@@ -40,19 +40,21 @@ export class OkenaSolver implements Solver {
 		}
 
 		// Fetch and switch to base branch (previous attempts may have left it on a vigil branch)
+		log.info('okena', `Matched Okena project: ${okenaProject.name} (${okenaProject.id})`)
 		try {
-			execSync(`git fetch origin "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe' })
+			log.info('okena', `Fetching origin/${projectConfig.baseBranch}...`)
+			execSync(`git fetch origin "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe', timeout: 30_000 })
 		} catch {
 			log.warn('okena', `Could not fetch origin/${projectConfig.baseBranch}`)
 		}
 		// Ensure origin/HEAD points to the configured base branch (Okena uses this to determine start point)
 		try {
-			execSync(`git remote set-head origin "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe' })
+			execSync(`git remote set-head origin "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe', timeout: 10_000 })
 		} catch {
 			// Non-critical
 		}
 		try {
-			execSync(`git checkout "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe' })
+			execSync(`git checkout "${projectConfig.baseBranch}"`, { cwd: projectConfig.repoPath, stdio: 'pipe', timeout: 10_000 })
 		} catch {
 			// Non-critical — may already be on the right branch
 		}
