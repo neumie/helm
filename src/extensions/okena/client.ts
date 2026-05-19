@@ -12,6 +12,11 @@ interface RemoteConfig {
 	pid: number
 }
 
+interface ProfilesConfig {
+	last_used?: string
+	default_profile?: string
+}
+
 interface OkenaCredentials {
 	token: string
 	baseUrl: string
@@ -21,17 +26,40 @@ const EXPIRED_TOKEN_HINT =
 	'Okena CLI token expired or invalid. Re-register by running the okena binary (e.g. `okena state`), then restart vigil.'
 
 export class OkenaClient {
-	private configDir: string
+	private baseDir: string
 
 	constructor() {
-		this.configDir =
+		this.baseDir =
 			process.platform === 'darwin'
 				? join(homedir(), 'Library', 'Application Support', 'okena')
 				: join(homedir(), '.config', 'okena')
 	}
 
+	/**
+	 * Resolve the directory holding cli.json / remote.json.
+	 *
+	 * Okena keeps credentials under `profiles/<id>/`. The active profile comes
+	 * from profiles.json (`last_used` → `default_profile`). Resolved per call —
+	 * the active profile can change at runtime.
+	 */
+	private resolveConfigDir(): string | null {
+		const profilesPath = join(this.baseDir, 'profiles.json')
+		if (!existsSync(profilesPath)) return null
+		try {
+			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const id = profiles.last_used ?? profiles.default_profile
+			if (!id) return null
+			const dir = join(this.baseDir, 'profiles', id)
+			return existsSync(dir) ? dir : null
+		} catch {
+			return null
+		}
+	}
+
 	private loadCredentials(): OkenaCredentials | null {
-		const cliPath = join(this.configDir, 'cli.json')
+		const configDir = this.resolveConfigDir()
+		if (!configDir) return null
+		const cliPath = join(configDir, 'cli.json')
 		if (!existsSync(cliPath)) return null
 
 		let token: string
@@ -42,7 +70,7 @@ export class OkenaClient {
 			return null
 		}
 
-		const remotePath = join(this.configDir, 'remote.json')
+		const remotePath = join(configDir, 'remote.json')
 		if (!existsSync(remotePath)) return null
 
 		try {
