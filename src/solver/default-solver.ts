@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { VigilConfig } from '../config.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
@@ -6,6 +7,8 @@ import { invokeChatSession } from './chat-invoker.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeClaude } from './invoker.js'
 import type {
+	PlanningSessionParams,
+	PlanningSessionResult,
 	PrepareWorktreeParams,
 	PrepareWorktreeResult,
 	SolveParams,
@@ -18,6 +21,19 @@ export class DefaultSolver implements Solver {
 
 	constructor(config: VigilConfig) {
 		this.config = config
+	}
+
+	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
+		// DefaultSolver has no terminal of its own to spawn into. Stage the
+		// planning prompt in the worktree so the user can paste/cat it into
+		// their own `claude` session.
+		const promptPath = join(params.worktreePath, '.vigil-planning-prompt.txt')
+		writeFileSync(promptPath, params.buildPrompt(params.worktreePath), 'utf-8')
+		log.info('solver', `Planning prompt staged at ${promptPath}`)
+		return {
+			hint:
+				`Open a terminal in ${params.worktreePath} and run:\n  claude --dangerously-skip-permissions "$(cat .vigil-planning-prompt.txt)"`,
+		}
 	}
 
 	async prepareWorktree(params: PrepareWorktreeParams): Promise<PrepareWorktreeResult> {

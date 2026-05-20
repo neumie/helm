@@ -17,8 +17,8 @@ const solverResultSchema = z.object({
 	prBody: z.string().optional(),
 })
 
-export function parseResultFile(worktreePath: string, externalId: string): SolverResult | null {
-	const resultPath = join(worktreePath, 'docs', 'plans', externalId, 'solver-result.json')
+export function parseResultFile(worktreePath: string, planDirName: string): SolverResult | null {
+	const resultPath = join(worktreePath, 'docs', 'plans', planDirName, 'solver-result.json')
 	try {
 		const raw = readFileSync(resultPath, 'utf-8')
 		const json = JSON.parse(raw)

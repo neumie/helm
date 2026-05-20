@@ -56,9 +56,10 @@ async function deleteAPI<T>(path: string): Promise<T> {
 export interface PlanInfo {
 	worktreePath: string
 	branchName: string
-	externalId: string
+	planDirName: string
 	readmePath: string
 	solverType: 'default' | 'okena'
+	hint: string
 }
 
 export const api = {

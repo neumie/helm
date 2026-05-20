@@ -9,7 +9,7 @@ import { buildChatPrompt, buildPrompt } from '../solver/prompt-builder.js'
 import { parseResultFile, parseTierFromOutput } from '../solver/result-parser.js'
 import type { Solver } from '../solver/solver.js'
 import { log } from '../util/logger.js'
-import { slugify } from '../util/slug.js'
+import { computePlanDirName, slugify } from '../util/slug.js'
 
 const LOGS_DIR = resolve(process.cwd(), 'logs')
 
@@ -43,15 +43,23 @@ export async function processTask(
 			throw Object.assign(new Error('Task not found in source system'), { phase: 'poll' })
 		}
 
+		// Ensure the task has a plan-dir name — computed once from the task
+		// title the first time we need it (plan endpoint or autonomous run),
+		// then persisted on the task row so subsequent reads stay stable
+		// across renames / title edits upstream.
+		const planDirName = task.planDirName ?? computePlanDirName(task.title)
+		if (!task.planDirName) {
+			db.updateTask(taskId, { planDirName })
+		}
+
 		// Prompts are built lazily — the solver invokes the thunk AFTER it has
 		// created the worktree, so the transformer can read worktree-resident
-		// files (e.g. docs/plans/<externalId>/*.md).
-		const externalId = task.clientcareId
+		// files (e.g. docs/plans/<planDirName>/*.md).
 		const promptBuilder = (worktreePath: string) =>
-			buildPrompt(taskContext, config.solver.transformer, { externalId, worktreePath })
+			buildPrompt(taskContext, config.solver.transformer, { planDirName, worktreePath })
 		const chatPromptBuilder = config.chat?.enabled
 			? (worktreePath: string) =>
-					buildChatPrompt(taskContext, taskId, config.solver.transformer, { externalId, worktreePath })
+					buildChatPrompt(taskContext, taskId, config.solver.transformer, { planDirName, worktreePath })
 			: undefined
 
 		// Phase 2+3: Create worktree + invoke Claude (delegated to solver).
@@ -61,7 +69,7 @@ export async function processTask(
 		const { worktreePath, invokeResult } = await solver.solve({
 			projectConfig,
 			branchName,
-			externalId,
+			planDirName,
 			buildPrompt: promptBuilder,
 			buildChatPrompt: chatPromptBuilder,
 			taskTitle: task.title,
@@ -84,7 +92,7 @@ export async function processTask(
 		}
 
 		// Phase 4: Parse result
-		let solverResult = parseResultFile(worktreePath, externalId)
+		let solverResult = parseResultFile(worktreePath, planDirName)
 		if (!solverResult) {
 			log.warn('worker', 'No solver-result.json found, trying to parse from output')
 			solverResult = parseTierFromOutput(invokeResult.stdout)

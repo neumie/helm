@@ -1,7 +1,7 @@
 import type { TaskContext } from '../providers/provider.js'
 import { getTransformer, type TransformerContext } from '../transformers/transformer.js'
 
-function solverInstructions(externalId: string): string {
+function solverInstructions(planDirName: string): string {
 	return `You are solving a task from a project management system. The task may be written in any language — understand it regardless.
 
 Follow the /almanac:task-start skill to begin. This will guide you through exploration, complexity assessment, and execution.
@@ -16,7 +16,7 @@ When the implementation is complete, use /almanac:ship to create the PR. Do NOT 
 
 ## Additional rules for automated solving
 
-After shipping, write a \`solver-result.json\` file at \`docs/plans/${externalId}/solver-result.json\` (the directory already exists; do not create a sibling at the repo root):
+After shipping, write a \`solver-result.json\` file at \`docs/plans/${planDirName}/solver-result.json\` (the directory already exists; do not create a sibling at the repo root):
 
 \`\`\`json
 {
@@ -46,6 +46,38 @@ Map tiers: trivial → prReady: true, simple/moderate → prReady: true, complex
 ---
 
 `
+}
+
+function planningInstructions(planDirName: string): string {
+	return `You are helping the user PLAN a task before it gets solved autonomously. This is an interactive session — chat with the user, don't take actions on your own.
+
+Briefly read the codebase to understand the surface area touched by this task (don't go deep — exploration is for the planning skills below).
+
+Then greet the user with a 2-3 sentence summary of what you understand about the task, and ASK what they want to do. Options to surface:
+
+- Run \`/grill-me ${planDirName}\` to stress-test decisions interactively. Writes \`docs/plans/${planDirName}/brief.md\`.
+- Run \`/grill-plan ${planDirName}\` to challenge their plan against the existing domain model.
+- Run \`/prd-create\` once they have a brief, to synthesize a PRD into \`docs/plans/${planDirName}/prd.md\`.
+- Run \`/almanac:complexity-assess\` to rate scope/risk.
+- Just talk through it conversationally.
+
+WAIT for direction. Don't start grilling or writing artifacts unsolicited. If the user gives a vague answer, ask one targeted clarifying question.
+
+Everything the user decides should land under \`docs/plans/${planDirName}/\` — that's where the autonomous solver reads from when the task runs. Skills like \`/grill-me\` and \`/prd-create\` write there automatically when invoked with the name argument.
+
+Do NOT run \`/almanac:ship\` or commit code changes in this session. Planning only.
+
+When the user is done planning, tell them they can trigger the autonomous run from the Vigil dashboard / extension.
+
+---
+
+`
+}
+
+export function buildPlanningPrompt(task: TaskContext, transformerName: string, ctx: TransformerContext): string {
+	const transformer = getTransformer(transformerName)
+	const taskContextStr = transformer(task, ctx)
+	return `${planningInstructions(ctx.planDirName)}## Task Context\n\n${taskContextStr}`
 }
 
 const CHAT_INSTRUCTIONS = `You are assessing a task from a project management system before it gets solved. Read the codebase to understand the project structure and context.
@@ -91,5 +123,5 @@ export function buildChatPrompt(task: TaskContext, taskId: string, transformerNa
 export function buildPrompt(task: TaskContext, transformerName: string, ctx: TransformerContext): string {
 	const transformer = getTransformer(transformerName)
 	const taskContextStr = transformer(task, ctx)
-	return `${solverInstructions(ctx.externalId)}## Task Context\n\n${taskContextStr}`
+	return `${solverInstructions(ctx.planDirName)}## Task Context\n\n${taskContextStr}`
 }

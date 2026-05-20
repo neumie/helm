@@ -10,8 +10,9 @@ import type { DB } from '../../db/client.js'
 import type { Poller } from '../../poller/poller.js'
 import type { TaskProvider } from '../../providers/provider.js'
 import type { TaskQueue } from '../../queue/queue.js'
+import { buildPlanningPrompt } from '../../solver/prompt-builder.js'
 import type { Solver } from '../../solver/solver.js'
-import { slugify } from '../../util/slug.js'
+import { computePlanDirName, slugify } from '../../util/slug.js'
 
 export function apiRoutes(
 	config: VigilConfig,
@@ -187,11 +188,11 @@ export function apiRoutes(
 	})
 
 	// Prepare a worktree for interactive planning BEFORE the autonomous solve.
-	// User opens the worktree (Okena terminal for okena solver, their own CC
-	// for default), runs /grill-me/<externalId> or /grill-plan/<externalId>,
-	// commits the resulting docs/plans/<externalId>/ artifacts. When the task
-	// later runs autonomously, the solver reuses this worktree and the
-	// transformer prepends the artifacts to the prompt.
+	// Creates the worktree, writes a per-task README at docs/plans/<planDirName>/,
+	// and KICKS OFF the planning agent (claude in okena's terminal for the okena
+	// solver, or stages a prompt file the user runs themselves for the default
+	// solver). The autonomous run later reuses the same worktree and the
+	// transformer prepends docs/plans/<planDirName>/*.md to the solver prompt.
 	api.post('/tasks/:id/plan', async c => {
 		const task = db.getTask(c.req.param('id'))
 		if (!task) return c.json({ error: 'Not found' }, 404)
@@ -199,7 +200,7 @@ export function apiRoutes(
 		const projectConfig = config.projects.find(p => p.slug === task.projectSlug)
 		if (!projectConfig) return c.json({ error: `Unknown project slug: ${task.projectSlug}` }, 400)
 
-		const externalId = task.clientcareId
+		const planDirName = task.planDirName ?? computePlanDirName(task.title)
 		const branchName = task.branchName ?? `vigil/${slugify(task.title)}`
 
 		// Idempotent: if a worktree already exists on disk for this task, reuse it.
@@ -222,39 +223,66 @@ export function apiRoutes(
 
 		// Write a per-task README the user lands on. Records task identity +
 		// suggested next step. Overwritten on subsequent calls to keep it fresh.
-		const taskDir = join(worktreePath, 'docs', 'plans', externalId)
+		const taskDir = join(worktreePath, 'docs', 'plans', planDirName)
 		mkdirSync(taskDir, { recursive: true })
 		const readmePath = join(taskDir, 'README.md')
 		const readmeBody = [
-			`# Task ${externalId}`,
+			`# ${task.title}`,
 			'',
-			`**Title:** ${task.title}`,
 			`**Status:** ${task.status}`,
 			`**Branch:** ${branchName}`,
+			`**Task ID:** ${task.clientcareId}`,
 			'',
 			'## Plan this task',
 			'',
-			'Run one of the planning skills in this directory:',
+			'A planning agent has been started in this worktree. Tell it what you want to do, or invoke one of:',
 			'',
-			`- \`/grill-me ${externalId}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
-			`- \`/grill-plan ${externalId}\` — challenge the plan against the domain model.`,
+			`- \`/grill-me ${planDirName}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
+			`- \`/grill-plan ${planDirName}\` — challenge the plan against the domain model.`,
 			`- \`/prd-create\` — once you have a brief, synthesize into \`prd.md\`.`,
 			'',
-			'Anything you commit under this directory will be loaded into the autonomous solver prompt when the task runs.',
+			'Anything committed under this directory is loaded into the autonomous solver prompt when the task runs.',
 			'',
 		].join('\n')
 		writeFileSync(readmePath, readmeBody, 'utf-8')
 
-		db.updateTask(task.id, { worktreePath, branchName })
-		db.insertEvent(task.id, 'plan_prepared', { worktreePath, branchName })
+		// Fetch task context so the planning prompt is informed.
+		const taskContext = await provider.getTaskContext(task.clientcareId)
+
+		// Start the interactive planning session (fire-and-forget — solver
+		// returns immediately, user interacts at their leisure).
+		let hint = ''
+		if (taskContext) {
+			const planningPromptBuilder = (wt: string) =>
+				buildPlanningPrompt(taskContext, config.solver.transformer, { planDirName, worktreePath: wt })
+			try {
+				const session = await solver.startPlanningSession({
+					worktreePath,
+					planDirName,
+					taskTitle: task.title,
+					solverConfig: config.solver,
+					buildPrompt: planningPromptBuilder,
+				})
+				hint = session.hint
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err)
+				return c.json({ error: `Planning session failed to start: ${msg}` }, 500)
+			}
+		} else {
+			hint = 'Task context could not be fetched — planning agent not started. Open the worktree and plan manually.'
+		}
+
+		db.updateTask(task.id, { worktreePath, branchName, planDirName })
+		db.insertEvent(task.id, 'plan_prepared', { worktreePath, branchName, planDirName })
 
 		return c.json({
 			data: {
 				worktreePath,
 				branchName,
-				externalId,
+				planDirName,
 				readmePath,
 				solverType: config.solver.type,
+				hint,
 			},
 		})
 	})

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import type { VigilConfig } from '../../config.js'
 import { log } from '../../util/logger.js'
 import type {
+	PlanningSessionParams,
+	PlanningSessionResult,
 	PrepareWorktreeParams,
 	PrepareWorktreeResult,
 	SolveParams,
@@ -160,6 +162,65 @@ export class OkenaSolver implements Solver {
 		return { worktreePath, wtProjectId, terminalId }
 	}
 
+	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
+		const { worktreePath, taskTitle, solverConfig, buildPrompt } = params
+
+		const state = await this.client.getState()
+		const wtProject = state.projects.find(p => p.path === worktreePath)
+		if (!wtProject) {
+			throw new Error(`Okena project not found for worktree path: ${worktreePath}`)
+		}
+
+		// Pick the most recent terminal in the project (the one prepareWorktree
+		// just created) or spawn a new one.
+		let terminalId = (await this.createTerminal(wtProject.id)) ?? null
+		if (!terminalId) {
+			throw new Error('Failed to create terminal for planning session')
+		}
+
+		try {
+			await this.client.action({
+				action: 'rename_terminal',
+				project_id: wtProject.id,
+				terminal_id: terminalId,
+				name: `plan: ${taskTitle}`,
+			})
+		} catch {
+			// Non-critical
+		}
+
+		// Write planning prompt to worktree
+		const promptFile = join(worktreePath, '.vigil-planning-prompt.txt')
+		writeFileSync(promptFile, buildPrompt(worktreePath), 'utf-8')
+
+		// Run claude interactively (NO --print / -p; agent stays alive for the user)
+		const args = ['claude', '--dangerously-skip-permissions']
+		if (solverConfig.model) {
+			args.push('--model', solverConfig.model)
+		}
+		const command = `${args.join(' ')} "$(cat .vigil-planning-prompt.txt)"`
+
+		log.info('okena', `Starting planning session in terminal ${terminalId}`)
+		try {
+			await this.client.action({
+				action: 'run_command',
+				terminal_id: terminalId,
+				command,
+			})
+		} catch (err) {
+			throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
+		}
+
+		return {
+			hint: `Switch to Okena → open the project for branch (${this.shortPath(worktreePath)}). The planning session is running in the "plan: ${taskTitle}" terminal.`,
+		}
+	}
+
+	private shortPath(path: string): string {
+		const parts = path.split('/')
+		return parts.slice(-2).join('/')
+	}
+
 	async prepareWorktree(params: PrepareWorktreeParams): Promise<PrepareWorktreeResult> {
 		const { projectConfig, branchName, taskTitle, signal } = params
 		if (signal?.aborted) {
@@ -180,7 +241,7 @@ export class OkenaSolver implements Solver {
 	}
 
 	async solve(params: SolveParams): Promise<SolveResult> {
-		const { projectConfig, branchName, externalId, buildPrompt, taskTitle, solverConfig, signal, existingWorktreePath } = params
+		const { projectConfig, branchName, planDirName, buildPrompt, taskTitle, solverConfig, signal, existingWorktreePath } = params
 
 		if (signal?.aborted) {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
@@ -239,9 +300,9 @@ export class OkenaSolver implements Solver {
 		}
 
 		// Write prompt to file in worktree. Built now so the transformer sees
-		// any docs/plans/<externalId>/ artifacts present in the worktree.
+		// any docs/plans/<planDirName>/ artifacts present in the worktree.
 		const promptFile = join(worktreePath, '.vigil-prompt.txt')
-		const resultFile = join(worktreePath, 'docs', 'plans', externalId, 'solver-result.json')
+		const resultFile = join(worktreePath, 'docs', 'plans', planDirName, 'solver-result.json')
 		writeFileSync(promptFile, buildPrompt(worktreePath), 'utf-8')
 
 		// Run claude in the terminal

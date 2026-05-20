@@ -36,16 +36,16 @@ export function defaultTransformer(task: TaskContext, ctx: TransformerContext): 
 		}
 	}
 
-	const planArtifacts = readPlanArtifacts(ctx.worktreePath, ctx.externalId)
+	const planArtifacts = readPlanArtifacts(ctx.worktreePath, ctx.planDirName)
 	if (planArtifacts) {
-		context += `\n## Plan Artifacts\n\nThe requester (or a prior planning session) wrote the following files to docs/plans/${ctx.externalId}/ before this task ran. Treat them as authoritative scoping — they reflect decisions already made.\n\n${planArtifacts}`
+		context += `\n## Plan Artifacts\n\nThe requester (or a prior planning session) wrote the following files to docs/plans/${ctx.planDirName}/ before this task ran. Treat them as authoritative scoping — they reflect decisions already made.\n\n${planArtifacts}`
 	}
 
 	return context
 }
 
-function readPlanArtifacts(worktreePath: string, externalId: string): string | null {
-	const plansDir = join(worktreePath, 'docs', 'plans', externalId)
+function readPlanArtifacts(worktreePath: string, planDirName: string): string | null {
+	const plansDir = join(worktreePath, 'docs', 'plans', planDirName)
 	if (!existsSync(plansDir)) return null
 
 	const entries = readdirSync(plansDir)
@@ -62,7 +62,7 @@ function readPlanArtifacts(worktreePath: string, externalId: string): string | n
 	for (const entry of entries) {
 		const content = readFileSync(entry.fullPath, 'utf-8')
 		const mtimeIso = new Date(entry.mtime).toISOString()
-		out += `<plan_artifact path="docs/plans/${externalId}/${entry.name}" mtime="${mtimeIso}">\n${content}\n</plan_artifact>\n\n`
+		out += `<plan_artifact path="docs/plans/${planDirName}/${entry.name}" mtime="${mtimeIso}">\n${content}\n</plan_artifact>\n\n`
 	}
 	return out
 }

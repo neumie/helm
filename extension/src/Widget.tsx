@@ -265,14 +265,9 @@ function Card(props: {
 							<Show when={props.planInfo()}>
 								{(info) => (
 									<div class="card-plan">
-										<div class="card-plan-line">Worktree ready at <code>{info().worktreePath}</code></div>
-										<Show when={info().solverType === 'okena'}>
-											<div class="card-plan-line">Switch to Okena → open the project for branch <code>{info().branchName}</code>.</div>
-										</Show>
-										<Show when={info().solverType !== 'okena'}>
-											<div class="card-plan-line">Open Claude Code in that directory.</div>
-										</Show>
-										<div class="card-plan-line">Run <code>/grill-me {info().externalId}</code> or <code>/grill-plan {info().externalId}</code>.</div>
+										<div class="card-plan-line">Planning agent started for <code>{info().planDirName}</code>.</div>
+										<div class="card-plan-line">{info().hint}</div>
+										<div class="card-plan-line">Tell the agent what you want to do, or invoke <code>/grill-me {info().planDirName}</code> / <code>/grill-plan {info().planDirName}</code>.</div>
 									</div>
 								)}
 							</Show>

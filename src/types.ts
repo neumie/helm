@@ -16,6 +16,7 @@ export interface TaskRecord {
 	solverRawResult: string | null
 	worktreePath: string | null
 	branchName: string | null
+	planDirName: string | null
 	prUrl: string | null
 	prDraft: number | null
 	commentId: string | null

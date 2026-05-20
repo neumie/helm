@@ -79,4 +79,10 @@ CREATE INDEX idx_chat_sessions_token ON chat_sessions(token);
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_id);
 `,
 	},
+	{
+		version: 3,
+		sql: `
+ALTER TABLE tasks ADD COLUMN plan_dir_name TEXT;
+`,
+	},
 ]

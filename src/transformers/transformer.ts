@@ -2,7 +2,13 @@ import type { TaskContext } from '../providers/provider.js'
 import { defaultTransformer } from './default.js'
 
 export interface TransformerContext {
-	externalId: string
+	/**
+	 * Human-readable, chronologically-sortable folder name under
+	 * `<worktree>/docs/plans/` (e.g. `2026-05-20-add-user-avatar`).
+	 * Stable per task; computed once via `computePlanDirName` and
+	 * persisted on the task row.
+	 */
+	planDirName: string
 	worktreePath: string
 }
 
