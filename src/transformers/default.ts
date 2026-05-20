@@ -1,6 +1,9 @@
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import type { TaskContext } from '../providers/provider.js'
+import type { TransformerContext } from './transformer.js'
 
-export function defaultTransformer(task: TaskContext): string {
+export function defaultTransformer(task: TaskContext, ctx: TransformerContext): string {
 	let context = ''
 
 	if (task.projectContext) {
@@ -33,5 +36,33 @@ export function defaultTransformer(task: TaskContext): string {
 		}
 	}
 
+	const planArtifacts = readPlanArtifacts(ctx.worktreePath, ctx.externalId)
+	if (planArtifacts) {
+		context += `\n## Plan Artifacts\n\nThe requester (or a prior planning session) wrote the following files to docs/plans/${ctx.externalId}/ before this task ran. Treat them as authoritative scoping — they reflect decisions already made.\n\n${planArtifacts}`
+	}
+
 	return context
+}
+
+function readPlanArtifacts(worktreePath: string, externalId: string): string | null {
+	const plansDir = join(worktreePath, 'docs', 'plans', externalId)
+	if (!existsSync(plansDir)) return null
+
+	const entries = readdirSync(plansDir)
+		.filter(name => name.endsWith('.md'))
+		.map(name => {
+			const fullPath = join(plansDir, name)
+			return { name, fullPath, mtime: statSync(fullPath).mtimeMs }
+		})
+		.sort((a, b) => a.mtime - b.mtime)
+
+	if (entries.length === 0) return null
+
+	let out = ''
+	for (const entry of entries) {
+		const content = readFileSync(entry.fullPath, 'utf-8')
+		const mtimeIso = new Date(entry.mtime).toISOString()
+		out += `<plan_artifact path="docs/plans/${externalId}/${entry.name}" mtime="${mtimeIso}">\n${content}\n</plan_artifact>\n\n`
+	}
+	return out
 }

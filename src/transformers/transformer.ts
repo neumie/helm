@@ -1,7 +1,12 @@
 import type { TaskContext } from '../providers/provider.js'
 import { defaultTransformer } from './default.js'
 
-export type TaskTransformer = (task: TaskContext) => string
+export interface TransformerContext {
+	externalId: string
+	worktreePath: string
+}
+
+export type TaskTransformer = (task: TaskContext, ctx: TransformerContext) => string
 
 const transformers: Record<string, TaskTransformer> = {
 	default: defaultTransformer,

@@ -43,26 +43,34 @@ export async function processTask(
 			throw Object.assign(new Error('Task not found in source system'), { phase: 'poll' })
 		}
 
-		const prompt = buildPrompt(taskContext, config.solver.transformer)
-		db.updateTask(taskId, { taskContext: prompt })
-
-		// Build chat prompt if chat is enabled
-		const chatPrompt = config.chat?.enabled
-			? buildChatPrompt(taskContext, taskId, config.solver.transformer)
+		// Prompts are built lazily — the solver invokes the thunk AFTER it has
+		// created the worktree, so the transformer can read worktree-resident
+		// files (e.g. docs/plans/<externalId>/*.md).
+		const externalId = task.clientcareId
+		const promptBuilder = (worktreePath: string) =>
+			buildPrompt(taskContext, config.solver.transformer, { externalId, worktreePath })
+		const chatPromptBuilder = config.chat?.enabled
+			? (worktreePath: string) =>
+					buildChatPrompt(taskContext, taskId, config.solver.transformer, { externalId, worktreePath })
 			: undefined
 
-		// Phase 2+3: Create worktree + invoke Claude (delegated to solver)
-		const branchName = `vigil/${slugify(task.title)}`
+		// Phase 2+3: Create worktree + invoke Claude (delegated to solver).
+		// Reuse a worktree if one was created earlier by the plan endpoint.
+		const branchName = task.branchName ?? `vigil/${slugify(task.title)}`
+		const existingWorktreePath = task.worktreePath ?? undefined
 		const { worktreePath, invokeResult } = await solver.solve({
 			projectConfig,
 			branchName,
-			prompt,
-			chatPrompt,
+			externalId,
+			buildPrompt: promptBuilder,
+			buildChatPrompt: chatPromptBuilder,
 			taskTitle: task.title,
 			solverConfig: config.solver,
 			signal,
 			outputLogPath,
+			existingWorktreePath,
 		})
+		db.updateTask(taskId, { taskContext: promptBuilder(worktreePath) })
 		db.updateTask(taskId, { worktreePath, branchName })
 		db.updateTask(taskId, {
 			claudeExitCode: invokeResult.exitCode,
@@ -76,14 +84,14 @@ export async function processTask(
 		}
 
 		// Phase 4: Parse result
-		let solverResult = parseResultFile(worktreePath)
+		let solverResult = parseResultFile(worktreePath, externalId)
 		if (!solverResult) {
-			log.warn('worker', 'No .solver-result.json found, trying to parse from output')
+			log.warn('worker', 'No solver-result.json found, trying to parse from output')
 			solverResult = parseTierFromOutput(invokeResult.stdout)
 		}
 		if (!solverResult) {
 			throw Object.assign(
-				new Error('Could not determine solver result — no .solver-result.json and no tier in output'),
+				new Error('Could not determine solver result — no solver-result.json and no tier in output'),
 				{ phase: 'solve' },
 			)
 		}

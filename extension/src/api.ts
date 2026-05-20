@@ -53,6 +53,14 @@ async function deleteAPI<T>(path: string): Promise<T> {
 	return json.data
 }
 
+export interface PlanInfo {
+	worktreePath: string
+	branchName: string
+	externalId: string
+	readmePath: string
+	solverType: 'default' | 'okena'
+}
+
 export const api = {
 	findTask: (clientcareId: string) =>
 		fetchAPI<TaskRecord | null>(`/tasks/by-clientcare-id/${clientcareId}`),
@@ -63,6 +71,7 @@ export const api = {
 	start: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/start`),
 	retry: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/retry`),
 	cancel: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/cancel`),
+	plan: (id: string) => postAPI<PlanInfo>(`/tasks/${id}/plan`),
 	setStatus: (id: string, status: string) =>
 		postAPI<{ message: string }>(`/tasks/${id}/status`, { status }),
 	deleteTask: (id: string) => deleteAPI<{ message: string }>(`/tasks/${id}`),

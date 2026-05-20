@@ -17,14 +17,14 @@ const solverResultSchema = z.object({
 	prBody: z.string().optional(),
 })
 
-export function parseResultFile(worktreePath: string): SolverResult | null {
-	const resultPath = join(worktreePath, '.solver-result.json')
+export function parseResultFile(worktreePath: string, externalId: string): SolverResult | null {
+	const resultPath = join(worktreePath, 'docs', 'plans', externalId, 'solver-result.json')
 	try {
 		const raw = readFileSync(resultPath, 'utf-8')
 		const json = JSON.parse(raw)
 		return solverResultSchema.parse(json)
 	} catch (err) {
-		log.warn('result-parser', `Could not read .solver-result.json from ${worktreePath}`, err)
+		log.warn('result-parser', `Could not read ${resultPath}`, err)
 		return null
 	}
 }

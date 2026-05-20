@@ -1,7 +1,8 @@
 import type { TaskContext } from '../providers/provider.js'
-import { getTransformer } from '../transformers/transformer.js'
+import { getTransformer, type TransformerContext } from '../transformers/transformer.js'
 
-const SOLVER_INSTRUCTIONS = `You are solving a task from a project management system. The task may be written in any language — understand it regardless.
+function solverInstructions(externalId: string): string {
+	return `You are solving a task from a project management system. The task may be written in any language — understand it regardless.
 
 Follow the /almanac:task-start skill to begin. This will guide you through exploration, complexity assessment, and execution.
 
@@ -15,7 +16,7 @@ When the implementation is complete, use /almanac:ship to create the PR. Do NOT 
 
 ## Additional rules for automated solving
 
-After shipping, write a \`.solver-result.json\` file in the repository root:
+After shipping, write a \`solver-result.json\` file at \`docs/plans/${externalId}/solver-result.json\` (the directory already exists; do not create a sibling at the repo root):
 
 \`\`\`json
 {
@@ -45,6 +46,7 @@ Map tiers: trivial → prReady: true, simple/moderate → prReady: true, complex
 ---
 
 `
+}
 
 const CHAT_INSTRUCTIONS = `You are assessing a task from a project management system before it gets solved. Read the codebase to understand the project structure and context.
 
@@ -80,14 +82,14 @@ Then output this JSON with the full conversation in your own words:
 
 `
 
-export function buildChatPrompt(task: TaskContext, taskId: string, transformerName: string): string {
+export function buildChatPrompt(task: TaskContext, taskId: string, transformerName: string, ctx: TransformerContext): string {
 	const transformer = getTransformer(transformerName)
-	const taskContextStr = transformer(task)
+	const taskContextStr = transformer(task, ctx)
 	return `${CHAT_INSTRUCTIONS}## Task ID: ${taskId}\n\n## Task Context\n\n${taskContextStr}`
 }
 
-export function buildPrompt(task: TaskContext, transformerName: string): string {
+export function buildPrompt(task: TaskContext, transformerName: string, ctx: TransformerContext): string {
 	const transformer = getTransformer(transformerName)
-	const taskContextStr = transformer(task)
-	return `${SOLVER_INSTRUCTIONS}## Task Context\n\n${taskContextStr}`
+	const taskContextStr = transformer(task, ctx)
+	return `${solverInstructions(ctx.externalId)}## Task Context\n\n${taskContextStr}`
 }

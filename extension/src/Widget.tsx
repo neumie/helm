@@ -1,5 +1,5 @@
 import { createSignal, createEffect, onCleanup, Show, type Accessor } from 'solid-js'
-import { type TaskRecord, api, getServerUrl } from './api'
+import { type PlanInfo, type TaskRecord, api, getServerUrl } from './api'
 
 const STATUS_COLORS: Record<string, string> = {
 	queued: '#808080',
@@ -23,6 +23,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	const [error, setError] = createSignal<string | null>(null)
 	const [projects, setProjects] = createSignal<string[]>([])
 	const [serverUrl, setServerUrl] = createSignal<string>('http://localhost:7474')
+	const [planInfo, setPlanInfo] = createSignal<PlanInfo | null>(null)
+	const [planPending, setPlanPending] = createSignal(false)
 
 	getServerUrl().then(setServerUrl)
 
@@ -95,6 +97,21 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		setExpanded(false)
 	}
 
+	async function handlePlan() {
+		const t = task()
+		if (!t) return
+		setPlanPending(true)
+		try {
+			const info = await api.plan(t.id)
+			setPlanInfo(info)
+			setError(null)
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Plan failed')
+		} finally {
+			setPlanPending(false)
+		}
+	}
+
 	const statusColor = () => {
 		const t = task()
 		return t ? STATUS_COLORS[t.status] ?? '#808080' : '#808080'
@@ -122,6 +139,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				projects={projects}
 				statusColor={statusColor}
 				dashboardUrl={dashboardUrl}
+				planInfo={planInfo}
+				planPending={planPending}
 				onCollapse={() => setExpanded(false)}
 				onSolve={solve}
 				onStart={() => doAction(() => api.start(task()!.id))}
@@ -129,6 +148,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				onCancel={() => doAction(() => api.cancel(task()!.id))}
 				onSkip={() => doAction(() => api.setStatus(task()!.id, 'skipped'))}
 				onDelete={handleDelete}
+				onPlan={handlePlan}
 			/>
 		</Show>
 	)
@@ -179,6 +199,8 @@ function Card(props: {
 	projects: Accessor<string[]>
 	statusColor: Accessor<string>
 	dashboardUrl: Accessor<string | null>
+	planInfo: Accessor<PlanInfo | null>
+	planPending: Accessor<boolean>
 	onCollapse: () => void
 	onSolve: () => void
 	onStart: () => void
@@ -186,6 +208,7 @@ function Card(props: {
 	onCancel: () => void
 	onSkip: () => void
 	onDelete: () => void
+	onPlan: () => void
 }) {
 	return (
 		<Show when={props.task()} fallback={
@@ -239,7 +262,24 @@ function Card(props: {
 							<Show when={t().solverSummary}><div class="card-summary">{t().solverSummary}</div></Show>
 							<Show when={t().errorMessage}><div class="card-error">{t().errorMessage}</div></Show>
 							<Show when={t().prUrl}><div class="card-pr"><a class="link" href={t().prUrl!} target="_blank">{formatPr(t().prUrl!)}</a></div></Show>
+							<Show when={props.planInfo()}>
+								{(info) => (
+									<div class="card-plan">
+										<div class="card-plan-line">Worktree ready at <code>{info().worktreePath}</code></div>
+										<Show when={info().solverType === 'okena'}>
+											<div class="card-plan-line">Switch to Okena → open the project for branch <code>{info().branchName}</code>.</div>
+										</Show>
+										<Show when={info().solverType !== 'okena'}>
+											<div class="card-plan-line">Open Claude Code in that directory.</div>
+										</Show>
+										<div class="card-plan-line">Run <code>/grill-me {info().externalId}</code> or <code>/grill-plan {info().externalId}</code>.</div>
+									</div>
+								)}
+							</Show>
 							<div class="card-actions">
+								<button class="btn btn-muted" on:click={props.onPlan} disabled={props.planPending() || t().status === 'processing'}>
+									{props.planPending() ? 'Planning…' : props.planInfo() ? 'Re-plan' : 'Plan'}
+								</button>
 								<Show when={t().status === 'queued'}>
 									<button class="btn btn-primary" on:click={props.onStart}>Start</button>
 									<button class="btn btn-muted" on:click={props.onSkip}>Skip</button>

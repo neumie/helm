@@ -78,7 +78,7 @@ async function main() {
 	}
 
 	// Start API server
-	const app = createApp(config, configPath, db, queue, poller, provider)
+	const app = createApp(config, configPath, db, queue, poller, provider, solver)
 	const { serve } = await import('@hono/node-server')
 	serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, () => {
 		log.success('vigil', `Dashboard: http://${config.server.host}:${config.server.port}`)

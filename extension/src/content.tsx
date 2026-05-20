@@ -153,6 +153,27 @@ const STYLES = `
 
 	.card-pr { margin-bottom: 10px; }
 
+	.card-plan {
+		font-size: 11px;
+		color: #9d9d9d;
+		line-height: 1.5;
+		margin-bottom: 10px;
+		padding: 8px;
+		background: #1e1e1e;
+		border-left: 2px solid #569cd6;
+		border-radius: 2px;
+	}
+	.card-plan-line { margin-bottom: 4px; }
+	.card-plan-line:last-child { margin-bottom: 0; }
+	.card-plan code {
+		background: #2d2d2d;
+		padding: 1px 4px;
+		border-radius: 2px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 10px;
+		color: #d4d4d4;
+	}
+
 	.link {
 		color: #569cd6;
 		text-decoration: none;

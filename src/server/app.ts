@@ -9,6 +9,7 @@ import { createMcpServer, handleMcpRequest } from '../mcp/server.js'
 import type { Poller } from '../poller/poller.js'
 import type { TaskProvider } from '../providers/provider.js'
 import type { TaskQueue } from '../queue/queue.js'
+import type { Solver } from '../solver/solver.js'
 import { apiRoutes } from './routes/api.js'
 
 const MIME: Record<string, string> = {
@@ -21,13 +22,13 @@ const MIME: Record<string, string> = {
 	'.ico': 'image/x-icon',
 }
 
-export function createApp(config: VigilConfig, configPath: string, db: DB, queue: TaskQueue, poller: Poller, provider: TaskProvider) {
+export function createApp(config: VigilConfig, configPath: string, db: DB, queue: TaskQueue, poller: Poller, provider: TaskProvider, solver: Solver) {
 	const app = new Hono()
 	const webDir = resolve(import.meta.dirname, '../web')
 
 	app.use('*', cors())
 
-	app.route('/api', apiRoutes(config, configPath, db, queue, poller, provider))
+	app.route('/api', apiRoutes(config, configPath, db, queue, poller, provider, solver))
 	app.route('/api/chat', chatRoutes(config, db))
 
 	// MCP endpoint for Claude CLI chat tools

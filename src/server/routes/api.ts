@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { execSync } from 'node:child_process'
-import { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { Hono } from 'hono'
 import { signToken } from '../../chat/token.js'
 import { configSchema } from '../../config.js'
@@ -10,6 +10,8 @@ import type { DB } from '../../db/client.js'
 import type { Poller } from '../../poller/poller.js'
 import type { TaskProvider } from '../../providers/provider.js'
 import type { TaskQueue } from '../../queue/queue.js'
+import type { Solver } from '../../solver/solver.js'
+import { slugify } from '../../util/slug.js'
 
 export function apiRoutes(
 	config: VigilConfig,
@@ -18,6 +20,7 @@ export function apiRoutes(
 	queue: TaskQueue,
 	poller: Poller,
 	provider: TaskProvider,
+	solver: Solver,
 ) {
 	const api = new Hono()
 
@@ -181,6 +184,79 @@ export function apiRoutes(
 	// Stats
 	api.get('/stats', c => {
 		return c.json({ data: db.getStats() })
+	})
+
+	// Prepare a worktree for interactive planning BEFORE the autonomous solve.
+	// User opens the worktree (Okena terminal for okena solver, their own CC
+	// for default), runs /grill-me/<externalId> or /grill-plan/<externalId>,
+	// commits the resulting docs/plans/<externalId>/ artifacts. When the task
+	// later runs autonomously, the solver reuses this worktree and the
+	// transformer prepends the artifacts to the prompt.
+	api.post('/tasks/:id/plan', async c => {
+		const task = db.getTask(c.req.param('id'))
+		if (!task) return c.json({ error: 'Not found' }, 404)
+
+		const projectConfig = config.projects.find(p => p.slug === task.projectSlug)
+		if (!projectConfig) return c.json({ error: `Unknown project slug: ${task.projectSlug}` }, 400)
+
+		const externalId = task.clientcareId
+		const branchName = task.branchName ?? `vigil/${slugify(task.title)}`
+
+		// Idempotent: if a worktree already exists on disk for this task, reuse it.
+		let worktreePath: string
+		if (task.worktreePath && existsSync(task.worktreePath)) {
+			worktreePath = task.worktreePath
+		} else {
+			try {
+				const result = await solver.prepareWorktree({
+					projectConfig,
+					branchName,
+					taskTitle: task.title,
+				})
+				worktreePath = result.worktreePath
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err)
+				return c.json({ error: `Worktree preparation failed: ${msg}` }, 500)
+			}
+		}
+
+		// Write a per-task README the user lands on. Records task identity +
+		// suggested next step. Overwritten on subsequent calls to keep it fresh.
+		const taskDir = join(worktreePath, 'docs', 'plans', externalId)
+		mkdirSync(taskDir, { recursive: true })
+		const readmePath = join(taskDir, 'README.md')
+		const readmeBody = [
+			`# Task ${externalId}`,
+			'',
+			`**Title:** ${task.title}`,
+			`**Status:** ${task.status}`,
+			`**Branch:** ${branchName}`,
+			'',
+			'## Plan this task',
+			'',
+			'Run one of the planning skills in this directory:',
+			'',
+			`- \`/grill-me ${externalId}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
+			`- \`/grill-plan ${externalId}\` — challenge the plan against the domain model.`,
+			`- \`/prd-create\` — once you have a brief, synthesize into \`prd.md\`.`,
+			'',
+			'Anything you commit under this directory will be loaded into the autonomous solver prompt when the task runs.',
+			'',
+		].join('\n')
+		writeFileSync(readmePath, readmeBody, 'utf-8')
+
+		db.updateTask(task.id, { worktreePath, branchName })
+		db.insertEvent(task.id, 'plan_prepared', { worktreePath, branchName })
+
+		return c.json({
+			data: {
+				worktreePath,
+				branchName,
+				externalId,
+				readmePath,
+				solverType: config.solver.type,
+			},
+		})
 	})
 
 	// Process a single task immediately (bypasses pause)
