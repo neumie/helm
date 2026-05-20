@@ -44,11 +44,13 @@ export class DefaultSolver implements Solver {
 		const planDir = join(worktreePath, 'docs', 'plans', params.planDirName)
 		mkdirSync(planDir, { recursive: true })
 		writeFileSync(join(planDir, 'context.md'), params.contextMarkdown, 'utf-8')
+		const promptRelPath = `docs/plans/${params.planDirName}/.planning-prompt.txt`
+		writeFileSync(join(worktreePath, promptRelPath), params.prompt, 'utf-8')
 
 		return {
 			worktreePath,
 			branchName: params.branchName,
-			hint: `Open a terminal in ${worktreePath} and run claude with this prompt:\n\n${params.prompt}`,
+			hint: `Open a terminal in ${worktreePath} and run:\n  claude --dangerously-skip-permissions "$(cat ${promptRelPath})"`,
 		}
 	}
 
