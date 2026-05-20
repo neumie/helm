@@ -219,15 +219,20 @@ export class OkenaSolver implements Solver {
 		mkdirSync(planDir, { recursive: true })
 		writeFileSync(join(planDir, 'context.md'), contextMarkdown, 'utf-8')
 
-		// Run claude interactively (no --print / -p; agent stays alive for the user).
-		// Prompt is short and CLI-safe (no backticks, no $) — embedded directly
-		// rather than via a temp file, so we don't litter the worktree root.
+		// Stage the planning prompt in the plan dir (dot-prefixed + .txt so the
+		// transformer skips it). We deliberately do NOT embed the multi-line
+		// prompt directly in the shell command: okena's run_command types the
+		// command into the terminal character-by-character, and embedded newlines
+		// break the shell's tokenization mid-stream. `$(cat path)` keeps the
+		// command on a single line.
+		const promptRelPath = `docs/plans/${planDirName}/.planning-prompt.txt`
+		writeFileSync(join(worktreePath, promptRelPath), prompt, 'utf-8')
+
 		const args = ['claude', '--dangerously-skip-permissions']
 		if (solverConfig.model) {
 			args.push('--model', solverConfig.model)
 		}
-		const escaped = prompt.replace(/"/g, '\\"')
-		const command = `${args.join(' ')} "${escaped}"`
+		const command = `${args.join(' ')} "$(cat ${promptRelPath})"`
 
 		log.info('okena', `Starting planning session in terminal ${terminalId}`)
 		try {
