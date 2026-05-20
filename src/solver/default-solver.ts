@@ -1,4 +1,5 @@
 import type { VigilConfig } from '../config.js'
+import { installSkillsIntoWorktree } from '../skills/installer.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
 import { invokeChatSession } from './chat-invoker.js'
@@ -37,6 +38,18 @@ export class DefaultSolver implements Solver {
 		}
 
 		excludeVigilFiles(worktreePath)
+
+		// Install bundled skills (vigil-*) into the worktree so the spawned
+		// Claude agent can load them via /vigil-task-start, /vigil-ship, etc.
+		// Fatal on failure: the solver prompt references vigil-* skills, so a
+		// missing bundle would silently degrade to runtime errors inside the agent.
+		try {
+			installSkillsIntoWorktree(worktreePath, 'claude')
+		} catch (err) {
+			throw Object.assign(new Error(`Skill install failed: ${err instanceof Error ? err.message : err}`), {
+				phase: 'worktree',
+			})
+		}
 
 		if (signal?.aborted) {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })

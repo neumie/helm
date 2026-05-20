@@ -8,12 +8,24 @@ import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launch
 const HELP = `Usage: vigil <command>
 
 Commands:
-  start    Start the Vigil daemon
-  stop     Stop the Vigil daemon
-  status   Show daemon status
-  logs     Tail daemon logs (--err for stderr)
-  run      Run a single task and exit
-  help     Show this help message`
+  start           Start the Vigil daemon
+  stop            Stop the Vigil daemon
+  status          Show daemon status
+  logs            Tail daemon logs (--err for stderr)
+  run             Run a single task and exit
+  install-skills  Install bundled vigil-* skills into ~/.claude and ~/.agents
+  help            Show this help message`
+
+const INSTALL_SKILLS_HELP = `Usage: vigil install-skills [--claude] [--codex]
+
+Install bundled vigil-* skills into the user's global skill dirs so they're
+available in your own Claude Code / Codex CLI sessions (planner-side).
+
+Destinations:
+  --claude        ~/.claude/skills/vigil/<skill>
+  --codex         ~/.agents/skills/vigil/<skill>
+
+With no flags, installs both targets.`
 
 const RUN_HELP = `Usage: vigil run <id> [--project <slug>]
 
@@ -146,6 +158,35 @@ async function run(): Promise<void> {
 	process.exit(result.status === 'completed' ? 0 : 1)
 }
 
+async function installSkills(): Promise<void> {
+	const args = process.argv.slice(3)
+	if (args.includes('--help') || args.includes('-h')) {
+		console.log(INSTALL_SKILLS_HELP)
+		process.exit(0)
+	}
+
+	const wantClaude = args.includes('--claude')
+	const wantCodex = args.includes('--codex')
+	// Default: install both if no flags given
+	const targets: Array<'claude' | 'codex'> = (() => {
+		if (!wantClaude && !wantCodex) return ['claude', 'codex']
+		const out: Array<'claude' | 'codex'> = []
+		if (wantClaude) out.push('claude')
+		if (wantCodex) out.push('codex')
+		return out
+	})()
+
+	const { installSkillsGlobally } = await import('../skills/installer.js')
+	const { homedir } = await import('node:os')
+	const { join } = await import('node:path')
+
+	for (const target of targets) {
+		installSkillsGlobally(target)
+		const base = target === 'claude' ? '.claude/skills/vigil' : '.agents/skills/vigil'
+		console.log(`Installed ${target} skills at ${join(homedir(), base)}`)
+	}
+}
+
 const command = process.argv[2]
 
 switch (command) {
@@ -163,6 +204,12 @@ switch (command) {
 		break
 	case 'run':
 		run().catch(err => {
+			console.error(`Error: ${err instanceof Error ? err.message : err}`)
+			process.exit(1)
+		})
+		break
+	case 'install-skills':
+		installSkills().catch(err => {
 			console.error(`Error: ${err instanceof Error ? err.message : err}`)
 			process.exit(1)
 		})

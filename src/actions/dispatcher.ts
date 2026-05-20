@@ -20,7 +20,7 @@ export async function dispatch(
 	const worktreePath = task.worktreePath ?? ''
 	const branchName = task.branchName ?? ''
 
-	// If claude already shipped (created PR via /almanac:ship), just record it
+	// If claude already shipped (created PR via /vigil-ship), just record it
 	if (result.prUrl) {
 		log.info('dispatcher', `Claude already shipped PR: ${result.prUrl}`)
 		db.updateTask(taskId, { prUrl: result.prUrl, prDraft: 0 })

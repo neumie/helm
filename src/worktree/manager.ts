@@ -63,7 +63,7 @@ export function pushBranch(worktreePath: string, branchName: string): void {
 		execSync(`git push -u origin "${branchName}"`, { cwd: worktreePath, stdio: 'pipe' })
 		log.success('worktree', `Pushed branch ${branchName}`)
 	} catch {
-		// Branch may have been renamed (e.g. by /almanac:ship) or already pushed
+		// Branch may have been renamed (e.g. by /vigil-ship) or already pushed
 		const currentBranch = getCurrentBranch(worktreePath)
 		if (currentBranch && currentBranch !== branchName) {
 			log.info('worktree', `Branch was renamed to ${currentBranch}, pushing that instead`)

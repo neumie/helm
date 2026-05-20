@@ -27,6 +27,7 @@ Three discriminated unions / interfaces gate where code goes. Bypass them and th
 | New chat/MCP tool exposed to the solver  | `src/mcp/server.ts` (register via `server.tool(...)`) |
 | New dashboard endpoint                   | `src/server/routes/api.ts` (mounted from `app.ts`) |
 | DB column or query                       | `src/db/schema.ts` (append to `MIGRATIONS`) + `src/db/client.ts` |
+| New bundled skill                        | `vendor/<bundle>/vigil-<name>/` + update `vendor/UPSTREAM.md` |
 
 ## Pipeline (`src/queue/worker.ts`)
 
@@ -42,8 +43,9 @@ Five phases. Don't reorder, don't skip.
 
 - **`src/chat/`** — clarification chat. Signed tokens gate every route; never expose `session.id` over the wire, only the token.
 - **`src/mcp/server.ts`** — MCP server the running solver talks to. New solver capabilities go here as tools, not on the dispatcher.
-- **`src/cli/`** — `vigil` binary wrapping launchd: `start` / `stop` / `status` / `logs` / `run`. **`vigil run <id>` executes one task and exits** — use it to debug a single task without re-polling or restarting the daemon.
+- **`src/cli/`** — `vigil` binary wrapping launchd: `start` / `stop` / `status` / `logs` / `run` / `install-skills`. **`vigil run <id>` executes one task and exits** — use it to debug a single task without re-polling or restarting the daemon. **`vigil install-skills`** copies bundled skills into `~/.claude/skills/vigil/` (and `~/.agents/skills/vigil/`) for planner-side workflows.
 - **`src/extensions/okena/`** — alternative `Solver` (local Okena daemon instead of `claude` CLI). Loaded via dynamic `import()` in `src/index.ts` with `DefaultSolver` fallback. Don't hard-import it.
+- **Bundled skills (`vendor/` + `src/skills/installer.ts`)** — vendored SKILL.md skills (all sourced from almanac) prefixed `vigil-`. Source of truth is `vendor/almanac/`. Both `Solver` impls call `installSkillsIntoWorktree(worktreePath, 'claude')` after worktree creation, which copies every `vendor/*/<skill>/` dir into `<worktree>/.claude/skills/`. The `codex` target writes to `.agents/skills/` instead (reserved for a future CodexSolver). The `vigil install-skills` CLI subcommand calls `installSkillsGlobally(target)` to land the same bundle under `~/.claude/skills/vigil/` (or `~/.agents/skills/vigil/`) for the user's own planner-side sessions. Re-sync procedure and upstream provenance live in `vendor/UPSTREAM.md`.
 
 ### Directory rules
 
@@ -54,7 +56,7 @@ Five phases. Don't reorder, don't skip.
 
 - **Worktree cwd.** Solver code runs with the worktree as `cwd`. Reading `process.cwd()` from anywhere outside `Solver` impls or the worker hits the wrong tree (or the daemon's tree). Prefer paths derived from `worktreePath` / `projectConfig.repoPath`. Exception: module-load-time daemon paths (config, DB, logs) capture the daemon's startup cwd — that's intended. Note: `src/server/routes/api.ts:291` resolves `process.cwd()` per request to read the log path — that works only because the daemon never `chdir`s, so don't copy the pattern into code that might run after a `cwd` change.
 - **Optional solver imports.** Extension solvers (e.g. `src/extensions/okena/`) load via dynamic `import()` in `src/index.ts` with a `DefaultSolver` fallback on failure. Never add a top-level static import for an optional/extension solver — an unavailable optional dep would crash startup. Mirror the okena pattern.
-- **Claude can pre-ship.** If `.solver-result.json` carries `prUrl`, `dispatcher.ts` records it and skips tier routing entirely (Claude shipped via `/almanac:ship`). Don't add tier-only side effects assuming dispatch always runs the tier branch.
+- **Claude can pre-ship.** If `.solver-result.json` carries `prUrl`, `dispatcher.ts` records it and skips tier routing entirely (Claude shipped via `/vigil-ship`). Don't add tier-only side effects assuming dispatch always runs the tier branch.
 - **Okena token rotation.** Okena rotates the CLI token; `OkenaClient` reloads `cli.json` per call. Never cache the token in memory — long-running daemons will start returning HTTP 401 silently. Newly registered tokens activate only after Okena itself restarts.
 - **Okena profile layout.** Okena keeps `cli.json`/`remote.json` under `profiles/<id>/`. `OkenaClient.resolveConfigDir()` reads `profiles.json` (`last_used` → `default_profile`) per call to find the active profile. Symptom of okena changing this layout again: `Error: Okena not configured` even though okena is running — re-check `resolveConfigDir()` against the new on-disk layout.
 - **Silent solver fallback.** If `config.solver.type === 'okena'` but Okena is unavailable, `src/index.ts` logs a warning and falls back to `DefaultSolver`. Don't assume the configured type is the active type — read the startup log or `solver.constructor.name`.
@@ -64,6 +66,7 @@ Five phases. Don't reorder, don't skip.
 - **Chat token vs session id.** `chat_sessions` rows have both `id` (DB primary key) and `token` (signed, expiring). HTTP/URLs/logs: token only — `id` is not signature-verified, leaking it bypasses the gate. MCP tools: `sessionId` is the addressing key — don't "fix" them to take the token.
 - **Stale processing tasks.** `src/index.ts` re-enqueues anything stuck in `processing` on startup. Don't write code that assumes "processing" means "currently running" — it might be a recovered task from a prior crash.
 - **Legacy `clientcareId`.** The DB column is named `clientcare_id` (`clientcareId` in TS) but holds the provider-agnostic external ID (predates the provider abstraction). Don't read it as Contember-specific; don't rename without a migration.
+- **`vendor/` path resolution.** `src/skills/installer.ts` resolves `vendor/` via `import.meta.url` → `fileURLToPath` → walk two levels up. This works because both `src/skills/installer.ts` (tsx-dev) and `dist/skills/installer.js` (built) sit at the same depth relative to `vendor/` at the repo root. **Never `process.cwd()`** here — the installer runs inside per-task worktrees (see the "Worktree cwd" gotcha) where `cwd` is wrong. If you move the installer file or change `rootDir`/`outDir`, update the `resolve(here, '..', '..', 'vendor')` walk to match.
 
 ## Build & run
 

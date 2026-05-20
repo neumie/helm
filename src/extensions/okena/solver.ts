@@ -3,6 +3,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VigilConfig } from '../../config.js'
 import { log } from '../../util/logger.js'
+import { installSkillsIntoWorktree } from '../../skills/installer.js'
 import type { SolveParams, SolveResult, Solver } from '../../solver/solver.js'
 import { excludeVigilFiles } from '../../worktree/manager.js'
 import { OkenaClient } from './client.js'
@@ -144,6 +145,17 @@ export class OkenaSolver implements Solver {
 
 		log.success('okena', `Worktree at ${worktreePath} (terminal: ${terminalId})`)
 		excludeVigilFiles(worktreePath)
+
+		// Install bundled skills (vigil-*) into the worktree — OkenaSolver still
+		// drives the claude CLI internally, so the target is 'claude'. Fatal on
+		// failure: the solver prompt references vigil-* skills.
+		try {
+			installSkillsIntoWorktree(worktreePath, 'claude')
+		} catch (err) {
+			throw Object.assign(new Error(`Skill install failed: ${err instanceof Error ? err.message : err}`), {
+				phase: 'worktree',
+			})
+		}
 
 		// Rename terminal with task title
 		if (wtProjectId) {

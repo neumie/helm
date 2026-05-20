@@ -3,15 +3,15 @@ import { getTransformer } from '../transformers/transformer.js'
 
 const SOLVER_INSTRUCTIONS = `You are solving a task from a project management system. The task may be written in any language — understand it regardless.
 
-Follow the /almanac:task-start skill to begin. This will guide you through exploration, complexity assessment, and execution.
+Follow the /vigil-task-start skill to begin. This will guide you through exploration, complexity assessment, and execution.
 
 IMPORTANT: If the task context lists any attachments, always fetch and review them before starting — they often contain screenshots, mockups, logs, or specs that are essential to understanding the task.
 
 IMPORTANT: If the task affects UI behaviour (which most of these do), verify the fix end-to-end with \`agent-browser\` before shipping — navigate to the relevant page, reproduce the scenario from the task, and confirm the new behaviour matches what was requested. Do not claim a UI task is done without having seen it work in the browser.
 
-IMPORTANT: Always rename the branch using /almanac:branch-name — the auto-generated branch name is not descriptive.
+IMPORTANT: Always rename the branch using /vigil-branch-name — the auto-generated branch name is not descriptive.
 
-When the implementation is complete, use /almanac:ship to create the PR. Do NOT create a draft — create a regular PR unless the task is complex.
+When the implementation is complete, use /vigil-ship to create the PR. Do NOT create a draft — create a regular PR unless the task is complex.
 
 ## Additional rules for automated solving
 
@@ -32,8 +32,8 @@ After shipping, write a \`.solver-result.json\` file in the repository root:
 }
 \`\`\`
 
-If you created a PR via /almanac:ship, set \`prReady: true\` and include the PR URL in \`prUrl\`.
-Use /almanac:commit for all commits.
+If you created a PR via /vigil-ship, set \`prReady: true\` and include the PR URL in \`prUrl\`.
+Use /vigil-commit for all commits.
 Map tiers: trivial → prReady: true, simple/moderate → prReady: true, complex → prReady: false, unclear → prReady: false (no code changes).
 
 ### Critical rules:
