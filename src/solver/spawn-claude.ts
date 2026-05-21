@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
+import { taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
 
 export interface SpawnClaudeOptions {
@@ -23,7 +24,7 @@ export function spawnClaude(options: SpawnClaudeOptions): Promise<SpawnClaudeRes
 
 	return new Promise<SpawnClaudeResult>((resolve, reject) => {
 		if (signal?.aborted) {
-			reject(Object.assign(new Error('Task cancelled'), { name: 'AbortError' }))
+			reject(taskCancelled())
 			return
 		}
 
@@ -71,7 +72,7 @@ export function spawnClaude(options: SpawnClaudeOptions): Promise<SpawnClaudeRes
 			})
 
 			if (signal?.aborted) {
-				reject(Object.assign(new Error('Task cancelled'), { name: 'AbortError' }))
+				reject(taskCancelled())
 			} else {
 				resolve({ exitCode: code, stdout, stderr })
 			}

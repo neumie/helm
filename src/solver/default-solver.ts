@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import type { VigilConfig } from '../config.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { formatTaskContext } from '../task-context.js'
+import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
 import { invokeChatSession } from './chat-invoker.js'
@@ -26,7 +27,7 @@ export class DefaultSolver implements Solver {
 		signal: AbortSignal | undefined,
 	): string {
 		if (signal?.aborted) {
-			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+			throw taskCancelled()
 		}
 		if (existingWorktreePath && existsSync(existingWorktreePath)) {
 			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
@@ -43,9 +44,7 @@ export class DefaultSolver implements Solver {
 				projectConfig.worktreeDir,
 			)
 		} catch (err) {
-			throw Object.assign(new Error(`Worktree creation failed: ${err instanceof Error ? err.message : err}`), {
-				phase: 'worktree',
-			})
+			throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
 		excludeVigilFiles(worktreePath)
 		return worktreePath
@@ -87,13 +86,13 @@ export class DefaultSolver implements Solver {
 		} = params
 
 		if (signal?.aborted) {
-			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+			throw taskCancelled()
 		}
 
 		const worktreePath = this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
 
 		if (signal?.aborted) {
-			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+			throw taskCancelled()
 		}
 
 		// Clarification chat is a DefaultSolver-only concern (sandboxed, read-only).
@@ -111,14 +110,14 @@ export class DefaultSolver implements Solver {
 					log.info('solver', 'Chat session determined task is clear — proceeding to solve')
 				}
 			} catch (err) {
-				if ((err as Error).name === 'AbortError') throw err
+				if (isCancellation(err)) throw err
 				log.warn('solver', `Chat session failed: ${err instanceof Error ? err.message : err}`)
 				// Continue to solve without chat transcript
 			}
 		}
 
 		if (signal?.aborted) {
-			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+			throw taskCancelled()
 		}
 
 		// Build the solver prompt now — task-context builder reads worktree-resident plan artifacts.
@@ -133,10 +132,8 @@ export class DefaultSolver implements Solver {
 		try {
 			invokeResult = await invokeClaude(worktreePath, solverPrompt, solverConfig, signal, outputLogPath)
 		} catch (err) {
-			if ((err as Error).name === 'AbortError') throw err
-			throw Object.assign(new Error(`Claude invocation failed: ${err instanceof Error ? err.message : err}`), {
-				phase: 'solve',
-			})
+			if (isCancellation(err)) throw err
+			throw phaseError('solve', `Claude invocation failed: ${err instanceof Error ? err.message : err}`)
 		}
 
 		return {

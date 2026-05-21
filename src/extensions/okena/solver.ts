@@ -12,6 +12,7 @@ import type {
 	Solver,
 } from '../../solver/solver.js'
 import { formatTaskContext } from '../../task-context.js'
+import { phaseError, taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { excludeVigilFiles } from '../../worktree/manager.js'
 import { OkenaClient } from './client.js'
@@ -42,7 +43,7 @@ export class OkenaSolver implements Solver {
 		const state = await this.client.getState()
 		const okenaProject = state.projects.find(p => p.path === repoPath)
 		if (!okenaProject) {
-			throw Object.assign(new Error(`Project not found in Okena for path: ${repoPath}`), { phase: 'worktree' })
+			throw phaseError('worktree', `Project not found in Okena for path: ${repoPath}`)
 		}
 		return { state, okenaProject }
 	}
@@ -95,9 +96,7 @@ export class OkenaSolver implements Solver {
 			const { state } = await this.findOkenaProject(repoPath)
 			const wtProject = state.projects.find(p => p.path === existingWorktreePath)
 			if (!wtProject) {
-				throw Object.assign(new Error(`Okena project not found for worktree path: ${existingWorktreePath}`), {
-					phase: 'worktree',
-				})
+				throw phaseError('worktree', `Okena project not found for worktree path: ${existingWorktreePath}`)
 			}
 			excludeVigilFiles(existingWorktreePath)
 			return { worktreePath: existingWorktreePath, wtProjectId: wtProject.id, autoTerminalId: null }
@@ -135,9 +134,7 @@ export class OkenaSolver implements Solver {
 					create_branch: false,
 				})
 			} catch (err) {
-				throw Object.assign(new Error(`Okena worktree creation failed: ${err instanceof Error ? err.message : err}`), {
-					phase: 'worktree',
-				})
+				throw phaseError('worktree', `Okena worktree creation failed: ${err instanceof Error ? err.message : err}`)
 			}
 		}
 
@@ -147,7 +144,7 @@ export class OkenaSolver implements Solver {
 			state.projects.find(p => p.path === worktreePath)?.id ??
 			(await this.client.getState()).projects.find(p => p.path === worktreePath)?.id
 		if (!wtProjectId) {
-			throw Object.assign(new Error('Worktree project ID could not be resolved'), { phase: 'worktree' })
+			throw phaseError('worktree', 'Worktree project ID could not be resolved')
 		}
 
 		log.success('okena', `Worktree at ${worktreePath}`)
@@ -224,7 +221,7 @@ export class OkenaSolver implements Solver {
 		} = params
 
 		if (signal?.aborted) {
-			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+			throw taskCancelled()
 		}
 
 		const ensured = await this.ensureWorktreeProject(
@@ -237,7 +234,7 @@ export class OkenaSolver implements Solver {
 		// terminal. Use the auto-created terminal only for a brand-new worktree.
 		const terminalId = ensured.autoTerminalId ?? (await this.createTerminal(ensured.wtProjectId))
 		if (!terminalId) {
-			throw Object.assign(new Error('Failed to create terminal for solve'), { phase: 'worktree' })
+			throw phaseError('worktree', 'Failed to create terminal for solve')
 		}
 		const worktreePath = ensured.worktreePath
 
@@ -263,12 +260,7 @@ export class OkenaSolver implements Solver {
 		try {
 			await this.client.action({ action: 'run_command', terminal_id: terminalId, command })
 		} catch (err) {
-			throw Object.assign(
-				new Error(`Failed to run command in Okena terminal: ${err instanceof Error ? err.message : err}`),
-				{
-					phase: 'solve',
-				},
-			)
+			throw phaseError('solve', `Failed to run command in Okena terminal: ${err instanceof Error ? err.message : err}`)
 		}
 
 		// Poll for solver-result.json — Claude writes this when done solving
@@ -283,10 +275,10 @@ export class OkenaSolver implements Solver {
 				} catch {
 					/* best effort */
 				}
-				throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+				throw taskCancelled()
 			}
 			if (Date.now() - startTime > timeoutMs) {
-				throw Object.assign(new Error('Claude timed out in Okena terminal'), { phase: 'solve' })
+				throw phaseError('solve', 'Claude timed out in Okena terminal')
 			}
 			await sleep(2000)
 		}

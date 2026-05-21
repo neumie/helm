@@ -8,7 +8,7 @@ import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { buildPrompt } from '../solver/prompt-builder.js'
 import type { Solver } from '../solver/solver.js'
-import type { ErrorPhase } from '../types.js'
+import { errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
 
 const LOGS_DIR = resolve(process.cwd(), 'logs')
@@ -40,7 +40,7 @@ export async function processTask(
 		const taskContext = await provider.getTaskContext(task.clientcareId)
 
 		if (!taskContext) {
-			throw Object.assign(new Error('Task not found in source system'), { phase: 'poll' })
+			throw phaseError('poll', 'Task not found in source system')
 		}
 
 		// Resolve the task's workspace identity (plan dir, branch, existing
@@ -87,9 +87,7 @@ export async function processTask(
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
 		const solverResult = workspace.readResult()
 		if (!solverResult) {
-			throw Object.assign(new Error(`No solver-result.json at ${workspace.rel.result}`), {
-				phase: 'solve',
-			})
+			throw phaseError('solve', `No solver-result.json at ${workspace.rel.result}`)
 		}
 
 		db.updateTask(taskId, {
@@ -117,17 +115,18 @@ export async function processTask(
 		db.insertEvent(taskId, 'action_completed')
 		log.success('worker', `Task ready for review: ${task.title} [${solverResult.tier}]`)
 	} catch (err) {
-		const error = err as Error & { phase?: ErrorPhase }
-		const isCancelled = error.name === 'AbortError' || signal?.aborted
+		const error = err as Error
+		const isCancelled = isCancellation(error, signal)
+		const phase = errorPhase(error)
 		db.updateTask(taskId, {
 			status: isCancelled ? 'cancelled' : 'failed',
 			errorMessage: isCancelled ? 'Task cancelled by user' : error.message,
-			errorPhase: error.phase ?? 'solve',
+			errorPhase: phase,
 			completedAt: new Date().toISOString(),
 		})
 		db.insertEvent(taskId, isCancelled ? 'task_cancelled' : 'solver_failed', {
 			error: error.message,
-			phase: error.phase,
+			phase,
 		})
 		if (isCancelled) {
 			log.warn('worker', `Task cancelled: ${task.title}`)
