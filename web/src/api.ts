@@ -105,14 +105,19 @@ export const api = {
 	retry: (id: string) => postJSON<{ message: string }>(`/tasks/${id}/retry`),
 	cancel: (id: string) => postJSON<{ message: string }>(`/tasks/${id}/cancel`),
 	deleteTask: (id: string) =>
-		fetch(`${BASE}/tasks/${id}`, { method: 'DELETE' }).then(r => r.json()).then(r => r.data),
+		fetch(`${BASE}/tasks/${id}`, { method: 'DELETE' })
+			.then(r => r.json())
+			.then(r => r.data),
 	setStatus: (id: string, status: string) =>
 		fetch(`${BASE}/tasks/${id}/status`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ status }),
-		}).then(r => r.json()).then(r => r.data),
-	prStatus: (id: string) => fetchJSON<{ state: string | null; merged?: boolean; mergedAt?: string }>(`/tasks/${id}/pr-status`),
+		})
+			.then(r => r.json())
+			.then(r => r.data),
+	prStatus: (id: string) =>
+		fetchJSON<{ state: string | null; merged?: boolean; mergedAt?: string }>(`/tasks/${id}/pr-status`),
 	output: (id: string, offset = 0) =>
 		fetchJSON<{ content: string; offset: number; done: boolean }>(`/tasks/${id}/output?offset=${offset}`),
 	triggerPoll: () => postJSON<{ message: string }>('/poll/trigger'),
@@ -126,5 +131,7 @@ export const api = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ message }),
-		}).then(r => r.json()).then(r => r.data as { session: ChatSessionInfo; chatUrl: string }),
+		})
+			.then(r => r.json())
+			.then(r => r.data as { session: ChatSessionInfo; chatUrl: string }),
 }

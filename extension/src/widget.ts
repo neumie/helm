@@ -88,11 +88,12 @@ export class VigilWidget {
 		try {
 			const result = await api.findTask(taskId)
 			if (this.currentTaskId !== taskId) return
-			const changed = result?.status !== this.task?.status
-				|| result?.tier !== this.task?.tier
-				|| result?.prUrl !== this.task?.prUrl
-				|| result?.id !== this.task?.id
-				|| (result === null) !== (this.task === null)
+			const changed =
+				result?.status !== this.task?.status ||
+				result?.tier !== this.task?.tier ||
+				result?.prUrl !== this.task?.prUrl ||
+				result?.id !== this.task?.id ||
+				(result === null) !== (this.task === null)
 			this.task = result
 			const hadError = this.error !== null
 			this.error = null
@@ -147,7 +148,9 @@ export class VigilWidget {
 		this.shadow.getElementById('start')?.addEventListener('click', () => this.action(() => api.resumeQueue()))
 		this.shadow.getElementById('retry')?.addEventListener('click', () => this.action(() => api.retry(this.task!.id)))
 		this.shadow.getElementById('cancel')?.addEventListener('click', () => this.action(() => api.cancel(this.task!.id)))
-		this.shadow.getElementById('skip')?.addEventListener('click', () => this.action(() => api.setStatus(this.task!.id, 'skipped')))
+		this.shadow
+			.getElementById('skip')
+			?.addEventListener('click', () => this.action(() => api.setStatus(this.task!.id, 'skipped')))
 		this.shadow.getElementById('delete')?.addEventListener('click', async () => {
 			await api.deleteTask(this.task!.id)
 			this.task = null
@@ -210,16 +213,17 @@ export class VigilWidget {
 					</div>
 					<div class="card-body">
 						<div class="card-text">Task not tracked by Vigil.</div>
-						${this.projects.length > 0
-							? `<div class="card-actions"><button class="btn btn-primary" id="solve">Solve with Vigil</button></div>`
-							: `<div class="card-summary">No projects configured.</div>`
+						${
+							this.projects.length > 0
+								? `<div class="card-actions"><button class="btn btn-primary" id="solve">Solve with Vigil</button></div>`
+								: `<div class="card-summary">No projects configured.</div>`
 						}
 					</div>
 				</div>`
 		}
 
 		const sc = STATUS_COLORS[t.status] ?? '#808080'
-		const tc = t.tier ? TIER_COLORS[t.tier] ?? '#808080' : null
+		const tc = t.tier ? (TIER_COLORS[t.tier] ?? '#808080') : null
 		const glow = t.status === 'processing' ? `box-shadow:0 0 6px ${sc}` : ''
 
 		let primary = ''

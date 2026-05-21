@@ -10,9 +10,12 @@ export function SettingsPage() {
 	const [dirty, setDirty] = useState(false)
 
 	useEffect(() => {
-		api.configFull().then(setConfig).catch(err => {
-			setMessage({ type: 'error', text: `Failed to load config: ${err.message}` })
-		})
+		api
+			.configFull()
+			.then(setConfig)
+			.catch(err => {
+				setMessage({ type: 'error', text: `Failed to load config: ${err.message}` })
+			})
 	}, [])
 
 	const handleSave = useCallback(async () => {
@@ -72,11 +75,7 @@ export function SettingsPage() {
 	}, [])
 
 	if (!config) {
-		return (
-			<div style={{ padding: 40, color: 'var(--text-3)' }}>
-				{message ? message.text : 'Loading config...'}
-			</div>
-		)
+		return <div style={{ padding: 40, color: 'var(--text-3)' }}>{message ? message.text : 'Loading config...'}</div>
 	}
 
 	const provider = config.provider as Record<string, unknown> | undefined
@@ -90,23 +89,28 @@ export function SettingsPage() {
 	return (
 		<div style={{ maxWidth: 680, margin: '0 auto', padding: '32px 24px' }}>
 			{/* Header */}
-			<div style={{
-				display: 'flex',
-				alignItems: 'center',
-				justifyContent: 'space-between',
-				marginBottom: 28,
-				paddingBottom: 16,
-				borderBottom: '1px solid var(--border)',
-			}}>
+			<div
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'space-between',
+					marginBottom: 28,
+					paddingBottom: 16,
+					borderBottom: '1px solid var(--border)',
+				}}
+			>
 				<div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-					<a href="/" style={{
-						color: 'var(--text-3)',
-						textDecoration: 'none',
-						fontSize: 13,
-						display: 'flex',
-						alignItems: 'center',
-						gap: 4,
-					}}>
+					<a
+						href="/"
+						style={{
+							color: 'var(--text-3)',
+							textDecoration: 'none',
+							fontSize: 13,
+							display: 'flex',
+							alignItems: 'center',
+							gap: 4,
+						}}
+					>
 						&larr; Dashboard
 					</a>
 					<h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-0)' }}>Settings</h1>
@@ -133,16 +137,18 @@ export function SettingsPage() {
 			</div>
 
 			{message && (
-				<div style={{
-					padding: '10px 14px',
-					marginBottom: 20,
-					borderRadius: 'var(--radius-sm)',
-					background: message.type === 'success' ? 'var(--green-dim)' : 'var(--red-dim)',
-					color: message.type === 'success' ? 'var(--green)' : 'var(--red)',
-					fontSize: 13,
-					border: `1px solid ${message.type === 'success' ? 'var(--green)' : 'var(--red)'}`,
-					borderColor: `color-mix(in srgb, ${message.type === 'success' ? 'var(--green)' : 'var(--red)'} 30%, transparent)`,
-				}}>
+				<div
+					style={{
+						padding: '10px 14px',
+						marginBottom: 20,
+						borderRadius: 'var(--radius-sm)',
+						background: message.type === 'success' ? 'var(--green-dim)' : 'var(--red-dim)',
+						color: message.type === 'success' ? 'var(--green)' : 'var(--red)',
+						fontSize: 13,
+						border: `1px solid ${message.type === 'success' ? 'var(--green)' : 'var(--red)'}`,
+						borderColor: `color-mix(in srgb, ${message.type === 'success' ? 'var(--green)' : 'var(--red)'} 30%, transparent)`,
+					}}
+				>
 					{message.text}
 				</div>
 			)}
@@ -150,11 +156,38 @@ export function SettingsPage() {
 			{/* Provider */}
 			{provider && (
 				<Card title="Provider" description="External task source configuration">
-					<Field label="Type" value={String(provider.type ?? '')} onChange={v => update(['provider', 'type'], v)} required />
-					<Field label="API Base URL" value={String(provider.apiBaseUrl ?? '')} onChange={v => update(['provider', 'apiBaseUrl'], v)} required placeholder="https://..." />
-					<Field label="Project Slug" value={String(provider.projectSlug ?? '')} onChange={v => update(['provider', 'projectSlug'], v)} required />
-					<Field label="API Token" value={String(provider.apiToken ?? '')} onChange={v => update(['provider', 'apiToken'], v)} type="password" required />
-					<Field label="Task Base URL" value={String(provider.taskBaseUrl ?? '')} onChange={v => update(['provider', 'taskBaseUrl'], v || undefined)} placeholder="https://... (optional)" />
+					<Field
+						label="Type"
+						value={String(provider.type ?? '')}
+						onChange={v => update(['provider', 'type'], v)}
+						required
+					/>
+					<Field
+						label="API Base URL"
+						value={String(provider.apiBaseUrl ?? '')}
+						onChange={v => update(['provider', 'apiBaseUrl'], v)}
+						required
+						placeholder="https://..."
+					/>
+					<Field
+						label="Project Slug"
+						value={String(provider.projectSlug ?? '')}
+						onChange={v => update(['provider', 'projectSlug'], v)}
+						required
+					/>
+					<Field
+						label="API Token"
+						value={String(provider.apiToken ?? '')}
+						onChange={v => update(['provider', 'apiToken'], v)}
+						type="password"
+						required
+					/>
+					<Field
+						label="Task Base URL"
+						value={String(provider.taskBaseUrl ?? '')}
+						onChange={v => update(['provider', 'taskBaseUrl'], v || undefined)}
+						placeholder="https://... (optional)"
+					/>
 				</Card>
 			)}
 
@@ -168,73 +201,186 @@ export function SettingsPage() {
 					<p style={{ color: 'var(--text-4)', fontSize: 12, padding: '8px 0' }}>No projects configured.</p>
 				)}
 				{(projects ?? []).map((p, i) => (
-					<div key={i} style={{
-						padding: '14px 16px',
-						marginBottom: 8,
-						background: 'var(--bg-0)',
-						borderRadius: 'var(--radius-sm)',
-						border: '1px solid var(--border)',
-					}}>
+					<div
+						key={i}
+						style={{
+							padding: '14px 16px',
+							marginBottom: 8,
+							background: 'var(--bg-0)',
+							borderRadius: 'var(--radius-sm)',
+							border: '1px solid var(--border)',
+						}}
+					>
 						<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
 							<span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)' }}>
 								{String(p.slug || `Project ${i + 1}`)}
 							</span>
-							<SmallButton onClick={() => removeProject(i)} danger>Remove</SmallButton>
+							<SmallButton onClick={() => removeProject(i)} danger>
+								Remove
+							</SmallButton>
 						</div>
-						<Field label="Slug" value={String(p.slug ?? '')} onChange={v => update(['projects', String(i), 'slug'], v)} required />
-						<Field label="Repo Path" value={String(p.repoPath ?? '')} onChange={v => update(['projects', String(i), 'repoPath'], v)} required placeholder="/path/to/repo" />
-						<Field label="Base Branch" value={String(p.baseBranch ?? 'main')} onChange={v => update(['projects', String(i), 'baseBranch'], v)} />
-						<Field label="Worktree Dir" value={String(p.worktreeDir ?? '')} onChange={v => update(['projects', String(i), 'worktreeDir'], v || undefined)} placeholder="(optional)" />
-					<ColorField label="Color" value={String(p.color ?? '')} onChange={v => update(['projects', String(i), 'color'], v || undefined)} />
+						<Field
+							label="Slug"
+							value={String(p.slug ?? '')}
+							onChange={v => update(['projects', String(i), 'slug'], v)}
+							required
+						/>
+						<Field
+							label="Repo Path"
+							value={String(p.repoPath ?? '')}
+							onChange={v => update(['projects', String(i), 'repoPath'], v)}
+							required
+							placeholder="/path/to/repo"
+						/>
+						<Field
+							label="Base Branch"
+							value={String(p.baseBranch ?? 'main')}
+							onChange={v => update(['projects', String(i), 'baseBranch'], v)}
+						/>
+						<Field
+							label="Worktree Dir"
+							value={String(p.worktreeDir ?? '')}
+							onChange={v => update(['projects', String(i), 'worktreeDir'], v || undefined)}
+							placeholder="(optional)"
+						/>
+						<ColorField
+							label="Color"
+							value={String(p.color ?? '')}
+							onChange={v => update(['projects', String(i), 'color'], v || undefined)}
+						/>
 					</div>
 				))}
 			</Card>
 
 			{/* Polling */}
 			<Card title="Polling" description="How often Vigil checks for new tasks">
-				<Field label="Interval (seconds)" value={String(polling?.intervalSeconds ?? 60)} onChange={v => update(['polling', 'intervalSeconds'], Number(v))} type="number" required />
-				<Field label="Since" value={String(polling?.since ?? '')} onChange={v => update(['polling', 'since'], v || undefined)} placeholder="ISO date (optional)" />
+				<Field
+					label="Interval (seconds)"
+					value={String(polling?.intervalSeconds ?? 60)}
+					onChange={v => update(['polling', 'intervalSeconds'], Number(v))}
+					type="number"
+					required
+				/>
+				<Field
+					label="Since"
+					value={String(polling?.since ?? '')}
+					onChange={v => update(['polling', 'since'], v || undefined)}
+					placeholder="ISO date (optional)"
+				/>
 			</Card>
 
 			{/* Solver */}
 			<Card title="Solver" description="Claude Code invocation settings">
 				<Field label="Type" value={String(solver?.type ?? 'default')} onChange={v => update(['solver', 'type'], v)} />
-				<Field label="Concurrency" value={String(solver?.concurrency ?? 2)} onChange={v => update(['solver', 'concurrency'], Number(v))} type="number" />
-				<Field label="Model" value={String(solver?.model ?? '')} onChange={v => update(['solver', 'model'], v || undefined)} placeholder="e.g. claude-sonnet-4-5-20250514" />
-				<Field label="Timeout (min)" value={String(solver?.timeoutMinutes ?? 30)} onChange={v => update(['solver', 'timeoutMinutes'], Number(v))} type="number" />
-				<Field label="Max Budget ($)" value={String(solver?.maxBudgetUsd ?? '')} onChange={v => update(['solver', 'maxBudgetUsd'], v ? Number(v) : undefined)} type="number" placeholder="(optional)" />
-				<Field label="Transformer" value={String(solver?.transformer ?? 'default')} onChange={v => update(['solver', 'transformer'], v)} />
+				<Field
+					label="Concurrency"
+					value={String(solver?.concurrency ?? 2)}
+					onChange={v => update(['solver', 'concurrency'], Number(v))}
+					type="number"
+				/>
+				<Field
+					label="Model"
+					value={String(solver?.model ?? '')}
+					onChange={v => update(['solver', 'model'], v || undefined)}
+					placeholder="e.g. claude-sonnet-4-5-20250514"
+				/>
+				<Field
+					label="Timeout (min)"
+					value={String(solver?.timeoutMinutes ?? 30)}
+					onChange={v => update(['solver', 'timeoutMinutes'], Number(v))}
+					type="number"
+				/>
+				<Field
+					label="Max Budget ($)"
+					value={String(solver?.maxBudgetUsd ?? '')}
+					onChange={v => update(['solver', 'maxBudgetUsd'], v ? Number(v) : undefined)}
+					type="number"
+					placeholder="(optional)"
+				/>
+				<Field
+					label="Transformer"
+					value={String(solver?.transformer ?? 'default')}
+					onChange={v => update(['solver', 'transformer'], v)}
+				/>
 			</Card>
 
 			{/* Server */}
 			<Card title="Server" description="Dashboard and API server">
-				<Field label="Port" value={String(server?.port ?? 7474)} onChange={v => update(['server', 'port'], Number(v))} type="number" />
+				<Field
+					label="Port"
+					value={String(server?.port ?? 7474)}
+					onChange={v => update(['server', 'port'], Number(v))}
+					type="number"
+				/>
 				<Field label="Host" value={String(server?.host ?? 'localhost')} onChange={v => update(['server', 'host'], v)} />
 			</Card>
 
 			{/* GitHub */}
 			<Card title="GitHub" description="PR and comment settings">
-				<Toggle label="Create PRs" value={Boolean(github?.createPrs ?? true)} onChange={v => update(['github', 'createPrs'], v)} />
-				<Toggle label="Post Comments" value={Boolean(github?.postComments ?? true)} onChange={v => update(['github', 'postComments'], v)} />
-				<Field label="PR Prefix" value={String(github?.prPrefix ?? '[Vigil]')} onChange={v => update(['github', 'prPrefix'], v)} />
+				<Toggle
+					label="Create PRs"
+					value={Boolean(github?.createPrs ?? true)}
+					onChange={v => update(['github', 'createPrs'], v)}
+				/>
+				<Toggle
+					label="Post Comments"
+					value={Boolean(github?.postComments ?? true)}
+					onChange={v => update(['github', 'postComments'], v)}
+				/>
+				<Field
+					label="PR Prefix"
+					value={String(github?.prPrefix ?? '[Vigil]')}
+					onChange={v => update(['github', 'prPrefix'], v)}
+				/>
 			</Card>
 
 			{/* Chat */}
 			<Card title="Chat" description="Clarification chat with task requesters">
-				<Toggle label="Enabled" value={Boolean(chat?.enabled)} onChange={v => {
-					if (v && !chat) {
-						update(['chat'], { enabled: true, secret: '', expiryDays: 7, timeoutMinutes: 120, tunnel: false })
-					} else {
-						update(['chat', 'enabled'], v)
-					}
-				}} />
+				<Toggle
+					label="Enabled"
+					value={Boolean(chat?.enabled)}
+					onChange={v => {
+						if (v && !chat) {
+							update(['chat'], { enabled: true, secret: '', expiryDays: 7, timeoutMinutes: 120, tunnel: false })
+						} else {
+							update(['chat', 'enabled'], v)
+						}
+					}}
+				/>
 				{Boolean(chat?.enabled) && (
 					<>
-						<Field label="Secret" value={String(chat?.secret ?? '')} onChange={v => update(['chat', 'secret'], v)} type="password" required placeholder="Min 16 characters" />
-						<Field label="Base URL" value={String(chat?.baseUrl ?? '')} onChange={v => update(['chat', 'baseUrl'], v || undefined)} placeholder="(auto if tunnel enabled)" />
-						<Toggle label="Tunnel" value={Boolean(chat?.tunnel)} onChange={v => update(['chat', 'tunnel'], v)} description="Auto-expose via Cloudflare Tunnel" />
-						<Field label="Expiry (days)" value={String(chat?.expiryDays ?? 7)} onChange={v => update(['chat', 'expiryDays'], Number(v))} type="number" />
-						<Field label="Timeout (min)" value={String(chat?.timeoutMinutes ?? 120)} onChange={v => update(['chat', 'timeoutMinutes'], Number(v))} type="number" />
+						<Field
+							label="Secret"
+							value={String(chat?.secret ?? '')}
+							onChange={v => update(['chat', 'secret'], v)}
+							type="password"
+							required
+							placeholder="Min 16 characters"
+						/>
+						<Field
+							label="Base URL"
+							value={String(chat?.baseUrl ?? '')}
+							onChange={v => update(['chat', 'baseUrl'], v || undefined)}
+							placeholder="(auto if tunnel enabled)"
+						/>
+						<Toggle
+							label="Tunnel"
+							value={Boolean(chat?.tunnel)}
+							onChange={v => update(['chat', 'tunnel'], v)}
+							description="Auto-expose via Cloudflare Tunnel"
+						/>
+						<Field
+							label="Expiry (days)"
+							value={String(chat?.expiryDays ?? 7)}
+							onChange={v => update(['chat', 'expiryDays'], Number(v))}
+							type="number"
+						/>
+						<Field
+							label="Timeout (min)"
+							value={String(chat?.timeoutMinutes ?? 120)}
+							onChange={v => update(['chat', 'timeoutMinutes'], Number(v))}
+							type="number"
+						/>
 					</>
 				)}
 			</Card>
@@ -247,20 +393,27 @@ export function SettingsPage() {
 
 // --- Components ---
 
-function Card({ title, description, action, children }: {
+function Card({
+	title,
+	description,
+	action,
+	children,
+}: {
 	title: string
 	description?: string
 	action?: React.ReactNode
 	children: React.ReactNode
 }) {
 	return (
-		<div style={{
-			marginBottom: 20,
-			padding: '18px 20px',
-			background: 'var(--bg-1)',
-			borderRadius: 'var(--radius)',
-			border: '1px solid var(--border)',
-		}}>
+		<div
+			style={{
+				marginBottom: 20,
+				padding: '18px 20px',
+				background: 'var(--bg-1)',
+				borderRadius: 'var(--radius)',
+				border: '1px solid var(--border)',
+			}}
+		>
 			<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
 				<div>
 					<h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)', marginBottom: 2 }}>{title}</h2>
@@ -273,7 +426,14 @@ function Card({ title, description, action, children }: {
 	)
 }
 
-function Field({ label, value, onChange, type = 'text', required, placeholder }: {
+function Field({
+	label,
+	value,
+	onChange,
+	type = 'text',
+	required,
+	placeholder,
+}: {
 	label: string
 	value: string
 	onChange: (v: string) => void
@@ -285,15 +445,17 @@ function Field({ label, value, onChange, type = 'text', required, placeholder }:
 
 	return (
 		<div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-			<label style={{
-				fontSize: 12,
-				color: 'var(--text-3)',
-				width: 120,
-				flexShrink: 0,
-				display: 'flex',
-				alignItems: 'center',
-				gap: 3,
-			}}>
+			<label
+				style={{
+					fontSize: 12,
+					color: 'var(--text-3)',
+					width: 120,
+					flexShrink: 0,
+					display: 'flex',
+					alignItems: 'center',
+					gap: 3,
+				}}
+			>
 				{label}
 				{required && <span style={{ color: 'var(--red)', fontSize: 10 }}>*</span>}
 			</label>
@@ -325,7 +487,11 @@ function Field({ label, value, onChange, type = 'text', required, placeholder }:
 	)
 }
 
-function ColorField({ label, value, onChange }: {
+function ColorField({
+	label,
+	value,
+	onChange,
+}: {
 	label: string
 	value: string
 	onChange: (v: string) => void
@@ -368,7 +534,12 @@ function ColorField({ label, value, onChange }: {
 	)
 }
 
-function Toggle({ label, value, onChange, description }: {
+function Toggle({
+	label,
+	value,
+	onChange,
+	description,
+}: {
 	label: string
 	value: boolean
 	onChange: (v: boolean) => void
@@ -392,16 +563,18 @@ function Toggle({ label, value, onChange, description }: {
 						flexShrink: 0,
 					}}
 				>
-					<span style={{
-						position: 'absolute',
-						top: 2,
-						left: value ? 18 : 2,
-						width: 16,
-						height: 16,
-						borderRadius: '50%',
-						background: '#fff',
-						transition: 'left 150ms',
-					}} />
+					<span
+						style={{
+							position: 'absolute',
+							top: 2,
+							left: value ? 18 : 2,
+							width: 16,
+							height: 16,
+							borderRadius: '50%',
+							background: '#fff',
+							transition: 'left 150ms',
+						}}
+					/>
 				</button>
 				{description && <span style={{ fontSize: 11, color: 'var(--text-4)' }}>{description}</span>}
 			</div>
@@ -409,7 +582,11 @@ function Toggle({ label, value, onChange, description }: {
 	)
 }
 
-function SmallButton({ onClick, children, danger }: {
+function SmallButton({
+	onClick,
+	children,
+	danger,
+}: {
 	onClick: () => void
 	children: React.ReactNode
 	danger?: boolean

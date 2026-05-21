@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { type AppConfig, type DaemonStatus, type TaskRecord, api } from './api'
-import { TaskList } from './components/TaskList'
-import { TaskDetail } from './components/TaskDetail'
-import { Header } from './components/Header'
 import { EmptyState } from './components/EmptyState'
+import { Header } from './components/Header'
+import { TaskDetail } from './components/TaskDetail'
+import { TaskList } from './components/TaskList'
 import { useHashRoute, useInterval } from './hooks'
 
 export function App() {
@@ -30,13 +30,11 @@ export function App() {
 
 	useInterval(refresh, 5000)
 
-	const filteredTasks = projectFilter
-		? tasks.filter(t => t.projectSlug === projectFilter)
-		: tasks
+	const filteredTasks = projectFilter ? tasks.filter(t => t.projectSlug === projectFilter) : tasks
 
 	const projectSlugs = [...new Set(tasks.map(t => t.projectSlug))]
 
-	const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) ?? null : null
+	const selectedTask = selectedTaskId ? (tasks.find(t => t.id === selectedTaskId) ?? null) : null
 	const activeCount = tasks.filter(t => t.status === 'processing').length
 	const queuedCount = tasks.filter(t => t.status === 'queued').length
 
@@ -88,17 +86,24 @@ export function App() {
 							task={selectedTask}
 							taskBaseUrl={config.taskBaseUrl}
 							chatEnabled={status?.chatEnabled ?? false}
-							onStart={async () => { await api.start(selectedTask.id); refresh() }}
+							onStart={async () => {
+								await api.start(selectedTask.id)
+								refresh()
+							}}
 							onRetry={() => handleRetry(selectedTask.id)}
 							onCancel={() => handleCancel(selectedTask.id)}
-							onSetStatus={async (status) => { await api.setStatus(selectedTask.id, status); refresh() }}
-							onDelete={async () => { await api.deleteTask(selectedTask.id); selectTask(null); refresh() }}
+							onSetStatus={async status => {
+								await api.setStatus(selectedTask.id, status)
+								refresh()
+							}}
+							onDelete={async () => {
+								await api.deleteTask(selectedTask.id)
+								selectTask(null)
+								refresh()
+							}}
 						/>
 					) : (
-						<EmptyState
-							taskCount={tasks.length}
-							activeCount={tasks.filter(t => t.status === 'processing').length}
-						/>
+						<EmptyState taskCount={tasks.length} activeCount={tasks.filter(t => t.status === 'processing').length} />
 					)}
 				</main>
 			</div>

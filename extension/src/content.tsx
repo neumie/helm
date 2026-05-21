@@ -1,4 +1,4 @@
-import { createSignal, createRoot } from 'solid-js'
+import { createRoot, createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { Widget } from './Widget'
 

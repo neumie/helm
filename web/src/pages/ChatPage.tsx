@@ -128,9 +128,7 @@ export function ChatPage({ token }: { token: string }) {
 			<div style={styles.chatWindow}>
 				{/* Header */}
 				<div style={styles.header}>
-					<div style={styles.headerTitle}>
-						{sessionInfo.task?.title ?? 'Task Clarification'}
-					</div>
+					<div style={styles.headerTitle}>{sessionInfo.task?.title ?? 'Task Clarification'}</div>
 					<div style={styles.headerSub}>
 						{completed ? 'Session complete — work is in progress' : 'Vigil needs more details'}
 					</div>
@@ -139,9 +137,7 @@ export function ChatPage({ token }: { token: string }) {
 				{/* Messages */}
 				<div style={styles.messageList}>
 					{messages.length === 0 && !completed && (
-						<div style={styles.waitingMessage}>
-							Waiting for the first question...
-						</div>
+						<div style={styles.waitingMessage}>Waiting for the first question...</div>
 					)}
 					{messages.map(msg => (
 						<div
@@ -151,17 +147,11 @@ export function ChatPage({ token }: { token: string }) {
 								...(msg.role === 'user' ? styles.userBubble : styles.assistantBubble),
 							}}
 						>
-							<div style={styles.bubbleRole}>
-								{msg.role === 'assistant' ? 'Vigil' : 'You'}
-							</div>
+							<div style={styles.bubbleRole}>{msg.role === 'assistant' ? 'Vigil' : 'You'}</div>
 							<div style={styles.bubbleContent}>{msg.content}</div>
 						</div>
 					))}
-					{completed && (
-						<div style={styles.completedBanner}>
-							Session complete. Work is in progress.
-						</div>
-					)}
+					{completed && <div style={styles.completedBanner}>Session complete. Work is in progress.</div>}
 					<div ref={messagesEndRef} />
 				</div>
 

@@ -63,18 +63,15 @@ export interface PlanInfo {
 }
 
 export const api = {
-	findTask: (clientcareId: string) =>
-		fetchAPI<TaskRecord | null>(`/tasks/by-clientcare-id/${clientcareId}`),
+	findTask: (clientcareId: string) => fetchAPI<TaskRecord | null>(`/tasks/by-clientcare-id/${clientcareId}`),
 
-	createTask: (clientcareId: string) =>
-		postAPI<TaskRecord>('/tasks', { clientcareId }),
+	createTask: (clientcareId: string) => postAPI<TaskRecord>('/tasks', { clientcareId }),
 
 	start: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/start`),
 	retry: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/retry`),
 	cancel: (id: string) => postAPI<{ message: string }>(`/tasks/${id}/cancel`),
 	plan: (id: string) => postAPI<PlanInfo>(`/tasks/${id}/plan`),
-	setStatus: (id: string, status: string) =>
-		postAPI<{ message: string }>(`/tasks/${id}/status`, { status }),
+	setStatus: (id: string, status: string) => postAPI<{ message: string }>(`/tasks/${id}/status`, { status }),
 	deleteTask: (id: string) => deleteAPI<{ message: string }>(`/tasks/${id}`),
 	resumeQueue: () => postAPI<{ paused: boolean }>('/queue/resume'),
 	config: () => fetchAPI<{ projects: Array<{ slug: string }> }>('/config'),

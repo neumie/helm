@@ -62,7 +62,12 @@ export function ActivityTimeline({ taskId }: { taskId: string }) {
 				const payload = event.payload ? JSON.parse(event.payload) : null
 				const icon = eventIcons[event.eventType] ?? '>>'
 				const color = eventColors[event.eventType] ?? 'var(--text-3)'
-				const time = new Date(event.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+				const time = new Date(event.createdAt).toLocaleTimeString([], {
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit',
+					hour12: false,
+				})
 				const label = formatEvent(event.eventType, payload)
 
 				return (
@@ -76,8 +81,23 @@ export function ActivityTimeline({ taskId }: { taskId: string }) {
 							fontSize: 12,
 						}}
 					>
-						<span style={{ color: 'var(--text-4)', fontFamily: 'var(--font-mono)', width: 60, flexShrink: 0, fontSize: 11 }}>{time}</span>
-						<span style={{ color, fontFamily: 'var(--font-mono)', width: 22, flexShrink: 0, textAlign: 'center', fontSize: 11 }}>{icon}</span>
+						<span
+							style={{ color: 'var(--text-4)', fontFamily: 'var(--font-mono)', width: 60, flexShrink: 0, fontSize: 11 }}
+						>
+							{time}
+						</span>
+						<span
+							style={{
+								color,
+								fontFamily: 'var(--font-mono)',
+								width: 22,
+								flexShrink: 0,
+								textAlign: 'center',
+								fontSize: 11,
+							}}
+						>
+							{icon}
+						</span>
 						<span style={{ color: 'var(--text-2)', lineHeight: 1.4 }}>{label}</span>
 					</div>
 				)

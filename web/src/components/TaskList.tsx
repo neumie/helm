@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { DaemonStatus, TaskRecord } from '../api'
-import { StatusBadge } from './StatusBadge'
 import { useRelativeTime } from '../hooks'
+import { StatusBadge } from './StatusBadge'
 
 type Tab = 'active' | 'queued' | 'archived'
 
@@ -16,7 +16,16 @@ interface Props {
 	projectColors: Record<string, string>
 }
 
-export function TaskList({ tasks, status, selectedId, onSelect, projects, selectedProject, onProjectChange, projectColors }: Props) {
+export function TaskList({
+	tasks,
+	status,
+	selectedId,
+	onSelect,
+	projects,
+	selectedProject,
+	onProjectChange,
+	projectColors,
+}: Props) {
 	const [tab, setTab] = useState<Tab>('queued')
 
 	const active = tasks.filter(t => t.status === 'processing' || t.status === 'failed' || t.status === 'review')
@@ -32,21 +41,25 @@ export function TaskList({ tasks, status, selectedId, onSelect, projects, select
 	const visibleTasks = tab === 'active' ? active : tab === 'queued' ? queued : archived
 
 	return (
-		<aside style={{
-			width: 380,
-			borderRight: '1px solid var(--border)',
-			background: 'var(--bg-1)',
-			display: 'flex',
-			flexDirection: 'column',
-			overflow: 'hidden',
-			flexShrink: 0,
-		}}>
+		<aside
+			style={{
+				width: 380,
+				borderRight: '1px solid var(--border)',
+				background: 'var(--bg-1)',
+				display: 'flex',
+				flexDirection: 'column',
+				overflow: 'hidden',
+				flexShrink: 0,
+			}}
+		>
 			{/* Project filter */}
 			{projects.length > 1 && (
-				<div style={{
-					padding: '8px 12px',
-					borderBottom: '1px solid var(--border)',
-				}}>
+				<div
+					style={{
+						padding: '8px 12px',
+						borderBottom: '1px solid var(--border)',
+					}}
+				>
 					<select
 						value={selectedProject ?? ''}
 						onChange={e => onProjectChange(e.target.value || null)}
@@ -65,25 +78,24 @@ export function TaskList({ tasks, status, selectedId, onSelect, projects, select
 					>
 						<option value="">All projects</option>
 						{projects.map(p => (
-							<option key={p} value={p}>{p}</option>
+							<option key={p} value={p}>
+								{p}
+							</option>
 						))}
 					</select>
 				</div>
 			)}
 
 			{/* Tabs */}
-			<div style={{
-				display: 'flex',
-				background: 'var(--bg-1)',
-				borderBottom: '1px solid var(--border)',
-			}}>
+			<div
+				style={{
+					display: 'flex',
+					background: 'var(--bg-1)',
+					borderBottom: '1px solid var(--border)',
+				}}
+			>
 				{tabItems.map(t => (
-					<TabButton
-						key={t.key}
-						active={tab === t.key}
-						count={t.count}
-						onClick={() => setTab(t.key)}
-					>
+					<TabButton key={t.key} active={tab === t.key} count={t.count} onClick={() => setTab(t.key)}>
 						{t.label}
 					</TabButton>
 				))}
@@ -109,23 +121,31 @@ export function TaskList({ tasks, status, selectedId, onSelect, projects, select
 			</div>
 
 			{/* Settings link */}
-			<a href="/settings" style={{
-				display: 'block',
-				padding: '10px 16px',
-				borderTop: '1px solid var(--border)',
-				color: 'var(--text-4)',
-				textDecoration: 'none',
-				fontSize: 12,
-				fontWeight: 500,
-				flexShrink: 0,
-			}}>
+			<a
+				href="/settings"
+				style={{
+					display: 'block',
+					padding: '10px 16px',
+					borderTop: '1px solid var(--border)',
+					color: 'var(--text-4)',
+					textDecoration: 'none',
+					fontSize: 12,
+					fontWeight: 500,
+					flexShrink: 0,
+				}}
+			>
 				Settings
 			</a>
 		</aside>
 	)
 }
 
-function TabButton({ active, count, onClick, children }: {
+function TabButton({
+	active,
+	count,
+	onClick,
+	children,
+}: {
 	active: boolean
 	count: number
 	onClick: () => void
@@ -154,12 +174,14 @@ function TabButton({ active, count, onClick, children }: {
 		>
 			{children}
 			{count > 0 && (
-				<span style={{
-					fontSize: 10,
-					fontWeight: 600,
-					color: active ? 'var(--accent)' : 'var(--text-4)',
-					fontVariantNumeric: 'tabular-nums',
-				}}>
+				<span
+					style={{
+						fontSize: 10,
+						fontWeight: 600,
+						color: active ? 'var(--accent)' : 'var(--text-4)',
+						fontVariantNumeric: 'tabular-nums',
+					}}
+				>
 					{count}
 				</span>
 			)}
@@ -167,7 +189,12 @@ function TabButton({ active, count, onClick, children }: {
 	)
 }
 
-function TaskRow({ task, selected, onClick, projectColor }: {
+function TaskRow({
+	task,
+	selected,
+	onClick,
+	projectColor,
+}: {
 	task: TaskRecord
 	selected: boolean
 	onClick: () => void
@@ -189,16 +216,31 @@ function TaskRow({ task, selected, onClick, projectColor }: {
 				borderLeft: `3px solid ${projectColor ?? 'transparent'}`,
 				transition: 'background 150ms',
 			}}
-			onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--bg-2)' }}
-			onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent' }}
+			onMouseEnter={e => {
+				if (!selected) e.currentTarget.style.background = 'var(--bg-2)'
+			}}
+			onMouseLeave={e => {
+				if (!selected) e.currentTarget.style.background = 'transparent'
+			}}
 		>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				<span style={{ fontSize: 10, color: projectColor ?? 'var(--text-4)', fontWeight: 500 }}>{task.projectSlug}</span>
+				<span style={{ fontSize: 10, color: projectColor ?? 'var(--text-4)', fontWeight: 500 }}>
+					{task.projectSlug}
+				</span>
 				<span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>
 					{elapsed ?? formatTime(task.queuedAt)}
 				</span>
 			</div>
-			<div style={{ fontSize: 13, color: selected ? 'var(--text-0)' : 'var(--text-1)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+			<div
+				style={{
+					fontSize: 13,
+					color: selected ? 'var(--text-0)' : 'var(--text-1)',
+					lineHeight: 1.4,
+					overflow: 'hidden',
+					textOverflow: 'ellipsis',
+					whiteSpace: 'nowrap',
+				}}
+			>
 				{task.title}
 			</div>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

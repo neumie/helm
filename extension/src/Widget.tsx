@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, Show, type Accessor } from 'solid-js'
+import { type Accessor, Show, createEffect, createSignal, onCleanup } from 'solid-js'
 import { type PlanInfo, type TaskRecord, api, getServerUrl } from './api'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -29,7 +29,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	getServerUrl().then(setServerUrl)
 
 	// Load projects on mount
-	api.config()
+	api
+		.config()
 		.then(c => setProjects(c.projects.map(p => p.slug)))
 		.catch(err => {
 			console.warn('[vigil]', err)
@@ -67,7 +68,10 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 
 		lookup()
 		const interval = setInterval(lookup, 5000)
-		onCleanup(() => { active = false; clearInterval(interval) })
+		onCleanup(() => {
+			active = false
+			clearInterval(interval)
+		})
 	})
 
 	async function doAction(fn: () => Promise<unknown>) {
@@ -114,7 +118,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 
 	const statusColor = () => {
 		const t = task()
-		return t ? STATUS_COLORS[t.status] ?? '#808080' : '#808080'
+		return t ? (STATUS_COLORS[t.status] ?? '#808080') : '#808080'
 	}
 
 	return (
@@ -164,21 +168,49 @@ function Pill(props: {
 	onSolve: () => void
 }) {
 	return (
-		<Show when={props.taskId()} fallback={
-			<div class="pill" on:click={props.onExpand}><span class="brand">V</span><span class="pill-text muted">No task</span></div>
-		}>
-			<Show when={!props.error() || props.task()} fallback={
-				<div class="pill" on:click={props.onExpand}><span class="dot" style={{ background: '#f14c4c' }} /><span class="pill-text" style={{ color: '#f14c4c' }}>Error</span></div>
-			}>
-				<Show when={props.task()} fallback={
-					<Show when={props.projects().length > 0} fallback={
-						<div class="pill" on:click={props.onExpand}><span class="dot" style={{ background: '#5a5a5a' }} /><span class="pill-text muted">Not tracked</span></div>
-					}>
-						<div class="pill pill-action" on:click={props.onSolve}><span class="brand">V</span><span class="pill-text" style={{ color: '#007acc' }}>Solve</span></div>
-					</Show>
-				}>
-					{(t) => {
-						const glow = () => t().status === 'processing' ? `0 0 6px ${props.statusColor()}` : 'none'
+		<Show
+			when={props.taskId()}
+			fallback={
+				<div class="pill" on:click={props.onExpand}>
+					<span class="brand">V</span>
+					<span class="pill-text muted">No task</span>
+				</div>
+			}
+		>
+			<Show
+				when={!props.error() || props.task()}
+				fallback={
+					<div class="pill" on:click={props.onExpand}>
+						<span class="dot" style={{ background: '#f14c4c' }} />
+						<span class="pill-text" style={{ color: '#f14c4c' }}>
+							Error
+						</span>
+					</div>
+				}
+			>
+				<Show
+					when={props.task()}
+					fallback={
+						<Show
+							when={props.projects().length > 0}
+							fallback={
+								<div class="pill" on:click={props.onExpand}>
+									<span class="dot" style={{ background: '#5a5a5a' }} />
+									<span class="pill-text muted">Not tracked</span>
+								</div>
+							}
+						>
+							<div class="pill pill-action" on:click={props.onSolve}>
+								<span class="brand">V</span>
+								<span class="pill-text" style={{ color: '#007acc' }}>
+									Solve
+								</span>
+							</div>
+						</Show>
+					}
+				>
+					{t => {
+						const glow = () => (t().status === 'processing' ? `0 0 6px ${props.statusColor()}` : 'none')
 						return (
 							<div class="pill" on:click={props.onExpand}>
 								<span class="dot" style={{ background: props.statusColor(), 'box-shadow': glow() }} />
@@ -211,36 +243,52 @@ function Card(props: {
 	onPlan: () => void
 }) {
 	return (
-		<Show when={props.task()} fallback={
-			<div class="card">
-				<div class="card-header"><span class="brand">Vigil</span><span class="close" on:click={props.onCollapse}>&times;</span></div>
-				<div class="card-body">
-					<Show when={props.error()}>
-						<div class="card-error">{props.error()}</div>
-						<div class="card-summary">Make sure Vigil is running.</div>
-					</Show>
-					<Show when={!props.error()}>
-						<div class="card-text">Task not tracked by Vigil.</div>
-						<Show when={props.projects().length > 0}>
-							<div class="card-actions"><button class="btn btn-primary" on:click={props.onSolve}>Solve with Vigil</button></div>
+		<Show
+			when={props.task()}
+			fallback={
+				<div class="card">
+					<div class="card-header">
+						<span class="brand">Vigil</span>
+						<span class="close" on:click={props.onCollapse}>
+							&times;
+						</span>
+					</div>
+					<div class="card-body">
+						<Show when={props.error()}>
+							<div class="card-error">{props.error()}</div>
+							<div class="card-summary">Make sure Vigil is running.</div>
 						</Show>
-					</Show>
+						<Show when={!props.error()}>
+							<div class="card-text">Task not tracked by Vigil.</div>
+							<Show when={props.projects().length > 0}>
+								<div class="card-actions">
+									<button class="btn btn-primary" on:click={props.onSolve}>
+										Solve with Vigil
+									</button>
+								</div>
+							</Show>
+						</Show>
+					</div>
 				</div>
-			</div>
-		}>
-			{(t) => {
+			}
+		>
+			{t => {
 				const sc = () => props.statusColor()
-				const tc = () => t().tier ? TIER_COLORS[t().tier!] ?? '#808080' : null
-				const glow = () => t().status === 'processing' ? `0 0 6px ${sc()}` : 'none'
+				const tc = () => (t().tier ? (TIER_COLORS[t().tier!] ?? '#808080') : null)
+				const glow = () => (t().status === 'processing' ? `0 0 6px ${sc()}` : 'none')
 
 				return (
 					<div class="card">
 						<div class="card-header">
 							<div class="card-badges">
 								<span class="dot" style={{ background: sc(), 'box-shadow': glow() }} />
-								<span class="badge" style={{ color: sc(), background: `${sc()}20` }}>{t().status}</span>
+								<span class="badge" style={{ color: sc(), background: `${sc()}20` }}>
+									{t().status}
+								</span>
 								<Show when={tc()}>
-									<span class="badge" style={{ color: tc()!, background: `${tc()!}20` }}>{t().tier}</span>
+									<span class="badge" style={{ color: tc()!, background: `${tc()!}20` }}>
+										{t().tier}
+									</span>
 								</Show>
 							</div>
 							<div class="card-header-actions">
@@ -255,36 +303,67 @@ function Card(props: {
 										Open ↗
 									</a>
 								</Show>
-								<span class="close" on:click={props.onCollapse}>&times;</span>
+								<span class="close" on:click={props.onCollapse}>
+									&times;
+								</span>
 							</div>
 						</div>
 						<div class="card-body">
-							<Show when={t().solverSummary}><div class="card-summary">{t().solverSummary}</div></Show>
-							<Show when={t().errorMessage}><div class="card-error">{t().errorMessage}</div></Show>
-							<Show when={t().prUrl}><div class="card-pr"><a class="link" href={t().prUrl!} target="_blank">{formatPr(t().prUrl!)}</a></div></Show>
+							<Show when={t().solverSummary}>
+								<div class="card-summary">{t().solverSummary}</div>
+							</Show>
+							<Show when={t().errorMessage}>
+								<div class="card-error">{t().errorMessage}</div>
+							</Show>
+							<Show when={t().prUrl}>
+								<div class="card-pr">
+									<a class="link" href={t().prUrl!} target="_blank" rel="noreferrer">
+										{formatPr(t().prUrl!)}
+									</a>
+								</div>
+							</Show>
 							<Show when={props.planInfo()}>
-								{(info) => (
+								{info => (
 									<div class="card-plan">
-										<div class="card-plan-line">Planning agent started for <code>{info().planDirName}</code>.</div>
+										<div class="card-plan-line">
+											Planning agent started for <code>{info().planDirName}</code>.
+										</div>
 										<div class="card-plan-line">{info().hint}</div>
-										<div class="card-plan-line">Tell the agent what you want to do, or invoke <code>/grill-me {info().planDirName}</code> / <code>/grill-plan {info().planDirName}</code>.</div>
+										<div class="card-plan-line">
+											Tell the agent what you want to do, or invoke <code>/grill-me {info().planDirName}</code> /{' '}
+											<code>/grill-plan {info().planDirName}</code>.
+										</div>
 									</div>
 								)}
 							</Show>
 							<div class="card-actions">
-								<button class="btn btn-muted" on:click={props.onPlan} disabled={props.planPending() || t().status === 'processing'}>
+								<button
+									class="btn btn-muted"
+									on:click={props.onPlan}
+									disabled={props.planPending() || t().status === 'processing'}
+								>
 									{props.planPending() ? 'Planning…' : props.planInfo() ? 'Re-plan' : 'Plan'}
 								</button>
 								<Show when={t().status === 'queued'}>
-									<button class="btn btn-primary" on:click={props.onStart}>Start</button>
-									<button class="btn btn-muted" on:click={props.onSkip}>Skip</button>
+									<button class="btn btn-primary" on:click={props.onStart}>
+										Start
+									</button>
+									<button class="btn btn-muted" on:click={props.onSkip}>
+										Skip
+									</button>
 								</Show>
 								<Show when={t().status === 'processing'}>
-									<button class="btn btn-danger" on:click={props.onCancel}>Cancel</button>
+									<button class="btn btn-danger" on:click={props.onCancel}>
+										Cancel
+									</button>
 								</Show>
 								<Show when={t().status !== 'processing' && t().status !== 'queued'}>
-									<button class="btn btn-primary" on:click={props.onRetry}>Re-queue</button>
-									<button class="btn btn-danger" on:click={props.onDelete}>Delete</button>
+									<button class="btn btn-primary" on:click={props.onRetry}>
+										Re-queue
+									</button>
+									<button class="btn btn-danger" on:click={props.onDelete}>
+										Delete
+									</button>
 								</Show>
 							</div>
 						</div>

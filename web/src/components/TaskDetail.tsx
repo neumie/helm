@@ -21,8 +21,17 @@ interface PrStatus {
 	mergedAt?: string
 }
 
-export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, onCancel, onSetStatus, onDelete }: Props) {
-	const files = task.filesChanged ? JSON.parse(task.filesChanged) as string[] : []
+export function TaskDetail({
+	task,
+	taskBaseUrl,
+	chatEnabled,
+	onStart,
+	onRetry,
+	onCancel,
+	onSetStatus,
+	onDelete,
+}: Props) {
+	const files = task.filesChanged ? (JSON.parse(task.filesChanged) as string[]) : []
 	const isActive = task.status === 'processing'
 	const [prStatus, setPrStatus] = useState<PrStatus | null>(null)
 	const [chatSessions, setChatSessions] = useState<ChatSessionInfo[]>([])
@@ -30,7 +39,10 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 
 	useEffect(() => {
 		if (task.prUrl) {
-			api.prStatus(task.id).then(setPrStatus).catch(() => {})
+			api
+				.prStatus(task.id)
+				.then(setPrStatus)
+				.catch(() => {})
 		} else {
 			setPrStatus(null)
 		}
@@ -38,7 +50,10 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 
 	useEffect(() => {
 		if (chatEnabled) {
-			api.chatSessions(task.id).then(setChatSessions).catch(() => setChatSessions([]))
+			api
+				.chatSessions(task.id)
+				.then(setChatSessions)
+				.catch(() => setChatSessions([]))
 		}
 	}, [task.id, chatEnabled])
 
@@ -56,39 +71,69 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 				<StatusBadge value={task.status} type="status" />
 				{task.tier && <StatusBadge value={task.tier} type="tier" />}
 				{task.solverConfidence != null && (
-					<span style={{ fontSize: 12, color: 'var(--text-3)' }}>{(task.solverConfidence * 100).toFixed(0)}% confidence</span>
+					<span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+						{(task.solverConfidence * 100).toFixed(0)}% confidence
+					</span>
 				)}
 
 				<span style={{ flex: 1 }} />
 
 				{taskBaseUrl && (
-					<a href={`${taskBaseUrl}${task.clientcareId}`} target="_blank" rel="noreferrer"
-						style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>
+					<a
+						href={`${taskBaseUrl}${task.clientcareId}`}
+						target="_blank"
+						rel="noreferrer"
+						style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}
+					>
 						Source
 					</a>
 				)}
 			</div>
 
 			{/* Info line */}
-			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 20px', fontSize: 12, color: 'var(--text-3)', marginBottom: 16 }}>
-				<span>Project: <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{task.projectSlug}</strong></span>
+			<div
+				style={{
+					display: 'flex',
+					flexWrap: 'wrap',
+					gap: '4px 20px',
+					fontSize: 12,
+					color: 'var(--text-3)',
+					marginBottom: 16,
+				}}
+			>
+				<span>
+					Project: <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{task.projectSlug}</strong>
+				</span>
 				{task.branchName && (
-					<span>Branch: {branchUrl ? (
-						<a href={branchUrl} target="_blank" rel="noreferrer"
-							style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)', fontSize: 11, textDecoration: 'none' }}>
-							{task.branchName}
-						</a>
-					) : (
-						<code style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{task.branchName}</code>
-					)}</span>
+					<span>
+						Branch:{' '}
+						{branchUrl ? (
+							<a
+								href={branchUrl}
+								target="_blank"
+								rel="noreferrer"
+								style={{ color: 'var(--blue)', fontFamily: 'var(--font-mono)', fontSize: 11, textDecoration: 'none' }}
+							>
+								{task.branchName}
+							</a>
+						) : (
+							<code style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+								{task.branchName}
+							</code>
+						)}
+					</span>
 				)}
 			</div>
 
 			{/* PR status */}
 			{task.prUrl && (
 				<div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, marginBottom: 24 }}>
-					<a href={task.prUrl} target="_blank" rel="noreferrer"
-						style={{ color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}>
+					<a
+						href={task.prUrl}
+						target="_blank"
+						rel="noreferrer"
+						style={{ color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}
+					>
 						{formatPrLabel(task.prUrl)}
 					</a>
 					{prStatus && <PrBadge status={prStatus} />}
@@ -97,14 +142,23 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 
 			{/* Error */}
 			{task.errorMessage && (
-				<div style={{
-					padding: '12px 16px', marginBottom: 24, borderRadius: 'var(--radius-sm)',
-					background: 'var(--red-dim)', border: '1px solid color-mix(in srgb, var(--red) 25%, transparent)',
-				}}>
-					<div style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}>
+				<div
+					style={{
+						padding: '12px 16px',
+						marginBottom: 24,
+						borderRadius: 'var(--radius-sm)',
+						background: 'var(--red-dim)',
+						border: '1px solid color-mix(in srgb, var(--red) 25%, transparent)',
+					}}
+				>
+					<div
+						style={{ fontSize: 11, color: 'var(--red)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}
+					>
 						Error{task.errorPhase ? ` (${task.errorPhase})` : ''}
 					</div>
-					<div style={{ fontSize: 13, color: 'color-mix(in srgb, var(--red) 80%, white)', lineHeight: 1.5 }}>{task.errorMessage}</div>
+					<div style={{ fontSize: 13, color: 'color-mix(in srgb, var(--red) 80%, white)', lineHeight: 1.5 }}>
+						{task.errorMessage}
+					</div>
 				</div>
 			)}
 
@@ -112,7 +166,9 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 			<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
 				{task.status === 'queued' && <ActionBtn label="Start" color="var(--accent)" onClick={onStart} />}
 				{(isActive || task.status === 'queued') && <ActionBtn label="Cancel" color="var(--red)" onClick={onCancel} />}
-				{task.status === 'queued' && <ActionBtn label="Skip" color="var(--text-3)" onClick={() => onSetStatus('skipped')} />}
+				{task.status === 'queued' && (
+					<ActionBtn label="Skip" color="var(--text-3)" onClick={() => onSetStatus('skipped')} />
+				)}
 				{task.status === 'review' && (
 					<>
 						<ActionBtn label="Complete" color="var(--green)" onClick={() => onSetStatus('completed')} />
@@ -122,9 +178,15 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 				{task.status !== 'processing' && task.status !== 'queued' && task.status !== 'review' && (
 					<>
 						<ActionBtn label="Re-queue" color="var(--accent)" onClick={onRetry} />
-						{task.status !== 'completed' && <ActionBtn label="Complete" color="var(--green)" onClick={() => onSetStatus('completed')} />}
-						{task.status !== 'review' && <ActionBtn label="Review" color="var(--amber)" onClick={() => onSetStatus('review')} />}
-						{task.status !== 'skipped' && <ActionBtn label="Skip" color="var(--text-3)" onClick={() => onSetStatus('skipped')} />}
+						{task.status !== 'completed' && (
+							<ActionBtn label="Complete" color="var(--green)" onClick={() => onSetStatus('completed')} />
+						)}
+						{task.status !== 'review' && (
+							<ActionBtn label="Review" color="var(--amber)" onClick={() => onSetStatus('review')} />
+						)}
+						{task.status !== 'skipped' && (
+							<ActionBtn label="Skip" color="var(--text-3)" onClick={() => onSetStatus('skipped')} />
+						)}
 					</>
 				)}
 				<ActionBtn label="Delete" color="var(--red)" onClick={onDelete} />
@@ -151,15 +213,17 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 			{/* Task description */}
 			{task.taskContext && (
 				<Section title="Task description">
-					<pre style={{
-						fontSize: 12,
-						color: 'var(--text-2)',
-						lineHeight: 1.6,
-						whiteSpace: 'pre-wrap',
-						wordBreak: 'break-word',
-						fontFamily: 'var(--font-sans)',
-						margin: 0,
-					}}>
+					<pre
+						style={{
+							fontSize: 12,
+							color: 'var(--text-2)',
+							lineHeight: 1.6,
+							whiteSpace: 'pre-wrap',
+							wordBreak: 'break-word',
+							fontFamily: 'var(--font-sans)',
+							margin: 0,
+						}}
+					>
 						{extractTaskDescription(task.taskContext)}
 					</pre>
 				</Section>
@@ -176,7 +240,12 @@ export function TaskDetail({ task, taskBaseUrl, chatEnabled, onStart, onRetry, o
 			{files.length > 0 && (
 				<Section title={`Files changed (${files.length})`}>
 					{files.map(f => (
-						<div key={f} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-2)', padding: '2px 0' }}>{f}</div>
+						<div
+							key={f}
+							style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-2)', padding: '2px 0' }}
+						>
+							{f}
+						</div>
 					))}
 				</Section>
 			)}
@@ -225,12 +294,17 @@ function PrBadge({ status }: { status: PrStatus }) {
 
 function Badge({ color, label }: { color: string; label: string }) {
 	return (
-		<span style={{
-			fontSize: 11, fontWeight: 600, color,
-			padding: '1px 8px', borderRadius: 4,
-			background: `color-mix(in srgb, ${color} 15%, transparent)`,
-			border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
-		}}>
+		<span
+			style={{
+				fontSize: 11,
+				fontWeight: 600,
+				color,
+				padding: '1px 8px',
+				borderRadius: 4,
+				background: `color-mix(in srgb, ${color} 15%, transparent)`,
+				border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
+			}}
+		>
 			{label}
 		</span>
 	)
@@ -238,12 +312,23 @@ function Badge({ color, label }: { color: string; label: string }) {
 
 function ActionBtn({ label, color, onClick }: { label: string; color: string; onClick: () => void }) {
 	return (
-		<button onClick={onClick} style={{
-			padding: '6px 16px', background: `color-mix(in srgb, ${color} 10%, transparent)`,
-			border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
-			borderRadius: 'var(--radius-sm)', color, cursor: 'pointer', fontSize: 13,
-			fontFamily: 'var(--font-sans)', fontWeight: 500, transition: 'all 150ms',
-		}}>{label}</button>
+		<button
+			onClick={onClick}
+			style={{
+				padding: '6px 16px',
+				background: `color-mix(in srgb, ${color} 10%, transparent)`,
+				border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`,
+				borderRadius: 'var(--radius-sm)',
+				color,
+				cursor: 'pointer',
+				fontSize: 13,
+				fontFamily: 'var(--font-sans)',
+				fontWeight: 500,
+				transition: 'all 150ms',
+			}}
+		>
+			{label}
+		</button>
 	)
 }
 
@@ -254,7 +339,11 @@ function extractTaskDescription(taskContext: string): string {
 	return taskContext.slice(idx + marker.length).trim()
 }
 
-function ChatSection({ sessions, loading, onNewChat }: {
+function ChatSection({
+	sessions,
+	loading,
+	onNewChat,
+}: {
 	sessions: ChatSessionInfo[]
 	loading: boolean
 	onNewChat: () => void
@@ -271,17 +360,18 @@ function ChatSection({ sessions, loading, onNewChat }: {
 	return (
 		<Section title="Chat">
 			{sessions.length === 0 ? (
-				<p style={{ fontSize: 13, color: 'var(--text-4)', marginBottom: 12 }}>
-					No chat sessions yet.
-				</p>
+				<p style={{ fontSize: 13, color: 'var(--text-4)', marginBottom: 12 }}>No chat sessions yet.</p>
 			) : (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
 					{sessions.map(s => (
-						<div key={s.id} style={{
-							border: '1px solid var(--border)',
-							borderRadius: 'var(--radius-sm)',
-							overflow: 'hidden',
-						}}>
+						<div
+							key={s.id}
+							style={{
+								border: '1px solid var(--border)',
+								borderRadius: 'var(--radius-sm)',
+								overflow: 'hidden',
+							}}
+						>
 							<div
 								onClick={() => setExpanded(expanded === s.id ? null : s.id)}
 								style={{
@@ -293,26 +383,42 @@ function ChatSection({ sessions, loading, onNewChat }: {
 									background: 'var(--bg-1)',
 								}}
 							>
-								<span style={{
-									fontSize: 11, fontWeight: 600,
-									color: s.status === 'active' ? 'var(--green)' : 'var(--text-4)',
-								}}>
+								<span
+									style={{
+										fontSize: 11,
+										fontWeight: 600,
+										color: s.status === 'active' ? 'var(--green)' : 'var(--text-4)',
+									}}
+								>
 									{s.status === 'active' ? 'Active' : 'Completed'}
 								</span>
 								<span style={{ fontSize: 11, color: 'var(--text-4)' }}>
 									{s.messages.length} message{s.messages.length !== 1 ? 's' : ''}
 								</span>
 								<span style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
-									{new Date(s.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+									{new Date(s.createdAt).toLocaleString([], {
+										month: 'short',
+										day: 'numeric',
+										hour: '2-digit',
+										minute: '2-digit',
+										hour12: false,
+									})}
 								</span>
 								<span style={{ flex: 1 }} />
 								{s.chatUrl && (
 									<button
-										onClick={e => { e.stopPropagation(); copyUrl(s.chatUrl!, s.id) }}
+										onClick={e => {
+											e.stopPropagation()
+											copyUrl(s.chatUrl!, s.id)
+										}}
 										style={{
-											background: 'none', border: 'none', cursor: 'pointer',
-											fontSize: 11, color: copied === s.id ? 'var(--green)' : 'var(--accent)',
-											fontFamily: 'var(--font-sans)', fontWeight: 500,
+											background: 'none',
+											border: 'none',
+											cursor: 'pointer',
+											fontSize: 11,
+											color: copied === s.id ? 'var(--green)' : 'var(--accent)',
+											fontFamily: 'var(--font-sans)',
+											fontWeight: 500,
 										}}
 									>
 										{copied === s.id ? 'Copied' : 'Copy link'}
@@ -324,7 +430,10 @@ function ChatSection({ sessions, loading, onNewChat }: {
 									rel="noreferrer"
 									onClick={e => e.stopPropagation()}
 									style={{
-										fontSize: 11, color: 'var(--blue)', textDecoration: 'none', fontWeight: 500,
+										fontSize: 11,
+										color: 'var(--blue)',
+										textDecoration: 'none',
+										fontWeight: 500,
 									}}
 								>
 									Open
@@ -334,10 +443,13 @@ function ChatSection({ sessions, loading, onNewChat }: {
 								<div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--bg-0)' }}>
 									{s.messages.map(m => (
 										<div key={m.id} style={{ marginBottom: 8 }}>
-											<span style={{
-												fontSize: 11, fontWeight: 600,
-												color: m.role === 'assistant' ? 'var(--accent)' : 'var(--blue)',
-											}}>
+											<span
+												style={{
+													fontSize: 11,
+													fontWeight: 600,
+													color: m.role === 'assistant' ? 'var(--accent)' : 'var(--blue)',
+												}}
+											>
 												{m.role === 'assistant' ? 'Vigil' : 'Requester'}:
 											</span>
 											<span style={{ fontSize: 12, color: 'var(--text-2)', marginLeft: 6, lineHeight: 1.5 }}>
@@ -351,11 +463,7 @@ function ChatSection({ sessions, loading, onNewChat }: {
 					))}
 				</div>
 			)}
-			<ActionBtn
-				label={loading ? 'Creating...' : 'New chat'}
-				color="var(--accent)"
-				onClick={onNewChat}
-			/>
+			<ActionBtn label={loading ? 'Creating...' : 'New chat'} color="var(--accent)" onClick={onNewChat} />
 		</Section>
 	)
 }
@@ -363,10 +471,16 @@ function ChatSection({ sessions, loading, onNewChat }: {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<div style={{ marginBottom: 28 }}>
-			<div style={{
-				fontSize: 12, fontWeight: 600, color: 'var(--text-3)', marginBottom: 12,
-				paddingBottom: 8, borderBottom: '1px solid var(--border)',
-			}}>
+			<div
+				style={{
+					fontSize: 12,
+					fontWeight: 600,
+					color: 'var(--text-3)',
+					marginBottom: 12,
+					paddingBottom: 8,
+					borderBottom: '1px solid var(--border)',
+				}}
+			>
 				{title}
 			</div>
 			{children}
