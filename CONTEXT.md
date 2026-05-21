@@ -49,3 +49,17 @@ construction site for `signToken(randomUUID(), …)` + `createChatSession`. Both
 MCP chat tools and the dashboard API route through it; previously the
 `baseUrl ?? localhost` + `${baseUrl}/chat/${token}` derivation was copied across
 four sites.
+
+**ClarificationChat** (`src/chat/clarification.ts`) — the deep module owning the
+clarification-chat *orchestration* (distinct from `ChatLinks`, which owns only
+link identity). Three intention-revealing methods — `createInvite` (session create
++ provider comment + webhook), `sendAndAwaitReply` (the 24h block-and-poll wait
+loop, returning a `ReplyOutcome` discriminated union), `end` (complete + assemble
+transcript). Previously all of this was inlined inside the `vigil_create_chat` /
+`vigil_send_message` / `vigil_end_chat` MCP tool closures in `src/mcp/server.ts`,
+untestable without an MCP transport; the tools are now a thin adapter that only
+translates args ↔ MCP content. The interface is the test surface. Two invariants
+concentrate here: the wait state is keyed by `sessionId`/DB rows (never per-transport
+closure) so it survives the MCP transport's 30-min rotation; `sessionId` is the
+addressing key throughout while the signed `token` only ever appears inside the
+`chatUrl` minted by `ChatLinks`.

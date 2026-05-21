@@ -2,20 +2,21 @@ import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
-import { formatTranscript } from '../chat/format.js'
+import { ClarificationChat } from '../chat/clarification.js'
 import type { ChatLinks } from '../chat/links.js'
-import { emitSessionEvent, waitForSessionEvent } from '../chat/routes.js'
-import { sendWebhook } from '../chat/webhook.js'
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
-import { log } from '../util/logger.js'
 
 export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvider, chatLinks: ChatLinks) {
 	const server = new McpServer({
 		name: 'vigil',
 		version: '0.1.0',
 	})
+
+	// The MCP tools are a thin adapter over the ClarificationChat module: they
+	// translate tool args ↔ MCP content and own nothing of the chat orchestration.
+	const chat = new ClarificationChat(config, db, provider, chatLinks)
 
 	server.tool(
 		'vigil_create_chat',
@@ -30,35 +31,10 @@ export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvi
 				return { content: [{ type: 'text', text: 'Chat is not enabled in Vigil config.' }], isError: true }
 			}
 
-			const { session, chatUrl } = chatLinks.createSession(taskId)
-
-			log.info('mcp', `Created chat session ${session.id} for task ${taskId}`)
-
-			// Post chat link as a comment on the source task
-			const task = db.getTask(taskId)
-			if (task) {
-				const comment = `I need more details about this task before I can solve it.\n\n[Click here to chat](${chatUrl})`
-				try {
-					await provider.postComment(task.clientcareId, comment)
-					log.success('mcp', `Posted chat link as comment on task ${task.clientcareId}`)
-				} catch (err) {
-					log.warn('mcp', `Failed to post comment: ${err instanceof Error ? err.message : err}`)
-				}
-			}
-
-			if (config.chat.webhook) {
-				await sendWebhook(config.chat.webhook, {
-					event: 'clarification_needed',
-					taskId,
-					taskTitle,
-					taskDescription,
-					chatUrl,
-					message: `I need more details about this task. Please click the link to chat: ${chatUrl}`,
-				})
-			}
+			const { sessionId, chatUrl } = await chat.createInvite({ taskId, taskTitle, taskDescription })
 
 			return {
-				content: [{ type: 'text', text: JSON.stringify({ sessionId: session.id, chatUrl }) }],
+				content: [{ type: 'text', text: JSON.stringify({ sessionId, chatUrl }) }],
 			}
 		},
 	)
@@ -71,37 +47,19 @@ export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvi
 			message: z.string().describe('The message to send to the requester'),
 		},
 		async ({ sessionId, message }) => {
-			const session = db.getChatSession(sessionId)
-			if (!session || session.status !== 'active') {
-				return { content: [{ type: 'text', text: 'Chat session not found or not active.' }], isError: true }
-			}
-
-			const msgId = db.addChatMessage(sessionId, 'assistant', message)
-			emitSessionEvent(sessionId)
-			log.info('mcp', `Chat ${sessionId}: sent message, waiting for response...`)
-
-			const maxWait = 24 * 60 * 60 * 1000
-			const start = Date.now()
-
-			while (Date.now() - start < maxWait) {
-				await waitForSessionEvent(sessionId)
-
-				const newMessages = db.getNewUserMessages(sessionId, msgId)
-				if (newMessages.length > 0) {
-					const response = newMessages.map(m => m.content).join('\n')
-					log.info('mcp', `Chat ${sessionId}: received response`)
-					return { content: [{ type: 'text', text: `Requester responded: ${response}` }] }
-				}
-
-				const currentSession = db.getChatSession(sessionId)
-				if (!currentSession || currentSession.status !== 'active') {
+			const outcome = await chat.sendAndAwaitReply(sessionId, message)
+			switch (outcome.kind) {
+				case 'reply':
+					return { content: [{ type: 'text', text: `Requester responded: ${outcome.text}` }] }
+				case 'inactive':
+					return { content: [{ type: 'text', text: 'Chat session not found or not active.' }], isError: true }
+				case 'closed':
 					return {
 						content: [{ type: 'text', text: 'Chat session was closed before a response was received.' }],
 					}
-				}
+				case 'timeout':
+					return { content: [{ type: 'text', text: 'Timed out waiting for requester response.' }], isError: true }
 			}
-
-			return { content: [{ type: 'text', text: 'Timed out waiting for requester response.' }], isError: true }
 		},
 	)
 
@@ -112,18 +70,10 @@ export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvi
 			sessionId: z.string().describe('The chat session ID to end'),
 		},
 		async ({ sessionId }) => {
-			const session = db.getChatSession(sessionId)
-			if (!session) {
+			const transcript = chat.end(sessionId)
+			if (transcript === null) {
 				return { content: [{ type: 'text', text: 'Chat session not found.' }], isError: true }
 			}
-
-			db.completeChatSession(sessionId)
-			emitSessionEvent(sessionId)
-
-			const messages = db.getChatMessages(sessionId)
-			const transcript = formatTranscript(messages)
-
-			log.info('mcp', `Chat ${sessionId}: ended with ${messages.length} messages`)
 
 			return {
 				content: [{ type: 'text', text: `Chat session ended. Transcript:\n\n${transcript}` }],
