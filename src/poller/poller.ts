@@ -40,7 +40,7 @@ export class Poller {
 				await this.pollProject(project.slug)
 			} catch (err) {
 				log.error('poller', `Error polling project ${project.slug}`, err)
-					if (err instanceof Error && err.stack) console.error(err.stack)
+				if (err instanceof Error && err.stack) console.error(err.stack)
 			}
 		}
 	}

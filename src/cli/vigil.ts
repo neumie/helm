@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { randomUUID } from 'node:crypto'
 import { execSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
 
@@ -102,7 +102,13 @@ async function run(): Promise<void> {
 
 	if (task) {
 		console.log(`Found existing task: ${task.title} [${task.status}]`)
-		db.updateTask(task.id, { status: 'queued', startedAt: null, completedAt: null, errorMessage: null, errorPhase: null })
+		db.updateTask(task.id, {
+			status: 'queued',
+			startedAt: null,
+			completedAt: null,
+			errorMessage: null,
+			errorPhase: null,
+		})
 	} else {
 		// Create new task from external ID
 		if (!projectSlug) {
@@ -121,14 +127,23 @@ async function run(): Promise<void> {
 		}
 		db.insertTask({ id: taskId, clientcareId: id, projectSlug, title: context.title })
 		db.insertEvent(taskId, 'task_discovered', { source: 'cli' })
-		task = db.getTask(taskId)!
+		const created = db.getTask(taskId)
+		if (!created) {
+			console.error(`Failed to load created task ${taskId}`)
+			process.exit(1)
+		}
+		task = created
 		console.log(`Created task: ${task.title}`)
 	}
 
 	console.log(`Processing task ${task.id}...`)
 	await processTask(task.id, config, db, provider, solver)
 
-	const result = db.getTask(task.id)!
+	const result = db.getTask(task.id)
+	if (!result) {
+		console.error(`Task ${task.id} disappeared during processing`)
+		process.exit(1)
+	}
 	console.log(`\nResult: ${result.status}${result.tier ? ` (${result.tier})` : ''}`)
 	if (result.solverSummary) console.log(`Summary: ${result.solverSummary}`)
 	if (result.prUrl) console.log(`PR: ${result.prUrl}`)

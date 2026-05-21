@@ -44,7 +44,9 @@ export class DB {
 
 	deleteTask(id: string): void {
 		this.db.prepare('DELETE FROM event_log WHERE task_id = ?').run(id)
-		this.db.prepare('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE task_id = ?)').run(id)
+		this.db
+			.prepare('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE task_id = ?)')
+			.run(id)
 		this.db.prepare('DELETE FROM chat_sessions WHERE task_id = ?').run(id)
 		this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
 	}

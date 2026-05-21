@@ -93,7 +93,8 @@ export function apiRoutes(
 		})
 		db.insertEvent(id, 'task_discovered', { source: 'extension' })
 		queue.enqueue(id)
-		const task = db.getTask(id)!
+		const task = db.getTask(id)
+		if (!task) return c.json({ error: 'Task not found after insert' }, 500)
 		return c.json({ data: task }, 201)
 	})
 
@@ -247,7 +248,7 @@ export function apiRoutes(
 			'',
 			`- \`/grill-me ${planDirName}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
 			`- \`/grill-plan ${planDirName}\` — challenge the plan against the domain model.`,
-			`- \`/prd-create\` — once you have a brief, synthesize into \`prd.md\`.`,
+			'- `/prd-create` — once you have a brief, synthesize into `prd.md`.',
 			'',
 			'Anything committed under this directory is loaded into the autonomous solver prompt when the task runs.',
 			'',

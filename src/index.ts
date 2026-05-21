@@ -59,7 +59,10 @@ async function main() {
 			stopTunnel = tunnel.stop
 			log.success('vigil', `Chat accessible at: ${tunnel.url}/chat/...`)
 		} catch (err) {
-			log.warn('vigil', `Tunnel failed: ${err instanceof Error ? err.message : err} — chat links will use baseUrl from config`)
+			log.warn(
+				'vigil',
+				`Tunnel failed: ${err instanceof Error ? err.message : err} — chat links will use baseUrl from config`,
+			)
 		}
 	}
 

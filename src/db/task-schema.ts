@@ -12,7 +12,15 @@ import { z } from 'zod'
  * to drift out of sync.
  */
 
-export const taskStatusSchema = z.enum(['queued', 'processing', 'review', 'completed', 'failed', 'cancelled', 'skipped'])
+export const taskStatusSchema = z.enum([
+	'queued',
+	'processing',
+	'review',
+	'completed',
+	'failed',
+	'cancelled',
+	'skipped',
+])
 export const tierSchema = z.enum(['trivial', 'simple', 'complex', 'unclear'])
 export const errorPhaseSchema = z.enum(['poll', 'worktree', 'solve', 'action'])
 

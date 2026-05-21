@@ -49,7 +49,7 @@ export function startTunnel(port: number): Promise<TunnelResult> {
 			}
 		})
 
-		proc.on('exit', (code) => {
+		proc.on('exit', code => {
 			if (!resolved) {
 				resolved = true
 				clearTimeout(timeout)
