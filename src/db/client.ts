@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import type { ChatMessage, ChatSession, EventLogEntry, PollState, TaskRecord } from '../types.js'
 import { MIGRATIONS } from './schema.js'
+import { TASK_COLUMNS, rowToTaskRecord } from './task-schema.js'
 
 export class DB {
 	private db: Database.Database
@@ -65,36 +66,16 @@ export class DB {
 		return row ? this.mapTaskRow(row) : null
 	}
 
-	updateTask(id: string, fields: Partial<Record<string, unknown>>): void {
-		const columnMap: Record<string, string> = {
-			status: 'status',
-			tier: 'tier',
-			taskContext: 'task_context',
-			solverSummary: 'solver_summary',
-			solverConfidence: 'solver_confidence',
-			filesChanged: 'files_changed',
-			solverRawResult: 'solver_raw_result',
-			worktreePath: 'worktree_path',
-			branchName: 'branch_name',
-			planDirName: 'plan_dir_name',
-			prUrl: 'pr_url',
-			prDraft: 'pr_draft',
-			commentId: 'comment_id',
-			startedAt: 'started_at',
-			completedAt: 'completed_at',
-			errorMessage: 'error_message',
-			errorPhase: 'error_phase',
-			claudeExitCode: 'claude_exit_code',
-			claudeRawOutput: 'claude_raw_output',
-		}
+	updateTask(id: string, fields: Partial<TaskRecord>): void {
 		const sets: string[] = []
 		const values: unknown[] = []
 		for (const [key, value] of Object.entries(fields)) {
-			const col = columnMap[key]
-			if (col) {
-				sets.push(`${col} = ?`)
-				values.push(value)
-			}
+			const col = TASK_COLUMNS[key as keyof TaskRecord]
+			// Throw on unknown field rather than silently dropping the update —
+			// a typo'd column name should fail loudly, not vanish.
+			if (!col) throw new Error(`updateTask: unknown task field "${key}"`)
+			sets.push(`${col} = ?`)
+			values.push(value)
 		}
 		if (sets.length === 0) return
 		values.push(id)
@@ -137,32 +118,7 @@ export class DB {
 	}
 
 	private mapTaskRow(row: Record<string, unknown>): TaskRecord {
-		return {
-			id: row.id as string,
-			clientcareId: row.clientcare_id as string,
-			projectSlug: row.project_slug as string,
-			title: row.title as string,
-			status: row.status as TaskRecord['status'],
-			tier: (row.tier as TaskRecord['tier']) ?? null,
-			taskContext: (row.task_context as string) ?? null,
-			solverSummary: (row.solver_summary as string) ?? null,
-			solverConfidence: (row.solver_confidence as number) ?? null,
-			filesChanged: (row.files_changed as string) ?? null,
-			solverRawResult: (row.solver_raw_result as string) ?? null,
-			worktreePath: (row.worktree_path as string) ?? null,
-			branchName: (row.branch_name as string) ?? null,
-			planDirName: (row.plan_dir_name as string) ?? null,
-			prUrl: (row.pr_url as string) ?? null,
-			prDraft: (row.pr_draft as number) ?? null,
-			commentId: (row.comment_id as string) ?? null,
-			queuedAt: row.queued_at as string,
-			startedAt: (row.started_at as string) ?? null,
-			completedAt: (row.completed_at as string) ?? null,
-			errorMessage: (row.error_message as string) ?? null,
-			errorPhase: (row.error_phase as TaskRecord['errorPhase']) ?? null,
-			claudeExitCode: (row.claude_exit_code as number) ?? null,
-			claudeRawOutput: (row.claude_raw_output as string) ?? null,
-		}
+		return rowToTaskRecord(row)
 	}
 
 	// Poll state

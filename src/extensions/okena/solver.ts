@@ -242,13 +242,6 @@ export class OkenaSolver implements Solver {
 			// Non-critical
 		}
 
-		// Wait for hook setup (e.g. hatch/MCP servers) if configured
-		const delayMs = solverConfig.setupDelaySeconds * 1000
-		if (delayMs > 0) {
-			log.info('okena', `Waiting ${solverConfig.setupDelaySeconds}s for setup to finish...`)
-			await sleep(delayMs)
-		}
-
 		// Build the prompt now so the task-context builder sees any
 		// docs/plans/<planDirName>/ artifacts present in the worktree.
 		const promptFile = join(worktreePath, '.vigil-prompt.txt')

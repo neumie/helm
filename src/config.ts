@@ -34,7 +34,6 @@ export const configSchema = z.object({
 	solver: z
 		.object({
 			type: z.enum(['default', 'okena']).default('default'),
-			setupDelaySeconds: z.number().min(0).default(0),
 			concurrency: z.number().min(1).max(10).default(2),
 			model: z.string().optional(),
 			maxBudgetUsd: z.number().optional(),
