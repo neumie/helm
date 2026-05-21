@@ -4,6 +4,7 @@ import { dispatch } from '../actions/dispatcher.js'
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
+import type { ErrorPhase } from '../types.js'
 import { parseClaudeOutput } from '../solver/output-parser.js'
 import { buildPrompt } from '../solver/prompt-builder.js'
 import { parseResultFile, parseTierFromOutput } from '../solver/result-parser.js'
@@ -123,7 +124,7 @@ export async function processTask(
 		db.insertEvent(taskId, 'action_completed')
 		log.success('worker', `Task ready for review: ${task.title} [${solverResult.tier}]`)
 	} catch (err) {
-		const error = err as Error & { phase?: string }
+		const error = err as Error & { phase?: ErrorPhase }
 		const isCancelled = error.name === 'AbortError' || signal?.aborted
 		db.updateTask(taskId, {
 			status: isCancelled ? 'cancelled' : 'failed',

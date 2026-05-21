@@ -10,6 +10,7 @@ import type { DB } from '../../db/client.js'
 import type { Poller } from '../../poller/poller.js'
 import type { TaskProvider } from '../../providers/provider.js'
 import type { TaskQueue } from '../../queue/queue.js'
+import { manualStatusSchema } from '../../db/task-schema.js'
 import type { Solver } from '../../solver/solver.js'
 import { computePlanDirName, slugify } from '../../util/slug.js'
 
@@ -341,12 +342,12 @@ export function apiRoutes(
 		const task = db.getTask(c.req.param('id'))
 		if (!task) return c.json({ error: 'Not found' }, 404)
 		const body = await c.req.json<{ status: string }>()
-		const validStatuses = ['completed', 'review', 'failed', 'cancelled', 'skipped']
-		if (!validStatuses.includes(body.status)) {
-			return c.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, 400)
+		const manualStatus = manualStatusSchema.safeParse(body.status)
+		if (!manualStatus.success) {
+			return c.json({ error: `Invalid status. Must be one of: ${manualStatusSchema.options.join(', ')}` }, 400)
 		}
 		db.updateTask(task.id, {
-			status: body.status,
+			status: manualStatus.data,
 			completedAt: new Date().toISOString(),
 		})
 		db.insertEvent(task.id, 'status_changed', { status: body.status, manual: true })

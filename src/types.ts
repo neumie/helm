@@ -1,33 +1,8 @@
-export type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'skipped'
-export type Tier = 'trivial' | 'simple' | 'complex' | 'unclear'
-export type ErrorPhase = 'poll' | 'worktree' | 'solve' | 'action'
-
-export interface TaskRecord {
-	id: string
-	clientcareId: string
-	projectSlug: string
-	title: string
-	status: TaskStatus
-	tier: Tier | null
-	taskContext: string | null
-	solverSummary: string | null
-	solverConfidence: number | null
-	filesChanged: string | null
-	solverRawResult: string | null
-	worktreePath: string | null
-	branchName: string | null
-	planDirName: string | null
-	prUrl: string | null
-	prDraft: number | null
-	commentId: string | null
-	queuedAt: string
-	startedAt: string | null
-	completedAt: string | null
-	errorMessage: string | null
-	errorPhase: ErrorPhase | null
-	claudeExitCode: number | null
-	claudeRawOutput: string | null
-}
+// TaskRecord + its enums are derived from the Zod schema (single source of
+// truth for the tasks table). Imported for local use (SolverResult references
+// Tier) and re-exported so existing imports keep working.
+import type { ErrorPhase, TaskRecord, TaskStatus, Tier } from './db/task-schema.js'
+export type { ErrorPhase, TaskRecord, TaskStatus, Tier }
 
 export interface PollState {
 	projectSlug: string
