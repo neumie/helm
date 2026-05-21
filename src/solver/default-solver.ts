@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { VigilConfig } from '../config.js'
+import { formatTaskContext } from '../task-context.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
 import { invokeChatSession } from './chat-invoker.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeClaude } from './invoker.js'
+import { buildChatPrompt, buildPlanningPrompt, buildPrompt } from './prompt-builder.js'
 import type {
 	PlanningSessionParams,
 	PlanningSessionResult,
-	PrepareWorktreeParams,
-	PrepareWorktreeResult,
 	SolveParams,
 	SolveResult,
 	Solver,
@@ -23,41 +23,20 @@ export class DefaultSolver implements Solver {
 		this.config = config
 	}
 
-	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
-		// DefaultSolver has no terminal of its own to spawn into. Ensure the
-		// worktree exists, write the task context to docs/plans/<id>/context.md
-		// so the planning agent can read it from disk, return a hint for the
-		// user to run claude themselves.
-		let worktreePath: string
-		if (params.existingWorktreePath && existsSync(params.existingWorktreePath)) {
-			worktreePath = params.existingWorktreePath
-		} else {
-			const prep = await this.prepareWorktree({
-				projectConfig: params.projectConfig,
-				branchName: params.branchName,
-				taskTitle: params.taskTitle,
-				signal: params.signal,
-			})
-			worktreePath = prep.worktreePath
-		}
-
-		const planDir = join(worktreePath, 'docs', 'plans', params.planDirName)
-		mkdirSync(planDir, { recursive: true })
-		writeFileSync(join(planDir, 'context.md'), params.contextMarkdown, 'utf-8')
-		const promptRelPath = `docs/plans/${params.planDirName}/.planning-prompt.txt`
-		writeFileSync(join(worktreePath, promptRelPath), params.prompt, 'utf-8')
-
-		return {
-			worktreePath,
-			branchName: params.branchName,
-			hint: `Open a terminal in ${worktreePath} and run:\n  claude --dangerously-skip-permissions "$(cat ${promptRelPath})"`,
-		}
-	}
-
-	async prepareWorktree(params: PrepareWorktreeParams): Promise<PrepareWorktreeResult> {
-		const { projectConfig, branchName, signal } = params
+	/** Create the worktree, or reuse an existing one on disk. */
+	private ensureWorktree(
+		projectConfig: SolveParams['projectConfig'],
+		branchName: string,
+		existingWorktreePath: string | undefined,
+		signal: AbortSignal | undefined,
+	): string {
 		if (signal?.aborted) {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
+		}
+		if (existingWorktreePath && existsSync(existingWorktreePath)) {
+			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
+			excludeVigilFiles(existingWorktreePath)
+			return existingWorktreePath
 		}
 		log.info('solver', `Creating worktree for branch: ${branchName}`)
 		let worktreePath: string
@@ -74,41 +53,54 @@ export class DefaultSolver implements Solver {
 			})
 		}
 		excludeVigilFiles(worktreePath)
-		return { worktreePath, branchName }
+		return worktreePath
+	}
+
+	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
+		// DefaultSolver has no terminal of its own to spawn into. Ensure the
+		// worktree, write the task context + planning prompt into the plan dir,
+		// return a hint for the user to run claude themselves.
+		const worktreePath = this.ensureWorktree(
+			params.projectConfig,
+			params.branchName,
+			params.existingWorktreePath,
+			params.signal,
+		)
+
+		const planDir = join(worktreePath, 'docs', 'plans', params.planDirName)
+		mkdirSync(planDir, { recursive: true })
+		writeFileSync(join(planDir, 'context.md'), formatTaskContext(params.taskContext), 'utf-8')
+		const promptRelPath = `docs/plans/${params.planDirName}/.planning-prompt.txt`
+		writeFileSync(join(worktreePath, promptRelPath), buildPlanningPrompt(params.planDirName), 'utf-8')
+
+		return {
+			worktreePath,
+			branchName: params.branchName,
+			hint: `Open a terminal in ${worktreePath} and run:\n  claude --dangerously-skip-permissions "$(cat ${promptRelPath})"`,
+		}
 	}
 
 	async solve(params: SolveParams): Promise<SolveResult> {
-		const { projectConfig, branchName, buildPrompt, buildChatPrompt, solverConfig, signal, outputLogPath, existingWorktreePath } = params
+		const { projectConfig, branchName, planDirName, taskContext, taskId, solverConfig, signal, outputLogPath, existingWorktreePath } =
+			params
 
 		if (signal?.aborted) {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
 		}
 
-		let worktreePath: string
-		if (existingWorktreePath && existsSync(existingWorktreePath)) {
-			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
-			worktreePath = existingWorktreePath
-			excludeVigilFiles(worktreePath)
-		} else {
-			const prep = await this.prepareWorktree({
-				projectConfig,
-				branchName,
-				taskTitle: params.taskTitle,
-				signal,
-			})
-			worktreePath = prep.worktreePath
-		}
+		const worktreePath = this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
 
 		if (signal?.aborted) {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
 		}
 
-		// Chat session (sandboxed, read-only) — if chat is enabled and a chat prompt builder is provided
+		// Clarification chat is a DefaultSolver-only concern (sandboxed, read-only).
+		// Built and run entirely here — not part of the shared Solver protocol.
 		let chatTranscript: string | null = null
-		if (this.config.chat?.enabled && buildChatPrompt) {
+		if (this.config.chat?.enabled) {
 			log.info('solver', 'Starting sandboxed chat session for task clarification')
 			try {
-				const chatPrompt = buildChatPrompt(worktreePath)
+				const chatPrompt = buildChatPrompt(taskContext, taskId, { planDirName, worktreePath })
 				const chatResult = await invokeChatSession(worktreePath, chatPrompt, this.config, signal)
 				if (chatResult.chatNeeded && chatResult.transcript) {
 					chatTranscript = chatResult.transcript
@@ -127,9 +119,8 @@ export class DefaultSolver implements Solver {
 			throw Object.assign(new Error('Task cancelled'), { name: 'AbortError' })
 		}
 
-		// Build the solver prompt now — transformer reads worktree-resident plan artifacts.
-		// Append chat transcript if the optional clarification session produced one.
-		const basePrompt = buildPrompt(worktreePath)
+		// Build the solver prompt now — task-context builder reads worktree-resident plan artifacts.
+		const basePrompt = buildPrompt(taskContext, { planDirName, worktreePath })
 		const solverPrompt = chatTranscript
 			? `${basePrompt}\n\n## Clarification from Requester\n\nThe following is a conversation with the task requester that clarified the requirements:\n\n${chatTranscript}`
 			: basePrompt
