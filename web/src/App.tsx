@@ -15,7 +15,7 @@ export function App() {
 
 	const refresh = useCallback(async () => {
 		try {
-			const [s, t, c] = await Promise.all([api.status(), api.tasks(), api.config() as Promise<any>])
+			const [s, t, c] = await Promise.all([api.status(), api.tasks(), api.config()])
 			setStatus(s)
 			setTasks(t)
 			const projectColors: Record<string, string> = {}

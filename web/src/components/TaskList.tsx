@@ -153,6 +153,7 @@ function TabButton({
 }) {
 	return (
 		<button
+			type="button"
 			onClick={onClick}
 			style={{
 				flex: 1,
@@ -204,7 +205,16 @@ function TaskRow({
 
 	return (
 		<div
+			// biome-ignore lint/a11y/useSemanticElements: task row has rich block content (nested divs); role + keyboard handlers give it accessible button behavior without invalid button nesting
+			role="button"
+			tabIndex={0}
 			onClick={onClick}
+			onKeyDown={e => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault()
+					onClick()
+				}
+			}}
 			style={{
 				display: 'flex',
 				flexDirection: 'column',

@@ -71,14 +71,16 @@ export function ChatPage({ token }: { token: string }) {
 		}
 
 		return () => eventSource.close()
-	}, [sessionInfo?.session.id, token, completed])
+	}, [sessionInfo, token, completed])
 
-	// Auto-scroll to bottom
+	// Auto-scroll to bottom: messages is a trigger dep (re-run on each new message), not read in the body.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: messages drives the re-scroll intentionally
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 	}, [messages])
 
-	// Focus input
+	// Focus input: messages is a trigger dep so the input re-focuses after each new message.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: messages intentionally re-triggers focus
 	useEffect(() => {
 		if (!completed) inputRef.current?.focus()
 	}, [completed, messages])
@@ -174,6 +176,7 @@ export function ChatPage({ token }: { token: string }) {
 							disabled={sending}
 						/>
 						<button
+							type="button"
 							style={{
 								...styles.sendButton,
 								opacity: sending || !input.trim() ? 0.5 : 1,

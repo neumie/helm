@@ -18,4 +18,6 @@ function Root() {
 	return <App />
 }
 
-createRoot(document.getElementById('root')!).render(<Root />)
+const rootEl = document.getElementById('root')
+if (!rootEl) throw new Error('Root element #root not found')
+createRoot(rootEl).render(<Root />)

@@ -28,6 +28,8 @@ export function LiveOutput({ taskId, isActive }: { taskId: string; isActive: boo
 		return () => clearInterval(interval)
 	}, [taskId, done, isActive])
 
+	// output is a trigger dep (re-run to scroll to bottom as output grows), not read in the body.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: output intentionally drives the re-scroll
 	useEffect(() => {
 		if (containerRef.current) {
 			containerRef.current.scrollTop = containerRef.current.scrollHeight

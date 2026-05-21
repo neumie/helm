@@ -116,6 +116,7 @@ export function SettingsPage() {
 					<h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-0)' }}>Settings</h1>
 				</div>
 				<button
+					type="button"
 					onClick={handleSave}
 					disabled={saving || !dirty}
 					style={{
@@ -202,6 +203,7 @@ export function SettingsPage() {
 				)}
 				{(projects ?? []).map((p, i) => (
 					<div
+						// biome-ignore lint/suspicious/noArrayIndexKey: rows are edited/removed by index against the saved config; no stable id exists
 						key={i}
 						style={{
 							padding: '14px 16px',
@@ -444,8 +446,8 @@ function Field({
 	const empty = required && !value.trim()
 
 	return (
-		<div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-			<label
+		<label style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+			<span
 				style={{
 					fontSize: 12,
 					color: 'var(--text-3)',
@@ -458,7 +460,7 @@ function Field({
 			>
 				{label}
 				{required && <span style={{ color: 'var(--red)', fontSize: 10 }}>*</span>}
-			</label>
+			</span>
 			<input
 				type={type}
 				value={value}
@@ -483,7 +485,7 @@ function Field({
 					e.currentTarget.style.borderColor = empty ? 'var(--red)' : 'var(--border)'
 				}}
 			/>
-		</div>
+		</label>
 	)
 }
 
@@ -497,8 +499,8 @@ function ColorField({
 	onChange: (v: string) => void
 }) {
 	return (
-		<div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-			<label style={{ fontSize: 12, color: 'var(--text-3)', width: 120, flexShrink: 0 }}>{label}</label>
+		<label style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+			<span style={{ fontSize: 12, color: 'var(--text-3)', width: 120, flexShrink: 0 }}>{label}</span>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 				<input
 					type="color"
@@ -516,6 +518,7 @@ function ColorField({
 				/>
 				{value && (
 					<button
+						type="button"
 						onClick={() => onChange('')}
 						style={{
 							background: 'none',
@@ -530,7 +533,7 @@ function ColorField({
 					</button>
 				)}
 			</div>
-		</div>
+		</label>
 	)
 }
 
@@ -547,9 +550,11 @@ function Toggle({
 }) {
 	return (
 		<div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-			<label style={{ fontSize: 12, color: 'var(--text-3)', width: 120, flexShrink: 0 }}>{label}</label>
+			<span style={{ fontSize: 12, color: 'var(--text-3)', width: 120, flexShrink: 0 }}>{label}</span>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 				<button
+					type="button"
+					aria-label={label}
 					onClick={() => onChange(!value)}
 					style={{
 						width: 36,
@@ -594,6 +599,7 @@ function SmallButton({
 	const color = danger ? 'var(--red)' : 'var(--accent)'
 	return (
 		<button
+			type="button"
 			onClick={onClick}
 			style={{
 				padding: '3px 10px',

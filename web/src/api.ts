@@ -91,6 +91,7 @@ export interface ChatSessionInfo {
 export interface AppConfig {
 	taskBaseUrl?: string
 	projectColors?: Record<string, string>
+	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
 }
 
 export const api = {

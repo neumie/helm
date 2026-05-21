@@ -26,22 +26,29 @@ export function Header({ status, onPoll, onRefresh, onTogglePause }: Props) {
 				<h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.02em' }}>vigil</h1>
 			</div>
 			<div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-				<span
+				<button
+					type="button"
 					style={{
 						color: 'var(--text-4)',
 						fontSize: 12,
 						cursor: 'pointer',
+						background: 'none',
+						border: 'none',
+						padding: 0,
+						fontFamily: 'inherit',
 					}}
 					onClick={onPoll}
 				>
 					Poll now
-				</span>
+				</button>
 				{/* Processing toggle */}
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 					<span style={{ fontSize: 11, color: paused ? 'var(--text-4)' : 'var(--green)', fontWeight: 500 }}>
 						{paused ? 'Paused' : 'Running'}
 					</span>
 					<button
+						type="button"
+						aria-label={paused ? 'Resume processing' : 'Pause processing'}
 						onClick={onTogglePause}
 						style={{
 							width: 36,

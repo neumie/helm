@@ -313,6 +313,7 @@ function Badge({ color, label }: { color: string; label: string }) {
 function ActionBtn({ label, color, onClick }: { label: string; color: string; onClick: () => void }) {
 	return (
 		<button
+			type="button"
 			onClick={onClick}
 			style={{
 				padding: '6px 16px',
@@ -373,7 +374,16 @@ function ChatSection({
 							}}
 						>
 							<div
+								// biome-ignore lint/a11y/useSemanticElements: row header contains nested interactive controls (copy button, external link); role + keyboard handlers give it accessible button behavior
+								role="button"
+								tabIndex={0}
 								onClick={() => setExpanded(expanded === s.id ? null : s.id)}
+								onKeyDown={e => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault()
+										setExpanded(expanded === s.id ? null : s.id)
+									}
+								}}
 								style={{
 									display: 'flex',
 									alignItems: 'center',
@@ -407,9 +417,10 @@ function ChatSection({
 								<span style={{ flex: 1 }} />
 								{s.chatUrl && (
 									<button
+										type="button"
 										onClick={e => {
 											e.stopPropagation()
-											copyUrl(s.chatUrl!, s.id)
+											if (s.chatUrl) copyUrl(s.chatUrl, s.id)
 										}}
 										style={{
 											background: 'none',

@@ -1,5 +1,5 @@
 const urlInput = document.getElementById('url') as HTMLInputElement
-const statusEl = document.getElementById('status')!
+const statusEl = document.getElementById('status') as HTMLElement
 
 // Load saved URL
 chrome.storage.sync.get({ serverUrl: 'http://localhost:7474' }, items => {

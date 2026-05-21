@@ -119,8 +119,9 @@ export class VigilWidget {
 	}
 
 	private async solve() {
-		if (!this.currentTaskId || this.projects.length === 0) return
-		await this.action(() => api.createTask(this.currentTaskId!))
+		const taskId = this.currentTaskId
+		if (!taskId || this.projects.length === 0) return
+		await this.action(() => api.createTask(taskId))
 	}
 
 	destroy() {
@@ -146,13 +147,22 @@ export class VigilWidget {
 		})
 		this.shadow.getElementById('solve')?.addEventListener('click', () => this.solve())
 		this.shadow.getElementById('start')?.addEventListener('click', () => this.action(() => api.resumeQueue()))
-		this.shadow.getElementById('retry')?.addEventListener('click', () => this.action(() => api.retry(this.task!.id)))
-		this.shadow.getElementById('cancel')?.addEventListener('click', () => this.action(() => api.cancel(this.task!.id)))
-		this.shadow
-			.getElementById('skip')
-			?.addEventListener('click', () => this.action(() => api.setStatus(this.task!.id, 'skipped')))
+		this.shadow.getElementById('retry')?.addEventListener('click', () => {
+			const t = this.task
+			if (t) this.action(() => api.retry(t.id))
+		})
+		this.shadow.getElementById('cancel')?.addEventListener('click', () => {
+			const t = this.task
+			if (t) this.action(() => api.cancel(t.id))
+		})
+		this.shadow.getElementById('skip')?.addEventListener('click', () => {
+			const t = this.task
+			if (t) this.action(() => api.setStatus(t.id, 'skipped'))
+		})
 		this.shadow.getElementById('delete')?.addEventListener('click', async () => {
-			await api.deleteTask(this.task!.id)
+			const t = this.task
+			if (!t) return
+			await api.deleteTask(t.id)
 			this.task = null
 			this.expanded = false
 			this.render()

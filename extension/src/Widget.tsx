@@ -56,7 +56,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		async function lookup() {
 			if (!active) return
 			try {
-				const result = await api.findTask(id!)
+				const result = await api.findTask(id)
 				if (active) {
 					setTask(result)
 					setError(null)
@@ -147,10 +147,22 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				planPending={planPending}
 				onCollapse={() => setExpanded(false)}
 				onSolve={solve}
-				onStart={() => doAction(() => api.start(task()!.id))}
-				onRetry={() => doAction(() => api.retry(task()!.id))}
-				onCancel={() => doAction(() => api.cancel(task()!.id))}
-				onSkip={() => doAction(() => api.setStatus(task()!.id, 'skipped'))}
+				onStart={() => {
+					const t = task()
+					if (t) doAction(() => api.start(t.id))
+				}}
+				onRetry={() => {
+					const t = task()
+					if (t) doAction(() => api.retry(t.id))
+				}}
+				onCancel={() => {
+					const t = task()
+					if (t) doAction(() => api.cancel(t.id))
+				}}
+				onSkip={() => {
+					const t = task()
+					if (t) doAction(() => api.setStatus(t.id, 'skipped'))
+				}}
 				onDelete={handleDelete}
 				onPlan={handlePlan}
 			/>
@@ -262,7 +274,7 @@ function Card(props: {
 							<div class="card-text">Task not tracked by Vigil.</div>
 							<Show when={props.projects().length > 0}>
 								<div class="card-actions">
-									<button class="btn btn-primary" on:click={props.onSolve}>
+									<button type="button" class="btn btn-primary" on:click={props.onSolve}>
 										Solve with Vigil
 									</button>
 								</div>
@@ -274,7 +286,10 @@ function Card(props: {
 		>
 			{t => {
 				const sc = () => props.statusColor()
-				const tc = () => (t().tier ? (TIER_COLORS[t().tier!] ?? '#808080') : null)
+				const tc = () => {
+					const tier = t().tier
+					return tier ? (TIER_COLORS[tier] ?? '#808080') : null
+				}
 				const glow = () => (t().status === 'processing' ? `0 0 6px ${sc()}` : 'none')
 
 				return (
@@ -286,22 +301,26 @@ function Card(props: {
 									{t().status}
 								</span>
 								<Show when={tc()}>
-									<span class="badge" style={{ color: tc()!, background: `${tc()!}20` }}>
-										{t().tier}
-									</span>
+									{color => (
+										<span class="badge" style={{ color: color(), background: `${color()}20` }}>
+											{t().tier}
+										</span>
+									)}
 								</Show>
 							</div>
 							<div class="card-header-actions">
 								<Show when={props.dashboardUrl()}>
-									<a
-										class="header-link"
-										href={props.dashboardUrl()!}
-										target="_blank"
-										rel="noreferrer"
-										title="Open in Vigil dashboard"
-									>
-										Open ↗
-									</a>
+									{url => (
+										<a
+											class="header-link"
+											href={url()}
+											target="_blank"
+											rel="noreferrer"
+											title="Open in Vigil dashboard"
+										>
+											Open ↗
+										</a>
+									)}
 								</Show>
 								<span class="close" on:click={props.onCollapse}>
 									&times;
@@ -316,11 +335,13 @@ function Card(props: {
 								<div class="card-error">{t().errorMessage}</div>
 							</Show>
 							<Show when={t().prUrl}>
-								<div class="card-pr">
-									<a class="link" href={t().prUrl!} target="_blank" rel="noreferrer">
-										{formatPr(t().prUrl!)}
-									</a>
-								</div>
+								{prUrl => (
+									<div class="card-pr">
+										<a class="link" href={prUrl()} target="_blank" rel="noreferrer">
+											{formatPr(prUrl())}
+										</a>
+									</div>
+								)}
 							</Show>
 							<Show when={props.planInfo()}>
 								{info => (
@@ -338,6 +359,7 @@ function Card(props: {
 							</Show>
 							<div class="card-actions">
 								<button
+									type="button"
 									class="btn btn-muted"
 									on:click={props.onPlan}
 									disabled={props.planPending() || t().status === 'processing'}
@@ -345,23 +367,23 @@ function Card(props: {
 									{props.planPending() ? 'Planning…' : props.planInfo() ? 'Re-plan' : 'Plan'}
 								</button>
 								<Show when={t().status === 'queued'}>
-									<button class="btn btn-primary" on:click={props.onStart}>
+									<button type="button" class="btn btn-primary" on:click={props.onStart}>
 										Start
 									</button>
-									<button class="btn btn-muted" on:click={props.onSkip}>
+									<button type="button" class="btn btn-muted" on:click={props.onSkip}>
 										Skip
 									</button>
 								</Show>
 								<Show when={t().status === 'processing'}>
-									<button class="btn btn-danger" on:click={props.onCancel}>
+									<button type="button" class="btn btn-danger" on:click={props.onCancel}>
 										Cancel
 									</button>
 								</Show>
 								<Show when={t().status !== 'processing' && t().status !== 'queued'}>
-									<button class="btn btn-primary" on:click={props.onRetry}>
+									<button type="button" class="btn btn-primary" on:click={props.onRetry}>
 										Re-queue
 									</button>
-									<button class="btn btn-danger" on:click={props.onDelete}>
+									<button type="button" class="btn btn-danger" on:click={props.onDelete}>
 										Delete
 									</button>
 								</Show>
