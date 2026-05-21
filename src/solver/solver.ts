@@ -1,50 +1,35 @@
 import type { ProjectConfig, VigilConfig } from '../config.js'
+import type { TaskContext } from '../providers/provider.js'
 import type { InvokeResult } from './invoker.js'
 
+/**
+ * Raw materials a solver needs to assemble its own prompts. The solver builds
+ * the prompt itself (after the worktree exists, so the task-context builder can
+ * read worktree-resident `docs/plans/<planDirName>/*.md` artifacts) rather than
+ * receiving a pre-built string or a thunk.
+ */
 export interface SolveParams {
 	projectConfig: ProjectConfig
 	branchName: string
 	/**
-	 * Human-readable plan-dir name (`<YYYY-MM-DD>-<slug>`). Used by solvers to
-	 * compute the path of the solver-result file the agent writes
-	 * (`docs/plans/<planDirName>/solver-result.json`) and shown in the prompt.
+	 * Human-readable plan-dir name (`<YYYY-MM-DD>-<slug>`). The solver-result
+	 * file the agent writes lives at `docs/plans/<planDirName>/solver-result.json`.
 	 */
 	planDirName: string
-	/**
-	 * Builds the final solver prompt. Called by the Solver impl AFTER the
-	 * worktree exists so transformers can read worktree-resident files
-	 * (e.g. `docs/plans/<externalId>/*.md`). Always invoke with the path
-	 * of the worktree the agent will run in.
-	 */
-	buildPrompt: (worktreePath: string) => string
-	/**
-	 * Builds the chat-session prompt. Same timing rules as `buildPrompt`.
-	 * Undefined when chat is disabled.
-	 */
-	buildChatPrompt?: (worktreePath: string) => string
+	/** Raw task context — the solver formats it into the prompt itself. */
+	taskContext: TaskContext
+	/** Needed by solvers that run a clarification chat (the chat session keys on it). */
+	taskId: string
 	taskTitle: string
 	solverConfig: VigilConfig['solver']
 	signal?: AbortSignal
 	outputLogPath?: string
 	/**
-	 * Path of an already-existing worktree (e.g. created during a planning
-	 * session via `solver.prepareWorktree(...)`). When set, solve() reuses
-	 * it instead of creating a fresh one — preserving any planning artifacts
-	 * the user wrote there (`docs/plans/<externalId>/*.md`, scaffolds, etc.).
+	 * Path of an already-existing worktree (created during a planning session).
+	 * When set, solve() reuses it instead of creating a fresh one — preserving
+	 * any planning artifacts the user wrote under `docs/plans/<planDirName>/`.
 	 */
 	existingWorktreePath?: string
-}
-
-export interface PrepareWorktreeParams {
-	projectConfig: ProjectConfig
-	branchName: string
-	taskTitle: string
-	signal?: AbortSignal
-}
-
-export interface PrepareWorktreeResult {
-	worktreePath: string
-	branchName: string
 }
 
 export interface PlanningSessionParams {
@@ -52,21 +37,11 @@ export interface PlanningSessionParams {
 	branchName: string
 	planDirName: string
 	taskTitle: string
+	/** Raw task context — the solver writes `context.md` + builds the prompt. */
+	taskContext: TaskContext
 	solverConfig: VigilConfig['solver']
 	/** If set, reuse this worktree instead of creating a new one. */
 	existingWorktreePath?: string
-	/**
-	 * Short instructions passed to the agent as a single shell arg. Must be
-	 * free of backticks and unescaped dollar signs (the okena run_command
-	 * shell layer would expand them).
-	 */
-	prompt: string
-	/**
-	 * Markdown to write to `<worktree>/docs/plans/<planDirName>/context.md`
-	 * BEFORE the agent spawns. The planning prompt instructs the agent to
-	 * read this file first.
-	 */
-	contextMarkdown: string
 	signal?: AbortSignal
 }
 
@@ -76,7 +51,7 @@ export interface PlanningSessionResult {
 	/**
 	 * Solver-specific human-readable hint to show the user. For okena: "Switch
 	 * to Okena, planning session is running in terminal X". For default: "Open
-	 * Claude Code in <path> — prompt staged at .vigil-planning-prompt.txt".
+	 * Claude Code in <path> — prompt staged at .planning-prompt.txt".
 	 */
 	hint: string
 }
@@ -89,18 +64,12 @@ export interface SolveResult {
 
 export interface Solver {
 	/**
-	 * Create (or reuse, where supported) a worktree without invoking the agent.
-	 * Used by the plan endpoint so the user can drop into the worktree, run
-	 * `/grill-me`/`/grill-plan`, write `docs/plans/<externalId>/` artifacts,
-	 * and commit them BEFORE the autonomous solve. The same worktree is then
-	 * reused by `solve()` via `SolveParams.existingWorktreePath`.
-	 */
-	prepareWorktree(params: PrepareWorktreeParams): Promise<PrepareWorktreeResult>
-	/**
-	 * Start an INTERACTIVE planning session in the worktree. Spawns the agent
-	 * with the planning prompt and returns immediately — does NOT block, does
-	 * NOT poll for completion. The user interacts at their leisure; the
-	 * autonomous solve is triggered separately (via the dashboard / extension).
+	 * Start an INTERACTIVE planning session: ensure the worktree, write the
+	 * task context to `docs/plans/<planDirName>/context.md`, spawn the agent
+	 * with the planning prompt, and return immediately — does NOT block or poll.
+	 * The user interacts at their leisure; the autonomous solve is triggered
+	 * separately. The same worktree is reused by `solve()` via
+	 * `SolveParams.existingWorktreePath`.
 	 */
 	startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult>
 	solve(params: SolveParams): Promise<SolveResult>

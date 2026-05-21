@@ -5,7 +5,7 @@ import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { parseClaudeOutput } from '../solver/output-parser.js'
-import { buildChatPrompt, buildPrompt } from '../solver/prompt-builder.js'
+import { buildPrompt } from '../solver/prompt-builder.js'
 import { parseResultFile, parseTierFromOutput } from '../solver/result-parser.js'
 import type { Solver } from '../solver/solver.js'
 import { log } from '../util/logger.js'
@@ -52,33 +52,27 @@ export async function processTask(
 			db.updateTask(taskId, { planDirName })
 		}
 
-		// Prompts are built lazily — the solver invokes the thunk AFTER it has
-		// created the worktree, so the transformer can read worktree-resident
-		// files (e.g. docs/plans/<planDirName>/*.md).
-		const promptBuilder = (worktreePath: string) =>
-			buildPrompt(taskContext, { planDirName, worktreePath })
-		const chatPromptBuilder = config.chat?.enabled
-			? (worktreePath: string) =>
-					buildChatPrompt(taskContext, taskId, { planDirName, worktreePath })
-			: undefined
-
 		// Phase 2+3: Create worktree + invoke Claude (delegated to solver).
-		// Reuse a worktree if one was created earlier by the plan endpoint.
+		// The solver assembles its own prompt from the raw task context (it
+		// builds it AFTER worktree creation so the task-context builder can read
+		// worktree-resident docs/plans/<planDirName>/*.md). Reuse a worktree if
+		// one was created earlier by the plan endpoint.
 		const branchName = task.branchName ?? `vigil/${slugify(task.title)}`
 		const existingWorktreePath = task.worktreePath ?? undefined
 		const { worktreePath, invokeResult } = await solver.solve({
 			projectConfig,
 			branchName,
 			planDirName,
-			buildPrompt: promptBuilder,
-			buildChatPrompt: chatPromptBuilder,
+			taskContext,
+			taskId,
 			taskTitle: task.title,
 			solverConfig: config.solver,
 			signal,
 			outputLogPath,
 			existingWorktreePath,
 		})
-		db.updateTask(taskId, { taskContext: promptBuilder(worktreePath) })
+		// Snapshot the rendered prompt for the dashboard's "task context" view.
+		db.updateTask(taskId, { taskContext: buildPrompt(taskContext, { planDirName, worktreePath }) })
 		db.updateTask(taskId, { worktreePath, branchName })
 		db.updateTask(taskId, {
 			claudeExitCode: invokeResult.exitCode,

@@ -10,9 +10,7 @@ import type { DB } from '../../db/client.js'
 import type { Poller } from '../../poller/poller.js'
 import type { TaskProvider } from '../../providers/provider.js'
 import type { TaskQueue } from '../../queue/queue.js'
-import { buildPlanningPrompt } from '../../solver/prompt-builder.js'
 import type { Solver } from '../../solver/solver.js'
-import { formatTaskContext } from '../../task-context.js'
 import { computePlanDirName, slugify } from '../../util/slug.js'
 
 export function apiRoutes(
@@ -205,18 +203,15 @@ export function apiRoutes(
 		const branchName = task.branchName ?? `vigil/${slugify(task.title)}`
 		const existingWorktreePath = task.worktreePath && existsSync(task.worktreePath) ? task.worktreePath : undefined
 
-		// Fetch task context so the planning prompt is informed.
+		// Fetch task context so the planning agent (and context.md) is informed.
 		const taskContext = await provider.getTaskContext(task.clientcareId)
 		if (!taskContext) {
 			return c.json({ error: 'Task not found in source system' }, 502)
 		}
 
-		// One call — solver creates/reuses the worktree, writes context.md,
-		// creates/reuses a single planning terminal, and spawns the planning
-		// agent in it. Task context lives at docs/plans/<planDirName>/context.md
-		// for the agent (and the user) to read.
-		const contextMarkdown = formatTaskContext(taskContext)
-		const prompt = buildPlanningPrompt(planDirName)
+		// One call — solver creates/reuses the worktree, writes context.md from
+		// the raw task context, creates/reuses a single planning terminal, and
+		// spawns the planning agent in it.
 		let worktreePath: string
 		let hint: string
 		try {
@@ -225,10 +220,9 @@ export function apiRoutes(
 				branchName,
 				planDirName,
 				taskTitle: task.title,
+				taskContext,
 				solverConfig: config.solver,
 				existingWorktreePath,
-				prompt,
-				contextMarkdown,
 			})
 			worktreePath = session.worktreePath
 			hint = session.hint
