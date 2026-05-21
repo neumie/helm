@@ -24,7 +24,7 @@ Task-context + prompt assembly lives in `src/task-context.ts` (`formatTaskContex
 | Support for a new task source            | `src/providers/<name>.ts` + registry |
 | Different code-execution backend         | `src/solver/` or `src/extensions/<x>/` + `src/index.ts` switch |
 | Prompt content / task-context shape      | `src/solver/prompt-builder.ts` + `src/task-context.ts` |
-| New tier-driven action (PR, comment, …)  | `src/actions/dispatcher.ts`          |
+| New tier-driven action (PR, comment, …)  | `src/actions/dispatcher.ts` (comment markdown → `src/actions/comment-format.ts`) |
 | New chat/MCP tool exposed to the solver  | `src/mcp/server.ts` (register via `server.tool(...)`) |
 | New dashboard endpoint                   | `src/server/routes/api.ts` (mounted from `app.ts`) |
 | New `tasks` column                       | `src/db/task-schema.ts` (Zod field) + append a migration to `src/db/schema.ts`. Nothing else — type, column map, and read-validation all derive from the schema. |

@@ -1,9 +1,10 @@
 import type { ProjectConfig, VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
-import type { SolverResult } from '../types.js'
+import type { SolverResult, TaskRecord } from '../types.js'
 import { log } from '../util/logger.js'
 import { pushBranch } from '../worktree/manager.js'
+import { clarificationComment, partialSolutionComment } from './comment-format.js'
 import { createPR } from './pr-creator.js'
 
 export async function dispatch(
@@ -20,7 +21,7 @@ export async function dispatch(
 	const worktreePath = task.worktreePath ?? ''
 	const branchName = task.branchName ?? ''
 
-	// If claude already shipped (created PR via /almanac:ship), just record it
+	// If claude already shipped (created PR via /almanac:ship), just record it.
 	if (result.prUrl) {
 		log.info('dispatcher', `Claude already shipped PR: ${result.prUrl}`)
 		db.updateTask(taskId, { prUrl: result.prUrl, prDraft: 0 })
@@ -29,99 +30,102 @@ export async function dispatch(
 	}
 
 	switch (result.tier) {
-		case 'trivial': {
-			pushBranch(worktreePath, branchName)
-			if (config.github.createPrs) {
-				const prUrl = createPR({
-					worktreePath,
-					branchName,
-					baseBranch: projectConfig.baseBranch,
-					title: `${config.github.prPrefix} ${result.prTitle ?? task.title}`,
-					body: result.prBody ?? result.summary,
-					draft: false,
-				})
-				db.updateTask(taskId, { prUrl, prDraft: 0 })
-				db.insertEvent(taskId, 'pr_created', { url: prUrl, draft: false })
-
-				if (config.github.postComments) {
-					const commentId = await provider.postComment(task.clientcareId, `**Vigil**: Solved (trivial). PR: ${prUrl}`)
-					if (commentId) {
-						db.updateTask(taskId, { commentId })
-						db.insertEvent(taskId, 'comment_posted', { commentId })
-					}
-				}
-			}
+		case 'trivial':
+			await openPrAndRecord({
+				taskId,
+				db,
+				provider,
+				config,
+				projectConfig,
+				task,
+				worktreePath,
+				branchName,
+				result,
+				draft: false,
+				label: 'Solved (trivial)',
+			})
 			break
-		}
 
-		case 'simple': {
-			pushBranch(worktreePath, branchName)
-			if (config.github.createPrs) {
-				const prUrl = createPR({
-					worktreePath,
-					branchName,
-					baseBranch: projectConfig.baseBranch,
-					title: `${config.github.prPrefix} ${result.prTitle ?? task.title}`,
-					body: result.prBody ?? result.summary,
-					draft: true,
-				})
-				db.updateTask(taskId, { prUrl, prDraft: 1 })
-				db.insertEvent(taskId, 'pr_created', { url: prUrl, draft: true })
-
-				if (config.github.postComments) {
-					const commentId = await provider.postComment(
-						task.clientcareId,
-						`**Vigil**: Solved (draft PR for review). PR: ${prUrl}`,
-					)
-					if (commentId) {
-						db.updateTask(taskId, { commentId })
-						db.insertEvent(taskId, 'comment_posted', { commentId })
-					}
-				}
-			}
+		case 'simple':
+			await openPrAndRecord({
+				taskId,
+				db,
+				provider,
+				config,
+				projectConfig,
+				task,
+				worktreePath,
+				branchName,
+				result,
+				draft: true,
+				label: 'Solved (draft PR for review)',
+			})
 			break
-		}
 
-		case 'complex': {
+		case 'complex':
 			pushBranch(worktreePath, branchName)
-
 			if (config.github.postComments) {
-				let md = `**Vigil**: Partial solution on branch \`${branchName}\`.\n\n`
-				md += `**Summary**: ${result.summary}\n\n`
-				if (result.analysis) md += `**Analysis**:\n${result.analysis}\n\n`
-				if (result.remainingWork?.length) {
-					md += '**Remaining work**:\n'
-					for (const item of result.remainingWork) md += `- ${item}\n`
-				}
-
-				const commentId = await provider.postComment(task.clientcareId, md)
-				if (commentId) {
-					db.updateTask(taskId, { commentId })
-					db.insertEvent(taskId, 'comment_posted', { commentId })
-				}
+				await postCommentAndRecord(taskId, db, provider, task.clientcareId, partialSolutionComment(result, branchName))
 			}
 			break
-		}
 
-		case 'unclear': {
+		case 'unclear':
 			if (config.github.postComments) {
-				let md = '**Vigil**: Cannot proceed — task needs clarification.\n\n'
-				if (result.analysis) md += `**Analysis**:\n${result.analysis}\n\n`
-				if (result.questionsForRequester?.length) {
-					md += '**Questions**:\n'
-					for (const q of result.questionsForRequester) md += `- ${q}\n`
-				}
-
-				const commentId = await provider.postComment(task.clientcareId, md)
-				if (commentId) {
-					db.updateTask(taskId, { commentId })
-					db.insertEvent(taskId, 'comment_posted', { commentId })
-				}
+				await postCommentAndRecord(taskId, db, provider, task.clientcareId, clarificationComment(result))
 			}
 			break
-		}
 
 		default:
 			log.warn('dispatcher', `Unknown tier: ${result.tier}`)
+	}
+}
+
+interface OpenPrArgs {
+	taskId: string
+	db: DB
+	provider: TaskProvider
+	config: VigilConfig
+	projectConfig: ProjectConfig
+	task: TaskRecord
+	worktreePath: string
+	branchName: string
+	result: SolverResult
+	draft: boolean
+	label: string
+}
+
+/** Push the branch, open a PR (if enabled), record it, and post a comment. */
+async function openPrAndRecord(a: OpenPrArgs): Promise<void> {
+	pushBranch(a.worktreePath, a.branchName)
+	if (!a.config.github.createPrs) return
+
+	const prUrl = createPR({
+		worktreePath: a.worktreePath,
+		branchName: a.branchName,
+		baseBranch: a.projectConfig.baseBranch,
+		title: `${a.config.github.prPrefix} ${a.result.prTitle ?? a.task.title}`,
+		body: a.result.prBody ?? a.result.summary,
+		draft: a.draft,
+	})
+	a.db.updateTask(a.taskId, { prUrl, prDraft: a.draft ? 1 : 0 })
+	a.db.insertEvent(a.taskId, 'pr_created', { url: prUrl, draft: a.draft })
+
+	if (a.config.github.postComments) {
+		await postCommentAndRecord(a.taskId, a.db, a.provider, a.task.clientcareId, `**Vigil**: ${a.label}. PR: ${prUrl}`)
+	}
+}
+
+/** Post a comment via the provider and record the comment id on the task. */
+async function postCommentAndRecord(
+	taskId: string,
+	db: DB,
+	provider: TaskProvider,
+	externalId: string,
+	markdown: string,
+): Promise<void> {
+	const commentId = await provider.postComment(externalId, markdown)
+	if (commentId) {
+		db.updateTask(taskId, { commentId })
+		db.insertEvent(taskId, 'comment_posted', { commentId })
 	}
 }
