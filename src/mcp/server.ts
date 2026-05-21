@@ -2,13 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { z } from 'zod'
+import type { ChatChannel } from '../chat/channel.js'
 import { ClarificationChat } from '../chat/clarification.js'
 import type { ChatLinks } from '../chat/links.js'
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
 
-export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvider, chatLinks: ChatLinks) {
+export function createMcpServer(
+	config: VigilConfig,
+	db: DB,
+	provider: TaskProvider,
+	chatLinks: ChatLinks,
+	channel: ChatChannel,
+) {
 	const server = new McpServer({
 		name: 'vigil',
 		version: '0.1.0',
@@ -16,7 +23,7 @@ export function createMcpServer(config: VigilConfig, db: DB, provider: TaskProvi
 
 	// The MCP tools are a thin adapter over the ClarificationChat module: they
 	// translate tool args ↔ MCP content and own nothing of the chat orchestration.
-	const chat = new ClarificationChat(config, db, provider, chatLinks)
+	const chat = new ClarificationChat(config, db, provider, chatLinks, channel)
 
 	server.tool(
 		'vigil_create_chat',

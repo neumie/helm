@@ -3,9 +3,10 @@ import { streamSSE } from 'hono/streaming'
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { ChatSession } from '../types.js'
+import type { ChatChannel } from './channel.js'
 import { verifyToken } from './token.js'
 
-export function chatRoutes(config: VigilConfig, db: DB) {
+export function chatRoutes(config: VigilConfig, db: DB, channel: ChatChannel) {
 	const app = new Hono()
 
 	const getSecret = () => config.chat?.secret ?? ''
@@ -54,8 +55,7 @@ export function chatRoutes(config: VigilConfig, db: DB) {
 			return c.json({ error: 'Message content required' }, 400)
 		}
 
-		const messageId = db.addChatMessage(session.id, 'user', body.content.trim())
-		emitSessionEvent(session.id)
+		const messageId = channel.postUser(session.id, body.content.trim())
 
 		return c.json({ messageId })
 	})
@@ -115,7 +115,7 @@ export function chatRoutes(config: VigilConfig, db: DB) {
 				}
 			}
 
-			addSessionListener(sessionId, sendNewMessages)
+			const unsubscribe = channel.subscribe(sessionId, sendNewMessages)
 
 			const heartbeat = setInterval(async () => {
 				try {
@@ -130,50 +130,10 @@ export function chatRoutes(config: VigilConfig, db: DB) {
 				await donePromise
 			} finally {
 				clearInterval(heartbeat)
-				removeSessionListener(sessionId, sendNewMessages)
+				unsubscribe()
 			}
 		})
 	})
 
 	return app
-}
-
-// In-memory event bus for session updates
-const sessionListeners = new Map<string, Set<() => void>>()
-
-function addSessionListener(sessionId: string, listener: () => void) {
-	if (!sessionListeners.has(sessionId)) {
-		sessionListeners.set(sessionId, new Set())
-	}
-	sessionListeners.get(sessionId)?.add(listener)
-}
-
-function removeSessionListener(sessionId: string, listener: () => void) {
-	sessionListeners.get(sessionId)?.delete(listener)
-	if (sessionListeners.get(sessionId)?.size === 0) {
-		sessionListeners.delete(sessionId)
-	}
-}
-
-export function emitSessionEvent(sessionId: string) {
-	const listeners = sessionListeners.get(sessionId)
-	if (listeners) {
-		for (const listener of listeners) {
-			listener()
-		}
-	}
-}
-
-/**
- * Returns a Promise that resolves when the next event fires for this session.
- * Used by the MCP send_message tool to avoid polling.
- */
-export function waitForSessionEvent(sessionId: string): Promise<void> {
-	return new Promise(resolve => {
-		const listener = () => {
-			removeSessionListener(sessionId, listener)
-			resolve()
-		}
-		addSessionListener(sessionId, listener)
-	})
 }

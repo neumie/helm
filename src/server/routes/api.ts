@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Hono } from 'hono'
+import type { ChatChannel } from '../../chat/channel.js'
 import type { ChatLinks } from '../../chat/links.js'
 import { configSchema } from '../../config.js'
 import type { VigilConfig } from '../../config.js'
@@ -24,6 +25,7 @@ export function apiRoutes(
 	provider: TaskProvider,
 	solver: Solver,
 	chatLinks: ChatLinks,
+	channel: ChatChannel,
 ) {
 	const api = new Hono()
 
@@ -423,7 +425,9 @@ export function apiRoutes(
 		const { session, chatUrl } = chatLinks.createSession(task.id)
 
 		if (body.message?.trim()) {
-			db.addChatMessage(session.id, 'assistant', body.message.trim())
+			// Post through the channel so any live SSE viewer of this session
+			// sees the seeded message immediately (write+notify is one op).
+			channel.postAssistant(session.id, body.message.trim())
 		}
 
 		db.insertEvent(task.id, 'chat_created', { sessionId: session.id, manual: true })

@@ -62,4 +62,20 @@ translates args ↔ MCP content. The interface is the test surface. Two invarian
 concentrate here: the wait state is keyed by `sessionId`/DB rows (never per-transport
 closure) so it survives the MCP transport's 30-min rotation; `sessionId` is the
 addressing key throughout while the signed `token` only ever appears inside the
-`chatUrl` minted by `ChatLinks`.
+`chatUrl` minted by `ChatLinks`. The live wait + the message writes go through
+`ChatChannel`.
+
+**ChatChannel** (`src/chat/channel.ts`) — the deep module owning a clarification
+session's *live channel*: the in-memory listener registry AND the message-write
+operations (`postUser` / `postAssistant`) that must wake those listeners. One
+invariant concentrates here: *every chat-message write notifies every listener on
+the session*. Previously that was split — `DB.addChatMessage` wrote the row, a
+free-function bus in `routes.ts` did the notify, and three write sites (SSE POST,
+the MCP send loop, the manual-chat API route) had to pair them by hand; the
+manual-chat route already forgot, so a live viewer missed the seeded message.
+Folding write+notify into one op makes the bus impossible to drive out of sync
+with the table. Two real consumers cross the wait/subscribe seam: the SSE stream
+(`subscribe`) and the MCP `vigil_send_message` 24h loop (`waitForEvent`). One
+shared instance is constructed in `app.ts` (like `ChatLinks`) and threaded into
+`chatRoutes`, `apiRoutes`, and `ClarificationChat`. State keyed by `sessionId`,
+so it survives MCP transport rotation.

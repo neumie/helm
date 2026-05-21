@@ -26,6 +26,7 @@ Task-context + prompt assembly lives in `src/task-context.ts` (`formatTaskContex
 | Prompt content / task-context shape      | `src/solver/prompt-builder.ts` + `src/task-context.ts` |
 | New tier-driven action (PR, comment, …)  | `src/actions/dispatcher.ts` (comment markdown → `src/actions/comment-format.ts`) |
 | New chat/MCP tool exposed to the solver  | `src/mcp/server.ts` (register via `server.tool(...)`) |
+| Writing/notifying a chat message         | `src/chat/channel.ts` (`ChatChannel.postUser`/`postAssistant`) — never call `db.addChatMessage` directly |
 | New dashboard endpoint                   | `src/server/routes/api.ts` (mounted from `app.ts`) |
 | New `tasks` column                       | `src/db/task-schema.ts` (Zod field) + append a migration to `src/db/schema.ts`. Nothing else — type, column map, and read-validation all derive from the schema. |
 | Other DB query                           | `src/db/client.ts` |
@@ -47,7 +48,7 @@ Five phases. Don't reorder, don't skip.
 
 ## Subsystems
 
-- **`src/chat/`** — clarification chat. Signed tokens gate every route; never expose `session.id` over the wire, only the token. The chat *orchestration* (create invite + provider comment + webhook, the 24h wait loop, transcript assembly) lives in `ClarificationChat` (`src/chat/clarification.ts`); link identity lives in `ChatLinks` (`src/chat/links.ts`). Put new clarification behavior in the module, not in the MCP tool closures.
+- **`src/chat/`** — clarification chat. Signed tokens gate every route; never expose `session.id` over the wire, only the token. The chat *orchestration* (create invite + provider comment + webhook, the 24h wait loop, transcript assembly) lives in `ClarificationChat` (`src/chat/clarification.ts`); link identity lives in `ChatLinks` (`src/chat/links.ts`); the *live channel* (listener registry + message writes) lives in `ChatChannel` (`src/chat/channel.ts`). Put new clarification behavior in the module, not in the MCP tool closures. Adding a chat message MUST go through `ChatChannel.postUser`/`postAssistant`, never `db.addChatMessage` directly — the channel pairs the DB write with the listener notify so live SSE viewers / the MCP wait loop see it. One shared `ChatChannel` is constructed in `server/app.ts` and threaded into `chatRoutes`, `apiRoutes`, and `ClarificationChat`.
 - **`src/mcp/server.ts`** — MCP server the running solver talks to. New solver capabilities go here as tools, not on the dispatcher. The chat tools (`vigil_create_chat`/`vigil_send_message`/`vigil_end_chat`) are a thin adapter over `ClarificationChat`: they translate args ↔ MCP content and own none of the orchestration. Don't re-inline session/wait/transcript logic into a tool closure — that's what got extracted.
 - **`src/cli/`** — `vigil` binary wrapping launchd: `start` / `stop` / `status` / `logs` / `run`. **`vigil run <id>` executes one task and exits** — use it to debug a single task without re-polling or restarting the daemon.
 - **`src/extensions/okena/`** — alternative `Solver` (local Okena daemon instead of `claude` CLI). Loaded via dynamic `import()` in `src/index.ts` with `DefaultSolver` fallback. Don't hard-import it.

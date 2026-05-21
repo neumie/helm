@@ -2,9 +2,9 @@ import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { log } from '../util/logger.js'
+import type { ChatChannel } from './channel.js'
 import { formatTranscript } from './format.js'
 import type { ChatLinks } from './links.js'
-import { emitSessionEvent, waitForSessionEvent } from './routes.js'
 import { sendWebhook } from './webhook.js'
 
 const WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1000 // 24h block-and-poll ceiling
@@ -42,6 +42,7 @@ export class ClarificationChat {
 		private readonly db: DB,
 		private readonly provider: TaskProvider,
 		private readonly chatLinks: ChatLinks,
+		private readonly channel: ChatChannel,
 	) {}
 
 	/**
@@ -93,13 +94,12 @@ export class ClarificationChat {
 		const session = this.db.getChatSession(sessionId)
 		if (!session || session.status !== 'active') return { kind: 'inactive' }
 
-		const msgId = this.db.addChatMessage(sessionId, 'assistant', message)
-		emitSessionEvent(sessionId)
+		const msgId = this.channel.postAssistant(sessionId, message)
 		log.info('chat', `Chat ${sessionId}: sent message, waiting for response...`)
 
 		const start = Date.now()
 		while (Date.now() - start < WAIT_TIMEOUT_MS) {
-			await waitForSessionEvent(sessionId)
+			await this.channel.waitForEvent(sessionId)
 
 			const newMessages = this.db.getNewUserMessages(sessionId, msgId)
 			if (newMessages.length > 0) {
@@ -123,7 +123,7 @@ export class ClarificationChat {
 		if (!session) return null
 
 		this.db.completeChatSession(sessionId)
-		emitSessionEvent(sessionId)
+		this.channel.notify(sessionId)
 
 		const messages = this.db.getChatMessages(sessionId)
 		log.info('chat', `Chat ${sessionId}: ended with ${messages.length} messages`)
