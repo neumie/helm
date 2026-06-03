@@ -172,7 +172,26 @@ export const WIDGET_STYLES = `
 		background: var(--vg-red-soft);
 		border-radius: var(--vg-radius-ctl);
 		padding: 10px 12px;
+		word-break: break-word;
 	}
+	.vg-error--dismissible {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+	}
+	.vg-error--dismissible > span { flex: 1; }
+	.vg-error__dismiss {
+		flex-shrink: 0;
+		background: transparent;
+		border: 0;
+		color: inherit;
+		font-size: 16px;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0.6;
+		padding: 0;
+	}
+	.vg-error__dismiss:hover { opacity: 1; }
 
 	.vg-plan {
 		font-size: 12px;

@@ -33,7 +33,12 @@ type View =
 export function Widget(props: { taskId: Accessor<string | null> }) {
 	const [task, setTask] = createSignal<TaskRecord | null>(null)
 	const [expanded, setExpanded] = createSignal(false)
-	const [error, setError] = createSignal<string | null>(null)
+	// connError = connectivity/poll failures, cleared on a successful poll.
+	// actionError = explicit action (plan/solve/start/retry/...) failures, sticky
+	// until the user takes another action or dismisses. Splitting them keeps a
+	// real failure visible — a poll tick used to wipe it within 5s.
+	const [connError, setConnError] = createSignal<string | null>(null)
+	const [actionError, setActionError] = createSignal<string | null>(null)
 	const [projects, setProjects] = createSignal<string[]>([])
 	const [serverUrl, setServerUrl] = createSignal<string>('http://localhost:7474')
 	const [planInfo, setPlanInfo] = createSignal<PlanInfo | null>(null)
@@ -47,7 +52,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		.then(c => setProjects(c.projects.map(p => p.slug)))
 		.catch(err => {
 			console.warn('[vigil]', err)
-			setError('Cannot connect to Vigil')
+			setConnError('Cannot connect to Vigil')
 		})
 
 	const dashboardUrl = () => {
@@ -60,7 +65,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		const id = props.taskId()
 		if (!id) {
 			setTask(null)
-			setError(null)
+			setConnError(null)
+			setActionError(null)
 			return
 		}
 
@@ -73,10 +79,10 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				const result = await api.findTask(taskId)
 				if (active) {
 					setTask(result)
-					setError(null)
+					setConnError(null)
 				}
 			} catch (err) {
-				if (active) setError(err instanceof Error ? err.message : 'Connection failed')
+				if (active) setConnError(err instanceof Error ? err.message : 'Connection failed')
 			}
 		}
 
@@ -89,6 +95,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	})
 
 	async function doAction(fn: () => Promise<unknown>) {
+		setActionError(null)
 		try {
 			await fn()
 			const id = props.taskId()
@@ -97,7 +104,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				setTask(result)
 			}
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Action failed')
+			setActionError(err instanceof Error ? err.message : 'Action failed')
 		}
 	}
 
@@ -118,13 +125,13 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	async function handlePlan() {
 		const t = task()
 		if (!t) return
+		setActionError(null)
 		setPlanPending(true)
 		try {
 			const info = await api.plan(t.id)
 			setPlanInfo(info)
-			setError(null)
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Plan failed')
+			setActionError(err instanceof Error ? err.message : 'Plan failed')
 		} finally {
 			setPlanPending(false)
 		}
@@ -133,7 +140,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	const view = (): View => {
 		if (!props.taskId()) return { kind: 'none' }
 		const t = task()
-		if (error() && !t) return { kind: 'error' }
+		if (connError() && !t) return { kind: 'error' }
 		if (!t) return { kind: 'untracked', solvable: projects().length > 0 }
 		return { kind: 'task', task: t }
 	}
@@ -145,6 +152,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				dashboardUrl={dashboardUrl}
 				planInfo={planInfo}
 				planPending={planPending}
+				actionError={actionError}
+				onDismissError={() => setActionError(null)}
 				onCollapse={() => setExpanded(false)}
 				onSolve={solve}
 				onStart={() => {
@@ -237,6 +246,8 @@ function Card(props: {
 	dashboardUrl: Accessor<string | null>
 	planInfo: Accessor<PlanInfo | null>
 	planPending: Accessor<boolean>
+	actionError: Accessor<string | null>
+	onDismissError: () => void
 	onCollapse: () => void
 	onSolve: () => void
 	onStart: () => void
@@ -326,6 +337,16 @@ function Card(props: {
 								</div>
 
 								<div class="vg-card__body">
+									<Show when={props.actionError()}>
+										{msg => (
+											<div class="vg-error vg-error--dismissible">
+												<span>{msg()}</span>
+												<button type="button" class="vg-error__dismiss" on:click={props.onDismissError}>
+													&times;
+												</button>
+											</div>
+										)}
+									</Show>
 									<Show when={task().solverSummary}>
 										<div class="vg-summary">{task().solverSummary}</div>
 									</Show>
