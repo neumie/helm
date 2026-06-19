@@ -1,6 +1,6 @@
 // TaskRecord + its enums are derived from the Zod schema (single source of
 // truth for the tasks table); re-exported so existing imports keep working.
-export type { ErrorPhase, TaskRecord, TaskStatus, Tier } from './db/task-schema.js'
+export type { ErrorPhase, TaskRecord, TaskStatus } from './db/task-schema.js'
 // SolverResult is derived from its own Zod schema (single source of truth for
 // the agent's solver-result.json); re-exported here so existing imports keep working.
 export type { SolverResult } from './solver/result-schema.js'
@@ -32,21 +32,4 @@ export interface QueueStatus {
 	active: number
 	maxConcurrency: number
 	activeTasks: Array<{ taskId: string; title: string; startedAt: string }>
-}
-
-export interface ChatSession {
-	id: string
-	taskId: string
-	token: string
-	status: 'active' | 'completed'
-	createdAt: string
-	completedAt: string | null
-}
-
-export interface ChatMessage {
-	id: string
-	sessionId: string
-	role: 'assistant' | 'user'
-	content: string
-	createdAt: string
 }

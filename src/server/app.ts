@@ -2,12 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { ChatChannel } from '../chat/channel.js'
-import { ChatLinks } from '../chat/links.js'
-import { chatRoutes } from '../chat/routes.js'
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
-import { createMcpServer, handleMcpRequest } from '../mcp/server.js'
 import type { Poller } from '../poller/poller.js'
 import type { TaskProvider } from '../providers/provider.js'
 import type { TaskQueue } from '../queue/queue.js'
@@ -35,30 +31,10 @@ export function createApp(
 ) {
 	const app = new Hono()
 	const webDir = resolve(import.meta.dirname, '../web')
-	const chatLinks = new ChatLinks(config, db)
-	// One shared channel: the live session bus + the write+notify operations.
-	// Shared across the SSE routes, the manual-chat API route, and the MCP
-	// clarification tools so every viewer sees every message.
-	const chatChannel = new ChatChannel(db)
 
 	app.use('*', cors())
 
-	app.route('/api', apiRoutes(config, configPath, db, queue, poller, provider, solver, chatLinks, chatChannel))
-	app.route('/api/chat', chatRoutes(config, db, chatChannel))
-
-	// MCP endpoint for Claude CLI chat tools
-	if (config.chat?.enabled) {
-		const mcpServer = createMcpServer(config, db, provider, chatLinks, chatChannel)
-
-		app.all('/mcp', async c => {
-			const response = await handleMcpRequest(mcpServer, c.req.raw)
-			return response
-		})
-		app.all('/mcp/*', async c => {
-			const response = await handleMcpRequest(mcpServer, c.req.raw)
-			return response
-		})
-	}
+	app.route('/api', apiRoutes(config, configPath, db, queue, poller, provider, solver))
 
 	// Serve static frontend assets
 	app.get('*', c => {

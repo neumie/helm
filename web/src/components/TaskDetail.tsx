@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { type ChatSessionInfo, type TaskRecord, api } from '../api'
+import { type TaskRecord, api } from '../api'
 import { ActivityTimeline } from './ActivityTimeline'
 import { LiveOutput } from './LiveOutput'
 import { StatusBadge } from './StatusBadge'
@@ -7,7 +7,6 @@ import { StatusBadge } from './StatusBadge'
 interface Props {
 	task: TaskRecord
 	taskBaseUrl?: string
-	chatEnabled: boolean
 	onStart: () => void
 	onRetry: () => void
 	onCancel: () => void
@@ -21,21 +20,10 @@ interface PrStatus {
 	mergedAt?: string
 }
 
-export function TaskDetail({
-	task,
-	taskBaseUrl,
-	chatEnabled,
-	onStart,
-	onRetry,
-	onCancel,
-	onSetStatus,
-	onDelete,
-}: Props) {
+export function TaskDetail({ task, taskBaseUrl, onStart, onRetry, onCancel, onSetStatus, onDelete }: Props) {
 	const files = task.filesChanged ? (JSON.parse(task.filesChanged) as string[]) : []
 	const isActive = task.status === 'processing'
 	const [prStatus, setPrStatus] = useState<PrStatus | null>(null)
-	const [chatSessions, setChatSessions] = useState<ChatSessionInfo[]>([])
-	const [chatLoading, setChatLoading] = useState(false)
 
 	useEffect(() => {
 		if (task.prUrl) {
@@ -48,15 +36,6 @@ export function TaskDetail({
 		}
 	}, [task.id, task.prUrl])
 
-	useEffect(() => {
-		if (chatEnabled) {
-			api
-				.chatSessions(task.id)
-				.then(setChatSessions)
-				.catch(() => setChatSessions([]))
-		}
-	}, [task.id, chatEnabled])
-
 	const branchUrl = task.prUrl ?? (task.branchName ? buildBranchUrl(task.prUrl, task.branchName) : null)
 
 	return (
@@ -68,13 +47,7 @@ export function TaskDetail({
 
 			{/* Badges + links row */}
 			<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
-				<StatusBadge value={task.status} type="status" />
-				{task.tier && <StatusBadge value={task.tier} type="tier" />}
-				{task.solverConfidence != null && (
-					<span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-						{(task.solverConfidence * 100).toFixed(0)}% confidence
-					</span>
-				)}
+				<StatusBadge value={task.status} />
 
 				<span style={{ flex: 1 }} />
 
@@ -190,24 +163,6 @@ export function TaskDetail({
 				<span style={{ flex: 1 }} />
 				<ActionBtn label="Delete" variant="danger" onClick={onDelete} />
 			</div>
-
-			{/* Chat */}
-			{chatEnabled && (
-				<ChatSection
-					sessions={chatSessions}
-					loading={chatLoading}
-					onNewChat={async () => {
-						setChatLoading(true)
-						try {
-							const result = await api.createChat(task.id)
-							const sessions = await api.chatSessions(task.id)
-							setChatSessions(sessions)
-						} finally {
-							setChatLoading(false)
-						}
-					}}
-				/>
-			)}
 
 			{/* Task description */}
 			{task.taskContext && (
@@ -343,145 +298,6 @@ function extractTaskDescription(taskContext: string): string {
 	const idx = taskContext.indexOf(marker)
 	if (idx === -1) return taskContext
 	return taskContext.slice(idx + marker.length).trim()
-}
-
-function ChatSection({
-	sessions,
-	loading,
-	onNewChat,
-}: {
-	sessions: ChatSessionInfo[]
-	loading: boolean
-	onNewChat: () => void
-}) {
-	const [copied, setCopied] = useState<string | null>(null)
-	const [expanded, setExpanded] = useState<string | null>(null)
-
-	const copyUrl = (url: string, id: string) => {
-		navigator.clipboard.writeText(url)
-		setCopied(id)
-		setTimeout(() => setCopied(null), 2000)
-	}
-
-	return (
-		<Section title="Chat">
-			{sessions.length === 0 ? (
-				<p style={{ fontSize: 13, color: 'var(--text-4)', marginBottom: 12 }}>No chat sessions yet.</p>
-			) : (
-				<div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-					{sessions.map(s => (
-						<div
-							key={s.id}
-							style={{
-								border: '1px solid var(--border)',
-								borderRadius: 'var(--radius-sm)',
-								overflow: 'hidden',
-							}}
-						>
-							<div
-								// biome-ignore lint/a11y/useSemanticElements: row header contains nested interactive controls (copy button, external link); role + keyboard handlers give it accessible button behavior
-								role="button"
-								tabIndex={0}
-								onClick={() => setExpanded(expanded === s.id ? null : s.id)}
-								onKeyDown={e => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault()
-										setExpanded(expanded === s.id ? null : s.id)
-									}
-								}}
-								style={{
-									display: 'flex',
-									alignItems: 'center',
-									gap: 8,
-									padding: '8px 12px',
-									cursor: 'pointer',
-									background: 'var(--bg-1)',
-								}}
-							>
-								<span
-									style={{
-										fontSize: 11,
-										fontWeight: 600,
-										color: s.status === 'active' ? 'var(--green)' : 'var(--text-4)',
-									}}
-								>
-									{s.status === 'active' ? 'Active' : 'Completed'}
-								</span>
-								<span style={{ fontSize: 11, color: 'var(--text-4)' }}>
-									{s.messages.length} message{s.messages.length !== 1 ? 's' : ''}
-								</span>
-								<span style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
-									{new Date(s.createdAt).toLocaleString([], {
-										month: 'short',
-										day: 'numeric',
-										hour: '2-digit',
-										minute: '2-digit',
-										hour12: false,
-									})}
-								</span>
-								<span style={{ flex: 1 }} />
-								{s.chatUrl && (
-									<button
-										type="button"
-										onClick={e => {
-											e.stopPropagation()
-											if (s.chatUrl) copyUrl(s.chatUrl, s.id)
-										}}
-										style={{
-											background: 'none',
-											border: 'none',
-											cursor: 'pointer',
-											fontSize: 11,
-											color: copied === s.id ? 'var(--green)' : 'var(--accent)',
-											fontFamily: 'var(--font-sans)',
-											fontWeight: 500,
-										}}
-									>
-										{copied === s.id ? 'Copied' : 'Copy link'}
-									</button>
-								)}
-								<a
-									href={s.chatUrl ?? '#'}
-									target="_blank"
-									rel="noreferrer"
-									onClick={e => e.stopPropagation()}
-									style={{
-										fontSize: 11,
-										color: 'var(--blue)',
-										textDecoration: 'none',
-										fontWeight: 500,
-									}}
-								>
-									Open
-								</a>
-							</div>
-							{expanded === s.id && s.messages.length > 0 && (
-								<div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--bg-0)' }}>
-									{s.messages.map(m => (
-										<div key={m.id} style={{ marginBottom: 8 }}>
-											<span
-												style={{
-													fontSize: 11,
-													fontWeight: 600,
-													color: m.role === 'assistant' ? 'var(--accent)' : 'var(--blue)',
-												}}
-											>
-												{m.role === 'assistant' ? 'Vigil' : 'Requester'}:
-											</span>
-											<span style={{ fontSize: 12, color: 'var(--text-2)', marginLeft: 6, lineHeight: 1.5 }}>
-												{m.content}
-											</span>
-										</div>
-									))}
-								</div>
-							)}
-						</div>
-					))}
-				</div>
-			)}
-			<ActionBtn label={loading ? 'Creating...' : 'New chat'} variant="primary" onClick={onNewChat} />
-		</Section>
-	)
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

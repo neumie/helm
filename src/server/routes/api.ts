@@ -3,8 +3,6 @@ import { randomUUID } from 'node:crypto'
 import { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Hono } from 'hono'
-import type { ChatChannel } from '../../chat/channel.js'
-import type { ChatLinks } from '../../chat/links.js'
 import { configSchema } from '../../config.js'
 import type { VigilConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
@@ -26,8 +24,6 @@ export function apiRoutes(
 	poller: Poller,
 	provider: TaskProvider,
 	solver: Solver,
-	chatLinks: ChatLinks,
-	channel: ChatChannel,
 ) {
 	const api = new Hono()
 
@@ -49,7 +45,6 @@ export function apiRoutes(
 				queue: queueStatus,
 				projects: config.projects.map(p => p.slug),
 				pollInterval: config.polling.intervalSeconds,
-				chatEnabled: config.chat?.enabled ?? false,
 			},
 		})
 	})
@@ -118,22 +113,10 @@ export function apiRoutes(
 		return c.json({ data: task }, 201)
 	})
 
-	// Single task detail
-	api.get('/tasks/:id', c => {
-		const task = db.getTask(c.req.param('id'))
-		if (!task) return c.json({ error: 'Not found' }, 404)
-		return c.json({ data: task })
-	})
-
 	// Task events (activity timeline)
 	api.get('/tasks/:id/events', c => {
 		const events = db.getEvents(c.req.param('id'))
 		return c.json({ data: events })
-	})
-
-	// Queue state
-	api.get('/queue', c => {
-		return c.json({ data: queue.getStatus() })
 	})
 
 	// Config (sanitized, read from disk to pick up changes)
@@ -206,11 +189,6 @@ export function apiRoutes(
 		} catch (err) {
 			return c.json({ error: `Failed to write config: ${err instanceof Error ? err.message : err}` }, 500)
 		}
-	})
-
-	// Stats
-	api.get('/stats', c => {
-		return c.json({ data: db.getStats() })
 	})
 
 	// Prepare a worktree for interactive planning BEFORE the autonomous solve.
@@ -441,40 +419,6 @@ export function apiRoutes(
 		} catch {
 			return c.json({ data: { content: '', offset: 0, done: task.status !== 'processing' } })
 		}
-	})
-
-	// Chat sessions for a task
-	api.get('/tasks/:id/chat', c => {
-		const task = db.getTask(c.req.param('id'))
-		if (!task) return c.json({ error: 'Not found' }, 404)
-
-		const sessions = db.getChatSessionsByTaskId(task.id)
-		const result = sessions.map(s => ({
-			...s,
-			messages: db.getChatMessages(s.id),
-			chatUrl: config.chat?.enabled ? chatLinks.urlForToken(s.token) : null,
-		}))
-		return c.json({ data: result })
-	})
-
-	// Create manual chat session
-	api.post('/tasks/:id/chat', async c => {
-		const task = db.getTask(c.req.param('id'))
-		if (!task) return c.json({ error: 'Not found' }, 404)
-		if (!config.chat?.enabled) return c.json({ error: 'Chat is not enabled in config' }, 400)
-
-		const body = await c.req.json<{ message?: string }>().catch(() => ({ message: undefined }))
-		const { session, chatUrl } = chatLinks.createSession(task.id)
-
-		if (body.message?.trim()) {
-			// Post through the channel so any live SSE viewer of this session
-			// sees the seeded message immediately (write+notify is one op).
-			channel.postAssistant(session.id, body.message.trim())
-		}
-
-		db.insertEvent(task.id, 'chat_created', { sessionId: session.id, manual: true })
-
-		return c.json({ data: { session, chatUrl } }, 201)
 	})
 
 	// Pause/resume queue

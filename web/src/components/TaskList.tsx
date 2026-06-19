@@ -254,8 +254,7 @@ function TaskRow({
 				{task.title}
 			</div>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				<StatusBadge value={task.status} type="status" />
-				{task.tier && <StatusBadge value={task.tier} type="tier" />}
+				<StatusBadge value={task.status} />
 			</div>
 		</div>
 	)

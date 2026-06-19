@@ -83,7 +83,7 @@ export async function processTask(
 		}
 
 		// Phase 4: Parse result. The agent writes solver-result.json — that file is
-		// the only source of the tier. No stdout fallback: a missing file is a hard
+		// the only source of the result. No stdout fallback: a missing file is a hard
 		// failure (the okena solver produces no stdout anyway).
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
 		const solverResult = workspace.readResult()
@@ -92,19 +92,14 @@ export async function processTask(
 		}
 
 		db.updateTask(taskId, {
-			tier: solverResult.tier,
 			solverSummary: solverResult.summary,
-			solverConfidence: solverResult.confidence,
 			filesChanged: JSON.stringify(solverResult.filesChanged),
 			solverRawResult: JSON.stringify(solverResult),
 		})
-		db.insertEvent(taskId, 'solver_completed', {
-			tier: solverResult.tier,
-			confidence: solverResult.confidence,
-		})
+		db.insertEvent(taskId, 'solver_completed', { summary: solverResult.summary })
 
-		// Phase 5: Dispatch tier-appropriate action
-		log.info('worker', `Task assessed as ${solverResult.tier} (confidence: ${solverResult.confidence})`)
+		// Phase 5: Dispatch — record the pre-shipped PR or push branch + open one.
+		log.info('worker', 'Solve complete — dispatching')
 		try {
 			await dispatch(taskId, solverResult, config, db, provider, projectConfig)
 		} catch (err) {
@@ -114,7 +109,7 @@ export async function processTask(
 
 		db.updateTask(taskId, { status: 'review', completedAt: new Date().toISOString() })
 		db.insertEvent(taskId, 'action_completed')
-		log.success('worker', `Task ready for review: ${task.title} [${solverResult.tier}]`)
+		log.success('worker', `Task ready for review: ${task.title}`)
 	} catch (err) {
 		const error = err as Error
 		const isCancelled = isCancellation(error, signal)

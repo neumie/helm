@@ -1,10 +1,3 @@
-const tierColors: Record<string, string> = {
-	trivial: 'var(--green)',
-	simple: 'var(--blue)',
-	complex: 'var(--amber)',
-	unclear: 'var(--red)',
-}
-
 const statusColors: Record<string, string> = {
 	queued: 'var(--text-3)',
 	processing: 'var(--blue)',
@@ -15,9 +8,8 @@ const statusColors: Record<string, string> = {
 	skipped: 'var(--text-3)',
 }
 
-export function StatusBadge({ value, type }: { value: string; type: 'tier' | 'status' }) {
-	const colors = type === 'tier' ? tierColors : statusColors
-	const color = colors[value] ?? 'var(--text-3)'
+export function StatusBadge({ value }: { value: string }) {
+	const color = statusColors[value] ?? 'var(--text-3)'
 
 	return (
 		<span

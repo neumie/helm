@@ -5,7 +5,6 @@ import { createProvider } from './providers/registry.js'
 import { TaskQueue } from './queue/queue.js'
 import { createApp } from './server/app.js'
 import { createSolver } from './solver/registry.js'
-import { startTunnel } from './tunnel.js'
 import { log } from './util/logger.js'
 
 async function main() {
@@ -51,22 +50,6 @@ async function main() {
 		queue.enqueue(id)
 	})
 
-	// Start Cloudflare tunnel if chat.tunnel is enabled
-	let stopTunnel: (() => void) | null = null
-	if (config.chat?.enabled && config.chat.tunnel) {
-		try {
-			const tunnel = await startTunnel(config.server.port)
-			config.chat.baseUrl = tunnel.url
-			stopTunnel = tunnel.stop
-			log.success('vigil', `Chat accessible at: ${tunnel.url}/chat/...`)
-		} catch (err) {
-			log.warn(
-				'vigil',
-				`Tunnel failed: ${err instanceof Error ? err.message : err} — chat links will use baseUrl from config`,
-			)
-		}
-	}
-
 	// Start API server
 	const app = createApp(config, configPath, db, queue, poller, provider, solver)
 	const { serve } = await import('@hono/node-server')
@@ -83,7 +66,6 @@ async function main() {
 	// Graceful shutdown
 	const shutdown = () => {
 		log.info('vigil', 'Shutting down...')
-		stopTunnel?.()
 		poller.stop()
 		queue.stop()
 		db.close()

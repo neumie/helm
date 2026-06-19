@@ -12,13 +12,6 @@ const STATUS_TONE: Record<string, Tone> = {
 	skipped: 'gray',
 }
 
-const TIER_TONE: Record<string, Tone> = {
-	trivial: 'green',
-	simple: 'blue',
-	complex: 'amber',
-	unclear: 'red',
-}
-
 const toneOf = (map: Record<string, Tone>, key: string | null | undefined): Tone => (key && map[key]) || 'gray'
 
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -372,9 +365,6 @@ function Card(props: {
 									<div class="vg-card__id">
 										<Dot tone={statusTone()} pulse={isProcessing()} />
 										<span class="vg-card__status">{titleCase(task().status)}</span>
-										<Show when={task().tier}>
-											{tier => <span class={`vg-chip chip-${toneOf(TIER_TONE, tier())}`}>{tier()}</span>}
-										</Show>
 									</div>
 									<div class="vg-card__hactions">
 										<Show when={props.dashboardUrl()}>

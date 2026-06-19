@@ -55,22 +55,6 @@ export const configSchema = z.object({
 			prPrefix: z.string().default('[Vigil]'),
 		})
 		.default({}),
-	chat: z
-		.object({
-			enabled: z.boolean().default(false),
-			secret: z.string().min(16),
-			expiryDays: z.number().min(1).default(7),
-			baseUrl: z.string().url().optional(),
-			tunnel: z.boolean().default(false),
-			timeoutMinutes: z.number().min(1).default(120),
-			webhook: z
-				.object({
-					url: z.string().url(),
-					headers: z.record(z.string()).optional(),
-				})
-				.optional(),
-		})
-		.optional(),
 })
 
 export type VigilConfig = z.infer<typeof configSchema>

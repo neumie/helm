@@ -144,7 +144,7 @@ async function run(): Promise<void> {
 		console.error(`Task ${task.id} disappeared during processing`)
 		process.exit(1)
 	}
-	console.log(`\nResult: ${result.status}${result.tier ? ` (${result.tier})` : ''}`)
+	console.log(`\nResult: ${result.status}`)
 	if (result.solverSummary) console.log(`Summary: ${result.solverSummary}`)
 	if (result.prUrl) console.log(`PR: ${result.prUrl}`)
 	if (result.errorMessage) console.log(`Error: ${result.errorMessage}`)

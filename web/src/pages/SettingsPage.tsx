@@ -84,7 +84,6 @@ export function SettingsPage() {
 	const solver = config.solver as Record<string, unknown> | undefined
 	const server = config.server as Record<string, unknown> | undefined
 	const github = config.github as Record<string, unknown> | undefined
-	const chat = config.chat as Record<string, unknown> | undefined
 
 	return (
 		<div style={{ maxWidth: 680, margin: '0 auto', padding: '32px 24px' }}>
@@ -351,57 +350,6 @@ export function SettingsPage() {
 					value={String(github?.prPrefix ?? '[Vigil]')}
 					onChange={v => update(['github', 'prPrefix'], v)}
 				/>
-			</Card>
-
-			{/* Chat */}
-			<Card title="Chat" description="Clarification chat with task requesters">
-				<Toggle
-					label="Enabled"
-					value={Boolean(chat?.enabled)}
-					onChange={v => {
-						if (v && !chat) {
-							update(['chat'], { enabled: true, secret: '', expiryDays: 7, timeoutMinutes: 120, tunnel: false })
-						} else {
-							update(['chat', 'enabled'], v)
-						}
-					}}
-				/>
-				{Boolean(chat?.enabled) && (
-					<>
-						<Field
-							label="Secret"
-							value={String(chat?.secret ?? '')}
-							onChange={v => update(['chat', 'secret'], v)}
-							type="password"
-							required
-							placeholder="Min 16 characters"
-						/>
-						<Field
-							label="Base URL"
-							value={String(chat?.baseUrl ?? '')}
-							onChange={v => update(['chat', 'baseUrl'], v || undefined)}
-							placeholder="(auto if tunnel enabled)"
-						/>
-						<Toggle
-							label="Tunnel"
-							value={Boolean(chat?.tunnel)}
-							onChange={v => update(['chat', 'tunnel'], v)}
-							description="Auto-expose via Cloudflare Tunnel"
-						/>
-						<Field
-							label="Expiry (days)"
-							value={String(chat?.expiryDays ?? 7)}
-							onChange={v => update(['chat', 'expiryDays'], Number(v))}
-							type="number"
-						/>
-						<Field
-							label="Timeout (min)"
-							value={String(chat?.timeoutMinutes ?? 120)}
-							onChange={v => update(['chat', 'timeoutMinutes'], Number(v))}
-							type="number"
-						/>
-					</>
-				)}
 			</Card>
 
 			{/* Bottom spacing */}

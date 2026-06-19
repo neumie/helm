@@ -6,9 +6,7 @@ export interface TaskRecord {
 	projectSlug: string
 	title: string
 	status: string
-	tier: string | null
 	solverSummary: string | null
-	solverConfidence: number | null
 	solverAgent: SolverAgent | null
 	prUrl: string | null
 	prDraft: number | null
@@ -78,7 +76,6 @@ export const api = {
 	plan: (id: string, solverAgent?: SolverAgent) => postAPI<PlanInfo>(`/tasks/${id}/plan`, { solverAgent }),
 	setStatus: (id: string, status: string) => postAPI<{ message: string }>(`/tasks/${id}/status`, { status }),
 	deleteTask: (id: string) => deleteAPI<{ message: string }>(`/tasks/${id}`),
-	resumeQueue: () => postAPI<{ paused: boolean }>('/queue/resume'),
 	config: () =>
 		fetchAPI<{ projects: Array<{ slug: string }>; solver?: { agent?: SolverAgent; type?: 'default' | 'okena' } }>(
 			'/config',

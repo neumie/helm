@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import Database from 'better-sqlite3'
-import type { ChatMessage, ChatSession, EventLogEntry, PollState, TaskRecord } from '../types.js'
+import type { EventLogEntry, PollState, TaskRecord } from '../types.js'
 import { MIGRATIONS } from './schema.js'
 import { TASK_COLUMNS, rowToTaskRecord } from './task-schema.js'
 
@@ -52,10 +51,6 @@ export class DB {
 
 	deleteTask(id: string): void {
 		this.db.prepare('DELETE FROM event_log WHERE task_id = ?').run(id)
-		this.db
-			.prepare('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE task_id = ?)')
-			.run(id)
-		this.db.prepare('DELETE FROM chat_sessions WHERE task_id = ?').run(id)
 		this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
 	}
 
@@ -168,106 +163,6 @@ export class DB {
 			payload: (r.payload as string) ?? null,
 			createdAt: r.created_at as string,
 		}))
-	}
-
-	// Stats
-	getStats(): Record<string, number> {
-		const rows = this.db.prepare('SELECT status, COUNT(*) as count FROM tasks GROUP BY status').all() as {
-			status: string
-			count: number
-		}[]
-		const stats: Record<string, number> = {}
-		for (const r of rows) stats[r.status] = r.count
-		return stats
-	}
-
-	// Chat sessions
-	createChatSession(taskId: string, token: string): ChatSession {
-		const id = randomUUID()
-		const now = new Date().toISOString()
-		this.db.prepare('INSERT INTO chat_sessions (id, task_id, token) VALUES (?, ?, ?)').run(id, taskId, token)
-		return { id, taskId, token, status: 'active', createdAt: now, completedAt: null }
-	}
-
-	getChatSession(sessionId: string): ChatSession | null {
-		const row = this.db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(sessionId) as
-			| Record<string, unknown>
-			| undefined
-		return row ? this.mapChatSessionRow(row) : null
-	}
-
-	getChatSessionByToken(token: string): ChatSession | null {
-		const row = this.db.prepare('SELECT * FROM chat_sessions WHERE token = ?').get(token) as
-			| Record<string, unknown>
-			| undefined
-		return row ? this.mapChatSessionRow(row) : null
-	}
-
-	getChatSessionsByTaskId(taskId: string): ChatSession[] {
-		const rows = this.db
-			.prepare('SELECT * FROM chat_sessions WHERE task_id = ? ORDER BY created_at DESC')
-			.all(taskId) as Record<string, unknown>[]
-		return rows.map(r => this.mapChatSessionRow(r))
-	}
-
-	completeChatSession(sessionId: string): void {
-		this.db
-			.prepare("UPDATE chat_sessions SET status = 'completed', completed_at = datetime('now') WHERE id = ?")
-			.run(sessionId)
-	}
-
-	private mapChatSessionRow(row: Record<string, unknown>): ChatSession {
-		return {
-			id: row.id as string,
-			taskId: row.task_id as string,
-			token: row.token as string,
-			status: row.status as ChatSession['status'],
-			createdAt: row.created_at as string,
-			completedAt: (row.completed_at as string) ?? null,
-		}
-	}
-
-	// Chat messages
-	addChatMessage(sessionId: string, role: 'assistant' | 'user', content: string): string {
-		const id = randomUUID()
-		this.db
-			.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
-			.run(id, sessionId, role, content)
-		return id
-	}
-
-	getChatMessages(sessionId: string): ChatMessage[] {
-		const rows = this.db
-			.prepare('SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC')
-			.all(sessionId) as Record<string, unknown>[]
-		return rows.map(r => this.mapChatMessageRow(r))
-	}
-
-	getNewUserMessages(sessionId: string, afterId: string | null): ChatMessage[] {
-		const rows = afterId
-			? (this.db
-					.prepare(
-						`SELECT * FROM chat_messages
-					 WHERE session_id = ? AND role = 'user' AND created_at > (
-					   SELECT created_at FROM chat_messages WHERE id = ?
-					 )
-					 ORDER BY created_at ASC`,
-					)
-					.all(sessionId, afterId) as Record<string, unknown>[])
-			: (this.db
-					.prepare("SELECT * FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY created_at ASC")
-					.all(sessionId) as Record<string, unknown>[])
-		return rows.map(r => this.mapChatMessageRow(r))
-	}
-
-	private mapChatMessageRow(row: Record<string, unknown>): ChatMessage {
-		return {
-			id: row.id as string,
-			sessionId: row.session_id as string,
-			role: row.role as ChatMessage['role'],
-			content: row.content as string,
-			createdAt: row.created_at as string,
-		}
 	}
 
 	close(): void {

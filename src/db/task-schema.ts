@@ -22,7 +22,6 @@ export const taskStatusSchema = z.enum([
 	'cancelled',
 	'skipped',
 ])
-export const tierSchema = z.enum(['trivial', 'simple', 'complex', 'unclear'])
 export const errorPhaseSchema = z.enum(['poll', 'worktree', 'solve', 'action'])
 
 /** Statuses a user may set manually (subset of TaskStatus — excludes queued/processing). */
@@ -34,10 +33,8 @@ export const taskRecordSchema = z.object({
 	projectSlug: z.string(),
 	title: z.string(),
 	status: taskStatusSchema,
-	tier: tierSchema.nullable(),
 	taskContext: z.string().nullable(),
 	solverSummary: z.string().nullable(),
-	solverConfidence: z.number().nullable(),
 	filesChanged: z.string().nullable(),
 	solverRawResult: z.string().nullable(),
 	solverAgent: solverAgentSchema.nullable(),
@@ -58,7 +55,6 @@ export const taskRecordSchema = z.object({
 
 export type TaskRecord = z.infer<typeof taskRecordSchema>
 export type TaskStatus = z.infer<typeof taskStatusSchema>
-export type Tier = z.infer<typeof tierSchema>
 export type ErrorPhase = z.infer<typeof errorPhaseSchema>
 
 /** camelCase → snake_case. Pure function; the only "mapping" the DB needs. */

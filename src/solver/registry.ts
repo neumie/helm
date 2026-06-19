@@ -27,5 +27,5 @@ export async function createSolver(config: VigilConfig): Promise<Solver> {
 		return createOkenaSolver(config)
 	}
 
-	return new DefaultSolver(config)
+	return new DefaultSolver()
 }

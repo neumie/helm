@@ -113,7 +113,7 @@ function formatEvent(type: string, payload: Record<string, unknown> | null): str
 		case 'task_discovered':
 			return `Discovered: ${payload.title ?? '?'}`
 		case 'solver_completed':
-			return `Assessment: ${payload.tier} (confidence: ${payload.confidence})`
+			return `Solve complete${payload.summary ? `: ${payload.summary}` : ''}`
 		case 'solver_failed':
 			return `Failed (${payload.phase ?? '?'}): ${payload.error ?? '?'}`
 		case 'task_cancelled':

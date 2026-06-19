@@ -4,7 +4,6 @@ import type { TaskProvider } from '../providers/provider.js'
 import type { SolverResult, TaskRecord } from '../types.js'
 import { log } from '../util/logger.js'
 import { pushBranch } from '../worktree/manager.js'
-import { clarificationComment, partialSolutionComment } from './comment-format.js'
 import { createPR } from './pr-creator.js'
 
 export async function dispatch(
@@ -29,55 +28,8 @@ export async function dispatch(
 		return
 	}
 
-	switch (result.tier) {
-		case 'trivial':
-			await openPrAndRecord({
-				taskId,
-				db,
-				provider,
-				config,
-				projectConfig,
-				task,
-				worktreePath,
-				branchName,
-				result,
-				draft: false,
-				label: 'Solved (trivial)',
-			})
-			break
-
-		case 'simple':
-			await openPrAndRecord({
-				taskId,
-				db,
-				provider,
-				config,
-				projectConfig,
-				task,
-				worktreePath,
-				branchName,
-				result,
-				draft: true,
-				label: 'Solved (draft PR for review)',
-			})
-			break
-
-		case 'complex':
-			pushBranch(worktreePath, branchName)
-			if (config.github.postComments) {
-				await postCommentAndRecord(taskId, db, provider, task.clientcareId, partialSolutionComment(result, branchName))
-			}
-			break
-
-		case 'unclear':
-			if (config.github.postComments) {
-				await postCommentAndRecord(taskId, db, provider, task.clientcareId, clarificationComment(result))
-			}
-			break
-
-		default:
-			log.warn('dispatcher', `Unknown tier: ${result.tier}`)
-	}
+	// Agent didn't pre-ship — push the branch and open a PR ourselves.
+	await openPrAndRecord({ taskId, db, provider, config, projectConfig, task, worktreePath, branchName, result })
 }
 
 interface OpenPrArgs {
@@ -90,8 +42,6 @@ interface OpenPrArgs {
 	worktreePath: string
 	branchName: string
 	result: SolverResult
-	draft: boolean
-	label: string
 }
 
 /** Push the branch, open a PR (if enabled), record it, and post a comment. */
@@ -105,13 +55,13 @@ async function openPrAndRecord(a: OpenPrArgs): Promise<void> {
 		baseBranch: a.projectConfig.baseBranch,
 		title: `${a.config.github.prPrefix} ${a.result.prTitle ?? a.task.title}`,
 		body: a.result.prBody ?? a.result.summary,
-		draft: a.draft,
+		draft: false,
 	})
-	a.db.updateTask(a.taskId, { prUrl, prDraft: a.draft ? 1 : 0 })
-	a.db.insertEvent(a.taskId, 'pr_created', { url: prUrl, draft: a.draft })
+	a.db.updateTask(a.taskId, { prUrl, prDraft: 0 })
+	a.db.insertEvent(a.taskId, 'pr_created', { url: prUrl, draft: false })
 
 	if (a.config.github.postComments) {
-		await postCommentAndRecord(a.taskId, a.db, a.provider, a.task.clientcareId, `**Vigil**: ${a.label}. PR: ${prUrl}`)
+		await postCommentAndRecord(a.taskId, a.db, a.provider, a.task.clientcareId, `**Vigil**: Solved. PR: ${prUrl}`)
 	}
 }
 
