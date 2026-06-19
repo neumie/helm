@@ -1,14 +1,12 @@
 import { ContemberProvider, type ContemberProviderConfig } from './contember.js'
 import type { TaskProvider } from './provider.js'
 
-export type ProviderConfig = ContemberProviderConfig
-// Future: | GitHubProviderConfig | LinearProviderConfig
-
-export function createProvider(config: ProviderConfig): TaskProvider {
-	switch (config.type) {
-		case 'contember':
-			return new ContemberProvider(config)
-		default:
-			throw new Error(`Unknown provider type: ${(config as { type: string }).type}`)
-	}
+/**
+ * Single construction site for the active {@link TaskProvider}, mirroring
+ * `solver/registry.ts`. Only `contember` exists today; if a second provider is
+ * added, make `config.provider` a discriminated union (`config.ts`) and branch
+ * on `config.type` here.
+ */
+export function createProvider(config: ContemberProviderConfig): TaskProvider {
+	return new ContemberProvider(config)
 }

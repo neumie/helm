@@ -12,8 +12,9 @@ const contemberProviderSchema = z.object({
 	statuses: z.array(z.string()).default(['new']),
 })
 
-// Future providers go here as union members
-const providerSchema = z.discriminatedUnion('type', [contemberProviderSchema])
+// Only one provider exists. If a second is added, make this a
+// z.discriminatedUnion('type', [...]) again and branch in providers/registry.ts.
+const providerSchema = contemberProviderSchema
 
 const projectSchema = z.object({
 	slug: z.string(),

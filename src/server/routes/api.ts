@@ -7,6 +7,7 @@ import { configSchema } from '../../config.js'
 import type { VigilConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
 import { manualStatusSchema } from '../../db/task-schema.js'
+import type { TaskRecord } from '../../db/task-schema.js'
 import { resolveTaskWorkspace } from '../../plan/identity.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
@@ -15,6 +16,76 @@ import type { TaskQueue } from '../../queue/queue.js'
 import { solverAgentSchema } from '../../solver/agent.js'
 import type { SolverAgent } from '../../solver/agent.js'
 import type { Solver } from '../../solver/solver.js'
+
+/** Sanitized config shape for the dashboard. `src` is the on-disk JSON (to pick
+ *  up edits) or the in-memory config; `fallback` fills any missing field. */
+function sanitizeConfig(
+	src: { projects?: unknown; polling?: unknown; solver?: unknown; provider?: unknown },
+	fallback: VigilConfig,
+) {
+	const solver = (src.solver ?? {}) as Record<string, unknown>
+	const projects = (src.projects ?? fallback.projects) as Array<Record<string, unknown>>
+	const provider = src.provider as Record<string, unknown> | undefined
+	return {
+		projects: projects.map(p => ({
+			slug: p.slug,
+			repoPath: p.repoPath,
+			baseBranch: p.baseBranch ?? 'main',
+			color: p.color,
+		})),
+		polling: src.polling ?? fallback.polling,
+		solver: {
+			type: solver.type ?? fallback.solver.type,
+			agent: solver.agent ?? fallback.solver.agent,
+			concurrency: solver.concurrency ?? fallback.solver.concurrency,
+			model: solver.model ?? fallback.solver.model,
+			timeoutMinutes: solver.timeoutMinutes ?? fallback.solver.timeoutMinutes,
+		},
+		taskBaseUrl: provider?.taskBaseUrl ?? fallback.provider.taskBaseUrl,
+	}
+}
+
+/** Read a task's log file from `offset`. cwd is the daemon's startup dir (it
+ *  never chdirs), so `logs/` resolves correctly. Returns empty on any error. */
+function readLogTail(taskId: string, offset: number): { content: string; offset: number } {
+	const logPath = resolve(process.cwd(), 'logs', `${taskId}.log`)
+	try {
+		const fd = openSync(logPath, 'r')
+		try {
+			const size = fstatSync(fd).size
+			if (offset >= size) return { content: '', offset: size }
+			const buf = Buffer.alloc(size - offset)
+			readSync(fd, buf, 0, buf.length, offset)
+			return { content: buf.toString('utf-8'), offset: size }
+		} finally {
+			closeSync(fd)
+		}
+	} catch {
+		return { content: '', offset: 0 }
+	}
+}
+
+/** The README the user lands on in a freshly-prepared plan worktree. */
+function buildPlanReadmeBody(task: TaskRecord, branchName: string, planDirName: string): string {
+	return [
+		`# ${task.title}`,
+		'',
+		`**Status:** ${task.status}`,
+		`**Branch:** ${branchName}`,
+		`**Task ID:** ${task.externalId}`,
+		'',
+		'## Plan this task',
+		'',
+		'A planning agent has been started in this worktree. Tell it what you want to do, or invoke one of:',
+		'',
+		`- \`/grill-me ${planDirName}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
+		`- \`/grill-plan ${planDirName}\` — challenge the plan against the domain model.`,
+		'- `/prd-create` — once you have a brief, synthesize into `prd.md`.',
+		'',
+		'Anything committed under this directory is loaded into the autonomous solver prompt when the task runs.',
+		'',
+	].join('\n')
+}
 
 export function apiRoutes(
 	config: VigilConfig,
@@ -119,50 +190,13 @@ export function apiRoutes(
 		return c.json({ data: events })
 	})
 
-	// Config (sanitized, read from disk to pick up changes)
+	// Config (sanitized, read from disk to pick up changes; falls back to in-memory)
 	api.get('/config', c => {
 		try {
 			const raw = JSON.parse(readFileSync(configPath, 'utf-8'))
-			return c.json({
-				data: {
-					projects: (raw.projects ?? []).map((p: Record<string, unknown>) => ({
-						slug: p.slug,
-						repoPath: p.repoPath,
-						baseBranch: p.baseBranch ?? 'main',
-						color: p.color,
-					})),
-					polling: raw.polling ?? config.polling,
-					solver: {
-						type: raw.solver?.type ?? config.solver.type,
-						agent: raw.solver?.agent ?? config.solver.agent,
-						concurrency: raw.solver?.concurrency ?? config.solver.concurrency,
-						model: raw.solver?.model ?? config.solver.model,
-						timeoutMinutes: raw.solver?.timeoutMinutes ?? config.solver.timeoutMinutes,
-					},
-					taskBaseUrl: raw.provider?.taskBaseUrl,
-				},
-			})
+			return c.json({ data: sanitizeConfig(raw, config) })
 		} catch {
-			// Fallback to in-memory config if file read fails
-			return c.json({
-				data: {
-					projects: config.projects.map(p => ({
-						slug: p.slug,
-						repoPath: p.repoPath,
-						baseBranch: p.baseBranch,
-						color: p.color,
-					})),
-					polling: config.polling,
-					solver: {
-						type: config.solver.type,
-						agent: config.solver.agent,
-						concurrency: config.solver.concurrency,
-						model: config.solver.model,
-						timeoutMinutes: config.solver.timeoutMinutes,
-					},
-					taskBaseUrl: config.provider.type === 'contember' ? config.provider.taskBaseUrl : undefined,
-				},
-			})
+			return c.json({ data: sanitizeConfig(config, config) })
 		}
 	})
 
@@ -243,25 +277,7 @@ export function apiRoutes(
 		// Write a per-task README the user lands on. Records task identity +
 		// suggested next step. Overwritten on subsequent calls to keep it fresh.
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
-		const readmeBody = [
-			`# ${task.title}`,
-			'',
-			`**Status:** ${task.status}`,
-			`**Branch:** ${branchName}`,
-			`**Task ID:** ${task.externalId}`,
-			'',
-			'## Plan this task',
-			'',
-			'A planning agent has been started in this worktree. Tell it what you want to do, or invoke one of:',
-			'',
-			`- \`/grill-me ${planDirName}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
-			`- \`/grill-plan ${planDirName}\` — challenge the plan against the domain model.`,
-			'- `/prd-create` — once you have a brief, synthesize into `prd.md`.',
-			'',
-			'Anything committed under this directory is loaded into the autonomous solver prompt when the task runs.',
-			'',
-		].join('\n')
-		workspace.writeReadme(readmeBody)
+		workspace.writeReadme(buildPlanReadmeBody(task, branchName, planDirName))
 		const readmePath = workspace.readmePath
 
 		db.updateTask(task.id, { worktreePath, branchName, planDirName })
@@ -396,29 +412,9 @@ export function apiRoutes(
 		const task = db.getTask(c.req.param('id'))
 		if (!task) return c.json({ error: 'Not found' }, 404)
 
-		const logPath = resolve(process.cwd(), 'logs', `${c.req.param('id')}.log`)
 		const offset = Number(c.req.query('offset') ?? 0)
-
-		try {
-			const fd = openSync(logPath, 'r')
-			const stat = fstatSync(fd)
-			const size = stat.size
-
-			if (offset >= size) {
-				closeSync(fd)
-				return c.json({ data: { content: '', offset: size, done: task.status !== 'processing' } })
-			}
-
-			const buf = Buffer.alloc(size - offset)
-			readSync(fd, buf, 0, buf.length, offset)
-			closeSync(fd)
-
-			return c.json({
-				data: { content: buf.toString('utf-8'), offset: size, done: task.status !== 'processing' },
-			})
-		} catch {
-			return c.json({ data: { content: '', offset: 0, done: task.status !== 'processing' } })
-		}
+		const tail = readLogTail(c.req.param('id'), offset)
+		return c.json({ data: { ...tail, done: task.status !== 'processing' } })
 	})
 
 	// Pause/resume queue
