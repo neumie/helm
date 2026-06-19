@@ -17,10 +17,10 @@ Commands:
 
 const RUN_HELP = `Usage: vigil run <id> [--project <slug>]
 
-Run a single task by its Vigil task ID or external (clientcare) ID.
+Run a single task by its Vigil task ID or external ID.
 
 Arguments:
-  <id>                 Vigil task ID (UUID) or external clientcare ID
+  <id>                 Vigil task ID (UUID) or external ID
 
 Options:
   --project <slug>     Project slug (required when creating a new task)`
@@ -97,8 +97,8 @@ async function run(): Promise<void> {
 	// (previously the CLI swallowed an okena failure silently).
 	const solver = await createSolver(config)
 
-	// Look up task: first by task ID, then by clientcare ID
-	let task = db.getTask(id) ?? db.getTaskByClientcareId(id)
+	// Look up task: first by task ID, then by external ID
+	let task = db.getTask(id) ?? db.getTaskByExternalId(id)
 
 	if (task) {
 		console.log(`Found existing task: ${task.title} [${task.status}]`)
@@ -125,7 +125,7 @@ async function run(): Promise<void> {
 			console.error(`Task not found in source system: ${id}`)
 			process.exit(1)
 		}
-		db.insertTask({ id: taskId, clientcareId: id, projectSlug, title: context.title })
+		db.insertTask({ id: taskId, externalId: id, projectSlug, title: context.title })
 		db.insertEvent(taskId, 'task_discovered', { source: 'cli' })
 		const created = db.getTask(taskId)
 		if (!created) {

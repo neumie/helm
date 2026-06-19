@@ -27,7 +27,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 
 export interface TaskRecord {
 	id: string
-	clientcareId: string
+	externalId: string
 	projectSlug: string
 	title: string
 	status: string

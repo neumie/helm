@@ -29,7 +29,7 @@ export const manualStatusSchema = z.enum(['completed', 'review', 'failed', 'canc
 
 export const taskRecordSchema = z.object({
 	id: z.string(),
-	clientcareId: z.string(),
+	externalId: z.string(),
 	projectSlug: z.string(),
 	title: z.string(),
 	status: taskStatusSchema,

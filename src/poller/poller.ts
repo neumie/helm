@@ -64,12 +64,12 @@ export class Poller {
 		let latestCreatedAt = since
 
 		for (const task of tasks) {
-			if (this.db.taskExistsByClientcareId(task.externalId)) continue
+			if (this.db.taskExistsByExternalId(task.externalId)) continue
 
 			const id = randomUUID()
 			this.db.insertTask({
 				id,
-				clientcareId: task.externalId,
+				externalId: task.externalId,
 				projectSlug,
 				title: task.title,
 			})

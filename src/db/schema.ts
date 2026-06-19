@@ -91,4 +91,12 @@ ALTER TABLE tasks ADD COLUMN plan_dir_name TEXT;
 ALTER TABLE tasks ADD COLUMN solver_agent TEXT;
 `,
 	},
+	{
+		version: 5,
+		sql: `
+ALTER TABLE tasks RENAME COLUMN clientcare_id TO external_id;
+DROP INDEX idx_tasks_clientcare_id;
+CREATE INDEX idx_tasks_external_id ON tasks(external_id);
+`,
+	},
 ]

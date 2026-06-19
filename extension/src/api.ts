@@ -2,7 +2,7 @@ export type SolverAgent = 'claude' | 'codex'
 
 export interface TaskRecord {
 	id: string
-	clientcareId: string
+	externalId: string
 	projectSlug: string
 	title: string
 	status: string
@@ -65,10 +65,10 @@ export interface PlanInfo {
 }
 
 export const api = {
-	findTask: (clientcareId: string) => fetchAPI<TaskRecord | null>(`/tasks/by-clientcare-id/${clientcareId}`),
+	findTask: (externalId: string) => fetchAPI<TaskRecord | null>(`/tasks/by-external-id/${externalId}`),
 
-	createTask: (clientcareId: string, solverAgent?: SolverAgent) =>
-		postAPI<TaskRecord>('/tasks', { clientcareId, solverAgent }),
+	createTask: (externalId: string, solverAgent?: SolverAgent) =>
+		postAPI<TaskRecord>('/tasks', { externalId, solverAgent }),
 
 	start: (id: string, solverAgent?: SolverAgent) => postAPI<{ message: string }>(`/tasks/${id}/start`, { solverAgent }),
 	retry: (id: string, solverAgent?: SolverAgent) => postAPI<{ message: string }>(`/tasks/${id}/retry`, { solverAgent }),

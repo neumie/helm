@@ -37,16 +37,16 @@ export class DB {
 	// Tasks
 	insertTask(task: {
 		id: string
-		clientcareId: string
+		externalId: string
 		projectSlug: string
 		title: string
 		solverAgent?: string
 	}): void {
 		this.db
 			.prepare(
-				'INSERT OR IGNORE INTO tasks (id, clientcare_id, project_slug, title, solver_agent) VALUES (?, ?, ?, ?, ?)',
+				'INSERT OR IGNORE INTO tasks (id, external_id, project_slug, title, solver_agent) VALUES (?, ?, ?, ?, ?)',
 			)
-			.run(task.id, task.clientcareId, task.projectSlug, task.title, task.solverAgent ?? null)
+			.run(task.id, task.externalId, task.projectSlug, task.title, task.solverAgent ?? null)
 	}
 
 	deleteTask(id: string): void {
@@ -54,8 +54,8 @@ export class DB {
 		this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
 	}
 
-	taskExistsByClientcareId(clientcareId: string): boolean {
-		const row = this.db.prepare('SELECT 1 FROM tasks WHERE clientcare_id = ?').get(clientcareId)
+	taskExistsByExternalId(externalId: string): boolean {
+		const row = this.db.prepare('SELECT 1 FROM tasks WHERE external_id = ?').get(externalId)
 		return !!row
 	}
 
@@ -64,8 +64,8 @@ export class DB {
 		return row ? this.mapTaskRow(row) : null
 	}
 
-	getTaskByClientcareId(clientcareId: string): TaskRecord | null {
-		const row = this.db.prepare('SELECT * FROM tasks WHERE clientcare_id = ?').get(clientcareId) as
+	getTaskByExternalId(externalId: string): TaskRecord | null {
+		const row = this.db.prepare('SELECT * FROM tasks WHERE external_id = ?').get(externalId) as
 			| Record<string, unknown>
 			| undefined
 		return row ? this.mapTaskRow(row) : null

@@ -53,7 +53,7 @@ export function TaskDetail({ task, taskBaseUrl, onStart, onRetry, onCancel, onSe
 
 				{taskBaseUrl && (
 					<a
-						href={`${taskBaseUrl}${task.clientcareId}`}
+						href={`${taskBaseUrl}${task.externalId}`}
 						target="_blank"
 						rel="noreferrer"
 						style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}

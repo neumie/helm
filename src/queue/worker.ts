@@ -38,7 +38,7 @@ export async function processTask(
 	try {
 		// Phase 1: Fetch full context via provider
 		log.info('worker', `Fetching context for task: ${task.title}`)
-		const taskContext = await provider.getTaskContext(task.clientcareId)
+		const taskContext = await provider.getTaskContext(task.externalId)
 
 		if (!taskContext) {
 			throw phaseError('poll', 'Task not found in source system')

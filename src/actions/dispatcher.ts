@@ -61,7 +61,7 @@ async function openPrAndRecord(a: OpenPrArgs): Promise<void> {
 	a.db.insertEvent(a.taskId, 'pr_created', { url: prUrl, draft: false })
 
 	if (a.config.github.postComments) {
-		await postCommentAndRecord(a.taskId, a.db, a.provider, a.task.clientcareId, `**Vigil**: Solved. PR: ${prUrl}`)
+		await postCommentAndRecord(a.taskId, a.db, a.provider, a.task.externalId, `**Vigil**: Solved. PR: ${prUrl}`)
 	}
 }
 
