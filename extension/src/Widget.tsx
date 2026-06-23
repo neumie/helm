@@ -487,6 +487,11 @@ function Card(props: {
 									<LinkLine label="Source" link={item().links.source} />
 									<LinkLine label="Branch" link={item().links.branch} />
 									<LinkLine label="PR" link={item().links.pr} />
+									<AgentSelect
+										value={props.solverAgent}
+										onChange={props.onSolverAgentChange}
+										disabled={isProcessing()}
+									/>
 									<For each={itemRunNotices(item())}>
 										{notice => (
 											<div class={notice.kind === 'failure' ? 'vg-error' : 'vg-summary'}>
