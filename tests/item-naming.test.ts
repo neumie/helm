@@ -75,6 +75,12 @@ test('parseBranchName prefers the last conventional line (codex echoes a name th
 	assert.deepEqual(parseBranchName(raw), { type: 'feat', descriptionSlug: 'add-real-answer' })
 })
 
+test('parseBranchName takes the last answer across match shapes (clean preamble then labeled answer)', () => {
+	// Earlier clean whole-line name, later labeled/trailing answer — the last wins.
+	const raw = ['feat/old', 'Branch name: fix/new'].join('\n')
+	assert.deepEqual(parseBranchName(raw), { type: 'fix', descriptionSlug: 'new' })
+})
+
 test('parseBranchName ignores a slash buried in prose with a non-standard type', () => {
 	assert.equal(parseBranchName('handle the and/or case here'), null)
 })
@@ -96,7 +102,6 @@ test('ensureItemWorkspaceName persists and returns a derived branch and plan dir
 
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -123,7 +128,6 @@ test('ensureItemWorkspaceName clamps an over-long model name to the whole-name b
 		const longName = `refactor/${'extract-shared-validation-helpers-and-consolidate-everything'}`
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -146,7 +150,6 @@ test('ensureItemWorkspaceName appends the id suffix on collision', () =>
 
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -162,6 +165,34 @@ test('ensureItemWorkspaceName appends the id suffix on collision', () =>
 		assert.notEqual(result.branchName, 'feat/fix-login-redirect')
 	}))
 
+test('ensureItemWorkspaceName skips loop (ralph/harden) Items', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createRalphItem({ title: 'payments loop', projectSlug: 'vigil', prdPath: 'docs/prd/pay.md' })
+
+		let called = false
+		const result = await ensureItemWorkspaceName({
+			commands,
+			item,
+			taskContext,
+			config,
+			repoPath: '/repo',
+			agent: 'claude',
+			deps: {
+				runOneShot: async () => {
+					called = true
+					return 'feat/x'
+				},
+				branchExists: () => false,
+			},
+		})
+
+		assert.equal(called, false)
+		assert.equal(result.branchName, null)
+		assert.match(resolveItemWorkspace(result).branchName, /^vigil\/item\//)
+	}))
+
 test('ensureItemWorkspaceName is a no-op when disabled', () =>
 	withTempDb(async db => {
 		const config = makeConfig({ enabled: false })
@@ -171,7 +202,6 @@ test('ensureItemWorkspaceName is a no-op when disabled', () =>
 		let called = false
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -199,7 +229,6 @@ test('ensureItemWorkspaceName leaves the default when the model returns nothing'
 
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -220,7 +249,6 @@ test('ensureItemWorkspaceName swallows model errors and returns the input Item',
 
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,
@@ -247,7 +275,6 @@ test('ensureItemWorkspaceName re-throws cancellation so the pipeline aborts prom
 		await assert.rejects(
 			ensureItemWorkspaceName({
 				commands,
-				store: db.items,
 				item,
 				taskContext,
 				config,
@@ -276,7 +303,6 @@ test('ensureItemWorkspaceName does not override an already-named Item', () =>
 
 		const result = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item: preset,
 			taskContext,
 			config,

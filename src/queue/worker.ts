@@ -85,7 +85,6 @@ export async function processSolveItem(
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
 		const named = await ensureItemWorkspaceName({
 			commands,
-			store: db.items,
 			item,
 			taskContext,
 			config,

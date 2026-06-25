@@ -474,11 +474,24 @@ export class ItemCommands {
 	 * overrides a name the user has committed to. Writes no event — naming is
 	 * identity seeding, not a lifecycle transition; `resolveItemWorkspace` reads
 	 * the persisted columns via its `??` defaults.
+	 *
+	 * Owns the uniqueness reservation: the DB existence check, the suffix decision,
+	 * and the write all run synchronously here (better-sqlite3 is synchronous, no
+	 * await between them), so the reservation is atomic w.r.t. the single-threaded
+	 * event loop — two concurrent solves that derive the same `base` can't both
+	 * observe it as free before either persists; the second sees the first's row
+	 * and falls back to `base-suffix`. `gitTaken` is the caller's (non-transactional)
+	 * git-ref check folded in.
 	 */
-	recordDerivedWorkspaceName(id: string, fields: { branchName: string; planDirName: string }): ItemRecord {
+	recordDerivedWorkspaceName(
+		id: string,
+		fields: { base: string; suffix: string; planDirName: string; gitTaken: boolean },
+	): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.branchName) return item
-		return this.store.update(id, { branchName: fields.branchName, planDirName: fields.planDirName })
+		const taken = fields.gitTaken || this.store.branchNameExists(fields.base, id)
+		const branchName = taken ? `${fields.base}-${fields.suffix}` : fields.base
+		return this.store.update(id, { branchName, planDirName: fields.planDirName })
 	}
 
 	recordExecutionWorkspaceIdentity(

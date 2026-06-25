@@ -467,7 +467,6 @@ export function apiRoutes(
 		try {
 			named = await ensureItemWorkspaceName({
 				commands: itemCommands,
-				store: db.items,
 				item,
 				taskContext,
 				config,

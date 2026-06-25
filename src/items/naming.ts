@@ -10,7 +10,6 @@ import { localBranchExists, remoteBranchExists } from '../worktree/manager.js'
 import type { ItemCommands } from './commands.js'
 import { derivedItemPlanDirName, itemSuffix } from './identity.js'
 import type { ItemRecord } from './schema.js'
-import type { ItemStore } from './store.js'
 
 const ALLOWED_TYPES = new Set([
 	'feat',
@@ -70,11 +69,11 @@ const WHOLE_TOKEN = /^([a-z]+)\/([a-z0-9][a-z0-9-]*)$/
 /**
  * Pull a `<type>/<slug>` branch name out of raw model stdout. Scans bottom-up —
  * the model's branch name is its last meaningful line; agent preamble/log noise
- * (codex) precedes it, so the last match is the answer. Priority: a clean whole-
- * line conventional name, else a conventional token sharing a line with extra
- * text, else a whole-line token with a non-standard type (slug kept, type
- * dropped). Returns `null` when nothing branch-shaped is found so the caller can
- * fall back to the deterministic default.
+ * (codex) precedes it. Preference is purely positional: the FIRST allowed-type
+ * token found scanning upward (= the last in the output) wins, regardless of
+ * whether it's a clean whole line or shares a line with trailing text. A
+ * whole-line token with a non-standard type is a weak last-resort fallback (slug
+ * kept, type dropped). Returns `null` when nothing branch-shaped is found.
  */
 export function parseBranchName(raw: string): ParsedName | null {
 	const lines = raw
@@ -82,28 +81,29 @@ export function parseBranchName(raw: string): ParsedName | null {
 		.map(l => l.trim().toLowerCase())
 		.filter(Boolean)
 
-	let wholeAllowed: ParsedName | null = null
-	let looseAllowed: ParsedName | null = null
-	let wholeUnknown: ParsedName | null = null
-
+	let unknownFallback: ParsedName | null = null
 	for (let i = lines.length - 1; i >= 0; i--) {
 		const line = lines[i]
-		const whole = line.match(WHOLE_TOKEN)
-		if (whole) {
-			const slug = slugify(whole[2])
-			if (slug) {
-				if (ALLOWED_TYPES.has(whole[1])) wholeAllowed ??= { type: whole[1], descriptionSlug: slug }
-				else wholeUnknown ??= { descriptionSlug: slug }
-			}
-		}
+		// Allowed-type token anywhere on the line (tolerates trailing text). The
+		// first one found bottom-up is the model's last answer line — positional
+		// preference beats match shape, so a later labeled/trailing answer wins
+		// over an earlier clean preamble line.
 		const loose = line.match(NAME_TOKEN)
 		if (loose && ALLOWED_TYPES.has(loose[1])) {
 			const slug = slugify(loose[2])
-			if (slug) looseAllowed ??= { type: loose[1], descriptionSlug: slug }
+			if (slug) return { type: loose[1], descriptionSlug: slug }
+		}
+		// Require the WHOLE line for a non-standard type so a slash buried in prose
+		// (e.g. "and/or") is ignored; keep the last such line as a weak fallback.
+		if (!unknownFallback) {
+			const whole = line.match(WHOLE_TOKEN)
+			if (whole && !ALLOWED_TYPES.has(whole[1])) {
+				const slug = slugify(whole[2])
+				if (slug) unknownFallback = { descriptionSlug: slug }
+			}
 		}
 	}
-
-	return wholeAllowed ?? looseAllowed ?? wholeUnknown
+	return unknownFallback
 }
 
 /** Trim a slug to `max` chars without leaving a trailing hyphen. */
@@ -120,7 +120,6 @@ export interface EnsureItemNameDeps {
 
 export interface EnsureItemNameParams {
 	commands: ItemCommands
-	store: ItemStore
 	item: ItemRecord
 	taskContext: TaskContext
 	config: VigilConfig
@@ -142,8 +141,11 @@ export interface EnsureItemNameParams {
  * pipeline's abort-aware catch); nothing else throws.
  */
 export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Promise<ItemRecord> {
-	const { commands, store, item, taskContext, config, repoPath, agent, signal, deps } = params
+	const { commands, item, taskContext, config, repoPath, agent, signal, deps } = params
 	if (!config.solver.nameModel.enabled) return item
+	// Solve-only: enforced here (not just at call sites) so the plan route can't
+	// name a ralph/harden Item — loop Items keep the deterministic vigil/item name.
+	if (item.kind !== 'solve') return item
 	if (item.branchName) return item // already planned / forked / named
 
 	try {
@@ -160,23 +162,27 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 		const parsed = parseBranchName(raw)
 		if (!parsed) return item
 
-		const isTaken =
-			deps?.branchExists ??
-			((branch: string) =>
-				localBranchExists(repoPath, branch) ||
-				remoteBranchExists(repoPath, branch) ||
-				store.branchNameExists(branch, item.id))
-
 		// Clamp the slug so the assembled `type/slug` honors the whole-name budget
 		// the prompt advertises (the model's answer is untrusted and may be long).
 		const prefix = parsed.type ? `${parsed.type}/` : ''
 		const descriptionSlug = clampSlug(parsed.descriptionSlug, Math.max(8, MAX_BRANCH_LEN - prefix.length))
 		const base = `${prefix}${descriptionSlug}`
-		const branchName = isTaken(base) ? `${base}-${itemSuffix(item)}` : base
 		const planDirName = derivedItemPlanDirName(item, descriptionSlug)
 
-		const named = commands.recordDerivedWorkspaceName(item.id, { branchName, planDirName })
-		log.info('naming', `Derived branch name for Item ${item.id}: ${branchName} (${agent}/${model})`)
+		// Git existence is checked here (not transactional); the DB existence check +
+		// suffix decision + write happen atomically inside recordDerivedWorkspaceName
+		// so two concurrent solves can't both reserve the same derived branch.
+		const gitTaken = deps?.branchExists
+			? deps.branchExists(base)
+			: localBranchExists(repoPath, base) || remoteBranchExists(repoPath, base)
+
+		const named = commands.recordDerivedWorkspaceName(item.id, {
+			base,
+			suffix: itemSuffix(item),
+			planDirName,
+			gitTaken,
+		})
+		log.info('naming', `Derived branch name for Item ${item.id}: ${named.branchName} (${agent}/${model})`)
 		return named
 	} catch (err) {
 		if (isCancellation(err, signal)) throw err
