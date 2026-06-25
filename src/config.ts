@@ -48,6 +48,16 @@ export const configSchema = z.object({
 			model: z.string().optional(),
 			maxBudgetUsd: z.number().optional(),
 			timeoutMinutes: z.number().min(1).default(30),
+			// Opt-in: derive a conventional branch name (feat/…, fix/…) from task
+			// context via a cheap one-shot model call. `model` overrides the per-agent
+			// default (claude → claude-haiku-4-5, codex → gpt-5-mini). Any failure
+			// degrades to the deterministic vigil/item/<slug> default.
+			nameModel: z
+				.object({
+					enabled: z.boolean().default(false),
+					model: z.string().optional(),
+				})
+				.default({}),
 		})
 		.default({}),
 	spawner: spawnerSchema,

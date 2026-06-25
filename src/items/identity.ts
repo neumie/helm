@@ -15,8 +15,19 @@ function createdAtDate(item: ItemRecord): Date {
 	return Number.isNaN(date.getTime()) ? new Date() : date
 }
 
-function itemSuffix(item: ItemRecord): string {
+/** Deterministic 8-char disambiguator derived from the Item id. */
+export function itemSuffix(item: ItemRecord): string {
 	return slugify(item.id, 8) || 'item'
+}
+
+/**
+ * Plan-dir name for a model-derived slug, keeping the existing default shape
+ * (`<date>-<slug>-<suffix>`) so plan dirs stay date-sortable and unique. Only the
+ * slug source changes (AI summary instead of the title). Lives here so all Item
+ * identity construction stays in one module.
+ */
+export function derivedItemPlanDirName(item: ItemRecord, slug: string): string {
+	return `${computePlanDirName(slug, createdAtDate(item))}-${itemSuffix(item)}`
 }
 
 /**

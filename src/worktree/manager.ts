@@ -14,6 +14,11 @@ function gitRefExists(repoPath: string, ref: string): boolean {
 	}
 }
 
+/** True if a local branch with this name already exists in the repo. */
+export function localBranchExists(repoPath: string, branchName: string): boolean {
+	return gitRefExists(repoPath, `refs/heads/${branchName}`)
+}
+
 export function resolveWorktreeStartPoint(repoPath: string, baseRef: string): string {
 	try {
 		execFileSync('git', ['fetch', 'origin', baseRef], { cwd: repoPath, stdio: 'pipe' })

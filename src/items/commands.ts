@@ -466,6 +466,21 @@ export class ItemCommands {
 		this.store.insertEvent(id, 'action_completed')
 	}
 
+	/**
+	 * Seed a model-derived branch/plan-dir name before the worktree is created.
+	 * Status-agnostic (naming happens at plan time on a queued/planned Item and at
+	 * run time on a processing Item) and idempotent: a no-op if the Item already
+	 * carries a `branchName` (planned, forked, or already named), so it never
+	 * overrides a name the user has committed to. Writes no event — naming is
+	 * identity seeding, not a lifecycle transition; `resolveItemWorkspace` reads
+	 * the persisted columns via its `??` defaults.
+	 */
+	recordDerivedWorkspaceName(id: string, fields: { branchName: string; planDirName: string }): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.branchName) return item
+		return this.store.update(id, { branchName: fields.branchName, planDirName: fields.planDirName })
+	}
+
 	recordExecutionWorkspaceIdentity(
 		id: string,
 		fields: {

@@ -240,6 +240,15 @@ export class ItemStore {
 		return rows.map(row => this.rowToItem(row))
 	}
 
+	branchNameExists(branchName: string, exceptId?: string): boolean {
+		const row = exceptId
+			? this.db
+					.prepare('SELECT COUNT(*) AS count FROM items WHERE branch_name = ? AND id != ?')
+					.get(branchName, exceptId)
+			: this.db.prepare('SELECT COUNT(*) AS count FROM items WHERE branch_name = ?').get(branchName)
+		return (row as { count: number }).count > 0
+	}
+
 	countQueuedByKind(kind: ItemKind): number {
 		const row = this.db
 			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'queued' AND kind = ?")

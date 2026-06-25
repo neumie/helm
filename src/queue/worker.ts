@@ -6,6 +6,7 @@ import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import { buildItemTaskContext } from '../items/context.js'
 import { resolveItemWorkspace } from '../items/identity.js'
+import { ensureItemWorkspaceName } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
 import { resolveTaskWorkspace } from '../plan/identity.js'
 import { PlanWorkspace } from '../plan/workspace.js'
@@ -81,9 +82,22 @@ export async function processSolveItem(
 		log.info('worker', `Building context for solve Item: ${item.title}`)
 		const taskContext = await buildSolveItemTaskContext(item, provider)
 
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
-		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
+		await ensureItemWorkspaceName({
+			commands,
+			store: db.items,
+			item,
+			taskContext,
+			config,
+			repoPath: projectConfig.repoPath,
+			agent: selectedAgent ?? config.solver.agent,
+			signal,
+		})
+
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
+			commands.getItem(itemId) ?? item,
+		)
+		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const solverConfig = { ...config.solver, agent: selectedAgent ?? config.solver.agent }
 
 		const { worktreePath, outcome } = await solver.solve({
@@ -174,7 +188,18 @@ export async function processLoopItem(
 	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
 
 	try {
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
+		await ensureItemWorkspaceName({
+			commands,
+			store: db.items,
+			item,
+			taskContext: buildItemTaskContext(item),
+			config,
+			repoPath: projectConfig.repoPath,
+			signal,
+		})
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
+			commands.getItem(itemId) ?? item,
+		)
 		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const worktreePath = ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
 		commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })

@@ -198,6 +198,19 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 					input: 'text',
 					placeholder: 'Agent model override (optional)',
 				},
+				{
+					type: 'field',
+					path: ['solver', 'nameModel', 'enabled'],
+					label: 'AI Branch Naming',
+					input: 'boolean',
+				},
+				{
+					type: 'field',
+					path: ['solver', 'nameModel', 'model'],
+					label: 'Naming Model',
+					input: 'text',
+					placeholder: 'claude-haiku-4-5 / gpt-5-mini (optional)',
+				},
 				{ type: 'field', path: ['solver', 'timeoutMinutes'], label: 'Timeout (min)', input: 'number' },
 				{
 					type: 'field',

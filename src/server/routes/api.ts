@@ -13,6 +13,7 @@ import { ItemCommands } from '../../items/commands.js'
 import { buildItemTaskContext } from '../../items/context.js'
 import { toDashboardItemWithSiblings, toDashboardItems } from '../../items/contract.js'
 import { resolveItemWorkspace } from '../../items/identity.js'
+import { ensureItemWorkspaceName } from '../../items/naming.js'
 import { observeItemRun } from '../../items/observation.js'
 import { itemStatusSchema } from '../../items/schema.js'
 import type { ItemRecord } from '../../items/schema.js'
@@ -445,7 +446,6 @@ export function apiRoutes(
 		const projectConfig = config.projects.find(p => p.slug === item.projectSlug)
 		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
 
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
 		let sourceContext: TaskContext | null = null
 		if (item.payload.kind === 'solve' && item.source) {
 			try {
@@ -457,6 +457,21 @@ export function apiRoutes(
 			if (!sourceContext) return c.json({ error: 'Item source not found in source system' }, 502)
 		}
 		const taskContext = buildItemTaskContext(item, sourceContext)
+
+		// Derive a conventional branch name before resolving identity, so planning
+		// writes its worktree under the AI-chosen name (no-op unless enabled).
+		await ensureItemWorkspaceName({
+			commands: itemCommands,
+			store: db.items,
+			item,
+			taskContext,
+			config,
+			repoPath: projectConfig.repoPath,
+			agent: effectiveSolverAgent,
+		})
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
+			itemCommands.getItem(item.id) ?? item,
+		)
 
 		let itemSpawner: Spawner
 		try {
