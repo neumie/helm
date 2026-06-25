@@ -3,6 +3,7 @@ import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
 import { runOneShot } from '../solver/one-shot.js'
 import type { OneShotOptions } from '../solver/one-shot.js'
+import { isCancellation } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { slugify } from '../util/slug.js'
 import { localBranchExists } from '../worktree/manager.js'
@@ -30,13 +31,6 @@ function defaultNameModel(agent: SolverAgent): string {
 	return agent === 'codex' ? 'gpt-5-mini' : 'claude-haiku-4-5'
 }
 
-function effectiveAgent(item: ItemRecord, config: VigilConfig, override?: SolverAgent): SolverAgent {
-	if (override) return override
-	if (item.payload.kind === 'solve' && item.payload.solverAgent) return item.payload.solverAgent
-	if (item.payload.kind === 'ralph' && item.payload.provider) return item.payload.provider
-	return config.solver.agent
-}
-
 export function buildNamingPrompt(taskContext: TaskContext): string {
 	const lines = [
 		'You name git branches for a software task. Reply with ONLY the branch name on a single line — no quotes, no backticks, no explanation.',
@@ -62,14 +56,18 @@ interface ParsedName {
 	descriptionSlug: string
 }
 
-const WRAP = /^[\s`'"*>-]+/
-const WRAP_END = /[\s`'"*]+$/
+// Strip wrapping decorations a model may add around the answer: quotes, backticks,
+// markdown emphasis/bullets/blockquotes and brackets on the left; the same plus
+// sentence punctuation (`.`, `,`, `)` …) on the right, so a line ending in
+// punctuation still matches the branch regex instead of silently falling back.
+const WRAP_START = /^[\s`'"*>([{-]+/
+const WRAP_END = /[\s`'"*.,;:!?)\]}]+$/
 
-/** Strip wrapping quotes/backticks/bullets and a leading "Branch name:" echo. */
+/** Strip wrapping decorations and a leading "Branch name:" echo. */
 function cleanCandidateLine(line: string): string {
-	const unwrapped = line.replace(WRAP, '').replace(WRAP_END, '')
+	const unwrapped = line.replace(WRAP_START, '').replace(WRAP_END, '')
 	const unlabelled = unwrapped.replace(/^branch\s*name\s*:?\s*/i, '')
-	return unlabelled.replace(WRAP, '').replace(WRAP_END, '').trim()
+	return unlabelled.replace(WRAP_START, '').replace(WRAP_END, '').trim()
 }
 
 /**
@@ -107,8 +105,8 @@ export interface EnsureItemNameParams {
 	taskContext: TaskContext
 	config: VigilConfig
 	repoPath: string
-	/** Effective solver agent (e.g. the plan route's chosen agent). */
-	agent?: SolverAgent
+	/** Effective solver agent, resolved by the caller (selected agent ?? config). */
+	agent: SolverAgent
 	signal?: AbortSignal
 	deps?: EnsureItemNameDeps
 }
@@ -116,31 +114,32 @@ export interface EnsureItemNameParams {
 /**
  * Optionally replace the default `vigil/item/<slug>` branch with a conventional,
  * model-derived name (`feat/…`, `fix/…`) when `solver.nameModel.enabled`. Persists
- * through `ItemCommands` so `resolveItemWorkspace` picks it up via its `??`
- * defaults. Pure side-effect: any disablement/failure/timeout leaves the Item
- * untouched, so the deterministic default still applies. Never throws — it must
- * not be able to fail the pipeline.
+ * through `ItemCommands` and returns the resulting Item (the updated row, or the
+ * input unchanged when naming is disabled/declined) so callers can pass it
+ * straight to `resolveItemWorkspace` without a reload. A model failure, timeout,
+ * or unparseable answer degrades silently to the input Item, so the deterministic
+ * default still applies. Cancellation is re-thrown (callers run inside the
+ * pipeline's abort-aware catch); nothing else throws.
  */
-export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Promise<void> {
+export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Promise<ItemRecord> {
 	const { commands, store, item, taskContext, config, repoPath, agent, signal, deps } = params
-	if (!config.solver.nameModel.enabled) return
-	if (item.branchName) return // already planned / forked / named
+	if (!config.solver.nameModel.enabled) return item
+	if (item.branchName) return item // already planned / forked / named
 
 	try {
-		const resolvedAgent = effectiveAgent(item, config, agent)
-		const model = config.solver.nameModel.model ?? defaultNameModel(resolvedAgent)
+		const model = config.solver.nameModel.model ?? defaultNameModel(agent)
 		const run = deps?.runOneShot ?? runOneShot
 		const raw = await run({
-			agent: resolvedAgent,
+			agent,
 			model,
 			prompt: buildNamingPrompt(taskContext),
 			cwd: repoPath,
 			signal,
 		})
-		if (!raw) return
+		if (!raw) return item
 
 		const parsed = parseBranchName(raw)
-		if (!parsed) return
+		if (!parsed) return item
 
 		const isTaken =
 			deps?.branchExists ??
@@ -150,12 +149,15 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 		const branchName = isTaken(base) ? `${base}-${itemSuffix(item)}` : base
 		const planDirName = derivedItemPlanDirName(item, parsed.descriptionSlug)
 
-		commands.recordDerivedWorkspaceName(item.id, { branchName, planDirName })
-		log.info('naming', `Derived branch name for Item ${item.id}: ${branchName} (${resolvedAgent}/${model})`)
+		const named = commands.recordDerivedWorkspaceName(item.id, { branchName, planDirName })
+		log.info('naming', `Derived branch name for Item ${item.id}: ${branchName} (${agent}/${model})`)
+		return named
 	} catch (err) {
+		if (isCancellation(err, signal)) throw err
 		log.warn(
 			'naming',
 			`Branch naming failed for Item ${item.id}, using default: ${err instanceof Error ? err.message : err}`,
 		)
+		return item
 	}
 }

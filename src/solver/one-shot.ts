@@ -1,3 +1,4 @@
+import { isCancellation } from '../util/errors.js'
 import type { SolverAgent } from './agent.js'
 import { spawnClaude } from './spawn-claude.js'
 
@@ -18,11 +19,13 @@ const DEFAULT_ONE_SHOT_TIMEOUT_MS = 15_000
  * branch name) and return its trimmed stdout, or `null` on any failure/timeout.
  *
  * This is deliberately NOT the agentic `AgentAdapter.buildHeadlessInvocation()`
- * envelope (which forces `--dangerously-skip-permissions` / sandbox bypass for a
- * full solve). It builds a minimal print-mode invocation and reuses the sanctioned
- * `spawnClaude` primitive so the "never spawn an agent CLI outside this path"
- * invariant holds. Callers MUST treat `null` as "fall back to the deterministic
- * default" — this helper never throws.
+ * envelope, but it does keep codex's approval/sandbox bypass flags so a no-tool
+ * naming call can't stall on an approval prompt and run out the clock. It reuses
+ * the sanctioned `spawnClaude` primitive so the "never spawn an agent CLI outside
+ * this path" invariant holds. Callers MUST treat `null` as "fall back to the
+ * deterministic default". Cancellation (an aborted `signal`) is re-thrown, not
+ * swallowed, so callers can abort the pipeline promptly instead of doing extra
+ * work after a late `null`.
  */
 export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
 	const { agent, model, prompt, cwd, timeoutMs = DEFAULT_ONE_SHOT_TIMEOUT_MS, signal } = opts
@@ -41,15 +44,29 @@ export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
 		if (result.exitCode !== 0) return null
 		const stdout = result.stdout.trim()
 		return stdout.length > 0 ? stdout : null
-	} catch {
+	} catch (err) {
+		if (isCancellation(err, signal)) throw err
 		return null
 	}
 }
 
 function buildOneShotInvocation(agent: SolverAgent, model: string): { command: string; args: string[] } {
 	if (agent === 'codex') {
-		// `-` reads the prompt from stdin; no sandbox/approval flags — no tools needed.
-		return { command: 'codex', args: ['exec', '--model', model, '-'] }
+		// Mirror the solve invocation's bypass/sandbox flags so a non-interactive
+		// naming call can't hang on an approval prompt (it does no tool work, so
+		// full access is moot). `-` reads the prompt from stdin and stays last.
+		return {
+			command: 'codex',
+			args: [
+				'exec',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--sandbox',
+				'danger-full-access',
+				'--model',
+				model,
+				'-',
+			],
+		}
 	}
 	// `-p` print mode reads the prompt from stdin; `text` output is the raw answer.
 	return { command: 'claude', args: ['-p', '--model', model, '--output-format', 'text'] }

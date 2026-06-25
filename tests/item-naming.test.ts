@@ -10,6 +10,7 @@ import { ItemCommands } from '../src/items/commands.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
 import { ensureItemWorkspaceName, parseBranchName } from '../src/items/naming.js'
 import type { TaskContext } from '../src/providers/provider.js'
+import { taskCancelled } from '../src/util/errors.js'
 
 function makeConfig(overrides?: Partial<VigilConfig['solver']['nameModel']>): VigilConfig {
 	return configSchema.parse({
@@ -49,6 +50,11 @@ test('parseBranchName tolerates quotes, backticks, and a label echo', () => {
 	})
 })
 
+test('parseBranchName strips trailing sentence punctuation', () => {
+	assert.deepEqual(parseBranchName('feat/add-thing.'), { type: 'feat', descriptionSlug: 'add-thing' })
+	assert.deepEqual(parseBranchName('(fix/redirect-loop).'), { type: 'fix', descriptionSlug: 'redirect-loop' })
+})
+
 test('parseBranchName scans past codex preamble/log noise', () => {
 	const raw = ['[2026-06-25] codex session started', 'thinking...', 'chore/cleanup-config', 'tokens used: 412'].join(
 		'\n',
@@ -65,27 +71,30 @@ test('parseBranchName returns null when nothing is branch-shaped', () => {
 	assert.equal(parseBranchName(''), null)
 })
 
-test('ensureItemWorkspaceName persists a derived branch and plan dir', () =>
+test('ensureItemWorkspaceName persists and returns a derived branch and plan dir', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
 
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: { runOneShot: async () => 'feat/fix-login-redirect', branchExists: () => false },
 		})
 
-		const named = commands.getItem(item.id)
-		assert(named)
-		assert.equal(named.branchName, 'feat/fix-login-redirect')
-		assert.match(named.planDirName ?? '', /^\d{4}-\d{2}-\d{2}-fix-login-redirect-/)
-		assert.equal(resolveItemWorkspace(named).branchName, 'feat/fix-login-redirect')
+		// Returned item carries the name — no reload needed at the call site.
+		assert.equal(result.branchName, 'feat/fix-login-redirect')
+		assert.match(result.planDirName ?? '', /^\d{4}-\d{2}-\d{2}-fix-login-redirect-/)
+		assert.equal(resolveItemWorkspace(result).branchName, 'feat/fix-login-redirect')
+
+		const persisted = commands.getItem(item.id)
+		assert.equal(persisted?.branchName, 'feat/fix-login-redirect')
 	}))
 
 test('ensureItemWorkspaceName appends the id suffix on collision', () =>
@@ -94,22 +103,22 @@ test('ensureItemWorkspaceName appends the id suffix on collision', () =>
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
 
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: {
 				runOneShot: async () => 'feat/fix-login-redirect',
 				branchExists: branch => branch === 'feat/fix-login-redirect',
 			},
 		})
 
-		const named = commands.getItem(item.id)
-		assert.match(named?.branchName ?? '', /^feat\/fix-login-redirect-[a-z0-9]+$/)
-		assert.notEqual(named?.branchName, 'feat/fix-login-redirect')
+		assert.match(result.branchName ?? '', /^feat\/fix-login-redirect-[a-z0-9]+$/)
+		assert.notEqual(result.branchName, 'feat/fix-login-redirect')
 	}))
 
 test('ensureItemWorkspaceName is a no-op when disabled', () =>
@@ -119,13 +128,14 @@ test('ensureItemWorkspaceName is a no-op when disabled', () =>
 		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
 
 		let called = false
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: {
 				runOneShot: async () => {
 					called = true
@@ -136,6 +146,7 @@ test('ensureItemWorkspaceName is a no-op when disabled', () =>
 		})
 
 		assert.equal(called, false)
+		assert.equal(result.branchName, null)
 		assert.equal(commands.getItem(item.id)?.branchName, null)
 	}))
 
@@ -145,35 +156,35 @@ test('ensureItemWorkspaceName leaves the default when the model returns nothing'
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
 
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: { runOneShot: async () => null, branchExists: () => false },
 		})
 
-		const named = commands.getItem(item.id)
-		assert(named)
-		assert.equal(named.branchName, null)
-		assert.match(resolveItemWorkspace(named).branchName, /^vigil\/item\//)
+		assert.equal(result.branchName, null)
+		assert.match(resolveItemWorkspace(result).branchName, /^vigil\/item\//)
 	}))
 
-test('ensureItemWorkspaceName never throws and does not name when the model errors', () =>
+test('ensureItemWorkspaceName swallows model errors and returns the input Item', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
 
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: {
 				runOneShot: async () => {
 					throw new Error('boom')
@@ -182,6 +193,34 @@ test('ensureItemWorkspaceName never throws and does not name when the model erro
 			},
 		})
 
+		assert.equal(result.branchName, null)
+		assert.equal(commands.getItem(item.id)?.branchName, null)
+	}))
+
+test('ensureItemWorkspaceName re-throws cancellation so the pipeline aborts promptly', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+
+		await assert.rejects(
+			ensureItemWorkspaceName({
+				commands,
+				store: db.items,
+				item,
+				taskContext,
+				config,
+				repoPath: '/repo',
+				agent: 'claude',
+				deps: {
+					runOneShot: async () => {
+						throw taskCancelled()
+					},
+					branchExists: () => false,
+				},
+			}),
+			/cancelled/i,
+		)
 		assert.equal(commands.getItem(item.id)?.branchName, null)
 	}))
 
@@ -194,15 +233,17 @@ test('ensureItemWorkspaceName does not override an already-named Item', () =>
 		const preset = commands.getItem(item.id)
 		assert(preset)
 
-		await ensureItemWorkspaceName({
+		const result = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item: preset,
 			taskContext,
 			config,
 			repoPath: '/repo',
+			agent: 'claude',
 			deps: { runOneShot: async () => 'feat/should-not-apply', branchExists: () => false },
 		})
 
+		assert.equal(result.branchName, 'vigil/item/preset-abcd1234')
 		assert.equal(commands.getItem(item.id)?.branchName, 'vigil/item/preset-abcd1234')
 	}))

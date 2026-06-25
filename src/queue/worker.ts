@@ -83,7 +83,7 @@ export async function processSolveItem(
 		const taskContext = await buildSolveItemTaskContext(item, provider)
 
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
-		await ensureItemWorkspaceName({
+		const named = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
@@ -94,9 +94,7 @@ export async function processSolveItem(
 			signal,
 		})
 
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
-			commands.getItem(itemId) ?? item,
-		)
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
 		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const solverConfig = { ...config.solver, agent: selectedAgent ?? config.solver.agent }
 
@@ -188,18 +186,19 @@ export async function processLoopItem(
 	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
 
 	try {
-		await ensureItemWorkspaceName({
+		const loopAgent =
+			item.payload.kind === 'ralph' ? (item.payload.provider ?? config.solver.agent) : config.solver.agent
+		const named = await ensureItemWorkspaceName({
 			commands,
 			store: db.items,
 			item,
 			taskContext: buildItemTaskContext(item),
 			config,
 			repoPath: projectConfig.repoPath,
+			agent: loopAgent,
 			signal,
 		})
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
-			commands.getItem(itemId) ?? item,
-		)
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
 		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const worktreePath = ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
 		commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })

@@ -27,6 +27,7 @@ import type { SolverAgent } from '../../solver/agent.js'
 import { createSpawner, listSpawnerAdapters, spawnerNameSchema } from '../../spawner/registry.js'
 import type { SpawnerName } from '../../spawner/registry.js'
 import type { Spawner } from '../../spawner/spawner.js'
+import { isCancellation } from '../../util/errors.js'
 
 /** Read a task's log file from `offset`. cwd is the daemon's startup dir (it
  *  never chdirs), so `logs/` resolves correctly. Returns empty on any error. */
@@ -459,19 +460,26 @@ export function apiRoutes(
 		const taskContext = buildItemTaskContext(item, sourceContext)
 
 		// Derive a conventional branch name before resolving identity, so planning
-		// writes its worktree under the AI-chosen name (no-op unless enabled).
-		await ensureItemWorkspaceName({
-			commands: itemCommands,
-			store: db.items,
-			item,
-			taskContext,
-			config,
-			repoPath: projectConfig.repoPath,
-			agent: effectiveSolverAgent,
-		})
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(
-			itemCommands.getItem(item.id) ?? item,
-		)
+		// writes its worktree under the AI-chosen name (no-op unless enabled). Wire
+		// the request's abort signal so the model call dies if the client gives up
+		// instead of blocking the handler for the full one-shot timeout.
+		let named: ItemRecord
+		try {
+			named = await ensureItemWorkspaceName({
+				commands: itemCommands,
+				store: db.items,
+				item,
+				taskContext,
+				config,
+				repoPath: projectConfig.repoPath,
+				agent: effectiveSolverAgent,
+				signal: c.req.raw.signal,
+			})
+		} catch (err) {
+			if (isCancellation(err)) return c.json({ error: 'Request aborted' }, 503)
+			throw err
+		}
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
 
 		let itemSpawner: Spawner
 		try {
