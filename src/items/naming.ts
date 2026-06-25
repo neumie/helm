@@ -6,7 +6,7 @@ import type { OneShotOptions } from '../solver/one-shot.js'
 import { isCancellation } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { slugify } from '../util/slug.js'
-import { localBranchExists } from '../worktree/manager.js'
+import { localBranchExists, remoteBranchExists } from '../worktree/manager.js'
 import type { ItemCommands } from './commands.js'
 import { derivedItemPlanDirName, itemSuffix } from './identity.js'
 import type { ItemRecord } from './schema.js'
@@ -56,41 +56,61 @@ interface ParsedName {
 	descriptionSlug: string
 }
 
-// Strip wrapping decorations a model may add around the answer: quotes, backticks,
-// markdown emphasis/bullets/blockquotes and brackets on the left; the same plus
-// sentence punctuation (`.`, `,`, `)` …) on the right, so a line ending in
-// punctuation still matches the branch regex instead of silently falling back.
-const WRAP_START = /^[\s`'"*>([{-]+/
-const WRAP_END = /[\s`'"*.,;:!?)\]}]+$/
+/** Whole branch name budget; the slug is clamped so the assembled name honors it. */
+const MAX_BRANCH_LEN = 50
 
-/** Strip wrapping decorations and a leading "Branch name:" echo. */
-function cleanCandidateLine(line: string): string {
-	const unwrapped = line.replace(WRAP_START, '').replace(WRAP_END, '')
-	const unlabelled = unwrapped.replace(/^branch\s*name\s*:?\s*/i, '')
-	return unlabelled.replace(WRAP_START, '').replace(WRAP_END, '').trim()
-}
+// A conventional token anywhere in a line. Non-anchored so wrapping quotes/
+// backticks/bullets and trailing prose ("feat/x (recommended)", "- feat/x # note")
+// don't defeat extraction.
+const NAME_TOKEN = /([a-z]+)\/([a-z0-9][a-z0-9-]*)/
+// A line that is EXACTLY a token — used to accept a non-standard type the model
+// clearly meant as the whole answer, without matching a slash buried in prose.
+const WHOLE_TOKEN = /^([a-z]+)\/([a-z0-9][a-z0-9-]*)$/
 
 /**
- * Pull a `<type>/<slug>` branch name out of raw model stdout. Tolerant of agent
- * preamble/log noise (codex): scans every line for a conventional pattern rather
- * than trusting the last line. Returns `null` when nothing branch-shaped is found
- * so the caller can fall back to the deterministic default.
+ * Pull a `<type>/<slug>` branch name out of raw model stdout. Scans bottom-up —
+ * the model's branch name is its last meaningful line; agent preamble/log noise
+ * (codex) precedes it, so the last match is the answer. Priority: a clean whole-
+ * line conventional name, else a conventional token sharing a line with extra
+ * text, else a whole-line token with a non-standard type (slug kept, type
+ * dropped). Returns `null` when nothing branch-shaped is found so the caller can
+ * fall back to the deterministic default.
  */
 export function parseBranchName(raw: string): ParsedName | null {
-	const lines = raw.split('\n').map(cleanCandidateLine).filter(Boolean)
+	const lines = raw
+		.split('\n')
+		.map(l => l.trim().toLowerCase())
+		.filter(Boolean)
 
-	let flatFallback: ParsedName | null = null
-	for (const line of lines) {
-		const match = line.toLowerCase().match(/^([a-z]+)\/([a-z0-9][a-z0-9-]*)$/)
-		if (!match) continue
-		const type = match[1]
-		const descriptionSlug = slugify(match[2])
-		if (!descriptionSlug) continue
-		if (ALLOWED_TYPES.has(type)) return { type, descriptionSlug }
-		// Looks like type/slug but the type is unknown — keep the slug, drop the type.
-		flatFallback ??= { descriptionSlug }
+	let wholeAllowed: ParsedName | null = null
+	let looseAllowed: ParsedName | null = null
+	let wholeUnknown: ParsedName | null = null
+
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const line = lines[i]
+		const whole = line.match(WHOLE_TOKEN)
+		if (whole) {
+			const slug = slugify(whole[2])
+			if (slug) {
+				if (ALLOWED_TYPES.has(whole[1])) wholeAllowed ??= { type: whole[1], descriptionSlug: slug }
+				else wholeUnknown ??= { descriptionSlug: slug }
+			}
+		}
+		const loose = line.match(NAME_TOKEN)
+		if (loose && ALLOWED_TYPES.has(loose[1])) {
+			const slug = slugify(loose[2])
+			if (slug) looseAllowed ??= { type: loose[1], descriptionSlug: slug }
+		}
 	}
-	return flatFallback
+
+	return wholeAllowed ?? looseAllowed ?? wholeUnknown
+}
+
+/** Trim a slug to `max` chars without leaving a trailing hyphen. */
+function clampSlug(slug: string, max: number): string {
+	if (slug.length <= max) return slug
+	const cut = slug.slice(0, max).replace(/-+$/, '')
+	return cut || slug.slice(0, max)
 }
 
 export interface EnsureItemNameDeps {
@@ -133,7 +153,6 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 			agent,
 			model,
 			prompt: buildNamingPrompt(taskContext),
-			cwd: repoPath,
 			signal,
 		})
 		if (!raw) return item
@@ -143,11 +162,18 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 
 		const isTaken =
 			deps?.branchExists ??
-			((branch: string) => localBranchExists(repoPath, branch) || store.branchNameExists(branch, item.id))
+			((branch: string) =>
+				localBranchExists(repoPath, branch) ||
+				remoteBranchExists(repoPath, branch) ||
+				store.branchNameExists(branch, item.id))
 
-		const base = parsed.type ? `${parsed.type}/${parsed.descriptionSlug}` : parsed.descriptionSlug
+		// Clamp the slug so the assembled `type/slug` honors the whole-name budget
+		// the prompt advertises (the model's answer is untrusted and may be long).
+		const prefix = parsed.type ? `${parsed.type}/` : ''
+		const descriptionSlug = clampSlug(parsed.descriptionSlug, Math.max(8, MAX_BRANCH_LEN - prefix.length))
+		const base = `${prefix}${descriptionSlug}`
 		const branchName = isTaken(base) ? `${base}-${itemSuffix(item)}` : base
-		const planDirName = derivedItemPlanDirName(item, parsed.descriptionSlug)
+		const planDirName = derivedItemPlanDirName(item, descriptionSlug)
 
 		const named = commands.recordDerivedWorkspaceName(item.id, { branchName, planDirName })
 		log.info('naming', `Derived branch name for Item ${item.id}: ${branchName} (${agent}/${model})`)

@@ -186,19 +186,10 @@ export async function processLoopItem(
 	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
 
 	try {
-		const loopAgent =
-			item.payload.kind === 'ralph' ? (item.payload.provider ?? config.solver.agent) : config.solver.agent
-		const named = await ensureItemWorkspaceName({
-			commands,
-			store: db.items,
-			item,
-			taskContext: buildItemTaskContext(item),
-			config,
-			repoPath: projectConfig.repoPath,
-			agent: loopAgent,
-			signal,
-		})
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
+		// Loop (ralph/harden) Items keep the deterministic vigil/item name: their
+		// title is a PRD path / harden target, not a single conventional change, so
+		// AI naming is scoped to solve Items only.
+		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
 		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
 		const worktreePath = ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
 		commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })

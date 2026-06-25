@@ -62,6 +62,23 @@ test('parseBranchName scans past codex preamble/log noise', () => {
 	assert.deepEqual(parseBranchName(raw), { type: 'chore', descriptionSlug: 'cleanup-config' })
 })
 
+test('parseBranchName extracts a name sharing a line with trailing text', () => {
+	assert.deepEqual(parseBranchName('feat/add-thing (recommended)'), { type: 'feat', descriptionSlug: 'add-thing' })
+	assert.deepEqual(parseBranchName('- fix/login-loop  # conventional name'), {
+		type: 'fix',
+		descriptionSlug: 'login-loop',
+	})
+})
+
+test('parseBranchName prefers the last conventional line (codex echoes a name then answers)', () => {
+	const raw = ['I see the repo has a feat/old-thing branch.', 'feat/add-real-answer'].join('\n')
+	assert.deepEqual(parseBranchName(raw), { type: 'feat', descriptionSlug: 'add-real-answer' })
+})
+
+test('parseBranchName ignores a slash buried in prose with a non-standard type', () => {
+	assert.equal(parseBranchName('handle the and/or case here'), null)
+})
+
 test('parseBranchName drops an unknown type but keeps the slug', () => {
 	assert.deepEqual(parseBranchName('wip/some-thing'), { descriptionSlug: 'some-thing' })
 })
@@ -95,6 +112,30 @@ test('ensureItemWorkspaceName persists and returns a derived branch and plan dir
 
 		const persisted = commands.getItem(item.id)
 		assert.equal(persisted?.branchName, 'feat/fix-login-redirect')
+	}))
+
+test('ensureItemWorkspaceName clamps an over-long model name to the whole-name budget', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+
+		const longName = `refactor/${'extract-shared-validation-helpers-and-consolidate-everything'}`
+		const result = await ensureItemWorkspaceName({
+			commands,
+			store: db.items,
+			item,
+			taskContext,
+			config,
+			repoPath: '/repo',
+			agent: 'claude',
+			deps: { runOneShot: async () => longName, branchExists: () => false },
+		})
+
+		assert(result.branchName)
+		assert.ok(result.branchName.length <= 50, `branch ${result.branchName} (${result.branchName.length}) exceeds 50`)
+		assert.ok(result.branchName.startsWith('refactor/'))
+		assert.ok(!result.branchName.endsWith('-'))
 	}))
 
 test('ensureItemWorkspaceName appends the id suffix on collision', () =>

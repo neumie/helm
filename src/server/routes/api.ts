@@ -476,7 +476,10 @@ export function apiRoutes(
 				signal: c.req.raw.signal,
 			})
 		} catch (err) {
-			if (isCancellation(err)) return c.json({ error: 'Request aborted' }, 503)
+			// Pass the request signal so an error coinciding with a client abort is
+			// classified as cancellation (matching how ensureItemWorkspaceName re-throws),
+			// not mis-reported as a 500.
+			if (isCancellation(err, c.req.raw.signal)) return c.json({ error: 'Request aborted' }, 503)
 			throw err
 		}
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)

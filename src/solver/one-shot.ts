@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { isCancellation } from '../util/errors.js'
 import type { SolverAgent } from './agent.js'
 import { spawnClaude } from './spawn-claude.js'
@@ -6,30 +9,32 @@ export interface OneShotOptions {
 	agent: SolverAgent
 	model: string
 	prompt: string
-	/** Directory to run in. Naming needs no worktree — pass the repo path. */
-	cwd: string
 	timeoutMs?: number
 	signal?: AbortSignal
 }
 
-const DEFAULT_ONE_SHOT_TIMEOUT_MS = 15_000
+// Generous enough to absorb agent-CLI cold start (auth + config/MCP load) plus a
+// short completion; naming is best-effort, so a slow host should still get a name
+// rather than silently falling back.
+const DEFAULT_ONE_SHOT_TIMEOUT_MS = 30_000
 
 /**
  * Run the agent CLI once for a short, non-agentic completion (e.g. deriving a
  * branch name) and return its trimmed stdout, or `null` on any failure/timeout.
  *
- * This is deliberately NOT the agentic `AgentAdapter.buildHeadlessInvocation()`
- * envelope, but it does keep codex's approval/sandbox bypass flags so a no-tool
- * naming call can't stall on an approval prompt and run out the clock. It reuses
- * the sanctioned `spawnClaude` primitive so the "never spawn an agent CLI outside
- * this path" invariant holds. Callers MUST treat `null` as "fall back to the
- * deterministic default". Cancellation (an aborted `signal`) is re-thrown, not
- * swallowed, so callers can abort the pipeline promptly instead of doing extra
- * work after a late `null`.
+ * Runs in a throwaway temp dir, NOT the repo: naming needs no repo context (all
+ * input is in the prompt), and an isolated cwd means an agentic CLI granted broad
+ * permissions/sandbox can't mutate the canonical working tree before the real
+ * worktree exists. Both agents get their permission/approval bypass so a no-tool
+ * naming call can't stall on an interactive prompt that piped stdin can't answer.
+ * Reuses the sanctioned `spawnClaude` primitive. Callers MUST treat `null` as
+ * "fall back to the deterministic default". Cancellation (an aborted `signal`) is
+ * re-thrown, not swallowed, so callers can abort the pipeline promptly.
  */
 export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
-	const { agent, model, prompt, cwd, timeoutMs = DEFAULT_ONE_SHOT_TIMEOUT_MS, signal } = opts
+	const { agent, model, prompt, timeoutMs = DEFAULT_ONE_SHOT_TIMEOUT_MS, signal } = opts
 	const { command, args } = buildOneShotInvocation(agent, model)
+	const cwd = mkdtempSync(join(tmpdir(), 'vigil-naming-'))
 	try {
 		const result = await spawnClaude({
 			command,
@@ -47,14 +52,20 @@ export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
 	} catch (err) {
 		if (isCancellation(err, signal)) throw err
 		return null
+	} finally {
+		try {
+			rmSync(cwd, { recursive: true, force: true })
+		} catch {
+			// best-effort cleanup; OS temp reaping covers a leaked dir
+		}
 	}
 }
 
 function buildOneShotInvocation(agent: SolverAgent, model: string): { command: string; args: string[] } {
 	if (agent === 'codex') {
-		// Mirror the solve invocation's bypass/sandbox flags so a non-interactive
-		// naming call can't hang on an approval prompt (it does no tool work, so
-		// full access is moot). `-` reads the prompt from stdin and stays last.
+		// Bypass approvals/sandbox so a non-interactive exec can't hang on a prompt
+		// (it does no tool work, and runs in a throwaway cwd, so full access is moot).
+		// `-` reads the prompt from stdin and stays last.
 		return {
 			command: 'codex',
 			args: [
@@ -69,5 +80,10 @@ function buildOneShotInvocation(agent: SolverAgent, model: string): { command: s
 		}
 	}
 	// `-p` print mode reads the prompt from stdin; `text` output is the raw answer.
-	return { command: 'claude', args: ['-p', '--model', model, '--output-format', 'text'] }
+	// `--dangerously-skip-permissions` mirrors the codex bypass so a permission
+	// prompt (hooks/MCP/non-bypassing default mode) can't stall the call.
+	return {
+		command: 'claude',
+		args: ['-p', '--model', model, '--output-format', 'text', '--dangerously-skip-permissions'],
+	}
 }
