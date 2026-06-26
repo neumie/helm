@@ -24,10 +24,9 @@ export class OkenaSpawner implements Spawner {
 			params.existingWorktreePath,
 		)
 
+		const reusedTerminal = await this.worktrees.findPlanTerminal(ensured.wtProjectId)
 		const terminalId =
-			(await this.worktrees.findPlanTerminal(ensured.wtProjectId)) ??
-			ensured.autoTerminalId ??
-			(await this.worktrees.createTerminal(ensured.wtProjectId))
+			reusedTerminal ?? ensured.autoTerminalId ?? (await this.worktrees.createTerminal(ensured.wtProjectId))
 		if (!terminalId) throw new Error('Failed to obtain a planning terminal')
 
 		try {
@@ -53,7 +52,9 @@ export class OkenaSpawner implements Spawner {
 		const agentLabel = agentLabelFromConfig(params.solverConfig)
 		log.info('okena', `Starting planning session in terminal ${terminalId}`)
 		try {
-			await this.client.action({ action: 'run_command', terminal_id: terminalId, command })
+			// A fresh/auto terminal needs settling + line-clear; a reused plan
+			// terminal must NOT get ctrl_c (it may have a running agent).
+			await this.client.runCommand(terminalId, command, { freshTerminal: !reusedTerminal })
 		} catch (err) {
 			throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
 		}
