@@ -140,6 +140,28 @@ export class OkenaClient {
 		return res.json() as Promise<T>
 	}
 
+	/**
+	 * Run a command in a terminal, defended against a freshly-created/auto terminal
+	 * that is still initializing or carrying leftover text on its prompt line —
+	 * which otherwise merges into our command (e.g. `<dir> in kcd '...'` →
+	 * `command not found: in`). When `freshTerminal`, wait for the shell to settle
+	 * and clear the input line with ctrl_c before running. Never pass
+	 * `freshTerminal` for a REUSED terminal that may have a running agent — ctrl_c
+	 * would abort it.
+	 */
+	async runCommand(terminalId: string, command: string, opts?: { freshTerminal?: boolean }): Promise<void> {
+		if (opts?.freshTerminal) {
+			await delay(1500)
+			try {
+				await this.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
+				await delay(200)
+			} catch {
+				// best-effort line clear
+			}
+		}
+		await this.action({ action: 'run_command', terminal_id: terminalId, command })
+	}
+
 	async getState(): Promise<OkenaState> {
 		const res = await this.authorizedFetch('/v1/state')
 		if (!res.ok) {
@@ -157,4 +179,8 @@ export interface OkenaState {
 		path: string
 		terminal_names?: Record<string, string>
 	}>
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms))
 }

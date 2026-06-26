@@ -161,26 +161,24 @@ test('TaskList keeps planned Items in the queued work bucket', () => {
 		status: 'planned',
 	} as DashboardItem
 
-	const buckets = partitionWorkEntries([], [planned])
+	const buckets = partitionWorkEntries([planned])
 
 	assert.deepEqual(
-		buckets.queued.map(entry => (entry.type === 'item' ? entry.item.id : entry.task.id)),
+		buckets.queued.map(item => item.id),
 		['item-planned'],
 	)
 	assert.equal(buckets.archived.length, 0)
 })
 
 test('dashboard attention counts include planned and unverified Items as waiting work', () => {
-	const queuedTask = { id: 'task-queued', status: 'queued' } as TaskRecord
-	const processingTask = { id: 'task-processing', status: 'processing' } as TaskRecord
 	const planned = { id: 'item-planned', status: 'planned' } as DashboardItem
 	const unverified = { id: 'item-unverified', status: 'unverified' } as DashboardItem
 	const queued = { id: 'item-queued', status: 'queued' } as DashboardItem
 	const processing = { id: 'item-processing', status: 'processing' } as DashboardItem
 
-	assert.deepEqual(workAttentionCounts([queuedTask, processingTask], [planned, unverified, queued, processing]), {
-		running: 2,
-		waiting: 4,
+	assert.deepEqual(workAttentionCounts([planned, unverified, queued, processing]), {
+		running: 1,
+		waiting: 3,
 	})
 })
 

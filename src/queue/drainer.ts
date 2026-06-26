@@ -8,7 +8,7 @@ import type { QueueStatus } from '../types.js'
 import { log } from '../util/logger.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
-import { processLoopItem, processSolveItem, processTask } from './worker.js'
+import { processLoopItem, processSolveItem } from './worker.js'
 
 type ActiveRun = { title: string; startedAt: string; controller: AbortController }
 
@@ -17,8 +17,6 @@ function isStartableItem(item: ItemRecord): boolean {
 }
 
 export class Drainer {
-	private pendingTasks: string[] = []
-	private activeTasks = new Map<string, ActiveRun>()
 	private activeSolveItems = new Map<string, ActiveRun>()
 	private activeLoopItems = new Map<string, ActiveRun>()
 	private running = false
@@ -71,35 +69,6 @@ export class Drainer {
 		return this.paused
 	}
 
-	enqueue(taskId: string, silent = false) {
-		if (!this.pendingTasks.includes(taskId) && !this.activeTasks.has(taskId)) {
-			this.pendingTasks.push(taskId)
-			if (!silent) safeInsertEvent(this.db, taskId, 'task_queued')
-			log.info('drainer', `Enqueued legacy task ${taskId} (pending: ${this.pendingTasks.length})`)
-			this.wake()
-		}
-	}
-
-	/** Process a single legacy task immediately, bypassing pause state. */
-	processOne(taskId: string): boolean {
-		const idx = this.pendingTasks.indexOf(taskId)
-		if (idx !== -1) this.pendingTasks.splice(idx, 1)
-		if (this.activeTasks.has(taskId)) return false
-
-		const task = this.db.getTask(taskId)
-		if (!task) return false
-
-		const controller = new AbortController()
-		this.activeTasks.set(taskId, { title: task.title, startedAt: new Date().toISOString(), controller })
-
-		processTask(taskId, this.config, this.db, this.provider, this.solver, controller.signal).finally(() => {
-			this.activeTasks.delete(taskId)
-			this.wake()
-		})
-
-		return true
-	}
-
 	/** Process a single Item immediately, bypassing pause state. */
 	processOneItem(itemId: string): boolean {
 		const item = this.db.items.get(itemId)
@@ -130,22 +99,8 @@ export class Drainer {
 		return true
 	}
 
-	cancel(taskId: string): boolean {
-		const entry = this.activeTasks.get(taskId)
-		if (entry) {
-			entry.controller.abort()
-			return true
-		}
-		const idx = this.pendingTasks.indexOf(taskId)
-		if (idx !== -1) {
-			this.pendingTasks.splice(idx, 1)
-			return true
-		}
-		return false
-	}
-
 	getStatus(): QueueStatus {
-		const solvePending = this.itemCommands.countQueuedItems('solve') + this.pendingTasks.length
+		const solvePending = this.itemCommands.countQueuedItems('solve')
 		const loopPending = this.itemCommands.countQueuedItems('ralph') + this.itemCommands.countQueuedItems('harden')
 		const activeSolve = this.activeSolveCount()
 		const activeLoop = this.activeLoopCount()
@@ -155,11 +110,6 @@ export class Drainer {
 			active: activeSolve + activeLoop,
 			maxConcurrency: this.solveCapacity() + this.loopCapacity(),
 			activeTasks: [
-				...Array.from(this.activeTasks.entries()).map(([taskId, info]) => ({
-					taskId,
-					title: info.title,
-					startedAt: info.startedAt,
-				})),
 				...Array.from(this.activeSolveItems.entries()).map(([taskId, info]) => ({
 					taskId,
 					title: info.title,
@@ -191,14 +141,8 @@ export class Drainer {
 
 		while (this.activeSolveCount() < this.solveCapacity()) {
 			const item = this.nextQueuedSolveItem()
-			if (item) {
-				if (!this.startSolveItem(item.id)) break
-				continue
-			}
-
-			const taskId = this.pendingTasks.shift()
-			if (!taskId) break
-			if (!this.processOne(taskId)) continue
+			if (!item) break
+			if (!this.startSolveItem(item.id)) break
 		}
 
 		while (this.activeLoopCount() < this.loopCapacity()) {
@@ -273,7 +217,7 @@ export class Drainer {
 	}
 
 	private activeSolveCount(): number {
-		return this.activeTasks.size + this.activeSolveItems.size
+		return this.activeSolveItems.size
 	}
 
 	private activeLoopCount(): number {
@@ -286,13 +230,5 @@ export class Drainer {
 
 	private loopCapacity(): number {
 		return 1
-	}
-}
-
-function safeInsertEvent(db: DB, taskId: string, eventType: string) {
-	try {
-		db.insertEvent(taskId, eventType)
-	} catch {
-		// Non-critical.
 	}
 }

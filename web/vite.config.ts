@@ -11,5 +11,8 @@ export default defineConfig({
 	},
 	build: {
 		outDir: '../dist/web',
+		// Wipe stale hashed bundles each build so the daemon never serves an old
+		// index.html → removed-endpoint client.
+		emptyOutDir: true,
 	},
 })

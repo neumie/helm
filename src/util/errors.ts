@@ -1,4 +1,8 @@
-import { type ErrorPhase, errorPhaseSchema } from '../db/task-schema.js'
+import { z } from 'zod'
+
+/** Pipeline phases an error can be tagged with. The single source of truth. */
+export const errorPhaseSchema = z.enum(['poll', 'worktree', 'solve', 'loop', 'action'])
+export type ErrorPhase = z.infer<typeof errorPhaseSchema>
 
 /**
  * The pipeline's error protocol — the single definition of how solve-path code

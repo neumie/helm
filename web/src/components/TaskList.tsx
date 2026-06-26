@@ -1,17 +1,13 @@
 import { useState } from 'react'
-import type { DaemonStatus, DashboardItem, TaskRecord } from '../api'
-import { useRelativeTime } from '../hooks'
+import type { DaemonStatus, DashboardItem } from '../api'
 import { StatusBadge } from './StatusBadge'
 
 type Tab = 'active' | 'queued' | 'archived'
 
 interface Props {
-	tasks: TaskRecord[]
 	items: DashboardItem[]
 	status: DaemonStatus | null
-	selectedTaskId: string | null
 	selectedItemId: string | null
-	onSelectTask: (id: string | null) => void
 	onSelectItem: (id: string | null) => void
 	projects: string[]
 	selectedProject: string | null
@@ -19,12 +15,10 @@ interface Props {
 	projectColors: Record<string, string>
 }
 
-export type ListEntry = { type: 'item'; item: DashboardItem } | { type: 'task'; task: TaskRecord }
-
 export interface WorkBuckets {
-	active: ListEntry[]
-	queued: ListEntry[]
-	archived: ListEntry[]
+	active: DashboardItem[]
+	queued: DashboardItem[]
+	archived: DashboardItem[]
 }
 
 export interface WorkAttentionCounts {
@@ -32,35 +26,20 @@ export interface WorkAttentionCounts {
 	waiting: number
 }
 
-function itemEntry(item: DashboardItem): ListEntry {
-	return { type: 'item', item }
-}
-
-function taskEntry(task: TaskRecord): ListEntry {
-	return { type: 'task', task }
-}
-
-export function partitionWorkEntries(tasks: TaskRecord[], items: DashboardItem[]): WorkBuckets {
-	const activeTasks = tasks.filter(t => t.status === 'processing' || t.status === 'failed' || t.status === 'review')
-	const queuedTasks = tasks.filter(t => t.status === 'queued')
-	const archivedTasks = tasks.filter(t => !['processing', 'failed', 'review', 'queued'].includes(t.status))
-	const activeItems = items.filter(i => i.status === 'processing' || i.status === 'failed' || i.status === 'review')
-	const queuedItems = items.filter(i => i.status === 'planned' || i.status === 'queued' || i.status === 'unverified')
-	const archivedItems = items.filter(
-		i => !['processing', 'failed', 'review', 'planned', 'queued', 'unverified'].includes(i.status),
-	)
-
+export function partitionWorkEntries(items: DashboardItem[]): WorkBuckets {
 	return {
-		active: [...activeItems.map(itemEntry), ...activeTasks.map(taskEntry)],
-		queued: [...queuedItems.map(itemEntry), ...queuedTasks.map(taskEntry)],
-		archived: [...archivedItems.map(itemEntry), ...archivedTasks.map(taskEntry)],
+		active: items.filter(i => i.status === 'processing' || i.status === 'failed' || i.status === 'review'),
+		queued: items.filter(i => i.status === 'planned' || i.status === 'queued' || i.status === 'unverified'),
+		archived: items.filter(
+			i => !['processing', 'failed', 'review', 'planned', 'queued', 'unverified'].includes(i.status),
+		),
 	}
 }
 
-export function workAttentionCounts(tasks: TaskRecord[], items: DashboardItem[]): WorkAttentionCounts {
-	const buckets = partitionWorkEntries(tasks, items)
+export function workAttentionCounts(items: DashboardItem[]): WorkAttentionCounts {
+	const buckets = partitionWorkEntries(items)
 	return {
-		running: tasks.filter(t => t.status === 'processing').length + items.filter(i => i.status === 'processing').length,
+		running: items.filter(i => i.status === 'processing').length,
 		waiting: buckets.queued.length,
 	}
 }
@@ -70,12 +49,8 @@ export function itemMetaLabels(item: DashboardItem): string[] {
 }
 
 export function TaskList({
-	tasks,
 	items,
-	status,
-	selectedTaskId,
 	selectedItemId,
-	onSelectTask,
 	onSelectItem,
 	projects,
 	selectedProject,
@@ -83,7 +58,7 @@ export function TaskList({
 	projectColors,
 }: Props) {
 	const [tab, setTab] = useState<Tab>('queued')
-	const { active, queued, archived } = partitionWorkEntries(tasks, items)
+	const { active, queued, archived } = partitionWorkEntries(items)
 
 	const tabItems: { key: Tab; label: string; count: number }[] = [
 		{ key: 'active', label: 'Active', count: active.length },
@@ -91,7 +66,7 @@ export function TaskList({
 		{ key: 'archived', label: 'Archived', count: archived.length },
 	]
 
-	const visibleTasks = tab === 'active' ? active : tab === 'queued' ? queued : archived
+	const visibleItems = tab === 'active' ? active : tab === 'queued' ? queued : archived
 
 	return (
 		<aside
@@ -154,32 +129,22 @@ export function TaskList({
 				))}
 			</div>
 
-			{/* Task list */}
+			{/* Item list */}
 			<div style={{ flex: 1, overflow: 'auto' }}>
-				{visibleTasks.length === 0 ? (
+				{visibleItems.length === 0 ? (
 					<p style={{ color: 'var(--text-4)', padding: '24px 16px', fontSize: 13, textAlign: 'center' }}>
 						No {tab} work.
 					</p>
 				) : (
-					visibleTasks.map(entry =>
-						entry.type === 'item' ? (
-							<ItemRow
-								key={`item-${entry.item.id}`}
-								item={entry.item}
-								selected={entry.item.id === selectedItemId}
-								onClick={() => onSelectItem(entry.item.id)}
-								projectColor={projectColors[entry.item.projectSlug]}
-							/>
-						) : (
-							<TaskRow
-								key={`task-${entry.task.id}`}
-								task={entry.task}
-								selected={entry.task.id === selectedTaskId}
-								onClick={() => onSelectTask(entry.task.id)}
-								projectColor={projectColors[entry.task.projectSlug]}
-							/>
-						),
-					)
+					visibleItems.map(item => (
+						<ItemRow
+							key={`item-${item.id}`}
+							item={item}
+							selected={item.id === selectedItemId}
+							onClick={() => onSelectItem(item.id)}
+							projectColor={projectColors[item.projectSlug]}
+						/>
+					))
 				)}
 			</div>
 
@@ -250,76 +215,6 @@ function TabButton({
 				</span>
 			)}
 		</button>
-	)
-}
-
-function TaskRow({
-	task,
-	selected,
-	onClick,
-	projectColor,
-}: {
-	task: TaskRecord
-	selected: boolean
-	onClick: () => void
-	projectColor?: string
-}) {
-	const elapsed = useRelativeTime(task.startedAt)
-
-	return (
-		<div
-			// biome-ignore lint/a11y/useSemanticElements: task row has rich block content (nested divs); role + keyboard handlers give it accessible button behavior without invalid button nesting
-			role="button"
-			tabIndex={0}
-			onClick={onClick}
-			onKeyDown={e => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault()
-					onClick()
-				}
-			}}
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				gap: 4,
-				padding: '10px 16px',
-				borderBottom: '1px solid var(--border)',
-				cursor: 'pointer',
-				background: selected ? 'var(--bg-2)' : 'transparent',
-				borderLeft: `3px solid ${selected ? 'var(--accent)' : (projectColor ?? 'transparent')}`,
-				transition: 'background 150ms',
-			}}
-			onMouseEnter={e => {
-				if (!selected) e.currentTarget.style.background = 'var(--bg-2)'
-			}}
-			onMouseLeave={e => {
-				if (!selected) e.currentTarget.style.background = 'transparent'
-			}}
-		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				<span style={{ fontSize: 10, color: projectColor ?? 'var(--text-4)', fontWeight: 500 }}>
-					{task.projectSlug}
-				</span>
-				<span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>
-					{elapsed ?? formatTime(task.queuedAt)}
-				</span>
-			</div>
-			<div
-				style={{
-					fontSize: 13,
-					color: selected ? 'var(--text-0)' : 'var(--text-1)',
-					lineHeight: 1.4,
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-					whiteSpace: 'nowrap',
-				}}
-			>
-				{task.title}
-			</div>
-			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				<StatusBadge value={task.status} />
-			</div>
-		</div>
 	)
 }
 

@@ -169,4 +169,19 @@ ALTER TABLE tasks DROP COLUMN tier;
 ALTER TABLE tasks DROP COLUMN solver_confidence;
 `,
 	},
+	{
+		// Legacy Task model removed — Items are the only work model. poll_state
+		// (the provider watermark) stays. Existing rows were exported to a backup
+		// before this dropped them; the GitHub PRs/branches are unaffected.
+		version: 11,
+		sql: `
+DROP INDEX IF EXISTS idx_events_task;
+DROP INDEX IF EXISTS idx_events_type;
+DROP TABLE IF EXISTS event_log;
+DROP INDEX IF EXISTS idx_tasks_status;
+DROP INDEX IF EXISTS idx_tasks_project;
+DROP INDEX IF EXISTS idx_tasks_external_id;
+DROP TABLE IF EXISTS tasks;
+`,
+	},
 ]

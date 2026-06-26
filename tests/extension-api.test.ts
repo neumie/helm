@@ -177,11 +177,11 @@ test('extension API ignores invalidated Chrome storage context', async () => {
 	}
 
 	try {
-		const task = await api.findTask('task-1')
+		const item = await api.findItemBySource('task-1')
 
-		assert.equal(task, null)
+		assert.equal(item, null)
 		assert.equal(calls.length, 1)
-		assert.equal(calls[0].path, 'http://localhost:7474/api/tasks/by-external-id/task-1')
+		assert.equal(calls[0].path, 'http://localhost:7474/api/items/by-source/task-1')
 	} finally {
 		globalThis.fetch = originalFetch
 		if (originalChrome) {

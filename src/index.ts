@@ -32,23 +32,9 @@ async function main() {
 
 	const queue = new Drainer(config, db, provider, solver)
 
-	// Recover tasks that were processing when we last shut down
-	const stale = db.getProcessingTaskIds()
-	for (const id of stale) {
-		log.warn('vigil', `Recovering stale processing task: ${id}`)
-		db.updateTask(id, { status: 'queued' })
-		queue.enqueue(id, true)
-	}
-
-	// Re-enqueue any queued tasks from DB
-	const queued = db.getQueuedTaskIds()
-	for (const id of queued) {
-		queue.enqueue(id, true)
-	}
+	// The Drainer recovers stale `processing` Items on start(); queued Items are
+	// pulled from the DB by the Drainer's lanes.
 	const queuedSolveItems = db.items.countQueuedByKind('solve')
-	if (queued.length > 0) {
-		log.info('vigil', `Re-enqueued ${queued.length} pending task(s) from DB`)
-	}
 	if (queuedSolveItems > 0) {
 		log.info('vigil', `Found ${queuedSolveItems} queued solve Item(s)`)
 	}

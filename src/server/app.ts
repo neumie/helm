@@ -36,6 +36,11 @@ export function createApp(
 
 	app.route('/api', apiRoutes(config, configPath, db, queue, poller, provider, spawner))
 
+	// Any unmatched /api/* request returns JSON, never the SPA HTML below —
+	// otherwise a stale/mismatched client gets `index.html` and dies with
+	// "Unexpected token '<'" trying to parse it as JSON.
+	app.all('/api/*', c => c.json({ error: 'Not found' }, 404))
+
 	// Serve static frontend assets
 	app.get('*', c => {
 		const urlPath = c.req.path === '/' ? '/index.html' : c.req.path

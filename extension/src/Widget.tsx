@@ -1,14 +1,12 @@
 import { type Accessor, For, type JSX, Match, Show, Switch, createEffect, createSignal, onCleanup } from 'solid-js'
 import {
 	type DashboardActionId,
-	type DashboardActionTone,
 	type DashboardItem,
 	type DashboardLink,
 	type DashboardPlan,
 	type DashboardTone,
 	type PlanInfo,
 	type SolverAgent,
-	type TaskRecord,
 	api,
 	getServerUrl,
 } from './api'
@@ -16,18 +14,6 @@ import { DEFAULT_SERVER_URL, getSync, setSync } from './storage'
 
 type Tone = DashboardTone
 
-const STATUS_TONE: Record<string, Tone> = {
-	queued: 'gray',
-	processing: 'blue',
-	completed: 'green',
-	failed: 'red',
-	cancelled: 'amber',
-	skipped: 'gray',
-}
-
-const toneOf = (map: Record<string, Tone>, key: string | null | undefined): Tone => (key && map[key]) || 'gray'
-
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const agentLabel = (agent: SolverAgent) => (agent === 'codex' ? 'Codex' : 'Claude')
 const isSolverAgent = (value: unknown): value is SolverAgent => value === 'claude' || value === 'codex'
 
@@ -37,7 +23,6 @@ type View =
 	| { kind: 'error' }
 	| { kind: 'untracked'; solvable: boolean }
 	| { kind: 'item'; item: DashboardItem }
-	| { kind: 'task'; task: TaskRecord }
 
 type DisplayPlan = PlanInfo | DashboardPlan
 
@@ -71,7 +56,6 @@ export function itemMetaLabels(item: DashboardItem): string[] {
 }
 
 export function Widget(props: { taskId: Accessor<string | null> }) {
-	const [task, setTask] = createSignal<TaskRecord | null>(null)
 	const [item, setItem] = createSignal<DashboardItem | null>(null)
 	const [expanded, setExpanded] = createSignal(false)
 	// connError = connectivity/poll failures, cleared on a successful poll.
@@ -108,16 +92,13 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 
 	const dashboardUrl = () => {
 		const i = item()
-		if (i) return `${serverUrl()}/#item/${i.id}`
-		const t = task()
-		return t ? `${serverUrl()}/#task/${t.id}` : null
+		return i ? `${serverUrl()}/#item/${i.id}` : null
 	}
 
-	// Poll for task data
+	// Poll for the Item backing this source task
 	createEffect(() => {
 		const id = props.taskId()
 		if (!id) {
-			setTask(null)
 			setItem(null)
 			setConnError(null)
 			setActionError(null)
@@ -125,19 +106,16 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 			return
 		}
 
-		const taskId = id
+		const sourceId = id
 		let active = true
 		setAgentTouched(false)
 
 		async function lookup() {
 			if (!active) return
 			try {
-				const contractItem = await api.findItemBySource(taskId)
-				const result = contractItem ? null : await api.findTask(taskId)
+				const contractItem = await api.findItemBySource(sourceId)
 				if (active) {
 					setItem(contractItem)
-					setTask(result)
-					if (result?.solverAgent && !agentTouched()) setSolverAgent(result.solverAgent)
 					setConnError(null)
 				}
 			} catch (err) {
@@ -158,12 +136,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		try {
 			await fn()
 			const id = props.taskId()
-			if (id) {
-				const contractItem = await api.findItemBySource(id)
-				const result = contractItem ? null : await api.findTask(id)
-				setItem(contractItem)
-				setTask(result)
-			}
+			if (id) setItem(await api.findItemBySource(id))
 		} catch (err) {
 			setActionError(err instanceof Error ? err.message : 'Action failed')
 		}
@@ -175,23 +148,13 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		await doAction(() => api.createItemFromSource(id))
 	}
 
-	async function handleDelete() {
-		const t = task()
-		if (!t) return
-		await api.deleteTask(t.id)
-		setTask(null)
-		setExpanded(false)
-	}
-
 	async function handlePlan() {
 		const i = item()
-		const t = task()
-		if (!i && !t) return
+		if (!i) return
 		setActionError(null)
 		setPlanPending(true)
 		try {
-			const info = i ? await api.planItem(i.id, solverAgent()) : await api.plan(t.id, solverAgent())
-			setPlanInfo(info)
+			setPlanInfo(await api.planItem(i.id, solverAgent()))
 		} catch (err) {
 			setActionError(err instanceof Error ? err.message : 'Plan failed')
 		} finally {
@@ -209,10 +172,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		if (!props.taskId()) return { kind: 'none' }
 		const i = item()
 		if (i) return { kind: 'item', item: i }
-		const t = task()
-		if (connError() && !t) return { kind: 'error' }
-		if (!t) return { kind: 'untracked', solvable: projects().length > 0 }
-		return { kind: 'task', task: t }
+		if (connError()) return { kind: 'error' }
+		return { kind: 'untracked', solvable: projects().length > 0 }
 	}
 
 	return (
@@ -228,27 +189,10 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				onDismissError={() => setActionError(null)}
 				onCollapse={() => setExpanded(false)}
 				onSolve={solve}
-				onStart={() => {
-					const t = task()
-					if (t) doAction(() => api.start(t.id, solverAgent()))
-				}}
-				onRetry={() => {
-					const t = task()
-					if (t) doAction(() => api.retry(t.id, solverAgent()))
-				}}
-				onCancel={() => {
-					const t = task()
-					if (t) doAction(() => api.cancel(t.id))
-				}}
 				onItemAction={action => {
 					const i = item()
 					if (i) doAction(() => api.itemAction(i.id, action, solverAgent()))
 				}}
-				onSkip={() => {
-					const t = task()
-					if (t) doAction(() => api.setStatus(t.id, 'skipped'))
-				}}
-				onDelete={handleDelete}
 				onPlan={handlePlan}
 			/>
 		</Show>
@@ -368,14 +312,6 @@ function Pill(props: { view: Accessor<View>; onExpand: () => void; onSolve: () =
 					</button>
 				)}
 			</Match>
-			<Match when={asTask(v())}>
-				{task => (
-					<button type="button" class="vg-pill" on:click={props.onExpand}>
-						<Dot tone={toneOf(STATUS_TONE, task().status)} pulse={task().status === 'processing'} />
-						<span class="vg-pill__label">{titleCase(task().status)}</span>
-					</button>
-				)}
-			</Match>
 		</Switch>
 	)
 }
@@ -391,12 +327,7 @@ function Card(props: {
 	onDismissError: () => void
 	onCollapse: () => void
 	onSolve: () => void
-	onStart: () => void
-	onRetry: () => void
-	onCancel: () => void
 	onItemAction: (action: DashboardActionId) => void
-	onSkip: () => void
-	onDelete: () => void
 	onPlan: () => void
 }) {
 	const v = props.view
@@ -531,99 +462,6 @@ function Card(props: {
 						)
 					}}
 				</Match>
-
-				{/* Tracked task */}
-				<Match when={asTask(v())}>
-					{task => {
-						const statusTone = () => toneOf(STATUS_TONE, task().status)
-						const isQueued = () => task().status === 'queued'
-						const isProcessing = () => task().status === 'processing'
-						return (
-							<>
-								<div class="vg-card__header">
-									<div class="vg-card__id">
-										<Dot tone={statusTone()} pulse={isProcessing()} />
-										<span class="vg-card__status">{titleCase(task().status)}</span>
-									</div>
-									<div class="vg-card__hactions">
-										<Show when={props.dashboardUrl()}>
-											{url => (
-												<a class="vg-link-open" href={url()} target="_blank" rel="noreferrer">
-													Open ↗
-												</a>
-											)}
-										</Show>
-										<button type="button" class="vg-close" on:click={props.onCollapse}>
-											&times;
-										</button>
-									</div>
-								</div>
-
-								<div class="vg-card__body">
-									<AgentSelect
-										value={props.solverAgent}
-										onChange={props.onSolverAgentChange}
-										disabled={isProcessing()}
-									/>
-									<Show when={props.actionError()}>
-										{msg => (
-											<div class="vg-error vg-error--dismissible">
-												<span>{msg()}</span>
-												<button type="button" class="vg-error__dismiss" on:click={props.onDismissError}>
-													&times;
-												</button>
-											</div>
-										)}
-									</Show>
-									<Show when={task().solverSummary}>
-										<div class="vg-summary">{task().solverSummary}</div>
-									</Show>
-									<Show when={task().errorMessage}>
-										<div class="vg-error">{task().errorMessage}</div>
-									</Show>
-									<Show when={task().prUrl}>
-										{prUrl => (
-											<a class="vg-pr" href={prUrl()} target="_blank" rel="noreferrer">
-												🔗 {formatPr(prUrl())}
-											</a>
-										)}
-									</Show>
-									<PlanInfoBlock planInfo={props.planInfo} />
-								</div>
-
-								<div class="vg-card__actions">
-									<Btn variant="muted" onClick={props.onPlan} disabled={props.planPending() || isProcessing()}>
-										{props.planPending() ? 'Planning…' : props.planInfo() ? 'Re-plan' : 'Plan'}
-									</Btn>
-									<Show when={isQueued()}>
-										<Btn variant="primary" onClick={props.onStart}>
-											Start
-										</Btn>
-										<span class="vg-spacer" />
-										<Btn variant="muted" onClick={props.onSkip}>
-											Skip
-										</Btn>
-									</Show>
-									<Show when={isProcessing()}>
-										<span class="vg-spacer" />
-										<Btn variant="danger" onClick={props.onCancel}>
-											Cancel
-										</Btn>
-									</Show>
-									<Show when={!isQueued() && !isProcessing()}>
-										<Btn variant="primary" onClick={props.onRetry}>
-											Re-queue
-										</Btn>
-										<span class="vg-spacer" />
-										<Btn variant="danger" onClick={props.onDelete}>
-											Delete
-										</Btn>
-									</Show>
-								</div>
-							</>
-						)
-					}}
-				</Match>
 			</Switch>
 		</div>
 	)
@@ -648,16 +486,7 @@ function LinkLine(props: { label: string; link: DashboardLink | null }) {
 	)
 }
 
-/** Narrowing helpers for Solid's `<Match>`. */
+/** Narrowing helper for Solid's `<Match>`. */
 function asItem(v: View): DashboardItem | false {
 	return v.kind === 'item' && v.item
-}
-
-function asTask(v: View): TaskRecord | false {
-	return v.kind === 'task' && v.task
-}
-
-function formatPr(url: string): string {
-	const m = url.match(/\/pull\/(\d+)/)
-	return m ? `PR #${m[1]}` : 'Pull Request'
 }

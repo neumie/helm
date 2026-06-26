@@ -105,7 +105,7 @@ function configEditPaths(document: ReturnType<typeof buildConfigDocument>): stri
 	)
 }
 
-test('DB migration removes legacy tier confidence and chat storage', () => {
+test('DB migration drops legacy Task + chat storage, keeps Items and poll_state', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'vigil-schema-reset-'))
 	const dbPath = join(dir, 'vigil.db')
 	const db = new DB(dbPath)
@@ -113,17 +113,19 @@ test('DB migration removes legacy tier confidence and chat storage', () => {
 
 	const sqlite = new Database(dbPath, { readonly: true })
 	try {
-		const taskColumns = sqlite.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>
-		const taskColumnNames = taskColumns.map(column => column.name)
-		assert.equal(taskColumnNames.includes('tier'), false)
-		assert.equal(taskColumnNames.includes('solver_confidence'), false)
-
 		const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
 			name: string
 		}>
 		const tableNames = tables.map(table => table.name)
+		// Legacy Task model is gone.
+		assert.equal(tableNames.includes('tasks'), false)
+		assert.equal(tableNames.includes('event_log'), false)
 		assert.equal(tableNames.includes('chat_sessions'), false)
 		assert.equal(tableNames.includes('chat_messages'), false)
+		// Item model + provider watermark survive.
+		assert.equal(tableNames.includes('items'), true)
+		assert.equal(tableNames.includes('item_events'), true)
+		assert.equal(tableNames.includes('poll_state'), true)
 	} finally {
 		sqlite.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -3092,7 +3094,6 @@ test('poller ingests provider tasks as source-backed unverified Items', async ()
 		await sourcePoller.pollOnce()
 
 		const item = db.items.findBySourceExternalId('task-789')
-		assert.equal(db.getTaskByExternalId('task-789'), null)
 		assert.equal(item?.status, 'unverified')
 		assert.deepEqual(item?.source, {
 			provider: 'contember',
@@ -3156,7 +3157,6 @@ test('server creates source-backed unverified Items from external ids', async ()
 			['approve', 'reject'],
 		)
 		assert.equal(db.items.findBySourceExternalId('task-extension-create')?.id, body.data.id)
-		assert.equal(db.getTaskByExternalId('task-extension-create'), null)
 	})
 })
 

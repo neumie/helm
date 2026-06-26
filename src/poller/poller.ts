@@ -66,8 +66,7 @@ export class Poller {
 		let latestCreatedAt = since
 
 		for (const task of tasks) {
-			if (this.db.items.findBySourceExternalId(task.externalId) || this.db.taskExistsByExternalId(task.externalId))
-				continue
+			if (this.db.items.findBySourceExternalId(task.externalId)) continue
 
 			this.itemCommands.createSolveItem({
 				projectSlug,

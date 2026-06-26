@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 
-export type DashboardSelection = { kind: 'task' | 'item'; id: string } | null
+export type DashboardSelection = { kind: 'item'; id: string } | null
 
-/** Read selected dashboard entity from URL hash: #task/{id} or #item/{id}. */
+/** Read selected dashboard entity from URL hash: #item/{id}. */
 function getHashSelectionKey(): string {
 	const hash = window.location.hash
-	const match = hash.match(/^#(task|item)\/(.+)$/)
+	const match = hash.match(/^#(item)\/(.+)$/)
 	return match ? `${match[1]}/${match[2]}` : ''
 }
 
@@ -18,21 +18,17 @@ export function useHashRoute() {
 	const selectionKey = useSyncExternalStore(subscribeHash, getHashSelectionKey)
 	const selection = parseSelection(selectionKey)
 
-	const selectTask = useCallback((id: string | null) => {
-		window.location.hash = id ? `task/${id}` : ''
-	}, [])
-
 	const selectItem = useCallback((id: string | null) => {
 		window.location.hash = id ? `item/${id}` : ''
 	}, [])
 
-	return { selection, selectTask, selectItem }
+	return { selection, selectItem }
 }
 
 function parseSelection(key: string): DashboardSelection {
-	const match = key.match(/^(task|item)\/(.+)$/)
+	const match = key.match(/^(item)\/(.+)$/)
 	if (!match) return null
-	return { kind: match[1] as 'task' | 'item', id: match[2] }
+	return { kind: 'item', id: match[2] }
 }
 
 export function useInterval(callback: () => void, ms: number) {

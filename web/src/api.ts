@@ -36,27 +36,6 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 	return json.data
 }
 
-export interface TaskRecord {
-	id: string
-	externalId: string
-	projectSlug: string
-	title: string
-	status: string
-	solverSummary: string | null
-	solverAgent: 'claude' | 'codex' | null
-	filesChanged: string | null
-	worktreePath: string | null
-	branchName: string | null
-	prUrl: string | null
-	prDraft: number | null
-	taskContext: string | null
-	queuedAt: string
-	startedAt: string | null
-	completedAt: string | null
-	errorMessage: string | null
-	errorPhase: string | null
-}
-
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
 export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry'
@@ -218,14 +197,6 @@ export interface PlanInfo {
 	hint: string
 }
 
-export interface EventEntry {
-	id: number
-	taskId: string | null
-	eventType: string
-	payload: string | null
-	createdAt: string
-}
-
 export interface QueueStatus {
 	paused: boolean
 	pending: number
@@ -246,7 +217,6 @@ export interface DaemonStatus {
 }
 
 export interface AppConfig {
-	taskBaseUrl?: string
 	projectColors?: Record<string, string>
 	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
 	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex' }
@@ -311,11 +281,6 @@ export const api = {
 	items: (params?: string) => fetchJSON<DashboardItem[]>(`/items${params ? `?${params}` : ''}`),
 	createItem: (input: CreateItemInput) => postJSONBody<DashboardItem | DashboardItem[]>('/items', input),
 	planItem: (id: string) => postJSONBody<PlanInfo>(`/items/${id}/plan`, {}),
-	tasks: (params?: string) => fetchJSON<TaskRecord[]>(`/tasks${params ? `?${params}` : ''}`),
-	taskEvents: (id: string) => fetchJSON<EventEntry[]>(`/tasks/${id}/events`),
-	start: (id: string) => postJSON<{ message: string }>(`/tasks/${id}/start`),
-	retry: (id: string) => postJSON<{ message: string }>(`/tasks/${id}/retry`),
-	cancel: (id: string) => postJSON<{ message: string }>(`/tasks/${id}/cancel`),
 	itemAction: (id: string, action: DashboardActionId) => {
 		switch (action) {
 			case 'approve':
@@ -326,22 +291,6 @@ export const api = {
 				return postJSON<DashboardItem>(`/items/${id}/${action}`)
 		}
 	},
-	deleteTask: (id: string) =>
-		fetch(`${BASE}/tasks/${id}`, { method: 'DELETE' })
-			.then(r => r.json())
-			.then(r => r.data),
-	setStatus: (id: string, status: string) =>
-		fetch(`${BASE}/tasks/${id}/status`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status }),
-		})
-			.then(r => r.json())
-			.then(r => r.data),
-	prStatus: (id: string) =>
-		fetchJSON<{ state: string | null; merged?: boolean; mergedAt?: string }>(`/tasks/${id}/pr-status`),
-	output: (id: string, offset = 0) =>
-		fetchJSON<{ content: string; offset: number; done: boolean }>(`/tasks/${id}/output?offset=${offset}`),
 	triggerPoll: () => postJSON<{ message: string }>('/poll/trigger'),
 	pauseQueue: () => postJSON<{ paused: boolean }>('/queue/pause'),
 	resumeQueue: () => postJSON<{ paused: boolean }>('/queue/resume'),
