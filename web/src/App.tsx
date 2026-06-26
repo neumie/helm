@@ -76,6 +76,9 @@ export function App() {
 	// poll shows this item actually changed (updatedAt). Static items never
 	// re-fetch — no constant background reloading of an open item.
 	const selectedUpdatedAt = listItem?.updatedAt ?? null
+	// selectedUpdatedAt is an intentional extra trigger: re-fetch the detail when
+	// the cheap list poll shows this item changed (it's not read in the body).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: deliberate refetch trigger
 	useEffect(() => {
 		loadDetail(selectedItemId)
 	}, [selectedItemId, selectedUpdatedAt, loadDetail])

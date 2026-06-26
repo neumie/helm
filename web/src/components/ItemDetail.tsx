@@ -339,16 +339,19 @@ function SourceTaskView({ task }: { task: SourceTask }) {
 			)}
 			{blocks.length > 0 ? (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-					{blocks.map((b, i) =>
+					{blocks.map(b =>
 						b.type === 'image' ? (
-							<Attachment key={`b-${i}`} att={{ name: b.name ?? 'image', url: b.url, contentType: b.contentType }} />
+							<Attachment
+								key={`i:${b.url}`}
+								att={{ name: b.name ?? 'image', url: b.url, contentType: b.contentType }}
+							/>
 						) : b.heading ? (
-							<div key={`b-${i}`} style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)' }}>
+							<div key={`h:${b.text}`} style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)' }}>
 								{b.text}
 							</div>
 						) : (
 							<p
-								key={`b-${i}`}
+								key={`t:${b.text}`}
 								style={{ fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}
 							>
 								{b.text}
@@ -365,15 +368,15 @@ function SourceTaskView({ task }: { task: SourceTask }) {
 			)}
 			{attachments.length > 0 && (
 				<div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
-					{attachments.map((a, i) => (
-						<Attachment key={`${a.url}-${i}`} att={a} />
+					{attachments.map(a => (
+						<Attachment key={a.url} att={a} />
 					))}
 				</div>
 			)}
 			{comments.length > 0 && (
 				<div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-					{comments.map((c, i) => (
-						<div key={`${c.createdAt}-${i}`} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10 }}>
+					{comments.map(c => (
+						<div key={`${c.createdAt}-${c.author}`} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10 }}>
 							<div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 2 }}>{c.author}</div>
 							<div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
 								{c.body}

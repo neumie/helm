@@ -39,20 +39,33 @@ export function useInterval(callback: () => void, ms: number) {
 	}, [callback, ms])
 }
 
-export function useRelativeTime(date: string | null) {
-	const [, setTick] = useState(0)
-	useEffect(() => {
-		if (!date) return
-		const id = setInterval(() => setTick(t => t + 1), 1000)
-		return () => clearInterval(id)
-	}, [date])
-
+function formatRelative(date: string | null): string | null {
 	if (!date) return null
 	const ms = Date.now() - new Date(date).getTime()
-	const s = Math.floor(ms / 1000)
-	if (s < 60) return `${s}s`
-	const m = Math.floor(s / 60)
-	if (m < 60) return `${m}m ${s % 60}s`
+	const m = Math.floor(ms / 60000)
+	if (m < 1) return 'just now'
+	if (m < 60) return `${m}m`
 	const h = Math.floor(m / 60)
-	return `${h}h ${m % 60}m`
+	if (h < 24) return `${h}h ${m % 60}m`
+	const d = Math.floor(h / 24)
+	return `${d}d ${h % 24}h`
+}
+
+/**
+ * Minute-granularity relative time. Re-renders only when the displayed label
+ * actually changes (the updater returns the previous string otherwise, so React
+ * bails) — not every second. One slow shared-cadence interval per instance.
+ */
+export function useRelativeTime(date: string | null) {
+	const [label, setLabel] = useState(() => formatRelative(date))
+	useEffect(() => {
+		setLabel(formatRelative(date))
+		if (!date) return
+		const id = setInterval(() => {
+			const next = formatRelative(date)
+			setLabel(prev => (prev === next ? prev : next))
+		}, 30000)
+		return () => clearInterval(id)
+	}, [date])
+	return label
 }
