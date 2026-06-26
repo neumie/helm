@@ -9,6 +9,7 @@ import type {
 	PlanInfo,
 	RunObservationState,
 } from '../api'
+import { useRelativeTime } from '../hooks'
 import { StatusBadge } from './StatusBadge'
 
 interface ItemDetailProps {
@@ -28,12 +29,12 @@ export interface RunObservationDetail {
 export function runObservationDetails(observation: DashboardItem['runObservation']): RunObservationDetail[] {
 	const details: RunObservationDetail[] = []
 	if (observation.pr.url) {
-		const value = observation.pr.state ?? 'unknown'
+		const value = observation.pr.merged ? 'merged' : (observation.pr.state ?? 'unknown')
 		details.push({
 			label: 'PR',
 			value,
 			link: { label: value, url: observation.pr.url },
-			tone: 'gray',
+			tone: observation.pr.merged ? 'green' : 'gray',
 		})
 	}
 	if (observation.almanac.status) {
@@ -58,6 +59,12 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 	const hasPlan = Boolean(planInfo || item.plan)
 	const commandPending = pendingAction !== null || pendingPlan
 	const hasCommands = item.allowedActions.length > 0 || canFork || canPlan
+	const elapsed = useRelativeTime(
+		item.status === 'processing'
+			? (item.startedAt ?? item.queuedAt ?? item.createdAt)
+			: (item.completedAt ?? item.updatedAt),
+	)
+	const elapsedLabel = item.status === 'processing' ? 'running' : item.status === 'review' ? 'in review' : item.status
 
 	const runAction = async (action: DashboardActionId) => {
 		setPendingAction(action)
@@ -92,16 +99,28 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 
 			<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
 				<StatusBadge value={item.card.statusLabel} tone={item.card.statusTone} />
-				<span
-					style={{
-						fontSize: 10,
-						fontWeight: 600,
-						color: 'var(--text-4)',
-						textTransform: 'uppercase',
-					}}
-				>
+				{item.runObservation.pr.merged && (
+					<span
+						style={{
+							fontSize: 10,
+							fontWeight: 700,
+							color: 'var(--green)',
+							background: 'var(--green-dim)',
+							borderRadius: 6,
+							padding: '2px 7px',
+						}}
+					>
+						MERGED
+					</span>
+				)}
+				<span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-4)', textTransform: 'uppercase' }}>
 					{item.kind}
 				</span>
+				{elapsed && (
+					<span style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
+						{elapsedLabel} {elapsed}
+					</span>
+				)}
 				<span style={{ flex: 1 }} />
 				<HeaderLink link={item.links.source} fallbackLabel="Source" />
 				<HeaderLink link={item.links.branch} fallbackLabel="Branch" />
@@ -122,14 +141,8 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 					Project: <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.projectSlug}</strong>
 				</span>
 				<span>
-					BaseRef:{' '}
-					<code style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{item.baseRef}</code>
+					BaseRef: <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.baseRef}</strong>
 				</span>
-				{item.branchName && (
-					<span>
-						Branch: <InlineLink link={item.links.branch} fallback={<code>{item.branchName}</code>} />
-					</span>
-				)}
 			</div>
 
 			{item.errorMessage && (
@@ -158,7 +171,7 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 					{item.allowedActions.map(action => (
 						<ActionButton
 							key={action.id}
-							label={action.label}
+							label={pendingAction === action.id ? `${action.label}…` : action.label}
 							tone={action.tone}
 							disabled={commandPending}
 							onClick={() => runAction(action.id)}
@@ -191,7 +204,19 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 			)}
 
 			{item.solveInputSnapshot && (
-				<Section title="Solve input">
+				<details style={{ marginTop: 28 }}>
+					<summary
+						style={{
+							fontSize: 11,
+							fontWeight: 600,
+							textTransform: 'uppercase',
+							letterSpacing: '0.04em',
+							color: 'var(--text-4)',
+							cursor: 'pointer',
+						}}
+					>
+						Solve input
+					</summary>
 					<pre
 						style={{
 							fontSize: 12,
@@ -200,12 +225,12 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 							whiteSpace: 'pre-wrap',
 							wordBreak: 'break-word',
 							fontFamily: 'var(--font-sans)',
-							margin: 0,
+							margin: '12px 0 0',
 						}}
 					>
 						{item.solveInputSnapshot}
 					</pre>
-				</Section>
+				</details>
 			)}
 		</div>
 	)

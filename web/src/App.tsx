@@ -14,12 +14,16 @@ import { ItemDetail } from './components/ItemDetail'
 import { TaskList, workAttentionCounts } from './components/TaskList'
 import { useHashRoute, useInterval } from './hooks'
 
+const DESTRUCTIVE: DashboardActionId[] = ['reject', 'cancel']
+
 export function App() {
 	const [status, setStatus] = useState<DaemonStatus | null>(null)
 	const [items, setItems] = useState<DashboardItem[]>([])
 	const [config, setConfig] = useState<AppConfig>({})
+	const [loaded, setLoaded] = useState(false)
+	const [connected, setConnected] = useState(true)
 	const { selection, selectItem } = useHashRoute()
-	const [projectFilter, setProjectFilter] = useState<string | null>(null)
+	const [projectFilter, setProjectFilter] = useState<string | null>(() => localStorage.getItem('vigil.project') || null)
 	const [createDraft, setCreateDraft] = useState<{ forkFrom?: DashboardItem } | null>(null)
 
 	const refresh = useCallback(async () => {
@@ -32,32 +36,49 @@ export function App() {
 				if (p.color) projectColors[p.slug] = p.color
 			}
 			setConfig({ ...c, projectColors })
+			setConnected(true)
 		} catch (err) {
 			console.error('Failed to refresh:', err)
+			setConnected(false)
+		} finally {
+			setLoaded(true)
 		}
 	}, [])
 
 	useInterval(refresh, 5000)
+
+	useEffect(() => {
+		if (projectFilter) localStorage.setItem('vigil.project', projectFilter)
+		else localStorage.removeItem('vigil.project')
+	}, [projectFilter])
 
 	const filteredItems = projectFilter ? items.filter(i => i.projectSlug === projectFilter) : items
 	const projectSlugs = [...new Set(items.map(i => i.projectSlug))]
 
 	const selectedItemId = selection?.kind === 'item' ? selection.id : null
 	const selectedItem = selectedItemId ? (items.find(i => i.id === selectedItemId) ?? null) : null
-	const { running: runningCount, waiting: waitingCount } = workAttentionCounts(items)
+	const selectionMissing = selectedItemId !== null && selectedItem === null && loaded && !createDraft
+	const { running: runningCount, needsYou: needsCount } = workAttentionCounts(items)
 
 	useEffect(() => {
-		if (runningCount > 0) {
-			document.title = `🔵 (${runningCount}) Vigil`
-		} else if (waitingCount > 0) {
-			document.title = `🟡 [${waitingCount}] Vigil`
-		} else {
-			document.title = '⚫ Vigil'
-		}
-	}, [runningCount, waitingCount])
+		// Attention-first: a PR waiting on you (needs) outranks a busy daemon.
+		if (needsCount > 0) document.title = `(${needsCount}) needs you · Vigil`
+		else if (runningCount > 0) document.title = `(${runningCount}) running · Vigil`
+		else document.title = 'Vigil'
+	}, [needsCount, runningCount])
+
+	const applyUpdated = (updated: DashboardItem) => setItems(prev => prev.map(i => (i.id === updated.id ? updated : i)))
 
 	const handleItemAction = async (id: string, action: DashboardActionId) => {
-		await api.itemAction(id, action)
+		if (DESTRUCTIVE.includes(action) && !window.confirm(`${action[0].toUpperCase()}${action.slice(1)} this item?`)) {
+			return
+		}
+		try {
+			const updated = await api.itemAction(id, action)
+			if (updated) applyUpdated(updated) // instant feedback; poll reconciles
+		} catch (err) {
+			console.error('Action failed:', err)
+		}
 		refresh()
 	}
 
@@ -74,15 +95,27 @@ export function App() {
 		if (first) selectItem(first.id)
 	}
 
-	const selectExistingItem = (id: string | null) => {
-		setCreateDraft(null)
-		selectItem(id)
-	}
-
 	return (
 		<div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+			{!connected && (
+				<div
+					style={{
+						background: 'var(--red-dim)',
+						color: 'var(--red)',
+						padding: '6px 16px',
+						fontSize: 12,
+						fontWeight: 600,
+						textAlign: 'center',
+						borderBottom: '1px solid var(--red)',
+					}}
+				>
+					⚠ Disconnected — can't reach the Vigil daemon. Showing last-known state.
+				</div>
+			)}
 			<Header
 				status={status}
+				connected={connected}
+				needsCount={needsCount}
 				onNewItem={() => {
 					setCreateDraft({})
 					selectItem(null)
@@ -98,7 +131,11 @@ export function App() {
 					items={filteredItems}
 					status={status}
 					selectedItemId={selectedItemId}
-					onSelectItem={selectExistingItem}
+					onSelectItem={id => {
+						setCreateDraft(null)
+						selectItem(id)
+					}}
+					onItemAction={handleItemAction}
 					projects={projectSlugs}
 					selectedProject={projectFilter}
 					onProjectChange={setProjectFilter}
@@ -123,6 +160,16 @@ export function App() {
 								selectItem(null)
 							}}
 						/>
+					) : selectionMissing ? (
+						<div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
+							<p style={{ color: 'var(--text-4)', fontSize: 13 }}>
+								That item is no longer in view — it moved or was archived.
+							</p>
+						</div>
+					) : !loaded ? (
+						<div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
+							<p style={{ color: 'var(--text-4)', fontSize: 13 }}>Loading…</p>
+						</div>
 					) : (
 						<EmptyState itemCount={items.length} activeCount={runningCount} />
 					)}

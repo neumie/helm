@@ -74,6 +74,8 @@ export interface DashboardItem {
 	}
 	createdAt: string
 	queuedAt: string | null
+	startedAt: string | null
+	completedAt: string | null
 	updatedAt: string
 }
 
@@ -143,6 +145,8 @@ function linksForItem(item: ItemRecord): DashboardItem['links'] {
 			: null,
 		branch: item.branchName
 			? {
+					// No standalone branch web URL (repo host unknown); the PR is the
+					// branch's home on GitHub, so the branch label links there.
 					label: item.branchName,
 					url: item.prUrl,
 				}
@@ -161,6 +165,8 @@ function forkContextForItem(item: ItemRecord): DashboardForkContext | null {
 		? {
 				itemId: item.id,
 				branchName: item.branchName,
+				// A fork bases the new Item on THIS Item's branch, so the fork's
+				// baseRef is this branch (intentional — not item.baseRef).
 				baseRef: item.branchName,
 			}
 		: null
@@ -227,6 +233,8 @@ export function toDashboardItem(
 		links: linksForItem(item),
 		createdAt: item.createdAt,
 		queuedAt: item.queuedAt,
+		startedAt: item.startedAt,
+		completedAt: item.completedAt,
 		updatedAt: item.updatedAt,
 	}
 }

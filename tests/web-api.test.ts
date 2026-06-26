@@ -170,15 +170,34 @@ test('TaskList keeps planned Items in the queued work bucket', () => {
 	assert.equal(buckets.archived.length, 0)
 })
 
-test('dashboard attention counts include planned and unverified Items as waiting work', () => {
-	const planned = { id: 'item-planned', status: 'planned' } as DashboardItem
-	const unverified = { id: 'item-unverified', status: 'unverified' } as DashboardItem
+test('partitionWorkEntries routes review + failed to the "needs you" bucket', () => {
+	const review = { id: 'r', status: 'review' } as DashboardItem
+	const failed = { id: 'f', status: 'failed' } as DashboardItem
+	const processing = { id: 'p', status: 'processing' } as DashboardItem
+	const done = { id: 'd', status: 'completed' } as DashboardItem
+
+	const buckets = partitionWorkEntries([review, failed, processing, done])
+	assert.deepEqual(buckets.needs.map(i => i.id).sort(), ['f', 'r'])
+	assert.deepEqual(
+		buckets.running.map(i => i.id),
+		['p'],
+	)
+	assert.deepEqual(
+		buckets.archived.map(i => i.id),
+		['d'],
+	)
+})
+
+test('dashboard attention counts surface review + failed as "needs you", processing as running', () => {
+	const review = { id: 'item-review', status: 'review' } as DashboardItem
+	const failed = { id: 'item-failed', status: 'failed' } as DashboardItem
 	const queued = { id: 'item-queued', status: 'queued' } as DashboardItem
 	const processing = { id: 'item-processing', status: 'processing' } as DashboardItem
 
-	assert.deepEqual(workAttentionCounts([planned, unverified, queued, processing]), {
+	// review + failed are what need a human; queued/planned do NOT count as attention.
+	assert.deepEqual(workAttentionCounts([review, failed, queued, processing]), {
 		running: 1,
-		waiting: 3,
+		needsYou: 2,
 	})
 })
 

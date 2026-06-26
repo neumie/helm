@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import type { DaemonStatus, DashboardItem } from '../api'
+import type { DaemonStatus, DashboardActionId, DashboardItem } from '../api'
+import { useRelativeTime } from '../hooks'
 import { StatusBadge } from './StatusBadge'
 
-type Tab = 'active' | 'queued' | 'archived'
+type Tab = 'needs' | 'running' | 'queued' | 'archived'
 
 interface Props {
 	items: DashboardItem[]
 	status: DaemonStatus | null
 	selectedItemId: string | null
 	onSelectItem: (id: string | null) => void
+	onItemAction: (id: string, action: DashboardActionId) => void
 	projects: string[]
 	selectedProject: string | null
 	onProjectChange: (slug: string | null) => void
@@ -16,31 +18,33 @@ interface Props {
 }
 
 export interface WorkBuckets {
-	active: DashboardItem[]
+	needs: DashboardItem[]
+	running: DashboardItem[]
 	queued: DashboardItem[]
 	archived: DashboardItem[]
 }
 
 export interface WorkAttentionCounts {
 	running: number
-	waiting: number
+	needsYou: number
 }
+
+const NEEDS_YOU = new Set(['review', 'failed'])
+const QUEUED = new Set(['planned', 'queued', 'unverified'])
 
 export function partitionWorkEntries(items: DashboardItem[]): WorkBuckets {
 	return {
-		active: items.filter(i => i.status === 'processing' || i.status === 'failed' || i.status === 'review'),
-		queued: items.filter(i => i.status === 'planned' || i.status === 'queued' || i.status === 'unverified'),
-		archived: items.filter(
-			i => !['processing', 'failed', 'review', 'planned', 'queued', 'unverified'].includes(i.status),
-		),
+		needs: items.filter(i => NEEDS_YOU.has(i.status)),
+		running: items.filter(i => i.status === 'processing'),
+		queued: items.filter(i => QUEUED.has(i.status)),
+		archived: items.filter(i => !NEEDS_YOU.has(i.status) && i.status !== 'processing' && !QUEUED.has(i.status)),
 	}
 }
 
 export function workAttentionCounts(items: DashboardItem[]): WorkAttentionCounts {
-	const buckets = partitionWorkEntries(items)
 	return {
 		running: items.filter(i => i.status === 'processing').length,
-		waiting: buckets.queued.length,
+		needsYou: items.filter(i => NEEDS_YOU.has(i.status)).length,
 	}
 }
 
@@ -48,25 +52,35 @@ export function itemMetaLabels(item: DashboardItem): string[] {
 	return [item.projectSlug, item.kind, ...(item.group ? [item.group.label] : [])]
 }
 
+/** Most meaningful timestamp to age, by state. */
+function rowTimestamp(item: DashboardItem): string {
+	if (item.status === 'processing') return item.startedAt ?? item.queuedAt ?? item.createdAt
+	if (NEEDS_YOU.has(item.status)) return item.completedAt ?? item.updatedAt
+	if (QUEUED.has(item.status)) return item.queuedAt ?? item.createdAt
+	return item.completedAt ?? item.updatedAt
+}
+
 export function TaskList({
 	items,
 	selectedItemId,
 	onSelectItem,
+	onItemAction,
 	projects,
 	selectedProject,
 	onProjectChange,
 	projectColors,
 }: Props) {
-	const [tab, setTab] = useState<Tab>('queued')
-	const { active, queued, archived } = partitionWorkEntries(items)
+	const { needs, running, queued, archived } = partitionWorkEntries(items)
+	const [tab, setTab] = useState<Tab>('needs')
 
-	const tabItems: { key: Tab; label: string; count: number }[] = [
-		{ key: 'active', label: 'Active', count: active.length },
+	const tabItems: { key: Tab; label: string; count: number; attention?: boolean }[] = [
+		{ key: 'needs', label: 'Needs you', count: needs.length, attention: true },
+		{ key: 'running', label: 'Running', count: running.length },
 		{ key: 'queued', label: 'Queued', count: queued.length },
 		{ key: 'archived', label: 'Archived', count: archived.length },
 	]
 
-	const visibleItems = tab === 'active' ? active : tab === 'queued' ? queued : archived
+	const visibleItems = tab === 'needs' ? needs : tab === 'running' ? running : tab === 'queued' ? queued : archived
 
 	return (
 		<aside
@@ -80,14 +94,8 @@ export function TaskList({
 				flexShrink: 0,
 			}}
 		>
-			{/* Project filter */}
 			{projects.length > 1 && (
-				<div
-					style={{
-						padding: '8px 12px',
-						borderBottom: '1px solid var(--border)',
-					}}
-				>
+				<div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
 					<select
 						value={selectedProject ?? ''}
 						onChange={e => onProjectChange(e.target.value || null)}
@@ -114,41 +122,39 @@ export function TaskList({
 				</div>
 			)}
 
-			{/* Tabs */}
-			<div
-				style={{
-					display: 'flex',
-					background: 'var(--bg-1)',
-					borderBottom: '1px solid var(--border)',
-				}}
-			>
+			<div style={{ display: 'flex', background: 'var(--bg-1)', borderBottom: '1px solid var(--border)' }}>
 				{tabItems.map(t => (
-					<TabButton key={t.key} active={tab === t.key} count={t.count} onClick={() => setTab(t.key)}>
+					<TabButton
+						key={t.key}
+						active={tab === t.key}
+						count={t.count}
+						attention={t.attention && t.count > 0}
+						onClick={() => setTab(t.key)}
+					>
 						{t.label}
 					</TabButton>
 				))}
 			</div>
 
-			{/* Item list */}
 			<div style={{ flex: 1, overflow: 'auto' }}>
 				{visibleItems.length === 0 ? (
 					<p style={{ color: 'var(--text-4)', padding: '24px 16px', fontSize: 13, textAlign: 'center' }}>
-						No {tab} work.
+						{tab === 'needs' ? 'Nothing needs you. 🎉' : `No ${tab} work.`}
 					</p>
 				) : (
 					visibleItems.map(item => (
 						<ItemRow
-							key={`item-${item.id}`}
+							key={item.id}
 							item={item}
 							selected={item.id === selectedItemId}
 							onClick={() => onSelectItem(item.id)}
+							onAction={onItemAction}
 							projectColor={projectColors[item.projectSlug]}
 						/>
 					))
 				)}
 			</div>
 
-			{/* Settings link */}
 			<a
 				href="/settings"
 				style={{
@@ -171,11 +177,13 @@ export function TaskList({
 function TabButton({
 	active,
 	count,
+	attention,
 	onClick,
 	children,
 }: {
 	active: boolean
 	count: number
+	attention?: boolean
 	onClick: () => void
 	children: React.ReactNode
 }) {
@@ -206,8 +214,12 @@ function TabButton({
 				<span
 					style={{
 						fontSize: 10,
-						fontWeight: 600,
-						color: active ? 'var(--accent)' : 'var(--text-4)',
+						fontWeight: 700,
+						minWidth: 16,
+						padding: '1px 5px',
+						borderRadius: 8,
+						color: attention ? '#fff' : active ? 'var(--accent)' : 'var(--text-4)',
+						background: attention ? 'var(--red)' : 'transparent',
 						fontVariantNumeric: 'tabular-nums',
 					}}
 				>
@@ -222,18 +234,21 @@ function ItemRow({
 	item,
 	selected,
 	onClick,
+	onAction,
 	projectColor,
 }: {
 	item: DashboardItem
 	selected: boolean
 	onClick: () => void
+	onAction: (id: string, action: DashboardActionId) => void
 	projectColor?: string
 }) {
-	const timestamp = item.queuedAt ?? item.createdAt
+	const age = useRelativeTime(rowTimestamp(item))
+	const failure = item.status === 'failed' ? item.errorMessage : null
 
 	return (
 		<div
-			// biome-ignore lint/a11y/useSemanticElements: item row mirrors task row rich block content with nested status/link fragments
+			// biome-ignore lint/a11y/useSemanticElements: rich block row with nested action buttons; role+keyboard give it accessible button behavior without nesting buttons in a button
 			role="button"
 			tabIndex={0}
 			onClick={onClick}
@@ -246,7 +261,7 @@ function ItemRow({
 			style={{
 				display: 'flex',
 				flexDirection: 'column',
-				gap: 4,
+				gap: 5,
 				padding: '10px 16px',
 				borderBottom: '1px solid var(--border)',
 				cursor: 'pointer',
@@ -262,23 +277,30 @@ function ItemRow({
 			}}
 		>
 			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+				{item.card.pulse && (
+					<span
+						className="vg-pulse"
+						style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }}
+					/>
+				)}
 				{itemMetaLabels(item).map((label, index) => (
 					<span
 						key={`${item.id}-meta-${index}`}
 						style={{
 							fontSize: 10,
-							color: index === 0 ? (projectColor ?? 'var(--text-4)') : 'var(--text-4)',
+							color: 'var(--text-4)',
 							textTransform: index === 1 ? 'uppercase' : undefined,
-							fontWeight: index === 0 ? 500 : 600,
+							fontWeight: index === 1 ? 600 : 500,
 						}}
 					>
 						{label}
 					</span>
 				))}
 				<span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>
-					{formatTime(timestamp)}
+					{age ?? ''}
 				</span>
 			</div>
+
 			<div
 				style={{
 					fontSize: 13,
@@ -291,25 +313,69 @@ function ItemRow({
 			>
 				{item.title}
 			</div>
-			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+
+			{failure && (
+				<div
+					style={{
+						fontSize: 11,
+						color: 'var(--red)',
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+						whiteSpace: 'nowrap',
+					}}
+				>
+					{failure}
+				</div>
+			)}
+
+			<div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
 				<StatusBadge value={item.card.statusLabel} tone={item.card.statusTone} />
+				{item.links.pr?.url && <RowLink href={item.links.pr.url} label="PR ↗" tone="var(--green)" />}
+				{item.links.source?.url && <RowLink href={item.links.source.url} label="source ↗" tone="var(--text-3)" />}
+				<span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
+					{item.allowedActions.map(action => (
+						<button
+							key={action.id}
+							type="button"
+							onClick={e => {
+								e.stopPropagation()
+								onAction(item.id, action.id)
+							}}
+							style={{
+								fontSize: 10,
+								fontWeight: 600,
+								padding: '2px 7px',
+								borderRadius: 'var(--radius-sm)',
+								border: '1px solid var(--border)',
+								cursor: 'pointer',
+								background: action.tone === 'primary' ? 'var(--accent-dim)' : 'transparent',
+								color:
+									action.tone === 'danger'
+										? 'var(--red)'
+										: action.tone === 'primary'
+											? 'var(--accent)'
+											: 'var(--text-3)',
+							}}
+						>
+							{action.label}
+						</button>
+					))}
+				</span>
 			</div>
 		</div>
 	)
 }
 
-function formatTime(iso: string): string {
-	const d = new Date(iso)
-	const now = new Date()
-	const diffMs = now.getTime() - d.getTime()
-	const diffMin = Math.floor(diffMs / 60000)
-	const diffHr = Math.floor(diffMin / 60)
-	const diffDays = Math.floor(diffHr / 24)
-
-	if (diffMin < 1) return 'just now'
-	if (diffMin < 60) return `${diffMin}m ago`
-	if (diffHr < 24) return `${diffHr}h ago`
-	if (diffDays === 1) return 'yesterday'
-	if (diffDays < 7) return `${diffDays}d ago`
-	return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+function RowLink({ href, label, tone }: { href: string; label: string; tone: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			onClick={e => e.stopPropagation()}
+			style={{ fontSize: 10, fontWeight: 600, color: tone, textDecoration: 'none' }}
+		>
+			{label}
+		</a>
+	)
 }

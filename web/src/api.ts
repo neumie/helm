@@ -142,6 +142,8 @@ export interface DashboardItem {
 	}
 	createdAt: string
 	queuedAt: string | null
+	startedAt: string | null
+	completedAt: string | null
 	updatedAt: string
 }
 

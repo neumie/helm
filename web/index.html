@@ -50,6 +50,11 @@
       ::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
       ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
       ::selection { background: var(--accent-dim); color: var(--accent); }
+      @keyframes vg-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }
+      .vg-pulse { animation: vg-pulse 1.4s ease-in-out infinite; }
     </style>
   </head>
   <body>
