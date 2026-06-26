@@ -40,6 +40,7 @@ type ItemUpdateInput = Partial<
 		| 'resultSummary'
 		| 'solveInputSnapshot'
 		| 'prUrl'
+		| 'runOutcome'
 	>
 >
 
@@ -57,6 +58,7 @@ const ITEM_UPDATE_COLUMNS = {
 	resultSummary: 'result_summary',
 	solveInputSnapshot: 'solve_input_snapshot',
 	prUrl: 'pr_url',
+	runOutcome: 'run_outcome',
 } satisfies Record<keyof ItemUpdateInput, string>
 
 function readJson(value: unknown, field: string): unknown {
@@ -111,6 +113,7 @@ export class ItemStore {
 			resultSummary: null,
 			solveInputSnapshot: null,
 			prUrl: null,
+			runOutcome: null,
 		})
 
 		this.db
@@ -119,12 +122,12 @@ export class ItemStore {
 					id, kind, status, project_slug, title, source, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, updated_at,
-					error_message, error_phase, result_summary, solve_input_snapshot, pr_url
+					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome
 				) VALUES (
 					@id, @kind, @status, @projectSlug, @title, @source, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @updatedAt,
-					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl
+					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome
 				)`,
 			)
 			.run(this.toDbParams(item))
@@ -314,6 +317,7 @@ export class ItemStore {
 			resultSummary: item.resultSummary,
 			solveInputSnapshot: item.solveInputSnapshot,
 			prUrl: item.prUrl,
+			runOutcome: item.runOutcome,
 		}
 	}
 
@@ -343,6 +347,7 @@ export class ItemStore {
 			resultSummary: row.result_summary ?? null,
 			solveInputSnapshot: row.solve_input_snapshot ?? null,
 			prUrl: row.pr_url ?? null,
+			runOutcome: row.run_outcome ?? null,
 		})
 	}
 }

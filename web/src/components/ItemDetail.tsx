@@ -116,6 +116,21 @@ export function ItemDetail({ item, onAction, onPlan, onFork }: ItemDetailProps) 
 				<span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-4)', textTransform: 'uppercase' }}>
 					{item.kind}
 				</span>
+				{item.runOutcome && item.runOutcome !== 'ok' && (
+					<span
+						title="The agent run errored or wrote no result file — the work may still be fine, verify the branch/PR."
+						style={{
+							fontSize: 10,
+							fontWeight: 700,
+							color: 'var(--amber)',
+							background: 'var(--amber-dim)',
+							borderRadius: 6,
+							padding: '2px 7px',
+						}}
+					>
+						run: {item.runOutcome === 'no_result' ? 'no result' : item.runOutcome}
+					</span>
+				)}
 				{elapsed && (
 					<span style={{ fontSize: 11, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
 						{elapsedLabel} {elapsed}

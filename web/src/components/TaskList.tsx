@@ -244,7 +244,15 @@ function ItemRow({
 	projectColor?: string
 }) {
 	const age = useRelativeTime(rowTimestamp(item))
-	const failure = item.status === 'failed' ? item.errorMessage : null
+	const messyRun = item.runOutcome === 'errored' || item.runOutcome === 'no_result'
+	// Red error line on a hard failure; amber "verify" hint on a reconciled
+	// review item (run was messy but shippable work was found).
+	const failure =
+		item.status === 'failed'
+			? { text: item.errorMessage, tone: 'var(--red)' }
+			: item.status === 'review' && messyRun
+				? { text: '⚠ run errored — verify the branch/PR', tone: 'var(--amber)' }
+				: null
 
 	return (
 		<div
@@ -314,17 +322,17 @@ function ItemRow({
 				{item.title}
 			</div>
 
-			{failure && (
+			{failure?.text && (
 				<div
 					style={{
 						fontSize: 11,
-						color: 'var(--red)',
+						color: failure.tone,
 						overflow: 'hidden',
 						textOverflow: 'ellipsis',
 						whiteSpace: 'nowrap',
 					}}
 				>
-					{failure}
+					{failure.text}
 				</div>
 			)}
 

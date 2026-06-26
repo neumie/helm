@@ -38,7 +38,8 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
-export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry'
+export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry' | 'reopen'
+export type RunOutcome = 'ok' | 'errored' | 'no_result' | 'cancelled'
 
 export interface DashboardAction {
 	id: DashboardActionId
@@ -127,6 +128,7 @@ export interface DashboardItem {
 	solveInputSnapshot: string | null
 	errorMessage: string | null
 	errorPhase: string | null
+	runOutcome: RunOutcome | null
 	card: {
 		state: string
 		statusLabel: string
@@ -290,6 +292,7 @@ export const api = {
 			case 'start':
 			case 'cancel':
 			case 'retry':
+			case 'reopen':
 				return postJSON<DashboardItem>(`/items/${id}/${action}`)
 		}
 	},

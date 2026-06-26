@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { dispatchSolveItem } from '../actions/dispatcher.js'
@@ -11,7 +12,7 @@ import type { ItemRecord } from '../items/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import type { Solver } from '../solver/solver.js'
-import { errorPhase, isCancellation, phaseError } from '../util/errors.js'
+import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
@@ -38,6 +39,74 @@ function ensureItemWorktree(
 	} catch (err) {
 		throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
 	}
+}
+
+/**
+ * After a solve run errors, detect whether the agent left shippable work on the
+ * branch — committed locally (commits ahead of base) and/or an open PR. A run
+ * that errored or wrote no result file may still have done real work; in that
+ * case "failed" is a lie. Best-effort and fail-safe: any detection error returns
+ * `false`, so the Item just fails normally. Returns the PR url when one exists.
+ */
+function detectShippableWork(
+	worktreePath: string,
+	baseRef: string,
+	branchName: string,
+): { prUrl: string | null } | false {
+	let commitsAhead = 0
+	try {
+		const out = execFileSync('git', ['-C', worktreePath, 'rev-list', '--count', `${baseRef}..HEAD`], {
+			encoding: 'utf-8',
+			timeout: 10_000,
+			stdio: ['ignore', 'pipe', 'ignore'],
+		})
+		commitsAhead = Number.parseInt(out.trim(), 10) || 0
+	} catch {
+		return false
+	}
+	if (commitsAhead <= 0) return false
+
+	let prUrl: string | null = null
+	try {
+		const out = execFileSync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
+			encoding: 'utf-8',
+			timeout: 10_000,
+			stdio: ['ignore', 'pipe', 'ignore'],
+		})
+		const trimmed = out.trim()
+		if (trimmed) prUrl = trimmed
+	} catch {
+		// No PR (or gh unavailable) — committed work alone is enough to reconcile.
+	}
+	return { prUrl }
+}
+
+/**
+ * Terminal handling for a non-cancelled solve failure: reconcile to `review`
+ * when the branch holds shippable work (solve phase only — poll/worktree
+ * failures mean no work was done), otherwise mark `failed`.
+ */
+function failOrReconcileSolve(
+	commands: ItemCommands,
+	itemId: string,
+	item: ItemRecord,
+	error: Error,
+	phase: ErrorPhase,
+): void {
+	if (phase === 'solve') {
+		const current = commands.getItem(itemId)
+		if (current?.worktreePath && current.branchName) {
+			const { baseRef } = resolveItemWorkspace(current)
+			const work = detectShippableWork(current.worktreePath, baseRef, current.branchName)
+			if (work) {
+				commands.reconcileFailedSolve(itemId, { message: error.message, phase, prUrl: work.prUrl })
+				log.warn('worker', `Solve Item errored but has shippable work — moved to review: ${item.title}`)
+				return
+			}
+		}
+	}
+	commands.failItem(itemId, error.message, phase)
+	log.error('worker', `Solve Item failed: ${item.title}`, error)
 }
 
 async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvider): Promise<TaskContext> {
@@ -156,8 +225,7 @@ export async function processSolveItem(
 			commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
 			log.warn('worker', `Solve Item cancelled: ${item.title}`)
 		} else {
-			commands.failItem(itemId, error.message, phase)
-			log.error('worker', `Solve Item failed: ${item.title}`, err)
+			failOrReconcileSolve(commands, itemId, item, error, phase)
 		}
 	}
 }

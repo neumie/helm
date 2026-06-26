@@ -195,4 +195,14 @@ CREATE TABLE app_state (
 );
 `,
 	},
+	{
+		// run_outcome records what the agent RUN did (ok/errored/no_result/cancelled),
+		// kept separate from the lifecycle `status`. This lets a solve run that errored
+		// (or wrote no result file) but committed shippable work land in `review` with
+		// an `errored`/`no_result` outcome flag, instead of a false `failed`.
+		version: 13,
+		sql: `
+ALTER TABLE items ADD COLUMN run_outcome TEXT;
+`,
+	},
 ]

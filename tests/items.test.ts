@@ -3033,12 +3033,97 @@ test('Dashboard Contract groups sibling Items together without changing lifecycl
 		})
 		assert.equal(contracts[2].group, null)
 		assert.deepEqual(
+			// failed solve Item: retry (re-run) + reopen (manual false-failure override)
 			contracts[0].allowedActions.map(action => action.id),
-			['retry'],
+			['retry', 'reopen'],
 		)
 		assert.deepEqual(
 			contracts[1].allowedActions.map(action => action.id),
 			['start', 'cancel'],
+		)
+	})
+})
+
+test('runOutcome records the run guess separate from lifecycle status', () => {
+	withTempDb(db => {
+		const commands = new ItemCommands(db.items, config)
+
+		const ok = commands.createSolveItem({ title: 'ok run', projectSlug: 'vigil', prompt: 'do it' })
+		commands.startItem(ok.id)
+		const completed = commands.completeSolveItem(ok.id, {
+			worktreePath: '/tmp/wt',
+			branchName: 'vigil/item/ok',
+			planDirName: '2026-06-26-ok',
+			resultSummary: 'done',
+		})
+		assert.equal(completed.status, 'review')
+		assert.equal(completed.runOutcome, 'ok')
+
+		const errored = commands.createSolveItem({ title: 'errored run', projectSlug: 'vigil', prompt: 'do it' })
+		commands.startItem(errored.id)
+		const failed = commands.failItem(errored.id, 'agent blew up', 'solve')
+		assert.equal(failed.status, 'failed')
+		assert.equal(failed.runOutcome, 'errored')
+
+		const noResult = commands.createSolveItem({ title: 'no result run', projectSlug: 'vigil', prompt: 'do it' })
+		commands.startItem(noResult.id)
+		const failedNoResult = commands.failItem(noResult.id, 'No solver-result.json at docs/...', 'solve')
+		assert.equal(failedNoResult.runOutcome, 'no_result')
+	})
+})
+
+test('reconcileFailedSolve lands an errored run with shippable work in review, not failed', () => {
+	withTempDb(db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'shipped but no result', projectSlug: 'vigil', prompt: 'do it' })
+		commands.startItem(item.id)
+		commands.recordExecutionWorkspaceIdentity(item.id, {
+			worktreePath: '/tmp/wt',
+			branchName: 'vigil/item/x',
+			planDirName: '2026-06-26-x',
+		})
+
+		const reconciled = commands.reconcileFailedSolve(item.id, {
+			message: 'No solver-result.json at docs/...',
+			phase: 'solve',
+			prUrl: 'https://github.com/neumie/vigil/pull/9',
+		})
+		assert.equal(reconciled.status, 'review')
+		assert.equal(reconciled.runOutcome, 'no_result')
+		assert.equal(reconciled.prUrl, 'https://github.com/neumie/vigil/pull/9')
+		// error context is kept so the dashboard can flag "run was messy — verify"
+		assert.equal(reconciled.errorMessage, 'No solver-result.json at docs/...')
+
+		// only processing solve Items can be reconciled
+		assert.throws(() => commands.reconcileFailedSolve(item.id, { message: 'x', phase: 'solve' }))
+	})
+})
+
+test('reopenItem is the manual false-failure override (failed solve → review)', () => {
+	withTempDb(db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'actually fine', projectSlug: 'vigil', prompt: 'do it' })
+		commands.startItem(item.id)
+		commands.failItem(item.id, 'looked failed', 'solve')
+
+		const reopened = commands.reopenItem(item.id)
+		assert.equal(reopened.status, 'review')
+		assert.equal(reopened.errorMessage, null)
+		// failed solve Items advertise both retry and reopen; review does not
+		assert.deepEqual(
+			toDashboardItem(db.items.get(item.id) ?? reopened).allowedActions.map(a => a.id),
+			['retry'],
+		)
+
+		// reopen is only valid from failed, and only for solve Items
+		assert.throws(() => commands.reopenItem(item.id))
+		const loop = commands.createRalphItem({ title: 'loop', projectSlug: 'vigil', prdPath: 'docs/p.md' })
+		commands.startItem(loop.id)
+		commands.failItem(loop.id, 'loop failed', 'loop')
+		assert.throws(() => commands.reopenItem(loop.id))
+		assert.deepEqual(
+			toDashboardItem(db.items.get(loop.id) ?? loop).allowedActions.map(a => a.id),
+			['retry'],
 		)
 	})
 })

@@ -5,7 +5,7 @@ import type { ItemRecord } from './schema.js'
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
-export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry'
+export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry' | 'reopen'
 
 export interface DashboardAction {
 	id: DashboardActionId
@@ -64,6 +64,7 @@ export interface DashboardItem {
 	solveInputSnapshot: string | null
 	errorMessage: string | null
 	errorPhase: string | null
+	runOutcome: ItemRecord['runOutcome']
 	card: DashboardCard
 	allowedActions: DashboardAction[]
 	runObservation: RunObservation
@@ -109,9 +110,10 @@ const ACTIONS: Record<DashboardActionId, DashboardAction> = {
 	start: { id: 'start', label: 'Start', tone: 'primary' },
 	cancel: { id: 'cancel', label: 'Cancel', tone: 'danger' },
 	retry: { id: 'retry', label: 'Retry', tone: 'primary' },
+	reopen: { id: 'reopen', label: 'To review', tone: 'primary' },
 }
 
-function actionsForStatus(status: ItemRecord['status']): DashboardAction[] {
+function actionsForStatus(status: ItemRecord['status'], kind: ItemRecord['kind']): DashboardAction[] {
 	switch (status) {
 		case 'unverified':
 			return [ACTIONS.approve, ACTIONS.reject]
@@ -123,10 +125,13 @@ function actionsForStatus(status: ItemRecord['status']): DashboardAction[] {
 		case 'review':
 			return [ACTIONS.retry]
 		case 'completed':
-		case 'failed':
-		case 'cancelled':
 		case 'skipped':
+		case 'cancelled':
 			return [ACTIONS.retry]
+		case 'failed':
+			// `reopen` is the manual override for a false failure (solve only):
+			// "the work is fine — move it to review" without re-running.
+			return kind === 'solve' ? [ACTIONS.retry, ACTIONS.reopen] : [ACTIONS.retry]
 	}
 }
 
@@ -222,13 +227,14 @@ export function toDashboardItem(
 		solveInputSnapshot: item.solveInputSnapshot,
 		errorMessage: item.errorMessage,
 		errorPhase: item.errorPhase,
+		runOutcome: item.runOutcome,
 		card: {
 			state: item.status,
 			statusLabel: STATUS_LABEL[item.status],
 			statusTone: STATUS_TONE[item.status],
 			pulse: item.status === 'processing',
 		},
-		allowedActions: actionsForStatus(item.status),
+		allowedActions: actionsForStatus(item.status, item.kind),
 		runObservation,
 		links: linksForItem(item),
 		createdAt: item.createdAt,

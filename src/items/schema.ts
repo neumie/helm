@@ -15,6 +15,12 @@ export const itemStatusSchema = z.enum([
 	'skipped',
 ])
 
+// What the agent RUN did, separate from the lifecycle `status`. `no_result` =
+// the run finished but produced no solver-result.json (the classic false-fail);
+// `errored` = the run threw. A reconciled Item keeps its outcome (e.g. `errored`)
+// while sitting in `review`, so the dashboard can flag "run was messy — verify".
+export const runOutcomeSchema = z.enum(['ok', 'errored', 'no_result', 'cancelled'])
+
 export const itemSourceSchema = z
 	.object({
 		provider: z.string().min(1),
@@ -83,10 +89,12 @@ export const itemRecordSchema = z.object({
 	resultSummary: z.string().nullable(),
 	solveInputSnapshot: z.string().nullable(),
 	prUrl: z.string().nullable(),
+	runOutcome: runOutcomeSchema.nullable(),
 })
 
 export type ItemKind = z.infer<typeof itemKindSchema>
 export type ItemStatus = z.infer<typeof itemStatusSchema>
+export type RunOutcome = z.infer<typeof runOutcomeSchema>
 export type ItemSource = z.infer<typeof itemSourceSchema>
 export type ItemPayload = z.infer<typeof itemPayloadSchema>
 export type ItemRecord = z.infer<typeof itemRecordSchema>

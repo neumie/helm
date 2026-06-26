@@ -373,6 +373,16 @@ export function apiRoutes(
 		}
 	})
 
+	api.post('/items/:id/reopen', c => {
+		try {
+			const item = itemCommands.reopenItem(c.req.param('id'))
+			return c.json({ data: dashboardItem(item) })
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err)
+			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
+		}
+	})
+
 	api.post('/items/:id/cancel', c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)

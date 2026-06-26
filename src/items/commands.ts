@@ -5,7 +5,7 @@ import { solverAgentSchema } from '../solver/agent.js'
 import type { SolverAgent } from '../solver/agent.js'
 import type { ErrorPhase } from '../types.js'
 import { itemSourceSchema } from './schema.js'
-import type { ItemKind, ItemRecord, ItemSource } from './schema.js'
+import type { ItemKind, ItemRecord, ItemSource, RunOutcome } from './schema.js'
 import type { ItemStore } from './store.js'
 
 const createItemInitialStatusSchema = z.enum(['queued', 'planned'])
@@ -94,6 +94,8 @@ const RESERVED_EVENT_TYPES = new Set([
 	'item_started',
 	'item_retried',
 	'item_recovered',
+	'item_reconciled',
+	'item_reopened',
 	'item_cancelled',
 	'item_failed',
 	'solve_completed',
@@ -118,6 +120,13 @@ function initialStatus(input: {
 }): ItemRecord['status'] {
 	if (input.source) return 'unverified'
 	return input.initialStatus ?? 'queued'
+}
+
+// A run that finished without writing solver-result.json is the classic
+// false-fail (the agent may still have committed shippable work); flag it
+// `no_result` so reconciliation/UI can distinguish it from a hard error.
+function runOutcomeForFailure(message: string): RunOutcome {
+	return message.includes('No solver-result.json') ? 'no_result' : 'errored'
 }
 
 export class ItemCommands {
@@ -306,6 +315,7 @@ export class ItemCommands {
 			resultSummary: null,
 			solveInputSnapshot: null,
 			prUrl: null,
+			runOutcome: null,
 		})
 		this.store.insertEvent(id, 'item_retried', { from: item.status, to: retried.status })
 		return retried
@@ -325,6 +335,7 @@ export class ItemCommands {
 				resultSummary: null,
 				solveInputSnapshot: null,
 				prUrl: null,
+				runOutcome: null,
 			})
 			this.store.insertEvent(item.id, 'item_recovered', {
 				from: item.status,
@@ -362,6 +373,7 @@ export class ItemCommands {
 			completedAt: new Date().toISOString(),
 			errorMessage: message,
 			errorPhase: phase,
+			runOutcome: 'cancelled',
 		})
 		this.store.insertEvent(id, 'item_cancelled', { from: item.status, to: cancelled.status, phase })
 		return cancelled
@@ -378,9 +390,64 @@ export class ItemCommands {
 			completedAt: new Date().toISOString(),
 			errorMessage: message,
 			errorPhase: phase,
+			runOutcome: runOutcomeForFailure(message),
 		})
 		this.store.insertEvent(id, 'item_failed', { from: item.status, to: failed.status, phase, error: message })
 		return failed
+	}
+
+	/**
+	 * Reconcile a solve run that ERRORED (or wrote no result file) but left
+	 * shippable work behind: instead of a false `failed`, land the Item in
+	 * `review` so it joins the human-handling pile, while keeping the error
+	 * context and an `errored`/`no_result` runOutcome flag. Called by the worker
+	 * after it detects committed work / a PR on the branch. Processing solve only.
+	 */
+	reconcileFailedSolve(id: string, fields: { message: string; phase: ErrorPhase; prUrl?: string | null }): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.kind !== 'solve') throw new Error('Only solve Items can be reconciled to review')
+		if (item.status !== 'processing') throw new Error('Only processing solve Items can be reconciled')
+
+		const reconciled = this.store.update(id, {
+			status: 'review',
+			completedAt: new Date().toISOString(),
+			errorMessage: fields.message,
+			errorPhase: fields.phase,
+			runOutcome: runOutcomeForFailure(fields.message),
+			...(fields.prUrl ? { prUrl: fields.prUrl } : {}),
+		})
+		this.store.insertEvent(id, 'item_reconciled', {
+			from: item.status,
+			to: reconciled.status,
+			phase: fields.phase,
+			error: fields.message,
+			reason: 'shippable_work_present',
+		})
+		return reconciled
+	}
+
+	/**
+	 * Manual override for a false failure: the user verified the work is fine,
+	 * so move a `failed` solve Item into `review` (the human-handling pile)
+	 * without re-running. Keeps the prior runOutcome so the "run was messy"
+	 * context survives; clears the error banner. For a genuine re-run use retry;
+	 * a deliberate `cancelled` Item is left alone (retry it to resume).
+	 */
+	reopenItem(id: string): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.kind !== 'solve') throw new Error('Only solve Items can be reopened to review')
+		if (item.status !== 'failed') {
+			throw new Error('Only failed Items can be reopened to review')
+		}
+
+		const reopened = this.store.update(id, {
+			status: 'review',
+			completedAt: new Date().toISOString(),
+			errorMessage: null,
+			errorPhase: null,
+		})
+		this.store.insertEvent(id, 'item_reopened', { from: item.status, to: reopened.status })
+		return reopened
 	}
 
 	completeSolveItem(
@@ -405,6 +472,7 @@ export class ItemCommands {
 			completedAt: new Date().toISOString(),
 			errorMessage: null,
 			errorPhase: null,
+			runOutcome: 'ok',
 		})
 		this.store.insertEvent(id, 'solve_completed', { summary: fields.resultSummary })
 		return completed
@@ -432,6 +500,7 @@ export class ItemCommands {
 			resultSummary: fields.resultSummary,
 			errorMessage: null,
 			errorPhase: null,
+			runOutcome: 'ok',
 		})
 		this.store.insertEvent(id, 'loop_completed', { summary: fields.resultSummary })
 		return completed
