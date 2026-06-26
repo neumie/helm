@@ -3,7 +3,7 @@ import type { DaemonStatus, DashboardActionId, DashboardItem } from '../api'
 import { useRelativeTime } from '../hooks'
 import { StatusBadge } from './StatusBadge'
 
-type Tab = 'needs' | 'running' | 'queued' | 'archived'
+type Tab = 'needs' | 'running' | 'queued' | 'unverified' | 'archived'
 
 interface Props {
 	items: DashboardItem[]
@@ -21,6 +21,7 @@ export interface WorkBuckets {
 	needs: DashboardItem[]
 	running: DashboardItem[]
 	queued: DashboardItem[]
+	unverified: DashboardItem[]
 	archived: DashboardItem[]
 }
 
@@ -30,14 +31,19 @@ export interface WorkAttentionCounts {
 }
 
 const NEEDS_YOU = new Set(['review', 'failed'])
-const QUEUED = new Set(['planned', 'queued', 'unverified'])
+// `queued` = the user's verified/approved list (queued + planned). `unverified`
+// is the noisy provider inbox — kept in its own tab so it doesn't bury Queued.
+const QUEUED = new Set(['planned', 'queued'])
 
 export function partitionWorkEntries(items: DashboardItem[]): WorkBuckets {
 	return {
 		needs: items.filter(i => NEEDS_YOU.has(i.status)),
 		running: items.filter(i => i.status === 'processing'),
 		queued: items.filter(i => QUEUED.has(i.status)),
-		archived: items.filter(i => !NEEDS_YOU.has(i.status) && i.status !== 'processing' && !QUEUED.has(i.status)),
+		unverified: items.filter(i => i.status === 'unverified'),
+		archived: items.filter(
+			i => !NEEDS_YOU.has(i.status) && i.status !== 'processing' && !QUEUED.has(i.status) && i.status !== 'unverified',
+		),
 	}
 }
 
@@ -83,17 +89,19 @@ export function TaskList({
 	onProjectChange,
 	projectColors,
 }: Props) {
-	const { needs, running, queued, archived } = partitionWorkEntries(items)
+	const { needs, running, queued, unverified, archived } = partitionWorkEntries(items)
 	const [tab, setTab] = useState<Tab>('needs')
 
 	const tabItems: { key: Tab; label: string; count: number; attention?: boolean }[] = [
 		{ key: 'needs', label: 'Needs you', count: needs.length, attention: true },
 		{ key: 'running', label: 'Running', count: running.length },
 		{ key: 'queued', label: 'Queued', count: queued.length },
+		{ key: 'unverified', label: 'Unverified', count: unverified.length },
 		{ key: 'archived', label: 'Archived', count: archived.length },
 	]
 
-	const visibleItems = tab === 'needs' ? needs : tab === 'running' ? running : tab === 'queued' ? queued : archived
+	const byTab: Record<Tab, DashboardItem[]> = { needs, running, queued, unverified, archived }
+	const visibleItems = byTab[tab]
 
 	return (
 		<aside
@@ -206,20 +214,22 @@ function TabButton({
 			onClick={onClick}
 			style={{
 				flex: 1,
-				padding: '12px 0',
+				minWidth: 0,
+				padding: '12px 2px',
 				background: 'none',
 				border: 'none',
 				borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
 				color: active ? 'var(--text-0)' : 'var(--text-3)',
 				cursor: 'pointer',
-				fontSize: 12,
+				fontSize: 11,
 				fontFamily: 'var(--font-sans)',
 				fontWeight: 500,
 				transition: 'color 150ms',
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'center',
-				gap: 5,
+				gap: 4,
+				whiteSpace: 'nowrap',
 			}}
 		>
 			{children}
@@ -228,8 +238,8 @@ function TabButton({
 					style={{
 						fontSize: 10,
 						fontWeight: 700,
-						minWidth: 16,
-						padding: '1px 5px',
+						minWidth: 15,
+						padding: '1px 4px',
 						borderRadius: 8,
 						color: attention ? '#fff' : active ? 'var(--accent)' : 'var(--text-4)',
 						background: attention ? 'var(--red)' : 'transparent',

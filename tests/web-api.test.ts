@@ -188,6 +188,19 @@ test('partitionWorkEntries routes review + failed to the "needs you" bucket', ()
 	)
 })
 
+test('partitionWorkEntries keeps unverified in its own bucket, not Queued', () => {
+	const unverified = { id: 'u', status: 'unverified' } as DashboardItem
+	const queued = { id: 'q', status: 'queued' } as DashboardItem
+	const planned = { id: 'p', status: 'planned' } as DashboardItem
+
+	const buckets = partitionWorkEntries([unverified, queued, planned])
+	assert.deepEqual(
+		buckets.unverified.map(i => i.id),
+		['u'],
+	)
+	assert.deepEqual(buckets.queued.map(i => i.id).sort(), ['p', 'q'])
+})
+
 test('dashboard attention counts surface review + failed as "needs you", processing as running', () => {
 	const review = { id: 'item-review', status: 'review' } as DashboardItem
 	const failed = { id: 'item-failed', status: 'failed' } as DashboardItem

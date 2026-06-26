@@ -232,13 +232,14 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 			<aside style={{ flex: '0 0 250px', width: 250, position: 'sticky', top: 0 }}>
 				{hasCommands && (
 					<Section title="Actions">
-						<div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+						<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 							{item.allowedActions.map(action => (
 								<ActionButton
 									key={action.id}
 									label={pendingAction === action.id ? `${action.label}…` : action.label}
 									tone={action.tone}
 									disabled={commandPending}
+									fullWidth
 									onClick={() => runAction(action.id)}
 								/>
 							))}
@@ -247,55 +248,90 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 									label={pendingPlan ? 'Planning...' : hasPlan ? 'Re-plan' : 'Plan'}
 									tone="muted"
 									disabled={commandPending || item.status === 'processing'}
+									fullWidth
 									onClick={runPlan}
 								/>
 							)}
 							{canFork && onFork && (
-								<ActionButton label="Fork" tone="muted" disabled={commandPending} onClick={() => onFork(item)} />
+								<ActionButton
+									label="Fork"
+									tone="muted"
+									disabled={commandPending}
+									fullWidth
+									onClick={() => onFork(item)}
+								/>
 							)}
 						</div>
 						{onSetStatus && (
-							<div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-								<span style={{ fontSize: 11, color: 'var(--text-4)' }}>Status</span>
-								<select
-									value={item.status}
-									disabled={item.status === 'processing' || pendingStatus}
-									title={
-										item.status === 'processing'
-											? 'Cancel the running Item before changing its status'
-											: 'Manual status override'
-									}
-									onChange={async e => {
-										const next = e.target.value as ItemStatus
-										if (next === item.status) return
-										setPendingStatus(true)
-										setActionError(null)
-										try {
-											await onSetStatus(item.id, next)
-										} catch (err) {
-											setActionError(err instanceof Error ? err.message : String(err))
-										} finally {
-											setPendingStatus(false)
-										}
-									}}
+							<div style={{ marginTop: 14 }}>
+								<div
 									style={{
-										flex: 1,
-										padding: '4px 8px',
-										background: 'var(--bg-0)',
-										border: '1px solid var(--border)',
-										borderRadius: 'var(--radius-sm)',
-										color: 'var(--text-1)',
-										fontSize: 12,
-										fontFamily: 'var(--font-sans)',
-										cursor: item.status === 'processing' ? 'not-allowed' : 'pointer',
+										fontSize: 11,
+										color: 'var(--text-4)',
+										textTransform: 'uppercase',
+										letterSpacing: '0.04em',
+										marginBottom: 6,
 									}}
 								>
-									{ITEM_STATUSES.map(s => (
-										<option key={s} value={s} disabled={s === 'processing'}>
-											{s}
-										</option>
-									))}
-								</select>
+									Status
+								</div>
+								<div style={{ position: 'relative' }}>
+									<select
+										value={item.status}
+										disabled={item.status === 'processing' || pendingStatus}
+										title={
+											item.status === 'processing'
+												? 'Cancel the running Item before changing its status'
+												: 'Manual status override'
+										}
+										onChange={async e => {
+											const next = e.target.value as ItemStatus
+											if (next === item.status) return
+											setPendingStatus(true)
+											setActionError(null)
+											try {
+												await onSetStatus(item.id, next)
+											} catch (err) {
+												setActionError(err instanceof Error ? err.message : String(err))
+											} finally {
+												setPendingStatus(false)
+											}
+										}}
+										style={{
+											appearance: 'none',
+											WebkitAppearance: 'none',
+											width: '100%',
+											padding: '8px 28px 8px 10px',
+											background: 'var(--bg-2)',
+											border: '1px solid var(--border)',
+											borderRadius: 'var(--radius-sm)',
+											color: 'var(--text-1)',
+											fontSize: 12,
+											fontFamily: 'var(--font-sans)',
+											cursor: item.status === 'processing' ? 'not-allowed' : 'pointer',
+											outline: 'none',
+										}}
+									>
+										{ITEM_STATUSES.map(s => (
+											<option key={s} value={s} disabled={s === 'processing'}>
+												{s}
+											</option>
+										))}
+									</select>
+									<span
+										style={{
+											position: 'absolute',
+											right: 10,
+											top: '50%',
+											transform: 'translateY(-50%)',
+											pointerEvents: 'none',
+											color: 'var(--text-4)',
+											fontSize: 10,
+										}}
+									>
+										▾
+									</span>
+								</div>
 							</div>
 						)}
 						{actionError && (
@@ -328,14 +364,12 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 					</div>
 				</Section>
 
-				{(item.links.source?.url || item.links.pr?.url) && (
-					<Section title="Links">
-						<div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-							<HeaderLink link={item.links.source} label="Task" />
-							<HeaderLink link={item.links.pr} label="GitHub" />
-						</div>
-					</Section>
-				)}
+				<Section title="Links">
+					<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+						<LinkRow label="Task" url={item.links.source?.url ?? null} fallback="no source" />
+						<LinkRow label="GitHub" url={item.links.pr?.url ?? null} fallback="no PR yet" />
+					</div>
+				</Section>
 
 				<DeployLadder deployState={item.deployState} />
 			</aside>
@@ -778,18 +812,26 @@ function formatTime(value: string): string {
 
 // A header link reads as the system name ("Task", "GitHub") — not the raw
 // external id or branch name. The underlying value is kept as a hover tooltip.
-function HeaderLink({ link, label }: { link: DashboardLink | null; label: string }) {
-	if (!link?.url) return null
+// A labeled link row for the sidebar Links card — always renders its label,
+// showing a muted placeholder (e.g. "no PR yet") when the link is absent so a
+// missing link reads as "not available" rather than vanishing.
+function LinkRow({ label, url, fallback }: { label: string; url: string | null; fallback: string }) {
 	return (
-		<a
-			href={link.url}
-			target="_blank"
-			rel="noreferrer"
-			title={link.label}
-			style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}
-		>
-			{label} ↗
-		</a>
+		<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+			<span style={{ color: 'var(--text-4)' }}>{label}</span>
+			{url ? (
+				<a
+					href={url}
+					target="_blank"
+					rel="noreferrer"
+					style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}
+				>
+					open ↗
+				</a>
+			) : (
+				<span style={{ color: 'var(--text-4)' }}>{fallback}</span>
+			)}
+		</div>
 	)
 }
 
@@ -812,17 +854,23 @@ function ActionButton({
 	label,
 	tone,
 	disabled,
+	fullWidth,
 	onClick,
 }: {
 	label: string
 	tone: DashboardActionTone
 	disabled: boolean
+	fullWidth?: boolean
 	onClick: () => void
 }) {
 	const styles: Record<DashboardActionTone, React.CSSProperties> = {
-		primary: { color: 'var(--accent)', border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)' },
-		muted: { color: 'var(--text-3)', border: '1px solid var(--border-hover)' },
-		danger: { color: 'var(--red)', border: '1px solid var(--red-dim)' },
+		primary: { color: '#fff', background: 'var(--accent-fill)', border: '1px solid transparent' },
+		muted: { color: 'var(--text-2)', background: 'var(--bg-2)', border: '1px solid var(--border)' },
+		danger: {
+			color: 'var(--red)',
+			background: 'color-mix(in srgb, var(--red) 12%, transparent)',
+			border: '1px solid color-mix(in srgb, var(--red) 30%, transparent)',
+		},
 	}
 	return (
 		<button
@@ -830,13 +878,15 @@ function ActionButton({
 			disabled={disabled}
 			onClick={onClick}
 			style={{
-				padding: '7px 16px',
+				width: fullWidth ? '100%' : undefined,
+				padding: '8px 14px',
 				borderRadius: 'var(--radius-sm)',
 				fontSize: 13,
 				fontWeight: 600,
-				background: 'transparent',
+				fontFamily: 'var(--font-sans)',
 				cursor: disabled ? 'default' : 'pointer',
-				opacity: disabled ? 0.6 : 1,
+				opacity: disabled ? 0.5 : 1,
+				transition: 'opacity 120ms',
 				...styles[tone],
 			}}
 		>
