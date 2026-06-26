@@ -312,17 +312,24 @@ function PersistedPlanBlock({ plan }: { plan: DashboardPlan }) {
 	)
 }
 
-/** The source task's actual content — description, metadata, comments — so the
- *  operator can read the task without leaving Vigil. */
+/** The source task's actual content — description (with inline images in
+ *  document order), metadata, attachments, comments — so the operator can read
+ *  the task without leaving Vigil. */
 function SourceTaskView({ task }: { task: SourceTask }) {
 	const metaEntries = task.metadata ? Object.entries(task.metadata) : []
 	const comments = task.comments ?? []
-	const attachments = task.attachments ?? []
-	if (!task.description && metaEntries.length === 0 && comments.length === 0 && attachments.length === 0) return null
+	const blocks = task.descriptionBlocks ?? []
+	// Images shown inline (in the blocks) shouldn't also appear in the trailing
+	// attachments strip.
+	const inlineUrls = new Set(blocks.flatMap(b => (b.type === 'image' ? [b.url] : [])))
+	const attachments = (task.attachments ?? []).filter(a => !inlineUrls.has(a.url))
+	const hasContent =
+		task.description || blocks.length > 0 || metaEntries.length > 0 || comments.length > 0 || attachments.length > 0
+	if (!hasContent) return null
 	return (
 		<Section title="Task">
 			{metaEntries.length > 0 && (
-				<div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: task.description ? 12 : 0 }}>
+				<div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
 					{metaEntries.map(([k, v]) => (
 						<span key={k} style={{ fontSize: 11, color: 'var(--text-3)' }}>
 							{k}: <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{v}</strong>
@@ -330,13 +337,34 @@ function SourceTaskView({ task }: { task: SourceTask }) {
 					))}
 				</div>
 			)}
-			{task.description && (
-				<p style={{ fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-					{task.description}
-				</p>
+			{blocks.length > 0 ? (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+					{blocks.map((b, i) =>
+						b.type === 'image' ? (
+							<Attachment key={`b-${i}`} att={{ name: b.name ?? 'image', url: b.url, contentType: b.contentType }} />
+						) : b.heading ? (
+							<div key={`b-${i}`} style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)' }}>
+								{b.text}
+							</div>
+						) : (
+							<p
+								key={`b-${i}`}
+								style={{ fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}
+							>
+								{b.text}
+							</p>
+						),
+					)}
+				</div>
+			) : (
+				task.description && (
+					<p style={{ fontSize: 14, color: 'var(--text-1)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+						{task.description}
+					</p>
+				)
 			)}
 			{attachments.length > 0 && (
-				<div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: task.description ? 14 : 0 }}>
+				<div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
 					{attachments.map((a, i) => (
 						<Attachment key={`${a.url}-${i}`} att={a} />
 					))}

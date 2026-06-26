@@ -72,13 +72,13 @@ export function App() {
 		}
 	}, [])
 
-	// Fetch on selection change, and keep the open item fresh on each poll.
+	// Fetch the full detail on selection, and re-fetch only when the cheap list
+	// poll shows this item actually changed (updatedAt). Static items never
+	// re-fetch — no constant background reloading of an open item.
+	const selectedUpdatedAt = listItem?.updatedAt ?? null
 	useEffect(() => {
 		loadDetail(selectedItemId)
-	}, [selectedItemId, loadDetail])
-	useInterval(() => {
-		if (selectedItemId) loadDetail(selectedItemId)
-	}, 5000)
+	}, [selectedItemId, selectedUpdatedAt, loadDetail])
 	const selectionMissing = selectedItemId !== null && selectedItem === null && loaded && !createDraft
 	const { running: runningCount, needsYou: needsCount } = workAttentionCounts(items)
 

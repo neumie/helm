@@ -1,5 +1,5 @@
 import { log } from '../util/logger.js'
-import type { DiscoveredTask, TaskContext, TaskProvider, TaskSummary } from './provider.js'
+import type { DescriptionBlock, DiscoveredTask, TaskContext, TaskProvider, TaskSummary } from './provider.js'
 
 // -- GraphQL queries/mutations --
 
@@ -49,7 +49,7 @@ query GetTaskContext($taskId: UUID!) {
     module { name }
     description {
       data
-      references { file { url fileName fileType } }
+      references { id file { url fileName fileType } }
     }
     comments(
       orderBy: [{ createdAt: asc }]
@@ -192,9 +192,14 @@ export class ContemberProvider implements TaskProvider {
 			projectContext = parts.join('\n')
 		}
 
+		const descriptionBlocks = t.description?.data
+			? extractDescriptionBlocks(t.description.data, t.description.references)
+			: []
+
 		return {
 			title: t.title ?? '',
 			description: t.description?.data ? extractPlainText(t.description.data) : undefined,
+			descriptionBlocks: descriptionBlocks.length > 0 ? descriptionBlocks : undefined,
 			metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
 			comments: comments.length > 0 ? comments : undefined,
 			attachments: attachments.length > 0 ? attachments : undefined,
@@ -274,6 +279,7 @@ interface RawTaskFull {
 	description?: {
 		data?: unknown
 		references?: Array<{
+			id?: string | null
 			file?: { url?: string | null; fileName?: string | null; fileType?: string | null } | null
 		}> | null
 	} | null
@@ -297,6 +303,48 @@ interface RawTaskFull {
 }
 
 // -- SlateJS utilities --
+
+/**
+ * Walk the top-level SlateJS blocks in document order, emitting text blocks and
+ * inline image blocks (resolved via `referenceId` → references[].file.url), so
+ * the dashboard can render images between the surrounding paragraphs instead of
+ * collecting them all at the end. Non-image references stay out (they surface as
+ * attachments); unrecognized shapes degrade to nothing.
+ */
+function extractDescriptionBlocks(
+	data: unknown,
+	references: NonNullable<RawTaskFull['description']>['references'],
+): DescriptionBlock[] {
+	const refMap = new Map<string, { url: string; name?: string; contentType?: string }>()
+	for (const ref of references ?? []) {
+		if (ref?.id && ref.file?.url) {
+			refMap.set(ref.id, {
+				url: ref.file.url,
+				name: ref.file.fileName ?? undefined,
+				contentType: ref.file.fileType ?? undefined,
+			})
+		}
+	}
+
+	const children = (data as { children?: unknown })?.children
+	if (!Array.isArray(children)) return []
+
+	const blocks: DescriptionBlock[] = []
+	for (const child of children) {
+		const node = child as { type?: string; level?: number; referenceId?: string }
+		if (node?.type === 'image' && typeof node.referenceId === 'string' && refMap.has(node.referenceId)) {
+			const file = refMap.get(node.referenceId)
+			if (file) blocks.push({ type: 'image', ...file })
+			continue
+		}
+		const text = extractPlainText(child)
+		if (text) {
+			const heading = node?.type === 'heading' && typeof node.level === 'number' ? node.level : undefined
+			blocks.push(heading ? { type: 'text', text, heading } : { type: 'text', text })
+		}
+	}
+	return blocks
+}
 
 /**
  * Extract plain text from SlateJS JSON data.

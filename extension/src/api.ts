@@ -21,9 +21,14 @@ export interface DeployState {
 	checkedAt: string
 }
 
+export type DescriptionBlock =
+	| { type: 'text'; text: string; heading?: number }
+	| { type: 'image'; url: string; name?: string; contentType?: string }
+
 export interface SourceTask {
 	title: string
 	description?: string
+	descriptionBlocks?: DescriptionBlock[]
 	metadata?: Record<string, string>
 	comments?: Array<{ author: string; createdAt: string; body: string }>
 	attachments?: Array<{ name: string; url: string; contentType?: string }>
