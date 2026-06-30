@@ -53,6 +53,8 @@ export interface DashboardItem {
 	status: ItemRecord['status']
 	projectSlug: string
 	title: string
+	/** Short AI-derived label; null until named. Clients show `displayName ?? title`. */
+	displayName: string | null
 	source: ItemRecord['source']
 	baseRef: string
 	spawner: string | null
@@ -220,6 +222,7 @@ export function toDashboardItem(
 		status: item.status,
 		projectSlug: item.projectSlug,
 		title: item.title,
+		displayName: item.displayName,
 		source: item.source,
 		baseRef: item.baseRef,
 		spawner: item.spawner,

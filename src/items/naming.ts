@@ -30,6 +30,121 @@ function defaultNameModel(agent: SolverAgent): string {
 	return agent === 'codex' ? 'gpt-5-mini' : 'claude-haiku-4-5'
 }
 
+// ---------------------------------------------------------------------------
+// Display naming — compress the raw provider title into a short human label for
+// the dashboard. Cosmetic only; shares the cheap one-shot infra with branch
+// naming but produces free text (a title), not a slug.
+// ---------------------------------------------------------------------------
+
+/** Titles at/under this length already read fine — skip the model call. */
+const MIN_TITLE_LEN_TO_NAME = 40
+const MAX_DISPLAY_WORDS = 8
+const MAX_DISPLAY_LEN = 60
+
+export function buildDisplayNamePrompt(title: string): string {
+	return [
+		'You write short, human-readable titles for software tasks. Reply with ONLY the title on a single line — no quotes, no surrounding punctuation, no explanation.',
+		'',
+		'Rules:',
+		'- Imperative mood, like a pull-request title (e.g. "Unify invoice recipient logic")',
+		'- At most 6 words',
+		'- Drop ticket ids, bracketed prefixes (e.g. "[Echo]"), and any trailing period',
+		"- Preserve the task's original language",
+		'',
+		`Task: ${title.slice(0, 500)}`,
+		'',
+		'Short title:',
+	].join('\n')
+}
+
+/**
+ * Pull a clean short title out of raw model stdout. The answer is the last
+ * non-empty line (agent preamble/log noise precedes it); strip wrapping
+ * quotes/backticks, a leading bullet or `Title:` label, collapse whitespace,
+ * drop a trailing period, and clamp to the word/char budget. Returns `null`
+ * when nothing usable remains.
+ */
+export function parseDisplayName(raw: string): string | null {
+	const lines = raw
+		.split('\n')
+		.map(l => l.trim())
+		.filter(Boolean)
+	if (lines.length === 0) return null
+
+	let line = lines[lines.length - 1]
+	line = line.replace(/^["'`]+|["'`]+$/g, '').trim()
+	line = line
+		.replace(/^[-*]\s+/, '')
+		.replace(/^(short\s+)?title:\s*/i, '')
+		.trim()
+	line = line.replace(/^["'`]+|["'`]+$/g, '').trim()
+	line = line
+		.replace(/\s+/g, ' ')
+		.replace(/[.\s]+$/, '')
+		.trim()
+	if (!line) return null
+
+	const words = line.split(' ')
+	let out = words.slice(0, MAX_DISPLAY_WORDS).join(' ')
+	if (out.length > MAX_DISPLAY_LEN)
+		out = out
+			.slice(0, MAX_DISPLAY_LEN)
+			.replace(/\s+\S*$/, '')
+			.trim()
+	return out || null
+}
+
+export interface EnsureItemDisplayNameDeps {
+	runOneShot?: (opts: OneShotOptions) => Promise<string | null>
+}
+
+export interface EnsureItemDisplayNameParams {
+	commands: ItemCommands
+	item: ItemRecord
+	config: VigilConfig
+	/** Effective solver agent; defaults to the configured `solver.agent`. */
+	agent?: SolverAgent
+	signal?: AbortSignal
+	deps?: EnsureItemDisplayNameDeps
+}
+
+/**
+ * Optionally derive a short display name from the Item's raw `title` via a cheap
+ * one-shot model call and persist it through `ItemCommands.recordDisplayName`.
+ * Gated by `solver.nameModel.displayNames`. No-op (returns the input Item) when
+ * disabled, already named, or the title is already short. Best-effort: a model
+ * failure, timeout, or empty/unparseable answer degrades silently to the input
+ * Item so the dashboard keeps showing the raw title. Re-throws only cancellation.
+ */
+export async function ensureItemDisplayName(params: EnsureItemDisplayNameParams): Promise<ItemRecord> {
+	const { commands, item, config, signal, deps } = params
+	if (!config.solver.nameModel.displayNames) return item
+	if (item.displayName) return item
+	if (item.title.length <= MIN_TITLE_LEN_TO_NAME) return item
+
+	const agent = params.agent ?? config.solver.agent
+	try {
+		const model = config.solver.nameModel.model ?? defaultNameModel(agent)
+		const run = deps?.runOneShot ?? runOneShot
+		const raw = await run({ agent, model, prompt: buildDisplayNamePrompt(item.title), signal })
+		if (!raw) return item
+
+		const name = parseDisplayName(raw)
+		if (!name) return item
+
+		const named = commands.recordDisplayName(item.id, name)
+		log.info('naming', `Derived display name for Item ${item.id}: "${name}" (${agent}/${model})`)
+		return named
+	} catch (err) {
+		if (isCancellation(err, signal)) throw err
+		log.warn(
+			'naming',
+			`Display naming failed for Item ${item.id}, keeping raw title: ${err instanceof Error ? err.message : err}`,
+		)
+		return item
+	}
+}
+
 export function buildNamingPrompt(taskContext: TaskContext): string {
 	const lines = [
 		'You name git branches for a software task. Reply with ONLY the branch name on a single line — no quotes, no backticks, no explanation.',

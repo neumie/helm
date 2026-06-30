@@ -8,7 +8,12 @@ import type { VigilConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ItemCommands } from '../src/items/commands.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
-import { ensureItemWorkspaceName, parseBranchName } from '../src/items/naming.js'
+import {
+	ensureItemDisplayName,
+	ensureItemWorkspaceName,
+	parseBranchName,
+	parseDisplayName,
+} from '../src/items/naming.js'
 import type { TaskContext } from '../src/providers/provider.js'
 import { taskCancelled } from '../src/util/errors.js'
 
@@ -313,4 +318,140 @@ test('ensureItemWorkspaceName does not override an already-named Item', () =>
 
 		assert.equal(result.branchName, 'vigil/item/preset-abcd1234')
 		assert.equal(commands.getItem(item.id)?.branchName, 'vigil/item/preset-abcd1234')
+	}))
+
+// --- display naming -------------------------------------------------------
+
+const LONG_TITLE = '[Echo] Please remove the operative crane exchange from the catalog view'
+
+test('parseDisplayName strips quotes, a label echo, and a trailing period', () => {
+	assert.equal(parseDisplayName('Short title: "Unify invoice recipient logic."'), 'Unify invoice recipient logic')
+	assert.equal(parseDisplayName('`Remove crane exchange`'), 'Remove crane exchange')
+})
+
+test('parseDisplayName takes the last non-empty line past preamble', () => {
+	const raw = ['thinking...', 'Here is a title:', 'Fix chart total mismatch'].join('\n')
+	assert.equal(parseDisplayName(raw), 'Fix chart total mismatch')
+})
+
+test('parseDisplayName clamps to the word budget', () => {
+	assert.equal(
+		parseDisplayName('one two three four five six seven eight nine ten'),
+		'one two three four five six seven eight',
+	)
+})
+
+test('parseDisplayName returns null when empty', () => {
+	assert.equal(parseDisplayName(''), null)
+	assert.equal(parseDisplayName('   \n  '), null)
+})
+
+test('ensureItemDisplayName persists a short AI display name', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			deps: { runOneShot: async () => 'Remove operative crane exchange' },
+		})
+
+		assert.equal(result.displayName, 'Remove operative crane exchange')
+		assert.equal(commands.getItem(item.id)?.displayName, 'Remove operative crane exchange')
+	}))
+
+test('ensureItemDisplayName skips an already-short title (no model call)', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'vigil', prompt: 'do it' })
+
+		let called = false
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			deps: {
+				runOneShot: async () => {
+					called = true
+					return 'X'
+				},
+			},
+		})
+
+		assert.equal(called, false)
+		assert.equal(result.displayName, null)
+	}))
+
+test('ensureItemDisplayName is a no-op when displayNames is disabled', () =>
+	withTempDb(async db => {
+		const config = makeConfig({ displayNames: false })
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+
+		let called = false
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			deps: {
+				runOneShot: async () => {
+					called = true
+					return 'X'
+				},
+			},
+		})
+
+		assert.equal(called, false)
+		assert.equal(result.displayName, null)
+	}))
+
+test('ensureItemDisplayName swallows model errors and keeps the raw title', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			deps: {
+				runOneShot: async () => {
+					throw new Error('boom')
+				},
+			},
+		})
+
+		assert.equal(result.displayName, null)
+		assert.equal(commands.getItem(item.id)?.displayName, null)
+	}))
+
+test('ensureItemDisplayName does not override an existing display name', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		commands.recordDisplayName(item.id, 'Preset name')
+		const preset = commands.getItem(item.id)
+		assert(preset)
+
+		let called = false
+		const result = await ensureItemDisplayName({
+			commands,
+			item: preset,
+			config,
+			deps: {
+				runOneShot: async () => {
+					called = true
+					return 'New name'
+				},
+			},
+		})
+
+		assert.equal(called, false)
+		assert.equal(result.displayName, 'Preset name')
 	}))

@@ -164,9 +164,10 @@ export interface RunObservation {
 export interface DashboardItem {
 	id: string
 	kind: 'solve' | 'ralph' | 'harden'
-	status: string
+	status: ItemStatus
 	projectSlug: string
 	title: string
+	displayName: string | null
 	source: { provider: string; externalId: string; url?: string } | null
 	baseRef: string
 	spawner: string | null

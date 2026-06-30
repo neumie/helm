@@ -55,6 +55,11 @@ export const configSchema = z.object({
 			nameModel: z
 				.object({
 					enabled: z.boolean().default(false),
+					// Independent of `enabled` (which gates branch naming): compress each
+					// item's raw provider title into a short human display name via the
+					// same cheap one-shot model, shown in the dashboard (title stays the
+					// source of truth). Failure degrades silently to the raw title.
+					displayNames: z.boolean().default(true),
 					model: z.string().optional(),
 				})
 				.default({}),

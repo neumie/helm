@@ -627,6 +627,17 @@ export class ItemCommands {
 	}
 
 	/**
+	 * Persist the AI-derived short display name (cosmetic; the dashboard shows
+	 * `displayName ?? title`). Routed through commands so Item writes stay in one
+	 * place, but it records no event and guards no status — it never touches the
+	 * lifecycle and applies to an Item in any state.
+	 */
+	recordDisplayName(id: string, displayName: string): ItemRecord {
+		this.requireItem(id)
+		return this.store.updateDisplayName(id, displayName)
+	}
+
+	/**
 	 * Persist the GitHub-observed deploy state (PR merge + per-environment
 	 * deployments) and record transition events for newly-reached milestones —
 	 * `deploy_merged` and `deploy_succeeded` (per environment). The event seam is

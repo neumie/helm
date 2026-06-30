@@ -93,6 +93,8 @@ export const itemRecordSchema = z.object({
 	status: itemStatusSchema,
 	projectSlug: z.string().min(1),
 	title: z.string().min(1),
+	// Short AI-derived label for the dashboard; null until named. `title` stays canonical.
+	displayName: z.string().nullable(),
 	source: itemSourceSchema.nullable(),
 	baseRef: z.string().min(1),
 	spawner: z.string().min(1).nullable(),

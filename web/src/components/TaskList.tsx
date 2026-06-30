@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import type { DaemonStatus, DashboardActionId, DashboardItem } from '../api'
+import type { DaemonStatus, DashboardActionId, DashboardItem, DashboardTone } from '../api'
 import { useRelativeTime } from '../hooks'
 import { Select } from './Select'
-import { StatusBadge } from './StatusBadge'
 
 type Tab = 'needs' | 'running' | 'queued' | 'unverified' | 'archived'
 
@@ -35,6 +34,17 @@ const NEEDS_YOU = new Set(['review', 'failed'])
 // `queued` = the user's verified/approved list (queued + planned). `unverified`
 // is the noisy provider inbox — kept in its own tab so it doesn't bury Queued.
 const QUEUED = new Set(['planned', 'queued'])
+
+// A small leading dot, colored by status tone, carries each row's status as a
+// light cue — enough to tell completed (green) from cancelled (amber) inside the
+// Archived tab without repeating the tab name as a redundant pill.
+const TONE_COLOR: Record<DashboardTone, string> = {
+	gray: 'var(--text-3)',
+	blue: 'var(--blue)',
+	green: 'var(--green)',
+	amber: 'var(--amber)',
+	red: 'var(--red)',
+}
 
 export function partitionWorkEntries(items: DashboardItem[]): WorkBuckets {
 	return {
@@ -93,12 +103,13 @@ export function TaskList({
 	const { needs, running, queued, unverified, archived } = partitionWorkEntries(items)
 	const [tab, setTab] = useState<Tab>('needs')
 
+	// Four primary tabs share the width; Archived is demoted to a compact icon
+	// toggle at the row's end so the bar isn't cramped (it's the rarely-used pile).
 	const tabItems: { key: Tab; label: string; count: number; attention?: boolean }[] = [
-		{ key: 'needs', label: 'Needs you', count: needs.length, attention: true },
+		{ key: 'needs', label: 'Needs', count: needs.length, attention: true },
 		{ key: 'running', label: 'Running', count: running.length },
 		{ key: 'queued', label: 'Queued', count: queued.length },
 		{ key: 'unverified', label: 'Unverified', count: unverified.length },
-		{ key: 'archived', label: 'Archived', count: archived.length },
 	]
 
 	const byTab: Record<Tab, DashboardItem[]> = { needs, running, queued, unverified, archived }
@@ -140,6 +151,7 @@ export function TaskList({
 						{t.label}
 					</TabButton>
 				))}
+				<ArchiveTab active={tab === 'archived'} count={archived.length} onClick={() => setTab('archived')} />
 			</div>
 
 			<div style={{ flex: 1, overflow: 'auto' }}>
@@ -200,13 +212,13 @@ function TabButton({
 			style={{
 				flex: 1,
 				minWidth: 0,
-				padding: '12px 2px',
+				padding: '13px 6px',
 				background: 'none',
 				border: 'none',
 				borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
 				color: active ? 'var(--text-0)' : 'var(--text-3)',
 				cursor: 'pointer',
-				fontSize: 11,
+				fontSize: 12.5,
 				fontFamily: 'var(--font-sans)',
 				fontWeight: 500,
 				transition: 'color 150ms',
@@ -228,6 +240,66 @@ function TabButton({
 						borderRadius: 8,
 						color: attention ? '#fff' : active ? 'var(--accent)' : 'var(--text-4)',
 						background: attention ? 'var(--red)' : 'transparent',
+						fontVariantNumeric: 'tabular-nums',
+					}}
+				>
+					{count}
+				</span>
+			)}
+		</button>
+	)
+}
+
+/** Compact icon-only toggle for the Archived pile — keeps the primary tab row uncramped. */
+function ArchiveTab({ active, count, onClick }: { active: boolean; count: number; onClick: () => void }) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			title={`Archived${count ? ` (${count})` : ''}`}
+			aria-label={`Archived${count ? ` (${count})` : ''}`}
+			aria-pressed={active}
+			style={{
+				position: 'relative',
+				flexShrink: 0,
+				width: 42,
+				padding: '12px 0',
+				background: 'none',
+				border: 'none',
+				borderLeft: '1px solid var(--border)',
+				borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+				color: active ? 'var(--text-0)' : 'var(--text-4)',
+				cursor: 'pointer',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				transition: 'color 150ms',
+			}}
+		>
+			{/* archive box */}
+			<svg
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				aria-hidden="true"
+			>
+				<rect width="20" height="5" x="2" y="3" rx="1" />
+				<path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+				<path d="M10 12h4" />
+			</svg>
+			{count > 0 && (
+				<span
+					style={{
+						position: 'absolute',
+						transform: 'translate(11px, -9px)',
+						fontSize: 9,
+						fontWeight: 700,
+						color: active ? 'var(--accent)' : 'var(--text-4)',
 						fontVariantNumeric: 'tabular-nums',
 					}}
 				>
@@ -262,6 +334,8 @@ function ItemRow({
 				? { text: '⚠ run errored — verify the branch/PR', tone: 'var(--amber)' }
 				: null
 	const deploy = deploySummary(item)
+	const hasLinks = Boolean(deploy || item.links.pr?.url || item.links.source?.url)
+	const hasFooter = item.allowedActions.length > 0 || hasLinks
 
 	return (
 		<div
@@ -278,12 +352,12 @@ function ItemRow({
 			style={{
 				display: 'flex',
 				flexDirection: 'column',
-				gap: 5,
-				padding: '10px 16px',
+				gap: 6,
+				padding: '11px 14px',
 				borderBottom: '1px solid var(--border)',
 				cursor: 'pointer',
 				background: selected ? 'var(--bg-2)' : 'transparent',
-				borderLeft: `3px solid ${selected ? 'var(--accent)' : (projectColor ?? 'transparent')}`,
+				borderLeft: `3px solid ${selected ? 'var(--accent)' : 'transparent'}`,
 				transition: 'background 150ms',
 			}}
 			onMouseEnter={e => {
@@ -293,34 +367,54 @@ function ItemRow({
 				if (!selected) e.currentTarget.style.background = 'transparent'
 			}}
 		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-				{item.card.pulse && (
-					<span
-						className="vg-pulse"
-						style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--blue)', flexShrink: 0 }}
-					/>
+			{/* Meta: project dot (project color) + project + kind chip + group, age right */}
+			<div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+				<span
+					className={item.card.pulse ? 'vg-pulse' : undefined}
+					title={item.projectSlug}
+					style={{
+						width: 8,
+						height: 8,
+						borderRadius: '50%',
+						flexShrink: 0,
+						background: projectColor ?? 'var(--text-4)',
+					}}
+				/>
+				<span
+					style={{
+						fontSize: 10,
+						fontWeight: 600,
+						color: 'var(--text-4)',
+						textTransform: 'uppercase',
+						letterSpacing: '0.04em',
+					}}
+				>
+					{item.projectSlug}
+				</span>
+				<span
+					style={{
+						fontSize: 10,
+						fontWeight: 600,
+						color: TONE_COLOR[item.card.statusTone],
+						textTransform: 'uppercase',
+						letterSpacing: '0.04em',
+					}}
+				>
+					{item.card.statusLabel}
+				</span>
+				{item.group && (
+					<span style={{ fontSize: 10, fontWeight: 500, color: 'var(--text-4)' }}>{item.group.label}</span>
 				)}
-				{itemMetaLabels(item).map((label, index) => (
-					<span
-						key={`${item.id}-meta-${index}`}
-						style={{
-							fontSize: 10,
-							color: 'var(--text-4)',
-							textTransform: index === 1 ? 'uppercase' : undefined,
-							fontWeight: index === 1 ? 600 : 500,
-						}}
-					>
-						{label}
-					</span>
-				))}
-				<span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>
+				<span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
 					{age ?? ''}
 				</span>
 			</div>
 
+			{/* Title */}
 			<div
 				style={{
 					fontSize: 13,
+					fontWeight: 500,
 					color: selected ? 'var(--text-0)' : 'var(--text-1)',
 					lineHeight: 1.4,
 					overflow: 'hidden',
@@ -328,13 +422,13 @@ function ItemRow({
 					whiteSpace: 'nowrap',
 				}}
 			>
-				{item.title}
+				{item.displayName ?? item.title}
 			</div>
 
 			{failure?.text && (
 				<div
 					style={{
-						fontSize: 11,
+						fontSize: 10,
 						color: failure.tone,
 						overflow: 'hidden',
 						textOverflow: 'ellipsis',
@@ -345,45 +439,51 @@ function ItemRow({
 				</div>
 			)}
 
-			<div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-				<StatusBadge value={item.card.statusLabel} tone={item.card.statusTone} />
-				{deploy && (
-					<span style={{ fontSize: 10, fontWeight: 700, color: deploy.tone, whiteSpace: 'nowrap' }}>
-						{deploy.label}
+			{/* Footer: actions bottom-left, deploy/PR/source bottom-right */}
+			{hasFooter && (
+				<div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+					<span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+						{item.allowedActions.map(action => (
+							<button
+								key={action.id}
+								type="button"
+								onClick={e => {
+									e.stopPropagation()
+									onAction(item.id, action.id)
+								}}
+								style={{
+									fontSize: 11,
+									fontWeight: 600,
+									padding: '3px 10px',
+									borderRadius: 'var(--radius-sm)',
+									border: `1px solid ${action.tone === 'primary' ? 'transparent' : 'var(--border)'}`,
+									cursor: 'pointer',
+									background: action.tone === 'primary' ? 'var(--accent-dim)' : 'transparent',
+									color:
+										action.tone === 'danger'
+											? 'var(--red)'
+											: action.tone === 'primary'
+												? 'var(--accent)'
+												: 'var(--text-3)',
+								}}
+							>
+								{action.label}
+							</button>
+						))}
 					</span>
-				)}
-				{item.links.pr?.url && <RowLink href={item.links.pr.url} label="PR ↗" tone="var(--green)" />}
-				{item.links.source?.url && <RowLink href={item.links.source.url} label="source ↗" tone="var(--text-3)" />}
-				<span style={{ marginLeft: 'auto', display: 'flex', gap: 5 }}>
-					{item.allowedActions.map(action => (
-						<button
-							key={action.id}
-							type="button"
-							onClick={e => {
-								e.stopPropagation()
-								onAction(item.id, action.id)
-							}}
-							style={{
-								fontSize: 10,
-								fontWeight: 600,
-								padding: '2px 7px',
-								borderRadius: 'var(--radius-sm)',
-								border: '1px solid var(--border)',
-								cursor: 'pointer',
-								background: action.tone === 'primary' ? 'var(--accent-dim)' : 'transparent',
-								color:
-									action.tone === 'danger'
-										? 'var(--red)'
-										: action.tone === 'primary'
-											? 'var(--accent)'
-											: 'var(--text-3)',
-							}}
-						>
-							{action.label}
-						</button>
-					))}
-				</span>
-			</div>
+					{hasLinks && (
+						<span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+							{deploy && (
+								<span style={{ fontSize: 10, fontWeight: 700, color: deploy.tone, whiteSpace: 'nowrap' }}>
+									{deploy.label}
+								</span>
+							)}
+							{item.links.pr?.url && <RowLink href={item.links.pr.url} label="PR ↗" tone="var(--green)" />}
+							{item.links.source?.url && <RowLink href={item.links.source.url} label="source ↗" tone="var(--text-3)" />}
+						</span>
+					)}
+				</div>
+			)}
 		</div>
 	)
 }

@@ -66,7 +66,13 @@ const config: VigilConfig = {
 	},
 	projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
 	polling: { intervalSeconds: 60 },
-	solver: { type: 'default', agent: 'claude', concurrency: 2, timeoutMinutes: 30, nameModel: { enabled: false } },
+	solver: {
+		type: 'default',
+		agent: 'claude',
+		concurrency: 2,
+		timeoutMinutes: 30,
+		nameModel: { enabled: false, displayNames: false },
+	},
 	spawner: { name: 'default' },
 	server: { port: 7474, host: 'localhost' },
 	github: {

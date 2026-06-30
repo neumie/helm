@@ -94,6 +94,7 @@ export class ItemStore {
 			status: input.status,
 			projectSlug: input.projectSlug,
 			title: input.title,
+			displayName: null,
 			source: input.source ?? null,
 			baseRef: input.baseRef,
 			spawner: input.spawner ?? null,
@@ -120,12 +121,12 @@ export class ItemStore {
 		this.db
 			.prepare(
 				`INSERT INTO items (
-					id, kind, status, project_slug, title, source, base_ref, spawner, group_id, payload,
+					id, kind, status, project_slug, title, display_name, source, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, updated_at,
 					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome, deploy_state
 				) VALUES (
-					@id, @kind, @status, @projectSlug, @title, @source, @baseRef, @spawner, @groupId, @payload,
+					@id, @kind, @status, @projectSlug, @title, @displayName, @source, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @updatedAt,
 					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome, @deployState
@@ -201,6 +202,29 @@ export class ItemStore {
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
 		return updated
+	}
+
+	// Cosmetic short label; dedicated writer keeps it off the lifecycle update surface.
+	updateDisplayName(id: string, displayName: string | null): ItemRecord {
+		const current = this.get(id)
+		if (!current) throw new Error(`Item not found: ${id}`)
+		const updatedAt = new Date().toISOString()
+		validateItem({ ...current, displayName, updatedAt })
+		const result = this.db
+			.prepare('UPDATE items SET display_name = ?, updated_at = ? WHERE id = ?')
+			.run(displayName, updatedAt, id)
+		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
+		const updated = this.get(id)
+		if (!updated) throw new Error(`Item not found: ${id}`)
+		return updated
+	}
+
+	// Source items still awaiting an AI display name — work-list for the backfill namer.
+	listSourceItemsMissingDisplayName(): ItemRecord[] {
+		const rows = this.db
+			.prepare('SELECT * FROM items WHERE source IS NOT NULL AND display_name IS NULL ORDER BY created_at DESC')
+			.all() as Record<string, unknown>[]
+		return rows.map(row => this.rowToItem(row))
 	}
 
 	updatePayload(id: string, payload: ItemPayload): ItemRecord {
@@ -329,6 +353,7 @@ export class ItemStore {
 			status: item.status,
 			projectSlug: item.projectSlug,
 			title: item.title,
+			displayName: item.displayName,
 			source: item.source ? JSON.stringify(item.source) : null,
 			baseRef: item.baseRef,
 			spawner: item.spawner,
@@ -360,6 +385,7 @@ export class ItemStore {
 			status: row.status,
 			projectSlug: row.project_slug,
 			title: row.title,
+			displayName: row.display_name ?? null,
 			source: readJson(row.source, 'source'),
 			baseRef: row.base_ref,
 			spawner: row.spawner ?? null,

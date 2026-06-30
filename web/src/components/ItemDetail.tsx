@@ -110,12 +110,26 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 						fontWeight: 600,
 						color: 'var(--text-0)',
 						lineHeight: 1.4,
-						marginBottom: 12,
+						marginBottom: item.displayName ? 4 : 12,
 						overflowWrap: 'break-word',
 					}}
 				>
-					{item.title}
+					{item.displayName ?? item.title}
 				</h2>
+				{/* When a short AI name leads, keep the full raw title visible underneath. */}
+				{item.displayName && (
+					<p
+						style={{
+							fontSize: 13,
+							color: 'var(--text-3)',
+							lineHeight: 1.45,
+							marginBottom: 16,
+							overflowWrap: 'break-word',
+						}}
+					>
+						{item.title}
+					</p>
+				)}
 
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
 					<StatusBadge value={item.card.statusLabel} tone={item.card.statusTone} />

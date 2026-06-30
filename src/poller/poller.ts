@@ -1,6 +1,8 @@
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
+import type { ItemNamer } from '../items/namer.js'
+import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { log } from '../util/logger.js'
 
@@ -13,6 +15,7 @@ export class Poller {
 		private config: VigilConfig,
 		private db: DB,
 		private provider: TaskProvider,
+		private namer?: ItemNamer,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
 	}
@@ -62,23 +65,24 @@ export class Poller {
 		const tasks = await this.provider.pollNewTasks(projectSlug, since)
 		if (tasks.length === 0) return
 
-		let newCount = 0
 		let latestCreatedAt = since
+		const created: ItemRecord[] = []
 
 		for (const task of tasks) {
 			if (this.db.items.findBySourceExternalId(task.externalId)) continue
 
-			this.itemCommands.createSolveItem({
-				projectSlug,
-				title: task.title,
-				prompt: task.title,
-				source: {
-					provider: this.provider.name,
-					externalId: task.externalId,
-					url: this.config.provider.taskBaseUrl ? `${this.config.provider.taskBaseUrl}${task.externalId}` : undefined,
-				},
-			})
-			newCount++
+			created.push(
+				this.itemCommands.createSolveItem({
+					projectSlug,
+					title: task.title,
+					prompt: task.title,
+					source: {
+						provider: this.provider.name,
+						externalId: task.externalId,
+						url: this.config.provider.taskBaseUrl ? `${this.config.provider.taskBaseUrl}${task.externalId}` : undefined,
+					},
+				}),
+			)
 
 			if (task.createdAt > latestCreatedAt) {
 				latestCreatedAt = task.createdAt
@@ -87,8 +91,10 @@ export class Poller {
 
 		this.db.updatePollState(projectSlug, new Date().toISOString(), latestCreatedAt)
 
-		if (newCount > 0) {
-			log.success('poller', `Discovered ${newCount} new source Item(s) in ${projectSlug}`)
+		if (created.length > 0) {
+			log.success('poller', `Discovered ${created.length} new source Item(s) in ${projectSlug}`)
+			// Off the hot path: kick off short AI display names for the new Items.
+			this.namer?.enqueue(created)
 		}
 	}
 }

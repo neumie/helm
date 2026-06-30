@@ -2,6 +2,7 @@ import { unknownConfigPaths } from './config-document.js'
 import { loadConfig } from './config.js'
 import { DB } from './db/client.js'
 import { DeployWatcher } from './github/deploy-watcher.js'
+import { ItemNamer } from './items/namer.js'
 import { Poller } from './poller/poller.js'
 import { createProvider } from './providers/registry.js'
 import { Drainer } from './queue/drainer.js'
@@ -44,7 +45,8 @@ async function main() {
 		log.info('vigil', `Found ${queuedSolveItems} queued solve Item(s)`)
 	}
 
-	const poller = new Poller(config, db, provider)
+	const namer = new ItemNamer(config, db.items)
+	const poller = new Poller(config, db, provider, namer)
 	const deployWatcher = new DeployWatcher(config, db)
 
 	// Start API server
@@ -57,6 +59,9 @@ async function main() {
 	// Start polling
 	poller.start()
 
+	// One-time backfill of short AI display names for Items still missing one.
+	namer.backfill()
+
 	// Start processing queue
 	queue.start()
 
@@ -67,6 +72,7 @@ async function main() {
 	const shutdown = () => {
 		log.info('vigil', 'Shutting down...')
 		poller.stop()
+		namer.stop()
 		queue.stop()
 		deployWatcher.stop()
 		db.close()

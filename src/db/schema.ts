@@ -215,4 +215,14 @@ ALTER TABLE items ADD COLUMN run_outcome TEXT;
 ALTER TABLE items ADD COLUMN deploy_state TEXT;
 `,
 	},
+	{
+		// display_name is a short, AI-derived human label for the row, compressed
+		// from the raw provider `title` by a cheap one-shot model call at creation.
+		// Cosmetic only (the dashboard shows display_name ?? title); `title` stays
+		// the source of truth and is never overwritten. Null until named / on failure.
+		version: 15,
+		sql: `
+ALTER TABLE items ADD COLUMN display_name TEXT;
+`,
+	},
 ]
