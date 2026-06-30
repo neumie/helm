@@ -41,7 +41,10 @@ Options:
 
 const ADD_HELP = `Usage: vigil add <kind> [options]
 
-Create queued Item(s) through Item Commands.
+Create queued Item(s) by POSTing to the RUNNING daemon's /api/items. Like
+\`vigil ingest\`, it is a thin HTTP client: it works from ANY directory (no
+vigil.config.json needed), the daemon owns the DB and wakes its own queue, and
+any agent can call it. The daemon must be running (\`vigil start\`).
 
 Kinds:
   solve    Requires --project, --title, --prompt
@@ -55,6 +58,7 @@ Common options:
   --base-item <id>        Existing Item branch to branch from
   --spawner <name>        Planning Spawner preference
   --parallelism <n>       Number of sibling Items to create
+  --url <baseUrl>         Daemon base URL (default: $VIGIL_URL or http://localhost:7474)
 
 Ralph options:
   --prd-path <path>       PRD path
@@ -166,6 +170,68 @@ function enumOption<T extends string>(args: string[], name: string, allowed: rea
 	return value as T
 }
 
+/** Daemon base URL: --url ?? $VIGIL_URL ?? localhost:7474. No config file is read. */
+function resolveBaseUrl(args: string[]): string {
+	return (optionValue(args, '--url') ?? process.env.VIGIL_URL ?? 'http://localhost:7474').replace(/\/+$/, '')
+}
+
+/** POST a JSON payload to the running daemon and unwrap its `{ data | error }` envelope. */
+async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown): Promise<T> {
+	let res: Response
+	try {
+		res = await fetch(`${baseUrl}${path}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload),
+		})
+	} catch (err) {
+		throw new Error(
+			`Could not reach the Vigil daemon at ${baseUrl} — is it running? Start it with \`vigil start\`, or set --url / $VIGIL_URL. (${err instanceof Error ? err.message : err})`,
+		)
+	}
+	const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
+	if (!res.ok) throw new Error(json.error ?? `Request failed: HTTP ${res.status}`)
+	return json.data as T
+}
+
+/**
+ * Map `vigil add <kind> …` args to a POST /api/items payload. Undefined optional
+ * fields drop out of the JSON, so the route's strict schema accepts the body; the
+ * daemon (not the CLI) validates spawner installs and creates the rows. Kept thin
+ * on purpose — the daemon is the single owner of Item creation.
+ */
+function buildAddPayload(args: string[]): Record<string, unknown> {
+	const kind = args[0]
+	if (kind !== 'solve' && kind !== 'ralph' && kind !== 'harden') {
+		throw new Error(`Unknown Item kind: ${kind}`)
+	}
+	const common = {
+		title: requiredOption(args, '--title'),
+		projectSlug: requiredOption(args, '--project'),
+		baseRef: optionValue(args, '--base-ref'),
+		baseItemId: optionValue(args, '--base-item'),
+		spawner: optionValue(args, '--spawner'),
+		parallelism: positiveIntegerOption(args, '--parallelism'),
+	}
+	if (kind === 'solve') {
+		return { kind, ...common, prompt: requiredOption(args, '--prompt') }
+	}
+	if (kind === 'ralph') {
+		return {
+			kind,
+			...common,
+			prdPath: optionValueAny(args, ['--prd-path', '--prd']) ?? requiredOption(args, '--prd-path'),
+			mode: enumOption(args, '--mode', ['once', 'afk'] as const),
+			provider: enumOption(args, '--provider', ['claude', 'codex'] as const),
+			model: optionValue(args, '--model'),
+			effort: optionValue(args, '--effort'),
+			iterations: positiveIntegerOption(args, '--iterations'),
+			noOversee: args.includes('--no-oversee') ? true : undefined,
+		}
+	}
+	return { kind, ...common, target: requiredOption(args, '--target'), rounds: positiveIntegerOption(args, '--rounds') }
+}
+
 async function add(): Promise<void> {
 	const args = process.argv.slice(3)
 	if (args.includes('--help') || args.includes('-h') || args.length === 0) {
@@ -173,64 +239,13 @@ async function add(): Promise<void> {
 		process.exit(args.length === 0 ? 1 : 0)
 	}
 
-	const kind = args[0]
-	if (kind !== 'solve' && kind !== 'ralph' && kind !== 'harden') {
-		throw new Error(`Unknown Item kind: ${kind}`)
-	}
-
-	const { loadConfig } = await import('../config.js')
-	const { DB } = await import('../db/client.js')
-	const { ItemCommands } = await import('../items/commands.js')
-	const { listSpawnerAdapters, spawnerNameSchema } = await import('../spawner/registry.js')
-
-	const { config } = loadConfig()
-	const db = new DB()
-	try {
-		const spawner = optionValue(args, '--spawner')
-		if (spawner) {
-			const parsed = spawnerNameSchema.safeParse(spawner)
-			if (!parsed.success) throw new Error(`Invalid Spawner adapter name: ${spawner}`)
-			const installed = listSpawnerAdapters().some(adapter => adapter.available && adapter.name === parsed.data)
-			if (!installed) throw new Error(`Spawner adapter not installed: ${parsed.data}`)
-		}
-
-		const common = {
-			title: requiredOption(args, '--title'),
-			projectSlug: requiredOption(args, '--project'),
-			baseRef: optionValue(args, '--base-ref'),
-			baseItemId: optionValue(args, '--base-item'),
-			spawner,
-			parallelism: positiveIntegerOption(args, '--parallelism'),
-		}
-		const commands = new ItemCommands(db.items, config)
-		const items =
-			kind === 'solve'
-				? commands.createSolveItems({
-						...common,
-						prompt: requiredOption(args, '--prompt'),
-					})
-				: kind === 'ralph'
-					? commands.createRalphItems({
-							...common,
-							prdPath: optionValueAny(args, ['--prd-path', '--prd']) ?? requiredOption(args, '--prd-path'),
-							mode: enumOption(args, '--mode', ['once', 'afk'] as const),
-							provider: enumOption(args, '--provider', ['claude', 'codex'] as const),
-							model: optionValue(args, '--model'),
-							effort: optionValue(args, '--effort'),
-							iterations: positiveIntegerOption(args, '--iterations'),
-							noOversee: args.includes('--no-oversee') ? true : undefined,
-						})
-					: commands.createHardenItems({
-							...common,
-							target: requiredOption(args, '--target'),
-							rounds: positiveIntegerOption(args, '--rounds'),
-						})
-
-		const noun = items.length === 1 ? 'Item' : 'Items'
-		console.log(`Created ${items.length} ${kind} ${noun}: ${items.map(item => item.id).join(', ')}`)
-	} finally {
-		db.close()
-	}
+	const payload = buildAddPayload(args)
+	const baseUrl = resolveBaseUrl(args)
+	const data = await postToDaemon<{ id: string } | Array<{ id: string }>>(baseUrl, '/api/items', payload)
+	const items = Array.isArray(data) ? data : [data]
+	const noun = items.length === 1 ? 'Item' : 'Items'
+	console.log(`Created ${items.length} ${String(payload.kind)} ${noun}: ${items.map(item => item.id).join(', ')}`)
+	console.log(`Track them at ${baseUrl}/`)
 }
 
 async function ingest(): Promise<void> {
@@ -274,23 +289,8 @@ async function ingest(): Promise<void> {
 		...(attachments.length > 0 ? { attachments } : {}),
 	}
 
-	const baseUrl = (optionValue(args, '--url') ?? process.env.VIGIL_URL ?? 'http://localhost:7474').replace(/\/+$/, '')
-	let res: Response
-	try {
-		res = await fetch(`${baseUrl}/api/items/ingest`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload),
-		})
-	} catch (err) {
-		throw new Error(
-			`Could not reach the Vigil daemon at ${baseUrl} — is it running? Start it with \`vigil start\`, or set --url / $VIGIL_URL. (${err instanceof Error ? err.message : err})`,
-		)
-	}
-
-	const json = (await res.json().catch(() => ({}))) as { data?: { id: string; status: string }; error?: string }
-	if (!res.ok) throw new Error(json.error ?? `Ingest failed: HTTP ${res.status}`)
-	const item = json.data
+	const baseUrl = resolveBaseUrl(args)
+	const item = await postToDaemon<{ id: string; status: string }>(baseUrl, '/api/items/ingest', payload)
 	console.log(`Ingested into ${project}: ${item?.id} (${item?.status})`)
 	console.log(`Review and approve it at ${baseUrl}/`)
 }

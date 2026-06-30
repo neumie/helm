@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
+import { serve } from '@hono/node-server'
 import Database from 'better-sqlite3'
+import { Hono } from 'hono'
 import { dispatchSolveItem } from '../src/actions/dispatcher.js'
 import {
 	CONFIG_SECRET_REDACTION,
@@ -509,112 +512,108 @@ test('ItemCommands creates queued source-less solve Items with default BaseRef',
 	})
 })
 
-test('CLI add creates queued Item kinds through ItemCommands', () => {
+test('CLI add posts to the running daemon (headless) and creates queued Item kinds', async () => {
+	// Headless control plane: `vigil add` is a pure HTTP client. Stand up the real
+	// /api routes on an ephemeral port, point the CLI at it via $VIGIL_URL, and
+	// assert the daemon (not the CLI) wrote the rows. The CLI never opens the DB —
+	// it does not read VIGIL_CONFIG or run from the repo cwd.
 	const dir = mkdtempSync(join(tmpdir(), 'vigil-cli-add-'))
+	const db = new DB(join(dir, 'vigil.db'))
+	const app = new Hono()
+	app.route(
+		'/api',
+		apiRoutes(
+			config,
+			join(dir, 'vigil.config.json'),
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		),
+	)
+	// port 0 → OS-assigned; execFile (async) keeps the event loop free so this
+	// in-process server can answer the subprocess's request (execFileSync would deadlock).
+	const server = await new Promise<{ close: () => void; port: number }>(res => {
+		const s = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, (info: { port: number }) =>
+			res({ close: () => s.close(), port: info.port }),
+		)
+	})
+	const execFileAsync = promisify(execFile)
+	const cliPath = resolve('src/cli/vigil.ts')
+	const tsxBin = resolve('node_modules/.bin/tsx')
+	// No cwd / VIGIL_CONFIG — only the daemon URL. Proves it runs from anywhere.
+	const env = { ...process.env, VIGIL_URL: `http://127.0.0.1:${server.port}` }
+	const run = (extra: string[]) => execFileAsync(tsxBin, [cliPath, 'add', ...extra], { env })
+
 	try {
-		const configPath = join(dir, 'vigil.config.json')
-		writeFileSync(configPath, JSON.stringify(config), 'utf-8')
-		const cliPath = resolve('src/cli/vigil.ts')
-		const tsxBin = resolve('node_modules/.bin/tsx')
-		const env = { ...process.env, VIGIL_CONFIG: configPath }
+		await run([
+			'solve',
+			'--project',
+			'vigil',
+			'--title',
+			'CLI solve',
+			'--prompt',
+			'Ship a CLI-created solve.',
+			'--base-ref',
+			'feature/base',
+			'--parallelism',
+			'2',
+		])
+		await run([
+			'ralph',
+			'--project',
+			'vigil',
+			'--title',
+			'CLI ralph',
+			'--prd-path',
+			'docs/plans/afk-rework/prd.md',
+			'--mode',
+			'afk',
+			'--provider',
+			'codex',
+			'--iterations',
+			'3',
+			'--no-oversee',
+		])
+		await run(['harden', '--project', 'vigil', '--title', 'CLI harden', '--target', 'src/items', '--rounds', '2'])
 
-		execFileSync(
-			tsxBin,
-			[
-				cliPath,
-				'add',
-				'solve',
-				'--project',
-				'vigil',
-				'--title',
-				'CLI solve',
-				'--prompt',
-				'Ship a CLI-created solve.',
-				'--base-ref',
-				'feature/base',
-				'--parallelism',
-				'2',
-			],
-			{ cwd: dir, env, encoding: 'utf-8' },
-		)
-		execFileSync(
-			tsxBin,
-			[
-				cliPath,
-				'add',
-				'ralph',
-				'--project',
-				'vigil',
-				'--title',
-				'CLI ralph',
-				'--prd-path',
-				'docs/plans/afk-rework/prd.md',
-				'--mode',
-				'afk',
-				'--provider',
-				'codex',
-				'--iterations',
-				'3',
-				'--no-oversee',
-			],
-			{ cwd: dir, env, encoding: 'utf-8' },
-		)
-		execFileSync(
-			tsxBin,
-			[
-				cliPath,
-				'add',
-				'harden',
-				'--project',
-				'vigil',
-				'--title',
-				'CLI harden',
-				'--target',
-				'src/items',
-				'--rounds',
-				'2',
-			],
-			{ cwd: dir, env, encoding: 'utf-8' },
-		)
+		const items = db.items.list({ projectSlug: 'vigil', limit: 10 })
+		const solveItems = items.filter(item => item.title === 'CLI solve')
+		assert.equal(solveItems.length, 2)
+		assert.equal(new Set(solveItems.map(item => item.groupId)).size, 1)
+		assert.ok(solveItems[0].groupId)
+		assert.equal(solveItems[0].status, 'ready')
+		assert.equal(solveItems[0].baseRef, 'feature/base')
+		assert.deepEqual(solveItems[0].payload, {
+			kind: 'solve',
+			prompt: 'Ship a CLI-created solve.',
+		})
 
-		const db = new DB(join(dir, 'vigil.db'))
-		try {
-			const items = db.items.list({ projectSlug: 'vigil', limit: 10 })
-			const solveItems = items.filter(item => item.title === 'CLI solve')
-			assert.equal(solveItems.length, 2)
-			assert.equal(new Set(solveItems.map(item => item.groupId)).size, 1)
-			assert.ok(solveItems[0].groupId)
-			assert.equal(solveItems[0].status, 'ready')
-			assert.equal(solveItems[0].baseRef, 'feature/base')
-			assert.deepEqual(solveItems[0].payload, {
-				kind: 'solve',
-				prompt: 'Ship a CLI-created solve.',
-			})
+		const ralph = items.find(item => item.title === 'CLI ralph')
+		assert.ok(ralph)
+		assert.equal(ralph.status, 'ready')
+		assert.deepEqual(ralph.payload, {
+			kind: 'ralph',
+			prdPath: 'docs/plans/afk-rework/prd.md',
+			mode: 'afk',
+			provider: 'codex',
+			iterations: 3,
+			noOversee: true,
+		})
 
-			const ralph = items.find(item => item.title === 'CLI ralph')
-			assert.ok(ralph)
-			assert.equal(ralph.status, 'ready')
-			assert.deepEqual(ralph.payload, {
-				kind: 'ralph',
-				prdPath: 'docs/plans/afk-rework/prd.md',
-				mode: 'afk',
-				provider: 'codex',
-				iterations: 3,
-				noOversee: true,
-			})
-
-			const harden = items.find(item => item.title === 'CLI harden')
-			assert.ok(harden)
-			assert.equal(harden.status, 'ready')
-			assert.deepEqual(harden.payload, {
-				kind: 'harden',
-				target: 'src/items',
-				rounds: 2,
-			})
-		} finally {
-			db.close()
-		}
+		const harden = items.find(item => item.title === 'CLI harden')
+		assert.ok(harden)
+		assert.equal(harden.status, 'ready')
+		assert.deepEqual(harden.payload, {
+			kind: 'harden',
+			target: 'src/items',
+			rounds: 2,
+		})
 	} finally {
+		server.close()
+		db.close()
 		rmSync(dir, { recursive: true, force: true })
 	}
 })
