@@ -57,19 +57,6 @@ export function itemMetaLabels(item: DashboardItem): string[] {
 	return [item.projectSlug, item.kind, ...(item.group ? [item.group.label] : [])]
 }
 
-/** Compact furthest-deploy signal for a row, or null when nothing's shipped. */
-function deploySummary(item: DashboardItem): { label: string; tone: string } | null {
-	const ds = item.deployState
-	if (!ds) return null
-	const succeeded = ds.deployments.filter(d => d.state === 'success').map(d => d.environment)
-	if (succeeded.length) return { label: `${succeeded.join('·')} ✓`, tone: 'var(--green)' }
-	const failed = ds.deployments.find(d => d.state === 'failure' || d.state === 'error')
-	if (failed) return { label: `${failed.environment} ✕`, tone: 'var(--red)' }
-	if (ds.deployments.length) return { label: 'deploying', tone: 'var(--blue)' }
-	if (ds.merged) return { label: 'merged', tone: 'var(--text-3)' }
-	return null
-}
-
 /** Most meaningful timestamp to age, by state. */
 function rowTimestamp(item: DashboardItem): string {
 	if (item.status === 'running') return item.startedAt ?? item.queuedAt ?? item.createdAt
@@ -317,9 +304,6 @@ function ItemRow({
 			: item.status === 'review' && messyRun
 				? { text: '⚠ run errored — verify the branch/PR', tone: 'var(--amber)' }
 				: null
-	const deploy = deploySummary(item)
-	const hasLinks = Boolean(deploy || item.links.pr?.url || item.links.source?.url)
-
 	return (
 		<div
 			// biome-ignore lint/a11y/useSemanticElements: rich block row with nested action buttons; role+keyboard give it accessible button behavior without nesting buttons in a button
@@ -424,21 +408,8 @@ function ItemRow({
 				</div>
 			)}
 
-			{/* Footer: deploy/PR/source links only — actions live in the detail pane,
-			    the sidebar is pure navigation. */}
-			{hasLinks && (
-				<div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-					<span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-						{deploy && (
-							<span style={{ fontSize: 10, fontWeight: 700, color: deploy.tone, whiteSpace: 'nowrap' }}>
-								{deploy.label}
-							</span>
-						)}
-						{item.links.pr?.url && <RowLink href={item.links.pr.url} label="PR ↗" tone="var(--green)" />}
-						{item.links.source?.url && <RowLink href={item.links.source.url} label="source ↗" tone="var(--text-3)" />}
-					</span>
-				</div>
-			)}
+			{/* No footer links — the sidebar row is pure navigation; source/PR/deploy
+			    live in the detail pane. */}
 			{/* Indeterminate "AI working" bar while the agent is running. */}
 			{item.card.pulse && <div className="vg-progress" style={{ marginTop: 4 }} aria-hidden="true" />}
 		</div>
@@ -467,19 +438,5 @@ function VerdictChip({ verdict }: { verdict: AssessmentVerdict }) {
 		>
 			{m.icon} {m.label}
 		</span>
-	)
-}
-
-function RowLink({ href, label, tone }: { href: string; label: string; tone: string }) {
-	return (
-		<a
-			href={href}
-			target="_blank"
-			rel="noreferrer"
-			onClick={e => e.stopPropagation()}
-			style={{ fontSize: 10, fontWeight: 600, color: tone, textDecoration: 'none' }}
-		>
-			{label}
-		</a>
 	)
 }
