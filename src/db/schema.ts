@@ -225,4 +225,30 @@ ALTER TABLE items ADD COLUMN deploy_state TEXT;
 ALTER TABLE items ADD COLUMN display_name TEXT;
 `,
 	},
+	{
+		// assessment (JSON) is the pre-solve intent triage of a source task: restated
+		// intent, acceptance criteria, a verdict (clear / needs_clarification /
+		// human_decision / not_code / security), clarifying questions, and a security
+		// note. It moves the human checkpoint from "test the finished PR" to "approve
+		// the intent". Advisory only — it does NOT change status; the user still
+		// approves/rejects. Null until assessed / on failure.
+		version: 16,
+		sql: `
+ALTER TABLE items ADD COLUMN assessment TEXT;
+`,
+	},
+	{
+		// Status vocabulary restructure (9 → 7): unverified+planned → triage,
+		// queued → ready, processing → running, completed → done, skipped+cancelled
+		// → cancelled. review/failed/cancelled keep their names. The "why" of a
+		// cancellation (rejected at triage vs run stopped) lives in item_events.
+		version: 17,
+		sql: `
+UPDATE items SET status = 'triage'    WHERE status IN ('unverified', 'planned');
+UPDATE items SET status = 'ready'     WHERE status = 'queued';
+UPDATE items SET status = 'running'   WHERE status = 'processing';
+UPDATE items SET status = 'done'      WHERE status = 'completed';
+UPDATE items SET status = 'cancelled' WHERE status = 'skipped';
+`,
+	},
 ]

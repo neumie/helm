@@ -254,7 +254,7 @@ test('extension API creates source-backed Items without a per-run solverAgent', 
 	}
 	globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
 		calls.push({ path: input.toString(), init })
-		return new Response(JSON.stringify({ data: { id: 'item-1', status: 'unverified' } }), {
+		return new Response(JSON.stringify({ data: { id: 'item-1', status: 'triage' } }), {
 			status: 201,
 			headers: { 'content-type': 'application/json' },
 		})

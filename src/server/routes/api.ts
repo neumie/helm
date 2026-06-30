@@ -278,7 +278,7 @@ export function apiRoutes(
 							baseRef: parsed.data.baseRef,
 							baseItemId: parsed.data.baseItemId,
 							spawner: parsed.data.spawner,
-							initialStatus: parsed.data.intent === 'plan' ? 'planned' : undefined,
+							initialStatus: parsed.data.intent === 'plan' ? 'triage' : undefined,
 							parallelism: parsed.data.parallelism,
 						})
 					case 'ralph':
@@ -295,7 +295,7 @@ export function apiRoutes(
 							effort: parsed.data.effort,
 							iterations: parsed.data.iterations,
 							noOversee: parsed.data.noOversee,
-							initialStatus: parsed.data.intent === 'plan' ? 'planned' : undefined,
+							initialStatus: parsed.data.intent === 'plan' ? 'triage' : undefined,
 							parallelism: parsed.data.parallelism,
 						})
 					case 'harden':
@@ -307,12 +307,12 @@ export function apiRoutes(
 							baseItemId: parsed.data.baseItemId,
 							spawner: parsed.data.spawner,
 							rounds: parsed.data.rounds,
-							initialStatus: parsed.data.intent === 'plan' ? 'planned' : undefined,
+							initialStatus: parsed.data.intent === 'plan' ? 'triage' : undefined,
 							parallelism: parsed.data.parallelism,
 						})
 				}
 			})()
-			if (items.some(item => item.status === 'queued')) queue.wake()
+			if (items.some(item => item.status === 'ready')) queue.wake()
 			return c.json({ data: items.length === 1 ? dashboardItem(items[0]) : dashboardItems(items) }, 201)
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
@@ -327,7 +327,7 @@ export function apiRoutes(
 		}
 		const current = itemCommands.getItem(c.req.param('id'))
 		if (!current) return c.json({ error: 'Item not found' }, 404)
-		if (current.status !== 'unverified') return c.json({ error: 'Only unverified Items can be approved' }, 400)
+		if (current.status !== 'triage') return c.json({ error: 'Only triage Items can be approved' }, 400)
 		try {
 			recordSelectedSolveAgent(current, solverAgent)
 			const item = itemCommands.approveItem(current.id)
@@ -359,8 +359,7 @@ export function apiRoutes(
 		if (item.kind !== 'solve' && item.kind !== 'ralph' && item.kind !== 'harden') {
 			return c.json({ error: 'Only solve, ralph, or harden Items can be started by this drainer' }, 400)
 		}
-		if (item.status !== 'queued' && item.status !== 'planned')
-			return c.json({ error: 'Item is not ready to start' }, 400)
+		if (item.status !== 'ready' && item.status !== 'triage') return c.json({ error: 'Item is not ready to start' }, 400)
 		recordSelectedSolveAgent(item, solverAgent)
 		const started = queue.processOneItem(item.id)
 		if (!started) return c.json({ error: 'Could not start Item' }, 500)
@@ -392,7 +391,7 @@ export function apiRoutes(
 		}
 		try {
 			const item = itemCommands.setItemStatus(c.req.param('id'), parsed.data)
-			if (item.status === 'queued') queue.wake()
+			if (item.status === 'ready') queue.wake()
 			return c.json({ data: dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
@@ -413,7 +412,7 @@ export function apiRoutes(
 	api.post('/items/:id/cancel', c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
-		if (item.status !== 'processing' && item.status !== 'queued' && item.status !== 'planned') {
+		if (item.status !== 'running' && item.status !== 'ready' && item.status !== 'triage') {
 			return c.json({ error: 'Item is not active' }, 400)
 		}
 		try {
@@ -428,7 +427,7 @@ export function apiRoutes(
 	api.post('/items/:id/plan', async c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
-		if (item.status === 'processing') return c.json({ error: 'Processing Items cannot be planned' }, 400)
+		if (item.status === 'running') return c.json({ error: 'Running Items cannot be planned' }, 400)
 		const solverAgent = await readSolverAgent(c.req.json<{ solverAgent?: unknown }>())
 		if (solverAgent === null) {
 			return c.json({ error: `Invalid solverAgent. Must be one of: ${solverAgentSchema.options.join(', ')}` }, 400)

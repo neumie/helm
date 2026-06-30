@@ -55,6 +55,8 @@ export interface DashboardItem {
 	title: string
 	/** Short AI-derived label; null until named. Clients show `displayName ?? title`. */
 	displayName: string | null
+	/** Pre-solve intent triage (advisory); null until assessed. */
+	assessment: ItemRecord['assessment']
 	source: ItemRecord['source']
 	baseRef: string
 	spawner: string | null
@@ -88,27 +90,23 @@ export interface DashboardItem {
 }
 
 const STATUS_TONE: Record<ItemRecord['status'], DashboardTone> = {
-	unverified: 'amber',
-	planned: 'gray',
-	queued: 'gray',
-	processing: 'blue',
+	triage: 'amber',
+	ready: 'gray',
+	running: 'blue',
 	review: 'amber',
-	completed: 'green',
+	done: 'green',
 	failed: 'red',
 	cancelled: 'amber',
-	skipped: 'gray',
 }
 
 const STATUS_LABEL: Record<ItemRecord['status'], string> = {
-	unverified: 'Unverified',
-	planned: 'Planned',
-	queued: 'Queued',
-	processing: 'Processing',
+	triage: 'Triage',
+	ready: 'Ready',
+	running: 'Running',
 	review: 'Review',
-	completed: 'Completed',
+	done: 'Done',
 	failed: 'Failed',
 	cancelled: 'Cancelled',
-	skipped: 'Skipped',
 }
 
 const ACTIONS: Record<DashboardActionId, DashboardAction> = {
@@ -120,19 +118,23 @@ const ACTIONS: Record<DashboardActionId, DashboardAction> = {
 	reopen: { id: 'reopen', label: 'To review', tone: 'primary' },
 }
 
-function actionsForStatus(status: ItemRecord['status'], kind: ItemRecord['kind']): DashboardAction[] {
+function actionsForStatus(
+	status: ItemRecord['status'],
+	kind: ItemRecord['kind'],
+	hasSource: boolean,
+): DashboardAction[] {
 	switch (status) {
-		case 'unverified':
-			return [ACTIONS.approve, ACTIONS.reject]
-		case 'planned':
-		case 'queued':
+		case 'triage':
+			// Source tasks are an untrusted inbox → approve/reject (the go/no-go gate).
+			// Source-less plan-first Items are deliberately created → start/cancel.
+			return hasSource ? [ACTIONS.approve, ACTIONS.reject] : [ACTIONS.start, ACTIONS.cancel]
+		case 'ready':
 			return [ACTIONS.start, ACTIONS.cancel]
-		case 'processing':
+		case 'running':
 			return [ACTIONS.cancel]
 		case 'review':
 			return [ACTIONS.retry]
-		case 'completed':
-		case 'skipped':
+		case 'done':
 		case 'cancelled':
 			return [ACTIONS.retry]
 		case 'failed':
@@ -223,6 +225,7 @@ export function toDashboardItem(
 		projectSlug: item.projectSlug,
 		title: item.title,
 		displayName: item.displayName,
+		assessment: item.assessment,
 		source: item.source,
 		baseRef: item.baseRef,
 		spawner: item.spawner,
@@ -241,9 +244,9 @@ export function toDashboardItem(
 			state: item.status,
 			statusLabel: STATUS_LABEL[item.status],
 			statusTone: STATUS_TONE[item.status],
-			pulse: item.status === 'processing',
+			pulse: item.status === 'running',
 		},
-		allowedActions: actionsForStatus(item.status, item.kind),
+		allowedActions: actionsForStatus(item.status, item.kind, item.source != null),
 		runObservation,
 		links: linksForItem(item),
 		createdAt: item.createdAt,

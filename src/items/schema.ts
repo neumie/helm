@@ -4,15 +4,13 @@ import { solverAgentSchema } from '../solver/agent.js'
 export const itemKindSchema = z.enum(['solve', 'ralph', 'harden'])
 
 export const itemStatusSchema = z.enum([
-	'unverified',
-	'planned',
-	'queued',
-	'processing',
-	'review',
-	'completed',
-	'failed',
-	'cancelled',
-	'skipped',
+	'triage', // awaiting your go/no-go (source tasks + plan-first items); was unverified + planned
+	'ready', // approved → the drainer will run it; was queued
+	'running', // executing now; was processing
+	'review', // PR open → awaiting your merge/verify
+	'done', // merged / landed; was completed
+	'failed', // broke → needs you
+	'cancelled', // not pursued: rejected at triage, or a run was stopped; was cancelled + skipped
 ])
 
 // What the agent RUN did, separate from the lifecycle `status`. `no_result` =
@@ -20,6 +18,29 @@ export const itemStatusSchema = z.enum([
 // `errored` = the run threw. A reconciled Item keeps its outcome (e.g. `errored`)
 // while sitting in `review`, so the dashboard can flag "run was messy — verify".
 export const runOutcomeSchema = z.enum(['ok', 'errored', 'no_result', 'cancelled'])
+
+// Pre-solve intent triage verdict for a source task.
+export const assessmentVerdictSchema = z.enum([
+	'clear', // a well-specified code task — safe to solve
+	'needs_clarification', // ambiguous; needs answers before solving
+	'human_decision', // a product/design call, not a coding task
+	'not_code', // not actionable as code at all (a question, status note, …)
+	'security', // suspicious: prompt injection / touches auth, secrets, CI
+])
+
+// What the model returns for an assessment (we stamp `assessedAt` ourselves).
+export const assessmentInputSchema = z
+	.object({
+		intent: z.string(),
+		acceptanceCriteria: z.array(z.string()),
+		verdict: assessmentVerdictSchema,
+		clarifyingQuestions: z.array(z.string()),
+		securityNote: z.string().nullable(),
+	})
+	.strict()
+
+// Stored pre-solve intent triage (advisory; never changes status).
+export const assessmentSchema = assessmentInputSchema.extend({ assessedAt: z.string() }).strict()
 
 export const itemSourceSchema = z
 	.object({
@@ -95,6 +116,8 @@ export const itemRecordSchema = z.object({
 	title: z.string().min(1),
 	// Short AI-derived label for the dashboard; null until named. `title` stays canonical.
 	displayName: z.string().nullable(),
+	// Pre-solve intent triage; null until assessed. Advisory, never changes status.
+	assessment: assessmentSchema.nullable(),
 	source: itemSourceSchema.nullable(),
 	baseRef: z.string().min(1),
 	spawner: z.string().min(1).nullable(),
@@ -121,6 +144,9 @@ export const itemRecordSchema = z.object({
 export type ItemKind = z.infer<typeof itemKindSchema>
 export type ItemStatus = z.infer<typeof itemStatusSchema>
 export type RunOutcome = z.infer<typeof runOutcomeSchema>
+export type AssessmentVerdict = z.infer<typeof assessmentVerdictSchema>
+export type AssessmentInput = z.infer<typeof assessmentInputSchema>
+export type Assessment = z.infer<typeof assessmentSchema>
 export type DeploymentEntry = z.infer<typeof deploymentEntrySchema>
 export type DeployState = z.infer<typeof deployStateSchema>
 export type ItemSource = z.infer<typeof itemSourceSchema>

@@ -155,17 +155,17 @@ test('ItemCreateForm plan intent creates Items and prepares planning for each on
 	assert.deepEqual(calls, ['create', 'plan:item-a', 'plan:item-b'])
 })
 
-test('TaskList keeps planned Items in the queued work bucket', () => {
-	const planned = {
-		id: 'item-planned',
-		status: 'planned',
+test('TaskList keeps triage Items in the triage bucket', () => {
+	const triaged = {
+		id: 'item-triage',
+		status: 'triage',
 	} as DashboardItem
 
-	const buckets = partitionWorkEntries([planned])
+	const buckets = partitionWorkEntries([triaged])
 
 	assert.deepEqual(
-		buckets.queued.map(item => item.id),
-		['item-planned'],
+		buckets.triage.map(item => item.id),
+		['item-triage'],
 	)
 	assert.equal(buckets.archived.length, 0)
 })
@@ -173,8 +173,8 @@ test('TaskList keeps planned Items in the queued work bucket', () => {
 test('partitionWorkEntries routes review + failed to the "needs you" bucket', () => {
 	const review = { id: 'r', status: 'review' } as DashboardItem
 	const failed = { id: 'f', status: 'failed' } as DashboardItem
-	const processing = { id: 'p', status: 'processing' } as DashboardItem
-	const done = { id: 'd', status: 'completed' } as DashboardItem
+	const processing = { id: 'p', status: 'running' } as DashboardItem
+	const done = { id: 'd', status: 'done' } as DashboardItem
 
 	const buckets = partitionWorkEntries([review, failed, processing, done])
 	assert.deepEqual(buckets.needs.map(i => i.id).sort(), ['f', 'r'])
@@ -188,24 +188,24 @@ test('partitionWorkEntries routes review + failed to the "needs you" bucket', ()
 	)
 })
 
-test('partitionWorkEntries keeps unverified in its own bucket, not Queued', () => {
-	const unverified = { id: 'u', status: 'unverified' } as DashboardItem
-	const queued = { id: 'q', status: 'queued' } as DashboardItem
-	const planned = { id: 'p', status: 'planned' } as DashboardItem
+test('partitionWorkEntries keeps triage in its own bucket, not Ready', () => {
+	const triagedA = { id: 'u', status: 'triage' } as DashboardItem
+	const ready = { id: 'q', status: 'ready' } as DashboardItem
+	const triagedB = { id: 'p', status: 'triage' } as DashboardItem
 
-	const buckets = partitionWorkEntries([unverified, queued, planned])
+	const buckets = partitionWorkEntries([triagedA, ready, triagedB])
+	assert.deepEqual(buckets.triage.map(i => i.id).sort(), ['p', 'u'])
 	assert.deepEqual(
-		buckets.unverified.map(i => i.id),
-		['u'],
+		buckets.ready.map(i => i.id),
+		['q'],
 	)
-	assert.deepEqual(buckets.queued.map(i => i.id).sort(), ['p', 'q'])
 })
 
 test('dashboard attention counts surface review + failed as "needs you", processing as running', () => {
 	const review = { id: 'item-review', status: 'review' } as DashboardItem
 	const failed = { id: 'item-failed', status: 'failed' } as DashboardItem
-	const queued = { id: 'item-queued', status: 'queued' } as DashboardItem
-	const processing = { id: 'item-processing', status: 'processing' } as DashboardItem
+	const queued = { id: 'item-queued', status: 'ready' } as DashboardItem
+	const processing = { id: 'item-processing', status: 'running' } as DashboardItem
 
 	// review + failed are what need a human; queued/planned do NOT count as attention.
 	assert.deepEqual(workAttentionCounts([review, failed, queued, processing]), {

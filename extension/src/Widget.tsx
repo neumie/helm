@@ -382,7 +382,7 @@ function Card(props: {
 				{/* Tracked Item */}
 				<Match when={asItem(v())}>
 					{item => {
-						const isProcessing = () => item().status === 'processing'
+						const isProcessing = () => item().status === 'running'
 						return (
 							<>
 								<div class="vg-card__header">

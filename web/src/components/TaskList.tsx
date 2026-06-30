@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import type { DaemonStatus, DashboardActionId, DashboardItem, DashboardTone } from '../api'
+import type { AssessmentVerdict, DaemonStatus, DashboardActionId, DashboardItem } from '../api'
 import { useRelativeTime } from '../hooks'
+import { TONE_COLOR, TONE_DIM, VERDICT_META } from '../verdict'
 import { Select } from './Select'
 
-type Tab = 'needs' | 'running' | 'queued' | 'unverified' | 'archived'
+type Tab = 'needs' | 'running' | 'ready' | 'triage' | 'archived'
 
 interface Props {
 	items: DashboardItem[]
@@ -20,8 +21,8 @@ interface Props {
 export interface WorkBuckets {
 	needs: DashboardItem[]
 	running: DashboardItem[]
-	queued: DashboardItem[]
-	unverified: DashboardItem[]
+	ready: DashboardItem[]
+	triage: DashboardItem[]
 	archived: DashboardItem[]
 }
 
@@ -30,37 +31,25 @@ export interface WorkAttentionCounts {
 	needsYou: number
 }
 
+// `review` + `failed` are the "needs you" pile. `triage` is the noisy provider
+// inbox awaiting your go/no-go; `ready` is the approved list the drainer will run.
 const NEEDS_YOU = new Set(['review', 'failed'])
-// `queued` = the user's verified/approved list (queued + planned). `unverified`
-// is the noisy provider inbox — kept in its own tab so it doesn't bury Queued.
-const QUEUED = new Set(['planned', 'queued'])
-
-// A small leading dot, colored by status tone, carries each row's status as a
-// light cue — enough to tell completed (green) from cancelled (amber) inside the
-// Archived tab without repeating the tab name as a redundant pill.
-const TONE_COLOR: Record<DashboardTone, string> = {
-	gray: 'var(--text-3)',
-	blue: 'var(--blue)',
-	green: 'var(--green)',
-	amber: 'var(--amber)',
-	red: 'var(--red)',
-}
 
 export function partitionWorkEntries(items: DashboardItem[]): WorkBuckets {
 	return {
 		needs: items.filter(i => NEEDS_YOU.has(i.status)),
-		running: items.filter(i => i.status === 'processing'),
-		queued: items.filter(i => QUEUED.has(i.status)),
-		unverified: items.filter(i => i.status === 'unverified'),
+		running: items.filter(i => i.status === 'running'),
+		ready: items.filter(i => i.status === 'ready'),
+		triage: items.filter(i => i.status === 'triage'),
 		archived: items.filter(
-			i => !NEEDS_YOU.has(i.status) && i.status !== 'processing' && !QUEUED.has(i.status) && i.status !== 'unverified',
+			i => !NEEDS_YOU.has(i.status) && i.status !== 'running' && i.status !== 'ready' && i.status !== 'triage',
 		),
 	}
 }
 
 export function workAttentionCounts(items: DashboardItem[]): WorkAttentionCounts {
 	return {
-		running: items.filter(i => i.status === 'processing').length,
+		running: items.filter(i => i.status === 'running').length,
 		needsYou: items.filter(i => NEEDS_YOU.has(i.status)).length,
 	}
 }
@@ -84,9 +73,9 @@ function deploySummary(item: DashboardItem): { label: string; tone: string } | n
 
 /** Most meaningful timestamp to age, by state. */
 function rowTimestamp(item: DashboardItem): string {
-	if (item.status === 'processing') return item.startedAt ?? item.queuedAt ?? item.createdAt
+	if (item.status === 'running') return item.startedAt ?? item.queuedAt ?? item.createdAt
 	if (NEEDS_YOU.has(item.status)) return item.completedAt ?? item.updatedAt
-	if (QUEUED.has(item.status)) return item.queuedAt ?? item.createdAt
+	if (item.status === 'ready') return item.queuedAt ?? item.createdAt
 	return item.completedAt ?? item.updatedAt
 }
 
@@ -100,7 +89,7 @@ export function TaskList({
 	onProjectChange,
 	projectColors,
 }: Props) {
-	const { needs, running, queued, unverified, archived } = partitionWorkEntries(items)
+	const { needs, running, ready, triage, archived } = partitionWorkEntries(items)
 	const [tab, setTab] = useState<Tab>('needs')
 
 	// Four primary tabs share the width; Archived is demoted to a compact icon
@@ -108,11 +97,11 @@ export function TaskList({
 	const tabItems: { key: Tab; label: string; count: number; attention?: boolean }[] = [
 		{ key: 'needs', label: 'Needs', count: needs.length, attention: true },
 		{ key: 'running', label: 'Running', count: running.length },
-		{ key: 'queued', label: 'Queued', count: queued.length },
-		{ key: 'unverified', label: 'Unverified', count: unverified.length },
+		{ key: 'ready', label: 'Ready', count: ready.length },
+		{ key: 'triage', label: 'Triage', count: triage.length },
 	]
 
-	const byTab: Record<Tab, DashboardItem[]> = { needs, running, queued, unverified, archived }
+	const byTab: Record<Tab, DashboardItem[]> = { needs, running, ready, triage, archived }
 	const visibleItems = byTab[tab]
 
 	return (
@@ -402,6 +391,7 @@ function ItemRow({
 				>
 					{item.card.statusLabel}
 				</span>
+				{item.assessment && <VerdictChip verdict={item.assessment.verdict} />}
 				{item.group && (
 					<span style={{ fontSize: 10, fontWeight: 500, color: 'var(--text-4)' }}>{item.group.label}</span>
 				)}
@@ -485,6 +475,31 @@ function ItemRow({
 				</div>
 			)}
 		</div>
+	)
+}
+
+/** Compact pre-solve intent verdict pill — surfaces clarity/security at a glance in the inbox. */
+function VerdictChip({ verdict }: { verdict: AssessmentVerdict }) {
+	const m = VERDICT_META[verdict]
+	return (
+		<span
+			title={`Intent verdict: ${m.label}`}
+			style={{
+				fontSize: 9.5,
+				fontWeight: 700,
+				color: TONE_COLOR[m.tone],
+				background: TONE_DIM[m.tone],
+				padding: '1px 6px',
+				borderRadius: 999,
+				letterSpacing: '0.03em',
+				whiteSpace: 'nowrap',
+				display: 'inline-flex',
+				alignItems: 'center',
+				gap: 3,
+			}}
+		>
+			{m.icon} {m.label}
+		</span>
 	)
 }
 

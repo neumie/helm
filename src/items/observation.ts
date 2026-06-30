@@ -79,20 +79,18 @@ function sourceForItem(item: ItemRecord): RunObservationSource {
 
 function stateFromItem(item: ItemRecord): RunObservationState {
 	switch (item.status) {
-		case 'processing':
+		case 'running':
 			return 'running'
 		case 'review':
 			return 'review'
-		case 'completed':
+		case 'done':
 			return 'completed'
 		case 'failed':
 			return 'failed'
 		case 'cancelled':
 			return 'cancelled'
-		case 'unverified':
-		case 'planned':
-		case 'queued':
-		case 'skipped':
+		case 'triage':
+		case 'ready':
 			return 'idle'
 	}
 }

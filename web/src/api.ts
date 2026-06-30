@@ -38,28 +38,19 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
-export type ItemStatus =
-	| 'unverified'
-	| 'planned'
-	| 'queued'
-	| 'processing'
-	| 'review'
-	| 'completed'
-	| 'failed'
-	| 'cancelled'
-	| 'skipped'
 
-export const ITEM_STATUSES: ItemStatus[] = [
-	'unverified',
-	'planned',
-	'queued',
-	'processing',
-	'review',
-	'completed',
-	'failed',
-	'cancelled',
-	'skipped',
-]
+export type AssessmentVerdict = 'clear' | 'needs_clarification' | 'human_decision' | 'not_code' | 'security'
+export interface Assessment {
+	intent: string
+	acceptanceCriteria: string[]
+	verdict: AssessmentVerdict
+	clarifyingQuestions: string[]
+	securityNote: string | null
+	assessedAt: string
+}
+export type ItemStatus = 'triage' | 'ready' | 'running' | 'review' | 'done' | 'failed' | 'cancelled'
+
+export const ITEM_STATUSES: ItemStatus[] = ['triage', 'ready', 'running', 'review', 'done', 'failed', 'cancelled']
 
 export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry' | 'reopen'
 export type RunOutcome = 'ok' | 'errored' | 'no_result' | 'cancelled'
@@ -168,6 +159,7 @@ export interface DashboardItem {
 	projectSlug: string
 	title: string
 	displayName: string | null
+	assessment: Assessment | null
 	source: { provider: string; externalId: string; url?: string } | null
 	baseRef: string
 	spawner: string | null

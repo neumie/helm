@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { itemRecordSchema } from './schema.js'
-import type { DeployState, ItemKind, ItemPayload, ItemRecord, ItemSource, ItemStatus } from './schema.js'
+import type { Assessment, DeployState, ItemKind, ItemPayload, ItemRecord, ItemSource, ItemStatus } from './schema.js'
 
 export interface CreateItemInput {
 	id?: string
@@ -95,6 +95,7 @@ export class ItemStore {
 			projectSlug: input.projectSlug,
 			title: input.title,
 			displayName: null,
+			assessment: null,
 			source: input.source ?? null,
 			baseRef: input.baseRef,
 			spawner: input.spawner ?? null,
@@ -105,7 +106,7 @@ export class ItemStore {
 			planDirName: null,
 			almanacRunId: null,
 			createdAt: now,
-			queuedAt: input.status === 'queued' ? now : null,
+			queuedAt: input.status === 'ready' ? now : null,
 			startedAt: null,
 			completedAt: null,
 			updatedAt: now,
@@ -121,12 +122,12 @@ export class ItemStore {
 		this.db
 			.prepare(
 				`INSERT INTO items (
-					id, kind, status, project_slug, title, display_name, source, base_ref, spawner, group_id, payload,
+					id, kind, status, project_slug, title, display_name, assessment, source, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, updated_at,
 					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome, deploy_state
 				) VALUES (
-					@id, @kind, @status, @projectSlug, @title, @displayName, @source, @baseRef, @spawner, @groupId, @payload,
+					@id, @kind, @status, @projectSlug, @title, @displayName, @assessment, @source, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @updatedAt,
 					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome, @deployState
@@ -219,10 +220,28 @@ export class ItemStore {
 		return updated
 	}
 
-	// Source items still awaiting an AI display name — work-list for the backfill namer.
-	listSourceItemsMissingDisplayName(): ItemRecord[] {
+	// Advisory pre-solve triage; dedicated JSON writer (like deploy_state).
+	updateAssessment(id: string, assessment: Assessment | null): ItemRecord {
+		const current = this.get(id)
+		if (!current) throw new Error(`Item not found: ${id}`)
+		const updatedAt = new Date().toISOString()
+		validateItem({ ...current, assessment, updatedAt })
+		const result = this.db
+			.prepare('UPDATE items SET assessment = ?, updated_at = ? WHERE id = ?')
+			.run(assessment ? JSON.stringify(assessment) : null, updatedAt, id)
+		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
+		const updated = this.get(id)
+		if (!updated) throw new Error(`Item not found: ${id}`)
+		return updated
+	}
+
+	// Source items still awaiting any AI enrichment (display name or assessment) —
+	// the work-list for the backfill enricher.
+	listSourceItemsNeedingEnrichment(): ItemRecord[] {
 		const rows = this.db
-			.prepare('SELECT * FROM items WHERE source IS NOT NULL AND display_name IS NULL ORDER BY created_at DESC')
+			.prepare(
+				'SELECT * FROM items WHERE source IS NOT NULL AND (display_name IS NULL OR assessment IS NULL) ORDER BY created_at DESC',
+			)
 			.all() as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
@@ -275,7 +294,7 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'queued' AND kind = ?
+				 WHERE status = 'ready' AND kind = ?
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
@@ -287,7 +306,7 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'processing' AND kind = ?
+				 WHERE status = 'running' AND kind = ?
 				 ORDER BY started_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
@@ -301,7 +320,7 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'completed')
+				 WHERE kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'done')
 				 ORDER BY updated_at DESC
 				 LIMIT ?`,
 			)
@@ -320,7 +339,7 @@ export class ItemStore {
 
 	countQueuedByKind(kind: ItemKind): number {
 		const row = this.db
-			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'queued' AND kind = ?")
+			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'ready' AND kind = ?")
 			.get(kind) as { count: number }
 		return row.count
 	}
@@ -354,6 +373,7 @@ export class ItemStore {
 			projectSlug: item.projectSlug,
 			title: item.title,
 			displayName: item.displayName,
+			assessment: item.assessment ? JSON.stringify(item.assessment) : null,
 			source: item.source ? JSON.stringify(item.source) : null,
 			baseRef: item.baseRef,
 			spawner: item.spawner,
@@ -386,6 +406,7 @@ export class ItemStore {
 			projectSlug: row.project_slug,
 			title: row.title,
 			displayName: row.display_name ?? null,
+			assessment: readJson(row.assessment, 'assessment'),
 			source: readJson(row.source, 'source'),
 			baseRef: row.base_ref,
 			spawner: row.spawner ?? null,

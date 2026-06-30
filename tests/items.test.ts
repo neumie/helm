@@ -72,6 +72,7 @@ const config: VigilConfig = {
 		concurrency: 2,
 		timeoutMinutes: 30,
 		nameModel: { enabled: false, displayNames: false },
+		triage: { enabled: false },
 	},
 	spawner: { name: 'default' },
 	server: { port: 7474, host: 'localhost' },
@@ -482,7 +483,7 @@ test('ItemCommands creates queued source-less solve Items with default BaseRef',
 		})
 
 		assert.equal(item.kind, 'solve')
-		assert.equal(item.status, 'queued')
+		assert.equal(item.status, 'ready')
 		assert.equal(item.projectSlug, 'vigil')
 		assert.equal(item.title, 'Ship AFK dashboard')
 		assert.equal(item.baseRef, 'main')
@@ -569,7 +570,7 @@ test('CLI add creates queued Item kinds through ItemCommands', () => {
 			assert.equal(solveItems.length, 2)
 			assert.equal(new Set(solveItems.map(item => item.groupId)).size, 1)
 			assert.ok(solveItems[0].groupId)
-			assert.equal(solveItems[0].status, 'queued')
+			assert.equal(solveItems[0].status, 'ready')
 			assert.equal(solveItems[0].baseRef, 'feature/base')
 			assert.deepEqual(solveItems[0].payload, {
 				kind: 'solve',
@@ -578,7 +579,7 @@ test('CLI add creates queued Item kinds through ItemCommands', () => {
 
 			const ralph = items.find(item => item.title === 'CLI ralph')
 			assert.ok(ralph)
-			assert.equal(ralph.status, 'queued')
+			assert.equal(ralph.status, 'ready')
 			assert.deepEqual(ralph.payload, {
 				kind: 'ralph',
 				prdPath: 'docs/plans/afk-rework/prd.md',
@@ -590,7 +591,7 @@ test('CLI add creates queued Item kinds through ItemCommands', () => {
 
 			const harden = items.find(item => item.title === 'CLI harden')
 			assert.ok(harden)
-			assert.equal(harden.status, 'queued')
+			assert.equal(harden.status, 'ready')
 			assert.deepEqual(harden.payload, {
 				kind: 'harden',
 				target: 'src/items',
@@ -621,7 +622,7 @@ test('ItemCommands fans out solve Items with shared GroupId and independent life
 		assert.ok(items[0].groupId)
 		assert.deepEqual(
 			items.map(item => item.status),
-			['queued', 'queued', 'queued'],
+			['ready', 'ready', 'ready'],
 		)
 		assert.equal(new Set(items.map(item => resolveItemWorkspace(item).branchName)).size, 3)
 
@@ -639,7 +640,7 @@ test('ItemCommands fans out solve Items with shared GroupId and independent life
 		assert.equal(db.items.get(items[1].id)?.status, 'cancelled')
 		assert.equal(db.items.get(items[2].id)?.status, 'review')
 		const retried = commands.retryItem(items[1].id)
-		assert.equal(retried.status, 'queued')
+		assert.equal(retried.status, 'ready')
 		assert.equal(retried.groupId, items[1].groupId)
 
 		const stored = items.map(item => {
@@ -649,7 +650,7 @@ test('ItemCommands fans out solve Items with shared GroupId and independent life
 		})
 		assert.deepEqual(
 			stored.map(item => item.status),
-			['failed', 'queued', 'review'],
+			['failed', 'ready', 'review'],
 		)
 		assert.deepEqual(
 			stored.map(item => item.resultSummary),
@@ -669,9 +670,9 @@ test('ItemCommands only cancels processing Items through the processing cancella
 
 		assert.throws(
 			() => commands.cancelProcessingItem(item.id, 'cancelled from wrong state', 'solve'),
-			/Only processing Items can be cancelled during execution/,
+			/Only running Items can be cancelled during execution/,
 		)
-		assert.equal(db.items.get(item.id)?.status, 'queued')
+		assert.equal(db.items.get(item.id)?.status, 'ready')
 
 		commands.startItem(item.id)
 		const cancelled = commands.cancelProcessingItem(item.id, 'cancelled while running', 'solve')
@@ -691,9 +692,9 @@ test('ItemCommands only fails processing Items through the execution failure pat
 
 		assert.throws(
 			() => commands.failItem(item.id, 'failed from wrong state', 'solve'),
-			/Only processing Items can fail during execution/,
+			/Only running Items can fail during execution/,
 		)
-		assert.equal(db.items.get(item.id)?.status, 'queued')
+		assert.equal(db.items.get(item.id)?.status, 'ready')
 
 		commands.startItem(item.id)
 		const failed = commands.failItem(item.id, 'failed while running', 'solve')
@@ -724,14 +725,14 @@ test('ItemCommands only completes processing Items through execution completion 
 					planDirName: 'guard-solve',
 					resultSummary: 'Should not complete',
 				}),
-			/Only processing solve Items can complete through Solver/,
+			/Only running solve Items can complete through Solver/,
 		)
-		assert.equal(db.items.get(solve.id)?.status, 'queued')
+		assert.equal(db.items.get(solve.id)?.status, 'ready')
 		assert.throws(
 			() => commands.completeLoopItem(loop.id, { resultSummary: 'Should not complete' }),
-			/Only processing loop Items can complete through almanac/,
+			/Only running loop Items can complete through almanac/,
 		)
-		assert.equal(db.items.get(loop.id)?.status, 'queued')
+		assert.equal(db.items.get(loop.id)?.status, 'ready')
 
 		commands.startItem(solve.id)
 		const completedSolve = commands.completeSolveItem(solve.id, {
@@ -744,7 +745,7 @@ test('ItemCommands only completes processing Items through execution completion 
 
 		commands.startItem(loop.id)
 		const completedLoop = commands.completeLoopItem(loop.id, { resultSummary: 'Loop completion guarded' })
-		assert.equal(completedLoop.status, 'completed')
+		assert.equal(completedLoop.status, 'done')
 	})
 })
 
@@ -759,7 +760,7 @@ test('ItemCommands only records AlmanacRunId for processing loop Items', async (
 
 		assert.throws(
 			() => commands.recordAlmanacRunId(item.id, 'ralph-guard-run-1'),
-			/Only processing loop Items can record AlmanacRunId/,
+			/Only running loop Items can record AlmanacRunId/,
 		)
 		assert.equal(db.items.get(item.id)?.almanacRunId, null)
 		assert.deepEqual(db.items.getEvents(item.id), [])
@@ -785,7 +786,7 @@ test('ItemCommands only records solve input snapshots for processing solve Items
 
 		assert.throws(
 			() => commands.recordSolveInputSnapshot(item.id, 'queued prompt snapshot'),
-			/Only processing solve Items can record solve input snapshots/,
+			/Only running solve Items can record solve input snapshots/,
 		)
 		assert.equal(db.items.get(item.id)?.solveInputSnapshot, null)
 
@@ -890,12 +891,12 @@ test('ItemCommands only records generic run events for matching Item lifecycles'
 
 		assert.throws(
 			() => commands.recordEvent(solve.id, 'solve_command', { detail: 'npm test' }),
-			/Only processing solve Items can record solve events/,
+			/Only running solve Items can record solve events/,
 		)
 		commands.startItem(loop.id)
 		assert.throws(
 			() => commands.recordEvent(loop.id, 'solve_command', { detail: 'npm test' }),
-			/Only processing solve Items can record solve events/,
+			/Only running solve Items can record solve events/,
 		)
 		assert.equal(
 			db.items.getEvents(solve.id).some(event => event.eventType === 'solve_command'),
@@ -996,7 +997,7 @@ test('ItemCommands records plan preparation through the planning lifecycle path'
 					planDirName: 'plan-command-2',
 					spawner: 'default',
 				}),
-			/Processing Items cannot be planned/,
+			/Running Items cannot be planned/,
 		)
 		assert.equal(db.items.get(item.id)?.worktreePath, '/tmp/vigil-plan-command')
 	})
@@ -1018,7 +1019,7 @@ test('ItemCommands only records execution workspace identity for processing Item
 					branchName: 'vigil/item/execution-workspace',
 					planDirName: 'execution-workspace',
 				}),
-			/Only processing Items can record execution workspace identity/,
+			/Only running Items can record execution workspace identity/,
 		)
 		assert.equal(db.items.get(item.id)?.worktreePath, null)
 
@@ -1068,7 +1069,7 @@ test('server creates queued ralph Items with PRD path and almanac flags', async 
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
 		assert.equal(body.data.kind, 'ralph')
-		assert.equal(body.data.status, 'queued')
+		assert.equal(body.data.status, 'ready')
 		assert.equal(body.data.baseRef, 'release/afk')
 
 		const stored = db.items.get(body.data.id)
@@ -1131,7 +1132,7 @@ test('server creates parallel solve Items through dashboard contract', async () 
 		})
 		assert.deepEqual(
 			body.data.map(item => item.status),
-			['queued', 'queued'],
+			['ready', 'ready'],
 		)
 		assert.equal(db.items.list({ projectSlug: 'vigil' }).length, 2)
 	})
@@ -1171,7 +1172,7 @@ test('server creates plan-intent Items without enqueueing execution', async () =
 
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
-		assert.equal(body.data.status, 'planned')
+		assert.equal(body.data.status, 'triage')
 		assert.equal(body.data.queuedAt, null)
 		assert.deepEqual(
 			body.data.allowedActions.map(action => action.id),
@@ -1180,7 +1181,7 @@ test('server creates plan-intent Items without enqueueing execution', async () =
 		assert.equal(wakeCount, 0)
 
 		const stored = db.items.get(body.data.id)
-		assert.equal(stored?.status, 'planned')
+		assert.equal(stored?.status, 'triage')
 		assert.equal(stored?.queuedAt, null)
 
 		const startRes = await api.request(`/items/${body.data.id}/start`, { method: 'POST' })
@@ -1332,7 +1333,7 @@ test('server creates queued harden Items with target and almanac flags', async (
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
 		assert.equal(body.data.kind, 'harden')
-		assert.equal(body.data.status, 'queued')
+		assert.equal(body.data.status, 'ready')
 		assert.equal(body.data.baseRef, 'release/afk')
 
 		const stored = db.items.get(body.data.id)
@@ -1525,7 +1526,7 @@ test('Drainer runs queued ralph Items through the loop lane and captures Almanac
 			drainer.start()
 			drainer.resume()
 
-			await waitFor(() => db.items.get(item.id)?.status === 'completed', 'queued ralph Item did not finish')
+			await waitFor(() => db.items.get(item.id)?.status === 'done', 'queued ralph Item did not finish')
 
 			assert.equal(solver.calls.length, 0)
 			assert.equal(loopRunner.ralphCalls.length, 1)
@@ -1569,7 +1570,7 @@ test('Drainer runs queued harden Items through the loop lane and captures Almana
 			drainer.start()
 			drainer.resume()
 
-			await waitFor(() => db.items.get(item.id)?.status === 'completed', 'queued harden Item did not finish')
+			await waitFor(() => db.items.get(item.id)?.status === 'done', 'queued harden Item did not finish')
 
 			assert.equal(solver.calls.length, 0)
 			assert.equal(loopRunner.hardenCalls.length, 1)
@@ -1631,8 +1632,7 @@ test('Drainer runs loop Items oldest-first across ralph and harden kinds', async
 			drainer.resume()
 
 			await waitFor(
-				() =>
-					db.items.get(olderHarden.id)?.status === 'completed' && db.items.get(newerRalph.id)?.status === 'completed',
+				() => db.items.get(olderHarden.id)?.status === 'done' && db.items.get(newerRalph.id)?.status === 'done',
 				'queued loop Items did not finish',
 			)
 
@@ -1828,12 +1828,12 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 			drainer.pause()
 			drainer.start()
 			await sleep(20)
-			assert.equal(db.items.get(pausedItem.id)?.status, 'queued')
+			assert.equal(db.items.get(pausedItem.id)?.status, 'ready')
 			assert.equal(solver.calls.length, 0)
 
 			assert.equal(drainer.cancelItem(pausedItem.id), true)
 			assert.equal(db.items.get(pausedItem.id)?.status, 'cancelled')
-			assert.equal(drainer.retryItem(pausedItem.id).status, 'queued')
+			assert.equal(drainer.retryItem(pausedItem.id).status, 'ready')
 			assert.equal(drainer.processOneItem(pausedItem.id), true)
 
 			await waitFor(() => db.items.get(pausedItem.id)?.status === 'review', 'manually started Item did not finish')
@@ -1873,7 +1873,7 @@ test('Drainer ignores planned Items until explicit start', async () => {
 			title: 'Plan-only solve',
 			projectSlug: 'vigil',
 			prompt: 'Start only after planning.',
-			initialStatus: 'planned',
+			initialStatus: 'triage',
 		})
 		const solver = new FakeSolveSolver(worktreeRoot)
 		const drainer = new Drainer(config, db, provider, solver)
@@ -1883,7 +1883,7 @@ test('Drainer ignores planned Items until explicit start', async () => {
 			drainer.resume()
 			await sleep(20)
 
-			assert.equal(db.items.get(plannedItem.id)?.status, 'planned')
+			assert.equal(db.items.get(plannedItem.id)?.status, 'triage')
 			assert.equal(solver.calls.length, 0)
 
 			assert.equal(drainer.processOneItem(plannedItem.id), true)
@@ -1962,8 +1962,8 @@ test('Drainer recovers stale processing Items before scheduling lanes', async ()
 			drainer.pause()
 			drainer.start()
 
-			assert.equal(db.items.get(solveItem.id)?.status, 'queued')
-			assert.equal(db.items.get(loopItem.id)?.status, 'queued')
+			assert.equal(db.items.get(solveItem.id)?.status, 'ready')
+			assert.equal(db.items.get(loopItem.id)?.status, 'ready')
 			assert.deepEqual(
 				db.items.getEvents(solveItem.id).map(event => event.eventType),
 				['item_started', 'item_recovered'],
@@ -1976,7 +1976,7 @@ test('Drainer recovers stale processing Items before scheduling lanes', async ()
 			drainer.resume()
 
 			await waitFor(
-				() => db.items.get(solveItem.id)?.status === 'review' && db.items.get(loopItem.id)?.status === 'completed',
+				() => db.items.get(solveItem.id)?.status === 'review' && db.items.get(loopItem.id)?.status === 'done',
 				'recovered Items did not finish',
 			)
 
@@ -2034,7 +2034,7 @@ test('processSolveItem uses solve Item selected solver agent', async () => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-item-agent-'))
 		const item = db.items.create({
 			kind: 'solve',
-			status: 'queued',
+			status: 'ready',
 			projectSlug: 'vigil',
 			title: 'Run with Codex',
 			source: null,
@@ -2453,7 +2453,7 @@ test('ItemStore validates payload kind and shape at the persistence seam', async
 				store.create({
 					id: 'item-invalid',
 					kind: 'solve',
-					status: 'queued',
+					status: 'ready',
 					projectSlug: 'vigil',
 					title: 'Bad payload',
 					source: null,
@@ -2469,7 +2469,7 @@ test('ItemStore validates payload kind and shape at the persistence seam', async
 				store.create({
 					id: 'item-mismatch',
 					kind: 'solve',
-					status: 'queued',
+					status: 'ready',
 					projectSlug: 'vigil',
 					title: 'Wrong kind',
 					source: null,
@@ -2487,7 +2487,7 @@ test('ItemStore rejects invalid lifecycle updates without corrupting the row', a
 		const item = db.items.create({
 			id: 'item-status-guard',
 			kind: 'solve',
-			status: 'queued',
+			status: 'ready',
 			projectSlug: 'vigil',
 			title: 'Status guard',
 			source: null,
@@ -2498,7 +2498,7 @@ test('ItemStore rejects invalid lifecycle updates without corrupting the row', a
 		const invalidUpdate = { status: 'ghost' } as unknown as Parameters<typeof db.items.update>[1]
 
 		assert.throws(() => db.items.update(item.id, invalidUpdate), /Item validation failed/)
-		assert.equal(db.items.get(item.id)?.status, 'queued')
+		assert.equal(db.items.get(item.id)?.status, 'ready')
 	})
 })
 
@@ -2533,8 +2533,8 @@ test('server exposes created Items through the dashboard contract', async () => 
 		assert.equal(created.data.spawner, 'default')
 		assert.equal(created.data.source, null)
 		assert.deepEqual(created.data.card, {
-			state: 'queued',
-			statusLabel: 'Queued',
+			state: 'ready',
+			statusLabel: 'Ready',
 			statusTone: 'gray',
 			pulse: false,
 		})
@@ -2750,7 +2750,7 @@ test('server rejects planning for processing Items before mutating workspace ide
 
 			assert.equal(res.status, 400)
 			const body = (await res.json()) as { error: string }
-			assert.match(body.error, /Processing Items cannot be planned/)
+			assert.match(body.error, /Running Items cannot be planned/)
 			assert.equal(planningSpawner.calls.length, 0)
 			const stored = db.items.get(item.id)
 			assert.equal(stored?.worktreePath, null)
@@ -2891,7 +2891,7 @@ test('server planning route accepts loop Item kinds through the same Spawner sea
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-loop-item-plans-'))
 		const ralph = db.items.create({
 			kind: 'ralph',
-			status: 'queued',
+			status: 'ready',
 			projectSlug: 'vigil',
 			title: 'Plan ralph run',
 			source: null,
@@ -2900,7 +2900,7 @@ test('server planning route accepts loop Item kinds through the same Spawner sea
 		})
 		const harden = db.items.create({
 			kind: 'harden',
-			status: 'queued',
+			status: 'ready',
 			projectSlug: 'vigil',
 			title: 'Plan harden run',
 			source: null,
@@ -3170,7 +3170,7 @@ test('listDeployWatchable returns shipped solve Items, excludes unshipped', () =
 			resultSummary: 's',
 		})
 		commands.recordDispatchPr(shipped.id, { prUrl: 'https://github.com/neumie/vigil/pull/1' })
-		const queuedNoPr = commands.createSolveItem({ title: 'queued', projectSlug: 'vigil', prompt: 'x' })
+		const queuedNoPr = commands.createSolveItem({ title: 'ready', projectSlug: 'vigil', prompt: 'x' })
 
 		const ids = db.items.listDeployWatchable().map(i => i.id)
 		assert.ok(ids.includes(shipped.id))
@@ -3254,12 +3254,12 @@ test('markItemMerged moves a review solve Item to completed and is idempotent', 
 		assert.equal(db.items.get(item.id)?.status, 'review')
 
 		const merged = commands.markItemMerged(item.id)
-		assert.equal(merged.status, 'completed')
+		assert.equal(merged.status, 'done')
 		assert.equal(db.items.countEvents(item.id, 'item_merged'), 1)
 
 		// idempotent: not in review anymore → no-op, no duplicate event
 		const again = commands.markItemMerged(item.id)
-		assert.equal(again.status, 'completed')
+		assert.equal(again.status, 'done')
 		assert.equal(db.items.countEvents(item.id, 'item_merged'), 1)
 	})
 })
@@ -3269,22 +3269,22 @@ test('setItemStatus is a guarded manual override', () => {
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 't', projectSlug: 'vigil', prompt: 'p' }) // queued
 
-		const done = commands.setItemStatus(item.id, 'completed')
-		assert.equal(done.status, 'completed')
+		const done = commands.setItemStatus(item.id, 'done')
+		assert.equal(done.status, 'done')
 		assert.ok(done.completedAt)
 		assert.equal(db.items.countEvents(item.id, 'item_status_set'), 1)
 
-		const requeued = commands.setItemStatus(item.id, 'queued')
-		assert.equal(requeued.status, 'queued')
+		const requeued = commands.setItemStatus(item.id, 'ready')
+		assert.equal(requeued.status, 'ready')
 		assert.ok(requeued.queuedAt)
 		assert.equal(requeued.completedAt, null)
 
 		// cannot fake `processing`
-		assert.throws(() => commands.setItemStatus(item.id, 'processing'))
+		assert.throws(() => commands.setItemStatus(item.id, 'running'))
 
 		// cannot override a running Item — cancel it first
 		commands.startItem(item.id)
-		assert.throws(() => commands.setItemStatus(item.id, 'completed'))
+		assert.throws(() => commands.setItemStatus(item.id, 'done'))
 	})
 })
 
@@ -3334,7 +3334,7 @@ test('server can find an Item dashboard contract by Source external id', async (
 		)
 		db.items.create({
 			kind: 'solve',
-			status: 'queued',
+			status: 'ready',
 			projectSlug: 'vigil',
 			title: 'Source-backed Item',
 			source: {
@@ -3383,7 +3383,7 @@ test('poller ingests provider tasks as source-backed unverified Items', async ()
 		await sourcePoller.pollOnce()
 
 		const item = db.items.findBySourceExternalId('task-789')
-		assert.equal(item?.status, 'unverified')
+		assert.equal(item?.status, 'triage')
 		assert.deepEqual(item?.source, {
 			provider: 'contember',
 			externalId: 'task-789',
@@ -3434,7 +3434,7 @@ test('server creates source-backed unverified Items from external ids', async ()
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
 		assert.equal(body.data.kind, 'solve')
-		assert.equal(body.data.status, 'unverified')
+		assert.equal(body.data.status, 'triage')
 		assert.equal(body.data.title, 'Extension-created source Item')
 		assert.deepEqual(body.data.source, {
 			provider: 'contember',
@@ -3509,7 +3509,7 @@ test('ItemCommands approve and reject unverified Items with lifecycle events', a
 		const approved = commands.approveItem(toApprove.id)
 		const rejected = commands.rejectItem(toReject.id)
 
-		assert.equal(approved.status, 'queued')
+		assert.equal(approved.status, 'ready')
 		assert.notEqual(approved.queuedAt, null)
 		assert.deepEqual(
 			toDashboardItem(approved).allowedActions.map(a => a.id),
@@ -3519,7 +3519,7 @@ test('ItemCommands approve and reject unverified Items with lifecycle events', a
 			db.items.getEvents(approved.id).map(event => event.eventType),
 			['item_approved'],
 		)
-		assert.equal(rejected.status, 'skipped')
+		assert.equal(rejected.status, 'cancelled')
 		assert.notEqual(rejected.completedAt, null)
 		assert.deepEqual(
 			toDashboardItem(rejected).allowedActions.map(a => a.id),
@@ -3545,7 +3545,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		)
 		const approveTarget = db.items.create({
 			kind: 'solve',
-			status: 'unverified',
+			status: 'triage',
 			projectSlug: 'vigil',
 			title: 'Approve via API',
 			source: {
@@ -3558,7 +3558,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		})
 		const rejectTarget = db.items.create({
 			kind: 'solve',
-			status: 'unverified',
+			status: 'triage',
 			projectSlug: 'vigil',
 			title: 'Reject via API',
 			source: {
@@ -3577,12 +3577,12 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		assert.equal(rejectRes.status, 200)
 		const approved = (await approveRes.json()) as { data: ReturnType<typeof toDashboardItem> }
 		const rejected = (await rejectRes.json()) as { data: ReturnType<typeof toDashboardItem> }
-		assert.equal(approved.data.status, 'queued')
+		assert.equal(approved.data.status, 'ready')
 		assert.deepEqual(
 			approved.data.allowedActions.map(a => a.id),
 			['start', 'cancel'],
 		)
-		assert.equal(rejected.data.status, 'skipped')
+		assert.equal(rejected.data.status, 'cancelled')
 		assert.deepEqual(
 			rejected.data.allowedActions.map(a => a.id),
 			['retry'],
@@ -3632,7 +3632,7 @@ test('server start and cancel Item action routes return dashboard contract', asy
 		const started = (await startRes.json()) as { data: ReturnType<typeof toDashboardItem> }
 		const cancelled = (await cancelRes.json()) as { data: ReturnType<typeof toDashboardItem> }
 		assert.equal(started.data.id, startTarget.id)
-		assert.equal(started.data.status, 'processing')
+		assert.equal(started.data.status, 'running')
 		assert.deepEqual(
 			started.data.allowedActions.map(a => a.id),
 			['cancel'],
@@ -3651,7 +3651,7 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		const commands = new ItemCommands(db.items, config)
 		const approveTarget = db.items.create({
 			kind: 'solve',
-			status: 'unverified',
+			status: 'triage',
 			projectSlug: 'vigil',
 			title: 'Approve with Codex',
 			source: {

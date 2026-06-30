@@ -13,7 +13,9 @@ import type {
 	SourceTask,
 } from '../api'
 import { ITEM_STATUSES } from '../api'
+import type { Assessment } from '../api'
 import { useRelativeTime } from '../hooks'
+import { TONE_COLOR, TONE_DIM, VERDICT_META } from '../verdict'
 import { Select } from './Select'
 import { StatusBadge } from './StatusBadge'
 
@@ -67,11 +69,11 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 	const commandPending = pendingAction !== null || pendingPlan
 	const hasCommands = item.allowedActions.length > 0 || canFork || canPlan
 	const elapsed = useRelativeTime(
-		item.status === 'processing'
+		item.status === 'running'
 			? (item.startedAt ?? item.queuedAt ?? item.createdAt)
 			: (item.completedAt ?? item.updatedAt),
 	)
-	const elapsedLabel = item.status === 'processing' ? 'running' : item.status === 'review' ? 'in review' : item.status
+	const elapsedLabel = item.status === 'running' ? 'running' : item.status === 'review' ? 'in review' : item.status
 	const created = useRelativeTime(item.createdAt)
 
 	const runAction = async (action: DashboardActionId) => {
@@ -172,6 +174,8 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 					)}
 				</div>
 
+				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
+
 				{item.sourceTask && <SourceTaskView task={item.sourceTask} />}
 
 				{item.errorMessage && (
@@ -262,7 +266,7 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 								<ActionButton
 									label={pendingPlan ? 'Planning...' : hasPlan ? 'Re-plan' : 'Plan'}
 									tone="muted"
-									disabled={commandPending || item.status === 'processing'}
+									disabled={commandPending || item.status === 'running'}
 									fullWidth
 									onClick={runPlan}
 								/>
@@ -292,12 +296,12 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onFork }: Item
 								</div>
 								<Select
 									value={item.status}
-									options={ITEM_STATUSES.map(s => ({ value: s, label: s, disabled: s === 'processing' }))}
-									disabled={item.status === 'processing' || pendingStatus}
+									options={ITEM_STATUSES.map(s => ({ value: s, label: s, disabled: s === 'running' }))}
+									disabled={item.status === 'running' || pendingStatus}
 									fullWidth
 									ariaLabel="Set item status"
 									title={
-										item.status === 'processing'
+										item.status === 'running'
 											? 'Cancel the running Item before changing its status'
 											: 'Manual status override'
 									}
@@ -403,6 +407,109 @@ function PersistedPlanBlock({ plan }: { plan: DashboardPlan }) {
 				<code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-1)' }}>{plan.planDirName}</code>
 				.
 			</div>
+		</div>
+	)
+}
+
+/** Pre-solve intent triage — the "approve the intent, not the output" surface:
+ *  restated intent, acceptance criteria, clarifying questions, security note. */
+function AssessmentPanel({ assessment }: { assessment: Assessment }) {
+	const m = VERDICT_META[assessment.verdict]
+	const labelStyle = {
+		fontSize: 10,
+		fontWeight: 700,
+		textTransform: 'uppercase' as const,
+		letterSpacing: '0.05em',
+		marginBottom: 6,
+	}
+	return (
+		<div
+			style={{
+				marginBottom: 24,
+				padding: '14px 16px',
+				borderRadius: 'var(--radius-sm)',
+				background: 'var(--bg-2)',
+				border:
+					assessment.verdict === 'security'
+						? '1px solid color-mix(in srgb, var(--red) 35%, transparent)'
+						: '1px solid var(--border)',
+				borderLeft: `3px solid ${TONE_COLOR[m.tone]}`,
+			}}
+		>
+			<div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+				<span style={{ ...labelStyle, marginBottom: 0, color: 'var(--text-4)' }}>Intent check</span>
+				<span
+					style={{
+						fontSize: 10,
+						fontWeight: 700,
+						color: TONE_COLOR[m.tone],
+						background: TONE_DIM[m.tone],
+						padding: '2px 8px',
+						borderRadius: 999,
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: 4,
+					}}
+				>
+					{m.icon} {m.label}
+				</span>
+			</div>
+
+			<p
+				style={{
+					fontSize: 14,
+					color: 'var(--text-0)',
+					lineHeight: 1.5,
+					overflowWrap: 'break-word',
+					marginBottom: assessment.acceptanceCriteria.length ? 12 : 0,
+				}}
+			>
+				{assessment.intent}
+			</p>
+
+			{assessment.acceptanceCriteria.length > 0 && (
+				<div style={{ marginBottom: assessment.clarifyingQuestions.length || assessment.securityNote ? 12 : 0 }}>
+					<div style={{ ...labelStyle, color: 'var(--text-4)' }}>Done when</div>
+					<ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 5 }}>
+						{assessment.acceptanceCriteria.map(c => (
+							<li key={c} style={{ display: 'flex', gap: 8, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.45 }}>
+								<span style={{ color: 'var(--text-4)', flexShrink: 0 }}>○</span>
+								<span style={{ overflowWrap: 'break-word', minWidth: 0 }}>{c}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+
+			{assessment.clarifyingQuestions.length > 0 && (
+				<div style={{ marginBottom: assessment.securityNote ? 12 : 0 }}>
+					<div style={{ ...labelStyle, color: 'var(--amber)' }}>Needs answers</div>
+					<ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 5 }}>
+						{assessment.clarifyingQuestions.map(q => (
+							<li key={q} style={{ display: 'flex', gap: 8, fontSize: 13, color: 'var(--text-1)', lineHeight: 1.45 }}>
+								<span style={{ color: 'var(--amber)', flexShrink: 0 }}>?</span>
+								<span style={{ overflowWrap: 'break-word', minWidth: 0 }}>{q}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+
+			{assessment.securityNote && (
+				<div
+					style={{
+						fontSize: 12,
+						color: 'var(--red)',
+						background: 'var(--red-dim)',
+						padding: '8px 10px',
+						borderRadius: 'var(--radius-sm)',
+						lineHeight: 1.45,
+						overflowWrap: 'break-word',
+					}}
+				>
+					⚠ {assessment.securityNote}
+				</div>
+			)}
 		</div>
 	)
 }

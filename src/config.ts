@@ -63,6 +63,18 @@ export const configSchema = z.object({
 					model: z.string().optional(),
 				})
 				.default({}),
+			// Pre-solve intent triage: a cheap one-shot model pass over each source
+			// task that restates intent, drafts acceptance criteria, and assigns a
+			// verdict (clear / needs_clarification / human_decision / not_code /
+			// security) so the human checkpoint becomes "approve the intent" instead
+			// of "test the finished PR". Advisory only — never changes status. `model`
+			// overrides the per-agent default (claude → claude-haiku-4-5, codex → gpt-5-mini).
+			triage: z
+				.object({
+					enabled: z.boolean().default(true),
+					model: z.string().optional(),
+				})
+				.default({}),
 		})
 		.default({}),
 	spawner: spawnerSchema,

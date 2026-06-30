@@ -5,10 +5,10 @@ import { solverAgentSchema } from '../solver/agent.js'
 import type { SolverAgent } from '../solver/agent.js'
 import type { ErrorPhase } from '../types.js'
 import { itemSourceSchema } from './schema.js'
-import type { DeployState, ItemKind, ItemRecord, ItemSource, RunOutcome } from './schema.js'
+import type { Assessment, DeployState, ItemKind, ItemRecord, ItemSource, RunOutcome } from './schema.js'
 import type { ItemStore } from './store.js'
 
-const createItemInitialStatusSchema = z.enum(['queued', 'planned'])
+const createItemInitialStatusSchema = z.enum(['ready', 'triage'])
 type CreateItemInitialStatus = z.infer<typeof createItemInitialStatusSchema>
 
 const createSolveItemInputSchema = z
@@ -86,7 +86,7 @@ const createHardenItemsInputSchema = createHardenItemInputSchema
 
 export type CreateHardenItemsInput = z.infer<typeof createHardenItemsInputSchema>
 
-const RETRYABLE_STATUSES = new Set<ItemRecord['status']>(['failed', 'cancelled', 'skipped', 'completed', 'review'])
+const RETRYABLE_STATUSES = new Set<ItemRecord['status']>(['failed', 'cancelled', 'done', 'review'])
 const ITEM_KINDS: ItemKind[] = ['solve', 'ralph', 'harden']
 const RESERVED_EVENT_TYPES = new Set([
 	'item_approved',
@@ -112,7 +112,7 @@ const RESERVED_EVENT_TYPES = new Set([
 	'item_status_set',
 ])
 
-const COMPLETED_AT_STATUSES = new Set<ItemRecord['status']>(['review', 'completed', 'failed', 'cancelled', 'skipped'])
+const COMPLETED_AT_STATUSES = new Set<ItemRecord['status']>(['review', 'done', 'failed', 'cancelled'])
 
 function successfulEnvironments(state: DeployState | null): Set<string> {
 	const envs = new Set<string>()
@@ -133,8 +133,8 @@ function initialStatus(input: {
 	source?: ItemSource | null
 	initialStatus?: CreateItemInitialStatus
 }): ItemRecord['status'] {
-	if (input.source) return 'unverified'
-	return input.initialStatus ?? 'queued'
+	if (input.source) return 'triage'
+	return input.initialStatus ?? 'ready'
 }
 
 // A run that finished without writing solver-result.json is the classic
@@ -268,11 +268,11 @@ export class ItemCommands {
 
 	approveItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'unverified') throw new Error('Only unverified Items can be approved')
+		if (item.status !== 'triage') throw new Error('Only triage Items can be approved')
 
 		const now = new Date().toISOString()
 		const approved = this.store.update(id, {
-			status: 'queued',
+			status: 'ready',
 			queuedAt: now,
 			completedAt: null,
 			errorMessage: null,
@@ -284,11 +284,11 @@ export class ItemCommands {
 
 	rejectItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'unverified') throw new Error('Only unverified Items can be rejected')
+		if (item.status !== 'triage') throw new Error('Only triage Items can be rejected')
 
 		const now = new Date().toISOString()
 		const rejected = this.store.update(id, {
-			status: 'skipped',
+			status: 'cancelled',
 			completedAt: now,
 			errorMessage: null,
 			errorPhase: null,
@@ -299,11 +299,11 @@ export class ItemCommands {
 
 	startItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'queued' && item.status !== 'planned')
-			throw new Error('Only queued or planned Items can be started')
+		if (item.status !== 'ready' && item.status !== 'triage')
+			throw new Error('Only ready or triage Items can be started')
 
 		const started = this.store.update(id, {
-			status: 'processing',
+			status: 'running',
 			startedAt: new Date().toISOString(),
 			completedAt: null,
 			errorMessage: null,
@@ -316,11 +316,11 @@ export class ItemCommands {
 	retryItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
 		if (!RETRYABLE_STATUSES.has(item.status)) {
-			throw new Error('Only failed, cancelled, skipped, completed, or review Items can be retried')
+			throw new Error('Only failed, cancelled, done, or review Items can be retried')
 		}
 
 		const retried = this.store.update(id, {
-			status: 'queued',
+			status: 'ready',
 			queuedAt: new Date().toISOString(),
 			startedAt: null,
 			completedAt: null,
@@ -340,7 +340,7 @@ export class ItemCommands {
 		const stale = ITEM_KINDS.flatMap(kind => this.store.listProcessingByKind(kind))
 		return stale.map(item => {
 			const recovered = this.store.update(item.id, {
-				status: 'queued',
+				status: 'ready',
 				queuedAt: item.queuedAt ?? new Date().toISOString(),
 				startedAt: null,
 				completedAt: null,
@@ -363,8 +363,8 @@ export class ItemCommands {
 
 	cancelQueuedItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'queued' && item.status !== 'planned') {
-			throw new Error('Only queued or planned Items can be cancelled before execution')
+		if (item.status !== 'ready' && item.status !== 'triage') {
+			throw new Error('Only ready or triage Items can be cancelled before execution')
 		}
 
 		const cancelled = this.store.update(id, {
@@ -379,8 +379,8 @@ export class ItemCommands {
 
 	cancelProcessingItem(id: string, message: string, phase: ErrorPhase): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'processing') {
-			throw new Error('Only processing Items can be cancelled during execution')
+		if (item.status !== 'running') {
+			throw new Error('Only running Items can be cancelled during execution')
 		}
 
 		const cancelled = this.store.update(id, {
@@ -396,8 +396,8 @@ export class ItemCommands {
 
 	failItem(id: string, message: string, phase: ErrorPhase): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'processing') {
-			throw new Error('Only processing Items can fail during execution')
+		if (item.status !== 'running') {
+			throw new Error('Only running Items can fail during execution')
 		}
 
 		const failed = this.store.update(id, {
@@ -421,7 +421,7 @@ export class ItemCommands {
 	reconcileFailedSolve(id: string, fields: { message: string; phase: ErrorPhase; prUrl?: string | null }): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'solve') throw new Error('Only solve Items can be reconciled to review')
-		if (item.status !== 'processing') throw new Error('Only processing solve Items can be reconciled')
+		if (item.status !== 'running') throw new Error('Only running solve Items can be reconciled')
 
 		const reconciled = this.store.update(id, {
 			status: 'review',
@@ -476,7 +476,7 @@ export class ItemCommands {
 	): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'solve') throw new Error('Only solve Items can complete through Solver')
-		if (item.status !== 'processing') throw new Error('Only processing solve Items can complete through Solver')
+		if (item.status !== 'running') throw new Error('Only running solve Items can complete through Solver')
 
 		const completed = this.store.update(id, {
 			status: 'review',
@@ -496,7 +496,7 @@ export class ItemCommands {
 	recordAlmanacRunId(id: string, runId: string): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'ralph' && item.kind !== 'harden') throw new Error('Only loop Items can record AlmanacRunId')
-		if (item.status !== 'processing') throw new Error('Only processing loop Items can record AlmanacRunId')
+		if (item.status !== 'running') throw new Error('Only running loop Items can record AlmanacRunId')
 		if (item.almanacRunId === runId) return item
 
 		const updated = this.store.update(id, { almanacRunId: runId })
@@ -507,10 +507,10 @@ export class ItemCommands {
 	completeLoopItem(id: string, fields: { resultSummary: string }): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'ralph' && item.kind !== 'harden') throw new Error('Only loop Items can complete through almanac')
-		if (item.status !== 'processing') throw new Error('Only processing loop Items can complete through almanac')
+		if (item.status !== 'running') throw new Error('Only running loop Items can complete through almanac')
 
 		const completed = this.store.update(id, {
-			status: 'completed',
+			status: 'done',
 			completedAt: new Date().toISOString(),
 			resultSummary: fields.resultSummary,
 			errorMessage: null,
@@ -587,8 +587,8 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'processing') {
-			throw new Error('Only processing Items can record execution workspace identity')
+		if (item.status !== 'running') {
+			throw new Error('Only running Items can record execution workspace identity')
 		}
 		return this.store.update(id, fields)
 	}
@@ -603,7 +603,7 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status === 'processing') throw new Error('Processing Items cannot be planned')
+		if (item.status === 'running') throw new Error('Running Items cannot be planned')
 
 		const planned = this.store.update(id, {
 			worktreePath: fields.worktreePath,
@@ -622,7 +622,7 @@ export class ItemCommands {
 	recordSolveInputSnapshot(id: string, prompt: string): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'solve') throw new Error('Only solve Items can record solve input snapshots')
-		if (item.status !== 'processing') throw new Error('Only processing solve Items can record solve input snapshots')
+		if (item.status !== 'running') throw new Error('Only running solve Items can record solve input snapshots')
 		return this.store.update(id, { solveInputSnapshot: prompt })
 	}
 
@@ -635,6 +635,17 @@ export class ItemCommands {
 	recordDisplayName(id: string, displayName: string): ItemRecord {
 		this.requireItem(id)
 		return this.store.updateDisplayName(id, displayName)
+	}
+
+	/**
+	 * Persist the pre-solve intent triage (restated intent, acceptance criteria,
+	 * verdict, clarifying questions, security note). Advisory only — routed through
+	 * commands for a single write path, but records NO event and guards NO status;
+	 * the user still approves/rejects. Applies to an Item in any state.
+	 */
+	recordAssessment(id: string, assessment: Assessment): ItemRecord {
+		this.requireItem(id)
+		return this.store.updateAssessment(id, assessment)
 	}
 
 	/**
@@ -687,13 +698,13 @@ export class ItemCommands {
 	setItemStatus(id: string, status: ItemRecord['status']): ItemRecord {
 		const item = this.requireItem(id)
 		if (status === item.status) return item
-		if (item.status === 'processing') throw new Error('Cancel the running Item before changing its status')
-		if (status === 'processing') throw new Error('Cannot manually set an Item to processing')
+		if (item.status === 'running') throw new Error('Cancel the running Item before changing its status')
+		if (status === 'running') throw new Error('Cannot manually set an Item to running')
 
 		const now = new Date().toISOString()
 		const updated = this.store.update(id, {
 			status,
-			queuedAt: status === 'queued' ? now : item.queuedAt,
+			queuedAt: status === 'ready' ? now : item.queuedAt,
 			completedAt: COMPLETED_AT_STATUSES.has(status) ? now : null,
 			errorMessage: status === 'failed' ? item.errorMessage : null,
 			errorPhase: status === 'failed' ? item.errorPhase : null,
@@ -707,7 +718,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve') throw new Error('Only solve Items can be completed via merge')
 		if (item.status !== 'review') return item
 
-		const completed = this.store.update(id, { status: 'completed', completedAt: new Date().toISOString() })
+		const completed = this.store.update(id, { status: 'done', completedAt: new Date().toISOString() })
 		this.store.insertEvent(id, 'item_merged', { from: item.status, to: completed.status })
 		return completed
 	}
@@ -782,8 +793,8 @@ export class ItemCommands {
 		if (RESERVED_EVENT_TYPES.has(eventType)) {
 			throw new Error(`Use the dedicated ItemCommands method to record ${eventType}`)
 		}
-		if (eventType.startsWith('solve_') && (item.kind !== 'solve' || item.status !== 'processing')) {
-			throw new Error('Only processing solve Items can record solve events')
+		if (eventType.startsWith('solve_') && (item.kind !== 'solve' || item.status !== 'running')) {
+			throw new Error('Only running solve Items can record solve events')
 		}
 		if (eventType === 'dispatch_failed' && (item.kind !== 'solve' || item.status !== 'review')) {
 			throw new Error('Only review solve Items can record dispatch failures')

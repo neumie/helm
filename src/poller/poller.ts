@@ -1,7 +1,7 @@
 import type { VigilConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
-import type { ItemNamer } from '../items/namer.js'
+import type { ItemEnricher } from '../items/enricher.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { log } from '../util/logger.js'
@@ -15,7 +15,7 @@ export class Poller {
 		private config: VigilConfig,
 		private db: DB,
 		private provider: TaskProvider,
-		private namer?: ItemNamer,
+		private enricher?: ItemEnricher,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
 	}
@@ -93,8 +93,8 @@ export class Poller {
 
 		if (created.length > 0) {
 			log.success('poller', `Discovered ${created.length} new source Item(s) in ${projectSlug}`)
-			// Off the hot path: kick off short AI display names for the new Items.
-			this.namer?.enqueue(created)
+			// Off the hot path: AI-enrich the new Items (short display name + intent triage).
+			this.enricher?.enqueue(created)
 		}
 	}
 }
