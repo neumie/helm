@@ -27,6 +27,11 @@ interface ItemDetailProps {
 	onPlan?: (id: string) => Promise<PlanInfo>
 	onAiPass?: (id: string, pass: AiPass) => Promise<void>
 	onFork?: (item: DashboardItem) => void
+	/** True while the full detail (with provider `sourceTask`) is still being
+	 *  fetched and we're rendering from the cheap list row. Lets the description
+	 *  slot show a skeleton so the real card fills reserved space instead of
+	 *  popping in and shoving the rest of the pane down. */
+	sourceLoading?: boolean
 }
 
 export interface RunObservationDetail {
@@ -59,7 +64,7 @@ export function runObservationDetails(observation: DashboardItem['runObservation
 	return details
 }
 
-export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFork }: ItemDetailProps) {
+export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFork, sourceLoading }: ItemDetailProps) {
 	const [pendingAction, setPendingAction] = useState<DashboardActionId | null>(null)
 	const [pendingPlan, setPendingPlan] = useState(false)
 	const [pendingStatus, setPendingStatus] = useState(false)
@@ -186,7 +191,13 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 					)}
 				</div>
 
-				{item.sourceTask && <SourceTaskView task={item.sourceTask} title={item.displayName ? item.title : null} />}
+				{item.sourceTask ? (
+					<SourceTaskView task={item.sourceTask} title={item.displayName ? item.title : null} />
+				) : sourceLoading && item.source ? (
+					// Source-backed item whose provider content is still loading: hold the
+					// space so it doesn't pop in later and shove the pane down.
+					<SourceTaskSkeleton hasTitle={Boolean(item.displayName)} />
+				) : null}
 
 				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
 
@@ -610,6 +621,35 @@ function AssessmentPanel({ assessment }: { assessment: Assessment }) {
 					⚠ {assessment.securityNote}
 				</div>
 			)}
+		</div>
+	)
+}
+
+/** Placeholder for the description card while GET /items/:id fetches the provider
+ *  content. Matches SourceTaskView's shell so the real card fills the reserved
+ *  space instead of appearing from nothing and shoving the pane down. */
+function SourceTaskSkeleton({ hasTitle }: { hasTitle: boolean }) {
+	const bar = (width: string, height = 12) => (
+		<div className="vg-pulse" style={{ width, height, background: 'var(--bg-3)', borderRadius: 4 }} />
+	)
+	return (
+		<div
+			aria-hidden="true"
+			style={{
+				background: 'var(--bg-1)',
+				border: '1px solid var(--border)',
+				borderRadius: 'var(--radius)',
+				padding: '16px 18px',
+				marginBottom: 16,
+				display: 'flex',
+				flexDirection: 'column',
+				gap: 10,
+			}}
+		>
+			{hasTitle && bar('55%', 15)}
+			{bar('92%')}
+			{bar('84%')}
+			{bar('68%')}
 		</div>
 	)
 }

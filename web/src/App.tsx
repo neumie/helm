@@ -63,7 +63,8 @@ export function App() {
 	const selectedItemId = selection?.kind === 'item' ? selection.id : null
 	const listItem = selectedItemId ? (items.find(i => i.id === selectedItemId) ?? null) : null
 	// Prefer the richer fetched detail; fall back to the list row while it loads.
-	const selectedItem = detail && detail.id === selectedItemId ? detail : listItem
+	const detailReady = Boolean(detail && detail.id === selectedItemId)
+	const selectedItem = detailReady ? detail : listItem
 
 	const loadDetail = useCallback(async (id: string | null) => {
 		if (!id) return setDetail(null)
@@ -204,6 +205,7 @@ export function App() {
 					) : selectedItem ? (
 						<ItemDetail
 							item={selectedItem}
+							sourceLoading={!detailReady}
 							onAction={handleItemAction}
 							onSetStatus={handleSetStatus}
 							onPlan={handlePlanItem}
