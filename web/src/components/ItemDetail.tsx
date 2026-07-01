@@ -68,7 +68,10 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 	const [pendingAction, setPendingAction] = useState<DashboardActionId | null>(null)
 	const [pendingPlan, setPendingPlan] = useState(false)
 	const [pendingStatus, setPendingStatus] = useState(false)
-	const [pendingAi, setPendingAi] = useState<AiPass | null>(null)
+	// A set, not a single value — the cheap AI passes are independent, so several
+	// (e.g. branch name + re-assess) can run at once; each button reflects only
+	// its own pass.
+	const [pendingAi, setPendingAi] = useState<Set<AiPass>>(() => new Set())
 	const [planInfo, setPlanInfo] = useState<PlanInfo | null>(null)
 	const [actionError, setActionError] = useState<string | null>(null)
 	// Transient per-item UI state — reset when the selected item changes so a
@@ -78,7 +81,7 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 	useEffect(() => {
 		setPendingAction(null)
 		setPendingPlan(false)
-		setPendingAi(null)
+		setPendingAi(new Set())
 		setPlanInfo(null)
 		setActionError(null)
 	}, [item.id])
@@ -133,14 +136,18 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 
 	const runAi = async (pass: AiPass) => {
 		if (!onAiPass) return
-		setPendingAi(pass)
+		setPendingAi(prev => new Set(prev).add(pass))
 		setActionError(null)
 		try {
 			await onAiPass(item.id, pass)
 		} catch (err) {
 			setActionError(err instanceof Error ? err.message : String(err))
 		} finally {
-			setPendingAi(null)
+			setPendingAi(prev => {
+				const next = new Set(prev)
+				next.delete(pass)
+				return next
+			})
 		}
 	}
 
@@ -285,7 +292,6 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 			</div>
 
 			<aside style={{ flex: '0 0 250px', width: 250, position: 'sticky', top: 0 }}>
-				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
 				{hasCommands && (
 					<Section title="Actions">
 						<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -337,10 +343,10 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 									{aiPasses.map(({ pass, label }) => (
 										<ActionButton
 											key={pass}
-											label={pendingAi === pass ? label : `↻ ${label}`}
+											label={pendingAi.has(pass) ? label : `↻ ${label}`}
 											tone="muted"
-											disabled={pendingAi !== null}
-											loading={pendingAi === pass}
+											disabled={pendingAi.has(pass)}
+											loading={pendingAi.has(pass)}
 											fullWidth
 											onClick={() => runAi(pass)}
 										/>
@@ -415,16 +421,24 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 							</span>
 						)}
 					</div>
-				</Section>
-
-				<Section title="Links">
-					<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					<div
+						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: 8,
+							marginTop: 12,
+							paddingTop: 12,
+							borderTop: '1px solid var(--border)',
+						}}
+					>
 						<LinkRow label="Task" url={item.links.source?.url ?? null} fallback="no source" />
 						<LinkRow label="GitHub" url={item.links.pr?.url ?? null} fallback="no PR yet" />
 					</div>
 				</Section>
 
 				<DeployLadder deployState={item.deployState} />
+
+				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
 			</aside>
 		</div>
 	)
