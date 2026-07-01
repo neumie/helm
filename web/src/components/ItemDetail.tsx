@@ -145,8 +145,6 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 					{item.displayName ?? item.title}
 				</h2>
 
-				{item.sourceTask && <SourceTaskView task={item.sourceTask} title={item.displayName ? item.title : null} />}
-
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
 					<StatusBadge value={item.card.statusLabel} tone={item.card.statusTone} />
 					{item.runObservation.pr.merged && (
@@ -187,6 +185,8 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 						</span>
 					)}
 				</div>
+
+				{item.sourceTask && <SourceTaskView task={item.sourceTask} title={item.displayName ? item.title : null} />}
 
 				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
 
