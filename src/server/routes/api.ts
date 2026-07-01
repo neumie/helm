@@ -55,9 +55,9 @@ function buildItemPlanReadmeBody(item: ItemRecord, branchName: string, planDirNa
 		'',
 		'Planning agent started in this worktree. Tell it what you want to do, or invoke one of:',
 		'',
-		`- \`/grill-me ${planDirName}\` — stress-test decisions interactively. Writes \`brief.md\`.`,
+		`- \`/grill-me ${planDirName}\` — stress-test decisions interactively (in-conversation, no file).`,
 		`- \`/grill-plan ${planDirName}\` — challenge the plan against the domain model.`,
-		'- `/prd-create` — once you have a brief, synthesize into `prd.md`.',
+		'- `/prd-create` — synthesize the decisions into `prd.md`.',
 		'',
 		'Anything committed under this directory is loaded into the autonomous run when the Item executes.',
 		'',
@@ -403,7 +403,7 @@ export function apiRoutes(
 		} catch (err) {
 			log.warn('api', `Failed to load source task for Item ${item.id}: ${err instanceof Error ? err.message : err}`)
 		}
-		// Plan preview: the *.md the user wrote while planning (brief/prd/…), read
+		// Plan preview: the *.md the user wrote while planning (prd/…), read
 		// from the worktree's plan dir. Only for interactively-planned Items, and
 		// best-effort — a cleaned-up worktree degrades to []. Per-item IO (detail only).
 		let planArtifacts: Array<{ name: string; content: string }> = []

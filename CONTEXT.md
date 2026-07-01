@@ -191,7 +191,7 @@ the add-form).
 Vigil resolves the Item's workspace (`resolveItemWorkspace`), creates the worktree
 off `baseRef`, writes `docs/plans/<dir>/context.md`, then invokes the selected
 `Spawner` to open an interactive planning session with the planning prompt + that
-worktree as cwd. The operator writes `docs/plans/<dir>/{brief,prd,…}.md` from
+worktree as cwd. The operator writes `docs/plans/<dir>/{prd,…}.md` from
 inside the spawned session (e.g. via almanac `/grill-me`, `/prd-create`). When the
 Item later runs, its execution adapter reuses the same worktree and can read the
 plan artifacts as authoritative context.

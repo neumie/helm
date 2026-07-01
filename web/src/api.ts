@@ -79,7 +79,7 @@ export type DescriptionBlock =
 	| { type: 'text'; text: string; heading?: number }
 	| { type: 'image'; url: string; name?: string; contentType?: string }
 
-/** One plan-dir markdown file (brief.md / prd.md / …) for the detail preview. */
+/** One plan-dir markdown file (prd.md / …) for the detail preview. */
 export interface PlanArtifact {
 	name: string
 	content: string

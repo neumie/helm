@@ -71,7 +71,7 @@ export function buildPlanningPrompt(planDirName: string): string {
 		"Step 4 — explore the codebase briefly to understand the surface area touched. Grep for terms from the task, read files likely to be involved. Don't go deep — deep dives belong to the planning skills below.",
 		'',
 		'Step 5 — ONLY now greet the user. Give a 2-3 sentence summary of what you understand (including anything surprising the attachments or codebase revealed) and ask what they want to do. Options:',
-		`- /grill-me ${planDirName} for interactive decision stress-testing (writes brief.md)`,
+		`- /grill-me ${planDirName} for interactive decision stress-testing (in-conversation, no file)`,
 		`- /grill-plan ${planDirName} to challenge the plan against the domain model`,
 		'- /prd-create to synthesize a PRD',
 		'- /almanac:complexity-assess to rate scope and risk',

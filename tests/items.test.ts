@@ -3835,12 +3835,12 @@ test('PlanWorkspace.listArtifacts returns each .md file with content and skips n
 		const ws = new PlanWorkspace(dir, '2026-06-30-demo')
 		ws.ensureDir()
 		writeFileSync(join(ws.dir, 'context.md'), 'task context', 'utf-8')
-		writeFileSync(join(ws.dir, 'brief.md'), '# Brief\nDecision: do X', 'utf-8')
+		writeFileSync(join(ws.dir, 'prd.md'), '# PRD\nDecision: do X', 'utf-8')
 		writeFileSync(join(ws.dir, '.planning-prompt.txt'), 'not markdown', 'utf-8')
 
 		const arts = ws.listArtifacts()
-		assert.deepEqual(arts.map(a => a.name).sort(), ['brief.md', 'context.md'])
-		assert.equal(arts.find(a => a.name === 'brief.md')?.content, '# Brief\nDecision: do X')
+		assert.deepEqual(arts.map(a => a.name).sort(), ['context.md', 'prd.md'])
+		assert.equal(arts.find(a => a.name === 'prd.md')?.content, '# PRD\nDecision: do X')
 		assert.ok(!arts.some(a => a.name.endsWith('.txt'))) // non-markdown excluded
 	} finally {
 		rmSync(dir, { recursive: true, force: true })

@@ -439,7 +439,7 @@ function PlanInfoBlock({ info }: { info: PlanInfo }) {
 }
 
 /** Plan preview — "what we've decided to do": the plan files the user wrote
- *  while planning (brief.md / prd.md / …), each expandable. The auto-written
+ *  while planning (prd.md / …), each expandable. The auto-written
  *  context.md / README.md are hidden (the task itself shows above). */
 function PlanPreview({ item }: { item: DashboardItem }) {
 	const planned = useRelativeTime(item.plannedAt)
@@ -475,8 +475,8 @@ function PlanPreview({ item }: { item: DashboardItem }) {
 			</div>
 			{docs.length === 0 ? (
 				<p style={{ fontSize: 13, color: 'var(--text-4)', lineHeight: 1.5, margin: 0 }}>
-					No plan notes yet — only the task context. In the planning agent, run <code>/grill-me</code> or{' '}
-					<code>/prd-create</code> to write a brief.
+					No plan notes yet — only the task context. In the planning agent, run <code>/grill-me</code> to grill the
+					decisions, then <code>/prd-create</code> to write the <code>prd.md</code>.
 				</p>
 			) : (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
