@@ -71,10 +71,24 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 	const [pendingAi, setPendingAi] = useState<AiPass | null>(null)
 	const [planInfo, setPlanInfo] = useState<PlanInfo | null>(null)
 	const [actionError, setActionError] = useState<string | null>(null)
+	// Transient per-item UI state — reset when the selected item changes so a
+	// pending pass on one item doesn't leave another item's controls locked
+	// (this component instance is reused across item selections).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on item switch only
+	useEffect(() => {
+		setPendingAction(null)
+		setPendingPlan(false)
+		setPendingAi(null)
+		setPlanInfo(null)
+		setActionError(null)
+	}, [item.id])
 	const canFork = Boolean(item.forkContext && onFork)
 	const canPlan = Boolean(onPlan)
 	const hasPlan = Boolean(planInfo || item.plan)
-	const commandPending = pendingAction !== null || pendingPlan || pendingAi !== null
+	// Actions (approve/reject/plan/fork) and the cheap AI passes (display name /
+	// branch name / re-assess) are independent server ops — running a re-assess
+	// must NOT lock the action bar. Gate them on separate pending flags.
+	const actionPending = pendingAction !== null || pendingPlan
 	// Branch renaming is only safe before a worktree exists (renaming after would
 	// orphan it), and only for solve Items not yet running — mirrors the server gate.
 	const canBranchName = item.kind === 'solve' && !item.plan && (item.status === 'triage' || item.status === 'ready')
@@ -199,8 +213,6 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 					<SourceTaskSkeleton hasTitle={Boolean(item.displayName)} />
 				) : null}
 
-				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
-
 				{item.errorMessage && (
 					<div
 						style={{
@@ -273,24 +285,27 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 			</div>
 
 			<aside style={{ flex: '0 0 250px', width: 250, position: 'sticky', top: 0 }}>
+				{item.assessment && <AssessmentPanel assessment={item.assessment} />}
 				{hasCommands && (
 					<Section title="Actions">
 						<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 							{item.allowedActions.map(action => (
 								<ActionButton
 									key={action.id}
-									label={pendingAction === action.id ? `${action.label}…` : action.label}
+									label={action.label}
 									tone={action.tone}
-									disabled={commandPending}
+									disabled={actionPending}
+									loading={pendingAction === action.id}
 									fullWidth
 									onClick={() => runAction(action.id)}
 								/>
 							))}
 							{canPlan && (
 								<ActionButton
-									label={pendingPlan ? 'Planning...' : hasPlan ? 'Re-plan' : 'Plan'}
+									label={hasPlan ? 'Re-plan' : 'Plan'}
 									tone="muted"
-									disabled={commandPending || item.status === 'running'}
+									disabled={actionPending || item.status === 'running'}
+									loading={pendingPlan}
 									fullWidth
 									onClick={runPlan}
 								/>
@@ -299,7 +314,7 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 								<ActionButton
 									label="Fork"
 									tone="muted"
-									disabled={commandPending}
+									disabled={actionPending}
 									fullWidth
 									onClick={() => onFork(item)}
 								/>
@@ -322,9 +337,10 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 									{aiPasses.map(({ pass, label }) => (
 										<ActionButton
 											key={pass}
-											label={pendingAi === pass ? `${label}…` : `↻ ${label}`}
+											label={pendingAi === pass ? label : `↻ ${label}`}
 											tone="muted"
-											disabled={commandPending}
+											disabled={pendingAi !== null}
+											loading={pendingAi === pass}
 											fullWidth
 											onClick={() => runAi(pass)}
 										/>
@@ -536,9 +552,9 @@ function AssessmentPanel({ assessment }: { assessment: Assessment }) {
 	return (
 		<div
 			style={{
-				marginBottom: 24,
+				marginBottom: 16,
 				padding: '14px 16px',
-				borderRadius: 'var(--radius-sm)',
+				borderRadius: 'var(--radius)',
 				background: 'var(--bg-2)',
 				border:
 					assessment.verdict === 'security'
@@ -1223,12 +1239,14 @@ function ActionButton({
 	label,
 	tone,
 	disabled,
+	loading,
 	fullWidth,
 	onClick,
 }: {
 	label: string
 	tone: DashboardActionTone
 	disabled: boolean
+	loading?: boolean
 	fullWidth?: boolean
 	onClick: () => void
 }) {
@@ -1247,6 +1265,10 @@ function ActionButton({
 			disabled={disabled}
 			onClick={onClick}
 			style={{
+				display: 'inline-flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				gap: 7,
 				width: fullWidth ? '100%' : undefined,
 				padding: '8px 14px',
 				borderRadius: 'var(--radius-sm)',
@@ -1259,6 +1281,7 @@ function ActionButton({
 				...styles[tone],
 			}}
 		>
+			{loading && <span className="vg-spin" aria-hidden="true" />}
 			{label}
 		</button>
 	)
