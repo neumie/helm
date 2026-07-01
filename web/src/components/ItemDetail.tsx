@@ -292,6 +292,43 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 			</div>
 
 			<aside style={{ flex: '0 0 250px', width: 250, position: 'sticky', top: 0 }}>
+				<Section title="Details">
+					<div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
+						<span>
+							Project <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.projectSlug}</strong>
+						</span>
+						<span>
+							BaseRef <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.baseRef}</strong>
+						</span>
+						{item.branchName && (
+							<span>
+								Branch{' '}
+								<code style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+									{item.branchName}
+								</code>
+							</span>
+						)}
+						{created && (
+							<span>
+								Created <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{created} ago</strong>
+							</span>
+						)}
+					</div>
+					<div
+						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: 8,
+							marginTop: 12,
+							paddingTop: 12,
+							borderTop: '1px solid var(--border)',
+						}}
+					>
+						<LinkRow label="Task" url={item.links.source?.url ?? null} fallback="no source" />
+						<LinkRow label="GitHub" url={item.links.pr?.url ?? null} fallback="no PR yet" />
+					</div>
+				</Section>
+
 				{hasCommands && (
 					<Section title="Actions">
 						<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -398,43 +435,6 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 						)}
 					</Section>
 				)}
-
-				<Section title="Details">
-					<div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
-						<span>
-							Project <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.projectSlug}</strong>
-						</span>
-						<span>
-							BaseRef <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{item.baseRef}</strong>
-						</span>
-						{item.branchName && (
-							<span>
-								Branch{' '}
-								<code style={{ color: 'var(--text-2)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-									{item.branchName}
-								</code>
-							</span>
-						)}
-						{created && (
-							<span>
-								Created <strong style={{ color: 'var(--text-1)', fontWeight: 500 }}>{created} ago</strong>
-							</span>
-						)}
-					</div>
-					<div
-						style={{
-							display: 'flex',
-							flexDirection: 'column',
-							gap: 8,
-							marginTop: 12,
-							paddingTop: 12,
-							borderTop: '1px solid var(--border)',
-						}}
-					>
-						<LinkRow label="Task" url={item.links.source?.url ?? null} fallback="no source" />
-						<LinkRow label="GitHub" url={item.links.pr?.url ?? null} fallback="no PR yet" />
-					</div>
-				</Section>
 
 				<DeployLadder deployState={item.deployState} />
 
