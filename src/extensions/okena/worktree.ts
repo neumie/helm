@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
-import { excludeVigilFiles, resolveWorktreeStartPoint } from '../../worktree/manager.js'
+import { excludeVigilFiles, resolveWorktreeStartPoint, withRepoLock } from '../../worktree/manager.js'
 import type { OkenaClient } from './client.js'
 
 interface CreateWorktreeResponse {
@@ -76,7 +77,7 @@ export class OkenaWorktreeManager {
 			if (!wtProject) {
 				throw phaseError('worktree', `Okena project not found for worktree path: ${existingWorktreePath}`)
 			}
-			excludeVigilFiles(existingWorktreePath)
+			await excludeVigilFiles(existingWorktreePath)
 			return { worktreePath: existingWorktreePath, wtProjectId: wtProject.id, autoTerminalId: null }
 		}
 
@@ -88,7 +89,7 @@ export class OkenaWorktreeManager {
 		const existing = state.projects.find(p => p.name === branchName && p.path.includes(safeBranch))
 		if (existing) {
 			log.info('okena', `Reusing existing worktree project: ${existing.id}`)
-			excludeVigilFiles(existing.path)
+			await excludeVigilFiles(existing.path)
 			return { worktreePath: existing.path, wtProjectId: existing.id, autoTerminalId: null }
 		}
 
@@ -124,7 +125,7 @@ export class OkenaWorktreeManager {
 		if (!wtProjectId) throw phaseError('worktree', 'Worktree project ID could not be resolved')
 
 		log.success('okena', `Worktree at ${worktreePath}`)
-		excludeVigilFiles(worktreePath)
+		await excludeVigilFiles(worktreePath)
 		return { worktreePath, wtProjectId, autoTerminalId: wt.terminal_id }
 	}
 
@@ -145,11 +146,13 @@ export class OkenaWorktreeManager {
 	}
 
 	private async ensureBaseBranchReady(repoPath: string, baseBranch: string): Promise<void> {
-		const startPoint = resolveWorktreeStartPoint(repoPath, baseBranch)
-		try {
-			execFileSync('git', ['checkout', '--detach', startPoint], { cwd: repoPath, stdio: 'pipe', timeout: 10_000 })
-		} catch (err) {
-			log.warn('okena', `Could not checkout ${startPoint}: ${err instanceof Error ? err.message : err}`)
-		}
+		await withRepoLock(repoPath, async () => {
+			const startPoint = await resolveWorktreeStartPoint(repoPath, baseBranch)
+			try {
+				await promisify(execFile)('git', ['checkout', '--detach', startPoint], { cwd: repoPath, timeout: 10_000 })
+			} catch (err) {
+				log.warn('okena', `Could not checkout ${startPoint}: ${err instanceof Error ? err.message : err}`)
+			}
+		})
 	}
 }

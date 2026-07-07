@@ -1,6 +1,7 @@
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { dispatchSolveItem } from '../actions/dispatcher.js'
 import { copyAttachmentsToWorktree } from '../attachments/store.js'
 import type { VigilConfig } from '../config.js'
@@ -21,21 +22,23 @@ import type { LoopRunner } from './loop-runner.js'
 
 const LOGS_DIR = resolve(process.cwd(), 'logs')
 
-function ensureItemWorktree(
+const execFileAsync = promisify(execFile)
+
+async function ensureItemWorktree(
 	projectConfig: VigilConfig['projects'][number],
 	baseRef: string,
 	branchName: string,
 	existingWorktreePath: string | undefined,
-): string {
+): Promise<string> {
 	if (existingWorktreePath && existsSync(existingWorktreePath)) {
 		log.info('worker', `Reusing existing worktree: ${existingWorktreePath}`)
-		excludeVigilFiles(existingWorktreePath)
+		await excludeVigilFiles(existingWorktreePath)
 		return existingWorktreePath
 	}
 
 	try {
-		const worktreePath = createWorktree(projectConfig.repoPath, baseRef, branchName, projectConfig.worktreeDir)
-		excludeVigilFiles(worktreePath)
+		const worktreePath = await createWorktree(projectConfig.repoPath, baseRef, branchName, projectConfig.worktreeDir)
+		await excludeVigilFiles(worktreePath)
 		return worktreePath
 	} catch (err) {
 		throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
@@ -49,19 +52,17 @@ function ensureItemWorktree(
  * case "failed" is a lie. Best-effort and fail-safe: any detection error returns
  * `false`, so the Item just fails normally. Returns the PR url when one exists.
  */
-function detectShippableWork(
+async function detectShippableWork(
 	worktreePath: string,
 	baseRef: string,
 	branchName: string,
-): { prUrl: string | null } | false {
+): Promise<{ prUrl: string | null } | false> {
 	let commitsAhead = 0
 	try {
-		const out = execFileSync('git', ['-C', worktreePath, 'rev-list', '--count', `${baseRef}..HEAD`], {
-			encoding: 'utf-8',
+		const { stdout } = await execFileAsync('git', ['-C', worktreePath, 'rev-list', '--count', `${baseRef}..HEAD`], {
 			timeout: 10_000,
-			stdio: ['ignore', 'pipe', 'ignore'],
 		})
-		commitsAhead = Number.parseInt(out.trim(), 10) || 0
+		commitsAhead = Number.parseInt(stdout.trim(), 10) || 0
 	} catch {
 		return false
 	}
@@ -69,12 +70,10 @@ function detectShippableWork(
 
 	let prUrl: string | null = null
 	try {
-		const out = execFileSync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
-			encoding: 'utf-8',
+		const { stdout } = await execFileAsync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
 			timeout: 10_000,
-			stdio: ['ignore', 'pipe', 'ignore'],
 		})
-		const trimmed = out.trim()
+		const trimmed = stdout.trim()
 		if (trimmed) prUrl = trimmed
 	} catch {
 		// No PR (or gh unavailable) — committed work alone is enough to reconcile.
@@ -87,18 +86,27 @@ function detectShippableWork(
  * when the branch holds shippable work (solve phase only — poll/worktree
  * failures mean no work was done), otherwise mark `failed`.
  */
-function failOrReconcileSolve(
+async function failOrReconcileSolve(
 	commands: ItemCommands,
 	itemId: string,
 	item: ItemRecord,
 	error: Error,
 	phase: ErrorPhase,
-): void {
+	signal?: AbortSignal,
+): Promise<void> {
 	if (phase === 'solve') {
 		const current = commands.getItem(itemId)
 		if (current?.worktreePath && current.branchName) {
 			const { baseRef } = resolveItemWorkspace(current)
-			const work = detectShippableWork(current.worktreePath, baseRef, current.branchName)
+			const work = await detectShippableWork(current.worktreePath, baseRef, current.branchName)
+			// A cancel can land while detection awaits (the Item is still `running`
+			// and the cancel route already answered 200); honor it instead of
+			// overwriting the user's cancel with failed/review.
+			if (signal?.aborted) {
+				commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
+				log.warn('worker', `Solve Item cancelled: ${item.title}`)
+				return
+			}
 			if (work) {
 				commands.reconcileFailedSolve(itemId, { message: error.message, phase, prUrl: work.prUrl })
 				log.warn('worker', `Solve Item errored but has shippable work — moved to review: ${item.title}`)
@@ -235,7 +243,7 @@ export async function processSolveItem(
 			commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
 			log.warn('worker', `Solve Item cancelled: ${item.title}`)
 		} else {
-			failOrReconcileSolve(commands, itemId, item, error, phase)
+			await failOrReconcileSolve(commands, itemId, item, error, phase, signal)
 		}
 	}
 }
@@ -267,7 +275,7 @@ export async function processLoopItem(
 		// AI naming is scoped to solve Items only.
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
 		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
-		const worktreePath = ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
+		const worktreePath = await ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
 		commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })
 
 		const result = await loopRunner.runLoop({

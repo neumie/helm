@@ -329,9 +329,7 @@ export function ItemDetail({ item, onAction, onSetStatus, onPlan, onAiPass, onFo
 							url={item.links.source?.url ?? null}
 							fallback="no source"
 							linkText={
-								(item.links.source?.url ? hostLabel(item.links.source.url) : null) ??
-								item.source?.provider ??
-								'open'
+								(item.links.source?.url ? hostLabel(item.links.source.url) : null) ?? item.source?.provider ?? 'open'
 							}
 						/>
 						<LinkRow label="GitHub" url={item.links.pr?.url ?? null} fallback="no PR yet" />

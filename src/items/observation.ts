@@ -1,8 +1,11 @@
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 import type { ItemRecord } from './schema.js'
 import type { ItemEvent, ItemStore } from './store.js'
+
+const execFileAsync = promisify(execFile)
 
 export type RunObservationSource = 'none' | 'solve' | 'loop'
 export type RunObservationState = 'idle' | 'running' | 'review' | 'completed' | 'failed' | 'cancelled' | 'unknown'
@@ -58,7 +61,7 @@ export interface RunObservationOptions {
 	store?: Pick<ItemStore, 'getEvents'>
 	logRoot?: string
 	maxLogBytes?: number
-	readPrStatus?: (url: string) => PrStatus
+	readPrStatus?: (url: string) => PrStatus | Promise<PrStatus>
 }
 
 const STATE_LABEL: Record<RunObservationState, string> = {
@@ -206,12 +209,10 @@ function readLog(item: ItemRecord, opts: RunObservationOptions): RunObservationL
 	}
 }
 
-function defaultReadPrStatus(url: string): PrStatus {
+async function defaultReadPrStatus(url: string): Promise<PrStatus> {
 	try {
-		const raw = execFileSync('gh', ['pr', 'view', url, '--json', 'state,merged,url'], {
-			encoding: 'utf-8',
+		const { stdout: raw } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'state,merged,url'], {
 			timeout: 10_000,
-			stdio: ['ignore', 'pipe', 'ignore'],
 		})
 		const parsed = JSON.parse(raw) as { state?: unknown; merged?: unknown; url?: unknown }
 		return {
@@ -224,10 +225,10 @@ function defaultReadPrStatus(url: string): PrStatus {
 	}
 }
 
-function readPr(item: ItemRecord, opts: RunObservationOptions): RunObservationPr {
+async function readPr(item: ItemRecord, opts: RunObservationOptions): Promise<RunObservationPr> {
 	if (!item.prUrl) return { url: null, state: null, merged: null }
 	try {
-		const status = (opts.readPrStatus ?? defaultReadPrStatus)(item.prUrl)
+		const status = await (opts.readPrStatus ?? defaultReadPrStatus)(item.prUrl)
 		return {
 			url: status.url ?? item.prUrl,
 			state: status.state ?? 'unknown',
@@ -282,11 +283,11 @@ function readAlmanac(item: ItemRecord): RunObservationAlmanac {
 	}
 }
 
-export function observeItemRun(item: ItemRecord, opts: RunObservationOptions = {}): RunObservation {
+export async function observeItemRun(item: ItemRecord, opts: RunObservationOptions = {}): Promise<RunObservation> {
 	const source = sourceForItem(item)
 	const events = readEvents(item, opts.store)
 	const log = readLog(item, opts)
-	const pr = readPr(item, opts)
+	const pr = await readPr(item, opts)
 	const almanac = readAlmanac(item)
 	const fallbackState = stateFromItem(item)
 	const missingAlmanacRecord = source === 'loop' && !!almanac.runId && !!almanac.statusPath && !almanac.status

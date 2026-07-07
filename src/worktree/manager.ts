@@ -1,13 +1,38 @@
-import { execFileSync, execSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { log } from '../util/logger.js'
+
+// All git operations here are async on purpose: several of them hit the network
+// (fetch, ls-remote, push) or check out a full tree (worktree add), and the
+// daemon runs them on its only event loop. A sync exec here freezes every HTTP
+// route (dashboard + extension) for the duration. Never reintroduce
+// execSync/execFileSync in this module.
+const execFileAsync = promisify(execFile)
 
 const VIGIL_EXCLUDE_PATTERNS = ['.vigil-*', '.mcp.json']
 
-function gitRefExists(repoPath: string, ref: string): boolean {
+// Async exec means the event loop no longer serializes the daemon's git child
+// processes: two concurrent solves in ONE repo would interleave `git fetch` /
+// `git worktree add` / `checkout --detach` and contend on git's ref/index
+// locks (the loser silently degrades to a stale base or a transient failure).
+// Serialize mutating repo-level git ops per repoPath instead.
+const repoLocks = new Map<string, Promise<unknown>>()
+
+export function withRepoLock<T>(repoPath: string, fn: () => Promise<T>): Promise<T> {
+	const prev = repoLocks.get(repoPath) ?? Promise.resolve()
+	const run = prev.then(fn, fn)
+	repoLocks.set(
+		repoPath,
+		run.catch(() => {}),
+	)
+	return run
+}
+
+async function gitRefExists(repoPath: string, ref: string): Promise<boolean> {
 	try {
-		execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: repoPath, stdio: 'pipe' })
+		await execFileAsync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: repoPath })
 		return true
 	} catch {
 		return false
@@ -15,7 +40,7 @@ function gitRefExists(repoPath: string, ref: string): boolean {
 }
 
 /** True if a local branch with this name already exists in the repo. */
-export function localBranchExists(repoPath: string, branchName: string): boolean {
+export async function localBranchExists(repoPath: string, branchName: string): Promise<boolean> {
 	return gitRefExists(repoPath, `refs/heads/${branchName}`)
 }
 
@@ -25,26 +50,26 @@ export function localBranchExists(repoPath: string, branchName: string): boolean
  * remote branch never fetched locally). A network/no-origin failure is treated as
  * "absent" so this can't block naming.
  */
-export function remoteBranchExists(repoPath: string, branchName: string): boolean {
-	if (gitRefExists(repoPath, `refs/remotes/origin/${branchName}`)) return true
+export async function remoteBranchExists(repoPath: string, branchName: string): Promise<boolean> {
+	if (await gitRefExists(repoPath, `refs/remotes/origin/${branchName}`)) return true
 	try {
-		execFileSync('git', ['ls-remote', '--exit-code', '--heads', 'origin', branchName], { cwd: repoPath, stdio: 'pipe' })
+		await execFileAsync('git', ['ls-remote', '--exit-code', '--heads', 'origin', branchName], { cwd: repoPath })
 		return true
 	} catch {
 		return false
 	}
 }
 
-export function resolveWorktreeStartPoint(repoPath: string, baseRef: string): string {
+export async function resolveWorktreeStartPoint(repoPath: string, baseRef: string): Promise<string> {
 	try {
-		execFileSync('git', ['fetch', 'origin', baseRef], { cwd: repoPath, stdio: 'pipe' })
+		await execFileAsync('git', ['fetch', 'origin', baseRef], { cwd: repoPath })
 	} catch {
 		log.warn('worktree', `Could not fetch origin/${baseRef}, using local`)
 	}
 
 	const remoteRef = baseRef.startsWith('origin/') ? baseRef : `origin/${baseRef}`
-	if (gitRefExists(repoPath, remoteRef)) return remoteRef
-	if (gitRefExists(repoPath, baseRef)) return baseRef
+	if (await gitRefExists(repoPath, remoteRef)) return remoteRef
+	if (await gitRefExists(repoPath, baseRef)) return baseRef
 	return baseRef
 }
 
@@ -53,8 +78,17 @@ export function createWorktree(
 	baseBranch: string,
 	branchName: string,
 	worktreeBaseDir?: string,
-): string {
-	const startPoint = resolveWorktreeStartPoint(repoPath, baseBranch)
+): Promise<string> {
+	return withRepoLock(repoPath, () => createWorktreeLocked(repoPath, baseBranch, branchName, worktreeBaseDir))
+}
+
+async function createWorktreeLocked(
+	repoPath: string,
+	baseBranch: string,
+	branchName: string,
+	worktreeBaseDir?: string,
+): Promise<string> {
+	const startPoint = await resolveWorktreeStartPoint(repoPath, baseBranch)
 
 	const worktreeDir = worktreeBaseDir ?? join(dirname(repoPath), `${basename(repoPath)}-worktrees`)
 	if (!existsSync(worktreeDir)) {
@@ -66,15 +100,14 @@ export function createWorktree(
 	if (existsSync(worktreePath)) {
 		log.warn('worktree', `Worktree path already exists: ${worktreePath}, removing first`)
 		try {
-			execFileSync('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: repoPath, stdio: 'pipe' })
+			await execFileAsync('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: repoPath })
 		} catch {
 			// May not be a worktree, just a directory
 		}
 	}
 
-	execFileSync('git', ['worktree', 'add', '-B', branchName, worktreePath, startPoint], {
+	await execFileAsync('git', ['worktree', 'add', '-B', branchName, worktreePath, startPoint], {
 		cwd: repoPath,
-		stdio: 'pipe',
 	})
 
 	log.success('worktree', `Created worktree at ${worktreePath} (branch: ${branchName})`)
@@ -85,13 +118,10 @@ export function createWorktree(
  * Add vigil temp file patterns to the worktree's git exclude so they're invisible to git.
  * Uses $GIT_DIR/info/exclude which is per-worktree and never committed.
  */
-export function excludeVigilFiles(worktreePath: string): void {
+export async function excludeVigilFiles(worktreePath: string): Promise<void> {
 	try {
-		const gitDir = execSync('git rev-parse --git-dir', {
-			cwd: worktreePath,
-			encoding: 'utf-8',
-			stdio: ['ignore', 'pipe', 'ignore'],
-		}).trim()
+		const { stdout } = await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: worktreePath })
+		const gitDir = stdout.trim()
 		const excludePath = join(worktreePath, gitDir, 'info', 'exclude')
 		mkdirSync(join(worktreePath, gitDir, 'info'), { recursive: true })
 		appendFileSync(excludePath, `\n# Vigil temp files\n${VIGIL_EXCLUDE_PATTERNS.join('\n')}\n`)
@@ -100,21 +130,21 @@ export function excludeVigilFiles(worktreePath: string): void {
 	}
 }
 
-export function pushBranch(worktreePath: string, branchName: string): void {
+export async function pushBranch(worktreePath: string, branchName: string): Promise<void> {
 	try {
-		execSync(`git push -u origin "${branchName}"`, { cwd: worktreePath, stdio: 'pipe' })
+		await execFileAsync('git', ['push', '-u', 'origin', branchName], { cwd: worktreePath })
 		log.success('worktree', `Pushed branch ${branchName}`)
 	} catch {
 		// Branch may have been renamed (e.g. by /almanac:ship) or already pushed
-		const currentBranch = getCurrentBranch(worktreePath)
+		const currentBranch = await getCurrentBranch(worktreePath)
 		if (currentBranch && currentBranch !== branchName) {
 			log.info('worktree', `Branch was renamed to ${currentBranch}, pushing that instead`)
-			execSync(`git push -u origin "${currentBranch}"`, { cwd: worktreePath, stdio: 'pipe' })
+			await execFileAsync('git', ['push', '-u', 'origin', currentBranch], { cwd: worktreePath })
 			log.success('worktree', `Pushed branch ${currentBranch}`)
 			return
 		}
 		// Check if there's simply nothing to push (Claude already pushed)
-		if (currentBranch && isBranchOnRemote(worktreePath, currentBranch)) {
+		if (currentBranch && (await isBranchOnRemote(worktreePath, currentBranch))) {
 			log.info('worktree', `Branch ${currentBranch} already exists on remote, skipping push`)
 			return
 		}
@@ -122,17 +152,18 @@ export function pushBranch(worktreePath: string, branchName: string): void {
 	}
 }
 
-function getCurrentBranch(cwd: string): string | null {
+async function getCurrentBranch(cwd: string): Promise<string | null> {
 	try {
-		return execSync('git branch --show-current', { cwd, encoding: 'utf-8' }).trim() || null
+		const { stdout } = await execFileAsync('git', ['branch', '--show-current'], { cwd })
+		return stdout.trim() || null
 	} catch {
 		return null
 	}
 }
 
-function isBranchOnRemote(cwd: string, branch: string): boolean {
+async function isBranchOnRemote(cwd: string, branch: string): Promise<boolean> {
 	try {
-		execSync(`git ls-remote --exit-code origin "refs/heads/${branch}"`, { cwd, stdio: 'pipe' })
+		await execFileAsync('git', ['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], { cwd })
 		return true
 	} catch {
 		return false

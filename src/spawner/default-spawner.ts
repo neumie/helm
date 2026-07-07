@@ -13,7 +13,7 @@ export class DefaultSpawner implements Spawner {
 	readonly name = 'default'
 
 	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
-		const worktreePath = this.ensureWorktree(
+		const worktreePath = await this.ensureWorktree(
 			params.projectConfig,
 			params.branchName,
 			params.existingWorktreePath,
@@ -31,28 +31,28 @@ export class DefaultSpawner implements Spawner {
 		}
 	}
 
-	private ensureWorktree(
+	private async ensureWorktree(
 		projectConfig: PlanningSessionParams['projectConfig'],
 		branchName: string,
 		existingWorktreePath: string | undefined,
 		signal: AbortSignal | undefined,
-	): string {
+	): Promise<string> {
 		if (signal?.aborted) throw taskCancelled()
 		if (existingWorktreePath && existsSync(existingWorktreePath)) {
 			log.info('spawner', `Reusing existing worktree: ${existingWorktreePath}`)
-			excludeVigilFiles(existingWorktreePath)
+			await excludeVigilFiles(existingWorktreePath)
 			return existingWorktreePath
 		}
 
 		log.info('spawner', `Creating planning worktree for branch: ${branchName}`)
 		try {
-			const worktreePath = createWorktree(
+			const worktreePath = await createWorktree(
 				projectConfig.repoPath,
 				projectConfig.baseBranch,
 				branchName,
 				projectConfig.worktreeDir,
 			)
-			excludeVigilFiles(worktreePath)
+			await excludeVigilFiles(worktreePath)
 			return worktreePath
 		} catch (err) {
 			throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)

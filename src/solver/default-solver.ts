@@ -11,24 +11,24 @@ import type { SolveParams, SolveResult, Solver } from './solver.js'
 
 export class DefaultSolver implements Solver {
 	/** Create the worktree, or reuse an existing one on disk. */
-	private ensureWorktree(
+	private async ensureWorktree(
 		projectConfig: SolveParams['projectConfig'],
 		branchName: string,
 		existingWorktreePath: string | undefined,
 		signal: AbortSignal | undefined,
-	): string {
+	): Promise<string> {
 		if (signal?.aborted) {
 			throw taskCancelled()
 		}
 		if (existingWorktreePath && existsSync(existingWorktreePath)) {
 			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
-			excludeVigilFiles(existingWorktreePath)
+			await excludeVigilFiles(existingWorktreePath)
 			return existingWorktreePath
 		}
 		log.info('solver', `Creating worktree for branch: ${branchName}`)
 		let worktreePath: string
 		try {
-			worktreePath = createWorktree(
+			worktreePath = await createWorktree(
 				projectConfig.repoPath,
 				projectConfig.baseBranch,
 				branchName,
@@ -37,7 +37,7 @@ export class DefaultSolver implements Solver {
 		} catch (err) {
 			throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
-		excludeVigilFiles(worktreePath)
+		await excludeVigilFiles(worktreePath)
 		return worktreePath
 	}
 
@@ -57,7 +57,7 @@ export class DefaultSolver implements Solver {
 			throw taskCancelled()
 		}
 
-		const worktreePath = this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
+		const worktreePath = await this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
 		params.onWorktreeReady?.(worktreePath)
 
 		if (signal?.aborted) {

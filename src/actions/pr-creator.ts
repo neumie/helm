@@ -1,5 +1,8 @@
-import { execSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { log } from '../util/logger.js'
+
+const execFileAsync = promisify(execFile)
 
 interface PROptions {
 	worktreePath: string
@@ -10,7 +13,7 @@ interface PROptions {
 	draft: boolean
 }
 
-export function createPR(opts: PROptions): string {
+export async function createPR(opts: PROptions): Promise<string> {
 	const args = [
 		'pr',
 		'create',
@@ -25,11 +28,8 @@ export function createPR(opts: PROptions): string {
 	]
 	if (opts.draft) args.push('--draft')
 
-	const result = execSync(`gh ${args.map(a => `"${a.replace(/"/g, '\\"')}"`).join(' ')}`, {
-		cwd: opts.worktreePath,
-		encoding: 'utf-8',
-		stdio: ['pipe', 'pipe', 'pipe'],
-	}).trim()
+	const { stdout } = await execFileAsync('gh', args, { cwd: opts.worktreePath })
+	const result = stdout.trim()
 
 	log.success('pr-creator', `Created PR: ${result}`)
 	return result

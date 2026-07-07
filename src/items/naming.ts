@@ -261,7 +261,7 @@ function clampSlug(slug: string, max: number): string {
 
 export interface EnsureItemNameDeps {
 	runOneShot?: (opts: OneShotOptions) => Promise<string | null>
-	branchExists?: (branch: string) => boolean
+	branchExists?: (branch: string) => boolean | Promise<boolean>
 }
 
 export interface EnsureItemNameParams {
@@ -337,8 +337,8 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 		// suffix decision + write happen atomically inside recordDerivedWorkspaceName
 		// so two concurrent solves can't both reserve the same derived branch.
 		const gitTaken = deps?.branchExists
-			? deps.branchExists(base)
-			: localBranchExists(repoPath, base) || remoteBranchExists(repoPath, base)
+			? await deps.branchExists(base)
+			: (await localBranchExists(repoPath, base)) || (await remoteBranchExists(repoPath, base))
 
 		const named = commands.recordDerivedWorkspaceName(item.id, {
 			base,

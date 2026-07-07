@@ -139,11 +139,11 @@ export function apiRoutes(
 	const api = new Hono()
 	const itemCommands = new ItemCommands(db.items, config)
 	const aiDeps = aiOneShot ? { runOneShot: aiOneShot } : undefined
-	const dashboardItem = (item: ItemRecord) =>
+	const dashboardItem = async (item: ItemRecord) =>
 		toDashboardItemWithSiblings(
 			item,
 			item.groupId ? itemCommands.listGroupItems(item.groupId) : [],
-			observeItemRun(item, { store: db.items }),
+			await observeItemRun(item, { store: db.items }),
 		)
 	const expandGroupedItems = (items: ItemRecord[]) => {
 		const expanded: ItemRecord[] = []
@@ -227,9 +227,9 @@ export function apiRoutes(
 		return c.json({ data: dashboardItems(items) })
 	})
 
-	api.get('/items/by-source/:externalId', c => {
+	api.get('/items/by-source/:externalId', async c => {
 		const item = itemCommands.getItemBySourceExternalId(c.req.param('externalId'))
-		return c.json({ data: item ? dashboardItem(item) : null })
+		return c.json({ data: item ? await dashboardItem(item) : null })
 	})
 
 	api.post('/items/source', async c => {
@@ -253,7 +253,7 @@ export function apiRoutes(
 		}
 
 		const existing = itemCommands.getItemBySourceExternalId(parsed.data.externalId)
-		if (existing) return c.json({ data: dashboardItem(existing) })
+		if (existing) return c.json({ data: await dashboardItem(existing) })
 
 		const summary = await provider.resolveTaskSummary(parsed.data.externalId)
 		if (!summary) return c.json({ error: `Task ${parsed.data.externalId} not found in ${provider.name}` }, 404)
@@ -271,7 +271,7 @@ export function apiRoutes(
 				url: config.provider.taskBaseUrl ? `${config.provider.taskBaseUrl}${parsed.data.externalId}` : undefined,
 			},
 		})
-		return c.json({ data: dashboardItem(item) }, 201)
+		return c.json({ data: await dashboardItem(item) }, 201)
 	})
 
 	// Ingest a self-contained task (e.g. an email tied to a project): title, body,
@@ -293,7 +293,7 @@ export function apiRoutes(
 
 		const externalId = input.source?.externalId ?? `email:${randomUUID()}`
 		const existing = itemCommands.getItemBySourceExternalId(externalId)
-		if (existing) return c.json({ data: dashboardItem(existing) })
+		if (existing) return c.json({ data: await dashboardItem(existing) })
 
 		// Atomic: pre-generate the id, save attachments + build the frozen context,
 		// then ONE create carrying source + capturedContext together — so a failure
@@ -336,7 +336,7 @@ export function apiRoutes(
 				capturedContext,
 			})
 			enricher.enqueue([item])
-			return c.json({ data: dashboardItem(item) }, 201)
+			return c.json({ data: await dashboardItem(item) }, 201)
 		} catch (err) {
 			removeItemAttachments(id)
 			const msg = err instanceof Error ? err.message : String(err)
@@ -417,7 +417,7 @@ export function apiRoutes(
 				)
 			}
 		}
-		return c.json({ data: { ...dashboardItem(item), sourceTask, planArtifacts } })
+		return c.json({ data: { ...(await dashboardItem(item)), sourceTask, planArtifacts } })
 	})
 
 	api.post('/items', async c => {
@@ -523,7 +523,7 @@ export function apiRoutes(
 				}
 			})()
 			if (items.some(item => item.status === 'ready')) queue.wake()
-			return c.json({ data: items.length === 1 ? dashboardItem(items[0]) : dashboardItems(items) }, 201)
+			return c.json({ data: items.length === 1 ? await dashboardItem(items[0]) : dashboardItems(items) }, 201)
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, 400)
@@ -542,17 +542,17 @@ export function apiRoutes(
 			recordSelectedSolveAgent(current, solverAgent)
 			const item = itemCommands.approveItem(current.id)
 			queue.wake()
-			return c.json({ data: dashboardItem(item) })
+			return c.json({ data: await dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
 		}
 	})
 
-	api.post('/items/:id/reject', c => {
+	api.post('/items/:id/reject', async c => {
 		try {
 			const item = itemCommands.rejectItem(c.req.param('id'))
-			return c.json({ data: dashboardItem(item) })
+			return c.json({ data: await dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
@@ -573,7 +573,7 @@ export function apiRoutes(
 		recordSelectedSolveAgent(item, solverAgent)
 		const started = queue.processOneItem(item.id)
 		if (!started) return c.json({ error: 'Could not start Item' }, 500)
-		return c.json({ data: dashboardItem(itemCommands.getItem(item.id) ?? item) })
+		return c.json({ data: await dashboardItem(itemCommands.getItem(item.id) ?? item) })
 	})
 
 	api.post('/items/:id/retry', async c => {
@@ -586,7 +586,7 @@ export function apiRoutes(
 			if (!current) return c.json({ error: 'Item not found' }, 404)
 			recordSelectedSolveAgent(current, solverAgent)
 			const item = queue.retryItem(current.id)
-			return c.json({ data: dashboardItem(item) })
+			return c.json({ data: await dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
@@ -602,24 +602,24 @@ export function apiRoutes(
 		try {
 			const item = itemCommands.setItemStatus(c.req.param('id'), parsed.data)
 			if (item.status === 'ready') queue.wake()
-			return c.json({ data: dashboardItem(item) })
+			return c.json({ data: await dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
 		}
 	})
 
-	api.post('/items/:id/reopen', c => {
+	api.post('/items/:id/reopen', async c => {
 		try {
 			const item = itemCommands.reopenItem(c.req.param('id'))
-			return c.json({ data: dashboardItem(item) })
+			return c.json({ data: await dashboardItem(item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, msg.startsWith('Item not found') ? 404 : 400)
 		}
 	})
 
-	api.post('/items/:id/cancel', c => {
+	api.post('/items/:id/cancel', async c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		if (item.status !== 'running' && item.status !== 'ready' && item.status !== 'triage') {
@@ -627,7 +627,7 @@ export function apiRoutes(
 		}
 		try {
 			queue.cancelItem(item.id)
-			return c.json({ data: dashboardItem(itemCommands.getItem(item.id) ?? item) })
+			return c.json({ data: await dashboardItem(itemCommands.getItem(item.id) ?? item) })
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, 400)
@@ -817,7 +817,7 @@ export function apiRoutes(
 					force: true,
 				})
 			}
-			return c.json({ data: dashboardItem(updated) })
+			return c.json({ data: await dashboardItem(updated) })
 		} catch (err) {
 			if (isCancellation(err, signal)) return c.json({ error: 'Request aborted' }, 503)
 			const msg = err instanceof Error ? err.message : String(err)

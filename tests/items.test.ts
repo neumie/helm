@@ -44,7 +44,7 @@ import {
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from '../src/spawner/spawner.js'
 import type { SolverResult as SolverResultFile } from '../src/types.js'
 import { phaseError, taskCancelled } from '../src/util/errors.js'
-import { createWorktree } from '../src/worktree/manager.js'
+import { createWorktree, withRepoLock } from '../src/worktree/manager.js'
 
 // apiRoutes takes an ItemEnricher (used only by the ingest route); these route
 // tests don't ingest, so a no-op enqueue stub is enough.
@@ -1292,7 +1292,41 @@ test('server creates a new Item forked from an existing Item branch', async () =
 	})
 })
 
-test('createWorktree can fork from a local Item branch BaseRef', () => {
+test('withRepoLock serializes work per repo and keeps repos independent', async () => {
+	const order: string[] = []
+	const gate = { resolve: () => {} }
+	const first = withRepoLock('/repo/a', async () => {
+		order.push('a1-start')
+		await new Promise<void>(resolve => {
+			gate.resolve = resolve
+		})
+		order.push('a1-end')
+	})
+	const second = withRepoLock('/repo/a', async () => {
+		order.push('a2')
+	})
+	const other = withRepoLock('/repo/b', async () => {
+		order.push('b1')
+	})
+
+	await other // repo/b is not blocked by repo/a's in-flight lock
+	assert.deepEqual(order, ['a1-start', 'b1'])
+
+	gate.resolve()
+	await Promise.all([first, second])
+	assert.deepEqual(order, ['a1-start', 'b1', 'a1-end', 'a2'])
+
+	// A rejection must not wedge the lock for the next caller.
+	await withRepoLock('/repo/a', async () => {
+		throw new Error('boom')
+	}).catch(() => {})
+	await withRepoLock('/repo/a', async () => {
+		order.push('a3')
+	})
+	assert.deepEqual(order.at(-1), 'a3')
+})
+
+test('createWorktree can fork from a local Item branch BaseRef', async () => {
 	const dir = mkdtempSync(join(tmpdir(), 'vigil-fork-worktree-'))
 	try {
 		const repoPath = join(dir, 'repo')
@@ -1309,7 +1343,7 @@ test('createWorktree can fork from a local Item branch BaseRef', () => {
 		git(repoPath, ['commit', '-m', 'base attempt'])
 		git(repoPath, ['switch', 'main'])
 
-		const worktreePath = createWorktree(
+		const worktreePath = await createWorktree(
 			repoPath,
 			'vigil/item/base-attempt',
 			'vigil/item/forked-attempt',
@@ -2126,7 +2160,7 @@ test('processSolveItem dispatches pre-shipped PR URLs for solve Items without op
 })
 
 test('Run Observation normalizes solve logs, events, and PR status into Dashboard Contract', async () => {
-	await withTempDb(db => {
+	await withTempDb(async db => {
 		const logRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-solve-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
@@ -2152,7 +2186,7 @@ test('Run Observation normalizes solve logs, events, and PR status into Dashboar
 
 			const contract = toDashboardItem(
 				stored,
-				observeItemRun(stored, {
+				await observeItemRun(stored, {
 					store: db.items,
 					logRoot,
 					readPrStatus: url => ({ url, state: 'OPEN', merged: false }),
@@ -2176,7 +2210,7 @@ test('Run Observation normalizes solve logs, events, and PR status into Dashboar
 })
 
 test('Run Observation normalizes almanac status.tsv for loop Items', async () => {
-	await withTempDb(db => {
+	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-loop-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
@@ -2216,7 +2250,7 @@ test('Run Observation normalizes almanac status.tsv for loop Items', async () =>
 			const stored = db.items.get(item.id)
 			assert.ok(stored)
 
-			const contract = toDashboardItem(stored, observeItemRun(stored, { store: db.items }))
+			const contract = toDashboardItem(stored, await observeItemRun(stored, { store: db.items }))
 
 			assert.equal(contract.runObservation.source, 'loop')
 			assert.equal(contract.runObservation.state, 'running')
@@ -2240,7 +2274,7 @@ test('Run Observation normalizes almanac status.tsv for loop Items', async () =>
 })
 
 test('Run Observation surfaces almanac failure_reason when loop summary is absent', async () => {
-	await withTempDb(db => {
+	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-loop-failure-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createHardenItem({
@@ -2278,7 +2312,7 @@ test('Run Observation surfaces almanac failure_reason when loop summary is absen
 			const stored = db.items.get(item.id)
 			assert.ok(stored)
 
-			const contract = toDashboardItem(stored, observeItemRun(stored, { store: db.items }))
+			const contract = toDashboardItem(stored, await observeItemRun(stored, { store: db.items }))
 
 			assert.equal(contract.runObservation.state, 'failed')
 			assert.equal(contract.runObservation.summary, 'exit=1; reviewer failed mid-round')
