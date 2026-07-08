@@ -203,9 +203,14 @@ export const WIDGET_STYLES = `
 		border-radius: var(--vg-radius-ctl);
 	}
 	.vg-model-select {
+		appearance: none;
+		-webkit-appearance: none;
 		height: 30px;
-		padding: 0 10px;
-		background: rgba(255, 255, 255, 0.05);
+		padding: 0 28px 0 10px;
+		background-color: rgba(255, 255, 255, 0.05);
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b6f77' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 10px center;
 		border: 1px solid var(--vg-border);
 		border-radius: var(--vg-radius-ctl);
 		color: var(--vg-text);
