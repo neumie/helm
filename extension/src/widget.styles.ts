@@ -202,19 +202,23 @@ export const WIDGET_STYLES = `
 		border: 1px solid var(--vg-border);
 		border-radius: var(--vg-radius-ctl);
 	}
-	.vg-agent__seg--flow {
-		display: flex;
-		flex-wrap: nowrap;
-		overflow-x: auto;
-		max-width: 236px;
-		scrollbar-width: none;
+	.vg-model-select {
+		height: 30px;
+		padding: 0 10px;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid var(--vg-border);
+		border-radius: var(--vg-radius-ctl);
+		color: var(--vg-text);
+		font-family: var(--vg-font);
+		font-size: 12px;
+		font-weight: 650;
+		cursor: pointer;
+		outline: none;
 	}
-	.vg-agent__seg--flow::-webkit-scrollbar { display: none; }
-	.vg-agent__seg--flow .vg-agent__option {
-		padding: 0 9px;
-		flex-shrink: 0;
-		white-space: nowrap;
-	}
+	.vg-model-select:hover { border-color: var(--vg-border-strong); }
+	.vg-model-select:focus { border-color: var(--vg-accent); }
+	.vg-model-select:disabled { cursor: default; opacity: 0.5; }
+	.vg-model-select option { background: var(--vg-surface); color: var(--vg-text); }
 	.vg-agent__option {
 		height: 24px;
 		border: 0;

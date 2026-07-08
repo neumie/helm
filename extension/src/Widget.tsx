@@ -292,9 +292,10 @@ function AgentSelect(props: {
 }
 
 /**
- * Quick-switch between favorite models for the selected agent. "Auto" = no
- * per-item override (the daemon's configured model). Hidden when the daemon
- * didn't provide a catalog (older server).
+ * Quick-switch between favorite models for the selected agent — a compact
+ * dropdown so the row never wraps. "Auto" = no per-item override (the
+ * daemon's configured model). Hidden when the daemon didn't provide a
+ * catalog (older server).
  */
 function ModelSelect(props: {
 	value: Accessor<string>
@@ -306,31 +307,22 @@ function ModelSelect(props: {
 		<Show when={props.options().length > 0}>
 			<div class="vg-agent">
 				<span class="vg-agent__label">Model</span>
-				<div class="vg-agent__seg vg-agent__seg--flow" aria-label="Solver model">
-					<button
-						type="button"
-						class={`vg-agent__option${props.value() === '' ? ' is-active' : ''}`}
-						aria-pressed={props.value() === ''}
-						disabled={props.disabled}
-						on:click={() => props.onChange('')}
-					>
-						Auto
-					</button>
+				<select
+					class="vg-model-select"
+					aria-label="Solver model"
+					disabled={props.disabled}
+					value={props.value()}
+					on:change={e => props.onChange((e.currentTarget as HTMLSelectElement).value)}
+				>
+					<option value="">Auto</option>
 					<For each={props.options()}>
 						{model => (
-							<button
-								type="button"
-								class={`vg-agent__option${props.value() === model.id ? ' is-active' : ''}`}
-								aria-pressed={props.value() === model.id}
-								disabled={props.disabled}
-								title={model.id}
-								on:click={() => props.onChange(model.id)}
-							>
+							<option value={model.id} selected={props.value() === model.id}>
 								{model.label}
-							</button>
+							</option>
 						)}
 					</For>
-				</div>
+				</select>
 			</div>
 		</Show>
 	)
