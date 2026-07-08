@@ -512,8 +512,8 @@ function PlanPreview({ item }: { item: DashboardItem }) {
 			</div>
 			{docs.length === 0 ? (
 				<p style={{ fontSize: 13, color: 'var(--text-4)', lineHeight: 1.5, margin: 0 }}>
-					No plan notes yet — only the task context. In the planning agent, run <code>/grill-me</code> to grill the
-					decisions, then <code>/prd-create</code> to write the <code>prd.md</code>.
+					No plan notes yet — only the task context. In the planning agent, run <code>/almanac:grill-me</code> to grill
+					the decisions, then <code>/almanac:prd-create</code> to write the <code>prd.md</code>.
 				</p>
 			) : (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
