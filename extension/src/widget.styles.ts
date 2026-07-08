@@ -147,14 +147,6 @@ export const WIDGET_STYLES = `
 	.vg-text { font-size: 13px; line-height: 1.5; color: var(--vg-text-dim); }
 	.vg-text--primary { color: var(--vg-text); }
 	.vg-summary { font-size: 13px; line-height: 1.55; color: var(--vg-text-dim); }
-	.vg-item-meta {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		color: var(--vg-text-faint);
-		font-size: 11px;
-		font-weight: 600;
-	}
 	.vg-link-line {
 		display: flex;
 		align-items: center;

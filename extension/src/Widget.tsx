@@ -53,10 +53,6 @@ export function itemRunNotices(item: DashboardItem): ItemRunNotice[] {
 	return notices
 }
 
-export function itemMetaLabels(item: DashboardItem): string[] {
-	return [item.kind, item.projectSlug, ...(item.group ? [item.group.label] : [])]
-}
-
 export function Widget(props: { taskId: Accessor<string | null> }) {
 	const [item, setItem] = createSignal<DashboardItem | null>(null)
 	const [expanded, setExpanded] = createSignal(false)
@@ -503,17 +499,6 @@ function Card(props: {
 								</div>
 
 								<div class="vg-card__body">
-									<div class="vg-text vg-text--primary">{item().title}</div>
-									<div class="vg-item-meta">
-										<For each={itemMetaLabels(item())}>
-											{(label, index) => (
-												<Show when={index() === 0} fallback={<span>{label}</span>}>
-													<span class="vg-chip chip-gray">{label}</span>
-												</Show>
-											)}
-										</For>
-									</div>
-									<LinkLine label="Source" link={item().links.source} />
 									<LinkLine label="Branch" link={item().links.branch} />
 									<LinkLine label="PR" link={item().links.pr} />
 									<AgentSelect

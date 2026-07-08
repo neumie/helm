@@ -6,7 +6,7 @@ import extensionApiModule from '../extension/src/api.ts'
 const originalFetch = globalThis.fetch
 const { api } = extensionApiModule as typeof import('../extension/src/api.ts')
 type ExtensionWidgetModule = typeof import('../extension/src/Widget.tsx')
-const { itemMetaLabels, itemRunNotices, planLeadText } = extensionWidgetModule as ExtensionWidgetModule
+const { itemRunNotices, planLeadText } = extensionWidgetModule as ExtensionWidgetModule
 
 type ChromeStorageStub = {
 	storage: {
@@ -62,23 +62,6 @@ test('extension Item notices show almanac failure reasons as failures', () => {
 			},
 		} as Parameters<typeof itemRunNotices>[0]),
 		[{ kind: 'failure', text: 'Tests failed after round 2' }],
-	)
-})
-
-test('extension Item meta uses server-owned group labels', () => {
-	assert.deepEqual(
-		itemMetaLabels({
-			kind: 'harden',
-			projectSlug: 'vigil',
-			group: {
-				id: 'group-1',
-				label: 'Group 1/4',
-				position: 1,
-				size: 4,
-				siblingIds: ['a', 'b', 'c', 'd'],
-			},
-		} as Parameters<typeof itemMetaLabels>[0]),
-		['harden', 'vigil', 'Group 1/4'],
 	)
 })
 
