@@ -74,7 +74,7 @@ export class OkenaSolver implements Solver {
 		// and unlinks .vigil-prompt.txt out from under the just-launched agent.
 		workspace.clearResult()
 		const promptFile = join(worktreePath, '.vigil-prompt.txt')
-		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath })
+		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath }, solverConfig)
 		params.onPromptSnapshot?.(solverPrompt)
 		writeFileSync(promptFile, solverPrompt, 'utf-8')
 

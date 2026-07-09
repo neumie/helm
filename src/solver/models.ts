@@ -36,6 +36,46 @@ export function agentModelLabel(agent: SolverAgent): string {
 }
 
 /**
+ * Model-tier guidance injected into the solve prompt: how the agent should
+ * SPEND the model it runs on. A premium tier (Fable) should orchestrate —
+ * delegate grunt work to subagents and keep its own context for judgment; a
+ * budget tier should stay narrow and flag scope creep instead of thrashing.
+ * Keyed by exact model id from {@link MODEL_CATALOG}; an unknown/unset model
+ * (agent CLI default) gets no extra guidance.
+ */
+const MODEL_GUIDANCE: Record<string, string> = {
+	'claude-fable-5': [
+		'You are running as Fable 5 — the most capable and most EXPENSIVE tier. Spend it like an orchestrator:',
+		'- Fan out subagents (the Task tool) for codebase exploration, broad searches, and mechanical multi-file edits; give them crisp, self-contained briefs.',
+		'- Keep your own context for architecture, tricky diagnosis, and reviewing what subagents return.',
+		'- Prefer one decisive, correct pass over cheap trial-and-error; verify with tools instead of re-deriving from memory.',
+	].join('\n'),
+	'claude-opus-4-8': [
+		'You are running as Opus 4.8 — a strong premium tier. Delegate broad exploration and mechanical sweeps to subagents (the Task tool); do the design, tricky edits, and verification yourself.',
+	].join('\n'),
+	'claude-sonnet-5':
+		'You are running as Sonnet 5 — a balanced tier. Work directly; use subagents only for genuinely parallel exploration.',
+	'claude-haiku-4-5': [
+		'You are running as Haiku 4.5 — a fast, budget tier. Keep the change tightly scoped and mechanical.',
+		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the solver-result.json summary and stop.',
+	].join('\n'),
+	'gpt-5.5':
+		'You are running as GPT-5.5 — a strong premium tier. Plan briefly, then make one decisive, well-verified pass; avoid redundant re-reads of files you have already seen.',
+	'gpt-5.4':
+		'You are running as GPT-5.4 — a capable general tier. Work directly and verify with the test suite before shipping.',
+	'gpt-5.4-mini': [
+		'You are running as GPT-5.4 mini — a fast, budget tier. Keep the change tightly scoped and mechanical.',
+		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the solver-result.json summary and stop.',
+	].join('\n'),
+}
+
+/** Guidance for the model the run will actually use, or null when unknown/default. */
+export function modelGuidance(model: string | undefined): string | null {
+	if (!model) return null
+	return MODEL_GUIDANCE[model] ?? null
+}
+
+/**
  * Flat select options across both agents (Settings model dropdowns aren't
  * agent-scoped — the sibling Provider field can change independently).
  */

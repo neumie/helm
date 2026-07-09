@@ -4143,3 +4143,20 @@ test('late-PR backfill falls back to the worktree branch when the agent renamed 
 		assert.deepEqual(lookups, ['fix/stored-name', 'fix/live-name'])
 		assert.equal(db.items.get(item.id)?.prUrl, 'https://github.com/neumie/vigil/pull/12')
 	}))
+
+test('buildPrompt injects model-tier guidance for known models only', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'vigil-guidance-'))
+	try {
+		const task = { title: 'Guide me', description: 'x' }
+		const ctx = { planDirName: 'guide-plan', worktreePath: dir }
+		const fable = buildPrompt(task as never, ctx as never, { model: 'claude-fable-5' })
+		assert.ok(fable.includes('## How to spend this model'))
+		assert.ok(fable.includes('orchestrator'))
+		const unknown = buildPrompt(task as never, ctx as never, { model: 'some-custom-model' })
+		assert.ok(!unknown.includes('## How to spend this model'))
+		const none = buildPrompt(task as never, ctx as never)
+		assert.ok(!none.includes('## How to spend this model'))
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})

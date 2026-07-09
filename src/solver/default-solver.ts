@@ -65,7 +65,7 @@ export class DefaultSolver implements Solver {
 		}
 
 		// Build the solver prompt now — task-context builder reads worktree-resident plan artifacts.
-		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath })
+		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath }, solverConfig)
 		params.onPromptSnapshot?.(solverPrompt)
 
 		// Drop any prior run's solver-result.json from a reused worktree so a crashed
