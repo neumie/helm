@@ -1,5 +1,6 @@
 import { type Accessor, For, type JSX, Match, Show, Switch, createEffect, createSignal, onCleanup } from 'solid-js'
 import {
+	type DashboardAction,
 	type DashboardActionId,
 	type DashboardItem,
 	type DashboardLink,
@@ -39,6 +40,17 @@ export function itemRunNotices(item: DashboardItem): ItemRunNotice[] {
 	if (summary && summary !== failureReason) notices.push({ kind: 'summary', text: summary })
 	if (failureReason) notices.push({ kind: 'failure', text: failureReason })
 	return notices
+}
+
+/**
+ * Extension action list. From the in-page widget, the server's two-step "approve
+ * (→ ready, wait for the drainer)" is pointless — the operator is looking at the
+ * task and wants it solved now — so `approve` becomes `start`, which runs the
+ * Item immediately (bypasses the queue + pause). `reject` and everything else
+ * pass through untouched.
+ */
+export function extensionItemActions(actions: DashboardAction[]): DashboardAction[] {
+	return actions.map(action => (action.id === 'approve' ? { id: 'start', label: 'Start', tone: 'primary' } : action))
 }
 
 export function Widget(props: { taskId: Accessor<string | null> }) {
@@ -493,7 +505,7 @@ function Card(props: {
 										{props.planPending() ? 'Planning…' : props.planInfo() || item().plan ? 'Re-plan' : 'Plan'}
 									</Btn>
 									<Show when={item().allowedActions.length > 0}>
-										<For each={item().allowedActions}>
+										<For each={extensionItemActions(item().allowedActions)}>
 											{action => (
 												<Btn variant={action.tone} onClick={() => props.onItemAction(action.id)}>
 													{action.label}

@@ -6,7 +6,7 @@ import extensionApiModule from '../extension/src/api.ts'
 const originalFetch = globalThis.fetch
 const { api } = extensionApiModule as typeof import('../extension/src/api.ts')
 type ExtensionWidgetModule = typeof import('../extension/src/Widget.tsx')
-const { itemRunNotices } = extensionWidgetModule as ExtensionWidgetModule
+const { itemRunNotices, extensionItemActions } = extensionWidgetModule as ExtensionWidgetModule
 
 type ChromeStorageStub = {
 	storage: {
@@ -48,6 +48,23 @@ test('extension Item notices show almanac failure reasons as failures', () => {
 		} as Parameters<typeof itemRunNotices>[0]),
 		[{ kind: 'failure', text: 'Tests failed after round 2' }],
 	)
+})
+
+test('extension remaps approve to start (run immediately), leaving other actions', () => {
+	assert.deepEqual(
+		extensionItemActions([
+			{ id: 'approve', label: 'Approve', tone: 'primary' },
+			{ id: 'reject', label: 'Reject', tone: 'danger' },
+		]),
+		[
+			{ id: 'start', label: 'Start', tone: 'primary' },
+			{ id: 'reject', label: 'Reject', tone: 'danger' },
+		],
+	)
+	// Non-approve action lists pass through untouched.
+	assert.deepEqual(extensionItemActions([{ id: 'retry', label: 'Retry', tone: 'primary' }]), [
+		{ id: 'retry', label: 'Retry', tone: 'primary' },
+	])
 })
 
 test('extension API posts dashboard Item actions to Item routes', async () => {
