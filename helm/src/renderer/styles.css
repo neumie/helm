@@ -338,6 +338,93 @@ body.dragging #dash {
 	height: 100%;
 }
 
+/* ---------- toasts ---------- */
+
+#toasts {
+	position: fixed;
+	right: 16px;
+	bottom: 16px;
+	z-index: 100;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 8px;
+}
+
+.toast {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 220px;
+	max-width: 340px;
+	padding: 10px 12px;
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	background: var(--chrome);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+	overflow: hidden; /* clips the countdown bar to the radius */
+	opacity: 0;
+	transform: translateY(8px);
+	transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.toast.shown {
+	opacity: 1;
+	transform: none;
+}
+
+.toast.leaving {
+	opacity: 0;
+	transform: translateY(8px);
+	transition-duration: 120ms;
+}
+
+.toast-body {
+	min-width: 0;
+}
+
+.toast-msg {
+	color: var(--text-0);
+}
+
+.toast-detail {
+	margin-top: 2px;
+	color: var(--text-1);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.toast-action {
+	flex: none;
+	padding: 3px 10px;
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	background: none;
+	color: var(--accent);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: background-color 140ms ease-out;
+}
+
+.toast-action:hover {
+	background: var(--subtle);
+}
+
+/* Quiet countdown affordance: hairline bar draining left-to-right over the ttl. */
+.toast-countdown {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2px;
+	background: rgba(255, 255, 255, 0.14);
+	transform-origin: left;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

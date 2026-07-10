@@ -3,7 +3,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
-import type { HelmApi } from '../shared'
+import { showToast } from './toast'
+import type { HelmApi, RestoredSession } from '../shared'
 
 declare global {
 	interface Window {
@@ -137,6 +138,8 @@ const termTheme = {
 
 interface Tab {
 	ptyId: number | null
+	/** dtach session behind the pty; null while spawning or when persistence is off. */
+	sessionId: string | null
 	closed: boolean
 	term: Terminal
 	fit: FitAddon
@@ -177,7 +180,30 @@ function cycleTab(delta: number): void {
 function closeTab(tab: Tab): void {
 	if (tab.closed) return
 	tab.closed = true
-	if (tab.ptyId !== null) helm.pty.kill(tab.ptyId)
+	const title = tab.tabButton.querySelector('.tab-label')?.textContent ?? 'zsh'
+	// Soft close (okena-style): main only DETACHES the pty client and arms a
+	// grace timer — the dtach session dies when it fires. The toast's Undo
+	// cancels the timer and reattaches the same session as a new tab.
+	if (tab.ptyId !== null) {
+		void helm.sessions.closeWithGrace(tab.ptyId).then((grace) => {
+			if (!grace) return // non-persistent pty — already fully killed, nothing to undo
+			const toast = showToast({
+				message: 'Terminal closed',
+				detail: title === 'zsh' ? undefined : title,
+				ttlMs: grace.graceMs,
+				countdown: true,
+				action: {
+					label: 'Undo',
+					onClick: () => {
+						toast.dismiss()
+						void helm.sessions.undoClose(grace.sessionId).then((alive) => {
+							if (alive) void createTab({ sessionId: grace.sessionId, title })
+						})
+					},
+				},
+			})
+		})
+	}
 	tab.term.dispose()
 	tab.holder.remove()
 	tab.tabButton.remove()
@@ -198,7 +224,7 @@ function syncEmptyState(): void {
 	if (empty) empty.hidden = tabs.length > 0
 }
 
-async function createTab(): Promise<void> {
+async function createTab(restore?: RestoredSession): Promise<void> {
 	const term = new Terminal({
 		cursorBlink: true,
 		scrollback: 10000,
@@ -226,10 +252,14 @@ async function createTab(): Promise<void> {
 	tabButton.tabIndex = 0
 	const label = document.createElement('span')
 	label.className = 'tab-label'
-	label.textContent = 'zsh'
+	// Restored tabs keep the label persisted from the previous run until the
+	// reattached shell emits a fresh OSC title.
+	label.textContent = restore?.title || 'zsh'
 	// Shell title arrives via OSC title events; empty titles fall back to "zsh".
 	term.onTitleChange((title) => {
-		label.textContent = title.trim() || 'zsh'
+		const text = title.trim() || 'zsh'
+		label.textContent = text
+		if (tab.sessionId) helm.sessions.setTitle(tab.sessionId, text)
 	})
 	const close = document.createElement('button')
 	close.className = 'tab-close'
@@ -239,7 +269,7 @@ async function createTab(): Promise<void> {
 	tabButton.append(label, close)
 	tabsEl.appendChild(tabButton)
 
-	const tab: Tab = { ptyId: null, closed: false, term, fit, holder, tabButton }
+	const tab: Tab = { ptyId: null, sessionId: null, closed: false, term, fit, holder, tabButton }
 	tabs.push(tab)
 
 	tabButton.addEventListener('click', () => activate(tab))
@@ -257,14 +287,15 @@ async function createTab(): Promise<void> {
 	activate(tab)
 	fit.fit()
 
-	const ptyId = await helm.pty.spawn(term.cols, term.rows)
+	const spawned = await helm.pty.spawn(term.cols, term.rows, restore?.sessionId)
 	if (tab.closed) {
-		helm.pty.kill(ptyId)
+		helm.pty.kill(spawned.id)
 		return
 	}
-	tab.ptyId = ptyId
-	term.onData((data) => helm.pty.write(ptyId, data))
-	term.onResize(({ cols, rows }) => helm.pty.resize(ptyId, cols, rows))
+	tab.ptyId = spawned.id
+	tab.sessionId = spawned.sessionId
+	term.onData((data) => helm.pty.write(spawned.id, data))
+	term.onResize(({ cols, rows }) => helm.pty.resize(spawned.id, cols, rows))
 }
 
 helm.pty.onData((id, data) => {
@@ -281,8 +312,16 @@ helm.pty.onExit((id) => {
 
 new ResizeObserver(() => fitActive()).observe(termsEl)
 
-newTabButton.addEventListener('click', () => void createTab())
-helm.tabs.onNew(() => void createTab())
+// New-tab actions are gated until session restore finishes, so restored tabs
+// always come first and a fast cmd+T can't interleave with reattachment.
+let tabsReady = false
+
+newTabButton.addEventListener('click', () => {
+	if (tabsReady) void createTab()
+})
+helm.tabs.onNew(() => {
+	if (tabsReady) void createTab()
+})
 helm.tabs.onClose(() => {
 	if (activeTab) closeTab(activeTab)
 })
@@ -309,4 +348,26 @@ window.addEventListener(
 	{ capture: true },
 )
 
-void createTab()
+// Startup: reattach every dtach session that survived the previous run (one
+// tab per session, saved titles restored); fresh single tab only when nothing
+// survived. Zero tabs stays a valid state after that — closing restored tabs
+// never respawns.
+void (async () => {
+	let restored: RestoredSession[] = []
+	try {
+		restored = await helm.sessions.list()
+	} catch {
+		// persistence unavailable — fall through to a fresh tab
+	}
+	if (restored.length === 0) {
+		await createTab().catch(() => {})
+	} else {
+		for (const session of restored) {
+			// One failed reattach must not sink the remaining sessions.
+			await createTab(session).catch(() => {})
+		}
+		const first = tabs[0]
+		if (first) activate(first)
+	}
+	tabsReady = true
+})()
