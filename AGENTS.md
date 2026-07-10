@@ -115,6 +115,8 @@ Loop Items (ralph/harden) use `processLoopItem`, also launched by `Drainer`. It 
 
 ### Directory rules
 
+- **`helm/`** — the desktop cockpit: an Electron app (own npm package, NOT in the root build/`make check`) with the live dashboard embedded in a left iframe (`VIGIL_URL` ?? `http://localhost:7474` — no component porting; it renders whatever the daemon serves) and xterm.js + node-pty terminal tabs as the main pane. `cd helm && npm install && npm start` (postinstall rebuilds node-pty against Electron's ABI — a plain `npm rebuild` breaks it). Keybindings (cmd+t/cmd+w) live in the Electron MENU (main process), not the renderer — xterm would swallow them. The daemon reachability ping runs in the MAIN process (renderer `fetch` from `file://` hits private-network-access variance). Rust/GPUI cockpit route was evaluated and rejected (2026-07): full dashboard port in GPUI = weeks vs embedding the existing React dashboard = free.
+
 - **`extension/`** — **SolidJS, NOT React** (unlike `web/`). Use signals + `For`/`Show`, `on:click` not `onClick`, `class` not `className`, no hooks/`useState`. Host permissions: `http://localhost:*/*` only — never add tunnel/public URLs (manifest is canonical: `extension/manifest.json`).
   - `extension/package.json` is `type: commonjs`; Node tests that import extension TS through `tsx` must default-import the module and destructure exports instead of using named ESM imports.
   - Extension reloads can leave old content-script/popup code alive long enough for `chrome.storage` to throw `Extension context invalidated.`. Use `extension/src/storage.ts` (`getSync` / `setSync`) for storage access; do not call `chrome.storage.*` directly from extension code.

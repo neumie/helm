@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src http: https:; connect-src 'self'"
+		/>
+		<title>Helm</title>
+		<link rel="stylesheet" href="renderer.css" />
+	</head>
+	<body>
+		<div id="app">
+			<aside id="left">
+				<iframe id="dash" title="Vigil dashboard"></iframe>
+				<div id="dash-offline">
+					<div class="offline-card">
+						<div class="offline-title">vigil daemon unreachable</div>
+						<div class="offline-detail">waiting for <code id="daemon-url"></code> &mdash; retrying&hellip;</div>
+					</div>
+				</div>
+			</aside>
+			<div id="divider" title="Drag to resize"></div>
+			<main id="right">
+				<div id="tabbar">
+					<div id="tabs"></div>
+					<button id="new-tab" title="New terminal (&#8984;T)">+</button>
+				</div>
+				<div id="terms"></div>
+			</main>
+		</div>
+		<script src="renderer.js"></script>
+	</body>
+</html>

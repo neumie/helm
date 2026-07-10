@@ -1,0 +1,236 @@
+/* Palette mirrors the vigil dashboard (web/index.html :root). */
+:root {
+	--bg-0: #141517;
+	--bg-1: #17191c;
+	--bg-2: #1e2024;
+	--bg-3: #292c31;
+	--border: rgba(255, 255, 255, 0.08);
+	--border-hover: rgba(255, 255, 255, 0.16);
+	--text-0: #f0f1f2;
+	--text-1: #d4d6da;
+	--text-2: #a6a9af;
+	--text-3: #797d84;
+	--accent: #4c9aff;
+	--accent-dim: rgba(76, 154, 255, 0.15);
+	--left-width: 480px;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body {
+	height: 100%;
+	overflow: hidden;
+}
+
+body {
+	background: var(--bg-0);
+	color: var(--text-1);
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	font-size: 13px;
+	-webkit-font-smoothing: antialiased;
+}
+
+#app {
+	display: grid;
+	grid-template-columns: var(--left-width) 6px 1fr;
+	height: 100vh;
+}
+
+/* Left: embedded dashboard */
+#left {
+	position: relative;
+	min-width: 0;
+	background: var(--bg-0);
+}
+
+#dash {
+	width: 100%;
+	height: 100%;
+	border: none;
+	display: block;
+	background: var(--bg-0);
+}
+
+#dash-offline {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--bg-0);
+}
+
+#dash-offline.hidden {
+	display: none;
+}
+
+.offline-card {
+	max-width: 320px;
+	padding: 16px 20px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	background: var(--bg-1);
+	text-align: center;
+}
+
+.offline-title {
+	color: var(--text-1);
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.offline-detail {
+	color: var(--text-3);
+	font-size: 12px;
+}
+
+.offline-detail code {
+	font-family: 'SF Mono', Menlo, ui-monospace, monospace;
+	color: var(--text-2);
+}
+
+/* Divider */
+#divider {
+	cursor: col-resize;
+	position: relative;
+}
+
+#divider::after {
+	content: '';
+	position: absolute;
+	left: 2px;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--border);
+}
+
+#divider:hover::after,
+body.dragging #divider::after {
+	background: var(--accent);
+	width: 2px;
+}
+
+body.dragging {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* iframe swallows pointermove during drag without this */
+body.dragging #dash {
+	pointer-events: none;
+}
+
+/* Right: terminal tabs */
+#right {
+	display: grid;
+	grid-template-rows: 34px 1fr;
+	min-width: 0;
+}
+
+#tabbar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 8px;
+	background: var(--bg-1);
+	border-bottom: 1px solid var(--border);
+}
+
+#tabs {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.tab {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px 4px 10px;
+	border-radius: 6px;
+	color: var(--text-3);
+	font-size: 12px;
+	white-space: nowrap;
+	cursor: default;
+	border: 1px solid transparent;
+}
+
+.tab:hover {
+	color: var(--text-2);
+	background: var(--bg-2);
+}
+
+.tab.active {
+	background: var(--bg-2);
+	color: var(--text-1);
+	border-color: var(--border);
+}
+
+.tab-close {
+	border: none;
+	background: none;
+	color: inherit;
+	font-size: 13px;
+	line-height: 1;
+	padding: 1px 4px;
+	border-radius: 4px;
+	cursor: pointer;
+	opacity: 0;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+	opacity: 0.6;
+}
+
+.tab-close:hover {
+	opacity: 1;
+	background: var(--bg-3);
+}
+
+#new-tab {
+	border: none;
+	background: none;
+	color: var(--text-3);
+	font-size: 16px;
+	line-height: 1;
+	padding: 3px 8px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
+#new-tab:hover {
+	color: var(--text-1);
+	background: var(--bg-2);
+}
+
+#terms {
+	position: relative;
+	min-height: 0;
+	background: var(--bg-0);
+}
+
+.term-holder {
+	position: absolute;
+	inset: 0;
+	padding: 8px 4px 8px 12px;
+	display: none;
+}
+
+.term-holder.active {
+	display: block;
+}
+
+.term-holder .xterm {
+	height: 100%;
+}
