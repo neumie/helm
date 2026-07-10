@@ -3,7 +3,6 @@ import type { DaemonStatus } from '../api'
 interface Props {
 	status: DaemonStatus | null
 	connected: boolean
-	needsCount: number
 	onNewItem: () => void
 	onPoll: () => void
 	onTogglePause: () => void
@@ -30,10 +29,9 @@ const ghostButton: React.CSSProperties = {
 	fontWeight: 500,
 }
 
-export function Header({ status, connected, needsCount, onNewItem, onPoll, onTogglePause }: Props) {
+export function Header({ status, connected, onNewItem, onPoll, onTogglePause }: Props) {
 	const paused = status?.queue.paused ?? true
 	const laneSummaries = queueLaneSummaries(status)
-	const active = status?.queue.active ?? 0
 	const stateLabel = !connected ? 'Offline' : paused ? 'Paused' : 'Running'
 	const stateColor = !connected ? 'var(--red)' : paused ? 'var(--text-4)' : 'var(--green)'
 
@@ -49,32 +47,10 @@ export function Header({ status, connected, needsCount, onNewItem, onPoll, onTog
 				flexShrink: 0,
 			}}
 		>
-			<div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-				<h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.02em' }}>vigil</h1>
-				{needsCount > 0 && (
-					<span
-						style={{
-							fontSize: 11,
-							fontWeight: 700,
-							color: '#fff',
-							background: 'var(--red)',
-							borderRadius: 10,
-							padding: '2px 9px',
-						}}
-					>
-						{needsCount} need{needsCount === 1 ? 's' : ''} you
-					</span>
-				)}
-			</div>
+			{/* Counts live in the list tabs (and the browser title) — the header stays quiet. */}
+			<h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.02em' }}>vigil</h1>
 			<div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'flex-end' }}>
-				{/* Compact queue indicator; full lane breakdown on hover. */}
-				<span
-					title={laneSummaries.join('\n')}
-					style={{ fontSize: 11, color: 'var(--text-3)', fontVariantNumeric: 'tabular-nums', cursor: 'default' }}
-				>
-					▶ {active} active
-				</span>
-				<button type="button" style={ghostButton} onClick={onPoll}>
+				<button type="button" title={laneSummaries.join('\n')} style={ghostButton} onClick={onPoll}>
 					Poll
 				</button>
 				<button

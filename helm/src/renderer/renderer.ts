@@ -159,6 +159,7 @@ function activate(tab: Tab): void {
 		t.tabButton.classList.toggle('active', t === tab)
 		t.tabButton.setAttribute('aria-selected', String(t === tab))
 	}
+	syncEmptyState()
 	// Fit after the holder becomes visible; hidden containers measure as 0x0.
 	requestAnimationFrame(() => {
 		fitActive()
@@ -187,8 +188,14 @@ function closeTab(tab: Tab): void {
 		const neighbor = tabs[Math.min(index, tabs.length - 1)]
 		if (neighbor) activate(neighbor)
 	}
-	// Keep the cockpit usable: closing the last terminal spawns a fresh one.
-	if (tabs.length === 0) void createTab()
+	syncEmptyState()
+}
+
+// Zero terminals is a valid state — show a quiet hint instead of respawning
+// (closing the last tab used to auto-open a new one; deliberate removal).
+function syncEmptyState(): void {
+	const empty = document.getElementById('no-terms')
+	if (empty) empty.hidden = tabs.length > 0
 }
 
 async function createTab(): Promise<void> {

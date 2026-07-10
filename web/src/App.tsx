@@ -180,7 +180,6 @@ export function App() {
 			<Header
 				status={status}
 				connected={connected}
-				needsCount={needsCount}
 				onNewItem={() => {
 					setCreateDraft({})
 					selectItem(null)
