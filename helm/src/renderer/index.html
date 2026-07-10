@@ -11,23 +11,32 @@
 	</head>
 	<body>
 		<div id="app">
-			<aside id="left">
-				<iframe id="dash" title="Vigil dashboard"></iframe>
-				<div id="dash-offline">
-					<div class="offline-card">
-						<div class="offline-title">vigil daemon unreachable</div>
-						<div class="offline-detail">waiting for <code id="daemon-url"></code> &mdash; retrying&hellip;</div>
+			<header id="topbar">
+				<div class="topbar-left">
+					<span id="conn-dot" class="conn-dot offline" aria-hidden="true"></span>
+					<span class="wordmark">Helm</span>
+				</div>
+				<div class="topbar-right">
+					<div id="tabs" role="tablist" aria-label="Terminals"></div>
+					<button id="new-tab" title="New terminal (&#8984;T)" aria-label="New terminal">+</button>
+				</div>
+			</header>
+			<div id="content">
+				<aside id="left">
+					<iframe id="dash" title="Vigil dashboard"></iframe>
+					<div id="dash-offline">
+						<div class="offline-card">
+							<span class="conn-dot offline" aria-hidden="true"></span>
+							<div class="offline-title">Waiting for vigil</div>
+							<div class="offline-detail">Checking <span id="daemon-url"></span> every 2 seconds.</div>
+						</div>
 					</div>
-				</div>
-			</aside>
-			<div id="divider" title="Drag to resize"></div>
-			<main id="right">
-				<div id="tabbar">
-					<div id="tabs"></div>
-					<button id="new-tab" title="New terminal (&#8984;T)">+</button>
-				</div>
-				<div id="terms"></div>
-			</main>
+				</aside>
+				<div id="divider" title="Drag to resize"></div>
+				<main id="right">
+					<div id="terms"></div>
+				</main>
+			</div>
 		</div>
 		<script src="renderer.js"></script>
 	</body>

@@ -1,9 +1,32 @@
-import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, screen, shell, webFrameMain } from 'electron'
+import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as pty from 'node-pty'
+import { dashEmbedScript } from './dash-embed'
 
 const daemonUrl = process.env.VIGIL_URL ?? 'http://localhost:7474'
+const daemonOrigin = (() => {
+	try {
+		return new URL(daemonUrl).origin
+	} catch {
+		return null
+	}
+})()
+
+// --- CLI modes ---------------------------------------------------------------
+// `electron . --screenshot=<path> [--user-data-dir-tmp]` renders the window
+// without focusing it, waits for the dashboard iframe + shell prompt to paint,
+// writes a full-window PNG, and exits 0.
+const screenshotPath =
+	process.argv.find((a) => a.startsWith('--screenshot='))?.slice('--screenshot='.length) || null
+
+app.setName('Helm')
+// Must run before anything touches userData so a screenshot run never fights a
+// running Helm instance over the same profile (locks, window-state writes).
+if (process.argv.includes('--user-data-dir-tmp')) {
+	app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'helm-')))
+}
 
 const ptys = new Map<number, pty.IPty>()
 let nextPtyId = 1
@@ -25,16 +48,130 @@ function killAllPtys(): void {
 	ptys.clear()
 }
 
+// --- Window bounds persistence -------------------------------------------------
+
+const MIN_WIDTH = 960
+const MIN_HEIGHT = 620
+const DEFAULT_BOUNDS = { width: 1400, height: 900 } as const
+const SAVE_BOUNDS_DEBOUNCE_MS = 400
+
+interface WindowState {
+	x?: number
+	y?: number
+	width: number
+	height: number
+}
+
+function windowStateFile(): string {
+	return path.join(app.getPath('userData'), 'window-state.json')
+}
+
+function restoreWindowState(): WindowState {
+	try {
+		const raw = JSON.parse(fs.readFileSync(windowStateFile(), 'utf8')) as Record<string, unknown>
+		const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+		const { width, height, x, y } = raw
+		if (!num(width) || !num(height)) return { ...DEFAULT_BOUNDS }
+		const state: WindowState = {
+			width: Math.max(MIN_WIDTH, Math.round(width)),
+			height: Math.max(MIN_HEIGHT, Math.round(height)),
+		}
+		if (num(x) && num(y)) {
+			// Restore position only while the title bar still lands on a connected
+			// display — a detached monitor must not strand the window off-screen.
+			const visible = screen.getAllDisplays().some((d) => {
+				const a = d.workArea
+				return x >= a.x - 100 && x <= a.x + a.width - 100 && y >= a.y && y <= a.y + a.height - 40
+			})
+			if (visible) {
+				state.x = Math.round(x)
+				state.y = Math.round(y)
+			}
+		}
+		return state
+	} catch {
+		return { ...DEFAULT_BOUNDS }
+	}
+}
+
+let saveBoundsTimer: NodeJS.Timeout | null = null
+
+function saveWindowState(win: BrowserWindow): void {
+	if (win.isDestroyed()) return
+	try {
+		// Normal bounds, so a maximized/fullscreen quit restores the pre-zoom size.
+		fs.writeFileSync(windowStateFile(), JSON.stringify(win.getNormalBounds()))
+	} catch {
+		// best-effort; next launch falls back to defaults
+	}
+}
+
+function trackWindowState(win: BrowserWindow): void {
+	const schedule = () => {
+		if (saveBoundsTimer) clearTimeout(saveBoundsTimer)
+		saveBoundsTimer = setTimeout(() => saveWindowState(win), SAVE_BOUNDS_DEBOUNCE_MS)
+	}
+	win.on('move', schedule)
+	win.on('resize', schedule)
+	win.on('close', () => {
+		if (saveBoundsTimer) clearTimeout(saveBoundsTimer)
+		saveWindowState(win)
+	})
+}
+
+// --- Screenshot harness ----------------------------------------------------------
+
+const SCREENSHOT_SETTLE_MS = 3000
+const SCREENSHOT_LOAD_TIMEOUT_MS = 20_000
+
+function captureScreenshot(win: BrowserWindow, outPath: string): void {
+	const resolved = path.resolve(outPath)
+	const fail = (err: unknown): void => {
+		console.error('[helm] screenshot failed:', err)
+		killAllPtys()
+		app.exit(1)
+	}
+	const loadTimeout = setTimeout(
+		() => fail(new Error('window never finished loading')),
+		SCREENSHOT_LOAD_TIMEOUT_MS,
+	)
+	// Listener attaches before loadFile is called, so the load event cannot be missed.
+	win.webContents.once('did-finish-load', () => {
+		clearTimeout(loadTimeout)
+		// Settle so the dashboard iframe (or its waiting card) and the shell prompt paint.
+		setTimeout(() => {
+			win.webContents
+				.capturePage()
+				.then((image) => {
+					fs.mkdirSync(path.dirname(resolved), { recursive: true })
+					fs.writeFileSync(resolved, image.toPNG())
+					console.log(`[helm] screenshot written: ${resolved}`)
+					killAllPtys()
+					app.exit(0)
+				})
+				.catch(fail)
+		}, SCREENSHOT_SETTLE_MS)
+	})
+}
+
 function createWindow(): void {
+	// Screenshot runs use fixed default bounds for deterministic captures.
+	const state = screenshotPath ? { ...DEFAULT_BOUNDS } : restoreWindowState()
 	const win = new BrowserWindow({
-		width: 1400,
-		height: 900,
+		...state,
+		minWidth: MIN_WIDTH,
+		minHeight: MIN_HEIGHT,
 		title: 'Helm',
+		show: false,
 		backgroundColor: '#141517',
+		titleBarStyle: 'hiddenInset',
+		trafficLightPosition: { x: 14, y: 12 },
 		webPreferences: {
 			preload: path.join(__dirname, 'preload.cjs'),
 			contextIsolation: true,
 			nodeIntegration: false,
+			// A screenshot run captures an unfocused window; keep it painting.
+			backgroundThrottling: !screenshotPath,
 		},
 	})
 	// Terminal web-links + dashboard target=_blank links open in the default browser, never a new Electron window.
@@ -42,10 +179,31 @@ function createWindow(): void {
 		if (/^https?:/.test(url)) void shell.openExternal(url)
 		return { action: 'deny' }
 	})
+	// Re-skin the embedded vigil dashboard on every load of its (cross-origin)
+	// iframe — the renderer can't reach into that document, only main can.
+	win.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+		if (isMainFrame || !daemonOrigin) return
+		try {
+			const frame = webFrameMain.fromId(frameProcessId, frameRoutingId)
+			if (!frame || new URL(frame.url).origin !== daemonOrigin) return
+			// Frame may navigate away mid-flight; the next load re-injects.
+			frame.executeJavaScript(dashEmbedScript()).catch(() => {})
+		} catch {
+			// about:blank / destroyed frame — nothing to style
+		}
+	})
 	win.on('closed', () => {
 		if (mainWindow === win) mainWindow = null
 		killAllPtys()
 	})
+	if (screenshotPath) {
+		captureScreenshot(win, screenshotPath)
+		// showInactive: window must paint for capturePage, but never steal focus.
+		win.once('ready-to-show', () => win.showInactive())
+	} else {
+		trackWindowState(win)
+		win.once('ready-to-show', () => win.show())
+	}
 	void win.loadFile(path.join(__dirname, 'index.html'))
 	mainWindow = win
 }
@@ -149,6 +307,7 @@ ipcMain.handle('daemon:ping', async () => {
 })
 
 void app.whenReady().then(() => {
+	app.setAboutPanelOptions({ applicationName: 'Helm', applicationVersion: app.getVersion() })
 	buildMenu()
 	createWindow()
 	app.on('activate', () => {

@@ -25,4 +25,6 @@ export interface HelmApi {
 	pty: PtyApi
 	config: ConfigApi
 	tabs: TabsApi
+	/** Host OS, for platform-specific keybindings/layout ('darwin' on macOS). */
+	platform: NodeJS.Platform
 }

@@ -1,17 +1,18 @@
-/* Palette mirrors the vigil dashboard (web/index.html :root). */
+/* Helm design tokens — one machined instrument panel, macOS dark. */
 :root {
-	--bg-0: #141517;
-	--bg-1: #17191c;
-	--bg-2: #1e2024;
-	--bg-3: #292c31;
-	--border: rgba(255, 255, 255, 0.08);
-	--border-hover: rgba(255, 255, 255, 0.16);
-	--text-0: #f0f1f2;
-	--text-1: #d4d6da;
-	--text-2: #a6a9af;
-	--text-3: #797d84;
+	--chrome: #1a1c1f;
+	--pane: #141517;
+	--well: #0f1113;
+	--hairline: rgba(255, 255, 255, 0.07);
+	--subtle: rgba(255, 255, 255, 0.05);
+	--raised: rgba(255, 255, 255, 0.09);
+	--text-0: #ececee;
+	--text-1: #9a9ea6;
+	--text-2: #62666e;
 	--accent: #4c9aff;
-	--accent-dim: rgba(76, 154, 255, 0.15);
+	--success: #4ec98a;
+	--warn: #e0b341;
+	--danger: #f2585b;
 	--left-width: 480px;
 }
 
@@ -30,24 +31,202 @@ body {
 }
 
 body {
-	background: var(--bg-0);
-	color: var(--text-1);
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	background: var(--pane);
+	color: var(--text-0);
+	font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
 	font-size: 13px;
+	letter-spacing: -0.01em;
 	-webkit-font-smoothing: antialiased;
+}
+
+button:focus-visible,
+.tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
 }
 
 #app {
 	display: grid;
-	grid-template-columns: var(--left-width) 6px 1fr;
+	grid-template-rows: 38px 1fr;
 	height: 100vh;
 }
 
-/* Left: embedded dashboard */
+/* ---------- top bar (window chrome) ---------- */
+
+/* Columns mirror #content so the tab strip sits exactly over the terminal pane. */
+#topbar {
+	display: grid;
+	grid-template-columns: var(--left-width) 1px 1fr;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	-webkit-app-region: drag;
+}
+
+.topbar-left {
+	grid-column: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding-left: 84px; /* traffic-light inset (hiddenInset titlebar) */
+}
+
+.topbar-right {
+	grid-column: 3;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	/* 6px strip inset + 10px pill padding = 16px, matching the terminal well text inset */
+	padding: 0 10px 0 6px;
+}
+
+.wordmark {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-2);
+	user-select: none;
+}
+
+/* Signature element: steady green glow when the daemon responds, amber breathing while unreachable. */
+.conn-dot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--success);
+	box-shadow: 0 0 6px rgba(78, 201, 138, 0.55);
+}
+
+.conn-dot.offline {
+	background: var(--warn);
+	box-shadow: 0 0 6px rgba(224, 179, 65, 0.45);
+	animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.4;
+	}
+}
+
+/* ---------- terminal tabs ---------- */
+
+#tabs {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-webkit-app-region: no-drag;
+}
+
+#tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.tab {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	height: 28px;
+	max-width: 180px;
+	padding: 0 6px 0 10px;
+	border-radius: 6px;
+	color: var(--text-2);
+	white-space: nowrap;
+	cursor: default;
+	user-select: none;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.tab:hover {
+	background: var(--subtle);
+	color: var(--text-1);
+}
+
+.tab.active {
+	background: var(--raised);
+	color: var(--text-0);
+}
+
+.tab-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tab-close {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border: none;
+	border-radius: 4px;
+	background: none;
+	color: inherit;
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 140ms ease-out, background-color 140ms ease-out;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+	opacity: 0.6;
+}
+
+.tab-close:hover {
+	opacity: 1;
+	background: var(--raised);
+}
+
+#new-tab {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-2);
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+#new-tab:hover {
+	background: var(--subtle);
+	color: var(--text-0);
+}
+
+/* ---------- panes ---------- */
+
+#content {
+	display: grid;
+	grid-template-columns: var(--left-width) 1px 1fr;
+	min-height: 0;
+}
+
 #left {
 	position: relative;
 	min-width: 0;
-	background: var(--bg-0);
+	background: var(--pane);
 }
 
 #dash {
@@ -55,7 +234,7 @@ body {
 	height: 100%;
 	border: none;
 	display: block;
-	background: var(--bg-0);
+	background: var(--pane);
 }
 
 #dash-offline {
@@ -64,7 +243,7 @@ body {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: var(--bg-0);
+	background: var(--pane);
 }
 
 #dash-offline.hidden {
@@ -72,50 +251,51 @@ body {
 }
 
 .offline-card {
-	max-width: 320px;
-	padding: 16px 20px;
-	border: 1px solid var(--border);
-	border-radius: 10px;
-	background: var(--bg-1);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10px;
+	max-width: 300px;
+	padding: 22px 26px;
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	background: var(--chrome);
 	text-align: center;
 }
 
 .offline-title {
-	color: var(--text-1);
+	color: var(--text-0);
 	font-weight: 600;
-	margin-bottom: 6px;
 }
 
 .offline-detail {
-	color: var(--text-3);
+	color: var(--text-1);
 	font-size: 12px;
+	letter-spacing: 0;
 }
 
-.offline-detail code {
-	font-family: 'SF Mono', Menlo, ui-monospace, monospace;
-	color: var(--text-2);
-}
+/* ---------- divider ---------- */
 
-/* Divider */
 #divider {
-	cursor: col-resize;
 	position: relative;
+	background: var(--hairline);
+	transition: background-color 120ms ease-out;
 }
 
-#divider::after {
+/* 8px hit-area straddling the 1px hairline */
+#divider::before {
 	content: '';
 	position: absolute;
-	left: 2px;
 	top: 0;
 	bottom: 0;
-	width: 1px;
-	background: var(--border);
+	left: -4px;
+	width: 9px;
+	cursor: col-resize;
 }
 
-#divider:hover::after,
-body.dragging #divider::after {
-	background: var(--accent);
-	width: 2px;
+#divider:hover,
+body.dragging #divider {
+	background: rgba(255, 255, 255, 0.18);
 }
 
 body.dragging {
@@ -128,102 +308,24 @@ body.dragging #dash {
 	pointer-events: none;
 }
 
-/* Right: terminal tabs */
+/* ---------- terminal well ---------- */
+
 #right {
-	display: grid;
-	grid-template-rows: 34px 1fr;
 	min-width: 0;
-}
-
-#tabbar {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	padding: 0 8px;
-	background: var(--bg-1);
-	border-bottom: 1px solid var(--border);
-}
-
-#tabs {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	overflow-x: auto;
-	scrollbar-width: none;
-}
-
-.tab {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 4px 6px 4px 10px;
-	border-radius: 6px;
-	color: var(--text-3);
-	font-size: 12px;
-	white-space: nowrap;
-	cursor: default;
-	border: 1px solid transparent;
-}
-
-.tab:hover {
-	color: var(--text-2);
-	background: var(--bg-2);
-}
-
-.tab.active {
-	background: var(--bg-2);
-	color: var(--text-1);
-	border-color: var(--border);
-}
-
-.tab-close {
-	border: none;
-	background: none;
-	color: inherit;
-	font-size: 13px;
-	line-height: 1;
-	padding: 1px 4px;
-	border-radius: 4px;
-	cursor: pointer;
-	opacity: 0;
-}
-
-.tab:hover .tab-close,
-.tab.active .tab-close {
-	opacity: 0.6;
-}
-
-.tab-close:hover {
-	opacity: 1;
-	background: var(--bg-3);
-}
-
-#new-tab {
-	border: none;
-	background: none;
-	color: var(--text-3);
-	font-size: 16px;
-	line-height: 1;
-	padding: 3px 8px;
-	border-radius: 6px;
-	cursor: pointer;
-}
-
-#new-tab:hover {
-	color: var(--text-1);
-	background: var(--bg-2);
+	min-height: 0;
+	background: var(--well);
 }
 
 #terms {
 	position: relative;
+	height: 100%;
 	min-height: 0;
-	background: var(--bg-0);
 }
 
 .term-holder {
 	position: absolute;
 	inset: 0;
-	padding: 8px 4px 8px 12px;
+	padding: 14px 16px;
 	display: none;
 }
 
@@ -233,4 +335,14 @@ body.dragging #dash {
 
 .term-holder .xterm {
 	height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
 }

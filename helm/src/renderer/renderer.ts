@@ -22,6 +22,7 @@ function el<T extends HTMLElement>(id: string): T {
 const dashFrame = el<HTMLIFrameElement>('dash')
 const dashOffline = el<HTMLDivElement>('dash-offline')
 const daemonUrlLabel = el<HTMLElement>('daemon-url')
+const connDot = el<HTMLSpanElement>('conn-dot')
 const divider = el<HTMLDivElement>('divider')
 const tabsEl = el<HTMLDivElement>('tabs')
 const newTabButton = el<HTMLButtonElement>('new-tab')
@@ -31,10 +32,17 @@ const termsEl = el<HTMLDivElement>('terms')
 
 const LEFT_WIDTH_KEY = 'helm.leftWidth'
 const MIN_LEFT = 320
+// 52% of the default 1400px window gives the dashboard iframe ≥720px — the
+// width where vigil comfortably renders list + detail side by side. Narrower
+// panes are fine: the embed CSS injected from main collapses vigil to one
+// column below 720px (see src/dash-embed.ts).
+const DEFAULT_LEFT_FRACTION = 0.52
 const maxLeft = () => Math.floor(window.innerWidth * 0.6)
 const clampLeft = (width: number) => Math.min(Math.max(width, MIN_LEFT), maxLeft())
 
-let leftWidth = clampLeft(Number(localStorage.getItem(LEFT_WIDTH_KEY)) || 480)
+let leftWidth = clampLeft(
+	Number(localStorage.getItem(LEFT_WIDTH_KEY)) || Math.round(window.innerWidth * DEFAULT_LEFT_FRACTION),
+)
 
 function applyLeftWidth(): void {
 	document.documentElement.style.setProperty('--left-width', `${leftWidth}px`)
@@ -66,47 +74,65 @@ window.addEventListener('resize', () => {
 	}
 })
 
-// ---------- dashboard iframe ----------
+// ---------- daemon connection (dot + dashboard iframe) ----------
 
 const daemonUrl = helm.config.getDaemonUrl()
-daemonUrlLabel.textContent = daemonUrl
+daemonUrlLabel.textContent = (() => {
+	try {
+		return new URL(daemonUrl).host
+	} catch {
+		return daemonUrl
+	}
+})()
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-async function connectDashboard(): Promise<void> {
-	// Never point the iframe at a dead daemon — a broken frame is uglier than the retry note.
-	while (!(await helm.config.pingDaemon())) {
+// Never point the iframe at a dead daemon — a broken frame is uglier than the
+// waiting card. Once loaded, the dashboard polls and recovers on its own, so
+// later outages surface through the amber dot only (no card flicker over live UI).
+let dashLoaded = false
+
+function reflectDaemonState(reachable: boolean): void {
+	connDot.classList.toggle('offline', !reachable)
+	if (reachable && !dashLoaded) {
+		dashLoaded = true
+		dashFrame.src = daemonUrl
+		dashOffline.classList.add('hidden')
+	}
+}
+
+async function pingLoop(): Promise<void> {
+	for (;;) {
+		reflectDaemonState(await helm.config.pingDaemon())
 		await sleep(2000)
 	}
-	dashFrame.src = daemonUrl
-	dashOffline.classList.add('hidden')
 }
-void connectDashboard()
+void pingLoop()
 
 // ---------- terminal tabs ----------
 
 const termTheme = {
-	background: '#141517',
-	foreground: '#d4d6da',
+	background: '#0f1113',
+	foreground: '#ececee',
 	cursor: '#4c9aff',
-	cursorAccent: '#141517',
-	selectionBackground: 'rgba(76, 154, 255, 0.30)',
-	black: '#292c31',
+	cursorAccent: '#0f1113',
+	selectionBackground: 'rgba(76, 154, 255, 0.25)',
+	black: '#2a2e33',
 	red: '#f2585b',
 	green: '#4ec98a',
 	yellow: '#e0b341',
 	blue: '#4c9aff',
-	magenta: '#c07fd4',
-	cyan: '#56c8d8',
-	white: '#d4d6da',
-	brightBlack: '#585c63',
-	brightRed: '#ff6b6e',
-	brightGreen: '#63e0a0',
-	brightYellow: '#f0c66a',
-	brightBlue: '#6fb1ff',
-	brightMagenta: '#d49ae4',
-	brightCyan: '#78dbe8',
-	brightWhite: '#f0f1f2',
+	magenta: '#c08ae0',
+	cyan: '#54c6d6',
+	white: '#c9ccd1',
+	brightBlack: '#5b6068',
+	brightRed: '#ff7477',
+	brightGreen: '#6fe0a8',
+	brightYellow: '#f2cd6d',
+	brightBlue: '#78b5ff',
+	brightMagenta: '#d5a9f0',
+	brightCyan: '#74dcea',
+	brightWhite: '#f5f6f7',
 }
 
 interface Tab {
@@ -120,7 +146,6 @@ interface Tab {
 
 const tabs: Tab[] = []
 let activeTab: Tab | null = null
-let tabCounter = 0
 
 function fitActive(): void {
 	if (!activeTab) return
@@ -132,12 +157,20 @@ function activate(tab: Tab): void {
 	for (const t of tabs) {
 		t.holder.classList.toggle('active', t === tab)
 		t.tabButton.classList.toggle('active', t === tab)
+		t.tabButton.setAttribute('aria-selected', String(t === tab))
 	}
 	// Fit after the holder becomes visible; hidden containers measure as 0x0.
 	requestAnimationFrame(() => {
 		fitActive()
 		tab.term.focus()
 	})
+}
+
+function cycleTab(delta: number): void {
+	if (tabs.length === 0) return
+	const current = activeTab ? tabs.indexOf(activeTab) : 0
+	const next = tabs[(current + delta + tabs.length) % tabs.length]
+	if (next && next !== activeTab) activate(next)
 }
 
 function closeTab(tab: Tab): void {
@@ -164,6 +197,10 @@ async function createTab(): Promise<void> {
 		scrollback: 10000,
 		fontSize: 13,
 		fontFamily: "'SF Mono', Menlo, ui-monospace, monospace",
+		// Spec asks for CSS line-height 1.45 (13px -> ~19px). xterm's lineHeight
+		// multiplies the font's natural cell height (~15.5px here), so 1.2 lands
+		// at that same ~19px; a literal 1.45 would render ~22px cells.
+		lineHeight: 1.2,
 		macOptionIsMeta: true,
 		theme: termTheme,
 	})
@@ -176,15 +213,22 @@ async function createTab(): Promise<void> {
 	termsEl.appendChild(holder)
 	term.open(holder)
 
-	const title = `Terminal ${++tabCounter}`
 	const tabButton = document.createElement('div')
 	tabButton.className = 'tab'
+	tabButton.setAttribute('role', 'tab')
+	tabButton.tabIndex = 0
 	const label = document.createElement('span')
-	label.textContent = title
+	label.className = 'tab-label'
+	label.textContent = 'zsh'
+	// Shell title arrives via OSC title events; empty titles fall back to "zsh".
+	term.onTitleChange((title) => {
+		label.textContent = title.trim() || 'zsh'
+	})
 	const close = document.createElement('button')
 	close.className = 'tab-close'
 	close.textContent = '×'
 	close.title = 'Close (⌘W)'
+	close.setAttribute('aria-label', 'Close terminal')
 	tabButton.append(label, close)
 	tabsEl.appendChild(tabButton)
 
@@ -192,6 +236,12 @@ async function createTab(): Promise<void> {
 	tabs.push(tab)
 
 	tabButton.addEventListener('click', () => activate(tab))
+	tabButton.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault()
+			activate(tab)
+		}
+	})
 	close.addEventListener('click', (event) => {
 		event.stopPropagation()
 		closeTab(tab)
@@ -229,5 +279,27 @@ helm.tabs.onNew(() => void createTab())
 helm.tabs.onClose(() => {
 	if (activeTab) closeTab(activeTab)
 })
+
+// cmd+1..9 select tab, cmd+shift+[ / ] cycle. Capture phase so the shortcuts
+// win over xterm's own key handling when a terminal has focus.
+window.addEventListener(
+	'keydown',
+	(event) => {
+		if (!event.metaKey || event.ctrlKey || event.altKey) return
+		if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
+			const target = tabs[Number(event.key) - 1]
+			if (target) {
+				event.preventDefault()
+				activate(target)
+			}
+			return
+		}
+		if (event.shiftKey && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
+			event.preventDefault()
+			cycleTab(event.code === 'BracketRight' ? 1 : -1)
+		}
+	},
+	{ capture: true },
+)
 
 void createTab()

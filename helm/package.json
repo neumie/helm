@@ -1,5 +1,6 @@
 {
 	"name": "helm",
+	"productName": "Helm",
 	"private": true,
 	"version": "0.1.0",
 	"description": "Orchestrator cockpit for the vigil daemon: embedded dashboard + real terminal",

@@ -28,6 +28,7 @@ const api: HelmApi = {
 		onNew: (listener) => subscribe('tab:new', listener),
 		onClose: (listener) => subscribe('tab:close', listener),
 	},
+	platform: process.platform,
 }
 
 contextBridge.exposeInMainWorld('helm', api)
