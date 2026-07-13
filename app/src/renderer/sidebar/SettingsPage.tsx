@@ -194,7 +194,7 @@ function SaveBar({ store }: { store: SettingsStore }) {
  *  later land in a trailing "Other" card instead of disappearing. */
 const SECTION_GROUPS: ReadonlyArray<{ label: string; ids: string[] }> = [
 	{ label: 'Daemon', ids: ['provider', 'projects', 'polling', 'server'] },
-	{ label: 'Execution', ids: ['solver', 'spawner'] },
+	{ label: 'Execution', ids: ['solver', 'execution', 'spawner'] },
 	{ label: 'AI', ids: ['ai-branch', 'ai-display', 'ai-model-guidance', 'ai-triage'] },
 	{ label: 'Integrations', ids: ['github'] },
 ]
@@ -289,6 +289,13 @@ function sectionSummary(section: ConfigEditSection, draft: Draft | null, section
 		case 'solver': {
 			const agent = selectValueLabel(section, ['solver', 'agent'], draft)
 			if (agent !== '') return agent
+			break
+		}
+		case 'execution': {
+			// Short state, not the verbose select label ("Worktree (isolated, default)").
+			const workspace = getAtPath(draft, ['solver', 'workspace'])
+			if (workspace === 'main') return 'Main'
+			if (workspace === 'worktree') return 'Worktree'
 			break
 		}
 		case 'server': {

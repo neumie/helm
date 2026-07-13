@@ -1,5 +1,6 @@
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext } from '../providers/provider.js'
+import type { SolverWorkspace } from '../solver/workspace.js'
 import { emptyRunObservation } from './observation.js'
 import type { RunObservation } from './observation.js'
 import type { ItemRecord } from './schema.js'
@@ -76,6 +77,8 @@ export interface DashboardItem {
 	plan: DashboardPlan | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
+	/** Per-item execution workspace override (`null` = follow `config.solver.workspace`). Solve only. */
+	solverWorkspace: SolverWorkspace | null
 	errorMessage: string | null
 	errorPhase: string | null
 	runOutcome: ItemRecord['runOutcome']
@@ -260,6 +263,7 @@ export function toDashboardItem(
 		plan: planForItem(item),
 		resultSummary: item.resultSummary,
 		solveInputSnapshot: item.solveInputSnapshot,
+		solverWorkspace: item.payload.kind === 'solve' ? (item.payload.solverWorkspace ?? null) : null,
 		errorMessage: item.errorMessage,
 		errorPhase: item.errorPhase,
 		runOutcome: item.runOutcome,

@@ -1,6 +1,7 @@
 import { DEFAULT_SERVER_URL, getSync } from './storage'
 
 export type SolverAgent = 'claude' | 'codex'
+export type SolverWorkspace = 'worktree' | 'main'
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
@@ -193,6 +194,12 @@ export interface SolveSelection {
 	 * previously stored override (the "Auto" chip); undefined leaves it alone.
 	 */
 	solverModel?: string | null
+	/**
+	 * Per-item execution workspace. A value ('worktree' | 'main') sets it; null
+	 * explicitly CLEARS the override back to the config default; undefined leaves
+	 * it alone. Mirrors `solverModel`'s null-for-default semantics.
+	 */
+	solverWorkspace?: SolverWorkspace | null
 }
 
 function selectionBody(selection?: SolveSelection): Record<string, unknown> | undefined {
@@ -200,6 +207,7 @@ function selectionBody(selection?: SolveSelection): Record<string, unknown> | un
 	const body: Record<string, unknown> = {}
 	if (selection.solverAgent) body.solverAgent = selection.solverAgent
 	if (selection.solverModel !== undefined) body.solverModel = selection.solverModel
+	if (selection.solverWorkspace !== undefined) body.solverWorkspace = selection.solverWorkspace
 	return Object.keys(body).length > 0 ? body : undefined
 }
 

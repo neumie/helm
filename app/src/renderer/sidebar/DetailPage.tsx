@@ -12,6 +12,7 @@ import type {
 	HelmSnapshot,
 	PlanInfo,
 	SolverAgentBody,
+	SolverWorkspace,
 } from '../../shared-helm'
 import { showToast } from '../toast'
 import { CHIP_CLASS, VERDICT_META, absoluteUrl, itemTitle, relativeTime, useNow } from './model'
@@ -108,6 +109,11 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 	const [agent, setAgent] = useState<SolverAgent>((config?.solver?.agent as SolverAgent) ?? 'claude')
 	const [model, setModel] = useState('')
 	const touched = useRef({ agent: false, model: false })
+	// Execution workspace: `undefined` = untouched this session (reflect the item's
+	// stored override, else the config default); an explicit value or `null` (reset
+	// to config default) is what rides the next run action — mirroring the wire's
+	// value/null-to-clear/absent semantics.
+	const [workspaceChoice, setWorkspaceChoice] = useState<SolverWorkspace | null | undefined>(undefined)
 
 	if (!item) {
 		return (
@@ -127,11 +133,21 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 	const showRunSetup = isSolve && preRun && config?.modelCatalog !== undefined
 	const catalog = config?.modelCatalog?.[agent] ?? []
 
+	// Reflected override: an untouched session shows the item's stored payload
+	// value (else config default); once touched, the local pick wins. `null` = no
+	// override (follow config). The segmented always lands on a concrete chip.
+	const configWorkspace: SolverWorkspace = config?.solver?.workspace ?? 'worktree'
+	const workspaceOverride: SolverWorkspace | null =
+		workspaceChoice !== undefined ? workspaceChoice : (item.solverWorkspace ?? null)
+	const effectiveWorkspace: SolverWorkspace = workspaceOverride ?? configWorkspace
+
 	const runBody = (): SolverAgentBody | undefined => {
 		if (!isSolve) return undefined
 		const body: SolverAgentBody = {}
 		if (touched.current.agent) body.solverAgent = agent
 		if (touched.current.model) body.solverModel = model === '' ? null : model
+		// Only a touched pick rides along; `null` clears the stored override.
+		if (workspaceChoice !== undefined) body.solverWorkspace = workspaceChoice
 		return Object.keys(body).length > 0 ? body : undefined
 	}
 
@@ -334,6 +350,33 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 										...catalog.map(m => ({ value: m.id, label: m.label })),
 									]}
 								/>
+							</div>
+							<div>
+								<div className="run-field-head">
+									<FieldLabel>Workspace</FieldLabel>
+									{workspaceOverride !== null && (
+										<button
+											type="button"
+											className="field-reset"
+											onClick={() => setWorkspaceChoice(null)}
+											title="Follow the configured default"
+										>
+											Default
+										</button>
+									)}
+								</div>
+								<Segmented<SolverWorkspace>
+									label="Execution workspace"
+									value={effectiveWorkspace}
+									onChange={next => setWorkspaceChoice(next)}
+									options={[
+										{ value: 'worktree', label: 'Worktree' },
+										{ value: 'main', label: 'Main' },
+									]}
+								/>
+								{effectiveWorkspace === 'main' && (
+									<p className="run-caption">Runs in the project’s checkout — shares your working tree.</p>
+								)}
 							</div>
 						</div>
 					</Card>

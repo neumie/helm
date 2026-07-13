@@ -976,6 +976,36 @@
 	gap: 8px;
 }
 
+/* Field header carrying a label + an optional trailing quiet reset ("Default"). */
+.run-field-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+}
+
+.field-reset {
+	border: none;
+	background: none;
+	padding: 0;
+	font-family: inherit;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 600;
+	color: var(--text-2);
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+.field-reset:hover {
+	color: var(--text-1);
+}
+
+/* One-line quiet caption under a run-setup control. */
+.run-caption {
+	margin-top: 6px;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.45;
+	color: var(--text-2);
+}
+
 /* ---------- action bar (§3.11) ---------- */
 
 .action-bar {

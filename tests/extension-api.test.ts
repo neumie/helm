@@ -122,13 +122,19 @@ test('extension API passes selected solver agent to Item actions that can start 
 	}
 
 	try {
-		await api.itemAction('item-1', 'approve', { solverAgent: 'codex' })
-		await api.itemAction('item-1', 'start', { solverAgent: 'codex', solverModel: 'gpt-5.5' })
+		await api.itemAction('item-1', 'approve', { solverAgent: 'codex', solverWorkspace: 'main' })
+		await api.itemAction('item-1', 'start', { solverAgent: 'codex', solverModel: 'gpt-5.5', solverWorkspace: null })
 		await api.itemAction('item-1', 'retry', { solverAgent: 'codex' })
 
+		// solverWorkspace mirrors solverModel: a value rides along, explicit null
+		// clears the override, and an absent field stays absent.
 		assert.deepEqual(
 			calls.map(call => JSON.parse(String(call.init?.body))),
-			[{ solverAgent: 'codex' }, { solverAgent: 'codex', solverModel: 'gpt-5.5' }, { solverAgent: 'codex' }],
+			[
+				{ solverAgent: 'codex', solverWorkspace: 'main' },
+				{ solverAgent: 'codex', solverModel: 'gpt-5.5', solverWorkspace: null },
+				{ solverAgent: 'codex' },
+			],
 		)
 	} finally {
 		globalThis.fetch = originalFetch

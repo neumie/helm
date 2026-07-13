@@ -9,6 +9,7 @@ import {
 	type PlanInfo,
 	type SolveSelection,
 	type SolverAgent,
+	type SolverWorkspace,
 	api,
 } from './api'
 import { getSync, setSync } from './storage'
@@ -17,6 +18,10 @@ type Tone = DashboardTone
 
 const agentLabel = (agent: SolverAgent) => (agent === 'codex' ? 'Codex' : 'Claude')
 const isSolverAgent = (value: unknown): value is SolverAgent => value === 'claude' || value === 'codex'
+const workspaceLabel = (workspace: SolverWorkspace) => (workspace === 'main' ? 'Main' : 'Worktree')
+// '' = follow the daemon default (no per-item override).
+const isStoredWorkspace = (value: unknown): value is '' | SolverWorkspace =>
+	value === '' || value === 'worktree' || value === 'main'
 
 /** What the widget should show, derived once and shared by the pill and the card. */
 type View =
@@ -72,6 +77,10 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	const [modelTouched, setModelTouched] = createSignal(false)
 	const [modelCatalog, setModelCatalog] = createSignal<Record<SolverAgent, ModelOption[]>>({ claude: [], codex: [] })
 	const [favoriteModels, setFavoriteModels] = createSignal<string[]>([])
+	// '' = no per-item override (the daemon's configured workspace). Persisted like
+	// the agent/model picks so the quick-switch survives popup/tab reloads.
+	const [solverWorkspace, setSolverWorkspace] = createSignal<'' | SolverWorkspace>('')
+	const [workspaceTouched, setWorkspaceTouched] = createSignal(false)
 
 	// Load projects on mount
 	api
@@ -80,10 +89,11 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 			setProjects(c.projects.map(p => p.slug))
 			if (c.modelCatalog) setModelCatalog(c.modelCatalog)
 			const configAgent = c.solver?.agent ?? 'claude'
-			getSync({ solverAgent: configAgent, solverModel: '', favoriteModels: [] as string[] })
+			getSync({ solverAgent: configAgent, solverModel: '', solverWorkspace: '', favoriteModels: [] as string[] })
 				.then(items => {
 					if (!agentTouched() && isSolverAgent(items.solverAgent)) setSolverAgent(items.solverAgent)
 					if (!modelTouched() && typeof items.solverModel === 'string') setSolverModel(items.solverModel)
+					if (!workspaceTouched() && isStoredWorkspace(items.solverWorkspace)) setSolverWorkspace(items.solverWorkspace)
 					if (Array.isArray(items.favoriteModels)) {
 						setFavoriteModels(items.favoriteModels.filter((m): m is string => typeof m === 'string'))
 					}
@@ -177,6 +187,8 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		solverAgent: solverAgent(),
 		// null = explicitly clear any stored per-item override ("Auto").
 		solverModel: effectiveModel() || null,
+		// null = follow the daemon default (no workspace override); a value pins it.
+		solverWorkspace: solverWorkspace() || null,
 	})
 
 	async function handlePlan() {
@@ -210,6 +222,15 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		void setSync({ solverModel: model })
 	}
 
+	function chooseSolverWorkspace(workspace: SolverWorkspace) {
+		setWorkspaceTouched(true)
+		// Two chips, tri-state: clicking the active chip toggles back to '' (the
+		// daemon default), the only way to reach "no override" without a 3rd chip.
+		const next: '' | SolverWorkspace = solverWorkspace() === workspace ? '' : workspace
+		setSolverWorkspace(next)
+		void setSync({ solverWorkspace: next })
+	}
+
 	const view = (): View => {
 		if (!props.taskId()) return { kind: 'none' }
 		const i = item()
@@ -227,10 +248,12 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				planPending={planPending}
 				solverAgent={solverAgent}
 				solverModel={effectiveModel}
+				solverWorkspace={solverWorkspace}
 				modelOptions={modelOptions}
 				actionError={actionError}
 				onSolverAgentChange={chooseSolverAgent}
 				onSolverModelChange={chooseSolverModel}
+				onSolverWorkspaceChange={chooseSolverWorkspace}
 				onDismissError={() => setActionError(null)}
 				onCollapse={() => setExpanded(false)}
 				onSolve={solve}
@@ -300,6 +323,39 @@ function AgentSelect(props: {
 							on:click={() => props.onChange(agent)}
 						>
 							{agentLabel(agent)}
+						</button>
+					)}
+				</For>
+			</div>
+		</div>
+	)
+}
+
+/**
+ * Execution-workspace picker — two chips reusing the agent segmented pattern.
+ * '' (no chip active) = follow the daemon default; clicking a chip pins it, and
+ * clicking the active chip again toggles back to the default.
+ */
+function WorkspaceSelect(props: {
+	value: Accessor<'' | SolverWorkspace>
+	onChange: (workspace: SolverWorkspace) => void
+	disabled?: boolean
+}) {
+	const options: SolverWorkspace[] = ['worktree', 'main']
+	return (
+		<div class="vg-agent">
+			<span class="vg-agent__label">Workspace</span>
+			<div class="vg-agent__seg" aria-label="Execution workspace">
+				<For each={options}>
+					{workspace => (
+						<button
+							type="button"
+							class={`vg-agent__option${props.value() === workspace ? ' is-active' : ''}`}
+							aria-pressed={props.value() === workspace}
+							disabled={props.disabled}
+							on:click={() => props.onChange(workspace)}
+						>
+							{workspaceLabel(workspace)}
 						</button>
 					)}
 				</For>
@@ -563,10 +619,12 @@ function Card(props: {
 	planPending: Accessor<boolean>
 	solverAgent: Accessor<SolverAgent>
 	solverModel: Accessor<string>
+	solverWorkspace: Accessor<'' | SolverWorkspace>
 	modelOptions: Accessor<ModelOption[]>
 	actionError: Accessor<string | null>
 	onSolverAgentChange: (agent: SolverAgent) => void
 	onSolverModelChange: (model: string) => void
+	onSolverWorkspaceChange: (workspace: SolverWorkspace) => void
 	onDismissError: () => void
 	onCollapse: () => void
 	onSolve: () => void
@@ -664,6 +722,11 @@ function Card(props: {
 										value={props.solverModel}
 										options={props.modelOptions}
 										onChange={props.onSolverModelChange}
+										disabled={isProcessing()}
+									/>
+									<WorkspaceSelect
+										value={props.solverWorkspace}
+										onChange={props.onSolverWorkspaceChange}
 										disabled={isProcessing()}
 									/>
 									<For each={itemRunNotices(item())}>

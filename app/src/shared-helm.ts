@@ -151,6 +151,8 @@ export interface DashboardItem {
 	plan: DashboardPlan | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
+	/** Per-item execution workspace override (`null` = follow `config.solver.workspace`). Solve only. */
+	solverWorkspace: SolverWorkspace | null
 	errorMessage: string | null
 	errorPhase: string | null
 	runOutcome: RunOutcome | null
@@ -259,7 +261,7 @@ export interface ModelOption {
 export interface AppConfig {
 	projectColors?: Record<string, string>
 	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
-	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex' }
+	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex'; workspace?: SolverWorkspace }
 	spawner?: { name?: string }
 	spawnerAdapters?: Array<{ name: string; available: boolean }>
 	/** Curated per-agent model options for model pickers (server-owned). */
@@ -359,13 +361,18 @@ export interface HelmSnapshot {
 	config: AppConfig | null
 }
 
+/** Where a solve run executes (`src/solver/workspace.ts`). */
+export type SolverWorkspace = 'worktree' | 'main'
+
 /**
  * Optional body for item action / plan routes. approve/start/retry/plan accept
- * a solver agent and a model override (`null` clears a stored per-item model).
+ * a solver agent, a model override (`null` clears a stored per-item model), and
+ * an execution-workspace override (`null` clears it back to the config default).
  */
 export interface SolverAgentBody {
 	solverAgent?: 'claude' | 'codex'
 	solverModel?: string | null
+	solverWorkspace?: SolverWorkspace | null
 }
 
 /**
