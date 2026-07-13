@@ -410,6 +410,11 @@ export class SessionRegistry {
 		return this.#data[sessionId]
 	}
 
+	/** All known session ids (startup orphan sweeps read this before prune()). */
+	ids(): string[] {
+		return Object.keys(this.#data)
+	}
+
 	setTitle(sessionId: string, title: string): void {
 		const meta = this.#data[sessionId]
 		if (!meta || meta.lastTitle === title) return

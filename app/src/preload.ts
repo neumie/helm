@@ -9,11 +9,37 @@ const { daemonUrl } = ipcRenderer.sendSync('config:get') as { daemonUrl: string 
 // --ui-preview=<list|detail|settings> arrives via webPreferences.additionalArguments
 // (main.ts) for screenshot runs; the sidebar auto-navigates to the named page.
 const uiPreviewArg = process.argv.find(arg => arg.startsWith('--ui-preview='))?.slice('--ui-preview='.length)
-const UI_PREVIEWS: readonly UiPreview[] = ['list', 'detail', 'settings', 'appearance', 'background', 'background-strip']
+const UI_PREVIEWS: readonly UiPreview[] = [
+	'list',
+	'detail',
+	'settings',
+	'appearance',
+	'background',
+	'background-strip',
+	'background-park',
+	'background-restore',
+]
 const uiPreview: UiPreview | null = UI_PREVIEWS.find(page => page === uiPreviewArg) ?? null
 
 // --ui-theme=<presetId>: screenshot runs verify a theme preset visually.
 const uiTheme = process.argv.find(arg => arg.startsWith('--ui-theme='))?.slice('--ui-theme='.length) ?? null
+
+// --term-cmd=<base64>: screenshot runs type a command into the first tab's
+// shell (base64 so shell metacharacters/spaces survive the argv hop).
+function decodeTermCmd(): string | null {
+	const raw = process.argv.find(arg => arg.startsWith('--term-cmd='))?.slice('--term-cmd='.length)
+	if (!raw) return null
+	try {
+		return Buffer.from(raw, 'base64').toString('utf8')
+	} catch {
+		return null
+	}
+}
+const termCmd = decodeTermCmd()
+
+// --term-scroll=<top|middle>: screenshot runs verify scrollbar travel extremes.
+const termScrollArg = process.argv.find(arg => arg.startsWith('--term-scroll='))?.slice('--term-scroll='.length)
+const termScroll = termScrollArg === 'top' || termScrollArg === 'middle' ? termScrollArg : null
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
 	const handler = (_event: IpcRendererEvent, ...args: unknown[]) => listener(...(args as Args))
@@ -43,6 +69,12 @@ const api: HelmApi = {
 		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked),
 		closeWithGrace: ptyId => ipcRenderer.invoke('session:close-with-grace', ptyId) as Promise<GraceClose | null>,
 		undoClose: sessionId => ipcRenderer.invoke('session:undo-close', sessionId) as Promise<boolean>,
+	},
+	buffers: {
+		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId) as Promise<string | null>,
+		save: (sessionId, data) => ipcRenderer.send('buffer:save', sessionId, data),
+		onFlush: listener => subscribe('buffers:flush', listener),
+		flushed: () => ipcRenderer.send('buffers:flushed'),
 	},
 	config: {
 		getDaemonUrl: () => daemonUrl,
@@ -81,6 +113,8 @@ const api: HelmApi = {
 	platform: process.platform,
 	uiPreview,
 	uiTheme,
+	termCmd,
+	termScroll,
 }
 
 contextBridge.exposeInMainWorld('helm', api)

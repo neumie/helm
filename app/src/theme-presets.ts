@@ -41,6 +41,9 @@ const HELM_TOKENS: Record<string, string> = {
 	// Scroll thumbs + toast countdown share one alpha pair (§3.17)
 	'--thumb': 'rgba(255, 255, 255, 0.14)',
 	'--thumb-hover': 'rgba(255, 255, 255, 0.24)',
+	// Terminal overlay scrollbar (§3.14) — brighter pair; floats over --well
+	'--term-scroll-thumb': 'rgba(255, 255, 255, 0.22)',
+	'--term-scroll-thumb-hover': 'rgba(255, 255, 255, 0.35)',
 	'--scrim': 'rgba(0, 0, 0, 0.4)',
 	'--shadow-1': '0 8px 24px rgba(0, 0, 0, 0.35)',
 	'--shadow-2': '0 10px 30px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35)',
@@ -90,6 +93,8 @@ const HIGH_CONTRAST_TOKENS: Record<string, string> = {
 	'--neutral': '#a6adb8',
 	'--thumb': 'rgba(255, 255, 255, 0.28)',
 	'--thumb-hover': 'rgba(255, 255, 255, 0.44)',
+	'--term-scroll-thumb': 'rgba(255, 255, 255, 0.35)',
+	'--term-scroll-thumb-hover': 'rgba(255, 255, 255, 0.5)',
 	'--scrim': 'rgba(0, 0, 0, 0.55)',
 	'--term-bg': '#000000',
 	'--term-fg': '#ffffff',

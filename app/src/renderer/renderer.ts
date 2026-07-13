@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
@@ -108,10 +109,26 @@ interface Tab {
 	activityMuteUntil: number
 	/** Current normalized label (popover row title, toast detail). */
 	title: string
+	/** Output arrived since the last buffer-snapshot save (10s autosave picks it up). */
+	dirty: boolean
 	term: Terminal
 	fit: FitAddon
+	/** Buffer serializer for snapshot saves (restore-before-attach, app/src/buffers.ts). */
+	serialize: SerializeAddon
 	holder: HTMLDivElement
 	tabButton: HTMLDivElement
+	/** Custom overlay scrollbar (§3.14): full-pane track + pill thumb. */
+	scrollbar: HTMLDivElement
+	thumb: HTMLDivElement
+	/** rAF-coalescing flags (one pending frame each, never stacked). */
+	fitRetryPending: boolean
+	scrollSyncPending: boolean
+	/** dtach's attach client home+clears (\e[H\e[J) as its FIRST output on every
+	 *  attach (verified against attach with `-r none`: the stream is exactly
+	 *  those 6 bytes) — it would wipe a restored buffer snapshot, so the first
+	 *  chunk of a session-backed spawn is filtered once (see filterAttachClear). */
+	attachClearPending: boolean
+	attachClearHeld: string
 }
 
 // FitAddon measures getComputedStyle(term.element.parentElement).width, which
@@ -156,9 +173,29 @@ function applyTabTitle(label: HTMLSpanElement, raw: string): string {
 
 function fitTab(tab: Tab): void {
 	// Hidden/zero-size holders measure 0x0 — fitting then would clamp the grid
-	// to FitAddon's 2x1 floor. activate()'s rAF refits once visible.
-	if (tab.holder.clientWidth === 0 || tab.holder.clientHeight === 0) return
+	// to FitAddon's 2x1 floor. DEFER instead of silently skipping: retry on the
+	// next frames until the holder is measurable (first-paint guard — an open
+	// before layout settles must not leave a mis-sized terminal until a manual
+	// resize). Parked/backgrounded holders stay 0x0 by design; activate()'s rAF
+	// refits those once visible, so the retry loop only chases the ACTIVE tab.
+	if (tab.holder.clientWidth === 0 || tab.holder.clientHeight === 0) {
+		scheduleFitRetry(tab)
+		return
+	}
 	tab.fit.fit()
+	scheduleScrollbarSync(tab)
+}
+
+function scheduleFitRetry(tab: Tab): void {
+	if (tab.fitRetryPending || tab.closed) return
+	tab.fitRetryPending = true
+	requestAnimationFrame(() => {
+		tab.fitRetryPending = false
+		// Only the active tab is meant to be measurable; a tab hidden/parked
+		// since the skip gets its deferred fit from activate() instead.
+		if (tab.closed || tab !== activeTab) return
+		fitTab(tab)
+	})
 }
 
 function fitActive(): void {
@@ -185,6 +222,171 @@ function syncPtySize(tab: Tab, spawnCols: number, spawnRows: number, nudge: bool
 		helm.pty.resize(tab.ptyId, cols - 1, rows)
 		helm.pty.resize(tab.ptyId, cols, rows)
 	}
+}
+
+// ---------- overlay scrollbar (§3.14) ----------
+// xterm 6 scrolls through a monaco SmoothScrollableElement whose track is
+// inline-sized to rows*cellHeight starting at the screen's top — inside the
+// padded holder it can never reach the pane edges, and its square slider reads
+// as a generic web scrollbar. Helm hides it (styles.css) and renders its own
+// macOS-style overlay: a track spanning the FULL pane height with a pill
+// thumb. Pure overlay — it lives inside FitAddon's fixed 14px scrollbar
+// reserve, so it never reserves layout space or shifts terminal columns
+// (columns are identical with or without scrollback).
+
+const THUMB_MIN_PX = 24
+
+function thumbMetrics(tab: Tab): { trackHeight: number; thumbHeight: number; maxTop: number } {
+	const trackHeight = tab.scrollbar.clientHeight
+	const thumbHeight = Math.max(THUMB_MIN_PX, Math.round((trackHeight * tab.term.rows) / tab.term.buffer.active.length))
+	return { trackHeight, thumbHeight, maxTop: Math.max(0, trackHeight - thumbHeight) }
+}
+
+function syncScrollbar(tab: Tab): void {
+	const buffer = tab.term.buffer.active
+	// Alt-screen apps (vim/less) own the whole viewport — no scrollbar, like
+	// Terminal.app. baseY === 0 = nothing has scrolled out yet.
+	if (buffer.type === 'alternate' || buffer.baseY === 0) {
+		tab.scrollbar.hidden = true
+		return
+	}
+	tab.scrollbar.hidden = false
+	const { trackHeight, thumbHeight, maxTop } = thumbMetrics(tab)
+	if (trackHeight === 0) {
+		// Hidden holder measures 0 — restore/activate refits and resyncs.
+		tab.scrollbar.hidden = true
+		return
+	}
+	const top = Math.round((maxTop * buffer.viewportY) / buffer.baseY)
+	tab.thumb.style.height = `${thumbHeight}px`
+	tab.thumb.style.transform = `translateY(${Math.min(maxTop, Math.max(0, top))}px)`
+}
+
+function scheduleScrollbarSync(tab: Tab): void {
+	// rAF-coalesced: onWriteParsed can fire per chunk on the pty:data path —
+	// one style write per frame, never per chunk (§6.2).
+	if (tab.scrollSyncPending || tab.closed) return
+	tab.scrollSyncPending = true
+	requestAnimationFrame(() => {
+		tab.scrollSyncPending = false
+		if (!tab.closed) syncScrollbar(tab)
+	})
+}
+
+function attachScrollbarInput(tab: Tab): void {
+	tab.thumb.addEventListener('pointerdown', down => {
+		if (down.button !== 0) return
+		down.preventDefault()
+		down.stopPropagation()
+		tab.thumb.setPointerCapture(down.pointerId)
+		tab.thumb.classList.add('active')
+		const grabLine = tab.term.buffer.active.viewportY
+		const startY = down.clientY
+		const onMove = (move: PointerEvent): void => {
+			const buffer = tab.term.buffer.active
+			const { maxTop } = thumbMetrics(tab)
+			if (maxTop <= 0) return
+			const line = Math.round(grabLine + ((move.clientY - startY) * buffer.baseY) / maxTop)
+			tab.term.scrollToLine(Math.min(buffer.baseY, Math.max(0, line)))
+		}
+		const onUp = (): void => {
+			tab.thumb.classList.remove('active')
+			tab.thumb.removeEventListener('pointermove', onMove)
+			tab.thumb.removeEventListener('pointerup', onUp)
+			tab.thumb.removeEventListener('pointercancel', onUp)
+		}
+		tab.thumb.addEventListener('pointermove', onMove)
+		tab.thumb.addEventListener('pointerup', onUp)
+		tab.thumb.addEventListener('pointercancel', onUp)
+	})
+	// Track click: macOS "jump to the spot that's clicked" — center the thumb
+	// on the pointer.
+	tab.scrollbar.addEventListener('pointerdown', event => {
+		if (event.target !== tab.scrollbar || event.button !== 0) return
+		event.preventDefault()
+		const buffer = tab.term.buffer.active
+		const { thumbHeight, maxTop } = thumbMetrics(tab)
+		if (maxTop <= 0) return
+		const top = Math.min(maxTop, Math.max(0, event.offsetY - thumbHeight / 2))
+		tab.term.scrollToLine(Math.round((top * buffer.baseY) / maxTop))
+	})
+}
+
+// ---------- buffer snapshots (restore-before-attach) ----------
+// dtach preserves the PROCESS, not the SCREEN: a reattached session renders
+// nothing until new output, so restored tabs used to come back black. Each
+// session-backed tab serializes its buffer (colors + scrollback tail) and main
+// persists it (<userData>/buffers, app/src/buffers.ts); reattach writes the
+// snapshot into the fresh xterm BEFORE the live pty stream, and the normal
+// fit → syncPtySize WINCH nudge redraws the prompt/TUI in place under it — no
+// marker line, the natural redraw is the seam.
+
+/** Target snapshot size. The ladder steps the serialized scrollback down until
+ *  the output fits — front-truncating VT output would shear escape sequences. */
+const SNAPSHOT_MAX_CHARS = 200_000
+const SNAPSHOT_SCROLLBACK_LADDER = [2000, 500, 120, 0]
+const SNAPSHOT_AUTOSAVE_MS = 10_000
+
+function serializeSnapshot(tab: Tab): string | null {
+	for (const scrollback of SNAPSHOT_SCROLLBACK_LADDER) {
+		let output: string
+		try {
+			// Alt-screen content is excluded: a live TUI repaints itself on the
+			// reattach WINCH; replaying its stale frame first would only flash.
+			output = tab.serialize.serialize({ scrollback, excludeAltBuffer: true })
+		} catch {
+			return null
+		}
+		if (output.length <= SNAPSHOT_MAX_CHARS) return output
+	}
+	return null
+}
+
+function saveSnapshot(tab: Tab): void {
+	tab.dirty = false
+	if (!tab.sessionId) return
+	const snapshot = serializeSnapshot(tab)
+	// Empty serialize (nothing ever painted) must not clobber a good snapshot.
+	if (snapshot) helm.buffers.save(tab.sessionId, snapshot)
+}
+
+function saveAllSnapshots(): void {
+	for (const tab of [...tabs, ...parked]) {
+		if (!tab.closed && tab.ptyId !== null && tab.sessionId) saveSnapshot(tab)
+	}
+}
+
+// Throttled autosave: only tabs whose pty produced output since the last save.
+setInterval(() => {
+	for (const tab of [...tabs, ...parked]) {
+		if (!tab.closed && tab.dirty && tab.ptyId !== null && tab.sessionId) saveSnapshot(tab)
+	}
+}, SNAPSHOT_AUTOSAVE_MS)
+
+// Quit/window-close: main intercepts the close, asks for one final flush
+// (before the xterm instances are torn down), and resumes the close on the ack.
+helm.buffers.onFlush(() => {
+	saveAllSnapshots()
+	helm.buffers.flushed()
+})
+
+/** dtach attach.c writes cursor-home + erase-below to its terminal the moment
+ *  a client attaches — BEFORE the WINCH redraw it requests from the program.
+ *  Left alone it erases the just-restored snapshot (the black-terminal bug in
+ *  its second form). Strip exactly that one leading sequence from the spawn's
+ *  first output; anything else (including a split chunk) passes through intact. */
+const ATTACH_CLEAR = '\x1b[H\x1b[J'
+
+function filterAttachClear(tab: Tab, data: string): string {
+	const buffered = tab.attachClearHeld + data
+	if (buffered.length < ATTACH_CLEAR.length && ATTACH_CLEAR.startsWith(buffered)) {
+		// Whole chunk is still a prefix of the clear — hold it, emit nothing yet.
+		tab.attachClearHeld = buffered
+		return ''
+	}
+	tab.attachClearPending = false
+	tab.attachClearHeld = ''
+	return buffered.startsWith(ATTACH_CLEAR) ? buffered.slice(ATTACH_CLEAR.length) : buffered
 }
 
 function activate(tab: Tab): void {
@@ -217,6 +419,9 @@ function closeTab(tab: Tab): void {
 	// grace timer — the dtach session dies when it fires. The toast's Undo
 	// cancels the timer and reattaches the same session as a new tab.
 	if (tab.ptyId !== null) {
+		// Snapshot NOW, before dispose: the grace Undo replays exactly this
+		// screen into the fresh xterm it reattaches.
+		saveSnapshot(tab)
 		void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
 			if (!grace) return // non-persistent pty — already fully killed, nothing to undo
 			const toast = showToast({
@@ -269,6 +474,9 @@ function parkTab(tab: Tab): void {
 	tab.tabButton.remove()
 	tab.holder.classList.remove('active')
 	if (tab.sessionId) helm.sessions.setParked(tab.sessionId, true)
+	// Park is a persistence point: a parked session relaunches as parked and
+	// may only be restored (and repainted) much later.
+	if (tab.ptyId !== null) saveSnapshot(tab)
 	if (activeTab === tab) {
 		activeTab = null
 		const neighbor = tabs[Math.min(index, tabs.length - 1)]
@@ -306,6 +514,8 @@ function killParkedTab(tab: Tab): void {
 	parked.splice(index, 1)
 	const { title } = tab
 	if (tab.ptyId !== null) {
+		// Same snapshot-before-dispose as closeTab: Undo replays this screen.
+		saveSnapshot(tab)
 		void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
 			if (!grace) return
 			const toast = showToast({
@@ -550,6 +760,8 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	})
 	const fit = new FitAddon()
 	term.loadAddon(fit)
+	const serialize = new SerializeAddon()
+	term.loadAddon(serialize)
 	term.loadAddon(new WebLinksAddon())
 
 	const holder = document.createElement('div')
@@ -558,6 +770,16 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	const mount = document.createElement('div')
 	mount.className = 'term-mount'
 	holder.appendChild(mount)
+	// Overlay scrollbar: sibling of the mount, so the track spans the holder's
+	// FULL padding box (pane top to pane bottom) instead of the inset text area.
+	const scrollbar = document.createElement('div')
+	scrollbar.className = 'term-scrollbar'
+	scrollbar.hidden = true
+	scrollbar.setAttribute('aria-hidden', 'true')
+	const thumb = document.createElement('div')
+	thumb.className = 'term-scrollbar-thumb'
+	scrollbar.appendChild(thumb)
+	holder.appendChild(scrollbar)
 	termsEl.appendChild(holder)
 	term.open(mount)
 
@@ -585,11 +807,20 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		// not light the "output since parking" dot.
 		activityMuteUntil: startParked ? performance.now() + REATTACH_MUTE_MS : 0,
 		title: '',
+		dirty: false,
 		term,
 		fit,
+		serialize,
 		holder,
 		tabButton,
+		scrollbar,
+		thumb,
+		fitRetryPending: false,
+		scrollSyncPending: false,
+		attachClearPending: true,
+		attachClearHeld: '',
 	}
+	attachScrollbarInput(tab)
 	// Restored tabs keep the label persisted from the previous run until the
 	// reattached shell emits a fresh OSC title (normalized too — older runs
 	// persisted raw "user@host:cwd" titles).
@@ -600,6 +831,11 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		if (tab.sessionId) helm.sessions.setTitle(tab.sessionId, tab.title)
 		if (tab.parked) updateBackgroundUi()
 	})
+	term.onScroll(() => scheduleScrollbarSync(tab))
+	term.onResize(() => scheduleScrollbarSync(tab))
+	// Content growth while scrolled up moves no viewport (no onScroll fires)
+	// but changes the thumb's proportion — onWriteParsed catches it.
+	term.onWriteParsed(() => scheduleScrollbarSync(tab))
 
 	tabButton.addEventListener('click', () => activate(tab))
 	tabButton.addEventListener('keydown', event => {
@@ -626,6 +862,29 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		tabsEl.appendChild(tabButton)
 		activate(tab)
 		fitTab(tab)
+	}
+
+	// Restore-before-attach: write the previous run's screen into the fresh
+	// xterm BEFORE the live dtach stream lands (startup tabs, background
+	// restore, and grace-undo all pass sessionId — one seam). The reattach
+	// WINCH repaint then redraws the prompt/TUI in place under the restored
+	// content; snapshot/live overlap needs no marker line. Awaited before
+	// spawn so no live byte can beat the snapshot into the write queue.
+	if (opts?.sessionId) {
+		try {
+			const snapshot = await helm.buffers.read(opts.sessionId)
+			if (snapshot && !tab.closed) {
+				tab.term.write(snapshot, () => {
+					if (tab.closed) return
+					// Belt-and-braces first-paint guard: force the restored frame
+					// onto the screen even if the session never emits another byte.
+					tab.term.refresh(0, tab.term.rows - 1)
+					scheduleScrollbarSync(tab)
+				})
+			}
+		} catch {
+			// no snapshot — the reattach shows the live redraw only
+		}
 	}
 
 	// Spawn with the best-known size, but treat it as provisional: layout can
@@ -659,7 +918,15 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 helm.pty.onData((id, data) => {
 	const tab = findByPty(id)
 	if (!tab) return
-	tab.term.write(data)
+	// Session-backed spawns: swallow dtach's one-time attach clear so it can't
+	// wipe the restored snapshot (non-dtach fallback ptys emit no such prefix).
+	let output = data
+	if (tab.attachClearPending && tab.sessionId !== null) {
+		output = filterAttachClear(tab, data)
+		if (output === '') return
+	}
+	tab.term.write(output)
+	tab.dirty = true // snapshot autosave picks this tab up on the next tick
 	// Quiet activity dot: first output since parking (once — no per-chunk DOM
 	// work on the pty:data path, §6.2).
 	if (tab.parked && !tab.activity && performance.now() >= tab.activityMuteUntil) {
@@ -672,6 +939,7 @@ helm.pty.onExit((id, exitCode) => {
 	const tab = findByPty(id)
 	if (!tab) return
 	tab.ptyId = null // pty is gone; don't kill it again on close
+	tab.dirty = false // session over — its snapshot is reaped with it, don't re-save
 	if (tab.parked) {
 		// Exited in the background: keep the row (state "Exited"), no toast spam.
 		// The exit burst is a death rattle, not activity — the state says it all.
@@ -711,6 +979,11 @@ appearance.subscribe(() => {
 // cmd+= / cmd+- / cmd+0 (View menu accelerators — same main→IPC pattern as
 // cmd+t): bounds + persistence live in the appearance store.
 helm.appearance.onFontStep(step => appearance.stepTermFontSize(step))
+
+// First-paint guard: cell metrics measured before a font finished loading
+// mis-size the grid until the next resize — refit once the font set settles.
+// (SF Mono/Menlo are local, so this usually resolves before the first fit.)
+void document.fonts.ready.then(() => fitActive())
 
 // New-tab actions are gated until session restore finishes, so restored tabs
 // always come first and a fast cmd+T can't interleave with reattachment.
@@ -759,6 +1032,20 @@ window.addEventListener(
 // `background` opens the popover; `background-strip` leaves it closed.
 async function runUiPreview(): Promise<void> {
 	const preview = helm.uiPreview
+	// background-park: park the ACTIVE tab (after any --term-cmd output landed)
+	// so a later run against the same profile/socket pool verifies parked
+	// snapshot restore. background-restore: restore the first startup-parked
+	// session back to a tab — the popover row-click analog, screenshot-driven.
+	if (preview === 'background-park') {
+		await new Promise(resolve => setTimeout(resolve, 1500))
+		if (activeTab) parkTab(activeTab)
+		return
+	}
+	if (preview === 'background-restore') {
+		const first = parked[0]
+		if (first) restoreParked(first)
+		return
+	}
 	if (preview !== 'background' && preview !== 'background-strip') return
 	await createTerminal().catch(() => {})
 	const exiting = activeTab
@@ -805,5 +1092,23 @@ void (async () => {
 		await createTerminal({ sessionId: session.sessionId, title: session.title, parked: true }).catch(() => {})
 	}
 	tabsReady = true
+	// --term-cmd (screenshot harness): type a command into the first tab's
+	// shell. The pty input buffer holds it until the shell is ready to read.
+	// (read through a closure: top-level CFA otherwise keeps activeTab narrowed
+	// to its `null` initializer — the createTerminal calls above reassigned it)
+	const cmdTab = ((): Tab | null => activeTab)()
+	if (helm.termCmd && cmdTab && cmdTab.ptyId !== null) helm.pty.write(cmdTab.ptyId, `${helm.termCmd}\r`)
+	// --term-scroll (screenshot harness): after the command's output lands
+	// (~2.2s < the 3s capture settle), pin the viewport to a scroll extreme so
+	// the overlay scrollbar's top-reach / mid-travel are capturable.
+	if (helm.termScroll) {
+		const target = helm.termScroll
+		setTimeout(() => {
+			const tab = ((): Tab | null => activeTab)()
+			if (!tab) return
+			const buffer = tab.term.buffer.active
+			tab.term.scrollToLine(target === 'top' ? 0 : Math.floor(buffer.baseY / 2))
+		}, 2200)
+	}
 	await runUiPreview()
 })()

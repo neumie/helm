@@ -50,6 +50,23 @@ export interface SessionsApi {
 	undoClose(sessionId: string): Promise<boolean>
 }
 
+/**
+ * Terminal buffer snapshots (app/src/buffers.ts): dtach preserves the process,
+ * not the screen, so restored tabs replay a serialized xterm buffer before the
+ * live pty stream attaches. Renderer serializes; main owns the file IO.
+ */
+export interface BuffersApi {
+	/** Stored snapshot for a session being reattached, or null. */
+	read(sessionId: string): Promise<string | null>
+	/** Persist a serialized snapshot (fire-and-forget; main validates + caps). */
+	save(sessionId: string, data: string): void
+	/** Main asks the renderer to serialize + save every session-backed tab NOW
+	 *  (quit/window-close path, before the pty clients detach). */
+	onFlush(listener: () => void): () => void
+	/** Renderer signals the requested flush is complete. */
+	flushed(): void
+}
+
 export interface ConfigApi {
 	getDaemonUrl(): string
 }
@@ -58,8 +75,19 @@ export interface ConfigApi {
  * Screenshot-harness hook: `--ui-preview=<page>` auto-navigates the sidebar.
  * `background` parks one running + one exited session and opens the popover;
  * `background-strip` parks them but keeps the popover closed (strip + badge shot).
+ * `background-park` parks the ACTIVE tab (after any --term-cmd output landed) so
+ * a relaunch can verify parked snapshot restore; `background-restore` restores
+ * the first startup-parked session back to a tab (popover row click analog).
  */
-export type UiPreview = 'list' | 'detail' | 'settings' | 'appearance' | 'background' | 'background-strip'
+export type UiPreview =
+	| 'list'
+	| 'detail'
+	| 'settings'
+	| 'appearance'
+	| 'background'
+	| 'background-strip'
+	| 'background-park'
+	| 'background-restore'
 
 /** Menu accelerators (cmd+t / cmd+w / cmd+shift+b) fire in main; renderer subscribes here. */
 export interface TabsApi {
@@ -96,6 +124,8 @@ export interface NavApi {
 export interface HelmApi {
 	pty: PtyApi
 	sessions: SessionsApi
+	/** Buffer snapshot IO (restore-before-attach; main owns the files). */
+	buffers: BuffersApi
 	config: ConfigApi
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */
 	appearance: AppearanceApi
@@ -110,4 +140,10 @@ export interface HelmApi {
 	uiPreview: UiPreview | null
 	/** Set only on `--ui-theme=<presetId>` screenshot runs; null in normal use. */
 	uiTheme: string | null
+	/** Screenshot-harness only: `--term-cmd=<base64>` — decoded command typed
+	 *  into the first tab's shell after startup (verifies output/restore paths). */
+	termCmd: string | null
+	/** Screenshot-harness only: `--term-scroll=<top|middle>` — scroll the active
+	 *  terminal before capture (verifies scrollbar extremes/mid-travel). */
+	termScroll: 'top' | 'middle' | null
 }

@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, Menu, app, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
+import { BufferStore } from './buffers'
 import { HelmBridge } from './helm-bridge'
 import { parseHelmItemUrl } from './protocol'
 import * as sessions from './sessions'
@@ -27,6 +28,14 @@ const screenshotPath = process.argv.find(a => a.startsWith('--screenshot='))?.sl
 // (no persistence) so theme presets are screenshot-verifiable.
 const uiPreviewArg = process.argv.find(a => a.startsWith('--ui-preview=')) || null
 const uiThemeArg = process.argv.find(a => a.startsWith('--ui-theme=')) || null
+
+// `--term-cmd=<base64>` (screenshot runs): the renderer types the decoded
+// command into the first tab's shell after startup — lets the harness put real
+// output into a terminal so buffer-snapshot restore is screenshot-verifiable.
+// `--term-scroll=<top|middle>` scrolls the active terminal before capture so
+// the overlay scrollbar's extremes/mid-travel are screenshot-verifiable.
+const termCmdArg = process.argv.find(a => a.startsWith('--term-cmd=')) || null
+const termScrollArg = process.argv.find(a => a.startsWith('--term-scroll=')) || null
 
 // `--window-size=WxH` (screenshot runs): capture at a specific window size so
 // layout-dependent behavior (terminal fit/reflow) is verifiable at more than
@@ -125,6 +134,8 @@ function defaultShell(): string {
 interface SessionSupport {
 	dtach: string
 	registry: sessions.SessionRegistry
+	/** Buffer snapshots (<userData>/buffers): restore-before-attach screen state. */
+	buffers: BufferStore
 }
 
 let sessionSupport: SessionSupport | null | undefined
@@ -163,6 +174,7 @@ function getSessionSupport(): SessionSupport | null {
 	sessionSupport = {
 		dtach,
 		registry: new sessions.SessionRegistry(path.join(app.getPath('userData'), 'sessions.json')),
+		buffers: new BufferStore(path.join(app.getPath('userData'), 'buffers')),
 	}
 	return sessionSupport
 }
@@ -171,7 +183,10 @@ function getSessionSupport(): SessionSupport | null {
 // session dies only when it fires (okena soft_close.rs semantics; 5s default
 // from okena settings.rs:494). Undo cancels the timer and the tab reattaches.
 const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), sessionId => {
-	getSessionSupport()?.registry.remove(sessionId)
+	const support = getSessionSupport()
+	support?.registry.remove(sessionId)
+	// The session is truly dead now — its buffer snapshot dies with it.
+	support?.buffers.remove(sessionId)
 })
 
 /**
@@ -271,10 +286,42 @@ function trackWindowState(win: BrowserWindow): void {
 	})
 }
 
+// --- Buffer snapshot flush (quit path) --------------------------------------------
+
+// The renderer owns serialization, so quitting must round-trip: main asks
+// (buffers:flush), the renderer serializes + saves every session-backed tab,
+// then acks (buffers:flushed). Bounded by a timeout — a hung renderer can't
+// wedge quit, it just costs at most the last autosave interval of output.
+const BUFFER_FLUSH_TIMEOUT_MS = 800
+
+function flushRendererBuffers(win: BrowserWindow, timeoutMs: number): Promise<void> {
+	return new Promise(resolve => {
+		if (win.isDestroyed() || win.webContents.isDestroyed() || !getSessionSupport()) {
+			resolve()
+			return
+		}
+		let settled = false
+		const finish = (): void => {
+			if (settled) return
+			settled = true
+			clearTimeout(timer)
+			ipcMain.removeListener('buffers:flushed', finish)
+			resolve()
+		}
+		const timer = setTimeout(finish, timeoutMs)
+		ipcMain.once('buffers:flushed', finish)
+		win.webContents.send('buffers:flush')
+	})
+}
+
+/** True once app.quit() started — a flush-intercepted close must resume QUIT, not just re-close. */
+let quitRequested = false
+
 // --- Screenshot harness ----------------------------------------------------------
 
 const SCREENSHOT_SETTLE_MS = 3000
 const SCREENSHOT_LOAD_TIMEOUT_MS = 20_000
+const SCREENSHOT_FLUSH_TIMEOUT_MS = 1500
 
 function captureScreenshot(win: BrowserWindow, outPath: string): void {
 	const resolved = path.resolve(outPath)
@@ -295,8 +342,13 @@ function captureScreenshot(win: BrowserWindow, outPath: string): void {
 					fs.mkdirSync(path.dirname(resolved), { recursive: true })
 					fs.writeFileSync(resolved, image.toPNG())
 					console.log(`[helm] screenshot written: ${resolved}`)
-					killAllPtyClients()
-					app.exit(0)
+					// Screenshot runs exit via app.exit (no window close events), so
+					// the buffer flush must happen here — a persistent-pool run
+					// (HELM_SOCKET_DIR) relies on it to verify snapshot restore.
+					void flushRendererBuffers(win, SCREENSHOT_FLUSH_TIMEOUT_MS).then(() => {
+						killAllPtyClients()
+						app.exit(0)
+					})
 				})
 				.catch(fail)
 		}, SCREENSHOT_SETTLE_MS)
@@ -327,8 +379,12 @@ function createWindow(): void {
 			nodeIntegration: false,
 			// A screenshot run captures an unfocused window; keep it painting.
 			backgroundThrottling: !screenshotPath,
-			...(uiPreviewArg || uiThemeArg
-				? { additionalArguments: [uiPreviewArg, uiThemeArg].filter((arg): arg is string => arg !== null) }
+			...(uiPreviewArg || uiThemeArg || termCmdArg || termScrollArg
+				? {
+						additionalArguments: [uiPreviewArg, uiThemeArg, termCmdArg, termScrollArg].filter(
+							(arg): arg is string => arg !== null,
+						),
+					}
 				: {}),
 		},
 	})
@@ -340,6 +396,21 @@ function createWindow(): void {
 	win.on('closed', () => {
 		if (mainWindow === win) mainWindow = null
 		killAllPtyClients()
+	})
+	// Quit/close buffer flush: serialize every tab's screen BEFORE the renderer
+	// (and its xterm instances) is torn down — dtach preserves processes, not
+	// screens, so this snapshot is what the next launch paints. Intercept once,
+	// flush (bounded), then resume the close/quit that was interrupted.
+	let buffersFlushed = false
+	win.on('close', event => {
+		if (buffersFlushed) return
+		event.preventDefault()
+		void flushRendererBuffers(win, BUFFER_FLUSH_TIMEOUT_MS).then(() => {
+			buffersFlushed = true
+			if (win.isDestroyed()) return
+			if (quitRequested) app.quit()
+			else win.close()
+		})
 	})
 	if (screenshotPath) {
 		captureScreenshot(win, screenshotPath)
@@ -496,7 +567,10 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		if (selfExit && sessionId && support) {
 			const sid = sessionId
 			void sessions.reapSessionIfDead(sid).then(dead => {
-				if (dead) support.registry.remove(sid)
+				if (dead) {
+					support.registry.remove(sid)
+					support.buffers.remove(sid)
+				}
 			})
 		}
 		if (!contents.isDestroyed()) contents.send('pty:exit', id, exitCode)
@@ -529,7 +603,11 @@ ipcMain.on('pty:kill', (_event, id: number) => {
 	if (entry.sessionId) {
 		const sid = entry.sessionId
 		graceCloser.undo(sid) // a hard kill supersedes any pending grace timer
-		void sessions.killSession(sid).then(() => getSessionSupport()?.registry.remove(sid))
+		void sessions.killSession(sid).then(() => {
+			const support = getSessionSupport()
+			support?.registry.remove(sid)
+			support?.buffers.remove(sid)
+		})
 	}
 	try {
 		entry.proc.kill()
@@ -571,7 +649,18 @@ ipcMain.handle('sessions:list', async () => {
 	const support = getSessionSupport()
 	if (!support) return []
 	const live = await sessions.listLiveSessions()
-	support.registry.prune(new Set(live.map(s => s.sessionId)))
+	const liveIds = new Set(live.map(s => s.sessionId))
+	// Buffer-snapshot orphan sweep: keep snapshots for live sessions plus parked
+	// registry entries (a parked session whose socket probed 'unknown' this
+	// launch keeps its snapshot for the next attempt); everything else — killed
+	// while the app was closed, dead-socket GC — is deleted with its session.
+	// Computed BEFORE prune(), which drops non-live registry entries.
+	const keepSnapshots = new Set(liveIds)
+	for (const id of support.registry.ids()) {
+		if (support.registry.get(id)?.parked === true) keepSnapshots.add(id)
+	}
+	support.buffers.removeOrphans(keepSnapshots)
+	support.registry.prune(liveIds)
 	return live
 		.map(s => ({
 			sessionId: s.sessionId,
@@ -595,6 +684,23 @@ ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown) =
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown) => {
 	if (!sessions.isValidSessionId(sessionId) || typeof title !== 'string') return
 	getSessionSupport()?.registry.setTitle(sessionId, title)
+})
+
+// --- Terminal buffer snapshots (app/src/buffers.ts) ------------------------------
+// The renderer serializes (it owns the Terminal); main owns the file IO. Saves
+// are fire-and-forget and size-capped in the store; reads happen once per
+// reattach, BEFORE the live pty stream is written into the fresh xterm.
+
+ipcMain.on('buffer:save', (_event, sessionId: unknown, data: unknown) => {
+	const support = getSessionSupport()
+	if (!support || !sessions.isValidSessionId(sessionId) || typeof data !== 'string') return
+	support.buffers.save(sessionId, data)
+})
+
+ipcMain.handle('buffer:read', (_event, sessionId: unknown) => {
+	const support = getSessionSupport()
+	if (!support || !sessions.isValidSessionId(sessionId)) return null
+	return support.buffers.read(sessionId)
 })
 
 ipcMain.on('config:get', event => {
@@ -687,8 +793,11 @@ app.on('window-all-closed', () => {
 })
 
 // Quit detaches (clients die, dtach sessions live on for the next launch) —
-// the pre-dtach behavior of killing the shells is gone by design.
+// the pre-dtach behavior of killing the shells is gone by design. Buffer
+// snapshots are flushed by the window-close interception (the renderer still
+// holds every xterm buffer after the clients detach).
 app.on('before-quit', () => {
+	quitRequested = true
 	helmBridge.stop()
 	killAllPtyClients()
 	sessionSupport?.registry.flush()

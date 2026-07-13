@@ -40,6 +40,10 @@
 	/* Scroll thumbs + toast countdown share one alpha pair (§3.17) */
 	--thumb: rgba(255, 255, 255, 0.14);
 	--thumb-hover: rgba(255, 255, 255, 0.24);
+	/* Terminal overlay scrollbar (§3.14) — brighter than pane thumbs; it floats
+	 * over the darkest surface (--well) with no track fill behind it. */
+	--term-scroll-thumb: rgba(255, 255, 255, 0.22);
+	--term-scroll-thumb-hover: rgba(255, 255, 255, 0.35);
 	--scrim: rgba(0, 0, 0, 0.4);
 	--shadow-1: 0 8px 24px rgba(0, 0, 0, 0.35);
 	--shadow-2: 0 10px 30px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -458,10 +462,11 @@ body.dragging {
 }
 
 /* Terminal well padding rule (§3.14): breathing room top/bottom/left only —
- * right padding MUST stay 0 so xterm's viewport scrollbar hugs the pane edge
- * (any right padding pushes the scrollbar into the well, Terminal.app never
- * does that). Right-side breathing room comes from FitAddon's integer-column
- * remainder plus its fixed scrollbar reserve.
+ * right padding MUST stay 0 so the overlay scrollbar (.term-scrollbar,
+ * absolutely positioned against this holder) hugs the pane edge (any right
+ * padding pushes it into the well, Terminal.app never does that). Right-side
+ * breathing room comes from FitAddon's integer-column remainder plus its
+ * fixed scrollbar reserve.
  *
  * overflow:hidden is load-bearing: a transient fit desync (mid-drag, mid-
  * reattach) must clip at the pane edge, never paint over the divider/window. */
@@ -504,21 +509,51 @@ body.dragging {
 	background-color: transparent !important;
 }
 
-/* xterm scrollbar at the pane edge: thin 8px, transparent track, rgba thumb
- * (same alphas as §3.17 pane scrollbars). Styling ::-webkit-scrollbar makes
- * it a classic 8px gutter FitAddon subtracts from the column budget. */
-.term-holder .xterm-viewport::-webkit-scrollbar {
-	width: 8px;
+/* xterm 6 scrolls through a monaco SmoothScrollableElement (VS Code widget),
+ * NOT a native-scrolling .xterm-viewport — ::-webkit-scrollbar styling never
+ * reaches it. Its track is inline-sized to rows*cellHeight from the screen's
+ * top (inside the padded holder it can never reach the pane edges) and its
+ * square slider reads as a generic web scrollbar, so helm hides it and
+ * renders its own overlay (.term-scrollbar, §3.14). Wheel input is unaffected:
+ * the widget listens on the screen element, not the scrollbar node. */
+.term-holder .xterm-scrollable-element > .scrollbar {
+	display: none !important;
 }
-.term-holder .xterm-viewport::-webkit-scrollbar-track {
-	background: transparent;
+
+/* Overlay scrollbar (§3.14): absolutely positioned in .term-holder, so the
+ * track spans the holder's FULL padding box — pane top to pane bottom —
+ * decoupled from the 14px text inset that used to shorten the old track. It
+ * floats inside FitAddon's fixed 14px scrollbar reserve: pure overlay, never
+ * reserves layout space, never shifts terminal columns. */
+.term-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 9px;
+	z-index: 2;
 }
-.term-holder .xterm-viewport::-webkit-scrollbar-thumb {
-	background: var(--thumb);
+
+.term-scrollbar[hidden] {
+	display: none;
+}
+
+/* macOS-style pill: 5px wide, fully rounded, 2px in from the pane edge; no
+ * track fill, no buttons, no corner. Height/translateY set from buffer state
+ * by renderer.ts (syncScrollbar). */
+.term-scrollbar-thumb {
+	position: absolute;
+	top: 0;
+	right: 2px;
+	width: 5px;
 	border-radius: 999px;
+	background: var(--term-scroll-thumb);
+	transition: background-color 140ms ease-out;
 }
-.term-holder .xterm-viewport::-webkit-scrollbar-thumb:hover {
-	background: var(--thumb-hover);
+
+.term-scrollbar-thumb:hover,
+.term-scrollbar-thumb.active {
+	background: var(--term-scroll-thumb-hover);
 }
 
 /* ---------- toasts ---------- */
