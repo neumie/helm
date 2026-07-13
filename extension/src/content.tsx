@@ -18,7 +18,7 @@ function extractTaskId(): string | null {
 
 // Mount into shadow DOM
 const host = document.createElement('div')
-host.id = 'vigil-widget-host'
+host.id = 'helm-widget-host'
 const shadow = host.attachShadow({ mode: 'closed' })
 
 const style = document.createElement('style')

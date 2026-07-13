@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { configSchema } from '../src/config.js'
-import type { VigilConfig } from '../src/config.js'
+import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ItemCommands } from '../src/items/commands.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
@@ -18,17 +18,17 @@ import type { TaskContext } from '../src/providers/provider.js'
 import { taskCancelled } from '../src/util/errors.js'
 
 function makeConfig(overrides?: {
-	branchNaming?: Partial<VigilConfig['solver']['branchNaming']>
-	displayName?: Partial<VigilConfig['solver']['displayName']>
-}): VigilConfig {
+	branchNaming?: Partial<HelmConfig['solver']['branchNaming']>
+	displayName?: Partial<HelmConfig['solver']['displayName']>
+}): HelmConfig {
 	return configSchema.parse({
 		provider: {
 			type: 'contember',
 			apiBaseUrl: 'https://example.test',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			apiToken: 'token',
 		},
-		projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
+		projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
 		solver: {
 			type: 'default',
 			agent: 'claude',
@@ -39,8 +39,8 @@ function makeConfig(overrides?: {
 }
 
 function withTempDb(fn: (db: DB) => Promise<void> | void) {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-naming-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-naming-'))
+	const db = new DB(join(dir, 'helm.db'))
 	return Promise.resolve(fn(db)).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -111,7 +111,7 @@ test('ensureItemWorkspaceName persists and returns a derived branch and plan dir
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemWorkspaceName({
 			commands,
@@ -136,7 +136,7 @@ test('ensureItemWorkspaceName clamps an over-long model name to the whole-name b
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		const longName = `refactor/${'extract-shared-validation-helpers-and-consolidate-everything'}`
 		const result = await ensureItemWorkspaceName({
@@ -159,7 +159,7 @@ test('ensureItemWorkspaceName appends the id suffix on collision', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemWorkspaceName({
 			commands,
@@ -182,7 +182,7 @@ test('ensureItemWorkspaceName skips loop (ralph/harden) Items', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createRalphItem({ title: 'payments loop', projectSlug: 'vigil', prdPath: 'docs/prd/pay.md' })
+		const item = commands.createRalphItem({ title: 'payments loop', projectSlug: 'helm', prdPath: 'docs/prd/pay.md' })
 
 		let called = false
 		const result = await ensureItemWorkspaceName({
@@ -203,14 +203,14 @@ test('ensureItemWorkspaceName skips loop (ralph/harden) Items', () =>
 
 		assert.equal(called, false)
 		assert.equal(result.branchName, null)
-		assert.match(resolveItemWorkspace(result).branchName, /^vigil\/item\//)
+		assert.match(resolveItemWorkspace(result).branchName, /^helm\/item\//)
 	}))
 
 test('ensureItemWorkspaceName is a no-op when disabled', () =>
 	withTempDb(async db => {
 		const config = makeConfig({ branchNaming: { enabled: false } })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		let called = false
 		const result = await ensureItemWorkspaceName({
@@ -238,7 +238,7 @@ test('ensureItemWorkspaceName leaves the default when the model returns nothing'
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemWorkspaceName({
 			commands,
@@ -251,14 +251,14 @@ test('ensureItemWorkspaceName leaves the default when the model returns nothing'
 		})
 
 		assert.equal(result.branchName, null)
-		assert.match(resolveItemWorkspace(result).branchName, /^vigil\/item\//)
+		assert.match(resolveItemWorkspace(result).branchName, /^helm\/item\//)
 	}))
 
 test('ensureItemWorkspaceName swallows model errors and returns the input Item', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemWorkspaceName({
 			commands,
@@ -283,7 +283,7 @@ test('ensureItemWorkspaceName re-throws cancellation so the pipeline aborts prom
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		await assert.rejects(
 			ensureItemWorkspaceName({
@@ -309,8 +309,8 @@ test('ensureItemWorkspaceName does not override an already-named Item', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
-		db.items.update(item.id, { branchName: 'vigil/item/preset-abcd1234' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
+		db.items.update(item.id, { branchName: 'helm/item/preset-abcd1234' })
 		const preset = commands.getItem(item.id)
 		assert(preset)
 
@@ -324,8 +324,8 @@ test('ensureItemWorkspaceName does not override an already-named Item', () =>
 			deps: { runOneShot: async () => 'feat/should-not-apply', branchExists: () => false },
 		})
 
-		assert.equal(result.branchName, 'vigil/item/preset-abcd1234')
-		assert.equal(commands.getItem(item.id)?.branchName, 'vigil/item/preset-abcd1234')
+		assert.equal(result.branchName, 'helm/item/preset-abcd1234')
+		assert.equal(commands.getItem(item.id)?.branchName, 'helm/item/preset-abcd1234')
 	}))
 
 test('ensureItemWorkspaceName force re-derives even when disabled and already named', () =>
@@ -334,8 +334,8 @@ test('ensureItemWorkspaceName force re-derives even when disabled and already na
 		// name — force must still run the model and overwrite.
 		const config = makeConfig({ branchNaming: { enabled: false } })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
-		db.items.update(item.id, { branchName: 'vigil/item/preset-abcd1234' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
+		db.items.update(item.id, { branchName: 'helm/item/preset-abcd1234' })
 		const preset = commands.getItem(item.id)
 		assert(preset)
 
@@ -361,7 +361,7 @@ test('ensureItemWorkspaceName force does NOT rename once a worktree exists (TOCT
 		// refuses the write even though force is set, so the worktree can't desync.
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 		db.items.update(item.id, { worktreePath: '/tmp/wt-created-concurrently' })
 		const withWorktree = commands.getItem(item.id)
 		assert(withWorktree)
@@ -385,7 +385,7 @@ test('ensureItemWorkspaceName force still skips loop Items (structural gate)', (
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createRalphItem({ title: 'payments loop', projectSlug: 'vigil', prdPath: 'docs/prd/pay.md' })
+		const item = commands.createRalphItem({ title: 'payments loop', projectSlug: 'helm', prdPath: 'docs/prd/pay.md' })
 
 		let called = false
 		const result = await ensureItemWorkspaceName({
@@ -413,7 +413,7 @@ test('ensureItemWorkspaceName force throws on an unparseable model answer', () =
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 
 		await assert.rejects(
 			ensureItemWorkspaceName({
@@ -460,7 +460,7 @@ test('ensureItemDisplayName persists a short AI display name', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemDisplayName({
 			commands,
@@ -477,7 +477,7 @@ test('ensureItemDisplayName skips an already-short title (no model call)', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'helm', prompt: 'do it' })
 
 		let called = false
 		const result = await ensureItemDisplayName({
@@ -500,7 +500,7 @@ test('ensureItemDisplayName is a no-op when displayNames is disabled', () =>
 	withTempDb(async db => {
 		const config = makeConfig({ displayName: { enabled: false } })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 
 		let called = false
 		const result = await ensureItemDisplayName({
@@ -523,7 +523,7 @@ test('ensureItemDisplayName swallows model errors and keeps the raw title', () =
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 
 		const result = await ensureItemDisplayName({
 			commands,
@@ -544,7 +544,7 @@ test('ensureItemDisplayName does not override an existing display name', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 		commands.recordDisplayName(item.id, 'Preset name')
 		const preset = commands.getItem(item.id)
 		assert(preset)
@@ -572,7 +572,7 @@ test('ensureItemDisplayName force overrides an existing name and runs on a short
 		// both the already-named and short-title gates and re-runs the model.
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'helm', prompt: 'do it' })
 		commands.recordDisplayName(item.id, 'Preset name')
 		const preset = commands.getItem(item.id)
 		assert(preset)
@@ -593,7 +593,7 @@ test('ensureItemDisplayName force throws on a model failure (manual run surfaces
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 
 		await assert.rejects(
 			ensureItemDisplayName({
@@ -615,7 +615,7 @@ test('ensureItemDisplayName threads a custom prompt and provider override', () =
 	withTempDb(async db => {
 		const config = makeConfig({ displayName: { prompt: 'CUSTOM-INSTRUCTIONS-HERE', agent: 'codex' } })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
 
 		let seenAgent: string | undefined
 		let seenPrompt = ''

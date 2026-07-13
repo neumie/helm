@@ -1,6 +1,6 @@
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { VigilConfig } from '../../config.js'
+import type { HelmConfig } from '../../config.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import { agentLabelFromConfig, buildInteractiveAgentCommand } from '../../solver/agent-command.js'
 import { buildPrompt } from '../../solver/prompt-builder.js'
@@ -71,14 +71,14 @@ export class OkenaSolver implements Solver {
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
 		// A reused worktree may still hold a prior run's solver-result.json. Clear it
 		// before launching, or the poll loop below exits instantly on the stale file
-		// and unlinks .vigil-prompt.txt out from under the just-launched agent.
+		// and unlinks .helm-prompt.txt out from under the just-launched agent.
 		workspace.clearResult()
-		const promptFile = join(worktreePath, '.vigil-prompt.txt')
+		const promptFile = join(worktreePath, '.helm-prompt.txt')
 		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath }, solverConfig)
 		params.onPromptSnapshot?.(solverPrompt)
 		writeFileSync(promptFile, solverPrompt, 'utf-8')
 
-		const command = buildInteractiveAgentCommand(solverConfig, '.vigil-prompt.txt', worktreePath)
+		const command = buildInteractiveAgentCommand(solverConfig, '.helm-prompt.txt', worktreePath)
 		const agentLabel = agentLabelFromConfig(solverConfig)
 		log.info('okena', `Running ${agentLabel} in terminal ${terminalId}`)
 		try {
@@ -93,7 +93,7 @@ export class OkenaSolver implements Solver {
 		//
 		// The timeout is IDLE-based, not wall-clock: real runs regularly exceed any
 		// fixed budget (a 30m wall-clock cap once "timed out" an agent that shipped
-		// a PR 80 minutes later), and vigil can't kill the agent anyway — it runs in
+		// a PR 80 minutes later), and helm can't kill the agent anyway — it runs in
 		// okena's terminal. `timeoutMinutes` means "no terminal activity for this
 		// long": the screen is sampled via okena's `read_content` and any repaint
 		// (Claude Code's spinner/output) counts as life. A dead agent leaves a
@@ -172,7 +172,7 @@ function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-export async function createOkenaSolver(_config: VigilConfig): Promise<Solver> {
+export async function createOkenaSolver(_config: HelmConfig): Promise<Solver> {
 	const client = new OkenaClient()
 	// Warn but DON'T fall back: the operator configured okena, so okena stays the
 	// active solver. If it's unreachable now, tasks/plan sessions fail with the

@@ -9,22 +9,22 @@ import {
 	sanitizeAttachmentName,
 	saveAttachment,
 } from '../src/attachments/store.js'
-import type { VigilConfig } from '../src/config.js'
+import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ItemCommands } from '../src/items/commands.js'
 import { localizeCapturedAttachments } from '../src/items/context.js'
 import type { TaskContext } from '../src/providers/provider.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 
-const config: VigilConfig = {
+const config: HelmConfig = {
 	provider: {
 		type: 'contember',
 		apiBaseUrl: 'https://example.test',
-		projectSlug: 'vigil',
+		projectSlug: 'helm',
 		apiToken: 'token',
 		statuses: ['new'],
 	},
-	projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
+	projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
 	polling: { intervalSeconds: 60 },
 	solver: {
 		type: 'default',
@@ -40,7 +40,7 @@ const config: VigilConfig = {
 	github: {
 		createPrs: false,
 		postComments: true,
-		prPrefix: '[Vigil]',
+		prPrefix: '[Helm]',
 		trackDeployments: false,
 		deployPollSeconds: 120,
 	},
@@ -68,8 +68,8 @@ function makeRecordingEnricher() {
 }
 
 function withTempDb(fn: (db: DB) => Promise<void> | void) {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-ingest-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-ingest-'))
+	const db = new DB(join(dir, 'helm.db'))
 	return Promise.resolve(fn(db)).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -84,7 +84,7 @@ const PNG_1x1 = Buffer.from(
 test('POST /items/ingest creates a triage source solve Item with frozen captured context + served attachment', () =>
 	withTempDb(async db => {
 		const { enricher, enqueued } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 
 		const createdIds: string[] = []
 		try {
@@ -92,7 +92,7 @@ test('POST /items/ingest creates a triage source solve Item with frozen captured
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					projectSlug: 'vigil',
+					projectSlug: 'helm',
 					title: 'Client emailed a bug report',
 					body: 'The export button 500s. Screenshot attached.',
 					metadata: { From: 'client@acme.test', Date: '2026-06-30' },
@@ -152,14 +152,14 @@ test('POST /items/ingest creates a triage source solve Item with frozen captured
 test('ingested attachments are served with XSS-safe headers (declared content-type ignored)', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 		const createdIds: string[] = []
 		try {
 			const res = await api.request('/items/ingest', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					projectSlug: 'vigil',
+					projectSlug: 'helm',
 					title: 'Malicious attachment',
 					// Attacker declares an active content-type for a script-bearing SVG.
 					attachments: [
@@ -192,11 +192,11 @@ test('ingested attachments are served with XSS-safe headers (declared content-ty
 test('POST /items/ingest is idempotent by source.externalId', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 		const payload = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ projectSlug: 'vigil', title: 'Dup email', source: { externalId: 'email:dup-1' } }),
+			body: JSON.stringify({ projectSlug: 'helm', title: 'Dup email', source: { externalId: 'email:dup-1' } }),
 		}
 		const createdIds: string[] = []
 		try {
@@ -219,7 +219,7 @@ test('POST /items/ingest is idempotent by source.externalId', () =>
 test('POST /items/ingest rejects an unconfigured project', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 		const res = await api.request('/items/ingest', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -241,7 +241,7 @@ test('isOpenableAttachment allows documents/media but refuses executables/script
 test('open-attachment route guards: 404 unknown item, 400 non-openable type, 404 missing file (no native open)', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 		const post = (path: string) => api.request(path, { method: 'POST' })
 
 		// Unknown item → 404 (never reaches the opener).
@@ -249,7 +249,7 @@ test('open-attachment route guards: 404 unknown item, 400 non-openable type, 404
 
 		// Real item, but a non-openable extension is rejected BEFORE any open.
 		const item = new ItemCommands(db.items, config).createSolveItem({
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Has a risky attachment name',
 			prompt: 'body',
 			source: { provider: 'Email', externalId: 'email:open-guard' },
@@ -287,7 +287,7 @@ test('localizeCapturedAttachments rewrites served URLs to worktree-relative path
 	const out = localizeCapturedAttachments(ctx)
 	assert.deepEqual(
 		out.attachments?.map(a => a.url),
-		['.vigil-attachments/shot.png', '.vigil-attachments/doc.pdf'],
+		['.helm-attachments/shot.png', '.helm-attachments/doc.pdf'],
 	)
 	// Name/contentType preserved; no attachments → unchanged object.
 	assert.equal(out.attachments?.[0].contentType, 'image/png')
@@ -298,7 +298,7 @@ test('source-task route promotes a captured Item into a provider task and links 
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Customer email: invoice recipient wrong',
 			prompt: 'Customer email: invoice recipient wrong',
 			source: { provider: 'Email', externalId: 'email:abc' },
@@ -318,13 +318,13 @@ test('source-task route promotes a captured Item into a provider task and links 
 			},
 		} as never
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, creatingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, creatingProvider, spawner, enricher as never)
 
 		const res = await api.request(`/items/${item.id}/source-task`, { method: 'POST' })
 		assert.equal(res.status, 200)
 		const body = (await res.json()) as { data: Record<string, unknown> }
 		assert.deepEqual(createCalls, [
-			{ projectSlug: 'vigil', title: 'Customer email: invoice recipient wrong', description: 'Body of the email.' },
+			{ projectSlug: 'helm', title: 'Customer email: invoice recipient wrong', description: 'Body of the email.' },
 		])
 		assert.deepEqual(body.data.source, {
 			provider: 'Contember',
@@ -349,9 +349,9 @@ test('source-task route promotes a captured Item into a provider task and links 
 test('source-task route refuses non-captured Items and providers without createTask', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const plain = commands.createSolveItem({ projectSlug: 'vigil', title: 'plain', prompt: 'plain' })
+		const plain = commands.createSolveItem({ projectSlug: 'helm', title: 'plain', prompt: 'plain' })
 		const captured = commands.createSolveItem({
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'email',
 			prompt: 'email',
 			source: { provider: 'Email', externalId: 'email:x' },
@@ -359,7 +359,7 @@ test('source-task route refuses non-captured Items and providers without createT
 		})
 		const { enricher } = makeRecordingEnricher()
 		// explodingProvider has no createTask
-		const api = apiRoutes(config, 'vigil.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
 
 		const nonCaptured = await api.request(`/items/${plain.id}/source-task`, { method: 'POST' })
 		assert.equal(nonCaptured.status, 400)

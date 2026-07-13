@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { configSchema } from '../src/config.js'
-import type { VigilConfig } from '../src/config.js'
+import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ensureItemAssessment, parseAssessment } from '../src/items/assess.js'
 import { ItemCommands } from '../src/items/commands.js'
@@ -12,17 +12,17 @@ import type { TaskContext } from '../src/providers/provider.js'
 import type { OneShotImage } from '../src/solver/one-shot.js'
 import { taskCancelled } from '../src/util/errors.js'
 
-function makeConfig(triage?: Partial<VigilConfig['solver']['triage']>): VigilConfig {
+function makeConfig(triage?: Partial<HelmConfig['solver']['triage']>): HelmConfig {
 	return configSchema.parse({
-		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'vigil', apiToken: 'token' },
-		projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
+		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
+		projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
 		solver: { type: 'default', agent: 'claude', triage: { enabled: true, ...triage } },
 	})
 }
 
 function withTempDb(fn: (db: DB) => Promise<void> | void) {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-assess-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-assess-'))
+	const db = new DB(join(dir, 'helm.db'))
 	return Promise.resolve(fn(db)).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -64,7 +64,7 @@ test('ensureItemAssessment persists a parsed assessment with a stamped assessedA
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Invoice recipient',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'x',
 			source: { provider: 'contember', externalId: 'e1' },
 		})
@@ -88,7 +88,7 @@ test('ensureItemAssessment sends fetched screenshots to the model for the claude
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'x',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'x',
 			source: { provider: 'contember', externalId: 'e1' },
 		})
@@ -116,7 +116,7 @@ test('ensureItemAssessment does not fetch or send images for the codex agent', (
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'x',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'x',
 			source: { provider: 'contember', externalId: 'e1' },
 		})
@@ -146,7 +146,7 @@ test('ensureItemAssessment is a no-op when triage is disabled', () =>
 	withTempDb(async db => {
 		const config = makeConfig({ enabled: false })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 
 		let called = false
 		const result = await ensureItemAssessment({
@@ -170,7 +170,7 @@ test('ensureItemAssessment does not re-assess an already-assessed Item', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 		commands.recordAssessment(item.id, {
 			intent: 'preset',
 			verdict: 'clear',
@@ -203,7 +203,7 @@ test('ensureItemAssessment swallows model errors and leaves no assessment', () =
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 
 		const result = await ensureItemAssessment({
 			commands,
@@ -225,7 +225,7 @@ test('ensureItemAssessment re-throws cancellation', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 
 		await assert.rejects(
 			ensureItemAssessment({
@@ -249,7 +249,7 @@ test('ensureItemAssessment force re-assesses when disabled and already assessed'
 		// runs anyway and overwrites the verdict.
 		const config = makeConfig({ enabled: false })
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 		commands.recordAssessment(item.id, {
 			intent: 'preset',
 			verdict: 'clear',
@@ -283,7 +283,7 @@ test('ensureItemAssessment force throws on an unparseable answer', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'x', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'x', projectSlug: 'helm', prompt: 'x' })
 
 		await assert.rejects(
 			ensureItemAssessment({

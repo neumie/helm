@@ -18,7 +18,7 @@ import {
 	unknownConfigPaths,
 } from '../src/config-document.js'
 import { configSchema } from '../src/config.js'
-import type { VigilConfig } from '../src/config.js'
+import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { DeployWatcher, httpUrlOrNull, parsePrUrl } from '../src/github/deploy-watcher.js'
 import { ItemCommands } from '../src/items/commands.js'
@@ -51,8 +51,8 @@ import { createWorktree, withRepoLock } from '../src/worktree/manager.js'
 const fakeEnricher = { enqueue() {} }
 
 function withTempDb(fn: (db: DB) => Promise<void> | void) {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-items-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-items-'))
+	const db = new DB(join(dir, 'helm.db'))
 	return Promise.resolve(fn(db)).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -63,15 +63,15 @@ function git(cwd: string, args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
-const config: VigilConfig = {
+const config: HelmConfig = {
 	provider: {
 		type: 'contember',
 		apiBaseUrl: 'https://example.test',
-		projectSlug: 'vigil',
+		projectSlug: 'helm',
 		apiToken: 'token',
 		statuses: ['new'],
 	},
-	projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
+	projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
 	polling: { intervalSeconds: 60 },
 	solver: {
 		type: 'default',
@@ -87,7 +87,7 @@ const config: VigilConfig = {
 	github: {
 		createPrs: false,
 		postComments: true,
-		prPrefix: '[Vigil]',
+		prPrefix: '[Helm]',
 		trackDeployments: false,
 		deployPollSeconds: 120,
 	},
@@ -137,8 +137,8 @@ function configEditPaths(document: ReturnType<typeof buildConfigDocument>): stri
 }
 
 test('DB migration drops legacy Task + chat storage, keeps Items and poll_state', () => {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-schema-reset-'))
-	const dbPath = join(dir, 'vigil.db')
+	const dir = mkdtempSync(join(tmpdir(), 'helm-schema-reset-'))
+	const dbPath = join(dir, 'helm.db')
 	const db = new DB(dbPath)
 	db.close()
 
@@ -414,8 +414,8 @@ test('Agent Adapter selects command shape, labels, interactive commands, and tim
 
 test('config routes use Config Document and preserve redacted secrets while rejecting stale fields', async () => {
 	await withTempDb(async db => {
-		const dir = mkdtempSync(join(tmpdir(), 'vigil-config-document-'))
-		const configPath = join(dir, 'vigil.config.json')
+		const dir = mkdtempSync(join(tmpdir(), 'helm-config-document-'))
+		const configPath = join(dir, 'helm.config.json')
 		writeFileSync(
 			configPath,
 			JSON.stringify(
@@ -502,13 +502,13 @@ test('ItemCommands creates queued source-less solve Items with default BaseRef',
 
 		const item = commands.createSolveItem({
 			title: 'Ship AFK dashboard',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Build the new Item dashboard.',
 		})
 
 		assert.equal(item.kind, 'solve')
 		assert.equal(item.status, 'ready')
-		assert.equal(item.projectSlug, 'vigil')
+		assert.equal(item.projectSlug, 'helm')
 		assert.equal(item.title, 'Ship AFK dashboard')
 		assert.equal(item.baseRef, 'main')
 		assert.equal(item.source, null)
@@ -520,18 +520,18 @@ test('ItemCommands creates queued source-less solve Items with default BaseRef',
 })
 
 test('CLI add posts to the running daemon (headless) and creates queued Item kinds', async () => {
-	// Headless control plane: `vigil add` is a pure HTTP client. Stand up the real
-	// /api routes on an ephemeral port, point the CLI at it via $VIGIL_URL, and
+	// Headless control plane: `helm add` is a pure HTTP client. Stand up the real
+	// /api routes on an ephemeral port, point the CLI at it via $HELM_URL, and
 	// assert the daemon (not the CLI) wrote the rows. The CLI never opens the DB —
-	// it does not read VIGIL_CONFIG or run from the repo cwd.
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-cli-add-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	// it does not read HELM_CONFIG or run from the repo cwd.
+	const dir = mkdtempSync(join(tmpdir(), 'helm-cli-add-'))
+	const db = new DB(join(dir, 'helm.db'))
 	const app = new Hono()
 	app.route(
 		'/api',
 		apiRoutes(
 			config,
-			join(dir, 'vigil.config.json'),
+			join(dir, 'helm.config.json'),
 			db,
 			queue as never,
 			poller as never,
@@ -548,17 +548,17 @@ test('CLI add posts to the running daemon (headless) and creates queued Item kin
 		)
 	})
 	const execFileAsync = promisify(execFile)
-	const cliPath = resolve('src/cli/vigil.ts')
+	const cliPath = resolve('src/cli/helm.ts')
 	const tsxBin = resolve('node_modules/.bin/tsx')
-	// No cwd / VIGIL_CONFIG — only the daemon URL. Proves it runs from anywhere.
-	const env = { ...process.env, VIGIL_URL: `http://127.0.0.1:${server.port}` }
+	// No cwd / HELM_CONFIG — only the daemon URL. Proves it runs from anywhere.
+	const env = { ...process.env, HELM_URL: `http://127.0.0.1:${server.port}` }
 	const run = (extra: string[]) => execFileAsync(tsxBin, [cliPath, 'add', ...extra], { env })
 
 	try {
 		await run([
 			'solve',
 			'--project',
-			'vigil',
+			'helm',
 			'--title',
 			'CLI solve',
 			'--prompt',
@@ -571,7 +571,7 @@ test('CLI add posts to the running daemon (headless) and creates queued Item kin
 		await run([
 			'ralph',
 			'--project',
-			'vigil',
+			'helm',
 			'--title',
 			'CLI ralph',
 			'--prd-path',
@@ -584,9 +584,9 @@ test('CLI add posts to the running daemon (headless) and creates queued Item kin
 			'3',
 			'--no-oversee',
 		])
-		await run(['harden', '--project', 'vigil', '--title', 'CLI harden', '--target', 'src/items', '--rounds', '2'])
+		await run(['harden', '--project', 'helm', '--title', 'CLI harden', '--target', 'src/items', '--rounds', '2'])
 
-		const items = db.items.list({ projectSlug: 'vigil', limit: 10 })
+		const items = db.items.list({ projectSlug: 'helm', limit: 10 })
 		const solveItems = items.filter(item => item.title === 'CLI solve')
 		assert.equal(solveItems.length, 2)
 		assert.equal(new Set(solveItems.map(item => item.groupId)).size, 1)
@@ -631,7 +631,7 @@ test('ItemCommands fans out solve Items with shared GroupId and independent life
 
 		const items = commands.createSolveItems({
 			title: 'Parallel solve attempt',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Try several implementations.',
 			parallelism: 3,
 		})
@@ -651,8 +651,8 @@ test('ItemCommands fans out solve Items with shared GroupId and independent life
 		commands.cancelQueuedItem(items[1].id)
 		commands.startItem(items[2].id)
 		commands.completeSolveItem(items[2].id, {
-			worktreePath: '/tmp/vigil-parallel-3',
-			branchName: 'vigil/item/parallel-3',
+			worktreePath: '/tmp/helm-parallel-3',
+			branchName: 'helm/item/parallel-3',
 			planDirName: 'parallel-3',
 			resultSummary: 'third attempt ready',
 		})
@@ -684,7 +684,7 @@ test('ItemCommands only cancels processing Items through the processing cancella
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard processing cancel',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not cancel this through the active-run path.',
 		})
 
@@ -706,7 +706,7 @@ test('ItemCommands only fails processing Items through the execution failure pat
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard processing failure',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not fail this through the active-run path.',
 		})
 
@@ -728,20 +728,20 @@ test('ItemCommands only completes processing Items through execution completion 
 		const commands = new ItemCommands(db.items, config)
 		const solve = commands.createSolveItem({
 			title: 'Guard solve completion',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not complete this before execution starts.',
 		})
 		const loop = commands.createRalphItem({
 			title: 'Guard loop completion',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 
 		assert.throws(
 			() =>
 				commands.completeSolveItem(solve.id, {
-					worktreePath: '/tmp/vigil-guard-solve',
-					branchName: 'vigil/item/guard-solve',
+					worktreePath: '/tmp/helm-guard-solve',
+					branchName: 'helm/item/guard-solve',
 					planDirName: 'guard-solve',
 					resultSummary: 'Should not complete',
 				}),
@@ -756,8 +756,8 @@ test('ItemCommands only completes processing Items through execution completion 
 
 		commands.startItem(solve.id)
 		const completedSolve = commands.completeSolveItem(solve.id, {
-			worktreePath: '/tmp/vigil-guard-solve',
-			branchName: 'vigil/item/guard-solve',
+			worktreePath: '/tmp/helm-guard-solve',
+			branchName: 'helm/item/guard-solve',
 			planDirName: 'guard-solve',
 			resultSummary: 'Solve completion guarded',
 		})
@@ -774,7 +774,7 @@ test('ItemCommands only records AlmanacRunId for processing loop Items', async (
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Guard loop run id',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 
@@ -800,7 +800,7 @@ test('ItemCommands only records solve input snapshots for processing solve Items
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard solve snapshot',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not snapshot this before execution starts.',
 		})
 
@@ -821,10 +821,10 @@ test('ItemCommands only records dispatch PRs for review solve Items', async () =
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard dispatch PR',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not record PR dispatch before solve completion.',
 		})
-		const prUrl = 'https://github.com/neumie/vigil/pull/204'
+		const prUrl = 'https://github.com/neumie/helm/pull/204'
 
 		assert.throws(() => commands.recordDispatchPr(item.id, { prUrl }), /Only review solve Items can record PR dispatch/)
 		assert.equal(db.items.get(item.id)?.prUrl, null)
@@ -834,8 +834,8 @@ test('ItemCommands only records dispatch PRs for review solve Items', async () =
 		assert.throws(() => commands.recordDispatchPr(item.id, { prUrl }), /Only review solve Items can record PR dispatch/)
 
 		commands.completeSolveItem(item.id, {
-			worktreePath: '/tmp/vigil-guard-dispatch',
-			branchName: 'vigil/item/guard-dispatch',
+			worktreePath: '/tmp/helm-guard-dispatch',
+			branchName: 'helm/item/guard-dispatch',
 			planDirName: 'guard-dispatch',
 			resultSummary: 'Ready for dispatch',
 		})
@@ -854,12 +854,12 @@ test('ItemCommands only records dispatch events for review solve Items', async (
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard dispatch events',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not record dispatch events before solve completion.',
 		})
 		const loop = commands.createRalphItem({
 			title: 'No loop dispatch events',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 
@@ -879,8 +879,8 @@ test('ItemCommands only records dispatch events for review solve Items', async (
 		assert.throws(() => commands.recordActionCompleted(item.id), /Only review solve Items can record action completion/)
 
 		commands.completeSolveItem(item.id, {
-			worktreePath: '/tmp/vigil-guard-dispatch-events',
-			branchName: 'vigil/item/guard-dispatch-events',
+			worktreePath: '/tmp/helm-guard-dispatch-events',
+			branchName: 'helm/item/guard-dispatch-events',
 			planDirName: 'guard-dispatch-events',
 			resultSummary: 'Ready for dispatch events',
 		})
@@ -900,12 +900,12 @@ test('ItemCommands only records generic run events for matching Item lifecycles'
 		const commands = new ItemCommands(db.items, config)
 		const solve = commands.createSolveItem({
 			title: 'Guard generic solve events',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not record solve events outside a solve run.',
 		})
 		const loop = commands.createRalphItem({
 			title: 'Guard generic loop events',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 
@@ -934,8 +934,8 @@ test('ItemCommands only records generic run events for matching Item lifecycles'
 			/Only review solve Items can record dispatch failures/,
 		)
 		commands.completeSolveItem(solve.id, {
-			worktreePath: '/tmp/vigil-guard-generic-events',
-			branchName: 'vigil/item/guard-generic-events',
+			worktreePath: '/tmp/helm-guard-generic-events',
+			branchName: 'helm/item/guard-generic-events',
 			planDirName: 'guard-generic-events',
 			resultSummary: 'Ready for dispatch',
 		})
@@ -953,7 +953,7 @@ test('ItemCommands rejects reserved lifecycle events through generic recordEvent
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard reserved generic events',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not forge lifecycle events through recordEvent.',
 		})
 		const reservedEvents = [
@@ -990,18 +990,18 @@ test('ItemCommands records plan preparation through the planning lifecycle path'
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Prepare plan through commands',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Keep planning lifecycle writes behind ItemCommands.',
 		})
 		const planned = commands.recordPlanPrepared(item.id, {
-			worktreePath: '/tmp/vigil-plan-command',
-			branchName: 'vigil/item/plan-command',
+			worktreePath: '/tmp/helm-plan-command',
+			branchName: 'helm/item/plan-command',
 			planDirName: 'plan-command',
 			spawner: 'default',
 		})
 
-		assert.equal(planned.worktreePath, '/tmp/vigil-plan-command')
-		assert.equal(planned.branchName, 'vigil/item/plan-command')
+		assert.equal(planned.worktreePath, '/tmp/helm-plan-command')
+		assert.equal(planned.branchName, 'helm/item/plan-command')
 		assert.equal(planned.planDirName, 'plan-command')
 		assert.deepEqual(
 			db.items.getEvents(item.id).map(event => event.eventType),
@@ -1012,14 +1012,14 @@ test('ItemCommands records plan preparation through the planning lifecycle path'
 		assert.throws(
 			() =>
 				commands.recordPlanPrepared(item.id, {
-					worktreePath: '/tmp/vigil-plan-command-2',
-					branchName: 'vigil/item/plan-command-2',
+					worktreePath: '/tmp/helm-plan-command-2',
+					branchName: 'helm/item/plan-command-2',
 					planDirName: 'plan-command-2',
 					spawner: 'default',
 				}),
 			/Running Items cannot be planned/,
 		)
-		assert.equal(db.items.get(item.id)?.worktreePath, '/tmp/vigil-plan-command')
+		assert.equal(db.items.get(item.id)?.worktreePath, '/tmp/helm-plan-command')
 	})
 })
 
@@ -1028,15 +1028,15 @@ test('ItemCommands only records execution workspace identity for processing Item
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Guard execution workspace identity',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not persist execution identity before execution starts.',
 		})
 
 		assert.throws(
 			() =>
 				commands.recordExecutionWorkspaceIdentity(item.id, {
-					worktreePath: '/tmp/vigil-execution-workspace',
-					branchName: 'vigil/item/execution-workspace',
+					worktreePath: '/tmp/helm-execution-workspace',
+					branchName: 'helm/item/execution-workspace',
 					planDirName: 'execution-workspace',
 				}),
 			/Only running Items can record execution workspace identity/,
@@ -1045,13 +1045,13 @@ test('ItemCommands only records execution workspace identity for processing Item
 
 		commands.startItem(item.id)
 		const updated = commands.recordExecutionWorkspaceIdentity(item.id, {
-			worktreePath: '/tmp/vigil-execution-workspace',
-			branchName: 'vigil/item/execution-workspace',
+			worktreePath: '/tmp/helm-execution-workspace',
+			branchName: 'helm/item/execution-workspace',
 			planDirName: 'execution-workspace',
 		})
 
-		assert.equal(updated.worktreePath, '/tmp/vigil-execution-workspace')
-		assert.equal(updated.branchName, 'vigil/item/execution-workspace')
+		assert.equal(updated.worktreePath, '/tmp/helm-execution-workspace')
+		assert.equal(updated.branchName, 'helm/item/execution-workspace')
 		assert.equal(updated.planDirName, 'execution-workspace')
 	})
 })
@@ -1060,7 +1060,7 @@ test('server creates queued ralph Items with PRD path and almanac flags', async 
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1075,7 +1075,7 @@ test('server creates queued ralph Items with PRD path and almanac flags', async 
 			body: JSON.stringify({
 				kind: 'ralph',
 				title: 'Run AFK PRD',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prdPath: 'docs/plans/afk-rework/prd.md',
 				baseRef: 'release/afk',
 				mode: 'afk',
@@ -1111,7 +1111,7 @@ test('server creates parallel solve Items through dashboard contract', async () 
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1126,7 +1126,7 @@ test('server creates parallel solve Items through dashboard contract', async () 
 			body: JSON.stringify({
 				kind: 'solve',
 				title: 'Parallel API solve',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Create multiple attempts.',
 				parallelism: 2,
 			}),
@@ -1156,7 +1156,7 @@ test('server creates parallel solve Items through dashboard contract', async () 
 			body.data.map(item => item.status),
 			['ready', 'ready'],
 		)
-		assert.equal(db.items.list({ projectSlug: 'vigil' }).length, 2)
+		assert.equal(db.items.list({ projectSlug: 'helm' }).length, 2)
 	})
 })
 
@@ -1172,7 +1172,7 @@ test('server creates plan-intent Items without enqueueing execution', async () =
 		}
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			trackingQueue as never,
 			poller as never,
@@ -1187,7 +1187,7 @@ test('server creates plan-intent Items without enqueueing execution', async () =
 			body: JSON.stringify({
 				kind: 'solve',
 				title: 'Plan before queue',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Prepare plan artifacts first.',
 				intent: 'plan',
 			}),
@@ -1217,13 +1217,13 @@ test('server Item list expands grouped siblings across pagination windows', asyn
 		const commands = new ItemCommands(db.items, config)
 		const siblings = commands.createSolveItems({
 			title: 'Paginated grouped Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Keep siblings together even when the page is small.',
 			parallelism: 2,
 		})
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1252,18 +1252,18 @@ test('server creates a new Item forked from an existing Item branch', async () =
 		const commands = new ItemCommands(db.items, config)
 		const base = commands.createSolveItem({
 			title: 'Base attempt',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Build the first attempt.',
 		})
 		const baseWithBranch = commands.recordPlanPrepared(base.id, {
-			worktreePath: '/tmp/vigil-base-attempt',
-			branchName: 'vigil/item/base-attempt',
+			worktreePath: '/tmp/helm-base-attempt',
+			branchName: 'helm/item/base-attempt',
 			planDirName: 'base-attempt',
 			spawner: 'default',
 		})
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1278,7 +1278,7 @@ test('server creates a new Item forked from an existing Item branch', async () =
 			body: JSON.stringify({
 				kind: 'solve',
 				title: 'Forked follow-up',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Continue from the base attempt branch.',
 				baseItemId: base.id,
 			}),
@@ -1288,13 +1288,13 @@ test('server creates a new Item forked from an existing Item branch', async () =
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
 		const forked = db.items.get(body.data.id)
 		assert.ok(forked)
-		assert.equal(forked.baseRef, 'vigil/item/base-attempt')
-		assert.equal(body.data.baseRef, 'vigil/item/base-attempt')
+		assert.equal(forked.baseRef, 'helm/item/base-attempt')
+		assert.equal(body.data.baseRef, 'helm/item/base-attempt')
 		assert.notEqual(resolveItemWorkspace(forked).branchName, baseWithBranch.branchName)
 		assert.deepEqual(toDashboardItem(baseWithBranch).forkContext, {
 			itemId: base.id,
-			branchName: 'vigil/item/base-attempt',
-			baseRef: 'vigil/item/base-attempt',
+			branchName: 'helm/item/base-attempt',
+			baseRef: 'helm/item/base-attempt',
 		})
 	})
 })
@@ -1334,17 +1334,17 @@ test('withRepoLock serializes work per repo and keeps repos independent', async 
 })
 
 test('createWorktree can fork from a local Item branch BaseRef', async () => {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-fork-worktree-'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-fork-worktree-'))
 	try {
 		const repoPath = join(dir, 'repo')
 		mkdirSync(repoPath)
 		git(repoPath, ['init', '-b', 'main'])
-		git(repoPath, ['config', 'user.email', 'vigil@example.test'])
-		git(repoPath, ['config', 'user.name', 'Vigil Test'])
+		git(repoPath, ['config', 'user.email', 'helm@example.test'])
+		git(repoPath, ['config', 'user.name', 'Helm Test'])
 		writeFileSync(join(repoPath, 'README.md'), 'main\n')
 		git(repoPath, ['add', 'README.md'])
 		git(repoPath, ['commit', '-m', 'init'])
-		git(repoPath, ['switch', '-c', 'vigil/item/base-attempt'])
+		git(repoPath, ['switch', '-c', 'helm/item/base-attempt'])
 		writeFileSync(join(repoPath, 'base.txt'), 'base branch content\n')
 		git(repoPath, ['add', 'base.txt'])
 		git(repoPath, ['commit', '-m', 'base attempt'])
@@ -1352,12 +1352,12 @@ test('createWorktree can fork from a local Item branch BaseRef', async () => {
 
 		const worktreePath = await createWorktree(
 			repoPath,
-			'vigil/item/base-attempt',
-			'vigil/item/forked-attempt',
+			'helm/item/base-attempt',
+			'helm/item/forked-attempt',
 			join(dir, 'worktrees'),
 		)
 
-		assert.equal(git(worktreePath, ['branch', '--show-current']), 'vigil/item/forked-attempt')
+		assert.equal(git(worktreePath, ['branch', '--show-current']), 'helm/item/forked-attempt')
 		assert.equal(readFileSync(join(worktreePath, 'base.txt'), 'utf-8'), 'base branch content\n')
 	} finally {
 		rmSync(dir, { recursive: true, force: true })
@@ -1368,7 +1368,7 @@ test('server creates queued harden Items with target and almanac flags', async (
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1383,7 +1383,7 @@ test('server creates queued harden Items with target and almanac flags', async (
 			body: JSON.stringify({
 				kind: 'harden',
 				title: 'Harden Item pipeline',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				target: 'src/items',
 				baseRef: 'release/afk',
 				rounds: 3,
@@ -1409,7 +1409,7 @@ test('server creates parallel loop Items with shared GroupId', async () => {
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -1424,7 +1424,7 @@ test('server creates parallel loop Items with shared GroupId', async () => {
 			body: JSON.stringify({
 				kind: 'ralph',
 				title: 'Parallel ralph run',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prdPath: 'docs/plans/afk-rework/prd.md',
 				parallelism: 2,
 			}),
@@ -1435,7 +1435,7 @@ test('server creates parallel loop Items with shared GroupId', async () => {
 			body: JSON.stringify({
 				kind: 'harden',
 				title: 'Parallel harden run',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				target: 'src/items',
 				parallelism: 2,
 			}),
@@ -1452,7 +1452,7 @@ test('server creates parallel loop Items with shared GroupId', async () => {
 		assert.notEqual(ralphBody.data[0].groupId, hardenBody.data[0].groupId)
 		assert.deepEqual(
 			db.items
-				.list({ projectSlug: 'vigil' })
+				.list({ projectSlug: 'helm' })
 				.map(item => item.kind)
 				.sort(),
 			['harden', 'harden', 'ralph', 'ralph'],
@@ -1465,7 +1465,7 @@ test('Item workspace identity is item-scoped and preserves captured BaseRef', as
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Ship AFK dashboard item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Build the new Item dashboard.',
 			baseRef: 'release/afk',
 		})
@@ -1483,11 +1483,11 @@ test('Item workspace identity is item-scoped and preserves captured BaseRef', as
 		assert.deepEqual(firstIdentity, {
 			baseRef: 'release/afk',
 			planDirName: `${createdDay}-ship-afk-dashboard-item-${reloaded.id.slice(0, 8)}`,
-			branchName: `vigil/item/ship-afk-dashboard-item-${reloaded.id.slice(0, 8)}`,
+			branchName: `helm/item/ship-afk-dashboard-item-${reloaded.id.slice(0, 8)}`,
 			existingWorktreePath: undefined,
 		})
 
-		const worktreePath = join(tmpdir(), `vigil-item-worktree-${reloaded.id}`)
+		const worktreePath = join(tmpdir(), `helm-item-worktree-${reloaded.id}`)
 		const stored = db.items.update(reloaded.id, {
 			planDirName: 'stored-plan',
 			branchName: 'stored-branch',
@@ -1508,17 +1508,17 @@ test('Item workspace identity is item-scoped and preserves captured BaseRef', as
 
 test('Drainer runs queued solve Items oldest-first through the Solver and Item Store', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-drainer-worktrees-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-worktrees-'))
 		const singleSolveConfig = { ...config, solver: { ...config.solver, concurrency: 1 } }
 		const commands = new ItemCommands(db.items, singleSolveConfig)
 		const newer = commands.createSolveItem({
 			title: 'Newer solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Run after the older solve Item.',
 		})
 		const older = commands.createSolveItem({
 			title: 'Older solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Run before the newer solve Item.',
 			baseRef: 'release/afk',
 		})
@@ -1548,8 +1548,8 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 			const olderDone = db.items.get(older.id)
 			const olderPlanDate = olderDone ? new Date(olderDone.createdAt).toISOString().slice(0, 10) : ''
 			assert.equal(olderDone?.resultSummary, 'Solved Older solve')
-			assert.match(olderDone?.worktreePath ?? '', /vigil-drainer-worktrees-/)
-			assert.match(olderDone?.branchName ?? '', /^vigil\/item\/older-solve-/)
+			assert.match(olderDone?.worktreePath ?? '', /helm-drainer-worktrees-/)
+			assert.match(olderDone?.branchName ?? '', /^helm\/item\/older-solve-/)
 			assert.match(olderDone?.planDirName ?? '', new RegExp(`^${olderPlanDate}-older-solve-`))
 			assert.deepEqual(
 				db.items.getEvents(older.id).map(event => event.eventType),
@@ -1564,18 +1564,18 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 
 test('Drainer runs queued ralph Items through the loop lane and captures AlmanacRunId', async () => {
 	await withTempDb(async db => {
-		const worktreePath = mkdtempSync(join(tmpdir(), 'vigil-ralph-worktree-'))
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-ralph-worktree-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Run ralph loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 			mode: 'once',
 			provider: 'codex',
 		})
 		commands.recordPlanPrepared(item.id, {
 			worktreePath,
-			branchName: 'vigil/item/ralph-loop',
+			branchName: 'helm/item/ralph-loop',
 			planDirName: 'afk-rework',
 			spawner: 'default',
 		})
@@ -1592,7 +1592,7 @@ test('Drainer runs queued ralph Items through the loop lane and captures Almanac
 			assert.equal(solver.calls.length, 0)
 			assert.equal(loopRunner.ralphCalls.length, 1)
 			assert.equal(loopRunner.ralphCalls[0].worktreePath, worktreePath)
-			assert.equal(loopRunner.ralphCalls[0].branchName, 'vigil/item/ralph-loop')
+			assert.equal(loopRunner.ralphCalls[0].branchName, 'helm/item/ralph-loop')
 			assert.equal(loopRunner.ralphCalls[0].payload.prdPath, 'docs/plans/afk-rework/prd.md')
 			assert.equal(db.items.get(item.id)?.almanacRunId, 'ralph-afk-rework-1')
 			assert.equal(db.items.get(item.id)?.resultSummary, 'almanac ralph run completed')
@@ -1609,17 +1609,17 @@ test('Drainer runs queued ralph Items through the loop lane and captures Almanac
 
 test('Drainer runs queued harden Items through the loop lane and captures AlmanacRunId', async () => {
 	await withTempDb(async db => {
-		const worktreePath = mkdtempSync(join(tmpdir(), 'vigil-harden-worktree-'))
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-harden-worktree-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createHardenItem({
 			title: 'Run harden loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			target: 'src/items',
 			rounds: 2,
 		})
 		commands.recordPlanPrepared(item.id, {
 			worktreePath,
-			branchName: 'vigil/item/harden-loop',
+			branchName: 'helm/item/harden-loop',
 			planDirName: 'harden-loop',
 			spawner: 'default',
 		})
@@ -1636,7 +1636,7 @@ test('Drainer runs queued harden Items through the loop lane and captures Almana
 			assert.equal(solver.calls.length, 0)
 			assert.equal(loopRunner.hardenCalls.length, 1)
 			assert.equal(loopRunner.hardenCalls[0].worktreePath, worktreePath)
-			assert.equal(loopRunner.hardenCalls[0].branchName, 'vigil/item/harden-loop')
+			assert.equal(loopRunner.hardenCalls[0].branchName, 'helm/item/harden-loop')
 			assert.equal(loopRunner.hardenCalls[0].payload.target, 'src/items')
 			assert.equal(loopRunner.hardenCalls[0].payload.rounds, 2)
 			assert.equal(db.items.get(item.id)?.almanacRunId, 'harden-src-items-1')
@@ -1654,7 +1654,7 @@ test('Drainer runs queued harden Items through the loop lane and captures Almana
 
 test('Drainer runs loop Items oldest-first across ralph and harden kinds', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-loop-order-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-loop-order-'))
 		const ralphWorktree = join(worktreeRoot, 'ralph')
 		const hardenWorktree = join(worktreeRoot, 'harden')
 		mkdirSync(ralphWorktree, { recursive: true })
@@ -1662,25 +1662,25 @@ test('Drainer runs loop Items oldest-first across ralph and harden kinds', async
 		const commands = new ItemCommands(db.items, config)
 		const newerRalph = commands.createRalphItem({
 			title: 'Newer ralph loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		const olderHarden = commands.createHardenItem({
 			title: 'Older harden loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			target: 'src/items',
 		})
 		db.items.update(newerRalph.id, { queuedAt: '2026-06-19T12:00:02.000Z' })
 		db.items.update(olderHarden.id, { queuedAt: '2026-06-19T12:00:01.000Z' })
 		commands.recordPlanPrepared(newerRalph.id, {
 			worktreePath: ralphWorktree,
-			branchName: 'vigil/item/newer-ralph-loop',
+			branchName: 'helm/item/newer-ralph-loop',
 			planDirName: 'newer-ralph-loop',
 			spawner: 'default',
 		})
 		commands.recordPlanPrepared(olderHarden.id, {
 			worktreePath: hardenWorktree,
-			branchName: 'vigil/item/older-harden-loop',
+			branchName: 'helm/item/older-harden-loop',
 			planDirName: 'older-harden-loop',
 			spawner: 'default',
 		})
@@ -1710,8 +1710,8 @@ test('Drainer runs loop Items oldest-first across ralph and harden kinds', async
 })
 
 test('AlmanacLoopRunner cancellation writes ralph stop signal and preserves worktree', async () => {
-	const worktreePath = mkdtempSync(join(tmpdir(), 'vigil-ralph-cancel-worktree-'))
-	const fakeBin = mkdtempSync(join(tmpdir(), 'vigil-fake-almanac-'))
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-ralph-cancel-worktree-'))
+	const fakeBin = mkdtempSync(join(tmpdir(), 'helm-fake-almanac-'))
 	const outputLogPath = join(worktreePath, 'ralph.log')
 	const almanacPath = join(fakeBin, 'almanac')
 	writeFileSync(
@@ -1747,7 +1747,7 @@ test('AlmanacLoopRunner cancellation writes ralph stop signal and preserves work
 					provider: 'codex',
 				},
 				worktreePath,
-				branchName: 'vigil/item/cancel-ralph',
+				branchName: 'helm/item/cancel-ralph',
 				planDirName: 'cancel-ralph',
 				outputLogPath,
 				signal: controller.signal,
@@ -1771,8 +1771,8 @@ test('AlmanacLoopRunner cancellation writes ralph stop signal and preserves work
 })
 
 test('AlmanacLoopRunner cancellation writes harden stop signal and preserves worktree', async () => {
-	const worktreePath = mkdtempSync(join(tmpdir(), 'vigil-harden-cancel-worktree-'))
-	const fakeBin = mkdtempSync(join(tmpdir(), 'vigil-fake-almanac-'))
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-harden-cancel-worktree-'))
+	const fakeBin = mkdtempSync(join(tmpdir(), 'helm-fake-almanac-'))
 	const outputLogPath = join(worktreePath, 'harden.log')
 	const argsLogPath = join(worktreePath, 'args.log')
 	const almanacPath = join(fakeBin, 'almanac')
@@ -1809,7 +1809,7 @@ test('AlmanacLoopRunner cancellation writes harden stop signal and preserves wor
 					rounds: 2,
 				},
 				worktreePath,
-				branchName: 'vigil/item/cancel-harden',
+				branchName: 'helm/item/cancel-harden',
 				planDirName: 'cancel-harden',
 				outputLogPath,
 				signal: controller.signal,
@@ -1841,16 +1841,16 @@ test('AlmanacLoopRunner cancellation writes harden stop signal and preserves wor
 
 test('processRalphItem records loop runner failures through ItemCommands', async () => {
 	await withTempDb(async db => {
-		const worktreePath = mkdtempSync(join(tmpdir(), 'vigil-ralph-fail-worktree-'))
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-ralph-fail-worktree-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Fail ralph loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		commands.recordPlanPrepared(item.id, {
 			worktreePath,
-			branchName: 'vigil/item/fail-ralph',
+			branchName: 'helm/item/fail-ralph',
 			planDirName: 'fail-ralph',
 			spawner: 'default',
 		})
@@ -1875,11 +1875,11 @@ test('processRalphItem records loop runner failures through ItemCommands', async
 
 test('Drainer routes solve Item pause, retry, cancel, start, and resume through Item lifecycle', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-drainer-lifecycle-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-lifecycle-'))
 		const commands = new ItemCommands(db.items, config)
 		const pausedItem = commands.createSolveItem({
 			title: 'Paused solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not start until asked.',
 		})
 		const solver = new FakeSolveSolver(worktreeRoot)
@@ -1901,7 +1901,7 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 
 			const resumedItem = commands.createSolveItem({
 				title: 'Resumed solve',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Start when drainer resumes.',
 			})
 			drainer.resume()
@@ -1928,11 +1928,11 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 
 test('Drainer ignores planned Items until explicit start', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-drainer-planned-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-planned-'))
 		const commands = new ItemCommands(db.items, config)
 		const plannedItem = commands.createSolveItem({
 			title: 'Plan-only solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Start only after planning.',
 			initialStatus: 'triage',
 		})
@@ -1961,17 +1961,17 @@ test('Drainer ignores planned Items until explicit start', async () => {
 
 test('Drainer refuses to manually start Items outside queued or planned states', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-drainer-start-guard-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-start-guard-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Already completed solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not run this Item again without retry.',
 		})
 		commands.startItem(item.id)
 		commands.completeSolveItem(item.id, {
 			worktreePath: worktreeRoot,
-			branchName: 'vigil/item/already-completed',
+			branchName: 'helm/item/already-completed',
 			planDirName: 'already-completed',
 			resultSummary: 'Already done',
 		})
@@ -1993,24 +1993,24 @@ test('Drainer refuses to manually start Items outside queued or planned states',
 
 test('Drainer recovers stale processing Items before scheduling lanes', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-stale-items-'))
-		const loopWorktree = mkdtempSync(join(tmpdir(), 'vigil-stale-loop-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-stale-items-'))
+		const loopWorktree = mkdtempSync(join(tmpdir(), 'helm-stale-loop-'))
 		const commands = new ItemCommands(db.items, config)
 		const solveItem = commands.createSolveItem({
 			title: 'Recover stale solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Continue after daemon restart.',
 		})
 		const loopItem = commands.createRalphItem({
 			title: 'Recover stale ralph',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		commands.startItem(solveItem.id)
 		commands.startItem(loopItem.id)
 		commands.recordExecutionWorkspaceIdentity(loopItem.id, {
 			worktreePath: loopWorktree,
-			branchName: 'vigil/item/recover-stale-ralph',
+			branchName: 'helm/item/recover-stale-ralph',
 			planDirName: 'recover-stale-ralph',
 		})
 
@@ -2054,11 +2054,11 @@ test('Drainer recovers stale processing Items before scheduling lanes', async ()
 
 test('solve Items display the immutable prompt snapshot captured before invocation', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-snapshot-worktrees-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-snapshot-worktrees-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Snapshot solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Use stored solve input.',
 		})
 		const planDirName = 'snapshot-plan'
@@ -2068,7 +2068,7 @@ test('solve Items display the immutable prompt snapshot captured before invocati
 		workspace.writeReadme('BEFORE snapshot artifact')
 		commands.recordPlanPrepared(item.id, {
 			worktreePath,
-			branchName: 'vigil/item/snapshot-solve',
+			branchName: 'helm/item/snapshot-solve',
 			planDirName,
 			spawner: 'default',
 		})
@@ -2092,11 +2092,11 @@ test('solve Items display the immutable prompt snapshot captured before invocati
 
 test('processSolveItem uses solve Item selected solver agent', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-item-agent-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-agent-'))
 		const item = db.items.create({
 			kind: 'solve',
 			status: 'ready',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Run with Codex',
 			source: null,
 			baseRef: 'main',
@@ -2116,11 +2116,11 @@ test('processSolveItem uses solve Item selected solver agent', async () => {
 
 test('solve Item cancellation preserves the newly-created worktree identity', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-cancelled-solve-worktrees-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-cancelled-solve-worktrees-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Cancelled solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Create worktree, then cancel before returning a solve result.',
 		})
 
@@ -2141,14 +2141,14 @@ test('solve Item cancellation preserves the newly-created worktree identity', as
 
 test('processSolveItem dispatches pre-shipped PR URLs for solve Items without opening another PR', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-preship-worktrees-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-preship-worktrees-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Pre-shipped solve',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Use the PR URL in solver-result.json.',
 		})
-		const prUrl = 'https://github.com/neumie/vigil/pull/77'
+		const prUrl = 'https://github.com/neumie/helm/pull/77'
 
 		try {
 			await processSolveItem(item.id, config, db, provider, new FakeSolveSolver(worktreeRoot, 0, { prUrl }))
@@ -2168,22 +2168,22 @@ test('processSolveItem dispatches pre-shipped PR URLs for solve Items without op
 
 test('Run Observation normalizes solve logs, events, and PR status into Dashboard Contract', async () => {
 	await withTempDb(async db => {
-		const logRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-solve-'))
+		const logRoot = mkdtempSync(join(tmpdir(), 'helm-observe-solve-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Observe solve Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Capture dashboard observation.',
 		})
-		const prUrl = 'https://github.com/neumie/vigil/pull/91'
+		const prUrl = 'https://github.com/neumie/helm/pull/91'
 
 		try {
 			writeFileSync(join(logRoot, `${item.id}.log`), 'agent boot\nagent done\n', 'utf-8')
 			commands.startItem(item.id)
 			commands.recordEvent(item.id, 'solve_command', { detail: 'npm test' })
 			commands.completeSolveItem(item.id, {
-				worktreePath: '/tmp/vigil-observe-solve',
-				branchName: 'vigil/item/observe-solve',
+				worktreePath: '/tmp/helm-observe-solve',
+				branchName: 'helm/item/observe-solve',
 				planDirName: 'observe-solve',
 				resultSummary: 'Solve observation complete',
 			})
@@ -2218,11 +2218,11 @@ test('Run Observation normalizes solve logs, events, and PR status into Dashboar
 
 test('Run Observation normalizes almanac status.tsv for loop Items', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-loop-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-observe-loop-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Observe ralph loop',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		const runId = 'ralph-afk-rework-99'
@@ -2250,7 +2250,7 @@ test('Run Observation normalizes almanac status.tsv for loop Items', async () =>
 			commands.startItem(item.id)
 			commands.recordExecutionWorkspaceIdentity(item.id, {
 				worktreePath,
-				branchName: 'vigil/item/observe-ralph',
+				branchName: 'helm/item/observe-ralph',
 				planDirName: 'observe-ralph',
 			})
 			commands.recordAlmanacRunId(item.id, runId)
@@ -2282,11 +2282,11 @@ test('Run Observation normalizes almanac status.tsv for loop Items', async () =>
 
 test('Run Observation surfaces almanac failure_reason when loop summary is absent', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-observe-loop-failure-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-observe-loop-failure-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createHardenItem({
 			title: 'Observe harden failure',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			target: 'src/items',
 		})
 		const runId = 'harden-items-42'
@@ -2312,7 +2312,7 @@ test('Run Observation surfaces almanac failure_reason when loop summary is absen
 			commands.startItem(item.id)
 			commands.recordExecutionWorkspaceIdentity(item.id, {
 				worktreePath,
-				branchName: 'vigil/item/observe-harden-failure',
+				branchName: 'helm/item/observe-harden-failure',
 				planDirName: 'observe-harden-failure',
 			})
 			commands.recordAlmanacRunId(item.id, runId)
@@ -2342,21 +2342,21 @@ test('server returns unknown and empty Run Observation fields when sources are m
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Missing observation sources',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		const runId = 'ralph-missing-1'
-		const missingWorktree = join(tmpdir(), 'vigil-missing-observation-worktree')
+		const missingWorktree = join(tmpdir(), 'helm-missing-observation-worktree')
 		commands.startItem(item.id)
 		commands.recordExecutionWorkspaceIdentity(item.id, {
 			worktreePath: missingWorktree,
-			branchName: 'vigil/item/missing-observation',
+			branchName: 'helm/item/missing-observation',
 			planDirName: 'missing-observation',
 		})
 		commands.recordAlmanacRunId(item.id, runId)
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2390,7 +2390,7 @@ test('dispatchSolveItem opens fallback PRs and posts provider comments only for 
 		const commands = new ItemCommands(db.items, prConfig)
 		const sourceItem = commands.createSolveItem({
 			title: 'Dispatch source Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Open a PR and comment on the source task.',
 			baseRef: 'release/afk',
 			source: {
@@ -2401,22 +2401,22 @@ test('dispatchSolveItem opens fallback PRs and posts provider comments only for 
 		})
 		const localItem = commands.createSolveItem({
 			title: 'Dispatch local Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Open a PR without provider comment.',
 			baseRef: 'release/local',
 		})
 		commands.approveItem(sourceItem.id)
 		commands.startItem(sourceItem.id)
 		commands.completeSolveItem(sourceItem.id, {
-			worktreePath: '/tmp/vigil-source-worktree',
-			branchName: 'vigil/item/source',
+			worktreePath: '/tmp/helm-source-worktree',
+			branchName: 'helm/item/source',
 			planDirName: 'source-plan',
 			resultSummary: 'Solved source Item',
 		})
 		commands.startItem(localItem.id)
 		commands.completeSolveItem(localItem.id, {
-			worktreePath: '/tmp/vigil-local-worktree',
-			branchName: 'vigil/item/local',
+			worktreePath: '/tmp/helm-local-worktree',
+			branchName: 'helm/item/local',
 			planDirName: 'local-plan',
 			resultSummary: 'Solved local Item',
 		})
@@ -2443,7 +2443,7 @@ test('dispatchSolveItem opens fallback PRs and posts provider comments only for 
 				body: string
 			}) => {
 				prs.push(opts)
-				return `https://github.com/neumie/vigil/pull/${prs.length}`
+				return `https://github.com/neumie/helm/pull/${prs.length}`
 			},
 		}
 
@@ -2475,26 +2475,26 @@ test('dispatchSolveItem opens fallback PRs and posts provider comments only for 
 		})
 
 		assert.deepEqual(pushed, [
-			{ worktreePath: '/tmp/vigil-source-worktree', branchName: 'vigil/item/source' },
-			{ worktreePath: '/tmp/vigil-local-worktree', branchName: 'vigil/item/local' },
+			{ worktreePath: '/tmp/helm-source-worktree', branchName: 'helm/item/source' },
+			{ worktreePath: '/tmp/helm-local-worktree', branchName: 'helm/item/local' },
 		])
 		assert.deepEqual(
 			prs.map(pr => ({ branchName: pr.branchName, baseBranch: pr.baseBranch, title: pr.title, body: pr.body })),
 			[
 				{
-					branchName: 'vigil/item/source',
+					branchName: 'helm/item/source',
 					baseBranch: 'release/afk',
-					title: '[Vigil] Source PR',
+					title: '[Helm] Source PR',
 					body: 'Source body\n\n---\n**Source:** https://example.test/tasks/task-dispatch',
 				},
-				{ branchName: 'vigil/item/local', baseBranch: 'release/local', title: '[Vigil] Local PR', body: 'Local body' },
+				{ branchName: 'helm/item/local', baseBranch: 'release/local', title: '[Helm] Local PR', body: 'Local body' },
 			],
 		)
 		assert.deepEqual(comments, [
-			{ externalId: 'task-dispatch', markdown: '**Vigil**: Solved. PR: https://github.com/neumie/vigil/pull/1' },
+			{ externalId: 'task-dispatch', markdown: '**Helm**: Solved. PR: https://github.com/neumie/helm/pull/1' },
 		])
-		assert.equal(db.items.get(sourceItem.id)?.prUrl, 'https://github.com/neumie/vigil/pull/1')
-		assert.equal(db.items.get(localItem.id)?.prUrl, 'https://github.com/neumie/vigil/pull/2')
+		assert.equal(db.items.get(sourceItem.id)?.prUrl, 'https://github.com/neumie/helm/pull/1')
+		assert.equal(db.items.get(localItem.id)?.prUrl, 'https://github.com/neumie/helm/pull/2')
 		assert.deepEqual(
 			db.items.getEvents(sourceItem.id).map(event => event.eventType),
 			['item_approved', 'item_started', 'solve_completed', 'pr_created', 'comment_posted', 'action_completed'],
@@ -2514,7 +2514,7 @@ test('dispatchSolveItem never posts a provider comment for a captured (email) It
 		// provider name — the capturedContext guard must still suppress the comment.
 		const captured = commands.createSolveItem({
 			title: 'Ingested email',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Fix the thing from the email.',
 			source: { provider: 'contember', externalId: 'email:abc' },
 			capturedContext: { title: 'Ingested email' },
@@ -2522,8 +2522,8 @@ test('dispatchSolveItem never posts a provider comment for a captured (email) It
 		commands.approveItem(captured.id)
 		commands.startItem(captured.id)
 		commands.completeSolveItem(captured.id, {
-			worktreePath: '/tmp/vigil-captured',
-			branchName: 'vigil/item/captured',
+			worktreePath: '/tmp/helm-captured',
+			branchName: 'helm/item/captured',
 			planDirName: 'captured-plan',
 			resultSummary: 'done',
 		})
@@ -2544,7 +2544,7 @@ test('dispatchSolveItem never posts a provider comment for a captured (email) It
 			provider: commentProvider,
 			sideEffects: {
 				pushBranch: () => undefined,
-				createPr: () => 'https://github.com/neumie/vigil/pull/9',
+				createPr: () => 'https://github.com/neumie/helm/pull/9',
 			},
 		})
 
@@ -2566,7 +2566,7 @@ test('ItemStore validates payload kind and shape at the persistence seam', async
 					id: 'item-invalid',
 					kind: 'solve',
 					status: 'ready',
-					projectSlug: 'vigil',
+					projectSlug: 'helm',
 					title: 'Bad payload',
 					source: null,
 					baseRef: 'main',
@@ -2582,7 +2582,7 @@ test('ItemStore validates payload kind and shape at the persistence seam', async
 					id: 'item-mismatch',
 					kind: 'solve',
 					status: 'ready',
-					projectSlug: 'vigil',
+					projectSlug: 'helm',
 					title: 'Wrong kind',
 					source: null,
 					baseRef: 'main',
@@ -2600,7 +2600,7 @@ test('ItemStore rejects invalid lifecycle updates without corrupting the row', a
 			id: 'item-status-guard',
 			kind: 'solve',
 			status: 'ready',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Status guard',
 			source: null,
 			baseRef: 'main',
@@ -2618,7 +2618,7 @@ test('server exposes created Items through the dashboard contract', async () => 
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2633,7 +2633,7 @@ test('server exposes created Items through the dashboard contract', async () => 
 			body: JSON.stringify({
 				kind: 'solve',
 				title: 'Create contract item',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Expose through server-owned contract.',
 				spawner: 'default',
 			}),
@@ -2677,7 +2677,7 @@ test('server rejects Item creation with an unavailable Spawner adapter', async (
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2692,7 +2692,7 @@ test('server rejects Item creation with an unavailable Spawner adapter', async (
 			body: JSON.stringify({
 				kind: 'solve',
 				title: 'Missing spawner',
-				projectSlug: 'vigil',
+				projectSlug: 'helm',
 				prompt: 'Do not store this Item.',
 				spawner: 'missing-spawner-zz-test',
 			}),
@@ -2710,18 +2710,18 @@ test('server rejects Item creation with an unavailable Spawner adapter', async (
 
 test('server plans Items through Spawner and records reusable Item workspace identity', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-item-plans-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-plans-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Plan Item flow',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Write a plan for this Item.',
 			baseRef: 'release/plan',
 		})
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2745,7 +2745,7 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 				}
 			}
 			assert.equal(first.data.spawner, 'fake')
-			assert.match(first.data.branchName, /^vigil\/item\/plan-item-flow-/)
+			assert.match(first.data.branchName, /^helm\/item\/plan-item-flow-/)
 			const planDate = new Date(item.createdAt).toISOString().slice(0, 10)
 			assert.match(first.data.planDirName, new RegExp(`^${planDate}-plan-item-flow-`))
 			assert.equal(planningSpawner.calls[0].projectConfig.baseBranch, 'release/plan')
@@ -2781,11 +2781,11 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 
 test('server plans source-backed solve Items with provider task context', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-source-item-plans-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-item-plans-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Stored source summary',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Stored fallback prompt.',
 			source: {
 				provider: provider.name,
@@ -2807,7 +2807,7 @@ test('server plans source-backed solve Items with provider task context', async 
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2843,18 +2843,18 @@ test('server plans source-backed solve Items with provider task context', async 
 
 test('server rejects planning for processing Items before mutating workspace identity', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-processing-plan-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-processing-plan-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Already running plan',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Do not re-plan during execution.',
 		})
 		commands.startItem(item.id)
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2886,11 +2886,11 @@ test('server rejects planning for processing Items before mutating workspace ide
 
 test('server plans Items with the per-Item selected Spawner', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-selected-spawner-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-selected-spawner-'))
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Plan with selected spawner',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Open this planning session in the selected spawner.',
 			spawner: 'okena',
 		})
@@ -2898,7 +2898,7 @@ test('server plans Items with the per-Item selected Spawner', async () => {
 		const selectedSpawner = new FakePlanningSpawner(worktreeRoot, 'okena')
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -2938,7 +2938,7 @@ test('Spawner registry discovers installed adapters and resolves the default ada
 })
 
 test('Spawner registry discovers extension adapter files without a closed name enum', async () => {
-	const root = mkdtempSync(join(tmpdir(), 'vigil-spawner-registry-'))
+	const root = mkdtempSync(join(tmpdir(), 'helm-spawner-registry-'))
 	const adapterDir = join(root, 'tmux')
 	mkdirSync(adapterDir, { recursive: true })
 	writeFileSync(
@@ -2973,7 +2973,7 @@ export async function createSpawner() {
 })
 
 test('Spawner registry uses config spawner name as the default planning surface', async () => {
-	const root = mkdtempSync(join(tmpdir(), 'vigil-spawner-default-'))
+	const root = mkdtempSync(join(tmpdir(), 'helm-spawner-default-'))
 	const adapterDir = join(root, 'tmux')
 	mkdirSync(adapterDir, { recursive: true })
 	writeFileSync(
@@ -3007,11 +3007,11 @@ export function createSpawner() {
 
 test('server planning route accepts loop Item kinds through the same Spawner seam', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'vigil-loop-item-plans-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-loop-item-plans-'))
 		const ralph = db.items.create({
 			kind: 'ralph',
 			status: 'ready',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Plan ralph run',
 			source: null,
 			baseRef: 'main',
@@ -3020,7 +3020,7 @@ test('server planning route accepts loop Item kinds through the same Spawner sea
 		const harden = db.items.create({
 			kind: 'harden',
 			status: 'ready',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Plan harden run',
 			source: null,
 			baseRef: 'main',
@@ -3029,7 +3029,7 @@ test('server planning route accepts loop Item kinds through the same Spawner sea
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3064,7 +3064,7 @@ test('Dashboard Contract includes optional source, branch, and PR links', async 
 		const item = db.items.create({
 			kind: 'solve',
 			status: 'review',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Review linked Item',
 			source: {
 				provider: 'contember',
@@ -3077,8 +3077,8 @@ test('Dashboard Contract includes optional source, branch, and PR links', async 
 
 		const contract = toDashboardItem({
 			...item,
-			branchName: 'vigil/item-contract',
-			prUrl: 'https://github.com/neumie/vigil/pull/123',
+			branchName: 'helm/item-contract',
+			prUrl: 'https://github.com/neumie/helm/pull/123',
 		})
 
 		assert.deepEqual(contract.card, {
@@ -3089,8 +3089,8 @@ test('Dashboard Contract includes optional source, branch, and PR links', async 
 		})
 		assert.deepEqual(contract.links, {
 			source: { label: 'task-123', url: 'https://example.test/tasks/task-123' },
-			branch: { label: 'vigil/item-contract', url: 'https://github.com/neumie/vigil/pull/123' },
-			pr: { label: 'PR #123', url: 'https://github.com/neumie/vigil/pull/123' },
+			branch: { label: 'helm/item-contract', url: 'https://github.com/neumie/helm/pull/123' },
+			pr: { label: 'PR #123', url: 'https://github.com/neumie/helm/pull/123' },
 		})
 		assert.deepEqual(
 			contract.allowedActions.map(a => a.id),
@@ -3104,12 +3104,12 @@ test('Dashboard Contract exposes persisted Item plan identity', async () => {
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createRalphItem({
 			title: 'Resume planned Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prdPath: 'docs/plans/afk-rework/prd.md',
 		})
 		const planned = commands.recordPlanPrepared(item.id, {
-			worktreePath: '/tmp/vigil-planned-item',
-			branchName: 'vigil/item/resume-planned',
+			worktreePath: '/tmp/helm-planned-item',
+			branchName: 'helm/item/resume-planned',
 			planDirName: 'resume-planned-item',
 			spawner: 'default',
 		})
@@ -3117,10 +3117,10 @@ test('Dashboard Contract exposes persisted Item plan identity', async () => {
 		const contract = toDashboardItem(planned)
 
 		assert.deepEqual(contract.plan, {
-			worktreePath: '/tmp/vigil-planned-item',
-			branchName: 'vigil/item/resume-planned',
+			worktreePath: '/tmp/helm-planned-item',
+			branchName: 'helm/item/resume-planned',
 			planDirName: 'resume-planned-item',
-			readmePath: new PlanWorkspace('/tmp/vigil-planned-item', 'resume-planned-item').readmePath,
+			readmePath: new PlanWorkspace('/tmp/helm-planned-item', 'resume-planned-item').readmePath,
 		})
 	})
 })
@@ -3130,13 +3130,13 @@ test('Dashboard Contract groups sibling Items together without changing lifecycl
 		const commands = new ItemCommands(db.items, config)
 		const siblings = commands.createSolveItems({
 			title: 'Grouped dashboard Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Render siblings together.',
 			parallelism: 2,
 		})
 		const standalone = commands.createSolveItem({
 			title: 'Standalone dashboard Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Render outside the group.',
 		})
 		commands.startItem(siblings[0].id)
@@ -3183,24 +3183,24 @@ test('runOutcome records the run guess separate from lifecycle status', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
 
-		const ok = commands.createSolveItem({ title: 'ok run', projectSlug: 'vigil', prompt: 'do it' })
+		const ok = commands.createSolveItem({ title: 'ok run', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(ok.id)
 		const completed = commands.completeSolveItem(ok.id, {
 			worktreePath: '/tmp/wt',
-			branchName: 'vigil/item/ok',
+			branchName: 'helm/item/ok',
 			planDirName: '2026-06-26-ok',
 			resultSummary: 'done',
 		})
 		assert.equal(completed.status, 'review')
 		assert.equal(completed.runOutcome, 'ok')
 
-		const errored = commands.createSolveItem({ title: 'errored run', projectSlug: 'vigil', prompt: 'do it' })
+		const errored = commands.createSolveItem({ title: 'errored run', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(errored.id)
 		const failed = commands.failItem(errored.id, 'agent blew up', 'solve')
 		assert.equal(failed.status, 'failed')
 		assert.equal(failed.runOutcome, 'errored')
 
-		const noResult = commands.createSolveItem({ title: 'no result run', projectSlug: 'vigil', prompt: 'do it' })
+		const noResult = commands.createSolveItem({ title: 'no result run', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(noResult.id)
 		const failedNoResult = commands.failItem(noResult.id, 'No solver-result.json at docs/...', 'solve')
 		assert.equal(failedNoResult.runOutcome, 'no_result')
@@ -3210,22 +3210,22 @@ test('runOutcome records the run guess separate from lifecycle status', () => {
 test('reconcileFailedSolve lands an errored run with shippable work in review, not failed', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'shipped but no result', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'shipped but no result', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(item.id)
 		commands.recordExecutionWorkspaceIdentity(item.id, {
 			worktreePath: '/tmp/wt',
-			branchName: 'vigil/item/x',
+			branchName: 'helm/item/x',
 			planDirName: '2026-06-26-x',
 		})
 
 		const reconciled = commands.reconcileFailedSolve(item.id, {
 			message: 'No solver-result.json at docs/...',
 			phase: 'solve',
-			prUrl: 'https://github.com/neumie/vigil/pull/9',
+			prUrl: 'https://github.com/neumie/helm/pull/9',
 		})
 		assert.equal(reconciled.status, 'review')
 		assert.equal(reconciled.runOutcome, 'no_result')
-		assert.equal(reconciled.prUrl, 'https://github.com/neumie/vigil/pull/9')
+		assert.equal(reconciled.prUrl, 'https://github.com/neumie/helm/pull/9')
 		// error context is kept so the dashboard can flag "run was messy — verify"
 		assert.equal(reconciled.errorMessage, 'No solver-result.json at docs/...')
 
@@ -3237,7 +3237,7 @@ test('reconcileFailedSolve lands an errored run with shippable work in review, n
 test('reopenItem is the manual false-failure override (failed solve → review)', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'actually fine', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'actually fine', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(item.id)
 		commands.failItem(item.id, 'looked failed', 'solve')
 
@@ -3252,7 +3252,7 @@ test('reopenItem is the manual false-failure override (failed solve → review)'
 
 		// reopen is only valid from failed, and only for solve Items
 		assert.throws(() => commands.reopenItem(item.id))
-		const loop = commands.createRalphItem({ title: 'loop', projectSlug: 'vigil', prdPath: 'docs/p.md' })
+		const loop = commands.createRalphItem({ title: 'loop', projectSlug: 'helm', prdPath: 'docs/p.md' })
 		commands.startItem(loop.id)
 		commands.failItem(loop.id, 'loop failed', 'loop')
 		assert.throws(() => commands.reopenItem(loop.id))
@@ -3264,7 +3264,7 @@ test('reopenItem is the manual false-failure override (failed solve → review)'
 })
 
 test('parsePrUrl extracts owner/repo from a GitHub PR URL', () => {
-	assert.deepEqual(parsePrUrl('https://github.com/neumie/vigil/pull/123'), { owner: 'neumie', repo: 'vigil' })
+	assert.deepEqual(parsePrUrl('https://github.com/neumie/helm/pull/123'), { owner: 'neumie', repo: 'helm' })
 	assert.equal(parsePrUrl('https://example.com/not/a/pr'), null)
 })
 
@@ -3281,7 +3281,7 @@ test('httpUrlOrNull rejects non-http(s) deploy URLs (XSS guard)', () => {
 test('listDeployWatchable returns shipped solve Items, excludes unshipped', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const shipped = commands.createSolveItem({ title: 'shipped', projectSlug: 'vigil', prompt: 'x' })
+		const shipped = commands.createSolveItem({ title: 'shipped', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(shipped.id)
 		commands.completeSolveItem(shipped.id, {
 			worktreePath: '/tmp/a',
@@ -3289,8 +3289,8 @@ test('listDeployWatchable returns shipped solve Items, excludes unshipped', () =
 			planDirName: 'p',
 			resultSummary: 's',
 		})
-		commands.recordDispatchPr(shipped.id, { prUrl: 'https://github.com/neumie/vigil/pull/1' })
-		const queuedNoPr = commands.createSolveItem({ title: 'ready', projectSlug: 'vigil', prompt: 'x' })
+		commands.recordDispatchPr(shipped.id, { prUrl: 'https://github.com/neumie/helm/pull/1' })
+		const queuedNoPr = commands.createSolveItem({ title: 'ready', projectSlug: 'helm', prompt: 'x' })
 
 		const ids = db.items.listDeployWatchable().map(i => i.id)
 		assert.ok(ids.includes(shipped.id))
@@ -3301,15 +3301,15 @@ test('listDeployWatchable returns shipped solve Items, excludes unshipped', () =
 test('recordDeployState persists the ladder and emits transition events exactly once', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'shipped', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'shipped', projectSlug: 'helm', prompt: 'do it' })
 		commands.startItem(item.id)
 		commands.completeSolveItem(item.id, {
 			worktreePath: '/tmp/wt',
-			branchName: 'vigil/item/x',
+			branchName: 'helm/item/x',
 			planDirName: '2026-06-26-x',
 			resultSummary: 'done',
 		})
-		commands.recordDispatchPr(item.id, { prUrl: 'https://github.com/neumie/vigil/pull/9' })
+		commands.recordDispatchPr(item.id, { prUrl: 'https://github.com/neumie/helm/pull/9' })
 
 		// first observation: merged, staging success, production in-progress
 		const s1 = commands.recordDeployState(item.id, {
@@ -3363,7 +3363,7 @@ test('recordDeployState persists the ladder and emits transition events exactly 
 test('markItemMerged moves a review solve Item to completed and is idempotent', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'shipped', projectSlug: 'vigil', prompt: 'p' })
+		const item = commands.createSolveItem({ title: 'shipped', projectSlug: 'helm', prompt: 'p' })
 		commands.startItem(item.id)
 		commands.completeSolveItem(item.id, {
 			worktreePath: '/tmp/wt',
@@ -3387,7 +3387,7 @@ test('markItemMerged moves a review solve Item to completed and is idempotent', 
 test('setItemStatus is a guarded manual override', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 't', projectSlug: 'vigil', prompt: 'p' }) // queued
+		const item = commands.createSolveItem({ title: 't', projectSlug: 'helm', prompt: 'p' }) // queued
 
 		const done = commands.setItemStatus(item.id, 'done')
 		assert.equal(done.status, 'done')
@@ -3413,13 +3413,13 @@ test('server single Item reads include sibling group dashboard metadata', async 
 		const commands = new ItemCommands(db.items, config)
 		const siblings = commands.createSolveItems({
 			title: 'Grouped detail Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Keep group metadata on detail reads.',
 			parallelism: 2,
 		})
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3446,7 +3446,7 @@ test('server can find an Item dashboard contract by Source external id', async (
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3457,7 +3457,7 @@ test('server can find an Item dashboard contract by Source external id', async (
 		db.items.create({
 			kind: 'solve',
 			status: 'ready',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Source-backed Item',
 			source: {
 				provider: 'contember',
@@ -3532,14 +3532,14 @@ test('server creates source-backed unverified Items from external ids', async ()
 			resolveTaskSummary: async (externalId: string) =>
 				externalId === 'task-extension-create'
 					? {
-							projectSlug: 'vigil',
+							projectSlug: 'helm',
 							title: 'Extension-created source Item',
 						}
 					: null,
 		}
 		const api = apiRoutes(
 			sourceConfig,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3580,14 +3580,14 @@ test('server rejects solverAgent on source Item creation', async () => {
 			resolveTaskSummary: async (externalId: string) =>
 				externalId === 'task-source-agent'
 					? {
-							projectSlug: 'vigil',
+							projectSlug: 'helm',
 							title: 'Source Item with stale agent field',
 						}
 					: null,
 		}
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3619,13 +3619,13 @@ test('ItemCommands approve and reject unverified Items with lifecycle events', a
 		}
 		const toApprove = commands.createSolveItem({
 			title: 'Approve source Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Approve this source Item.',
 			source,
 		})
 		const toReject = commands.createSolveItem({
 			title: 'Reject source Item',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Reject this source Item.',
 			source: { ...source, externalId: 'task-reject', url: 'https://example.test/tasks/task-reject' },
 		})
@@ -3660,7 +3660,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 	await withTempDb(async db => {
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			queue as never,
 			poller as never,
@@ -3671,7 +3671,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		const approveTarget = db.items.create({
 			kind: 'solve',
 			status: 'triage',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Approve via API',
 			source: {
 				provider: 'contember',
@@ -3684,7 +3684,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		const rejectTarget = db.items.create({
 			kind: 'solve',
 			status: 'triage',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Reject via API',
 			source: {
 				provider: 'contember',
@@ -3720,12 +3720,12 @@ test('server start and cancel Item action routes return dashboard contract', asy
 		const commands = new ItemCommands(db.items, config)
 		const startTarget = commands.createSolveItem({
 			title: 'Start via API',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Start this Item.',
 		})
 		const cancelTarget = commands.createSolveItem({
 			title: 'Cancel via API',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Cancel this Item.',
 		})
 		const routeQueue = {
@@ -3741,7 +3741,7 @@ test('server start and cancel Item action routes return dashboard contract', asy
 		}
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			routeQueue as never,
 			poller as never,
@@ -3778,7 +3778,7 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		const approveTarget = db.items.create({
 			kind: 'solve',
 			status: 'triage',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: 'Approve with Codex',
 			source: {
 				provider: 'contember',
@@ -3790,12 +3790,12 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		})
 		const startTarget = commands.createSolveItem({
 			title: 'Start with Codex',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Start with selected agent.',
 		})
 		const retryTarget = commands.createSolveItem({
 			title: 'Retry with Codex',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'Retry with selected agent.',
 		})
 		commands.startItem(retryTarget.id)
@@ -3818,7 +3818,7 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		}
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			routeQueue as never,
 			poller as never,
@@ -3848,7 +3848,7 @@ test('server Item work-start routes persist selected solve agent before queue ha
 test('recordPlanPrepared stamps plannedAt (the "planned" signal) and re-plan preserves the original', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'Plan me', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'Plan me', projectSlug: 'helm', prompt: 'do it' })
 		assert.equal(item.plannedAt, null) // a fresh item is unplanned
 
 		const planned = commands.recordPlanPrepared(item.id, {
@@ -3871,7 +3871,7 @@ test('recordPlanPrepared stamps plannedAt (the "planned" signal) and re-plan pre
 	}))
 
 test('PlanWorkspace.listArtifacts returns each .md file with content and skips non-markdown', () => {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-plan-'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-plan-'))
 	try {
 		const ws = new PlanWorkspace(dir, '2026-06-30-demo')
 		ws.ensureDir()
@@ -3889,7 +3889,7 @@ test('PlanWorkspace.listArtifacts returns each .md file with content and skips n
 })
 
 test('PlanWorkspace.listArtifacts truncates a pathologically large plan file for the preview', () => {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-plan-big-'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-plan-big-'))
 	try {
 		const ws = new PlanWorkspace(dir, '2026-06-30-big')
 		ws.ensureDir()
@@ -3908,7 +3908,7 @@ test('PlanWorkspace.listArtifacts truncates a pathologically large plan file for
 function aiApi(db: DB, oneShot: () => Promise<string | null>) {
 	return apiRoutes(
 		config,
-		'vigil.config.json',
+		'helm.config.json',
 		db,
 		queue as never,
 		poller as never,
@@ -3927,7 +3927,7 @@ test('POST /items/:id/ai/display-name force-runs the pass and returns the update
 		// must run regardless and persist the result.
 		const item = commands.createSolveItem({
 			title: 'A long provider title that should compress to a short human label',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'do the thing',
 		})
 		const api = aiApi(db, async () => 'Compress invoice recipient logic')
@@ -3943,7 +3943,7 @@ test('POST /items/:id/ai/assess force-runs triage and stores the assessment', ()
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Bug report',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			prompt: 'export 500s',
 			source: { provider: 'contember', externalId: 'assess-route-1' },
 		})
@@ -3964,7 +3964,7 @@ test('POST /items/:id/ai/assess force-runs triage and stores the assessment', ()
 test('POST /items/:id/ai/branch-name force-derives a branch for a worktree-less solve Item', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
 		const api = aiApi(db, async () => 'feat/manual-branch')
 		const res = await api.request(`/items/${item.id}/ai/branch-name`, { method: 'POST' })
 		assert.equal(res.status, 200)
@@ -3976,8 +3976,8 @@ test('POST /items/:id/ai/branch-name force-derives a branch for a worktree-less 
 test('POST /items/:id/ai/:pass guards unknown pass, missing item, and unsafe branch renames', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const solve = commands.createSolveItem({ title: 'whatever', projectSlug: 'vigil', prompt: 'do it' })
-		const ralph = commands.createRalphItem({ title: 'loop', projectSlug: 'vigil', prdPath: 'docs/prd/x.md' })
+		const solve = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
+		const ralph = commands.createRalphItem({ title: 'loop', projectSlug: 'helm', prdPath: 'docs/prd/x.md' })
 		// A worktree already exists → renaming its branch would orphan it.
 		db.items.update(solve.id, { worktreePath: '/tmp/already-a-worktree' })
 
@@ -3998,7 +3998,7 @@ test('POST /items/:id/ai/:pass guards unknown pass, missing item, and unsafe bra
 test('DeployWatcher backfills a late PR onto an errored review Item and stops once recorded', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'late pr', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'late pr', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(item.id)
 		commands.recordExecutionWorkspaceIdentity(item.id, {
 			worktreePath: '/tmp/wt',
@@ -4016,7 +4016,7 @@ test('DeployWatcher backfills a late PR onto an errored review Item and stops on
 		const watcher = new DeployWatcher(config, db, {
 			discoverPrUrl: async (repoPath, branch) => {
 				discovered.push({ repoPath, branch })
-				return discovered.length === 1 ? null : 'https://github.com/neumie/vigil/pull/9'
+				return discovered.length === 1 ? null : 'https://github.com/neumie/helm/pull/9'
 			},
 			fetchDeployState: async () => null,
 		})
@@ -4033,7 +4033,7 @@ test('DeployWatcher backfills a late PR onto an errored review Item and stops on
 			{ repoPath: '/repo', branch: 'fix/late' },
 		])
 		const updated = db.items.get(item.id)
-		assert.equal(updated?.prUrl, 'https://github.com/neumie/vigil/pull/9')
+		assert.equal(updated?.prUrl, 'https://github.com/neumie/helm/pull/9')
 		assert.equal(updated?.status, 'review')
 		assert.equal(db.items.countEvents(item.id, 'pr_created'), 1)
 		assert.equal(db.items.listPrBackfillable().length, 0)
@@ -4043,15 +4043,15 @@ test('listPrBackfillable excludes ok runs, missing branches, and non-review stat
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
 		// Clean completed run (runOutcome ok) — dispatch owns its PR story, not the backfill.
-		const ok = commands.createSolveItem({ title: 'ok', projectSlug: 'vigil', prompt: 'x' })
+		const ok = commands.createSolveItem({ title: 'ok', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(ok.id)
 		commands.completeSolveItem(ok.id, { worktreePath: '/t', branchName: 'b1', planDirName: 'p', resultSummary: 's' })
 		// Errored review Item without a branch — nothing to look up.
-		const noBranch = commands.createSolveItem({ title: 'nb', projectSlug: 'vigil', prompt: 'x' })
+		const noBranch = commands.createSolveItem({ title: 'nb', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(noBranch.id)
 		commands.recordExecutionWorkspaceIdentity(noBranch.id, { worktreePath: '/t2', planDirName: 'p2' })
 		// Failed (not review) Item.
-		const failed = commands.createSolveItem({ title: 'f', projectSlug: 'vigil', prompt: 'x' })
+		const failed = commands.createSolveItem({ title: 'f', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(failed.id)
 		commands.failItem(failed.id, 'boom', 'solve')
 
@@ -4065,7 +4065,7 @@ test('listPrBackfillable excludes ok runs, missing branches, and non-review stat
 test('setSolveItemModel stores and clears the per-item model override', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'model pick', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'model pick', projectSlug: 'helm', prompt: 'x' })
 
 		const withModel = commands.setSolveItemModel(item.id, 'claude-fable-5')
 		assert.equal(withModel.payload.kind === 'solve' ? withModel.payload.solverModel : null, 'claude-fable-5')
@@ -4073,15 +4073,15 @@ test('setSolveItemModel stores and clears the per-item model override', () =>
 		const cleared = commands.setSolveItemModel(item.id, null)
 		assert.equal(cleared.payload.kind === 'solve' ? cleared.payload.solverModel : 'set', undefined)
 
-		const ralph = commands.createRalphItem({ title: 'r', projectSlug: 'vigil', prdPath: 'docs/prd.md' })
+		const ralph = commands.createRalphItem({ title: 'r', projectSlug: 'helm', prdPath: 'docs/prd.md' })
 		assert.throws(() => commands.setSolveItemModel(ralph.id, 'claude-fable-5'))
 	}))
 
 test('Item action routes set, reject, and clear the per-item solver model', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const setTarget = commands.createSolveItem({ title: 'set model', projectSlug: 'vigil', prompt: 'x' })
-		const clearTarget = commands.createSolveItem({ title: 'clear model', projectSlug: 'vigil', prompt: 'x' })
+		const setTarget = commands.createSolveItem({ title: 'set model', projectSlug: 'helm', prompt: 'x' })
+		const clearTarget = commands.createSolveItem({ title: 'clear model', projectSlug: 'helm', prompt: 'x' })
 		commands.setSolveItemModel(clearTarget.id, 'claude-opus-4-8')
 
 		const routeQueue = {
@@ -4093,7 +4093,7 @@ test('Item action routes set, reject, and clear the per-item solver model', () =
 		}
 		const api = apiRoutes(
 			config,
-			'vigil.config.json',
+			'helm.config.json',
 			db,
 			routeQueue as never,
 			poller as never,
@@ -4127,7 +4127,7 @@ test('Item action routes set, reject, and clear the per-item solver model', () =
 test('late-PR backfill falls back to the worktree branch when the agent renamed it', () =>
 	withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)
-		const item = commands.createSolveItem({ title: 'renamed', projectSlug: 'vigil', prompt: 'x' })
+		const item = commands.createSolveItem({ title: 'renamed', projectSlug: 'helm', prompt: 'x' })
 		commands.startItem(item.id)
 		commands.recordExecutionWorkspaceIdentity(item.id, {
 			worktreePath: '/tmp/wt-renamed',
@@ -4140,7 +4140,7 @@ test('late-PR backfill falls back to the worktree branch when the agent renamed 
 		const watcher = new DeployWatcher(config, db, {
 			discoverPrUrl: async (_repoPath, branch) => {
 				lookups.push(branch)
-				return branch === 'fix/live-name' ? 'https://github.com/neumie/vigil/pull/12' : null
+				return branch === 'fix/live-name' ? 'https://github.com/neumie/helm/pull/12' : null
 			},
 			readWorktreeBranch: async () => 'fix/live-name',
 			fetchDeployState: async () => null,
@@ -4148,11 +4148,11 @@ test('late-PR backfill falls back to the worktree branch when the agent renamed 
 		await watcher.pollOnce()
 
 		assert.deepEqual(lookups, ['fix/stored-name', 'fix/live-name'])
-		assert.equal(db.items.get(item.id)?.prUrl, 'https://github.com/neumie/vigil/pull/12')
+		assert.equal(db.items.get(item.id)?.prUrl, 'https://github.com/neumie/helm/pull/12')
 	}))
 
 test('buildPrompt injects model-tier guidance for known models only', () => {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-guidance-'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-guidance-'))
 	try {
 		const task = { title: 'Guide me', description: 'x' }
 		const ctx = { planDirName: 'guide-plan', worktreePath: dir }

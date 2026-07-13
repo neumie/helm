@@ -1,6 +1,6 @@
 // Native sidebar root — push-stack navigation (design-system.md §3.10) over
-// the VigilBridge snapshot. Data arrives exclusively through the main-process
-// bridge (window.helm.vigil) — never fetch :7474 from this file:// renderer.
+// the HelmBridge snapshot. Data arrives exclusively through the main-process
+// bridge (window.helm.daemon) — never fetch :7474 from this file:// renderer.
 //
 // Navigation model: list → detail → plan/task, list → archive, list →
 // settings → section. Every stacked page stays mounted (scroll + state
@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './sidebar.css'
-import type { VigilSnapshot } from '../../shared-vigil'
+import type { HelmSnapshot } from '../../shared-helm'
 import { showToast } from '../toast'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage, PlanPage, TaskPage } from './DetailPage'
@@ -24,15 +24,15 @@ import { PushHeader } from './ui'
 const PUSH_MS = 150
 const POP_MS = 120
 
-function useVigilSnapshot(): VigilSnapshot | null {
-	const [snapshot, setSnapshot] = useState<VigilSnapshot | null>(null)
+function useHelmSnapshot(): HelmSnapshot | null {
+	const [snapshot, setSnapshot] = useState<HelmSnapshot | null>(null)
 	useEffect(() => {
 		let alive = true
-		const unsubscribe = window.helm.vigil.onSnapshot(next => {
+		const unsubscribe = window.helm.daemon.onSnapshot(next => {
 			if (alive) setSnapshot(next)
 		})
 		// Initial state; pushes only arrive when polled state changes afterwards.
-		void window.helm.vigil.subscribe().then(initial => {
+		void window.helm.daemon.subscribe().then(initial => {
 			if (alive) setSnapshot(current => current ?? initial)
 		})
 		return () => {
@@ -111,7 +111,7 @@ function useNavStack() {
 		settle(PUSH_MS)
 	}, [settle])
 
-	/** Replace the whole stack (vigil:// deep links) instead of piling pushes. */
+	/** Replace the whole stack (helm:// deep links) instead of piling pushes. */
 	const reset = useCallback(
 		(stack: Route[]) => {
 			forward.current = []
@@ -132,7 +132,7 @@ function useNavStack() {
 }
 
 export function SidebarRoot() {
-	const snapshot = useVigilSnapshot()
+	const snapshot = useHelmSnapshot()
 	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
 	const [newItemOpen, setNewItemOpen] = useState(false)
 	const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -151,7 +151,7 @@ export function SidebarRoot() {
 		[push],
 	)
 
-	// vigil://item/<id> (main's open-url → preload nav channel): jump straight
+	// helm://item/<id> (main's open-url → preload nav channel): jump straight
 	// to the item, replacing whatever was stacked — a deep link is an absolute
 	// destination, and repeated clicks must not pile up detail pages.
 	useEffect(
@@ -277,10 +277,10 @@ export function SidebarRoot() {
 						onNewItem={() => setNewItemOpen(true)}
 						onOpenArchive={() => push({ kind: 'archive' })}
 						onOpenSettings={() => push({ kind: 'settings' })}
-						onPoll={() => void runCommand('Poll requested', () => window.helm.vigil.poll())}
+						onPoll={() => void runCommand('Poll requested', () => window.helm.daemon.poll())}
 						onPauseToggle={() =>
 							void runCommand(snapshot?.status?.queue.paused ? 'Queue resumed' : 'Queue paused', () =>
-								window.helm.vigil.pauseToggle(),
+								window.helm.daemon.pauseToggle(),
 							)
 						}
 					/>

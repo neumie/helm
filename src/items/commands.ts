@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import { taskContextSchema } from '../providers/provider.js'
 import { solverAgentSchema } from '../solver/agent.js'
 import type { SolverAgent } from '../solver/agent.js'
@@ -154,7 +154,7 @@ function runOutcomeForFailure(message: string): RunOutcome {
 export class ItemCommands {
 	constructor(
 		private readonly store: ItemStore,
-		private readonly config: VigilConfig,
+		private readonly config: HelmConfig,
 	) {}
 
 	createSolveItem(input: CreateSolveItemInput): ItemRecord {

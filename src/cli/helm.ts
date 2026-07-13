@@ -5,27 +5,27 @@ import { existsSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
 
-const HELP = `Usage: vigil <command>
+const HELP = `Usage: helm <command>
 
 Commands:
-  start    Start the Vigil daemon
-  stop     Stop the Vigil daemon
+  start    Start the Helm daemon
+  stop     Stop the Helm daemon
   status   Show daemon status
   logs     Tail daemon logs (--err for stderr)
   add      Create queued Item(s)
   ingest   File a self-contained task (email, note, …) into a project
   help     Show this help message`
 
-const INGEST_HELP = `Usage: vigil ingest --project <slug> --title <title> [options]
+const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
 
 File a self-contained task — an email, an Obsidian note, anything tied to a
-project — into Vigil. Posts to the RUNNING daemon's /api/items/ingest, so it
-works from ANY directory (no vigil.config.json needed) and any agent can use it.
+project — into Helm. Posts to the RUNNING daemon's /api/items/ingest, so it
+works from ANY directory (no helm.config.json needed) and any agent can use it.
 The task lands in triage with a security-aware assessment; you approve it in
 helm, then it solves with its attachments available to the agent.
 
 Required:
-  --project <slug>        Vigil project slug
+  --project <slug>        Helm project slug
   --title <title>         Short task title
 
 Options:
@@ -37,14 +37,14 @@ Options:
   --external-id <id>      Idempotency key — re-ingesting the same id returns the
                           existing Item instead of a duplicate
   --source-url <url>      http(s) link back to the original
-  --url <baseUrl>         Daemon base URL (default: $VIGIL_URL or http://localhost:7474)`
+  --url <baseUrl>         Daemon base URL (default: $HELM_URL or http://localhost:7474)`
 
-const ADD_HELP = `Usage: vigil add <kind> [options]
+const ADD_HELP = `Usage: helm add <kind> [options]
 
 Create queued Item(s) by POSTing to the RUNNING daemon's /api/items. Like
-\`vigil ingest\`, it is a thin HTTP client: it works from ANY directory (no
-vigil.config.json needed), the daemon owns the DB and wakes its own queue, and
-any agent can call it. The daemon must be running (\`vigil start\`).
+\`helm ingest\`, it is a thin HTTP client: it works from ANY directory (no
+helm.config.json needed), the daemon owns the DB and wakes its own queue, and
+any agent can call it. The daemon must be running (\`helm start\`).
 
 Kinds:
   solve    Requires --project, --title, --prompt
@@ -58,7 +58,7 @@ Common options:
   --base-item <id>        Existing Item branch to branch from
   --spawner <name>        Planning Spawner preference
   --parallelism <n>       Number of sibling Items to create
-  --url <baseUrl>         Daemon base URL (default: $VIGIL_URL or http://localhost:7474)
+  --url <baseUrl>         Daemon base URL (default: $HELM_URL or http://localhost:7474)
 
 Ralph options:
   --prd-path <path>       PRD path
@@ -76,7 +76,7 @@ Harden options:
 function start(): void {
 	try {
 		load()
-		console.log('Vigil daemon started.')
+		console.log('Helm daemon started.')
 		console.log(`Logs: ${STDOUT_LOG}`)
 	} catch (err) {
 		console.error(`Error: ${err instanceof Error ? err.message : err}`)
@@ -87,7 +87,7 @@ function start(): void {
 function stop(): void {
 	try {
 		unload()
-		console.log('Vigil daemon stopped.')
+		console.log('Helm daemon stopped.')
 	} catch (err) {
 		console.error(`Error: ${err instanceof Error ? err.message : err}`)
 		process.exit(1)
@@ -96,11 +96,11 @@ function stop(): void {
 
 function status(): void {
 	if (!isLoaded()) {
-		console.log('Vigil is not running.')
+		console.log('Helm is not running.')
 		process.exit(1)
 	}
 	const pid = getPid()
-	console.log(`Vigil is running.${pid ? ` (PID: ${pid})` : ''}`)
+	console.log(`Helm is running.${pid ? ` (PID: ${pid})` : ''}`)
 }
 
 function logs(): void {
@@ -109,7 +109,7 @@ function logs(): void {
 
 	if (!existsSync(logFile)) {
 		console.error(`Log file not found: ${logFile}`)
-		console.error('Has Vigil been started at least once?')
+		console.error('Has Helm been started at least once?')
 		process.exit(1)
 	}
 
@@ -170,9 +170,17 @@ function enumOption<T extends string>(args: string[], name: string, allowed: rea
 	return value as T
 }
 
-/** Daemon base URL: --url ?? $VIGIL_URL ?? localhost:7474. No config file is read. */
-function resolveBaseUrl(args: string[]): string {
-	return (optionValue(args, '--url') ?? process.env.VIGIL_URL ?? 'http://localhost:7474').replace(/\/+$/, '')
+/**
+ * Daemon base URL: --url ?? $HELM_URL ?? $VIGIL_URL (legacy compat) ??
+ * localhost:7474. No config file is read. Exported for tests.
+ */
+export function resolveBaseUrl(args: string[]): string {
+	return (
+		optionValue(args, '--url') ??
+		process.env.HELM_URL ??
+		process.env.VIGIL_URL ??
+		'http://localhost:7474'
+	).replace(/\/+$/, '')
 }
 
 /** POST a JSON payload to the running daemon and unwrap its `{ data | error }` envelope. */
@@ -186,7 +194,7 @@ async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown):
 		})
 	} catch (err) {
 		throw new Error(
-			`Could not reach the Vigil daemon at ${baseUrl} — is it running? Start it with \`vigil start\`, or set --url / $VIGIL_URL. (${err instanceof Error ? err.message : err})`,
+			`Could not reach the Helm daemon at ${baseUrl} — is it running? Start it with \`helm start\`, or set --url / $HELM_URL. (${err instanceof Error ? err.message : err})`,
 		)
 	}
 	const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
@@ -195,7 +203,7 @@ async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown):
 }
 
 /**
- * Map `vigil add <kind> …` args to a POST /api/items payload. Undefined optional
+ * Map `helm add <kind> …` args to a POST /api/items payload. Undefined optional
  * fields drop out of the JSON, so the route's strict schema accepts the body; the
  * daemon (not the CLI) validates spawner installs and creates the rows. Kept thin
  * on purpose — the daemon is the single owner of Item creation.
@@ -245,7 +253,8 @@ async function add(): Promise<void> {
 	const items = Array.isArray(data) ? data : [data]
 	const noun = items.length === 1 ? 'Item' : 'Items'
 	console.log(`Created ${items.length} ${String(payload.kind)} ${noun}: ${items.map(item => item.id).join(', ')}`)
-	console.log(`Track them at ${baseUrl}/`)
+	// The daemon is API-only — there is no dashboard at baseUrl; the Helm app is the UI.
+	console.log(items.length === 1 ? 'Track it in Helm.' : 'Track them in Helm.')
 }
 
 async function ingest(): Promise<void> {
@@ -292,7 +301,8 @@ async function ingest(): Promise<void> {
 	const baseUrl = resolveBaseUrl(args)
 	const item = await postToDaemon<{ id: string; status: string }>(baseUrl, '/api/items/ingest', payload)
 	console.log(`Ingested into ${project}: ${item?.id} (${item?.status})`)
-	console.log(`Review and approve it at ${baseUrl}/`)
+	// The daemon is API-only — deep-link into the Helm app instead of baseUrl.
+	console.log(item?.id ? `Review and approve it in Helm (helm://item/${item.id}).` : 'Review and approve it in Helm.')
 }
 
 const command = process.argv[2]

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { configSchema } from './config.js'
-import type { VigilConfig } from './config.js'
+import type { HelmConfig } from './config.js'
 import { DEFAULT_ASSESSMENT_INSTRUCTIONS } from './items/assess.js'
 import { DEFAULT_DISPLAY_INSTRUCTIONS, DEFAULT_NAMING_INSTRUCTIONS } from './items/naming.js'
 import { DEFAULT_MODEL_GUIDANCE, MODEL_CATALOG, defaultHelperModel, modelSelectOptions } from './solver/models.js'
@@ -90,12 +90,12 @@ export interface DashboardSafeConfig {
 		worktreeDir?: string
 		color?: string
 	}>
-	polling: VigilConfig['polling']
-	solver: VigilConfig['solver']
-	spawner: VigilConfig['spawner']
-	server: VigilConfig['server']
-	github: VigilConfig['github']
-	provider: Omit<VigilConfig['provider'], 'apiToken'>
+	polling: HelmConfig['polling']
+	solver: HelmConfig['solver']
+	spawner: HelmConfig['spawner']
+	server: HelmConfig['server']
+	github: HelmConfig['github']
+	provider: Omit<HelmConfig['provider'], 'apiToken'>
 	spawnerAdapters: SpawnerAdapterInfo[]
 	/** Curated per-agent model options for model pickers (dashboard + extension). */
 	modelCatalog: Record<'claude' | 'codex', ModelOption[]>
@@ -103,7 +103,7 @@ export interface DashboardSafeConfig {
 }
 
 export interface ConfigDocument {
-	config: VigilConfig
+	config: HelmConfig
 	dashboard: DashboardSafeConfig
 	edit: ConfigEditMetadata
 	secretRedaction: typeof CONFIG_SECRET_REDACTION
@@ -159,7 +159,7 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 		{
 			id: 'projects',
 			title: 'Projects',
-			description: 'Repositories that Vigil monitors and solves tasks for',
+			description: 'Repositories that Helm monitors and solves tasks for',
 			controls: [
 				{
 					type: 'list',
@@ -181,7 +181,7 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 		{
 			id: 'polling',
 			title: 'Polling',
-			description: 'How often Vigil checks for new tasks',
+			description: 'How often Helm checks for new tasks',
 			controls: [
 				{
 					type: 'field',
@@ -322,7 +322,7 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 	],
 })
 
-type AiHelperConfig = VigilConfig['solver']['triage']
+type AiHelperConfig = HelmConfig['solver']['triage']
 
 const HELPER_DEFAULT_PROMPTS = {
 	branchNaming: DEFAULT_NAMING_INSTRUCTIONS,
@@ -336,7 +336,7 @@ const HELPER_DEFAULT_PROMPTS = {
  * default follows the helper's effective provider (its `agent` override, else
  * `solver.agent`).
  */
-function hydrateAiDefaults(config: VigilConfig): VigilConfig {
+function hydrateAiDefaults(config: HelmConfig): HelmConfig {
 	const fill = (helper: AiHelperConfig, defaultPrompt: string): AiHelperConfig => ({
 		...helper,
 		model: helper.model ?? defaultHelperModel(helper.agent ?? config.solver.agent),
@@ -363,7 +363,7 @@ function hydrateAiDefaults(config: VigilConfig): VigilConfig {
  * equals the default, so saving persists only genuine overrides and the helpers keep
  * following the provider + picking up future default-prompt improvements.
  */
-function stripAiHelperDefaults(config: VigilConfig): VigilConfig {
+function stripAiHelperDefaults(config: HelmConfig): HelmConfig {
 	const strip = (helper: AiHelperConfig, defaultPrompt: string): AiHelperConfig => ({
 		...helper,
 		model: helper.model === defaultHelperModel(helper.agent ?? config.solver.agent) ? undefined : helper.model,
@@ -384,7 +384,7 @@ function stripAiHelperDefaults(config: VigilConfig): VigilConfig {
 	}
 }
 
-export function buildConfigDocument(raw: unknown, fallback: VigilConfig): ConfigDocument {
+export function buildConfigDocument(raw: unknown, fallback: HelmConfig): ConfigDocument {
 	const config = parseConfigWithFallback(raw, fallback)
 	const hydrated = hydrateAiDefaults(config)
 	return {
@@ -401,7 +401,7 @@ export function buildConfigDocument(raw: unknown, fallback: VigilConfig): Config
  * hand-edited model id, a catalog entry removed later) as an extra
  * "(custom)" option instead of losing it.
  */
-function withCurrentSelectValues(edit: ConfigEditMetadata, config: VigilConfig): ConfigEditMetadata {
+function withCurrentSelectValues(edit: ConfigEditMetadata, config: HelmConfig): ConfigEditMetadata {
 	const valueAt = (path: string[]): unknown =>
 		path.reduce<unknown>(
 			(node, key) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined),
@@ -421,7 +421,7 @@ function withCurrentSelectValues(edit: ConfigEditMetadata, config: VigilConfig):
 	}
 }
 
-export function toDashboardSafeConfig(config: VigilConfig): DashboardSafeConfig {
+export function toDashboardSafeConfig(config: HelmConfig): DashboardSafeConfig {
 	const { apiToken: _apiToken, ...provider } = config.provider
 	return {
 		projects: config.projects.map(project => ({
@@ -443,7 +443,7 @@ export function toDashboardSafeConfig(config: VigilConfig): DashboardSafeConfig 
 	}
 }
 
-export function parseConfigUpdate(body: unknown, currentConfig: VigilConfig) {
+export function parseConfigUpdate(body: unknown, currentConfig: HelmConfig) {
 	const next = preserveRedactedSecrets(body, currentConfig)
 	const unknownPaths = findUnknownConfigPaths(configSchema, next)
 	if (unknownPaths.length > 0) {
@@ -465,7 +465,7 @@ export function parseConfigUpdate(body: unknown, currentConfig: VigilConfig) {
 	return parsed
 }
 
-export function parseConfigWithFallback(raw: unknown, fallback: VigilConfig): VigilConfig {
+export function parseConfigWithFallback(raw: unknown, fallback: HelmConfig): HelmConfig {
 	const parsed = configSchema.safeParse(raw)
 	return parsed.success ? parsed.data : fallback
 }
@@ -484,7 +484,7 @@ export function unknownConfigPaths(raw: unknown): string[] {
 	return findUnknownConfigPaths(configSchema, raw)
 }
 
-function redactEditableConfig(config: VigilConfig): VigilConfig {
+function redactEditableConfig(config: HelmConfig): HelmConfig {
 	return {
 		...config,
 		provider: {
@@ -494,7 +494,7 @@ function redactEditableConfig(config: VigilConfig): VigilConfig {
 	}
 }
 
-function preserveRedactedSecrets(body: unknown, currentConfig: VigilConfig): unknown {
+function preserveRedactedSecrets(body: unknown, currentConfig: HelmConfig): unknown {
 	if (!isRecord(body)) return body
 	const next = structuredClone(body)
 	const provider = next.provider

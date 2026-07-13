@@ -4,7 +4,7 @@
 // controls. Renders purely from the pushed snapshot — no per-row fetches.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { DashboardItem, VigilSnapshot } from '../../shared-vigil'
+import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
 import type { BucketKey } from './model'
 import { VERDICT_META, itemTitle, partitionWork, relativeTime, rowTimestamp, statusTone, useNow } from './model'
 import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, Segmented, StatusDot } from './ui'
@@ -24,7 +24,7 @@ const EMPTY_COPY: Record<BucketKey, { title: string; detail: string }> = {
 }
 
 export interface ListPageProps {
-	snapshot: VigilSnapshot | null
+	snapshot: HelmSnapshot | null
 	selectedId: string | null
 	onOpenItem: (id: string) => void
 	onNewItem: () => void
@@ -153,7 +153,7 @@ export function ListPage({
 				{waiting ? (
 					<EmptyState
 						title="Waiting for the daemon"
-						detail={reachable ? 'Loading work items.' : 'Start it with vigil start.'}
+						detail={reachable ? 'Loading work items.' : 'Start it with helm start.'}
 					/>
 				) : visible.length === 0 ? (
 					archive ? (

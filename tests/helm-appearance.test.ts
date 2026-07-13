@@ -5,11 +5,11 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import appearanceModule from '../helm/src/renderer/appearance.ts'
-import themePresetsModule from '../helm/src/theme-presets.ts'
+import appearanceModule from '../app/src/renderer/appearance.ts'
+import themePresetsModule from '../app/src/theme-presets.ts'
 
-type AppearanceModule = typeof import('../helm/src/renderer/appearance.ts')
-type ThemePresetsModule = typeof import('../helm/src/theme-presets.ts')
+type AppearanceModule = typeof import('../app/src/renderer/appearance.ts')
+type ThemePresetsModule = typeof import('../app/src/theme-presets.ts')
 const {
 	TERM_FONT_DEFAULT,
 	TERM_FONT_MAX,

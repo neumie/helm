@@ -12,29 +12,26 @@ import { createSpawner } from './spawner/registry.js'
 import { log } from './util/logger.js'
 
 async function main() {
-	process.title = 'vigil'
-	log.info('vigil', 'Starting Vigil...')
+	process.title = 'helm'
+	log.info('helm', 'Starting Helm...')
 
 	const { config, configPath, raw } = loadConfig()
-	log.info(
-		'vigil',
-		`Loaded config: ${config.projects.length} project(s), poll every ${config.polling.intervalSeconds}s`,
-	)
+	log.info('helm', `Loaded config: ${config.projects.length} project(s), poll every ${config.polling.intervalSeconds}s`)
 	for (const path of unknownConfigPaths(raw)) {
-		log.warn('vigil', `Ignoring unknown config field: ${path} (not in schema — check for typos/removed options)`)
+		log.warn('helm', `Ignoring unknown config field: ${path} (not in schema — check for typos/removed options)`)
 	}
 
 	const db = new DB()
 	const provider = createProvider(config.provider)
-	log.info('vigil', `Provider: ${provider.name}`)
+	log.info('helm', `Provider: ${provider.name}`)
 
 	const solver = await createSolver(config)
 	log.info(
-		'vigil',
+		'helm',
 		`Solver configured: ${config.solver.type}, agent: ${config.solver.agent}, active: ${solver.constructor.name}`,
 	)
 	const spawner = await createSpawner(config)
-	log.info('vigil', `Spawner configured: ${config.spawner.name}, active: ${spawner.constructor.name}`)
+	log.info('helm', `Spawner configured: ${config.spawner.name}, active: ${spawner.constructor.name}`)
 
 	const queue = new Drainer(config, db, provider, solver)
 
@@ -42,7 +39,7 @@ async function main() {
 	// pulled from the DB by the Drainer's lanes.
 	const queuedSolveItems = db.items.countQueuedByKind('solve')
 	if (queuedSolveItems > 0) {
-		log.info('vigil', `Found ${queuedSolveItems} queued solve Item(s)`)
+		log.info('helm', `Found ${queuedSolveItems} queued solve Item(s)`)
 	}
 
 	const enricher = new ItemEnricher(config, db.items, provider)
@@ -53,7 +50,7 @@ async function main() {
 	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher)
 	const { serve } = await import('@hono/node-server')
 	serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, () => {
-		log.success('vigil', `API: http://${config.server.host}:${config.server.port}/api (clients: helm + extension)`)
+		log.success('helm', `API: http://${config.server.host}:${config.server.port}/api (clients: helm + extension)`)
 	})
 
 	// Start polling
@@ -70,7 +67,7 @@ async function main() {
 
 	// Graceful shutdown
 	const shutdown = () => {
-		log.info('vigil', 'Shutting down...')
+		log.info('helm', 'Shutting down...')
 		poller.stop()
 		enricher.stop()
 		queue.stop()
@@ -83,6 +80,6 @@ async function main() {
 }
 
 main().catch(err => {
-	log.error('vigil', 'Fatal error', err)
+	log.error('helm', 'Fatal error', err)
 	process.exit(1)
 })

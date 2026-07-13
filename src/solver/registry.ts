@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import { DefaultSolver } from './default-solver.js'
 import type { Solver } from './solver.js'
 
@@ -21,7 +21,7 @@ import type { Solver } from './solver.js'
  * To add a backend: extend the `solver.type` enum in `config.ts`, then add a
  * branch here that dynamically imports its `createX(config)` factory.
  */
-export async function createSolver(config: VigilConfig): Promise<Solver> {
+export async function createSolver(config: HelmConfig): Promise<Solver> {
 	if (config.solver.type === 'okena') {
 		const { createOkenaSolver } = await import('../extensions/okena/solver.js')
 		return createOkenaSolver(config)

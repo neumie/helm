@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
-import { excludeVigilFiles, resolveWorktreeStartPoint, withRepoLock } from '../../worktree/manager.js'
+import { excludeHelmFiles, resolveWorktreeStartPoint, withRepoLock } from '../../worktree/manager.js'
 import type { OkenaClient } from './client.js'
 
 interface CreateWorktreeResponse {
@@ -77,7 +77,7 @@ export class OkenaWorktreeManager {
 			if (!wtProject) {
 				throw phaseError('worktree', `Okena project not found for worktree path: ${existingWorktreePath}`)
 			}
-			await excludeVigilFiles(existingWorktreePath)
+			await excludeHelmFiles(existingWorktreePath)
 			return { worktreePath: existingWorktreePath, wtProjectId: wtProject.id, autoTerminalId: null }
 		}
 
@@ -89,7 +89,7 @@ export class OkenaWorktreeManager {
 		const existing = state.projects.find(p => p.name === branchName && p.path.includes(safeBranch))
 		if (existing) {
 			log.info('okena', `Reusing existing worktree project: ${existing.id}`)
-			await excludeVigilFiles(existing.path)
+			await excludeHelmFiles(existing.path)
 			return { worktreePath: existing.path, wtProjectId: existing.id, autoTerminalId: null }
 		}
 
@@ -125,7 +125,7 @@ export class OkenaWorktreeManager {
 		if (!wtProjectId) throw phaseError('worktree', 'Worktree project ID could not be resolved')
 
 		log.success('okena', `Worktree at ${worktreePath}`)
-		await excludeVigilFiles(worktreePath)
+		await excludeHelmFiles(worktreePath)
 		return { worktreePath, wtProjectId, autoTerminalId: wt.terminal_id }
 	}
 

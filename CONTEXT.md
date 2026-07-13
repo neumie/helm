@@ -25,14 +25,14 @@ provider abstraction lives on as a context source, never as a kind.
 
 **BaseRef** — the git ref a new worktree branches off. Per-Item field on the
 envelope; defaults to `projects[].baseBranch`. Can be any ref the project repo
-resolves: a branch, a tag, a commit, or **another Item's branch** (`vigil/<kind>-<itemId>`).
+resolves: a branch, a tag, a commit, or **another Item's branch** (`helm/<kind>-<itemId>`).
 The last enables worktree-off-worktree: forking N parallel attempts off an
 existing in-flight Item. Always carried explicitly on the Item — never re-derived
 from `projects[].baseBranch` at run time, so a config change can't move a queued
 Item's base under it.
 
 **GroupId** — fan-out binding. When the operator queues N parallel attempts of
-the same Item shape (same `prompt`, `baseRef`, etc.), vigil writes N Items sharing
+the same Item shape (same `prompt`, `baseRef`, etc.), helm writes N Items sharing
 one `groupId`. Each Item keeps its own worktree, status, retry — `groupId` is
 only a rendering + comparison hint, not a lifecycle join. Failure or cancellation
 of one Item doesn't touch its siblings. The dashboard renders a group as one card
@@ -46,7 +46,7 @@ its environment (okena terminal, iTerm tab, tmux window, …), seeded with the
 planning prompt + worktree cwd. Planning is a separate axis from Item `kind` and
 from execution: it is not part of `Solver`, not a loop Item, and not a fourth
 Kind. Per-Item override on the add form; global default is `spawner.name` in
-`vigil.config.json`. Discovery remains file-based, not a config enum: config
+`helm.config.json`. Discovery remains file-based, not a config enum: config
 names the default adapter, but available adapters come from files present.
 
 **Triage** — the verification step between a poller-sourced Item and the queue.
@@ -60,7 +60,7 @@ it replaces the pre-rework solver clarification-chat round.
 loop capacity is currently 1. Solve and loop items never share a slot, so a long
 ralph can't starve a queue of short solves.
 
-**Drainer** — vigil's worker pool. Always-on daemon (launchd-managed); selects
+**Drainer** — helm's worker pool. Always-on daemon (launchd-managed); selects
 queued items respecting lane caps and `queuedAt ASC` per lane.
 
 **Provider** — the seam over external Item sources. `ContemberProvider` today;
@@ -77,7 +77,7 @@ dep can't crash module load. The configured `solver.type` is the active type —
 fallback (an unreachable okena surfaces errors per-Item, not by silently swapping
 in `DefaultSolver`).
 
-**AlmanacRunId** — the registry id at `.almanac/runs/<id>/` that vigil captures
+**AlmanacRunId** — the registry id at `.almanac/runs/<id>/` that helm captures
 from the first emitted almanac run-id line. Stored on the Item row; the dashboard
 tails `.almanac/runs/<id>/status.tsv` directly for live state. See *Cross-tool
 contracts* below.
@@ -172,7 +172,7 @@ verbatim — the post-rework Item lifecycle has different state-machine joins.
 
 ## Entrypoint flows
 
-Vigil is **the** entrypoint for tasks across projects — the dashboard is where
+Helm is **the** entrypoint for tasks across projects — the dashboard is where
 Items are created, not just observed. Three entrypoints write Items into the DB,
 all via Item Commands (no parallel write paths):
 
@@ -183,12 +183,12 @@ all via Item Commands (no parallel write paths):
    fan-out group). [Plan] and [Queue] buttons: Plan creates `planned` Item(s),
    their worktrees, and opens N spawner sessions without waking the Drainer;
    Queue creates `queued` Item(s) and the Drainer picks them up immediately.
-2. **CLI `vigil add …`** — same payload as the form, scriptable.
+2. **CLI `helm add …`** — same payload as the form, scriptable.
 3. **Clientcare poller** — produces `unverified` Items for triage (see *Triage*).
 
 **Plan flow.** Click Plan on an `unverified`, `planned`, or `queued` Item (or in
 the add-form).
-Vigil resolves the Item's workspace (`resolveItemWorkspace`), creates the worktree
+Helm resolves the Item's workspace (`resolveItemWorkspace`), creates the worktree
 off `baseRef`, writes `docs/plans/<dir>/context.md`, then invokes the selected
 `Spawner` to open an interactive planning session with the planning prompt + that
 worktree as cwd. The operator writes `docs/plans/<dir>/{prd,…}.md` from
@@ -201,8 +201,8 @@ plan artifacts as authoritative context.
 through the normal lane (subject to `solveConcurrency` / `loopConcurrency` —
 fan-out doesn't get to bypass the cap, so N=10 with `solveConcurrency=3` still
 runs three at a time). Each Item gets its own worktree off the shared `baseRef`,
-its own branch `vigil/<kind>-<itemId>`, its own outcome. The dashboard renders
-the group as one card; the operator compares branches (out-of-vigil via git tools
+its own branch `helm/<kind>-<itemId>`, its own outcome. The dashboard renders
+the group as one card; the operator compares branches (out-of-helm via git tools
 for v1; in-dashboard compare view later) and merges / cherry-picks / discards.
 
 **Worktree-off-worktree.** A natural fallout of `baseRef` accepting any ref. From
@@ -215,9 +215,9 @@ diverging afterward.
 
 **Almanac handoff.** `almanac ralph` / `almanac harden` emit a run id such as
 `run_id=<id>`, `Run ID: <id>`, `Run registered: <id>`, or a bare
-`ralph-*`/`harden-*` id. Vigil captures the first match, stores it on the Item
+`ralph-*`/`harden-*` id. Helm captures the first match, stores it on the Item
 (`almanacRunId`), and tails `.almanac/runs/<id>/status.tsv` (almanac's canonical
-per-run record) for live state. To cancel a loop, vigil writes the loop adapter's
+per-run record) for live state. To cancel a loop, helm writes the loop adapter's
 between-round signal file (`.ralph-stop` / `.harden-stop`) in the worktree;
-almanac exits cleanly between rounds and vigil marks the Item `cancelled`. The
+almanac exits cleanly between rounds and helm marks the Item `cancelled`. The
 worktree is preserved either way.

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { DashboardTone } from '../../shared-vigil'
+import type { DashboardTone } from '../../shared-helm'
 import { CHIP_CLASS } from './model'
 import type { StatusTone } from './model'
 

@@ -2,7 +2,7 @@
 // validates everything server-side (POST /api/items via the bridge).
 
 import { useMemo, useState } from 'react'
-import type { CreateItemInput, VigilSnapshot } from '../../shared-vigil'
+import type { CreateItemInput, HelmSnapshot } from '../../shared-helm'
 import { showToast } from '../toast'
 import { Btn, FieldLabel, Segmented, SelectInput, Sheet, TextArea, TextInput } from './ui'
 
@@ -19,7 +19,7 @@ export function NewItemSheet({
 	onClose,
 	onCreated,
 }: {
-	snapshot: VigilSnapshot | null
+	snapshot: HelmSnapshot | null
 	onClose: () => void
 	onCreated: (id: string) => void
 }) {
@@ -53,7 +53,7 @@ export function NewItemSheet({
 					: { kind, ...common, target: body.trim() }
 		setBusy(true)
 		try {
-			const result = await window.helm.vigil.createItem(input)
+			const result = await window.helm.daemon.createItem(input)
 			if (result.error !== undefined) {
 				showToast({ message: 'Create failed', detail: result.error, ttlMs: 6000 })
 				return

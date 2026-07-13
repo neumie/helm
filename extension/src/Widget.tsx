@@ -88,19 +88,19 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 						setFavoriteModels(items.favoriteModels.filter((m): m is string => typeof m === 'string'))
 					}
 				})
-				.catch(err => console.warn('[vigil]', err))
+				.catch(err => console.warn('[helm]', err))
 		})
 		.catch(err => {
-			console.warn('[vigil]', err)
-			setConnError('Cannot connect to Vigil')
+			console.warn('[helm]', err)
+			setConnError('Cannot connect to Helm')
 		})
 
 	// Deep link into helm (the native cockpit) — the browser dashboard is gone.
-	// helm registers the vigil:// scheme (helm/src/main.ts) and navigates its
+	// the app registers the helm:// scheme (app/src/main.ts) and navigates its
 	// sidebar to the item.
 	const helmUrl = () => {
 		const i = item()
-		return i ? `vigil://item/${i.id}` : null
+		return i ? `helm://item/${i.id}` : null
 	}
 
 	// Poll for the Item backing this source task
@@ -414,7 +414,7 @@ function Card(props: {
 				<Match when={v().kind === 'error'}>
 					<div class="vg-card__header">
 						<div class="vg-card__id">
-							<span class="vg-card__brand">Vigil</span>
+							<span class="vg-card__brand">Helm</span>
 						</div>
 						<div class="vg-card__hactions">
 							<button type="button" class="vg-close" on:click={props.onCollapse}>
@@ -423,8 +423,8 @@ function Card(props: {
 						</div>
 					</div>
 					<div class="vg-card__body">
-						<div class="vg-error">Cannot connect to Vigil</div>
-						<div class="vg-text">Make sure the Vigil daemon is running.</div>
+						<div class="vg-error">Cannot connect to Helm</div>
+						<div class="vg-text">Make sure the Helm daemon is running.</div>
 					</div>
 				</Match>
 
@@ -432,7 +432,7 @@ function Card(props: {
 				<Match when={v().kind === 'untracked'}>
 					<div class="vg-card__header">
 						<div class="vg-card__id">
-							<span class="vg-card__brand">Vigil</span>
+							<span class="vg-card__brand">Helm</span>
 						</div>
 						<div class="vg-card__hactions">
 							<button type="button" class="vg-close" on:click={props.onCollapse}>
@@ -441,7 +441,7 @@ function Card(props: {
 						</div>
 					</div>
 					<div class="vg-card__body">
-						<div class="vg-text vg-text--primary">This task isn’t tracked by Vigil yet.</div>
+						<div class="vg-text vg-text--primary">This task isn’t tracked by Helm yet.</div>
 						<Show when={!(v() as { kind: 'untracked'; solvable: boolean }).solvable}>
 							<div class="vg-text">No projects are configured.</div>
 						</Show>
@@ -449,7 +449,7 @@ function Card(props: {
 					<Show when={(v() as { kind: 'untracked'; solvable: boolean }).solvable}>
 						<div class="vg-card__actions">
 							<Btn variant="primary" onClick={props.onSolve}>
-								Solve with Vigil
+								Solve with Helm
 							</Btn>
 						</div>
 					</Show>
@@ -467,7 +467,7 @@ function Card(props: {
 										<span class="vg-card__status">{item().card.statusLabel}</span>
 									</div>
 									<div class="vg-card__hactions">
-										{/* vigil:// = external protocol launch (helm), not a navigation —
+										{/* helm:// = external protocol launch (the Helm app), not a navigation —
 										    no target: the page stays put while the OS opens Helm. */}
 										<Show when={props.helmUrl()}>
 											{url => (

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { GraceClose, HelmApi, PtySpawnResult, RestoredSession, ThemeListEntry, UiPreview } from './shared'
-import type { VigilApi, VigilResult, VigilSnapshot } from './shared-vigil'
+import type { DaemonApi, HelmResult, HelmSnapshot } from './shared-helm'
 
 // Captured synchronously at preload time so the renderer gets the URL without an async hop.
 const { daemonUrl } = ipcRenderer.sendSync('config:get') as { daemonUrl: string }
@@ -23,10 +23,10 @@ function subscribe<Args extends unknown[]>(channel: string, listener: (...args: 
 	return () => ipcRenderer.removeListener(channel, handler)
 }
 
-// All vigil command channels resolve with the daemon's { data } | { error }
+// All daemon command channels resolve with the daemon's { data } | { error }
 // envelope (the bridge never rejects), so the cast is one shared seam.
-function invokeVigil<T>(channel: string, ...args: unknown[]): Promise<VigilResult<T>> {
-	return ipcRenderer.invoke(channel, ...args) as Promise<VigilResult<T>>
+function invokeHelm<T>(channel: string, ...args: unknown[]): Promise<HelmResult<T>> {
+	return ipcRenderer.invoke(channel, ...args) as Promise<HelmResult<T>>
 }
 
 const api: HelmApi = {
@@ -52,21 +52,21 @@ const api: HelmApi = {
 		listThemes: () => ipcRenderer.invoke('themes:list') as Promise<ThemeListEntry[]>,
 		onFontStep: listener => subscribe('font:step', listener),
 	},
-	vigil: {
-		subscribe: () => ipcRenderer.invoke('vigil:subscribe') as Promise<VigilSnapshot>,
-		onSnapshot: listener => subscribe('vigil:snapshot', listener),
-		item: id => invokeVigil('vigil:item', id),
-		itemAction: (id, action, body) => invokeVigil('vigil:itemAction', id, action, body),
-		plan: (id, body) => invokeVigil('vigil:plan', id, body),
-		aiPass: (id, pass) => invokeVigil('vigil:aiPass', id, pass),
-		createItem: body => invokeVigil('vigil:createItem', body),
-		sourceTask: id => invokeVigil('vigil:sourceTask', id),
-		setStatus: (id, status) => invokeVigil('vigil:setStatus', id, status),
-		config: () => invokeVigil('vigil:config'),
-		updateConfig: body => invokeVigil('vigil:updateConfig', body),
-		pauseToggle: () => invokeVigil('vigil:pauseToggle'),
-		poll: () => invokeVigil('vigil:poll'),
-	} satisfies VigilApi,
+	daemon: {
+		subscribe: () => ipcRenderer.invoke('daemon:subscribe') as Promise<HelmSnapshot>,
+		onSnapshot: listener => subscribe('daemon:snapshot', listener),
+		item: id => invokeHelm('daemon:item', id),
+		itemAction: (id, action, body) => invokeHelm('daemon:itemAction', id, action, body),
+		plan: (id, body) => invokeHelm('daemon:plan', id, body),
+		aiPass: (id, pass) => invokeHelm('daemon:aiPass', id, pass),
+		createItem: body => invokeHelm('daemon:createItem', body),
+		sourceTask: id => invokeHelm('daemon:sourceTask', id),
+		setStatus: (id, status) => invokeHelm('daemon:setStatus', id, status),
+		config: () => invokeHelm('daemon:config'),
+		updateConfig: body => invokeHelm('daemon:updateConfig', body),
+		pauseToggle: () => invokeHelm('daemon:pauseToggle'),
+		poll: () => invokeHelm('daemon:poll'),
+	} satisfies DaemonApi,
 	tabs: {
 		onNew: listener => subscribe('tab:new', listener),
 		onClose: listener => subscribe('tab:close', listener),

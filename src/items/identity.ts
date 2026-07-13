@@ -39,7 +39,7 @@ export function resolveItemWorkspace(item: ItemRecord): ItemWorkspaceIdentity {
 	return {
 		baseRef: item.baseRef,
 		planDirName: item.planDirName ?? `${computePlanDirName(item.title, createdAtDate(item))}-${suffix}`,
-		branchName: item.branchName ?? `vigil/item/${slugify(item.title) || 'item'}-${suffix}`,
+		branchName: item.branchName ?? `helm/item/${slugify(item.title) || 'item'}-${suffix}`,
 		existingWorktreePath: item.worktreePath && existsSync(item.worktreePath) ? item.worktreePath : undefined,
 	}
 }

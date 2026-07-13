@@ -3,16 +3,17 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, Menu, app, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
-import { parseVigilItemUrl } from './protocol'
+import { HelmBridge } from './helm-bridge'
+import { parseHelmItemUrl } from './protocol'
 import * as sessions from './sessions'
 import { THEME_PRESETS } from './theme-presets'
-import { VigilBridge } from './vigil-bridge'
 
-const daemonUrl = process.env.VIGIL_URL ?? 'http://localhost:7474'
+// HELM_URL preferred; VIGIL_URL still honored (legacy compat).
+const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://localhost:7474'
 
 // Single owner of daemon HTTP: one poller + command proxy, pushed to the
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
-const vigilBridge = new VigilBridge(daemonUrl)
+const helmBridge = new HelmBridge(daemonUrl)
 
 // --- CLI modes ---------------------------------------------------------------
 // `electron . --screenshot=<path> [--user-data-dir-tmp]` renders the window
@@ -34,15 +35,21 @@ if (process.argv.includes('--user-data-dir-tmp')) {
 	app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'helm-')))
 }
 
-// --- vigil:// deep links -------------------------------------------------------
-// helm owns the `vigil://` scheme (the extension's "Open" link is
-// vigil://item/<id> — the browser dashboard is gone). Skipped for screenshot
-// runs: a throwaway capture must not steal the OS-level handler registration.
+// --- helm:// deep links -------------------------------------------------------
+// The app owns the `helm://` scheme (the extension's "Open" link is
+// helm://item/<id> — the browser dashboard is gone) and ALSO registers the
+// legacy `vigil://` scheme so pre-rename links keep working; the handler
+// treats both identically. Skipped for screenshot runs: a throwaway capture
+// must not steal the OS-level handler registration.
 // On macOS an UNPACKAGED run (electron .) can't always claim the scheme —
 // LaunchServices wants CFBundleURLTypes in the bundle's Info.plist — so a
 // failed registration is logged, not fatal; a packaged Helm carries the scheme.
-if (!screenshotPath && !app.setAsDefaultProtocolClient('vigil')) {
-	console.warn('[helm] could not register as vigil:// handler (unpackaged dev run?)')
+if (!screenshotPath) {
+	for (const scheme of ['helm', 'vigil']) {
+		if (!app.setAsDefaultProtocolClient(scheme)) {
+			console.warn(`[helm] could not register as ${scheme}:// handler (unpackaged dev run?)`)
+		}
+	}
 }
 
 /** Deep link that arrived before the window/renderer was ready; delivered on load. */
@@ -73,7 +80,7 @@ function flushPendingOpenItem(win: BrowserWindow): void {
 // single-instance lock + `second-instance` argv scan instead — not wired.
 app.on('open-url', (event, url) => {
 	event.preventDefault()
-	const itemId = parseVigilItemUrl(url)
+	const itemId = parseHelmItemUrl(url)
 	if (itemId) deliverOpenItem(itemId)
 })
 
@@ -299,7 +306,7 @@ function createWindow(): void {
 		trackWindowState(win)
 		win.once('ready-to-show', () => win.show())
 	}
-	// A vigil:// deep link may land before the renderer is up (cold start).
+	// A helm:// deep link may land before the renderer is up (cold start).
 	win.webContents.on('did-finish-load', () => flushPendingOpenItem(win))
 	// Native macOS three-finger swipe (System Settings "Swipe between pages"):
 	// swiping right = back, left = forward — same channel as the Go menu.
@@ -601,12 +608,12 @@ ipcMain.handle('themes:list', () => {
 	return [...list, ...custom]
 })
 
-vigilBridge.registerIpc()
+helmBridge.registerIpc()
 
 void app.whenReady().then(() => {
 	app.setAboutPanelOptions({ applicationName: 'Helm', applicationVersion: app.getVersion() })
 	buildMenu()
-	vigilBridge.start()
+	helmBridge.start()
 	createWindow()
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -621,7 +628,7 @@ app.on('window-all-closed', () => {
 // Quit detaches (clients die, dtach sessions live on for the next launch) —
 // the pre-dtach behavior of killing the shells is gone by design.
 app.on('before-quit', () => {
-	vigilBridge.stop()
+	helmBridge.stop()
 	killAllPtyClients()
 	sessionSupport?.registry.flush()
 })

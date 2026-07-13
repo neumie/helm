@@ -194,7 +194,7 @@ test('extension API prepares planning for dashboard Items through Item routes', 
 			JSON.stringify({
 				data: {
 					worktreePath: '/tmp/worktree',
-					branchName: 'vigil/item/demo',
+					branchName: 'helm/item/demo',
 					planDirName: 'demo-plan',
 					readmePath: '/tmp/worktree/docs/plans/demo-plan/README.md',
 					spawner: 'default',

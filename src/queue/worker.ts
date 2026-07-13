@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { dispatchSolveItem } from '../actions/dispatcher.js'
 import { copyAttachmentsToWorktree } from '../attachments/store.js'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import { buildItemTaskContext, localizeCapturedAttachments } from '../items/context.js'
@@ -16,7 +16,7 @@ import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import type { Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
-import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
+import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
 
@@ -25,20 +25,20 @@ const LOGS_DIR = resolve(process.cwd(), 'logs')
 const execFileAsync = promisify(execFile)
 
 async function ensureItemWorktree(
-	projectConfig: VigilConfig['projects'][number],
+	projectConfig: HelmConfig['projects'][number],
 	baseRef: string,
 	branchName: string,
 	existingWorktreePath: string | undefined,
 ): Promise<string> {
 	if (existingWorktreePath && existsSync(existingWorktreePath)) {
 		log.info('worker', `Reusing existing worktree: ${existingWorktreePath}`)
-		await excludeVigilFiles(existingWorktreePath)
+		await excludeHelmFiles(existingWorktreePath)
 		return existingWorktreePath
 	}
 
 	try {
 		const worktreePath = await createWorktree(projectConfig.repoPath, baseRef, branchName, projectConfig.worktreeDir)
-		await excludeVigilFiles(worktreePath)
+		await excludeHelmFiles(worktreePath)
 		return worktreePath
 	} catch (err) {
 		throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
@@ -142,7 +142,7 @@ async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvide
 
 export async function processSolveItem(
 	itemId: string,
-	config: VigilConfig,
+	config: HelmConfig,
 	db: DB,
 	provider: TaskProvider,
 	solver: Solver,
@@ -255,7 +255,7 @@ export async function processSolveItem(
 
 export async function processLoopItem(
 	itemId: string,
-	config: VigilConfig,
+	config: HelmConfig,
 	db: DB,
 	loopRunner: LoopRunner = new AlmanacLoopRunner(),
 	signal?: AbortSignal,
@@ -275,7 +275,7 @@ export async function processLoopItem(
 	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
 
 	try {
-		// Loop (ralph/harden) Items keep the deterministic vigil/item name: their
+		// Loop (ralph/harden) Items keep the deterministic helm/item name: their
 		// title is a PRD path / harden target, not a single conventional change, so
 		// AI naming is scoped to solve Items only.
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
@@ -318,7 +318,7 @@ export async function processLoopItem(
 
 export async function processRalphItem(
 	itemId: string,
-	config: VigilConfig,
+	config: HelmConfig,
 	db: DB,
 	loopRunner: LoopRunner = new AlmanacLoopRunner(),
 	signal?: AbortSignal,

@@ -17,7 +17,7 @@ import {
 	saveAttachment,
 } from '../../attachments/store.js'
 import { buildConfigDocument, parseConfigUpdate, parseConfigWithFallback } from '../../config-document.js'
-import type { VigilConfig } from '../../config.js'
+import type { HelmConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
 import { ensureItemAssessment } from '../../items/assess.js'
 import { ItemCommands } from '../../items/commands.js'
@@ -124,7 +124,7 @@ function httpSourceUrl(url: string | undefined): string | undefined {
 }
 
 export function apiRoutes(
-	config: VigilConfig,
+	config: HelmConfig,
 	configPath: string,
 	db: DB,
 	queue: Drainer,
@@ -132,7 +132,7 @@ export function apiRoutes(
 	provider: TaskProvider,
 	spawner: Spawner,
 	enricher: ItemEnricher,
-	createPlanningSpawner: (config: VigilConfig, name: SpawnerName) => Promise<Spawner> = createSpawner,
+	createPlanningSpawner: (config: HelmConfig, name: SpawnerName) => Promise<Spawner> = createSpawner,
 	// Injected only by tests so the manual AI-pass route can run without a real
 	// model; production leaves it undefined and the passes use the real one-shot.
 	aiOneShot?: (opts: OneShotOptions) => Promise<string | null>,
@@ -299,7 +299,7 @@ export function apiRoutes(
 		const summary = await provider.resolveTaskSummary(parsed.data.externalId)
 		if (!summary) return c.json({ error: `Task ${parsed.data.externalId} not found in ${provider.name}` }, 404)
 		if (!config.projects.some(p => p.slug === summary.projectSlug)) {
-			return c.json({ error: `Project '${summary.projectSlug}' is not configured in vigil.config.json` }, 400)
+			return c.json({ error: `Project '${summary.projectSlug}' is not configured in helm.config.json` }, 400)
 		}
 
 		const item = itemCommands.createSolveItem({
@@ -329,7 +329,7 @@ export function apiRoutes(
 		}
 		const input = parsed.data
 		if (!config.projects.some(p => p.slug === input.projectSlug)) {
-			return c.json({ error: `Project '${input.projectSlug}' is not configured in vigil.config.json` }, 400)
+			return c.json({ error: `Project '${input.projectSlug}' is not configured in helm.config.json` }, 400)
 		}
 
 		const externalId = input.source?.externalId ?? `email:${randomUUID()}`
@@ -791,7 +791,7 @@ export function apiRoutes(
 		}
 
 		// Drop ingested attachments into the planning worktree (gitignored
-		// .vigil-attachments/) so the planning agent can open the local files the
+		// .helm-attachments/) so the planning agent can open the local files the
 		// localized context.md references. No-op for provider-backed Items.
 		if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath)
 
@@ -936,7 +936,7 @@ export function apiRoutes(
 		}
 		try {
 			writeFileSync(configPath, JSON.stringify(result.data, null, '\t'), 'utf-8')
-			return c.json({ data: { message: 'Config saved. Restart Vigil for changes to take effect.' } })
+			return c.json({ data: { message: 'Config saved. Restart Helm for changes to take effect.' } })
 		} catch (err) {
 			return c.json({ error: `Failed to write config: ${err instanceof Error ? err.message : err}` }, 500)
 		}

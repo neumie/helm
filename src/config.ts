@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { solverAgentSchema } from './solver/agent.js'
@@ -70,7 +70,7 @@ export const configSchema = z.object({
 			// in Settings (on/off, provider, model, prompt). Defaults: model per-agent
 			// (claude → claude-haiku-4-5, codex → gpt-5.4-mini), provider = `solver.agent`.
 			// Branch naming: derive a conventional branch (feat/…, fix/…); failure →
-			// deterministic vigil/item/<slug>. Opt-in (default off).
+			// deterministic helm/item/<slug>. Opt-in (default off).
 			branchNaming: aiHelperSchema(false),
 			// Display name: compress each source title into a short dashboard label;
 			// failure → the raw title. Default on.
@@ -96,7 +96,7 @@ export const configSchema = z.object({
 		.object({
 			createPrs: z.boolean().default(true),
 			postComments: z.boolean().default(true),
-			prPrefix: z.string().default('[Vigil]'),
+			prPrefix: z.string().default('[Helm]'),
 			// DeployWatcher: observe PR merge + GitHub Deployments per environment for
 			// shipped Items and surface the deploy ladder. Read-only GitHub polling.
 			trackDeployments: z.boolean().default(true),
@@ -105,11 +105,31 @@ export const configSchema = z.object({
 		.default({}),
 })
 
-export type VigilConfig = z.infer<typeof configSchema>
+export type HelmConfig = z.infer<typeof configSchema>
 export type ProjectConfig = z.infer<typeof projectSchema>
 
-export function loadConfig(configPath?: string): { config: VigilConfig; configPath: string; raw: unknown } {
-	const path = configPath ?? process.env.VIGIL_CONFIG ?? resolve(process.cwd(), 'vigil.config.json')
+/**
+ * Resolve the config file path: explicit arg, then $HELM_CONFIG (preferred),
+ * then $VIGIL_CONFIG (legacy compat), then ./helm.config.json, falling back to
+ * ./vigil.config.json (legacy name) with a startup warning asking for a rename.
+ * Exported for tests.
+ */
+export function resolveConfigPath(configPath?: string): string {
+	if (configPath) return configPath
+	if (process.env.HELM_CONFIG) return process.env.HELM_CONFIG
+	if (process.env.VIGIL_CONFIG) return process.env.VIGIL_CONFIG
+	const helmPath = resolve(process.cwd(), 'helm.config.json')
+	if (existsSync(helmPath)) return helmPath
+	const legacyPath = resolve(process.cwd(), 'vigil.config.json')
+	if (existsSync(legacyPath)) {
+		console.warn(`[helm] Using legacy config file ${legacyPath} — rename it to helm.config.json.`)
+		return legacyPath
+	}
+	return helmPath
+}
+
+export function loadConfig(configPath?: string): { config: HelmConfig; configPath: string; raw: unknown } {
+	const path = resolveConfigPath(configPath)
 	const raw = readFileSync(path, 'utf-8')
 	const json = JSON.parse(raw)
 	return { config: configSchema.parse(json), configPath: path, raw: json }

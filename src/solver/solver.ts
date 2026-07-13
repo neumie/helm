@@ -1,4 +1,4 @@
-import type { ProjectConfig, VigilConfig } from '../config.js'
+import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { ClaudeEvent } from '../types.js'
 
@@ -21,7 +21,7 @@ export interface SolveParams {
 	/** Stable Item/Task id used for logs, worktree naming, and persisted run state. */
 	taskId: string
 	taskTitle: string
-	solverConfig: VigilConfig['solver']
+	solverConfig: HelmConfig['solver']
 	signal?: AbortSignal
 	outputLogPath?: string
 	/**

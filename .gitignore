@@ -4,6 +4,8 @@ dist/
 *.db-journal
 *.db-shm
 *.db-wal
+helm.config.json
+# legacy name (pre-rename installs may still have one)
 vigil.config.json
 .env
 .claude/

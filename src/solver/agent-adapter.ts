@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { ClaudeEvent } from '../types.js'
 import type { SolverAgent } from './agent.js'
 import { solverAgentLabel } from './agent.js'
@@ -18,16 +18,16 @@ export interface AgentAdapter {
 	parseTimeline(stdout: string): ClaudeEvent[]
 }
 
-export function createAgentAdapter(solverConfig: VigilConfig['solver']): AgentAdapter {
+export function createAgentAdapter(solverConfig: HelmConfig['solver']): AgentAdapter {
 	const agent = resolveSolverAgent(solverConfig)
 	return agent === 'codex' ? new CodexAgentAdapter(solverConfig) : new ClaudeAgentAdapter(solverConfig)
 }
 
-export function resolveSolverAgent(solverConfig: VigilConfig['solver']): SolverAgent {
+export function resolveSolverAgent(solverConfig: HelmConfig['solver']): SolverAgent {
 	return solverConfig.agent ?? 'claude'
 }
 
-export function buildHeadlessAgentInvocation(solverConfig: VigilConfig['solver']): AgentInvocation {
+export function buildHeadlessAgentInvocation(solverConfig: HelmConfig['solver']): AgentInvocation {
 	return createAgentAdapter(solverConfig).buildHeadlessInvocation()
 }
 
@@ -42,14 +42,14 @@ export function buildHeadlessAgentInvocation(solverConfig: VigilConfig['solver']
  * wrong tree. Always pass the worktree path; never rely on the terminal's cwd.
  */
 export function buildInteractiveAgentCommand(
-	solverConfig: VigilConfig['solver'],
+	solverConfig: HelmConfig['solver'],
 	promptPath: string,
 	worktreePath: string,
 ): string {
 	return createAgentAdapter(solverConfig).buildInteractiveCommand(promptPath, worktreePath)
 }
 
-export function agentLabelFromConfig(solverConfig: VigilConfig['solver']): string {
+export function agentLabelFromConfig(solverConfig: HelmConfig['solver']): string {
 	return createAgentAdapter(solverConfig).label
 }
 
@@ -57,7 +57,7 @@ class ClaudeAgentAdapter implements AgentAdapter {
 	readonly agent = 'claude'
 	readonly label = solverAgentLabel(this.agent)
 
-	constructor(private readonly solverConfig: VigilConfig['solver']) {}
+	constructor(private readonly solverConfig: HelmConfig['solver']) {}
 
 	buildHeadlessInvocation(): AgentInvocation {
 		const args: string[] = ['-p', '--output-format', 'json', '--dangerously-skip-permissions']
@@ -88,7 +88,7 @@ class CodexAgentAdapter implements AgentAdapter {
 	readonly agent = 'codex'
 	readonly label = solverAgentLabel(this.agent)
 
-	constructor(private readonly solverConfig: VigilConfig['solver']) {}
+	constructor(private readonly solverConfig: HelmConfig['solver']) {}
 
 	buildHeadlessInvocation(): AgentInvocation {
 		const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'danger-full-access', '-']
@@ -112,7 +112,7 @@ class CodexAgentAdapter implements AgentAdapter {
 
 function buildInteractiveCommand(
 	baseArgs: string[],
-	solverConfig: VigilConfig['solver'],
+	solverConfig: HelmConfig['solver'],
 	promptPath: string,
 	worktreePath: string,
 ): string {

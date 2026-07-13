@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import type { OneShotOptions } from '../solver/one-shot.js'
 import { log } from '../util/logger.js'
@@ -52,7 +52,7 @@ export class ItemEnricher {
 	private stopped = false
 
 	constructor(
-		private readonly config: VigilConfig,
+		private readonly config: HelmConfig,
 		private readonly store: ItemStore,
 		private readonly provider: TaskProvider,
 		private readonly concurrency = 3,

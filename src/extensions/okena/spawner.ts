@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../../config.js'
+import type { HelmConfig } from '../../config.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import { agentLabelFromConfig, buildInteractiveAgentCommand } from '../../solver/agent-command.js'
 import { buildPlanningPrompt } from '../../solver/prompt-builder.js'
@@ -67,7 +67,7 @@ export class OkenaSpawner implements Spawner {
 	}
 }
 
-export async function createOkenaSpawner(_config: VigilConfig): Promise<Spawner> {
+export async function createOkenaSpawner(_config: HelmConfig): Promise<Spawner> {
 	const client = new OkenaClient()
 	if (!(await client.isAvailable())) {
 		log.warn(

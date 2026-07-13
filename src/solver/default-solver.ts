@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
-import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
+import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import { createAgentAdapter } from './agent-adapter.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeAgent } from './invoker.js'
@@ -22,7 +22,7 @@ export class DefaultSolver implements Solver {
 		}
 		if (existingWorktreePath && existsSync(existingWorktreePath)) {
 			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
-			await excludeVigilFiles(existingWorktreePath)
+			await excludeHelmFiles(existingWorktreePath)
 			return existingWorktreePath
 		}
 		log.info('solver', `Creating worktree for branch: ${branchName}`)
@@ -37,7 +37,7 @@ export class DefaultSolver implements Solver {
 		} catch (err) {
 			throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
-		await excludeVigilFiles(worktreePath)
+		await excludeHelmFiles(worktreePath)
 		return worktreePath
 	}
 

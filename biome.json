@@ -20,6 +20,6 @@
 		}
 	},
 	"files": {
-		"ignore": ["dist", "node_modules", "vigil.config.json"]
+		"ignore": ["dist", "node_modules", "helm.config.json", "vigil.config.json"]
 	}
 }

@@ -1,8 +1,8 @@
 {
 	"manifest_version": 3,
-	"name": "Vigil for Clientcare",
+	"name": "Helm for Clientcare",
 	"version": "0.1.0",
-	"description": "Manage Vigil tasks directly from Clientcare",
+	"description": "Manage Helm tasks directly from Clientcare",
 	"permissions": ["storage"],
 	"host_permissions": ["http://localhost:*/*"],
 	"action": {

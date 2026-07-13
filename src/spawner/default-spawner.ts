@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { buildInteractiveAgentCommand } from '../solver/agent-command.js'
 import { buildPlanningPrompt } from '../solver/prompt-builder.js'
 import { formatTaskContext } from '../task-context.js'
 import { phaseError, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
-import { createWorktree, excludeVigilFiles } from '../worktree/manager.js'
+import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from './spawner.js'
 
 export class DefaultSpawner implements Spawner {
@@ -40,7 +40,7 @@ export class DefaultSpawner implements Spawner {
 		if (signal?.aborted) throw taskCancelled()
 		if (existingWorktreePath && existsSync(existingWorktreePath)) {
 			log.info('spawner', `Reusing existing worktree: ${existingWorktreePath}`)
-			await excludeVigilFiles(existingWorktreePath)
+			await excludeHelmFiles(existingWorktreePath)
 			return existingWorktreePath
 		}
 
@@ -52,7 +52,7 @@ export class DefaultSpawner implements Spawner {
 				branchName,
 				projectConfig.worktreeDir,
 			)
-			await excludeVigilFiles(worktreePath)
+			await excludeHelmFiles(worktreePath)
 			return worktreePath
 		} catch (err) {
 			throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
@@ -60,7 +60,7 @@ export class DefaultSpawner implements Spawner {
 	}
 }
 
-export function createDefaultSpawner(_config: VigilConfig): Spawner {
+export function createDefaultSpawner(_config: HelmConfig): Spawner {
 	return new DefaultSpawner()
 }
 

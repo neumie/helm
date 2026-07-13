@@ -4,29 +4,67 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const LABEL = 'com.vigil.daemon'
+const LABEL = 'com.helm.daemon'
 const PLIST_DIR = join(homedir(), 'Library', 'LaunchAgents')
 const PLIST_PATH = join(PLIST_DIR, `${LABEL}.plist`)
-const LOG_DIR = join(homedir(), 'Library', 'Logs', 'vigil')
+// Legacy identity (vigil): migrated one-way on `helm start`.
+const OLD_LABEL = 'com.vigil.daemon'
+const OLD_PLIST_PATH = join(PLIST_DIR, `${OLD_LABEL}.plist`)
+const LOG_DIR = join(homedir(), 'Library', 'Logs', 'helm')
 export const STDOUT_LOG = join(LOG_DIR, 'stdout.log')
 export const STDERR_LOG = join(LOG_DIR, 'stderr.log')
 
-function vigilRoot(): string {
+function helmRoot(): string {
 	const thisFile = fileURLToPath(import.meta.url)
 	// dist/cli/launchd.js -> project root (two levels up from dist/cli/)
 	return resolve(dirname(thisFile), '..', '..')
 }
 
 function entryPoint(): string {
-	return join(vigilRoot(), 'dist', 'index.js')
+	return join(helmRoot(), 'dist', 'index.js')
 }
 
 function escapeXml(s: string): string {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+/**
+ * One-way migration from the legacy com.vigil.daemon launchd job: unload it
+ * (ignoring errors — it may not be loaded), delete its plist, and remove any
+ * registration that lingers WITHOUT a plist file (a hand-deleted plist leaves
+ * the job loaded until `launchctl remove`) so only com.helm.daemon remains.
+ */
+function migrateLegacyLaunchdJob(): void {
+	if (existsSync(OLD_PLIST_PATH)) {
+		console.log(`Migrating legacy launchd job ${OLD_LABEL} -> ${LABEL} (unloading + removing old plist).`)
+		try {
+			execSync(`launchctl unload ${OLD_PLIST_PATH} 2>/dev/null`)
+		} catch {
+			// Old job wasn't loaded — fine, we only care that it's gone.
+		}
+		unlinkSync(OLD_PLIST_PATH)
+	}
+
+	// The legacy job can still be registered with launchd even when its plist
+	// is gone (plist deleted by hand, or the unload above failed). Probe the
+	// registration directly (exit 0 = registered) and remove it.
+	try {
+		execSync(`launchctl list ${OLD_LABEL} 2>/dev/null`)
+	} catch {
+		return // Exit != 0 — not registered; nothing left to migrate.
+	}
+	console.log(`Removing legacy launchd job ${OLD_LABEL} (still registered with launchd).`)
+	try {
+		execSync(`launchctl remove ${OLD_LABEL} 2>/dev/null`)
+	} catch (err) {
+		console.log(
+			`Could not remove legacy launchd job ${OLD_LABEL} (ignored): ${err instanceof Error ? err.message : err}`,
+		)
+	}
+}
+
 function buildPlist(env: Record<string, string>): string {
-	const root = escapeXml(vigilRoot())
+	const root = escapeXml(helmRoot())
 	const entry = escapeXml(entryPoint())
 	const nodePath = escapeXml(process.execPath)
 	const envEntries = Object.entries(env)
@@ -85,12 +123,14 @@ export function getPid(): number | null {
 
 export function load(): void {
 	if (isLoaded()) {
-		throw new Error('Vigil is already running. Use `vigil stop` first.')
+		throw new Error('Helm is already running. Use `helm stop` first.')
 	}
 
 	if (!existsSync(entryPoint())) {
 		throw new Error(`Compiled entry point not found at ${entryPoint()}. Run \`npm run build\` first.`)
 	}
+
+	migrateLegacyLaunchdJob()
 
 	mkdirSync(LOG_DIR, { recursive: true })
 	mkdirSync(PLIST_DIR, { recursive: true })
@@ -99,7 +139,10 @@ export function load(): void {
 	if (process.env.PATH) {
 		env.PATH = process.env.PATH
 	}
-	if (process.env.VIGIL_CONFIG) {
+	// HELM_CONFIG preferred; VIGIL_CONFIG still honored (legacy compat).
+	if (process.env.HELM_CONFIG) {
+		env.HELM_CONFIG = process.env.HELM_CONFIG
+	} else if (process.env.VIGIL_CONFIG) {
 		env.VIGIL_CONFIG = process.env.VIGIL_CONFIG
 	}
 
@@ -109,7 +152,7 @@ export function load(): void {
 
 export function unload(): void {
 	if (!isLoaded()) {
-		throw new Error('Vigil is not running.')
+		throw new Error('Helm is not running.')
 	}
 
 	execSync(`launchctl unload ${PLIST_PATH}`)

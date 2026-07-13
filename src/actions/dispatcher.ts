@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { ItemCommands } from '../items/commands.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
@@ -33,7 +33,7 @@ function dispatchSideEffects(overrides?: Partial<DispatchSideEffects>): Dispatch
 export interface DispatchSolveItemArgs {
 	itemId: string
 	result: SolverResult
-	config: VigilConfig
+	config: HelmConfig
 	commands: ItemCommands
 	provider: TaskProvider
 	sideEffects?: Partial<DispatchSideEffects>
@@ -79,7 +79,7 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 	args.commands.recordDispatchPr(args.itemId, { prUrl })
 
 	if (shouldPostItemComment(args.config, item, args.provider)) {
-		const commentId = await args.provider.postComment(item.source.externalId, `**Vigil**: Solved. PR: ${prUrl}`)
+		const commentId = await args.provider.postComment(item.source.externalId, `**Helm**: Solved. PR: ${prUrl}`)
 		if (commentId) args.commands.recordDispatchComment(args.itemId, commentId)
 	}
 
@@ -87,7 +87,7 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 }
 
 function shouldPostItemComment(
-	config: VigilConfig,
+	config: HelmConfig,
 	item: ItemRecord,
 	provider: TaskProvider,
 ): item is ItemRecord & {

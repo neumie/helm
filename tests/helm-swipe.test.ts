@@ -5,9 +5,9 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import swipeModule from '../helm/src/renderer/sidebar/swipe.ts'
+import swipeModule from '../app/src/renderer/sidebar/swipe.ts'
 
-type SwipeModule = typeof import('../helm/src/renderer/sidebar/swipe.ts')
+type SwipeModule = typeof import('../app/src/renderer/sidebar/swipe.ts')
 const { SwipeTracker, SWIPE_COMMIT_FRACTION, SWIPE_FLICK_VELOCITY, SWIPE_MIN_FLICK_TRAVEL_PX } =
 	swipeModule as SwipeModule
 

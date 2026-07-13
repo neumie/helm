@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
 import { defaultHelperModel } from '../solver/models.js'
@@ -59,7 +59,7 @@ export function buildDisplayNamePrompt(title: string, instructions: string = DEF
  * name). The enricher uses this to decide whether an enrichment genuinely failed
  * and is worth retrying.
  */
-export function itemWantsDisplayName(item: ItemRecord, config: VigilConfig): boolean {
+export function itemWantsDisplayName(item: ItemRecord, config: HelmConfig): boolean {
 	const feature = config.solver.displayName
 	return feature.enabled && !item.displayName && item.title.length > MIN_TITLE_LEN_TO_NAME
 }
@@ -108,7 +108,7 @@ export interface EnsureItemDisplayNameDeps {
 export interface EnsureItemDisplayNameParams {
 	commands: ItemCommands
 	item: ItemRecord
-	config: VigilConfig
+	config: HelmConfig
 	/** Effective solver agent; defaults to the configured `solver.agent`. */
 	agent?: SolverAgent
 	signal?: AbortSignal
@@ -264,7 +264,7 @@ export interface EnsureItemNameParams {
 	commands: ItemCommands
 	item: ItemRecord
 	taskContext: TaskContext
-	config: VigilConfig
+	config: HelmConfig
 	repoPath: string
 	/** Effective solver agent, resolved by the caller (selected agent ?? config). */
 	agent: SolverAgent
@@ -281,7 +281,7 @@ export interface EnsureItemNameParams {
 }
 
 /**
- * Optionally replace the default `vigil/item/<slug>` branch with a conventional,
+ * Optionally replace the default `helm/item/<slug>` branch with a conventional,
  * model-derived name (`feat/…`, `fix/…`) when `solver.nameModel.enabled`. Persists
  * through `ItemCommands` and returns the resulting Item (the updated row, or the
  * input unchanged when naming is disabled/declined) so callers can pass it
@@ -295,7 +295,7 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 	const feature = config.solver.branchNaming
 	if (!force && !feature.enabled) return item
 	// Solve-only: enforced here (not just at call sites) so the plan route can't
-	// name a ralph/harden Item — loop Items keep the deterministic vigil/item name.
+	// name a ralph/harden Item — loop Items keep the deterministic helm/item name.
 	// Structural; applies even to a forced manual run.
 	if (item.kind !== 'solve') return item
 	if (!force && item.branchName) return item // already planned / forked / named

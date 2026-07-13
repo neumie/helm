@@ -1,12 +1,12 @@
-// VigilBridge — the ONE place helm talks HTTP to the vigil daemon.
+// HelmBridge — the ONE place the app talks HTTP to the helm daemon.
 //
 // The renderer is a file:// document, so it cannot fetch :7474 directly (CORS,
 // private-network access). Instead the main process runs a single poller and
 // proxies commands:
 //
 //   - Poll loop (2.5s): GET /api/status + GET /api/items (+ GET /api/config
-//     once, refreshed after a config save). The merged VigilSnapshot is pushed
-//     to every window over 'vigil:snapshot' — full snapshot, only when the
+//     once, refreshed after a config save). The merged HelmSnapshot is pushed
+//     to every window over 'daemon:snapshot' — full snapshot, only when the
 //     JSON actually changed (no delta protocol).
 //   - Commands: invoke channels that proxy one HTTP call each and return the
 //     daemon's `{ data } | { error }` envelope verbatim.
@@ -20,10 +20,10 @@ import type {
 	DaemonStatus,
 	DashboardActionId,
 	DashboardItem,
+	HelmResult,
+	HelmSnapshot,
 	ItemStatus,
-	VigilResult,
-	VigilSnapshot,
-} from './shared-vigil'
+} from './shared-helm'
 
 const POLL_MS = 2500
 const REQUEST_TIMEOUT_MS = 10_000
@@ -35,9 +35,9 @@ function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err)
 }
 
-export class VigilBridge {
+export class HelmBridge {
 	private readonly baseUrl: string
-	private snapshot: VigilSnapshot = { reachable: false, status: null, items: null, config: null }
+	private snapshot: HelmSnapshot = { reachable: false, status: null, items: null, config: null }
 	/** Serialized snapshot with volatile fields dropped; push only when this changes. */
 	private lastComparable = ''
 	private timer: NodeJS.Timeout | null = null
@@ -58,7 +58,7 @@ export class VigilBridge {
 		this.timer = null
 	}
 
-	getSnapshot(): VigilSnapshot {
+	getSnapshot(): HelmSnapshot {
 		return this.snapshot
 	}
 
@@ -113,13 +113,13 @@ export class VigilBridge {
 		if (comparable === this.lastComparable) return
 		this.lastComparable = comparable
 		for (const win of BrowserWindow.getAllWindows()) {
-			if (!win.webContents.isDestroyed()) win.webContents.send('vigil:snapshot', this.snapshot)
+			if (!win.webContents.isDestroyed()) win.webContents.send('daemon:snapshot', this.snapshot)
 		}
 	}
 
 	// --- HTTP proxy ------------------------------------------------------------
 
-	private async request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<VigilResult<T>> {
+	private async request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<HelmResult<T>> {
 		try {
 			const res = await fetch(`${this.baseUrl}/api${path}`, {
 				method,
@@ -145,64 +145,64 @@ export class VigilBridge {
 		// allowlist) so a compromised renderer can't hit arbitrary daemon routes.
 		const id = (raw: unknown): string => encodeURIComponent(String(raw))
 
-		ipcMain.handle('vigil:subscribe', () => this.snapshot)
+		ipcMain.handle('daemon:subscribe', () => this.snapshot)
 
-		ipcMain.handle('vigil:item', (_e, rawId: unknown) => this.request('GET', `/items/${id(rawId)}`))
+		ipcMain.handle('daemon:item', (_e, rawId: unknown) => this.request('GET', `/items/${id(rawId)}`))
 
-		ipcMain.handle('vigil:itemAction', async (_e, rawId: unknown, action: DashboardActionId, body?: unknown) => {
+		ipcMain.handle('daemon:itemAction', async (_e, rawId: unknown, action: DashboardActionId, body?: unknown) => {
 			if (!ITEM_ACTIONS.has(action)) return { error: `Unknown item action: ${String(action)}` }
 			const result = await this.request('POST', `/items/${id(rawId)}/${action}`, body ?? {})
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:plan', async (_e, rawId: unknown, body?: unknown) => {
+		ipcMain.handle('daemon:plan', async (_e, rawId: unknown, body?: unknown) => {
 			const result = await this.request('POST', `/items/${id(rawId)}/plan`, body ?? {})
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
+		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
 			if (!AI_PASSES.has(pass)) return { error: `Unknown AI pass: ${String(pass)}` }
 			const result = await this.request('POST', `/items/${id(rawId)}/ai/${pass}`)
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:createItem', async (_e, body: unknown) => {
+		ipcMain.handle('daemon:createItem', async (_e, body: unknown) => {
 			const result = await this.request('POST', '/items', body)
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:sourceTask', async (_e, rawId: unknown) => {
+		ipcMain.handle('daemon:sourceTask', async (_e, rawId: unknown) => {
 			const result = await this.request('POST', `/items/${id(rawId)}/source-task`)
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:setStatus', async (_e, rawId: unknown, status: ItemStatus) => {
+		ipcMain.handle('daemon:setStatus', async (_e, rawId: unknown, status: ItemStatus) => {
 			const result = await this.request('POST', `/items/${id(rawId)}/status`, { status })
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:config', () => this.request('GET', '/config/full'))
+		ipcMain.handle('daemon:config', () => this.request('GET', '/config/full'))
 
-		ipcMain.handle('vigil:updateConfig', async (_e, body: unknown) => {
+		ipcMain.handle('daemon:updateConfig', async (_e, body: unknown) => {
 			const result = await this.request('PUT', '/config', body)
 			if (result.error === undefined) void this.refreshConfig()
 			return result
 		})
 
-		ipcMain.handle('vigil:pauseToggle', async () => {
+		ipcMain.handle('daemon:pauseToggle', async () => {
 			const paused = this.snapshot.status?.queue.paused ?? false
 			const result = await this.request('POST', paused ? '/queue/resume' : '/queue/pause')
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('vigil:poll', async () => {
+		ipcMain.handle('daemon:poll', async () => {
 			const result = await this.request('POST', '/poll/trigger')
 			this.kick()
 			return result

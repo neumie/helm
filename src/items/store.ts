@@ -353,7 +353,7 @@ export class ItemStore {
 
 	// Review solve Items that have a branch but no recorded PR and where a PR may
 	// genuinely exist unrecorded: the run errored/produced no result (agent may
-	// have shipped AFTER vigil stopped watching, e.g. a timeout later reconciled
+	// have shipped AFTER helm stopped watching, e.g. a timeout later reconciled
 	// to review) OR the run completed but dispatch FAILED (classic case: `gh pr
 	// create` dies client-side after GitHub created the PR). The DeployWatcher
 	// backfills these by asking gh for a PR on the branch. Deliberately excludes

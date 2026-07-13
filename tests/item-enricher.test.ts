@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
-import type { VigilConfig } from '../src/config.js'
+import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { itemWantsAssessment } from '../src/items/assess.js'
 import { ItemCommands } from '../src/items/commands.js'
@@ -13,16 +13,16 @@ import { itemWantsDisplayName } from '../src/items/naming.js'
 import type { ItemRecord } from '../src/items/schema.js'
 import type { OneShotOptions } from '../src/solver/one-shot.js'
 
-function makeConfig(over?: { displayName?: boolean; triage?: boolean }): VigilConfig {
+function makeConfig(over?: { displayName?: boolean; triage?: boolean }): HelmConfig {
 	return {
 		provider: {
 			type: 'contember',
 			apiBaseUrl: 'https://example.test',
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			apiToken: 'token',
 			statuses: ['new'],
 		},
-		projects: [{ slug: 'vigil', repoPath: '/repo', baseBranch: 'main' }],
+		projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
 		polling: { intervalSeconds: 60 },
 		solver: {
 			type: 'default',
@@ -38,7 +38,7 @@ function makeConfig(over?: { displayName?: boolean; triage?: boolean }): VigilCo
 		github: {
 			createPrs: false,
 			postComments: true,
-			prPrefix: '[Vigil]',
+			prPrefix: '[Helm]',
 			trackDeployments: false,
 			deployPollSeconds: 120,
 		},
@@ -58,7 +58,7 @@ function fakeItem(over: Partial<ItemRecord>): ItemRecord {
 		id: 'x',
 		kind: 'solve',
 		status: 'triage',
-		projectSlug: 'vigil',
+		projectSlug: 'helm',
 		title: 't',
 		displayName: null,
 		assessment: null,
@@ -77,8 +77,8 @@ const VALID_ASSESSMENT = JSON.stringify({
 })
 
 function withTempDb(fn: (db: DB) => Promise<void>) {
-	const dir = mkdtempSync(join(tmpdir(), 'vigil-enrich-'))
-	const db = new DB(join(dir, 'vigil.db'))
+	const dir = mkdtempSync(join(tmpdir(), 'helm-enrich-'))
+	const db = new DB(join(dir, 'helm.db'))
 	return Promise.resolve(fn(db)).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -104,7 +104,7 @@ test('enricher retries a transient one-shot failure and eventually enriches', ()
 	withTempDb(async db => {
 		const config = makeConfig()
 		const item = new ItemCommands(db.items, config).createSolveItem({
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: LONG_TITLE,
 			prompt: 'body',
 			source: { provider: 'Email', externalId: 'email:retry-1' },
@@ -147,7 +147,7 @@ test('enricher gives up after the retry cap when failures persist', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
 		const item = new ItemCommands(db.items, config).createSolveItem({
-			projectSlug: 'vigil',
+			projectSlug: 'helm',
 			title: LONG_TITLE,
 			prompt: 'body',
 			source: { provider: 'Email', externalId: 'email:retry-2' },

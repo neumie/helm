@@ -1,4 +1,4 @@
-import type { ProjectConfig, VigilConfig } from '../config.js'
+import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 
 export interface PlanningSessionParams {
@@ -7,7 +7,7 @@ export interface PlanningSessionParams {
 	planDirName: string
 	taskTitle: string
 	taskContext: TaskContext
-	solverConfig: VigilConfig['solver']
+	solverConfig: HelmConfig['solver']
 	/** If set, reuse this worktree instead of creating a new one. */
 	existingWorktreePath?: string
 	signal?: AbortSignal

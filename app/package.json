@@ -3,7 +3,7 @@
 	"productName": "Helm",
 	"private": true,
 	"version": "0.1.0",
-	"description": "Orchestrator cockpit for the vigil daemon: native sidebar + real terminal",
+	"description": "Orchestrator cockpit for the helm daemon: native sidebar + real terminal",
 	"main": "dist/main.cjs",
 	"scripts": {
 		"build": "tsc --noEmit && node build.mjs",

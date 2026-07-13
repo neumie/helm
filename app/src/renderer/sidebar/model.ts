@@ -6,7 +6,7 @@
 // absolute after, tabular numerals).
 
 import { useEffect, useState } from 'react'
-import type { AssessmentVerdict, DashboardItem, DashboardTone, ItemStatus } from '../../shared-vigil'
+import type { AssessmentVerdict, DashboardItem, DashboardTone, ItemStatus } from '../../shared-helm'
 
 // ---------------------------------------------------------------------------
 // Navigation routes (push stack, §3.10)

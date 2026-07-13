@@ -11,7 +11,7 @@ import type {
 	ConfigEditFieldControl,
 	ConfigEditListControl,
 	ConfigEditSection,
-} from '../../shared-vigil'
+} from '../../shared-helm'
 import { appearance } from '../appearance'
 import { showToast } from '../toast'
 import {
@@ -59,7 +59,7 @@ export function useSettingsStore(active: boolean): SettingsStore {
 			return
 		}
 		let alive = true
-		void window.helm.vigil.config().then(result => {
+		void window.helm.daemon.config().then(result => {
 			if (!alive) return
 			if (result.error !== undefined) setLoadError(result.error)
 			else {
@@ -109,7 +109,7 @@ export function useSettingsStore(active: boolean): SettingsStore {
 		if (!draft) return
 		setSaving(true)
 		try {
-			const result = await window.helm.vigil.updateConfig(draft)
+			const result = await window.helm.daemon.updateConfig(draft)
 			if (result.error !== undefined) showToast({ message: 'Save failed', detail: result.error, ttlMs: 6000 })
 			else {
 				setDirty(false)

@@ -6,15 +6,15 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import helmModelModule from '../helm/src/renderer/sidebar/model.ts'
-import sharedVigilModule from '../helm/src/shared-vigil.ts'
+import helmModelModule from '../app/src/renderer/sidebar/model.ts'
+import sharedHelmModule from '../app/src/shared-helm.ts'
 
-type HelmModelModule = typeof import('../helm/src/renderer/sidebar/model.ts')
-type SharedVigilModule = typeof import('../helm/src/shared-vigil.ts')
+type HelmModelModule = typeof import('../app/src/renderer/sidebar/model.ts')
+type SharedHelmModule = typeof import('../app/src/shared-helm.ts')
 const { partitionWork, statusTone } = helmModelModule as HelmModelModule
-const { ITEM_STATUSES } = sharedVigilModule as SharedVigilModule
+const { ITEM_STATUSES } = sharedHelmModule as SharedHelmModule
 
-type DashboardItem = import('../helm/src/shared-vigil.ts').DashboardItem
+type DashboardItem = import('../app/src/shared-helm.ts').DashboardItem
 
 test('helm keeps triage Items in the triage bucket, not queue', () => {
 	const triagedA = { id: 'u', status: 'triage' } as DashboardItem

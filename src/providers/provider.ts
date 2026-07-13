@@ -24,7 +24,7 @@ export const descriptionBlockSchema = z.discriminatedUnion('type', [
 export type DescriptionBlock = z.infer<typeof descriptionBlockSchema>
 
 /**
- * Vigil's canonical internal representation of a task. Each provider normalizes
+ * Helm's canonical internal representation of a task. Each provider normalizes
  * its native data into this shape; all fields optional except title. It is a Zod
  * schema (not just an interface) because an Item can FREEZE one as its
  * `capturedContext` column (an ingested email etc., with no live provider to
@@ -72,7 +72,7 @@ export interface TaskProvider {
 	/**
 	 * Optional capability: create a task in the source system (used to promote a
 	 * captured/ingested Item — e.g. an email — into a real tracked task). The
-	 * projectSlug is the vigil project slug, which by convention matches the
+	 * projectSlug is the helm project slug, which by convention matches the
 	 * provider's project identifier. Throws on failure.
 	 */
 	createTask?(input: { projectSlug: string; title: string; description?: string }): Promise<CreatedSourceTask>

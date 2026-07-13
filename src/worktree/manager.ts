@@ -11,7 +11,10 @@ import { log } from '../util/logger.js'
 // execSync/execFileSync in this module.
 const execFileAsync = promisify(execFile)
 
-const VIGIL_EXCLUDE_PATTERNS = ['.vigil-*', '.mcp.json']
+// `.vigil-*` stays in the list on purpose: worktrees created before the
+// vigil → helm rename still contain old `.vigil-prompt.txt` / `.vigil-attachments/`
+// artifacts, and they must stay invisible to git.
+const HELM_EXCLUDE_PATTERNS = ['.helm-*', '.vigil-*', '.mcp.json']
 
 // Async exec means the event loop no longer serializes the daemon's git child
 // processes: two concurrent solves in ONE repo would interleave `git fetch` /
@@ -115,16 +118,16 @@ async function createWorktreeLocked(
 }
 
 /**
- * Add vigil temp file patterns to the worktree's git exclude so they're invisible to git.
+ * Add helm temp file patterns to the worktree's git exclude so they're invisible to git.
  * Uses $GIT_DIR/info/exclude which is per-worktree and never committed.
  */
-export async function excludeVigilFiles(worktreePath: string): Promise<void> {
+export async function excludeHelmFiles(worktreePath: string): Promise<void> {
 	try {
 		const { stdout } = await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: worktreePath })
 		const gitDir = stdout.trim()
 		const excludePath = join(worktreePath, gitDir, 'info', 'exclude')
 		mkdirSync(join(worktreePath, gitDir, 'info'), { recursive: true })
-		appendFileSync(excludePath, `\n# Vigil temp files\n${VIGIL_EXCLUDE_PATTERNS.join('\n')}\n`)
+		appendFileSync(excludePath, `\n# Helm temp files\n${HELM_EXCLUDE_PATTERNS.join('\n')}\n`)
 	} catch {
 		log.warn('worktree', 'Could not write git exclude patterns')
 	}

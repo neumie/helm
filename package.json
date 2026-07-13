@@ -1,9 +1,10 @@
 {
-	"name": "vigil",
+	"name": "helm",
 	"version": "0.1.0",
 	"type": "module",
 	"bin": {
-		"vigil": "./dist/cli/vigil.js"
+		"helm": "./dist/cli/helm.js",
+		"vigil": "./dist/cli/helm.js"
 	},
 	"scripts": {
 		"dev": "tsx --watch src/index.ts",

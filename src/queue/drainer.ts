@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import type { ItemRecord } from '../items/schema.js'
@@ -38,7 +38,7 @@ export class Drainer {
 	private readonly itemCommands: ItemCommands
 
 	constructor(
-		private config: VigilConfig,
+		private config: HelmConfig,
 		private db: DB,
 		private provider: TaskProvider,
 		private solver: Solver,

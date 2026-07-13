@@ -1,5 +1,5 @@
 /**
- * Styles for the in-page Vigil widget, injected into its (closed) shadow root by
+ * Styles for the in-page Helm widget, injected into its (closed) shadow root by
  * `content.tsx`. Design tokens live on `:host`; everything is class-scoped, so the
  * shadow root keeps the page's styles out and ours in.
  */

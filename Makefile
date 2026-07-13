@@ -10,25 +10,25 @@ check: build
 
 install: build
 	npm link
-	vigil start
-	@echo "\n✓ Vigil installed and running. API: http://localhost:7474/api (clients: helm + extension)"
-	@echo "  Use: vigil start | stop | status | logs"
+	helm start
+	@echo "\n✓ Helm installed and running. API: http://localhost:7474/api (clients: app + extension)"
+	@echo "  Use: helm start | stop | status | logs"
 
 uninstall:
-	vigil stop
-	npm unlink -g vigil
-	@echo "\n✓ Vigil stopped and unlinked."
+	helm stop
+	npm unlink -g helm
+	@echo "\n✓ Helm stopped and unlinked."
 
 restart: build
-	-vigil stop 2>/dev/null
-	vigil start
-	@echo "\n✓ Vigil restarted."
+	-helm stop 2>/dev/null
+	helm start
+	@echo "\n✓ Helm restarted."
 
 status:
-	@vigil status
+	@helm status
 
 logs:
-	@vigil logs
+	@helm logs
 
 node_modules: package.json
 	npm install

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream, writeFileSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
-import type { ProjectConfig, VigilConfig } from '../config.js'
+import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { ItemPayload } from '../items/schema.js'
 import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 
@@ -11,7 +11,7 @@ export type LoopPayload = RalphPayload | HardenPayload
 
 export interface LoopRunParams {
 	projectConfig: ProjectConfig
-	solverConfig: VigilConfig['solver']
+	solverConfig: HelmConfig['solver']
 	itemId: string
 	itemTitle: string
 	payload: LoopPayload
@@ -50,7 +50,7 @@ function parseRunIdLine(line: string): string | null {
 	return /^(?:ralph|harden)-[A-Za-z0-9._:-]+$/.test(trimmed) ? trimmed : null
 }
 
-function ralphArgs(payload: RalphPayload, solverConfig: VigilConfig['solver']): string[] {
+function ralphArgs(payload: RalphPayload, solverConfig: HelmConfig['solver']): string[] {
 	const mode = payload.mode ?? 'once'
 	const args = [
 		'ralph',
@@ -77,7 +77,7 @@ function hardenArgs(payload: HardenPayload): string[] {
 	return args
 }
 
-function almanacArgs(payload: LoopPayload, solverConfig: VigilConfig['solver']): string[] {
+function almanacArgs(payload: LoopPayload, solverConfig: HelmConfig['solver']): string[] {
 	switch (payload.kind) {
 		case 'ralph':
 			return ralphArgs(payload, solverConfig)

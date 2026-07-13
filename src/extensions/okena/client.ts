@@ -23,7 +23,7 @@ interface OkenaCredentials {
 }
 
 const EXPIRED_TOKEN_HINT =
-	'Okena CLI token expired or invalid. Re-register by running the okena binary (e.g. `okena state`), then restart vigil.'
+	'Okena CLI token expired or invalid. Re-register by running the okena binary (e.g. `okena state`), then restart helm.'
 
 export class OkenaClient {
 	private baseDir: string

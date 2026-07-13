@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { ItemEnricher } from '../items/enricher.js'
 import type { Poller } from '../poller/poller.js'
@@ -10,7 +10,7 @@ import type { Spawner } from '../spawner/spawner.js'
 import { apiRoutes } from './routes/api.js'
 
 export function createApp(
-	config: VigilConfig,
+	config: HelmConfig,
 	configPath: string,
 	db: DB,
 	queue: Drainer,
@@ -33,7 +33,7 @@ export function createApp(
 	// native Electron sidebar) and the Chrome extension are the clients, both
 	// speaking /api. `/` stays as a tiny liveness/identity probe so a human (or
 	// `curl`) hitting the port sees what owns it; everything else is a JSON 404.
-	app.get('/', c => c.json({ name: 'vigil', api: '/api' }))
+	app.get('/', c => c.json({ name: 'helm', api: '/api' }))
 	app.all('*', c => c.json({ error: 'Not found' }, 404))
 
 	return app

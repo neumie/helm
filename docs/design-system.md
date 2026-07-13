@@ -1,6 +1,6 @@
-# Vigil design system
+# Helm design system
 
-**This document is law for every vigil UI surface**: the helm renderer (`helm/src/renderer/`), the extension widget (`extension/src/widget.styles.ts`), and any future surface. A UI change that introduces a new pattern MUST add it here in the same slice; a value not in these tables is drift. Where existing code disagreed, the canonical value was picked and the change is recorded in [Appendix: reconciled drift](#appendix-reconciled-drift).
+**This document is law for every helm UI surface**: the app renderer (`app/src/renderer/`), the extension widget (`extension/src/widget.styles.ts`), and any future surface. A UI change that introduces a new pattern MUST add it here in the same slice; a value not in these tables is drift. Where existing code disagreed, the canonical value was picked and the change is recorded in [Appendix: reconciled drift](#appendix-reconciled-drift).
 
 Helm is the captain's station: dark, machined, quiet. Everything below serves that.
 
@@ -18,11 +18,11 @@ Helm is the captain's station: dark, machined, quiet. Everything below serves th
 
 ## 2. Tokens
 
-Canonical CSS custom properties. Helm defines them on `:root` (`helm/src/renderer/styles.css`); the extension defines the same values on `:host` with a `--vg-` prefix (shadow-root isolation). **The values MUST be identical across surfaces**; the prefix is the only allowed difference.
+Canonical CSS custom properties. Helm defines them on `:root` (`app/src/renderer/styles.css`); the extension defines the same values on `:host` with a `--vg-` prefix (shadow-root isolation). **The values MUST be identical across surfaces**; the prefix is the only allowed difference.
 
 ### 2.1 Color
 
-Background ladder (dark only — vigil surfaces do not ship a light theme):
+Background ladder (dark only — helm surfaces do not ship a light theme):
 
 | Token | Value | Role |
 |---|---|---|
@@ -83,7 +83,7 @@ Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label an
 | Label | 11/600, uppercase, `0.06em` | Section labels, wordmark, field labels. `--text-2` |
 | Chip | 10/700, uppercase, `0.04em` | Chip/badge text only. Never for standalone labels |
 | Mono inline | 11/400 mono | Branch names, ids, kbd |
-| Terminal | 13/400 mono (default), cell height ≈19px | xterm: `lineHeight: 1.2` multiplier lands 13px at ~19px cells (`helm/src/renderer/renderer.ts`) — a literal 1.45 would render ~22px. Size is user-adjustable **9–24px** via ⌘= / ⌘− / ⌘0 or Settings → Appearance (§2.8). Theme comes from the `--term-*` / `--ansi-*` tokens (§2.8): bg `--term-bg`, fg `--term-fg`, cursor `--term-cursor`, selection `--term-selection` |
+| Terminal | 13/400 mono (default), cell height ≈19px | xterm: `lineHeight: 1.2` multiplier lands 13px at ~19px cells (`app/src/renderer/renderer.ts`) — a literal 1.45 would render ~22px. Size is user-adjustable **9–24px** via ⌘= / ⌘− / ⌘0 or Settings → Appearance (§2.8). Theme comes from the `--term-*` / `--ansi-*` tokens (§2.8): bg `--term-bg`, fg `--term-fg`, cursor `--term-cursor`, selection `--term-selection` |
 
 - `-webkit-font-smoothing: antialiased` on the body.
 - Never use font sizes outside this scale. Never bold below 600 or above 700.
@@ -158,10 +158,10 @@ Exactly two shadows. Attached surfaces (cards in flow, banners, rows) get **no s
 
 ### 2.8 Theming
 
-Every color in this document is a **CSS custom property** — components MUST consume `var(--token)`, never literals; a hex/rgba literal in component CSS is drift. Beyond §2.1, the token set includes `--accent-fill-hover`, `--on-accent` (text on accent fills), `--thumb`/`--thumb-hover` (scrollbars + toast countdown), `--scrim`, `--shadow-1`/`--shadow-2`, the terminal surface (`--term-bg`/`--term-fg`/`--term-cursor`/`--term-cursor-accent`/`--term-selection`), and the ANSI 16 as `--ansi-<name>`/`--ansi-bright-<name>`. The canonical values live in `helm/src/theme-presets.ts` (`HELM_TOKENS`); `helm/src/renderer/styles.css` `:root` mirrors them only for the pre-JS first paint — keep both in sync.
+Every color in this document is a **CSS custom property** — components MUST consume `var(--token)`, never literals; a hex/rgba literal in component CSS is drift. Beyond §2.1, the token set includes `--accent-fill-hover`, `--on-accent` (text on accent fills), `--thumb`/`--thumb-hover` (scrollbars + toast countdown), `--scrim`, `--shadow-1`/`--shadow-2`, the terminal surface (`--term-bg`/`--term-fg`/`--term-cursor`/`--term-cursor-accent`/`--term-selection`), and the ANSI 16 as `--ansi-<name>`/`--ansi-bright-<name>`. The canonical values live in `app/src/theme-presets.ts` (`HELM_TOKENS`); `app/src/renderer/styles.css` `:root` mirrors them only for the pre-JS first paint — keep both in sync.
 
 - **Soft fills are derived, not stored**: `--<tone>-soft: color-mix(in srgb, var(--<tone>) 15%, transparent)`. Themes override the tone; every chip/banner/soft border follows automatically. Never hand-mix a per-component alpha (the §2.1 0.15 rule, mechanized).
-- **A theme is a flat JSON object of token overrides**, stored as `<userData>/themes/<id>.json` (`{ "name": "…", "tokens": { "--token": "value", … } }`). Main seeds the presets as editable files on first list (`themes:list` IPC) and any other `*.json` dropped in the dir appears in the Appearance theme picker; sparse themes backfill missing tokens from the Helm base. Runtime application is owned by `helm/src/renderer/appearance.ts`: `documentElement.style.setProperty` per token plus an xterm `options.theme` rebuild from the `--term-*`/`--ansi-*` tokens (`termThemeFromTokens`) — CSS and terminal can never disagree.
+- **A theme is a flat JSON object of token overrides**, stored as `<userData>/themes/<id>.json` (`{ "name": "…", "tokens": { "--token": "value", … } }`). Main seeds the presets as editable files on first list (`themes:list` IPC) and any other `*.json` dropped in the dir appears in the Appearance theme picker; sparse themes backfill missing tokens from the Helm base. Runtime application is owned by `app/src/renderer/appearance.ts`: `documentElement.style.setProperty` per token plus an xterm `options.theme` rebuild from the `--term-*`/`--ansi-*` tokens (`termThemeFromTokens`) — CSS and terminal can never disagree.
 - **Presets: "Helm" + "High contrast".** Deliberately NO light preset: the §2.1 ladder is dark-only — the white-alpha hairline/fill system and the terminal palette assume a dark surface, so a genuinely good light theme needs its own ladder and fill system designed from scratch, not inverted tokens. High contrast raises the text ladder to white, doubles the line/fill alphas, deepens the wells to black, and brightens the ANSI 16.
 - **Appearance state** (active theme id, per-token overrides from the color wells, terminal font size, UI text scale) persists in `localStorage['helm.appearance']` — same persistence surface as the split width. Settings → Appearance live-applies every change; "Reset to preset" drops the overrides; switching themes starts clean. The accent color well writes the whole accent family (`--accent`, `--accent-fill`, derived `--accent-fill-hover`) so buttons, links, and focus rings stay coherent.
 - **Type knobs**: terminal font size **9–24px, default 13**, via ⌘= / ⌘− / ⌘0 — View-menu accelerators forwarded over IPC (the ⌘T pattern; the stock `viewMenu` zoom roles are replaced) — or the Appearance stepper; terminals refit on change. UI text scale is `--ui-scale` per §2.2.
@@ -232,7 +232,7 @@ The sidebar work-item row; also the template for any dense list.
 
 ### 3.6 Toast
 
-Reference implementation: `helm/src/renderer/toast.ts` + `styles.css` "toasts" block.
+Reference implementation: `app/src/renderer/toast.ts` + `styles.css` "toasts" block.
 
 - Container fixed bottom-right, 16px inset, column stack, gap 8, newest at bottom, `role="status"` + `aria-live="polite"`.
 - Box: min-width 220, max-width 340, padding **10 12**, background `--chrome`, 1px `--hairline`, radius `--radius-lg`, `--shadow-1`, `overflow: hidden` (clips countdown bar).
@@ -280,7 +280,7 @@ The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page 
 - Forward: incoming page slides `translateX(100%)`→0 over **150ms ease-out**; outgoing page slides 0→`translateX(-25%)` (parallax) and dims to 0.9 opacity. Back: exact reverse at 120ms.
 - Reduced motion: instant swap (the global clamp handles it).
 - The list page preserves scroll position and selection across push/pop. Deep pages (plan preview, settings section) push onto the same stack; Esc = back.
-- **Gestures — every pushed page inherits these** (implementation: `helm/src/renderer/sidebar/swipe.ts` + the nav-stack wiring in `SidebarRoot.tsx`):
+- **Gestures — every pushed page inherits these** (implementation: `app/src/renderer/sidebar/swipe.ts` + the nav-stack wiring in `SidebarRoot.tsx`):
   - **Two-finger swipe-back** (macOS trackpad, wheel `deltaX`): an interactive edge-tracking pop. The gesture qualifies on its FIRST event only — horizontal-dominant (`|deltaX| > |deltaY|`), leftward-content (`deltaX < 0` = fingers moving right under natural scrolling), a page to pop, and no horizontally-scrollable ancestor under the pointer that can still scroll left (`scrollLeft > 0` consumes the pan; at 0 it falls through to navigation — Safari's edge rule). While tracking, the top page translates 1:1 with the accumulated delta (inline transform, no easing) and the previous page peeks: parallax −25%→0 under a `--scrim` dimming layer fading 1→0. Release **commits past 50% pane width** or on a **flick** (recent velocity ≥ 0.7 px/ms with ≥ 40px travel): the remaining travel animates 150ms ease-out, then the stack pops with NO pop animation (replaying it would flash). Below threshold it **springs back in 160ms**. Gesture end = **90ms** of wheel idle; a **250ms cooldown** eats the momentum tail so one long swipe can't pop two pages. Reduced motion: no tracked animation at all — a threshold-crossing gesture pops instantly.
   - **Native three-finger swipe**: `BrowserWindow` `'swipe'` event → back/forward over the same channel as the Go menu.
   - **Keyboard**: ⌘[ back, ⌘] forward — Go-menu accelerators, not renderer listeners (§4: xterm swallows renderer keys). **Mouse back/forward buttons** (`event.button` 3/4, plus `app-command` mice) → back/forward.
@@ -309,20 +309,20 @@ Quiet and directive: say what the state is, then what to do.
 
 - Centered card (bare, or on `--chrome` with `--hairline` border + radius `--radius-lg` + padding 22 26 when floating over a well).
 - Title 13/600 `--text-1`; detail 12 `--text-2`, 6px below. Keyboard hints as `<kbd>`: 11px mono, padding 1 5, 1px `rgba(255,255,255,0.09)` border, radius `--radius-sm`, background `--fill-subtle`.
-- Copy pattern: state, then direction — "No terminals open" / "Press ⌘T to start one"; "Waiting for the daemon" / "Start it with vigil start".
+- Copy pattern: state, then direction — "No terminals open" / "Press ⌘T to start one"; "Waiting for the daemon" / "Start it with helm start".
 - **Don't** use illustrations, emoji, or exclamation marks; **don't** leave an empty state without a next step.
 
 ### 3.14 Terminal well
 
 - Background `--well`; text inset via `.term-holder` padding — **top/bottom 14, left 16, right 0**. The right padding MUST stay 0: xterm's scroll container (`.xterm-viewport`) lives inside the holder, so any right padding pushes its scrollbar off the pane edge into the well (Terminal.app never does that). Right-side breathing room comes from FitAddon's integer-column remainder (0–1 cell). The topbar/tab strip alignment mirrors the well's 16px **left** text inset.
 - Terminal scrollbar: xterm's own, styled at the pane edge — 8px wide, transparent track, thumb `rgba(255,255,255,0.14)` (hover `0.24`), radius 999. Styling `::-webkit-scrollbar` makes it a classic (non-overlay) 8px gutter that FitAddon subtracts from the column budget. No idle fade — scrollbar pseudo-elements don't transition; a JS fader isn't worth it.
-- Tab labels: shell OSC titles matching `user@host[:path]` normalize to the trailing path segment ("vigil"); a bare `user@host` falls back to "zsh"; other titles pass through. The raw title survives as the label's tooltip.
-- xterm theme = the `--term-*` / `--ansi-*` tokens (§2.8), rebuilt into an xterm theme object by `appearance.ts` (`termThemeFromTokens`) — `HELM_TOKENS` in `helm/src/theme-presets.ts` is the canonical ANSI-16 for any future terminal surface. Defaults: cursor `--accent`, selection `rgba(76,154,255,0.25)`.
+- Tab labels: shell OSC titles matching `user@host[:path]` normalize to the trailing path segment ("helm"); a bare `user@host` falls back to "zsh"; other titles pass through. The raw title survives as the label's tooltip.
+- xterm theme = the `--term-*` / `--ansi-*` tokens (§2.8), rebuilt into an xterm theme object by `appearance.ts` (`termThemeFromTokens`) — `HELM_TOKENS` in `app/src/theme-presets.ts` is the canonical ANSI-16 for any future terminal surface. Defaults: cursor `--accent`, selection `rgba(76,154,255,0.25)`.
 - **Don't** restyle ANSI colors per surface; **don't** put chrome-level controls inside the well.
 
 ### 3.15 Cards & info rows (sidebar detail/settings)
 
-The in-flow content card and its fact/navigation rows (`helm/src/renderer/sidebar/ui.tsx`).
+The in-flow content card and its fact/navigation rows (`app/src/renderer/sidebar/ui.tsx`).
 
 - Card: 1px `--hairline` border, radius `--radius-lg`, padding 12, transparent background (depth from the ladder — cards in flow get no fill and no shadow). Optional head row: Label-style section label left, one small control or chip right.
 - Info row (static fact): min-height 20, 12px value `--text-0` right-aligned single-line ellipsis; label is the Label type style. Mono values (branch, refs) use Mono inline 11.
@@ -391,7 +391,7 @@ Method: `process.getCreationTime()` as t0; marks at main-load (~120ms), app-read
 
 | Metric | Measured | Budget |
 |---|---|---|
-| Idle `vigil:snapshot` pushes (queue idle, nothing changing) | **0 pushes / 5 min** (120 poll ticks) | **0** — the bridge must diff (uptime stripped) before pushing |
+| Idle `daemon:snapshot` pushes (queue idle, nothing changing) | **0 pushes / 5 min** (120 poll ticks) | **0** — the bridge must diff (uptime stripped) before pushing |
 | Sidebar re-renders while idle | 2 (mount + first snapshot), then flat | re-render **only** on push + the 30s relative-time tick |
 | Full 50-row list render + paint (cold mount) | ~60ms | one poll-refresh re-render **< 16ms** (steady state; rows are memoized, only rows whose time label flipped re-render) |
 

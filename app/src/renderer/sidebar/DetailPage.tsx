@@ -8,11 +8,11 @@ import type {
 	Assessment,
 	DashboardAction,
 	DashboardItem,
+	HelmResult,
+	HelmSnapshot,
 	PlanInfo,
 	SolverAgentBody,
-	VigilResult,
-	VigilSnapshot,
-} from '../../shared-vigil'
+} from '../../shared-helm'
 import { showToast } from '../toast'
 import { CHIP_CLASS, VERDICT_META, absoluteUrl, itemTitle, relativeTime, useNow } from './model'
 import {
@@ -37,7 +37,7 @@ type SolverAgent = 'claude' | 'codex'
 
 export interface DetailPageProps {
 	id: string
-	snapshot: VigilSnapshot | null
+	snapshot: HelmSnapshot | null
 	onBack: () => void
 	onOpenPlan: (id: string) => void
 	onOpenTask: (id: string) => void
@@ -50,12 +50,12 @@ export interface DetailPageProps {
 // expensive observed route (log read + a `gh pr view` subprocess per call,
 // measured ~240ms each with a PR). Entries are one settled promise per item
 // viewed this session; errored fetches are evicted so a remount retries.
-const detailRequests = new Map<string, { key: string; promise: Promise<VigilResult<DashboardItem>> }>()
+const detailRequests = new Map<string, { key: string; promise: Promise<HelmResult<DashboardItem>> }>()
 
-function fetchItemDetail(id: string, key: string, force: boolean): Promise<VigilResult<DashboardItem>> {
+function fetchItemDetail(id: string, key: string, force: boolean): Promise<HelmResult<DashboardItem>> {
 	const cached = detailRequests.get(id)
 	if (!force && cached?.key === key) return cached.promise
-	const promise = window.helm.vigil.item(id)
+	const promise = window.helm.daemon.item(id)
 	detailRequests.set(id, { key, promise })
 	void promise.then(result => {
 		if (result.error !== undefined && detailRequests.get(id)?.promise === promise) detailRequests.delete(id)
@@ -64,13 +64,13 @@ function fetchItemDetail(id: string, key: string, force: boolean): Promise<Vigil
 }
 
 /** Fetch the full item; re-fetch when the list row's updatedAt moves. */
-export function useItemDetail(id: string, snapshot: VigilSnapshot | null) {
+export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
 	const row = useMemo(() => snapshot?.items?.find(i => i.id === id) ?? null, [snapshot?.items, id])
 	const [detail, setDetail] = useState<DashboardItem | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const rowUpdatedAt = row?.updatedAt ?? null
 
-	const apply = useCallback((result: VigilResult<DashboardItem>) => {
+	const apply = useCallback((result: HelmResult<DashboardItem>) => {
 		if (result.error !== undefined) setError(result.error)
 		else {
 			setError(null)
@@ -148,7 +148,7 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 
 	const runItemAction = (action: DashboardAction) =>
 		run(action.label, action.id, () =>
-			window.helm.vigil.itemAction(
+			window.helm.daemon.itemAction(
 				item.id,
 				action.id,
 				action.id === 'approve' || action.id === 'start' || action.id === 'retry' ? runBody() : undefined,
@@ -157,7 +157,7 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 
 	const runPlan = () =>
 		run('Plan', 'plan', async () => {
-			const result = await window.helm.vigil.plan(item.id, runBody())
+			const result = await window.helm.daemon.plan(item.id, runBody())
 			if (result.error === undefined) {
 				const info: PlanInfo = result.data
 				showToast({ message: `${info.spawner} planning started`, detail: info.hint, ttlMs: 8000 })
@@ -166,7 +166,7 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 		})
 
 	const runCreateSourceTask = () =>
-		run('Create source task', 'source-task', () => window.helm.vigil.sourceTask(item.id))
+		run('Create source task', 'source-task', () => window.helm.daemon.sourceTask(item.id))
 
 	// Action bar: one visible primary (or the sole quiet/danger fallback), the
 	// rest in the "…" overflow — §3.11.
@@ -494,7 +494,7 @@ function runTone(state: DashboardItem['runObservation']['state']): 'blue' | 'gre
 
 /** Plan preview: the user's plan-dir markdown (prd.md / …); auto-written
  *  context.md / README.md stay hidden — the task itself shows elsewhere. */
-export function PlanPage({ id, snapshot, onBack }: { id: string; snapshot: VigilSnapshot | null; onBack: () => void }) {
+export function PlanPage({ id, snapshot, onBack }: { id: string; snapshot: HelmSnapshot | null; onBack: () => void }) {
 	const { item } = useItemDetail(id, snapshot)
 	const docs = (item?.planArtifacts ?? []).filter(a => {
 		const name = a.name.toLowerCase()
@@ -531,7 +531,7 @@ export function PlanPage({ id, snapshot, onBack }: { id: string; snapshot: Vigil
 /** The source task's full content: description blocks, metadata, attachments,
  *  comments. Remote images can't render inline (renderer CSP allows only
  *  self/data:), so image blocks and attachments open externally. */
-export function TaskPage({ id, snapshot, onBack }: { id: string; snapshot: VigilSnapshot | null; onBack: () => void }) {
+export function TaskPage({ id, snapshot, onBack }: { id: string; snapshot: HelmSnapshot | null; onBack: () => void }) {
 	const { item, fresh } = useItemDetail(id, snapshot)
 	const now = useNow()
 	const task = item?.sourceTask ?? null

@@ -1,4 +1,4 @@
-// Vigil daemon wire types + the VigilBridge IPC surface.
+// Helm daemon wire types + the HelmBridge IPC surface.
 //
 // The contract types below are COPIED from web/src/api.ts (the web dashboard is
 // scheduled for deletion — helm must not import from it). They mirror the
@@ -318,21 +318,21 @@ export interface ConfigDocument {
 }
 
 // ---------------------------------------------------------------------------
-// VigilBridge wire shapes (helm-specific, not copied from web/).
+// HelmBridge wire shapes (helm-specific, not copied from web/).
 
 /**
  * Daemon response envelope, passed through verbatim: the daemon answers
  * `{ data }` on success and `{ error }` on failure; a network-level failure
  * becomes `{ error: <message> }` in the bridge.
  */
-export type VigilResult<T> = { data: T; error?: undefined } | { data?: undefined; error: string }
+export type HelmResult<T> = { data: T; error?: undefined } | { data?: undefined; error: string }
 
 /**
- * Full state pushed over `vigil:snapshot`. `status`/`items`/`config` are null
+ * Full state pushed over `daemon:snapshot`. `status`/`items`/`config` are null
  * until their first successful fetch (`config` is fetched once, then only on
  * demand after a config save).
  */
-export interface VigilSnapshot {
+export interface HelmSnapshot {
 	/** Last poll reached the daemon. The topbar connection dot reads this. */
 	reachable: boolean
 	status: DaemonStatus | null
@@ -354,22 +354,22 @@ export interface SolverAgentBody {
  * daemon HTTP happens in the main process — the file:// renderer never
  * fetches :7474 directly (CORS).
  */
-export interface VigilApi {
+export interface DaemonApi {
 	/** Returns the bridge's current snapshot and starts `onSnapshot` pushes for this window. */
-	subscribe(): Promise<VigilSnapshot>
+	subscribe(): Promise<HelmSnapshot>
 	/** Full snapshot pushed whenever polled state actually changed. Returns unsubscribe. */
-	onSnapshot(listener: (snapshot: VigilSnapshot) => void): () => void
-	item(id: string): Promise<VigilResult<DashboardItem>>
-	itemAction(id: string, action: DashboardActionId, body?: SolverAgentBody): Promise<VigilResult<DashboardItem>>
-	plan(id: string, body?: SolverAgentBody): Promise<VigilResult<PlanInfo>>
-	aiPass(id: string, pass: AiPass): Promise<VigilResult<DashboardItem>>
-	createItem(body: CreateItemInput): Promise<VigilResult<DashboardItem | DashboardItem[]>>
+	onSnapshot(listener: (snapshot: HelmSnapshot) => void): () => void
+	item(id: string): Promise<HelmResult<DashboardItem>>
+	itemAction(id: string, action: DashboardActionId, body?: SolverAgentBody): Promise<HelmResult<DashboardItem>>
+	plan(id: string, body?: SolverAgentBody): Promise<HelmResult<PlanInfo>>
+	aiPass(id: string, pass: AiPass): Promise<HelmResult<DashboardItem>>
+	createItem(body: CreateItemInput): Promise<HelmResult<DashboardItem | DashboardItem[]>>
 	/** Promote a captured (ingested) Item into a real task in the source system. */
-	sourceTask(id: string): Promise<VigilResult<DashboardItem>>
-	setStatus(id: string, status: ItemStatus): Promise<VigilResult<DashboardItem>>
-	config(): Promise<VigilResult<ConfigDocument>>
-	updateConfig(body: Record<string, unknown>): Promise<VigilResult<{ message: string }>>
+	sourceTask(id: string): Promise<HelmResult<DashboardItem>>
+	setStatus(id: string, status: ItemStatus): Promise<HelmResult<DashboardItem>>
+	config(): Promise<HelmResult<ConfigDocument>>
+	updateConfig(body: Record<string, unknown>): Promise<HelmResult<{ message: string }>>
 	/** Pause when running, resume when paused (reads the latest snapshot). */
-	pauseToggle(): Promise<VigilResult<{ paused: boolean }>>
-	poll(): Promise<VigilResult<{ message: string }>>
+	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
+	poll(): Promise<HelmResult<{ message: string }>>
 }

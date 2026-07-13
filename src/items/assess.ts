@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
 import { defaultHelperModel } from '../solver/models.js'
@@ -107,7 +107,7 @@ export function parseAssessment(raw: string): Omit<Assessment, 'assessedAt'> | n
  * The enricher uses this to decide whether the assessment genuinely failed (a
  * timeout/parse miss) and is worth retrying.
  */
-export function itemWantsAssessment(item: ItemRecord, config: VigilConfig): boolean {
+export function itemWantsAssessment(item: ItemRecord, config: HelmConfig): boolean {
 	return config.solver.triage.enabled && !item.assessment
 }
 
@@ -193,7 +193,7 @@ export interface EnsureItemAssessmentParams {
 	commands: ItemCommands
 	item: ItemRecord
 	taskContext: TaskContext
-	config: VigilConfig
+	config: HelmConfig
 	/** Effective solver agent; defaults to the configured `solver.agent`. */
 	agent?: SolverAgent
 	signal?: AbortSignal

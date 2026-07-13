@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import { createDefaultSpawner } from './default-spawner.js'
 import { spawnerNameSchema } from './name.js'
 import type { SpawnerName } from './name.js'
@@ -24,7 +24,7 @@ interface SpawnerRegistryOptions {
 interface SpawnerAdapterSpec {
 	name: SpawnerName
 	moduleUrl: URL
-	create(config: VigilConfig): Promise<Spawner> | Spawner
+	create(config: HelmConfig): Promise<Spawner> | Spawner
 }
 
 interface SpawnerModule {
@@ -33,7 +33,7 @@ interface SpawnerModule {
 
 export interface SpawnerRegistry {
 	listAdapters(): SpawnerAdapterInfo[]
-	create(config: VigilConfig, name?: SpawnerName): Promise<Spawner>
+	create(config: HelmConfig, name?: SpawnerName): Promise<Spawner>
 }
 
 function moduleExists(path: string): boolean {
@@ -67,7 +67,7 @@ function discoverExtensionSpecs(extensionDirUrl: URL): SpawnerAdapterSpec[] {
 		specs.push({
 			name: name.data,
 			moduleUrl,
-			create: (config: VigilConfig) => createSpawnerFromModule(name.data, moduleUrl, config),
+			create: (config: HelmConfig) => createSpawnerFromModule(name.data, moduleUrl, config),
 		})
 	}
 	return specs
@@ -98,11 +98,11 @@ function discoverSpecs(extensionDirUrl: URL): SpawnerAdapterSpec[] {
 function spawnerFactory(
 	adapterName: SpawnerName,
 	module: SpawnerModule,
-): (config: VigilConfig) => Spawner | Promise<Spawner> {
+): (config: HelmConfig) => Spawner | Promise<Spawner> {
 	if (typeof module.createSpawner !== 'function') {
 		throw new Error(`Spawner adapter ${adapterName} must export createSpawner(config)`)
 	}
-	return module.createSpawner as (config: VigilConfig) => Spawner | Promise<Spawner>
+	return module.createSpawner as (config: HelmConfig) => Spawner | Promise<Spawner>
 }
 
 function assertSpawner(adapterName: SpawnerName, value: unknown): asserts value is Spawner {
@@ -116,11 +116,7 @@ function assertSpawner(adapterName: SpawnerName, value: unknown): asserts value 
 	}
 }
 
-async function createSpawnerFromModule(
-	adapterName: SpawnerName,
-	moduleUrl: URL,
-	config: VigilConfig,
-): Promise<Spawner> {
+async function createSpawnerFromModule(adapterName: SpawnerName, moduleUrl: URL, config: HelmConfig): Promise<Spawner> {
 	const module = (await import(moduleUrl.href)) as SpawnerModule
 	const spawner = await spawnerFactory(adapterName, module)(config)
 	assertSpawner(adapterName, spawner)
@@ -152,6 +148,6 @@ export function listSpawnerAdapters(): SpawnerAdapterInfo[] {
 	return registry.listAdapters()
 }
 
-export async function createSpawner(config: VigilConfig, name: SpawnerName = config.spawner.name): Promise<Spawner> {
+export async function createSpawner(config: HelmConfig, name: SpawnerName = config.spawner.name): Promise<Spawner> {
 	return registry.create(config, name)
 }

@@ -1,6 +1,6 @@
 // IPC surface shared by preload (implements) and renderer (consumes as `window.helm`).
 
-import type { VigilApi } from './shared-vigil'
+import type { DaemonApi } from './shared-helm'
 
 export interface PtySpawnResult {
 	id: number
@@ -75,7 +75,7 @@ export interface AppearanceApi {
 	onFontStep(listener: (step: number) => void): () => void
 }
 
-/** vigil://item/<id> deep links (main's open-url handler) land here. */
+/** helm://item/<id> deep links (main's open-url handler) land here. */
 export interface NavApi {
 	onOpenItem(listener: (itemId: string) => void): () => void
 	/** Back/forward from main: native three-finger swipe, Go menu (cmd+[ / cmd+]),
@@ -90,10 +90,10 @@ export interface HelmApi {
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */
 	appearance: AppearanceApi
 	tabs: TabsApi
-	/** Deep-link navigation pushed from main (vigil:// protocol). */
+	/** Deep-link navigation pushed from main (helm:// protocol). */
 	nav: NavApi
-	/** Daemon data bridge: main-process poller + HTTP command proxy (src/vigil-bridge.ts). */
-	vigil: VigilApi
+	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
+	daemon: DaemonApi
 	/** Host OS, for platform-specific keybindings/layout ('darwin' on macOS). */
 	platform: NodeJS.Platform
 	/** Set only on `--ui-preview=…` screenshot runs; null in normal use. */

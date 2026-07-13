@@ -77,15 +77,15 @@ window.addEventListener('resize', () => {
 
 // ---------- daemon connection (topbar dot) + native sidebar ----------
 
-// Reachability comes from the VigilBridge poller in main — the old renderer
+// Reachability comes from the HelmBridge poller in main — the old renderer
 // ping loop (daemon:ping) is gone. Snapshots are pushed only on change, so the
 // initial subscribe() seeds the dot before the first change lands.
 function reflectDaemonState(reachable: boolean): void {
 	connDot.classList.toggle('offline', !reachable)
 }
 
-helm.vigil.onSnapshot(snapshot => reflectDaemonState(snapshot.reachable))
-void helm.vigil.subscribe().then(snapshot => reflectDaemonState(snapshot.reachable))
+helm.daemon.onSnapshot(snapshot => reflectDaemonState(snapshot.reachable))
+void helm.daemon.subscribe().then(snapshot => reflectDaemonState(snapshot.reachable))
 
 mountSidebar(leftPane)
 
@@ -109,7 +109,7 @@ const tabs: Tab[] = []
 let activeTab: Tab | null = null
 
 // Shell OSC titles usually arrive as "user@host:cwd" — noise at tab width.
-// Normalize to the trailing path segment ("vigil"); a bare "user@host" (no
+// Normalize to the trailing path segment ("helm"); a bare "user@host" (no
 // path) falls back to "zsh". Anything else (ssh banners, app-set titles)
 // passes through untouched. The raw title survives as the label's tooltip.
 function normalizeTabTitle(raw: string): string {

@@ -1,4 +1,4 @@
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import { log } from '../util/logger.js'
 import { createAgentAdapter } from './agent-adapter.js'
 import type { SolverAgent } from './agent.js'
@@ -9,7 +9,7 @@ export type InvokeResult = SpawnClaudeResult & { agent: SolverAgent }
 export async function invokeAgent(
 	worktreePath: string,
 	prompt: string,
-	solver: VigilConfig['solver'],
+	solver: HelmConfig['solver'],
 	signal?: AbortSignal,
 	outputLogPath?: string,
 ): Promise<InvokeResult> {

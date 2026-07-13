@@ -1,6 +1,6 @@
-# Vigil
+# Helm
 
-AFK automation daemon for repo work. Vigil polls external sources, creates or
+AFK automation daemon for repo work. Helm polls external sources, creates or
 accepts operator-created Items, drains them through solve and loop lanes, and
 shows run state in one dashboard.
 
@@ -28,15 +28,15 @@ Source / Dashboard -> Item Commands -> Drainer lanes -> Solver / Almanac loop ->
    worktree, writes plan files under `docs/plans/<planDirName>/`, and execution
    later reuses that worktree.
 7. **Dispatch** - solve Items record a pre-shipped PR when the agent already
-   shipped one; otherwise Vigil can push the branch, open a PR, and post a
+   shipped one; otherwise Helm can push the branch, open a PR, and post a
    provider comment when config allows it.
 8. **Run Observation** - dashboard state comes from the server contract:
    lifecycle events, solve logs, PR status, and almanac status files are
    normalized before clients render them.
 
-API: **http://localhost:7474/api** — the daemon is API-only. The UI is **helm**
-(`helm/`, native Electron sidebar + terminal) plus the Chrome extension; both
-speak `/api`.
+API: **http://localhost:7474/api** — the daemon is API-only. The UI is the
+**Helm app** (`app/`, native Electron sidebar + terminal) plus the Chrome
+extension; both speak `/api`.
 
 ## Prerequisites
 
@@ -50,18 +50,20 @@ speak `/api`.
 
 ```bash
 npm install
-cp vigil.config.example.json vigil.config.json
-# Edit vigil.config.json with provider credentials and project paths
+cp helm.config.example.json helm.config.json
+# Edit helm.config.json with provider credentials and project paths
 ```
 
 ## Configuration
 
-`vigil.config.json` is validated with Zod.
+`helm.config.json` is validated with Zod (a legacy `vigil.config.json` still
+loads, with a startup warning asking for a rename; `HELM_CONFIG` is preferred
+over the legacy `VIGIL_CONFIG` env var).
 
 | Field | Description |
 |-------|-------------|
 | `provider` | External source config: `type`, credentials, optional `taskBaseUrl` for Source links |
-| `projects` | Repos Vigil can work on: `slug`, `repoPath`, `baseBranch`, optional `worktreeDir`, optional dashboard `color` |
+| `projects` | Repos Helm can work on: `slug`, `repoPath`, `baseBranch`, optional `worktreeDir`, optional dashboard `color` |
 | `polling.intervalSeconds` | Poll interval for external Source discovery (default: 60) |
 | `polling.since` | ISO date to start polling from |
 | `solver.type` | `"default"` for headless Solver, `"okena"` for visible Okena terminal execution |
@@ -72,9 +74,9 @@ cp vigil.config.example.json vigil.config.json
 | `spawner.name` | Default interactive planning surface, e.g. `"default"` or installed adapter `"okena"` |
 | `github.createPrs` | Enable fallback PR creation for solve Items (default: true) |
 | `github.postComments` | Enable provider comments for Source-backed solve Items (default: true) |
-| `github.prPrefix` | PR title prefix (default: `[Vigil]`) |
+| `github.prPrefix` | PR title prefix (default: `[Helm]`) |
 
-Settings in helm use the same Config Document shape as the API. Secret
+Settings in the Helm app use the same Config Document shape as the API. Secret
 fields are redacted and preserved on save.
 
 ## Running
@@ -83,15 +85,15 @@ fields are redacted and preserved on save.
 # Development (backend API)
 npm run dev
 
-# Helm (native UI): see helm/README.md
-cd helm && bun install && bun run start
+# Helm app (native UI): see app/README.md
+cd app && bun install && bun run start
 
 # Production daemon (macOS launchd)
 make install
-vigil status
-vigil logs
-vigil logs --err
-vigil stop
+helm status
+helm logs
+helm logs --err
+helm stop
 make restart
 make uninstall
 ```
@@ -143,19 +145,19 @@ curl -sS http://localhost:7474/api/items \
 ```
 
 Create a planning-only Item by adding `"intent": "plan"` to any create payload.
-Vigil stores it as `planned`, prepares plan artifacts through `/items/<id>/plan`,
+Helm stores it as `planned`, prepares plan artifacts through `/items/<id>/plan`,
 and the Drainer will not auto-run it until you start it.
 
 CLI equivalents write to the same Item Commands path:
 
 ```bash
-vigil add solve --project my-project --title "Fix dashboard empty state" \
+helm add solve --project my-project --title "Fix dashboard empty state" \
   --prompt "Fix the empty state copy and verify the dashboard." --base-ref main
 
-vigil add ralph --project my-project --title "Run AFK PRD slice" \
+helm add ralph --project my-project --title "Run AFK PRD slice" \
   --prd-path docs/plans/example/prd.md --mode once
 
-vigil add harden --project my-project --title "Harden item commands" \
+helm add harden --project my-project --title "Harden item commands" \
   --target src/items --rounds 2
 ```
 
@@ -172,7 +174,7 @@ curl -sS -X POST http://localhost:7474/api/items/<id>/reject
 ```
 
 When creating an Item, optional `spawner` stores an installed planning surface
-from `/api/config` `spawnerAdapters`. Without it, Vigil uses the configured
+from `/api/config` `spawnerAdapters`. Without it, Helm uses the configured
 `spawner.name` default.
 
 Check queue + lanes:
@@ -191,13 +193,14 @@ summary, branch, and PR link when available.
 
 The AFK rework treats pre-rework local storage as disposable. Old `tasks`,
 tiering, solver confidence, and chat state are not migrated into Items. The
-default DB path is `./vigil.db`; stop Vigil and move or delete that file if an
+default DB path is `./helm.db` (a legacy `./vigil.db` is renamed automatically
+on startup); stop Helm and move or delete that file if an
 old local DB confuses operator testing. A fresh DB will be initialized on next
 start.
 
 ## Okena Integration
 
-When `solver.type` is `"okena"`, Vigil runs solve execution inside visible
+When `solver.type` is `"okena"`, Helm runs solve execution inside visible
 [Okena](https://github.com/nickarora/okena) terminal panes. Set
 `spawner.name` to `"okena"` to also open planning sessions in Okena. If Okena is
 unavailable, configured Okena work fails loudly until Okena is reachable again.
@@ -210,7 +213,7 @@ settings).
 The solve prompt builder (`src/solver/prompt-builder.ts`) delegates workflow to
 Almanac skills such as `/almanac:task-start`, `/almanac:branch-name`,
 `/almanac:ship`, and `/almanac:commit`. The agent must write
-`docs/plans/<planDirName>/solver-result.json`; Vigil reads that file only.
+`docs/plans/<planDirName>/solver-result.json`; Helm reads that file only.
 
 ## Architecture
 
@@ -226,8 +229,8 @@ src/
   worktree/        # Git worktree lifecycle
   plan/            # PlanWorkspace paths + IO
   db/              # SQLite persistence
-  server/          # Hono API + static dashboard serving
-web/               # React dashboard (Vite)
+  server/          # Hono API (API-only; no static UI)
+app/               # Helm desktop app (Electron; React sidebar + terminal)
 extension/         # Solid extension
 ```
 

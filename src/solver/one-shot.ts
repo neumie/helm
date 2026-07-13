@@ -58,7 +58,7 @@ export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
 	// For vision the stdin is a streaming-JSON user message carrying text + image
 	// blocks; for text it's the raw prompt. spawnClaude writes stdin verbatim.
 	const stdin = vision ? buildStreamJsonInput(prompt, opts.images ?? []) : prompt
-	const cwd = mkdtempSync(join(tmpdir(), 'vigil-naming-'))
+	const cwd = mkdtempSync(join(tmpdir(), 'helm-naming-'))
 	try {
 		const result = await spawnClaude({
 			command,

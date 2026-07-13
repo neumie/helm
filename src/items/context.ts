@@ -18,7 +18,7 @@ export async function resolveItemSourceContext(item: ItemRecord, provider: TaskP
 
 /**
  * Rewrite a captured task's attachment URLs from their served HTTP path to the
- * worktree-relative `.vigil-attachments/<name>` path, so a prompt rendered with
+ * worktree-relative `.helm-attachments/<name>` path, so a prompt rendered with
  * the worktree as cwd points the agent at the local copies (placed by
  * `copyAttachmentsToWorktree`). MUST be paired with that copy. No-op when there
  * are no attachments. Used by BOTH the solve worker and the plan route — keep

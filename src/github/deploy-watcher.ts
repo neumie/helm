@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
-import type { VigilConfig } from '../config.js'
+import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import type { DeployState, DeploymentEntry } from '../items/schema.js'
@@ -151,7 +151,7 @@ export interface DeployWatcherDeps {
  * w.r.t. GitHub; runs independently of the Drainer (safe while paused).
  *
  * Also backfills LATE PRs: a run that errored/timed out but was reconciled to
- * `review` may have had its agent ship a PR after vigil stopped watching — the
+ * `review` may have had its agent ship a PR after helm stopped watching — the
  * Item then sits in review with a branch but no `prUrl`, invisible to deploy
  * tracking. Each poll asks gh for a PR on those branches and records a hit
  * through `recordDispatchPr`, after which normal deploy tracking picks it up.
@@ -166,7 +166,7 @@ export class DeployWatcher {
 	private readonly readBranch: typeof readWorktreeBranch
 
 	constructor(
-		private config: VigilConfig,
+		private config: HelmConfig,
 		private db: DB,
 		deps: DeployWatcherDeps = {},
 	) {

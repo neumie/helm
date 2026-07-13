@@ -1,15 +1,43 @@
-import { resolve } from 'node:path'
+import { existsSync, renameSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { ItemStore } from '../items/store.js'
 import type { PollState } from '../types.js'
 import { MIGRATIONS } from './schema.js'
+
+/**
+ * One-way identity migration: helm.db is the DB name, but an existing install
+ * has vigil.db (legacy name). If helm.db is missing and vigil.db exists next to
+ * it (the daemon cwd), rename the file (plus -wal/-shm siblings) BEFORE opening
+ * so existing state keeps working under the new name. When BOTH files exist,
+ * nothing is migrated — that needs a human decision, so warn loudly instead of
+ * silently leaving a stale vigil.db behind.
+ *
+ * Exported for tests (runs against any dir, opens no DB).
+ */
+export function migrateLegacyDbFile(helmPath: string): void {
+	const legacyPath = join(dirname(helmPath), 'vigil.db')
+	if (!existsSync(legacyPath)) return
+	if (existsSync(helmPath)) {
+		console.warn(
+			`[helm] Legacy ${legacyPath} present but ${helmPath} already exists — not migrating; delete or merge the legacy vigil.db manually.`,
+		)
+		return
+	}
+	console.warn(`[helm] Renaming legacy DB ${legacyPath} -> ${helmPath}`)
+	renameSync(legacyPath, helmPath)
+	for (const suffix of ['-wal', '-shm']) {
+		if (existsSync(`${legacyPath}${suffix}`)) renameSync(`${legacyPath}${suffix}`, `${helmPath}${suffix}`)
+	}
+}
 
 export class DB {
 	private db: Database.Database
 	readonly items: ItemStore
 
 	constructor(dbPath?: string) {
-		const path = dbPath ?? resolve(process.cwd(), 'vigil.db')
+		const path = dbPath ?? resolve(process.cwd(), 'helm.db')
+		if (!dbPath) migrateLegacyDbFile(path)
 		this.db = new Database(path)
 		this.db.pragma('journal_mode = WAL')
 		this.db.pragma('foreign_keys = ON')
