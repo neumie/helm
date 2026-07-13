@@ -513,6 +513,10 @@ function activate(tab: Tab): void {
 	// Fit after the holder becomes visible; hidden containers measure as 0x0.
 	requestAnimationFrame(() => {
 		fitActive()
+		// A double-click runs activate (click) before startRename (dblclick):
+		// this deferred focus would land on the just-opened rename input and
+		// blur-commit it within a frame. The editor owns focus while open.
+		if (document.activeElement?.classList.contains('tab-rename')) return
 		tab.term.focus()
 	})
 }
