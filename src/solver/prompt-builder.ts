@@ -2,8 +2,35 @@ import { planPaths } from '../plan/workspace.js'
 import type { TaskContext } from '../providers/provider.js'
 import { type PlanContext, buildTaskContext } from '../task-context.js'
 import { modelGuidance } from './models.js'
+import type { SolverWorkspace } from './workspace.js'
 
-function solverInstructions(planDirName: string, model?: string, overrides?: Record<string, string>): string {
+/** Workspace shaping for the solve prompt (main-checkout runs need different branch rules). */
+export interface PromptWorkspaceContext {
+	mode: SolverWorkspace
+	/** Branch currently checked out in the main checkout (main mode; null when detached/unknown). */
+	currentBranch?: string | null
+}
+
+/**
+ * Branch-handling rules differ per workspace mode. Worktree runs: Helm
+ * pre-created and tracks the branch — renaming orphans the run. Main-checkout
+ * runs: there is NO pre-created branch, the checkout is the user's live working
+ * tree, and the agent must branch itself before touching anything.
+ */
+function branchInstructions(workspace?: PromptWorkspaceContext): string {
+	if (workspace?.mode === 'main') {
+		const onBranch = workspace.currentBranch ? ` (currently on branch \`${workspace.currentBranch}\`)` : ''
+		return `IMPORTANT — MAIN CHECKOUT: You are working directly in the user's MAIN checkout${onBranch}, not an isolated worktree — it may contain uncommitted work that is NOT yours. Create and switch to a new branch for this task (via /almanac:branch-name) BEFORE changing anything. NEVER discard, reset, stash-drop, or commit pre-existing uncommitted changes that aren't yours. If the tree is too dirty to work safely, do not start — say so in the \`summary\` field of solver-result.json and stop.`
+	}
+	return `IMPORTANT: Do NOT rename the branch — Helm already named it and tracks it by that name; a rename orphans the run (the PR can't be matched back to this task). Skip /almanac:branch-name even if another skill suggests it.`
+}
+
+function solverInstructions(
+	planDirName: string,
+	model?: string,
+	overrides?: Record<string, string>,
+	workspace?: PromptWorkspaceContext,
+): string {
 	const guidance = modelGuidance(model, overrides)
 	return `You are solving a task from a project management system. The task may be written in any language — understand it regardless.
 ${guidance ? `\n## How to spend this model\n\n${guidance}\n` : ''}
@@ -15,7 +42,7 @@ IMPORTANT: If the task context lists any attachments, always review them before 
 
 IMPORTANT: If the task affects UI behaviour (which most of these do), verify the fix end-to-end with \`agent-browser\` before shipping — navigate to the relevant page, reproduce the scenario from the task, and confirm the new behaviour matches what was requested. Do not claim a UI task is done without having seen it work in the browser.
 
-IMPORTANT: Do NOT rename the branch — Helm already named it and tracks it by that name; a rename orphans the run (the PR can't be matched back to this task). Skip /almanac:branch-name even if another skill suggests it.
+${branchInstructions(workspace)}
 
 When the implementation is complete, use /almanac:ship to create the PR. Do NOT create a draft — create a regular PR.
 
@@ -96,7 +123,8 @@ export function buildPrompt(
 	task: TaskContext,
 	ctx: PlanContext,
 	solver?: { model?: string; modelGuidance?: Record<string, string> },
+	workspace?: PromptWorkspaceContext,
 ): string {
 	const taskContextStr = buildTaskContext(task, ctx)
-	return `${solverInstructions(ctx.planDirName, solver?.model, solver?.modelGuidance)}## Task Context\n\n${taskContextStr}`
+	return `${solverInstructions(ctx.planDirName, solver?.model, solver?.modelGuidance, workspace)}## Task Context\n\n${taskContextStr}`
 }

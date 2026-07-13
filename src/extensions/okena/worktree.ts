@@ -61,6 +61,20 @@ export class OkenaWorktreeManager {
 	}
 
 	/**
+	 * Resolve the Okena project for the CANONICAL repo checkout (main-workspace
+	 * runs). Deliberately does NOT prepare anything: no base-branch fetch, no
+	 * `checkout --detach`, no `create_worktree` — the user's working state in the
+	 * main checkout is sacred; the agent manages its own branching inside the
+	 * terminal. Callers add a terminal PANE to this existing project window.
+	 */
+	async ensureMainRepoProject(repoPath: string): Promise<EnsuredOkenaWorktree> {
+		const { okenaProject } = await this.findOkenaProject(repoPath)
+		log.info('okena', `Using main checkout project: ${okenaProject.name} (${okenaProject.id})`)
+		await excludeHelmFiles(repoPath)
+		return { worktreePath: repoPath, wtProjectId: okenaProject.id, autoTerminalId: null }
+	}
+
+	/**
 	 * Resolve the Okena worktree PROJECT (create, reuse-by-branch-name, or reuse
 	 * by explicit path). Does NOT decide terminal policy — callers create/find
 	 * the terminal they need.

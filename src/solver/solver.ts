@@ -1,6 +1,7 @@
 import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { ClaudeEvent } from '../types.js'
+import type { SolverWorkspace } from './workspace.js'
 
 /**
  * Raw materials a solver needs to assemble its own prompts. The solver builds
@@ -22,6 +23,14 @@ export interface SolveParams {
 	taskId: string
 	taskTitle: string
 	solverConfig: HelmConfig['solver']
+	/**
+	 * Execution workspace for this run (effective per-item value; defaults to
+	 * 'worktree'). In 'main' mode the solver runs the agent DIRECTLY in the
+	 * project's canonical checkout: no worktree is created, `branchName` is a
+	 * label only (the agent branches itself), and the solver must never mutate
+	 * the checkout's state (no checkout/reset/clean) on Helm's behalf.
+	 */
+	workspaceMode?: SolverWorkspace
 	signal?: AbortSignal
 	outputLogPath?: string
 	/**

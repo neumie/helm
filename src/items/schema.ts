@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { taskContextSchema } from '../providers/provider.js'
 import { solverAgentSchema } from '../solver/agent.js'
+import { solverWorkspaceSchema } from '../solver/workspace.js'
 
 export const itemKindSchema = z.enum(['solve', 'ralph', 'harden'])
 
@@ -83,6 +84,9 @@ export const solveItemPayloadSchema = z
 		// Per-item model override (extension quick-switch / action routes); free
 		// string passed to the agent CLI's --model, wins over config.solver.model.
 		solverModel: z.string().min(1).max(100).optional(),
+		// Per-item execution workspace override; wins over config.solver.workspace.
+		// 'main' runs the agent directly in the project's canonical checkout.
+		solverWorkspace: solverWorkspaceSchema.optional(),
 	})
 	.strict()
 

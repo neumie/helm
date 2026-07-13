@@ -51,11 +51,15 @@ async function ensureItemWorktree(
  * that errored or wrote no result file may still have done real work; in that
  * case "failed" is a lie. Best-effort and fail-safe: any detection error returns
  * `false`, so the Item just fails normally. Returns the PR url when one exists.
+ *
+ * `branchName` is null for main-workspace runs (the Item row never carries a
+ * branch there): the commits-ahead check vs `baseRef` still applies, only the
+ * by-branch PR lookup is skipped.
  */
 async function detectShippableWork(
 	worktreePath: string,
 	baseRef: string,
-	branchName: string,
+	branchName: string | null,
 ): Promise<{ prUrl: string | null } | false> {
 	let commitsAhead = 0
 	try {
@@ -69,14 +73,16 @@ async function detectShippableWork(
 	if (commitsAhead <= 0) return false
 
 	let prUrl: string | null = null
-	try {
-		const { stdout } = await execFileAsync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
-			timeout: 10_000,
-		})
-		const trimmed = stdout.trim()
-		if (trimmed) prUrl = trimmed
-	} catch {
-		// No PR (or gh unavailable) — committed work alone is enough to reconcile.
+	if (branchName) {
+		try {
+			const { stdout } = await execFileAsync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
+				timeout: 10_000,
+			})
+			const trimmed = stdout.trim()
+			if (trimmed) prUrl = trimmed
+		} catch {
+			// No PR (or gh unavailable) — committed work alone is enough to reconcile.
+		}
 	}
 	return { prUrl }
 }
@@ -96,7 +102,9 @@ async function failOrReconcileSolve(
 ): Promise<void> {
 	if (phase === 'solve') {
 		const current = commands.getItem(itemId)
-		if (current?.worktreePath && current.branchName) {
+		// branchName may be null (main-workspace run) — commits-ahead detection
+		// still applies; only the by-branch PR lookup degrades away.
+		if (current?.worktreePath) {
 			const { baseRef } = resolveItemWorkspace(current)
 			const work = await detectShippableWork(current.worktreePath, baseRef, current.branchName)
 			// A cancel can land while detection awaits (the Item is still `running`
@@ -167,22 +175,33 @@ export async function processSolveItem(
 
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
 		const selectedModel = item.payload.kind === 'solve' ? item.payload.solverModel : undefined
-		const named = await ensureItemWorkspaceName({
-			commands,
-			item,
-			taskContext,
-			config,
-			repoPath: projectConfig.repoPath,
-			agent: selectedAgent ?? config.solver.agent,
-			signal,
-		})
+		const selectedWorkspace = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
+		const workspaceMode = selectedWorkspace ?? config.solver.workspace ?? 'worktree'
+		const mainMode = workspaceMode === 'main'
+
+		// Main-workspace runs skip AI branch naming entirely: no branch is
+		// pre-created — the agent manages branching itself in the main checkout.
+		const named = mainMode
+			? item
+			: await ensureItemWorkspaceName({
+					commands,
+					item,
+					taskContext,
+					config,
+					repoPath: projectConfig.repoPath,
+					agent: selectedAgent ?? config.solver.agent,
+					signal,
+				})
 
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
-		commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName })
+		// Main mode: the Item's branchName stays NULL until dispatch discovers the
+		// agent-created branch; only the plan dir is recorded up front.
+		commands.recordExecutionWorkspaceIdentity(itemId, mainMode ? { planDirName } : { planDirName, branchName })
 		const solverConfig = {
 			...config.solver,
 			agent: selectedAgent ?? config.solver.agent,
 			model: selectedModel ?? config.solver.model,
+			workspace: workspaceMode,
 		}
 
 		const { worktreePath, outcome } = await solver.solve({
@@ -193,6 +212,7 @@ export async function processSolveItem(
 			taskId: item.id,
 			taskTitle: item.title,
 			solverConfig,
+			workspaceMode,
 			signal,
 			outputLogPath,
 			existingWorktreePath,
@@ -200,14 +220,20 @@ export async function processSolveItem(
 				// Drop ingested-task attachments into the (gitignored) worktree so the
 				// agent can open them as local files. No-op for provider-backed Items.
 				if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath)
-				commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })
+				commands.recordExecutionWorkspaceIdentity(
+					itemId,
+					mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
+				)
 			},
 			onPromptSnapshot: prompt => {
 				commands.recordSolveInputSnapshot(itemId, prompt)
 			},
 		})
 
-		commands.recordExecutionWorkspaceIdentity(itemId, { worktreePath, branchName, planDirName })
+		commands.recordExecutionWorkspaceIdentity(
+			itemId,
+			mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
+		)
 
 		for (const event of outcome.events) {
 			commands.recordEvent(itemId, `solve_${event.type}`, { detail: event.detail, file: event.file })
@@ -221,7 +247,7 @@ export async function processSolveItem(
 
 		commands.completeSolveItem(itemId, {
 			worktreePath,
-			branchName,
+			branchName: mainMode ? null : branchName,
 			planDirName,
 			resultSummary: solverResult.summary,
 		})

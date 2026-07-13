@@ -4,6 +4,7 @@ import type { HelmConfig } from '../config.js'
 import { taskContextSchema } from '../providers/provider.js'
 import { solverAgentSchema } from '../solver/agent.js'
 import type { SolverAgent } from '../solver/agent.js'
+import type { SolverWorkspace } from '../solver/workspace.js'
 import type { ErrorPhase } from '../types.js'
 import { itemSourceSchema } from './schema.js'
 import type { Assessment, DeployState, ItemKind, ItemRecord, ItemSource, RunOutcome } from './schema.js'
@@ -199,6 +200,16 @@ export class ItemCommands {
 			throw new Error('Only solve Items can store a selected solver agent')
 		}
 		return this.store.updatePayload(id, { ...item.payload, solverAgent })
+	}
+
+	/** Per-item execution workspace override for the next solve run; null clears it. */
+	setSolveItemWorkspace(id: string, solverWorkspace: SolverWorkspace | null): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
+			throw new Error('Only solve Items can store a selected solver workspace')
+		}
+		const { solverWorkspace: _prev, ...payload } = item.payload
+		return this.store.updatePayload(id, solverWorkspace ? { ...payload, solverWorkspace } : payload)
 	}
 
 	/** Per-item model override for the next solve run; null clears it. */
@@ -514,7 +525,9 @@ export class ItemCommands {
 		id: string,
 		fields: {
 			worktreePath: string
-			branchName: string
+			// Null for main-workspace runs: the agent branches itself in the canonical
+			// checkout, so the Item row carries no pre-created branch identity.
+			branchName: string | null
 			planDirName: string
 			resultSummary: string
 		},
@@ -653,7 +666,9 @@ export class ItemCommands {
 		id: string,
 		fields: {
 			worktreePath: string
-			branchName: string
+			// Null for main-workspace planning: the session runs in the canonical
+			// checkout and no Item branch is pre-created.
+			branchName: string | null
 			planDirName: string
 			spawner: string
 		},

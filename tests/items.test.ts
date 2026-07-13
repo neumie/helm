@@ -210,7 +210,11 @@ class FakeSolveSolver implements Solver {
 		this.maxConcurrent = Math.max(this.maxConcurrent, this.active)
 		try {
 			if (this.delayMs > 0) await sleep(this.delayMs)
-			const worktreePath = params.existingWorktreePath ?? join(this.worktreeRoot, params.taskId)
+			// Main-workspace runs execute in the canonical checkout, like real solvers.
+			const worktreePath =
+				params.workspaceMode === 'main'
+					? params.projectConfig.repoPath
+					: (params.existingWorktreePath ?? join(this.worktreeRoot, params.taskId))
 			mkdirSync(worktreePath, { recursive: true })
 			const workspace = new PlanWorkspace(worktreePath, params.planDirName)
 			workspace.ensureDir()
@@ -4173,3 +4177,381 @@ test('buildPrompt injects model-tier guidance for known models only', () => {
 		rmSync(dir, { recursive: true, force: true })
 	}
 })
+
+// ---------------------------------------------------------------------------
+// Per-item execution workspace ('worktree' | 'main')
+// ---------------------------------------------------------------------------
+
+test('setSolveItemWorkspace stores and clears the per-item workspace override', () =>
+	withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'workspace pick', projectSlug: 'helm', prompt: 'x' })
+
+		const withWorkspace = commands.setSolveItemWorkspace(item.id, 'main')
+		assert.equal(withWorkspace.payload.kind === 'solve' ? withWorkspace.payload.solverWorkspace : null, 'main')
+
+		const cleared = commands.setSolveItemWorkspace(item.id, null)
+		assert.equal(cleared.payload.kind === 'solve' ? cleared.payload.solverWorkspace : 'set', undefined)
+
+		const ralph = commands.createRalphItem({ title: 'r', projectSlug: 'helm', prdPath: 'docs/prd.md' })
+		assert.throws(() => commands.setSolveItemWorkspace(ralph.id, 'main'))
+	}))
+
+test('Item action routes set, reject, and clear the per-item solver workspace', () =>
+	withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const setTarget = commands.createSolveItem({ title: 'set workspace', projectSlug: 'helm', prompt: 'x' })
+		const clearTarget = commands.createSolveItem({ title: 'clear workspace', projectSlug: 'helm', prompt: 'x' })
+		commands.setSolveItemWorkspace(clearTarget.id, 'main')
+
+		const routeQueue = {
+			...queue,
+			processOneItem: (id: string) => {
+				commands.startItem(id)
+				return true
+			},
+		}
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			routeQueue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		const post = (body: unknown) => ({
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		})
+
+		// Invalid workspace → 400, nothing persisted.
+		const bad = await api.request(`/items/${setTarget.id}/start`, post({ solverWorkspace: 'okena' }))
+		assert.equal(bad.status, 400)
+		const untouched = db.items.get(setTarget.id)?.payload
+		assert.equal(untouched?.kind === 'solve' ? untouched.solverWorkspace : 'set', undefined)
+
+		// Workspace set on start.
+		const setRes = await api.request(`/items/${setTarget.id}/start`, post({ solverWorkspace: 'main' }))
+		assert.equal(setRes.status, 200)
+		const setPayload = db.items.get(setTarget.id)?.payload
+		assert.equal(setPayload?.kind === 'solve' ? setPayload.solverWorkspace : null, 'main')
+
+		// Explicit null clears a previously stored override.
+		const clearRes = await api.request(`/items/${clearTarget.id}/start`, post({ solverWorkspace: null }))
+		assert.equal(clearRes.status, 200)
+		const clearedPayload = db.items.get(clearTarget.id)?.payload
+		assert.equal(clearedPayload?.kind === 'solve' ? clearedPayload.solverWorkspace : 'set', undefined)
+	}))
+
+test('processSolveItem runs a main-workspace Item in the canonical checkout with a null branch', async () => {
+	await withTempDb(async db => {
+		const repoPath = mkdtempSync(join(tmpdir(), 'helm-main-checkout-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-main-worktrees-'))
+		const mainConfig: HelmConfig = {
+			...config,
+			projects: [{ slug: 'helm', repoPath, baseBranch: 'main' }],
+		}
+		const commands = new ItemCommands(db.items, mainConfig)
+		const item = commands.createSolveItem({
+			title: 'Main workspace solve',
+			projectSlug: 'helm',
+			prompt: 'Run directly in the repo checkout.',
+		})
+		commands.setSolveItemWorkspace(item.id, 'main')
+		const solver = new FakeSolveSolver(worktreeRoot)
+
+		try {
+			await processSolveItem(item.id, mainConfig, db, provider, solver)
+
+			// The solver received the mode flag (both as the SolveParams seam and on
+			// the effective solver config).
+			assert.equal(solver.calls[0].workspaceMode, 'main')
+			assert.equal(solver.calls[0].solverConfig.workspace, 'main')
+
+			const stored = db.items.get(item.id)
+			assert.equal(stored?.status, 'review')
+			// Identity: the canonical checkout is the workspace; no pre-created branch —
+			// branchName stays NULL until dispatch discovers the agent's branch.
+			assert.equal(stored?.worktreePath, repoPath)
+			assert.equal(stored?.branchName, null)
+			assert.ok(stored?.planDirName)
+			assert.deepEqual(
+				db.items.getEvents(item.id).map(event => event.eventType),
+				['item_started', 'solve_command', 'solve_completed', 'dispatch_skipped', 'action_completed'],
+			)
+		} finally {
+			rmSync(repoPath, { recursive: true, force: true })
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('main-workspace solve failure reconciles via commits-ahead with a null branch', async () => {
+	await withTempDb(async db => {
+		const repoPath = mkdtempSync(join(tmpdir(), 'helm-main-reconcile-'))
+		const mainConfig: HelmConfig = {
+			...config,
+			projects: [{ slug: 'helm', repoPath, baseBranch: 'main' }],
+		}
+		git(repoPath, ['init', '-b', 'main'])
+		git(repoPath, ['config', 'user.email', 'test@example.com'])
+		git(repoPath, ['config', 'user.name', 'Helm Test'])
+		writeFileSync(join(repoPath, 'a.txt'), 'a')
+		git(repoPath, ['add', '.'])
+		git(repoPath, ['commit', '-m', 'init'])
+		// The agent branched itself and committed work before the run errored.
+		git(repoPath, ['checkout', '-b', 'feat/agent-made'])
+		writeFileSync(join(repoPath, 'b.txt'), 'b')
+		git(repoPath, ['add', '.'])
+		git(repoPath, ['commit', '-m', 'agent work'])
+
+		const commands = new ItemCommands(db.items, mainConfig)
+		const item = commands.createSolveItem({
+			title: 'Main workspace reconcile',
+			projectSlug: 'helm',
+			prompt: 'Fail after committing.',
+		})
+		commands.setSolveItemWorkspace(item.id, 'main')
+
+		class MainModeFailingSolver implements Solver {
+			async solve(params: SolveParams): Promise<SolveResult> {
+				params.onWorktreeReady?.(params.projectConfig.repoPath)
+				throw phaseError('solve', 'agent blew up after committing')
+			}
+		}
+
+		try {
+			await processSolveItem(item.id, mainConfig, db, provider, new MainModeFailingSolver())
+
+			const stored = db.items.get(item.id)
+			// Commits ahead of base → reconciled to review despite the null branch
+			// (the by-branch PR lookup is skipped, commits-ahead still counts).
+			assert.equal(stored?.status, 'review')
+			assert.equal(stored?.runOutcome, 'errored')
+			assert.equal(stored?.branchName, null)
+			assert.equal(stored?.prUrl, null)
+			// Null branch → deliberately NOT deploy/PR-backfillable.
+			assert.equal(db.items.listPrBackfillable().length, 0)
+		} finally {
+			rmSync(repoPath, { recursive: true, force: true })
+		}
+	})
+})
+
+test('buildPrompt swaps branch rules for main-checkout runs', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'helm-main-prompt-'))
+	try {
+		const task = { title: 'Prompt me', description: 'x' }
+		const ctx = { planDirName: 'main-plan', worktreePath: dir }
+
+		const worktreePrompt = buildPrompt(task as never, ctx as never)
+		assert.ok(worktreePrompt.includes('Do NOT rename the branch'))
+		assert.ok(!worktreePrompt.includes('MAIN checkout'))
+
+		const mainPrompt = buildPrompt(task as never, ctx as never, undefined, {
+			mode: 'main',
+			currentBranch: 'develop',
+		})
+		assert.ok(mainPrompt.includes('MAIN checkout'))
+		assert.ok(mainPrompt.includes('`develop`'))
+		assert.ok(mainPrompt.includes('/almanac:branch-name'))
+		assert.ok(mainPrompt.includes('NEVER discard, reset, stash-drop, or commit pre-existing uncommitted changes'))
+		assert.ok(!mainPrompt.includes('Do NOT rename the branch'))
+
+		// Unknown current branch degrades to no branch mention, not a crash.
+		const detachedPrompt = buildPrompt(task as never, ctx as never, undefined, { mode: 'main', currentBranch: null })
+		assert.ok(detachedPrompt.includes('MAIN checkout'))
+		assert.ok(!detachedPrompt.includes('currently on branch'))
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('dispatchSolveItem discovers and pushes the agent branch for main-workspace Items', async () => {
+	await withTempDb(async db => {
+		const prConfig = { ...config, github: { ...config.github, createPrs: true, postComments: false } }
+		const commands = new ItemCommands(db.items, prConfig)
+
+		const makeReviewItem = (title: string) => {
+			const item = commands.createSolveItem({ title, projectSlug: 'helm', prompt: 'x' })
+			commands.setSolveItemWorkspace(item.id, 'main')
+			commands.startItem(item.id)
+			commands.completeSolveItem(item.id, {
+				worktreePath: '/tmp/helm-main-checkout',
+				branchName: null,
+				planDirName: 'main-plan',
+				resultSummary: 'Solved in main checkout',
+			})
+			return item
+		}
+		const result = { summary: 'Solved in main checkout', filesChanged: ['src/x.ts'] }
+
+		// Happy path: the current branch of the checkout is discovered and dispatched.
+		const shipped = makeReviewItem('Main dispatch ok')
+		const pushed: Array<{ worktreePath: string; branchName: string }> = []
+		const prs: Array<{ branchName: string; baseBranch: string }> = []
+		await dispatchSolveItem({
+			itemId: shipped.id,
+			result,
+			config: prConfig,
+			commands,
+			provider,
+			sideEffects: {
+				pushBranch: (worktreePath: string, branchName: string) => {
+					pushed.push({ worktreePath, branchName })
+				},
+				createPr: (opts: { branchName: string; baseBranch: string }) => {
+					prs.push({ branchName: opts.branchName, baseBranch: opts.baseBranch })
+					return 'https://github.com/neumie/helm/pull/41'
+				},
+				currentBranch: () => 'feat/agent-made',
+			},
+		})
+		assert.deepEqual(pushed, [{ worktreePath: '/tmp/helm-main-checkout', branchName: 'feat/agent-made' }])
+		assert.deepEqual(prs, [{ branchName: 'feat/agent-made', baseBranch: 'main' }])
+		assert.equal(db.items.get(shipped.id)?.prUrl, 'https://github.com/neumie/helm/pull/41')
+
+		// Still on the base branch → the agent never branched; refuse to push main.
+		const onBase = makeReviewItem('Main dispatch on base')
+		await assert.rejects(
+			dispatchSolveItem({
+				itemId: onBase.id,
+				result,
+				config: prConfig,
+				commands,
+				provider,
+				sideEffects: {
+					pushBranch: () => assert.fail('must not push the base branch'),
+					createPr: () => assert.fail('must not open a PR from the base branch'),
+					currentBranch: () => 'main',
+				},
+			}),
+			/did not create a task branch/,
+		)
+
+		// Detached HEAD (no branch) → refuse with a clear error.
+		const detached = makeReviewItem('Main dispatch detached')
+		await assert.rejects(
+			dispatchSolveItem({
+				itemId: detached.id,
+				result,
+				config: prConfig,
+				commands,
+				provider,
+				sideEffects: {
+					pushBranch: () => assert.fail('must not push without a branch'),
+					createPr: () => assert.fail('must not open a PR without a branch'),
+					currentBranch: () => null,
+				},
+			}),
+			/no current branch to dispatch/,
+		)
+	})
+})
+
+test('planning a main-workspace Item reuses the repo checkout and skips branch naming', async () => {
+	await withTempDb(async db => {
+		const repoPath = mkdtempSync(join(tmpdir(), 'helm-main-plan-repo-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-main-plan-worktrees-'))
+		const namingConfig: HelmConfig = {
+			...config,
+			projects: [{ slug: 'helm', repoPath, baseBranch: 'main' }],
+			solver: { ...config.solver, branchNaming: { enabled: true } },
+		}
+		const commands = new ItemCommands(db.items, namingConfig)
+		const mainItem = commands.createSolveItem({
+			title: 'Plan in main checkout',
+			projectSlug: 'helm',
+			prompt: 'Plan directly in the repo.',
+		})
+		commands.setSolveItemWorkspace(mainItem.id, 'main')
+		const worktreeItem = commands.createSolveItem({
+			title: 'Plan in a worktree',
+			projectSlug: 'helm',
+			prompt: 'Plan in an isolated worktree.',
+		})
+
+		const aiCalls: unknown[] = []
+		const aiStub = async () => {
+			aiCalls.push('called')
+			return 'feat/model-named-branch'
+		}
+		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
+		const api = apiRoutes(
+			namingConfig,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			planningSpawner,
+			fakeEnricher as never,
+			undefined,
+			aiStub,
+		)
+
+		try {
+			// Main-workspace planning: no AI naming, the spawner receives the canonical
+			// checkout as its existing workspace, and the Item's branchName stays NULL.
+			const mainRes = await api.request(`/items/${mainItem.id}/plan`, { method: 'POST' })
+			assert.equal(mainRes.status, 200)
+			const main = (await mainRes.json()) as { data: { worktreePath: string; branchName: string | null } }
+			assert.equal(aiCalls.length, 0)
+			assert.equal(planningSpawner.calls[0].existingWorktreePath, repoPath)
+			assert.equal(main.data.worktreePath, repoPath)
+			assert.equal(main.data.branchName, null)
+			const storedMain = db.items.get(mainItem.id)
+			assert.equal(storedMain?.worktreePath, repoPath)
+			assert.equal(storedMain?.branchName, null)
+			assert.ok(storedMain?.planDirName)
+			assert.ok(storedMain?.plannedAt)
+			assert.match(
+				readFileSync(new PlanWorkspace(repoPath, storedMain?.planDirName ?? '').readmePath, 'utf-8'),
+				/main checkout — the agent creates the branch at run time/,
+			)
+
+			// Worktree planning on the same routes still runs AI naming (deps wiring).
+			const worktreeRes = await api.request(`/items/${worktreeItem.id}/plan`, { method: 'POST' })
+			assert.equal(worktreeRes.status, 200)
+			assert.equal(aiCalls.length, 1)
+			assert.equal(db.items.get(worktreeItem.id)?.branchName, 'feat/model-named-branch')
+			assert.notEqual(planningSpawner.calls[1].existingWorktreePath, repoPath)
+		} finally {
+			rmSync(repoPath, { recursive: true, force: true })
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('manual branch-name AI pass refuses main-workspace Items', () =>
+	withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'main naming refused', projectSlug: 'helm', prompt: 'x' })
+		commands.setSolveItemWorkspace(item.id, 'main')
+
+		let modelCalled = false
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+			undefined,
+			async () => {
+				modelCalled = true
+				return 'feat/should-not-happen'
+			},
+		)
+
+		const res = await api.request(`/items/${item.id}/ai/branch-name`, { method: 'POST' })
+		assert.equal(res.status, 400)
+		const body = (await res.json()) as { error: string }
+		assert.match(body.error, /main-workspace/)
+		assert.equal(modelCalled, false)
+	}))

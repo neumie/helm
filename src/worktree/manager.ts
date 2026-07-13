@@ -155,7 +155,8 @@ export async function pushBranch(worktreePath: string, branchName: string): Prom
 	}
 }
 
-async function getCurrentBranch(cwd: string): Promise<string | null> {
+/** Branch currently checked out at `cwd` (null when detached or not a repo). */
+export async function getCurrentBranch(cwd: string): Promise<string | null> {
 	try {
 		const { stdout } = await execFileAsync('git', ['branch', '--show-current'], { cwd })
 		return stdout.trim() || null

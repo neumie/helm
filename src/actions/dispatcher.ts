@@ -4,7 +4,7 @@ import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
 import type { SolverResult } from '../types.js'
 import { log } from '../util/logger.js'
-import { pushBranch } from '../worktree/manager.js'
+import { getCurrentBranch, pushBranch } from '../worktree/manager.js'
 import { createPR } from './pr-creator.js'
 
 export interface DispatchPrOptions {
@@ -19,11 +19,14 @@ export interface DispatchPrOptions {
 export interface DispatchSideEffects {
 	pushBranch(worktreePath: string, branchName: string): void | Promise<void>
 	createPr(opts: DispatchPrOptions): string | Promise<string>
+	/** Branch currently checked out at the workspace (main-workspace branch discovery). */
+	currentBranch(worktreePath: string): string | null | Promise<string | null>
 }
 
 const DEFAULT_SIDE_EFFECTS: DispatchSideEffects = {
 	pushBranch,
 	createPr: createPR,
+	currentBranch: getCurrentBranch,
 }
 
 function dispatchSideEffects(overrides?: Partial<DispatchSideEffects>): DispatchSideEffects {
@@ -58,12 +61,37 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 	}
 
 	const worktreePath = item.worktreePath
-	const branchName = item.branchName
-	if (!worktreePath || !branchName) {
+	if (!worktreePath) {
 		throw new Error(`Item ${args.itemId} is missing worktree or branch for dispatch`)
 	}
 
 	const sideEffects = dispatchSideEffects(args.sideEffects)
+
+	// Main-workspace runs never carry a pre-created branch on the row: discover
+	// the agent-created branch from the checkout at dispatch time. Refuse to
+	// dispatch the base branch itself — if the agent never branched, pushing
+	// would ship straight onto the user's main.
+	const mainMode =
+		item.payload.kind === 'solve' && (item.payload.solverWorkspace ?? args.config.solver.workspace) === 'main'
+	let branchName: string | null
+	if (mainMode) {
+		branchName = await sideEffects.currentBranch(worktreePath)
+		if (!branchName) {
+			throw new Error(`Item ${args.itemId} has no current branch to dispatch (main-workspace run, detached HEAD?)`)
+		}
+		const base = item.baseRef.replace(/^origin\//, '')
+		if (branchName === base) {
+			throw new Error(
+				`Item ${args.itemId} is still on the base branch "${branchName}" — the agent did not create a task branch; refusing to push it`,
+			)
+		}
+	} else {
+		branchName = item.branchName
+		if (!branchName) {
+			throw new Error(`Item ${args.itemId} is missing worktree or branch for dispatch`)
+		}
+	}
+
 	await sideEffects.pushBranch(worktreePath, branchName)
 
 	const baseBody = args.result.prBody ?? args.result.summary

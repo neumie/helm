@@ -249,6 +249,24 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 			],
 		},
 		{
+			id: 'execution',
+			title: 'Execution',
+			description:
+				'Where solve agents run. Worktree isolates each run in a fresh git worktree — safe for concurrent solves, never touches your checkout. Main checkout runs the agent directly in the project repo (Okena: a pane in the existing project window) — no worktree setup and your local env is reused, but the run shares your working tree, the agent must branch itself, and only one solve should run per repo.',
+			controls: [
+				{
+					type: 'field',
+					path: ['solver', 'workspace'],
+					label: 'Workspace',
+					input: 'select',
+					options: [
+						{ value: 'worktree', label: 'Worktree (isolated, default)' },
+						{ value: 'main', label: 'Main checkout' },
+					],
+				},
+			],
+		},
+		{
 			id: 'ai-branch',
 			title: 'AI · Branch naming',
 			description: 'Cheap one-shot model that derives a conventional branch name (feat/…, fix/…)',

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -36,6 +36,8 @@ import type { Drainer } from '../../queue/drainer.js'
 import { solverAgentSchema } from '../../solver/agent.js'
 import type { SolverAgent } from '../../solver/agent.js'
 import type { OneShotOptions } from '../../solver/one-shot.js'
+import { solverWorkspaceSchema } from '../../solver/workspace.js'
+import type { SolverWorkspace } from '../../solver/workspace.js'
 import { createSpawner, listSpawnerAdapters, spawnerNameSchema } from '../../spawner/registry.js'
 import type { SpawnerName } from '../../spawner/registry.js'
 import type { Spawner } from '../../spawner/spawner.js'
@@ -44,14 +46,14 @@ import { log } from '../../util/logger.js'
 import { defaultDaemonControl, scheduleDaemonRestart } from '../restart.js'
 import type { DaemonControl } from '../restart.js'
 
-function buildItemPlanReadmeBody(item: ItemRecord, branchName: string, planDirName: string): string {
+function buildItemPlanReadmeBody(item: ItemRecord, branchName: string | null, planDirName: string): string {
 	return [
 		`# ${item.title}`,
 		'',
 		`**Kind:** ${item.kind}`,
 		`**Status:** ${item.status}`,
 		`**BaseRef:** ${item.baseRef}`,
-		`**Branch:** ${branchName}`,
+		`**Branch:** ${branchName ?? '(main checkout — the agent creates the branch at run time)'}`,
 		`**Item ID:** ${item.id}`,
 		'',
 		'## Plan this Item',
@@ -181,19 +183,26 @@ export function apiRoutes(
 	// for the single-Item detail route, so the list stays fast as PRs accumulate.
 	const dashboardItems = (items: ItemRecord[]) => toDashboardItems(expandGroupedItems(items))
 
-	// solverAgent: absent/null → undefined (untouched). solverModel: absent →
-	// undefined (untouched), explicit JSON null → null (CLEAR the stored
-	// override — how the extension's "Auto" chip drops a previously-picked
-	// model), string → set. Invalid values flag a 400 instead.
+	// solverAgent: absent/null → undefined (untouched). solverModel and
+	// solverWorkspace: absent → undefined (untouched), explicit JSON null → null
+	// (CLEAR the stored override — how the extension's "Auto" chip drops a
+	// previously-picked model), valid value → set. Invalid values flag a 400
+	// instead.
 	interface SolveSelection {
 		solverAgent: SolverAgent | undefined
 		solverAgentInvalid: boolean
 		solverModel: string | null | undefined
 		solverModelInvalid: boolean
+		solverWorkspace: SolverWorkspace | null | undefined
+		solverWorkspaceInvalid: boolean
 	}
 
 	async function readSolveSelection(bodyPromise: Promise<unknown>): Promise<SolveSelection> {
-		const body = (await bodyPromise.catch(() => ({}))) as { solverAgent?: unknown; solverModel?: unknown }
+		const body = (await bodyPromise.catch(() => ({}))) as {
+			solverAgent?: unknown
+			solverModel?: unknown
+			solverWorkspace?: unknown
+		}
 		let solverAgent: SolveSelection['solverAgent']
 		let solverAgentInvalid = false
 		if (body.solverAgent !== undefined && body.solverAgent !== null) {
@@ -212,7 +221,16 @@ export function apiRoutes(
 				solverModelInvalid = true
 			}
 		}
-		return { solverAgent, solverAgentInvalid, solverModel, solverModelInvalid }
+		let solverWorkspace: SolveSelection['solverWorkspace']
+		let solverWorkspaceInvalid = false
+		if (body.solverWorkspace === null) {
+			solverWorkspace = null
+		} else if (body.solverWorkspace !== undefined) {
+			const parsed = solverWorkspaceSchema.safeParse(body.solverWorkspace)
+			if (parsed.success) solverWorkspace = parsed.data
+			else solverWorkspaceInvalid = true
+		}
+		return { solverAgent, solverAgentInvalid, solverModel, solverModelInvalid, solverWorkspace, solverWorkspaceInvalid }
 	}
 
 	function invalidSelection(c: Context, selection: SolveSelection) {
@@ -222,6 +240,12 @@ export function apiRoutes(
 		if (selection.solverModelInvalid) {
 			return c.json({ error: 'Invalid solverModel. Must be a non-empty string (max 100 chars) or null.' }, 400)
 		}
+		if (selection.solverWorkspaceInvalid) {
+			return c.json(
+				{ error: `Invalid solverWorkspace. Must be one of: ${solverWorkspaceSchema.options.join(', ')} — or null.` },
+				400,
+			)
+		}
 		return null
 	}
 
@@ -230,7 +254,16 @@ export function apiRoutes(
 		let updated = item
 		if (selection.solverAgent) updated = itemCommands.setSolveItemAgent(item.id, selection.solverAgent)
 		if (selection.solverModel !== undefined) updated = itemCommands.setSolveItemModel(item.id, selection.solverModel)
+		if (selection.solverWorkspace !== undefined) {
+			updated = itemCommands.setSolveItemWorkspace(item.id, selection.solverWorkspace)
+		}
 		return updated
+	}
+
+	/** Effective execution workspace for an Item: request override ?? stored payload ?? config. */
+	function effectiveSolverWorkspace(item: ItemRecord, selected: SolverWorkspace | null | undefined): SolverWorkspace {
+		const stored = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
+		return selected ?? stored ?? config.solver.workspace ?? 'worktree'
 	}
 
 	async function planningSpawnerForItem(item: ItemRecord): Promise<Spawner> {
@@ -723,9 +756,18 @@ export function apiRoutes(
 		if (invalid) return invalid
 		const effectiveSolverAgent = selection.solverAgent ?? config.solver.agent
 		const effectiveSolverModel = selection.solverModel ?? config.solver.model
+		// Like solverAgent, the request's solverWorkspace shapes THIS planning
+		// session only and is never persisted by planning; unlike solverAgent it
+		// also falls back to the Item's stored payload override so planning
+		// artifacts land where the eventual run will read them.
+		const effectiveWorkspace = effectiveSolverWorkspace(item, selection.solverWorkspace)
+		const planningInMain = effectiveWorkspace === 'main'
 
 		const projectConfig = config.projects.find(p => p.slug === item.projectSlug)
 		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
+		if (planningInMain && !existsSync(projectConfig.repoPath)) {
+			return c.json({ error: `Project checkout does not exist: ${projectConfig.repoPath}` }, 400)
+		}
 
 		let sourceContext: TaskContext | null = null
 		if (item.payload.kind === 'solve' && (item.capturedContext || item.source)) {
@@ -748,23 +790,30 @@ export function apiRoutes(
 		// writes its worktree under the AI-chosen name (no-op unless enabled). Wire
 		// the request's abort signal so the model call dies if the client gives up
 		// instead of blocking the handler for the full one-shot timeout.
+		// Main-workspace planning skips naming entirely: no branch is pre-created —
+		// the session runs in the canonical checkout and the agent branches itself.
 		let named: ItemRecord
-		try {
-			named = await ensureItemWorkspaceName({
-				commands: itemCommands,
-				item,
-				taskContext,
-				config,
-				repoPath: projectConfig.repoPath,
-				agent: effectiveSolverAgent,
-				signal: c.req.raw.signal,
-			})
-		} catch (err) {
-			// Pass the request signal so an error coinciding with a client abort is
-			// classified as cancellation (matching how ensureItemWorkspaceName re-throws),
-			// not mis-reported as a 500.
-			if (isCancellation(err, c.req.raw.signal)) return c.json({ error: 'Request aborted' }, 503)
-			throw err
+		if (planningInMain) {
+			named = item
+		} else {
+			try {
+				named = await ensureItemWorkspaceName({
+					commands: itemCommands,
+					item,
+					taskContext,
+					config,
+					repoPath: projectConfig.repoPath,
+					agent: effectiveSolverAgent,
+					signal: c.req.raw.signal,
+					deps: aiDeps,
+				})
+			} catch (err) {
+				// Pass the request signal so an error coinciding with a client abort is
+				// classified as cancellation (matching how ensureItemWorkspaceName re-throws),
+				// not mis-reported as a 500.
+				if (isCancellation(err, c.req.raw.signal)) return c.json({ error: 'Request aborted' }, 503)
+				throw err
+			}
 		}
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
 
@@ -779,14 +828,23 @@ export function apiRoutes(
 		let worktreePath: string
 		let hint: string
 		try {
+			// Main-workspace planning hands the spawner the canonical checkout as the
+			// "existing worktree": both spawners reuse it as-is (no worktree creation,
+			// no checkout mutation; okena reuses the repo's existing project window),
+			// and planning artifacts land in the main repo's docs/plans.
 			const session = await itemSpawner.startPlanningSession({
 				projectConfig: { ...projectConfig, baseBranch: baseRef },
 				branchName,
 				planDirName,
 				taskTitle: item.title,
 				taskContext,
-				solverConfig: { ...config.solver, agent: effectiveSolverAgent, model: effectiveSolverModel },
-				existingWorktreePath,
+				solverConfig: {
+					...config.solver,
+					agent: effectiveSolverAgent,
+					model: effectiveSolverModel,
+					workspace: effectiveWorkspace,
+				},
+				existingWorktreePath: planningInMain ? projectConfig.repoPath : existingWorktreePath,
 			})
 			worktreePath = session.worktreePath
 			hint = session.hint
@@ -800,11 +858,15 @@ export function apiRoutes(
 		// localized context.md references. No-op for provider-backed Items.
 		if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath)
 
+		// Main mode: the Item's branchName stays NULL (no pre-created branch to
+		// record); worktreePath/planDirName still persist so the run and the plan
+		// preview find the artifacts in the canonical checkout.
+		const recordedBranchName = planningInMain ? null : branchName
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
-		workspace.writeReadme(buildItemPlanReadmeBody(item, branchName, planDirName))
+		workspace.writeReadme(buildItemPlanReadmeBody(item, recordedBranchName, planDirName))
 		itemCommands.recordPlanPrepared(item.id, {
 			worktreePath,
-			branchName,
+			branchName: recordedBranchName,
 			planDirName,
 			spawner: itemSpawner.name,
 		})
@@ -812,7 +874,7 @@ export function apiRoutes(
 		return c.json({
 			data: {
 				worktreePath,
-				branchName,
+				branchName: recordedBranchName,
 				planDirName,
 				readmePath: workspace.readmePath,
 				spawner: itemSpawner.name,
@@ -845,11 +907,19 @@ export function apiRoutes(
 
 		// branch-name has structural guards: solve-only, not running, and only before
 		// a worktree exists — renaming the branch afterward would orphan the worktree.
+		// Main-workspace Items never carry a pre-created branch (the agent branches
+		// itself in the checkout), so there is nothing to name.
 		if (pass === 'branch-name') {
 			if (item.kind !== 'solve') return c.json({ error: 'Branch naming applies to solve Items only' }, 400)
 			if (item.status === 'running') return c.json({ error: 'Cannot rename a running Item' }, 400)
 			if (item.worktreePath) {
 				return c.json({ error: 'Cannot rename the branch once a worktree exists — re-plan instead' }, 400)
+			}
+			if (effectiveSolverWorkspace(item, undefined) === 'main') {
+				return c.json(
+					{ error: 'Branch naming does not apply to main-workspace Items — the agent branches itself' },
+					400,
+				)
 			}
 		}
 

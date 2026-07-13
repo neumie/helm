@@ -7,6 +7,7 @@ import { buildPrompt } from '../../solver/prompt-builder.js'
 import type { SolveParams, SolveResult, Solver } from '../../solver/solver.js'
 import { phaseError, taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
+import { getCurrentBranch } from '../../worktree/manager.js'
 import { OkenaClient } from './client.js'
 import { OkenaWorktreeManager } from './worktree.js'
 
@@ -40,12 +41,19 @@ export class OkenaSolver implements Solver {
 			throw taskCancelled()
 		}
 
-		const ensured = await this.worktrees.ensureWorktreeProject(
-			projectConfig.repoPath,
-			projectConfig.baseBranch,
-			branchName,
-			existingWorktreePath,
-		)
+		// Main-workspace runs open a terminal PANE in the item's EXISTING okena
+		// project window (the canonical checkout) — never a new worktree workspace,
+		// and never any base-branch prep / `checkout --detach`: the user's working
+		// state is sacred and the agent branches itself.
+		const mainMode = params.workspaceMode === 'main'
+		const ensured = mainMode
+			? await this.worktrees.ensureMainRepoProject(projectConfig.repoPath)
+			: await this.worktrees.ensureWorktreeProject(
+					projectConfig.repoPath,
+					projectConfig.baseBranch,
+					branchName,
+					existingWorktreePath,
+				)
 		// Solve always runs in its own fresh terminal — never the user's planning
 		// terminal. Use the auto-created terminal only for a brand-new worktree.
 		const terminalId = ensured.autoTerminalId ?? (await this.worktrees.createTerminal(ensured.wtProjectId))
@@ -74,7 +82,14 @@ export class OkenaSolver implements Solver {
 		// and unlinks .helm-prompt.txt out from under the just-launched agent.
 		workspace.clearResult()
 		const promptFile = join(worktreePath, '.helm-prompt.txt')
-		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath }, solverConfig)
+		// Main mode swaps the prompt's branch rules: the agent must branch itself.
+		const currentBranch = mainMode ? await getCurrentBranch(worktreePath) : null
+		const solverPrompt = buildPrompt(
+			taskContext,
+			{ planDirName, worktreePath },
+			solverConfig,
+			mainMode ? { mode: 'main', currentBranch } : undefined,
+		)
 		params.onPromptSnapshot?.(solverPrompt)
 		writeFileSync(promptFile, solverPrompt, 'utf-8')
 

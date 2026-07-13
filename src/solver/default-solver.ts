@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
-import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
+import { createWorktree, excludeHelmFiles, getCurrentBranch } from '../worktree/manager.js'
 import { createAgentAdapter } from './agent-adapter.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeAgent } from './invoker.js'
@@ -41,6 +41,27 @@ export class DefaultSolver implements Solver {
 		return worktreePath
 	}
 
+	/**
+	 * Main-workspace run: the agent executes directly in the project's canonical
+	 * checkout. Deliberately does NOT create a worktree, check anything out, or
+	 * touch the working tree in any way — the user's working state is sacred; the
+	 * agent creates its own branch inside the run.
+	 */
+	private async ensureMainCheckout(
+		projectConfig: SolveParams['projectConfig'],
+		signal: AbortSignal | undefined,
+	): Promise<string> {
+		if (signal?.aborted) throw taskCancelled()
+		if (!existsSync(projectConfig.repoPath)) {
+			throw phaseError('worktree', `Project checkout does not exist: ${projectConfig.repoPath}`)
+		}
+		log.info('solver', `Running in main checkout: ${projectConfig.repoPath}`)
+		// Idempotent append to $GIT_DIR/info/exclude — keeps .helm-* run artifacts
+		// invisible to git in the canonical repo too.
+		await excludeHelmFiles(projectConfig.repoPath)
+		return projectConfig.repoPath
+	}
+
 	async solve(params: SolveParams): Promise<SolveResult> {
 		const {
 			projectConfig,
@@ -57,7 +78,10 @@ export class DefaultSolver implements Solver {
 			throw taskCancelled()
 		}
 
-		const worktreePath = await this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
+		const mainMode = params.workspaceMode === 'main'
+		const worktreePath = mainMode
+			? await this.ensureMainCheckout(projectConfig, signal)
+			: await this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
 		params.onWorktreeReady?.(worktreePath)
 
 		if (signal?.aborted) {
@@ -65,7 +89,14 @@ export class DefaultSolver implements Solver {
 		}
 
 		// Build the solver prompt now — task-context builder reads worktree-resident plan artifacts.
-		const solverPrompt = buildPrompt(taskContext, { planDirName, worktreePath }, solverConfig)
+		// Main mode swaps the branch rules: the agent must branch itself off the current branch.
+		const currentBranch = mainMode ? await getCurrentBranch(worktreePath) : null
+		const solverPrompt = buildPrompt(
+			taskContext,
+			{ planDirName, worktreePath },
+			solverConfig,
+			mainMode ? { mode: 'main', currentBranch } : undefined,
+		)
 		params.onPromptSnapshot?.(solverPrompt)
 
 		// Drop any prior run's solver-result.json from a reused worktree so a crashed

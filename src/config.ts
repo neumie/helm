@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { solverAgentSchema } from './solver/agent.js'
+import { solverWorkspaceSchema } from './solver/workspace.js'
 import { spawnerNameSchema } from './spawner/name.js'
 
 const contemberProviderSchema = z.object({
@@ -58,6 +59,10 @@ export const configSchema = z.object({
 		.object({
 			type: z.enum(['default', 'okena']).default('default'),
 			agent: solverAgentSchema.default('claude'),
+			// Default execution workspace for solve runs: 'worktree' isolates each run
+			// in a fresh git worktree; 'main' runs the agent directly in the project's
+			// canonical checkout (per-item payload.solverWorkspace overrides this).
+			workspace: solverWorkspaceSchema.default('worktree'),
 			concurrency: z.number().min(1).max(10).default(2),
 			model: z.string().optional(),
 			maxBudgetUsd: z.number().optional(),
