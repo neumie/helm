@@ -20,6 +20,7 @@ const UI_PREVIEWS: readonly UiPreview[] = [
 	'background-restore',
 	'rename',
 	'rename-edit',
+	'tab-drag',
 ]
 const uiPreview: UiPreview | null = UI_PREVIEWS.find(page => page === uiPreviewArg) ?? null
 
@@ -75,6 +76,7 @@ const api: HelmApi = {
 		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title),
 		setCustomName: (sessionId, name) => ipcRenderer.send('session:set-custom-name', sessionId, name),
 		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked),
+		setOrder: sessionIds => ipcRenderer.send('session:set-order', sessionIds),
 		closeWithGrace: ptyId => ipcRenderer.invoke('session:close-with-grace', ptyId) as Promise<GraceClose | null>,
 		undoClose: sessionId => ipcRenderer.invoke('session:undo-close', sessionId) as Promise<boolean>,
 	},

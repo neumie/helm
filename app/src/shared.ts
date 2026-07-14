@@ -45,6 +45,8 @@ export interface SessionsApi {
 	setCustomName(sessionId: string, name: string | null): void
 	/** Persist the parked flag so background terminals relaunch as background. */
 	setParked(sessionId: string, parked: boolean): void
+	/** Persist current strip order followed by background-list order. */
+	setOrder(sessionIds: string[]): void
 	/**
 	 * Soft-close a tab: detaches the pty client now, kills the session only
 	 * after the grace period. Null when the pty had no session (already dead).
@@ -85,6 +87,7 @@ export interface ConfigApi {
  * `rename-edit` opens the inline tab-rename editor on the active tab (input
  * styling + select-all shot); `rename` commits the fixed pin "deploy watch" on
  * the active tab through the same commit path (relaunch verifies pin restore).
+ * `tab-drag` holds a three-tab pointer drag over slot 0 for visual QA.
  */
 export type UiPreview =
 	| 'list'
@@ -97,6 +100,7 @@ export type UiPreview =
 	| 'background-restore'
 	| 'rename'
 	| 'rename-edit'
+	| 'tab-drag'
 
 /** Menu accelerators (cmd+t / cmd+w / cmd+shift+b) fire in main; renderer subscribes here. */
 export interface TabsApi {

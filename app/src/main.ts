@@ -649,6 +649,10 @@ ipcMain.handle('sessions:list', async () => {
 	const support = getSessionSupport()
 	if (!support) return []
 	const { live, unknownIds } = await sessions.scanSessions()
+	// Registry loss must not make surviving dtach sessions permanently
+	// unnameable/unorderable: cosmetic writers correctly ignore unknown ids, so
+	// adopt every definitively-live socket before returning it to the renderer.
+	for (const session of live) support.registry.ensure(session.sessionId, session.createdAt)
 	// Retention = live ∪ unknown-probe: a probe timeout must not cost a live
 	// session its registry metadata (title/customName/parked) — that was a real
 	// loss path: prune-on-unknown left long-lived sessions restoring as "zsh".
@@ -673,8 +677,9 @@ ipcMain.handle('sessions:list', async () => {
 			parked: support.registry.get(s.sessionId)?.parked === true,
 			// Registry createdAt (original spawn) beats socket birthtime for ordering.
 			createdAt: support.registry.get(s.sessionId)?.createdAt ?? s.createdAt,
+			order: support.registry.get(s.sessionId)?.order,
 		}))
-		.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+		.sort(sessions.compareSessionOrder)
 		.map(({ sessionId, title, customName, parked }) => ({ sessionId, title, customName, parked }))
 })
 
@@ -683,6 +688,11 @@ ipcMain.handle('sessions:list', async () => {
 ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown) => {
 	if (!sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean') return
 	getSessionSupport()?.registry.setParked(sessionId, parked)
+})
+
+ipcMain.on('session:set-order', (_event, sessionIds: unknown) => {
+	if (!Array.isArray(sessionIds) || sessionIds.length > 100 || !sessionIds.every(sessions.isValidSessionId)) return
+	getSessionSupport()?.registry.setOrder(sessionIds)
 })
 
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown) => {

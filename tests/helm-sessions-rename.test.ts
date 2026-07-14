@@ -128,3 +128,20 @@ test('scanSessions: crash-leftover sockets are dead — unlinked and not retaine
 		process.env.HELM_SOCKET_DIR = prev
 	}
 })
+
+test('a live session is re-adopted after corrupt registry loss, then rename and order persist', () => {
+	const file = tempRegistryFile()
+	fs.writeFileSync(file, '') // prior non-atomic write was interrupted after truncate
+	const registry = new SessionRegistry(file)
+	assert.equal(registry.get('eeee5555'), undefined)
+
+	registry.ensure('eeee5555', '2026-07-14T09:00:00.000Z')
+	registry.setCustomName('eeee5555', 'production shell')
+	registry.setOrder(['eeee5555'])
+	registry.flush()
+
+	const restored = new SessionRegistry(file)
+	assert.equal(restored.get('eeee5555')?.customName, 'production shell')
+	assert.equal(restored.get('eeee5555')?.order, 0)
+	assert.equal(restored.get('eeee5555')?.createdAt, '2026-07-14T09:00:00.000Z')
+})

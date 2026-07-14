@@ -392,6 +392,8 @@ export class GraceCloser {
 
 export interface SessionMeta {
 	createdAt: string
+	/** Explicit cross-relaunch order. Missing = legacy registry; createdAt remains fallback. */
+	order?: number
 	lastTitle?: string
 	/**
 	 * Manual tab name (double-click rename). PINS the tab: never overwritten by
@@ -402,6 +404,16 @@ export interface SessionMeta {
 	customName?: string
 	/** Parked in the background list (strip-right popover) instead of the tab strip. */
 	parked?: boolean
+}
+
+export function compareSessionOrder(
+	a: Pick<SessionMeta, 'order' | 'createdAt'>,
+	b: Pick<SessionMeta, 'order' | 'createdAt'>,
+): number {
+	return (
+		(a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) ||
+		a.createdAt.localeCompare(b.createdAt)
+	)
 }
 
 /**
@@ -421,9 +433,10 @@ export class SessionRegistry {
 			const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
 			for (const [id, meta] of Object.entries(raw)) {
 				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null) continue
-				const { createdAt, lastTitle, customName, parked } = meta as Record<string, unknown>
+				const { createdAt, order, lastTitle, customName, parked } = meta as Record<string, unknown>
 				this.#data[id] = {
 					createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
+					...(typeof order === 'number' && Number.isFinite(order) && order >= 0 ? { order } : {}),
 					...(typeof lastTitle === 'string' ? { lastTitle } : {}),
 					...(typeof customName === 'string' && customName !== '' ? { customName } : {}),
 					...(parked === true ? { parked: true } : {}),
@@ -436,6 +449,13 @@ export class SessionRegistry {
 
 	add(sessionId: string): void {
 		this.#data[sessionId] = { createdAt: new Date().toISOString() }
+		this.#scheduleSave()
+	}
+
+	/** Re-adopt a live dtach session when registry JSON was missing/corrupt. */
+	ensure(sessionId: string, createdAt = new Date().toISOString()): void {
+		if (this.#data[sessionId]) return
+		this.#data[sessionId] = { createdAt }
 		this.#scheduleSave()
 	}
 
@@ -482,6 +502,25 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
+	/** Persist renderer-owned strip/background ordering as compact positions. */
+	setOrder(sessionIds: readonly string[]): void {
+		let changed = false
+		const seen = new Set<string>()
+		let order = 0
+		for (const sessionId of sessionIds) {
+			if (seen.has(sessionId)) continue
+			seen.add(sessionId)
+			const meta = this.#data[sessionId]
+			if (!meta) continue
+			if (meta.order !== order) {
+				meta.order = order
+				changed = true
+			}
+			order += 1
+		}
+		if (changed) this.#scheduleSave()
+	}
+
 	remove(sessionId: string): void {
 		if (!(sessionId in this.#data)) return
 		delete this.#data[sessionId]
@@ -514,11 +553,18 @@ export class SessionRegistry {
 			clearTimeout(this.#saveTimer)
 			this.#saveTimer = null
 		}
+		const tempFile = `${this.#file}.${process.pid}.tmp`
 		try {
 			fs.mkdirSync(path.dirname(this.#file), { recursive: true })
-			fs.writeFileSync(this.#file, JSON.stringify(this.#data))
+			fs.writeFileSync(tempFile, JSON.stringify(this.#data))
+			fs.renameSync(tempFile, this.#file)
 		} catch {
 			// best-effort; titles degrade to "zsh" on next restore
+			try {
+				fs.unlinkSync(tempFile)
+			} catch {
+				// missing / cleanup best-effort
+			}
 		}
 	}
 }

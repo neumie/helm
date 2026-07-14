@@ -7,6 +7,13 @@ import './styles.css'
 import type { HelmApi, RestoredSession } from '../shared'
 import { appearance } from './appearance'
 import { mountSidebar } from './sidebar/SidebarRoot'
+import {
+	dragThresholdExceeded,
+	moveToInsertionIndex,
+	pointInExpandedRect,
+	stripDropInsertionIndex,
+	tabStripAutoScrollDelta,
+} from './tab-drag'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import { terminalShortcut } from './terminal-keybindings'
 import { showToast } from './toast'
@@ -162,6 +169,11 @@ const tabs: Tab[] = []
 // inactive strip tab (those are already hidden, live xterm instances).
 const parked: Tab[] = []
 let activeTab: Tab | null = null
+
+function persistTerminalOrder(): void {
+	const sessionIds = [...tabs, ...parked].flatMap(tab => (tab.sessionId ? [tab.sessionId] : []))
+	if (sessionIds.length > 0) helm.sessions.setOrder(sessionIds)
+}
 
 const findByPty = (id: number): Tab | undefined => tabs.find(t => t.ptyId === id) ?? parked.find(t => t.ptyId === id)
 
@@ -566,6 +578,7 @@ function closeTab(tab: Tab): void {
 	tab.tabButton.remove()
 	const index = tabs.indexOf(tab)
 	tabs.splice(index, 1)
+	persistTerminalOrder()
 	if (activeTab === tab) {
 		activeTab = null
 		const neighbor = tabs[Math.min(index, tabs.length - 1)]
@@ -594,6 +607,7 @@ function parkTab(tab: Tab): void {
 	tab.tabButton.remove()
 	tab.holder.classList.remove('active')
 	if (tab.sessionId) helm.sessions.setParked(tab.sessionId, true)
+	persistTerminalOrder()
 	// Park is a persistence point: a parked session relaunches as parked and
 	// may only be restored (and repainted) much later.
 	if (tab.ptyId !== null) saveSnapshot(tab)
@@ -616,6 +630,7 @@ function restoreParked(tab: Tab): void {
 	tabs.push(tab)
 	tabsEl.appendChild(tab.tabButton)
 	if (tab.sessionId) helm.sessions.setParked(tab.sessionId, false)
+	persistTerminalOrder()
 	closeBackgroundPopover()
 	updateBackgroundUi()
 	syncEmptyState()
@@ -632,6 +647,7 @@ function killParkedTab(tab: Tab): void {
 	if (index === -1 || tab.closed) return
 	tab.closed = true
 	parked.splice(index, 1)
+	persistTerminalOrder()
 	const { title, customName } = tab
 	const shown = customName ?? title
 	if (tab.ptyId !== null) {
@@ -768,6 +784,274 @@ bgToggle.addEventListener('click', () => {
 	if (bgOpen) closeBackgroundPopover()
 	else openBackgroundPopover()
 })
+
+// ---------- direct-manipulation tab drag (live reorder / magnetic park) ----------
+
+type TabDropTarget = 'strip' | 'background' | null
+
+interface TabPointerDrag {
+	tab: Tab
+	pointerId: number
+	startX: number
+	startY: number
+	x: number
+	y: number
+	offsetX: number
+	offsetY: number
+	originalTabs: Tab[]
+	started: boolean
+	preview: HTMLDivElement | null
+	dropTarget: TabDropTarget
+	frame: number | null
+}
+
+let tabPointerDrag: TabPointerDrag | null = null
+const suppressTabClick = new WeakSet<Tab>()
+const tabReflowAnimations = new WeakMap<Tab, Animation>()
+
+function reducedMotion(): boolean {
+	return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function setTabOrder(next: readonly Tab[], animate: boolean): boolean {
+	if (next.every((candidate, index) => candidate === tabs[index])) return false
+	const previousLeft = new Map(tabs.map(candidate => [candidate, candidate.tabButton.getBoundingClientRect().left]))
+	tabs.splice(0, tabs.length, ...next)
+	for (const candidate of tabs) tabsEl.appendChild(candidate.tabButton)
+	if (animate && !reducedMotion()) {
+		for (const candidate of tabs) {
+			const delta = (previousLeft.get(candidate) ?? 0) - candidate.tabButton.getBoundingClientRect().left
+			if (Math.abs(delta) < 1) continue
+			tabReflowAnimations.get(candidate)?.cancel()
+			const animation = candidate.tabButton.animate(
+				[{ transform: `translateX(${delta}px)` }, { transform: 'translateX(0)' }],
+				{ duration: 160, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+			)
+			tabReflowAnimations.set(candidate, animation)
+			animation.addEventListener('finish', () => {
+				if (tabReflowAnimations.get(candidate) === animation) tabReflowAnimations.delete(candidate)
+			})
+		}
+	}
+	return true
+}
+
+function positionTabPreview(drag: TabPointerDrag): void {
+	if (!drag.preview) return
+	const left = drag.x - drag.offsetX
+	const top = drag.y - drag.offsetY
+	const scale = drag.dropTarget === 'background' ? 0.92 : 1.02
+	drag.preview.style.transform = `translate3d(${left}px, ${top}px, 0) scale(${scale})`
+}
+
+function updateTabDragTarget(drag: TabPointerDrag): void {
+	const backgroundRect = bgToggle.getBoundingClientRect()
+	const overNewTab = pointInExpandedRect(drag.x, drag.y, newTabButton.getBoundingClientRect())
+	if (!overNewTab && pointInExpandedRect(drag.x, drag.y, backgroundRect, 8)) {
+		drag.dropTarget = 'background'
+		bgToggle.classList.add('drag-over')
+		drag.preview?.classList.add('over-background')
+		positionTabPreview(drag)
+		return
+	}
+
+	bgToggle.classList.remove('drag-over')
+	drag.preview?.classList.remove('over-background')
+	const stripRect = tabsEl.getBoundingClientRect()
+	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 10)) {
+		drag.dropTarget = null
+		positionTabPreview(drag)
+		return
+	}
+
+	drag.dropTarget = 'strip'
+	const insertionIndex = stripDropInsertionIndex(
+		drag.x,
+		tabs.map(tab => tab.tabButton.getBoundingClientRect()),
+	)
+	setTabOrder(moveToInsertionIndex(tabs, drag.tab, insertionIndex), true)
+	positionTabPreview(drag)
+}
+
+function tabDragFrame(): void {
+	const drag = tabPointerDrag
+	if (!drag?.started) return
+	if (drag.dropTarget === 'strip') {
+		const stripRect = tabsEl.getBoundingClientRect()
+		const delta = tabStripAutoScrollDelta(drag.x, stripRect, tabsEl.scrollLeft, tabsEl.scrollWidth, tabsEl.clientWidth)
+		if (delta !== 0) {
+			tabsEl.scrollLeft += delta
+			updateTabDragTarget(drag)
+		}
+	}
+	drag.frame = requestAnimationFrame(tabDragFrame)
+}
+
+function startTabPointerDrag(drag: TabPointerDrag): void {
+	drag.started = true
+	closeTabMenu()
+	closeBackgroundPopover()
+	const rect = drag.tab.tabButton.getBoundingClientRect()
+	const preview = drag.tab.tabButton.cloneNode(true) as HTMLDivElement
+	preview.className = 'tab tab-drag-preview'
+	preview.setAttribute('aria-hidden', 'true')
+	preview.style.width = `${rect.width}px`
+	document.body.appendChild(preview)
+	drag.preview = preview
+	drag.tab.tabButton.classList.add('drag-placeholder')
+	document.body.classList.add('tab-dragging')
+	bgToggle.hidden = false
+	bgToggle.classList.add('drag-ready')
+	bgToggle.title = 'Move to background'
+	positionTabPreview(drag)
+	updateTabDragTarget(drag)
+	drag.frame = requestAnimationFrame(tabDragFrame)
+}
+
+function removeTabPointerListeners(drag: TabPointerDrag): void {
+	document.removeEventListener('pointermove', onTabPointerMove)
+	document.removeEventListener('pointerup', onTabPointerUp)
+	document.removeEventListener('pointercancel', onTabPointerCancel)
+	document.removeEventListener('keydown', onTabDragKeydown, true)
+	window.removeEventListener('blur', onTabDragBlur)
+	try {
+		if (drag.tab.tabButton.hasPointerCapture(drag.pointerId)) drag.tab.tabButton.releasePointerCapture(drag.pointerId)
+	} catch {
+		// synthetic screenshot drag / element removed mid-gesture
+	}
+}
+
+function settleTabPreview(drag: TabPointerDrag, target: DOMRect, intoBackground: boolean): void {
+	const preview = drag.preview
+	const cleanup = () => {
+		preview?.remove()
+		drag.tab.tabButton.classList.remove('drag-placeholder')
+	}
+	if (!preview || reducedMotion()) {
+		cleanup()
+		return
+	}
+	const left = drag.x - drag.offsetX
+	const top = drag.y - drag.offsetY
+	const destinationX = intoBackground ? target.left + (target.width - preview.offsetWidth) / 2 : target.left
+	const destinationY = intoBackground ? target.top + (target.height - preview.offsetHeight) / 2 : target.top
+	const animation = preview.animate(
+		[
+			{ transform: `translate3d(${left}px, ${top}px, 0) scale(${intoBackground ? 0.92 : 1.02})`, opacity: 1 },
+			{
+				transform: `translate3d(${destinationX}px, ${destinationY}px, 0) scale(${intoBackground ? 0.72 : 1})`,
+				opacity: intoBackground ? 0 : 1,
+			},
+		],
+		{ duration: intoBackground ? 140 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+	)
+	animation.addEventListener('finish', cleanup, { once: true })
+	animation.addEventListener('cancel', cleanup, { once: true })
+}
+
+function finishTabPointerDrag(cancelled: boolean): void {
+	const drag = tabPointerDrag
+	if (!drag) return
+	tabPointerDrag = null
+	removeTabPointerListeners(drag)
+	if (drag.frame !== null) cancelAnimationFrame(drag.frame)
+	if (!drag.started) return
+
+	suppressTabClick.add(drag.tab)
+	setTimeout(() => suppressTabClick.delete(drag.tab), 0)
+	const intoBackground = !cancelled && drag.dropTarget === 'background'
+	let target: DOMRect
+	if (intoBackground) {
+		target = bgToggle.getBoundingClientRect()
+		parkTab(drag.tab)
+	} else {
+		if (cancelled || drag.dropTarget !== 'strip') setTabOrder(drag.originalTabs, true)
+		else persistTerminalOrder()
+		target = drag.tab.tabButton.getBoundingClientRect()
+	}
+
+	document.body.classList.remove('tab-dragging')
+	bgToggle.classList.remove('drag-ready', 'drag-over')
+	bgToggle.title = 'Background terminals'
+	updateBackgroundUi()
+	settleTabPreview(drag, target, intoBackground)
+}
+
+function onTabPointerMove(event: PointerEvent): void {
+	const drag = tabPointerDrag
+	if (!drag || event.pointerId !== drag.pointerId) return
+	drag.x = event.clientX
+	drag.y = event.clientY
+	if (!drag.started) {
+		if (!dragThresholdExceeded(drag.startX, drag.startY, drag.x, drag.y)) return
+		startTabPointerDrag(drag)
+	} else {
+		updateTabDragTarget(drag)
+	}
+	event.preventDefault()
+}
+
+function onTabPointerUp(event: PointerEvent): void {
+	const drag = tabPointerDrag
+	if (!drag || event.pointerId !== drag.pointerId) return
+	drag.x = event.clientX
+	drag.y = event.clientY
+	if (drag.started) updateTabDragTarget(drag)
+	finishTabPointerDrag(false)
+}
+
+function onTabPointerCancel(event: PointerEvent): void {
+	if (tabPointerDrag && event.pointerId === tabPointerDrag.pointerId) finishTabPointerDrag(true)
+}
+
+function onTabDragKeydown(event: KeyboardEvent): void {
+	if (event.key !== 'Escape' || !tabPointerDrag) return
+	event.preventDefault()
+	finishTabPointerDrag(true)
+}
+
+function onTabDragBlur(): void {
+	if (tabPointerDrag) finishTabPointerDrag(true)
+}
+
+function createTabPointerDrag(tab: Tab, pointerId: number, x: number, y: number): TabPointerDrag {
+	const rect = tab.tabButton.getBoundingClientRect()
+	return {
+		tab,
+		pointerId,
+		startX: x,
+		startY: y,
+		x,
+		y,
+		offsetX: x - rect.left,
+		offsetY: y - rect.top,
+		originalTabs: [...tabs],
+		started: false,
+		preview: null,
+		dropTarget: null,
+		frame: null,
+	}
+}
+
+function beginTabPointerDrag(tab: Tab, event: PointerEvent): void {
+	if (
+		tabPointerDrag ||
+		event.button !== 0 ||
+		tab.closed ||
+		tab.parked ||
+		tab.tabButton.querySelector('.tab-rename') ||
+		(event.target instanceof Element && event.target.closest('.tab-close, .tab-rename'))
+	) {
+		return
+	}
+	tabPointerDrag = createTabPointerDrag(tab, event.pointerId, event.clientX, event.clientY)
+	tab.tabButton.setPointerCapture(event.pointerId)
+	document.addEventListener('pointermove', onTabPointerMove, { passive: false })
+	document.addEventListener('pointerup', onTabPointerUp)
+	document.addEventListener('pointercancel', onTabPointerCancel)
+	document.addEventListener('keydown', onTabDragKeydown, true)
+	window.addEventListener('blur', onTabDragBlur)
+}
 
 // ---------- tab context menu (§3.8 panel at the pointer) ----------
 
@@ -1006,7 +1290,11 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	// but changes the thumb's proportion — onWriteParsed catches it.
 	term.onWriteParsed(() => scheduleScrollbarSync(tab))
 
-	tabButton.addEventListener('click', () => activate(tab))
+	tabButton.addEventListener('pointerdown', event => beginTabPointerDrag(tab, event))
+	tabButton.addEventListener('click', () => {
+		if (suppressTabClick.delete(tab)) return
+		activate(tab)
+	})
 	// Double-click the tab = inline rename (pin); the close × keeps its meaning.
 	tabButton.addEventListener('dblclick', event => {
 		if (event.target instanceof Node && close.contains(event.target)) return
@@ -1073,6 +1361,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	}
 	tab.ptyId = spawned.id
 	tab.sessionId = spawned.sessionId
+	persistTerminalOrder()
 	// The pty is attached NOW — restored-title stickiness counts from here.
 	tab.attachedAt = performance.now()
 	// Re-assert the parked flag under the REAL session id (a fresh spawn mints
@@ -1210,6 +1499,23 @@ window.addEventListener(
 // `background` opens the popover; `background-strip` leaves it closed.
 async function runUiPreview(): Promise<void> {
 	const preview = helm.uiPreview
+	if (preview === 'tab-drag') {
+		while (tabs.length < 3) await createTerminal().catch(() => {})
+		const names = ['api', 'deploy', 'logs']
+		tabs.forEach((tab, index) => commitCustomName(tab, names[index] ?? `shell ${index + 1}`))
+		const tab = tabs.at(-1)
+		const first = tabs[0]
+		if (tab && first) {
+			const source = tab.tabButton.getBoundingClientRect()
+			const target = first.tabButton.getBoundingClientRect()
+			const drag = createTabPointerDrag(tab, -1, source.left + source.width / 2, source.top + source.height / 2)
+			tabPointerDrag = drag
+			drag.x = target.left + target.width * 0.25
+			drag.y = target.top + target.height / 2 + 3
+			startTabPointerDrag(drag)
+		}
+		return
+	}
 	// background-park: park the ACTIVE tab (after any --term-cmd output landed)
 	// so a later run against the same profile/socket pool verifies parked
 	// snapshot restore. background-restore: restore the first startup-parked

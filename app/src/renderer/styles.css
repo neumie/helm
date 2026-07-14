@@ -153,6 +153,10 @@ button:focus-visible,
 	align-items: center;
 	gap: 4px;
 	min-width: 0;
+	/* Pull hit box through topbar's 6px inset, then give it back as padding:
+	   first tab stays aligned while slot 0 gets a real, unclipped drop gutter. */
+	margin-left: -6px;
+	padding-left: 6px;
 	overflow-x: auto;
 	scrollbar-width: none;
 	-webkit-app-region: no-drag;
@@ -163,6 +167,7 @@ button:focus-visible,
 }
 
 .tab {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 4px;
@@ -175,7 +180,38 @@ button:focus-visible,
 	white-space: nowrap;
 	cursor: default;
 	user-select: none;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
+}
+
+body.tab-dragging,
+body.tab-dragging .tab {
+	cursor: grabbing;
+}
+
+.tab.drag-placeholder {
+	opacity: 0;
+}
+
+.tab-drag-preview {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 60;
+	pointer-events: none;
+	background: var(--fill-raised);
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+	color: var(--text-0);
+	opacity: 0.98;
+	will-change: transform;
+}
+
+.tab-drag-preview .tab-close {
+	opacity: 0;
+}
+
+.tab-drag-preview.over-background {
+	background: var(--fill-subtle);
+	color: var(--text-1);
 }
 
 .tab:hover {
@@ -292,13 +328,30 @@ button:focus-visible,
 	background: none;
 	color: var(--text-2);
 	cursor: pointer;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
 }
 
 #bg-toggle:hover,
-#bg-toggle[aria-expanded="true"] {
+#bg-toggle[aria-expanded="true"],
+#bg-toggle.drag-over {
 	background: var(--fill-subtle);
 	color: var(--text-0);
+}
+
+#bg-toggle.drag-over {
+	transform: scale(1.06);
+	background: var(--fill-raised);
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+}
+
+#bg-toggle.drag-ready:not(.drag-over) {
+	transform: scale(0.94);
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
+#bg-toggle.drag-ready .bg-count {
+	display: none;
 }
 
 #bg-toggle[hidden] {
