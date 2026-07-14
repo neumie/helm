@@ -1276,6 +1276,52 @@ test('server Item list expands grouped siblings across pagination windows', asyn
 	})
 })
 
+test('server dashboard list keeps old actionable Items beyond the archive window', async () => {
+	await withTempDb(async db => {
+		const actionable = db.items.create({
+			id: 'old-actionable-item',
+			kind: 'solve',
+			status: 'ready',
+			projectSlug: 'helm',
+			title: 'Old task run today',
+			baseRef: 'main',
+			payload: { kind: 'solve', prompt: 'Stay visible while actionable.' },
+		})
+		await sleep(5)
+		for (let index = 0; index < 55; index++) {
+			db.items.create({
+				id: `archived-item-${index}`,
+				kind: 'solve',
+				status: 'done',
+				projectSlug: 'helm',
+				title: `Archived Item ${index}`,
+				baseRef: 'main',
+				payload: { kind: 'solve', prompt: 'Already archived.' },
+			})
+		}
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+
+		const res = await api.request('/items')
+
+		assert.equal(res.status, 200)
+		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem>[] }
+		assert.equal(
+			body.data.some(item => item.id === actionable.id),
+			true,
+		)
+		assert.equal(body.data.filter(item => item.status === 'done').length, 50)
+	})
+})
+
 test('server creates a new Item forked from an existing Item branch', async () => {
 	await withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)

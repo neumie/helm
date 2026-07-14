@@ -15,6 +15,7 @@ import type {
 	SolverWorkspace,
 } from '../../shared-helm'
 import { showToast } from '../toast'
+import { lifecycleActionPlan } from './detail-actions'
 import { CHIP_CLASS, VERDICT_META, absoluteUrl, itemTitle, relativeTime, useNow } from './model'
 import {
 	ActionRow,
@@ -184,11 +185,20 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 	const runCreateSourceTask = () =>
 		run('Create source task', 'source-task', () => window.helm.daemon.sourceTask(item.id))
 
+	const runMarkDone = () =>
+		run('Mark done', 'mark-done', async () => {
+			const result = await window.helm.daemon.setStatus(item.id, 'done')
+			if (result.error === undefined) {
+				showToast({ message: 'Marked done' })
+				onBack()
+			}
+			return result
+		})
+
 	// Action bar: one visible primary (or the sole quiet/danger fallback), the
 	// rest in the "…" overflow — §3.11.
 	const actions = item.allowedActions
-	const primary = actions.find(a => a.tone === 'primary') ?? actions.find(a => a.tone === 'muted') ?? actions[0]
-	const rest = actions.filter(a => a !== primary)
+	const { markDone, primary, rest } = lifecycleActionPlan(item.status, actions)
 	const canPlan = item.status !== 'running'
 	const overflow = [
 		...rest.map(a => ({ label: a.label, onSelect: () => void runItemAction(a), danger: a.tone === 'danger' })),
@@ -383,9 +393,19 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 				)}
 			</div>
 
-			{(primary || overflow.length > 0) && (
+			{(markDone || primary || overflow.length > 0) && (
 				<div className="action-bar">
-					{primary && (
+					{markDone ? (
+						<Btn
+							tone="primary"
+							block
+							busy={busyAction === 'mark-done'}
+							disabled={busyAction !== null}
+							onClick={() => void runMarkDone()}
+						>
+							Mark done
+						</Btn>
+					) : primary ? (
 						<Btn
 							tone={primary.tone === 'primary' ? 'primary' : primary.tone === 'danger' ? 'danger' : 'quiet'}
 							block
@@ -395,8 +415,8 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 						>
 							{primary.label}
 						</Btn>
-					)}
-					{!primary && canPlan && (
+					) : null}
+					{!markDone && !primary && canPlan && (
 						<Btn
 							tone="quiet"
 							block
@@ -407,7 +427,7 @@ export function DetailPage({ id, snapshot, onBack, onOpenPlan, onOpenTask }: Det
 							{item.plannedAt ? 'Re-plan' : 'Plan'}
 						</Btn>
 					)}
-					{overflow.length > 0 && (primary || !canPlan) && (
+					{overflow.length > 0 && (markDone || primary || !canPlan) && (
 						<MenuButton triggerLabel="More actions" trigger={GLYPH.ellipsis} entries={overflow} />
 					)}
 				</div>

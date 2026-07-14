@@ -416,6 +416,25 @@ export class ItemStore {
 		return rows.map(row => this.rowToItem(row))
 	}
 
+	/**
+	 * Native dashboard snapshot: every Item that can still need attention, plus
+	 * a bounded recent archive. Actionable work must never disappear merely
+	 * because newer completed rows pushed it beyond a creation-time page.
+	 */
+	listDashboard(archiveLimit = 50): ItemRecord[] {
+		const actionableRows = this.db
+			.prepare(
+				"SELECT * FROM items WHERE status NOT IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC",
+			)
+			.all() as Record<string, unknown>[]
+		const archivedRows = this.db
+			.prepare(
+				"SELECT * FROM items WHERE status IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC LIMIT ?",
+			)
+			.all(archiveLimit) as Record<string, unknown>[]
+		return [...actionableRows, ...archivedRows].map(row => this.rowToItem(row))
+	}
+
 	private toDbParams(item: ItemRecord) {
 		return {
 			id: item.id,

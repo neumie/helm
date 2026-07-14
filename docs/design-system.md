@@ -295,7 +295,7 @@ The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page 
 Detail pages pin their actions; content scrolls, actions don't.
 
 - Height 48 (content 28 + 10px vertical padding), padding 10 12, background `--pane` (opaque), 1px `--hairline` top border, z-layer 10.
-- One **primary** button (the contextual main action: Approve / Start / Retry) + a quiet or ghost "…" overflow for the rest. Danger actions live in the overflow unless the page's whole point is destructive.
+- One **primary** button (the contextual main action: Approve / Start / Retry; **Mark done** in review) + a quiet or ghost "…" overflow for the rest. Review's Mark done is the human acknowledgement that shipped work is finished; Retry moves into overflow. Success returns to the work list and the Item moves to Archive. Danger actions live in the overflow unless the page's whole point is destructive.
 - **Don't** put more than two visible buttons in the bar; **don't** let the bar scroll away.
 
 ### 3.12 Banners (error / notice)
@@ -422,7 +422,7 @@ Method: `process.getCreationTime()` as t0; marks at main-load (~120ms), app-read
 | Sidebar re-renders while idle | 2 (mount + first snapshot), then flat | re-render **only** on push + the 30s relative-time tick |
 | Full 50-row list render + paint (cold mount) | ~60ms | one poll-refresh re-render **< 16ms** (steady state; rows are memoized, only rows whose time label flipped re-render) |
 
-**Virtualization: not used, deliberately.** At 50 items (the daemon list default/limit) plain memoized rows are nowhere near a frame budget. Do not add a virtual list until a *measured* paint exceeds ~16ms on push at real item counts — extrapolating from the cold-mount number, that's roughly **500+ rows**. If the list route's limit grows past that, measure first, then virtualize.
+**Virtualization: not used, deliberately.** Bare `GET /api/items` returns every actionable Item plus 50 recent archived Items; a work bucket must never lose an old active row to archive pagination. At the measured 50-row dataset, plain memoized rows are nowhere near a frame budget. Do not add a virtual list until a *measured* paint exceeds ~16ms on push at real item counts — extrapolating from the cold-mount number, that's roughly **500+ rows**. If actionable work grows past that, measure first, then virtualize.
 
 ### 6.4 Memory
 

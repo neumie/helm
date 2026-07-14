@@ -293,16 +293,24 @@ export function apiRoutes(
 	// Item dashboard contract — the read/write path for all work.
 	api.get('/items', c => {
 		const status = c.req.query('status')
+		const projectSlug = c.req.query('project') || undefined
+		const limit = c.req.query('limit')
+		const offset = c.req.query('offset')
 		const parsedStatus = status ? itemStatusSchema.safeParse(status) : null
 		if (status && !parsedStatus?.success) {
 			return c.json({ error: `Invalid status. Must be one of: ${itemStatusSchema.options.join(', ')}` }, 400)
 		}
-		const items = itemCommands.listItems({
-			status: parsedStatus?.success ? parsedStatus.data : undefined,
-			projectSlug: c.req.query('project') || undefined,
-			limit: Number(c.req.query('limit') ?? 50),
-			offset: Number(c.req.query('offset') ?? 0),
-		})
+		// Bare /items is the native dashboard snapshot: all actionable work plus
+		// a bounded archive. Explicit filters/pagination retain list semantics.
+		const items =
+			status === undefined && projectSlug === undefined && limit === undefined && offset === undefined
+				? itemCommands.listDashboardItems()
+				: itemCommands.listItems({
+						status: parsedStatus?.success ? parsedStatus.data : undefined,
+						projectSlug,
+						limit: Number(limit ?? 50),
+						offset: Number(offset ?? 0),
+					})
 		return c.json({ data: dashboardItems(items) })
 	})
 

@@ -774,6 +774,10 @@ export class ItemCommands {
 		return this.store.list(opts)
 	}
 
+	listDashboardItems(archiveLimit = 50): ItemRecord[] {
+		return this.store.listDashboard(archiveLimit)
+	}
+
 	private resolveBaseRef(input: BaseRefSelection, defaultBaseRef: string): string {
 		if (input.baseRef && input.baseItemId) {
 			throw new Error('Specify either baseRef or baseItemId, not both')
