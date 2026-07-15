@@ -2,7 +2,16 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { TaskContext } from '../providers/provider.js'
 import { itemRecordSchema } from './schema.js'
-import type { Assessment, DeployState, ItemKind, ItemPayload, ItemRecord, ItemSource, ItemStatus } from './schema.js'
+import type {
+	Assessment,
+	DeployState,
+	ItemKind,
+	ItemPayload,
+	ItemRecord,
+	ItemSource,
+	ItemStatus,
+	PlanStatus,
+} from './schema.js'
 
 export interface CreateItemInput {
 	id?: string
@@ -118,6 +127,7 @@ export class ItemStore {
 			startedAt: null,
 			completedAt: null,
 			plannedAt: null,
+			planStatus: null,
 			updatedAt: now,
 			errorMessage: null,
 			errorPhase: null,
@@ -133,12 +143,12 @@ export class ItemStore {
 				`INSERT INTO items (
 					id, kind, status, work_mode, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
-					created_at, queued_at, started_at, completed_at, planned_at, updated_at,
+					created_at, queued_at, started_at, completed_at, planned_at, plan_status, updated_at,
 					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome, deploy_state
 				) VALUES (
 					@id, @kind, @status, @workMode, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
-					@createdAt, @queuedAt, @startedAt, @completedAt, @plannedAt, @updatedAt,
+					@createdAt, @queuedAt, @startedAt, @completedAt, @plannedAt, @planStatus, @updatedAt,
 					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome, @deployState
 				)`,
 			)
@@ -261,6 +271,22 @@ export class ItemStore {
 		return updated
 	}
 
+	// Advisory plan readiness cache; dedicated JSON writer keeps it outside the
+	// generic lifecycle update surface.
+	updatePlanStatus(id: string, planStatus: PlanStatus): ItemRecord {
+		const current = this.get(id)
+		if (!current) throw new Error(`Item not found: ${id}`)
+		const updatedAt = new Date().toISOString()
+		validateItem({ ...current, planStatus, updatedAt })
+		const result = this.db
+			.prepare('UPDATE items SET plan_status = ?, updated_at = ? WHERE id = ?')
+			.run(JSON.stringify(planStatus), updatedAt, id)
+		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
+		const updated = this.get(id)
+		if (!updated) throw new Error(`Item not found: ${id}`)
+		return updated
+	}
+
 	// Source items still awaiting any AI enrichment (display name or assessment) —
 	// the work-list for the backfill enricher.
 	listSourceItemsNeedingEnrichment(): ItemRecord[] {
@@ -354,6 +380,18 @@ export class ItemStore {
 
 	// Solve Items that have shipped a PR and may still be merging/deploying — the
 	// DeployWatcher's work-list. review + completed (not failed/cancelled).
+	listPlanWatchable(limit = 200): ItemRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM items
+				 WHERE planned_at IS NOT NULL AND worktree_path IS NOT NULL AND plan_dir_name IS NOT NULL
+				   AND status NOT IN ('done', 'cancelled')
+				 ORDER BY updated_at DESC LIMIT ?`,
+			)
+			.all(limit) as Record<string, unknown>[]
+		return rows.map(row => this.rowToItem(row))
+	}
+
 	listDeployWatchable(limit = 100): ItemRecord[] {
 		const rows = this.db
 			.prepare(
@@ -475,6 +513,7 @@ export class ItemStore {
 			startedAt: item.startedAt,
 			completedAt: item.completedAt,
 			plannedAt: item.plannedAt,
+			planStatus: item.planStatus ? JSON.stringify(item.planStatus) : null,
 			updatedAt: item.updatedAt,
 			errorMessage: item.errorMessage,
 			errorPhase: item.errorPhase,
@@ -511,6 +550,7 @@ export class ItemStore {
 			startedAt: row.started_at ?? null,
 			completedAt: row.completed_at ?? null,
 			plannedAt: row.planned_at ?? null,
+			planStatus: readJson(row.plan_status, 'planStatus'),
 			updatedAt: row.updated_at,
 			errorMessage: row.error_message ?? null,
 			errorPhase: row.error_phase ?? null,

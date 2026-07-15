@@ -27,6 +27,7 @@ import { toDashboardItem, toDashboardItems } from '../src/items/contract.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
 import { observeItemRun } from '../src/items/observation.js'
 import type { ItemPayload } from '../src/items/schema.js'
+import { PlanStatusWatcher } from '../src/plan/status-watcher.js'
 import { PlanWorkspace } from '../src/plan/workspace.js'
 import { Poller } from '../src/poller/poller.js'
 import { Drainer } from '../src/queue/drainer.js'
@@ -4146,6 +4147,60 @@ test('PlanWorkspace resolves the runnable loop artifact deterministically', () =
 		rmSync(dir, { recursive: true, force: true })
 	}
 })
+
+test('PlanStatusWatcher caches local and GitHub ticket readiness without lifecycle events', () =>
+	withTempDb(async db => {
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-plan-status-'))
+		try {
+			const commands = new ItemCommands(db.items, config)
+			const item = commands.createSolveItem({ title: 'Plan status', projectSlug: 'helm', prompt: 'plan it' })
+			const planDirName = '2026-07-15-plan-status'
+			const workspace = new PlanWorkspace(worktreePath, planDirName)
+			workspace.ensureDir()
+			writeFileSync(join(workspace.dir, 'spec.md'), '# Spec', 'utf-8')
+			mkdirSync(join(workspace.dir, 'issues'))
+			writeFileSync(join(workspace.dir, 'issues', '01-agent.md'), '---\nstatus: ready-for-agent\n---\n# Agent', 'utf-8')
+			writeFileSync(join(workspace.dir, 'issues', '02-human.md'), '---\nstatus: ready-for-human\n---\n# Human', 'utf-8')
+			writeFileSync(join(workspace.dir, 'issues', '03-done.md'), '---\nstatus: done\n---\n# Done', 'utf-8')
+			recordPreparedPlan(commands, item.id, {
+				worktreePath,
+				branchName: 'feat/plan-status',
+				planDirName,
+				spawner: 'default',
+			})
+			const watcher = new PlanStatusWatcher(config, db, {
+				fetchGithubQueues: async () =>
+					new Map([[planDirName, { total: 2, open: 1, readyForAgent: 1, readyForHuman: 0 }]]),
+			})
+
+			await watcher.pollOnce()
+			const observed = db.items.get(item.id)
+			assert.equal(observed?.status, 'active')
+			assert.equal(observed?.planStatus?.stage, 'tickets_ready')
+			assert.equal(observed?.planStatus?.specName, 'spec.md')
+			assert.deepEqual(observed?.planStatus?.localTickets, {
+				total: 3,
+				open: 2,
+				readyForAgent: 1,
+				readyForHuman: 1,
+			})
+			assert.deepEqual(observed?.planStatus?.githubTickets, {
+				total: 2,
+				open: 1,
+				readyForAgent: 1,
+				readyForHuman: 0,
+			})
+			assert.deepEqual(
+				db.items.getEvents(item.id).map(event => event.eventType),
+				['planning_started', 'plan_prepared'],
+			)
+			const updatedAt = observed?.updatedAt
+			await watcher.pollOnce()
+			assert.equal(db.items.get(item.id)?.updatedAt, updatedAt, 'unchanged observation does not churn the row')
+		} finally {
+			rmSync(worktreePath, { recursive: true, force: true })
+		}
+	}))
 
 test('PlanWorkspace.listArtifacts truncates a pathologically large plan file for the preview', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'helm-plan-big-'))

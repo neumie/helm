@@ -102,6 +102,22 @@ export interface DashboardPlan {
 	readmePath: string
 }
 
+export interface TicketQueueSummary {
+	total: number
+	open: number
+	readyForAgent: number
+	readyForHuman: number
+}
+
+export interface PlanStatus {
+	stage: 'planning' | 'plan_ready' | 'tickets_ready'
+	specName: string | null
+	localTickets: TicketQueueSummary
+	githubTickets: TicketQueueSummary
+	githubAvailable: boolean
+	checkedAt: string
+}
+
 export type RunObservationSource = 'none' | 'solve' | 'loop'
 export type RunObservationState = 'idle' | 'running' | 'review' | 'completed' | 'failed' | 'cancelled' | 'unknown'
 
@@ -161,6 +177,7 @@ export interface DashboardItem {
 	branchName: string | null
 	forkContext: DashboardForkContext | null
 	plan: DashboardPlan | null
+	planStatus: PlanStatus | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */

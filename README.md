@@ -27,8 +27,9 @@ Source / Dashboard -> Item Commands -> Drainer lanes -> Solver / Almanac loop ->
    queued Item first.
 6. **Spawner** - interactive planning seam. Plan moves the Item to human-owned
    Active work, creates or reuses its worktree, and writes plan files under
-   `docs/plans/<planDirName>/`. The same planned solve Item can then start either
-   a normal agent run or an Almanac loop; both reuse that worktree.
+   `docs/plans/<planDirName>/`. Helm separately reports **Planning**, **Plan ready**,
+   or local/GitHub ticket counts as plan artifacts evolve. The same planned solve
+   Item can then start either a normal agent run or an Almanac loop; both reuse that worktree.
 7. **Dispatch** - solve Items record a pre-shipped PR when the agent already
    shipped one; otherwise Helm can push the branch, open a PR, and post a
    provider comment when config allows it.

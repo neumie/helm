@@ -5,7 +5,7 @@ import { itemExecutionMode } from './execution.js'
 import type { ItemExecutionMode } from './execution.js'
 import { emptyRunObservation } from './observation.js'
 import type { RunObservation } from './observation.js'
-import type { ItemRecord } from './schema.js'
+import type { ItemRecord, PlanStatus } from './schema.js'
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
@@ -80,6 +80,8 @@ export interface DashboardItem {
 	branchName: string | null
 	forkContext: DashboardForkContext | null
 	plan: DashboardPlan | null
+	/** Cached readiness of the planning session, spec, and ticket queues. */
+	planStatus: PlanStatus | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
@@ -251,6 +253,19 @@ function groupForItem(item: ItemRecord, siblings: ItemRecord[] | undefined): Das
 	}
 }
 
+function planStatusForItem(item: ItemRecord): PlanStatus | null {
+	if (item.planStatus) return item.planStatus
+	if (!item.plannedAt) return null
+	return {
+		stage: 'planning',
+		specName: null,
+		localTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+		githubTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+		githubAvailable: false,
+		checkedAt: item.plannedAt,
+	}
+}
+
 export function toDashboardItem(
 	item: ItemRecord,
 	runObservation: RunObservation = emptyRunObservation(item),
@@ -275,6 +290,7 @@ export function toDashboardItem(
 		branchName: item.branchName,
 		forkContext: forkContextForItem(item),
 		plan: planForItem(item),
+		planStatus: planStatusForItem(item),
 		resultSummary: item.resultSummary,
 		solveInputSnapshot: item.solveInputSnapshot,
 		solverAgent: item.payload.kind === 'solve' ? (item.payload.solverAgent ?? null) : null,

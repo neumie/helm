@@ -3,6 +3,7 @@ import { loadConfig } from './config.js'
 import { DB } from './db/client.js'
 import { DeployWatcher } from './github/deploy-watcher.js'
 import { ItemEnricher } from './items/enricher.js'
+import { PlanStatusWatcher } from './plan/status-watcher.js'
 import { Poller } from './poller/poller.js'
 import { createProvider } from './providers/registry.js'
 import { Drainer } from './queue/drainer.js'
@@ -45,6 +46,7 @@ async function main() {
 	const enricher = new ItemEnricher(config, db.items, provider)
 	const poller = new Poller(config, db, provider, enricher)
 	const deployWatcher = new DeployWatcher(config, db)
+	const planStatusWatcher = new PlanStatusWatcher(config, db)
 
 	// Start API server
 	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher)
@@ -62,8 +64,9 @@ async function main() {
 	// Start processing queue
 	queue.start()
 
-	// Start GitHub deploy lifecycle watcher (read-only; independent of the queue)
+	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
+	planStatusWatcher.start()
 
 	// Graceful shutdown
 	const shutdown = () => {
@@ -72,6 +75,7 @@ async function main() {
 		enricher.stop()
 		queue.stop()
 		deployWatcher.stop()
+		planStatusWatcher.stop()
 		db.close()
 		process.exit(0)
 	}

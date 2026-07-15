@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 import type { HelmSnapshot } from '../../shared-helm'
 import { useItemDetail } from './detail-data'
-import { absoluteUrl, openExternalUrl, relativeTime, useNow } from './model'
+import { absoluteUrl, openExternalUrl, planStatusLabel, relativeTime, useNow } from './model'
 import { type RunSelectionDraft, effectiveRunSelection, selectAgent } from './run-selection'
 import {
 	Card,
@@ -69,6 +69,12 @@ function TaskImage({
 	)
 }
 
+function ticketSummary(total: number, open: number, agent: number, human: number): string {
+	if (total === 0) return 'None'
+	if (open === 0) return `${total} complete`
+	return `${total} total · ${open} open · ${agent} agent · ${human} human`
+}
+
 export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 	const { item, phase, error, refetch, hasDetail } = useItemDetail(id, snapshot)
 	const docs = (item?.planArtifacts ?? []).filter(doc => !['context.md', 'readme.md'].includes(doc.name.toLowerCase()))
@@ -89,6 +95,34 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 						{phase === 'stale-error' && <FetchAlert error={error} retry={refetch} />}
 						{item?.plan && (
 							<Card>
+								{item.planStatus && (
+									<>
+										<InfoRow label="Status" value={planStatusLabel(item) ?? 'Planning'} />
+										{item.planStatus.specName && <InfoRow label="Spec" value={item.planStatus.specName} mono />}
+										<InfoRow
+											label="Local tickets"
+											value={ticketSummary(
+												item.planStatus.localTickets.total,
+												item.planStatus.localTickets.open,
+												item.planStatus.localTickets.readyForAgent,
+												item.planStatus.localTickets.readyForHuman,
+											)}
+										/>
+										<InfoRow
+											label="GitHub tickets"
+											value={
+												item.planStatus.githubAvailable
+													? ticketSummary(
+															item.planStatus.githubTickets.total,
+															item.planStatus.githubTickets.open,
+															item.planStatus.githubTickets.readyForAgent,
+															item.planStatus.githubTickets.readyForHuman,
+														)
+													: 'Unavailable'
+											}
+										/>
+									</>
+								)}
 								<InfoRow label="Branch" value={item.plan.branchName} mono />
 								<InfoRow label="Plan dir" value={item.plan.planDirName} mono />
 							</Card>

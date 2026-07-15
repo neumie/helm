@@ -105,6 +105,15 @@ export interface RunObservation {
 	}
 }
 
+export interface PlanStatus {
+	stage: 'planning' | 'plan_ready' | 'tickets_ready'
+	specName: string | null
+	localTickets: { total: number; open: number; readyForAgent: number; readyForHuman: number }
+	githubTickets: { total: number; open: number; readyForAgent: number; readyForHuman: number }
+	githubAvailable: boolean
+	checkedAt: string
+}
+
 export interface DashboardItem {
 	id: string
 	kind: 'solve' | 'loop'
@@ -121,6 +130,7 @@ export interface DashboardItem {
 	branchName: string | null
 	forkContext: DashboardForkContext | null
 	plan: DashboardPlan | null
+	planStatus: PlanStatus | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
 	errorMessage: string | null

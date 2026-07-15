@@ -356,4 +356,10 @@ WHERE planned_at IS NOT NULL
   AND status IN ('inbox', 'ready');
 `,
 	},
+	{
+		// Cached advisory readiness from plan artifacts and local/GitHub ticket
+		// queues. Dedicated JSON column, separate from Item lifecycle.
+		version: 24,
+		sql: 'ALTER TABLE items ADD COLUMN plan_status TEXT;',
+	},
 ]

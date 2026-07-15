@@ -28,6 +28,41 @@ export type Route =
 
 export type BucketKey = 'needs' | 'active' | 'queue' | 'inbox'
 
+export function planTicketTotal(item: DashboardItem): number {
+	const status = item.planStatus
+	return status ? status.localTickets.total + status.githubTickets.total : 0
+}
+
+export function planStatusLabel(item: DashboardItem): string | null {
+	const status = item.planStatus
+	if (!status) return null
+	if (status.stage === 'planning') return 'Planning'
+	if (status.stage === 'plan_ready') return 'Plan ready'
+	const total = planTicketTotal(item)
+	const open = status.localTickets.open + status.githubTickets.open
+	if (open === 0) return `${total} ${total === 1 ? 'ticket' : 'tickets'} complete`
+	return `${total} ${total === 1 ? 'ticket' : 'tickets'} ready`
+}
+
+export function planStatusDetail(item: DashboardItem): string | null {
+	const status = item.planStatus
+	if (!status) return null
+	if (status.stage === 'planning') return 'The planning workspace is open. No runnable spec has been detected yet.'
+	if (status.stage === 'plan_ready') {
+		return status.githubAvailable
+			? `${status.specName ?? 'A runnable spec'} is ready. No local or GitHub ticket queue was found.`
+			: `${status.specName ?? 'A runnable spec'} is ready. Local tickets were checked; GitHub is unavailable.`
+	}
+	const total = planTicketTotal(item)
+	const open = status.localTickets.open + status.githubTickets.open
+	const agent = status.localTickets.readyForAgent + status.githubTickets.readyForAgent
+	const human = status.localTickets.readyForHuman + status.githubTickets.readyForHuman
+	const sources = [status.localTickets.total > 0 ? 'local' : null, status.githubTickets.total > 0 ? 'GitHub' : null]
+		.filter(Boolean)
+		.join(' + ')
+	return `${total} ${total === 1 ? 'ticket' : 'tickets'} in ${sources}. ${open} open; ${agent} agent-ready, ${human} human-ready.`
+}
+
 /** `review` + `failed` are the "needs you" pile (same rule as the web dashboard). */
 const NEEDS_YOU = new Set<ItemStatus>(['review', 'failed'])
 

@@ -7,7 +7,16 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
 import type { BucketKey } from './model'
-import { VERDICT_META, itemTitle, partitionWork, relativeTime, rowTimestamp, statusTone, useNow } from './model'
+import {
+	VERDICT_META,
+	itemTitle,
+	partitionWork,
+	planStatusLabel,
+	relativeTime,
+	rowTimestamp,
+	statusTone,
+	useNow,
+} from './model'
 import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, Segmented, StatusDot } from './ui'
 
 const BUCKET_KEY = 'helm.sidebar.bucket'
@@ -224,7 +233,7 @@ const ItemRow = memo(function ItemRow({
 }) {
 	const verdict = item.assessment ? VERDICT_META[item.assessment.verdict] : null
 	const showQuickActions = item.status === 'ready' && item.workMode === null
-	const planned = item.plannedAt != null && ['inbox', 'ready', 'active'].includes(item.status)
+	const planningStatus = ['inbox', 'ready', 'active'].includes(item.status) ? planStatusLabel(item) : null
 	const mode = item.workMode
 	return (
 		<div className={`item-row-shell${showQuickActions ? ' item-row-shell-actions' : ''}`}>
@@ -241,10 +250,10 @@ const ItemRow = memo(function ItemRow({
 				</div>
 				<div className="item-row-line2">
 					<span className="item-row-project">{item.projectSlug}</span>
-					{planned ? (
-						<span className="item-row-mode mode-manual" title="Interactive plan prepared">
+					{planningStatus ? (
+						<span className="item-row-mode mode-manual" title="Planning readiness">
 							{GLYPH.plan}
-							Planned
+							{planningStatus}
 						</span>
 					) : mode ? (
 						<span className={`item-row-mode mode-${mode}`}>

@@ -90,6 +90,28 @@ export const loopOptionsSchema = z
 	})
 	.strict()
 
+export const ticketQueueSummarySchema = z
+	.object({
+		total: z.number().int().nonnegative(),
+		open: z.number().int().nonnegative(),
+		readyForAgent: z.number().int().nonnegative(),
+		readyForHuman: z.number().int().nonnegative(),
+	})
+	.strict()
+
+// Advisory planning readiness observed from the plan worktree and GitHub. This
+// is a cached UI axis — it never changes Item lifecycle or execution routing.
+export const planStatusSchema = z
+	.object({
+		stage: z.enum(['planning', 'plan_ready', 'tickets_ready']),
+		specName: z.string().nullable(),
+		localTickets: ticketQueueSummarySchema,
+		githubTickets: ticketQueueSummarySchema,
+		githubAvailable: z.boolean(),
+		checkedAt: z.string(),
+	})
+	.strict()
+
 export const solveExecutionSchema = z.discriminatedUnion('mode', [
 	z.object({ mode: z.literal('solver') }).strict(),
 	z
@@ -158,6 +180,8 @@ export const itemRecordSchema = z.object({
 	// Set once when an interactive planning session is prepared; the unambiguous
 	// "the user planned this" signal (worktree fields are also set by a normal run).
 	plannedAt: z.string().nullable(),
+	// Cached plan/spec/ticket readiness, maintained by PlanStatusWatcher.
+	planStatus: planStatusSchema.nullable(),
 	updatedAt: z.string().min(1),
 	errorMessage: z.string().nullable(),
 	errorPhase: z.string().nullable(),
@@ -179,6 +203,8 @@ export type DeploymentEntry = z.infer<typeof deploymentEntrySchema>
 export type DeployState = z.infer<typeof deployStateSchema>
 export type ItemSource = z.infer<typeof itemSourceSchema>
 export type LoopOptions = z.infer<typeof loopOptionsSchema>
+export type TicketQueueSummary = z.infer<typeof ticketQueueSummarySchema>
+export type PlanStatus = z.infer<typeof planStatusSchema>
 export type SolveExecution = z.infer<typeof solveExecutionSchema>
 export type ItemPayload = z.infer<typeof itemPayloadSchema>
 export type ItemRecord = z.infer<typeof itemRecordSchema>

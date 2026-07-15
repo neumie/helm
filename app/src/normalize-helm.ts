@@ -9,12 +9,32 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 	const legacyTriage = (item.status as string) === 'triage'
 	const workMode = item.workMode ?? (item.startedAt ? 'agent' : null)
 	const executionMode = item.executionMode ?? (item.kind === 'loop' ? 'loop' : 'solve')
-	if (!legacyTriage && item.workMode === workMode && item.executionMode === executionMode) return item
+	const emptyTickets = { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 }
+	const planStatus =
+		item.planStatus ??
+		(item.plannedAt
+			? {
+					stage: 'planning' as const,
+					specName: null,
+					localTickets: emptyTickets,
+					githubTickets: emptyTickets,
+					githubAvailable: false,
+					checkedAt: item.plannedAt,
+				}
+			: null)
+	if (
+		!legacyTriage &&
+		item.workMode === workMode &&
+		item.executionMode === executionMode &&
+		item.planStatus === planStatus
+	)
+		return item
 	return {
 		...item,
 		status: legacyTriage ? 'inbox' : item.status,
 		workMode,
 		executionMode,
+		planStatus,
 		card: legacyTriage
 			? {
 					...item.card,

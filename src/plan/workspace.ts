@@ -7,6 +7,16 @@ import { log } from '../util/logger.js'
  * Relative-to-worktree paths (POSIX separators — safe to embed in prompts and
  * `$(cat ...)` shell commands) for a task's plan directory.
  */
+export interface LocalPlanReadiness {
+	specName: string | null
+	tickets: {
+		total: number
+		open: number
+		readyForAgent: number
+		readyForHuman: number
+	}
+}
+
 export function planPaths(planDirName: string) {
 	const dir = `docs/plans/${planDirName}`
 	return {
@@ -96,6 +106,29 @@ export class PlanWorkspace {
 			log.warn('plan-workspace', `Could not read ${this.resultPath}`, err)
 			return null
 		}
+	}
+
+	/** Read the local spec + ticket queue without interpreting Item lifecycle. */
+	readLocalReadiness(): LocalPlanReadiness {
+		const specName = existsSync(join(this.dir, 'spec.md'))
+			? 'spec.md'
+			: existsSync(join(this.dir, 'prd.md'))
+				? 'prd.md'
+				: null
+		const issuesDir = join(this.dir, 'issues')
+		const names = existsSync(issuesDir) ? readdirSync(issuesDir).filter(name => name.endsWith('.md')) : []
+		const tickets = { total: names.length, open: 0, readyForAgent: 0, readyForHuman: 0 }
+		for (const name of names) {
+			const content = readFileSync(join(issuesDir, name), 'utf-8')
+			const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content)?.[1] ?? ''
+			const status = /^status:\s*([^\s#]+)/im.exec(frontmatter)?.[1]?.toLowerCase() ?? 'open'
+			const legacyType = /^type:\s*([^\s#]+)/im.exec(frontmatter)?.[1]?.toLowerCase() ?? null
+			if (['done', 'closed', 'complete', 'completed'].includes(status)) continue
+			tickets.open += 1
+			if (status === 'ready-for-human' || legacyType === 'hitl') tickets.readyForHuman += 1
+			else if (status === 'ready-for-agent' || status === 'open') tickets.readyForAgent += 1
+		}
+		return { specName, tickets }
 	}
 
 	/**

@@ -1,5 +1,5 @@
 import type { DashboardItem, DashboardTone } from '../../shared-helm'
-import { statusTone } from './model'
+import { planStatusDetail, planStatusLabel, statusTone } from './model'
 
 export type DetailSection = 'intent' | 'queue' | 'progress' | 'outcome' | 'failure' | 'work' | 'delivery' | 'run-setup'
 export type Attention = { tone: 'error' | 'warning' | 'info'; label: string; text: string } | null
@@ -76,10 +76,10 @@ export function detailState(item: DashboardItem): {
 				sections: ['queue', 'run-setup', 'work'],
 			}
 		case 'active':
-			return item.plannedAt
+			return item.planStatus
 				? {
-						headline: 'Plan ready',
-						direction: 'Continue planning, or choose how to run this work.',
+						headline: planStatusLabel(item),
+						direction: planStatusDetail(item),
 						chipTone: chipTone(item),
 						attention,
 						sections: ['work', 'run-setup'],

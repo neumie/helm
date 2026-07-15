@@ -1,5 +1,5 @@
 import type { Assessment, DashboardItem } from '../../shared-helm'
-import { CHIP_CLASS, VERDICT_META, openExternalUrl, relativeTime } from './model'
+import { CHIP_CLASS, VERDICT_META, openExternalUrl, planStatusLabel, relativeTime } from './model'
 import { ActionRow, Card, Chip, ClampText, InfoRow } from './ui'
 
 export function IntentCard({
@@ -143,7 +143,7 @@ export function WorkCard({
 		<ActionRow
 			nav
 			label="Plan"
-			value={`Prepared ${relativeTime(item.plannedAt, now)}`}
+			value={planStatusLabel(item) ?? `Prepared ${relativeTime(item.plannedAt, now)}`}
 			onClick={onPlan}
 			disabled={disabled}
 		/>

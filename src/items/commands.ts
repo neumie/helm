@@ -8,7 +8,16 @@ import type { SolverWorkspace } from '../solver/workspace.js'
 import type { ErrorPhase } from '../types.js'
 import { itemExecutionMode } from './execution.js'
 import { itemSourceSchema } from './schema.js'
-import type { Assessment, DeployState, ItemKind, ItemRecord, ItemSource, RunOutcome, SolveExecution } from './schema.js'
+import type {
+	Assessment,
+	DeployState,
+	ItemKind,
+	ItemRecord,
+	ItemSource,
+	PlanStatus,
+	RunOutcome,
+	SolveExecution,
+} from './schema.js'
 import type { ItemStore } from './store.js'
 
 const createSolveItemInputSchema = z
@@ -713,6 +722,12 @@ export class ItemCommands {
 	recordAssessment(id: string, assessment: Assessment): ItemRecord {
 		this.requireItem(id)
 		return this.store.updateAssessment(id, assessment)
+	}
+
+	/** Advisory cached plan/spec/ticket readiness; no lifecycle event. */
+	recordPlanStatus(id: string, planStatus: PlanStatus): ItemRecord {
+		this.requireItem(id)
+		return this.store.updatePlanStatus(id, planStatus)
 	}
 
 	/**

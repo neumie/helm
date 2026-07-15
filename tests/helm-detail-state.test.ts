@@ -24,6 +24,7 @@ const base = {
 	branchName: null,
 	forkContext: null,
 	plan: null,
+	planStatus: null,
 	resultSummary: null,
 	solveInputSnapshot: null,
 	solverAgent: null,
@@ -84,10 +85,51 @@ test('planned Active Items expose the executor choice', () => {
 		status: 'active',
 		workMode: 'manual',
 		plannedAt: '2026-01-02T00:00:00Z',
+		planStatus: {
+			stage: 'plan_ready',
+			specName: 'spec.md',
+			localTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubAvailable: true,
+			checkedAt: '2026-01-02T00:00:00Z',
+		},
 	})
 	assert.equal(active.headline, 'Plan ready')
-	assert.equal(active.direction, 'Continue planning, or choose how to run this work.')
+	assert.equal(active.direction, 'spec.md is ready. No local or GitHub ticket queue was found.')
 	assert.deepEqual(active.sections, ['work', 'run-setup'])
+})
+
+test('planned Active Items distinguish planning from a ticket queue', () => {
+	const planningItem: DashboardItem = {
+		...base,
+		status: 'active',
+		workMode: 'manual',
+		plannedAt: '2026-01-02T00:00:00Z',
+		planStatus: {
+			stage: 'planning',
+			specName: null,
+			localTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubAvailable: true,
+			checkedAt: '2026-01-02T00:00:00Z',
+		},
+	}
+	const planning = detailState(planningItem)
+	assert.equal(planning.headline, 'Planning')
+
+	const tickets = detailState({
+		...planningItem,
+		planStatus: {
+			stage: 'tickets_ready',
+			specName: 'spec.md',
+			localTickets: { total: 3, open: 3, readyForAgent: 2, readyForHuman: 1 },
+			githubTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubAvailable: true,
+			checkedAt: '2026-01-02T00:00:00Z',
+		},
+	})
+	assert.equal(tickets.headline, '3 tickets ready')
+	assert.equal(tickets.direction, '3 tickets in local. 3 open; 2 agent-ready, 1 human-ready.')
 })
 
 test('automatic Inbox Items lead with the approval decision', () => {
