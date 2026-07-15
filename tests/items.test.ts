@@ -4011,6 +4011,73 @@ test('server starts a planned solve as a loop using its existing plan artifact',
 			assert.equal(payload.execution?.mode, 'loop')
 			if (payload.execution?.mode !== 'loop') throw new Error('Expected loop execution payload')
 			assert.equal(payload.execution.prdPath, `${workspace.rel.dir}/spec.md`)
+			assert.equal(payload.execution.options?.mode, 'afk')
+			assert.equal(payload.execution.options?.iterations, 10)
+			assert.equal(payload.execution.options?.provider, config.solver.agent)
+			assert.equal(payload.execution.options?.model, config.solver.model)
+		} finally {
+			rmSync(worktreePath, { recursive: true, force: true })
+		}
+	})
+})
+
+test('planned loop uses the detected queue size and per-Item agent/model overrides', async () => {
+	await withTempDb(async db => {
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-api-planned-afk-loop-'))
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'Planned AFK loop', projectSlug: 'helm', prompt: 'Implement it.' })
+		const planDirName = '2026-07-15-planned-afk-loop'
+		const workspace = new PlanWorkspace(worktreePath, planDirName)
+		workspace.ensureDir()
+		writeFileSync(join(workspace.dir, 'spec.md'), '# Plan', 'utf-8')
+		recordPreparedPlan(commands, item.id, {
+			worktreePath,
+			branchName: 'helm/item/planned-afk-loop',
+			planDirName,
+			spawner: 'default',
+		})
+		commands.recordPlanStatus(item.id, {
+			stage: 'tickets_ready',
+			specName: 'spec.md',
+			localTickets: { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 },
+			githubTickets: { total: 6, open: 6, readyForAgent: 5, readyForHuman: 1 },
+			githubAvailable: true,
+			checkedAt: new Date().toISOString(),
+		})
+		const routeQueue = {
+			...queue,
+			processOneItem: (id: string) => {
+				commands.startItem(id)
+				return true
+			},
+		}
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			routeQueue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+
+		try {
+			const res = await api.request(`/items/${item.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ executionMode: 'loop', solverAgent: 'codex', solverModel: 'gpt-5.5' }),
+			})
+			assert.equal(res.status, 200)
+			const payload = solvePayload(db, item.id)
+			assert.equal(payload.execution?.mode, 'loop')
+			if (payload.execution?.mode !== 'loop') throw new Error('Expected loop execution payload')
+			assert.deepEqual(payload.execution.options, {
+				mode: 'afk',
+				iterations: 5,
+				provider: 'codex',
+				model: 'gpt-5.5',
+			})
 		} finally {
 			rmSync(worktreePath, { recursive: true, force: true })
 		}

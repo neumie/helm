@@ -691,11 +691,22 @@ export function apiRoutes(
 				} catch (err) {
 					return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
 				}
+				const localTickets = selectedItem.planStatus?.localTickets
+				const githubTickets = selectedItem.planStatus?.githubTickets
+				const ticketTotal = (localTickets?.total ?? 0) + (githubTickets?.total ?? 0)
+				const agentReadyTickets = (localTickets?.readyForAgent ?? 0) + (githubTickets?.readyForAgent ?? 0)
+				if (ticketTotal > 0 && agentReadyTickets === 0) {
+					return c.json({ error: 'This plan has tickets, but none are ready for an agent.' }, 400)
+				}
 				itemCommands.setSolveExecution(item.id, {
 					mode: 'loop',
 					prdPath,
 					options: {
-						mode: 'once',
+						// Start loop means finish the autonomous queue, not run one ticket.
+						// An explicit queue gets one iteration per currently agent-ready
+						// ticket; a spec with no queue gets Almanac's bounded decomposition run.
+						mode: 'afk',
+						iterations: agentReadyTickets > 0 ? agentReadyTickets : 10,
 						provider: selectedItem.payload.solverAgent ?? config.solver.agent,
 						model: selectedItem.payload.solverModel ?? config.solver.model,
 					},
