@@ -128,6 +128,28 @@ function httpSourceUrl(url: string | undefined): string | undefined {
 	}
 }
 
+interface OkenaOpenResult {
+	worktreePath: string
+	projectId: string
+	terminalId: string
+	createdWorkspace: boolean
+	activated: boolean
+}
+
+type OpenItemInOkena = (params: {
+	projectConfig: HelmConfig['projects'][number]
+	workspaceMode: SolverWorkspace
+	baseRef: string
+	branchName: string
+	existingWorktreePath?: string
+}) => Promise<OkenaOpenResult>
+
+const defaultOpenItemInOkena: OpenItemInOkena = async params => {
+	// Okena remains an optional extension: core route loading must not require it.
+	const extension = await import('../../extensions/okena/item-opener.js')
+	return extension.openItemInOkena(params)
+}
+
 export function apiRoutes(
 	config: HelmConfig,
 	configPath: string,
@@ -144,6 +166,8 @@ export function apiRoutes(
 	// Injected only by tests so config-save/restart routes can prove the exit
 	// path without killing the test runner; production uses the launchd control.
 	daemonControl: DaemonControl = defaultDaemonControl,
+	// Keeps the optional Okena extension dynamically loaded and route-testable.
+	openItemInOkena: OpenItemInOkena = defaultOpenItemInOkena,
 ) {
 	const api = new Hono()
 	const itemCommands = new ItemCommands(db.items, config)
@@ -803,6 +827,46 @@ export function apiRoutes(
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, 400)
+		}
+	})
+
+	api.post('/items/:id/open-okena', async c => {
+		const item = itemCommands.getItem(c.req.param('id'))
+		if (!item) return c.json({ error: 'Item not found' }, 404)
+		const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
+		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
+
+		const identity = resolveItemWorkspace(item)
+		const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+		if (item.status === 'running' && workspaceMode !== 'main' && !identity.existingWorktreePath) {
+			return c.json({ error: 'The running Item has not prepared its worktree yet. Try again shortly.' }, 409)
+		}
+
+		try {
+			const opened = await openItemInOkena({
+				projectConfig,
+				workspaceMode,
+				baseRef: identity.baseRef,
+				branchName: identity.branchName,
+				existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
+			})
+			if (opened.createdWorkspace && workspaceMode !== 'main') {
+				itemCommands.recordOkenaWorkspaceIdentity(item.id, {
+					worktreePath: opened.worktreePath,
+					branchName: identity.branchName,
+					planDirName: identity.planDirName,
+				})
+			}
+			return c.json({
+				data: {
+					...opened,
+					hint: opened.activated ? 'Focused in Okena' : 'Focused in Okena — switch to the Okena app',
+				},
+			})
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err)
+			log.error('okena', `Could not open Item ${item.id} in Okena`, err)
+			return c.json({ error: `Could not open in Okena: ${message}` }, message.includes('not running') ? 503 : 500)
 		}
 	})
 

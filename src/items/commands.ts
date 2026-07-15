@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { z } from 'zod'
 import type { HelmConfig } from '../config.js'
 import { taskContextSchema } from '../providers/provider.js'
@@ -631,6 +632,20 @@ export class ItemCommands {
 		const item = this.requireItem(id)
 		if (item.status !== 'running') {
 			throw new Error('Only running Items can record execution workspace identity')
+		}
+		return this.store.update(id, fields)
+	}
+
+	recordOkenaWorkspaceIdentity(
+		id: string,
+		fields: { worktreePath: string; branchName: string; planDirName: string },
+	): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.status === 'running') {
+			throw new Error('A running Item must record its workspace through the active run')
+		}
+		if (item.worktreePath && item.worktreePath !== fields.worktreePath && existsSync(item.worktreePath)) {
+			throw new Error('Item already points at a different live worktree')
 		}
 		return this.store.update(id, fields)
 	}

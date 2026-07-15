@@ -47,8 +47,21 @@ export function DetailPage(props: DetailPageProps) {
 
 	if (!item) return <MissingDetail phase={phase} error={error} onBack={onBack} onRetry={refetch} />
 	const state = detailState(item)
+	const effectiveWorkspace =
+		item.kind === 'solve' ? (item.solverWorkspace ?? snapshot?.config?.solver?.workspace) : 'worktree'
+	const okenaWorkspaceValue =
+		effectiveWorkspace === 'main'
+			? 'Okena · main checkout'
+			: item.branchName
+				? `Okena · ${item.branchName}`
+				: 'Okena · create workspace'
 	const disabled = busy !== null
-	const run = async (label: string, call: () => Promise<{ error?: string }>, after?: () => void) => {
+	const run = async (
+		label: string,
+		call: () => Promise<{ error?: string }>,
+		after?: () => void,
+		successMessage: string | null = `${label} complete`,
+	) => {
 		if (commandLock.current) return
 		commandLock.current = true
 		const own = ++token.current
@@ -58,10 +71,10 @@ export function DetailPage(props: DetailPageProps) {
 			const result = await call()
 			if (result.error !== undefined) {
 				setCommandError(result.error)
-				setRetryCommand(() => () => void run(label, call, after))
+				setRetryCommand(() => () => void run(label, call, after, successMessage))
 				return
 			}
-			showToast({ message: `${label} complete` })
+			if (successMessage) showToast({ message: successMessage })
 			after?.()
 		} finally {
 			if (token.current === own) {
@@ -89,6 +102,22 @@ export function DetailPage(props: DetailPageProps) {
 			return result
 		})
 	const sourceTask = () => run('Create source task', () => window.helm.daemon.sourceTask(item.id))
+	const openOkena = () =>
+		run(
+			'Open in Okena',
+			async () => {
+				const result = await window.helm.daemon.openOkena(item.id)
+				if (result.error === undefined) {
+					showToast({
+						message: result.data.activated ? 'Opened in Okena' : 'Focused in Okena',
+						detail: result.data.activated ? undefined : 'Switch to Okena to view the workspace.',
+					})
+				}
+				return result
+			},
+			undefined,
+			null,
+		)
 	const setManualStatus = (status: ItemStatus, label: string) =>
 		run(
 			['Status', label].join(': '),
@@ -212,6 +241,8 @@ export function DetailPage(props: DetailPageProps) {
 						onPlan={() => onOpenPlan(id)}
 						onRun={() => onOpenRun(id)}
 						onSetup={() => onOpenSetup(id)}
+						onOpenOkena={() => void openOkena()}
+						okenaWorkspaceValue={okenaWorkspaceValue}
 						disabled={disabled}
 					/>
 				)
@@ -226,6 +257,8 @@ export function DetailPage(props: DetailPageProps) {
 							onTask={() => onOpenTask(id)}
 							onPlan={() => onOpenPlan(id)}
 							onRun={() => onOpenRun(id)}
+							onOpenOkena={() => void openOkena()}
+							okenaWorkspaceValue={okenaWorkspaceValue}
 							disabled={disabled}
 							onlySetup
 							onSetup={() => onOpenSetup(id)}

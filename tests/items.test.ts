@@ -2595,6 +2595,131 @@ test('Run Observation surfaces almanac failure_reason when loop summary is absen
 	})
 })
 
+test('server opens every Item in Okena and persists a newly-created workspace without changing lifecycle', async () => {
+	await withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({
+			title: 'Open workspace',
+			projectSlug: 'helm',
+			prompt: 'Inspect this Item manually.',
+		})
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-open-okena-route-'))
+		const openerCalls: Record<string, unknown>[] = []
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+			createSpawner,
+			undefined,
+			undefined,
+			async params => {
+				openerCalls.push(params)
+				return {
+					worktreePath,
+					projectId: 'okena-project-1',
+					terminalId: 'okena-terminal-1',
+					createdWorkspace: true,
+					activated: true,
+				}
+			},
+		)
+
+		try {
+			const response = await api.request(`/items/${item.id}/open-okena`, { method: 'POST' })
+			assert.equal(response.status, 200)
+			const body = (await response.json()) as {
+				data: { worktreePath: string; projectId: string; terminalId: string; hint: string }
+			}
+			assert.equal(body.data.worktreePath, worktreePath)
+			assert.equal(body.data.projectId, 'okena-project-1')
+			assert.equal(body.data.terminalId, 'okena-terminal-1')
+			assert.equal(body.data.hint, 'Focused in Okena')
+			assert.equal(openerCalls[0]?.workspaceMode, 'worktree')
+
+			const stored = commands.getItem(item.id)
+			assert.ok(stored)
+			assert.equal(stored.status, 'ready')
+			assert.equal(stored.workMode, null)
+			assert.equal(stored.worktreePath, worktreePath)
+			assert.equal(stored.branchName, resolveItemWorkspace(item).branchName)
+			assert.equal(stored.planDirName, resolveItemWorkspace(item).planDirName)
+		} finally {
+			rmSync(worktreePath, { recursive: true, force: true })
+		}
+	})
+})
+
+test('Okena workspace identity replaces stale paths but refuses conflicting live worktrees', async () => {
+	await withTempDb(db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'Workspace identity', projectSlug: 'helm', prompt: 'Inspect.' })
+		const first = mkdtempSync(join(tmpdir(), 'helm-okena-live-worktree-'))
+		const second = mkdtempSync(join(tmpdir(), 'helm-okena-replacement-worktree-'))
+		try {
+			commands.recordOkenaWorkspaceIdentity(item.id, {
+				worktreePath: first,
+				branchName: 'helm/item/first',
+				planDirName: 'first',
+			})
+			assert.throws(
+				() =>
+					commands.recordOkenaWorkspaceIdentity(item.id, {
+						worktreePath: second,
+						branchName: 'helm/item/second',
+						planDirName: 'second',
+					}),
+				/different live worktree/,
+			)
+			rmSync(first, { recursive: true, force: true })
+			const replaced = commands.recordOkenaWorkspaceIdentity(item.id, {
+				worktreePath: second,
+				branchName: 'helm/item/second',
+				planDirName: 'second',
+			})
+			assert.equal(replaced.worktreePath, second)
+			assert.equal(replaced.status, 'ready')
+		} finally {
+			rmSync(first, { recursive: true, force: true })
+			rmSync(second, { recursive: true, force: true })
+		}
+	})
+})
+
+test('server refuses to race Okena workspace creation before a running Item records its worktree', async () => {
+	await withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'Running without path', projectSlug: 'helm', prompt: 'Wait.' })
+		commands.startItem(item.id)
+		let called = false
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+			createSpawner,
+			undefined,
+			undefined,
+			async () => {
+				called = true
+				throw new Error('should not run')
+			},
+		)
+
+		const response = await api.request(`/items/${item.id}/open-okena`, { method: 'POST' })
+		assert.equal(response.status, 409)
+		assert.equal(called, false)
+	})
+})
+
 test('server returns unknown and empty Run Observation fields when sources are missing', async () => {
 	await withTempDb(async db => {
 		const commands = new ItemCommands(db.items, config)

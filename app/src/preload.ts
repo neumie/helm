@@ -105,6 +105,7 @@ const api: HelmApi = {
 		item: id => invokeHelm('daemon:item', id),
 		itemAction: (id, action, body) => invokeHelm('daemon:itemAction', id, action, body),
 		plan: (id, body) => invokeHelm('daemon:plan', id, body),
+		openOkena: id => invokeHelm('daemon:openOkena', id),
 		aiPass: (id, pass) => invokeHelm('daemon:aiPass', id, pass),
 		createItem: body => invokeHelm('daemon:createItem', body),
 		sourceTask: id => invokeHelm('daemon:sourceTask', id),

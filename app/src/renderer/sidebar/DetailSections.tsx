@@ -108,6 +108,8 @@ export function WorkCard({
 	onPlan,
 	onRun,
 	onSetup,
+	onOpenOkena,
+	okenaWorkspaceValue,
 	disabled,
 	onlySetup = false,
 }: {
@@ -117,6 +119,8 @@ export function WorkCard({
 	onPlan: () => void
 	onRun: () => void
 	onSetup: () => void
+	onOpenOkena: () => void
+	okenaWorkspaceValue: string
 	disabled?: boolean
 	onlySetup?: boolean
 }) {
@@ -156,6 +160,13 @@ export function WorkCard({
 			{task}
 			{plan}
 			{!runFirst && run}
+			<ActionRow
+				label="Workspace"
+				value={okenaWorkspaceValue}
+				glyphKind="external"
+				onClick={onOpenOkena}
+				disabled={disabled}
+			/>
 		</Card>
 	)
 }

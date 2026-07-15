@@ -254,6 +254,15 @@ export interface PlanInfo {
 	hint: string
 }
 
+export interface OkenaOpenInfo {
+	worktreePath: string
+	projectId: string
+	terminalId: string
+	createdWorkspace: boolean
+	activated: boolean
+	hint: string
+}
+
 export interface QueueStatus {
 	paused: boolean
 	pending: number
@@ -415,6 +424,7 @@ export interface DaemonApi {
 	item(id: string): Promise<HelmResult<DashboardItem>>
 	itemAction(id: string, action: DashboardActionId, body?: SolverAgentBody): Promise<HelmResult<DashboardItem>>
 	plan(id: string, body?: SolverAgentBody): Promise<HelmResult<PlanInfo>>
+	openOkena(id: string): Promise<HelmResult<OkenaOpenInfo>>
 	aiPass(id: string, pass: AiPass): Promise<HelmResult<DashboardItem>>
 	createItem(body: CreateItemInput): Promise<HelmResult<DashboardItem | DashboardItem[]>>
 	/** Promote a captured (ingested) Item into a real task in the source system. */

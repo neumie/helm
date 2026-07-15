@@ -202,6 +202,12 @@ export class HelmBridge {
 			return result
 		})
 
+		ipcMain.handle('daemon:openOkena', async (_e, rawId: unknown) => {
+			const result = await this.request('POST', `/items/${id(rawId)}/open-okena`)
+			this.kick()
+			return result
+		})
+
 		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
 			if (!AI_PASSES.has(pass)) return { error: `Unknown AI pass: ${String(pass)}` }
 			const result = normalizeDashboardItemResult(
