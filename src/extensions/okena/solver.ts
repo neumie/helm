@@ -20,9 +20,9 @@ export class OkenaSolver implements Solver {
 	private client: OkenaClient
 	private worktrees: OkenaWorktreeManager
 
-	constructor(client: OkenaClient) {
+	constructor(client: OkenaClient, worktrees?: OkenaWorktreeManager) {
 		this.client = client
-		this.worktrees = new OkenaWorktreeManager(client)
+		this.worktrees = worktrees ?? new OkenaWorktreeManager(client)
 	}
 
 	async solve(params: SolveParams): Promise<SolveResult> {
@@ -121,48 +121,65 @@ export class OkenaSolver implements Solver {
 		let poll = 0
 
 		log.info('okena', `Waiting for solver-result.json (idle timeout: ${solverConfig.timeoutMinutes}m)`)
-		while (!workspace.resultExists()) {
-			if (signal?.aborted) {
+		await new Promise<void>((resolve, reject) => {
+			const check = async () => {
 				try {
-					await this.client.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
-				} catch {
-					/* best effort */
-				}
-				throw taskCancelled()
-			}
-			const now = Date.now()
-			if (now - startTime > HARD_TIMEOUT_MS) {
-				throw phaseError(
-					'solve',
-					`${agentLabel} exceeded the ${HARD_TIMEOUT_MS / 3_600_000}h hard cap in Okena terminal`,
-				)
-			}
-			if (now - lastActivity > idleTimeoutMs) {
-				throw phaseError(
-					'solve',
-					`${agentLabel} idle in Okena terminal for ${solverConfig.timeoutMinutes}m (no screen activity) — assuming it stalled`,
-				)
-			}
-			// Sample the screen every ~10s; a failed read (terminal closed) earns no
-			// activity credit, so a vanished terminal still idles out.
-			if (poll % SCREEN_SAMPLE_EVERY === 0) {
-				try {
-					const res = await this.client.action<{ content?: string }>({
-						action: 'read_content',
-						terminal_id: terminalId,
-					})
-					const screen = res?.content ?? ''
-					if (screen !== lastScreen) {
-						lastScreen = screen
-						lastActivity = Date.now()
+					if (workspace.resultExists()) {
+						resolve()
+						return
 					}
-				} catch {
-					/* no activity credit */
+					// Okena removes a managed worktree when its project is closed. Once the
+					// workspace is gone, no agent can still produce the required result file;
+					// fail immediately instead of leaving the Item running until idle timeout.
+					if (!existsSync(worktreePath)) {
+						throw phaseError('solve', `${agentLabel} workspace disappeared while waiting for solver-result.json`)
+					}
+					if (signal?.aborted) {
+						try {
+							await this.client.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
+						} catch {
+							/* best effort */
+						}
+						throw taskCancelled()
+					}
+					const now = Date.now()
+					if (now - startTime > HARD_TIMEOUT_MS) {
+						throw phaseError(
+							'solve',
+							`${agentLabel} exceeded the ${HARD_TIMEOUT_MS / 3_600_000}h hard cap in Okena terminal`,
+						)
+					}
+					if (now - lastActivity > idleTimeoutMs) {
+						throw phaseError(
+							'solve',
+							`${agentLabel} idle in Okena terminal for ${solverConfig.timeoutMinutes}m (no screen activity) — assuming it stalled`,
+						)
+					}
+					// Sample the screen every ~10s; a failed read (terminal closed) earns no
+					// activity credit, so a vanished terminal still idles out.
+					if (poll % SCREEN_SAMPLE_EVERY === 0) {
+						try {
+							const res = await this.client.action<{ content?: string }>({
+								action: 'read_content',
+								terminal_id: terminalId,
+							})
+							const screen = res?.content ?? ''
+							if (screen !== lastScreen) {
+								lastScreen = screen
+								lastActivity = Date.now()
+							}
+						} catch {
+							/* no activity credit */
+						}
+					}
+					poll++
+					setTimeout(() => void check(), 2000)
+				} catch (err) {
+					reject(err)
 				}
 			}
-			poll++
-			await sleep(2000)
-		}
+			void check()
+		})
 
 		await sleep(500)
 		log.success('okena', `${agentLabel} finished — solver-result.json detected`)
