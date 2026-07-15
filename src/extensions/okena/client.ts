@@ -172,11 +172,17 @@ export class OkenaClient {
 	}
 }
 
+export type OkenaLayoutNode =
+	| { type: 'terminal'; terminal_id: string | null; detached?: boolean }
+	| { type: 'split'; children: OkenaLayoutNode[] }
+	| { type: 'tabs'; children: OkenaLayoutNode[]; active_tab: number }
+
 export interface OkenaState {
 	projects: Array<{
 		id: string
 		name: string
 		path: string
+		layout?: OkenaLayoutNode | null
 		terminal_names?: Record<string, string>
 	}>
 }

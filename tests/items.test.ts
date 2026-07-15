@@ -2624,6 +2624,8 @@ test('server opens every Item in Okena and persists a newly-created workspace wi
 					projectId: 'okena-project-1',
 					terminalId: 'okena-terminal-1',
 					createdWorkspace: true,
+					focused: true,
+					notified: false,
 					activated: true,
 				}
 			},

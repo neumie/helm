@@ -10,14 +10,20 @@ import { OkenaSolver } from '../src/extensions/okena/solver.js'
 import type { OkenaWorktreeManager } from '../src/extensions/okena/worktree.js'
 import { errorPhase } from '../src/util/errors.js'
 
-test('openItemInOkena focuses an existing Item terminal without sending input', async () => {
+test('openItemInOkena ignores stale hook terminals and marks the live pane for attention', async () => {
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-open-existing-'))
 	const actions: Record<string, unknown>[] = []
 	const client = {
 		isAvailable: async () => true,
 		getState: async () => ({
 			projects: [
-				{ id: 'project-1', name: 'fix/existing', path: worktreePath, terminal_names: { 'terminal-1': 'plan' } },
+				{
+					id: 'project-1',
+					name: 'fix/existing',
+					path: worktreePath,
+					layout: { type: 'terminal', terminal_id: 'terminal-live' },
+					terminal_names: { 'terminal-stale-hook': 'on_worktree_create', 'terminal-live': 'plan' },
+				},
 			],
 		}),
 		action: async (payload: Record<string, unknown>) => {
@@ -45,12 +51,15 @@ test('openItemInOkena focuses an existing Item terminal without sending input', 
 		assert.deepEqual(result, {
 			worktreePath,
 			projectId: 'project-1',
-			terminalId: 'terminal-1',
+			terminalId: 'terminal-live',
 			createdWorkspace: false,
+			focused: true,
+			notified: true,
 			activated: true,
 		})
 		assert.deepEqual(actions, [
-			{ action: 'focus_terminal', project_id: 'project-1', terminal_id: 'terminal-1', window: 'main' },
+			{ action: 'focus_terminal', project_id: 'project-1', terminal_id: 'terminal-live', window: 'main' },
+			{ action: 'send_text', terminal_id: 'terminal-live', text: '\u0007' },
 		])
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })
@@ -88,6 +97,8 @@ test('openItemInOkena registers an existing non-Okena worktree before focusing i
 		)
 		assert.equal(result.projectId, 'project-2')
 		assert.equal(result.terminalId, 'terminal-2')
+		assert.equal(result.focused, true)
+		assert.equal(result.notified, false)
 		assert.equal(result.activated, false)
 		assert.deepEqual(actions, [
 			{ action: 'add_project', name: 'fix/register', path: worktreePath },

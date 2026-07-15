@@ -133,6 +133,8 @@ interface OkenaOpenResult {
 	projectId: string
 	terminalId: string
 	createdWorkspace: boolean
+	focused: boolean
+	notified: boolean
 	activated: boolean
 }
 
@@ -143,6 +145,13 @@ type OpenItemInOkena = (params: {
 	branchName: string
 	existingWorktreePath?: string
 }) => Promise<OkenaOpenResult>
+
+function okenaOpenHint(opened: OkenaOpenResult): string {
+	if (!opened.focused) return 'Workspace opened in Okena; its terminal is still becoming ready'
+	if (opened.activated) return 'Focused in Okena'
+	if (opened.notified) return 'Focused and marked for attention in Okena'
+	return 'Focused in Okena — switch to the Okena app'
+}
 
 const defaultOpenItemInOkena: OpenItemInOkena = async params => {
 	// Okena remains an optional extension: core route loading must not require it.
@@ -860,7 +869,7 @@ export function apiRoutes(
 			return c.json({
 				data: {
 					...opened,
-					hint: opened.activated ? 'Focused in Okena' : 'Focused in Okena — switch to the Okena app',
+					hint: okenaOpenHint(opened),
 				},
 			})
 		} catch (err) {

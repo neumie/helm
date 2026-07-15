@@ -109,8 +109,8 @@ export function DetailPage(props: DetailPageProps) {
 				const result = await window.helm.daemon.openOkena(item.id)
 				if (result.error === undefined) {
 					showToast({
-						message: result.data.activated ? 'Opened in Okena' : 'Focused in Okena',
-						detail: result.data.activated ? undefined : 'Switch to Okena to view the workspace.',
+						message: result.data.focused ? 'Focused in Okena' : 'Workspace opened in Okena',
+						detail: result.data.activated ? undefined : result.data.hint,
 					})
 				}
 				return result

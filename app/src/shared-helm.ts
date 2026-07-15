@@ -259,6 +259,8 @@ export interface OkenaOpenInfo {
 	projectId: string
 	terminalId: string
 	createdWorkspace: boolean
+	focused: boolean
+	notified: boolean
 	activated: boolean
 	hint: string
 }
