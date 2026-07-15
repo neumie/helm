@@ -1,7 +1,7 @@
 import type { HelmConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
-import { defaultHelperModel } from '../solver/models.js'
+import { resolveHelperInvocation } from '../solver/models.js'
 import { runOneShot } from '../solver/one-shot.js'
 import type { OneShotImage, OneShotOptions } from '../solver/one-shot.js'
 import { isCancellation } from '../util/errors.js'
@@ -221,9 +221,8 @@ export async function ensureItemAssessment(params: EnsureItemAssessmentParams): 
 	if (!force && !feature.enabled) return item
 	if (!force && item.assessment) return item
 
-	const agent = feature.agent ?? params.agent ?? config.solver.agent
+	const { agent, model } = resolveHelperInvocation(feature.agent, params.agent ?? config.solver.agent, feature.model)
 	try {
-		const model = feature.model ?? defaultHelperModel(agent)
 		const run = deps?.runOneShot ?? runOneShot
 		// Let the model actually SEE attached screenshots (vision is claude-only).
 		// Best-effort — a fetch failure just degrades this call to text-only.

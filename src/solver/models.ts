@@ -28,9 +28,32 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	],
 }
 
+/** Return the owning CLI for a curated model id; custom ids remain unresolved. */
+export function agentForModel(model: string | undefined): SolverAgent | undefined {
+	if (!model) return undefined
+	for (const agent of ['claude', 'codex'] satisfies SolverAgent[]) {
+		if (MODEL_CATALOG[agent].some(option => option.id === model)) return agent
+	}
+	return undefined
+}
+
 /** Default model for the cheap AI-helper one-shots (naming/triage). */
 export function defaultHelperModel(agent: SolverAgent | undefined): string {
 	return agent === 'codex' ? 'gpt-5.6-luna' : 'claude-haiku-4-5'
+}
+
+/**
+ * Resolve a helper invocation as one agent/model pair. A known curated model
+ * owns its CLI, preventing e.g. `claude --model gpt-*`; unknown custom model
+ * ids continue to honor the configured provider.
+ */
+export function resolveHelperInvocation(
+	configuredAgent: SolverAgent | undefined,
+	fallbackAgent: SolverAgent | undefined,
+	configuredModel: string | undefined,
+): { agent: SolverAgent; model: string } {
+	const agent = agentForModel(configuredModel) ?? configuredAgent ?? fallbackAgent ?? 'claude'
+	return { agent, model: configuredModel ?? defaultHelperModel(agent) }
 }
 
 export function agentModelLabel(agent: SolverAgent): string {

@@ -15,6 +15,7 @@ import {
 	parseDisplayName,
 } from '../src/items/naming.js'
 import type { TaskContext } from '../src/providers/provider.js'
+import { resolveHelperInvocation } from '../src/solver/models.js'
 import { taskCancelled } from '../src/util/errors.js'
 
 function makeConfig(overrides?: {
@@ -107,6 +108,13 @@ test('parseBranchName returns null when nothing is branch-shaped', () => {
 	assert.equal(parseBranchName(''), null)
 })
 
+test('custom helper models retain the explicitly configured agent', () => {
+	assert.deepEqual(resolveHelperInvocation('claude', 'codex', 'custom-private-model'), {
+		agent: 'claude',
+		model: 'custom-private-model',
+	})
+})
+
 test('ensureItemWorkspaceName persists and returns a derived branch and plan dir', () =>
 	withTempDb(async db => {
 		const config = makeConfig()
@@ -130,6 +138,33 @@ test('ensureItemWorkspaceName persists and returns a derived branch and plan dir
 
 		const persisted = commands.getItem(item.id)
 		assert.equal(persisted?.branchName, 'feat/fix-login-redirect')
+	}))
+
+test('ensureItemWorkspaceName uses the owning agent for a curated helper model', () =>
+	withTempDb(async db => {
+		const config = makeConfig({ branchNaming: { model: 'gpt-5.6-luna' } })
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'whatever', projectSlug: 'helm', prompt: 'do it' })
+		let seen: { agent?: string; model?: string } = {}
+
+		const result = await ensureItemWorkspaceName({
+			commands,
+			item,
+			taskContext,
+			config,
+			repoPath: '/repo',
+			agent: 'claude',
+			deps: {
+				runOneShot: async opts => {
+					seen = { agent: opts.agent, model: opts.model }
+					return 'fix/use-correct-provider'
+				},
+				branchExists: () => false,
+			},
+		})
+
+		assert.deepEqual(seen, { agent: 'codex', model: 'gpt-5.6-luna' })
+		assert.equal(result.branchName, 'fix/use-correct-provider')
 	}))
 
 test('ensureItemWorkspaceName clamps an over-long model name to the whole-name budget', () =>

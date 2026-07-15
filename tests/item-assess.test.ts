@@ -110,9 +110,9 @@ test('ensureItemAssessment sends fetched screenshots to the model for the claude
 		assert.equal(seen?.[0].mediaType, 'image/png')
 	}))
 
-test('ensureItemAssessment does not fetch or send images for the codex agent', () =>
+test('ensureItemAssessment uses a curated model’s owning agent and skips Claude-only vision', () =>
 	withTempDb(async db => {
-		const config = makeConfig({ agent: 'codex' })
+		const config = makeConfig({ agent: 'claude', model: 'gpt-5.6-luna' })
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'x',
@@ -122,6 +122,7 @@ test('ensureItemAssessment does not fetch or send images for the codex agent', (
 		})
 		let fetched = false
 		let seen: OneShotImage[] | undefined = undefined
+		let seenAgent: string | undefined
 		await ensureItemAssessment({
 			commands,
 			item,
@@ -133,11 +134,13 @@ test('ensureItemAssessment does not fetch or send images for the codex agent', (
 					return [{ data: 'AAAA', mediaType: 'image/png' }]
 				},
 				runOneShot: async opts => {
+					seenAgent = opts.agent
 					seen = opts.images
 					return VALID
 				},
 			},
 		})
+		assert.equal(seenAgent, 'codex')
 		assert.equal(fetched, false)
 		assert.deepEqual(seen, [])
 	}))

@@ -481,6 +481,23 @@ test('Config Document redacts dashboard config and validates edit metadata again
 	)
 })
 
+test('Config Document shows the owning provider for curated AI helper models', () => {
+	const document = buildConfigDocument(
+		{
+			...config,
+			solver: {
+				...config.solver,
+				branchNaming: { enabled: true, model: 'gpt-5.6-luna' },
+				displayName: { enabled: true, agent: 'claude', model: 'gpt-5.6-luna' },
+			},
+		},
+		config,
+	)
+
+	assert.equal(document.config.solver.branchNaming.agent, 'codex')
+	assert.equal(document.config.solver.displayName.agent, 'codex')
+})
+
 test('Agent Adapter selects command shape, labels, interactive commands, and timeline parsing', () => {
 	const claude = createAgentAdapter({ ...config.solver, agent: 'claude', model: 'claude-opus-4' })
 	assert.equal(claude.agent, 'claude')

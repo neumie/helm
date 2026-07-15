@@ -1,7 +1,7 @@
 import type { HelmConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
-import { defaultHelperModel } from '../solver/models.js'
+import { resolveHelperInvocation } from '../solver/models.js'
 import { runOneShot } from '../solver/one-shot.js'
 import type { OneShotOptions } from '../solver/one-shot.js'
 import { isCancellation } from '../util/errors.js'
@@ -146,9 +146,8 @@ export async function ensureItemDisplayName(params: EnsureItemDisplayNameParams)
 	if (!force && current.displayName) return current
 	if (!force && !generateWhenMissing && current.title.length <= MIN_TITLE_LEN_TO_NAME) return current
 
-	const agent = feature.agent ?? params.agent ?? config.solver.agent
+	const { agent, model } = resolveHelperInvocation(feature.agent, params.agent ?? config.solver.agent, feature.model)
 	try {
-		const model = feature.model ?? defaultHelperModel(agent)
 		const run = deps?.runOneShot ?? runOneShot
 		const raw = await run({ agent, model, prompt: buildDisplayNamePrompt(current.title, feature.prompt), signal })
 		if (!raw) {
@@ -311,10 +310,10 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 	if (item.kind !== 'solve') return item
 	if (!force && item.branchName) return item // already planned / forked / named
 
-	// Per-feature provider override wins over the effective solve agent the caller passed.
-	const agent = feature.agent ?? params.agent
+	// A curated model implies its owning CLI; custom model ids retain the
+	// per-feature provider override or effective solve agent.
+	const { agent, model } = resolveHelperInvocation(feature.agent, params.agent, feature.model)
 	try {
-		const model = feature.model ?? defaultHelperModel(agent)
 		const run = deps?.runOneShot ?? runOneShot
 		const raw = await run({
 			agent,

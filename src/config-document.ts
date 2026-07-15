@@ -3,7 +3,13 @@ import { configSchema } from './config.js'
 import type { HelmConfig } from './config.js'
 import { DEFAULT_ASSESSMENT_INSTRUCTIONS } from './items/assess.js'
 import { DEFAULT_DISPLAY_INSTRUCTIONS, DEFAULT_NAMING_INSTRUCTIONS } from './items/naming.js'
-import { DEFAULT_MODEL_GUIDANCE, MODEL_CATALOG, defaultHelperModel, modelSelectOptions } from './solver/models.js'
+import {
+	DEFAULT_MODEL_GUIDANCE,
+	MODEL_CATALOG,
+	agentForModel,
+	defaultHelperModel,
+	modelSelectOptions,
+} from './solver/models.js'
 import type { ModelOption } from './solver/models.js'
 import { listSpawnerAdapters } from './spawner/registry.js'
 import type { SpawnerAdapterInfo } from './spawner/registry.js'
@@ -355,11 +361,15 @@ const HELPER_DEFAULT_PROMPTS = {
  * `solver.agent`).
  */
 function hydrateAiDefaults(config: HelmConfig): HelmConfig {
-	const fill = (helper: AiHelperConfig, defaultPrompt: string): AiHelperConfig => ({
-		...helper,
-		model: helper.model ?? defaultHelperModel(helper.agent ?? config.solver.agent),
-		prompt: helper.prompt ?? defaultPrompt,
-	})
+	const fill = (helper: AiHelperConfig, defaultPrompt: string): AiHelperConfig => {
+		const inferredAgent = agentForModel(helper.model)
+		return {
+			...helper,
+			agent: inferredAgent ?? helper.agent,
+			model: helper.model ?? defaultHelperModel(helper.agent ?? config.solver.agent),
+			prompt: helper.prompt ?? defaultPrompt,
+		}
+	}
 	const guidance = { ...config.solver.modelGuidance }
 	for (const [id, text] of Object.entries(DEFAULT_MODEL_GUIDANCE)) {
 		guidance[id] = guidance[id] || text
