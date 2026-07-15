@@ -52,6 +52,8 @@ export interface DashboardItem {
 	id: string
 	kind: ItemRecord['kind']
 	status: ItemRecord['status']
+	/** Agent-owned, human-owned, or undecided while waiting in Queue. */
+	workMode: ItemRecord['workMode']
 	projectSlug: string
 	title: string
 	/** Short AI-derived label; null until named. Clients show `displayName ?? title`. */
@@ -77,7 +79,9 @@ export interface DashboardItem {
 	plan: DashboardPlan | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
-	/** Per-item execution workspace override (`null` = follow `config.solver.workspace`). Solve only. */
+	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
+	solverAgent: 'claude' | 'codex' | null
+	solverModel: string | null
 	solverWorkspace: SolverWorkspace | null
 	errorMessage: string | null
 	errorPhase: string | null
@@ -103,8 +107,9 @@ export interface DashboardItem {
 }
 
 const STATUS_TONE: Record<ItemRecord['status'], DashboardTone> = {
-	triage: 'amber',
+	inbox: 'gray',
 	ready: 'gray',
+	active: 'blue',
 	running: 'blue',
 	review: 'amber',
 	done: 'green',
@@ -113,8 +118,9 @@ const STATUS_TONE: Record<ItemRecord['status'], DashboardTone> = {
 }
 
 const STATUS_LABEL: Record<ItemRecord['status'], string> = {
-	triage: 'Triage',
+	inbox: 'Inbox',
 	ready: 'Ready',
+	active: 'Active',
 	running: 'Running',
 	review: 'Review',
 	done: 'Done',
@@ -137,12 +143,14 @@ function actionsForStatus(
 	hasSource: boolean,
 ): DashboardAction[] {
 	switch (status) {
-		case 'triage':
-			// Source tasks are an untrusted inbox → approve/reject (the go/no-go gate).
-			// Source-less plan-first Items are deliberately created → start/cancel.
+		case 'inbox':
+			// Automatic/source tasks enter Inbox → approve/reject (the go/no-go gate).
+			// A source-less Item can only reach Inbox through a manual status override.
 			return hasSource ? [ACTIONS.approve, ACTIONS.reject] : [ACTIONS.start, ACTIONS.cancel]
 		case 'ready':
 			return [ACTIONS.start, ACTIONS.cancel]
+		case 'active':
+			return []
 		case 'running':
 			return [ACTIONS.cancel]
 		case 'review':
@@ -248,6 +256,7 @@ export function toDashboardItem(
 		id: item.id,
 		kind: item.kind,
 		status: item.status,
+		workMode: item.workMode,
 		projectSlug: item.projectSlug,
 		title: item.title,
 		displayName: item.displayName,
@@ -263,6 +272,8 @@ export function toDashboardItem(
 		plan: planForItem(item),
 		resultSummary: item.resultSummary,
 		solveInputSnapshot: item.solveInputSnapshot,
+		solverAgent: item.payload.kind === 'solve' ? (item.payload.solverAgent ?? null) : null,
+		solverModel: item.payload.kind === 'solve' ? (item.payload.solverModel ?? null) : null,
 		solverWorkspace: item.payload.kind === 'solve' ? (item.payload.solverWorkspace ?? null) : null,
 		errorMessage: item.errorMessage,
 		errorPhase: item.errorPhase,

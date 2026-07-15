@@ -91,7 +91,11 @@ export interface ConfigApi {
  */
 export type UiPreview =
 	| 'list'
+	| 'queue-list'
 	| 'detail'
+	| 'queue-detail'
+	| 'archive-detail'
+	| 'task'
 	| 'settings'
 	| 'appearance'
 	| 'background'

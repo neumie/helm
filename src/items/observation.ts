@@ -92,8 +92,9 @@ function stateFromItem(item: ItemRecord): RunObservationState {
 			return 'failed'
 		case 'cancelled':
 			return 'cancelled'
-		case 'triage':
+		case 'inbox':
 		case 'ready':
+		case 'active':
 			return 'idle'
 	}
 }
@@ -118,9 +119,23 @@ function stateFromAlmanacStatus(status: string | null, fallback: RunObservationS
 
 function eventTone(type: string): RunObservationTone {
 	if (type.includes('failed')) return 'red'
-	if (type.includes('cancelled')) return 'amber'
-	if (type.includes('completed') || type === 'action_completed') return 'green'
-	if (type.includes('started') || type.startsWith('solve_')) return 'blue'
+	if (type.includes('cancelled') || type.includes('rejected')) return 'amber'
+	if (
+		type.includes('completed') ||
+		type === 'action_completed' ||
+		type.includes('merged') ||
+		type.includes('succeeded')
+	)
+		return 'green'
+	if (
+		type.includes('started') ||
+		type.includes('approved') ||
+		type.includes('retried') ||
+		type.includes('reopened') ||
+		type.includes('reconciled') ||
+		type.startsWith('solve_')
+	)
+		return 'blue'
 	return 'gray'
 }
 
@@ -144,6 +159,24 @@ function eventLabel(event: ItemEvent): string {
 	switch (event.eventType) {
 		case 'item_started':
 			return 'Item started'
+		case 'item_approved':
+			return 'Intent approved'
+		case 'item_rejected':
+			return 'Intent rejected'
+		case 'item_retried':
+			return 'Run queued again'
+		case 'item_reopened':
+			return 'Moved to review without rerunning'
+		case 'item_reconciled':
+			return 'Shippable work reconciled for review'
+		case 'item_merged':
+			return 'Pull request merged'
+		case 'deploy_succeeded':
+			return `Deployment succeeded${payload?.environment ? `: ${payload.environment}` : ''}`
+		case 'deploy_merged':
+			return 'Merge observed'
+		case 'item_status_set':
+			return `Status set${payload?.status ? `: ${payload.status}` : ''}`
 		case 'item_recovered':
 			return 'Recovered stale processing Item'
 		case 'solve_completed':

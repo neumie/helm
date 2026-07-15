@@ -22,7 +22,7 @@ const helmBridge = new HelmBridge(daemonUrl)
 // writes a full-window PNG, and exits 0.
 const screenshotPath = process.argv.find(a => a.startsWith('--screenshot='))?.slice('--screenshot='.length) || null
 
-// `--ui-preview=<list|detail|settings|appearance>` forwards to the renderer
+// `--ui-preview=<list|queue-list|detail|queue-detail|archive-detail|task|settings|appearance>` forwards to the renderer
 // (via preload additionalArguments) so screenshot runs can capture a specific
 // sidebar page. `--ui-theme=<presetId>` applies a theme preset for the run
 // (no persistence) so theme presets are screenshot-verifiable.

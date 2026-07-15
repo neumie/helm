@@ -10,9 +10,6 @@ import { itemSourceSchema } from './schema.js'
 import type { Assessment, DeployState, ItemKind, ItemRecord, ItemSource, RunOutcome } from './schema.js'
 import type { ItemStore } from './store.js'
 
-const createItemInitialStatusSchema = z.enum(['ready', 'triage'])
-type CreateItemInitialStatus = z.infer<typeof createItemInitialStatusSchema>
-
 const createSolveItemInputSchema = z
 	.object({
 		// Caller-supplied id: used by ingest so the Item row, its on-disk attachment
@@ -26,7 +23,6 @@ const createSolveItemInputSchema = z
 		baseItemId: z.string().min(1).optional(),
 		spawner: z.string().min(1).optional(),
 		solverAgent: solverAgentSchema.optional(),
-		initialStatus: createItemInitialStatusSchema.optional(),
 		source: itemSourceSchema.nullable().optional(),
 		// Frozen task content for a provider-less Item (ingested email etc.).
 		capturedContext: taskContextSchema.nullable().optional(),
@@ -51,7 +47,6 @@ const createLoopItemInputSchema = z
 		baseRef: z.string().min(1).optional(),
 		baseItemId: z.string().min(1).optional(),
 		spawner: z.string().min(1).optional(),
-		initialStatus: createItemInitialStatusSchema.optional(),
 		mode: z.enum(['once', 'afk']).optional(),
 		provider: z.enum(['claude', 'codex']).optional(),
 		model: z.string().min(1).optional(),
@@ -114,12 +109,8 @@ interface BaseRefSelection {
 	baseItemId?: string
 }
 
-function initialStatus(input: {
-	source?: ItemSource | null
-	initialStatus?: CreateItemInitialStatus
-}): ItemRecord['status'] {
-	if (input.source) return 'triage'
-	return input.initialStatus ?? 'ready'
+function initialStatus(source: ItemSource | null | undefined): ItemRecord['status'] {
+	return source ? 'inbox' : 'ready'
 }
 
 // A run that finished without writing solver-result.json is the classic
@@ -154,7 +145,7 @@ export class ItemCommands {
 			this.store.create({
 				...(parsed.data.id ? { id: parsed.data.id } : {}),
 				kind: 'solve',
-				status: initialStatus(parsed.data),
+				status: initialStatus(parsed.data.source),
 				projectSlug: parsed.data.projectSlug,
 				title: parsed.data.title,
 				source: parsed.data.source ?? null,
@@ -252,7 +243,7 @@ export class ItemCommands {
 		return Array.from({ length: count }, () =>
 			this.store.create({
 				kind: 'loop',
-				status: initialStatus(parsed.data),
+				status: initialStatus(undefined),
 				projectSlug: parsed.data.projectSlug,
 				title: parsed.data.title,
 				source: null,
@@ -266,7 +257,7 @@ export class ItemCommands {
 
 	approveItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'triage') throw new Error('Only triage Items can be approved')
+		if (item.status !== 'inbox') throw new Error('Only Inbox Items can be approved')
 
 		const now = new Date().toISOString()
 		const approved = this.store.update(id, {
@@ -282,7 +273,7 @@ export class ItemCommands {
 
 	rejectItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'triage') throw new Error('Only triage Items can be rejected')
+		if (item.status !== 'inbox') throw new Error('Only Inbox Items can be rejected')
 
 		const now = new Date().toISOString()
 		const rejected = this.store.update(id, {
@@ -297,11 +288,11 @@ export class ItemCommands {
 
 	startItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'ready' && item.status !== 'triage')
-			throw new Error('Only ready or triage Items can be started')
+		if (item.status !== 'ready' && item.status !== 'inbox') throw new Error('Only ready or Inbox Items can be started')
 
 		const started = this.store.update(id, {
 			status: 'running',
+			workMode: 'agent',
 			startedAt: new Date().toISOString(),
 			completedAt: null,
 			errorMessage: null,
@@ -319,6 +310,7 @@ export class ItemCommands {
 
 		const retried = this.store.update(id, {
 			status: 'ready',
+			workMode: 'agent',
 			queuedAt: new Date().toISOString(),
 			startedAt: null,
 			completedAt: null,
@@ -361,8 +353,8 @@ export class ItemCommands {
 
 	cancelQueuedItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (item.status !== 'ready' && item.status !== 'triage') {
-			throw new Error('Only ready or triage Items can be cancelled before execution')
+		if (item.status !== 'ready' && item.status !== 'inbox') {
+			throw new Error('Only ready or Inbox Items can be cancelled before execution')
 		}
 
 		const cancelled = this.store.update(id, {
@@ -718,14 +710,25 @@ export class ItemCommands {
 		if (status === 'running') throw new Error('Cannot manually set an Item to running')
 
 		const now = new Date().toISOString()
+		let workMode = item.workMode
+		let startedAt = item.startedAt
+		if (status === 'active') {
+			workMode = 'manual'
+			startedAt = now
+		} else if (status === 'ready') {
+			workMode = null
+			startedAt = null
+		}
 		const updated = this.store.update(id, {
 			status,
+			workMode,
 			queuedAt: status === 'ready' ? now : item.queuedAt,
+			startedAt,
 			completedAt: COMPLETED_AT_STATUSES.has(status) ? now : null,
 			errorMessage: status === 'failed' ? item.errorMessage : null,
 			errorPhase: status === 'failed' ? item.errorPhase : null,
 		})
-		this.store.insertEvent(id, 'item_status_set', { from: item.status, to: status })
+		this.store.insertEvent(id, 'item_status_set', { from: item.status, to: status, workMode })
 		return updated
 	}
 

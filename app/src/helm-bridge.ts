@@ -12,11 +12,16 @@
 //     daemon's `{ data } | { error }` envelope verbatim.
 //
 // The bridge holds no business logic: status/action rules stay server-owned.
+// It does apply narrow wire-compatibility normalization for mixed-version
+// app/daemon rollouts before values reach the renderer.
 
 import { BrowserWindow, ipcMain } from 'electron'
+import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
+import { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } from './protocol-version'
 import type {
 	AiPass,
 	AppConfig,
+	DaemonRestartResult,
 	DaemonStatus,
 	DashboardActionId,
 	DashboardItem,
@@ -42,6 +47,7 @@ export class HelmBridge {
 	private lastComparable = ''
 	private timer: NodeJS.Timeout | null = null
 	private ticking = false
+	private daemonRestartAttempt: string | null = null
 
 	constructor(daemonUrl: string) {
 		this.baseUrl = daemonUrl.replace(/\/$/, '')
@@ -73,6 +79,7 @@ export class HelmBridge {
 				this.request<DashboardItem[]>('GET', '/items'),
 			])
 			const reachable = status.error === undefined
+			if (status.data && (await this.restartForProtocolMismatch(status.data))) return
 			// Config is fetched once (first reachable tick), then only on demand
 			// (refreshConfig after a save) — it changes through helm itself.
 			let config = this.snapshot.config
@@ -84,13 +91,42 @@ export class HelmBridge {
 			this.snapshot = {
 				reachable,
 				status: status.data ?? this.snapshot.status,
-				items: items.data ?? this.snapshot.items,
+				items: items.data ? normalizeDashboardItems(items.data) : this.snapshot.items,
 				config,
 			}
 			this.publish()
 		} finally {
 			this.ticking = false
 		}
+	}
+
+	/**
+	 * A newly built app can launch while launchd still owns an older daemon
+	 * process. Restart once the queue is idle; the guarded endpoint refuses dev
+	 * processes and active runs, so this never drops run tracking.
+	 */
+	private async restartForProtocolMismatch(status: DaemonStatus): Promise<boolean> {
+		const actualProtocol = (status as Partial<DaemonStatus>).protocolVersion
+		const actualBuild = (status as Partial<DaemonStatus>).buildId
+		if (actualProtocol === EXPECTED_DAEMON_PROTOCOL_VERSION && actualBuild === EXPECTED_DAEMON_BUILD_ID) {
+			this.daemonRestartAttempt = null
+			return false
+		}
+		if (status.queue.active > 0) return false
+		const key = `${actualProtocol ?? 'missing'}/${actualBuild ?? 'missing'}`
+		if (this.daemonRestartAttempt === key) return false
+		this.daemonRestartAttempt = key
+		const result = await this.request<DaemonRestartResult>('POST', '/daemon/restart')
+		if (result.data?.applied) {
+			process.stderr.write(
+				`[helm] Restarting daemon ${key} → ${EXPECTED_DAEMON_PROTOCOL_VERSION}/${EXPECTED_DAEMON_BUILD_ID}\n`,
+			)
+			return true
+		}
+		process.stderr.write(
+			`[helm] Daemon ${key} does not match app ${EXPECTED_DAEMON_PROTOCOL_VERSION}/${EXPECTED_DAEMON_BUILD_ID}: ${result.error ?? result.data?.message ?? 'restart unavailable'}\n`,
+		)
+		return false
 	}
 
 	/** Immediate re-poll after a mutating command so the UI catches up before the next interval. */
@@ -130,7 +166,7 @@ export class HelmBridge {
 			const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
 			// Daemon envelope passed through verbatim; a non-ok status without an
 			// `error` body still needs a message for the UI.
-			if (!res.ok) return { error: json.error ?? `API error: ${res.status}` }
+			if (!res.ok) return { error: json.error ?? `API error: ${res.status}`, status: res.status }
 			return { data: json.data as T }
 		} catch (err) {
 			return { error: errorMessage(err) }
@@ -147,11 +183,15 @@ export class HelmBridge {
 
 		ipcMain.handle('daemon:subscribe', () => this.snapshot)
 
-		ipcMain.handle('daemon:item', (_e, rawId: unknown) => this.request('GET', `/items/${id(rawId)}`))
+		ipcMain.handle('daemon:item', async (_e, rawId: unknown) =>
+			normalizeDashboardItemResult(await this.request<DashboardItem>('GET', `/items/${id(rawId)}`)),
+		)
 
 		ipcMain.handle('daemon:itemAction', async (_e, rawId: unknown, action: DashboardActionId, body?: unknown) => {
 			if (!ITEM_ACTIONS.has(action)) return { error: `Unknown item action: ${String(action)}` }
-			const result = await this.request('POST', `/items/${id(rawId)}/${action}`, body ?? {})
+			const result = normalizeDashboardItemResult(
+				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/${action}`, body ?? {}),
+			)
 			this.kick()
 			return result
 		})
@@ -164,7 +204,9 @@ export class HelmBridge {
 
 		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
 			if (!AI_PASSES.has(pass)) return { error: `Unknown AI pass: ${String(pass)}` }
-			const result = await this.request('POST', `/items/${id(rawId)}/ai/${pass}`)
+			const result = normalizeDashboardItemResult(
+				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/ai/${pass}`),
+			)
 			this.kick()
 			return result
 		})
@@ -176,13 +218,17 @@ export class HelmBridge {
 		})
 
 		ipcMain.handle('daemon:sourceTask', async (_e, rawId: unknown) => {
-			const result = await this.request('POST', `/items/${id(rawId)}/source-task`)
+			const result = normalizeDashboardItemResult(
+				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/source-task`),
+			)
 			this.kick()
 			return result
 		})
 
 		ipcMain.handle('daemon:setStatus', async (_e, rawId: unknown, status: ItemStatus) => {
-			const result = await this.request('POST', `/items/${id(rawId)}/status`, { status })
+			const result = normalizeDashboardItemResult(
+				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/status`, { status }),
+			)
 			this.kick()
 			return result
 		})

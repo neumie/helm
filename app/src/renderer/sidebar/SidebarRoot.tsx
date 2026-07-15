@@ -13,11 +13,13 @@ import './sidebar.css'
 import type { HelmSnapshot } from '../../shared-helm'
 import { showToast } from '../toast'
 import { AppearancePage } from './AppearancePage'
-import { DetailPage, PlanPage, TaskPage } from './DetailPage'
+import { DetailPage } from './DetailPage'
+import { PlanPage, RunDetailsPage, RunSetupPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemSheet } from './NewItemSheet'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
 import type { Route } from './model'
+import type { RunSelectionDraft } from './run-selection'
 import { type SwipeBackControl, attachSwipeBack } from './swipe'
 import { PushHeader } from './ui'
 
@@ -136,6 +138,7 @@ export function SidebarRoot() {
 	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
 	const [newItemOpen, setNewItemOpen] = useState(false)
 	const [selectedId, setSelectedId] = useState<string | null>(null)
+	const [runDrafts, setRunDrafts] = useState<Record<string, RunSelectionDraft>>({})
 	const viewportRef = useRef<HTMLDivElement>(null)
 	const newItemOpenRef = useRef(newItemOpen)
 	newItemOpenRef.current = newItemOpen
@@ -256,20 +259,50 @@ export function SidebarRoot() {
 			reset([{ kind: 'list' }, { kind: 'settings' }, { kind: 'appearance' }])
 			return
 		}
-		if (preview !== 'detail') {
+		if (preview !== 'detail' && preview !== 'queue-detail' && preview !== 'archive-detail' && preview !== 'task') {
 			previewDone.current = true
 			return
 		}
-		// detail: needs an item id from the first snapshot with items.
+		// Item previews need an id from the first snapshot with items. Task prefers
+		// a source-backed Item; queue-detail shows the ownership decision; archive-
+		// detail exercises the deeper list → archive → detail stack.
 		const items = snapshot?.items
 		if (!items || items.length === 0) return
 		previewDone.current = true
-		const pick =
-			items.find(i => i.status === 'review' || i.status === 'failed') ??
-			items.find(i => i.assessment !== null) ??
-			items[0]
-		if (pick) openItem(pick.id)
+		let pick = items[0]
+		if (preview === 'task') pick = items.find(i => i.source || i.captured) ?? items[0]
+		else if (preview === 'queue-detail') pick = items.find(i => i.status === 'ready') ?? items[0]
+		else if (preview === 'archive-detail')
+			pick = items.find(i => i.status === 'done' || i.status === 'cancelled') ?? items[0]
+		else
+			pick =
+				items.find(i => i.status === 'review' || i.status === 'failed') ??
+				items.find(i => i.assessment !== null) ??
+				items[0]
+		if (pick && preview === 'task')
+			reset([{ kind: 'list' }, { kind: 'detail', id: pick.id }, { kind: 'task', id: pick.id }])
+		else if (pick && preview === 'archive-detail') {
+			reset([{ kind: 'list' }, { kind: 'archive' }])
+			window.setTimeout(() => openItem(pick.id), PUSH_MS + 40)
+		} else if (pick) openItem(pick.id)
 	}, [snapshot, push, reset, openItem])
+
+	useEffect(() => {
+		// Focusing an element while its page is translated offscreen makes Chromium
+		// scroll it into view and visually skips the slide. Restore focus only after
+		// push/pop motion has settled and the destination is no longer inert.
+		if (nav.leaving !== null || nav.phase !== null) return
+		const top = nav.stack[nav.stack.length - 1]
+		requestAnimationFrame(() => {
+			if (top?.kind === 'list' || top?.kind === 'archive') {
+				const selected = document.querySelector<HTMLElement>(`[data-item-id="${selectedId ?? ''}"]`)
+				selected?.focus()
+				if (!selected) document.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) button')?.focus()
+			} else {
+				document.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) [data-page-heading]')?.focus()
+			}
+		})
+	}, [nav.stack, nav.leaving, nav.phase, selectedId])
 
 	const runCommand = useCallback(async (label: string, call: () => Promise<{ error?: string }>) => {
 		const result = await call()
@@ -296,6 +329,8 @@ export function SidebarRoot() {
 								window.helm.daemon.pauseToggle(),
 							)
 						}
+						onStartAgent={id => runCommand('Agent started', () => window.helm.daemon.itemAction(id, 'start', {}))}
+						onWorkManually={id => runCommand('Marked active', () => window.helm.daemon.setStatus(id, 'active'))}
 					/>
 				)
 			case 'detail':
@@ -303,15 +338,30 @@ export function SidebarRoot() {
 					<DetailPage
 						id={route.id}
 						snapshot={snapshot}
+						draft={runDrafts[route.id] ?? {}}
 						onBack={pop}
 						onOpenPlan={id => push({ kind: 'plan', id })}
 						onOpenTask={id => push({ kind: 'task', id })}
+						onOpenRun={id => push({ kind: 'run', id })}
+						onOpenSetup={id => push({ kind: 'run-setup', id })}
 					/>
 				)
 			case 'plan':
 				return <PlanPage id={route.id} snapshot={snapshot} onBack={pop} />
 			case 'task':
 				return <TaskPage id={route.id} snapshot={snapshot} onBack={pop} />
+			case 'run':
+				return <RunDetailsPage id={route.id} snapshot={snapshot} onBack={pop} />
+			case 'run-setup':
+				return (
+					<RunSetupPage
+						id={route.id}
+						snapshot={snapshot}
+						onBack={pop}
+						draft={runDrafts[route.id] ?? {}}
+						onDraftChange={draft => setRunDrafts(current => ({ ...current, [route.id]: draft }))}
+					/>
+				)
 			case 'settings':
 				return (
 					<SettingsPage

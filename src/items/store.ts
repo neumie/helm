@@ -30,6 +30,7 @@ type ItemUpdateInput = Partial<
 	Pick<
 		ItemRecord,
 		| 'status'
+		| 'workMode'
 		| 'queuedAt'
 		| 'startedAt'
 		| 'completedAt'
@@ -49,6 +50,7 @@ type ItemUpdateInput = Partial<
 
 const ITEM_UPDATE_COLUMNS = {
 	status: 'status',
+	workMode: 'work_mode',
 	queuedAt: 'queued_at',
 	startedAt: 'started_at',
 	completedAt: 'completed_at',
@@ -96,6 +98,7 @@ export class ItemStore {
 			id: input.id ?? randomUUID(),
 			kind: input.kind,
 			status: input.status,
+			workMode: null,
 			projectSlug: input.projectSlug,
 			title: input.title,
 			displayName: null,
@@ -128,12 +131,12 @@ export class ItemStore {
 		this.db
 			.prepare(
 				`INSERT INTO items (
-					id, kind, status, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
+					id, kind, status, work_mode, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, planned_at, updated_at,
 					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome, deploy_state
 				) VALUES (
-					@id, @kind, @status, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
+					@id, @kind, @status, @workMode, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @plannedAt, @updatedAt,
 					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome, @deployState
@@ -317,7 +320,7 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'ready' AND kind = ?
+				 WHERE status = 'ready' AND work_mode = 'agent' AND kind = ?
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
@@ -390,7 +393,7 @@ export class ItemStore {
 
 	countQueuedByKind(kind: ItemKind): number {
 		const row = this.db
-			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'ready' AND kind = ?")
+			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'ready' AND work_mode = 'agent' AND kind = ?")
 			.get(kind) as { count: number }
 		return row.count
 	}
@@ -440,6 +443,7 @@ export class ItemStore {
 			id: item.id,
 			kind: item.kind,
 			status: item.status,
+			workMode: item.workMode,
 			projectSlug: item.projectSlug,
 			title: item.title,
 			displayName: item.displayName,
@@ -475,6 +479,7 @@ export class ItemStore {
 			id: row.id,
 			kind: row.kind,
 			status: row.status,
+			workMode: row.work_mode ?? null,
 			projectSlug: row.project_slug,
 			title: row.title,
 			displayName: row.display_name ?? null,

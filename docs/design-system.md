@@ -25,7 +25,7 @@ Canonical CSS custom properties. Helm defines them on `:root` (`app/src/renderer
 Background ladder (dark only — helm surfaces do not ship a light theme):
 
 | Token | Value | Role |
-|---|---|---|
+| --- | --- | --- |
 | `--chrome` | `#1a1c1f` | Window chrome, topbar, elevated cards (toast, menu, offline card, sheet) |
 | `--pane` | `#141517` | Default surface: sidebar, dashboard, widget card base |
 | `--well` | `#0f1113` | Deepest inset: terminal well, code wells, log viewers |
@@ -33,7 +33,7 @@ Background ladder (dark only — helm surfaces do not ship a light theme):
 White-alpha fills and lines (always on the ladder, never opaque grays):
 
 | Token | Value | Role |
-|---|---|---|
+| --- | --- | --- |
 | `--hairline` | `rgba(255,255,255,0.07)` | All borders and separators. The only line weight is 1px |
 | `--hairline-strong` | `rgba(255,255,255,0.16)` | Emphasized border: quiet-button outline, hovered input border, drag-target hover |
 | `--fill-subtle` | `rgba(255,255,255,0.05)` | Hover fill; resting input/segmented-track background |
@@ -42,7 +42,7 @@ White-alpha fills and lines (always on the ladder, never opaque grays):
 Text:
 
 | Token | Value | Role |
-|---|---|---|
+| --- | --- | --- |
 | `--text-0` | `#ececee` | Primary: titles, body, button labels |
 | `--text-1` | `#9a9ea6` | Secondary: descriptions, toast detail, quiet-button labels |
 | `--text-2` | `#62666e` | Faint: meta, timestamps, labels, placeholders, disabled-adjacent |
@@ -50,31 +50,31 @@ Text:
 Accent and semantic tones. Each tone has a **text/icon value** and a **soft fill** (15% alpha) for chips and banners:
 
 | Token | Value | Soft fill | Role |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `--accent` | `#4c9aff` | `rgba(76,154,255,0.15)` | Links, focus ring, running state, cursor, selection |
 | `--accent-fill` | `#3b82f6` | (hover `#5a9dff`) | Filled primary button background ONLY — `#4c9aff` is too bright as a fill under white text |
 | `--success` | `#4ec98a` | `rgba(78,201,138,0.15)` | Done, connected, merged |
 | `--warn` | `#e0b341` | `rgba(224,179,65,0.15)` | Needs attention, review, degraded |
 | `--danger` | `#f2585b` | `rgba(242,88,91,0.15)` | Failed, destructive actions |
-| `--neutral` | `#8a8f98` | `rgba(138,143,152,0.15)` | Queued, triage, cancelled, unknown |
+| `--neutral` | `#8a8f98` | `rgba(138,143,152,0.15)` | Inbox, queued, cancelled, unknown |
 
 - All soft fills are exactly **0.15 alpha** of their tone. Never invent per-component alphas.
 - Never use a tone color as an opaque background (exception: `--accent-fill` primary button).
-- Status → tone mapping is fixed: triage/queued/cancelled = neutral, running = accent, review/needs-you = warn, done = success, failed = danger. Do not remap per surface.
+- Status → tone mapping is fixed: inbox/queued/cancelled = neutral, active/running = accent, review/needs-you = warn, done = success, failed = danger. Do not remap per surface.
 
 ### 2.2 Typography
 
 Families:
 
 | Token | Stack | Use |
-|---|---|---|
+| --- | --- | --- |
 | `--font-ui` | `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif` | All UI text |
 | `--font-mono` | `'SF Mono', ui-monospace, SFMono-Regular, Menlo, monospace` | Terminal, branch names, ids, kbd, code |
 
 Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label and Chip styles override it:
 
 | Style | Size/weight | Spec |
-|---|---|---|
+| --- | --- | --- |
 | Page title | 15/600 | Detail-page heading. One per page. `--text-0` |
 | Body / row title | 13/400 (titles 13/500) | Default. Line-height 1.5 for paragraphs, single-line ellipsis in rows |
 | Emphasis / button | 13/600 (buttons 12/600) | Section titles, empty-state titles |
@@ -94,7 +94,7 @@ Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label an
 4px base scale: **4, 8, 12, 16, 20, 24, 32**. No other values (1px is a line, not a space; 2px only as inner padding of segmented tracks and countdown-bar height).
 
 | Context | Value |
-|---|---|
+| --- | --- |
 | Inside controls (icon↔label, dot↔text) | 4–8 |
 | Control-to-control in a row (toolbar, action bar) | 8 |
 | Card/section internal padding | 12 (compact) or 16 |
@@ -104,7 +104,7 @@ Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label an
 ### 2.4 Radii
 
 | Token | Value | Use |
-|---|---|---|
+| --- | --- | --- |
 | `--radius-lg` | 8 | Cards, toasts, menus, sheets, banners, wells |
 | `--radius-md` | 6 | Buttons, inputs, selects, tabs, segmented outer, menu-item hover |
 | `--radius-sm` | 4 | kbd, segmented inner option, tab-close hover, mini affordances |
@@ -115,7 +115,7 @@ Never 10/12/14px radii (extension card's 14px is reconciled to 8 — see appendi
 ### 2.5 Motion
 
 | Token | Value | Use |
-|---|---|---|
+| --- | --- | --- |
 | `--motion-exit` | 120ms | Leaving: toast dismiss, menu close, back-navigation |
 | `--motion-state` | 140ms | State change: hover, active, color/background transitions |
 | `--motion-enter` | 150ms | Entering: toast/sheet/menu appear, push navigation |
@@ -141,14 +141,14 @@ Never 10/12/14px radii (extension card's 14px is reconciled to 8 — see appendi
 Exactly two shadows. Attached surfaces (cards in flow, banners, rows) get **no shadow**.
 
 | Token | Value | Use |
-|---|---|---|
+| --- | --- | --- |
 | `--shadow-1` | `0 8px 24px rgba(0,0,0,0.35)` | Toast, menu/popover |
 | `--shadow-2` | `0 10px 30px -8px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.35)` | Sheet/modal, injected widget (floats over foreign pages — needs harder separation) |
 
 ### 2.7 Z-layers
 
 | Layer | z-index |
-|---|---|
+| --- | --- |
 | Content | 0 |
 | Pinned bars (topbar, action bar, push-nav header) | 10 |
 | Menus / popovers | 40 |
@@ -177,7 +177,7 @@ All px values are exact. "Do/Don't" lines are normative.
 Sizes:
 
 | Size | Height | Padding | Text |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | md (default) | 28 | 0 12 | 12/600 |
 | sm | 24 | 0 10 | 12/600 |
 | icon | 28×28 (sm 24×24) | 0 | glyph 14–16px |
@@ -185,7 +185,7 @@ Sizes:
 Tones:
 
 | Tone | Resting | Hover | Use |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | primary | `--accent-fill` bg, `#fff` text | bg `#5a9dff` | THE one primary action of the surface |
 | quiet | transparent, 1px `--hairline-strong` border, `--text-1` text | bg `--fill-subtle`, text `--text-0` | Secondary actions |
 | danger | transparent, 1px danger-soft border, `--danger` text | bg danger-soft | Destructive (reject, cancel run, delete) |
@@ -205,7 +205,7 @@ Tones:
 - **Workspace picker** (detail "Run with" card, `Segmented` in `DetailPage.tsx`): a two-option either/or (Worktree / Main) that stays **NEUTRAL** (`--fill-raised` active — the base spec, NOT `commit`), even though it's an either/or, because the Agent picker directly above already owns the card's one accent-filled commit and two accent fills on one surface is banned (§1). A trailing quiet **"Default"** reset (`.field-reset`, text `--text-2`) sits on the field-label row and appears ONLY when an override is active (stored on the Item, or freshly picked); it clears the override back to `config.solver.workspace`. Picking **Main** shows a one-line `.run-caption` (`--text-2`): "Runs in the project's checkout — shares your working tree." The extension widget's own Workspace segmented (`.vg-agent` pattern) DOES reuse the accent-filled chip (its dense card follows the agent-picker precedent), with "no chip active" = follow the daemon default.
 - Trailing count badges inside options: 11px tabular, `--text-2` (active: `--text-1`), separated by 4px. No pill background — bare number.
 - Keyboard: Left/Right arrows move selection; the control is one tab stop (`role="tablist"` semantics).
-- **Do** cap at 4–5 segments (sidebar filter: Needs / Active / Queue / Triage). **Don't** build full-width tab bars with icons; **don't** let labels wrap or ellipsize — shorten the label instead.
+- **Do** cap at 4–5 segments (sidebar filter: Needs / Active / Queue / Inbox). **Don't** build full-width tab bars with icons; **don't** let labels wrap or ellipsize — shorten the label instead.
 
 ### 3.3 List row
 
@@ -213,17 +213,17 @@ The sidebar work-item row; also the template for any dense list.
 
 - Height **48**, horizontal padding 12, radius 0 (rows are flush; the list well provides the frame). Separator: none by default — rely on spacing; a 1px `--hairline` inset separator is allowed for mixed-content lists.
 - Line 1: status dot (8px, §3.5) + 8px gap + title 13/500 `--text-0` single-line ellipsis + trailing relative time 11px tabular `--text-2`.
-- Line 2 (2px below): 11px `--text-2` meta — project tag, then ONE mini verdict chip when an assessment exists. Nothing else.
+- Line 2 (2px below): 11px `--text-2` meta — project tag, then ONE of: the mini assessment-verdict chip, or a compact Agent/Manual ownership marker (14px outline icon + label). The ownership marker wins once assigned.
 - Hover: background `--fill-subtle`. Selected: `--fill-raised` (text unchanged — no accent text on selection).
-- The entire row is the hit target and the only affordance.
-- **Do** keep trailing time tabular so columns don't jitter. **Don't** put buttons/icons that appear on hover in rows (principle 5); **don't** exceed two lines.
+- The entire row is the hit target by default. **Queue ownership exception:** undecided Queue rows reserve 64px at the trailing edge for two permanently-visible 28px ghost icon buttons — person = “Work manually”, robot = “Start agent” (or loop). They are sibling controls, never nested inside the row button; each has an accessible label. Permanent visibility avoids the inaccessible hover-action anti-pattern.
+- **Do** keep trailing time tabular so columns don't jitter. **Don't** add hover-only row controls; **don't** exceed two lines.
 
 ### 3.4 Chips & badges
 
 - Padding **2 7**, radius 999, text 10/700 uppercase `0.04em`, line-height 1.4.
 - Color: tone text on tone soft fill (`chip-gray/blue/green/amber/red` map to neutral/accent/success/warn/danger — the tone-class naming in `widget.styles.ts:344` and the web dashboard is the shared vocabulary).
 - Verdict chips (triage assessment) use the mapping in `web/src/verdict.ts` — that file owns verdict→label/tone/icon; do not re-derive it per surface.
-- **Do** cap at one chip per list-row meta line. **Don't** make chips interactive (a chip is a state readout, not a button); **don't** use chip style for section labels — that's the Label type style.
+- **Do** cap at one chip per list-row meta line. **Don't** make list-row chips interactive (a chip is a state readout, not a button); the Item detail's current-status control is the sole exception — a chip-styled menu trigger with a down chevron, visible focus ring, and every non-running manual status. **Don't** use chip style for section labels — that's the Label type style.
 
 ### 3.5 Status dots
 
@@ -257,7 +257,7 @@ Reference implementation: `app/src/renderer/toast.ts` + `styles.css` "toasts" bl
 ### 3.8 Menus (overflow / popover)
 
 - Panel: min-width 180, max-width 280, padding 4, background `--chrome`, 1px `--hairline`, radius `--radius-lg`, `--shadow-1`, z-layer 40.
-- Items: height 28, padding 0 8, radius `--radius-sm`, text 13 `--text-0`; hover `--fill-subtle`; destructive items `--danger` text (hover danger-soft fill). Disabled items `--text-2`, no hover.
+- Items: height 28, padding 0 8, radius `--radius-sm`, text 13 `--text-0`; hover `--fill-subtle`; destructive items `--danger` text (hover danger-soft fill). Disabled items `--text-2`, no hover. Action/overflow menus use a 14px `currentColor` outline icon in a fixed leading column with an 8px gap; every sibling in an icon-led menu gets an icon. Simple value-selection menus may stay text-only.
 - Separator: 1px `--hairline`, margin 4 0. Trailing shortcut hints: 11px mono `--text-2`.
 - Motion: open 120ms ease-out, opacity 0→1 + translateY(4px)→0 from the anchor edge; close instant or 120ms.
 - Keyboard: Down/Up cycle, Home/End jump, Enter activates, Esc closes and returns focus to the trigger. Click-outside closes.
@@ -279,8 +279,8 @@ For pane-scoped tasks like New Item.
 The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page as a push stack inside the pane. **No side-by-side master/detail below 480px pane width, ever.**
 
 - Header: height 36, background inherits the pane, 1px `--hairline` bottom border, z-layer 10. Contents: 28×28 ghost back-chevron button + page title 13/600 single-line ellipsis; optional one trailing icon button.
-- **The header title names the content, never its type.** An item's detail header shows the item's `displayName ?? title` (single-line ellipsis) at all scroll positions — a literal type word ("Item") never appears as a header title. The page may repeat the name in full below as its 15px page title (the header copy is truncated; the page title wraps). Sub-pages of an already-named object (Plan, Task) and pages whose name IS the page (Settings, Archive) keep a static header title.
-- Forward: incoming page slides `translateX(100%)`→0 over **150ms ease-out**; outgoing page slides 0→`translateX(-25%)` (parallax) and dims to 0.9 opacity. Back: exact reverse at 120ms.
+- **The header title names the content, never its type, and is the sole visible item-name heading.** An item's detail header shows the item's `displayName ?? title` (single-line ellipsis) at all scroll positions — a literal type word ("Item") never appears as a header title, and the body does NOT repeat the item name. The detail body leads with a state hero (status/project/time, then the 15/600 next-step headline); when an AI display name differs from the canonical source title, the pushed Task page carries the full source title. Sub-pages of an already-named object (Plan, Task) and pages whose name IS the page (Settings, Archive) keep a static header title.
+- Forward: incoming page slides `translateX(100%)`→0 over **150ms ease-out**; outgoing page slides 0→`translateX(-25%)` (parallax) and dims to 0.9 opacity. Back: exact reverse at 120ms. Every `.nav-page` remains its own stacking context (`isolation: isolate`) after motion ends, so a previous page's z-indexed pinned bar can never paint through a content-only subpage.
 - Reduced motion: instant swap (the global clamp handles it).
 - The list page preserves scroll position and selection across push/pop. Deep pages (plan preview, settings section) push onto the same stack; Esc = back.
 - **Gestures — every pushed page inherits these** (implementation: `app/src/renderer/sidebar/swipe.ts` + the nav-stack wiring in `SidebarRoot.tsx`):
@@ -295,7 +295,7 @@ The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page 
 Detail pages pin their actions; content scrolls, actions don't.
 
 - Height 48 (content 28 + 10px vertical padding), padding 10 12, background `--pane` (opaque), 1px `--hairline` top border, z-layer 10.
-- One **primary** button (the contextual main action: Approve / Start / Retry; **Mark done** in review) + a quiet or ghost "…" overflow for the rest. Review's Mark done is the human acknowledgement that shipped work is finished; Retry moves into overflow. Success returns to the work list and the Item moves to Archive. Danger actions live in the overflow unless the page's whole point is destructive.
+- One **primary** button (the contextual main action) + a quiet or ghost "…" overflow for the rest. The button explains its effect through a concise verb phrase plus a 14px outline icon: check + **Set as done** for a status-only review handoff, tray arrow + **Approve and queue**, play + **Start agent** (or **Start loop**), circular arrow + **Queue retry** (or **Queue loop retry**). **Ownership-choice exception:** an undecided Queue Item shows quiet person + **Work manually** beside primary robot + **Start agent**; a human-owned Active Item shows quiet tray + **Return to Queue** beside primary check + **Set as done**. These are the bar's maximum two visible buttons; overflow may remain as the one ghost control. Do not add an instructional caption above the bar; controls must be self-explanatory. Review's Set as done returns to the work list and moves the Item to Archive; Retry moves into overflow. Danger actions live in the overflow unless the page's whole point is destructive.
 - **Don't** put more than two visible buttons in the bar; **don't** let the bar scroll away.
 
 ### 3.12 Banners (error / notice)
@@ -335,11 +335,11 @@ Quiet and directive: say what the state is, then what to do.
 
 The in-flow content card and its fact/navigation rows (`app/src/renderer/sidebar/ui.tsx`).
 
-- Card: 1px `--hairline` border, radius `--radius-lg`, padding 12, transparent background (depth from the ladder — cards in flow get no fill and no shadow). Optional head row: Label-style section label left, one small control or chip right.
+- Card: 1px `--hairline` border, radius `--radius-lg`, padding 12, transparent background by default (depth from the ladder — cards in flow get no shadow). Optional head row: Label-style section label left, one small control or chip right. **Item decision details are the deliberate exception:** they use a flat editorial stack, not visible cards — each evidence section has no box/fill/radius and begins with one full-width `--hairline` rule, 16px top inset, and 4px horizontal text inset. The unframed state hero stays visually dominant; do not reintroduce grouped boxes or repeat low-priority context facts on the base page.
 - Info row (static fact): min-height 20, 12px value `--text-0` right-aligned single-line ellipsis; label is the Label type style. Mono values (branch, refs) use Mono inline 11.
 - **Row rhythm in a flush card** (the Details card, settings lists — `.card-flush`, gap 0, rows at exact pitch): fact rows AND copy/external action rows share **one 28px pitch** (`.card-flush .info-row` min-height 28, center-aligned; `.action-row` min-height 28); only rows that navigate — push rows (chevron ›, `.action-row-push`) and nav rows — sit at the **36px pitch**. Two pitches, one meaning: 28 = read/act in place, 36 = go somewhere.
 - Tappable row (`.action-row`): min-height 28 (push rows 36, above), radius `--radius-sm`, hover `--fill-subtle`. Trailing glyph declares the behavior — chevron ›= pushes a sub-page, ↗ = opens externally, copy glyph = copies to clipboard (confirm with a toast). ONLY external-link values are `--accent`; push/copy values stay `--text-0` so the pane doesn't read as a link farm.
-- Nav row (`.action-row-nav` — the settings section list): a tappable row whose **title is the content, not a label** — min-height **36** (36px pitch), title 13/400 `--text-0` sentence case, value 12 `--text-1` right-aligned single-line ellipsis, chevron `--text-2`. Nav rows stack flush (card gap 0 via `.card-flush`) inside cards with head rows; grouping comes from the card head row, never from a title prefix ("AI · …" is a namespace hack). Every nav row shows a current-state value with units and real state ("60s", "2 of 3 on", "default") — a blank cell next to a chevron reads as broken, a unit-less number gives no direction, and independent toggles never collapse into one fake on/off.
+- Nav row (`.action-row-nav` — settings section lists and the Item detail's Work/Run setup groups): a tappable row whose **title is the content, not a label** — min-height **36** (36px pitch), title 13/400 `--text-0` sentence case, value 12 `--text-1` right-aligned single-line ellipsis, chevron `--text-2`. Nav rows stack flush (card gap 0 via `.card-flush`) inside cards with head rows; grouping comes from the card head row, never from a title prefix ("AI · …" is a namespace hack). Every nav row shows a current-state value with units and real state ("60s", "2 of 3 on", "default") — a blank cell next to a chevron reads as broken, a unit-less number gives no direction, and independent toggles never collapse into one fake on/off.
 - **Don't** mix behaviors on one row; **don't** accent-color a value that doesn't leave the app; **don't** use a placeholder verb ("view", "open") or a bare destination name as a value — the value carries the fact (destination + short id: "Contember #4821", "GitHub #132" parsed from the PR url — "GitHub" alone never appears); one object gets one row — fold source + task views into a single push row and demote the external ↗ to the pushed page's header.
 
 ### 3.16 Toggle switch
@@ -359,7 +359,7 @@ The in-flow content card and its fact/navigation rows (`app/src/renderer/sidebar
 iTerm2's "bury session", helm-style: a tab leaves the strip while its Terminal instance stays mounted in the hidden holder and its pty stays attached — scrollback keeps accumulating headlessly. Memory cost equals an inactive strip tab (those are already hidden, live xterm instances), so parking buys strip space, not memory. Implementation: `app/src/renderer/renderer.ts` (park/restore/popover) + `app/src/sessions.ts` (persisted `parked` flag).
 
 - **Move to background**: right-click a tab → context menu (§3.8 panel at the pointer, viewport-clamped; items "Move to background" ⇧⌘B, "Close" ⌘W with §3.8 trailing shortcut hints). ⌘⇧B parks the active tab — an Electron Shell-menu accelerator per §4 (xterm swallows renderer keys).
-- **Drag**: custom pointer drag, never native HTML DnD (Chromium's ghost/cursor cannot match the app). After 5px intent, the tab lifts into a fixed clone at 1.02× with `--fill-raised`, strong hairline, and `--shadow-1`; its in-strip original becomes an invisible placeholder. Reordering is LIVE as pointer crosses every tab midpoint: placeholder moves, neighbors FLIP-settle over 160ms (`cubic-bezier(0.2, 0.8, 0.2, 1)`), no insertion rails. A 6px leading gutter makes slot 0 reachable. Holding either 28px strip edge auto-scrolls by 12px/frame while more tabs exist there. Pointer-up in strip settles clone home over 180ms; invalid drop/Esc restores original order and settles home. Reduced motion skips settles. Background is a magnetic layers well: appears during drag even at count 0, hides its count, scales 0.94 at rest → 1.06 inside an 8px expanded hit area, then absorbs clone at 0.72×/0 opacity over 140ms through the existing `parkTab` path. Close and inline-rename controls never start a drag.
+- **Drag**: custom pointer drag, never native HTML DnD (Chromium's ghost/cursor cannot match the app). After 5px intent, the tab lifts into a fixed clone at 1.02× with `--fill-raised`, strong hairline, and `--shadow-1`; its in-strip original becomes an invisible placeholder. Reordering is LIVE as pointer crosses every tab midpoint: placeholder moves, neighbors FLIP-settle over 160ms (`cubic-bezier(0.2, 0.8, 0.2, 1)`), no insertion rails. A 6px leading gutter makes slot 0 reachable. Holding either 28px strip edge auto-scrolls by 12px/frame while more tabs exist there. Pointer-up in strip settles clone home over 180ms; invalid drop/Esc restores original order and settles home. Reduced motion skips settles. Background is a magnetic layers well: appears during drag even at count 0, **keeps its count badge visible so the control never changes width or shifts**, scales 0.94 at rest → 1.06 inside an 8px expanded hit area, then absorbs clone at 0.72×/0 opacity over 140ms through the existing `parkTab` path. Close and inline-rename controls never start a drag.
 - **Strip control**: ghost button pinned at the strip's right edge (28px height, radius `--radius-md`), visible ONLY when the background count > 0 — the empty state is the hidden button, never an empty popover. Content: stack/layers glyph 14px `--text-2` + count badge in the §3.4 chip spec (neutral tone soft fill, 10/700 tabular). Hover and open: `--fill-subtle` fill, `--text-0` glyph.
 - **Popover**: §3.8 panel (background `--chrome`, `--hairline`, radius `--radius-lg`, `--shadow-1`, z 40), fixed width 260, anchored `menu-end` under the button. Header "Background terminals" in the Label type style. One row per background terminal, park order.
   - Row: 28px pitch, padding 0 8, radius `--radius-sm`, hover/focus `--fill-subtle`. Leading fixed 6px activity-dot slot (`--accent` when output arrived since parking; cleared on restore and on exit; transparent otherwise so titles align) + title 13 `--text-0` single-line ellipsis (exited rows: `--text-1`) + state 11 `--text-2` tabular ("Running" / "Exited (code)") + hover/focus-within ✕ (16px, opacity 0→0.6→1). The ✕ mirrors the strip tab's close affordance — the row is a tab surrogate, not a §3.3 list row, which is why the hover-revealed control is allowed here.
@@ -369,6 +369,17 @@ iTerm2's "bury session", helm-style: a tab leaves the strip while its Terminal i
 - **Persistence**: the session registry (`sessions.json`) carries per-session `parked` + additive numeric `order` metadata. Writes are temp+rename atomic — an interrupted truncate once left a 0-byte registry. On relaunch, every definitively-live dtach socket is re-adopted before metadata lookup, so missing/corrupt registry state self-heals and rename/order writers no longer ignore the surviving session as unknown. Parked sessions reattach headless into the popover; non-parked sessions restore as strip tabs; both lists retain drag order. Legacy entries without `order` fall back to `createdAt`. Registry titles are reused for row labels; a pinned `customName` (§3.14 tab rename) wins over the OSC title on the row.
 - **Copy**: menu item "Move to background", header "Background terminals", states "Running" / "Exited (n)" — sentence case per §5.
 - **Don't** show the strip button at count 0; **don't** toast background exits; **don't** give the popover more than the one ✕ action per row — restore is the row itself.
+
+### 3.19 Task detail
+
+The pushed Task page is a reading surface, not another dashboard. It follows the Item detail's flat editorial language while preserving the source's canonical content.
+
+- Static push title "Task" (or "Imported task") + optional external-source icon; the body begins with a compact source overline and the canonical task title at 15/600.
+- Description, attachments, and comments are full-width sections separated only by `--hairline`, with 16px vertical and 4px horizontal content insets. No cards, fills, or repeated metadata block above the description.
+- Rich description images render inline in source order, contained by one hairline/radius frame because the media itself needs an edge; clicking opens the source image. Non-inline attachments remain 36px text rows.
+- Comments use quiet author/time metadata and hairline separators between comments — never quote bars or chat bubbles.
+- Provider metadata is secondary and potentially noisy: keep it collapsed in a final "Metadata" disclosure. Its rows may use the standard fact-row pattern only after expansion.
+- **Don't** put metadata before the description; **don't** dump images into an attachment-name list; **don't** add a second visible container around any section.
 
 ---
 
@@ -402,7 +413,7 @@ Budgets are **measured, not aspirational**: each number below was measured on 20
 ### 6.1 Startup
 
 | Metric | Measured (median of 3) | Budget |
-|---|---|---|
+| --- | --- | --- |
 | Electron launch → window visible (`ready-to-show`) | 473ms (452–495) | **< 800ms** |
 | Launch → sidebar painted **with data** (50 items) | 474ms | **< 900ms** |
 
@@ -417,7 +428,7 @@ Method: `process.getCreationTime()` as t0; marks at main-load (~120ms), app-read
 ### 6.3 List rendering & polling
 
 | Metric | Measured | Budget |
-|---|---|---|
+| --- | --- | --- |
 | Idle `daemon:snapshot` pushes (queue idle, nothing changing) | **0 pushes / 5 min** (120 poll ticks) | **0** — the bridge must diff (uptime stripped) before pushing |
 | Sidebar re-renders while idle | 2 (mount + first snapshot), then flat | re-render **only** on push + the 30s relative-time tick |
 | Full 50-row list render + paint (cold mount) | ~60ms | one poll-refresh re-render **< 16ms** (steady state; rows are memoized, only rows whose time label flipped re-render) |
@@ -427,7 +438,7 @@ Method: `process.getCreationTime()` as t0; marks at main-load (~120ms), app-read
 ### 6.4 Memory
 
 | Process | Measured (5 min idle, 2 terminal tabs, 50 items) | Budget |
-|---|---|---|
+| --- | --- | --- |
 | Electron main | 179MB RSS | — |
 | Renderer (sidebar + 2 × xterm, 10k scrollback each) | 149MB RSS | — |
 | **Main + renderer total** | **328MB** | **< 400MB** |
@@ -437,7 +448,7 @@ No growth trend measured (321MB at 40s → 328MB at 5min). GPU/utility helpers a
 ### 6.5 Daemon API
 
 | Route | Measured | Budget |
-|---|---|---|
+| --- | --- | --- |
 | `GET /api/items` (50 items, ~190KB, cheap observation only) | p50 8ms (3.7–12.2) | **p50 < 50ms** — this route must stay DB-only; adding per-row IO (logs, `gh`) is the regression to watch for |
 | `GET /api/status` | p50 2ms | p50 < 20ms |
 | `GET /api/items/:id` (full observation) | ~60ms without PR, ~240ms with PR (`gh pr view` subprocess) | **< 500ms**; expensive by design — single-item surfaces only, never called per list row, and helm dedupes it across stacked pages (one fetch per id + updatedAt, `DetailPage.tsx`) |
@@ -453,7 +464,7 @@ No growth trend measured (321MB at 40s → 328MB at 5min). GPU/utility helpers a
 Values that existed in code before this document, and the canonical pick. Migrate on next touch of the affected file; do not batch-restyle preemptively.
 
 | Where | Was | Canonical | Why |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `extension/src/widget.styles.ts` bg ladder | `#17181a` / `#1e2024` / `#292c31` | `--pane #141517` / `--chrome #1a1c1f` / `--fill-raised` hover | One ladder everywhere; helm's matches the design seed |
 | widget border | `rgba(255,255,255,0.09)` | `--hairline 0.07` | 0.09 is the *fill-raised* alpha, not a line |
 | widget text | `#ededee` / `#a6a9af` / `#6b6f77` | `#ececee` / `#9a9ea6` / `#62666e` | Near-duplicates; helm's are canonical |

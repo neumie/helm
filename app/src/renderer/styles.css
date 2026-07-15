@@ -350,10 +350,6 @@ body.tab-dragging .tab {
 	color: var(--text-1);
 }
 
-#bg-toggle.drag-ready .bg-count {
-	display: none;
-}
-
 #bg-toggle[hidden] {
 	display: none; /* visible ONLY when the background count > 0 */
 }

@@ -496,6 +496,47 @@ test('ensureItemDisplayName skips an already-short title (no model call)', () =>
 		assert.equal(result.displayName, null)
 	}))
 
+test('ensureItemDisplayName generates a missing short name for solve startup', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'helm', prompt: 'do it' })
+
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			generateWhenMissing: true,
+			deps: { runOneShot: async () => 'Repair login flow' },
+		})
+
+		assert.equal(result.displayName, 'Repair login flow')
+		assert.equal(commands.getItem(item.id)?.displayName, 'Repair login flow')
+	}))
+
+test('ensureItemDisplayName does not overwrite a concurrent background name', () =>
+	withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({ title: LONG_TITLE, projectSlug: 'helm', prompt: 'do it' })
+
+		const result = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			generateWhenMissing: true,
+			deps: {
+				runOneShot: async () => {
+					commands.recordDisplayName(item.id, 'Background name wins')
+					return 'Solve-start name loses'
+				},
+			},
+		})
+
+		assert.equal(result.displayName, 'Background name wins')
+		assert.equal(commands.getItem(item.id)?.displayName, 'Background name wins')
+	}))
+
 test('ensureItemDisplayName is a no-op when displayNames is disabled', () =>
 	withTempDb(async db => {
 		const config = makeConfig({ displayName: { enabled: false } })

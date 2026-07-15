@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+// @ts-expect-error -- extension is CommonJS under tsx; runtime exports arrive on the default object.
 import extensionWidgetModule from '../extension/src/Widget.tsx'
+// @ts-expect-error -- extension is CommonJS under tsx; runtime exports arrive on the default object.
 import extensionApiModule from '../extension/src/api.ts'
 
 const originalFetch = globalThis.fetch
@@ -245,7 +247,7 @@ test('extension API creates source-backed Items without a per-run solverAgent', 
 	}
 	globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
 		calls.push({ path: input.toString(), init })
-		return new Response(JSON.stringify({ data: { id: 'item-1', status: 'triage' } }), {
+		return new Response(JSON.stringify({ data: { id: 'item-1', status: 'inbox' } }), {
 			status: 201,
 			headers: { 'content-type': 'application/json' },
 		})

@@ -27,11 +27,13 @@ function makeConfig(over?: { displayName?: boolean; triage?: boolean }): HelmCon
 		solver: {
 			type: 'default',
 			agent: 'claude',
+			workspace: 'worktree',
 			concurrency: 2,
 			timeoutMinutes: 30,
 			branchNaming: { enabled: false },
 			displayName: { enabled: over?.displayName ?? true },
 			triage: { enabled: over?.triage ?? true },
+			modelGuidance: {},
 		},
 		spawner: { name: 'default' },
 		server: { port: 7474, host: 'localhost' },
@@ -57,7 +59,7 @@ function fakeItem(over: Partial<ItemRecord>): ItemRecord {
 	return {
 		id: 'x',
 		kind: 'solve',
-		status: 'triage',
+		status: 'inbox',
 		projectSlug: 'helm',
 		title: 't',
 		displayName: null,

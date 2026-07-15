@@ -31,6 +31,7 @@ import { itemStatusSchema } from '../../items/schema.js'
 import type { ItemRecord } from '../../items/schema.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
+import { DAEMON_BUILD_ID, DAEMON_PROTOCOL_VERSION } from '../../protocol.js'
 import type { TaskContext, TaskProvider } from '../../providers/provider.js'
 import type { Drainer } from '../../queue/drainer.js'
 import { solverAgentSchema } from '../../solver/agent.js'
@@ -282,6 +283,8 @@ export function apiRoutes(
 		const queueStatus = queue.getStatus()
 		return c.json({
 			data: {
+				protocolVersion: DAEMON_PROTOCOL_VERSION,
+				buildId: DAEMON_BUILD_ID,
 				uptime: process.uptime(),
 				queue: queueStatus,
 				projects: config.projects.map(p => p.slug),
@@ -363,7 +366,7 @@ export function apiRoutes(
 
 	// Ingest a self-contained task (e.g. an email tied to a project): title, body,
 	// metadata, and base64 attachments captured up front. Creates a source-backed
-	// `triage` solve Item carrying a frozen capturedContext (no live provider to
+	// `inbox` solve Item carrying a frozen capturedContext (no live provider to
 	// re-poll) and enqueues it for AI enrichment (display name + the security-aware
 	// intent assessment — this is untrusted external content). Idempotent by
 	// source.externalId, so re-ingesting the same message returns the existing Item.
@@ -561,7 +564,6 @@ export function apiRoutes(
 							baseRef: parsed.data.baseRef,
 							baseItemId: parsed.data.baseItemId,
 							spawner: parsed.data.spawner,
-							initialStatus: parsed.data.intent === 'plan' ? 'triage' : undefined,
 							parallelism: parsed.data.parallelism,
 						})
 					case 'loop':
@@ -578,7 +580,6 @@ export function apiRoutes(
 							effort: parsed.data.effort,
 							iterations: parsed.data.iterations,
 							noOversee: parsed.data.noOversee,
-							initialStatus: parsed.data.intent === 'plan' ? 'triage' : undefined,
 							parallelism: parsed.data.parallelism,
 						})
 				}
@@ -597,7 +598,7 @@ export function apiRoutes(
 		if (invalid) return invalid
 		const current = itemCommands.getItem(c.req.param('id'))
 		if (!current) return c.json({ error: 'Item not found' }, 404)
-		if (current.status !== 'triage') return c.json({ error: 'Only triage Items can be approved' }, 400)
+		if (current.status !== 'inbox') return c.json({ error: 'Only Inbox Items can be approved' }, 400)
 		try {
 			recordSolveSelection(current, selection)
 			const item = itemCommands.approveItem(current.id)
@@ -665,7 +666,7 @@ export function apiRoutes(
 		if (item.kind !== 'solve' && item.kind !== 'loop') {
 			return c.json({ error: 'Only solve or loop Items can be started by this drainer' }, 400)
 		}
-		if (item.status !== 'ready' && item.status !== 'triage') return c.json({ error: 'Item is not ready to start' }, 400)
+		if (item.status !== 'ready' && item.status !== 'inbox') return c.json({ error: 'Item is not ready to start' }, 400)
 		recordSolveSelection(item, selection)
 		const started = queue.processOneItem(item.id)
 		if (!started) return c.json({ error: 'Could not start Item' }, 500)
@@ -717,7 +718,7 @@ export function apiRoutes(
 	api.post('/items/:id/cancel', async c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
-		if (item.status !== 'running' && item.status !== 'ready' && item.status !== 'triage') {
+		if (item.status !== 'running' && item.status !== 'ready' && item.status !== 'inbox') {
 			return c.json({ error: 'Item is not active' }, 400)
 		}
 		try {

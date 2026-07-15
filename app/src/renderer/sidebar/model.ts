@@ -17,6 +17,8 @@ export type Route =
 	| { kind: 'detail'; id: string }
 	| { kind: 'plan'; id: string }
 	| { kind: 'task'; id: string }
+	| { kind: 'run'; id: string }
+	| { kind: 'run-setup'; id: string }
 	| { kind: 'settings' }
 	| { kind: 'settings-section'; sectionId: string }
 	| { kind: 'appearance' }
@@ -24,7 +26,7 @@ export type Route =
 // ---------------------------------------------------------------------------
 // Work buckets
 
-export type BucketKey = 'needs' | 'active' | 'queue' | 'triage'
+export type BucketKey = 'needs' | 'active' | 'queue' | 'inbox'
 
 /** `review` + `failed` are the "needs you" pile (same rule as the web dashboard). */
 const NEEDS_YOU = new Set<ItemStatus>(['review', 'failed'])
@@ -33,25 +35,30 @@ export interface WorkBuckets {
 	needs: DashboardItem[]
 	active: DashboardItem[]
 	queue: DashboardItem[]
-	triage: DashboardItem[]
+	inbox: DashboardItem[]
 	archived: DashboardItem[]
 }
 
 export function partitionWork(items: DashboardItem[]): WorkBuckets {
 	return {
 		needs: items.filter(i => NEEDS_YOU.has(i.status)),
-		active: items.filter(i => i.status === 'running'),
+		active: items.filter(i => i.status === 'active' || i.status === 'running'),
 		queue: items.filter(i => i.status === 'ready'),
-		triage: items.filter(i => i.status === 'triage'),
+		inbox: items.filter(i => i.status === 'inbox'),
 		archived: items.filter(
-			i => !NEEDS_YOU.has(i.status) && i.status !== 'running' && i.status !== 'ready' && i.status !== 'triage',
+			i =>
+				!NEEDS_YOU.has(i.status) &&
+				i.status !== 'active' &&
+				i.status !== 'running' &&
+				i.status !== 'ready' &&
+				i.status !== 'inbox',
 		),
 	}
 }
 
 /** Most meaningful timestamp to age a row by, per state (mirrors the web list). */
 export function rowTimestamp(item: DashboardItem): string {
-	if (item.status === 'running') return item.startedAt ?? item.queuedAt ?? item.createdAt
+	if (item.status === 'active' || item.status === 'running') return item.startedAt ?? item.queuedAt ?? item.createdAt
 	if (NEEDS_YOU.has(item.status)) return item.completedAt ?? item.updatedAt
 	if (item.status === 'ready') return item.queuedAt ?? item.createdAt
 	return item.completedAt ?? item.updatedAt
@@ -65,6 +72,7 @@ export type StatusTone = 'neutral' | 'accent' | 'success' | 'warn' | 'danger'
 /** Fixed status→tone mapping from design-system.md §2.1. Do not remap. */
 export function statusTone(status: ItemStatus): StatusTone {
 	switch (status) {
+		case 'active':
 		case 'running':
 			return 'accent'
 		case 'review':
@@ -73,7 +81,7 @@ export function statusTone(status: ItemStatus): StatusTone {
 			return 'success'
 		case 'failed':
 			return 'danger'
-		default: // triage / ready / cancelled
+		default: // inbox / ready / cancelled
 			return 'neutral'
 	}
 }
@@ -145,4 +153,14 @@ export function absoluteUrl(url: string, daemonUrl: string): string | null {
 	} catch {
 		return null
 	}
+}
+
+export function openExternalUrl(url: string, daemonUrl: string): void {
+	const href = absoluteUrl(url, daemonUrl)
+	if (!href) return
+	const anchor = document.createElement('a')
+	anchor.href = href
+	anchor.target = '_blank'
+	anchor.rel = 'noopener noreferrer'
+	anchor.click()
 }

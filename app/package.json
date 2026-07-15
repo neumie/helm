@@ -6,7 +6,7 @@
 	"description": "Orchestrator cockpit for the helm daemon: native sidebar + real terminal",
 	"main": "dist/main.cjs",
 	"scripts": {
-		"build": "tsc --noEmit && node build.mjs",
+		"build": "npm --prefix .. run build && tsc --noEmit && node build.mjs",
 		"start": "bun run build && electron .",
 		"rebuild": "electron-rebuild -f -w node-pty",
 		"postinstall": "electron-rebuild -f -w node-pty"

@@ -109,6 +109,7 @@ export interface DashboardItem {
 	id: string
 	kind: 'solve' | 'loop'
 	status: string
+	workMode: 'agent' | 'manual' | null
 	projectSlug: string
 	title: string
 	source: { provider: string; externalId: string; url?: string } | null

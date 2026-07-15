@@ -29,11 +29,13 @@ const config: HelmConfig = {
 	solver: {
 		type: 'default',
 		agent: 'claude',
+		workspace: 'worktree',
 		concurrency: 2,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },
 		triage: { enabled: false },
+		modelGuidance: {},
 	},
 	spawner: { name: 'default' },
 	server: { port: 7474, host: 'localhost' },
@@ -81,7 +83,7 @@ const PNG_1x1 = Buffer.from(
 	'base64',
 )
 
-test('POST /items/ingest creates a triage source solve Item with frozen captured context + served attachment', () =>
+test('POST /items/ingest creates an Inbox source solve Item with frozen captured context + served attachment', () =>
 	withTempDb(async db => {
 		const { enricher, enqueued } = makeRecordingEnricher()
 		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
@@ -106,7 +108,7 @@ test('POST /items/ingest creates a triage source solve Item with frozen captured
 			}
 			createdIds.push(data.id)
 
-			assert.equal(data.status, 'triage')
+			assert.equal(data.status, 'inbox')
 			assert.equal(data.source.provider, 'Email')
 			assert.deepEqual(
 				data.allowedActions.map(a => a.id),

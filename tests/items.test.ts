@@ -26,6 +26,7 @@ import { ItemCommands } from '../src/items/commands.js'
 import { toDashboardItem, toDashboardItems } from '../src/items/contract.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
 import { observeItemRun } from '../src/items/observation.js'
+import type { ItemPayload } from '../src/items/schema.js'
 import { PlanWorkspace } from '../src/plan/workspace.js'
 import { Poller } from '../src/poller/poller.js'
 import { Drainer } from '../src/queue/drainer.js'
@@ -64,6 +65,24 @@ function git(cwd: string, args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
+function parseJsonObject(value: string, source: string): Record<string, unknown> {
+	try {
+		return JSON.parse(value) as Record<string, unknown>
+	} catch (error) {
+		throw new Error(`Could not parse JSON from ${source}`, { cause: error })
+	}
+}
+
+function readJsonObject(path: string): Record<string, unknown> {
+	return parseJsonObject(readFileSync(path, 'utf-8'), path)
+}
+
+function solvePayload(db: DB, id: string): Extract<ItemPayload, { kind: 'solve' }> {
+	const item = db.items.get(id)
+	if (!item || item.payload.kind !== 'solve') throw new Error(`Expected solve Item ${id}`)
+	return item.payload
+}
+
 const config: HelmConfig = {
 	provider: {
 		type: 'contember',
@@ -77,11 +96,13 @@ const config: HelmConfig = {
 	solver: {
 		type: 'default',
 		agent: 'claude',
+		workspace: 'worktree',
 		concurrency: 2,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },
 		triage: { enabled: false },
+		modelGuidance: {},
 	},
 	spawner: { name: 'default' },
 	server: { port: 7474, host: 'localhost' },
@@ -115,7 +136,7 @@ const provider = {
 	pollNewTasks: async () => [],
 	getTaskContext: async () => null,
 	resolveTaskSummary: async () => null,
-	postComment: async () => undefined,
+	postComment: async () => null,
 }
 const spawner = {
 	name: 'fake',
@@ -197,6 +218,55 @@ VALUES (?, ?, 'done', 'helm', ?, 'main', ?, '2026-07-13T00:00:00.000Z', '2026-07
 		assert.equal(db.items.getEvents('legacy-harden').length, 0)
 		assert.equal(db.items.get('legacy-loop')?.kind, 'loop')
 		assert.equal(db.items.get('legacy-loop')?.payload.kind, 'loop')
+	} finally {
+		db.close()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('DB migration moves automatic triage rows to Inbox and manual rows to Queue', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'helm-inbox-migration-'))
+	const dbPath = join(dir, 'helm.db')
+	const legacy = new Database(dbPath)
+	try {
+		for (const migration of MIGRATIONS.filter(entry => entry.version <= 20)) {
+			legacy.exec(migration.sql)
+			legacy.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(migration.version)
+		}
+		const insert = legacy.prepare(`
+INSERT INTO items (id, kind, status, project_slug, title, source, base_ref, payload, created_at, updated_at)
+VALUES (?, 'solve', 'triage', 'helm', ?, ?, 'main', ?, '2026-07-14T00:00:00.000Z', '2026-07-14T00:00:00.000Z')
+`)
+		insert.run(
+			'automatic',
+			'Automatic task',
+			JSON.stringify({ provider: 'contember', externalId: 'task-1' }),
+			JSON.stringify({ kind: 'solve', prompt: 'automatic' }),
+		)
+		insert.run('manual', 'Manual plan', null, JSON.stringify({ kind: 'solve', prompt: 'manual' }))
+		legacy
+			.prepare('INSERT INTO item_events (item_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)')
+			.run(
+				'automatic',
+				'item_status_set',
+				JSON.stringify({ from: 'triage', to: 'triage', status: 'triage' }),
+				'2026-07-14T00:00:00.000Z',
+			)
+	} finally {
+		legacy.close()
+	}
+
+	const db = new DB(dbPath)
+	try {
+		assert.equal(db.items.get('automatic')?.status, 'inbox')
+		assert.equal(db.items.get('automatic')?.queuedAt, null)
+		assert.equal(db.items.get('manual')?.status, 'ready')
+		assert.equal(db.items.get('manual')?.queuedAt, '2026-07-14T00:00:00.000Z')
+		assert.deepEqual(parseJsonObject(String(db.items.getEvents('automatic')[0]?.payload), 'migrated event'), {
+			from: 'inbox',
+			to: 'inbox',
+			status: 'inbox',
+		})
 	} finally {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })
@@ -510,7 +580,7 @@ test('config routes use Config Document and preserve redacted secrets while reje
 		const failedUpdate = (await updateRes.json()) as { error: string; details: { formErrors: string[] } }
 		assert.equal(failedUpdate.error, 'Validation failed')
 		assert.match(failedUpdate.details.formErrors.join('\n'), /Unknown config field: solver\.transformer/)
-		const unchanged = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+		const unchanged = readJsonObject(configPath)
 		const unchangedSolver = unchanged.solver as Record<string, unknown> | undefined
 		assert.equal(unchangedSolver?.transformer, 'stale-transformer')
 
@@ -522,7 +592,7 @@ test('config routes use Config Document and preserve redacted secrets while reje
 		})
 
 		assert.equal(cleanUpdateRes.status, 200)
-		const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>
+		const saved = readJsonObject(configPath)
 		const savedProvider = saved.provider as Record<string, unknown> | undefined
 		const savedSolver = saved.solver as Record<string, unknown> | undefined
 		const savedSpawner = saved.spawner as Record<string, unknown> | undefined
@@ -1004,10 +1074,9 @@ test('ItemCommands rejects reserved lifecycle events through generic recordEvent
 		]
 
 		for (const eventType of reservedEvents) {
-			assert.throws(
-				() => commands.recordEvent(item.id, eventType, { forged: true }),
-				new RegExp(`Use the dedicated ItemCommands method to record ${eventType}`),
-			)
+			assert.throws(() => commands.recordEvent(item.id, eventType, { forged: true }), {
+				message: `Use the dedicated ItemCommands method to record ${eventType}`,
+			})
 		}
 
 		assert.deepEqual(db.items.getEvents(item.id), [])
@@ -1189,7 +1258,7 @@ test('server creates parallel solve Items through dashboard contract', async () 
 	})
 })
 
-test('server creates plan-intent Items without enqueueing execution', async () => {
+test('server sends manually created plan-intent Items straight to Queue', async () => {
 	await withTempDb(async db => {
 		let wakeCount = 0
 		const trackingQueue = {
@@ -1224,17 +1293,17 @@ test('server creates plan-intent Items without enqueueing execution', async () =
 
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
-		assert.equal(body.data.status, 'triage')
-		assert.equal(body.data.queuedAt, null)
+		assert.equal(body.data.status, 'ready')
+		assert.ok(body.data.queuedAt)
 		assert.deepEqual(
 			body.data.allowedActions.map(action => action.id),
 			['start', 'cancel'],
 		)
-		assert.equal(wakeCount, 0)
+		assert.equal(wakeCount, 1)
 
 		const stored = db.items.get(body.data.id)
-		assert.equal(stored?.status, 'triage')
-		assert.equal(stored?.queuedAt, null)
+		assert.equal(stored?.status, 'ready')
+		assert.ok(stored?.queuedAt)
 
 		const startRes = await api.request(`/items/${body.data.id}/start`, { method: 'POST' })
 		assert.equal(startRes.status, 200)
@@ -1539,8 +1608,8 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 			prompt: 'Run before the newer solve Item.',
 			baseRef: 'release/afk',
 		})
-		db.items.update(newer.id, { queuedAt: '2026-06-19T12:00:02.000Z' })
-		db.items.update(older.id, { queuedAt: '2026-06-19T12:00:01.000Z' })
+		db.items.update(newer.id, { queuedAt: '2026-06-19T12:00:02.000Z', workMode: 'agent' })
+		db.items.update(older.id, { queuedAt: '2026-06-19T12:00:01.000Z', workMode: 'agent' })
 		const solver = new FakeSolveSolver(worktreeRoot, 10)
 		const drainer = new Drainer(singleSolveConfig, db, provider, solver)
 
@@ -1567,7 +1636,7 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 			assert.equal(olderDone?.resultSummary, 'Solved Older solve')
 			assert.match(olderDone?.worktreePath ?? '', /helm-drainer-worktrees-/)
 			assert.match(olderDone?.branchName ?? '', /^helm\/item\/older-solve-/)
-			assert.match(olderDone?.planDirName ?? '', new RegExp(`^${olderPlanDate}-older-solve-`))
+			assert.ok(olderDone?.planDirName?.startsWith(`${olderPlanDate}-older-solve-`))
 			assert.deepEqual(
 				db.items.getEvents(older.id).map(event => event.eventType),
 				['item_started', 'solve_command', 'solve_completed', 'dispatch_skipped', 'action_completed'],
@@ -1590,6 +1659,7 @@ test('Drainer runs queued loop Items through the loop lane and captures AlmanacR
 			mode: 'once',
 			provider: 'codex',
 		})
+		db.items.update(item.id, { workMode: 'agent' })
 		commands.recordPlanPrepared(item.id, {
 			worktreePath,
 			branchName: 'helm/item/loop',
@@ -1642,8 +1712,8 @@ test('Drainer runs loop Items oldest-first', async () => {
 			projectSlug: 'helm',
 			prdPath: 'docs/plans/older/prd.md',
 		})
-		db.items.update(newerLoop.id, { queuedAt: '2026-06-19T12:00:02.000Z' })
-		db.items.update(olderLoop.id, { queuedAt: '2026-06-19T12:00:01.000Z' })
+		db.items.update(newerLoop.id, { queuedAt: '2026-06-19T12:00:02.000Z', workMode: 'agent' })
+		db.items.update(olderLoop.id, { queuedAt: '2026-06-19T12:00:01.000Z', workMode: 'agent' })
 		commands.recordPlanPrepared(newerLoop.id, {
 			worktreePath: newerWorktree,
 			branchName: 'helm/item/newer-loop',
@@ -1807,6 +1877,7 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 				projectSlug: 'helm',
 				prompt: 'Start when drainer resumes.',
 			})
+			db.items.update(resumedItem.id, { workMode: 'agent' })
 			drainer.resume()
 			await waitFor(() => db.items.get(resumedItem.id)?.status === 'review', 'resumed Item did not finish')
 
@@ -1829,15 +1900,14 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 	})
 })
 
-test('Drainer ignores planned Items until explicit start', async () => {
+test('Drainer leaves ownership-undecided Queue Items until Start agent is chosen', async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-planned-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-manual-'))
 		const commands = new ItemCommands(db.items, config)
-		const plannedItem = commands.createSolveItem({
-			title: 'Plan-only solve',
+		const manualItem = commands.createSolveItem({
+			title: 'Manual solve',
 			projectSlug: 'helm',
-			prompt: 'Start only after planning.',
-			initialStatus: 'triage',
+			prompt: 'Run from Queue without an Inbox gate.',
 		})
 		const solver = new FakeSolveSolver(worktreeRoot)
 		const drainer = new Drainer(config, db, provider, solver)
@@ -1845,16 +1915,16 @@ test('Drainer ignores planned Items until explicit start', async () => {
 		try {
 			drainer.start()
 			drainer.resume()
-			await sleep(20)
-
-			assert.equal(db.items.get(plannedItem.id)?.status, 'triage')
+			await new Promise(resolve => setImmediate(resolve))
+			assert.equal(db.items.get(manualItem.id)?.status, 'ready')
+			assert.equal(db.items.get(manualItem.id)?.workMode, null)
 			assert.equal(solver.calls.length, 0)
 
-			assert.equal(drainer.processOneItem(plannedItem.id), true)
-			await waitFor(() => db.items.get(plannedItem.id)?.status === 'review', 'planned Item did not start explicitly')
-
+			assert.equal(drainer.processOneItem(manualItem.id), true)
+			await waitFor(() => db.items.get(manualItem.id)?.status === 'review', 'explicit agent run did not finish')
+			assert.equal(db.items.get(manualItem.id)?.workMode, 'agent')
 			assert.equal(solver.calls.length, 1)
-			assert.equal(solver.calls[0].taskId, plannedItem.id)
+			assert.equal(solver.calls[0].taskId, manualItem.id)
 		} finally {
 			drainer.stop()
 			rmSync(worktreeRoot, { recursive: true, force: true })
@@ -1862,7 +1932,7 @@ test('Drainer ignores planned Items until explicit start', async () => {
 	})
 })
 
-test('Drainer refuses to manually start Items outside queued or planned states', async () => {
+test('Drainer refuses to manually start Items outside Queue or Inbox', async () => {
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-start-guard-'))
 		const commands = new ItemCommands(db.items, config)
@@ -2011,6 +2081,69 @@ test('processSolveItem uses solve Item selected solver agent', async () => {
 			await processSolveItem(item.id, config, db, provider, solver)
 
 			assert.equal(solver.calls[0].solverConfig.agent, 'codex')
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('processSolveItem awaits missing display naming before solver invocation', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-display-name-'))
+		const namingConfig: HelmConfig = {
+			...config,
+			solver: { ...config.solver, displayName: { enabled: true } },
+		}
+		const commands = new ItemCommands(db.items, namingConfig)
+		const item = commands.createSolveItem({
+			title: 'Fix login',
+			projectSlug: 'helm',
+			prompt: 'Name before solving.',
+		})
+		const delegate = new FakeSolveSolver(worktreeRoot)
+		const solver: Solver = {
+			solve: params => {
+				assert.equal(commands.getItem(item.id)?.displayName, 'Repair login flow')
+				return delegate.solve(params)
+			},
+		}
+
+		try {
+			await processSolveItem(item.id, namingConfig, db, provider, solver, undefined, {
+				displayName: { runOneShot: async () => 'Repair login flow' },
+			})
+
+			assert.equal(commands.getItem(item.id)?.displayName, 'Repair login flow')
+			assert.equal(delegate.calls.length, 1)
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('processSolveItem continues after best-effort display naming failure', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-display-name-failure-'))
+		const namingConfig: HelmConfig = {
+			...config,
+			solver: { ...config.solver, displayName: { enabled: true } },
+		}
+		const commands = new ItemCommands(db.items, namingConfig)
+		const item = commands.createSolveItem({ title: 'Fix login', projectSlug: 'helm', prompt: 'Still solve.' })
+		const solver = new FakeSolveSolver(worktreeRoot)
+
+		try {
+			await processSolveItem(item.id, namingConfig, db, provider, solver, undefined, {
+				displayName: {
+					runOneShot: async () => {
+						throw new Error('naming unavailable')
+					},
+				},
+			})
+
+			assert.equal(commands.getItem(item.id)?.displayName, null)
+			assert.equal(commands.getItem(item.id)?.status, 'review')
+			assert.equal(solver.calls.length, 1)
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}
@@ -2650,7 +2783,7 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 			assert.equal(first.data.spawner, 'fake')
 			assert.match(first.data.branchName, /^helm\/item\/plan-item-flow-/)
 			const planDate = new Date(item.createdAt).toISOString().slice(0, 10)
-			assert.match(first.data.planDirName, new RegExp(`^${planDate}-plan-item-flow-`))
+			assert.ok(first.data.planDirName.startsWith(`${planDate}-plan-item-flow-`))
 			assert.equal(planningSpawner.calls[0].projectConfig.baseBranch, 'release/plan')
 			assert.equal(planningSpawner.calls[0].existingWorktreePath, undefined)
 			assert.equal(planningSpawner.calls[0].taskContext.title, 'Plan Item flow')
@@ -3276,22 +3409,33 @@ test('setItemStatus is a guarded manual override', () => {
 	withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({ title: 't', projectSlug: 'helm', prompt: 'p' }) // queued
+		assert.equal(item.workMode, null)
+
+		const active = commands.setItemStatus(item.id, 'active')
+		assert.equal(active.status, 'active')
+		assert.equal(active.workMode, 'manual')
+		assert.ok(active.startedAt)
+		assert.deepEqual(toDashboardItem(active).allowedActions, [])
 
 		const done = commands.setItemStatus(item.id, 'done')
 		assert.equal(done.status, 'done')
+		assert.equal(done.workMode, 'manual')
 		assert.ok(done.completedAt)
-		assert.equal(db.items.countEvents(item.id, 'item_status_set'), 1)
 
 		const requeued = commands.setItemStatus(item.id, 'ready')
 		assert.equal(requeued.status, 'ready')
+		assert.equal(requeued.workMode, null)
+		assert.equal(requeued.startedAt, null)
 		assert.ok(requeued.queuedAt)
 		assert.equal(requeued.completedAt, null)
+		assert.equal(db.items.countEvents(item.id, 'item_status_set'), 3)
 
 		// cannot fake `processing`
 		assert.throws(() => commands.setItemStatus(item.id, 'running'))
 
 		// cannot override a running Item — cancel it first
-		commands.startItem(item.id)
+		const running = commands.startItem(item.id)
+		assert.equal(running.workMode, 'agent')
 		assert.throws(() => commands.setItemStatus(item.id, 'done'))
 	})
 })
@@ -3368,7 +3512,7 @@ test('server can find an Item dashboard contract by Source external id', async (
 	})
 })
 
-test('poller ingests provider tasks as source-backed unverified Items', async () => {
+test('poller ingests provider tasks as source-backed Inbox Items', async () => {
 	await withTempDb(async db => {
 		const sourceConfig = {
 			...config,
@@ -3393,7 +3537,7 @@ test('poller ingests provider tasks as source-backed unverified Items', async ()
 		await sourcePoller.pollOnce()
 
 		const item = db.items.findBySourceExternalId('task-789')
-		assert.equal(item?.status, 'triage')
+		assert.equal(item?.status, 'inbox')
 		assert.deepEqual(item?.source, {
 			provider: 'contember',
 			externalId: 'task-789',
@@ -3405,7 +3549,7 @@ test('poller ingests provider tasks as source-backed unverified Items', async ()
 	})
 })
 
-test('server creates source-backed unverified Items from external ids', async () => {
+test('server creates source-backed Inbox Items from external ids', async () => {
 	await withTempDb(async db => {
 		const sourceConfig = {
 			...config,
@@ -3445,7 +3589,7 @@ test('server creates source-backed unverified Items from external ids', async ()
 		assert.equal(res.status, 201)
 		const body = (await res.json()) as { data: ReturnType<typeof toDashboardItem> }
 		assert.equal(body.data.kind, 'solve')
-		assert.equal(body.data.status, 'triage')
+		assert.equal(body.data.status, 'inbox')
 		assert.equal(body.data.title, 'Extension-created source Item')
 		assert.deepEqual(body.data.source, {
 			provider: 'contember',
@@ -3497,7 +3641,7 @@ test('server rejects solverAgent on source Item creation', async () => {
 	})
 })
 
-test('ItemCommands approve and reject unverified Items with lifecycle events', async () => {
+test('ItemCommands approve and reject Inbox Items with lifecycle events', async () => {
 	await withTempDb(db => {
 		const commands = new ItemCommands(db.items, config)
 		const source = {
@@ -3558,7 +3702,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		)
 		const approveTarget = db.items.create({
 			kind: 'solve',
-			status: 'triage',
+			status: 'inbox',
 			projectSlug: 'helm',
 			title: 'Approve via API',
 			source: {
@@ -3571,7 +3715,7 @@ test('server approves and rejects Items through dashboard contract routes', asyn
 		})
 		const rejectTarget = db.items.create({
 			kind: 'solve',
-			status: 'triage',
+			status: 'inbox',
 			projectSlug: 'helm',
 			title: 'Reject via API',
 			source: {
@@ -3665,7 +3809,7 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		const commands = new ItemCommands(db.items, config)
 		const approveTarget = db.items.create({
 			kind: 'solve',
-			status: 'triage',
+			status: 'inbox',
 			projectSlug: 'helm',
 			title: 'Approve with Codex',
 			source: {
@@ -3692,16 +3836,16 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		const routeQueue = {
 			...queue,
 			processOneItem: (id: string) => {
-				assert.equal(db.items.get(id)?.payload.solverAgent, 'codex')
+				assert.equal(solvePayload(db, id).solverAgent, 'codex')
 				commands.startItem(id)
 				return true
 			},
 			retryItem: (id: string) => {
-				assert.equal(db.items.get(id)?.payload.solverAgent, 'codex')
+				assert.equal(solvePayload(db, id).solverAgent, 'codex')
 				return commands.retryItem(id)
 			},
 			wake: () => {
-				assert.equal(db.items.get(approveTarget.id)?.payload.solverAgent, 'codex')
+				assert.equal(solvePayload(db, approveTarget.id).solverAgent, 'codex')
 			},
 		}
 		const api = apiRoutes(
@@ -3727,9 +3871,9 @@ test('server Item work-start routes persist selected solve agent before queue ha
 		assert.equal(approveRes.status, 200)
 		assert.equal(startRes.status, 200)
 		assert.equal(retryRes.status, 200)
-		assert.equal(db.items.get(approveTarget.id)?.payload.solverAgent, 'codex')
-		assert.equal(db.items.get(startTarget.id)?.payload.solverAgent, 'codex')
-		assert.equal(db.items.get(retryTarget.id)?.payload.solverAgent, 'codex')
+		assert.equal(solvePayload(db, approveTarget.id).solverAgent, 'codex')
+		assert.equal(solvePayload(db, startTarget.id).solverAgent, 'codex')
+		assert.equal(solvePayload(db, retryTarget.id).solverAgent, 'codex')
 	})
 })
 

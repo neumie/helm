@@ -17,9 +17,11 @@ Source / Dashboard -> Item Commands -> Drainer lanes -> Solver / Almanac loop ->
    - `loop` shells out to `almanac loop`.
 3. **Source** - external origin for poller-created Items. Source is optional;
    dashboard/API-created Items are first-class without it.
-4. **Triage** - Source-backed solve Items start `unverified`; approve queues
-   them, reject skips them. Hand-added Queue Items start `queued`; hand-added
-   Plan Items start `planned` until explicitly started.
+4. **Inbox** - Automatic/source-backed solve Items start `inbox`; approve moves
+   them to Queue (`ready`), reject cancels them. Every manually added Item,
+   including Plan-intent creation, starts directly in Queue. A Queue Item is
+   ownership-undecided: start an agent (`workMode: agent`) or take it manually
+   (`status: active`, `workMode: manual`); manual Active work is never scheduled.
 5. **Lane** - Drainer has separate solve and loop lanes. Solve capacity follows
    `solver.concurrency`; loop capacity is currently 1. Each lane runs oldest
    queued Item first.
@@ -33,7 +35,7 @@ Source / Dashboard -> Item Commands -> Drainer lanes -> Solver / Almanac loop ->
    lifecycle events, solve logs, PR status, and almanac status files are
    normalized before clients render them.
 
-API: **http://localhost:7474/api** — the daemon is API-only. The UI is the
+API: **<http://localhost:7474/api>** — the daemon is API-only. The UI is the
 **Helm app** (`app/`, native Electron sidebar + terminal) plus the Chrome
 extension; both speak `/api`.
 
@@ -60,7 +62,7 @@ loads, with a startup warning asking for a rename; `HELM_CONFIG` is preferred
 over the legacy `VIGIL_CONFIG` env var).
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `provider` | External source config: `type`, credentials, optional `taskBaseUrl` for Source links |
 | `projects` | Repos Helm can work on: `slug`, `repoPath`, `baseBranch`, optional `worktreeDir`, optional dashboard `color` |
 | `polling.intervalSeconds` | Poll interval for external Source discovery (default: 60) |
@@ -129,9 +131,10 @@ curl -sS http://localhost:7474/api/items \
   }'
 ```
 
-Create a planning-only Item by adding `"intent": "plan"` to any create payload.
-Helm stores it as `planned`, prepares plan artifacts through `/items/<id>/plan`,
-and the Drainer will not auto-run it until you start it.
+Add `"intent": "plan"` to a create payload to express the client's planning
+intent. Manual Items enter Queue immediately but stay ownership-undecided until
+someone chooses Start agent or Work manually; call `/items/<id>/plan` first when
+interactive planning is needed.
 
 CLI equivalents write to the same Item Commands path:
 
@@ -203,7 +206,7 @@ Almanac skills such as `/almanac:task-start`, `/almanac:branch-name`,
 ```
 src/
   providers/       # External Source abstraction
-  poller/          # Source discovery -> unverified Items
+  poller/          # Source discovery -> Inbox Items
   items/           # Item schema, store, commands, contract, observation
   queue/           # Drainer, solve lane, loop lane, almanac loop runner
   solver/          # Solve-only execution seam

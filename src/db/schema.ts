@@ -293,4 +293,53 @@ DELETE FROM item_events WHERE item_id IN (SELECT id FROM items WHERE kind = 'har
 DELETE FROM items WHERE kind = 'harden';
 `,
 	},
+	{
+		// Lifecycle vocabulary: automatic/source work waits in Inbox; legacy
+		// source-less plan-first work joins Queue under the new manual-create rule.
+		// Rewrite structured status snapshots before changing the Item rows so the
+		// source distinction is still available for the old value.
+		version: 21,
+		sql: `
+UPDATE item_events
+SET payload = json_set(
+  payload,
+  '$.from',
+  CASE WHEN EXISTS (
+    SELECT 1 FROM items WHERE items.id = item_events.item_id AND items.source IS NOT NULL
+  ) THEN 'inbox' ELSE 'ready' END
+)
+WHERE json_valid(payload) AND json_extract(payload, '$.from') = 'triage';
+UPDATE item_events
+SET payload = json_set(
+  payload,
+  '$.to',
+  CASE WHEN EXISTS (
+    SELECT 1 FROM items WHERE items.id = item_events.item_id AND items.source IS NOT NULL
+  ) THEN 'inbox' ELSE 'ready' END
+)
+WHERE json_valid(payload) AND json_extract(payload, '$.to') = 'triage';
+UPDATE item_events
+SET payload = json_set(
+  payload,
+  '$.status',
+  CASE WHEN EXISTS (
+    SELECT 1 FROM items WHERE items.id = item_events.item_id AND items.source IS NOT NULL
+  ) THEN 'inbox' ELSE 'ready' END
+)
+WHERE json_valid(payload) AND json_extract(payload, '$.status') = 'triage';
+UPDATE items SET status = 'inbox' WHERE status = 'triage' AND source IS NOT NULL;
+UPDATE items
+SET status = 'ready', queued_at = COALESCE(queued_at, created_at)
+WHERE status = 'triage';
+`,
+	},
+	{
+		// Work ownership is independent of lifecycle: Queue can be undecided,
+		// running work is agent-owned, and Active is reserved for human work.
+		version: 22,
+		sql: `
+ALTER TABLE items ADD COLUMN work_mode TEXT;
+UPDATE items SET work_mode = 'agent' WHERE started_at IS NOT NULL;
+`,
+	},
 ]

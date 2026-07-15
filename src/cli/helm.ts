@@ -21,8 +21,8 @@ const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [option
 File a self-contained task — an email, an Obsidian note, anything tied to a
 project — into Helm. Posts to the RUNNING daemon's /api/items/ingest, so it
 works from ANY directory (no helm.config.json needed) and any agent can use it.
-The task lands in triage with a security-aware assessment; you approve it in
-helm, then it solves with its attachments available to the agent.
+The task lands in Inbox with a security-aware assessment; you approve it into
+Queue, then it solves with its attachments available to the agent.
 
 Required:
   --project <slug>        Helm project slug

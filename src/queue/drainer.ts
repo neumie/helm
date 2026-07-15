@@ -18,7 +18,7 @@ const MAX_ATTEMPTS = 3
 const RETRY_BACKOFF_MS = 30_000
 
 function isStartableItem(item: ItemRecord): boolean {
-	return item.status === 'ready' || item.status === 'triage'
+	return item.status === 'ready' || item.status === 'inbox'
 }
 
 /** Transient failures worth auto-retrying (network/okena/worktree), vs real solve bugs. */

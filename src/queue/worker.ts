@@ -9,7 +9,8 @@ import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import { buildItemTaskContext, localizeCapturedAttachments } from '../items/context.js'
 import { resolveItemWorkspace } from '../items/identity.js'
-import { ensureItemWorkspaceName } from '../items/naming.js'
+import { ensureItemDisplayName, ensureItemWorkspaceName } from '../items/naming.js'
+import type { EnsureItemDisplayNameDeps } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
@@ -148,6 +149,10 @@ async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvide
 	return buildItemTaskContext(item)
 }
 
+export interface ProcessSolveItemDeps {
+	displayName?: EnsureItemDisplayNameDeps
+}
+
 export async function processSolveItem(
 	itemId: string,
 	config: HelmConfig,
@@ -155,37 +160,51 @@ export async function processSolveItem(
 	provider: TaskProvider,
 	solver: Solver,
 	signal?: AbortSignal,
+	deps: ProcessSolveItemDeps = {},
 ): Promise<void> {
 	const commands = new ItemCommands(db.items, config)
-	const item = commands.getItem(itemId)
-	if (!item) throw new Error(`Item ${itemId} not found in DB`)
-	if (item.kind !== 'solve') throw new Error(`Item ${itemId} is ${item.kind}, not solve`)
+	const pending = commands.getItem(itemId)
+	if (!pending) throw new Error(`Item ${itemId} not found in DB`)
+	if (pending.kind !== 'solve') throw new Error(`Item ${itemId} is ${pending.kind}, not solve`)
 
-	const projectConfig = config.projects.find(p => p.slug === item.projectSlug)
-	if (!projectConfig) throw new Error(`No project config for slug: ${item.projectSlug}`)
+	const projectConfig = config.projects.find(p => p.slug === pending.projectSlug)
+	if (!projectConfig) throw new Error(`No project config for slug: ${pending.projectSlug}`)
 
-	commands.startItem(itemId)
+	const item = commands.startItem(itemId)
 
 	mkdirSync(LOGS_DIR, { recursive: true })
 	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
 
 	try {
-		log.info('worker', `Building context for solve Item: ${item.title}`)
-		const taskContext = await buildSolveItemTaskContext(item, provider)
-
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
 		const selectedModel = item.payload.kind === 'solve' ? item.payload.solverModel : undefined
 		const selectedWorkspace = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
+
+		// A solve is the final guarantee that an enabled AI display name gets one
+		// generation attempt. Poll/startup enrichment is intentionally asynchronous;
+		// the naming seam re-reads before writing so the first successful name wins.
+		const displayNamed = await ensureItemDisplayName({
+			commands,
+			item,
+			config,
+			agent: selectedAgent ?? config.solver.agent,
+			signal,
+			deps: deps.displayName,
+			generateWhenMissing: true,
+		})
+
+		log.info('worker', `Building context for solve Item: ${item.title}`)
+		const taskContext = await buildSolveItemTaskContext(displayNamed, provider)
 		const workspaceMode = selectedWorkspace ?? config.solver.workspace ?? 'worktree'
 		const mainMode = workspaceMode === 'main'
 
 		// Main-workspace runs skip AI branch naming entirely: no branch is
 		// pre-created — the agent manages branching itself in the main checkout.
 		const named = mainMode
-			? item
+			? displayNamed
 			: await ensureItemWorkspaceName({
 					commands,
-					item,
+					item: displayNamed,
 					taskContext,
 					config,
 					repoPath: projectConfig.repoPath,

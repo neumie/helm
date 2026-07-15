@@ -16,9 +16,19 @@ export interface Assessment {
 	securityNote: string | null
 	assessedAt: string
 }
-export type ItemStatus = 'triage' | 'ready' | 'running' | 'review' | 'done' | 'failed' | 'cancelled'
+export type ItemStatus = 'inbox' | 'ready' | 'active' | 'running' | 'review' | 'done' | 'failed' | 'cancelled'
+export type WorkMode = 'agent' | 'manual'
 
-export const ITEM_STATUSES: ItemStatus[] = ['triage', 'ready', 'running', 'review', 'done', 'failed', 'cancelled']
+export const ITEM_STATUSES: ItemStatus[] = [
+	'inbox',
+	'ready',
+	'active',
+	'running',
+	'review',
+	'done',
+	'failed',
+	'cancelled',
+]
 
 export type DashboardActionId = 'approve' | 'reject' | 'start' | 'cancel' | 'retry' | 'reopen'
 export type RunOutcome = 'ok' | 'errored' | 'no_result' | 'cancelled'
@@ -133,6 +143,7 @@ export interface DashboardItem {
 	id: string
 	kind: 'solve' | 'loop'
 	status: ItemStatus
+	workMode: WorkMode | null
 	projectSlug: string
 	title: string
 	displayName: string | null
@@ -151,7 +162,9 @@ export interface DashboardItem {
 	plan: DashboardPlan | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
-	/** Per-item execution workspace override (`null` = follow `config.solver.workspace`). Solve only. */
+	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
+	solverAgent: 'claude' | 'codex' | null
+	solverModel: string | null
 	solverWorkspace: SolverWorkspace | null
 	errorMessage: string | null
 	errorPhase: string | null
@@ -234,6 +247,8 @@ export interface QueueStatus {
 }
 
 export interface DaemonStatus {
+	protocolVersion: number
+	buildId: string
 	uptime: number
 	queue: QueueStatus
 	projects: string[]
@@ -249,7 +264,7 @@ export interface ModelOption {
 export interface AppConfig {
 	projectColors?: Record<string, string>
 	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
-	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex'; workspace?: SolverWorkspace }
+	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex'; model?: string; workspace?: SolverWorkspace }
 	spawner?: { name?: string }
 	spawnerAdapters?: Array<{ name: string; available: boolean }>
 	/** Curated per-agent model options for model pickers (server-owned). */
@@ -334,7 +349,9 @@ export interface DaemonRestartResult {
  * `{ data }` on success and `{ error }` on failure; a network-level failure
  * becomes `{ error: <message> }` in the bridge.
  */
-export type HelmResult<T> = { data: T; error?: undefined } | { data?: undefined; error: string }
+export type HelmResult<T> =
+	| { data: T; error?: undefined; status?: undefined }
+	| { data?: undefined; error: string; status?: number }
 
 /**
  * Full state pushed over `daemon:snapshot`. `status`/`items`/`config` are null

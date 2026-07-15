@@ -120,6 +120,11 @@ export interface EnsureItemDisplayNameParams {
 	 * leaves `force` unset and stays best-effort.
 	 */
 	force?: boolean
+	/**
+	 * Solve-start guarantee: when enabled and unnamed, run even for an already-
+	 * short title while keeping automatic best-effort failure behavior.
+	 */
+	generateWhenMissing?: boolean
 }
 
 /**
@@ -127,34 +132,40 @@ export interface EnsureItemDisplayNameParams {
  * one-shot model call and persist it through `ItemCommands.recordDisplayName`.
  * Gated by `solver.displayName.enabled` (provider/model/prompt overridable on the
  * same block). No-op (returns the input Item) when disabled, already named, or the
- * title is already short. Best-effort: a model failure, timeout, or empty/
- * unparseable answer degrades silently to the input Item so the dashboard keeps
- * showing the raw title. Re-throws only cancellation. A forced (manual) run skips
- * the gates and throws on failure so the caller can report it.
+ * title is already short. Solve startup may set `generateWhenMissing` to bypass
+ * only that short-title optimization. Best-effort: a model failure, timeout, or
+ * empty/unparseable answer degrades silently to the input Item so the dashboard
+ * keeps showing the raw title. Re-throws only cancellation. A forced (manual)
+ * run skips the gates and throws on failure so the caller can report it.
  */
 export async function ensureItemDisplayName(params: EnsureItemDisplayNameParams): Promise<ItemRecord> {
-	const { commands, item, config, signal, deps, force } = params
+	const { commands, item, config, signal, deps, force, generateWhenMissing } = params
 	const feature = config.solver.displayName
-	if (!force && !feature.enabled) return item
-	if (!force && item.displayName) return item
-	if (!force && item.title.length <= MIN_TITLE_LEN_TO_NAME) return item
+	const current = force ? item : (commands.getItem(item.id) ?? item)
+	if (!force && !feature.enabled) return current
+	if (!force && current.displayName) return current
+	if (!force && !generateWhenMissing && current.title.length <= MIN_TITLE_LEN_TO_NAME) return current
 
 	const agent = feature.agent ?? params.agent ?? config.solver.agent
 	try {
 		const model = feature.model ?? defaultHelperModel(agent)
 		const run = deps?.runOneShot ?? runOneShot
-		const raw = await run({ agent, model, prompt: buildDisplayNamePrompt(item.title, feature.prompt), signal })
+		const raw = await run({ agent, model, prompt: buildDisplayNamePrompt(current.title, feature.prompt), signal })
 		if (!raw) {
 			if (force) throw new Error('Display naming model returned no output')
-			return item
+			return commands.getItem(item.id) ?? current
 		}
 
 		const name = parseDisplayName(raw)
 		if (!name) {
 			if (force) throw new Error('Could not parse a display name from the model output')
-			return item
+			return commands.getItem(item.id) ?? current
 		}
 
+		// The background Enricher may finish while this one-shot is in flight. Re-read
+		// synchronously before writing so the first successful name wins.
+		const latest = commands.getItem(item.id) ?? current
+		if (!force && latest.displayName) return latest
 		const named = commands.recordDisplayName(item.id, name)
 		log.info('naming', `Derived display name for Item ${item.id}: "${name}" (${agent}/${model})`)
 		return named
@@ -164,7 +175,7 @@ export async function ensureItemDisplayName(params: EnsureItemDisplayNameParams)
 			'naming',
 			`Display naming failed for Item ${item.id}, keeping raw title: ${err instanceof Error ? err.message : err}`,
 		)
-		return item
+		return commands.getItem(item.id) ?? current
 	}
 }
 

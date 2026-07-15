@@ -51,11 +51,13 @@ export function IconBtn({
 	onClick,
 	children,
 	pressed,
+	disabled,
 }: {
 	label: string
 	onClick?: () => void
 	children: ReactNode
 	pressed?: boolean
+	disabled?: boolean
 }) {
 	return (
 		<button
@@ -64,6 +66,7 @@ export function IconBtn({
 			aria-label={label}
 			title={label}
 			aria-pressed={pressed}
+			disabled={disabled}
 			onClick={onClick}
 		>
 			{children}
@@ -92,6 +95,20 @@ export const GLYPH = {
 	),
 	external: glyph('M6.5 4H4v8h8V9.5M9 3h4v4M13 3 7.5 8.5', 12),
 	copy: glyph('M6 6h7v7H6zM10 6V3H3v7h3', 12),
+	check: glyph('M3.5 8.5 6.5 11.5 12.5 4.5'),
+	agent: glyph('M4 5h8v7H4zM8 2.5V5M6 8h.1M9.9 8h.1M6 10h4'),
+	manual: glyph('M8 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5M3.5 13a4.5 4 0 0 1 9 0'),
+	play: glyph('M5 3.5 12 8 5 12.5z'),
+	queue: glyph('M8 2.5v7M5.5 7 8 9.5 10.5 7M3.5 12.5h9'),
+	retry: glyph('M12.5 5.5V2.8l-2.2 1.4A5 5 0 1 0 13 8'),
+	stop: glyph('M4.5 4.5h7v7h-7z'),
+	pause: glyph('M5.5 4v8M10.5 4v8'),
+	return: glyph('M6.5 4 3 7.5 6.5 11M3.5 7.5H9a4 4 0 0 1 4 4'),
+	plan: glyph('M4 2.5h6l2 2V13.5H4zM10 2.5v2h2M6 7h4M6 9.5h4', 13),
+	archive: glyph('M3 5h10v8H3zM2.5 3h11v2h-11M6.5 8h3'),
+	settings: glyph(
+		'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5M8 2.5v1M8 12.5v1M2.5 8h1M12.5 8h1M4.1 4.1l.7.7M11.2 11.2l.7.7M11.9 4.1l-.7.7M4.8 11.2l-.7.7',
+	),
 	close: glyph('M4 4l8 8M12 4l-8 8'),
 }
 
@@ -115,6 +132,7 @@ export function StatusDot({ tone, pulse }: { tone: StatusTone; pulse?: boolean }
 
 export interface MenuEntry {
 	label: string
+	icon?: ReactNode
 	onSelect: () => void
 	danger?: boolean
 	disabled?: boolean
@@ -128,18 +146,21 @@ export function MenuButton({
 	trigger,
 	triggerLabel,
 	triggerClass,
+	disabled,
 }: {
 	entries: MenuEntry[]
 	align?: 'start' | 'end'
 	trigger: ReactNode
 	triggerLabel: string
 	triggerClass?: string
+	disabled?: boolean
 }) {
 	const [open, setOpen] = useState(false)
 	const [activeIndex, setActiveIndex] = useState(-1)
 	const rootRef = useRef<HTMLDivElement>(null)
 	const triggerRef = useRef<HTMLButtonElement>(null)
 	const menuId = useId()
+	const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
 
 	const close = useCallback((refocus: boolean) => {
 		setOpen(false)
@@ -170,14 +191,28 @@ export function MenuButton({
 
 	const enabled = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => !entry.disabled)
 
+	const focusIndex = (index: number) => {
+		setActiveIndex(index)
+		requestAnimationFrame(() => itemRefs.current[index]?.focus())
+	}
 	const move = (delta: number) => {
 		if (enabled.length === 0) return
 		const position = enabled.findIndex(({ index }) => index === activeIndex)
 		const next = enabled[(position + delta + enabled.length) % enabled.length]
-		if (next) setActiveIndex(next.index)
+		if (next) focusIndex(next.index)
+	}
+	const openMenu = (last = false) => {
+		if (disabled || enabled.length === 0) return
+		const next = last ? enabled[enabled.length - 1] : enabled[0]
+		setOpen(true)
+		if (next) focusIndex(next.index)
 	}
 
 	const onMenuKeyDown = (event: React.KeyboardEvent) => {
+		if (event.key === 'Tab') {
+			close(false)
+			return
+		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault()
 			move(1)
@@ -186,11 +221,11 @@ export function MenuButton({
 			move(-1)
 		} else if (event.key === 'Home') {
 			event.preventDefault()
-			if (enabled[0]) setActiveIndex(enabled[0].index)
+			if (enabled[0]) focusIndex(enabled[0].index)
 		} else if (event.key === 'End') {
 			event.preventDefault()
 			const last = enabled[enabled.length - 1]
-			if (last) setActiveIndex(last.index)
+			if (last) focusIndex(last.index)
 		} else if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault()
 			const entry = entries[activeIndex]
@@ -202,7 +237,13 @@ export function MenuButton({
 	}
 
 	return (
-		<div className="menu-root" ref={rootRef}>
+		<div
+			className="menu-root"
+			ref={rootRef}
+			onBlur={event => {
+				if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(false)
+			}}
+		>
 			<button
 				type="button"
 				ref={triggerRef}
@@ -212,11 +253,16 @@ export function MenuButton({
 				aria-haspopup="menu"
 				aria-expanded={open}
 				aria-controls={open ? menuId : undefined}
-				onClick={() => setOpen(prev => !prev)}
+				disabled={disabled}
+				onClick={() => (open ? close(false) : openMenu())}
 				onKeyDown={event => {
-					if (event.key === 'ArrowDown' && open) {
+					if (event.key === 'ArrowDown') {
 						event.preventDefault()
-						move(1)
+						open ? move(1) : openMenu()
+					}
+					if (event.key === 'ArrowUp') {
+						event.preventDefault()
+						open ? move(-1) : openMenu(true)
 					}
 				}}
 			>
@@ -229,8 +275,6 @@ export function MenuButton({
 					role="menu"
 					aria-label={triggerLabel}
 					className={`menu-panel menu-${align}`}
-					tabIndex={-1}
-					ref={node => node?.focus()}
 					onKeyDown={onMenuKeyDown}
 				>
 					{entries.map((entry, index) => (
@@ -241,14 +285,18 @@ export function MenuButton({
 								role="menuitem"
 								className={`menu-item${entry.danger ? ' menu-item-danger' : ''}${index === activeIndex ? ' menu-item-active' : ''}`}
 								disabled={entry.disabled}
-								tabIndex={-1}
-								onMouseEnter={() => setActiveIndex(index)}
+								ref={node => {
+									itemRefs.current[index] = node
+								}}
+								tabIndex={index === activeIndex ? 0 : -1}
+								onMouseEnter={() => focusIndex(index)}
 								onClick={() => {
 									close(true)
 									entry.onSelect()
 								}}
 							>
-								{entry.label}
+								{entry.icon ? <span className="menu-item-icon">{entry.icon}</span> : null}
+								<span className="menu-item-label">{entry.label}</span>
 							</button>
 						</div>
 					))}
@@ -281,12 +329,16 @@ export function Segmented<T extends string>({
 	/** True either/or commit choice (agent picker) — active segment may use accent fill. */
 	commit?: boolean
 }) {
-	const onKeyDown = (event: React.KeyboardEvent) => {
+	const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
 		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
 		event.preventDefault()
 		const index = options.findIndex(option => option.value === value)
-		const next = options[(index + (event.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length]
-		if (next) onChange(next.value)
+		const nextIndex = (index + (event.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length
+		const next = options[nextIndex]
+		if (next) {
+			onChange(next.value)
+			event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus()
+		}
 	}
 	return (
 		<div
@@ -336,7 +388,9 @@ export function PushHeader({
 			<IconBtn label="Back" onClick={onBack}>
 				{GLYPH.back}
 			</IconBtn>
-			<div className="push-title">{title}</div>
+			<h1 className="push-title" data-page-heading tabIndex={-1}>
+				{title}
+			</h1>
 			{trailing && <div className="push-trailing">{trailing}</div>}
 		</header>
 	)
@@ -359,6 +413,25 @@ export function EmptyState({ title, detail }: { title: string; detail: string })
 // ---------------------------------------------------------------------------
 // Banner — §3.12 (clamped to 4 lines; the block itself toggles expansion)
 
+function clampedNodeOverflows(node: HTMLElement): boolean {
+	const clone = node.cloneNode(true) as HTMLElement
+	clone.style.position = 'fixed'
+	clone.style.visibility = 'hidden'
+	clone.style.pointerEvents = 'none'
+	clone.style.left = '-10000px'
+	clone.style.top = '0'
+	clone.style.width = `${node.clientWidth}px`
+	clone.style.display = 'block'
+	clone.style.webkitLineClamp = 'unset'
+	clone.style.maxHeight = 'none'
+	clone.style.height = 'auto'
+	clone.style.overflow = 'visible'
+	document.body.append(clone)
+	const fullHeight = clone.scrollHeight
+	clone.remove()
+	return fullHeight > node.clientHeight + 1
+}
+
 export function Banner({
 	tone,
 	label,
@@ -369,15 +442,42 @@ export function Banner({
 	children: ReactNode
 }) {
 	const [expanded, setExpanded] = useState(false)
+	const [overflows, setOverflows] = useState(false)
+	const id = useId()
+	const bodyRef = useRef<HTMLSpanElement>(null)
+	useEffect(() => {
+		const node = bodyRef.current
+		if (!node) return
+		const measure = () => {
+			if (!expanded) setOverflows(clampedNodeOverflows(node))
+		}
+		measure()
+		const observer = new ResizeObserver(measure)
+		observer.observe(node)
+		return () => observer.disconnect()
+	}, [expanded])
+	if (!overflows && !expanded)
+		return (
+			<div className={`banner banner-${tone} banner-clamped`}>
+				<span className="banner-label">{label}</span>
+				<span className="banner-body" ref={bodyRef}>
+					{children}
+				</span>
+			</div>
+		)
 	return (
 		<button
 			type="button"
 			className={`banner banner-${tone}${expanded ? '' : ' banner-clamped'}`}
 			onClick={() => setExpanded(prev => !prev)}
-			title={expanded ? 'Collapse' : 'Expand'}
+			aria-expanded={expanded}
+			aria-controls={id}
 		>
 			{label && <span className="banner-label">{label}</span>}
-			<span className="banner-body">{children}</span>
+			<span id={id} className="banner-body" ref={bodyRef}>
+				{children}
+			</span>
+			<span className="clamp-cue">{expanded ? 'Less' : 'More'}</span>
 		</button>
 	)
 }
@@ -388,22 +488,38 @@ export function ClampText({ text, lines = 4 }: { text: string; lines?: number })
 	const [expanded, setExpanded] = useState(false)
 	const [overflows, setOverflows] = useState(false)
 	const bodyRef = useRef<HTMLSpanElement>(null)
-	// Measure only while clamped; once expanded the last answer stays so the
-	// "Less" cue doesn't vanish mid-toggle.
-	// biome-ignore lint/correctness/useExhaustiveDependencies(text): the effect reads the DOM, so it must re-run when the rendered text changes
+	const contentId = useId()
+	// Re-measure while clamped so a pane resize cannot hide text without
+	// exposing the More control.
 	useEffect(() => {
-		if (expanded) return
 		const node = bodyRef.current
-		if (node) setOverflows(node.scrollHeight > node.clientHeight + 1)
-	}, [text, expanded])
+		if (!node) return
+		const measure = () => {
+			if (!expanded) setOverflows(clampedNodeOverflows(node))
+		}
+		measure()
+		const observer = new ResizeObserver(measure)
+		observer.observe(node)
+		return () => observer.disconnect()
+	}, [expanded])
+	if (!overflows && !expanded)
+		return (
+			<span className="clamp-text clamped">
+				<span ref={bodyRef} className="clamp-body" style={{ WebkitLineClamp: lines } as React.CSSProperties}>
+					{text}
+				</span>
+			</span>
+		)
 	return (
 		<button
 			type="button"
 			className={`clamp-text${expanded ? '' : ' clamped'}`}
 			onClick={() => setExpanded(prev => !prev)}
-			title={expanded ? 'Collapse' : 'Expand'}
+			aria-expanded={expanded}
+			aria-controls={contentId}
 		>
 			<span
+				id={contentId}
 				ref={bodyRef}
 				className="clamp-body"
 				style={expanded ? undefined : ({ WebkitLineClamp: lines } as React.CSSProperties)}
@@ -430,11 +546,16 @@ export function Card({
 	/** Zero row gap — nav rows stack at their exact 36px pitch (§3.15). */
 	flush?: boolean
 }) {
+	const headingId = useId()
 	return (
-		<section className={`card${flush ? ' card-flush' : ''}`}>
+		<section className={`card${flush ? ' card-flush' : ''}`} aria-labelledby={label ? headingId : undefined}>
 			{(label || trailing) && (
 				<div className="card-head">
-					{label && <span className="section-label">{label}</span>}
+					{label && (
+						<h2 id={headingId} className="section-label">
+							{label}
+						</h2>
+					)}
 					{trailing}
 				</div>
 			)}
@@ -621,10 +742,12 @@ export function Sheet({
 	footer: ReactNode
 }) {
 	const sheetRef = useRef<HTMLDivElement>(null)
+	const openerRef = useRef<HTMLElement | null>(null)
 
 	// Esc closes (capture, so the push stack never also pops); focus is trapped
 	// inside the sheet; initial focus lands on the first field.
 	useEffect(() => {
+		openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
 		const node = sheetRef.current
 		if (!node) return
 		const focusables = () =>
@@ -653,7 +776,10 @@ export function Sheet({
 			}
 		}
 		window.addEventListener('keydown', onKeyDown, { capture: true })
-		return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, { capture: true })
+			openerRef.current?.focus()
+		}
 	}, [onClose])
 
 	return (

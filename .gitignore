@@ -10,9 +10,12 @@ vigil.config.json
 .env
 .claude/
 .superpowers/
+.pi-subagents/
 docs/superpowers/
 logs/
 attachments/
 .almanac/
 docs/plans/*/*.log
 *.tsbuildinfo
+src/build-id.generated.ts
+app/src/build-id.generated.ts

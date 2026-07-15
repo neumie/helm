@@ -1,7 +1,8 @@
 // Work list page — header row (project filter menu, New item, overflow),
 // segmented bucket filter with counts (§3.2), 48px rows (§3.3). Selection is
-// the action: a row push-navigates to the detail page; no hover-revealed
-// controls. Renders purely from the pushed snapshot — no per-row fetches.
+// the action: a row push-navigates to detail. Queue rows also expose two
+// ownership choices (agent/manual) on hover or keyboard focus. Renders purely
+// from the pushed snapshot — no per-row fetches.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
@@ -13,14 +14,14 @@ const BUCKET_KEY = 'helm.sidebar.bucket'
 const PROJECT_KEY = 'helm.sidebar.project'
 
 function isBucket(value: string | null): value is BucketKey {
-	return value === 'needs' || value === 'active' || value === 'queue' || value === 'triage'
+	return value === 'needs' || value === 'active' || value === 'queue' || value === 'inbox'
 }
 
 const EMPTY_COPY: Record<BucketKey, { title: string; detail: string }> = {
 	needs: { title: 'Nothing needs you', detail: 'Runs in review and failures land here.' },
-	active: { title: 'Nothing running', detail: 'Approve or start an item to run it.' },
-	queue: { title: 'Queue is empty', detail: 'Approved items wait here for the next free lane.' },
-	triage: { title: 'No items to triage', detail: 'New provider tasks land here after a poll.' },
+	active: { title: 'Nothing active', detail: 'Agent runs and work you take manually appear here.' },
+	queue: { title: 'Queue is empty', detail: 'Items waiting for an agent or manual owner appear here.' },
+	inbox: { title: 'Inbox is empty', detail: 'New provider tasks land here automatically.' },
 }
 
 export interface ListPageProps {
@@ -32,6 +33,8 @@ export interface ListPageProps {
 	onOpenSettings: () => void
 	onPoll: () => void
 	onPauseToggle: () => void
+	onStartAgent: (id: string) => Promise<void>
+	onWorkManually: (id: string) => Promise<void>
 	/** Archive mode reuses the page frame minus header controls. */
 	archive?: boolean
 }
@@ -45,13 +48,17 @@ export function ListPage({
 	onOpenSettings,
 	onPoll,
 	onPauseToggle,
+	onStartAgent,
+	onWorkManually,
 	archive,
 }: ListPageProps) {
 	const [bucket, setBucket] = useState<BucketKey>(() => {
+		if (window.helm.uiPreview === 'queue-list') return 'queue'
 		const saved = localStorage.getItem(BUCKET_KEY)
 		return isBucket(saved) ? saved : 'needs'
 	})
 	const [project, setProject] = useState<string | null>(() => localStorage.getItem(PROJECT_KEY) || null)
+	const [quickBusy, setQuickBusy] = useState<string | null>(null)
 	useEffect(() => localStorage.setItem(BUCKET_KEY, bucket), [bucket])
 	useEffect(() => {
 		if (project) localStorage.setItem(PROJECT_KEY, project)
@@ -91,6 +98,15 @@ export function ListPage({
 	}
 
 	const waiting = items === null
+	const runQuick = async (key: string, action: () => Promise<void>) => {
+		if (quickBusy) return
+		setQuickBusy(key)
+		try {
+			await action()
+		} finally {
+			setQuickBusy(null)
+		}
+	}
 
 	return (
 		<div className="page-frame">
@@ -119,13 +135,19 @@ export function ListPage({
 							triggerLabel="More"
 							trigger={GLYPH.ellipsis}
 							entries={[
-								{ label: 'Poll now', onSelect: onPoll, disabled: !reachable },
-								{ label: paused ? 'Resume queue' : 'Pause queue', onSelect: onPauseToggle, disabled: !reachable },
+								{ label: 'Poll now', icon: GLYPH.retry, onSelect: onPoll, disabled: !reachable },
+								{
+									label: paused ? 'Resume queue' : 'Pause queue',
+									icon: paused ? GLYPH.play : GLYPH.pause,
+									onSelect: onPauseToggle,
+									disabled: !reachable,
+								},
 								{
 									label: buckets.archived.length > 0 ? `Archive (${buckets.archived.length})` : 'Archive',
+									icon: GLYPH.archive,
 									onSelect: onOpenArchive,
 								},
-								{ label: 'Settings', onSelect: onOpenSettings, group: true },
+								{ label: 'Settings', icon: GLYPH.settings, onSelect: onOpenSettings, group: true },
 							]}
 						/>
 					</div>
@@ -142,7 +164,7 @@ export function ListPage({
 							{ value: 'needs', label: 'Needs', count: buckets.needs.length },
 							{ value: 'active', label: 'Active', count: buckets.active.length },
 							{ value: 'queue', label: 'Queue', count: buckets.queue.length },
-							{ value: 'triage', label: 'Triage', count: buckets.triage.length },
+							{ value: 'inbox', label: 'Inbox', count: buckets.inbox.length },
 						]}
 					/>
 				</div>
@@ -169,6 +191,9 @@ export function ListPage({
 							selected={item.id === selectedId}
 							time={relativeTime(rowTimestamp(item), now)}
 							onOpen={onOpenItem}
+							quickDisabled={quickBusy !== null || !reachable}
+							onStartAgent={id => runQuick(`agent:${id}`, () => onStartAgent(id))}
+							onWorkManually={id => runQuick(`manual:${id}`, () => onWorkManually(id))}
 						/>
 					))
 				)}
@@ -184,28 +209,62 @@ const ItemRow = memo(function ItemRow({
 	selected,
 	time,
 	onOpen,
+	quickDisabled,
+	onStartAgent,
+	onWorkManually,
 }: {
 	item: DashboardItem
 	selected: boolean
 	time: string
 	onOpen: (id: string) => void
+	quickDisabled: boolean
+	onStartAgent: (id: string) => Promise<void>
+	onWorkManually: (id: string) => Promise<void>
 }) {
 	const verdict = item.assessment ? VERDICT_META[item.assessment.verdict] : null
+	const showQuickActions = item.status === 'ready' && item.workMode === null
+	const mode = item.workMode
 	return (
-		<button type="button" className={`item-row${selected ? ' item-row-selected' : ''}`} onClick={() => onOpen(item.id)}>
-			<div className="item-row-line1">
-				<StatusDot tone={statusTone(item.status)} pulse={item.card.pulse} />
-				<span className="item-row-title">{itemTitle(item)}</span>
-				<span className="item-row-time">{time}</span>
-			</div>
-			<div className="item-row-line2">
-				<span className="item-row-project">{item.projectSlug}</span>
-				{verdict && (
-					<Chip tone={verdict.tone} title={`Intent verdict: ${verdict.label}`}>
-						{verdict.icon} {verdict.label}
-					</Chip>
-				)}
-			</div>
-		</button>
+		<div className={`item-row-shell${showQuickActions ? ' item-row-shell-actions' : ''}`}>
+			<button
+				type="button"
+				data-item-id={item.id}
+				className={`item-row${selected ? ' item-row-selected' : ''}`}
+				onClick={() => onOpen(item.id)}
+			>
+				<div className="item-row-line1">
+					<StatusDot tone={statusTone(item.status)} pulse={item.card.pulse} />
+					<span className="item-row-title">{itemTitle(item)}</span>
+					<span className="item-row-time">{time}</span>
+				</div>
+				<div className="item-row-line2">
+					<span className="item-row-project">{item.projectSlug}</span>
+					{mode ? (
+						<span className={`item-row-mode mode-${mode}`}>
+							{GLYPH[mode]}
+							{mode === 'agent' ? 'Agent' : 'Manual'}
+						</span>
+					) : verdict ? (
+						<Chip tone={verdict.tone} title={`Intent verdict: ${verdict.label}`}>
+							{verdict.icon} {verdict.label}
+						</Chip>
+					) : null}
+				</div>
+			</button>
+			{showQuickActions ? (
+				<div className="item-row-actions" aria-label="Choose work owner">
+					<IconBtn label="Work manually" disabled={quickDisabled} onClick={() => void onWorkManually(item.id)}>
+						{GLYPH.manual}
+					</IconBtn>
+					<IconBtn
+						label={item.kind === 'loop' ? 'Start loop' : 'Start agent'}
+						disabled={quickDisabled}
+						onClick={() => void onStartAgent(item.id)}
+					>
+						{GLYPH.agent}
+					</IconBtn>
+				</div>
+			) : null}
+		</div>
 	)
 })

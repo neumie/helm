@@ -6,19 +6,22 @@ import { solverWorkspaceSchema } from '../solver/workspace.js'
 export const itemKindSchema = z.enum(['solve', 'loop'])
 
 export const itemStatusSchema = z.enum([
-	'triage', // awaiting your go/no-go (source tasks + plan-first items); was unverified + planned
-	'ready', // approved → the drainer will run it; was queued
-	'running', // executing now; was processing
+	'inbox', // automatic/source work awaiting your go/no-go; was triage
+	'ready', // waiting in Queue for an agent/manual ownership decision
+	'active', // human-owned work in progress; the drainer never pulls it
+	'running', // agent executing now; was processing
 	'review', // PR open → awaiting your merge/verify
 	'done', // merged / landed; was completed
 	'failed', // broke → needs you
-	'cancelled', // not pursued: rejected at triage, or a run was stopped; was cancelled + skipped
+	'cancelled', // not pursued: rejected from Inbox, or a run was stopped; was cancelled + skipped
 ])
 
 // What the agent RUN did, separate from the lifecycle `status`. `no_result` =
 // the run finished but produced no solver-result.json (the classic false-fail);
 // `errored` = the run threw. A reconciled Item keeps its outcome (e.g. `errored`)
 // while sitting in `review`, so the dashboard can flag "run was messy — verify".
+export const workModeSchema = z.enum(['agent', 'manual'])
+
 export const runOutcomeSchema = z.enum(['ok', 'errored', 'no_result', 'cancelled'])
 
 // Pre-solve intent triage verdict for a source task.
@@ -109,6 +112,8 @@ export const itemRecordSchema = z.object({
 	id: z.string().min(1),
 	kind: itemKindSchema,
 	status: itemStatusSchema,
+	// Who owns/owned the work. Null while a Queue Item is still undecided.
+	workMode: workModeSchema.nullable(),
 	projectSlug: z.string().min(1),
 	title: z.string().min(1),
 	// Short AI-derived label for the dashboard; null until named. `title` stays canonical.
@@ -146,6 +151,7 @@ export const itemRecordSchema = z.object({
 
 export type ItemKind = z.infer<typeof itemKindSchema>
 export type ItemStatus = z.infer<typeof itemStatusSchema>
+export type WorkMode = z.infer<typeof workModeSchema>
 export type RunOutcome = z.infer<typeof runOutcomeSchema>
 export type AssessmentVerdict = z.infer<typeof assessmentVerdictSchema>
 export type AssessmentInput = z.infer<typeof assessmentInputSchema>
