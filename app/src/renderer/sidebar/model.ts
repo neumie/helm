@@ -136,6 +136,26 @@ export function statusTone(status: ItemStatus): StatusTone {
 	}
 }
 
+/** List rows carry lifecycle in WORDS, not color dots (§3.3/§3.5): only where
+ * a tab mixes statuses — Needs (review/failed), Archive (done/cancelled) —
+ * plus the live "Running" marker. Tab-uniform statuses return null. */
+export function statusWord(status: ItemStatus): { label: string; tone: StatusTone } | null {
+	switch (status) {
+		case 'running':
+			return { label: 'Running', tone: 'accent' }
+		case 'review':
+			return { label: 'Review', tone: 'warn' }
+		case 'failed':
+			return { label: 'Failed', tone: 'danger' }
+		case 'done':
+			return { label: 'Done', tone: 'success' }
+		case 'cancelled':
+			return { label: 'Cancelled', tone: 'neutral' }
+		default: // inbox / ready / active — the tab or ownership marker says it
+			return null
+	}
+}
+
 /** DashboardTone → chip tone class suffix (shared tone vocabulary, §3.4). */
 export const CHIP_CLASS: Record<DashboardTone, string> = {
 	gray: 'chip-gray',
@@ -145,13 +165,14 @@ export const CHIP_CLASS: Record<DashboardTone, string> = {
 	red: 'chip-red',
 }
 
-/** Verdict display metadata — same mapping as web/src/verdict.ts (§3.4). */
-export const VERDICT_META: Record<AssessmentVerdict, { label: string; tone: DashboardTone; icon: string }> = {
-	clear: { label: 'Clear', tone: 'green', icon: '✓' },
-	needs_clarification: { label: 'Needs info', tone: 'amber', icon: '?' },
-	human_decision: { label: 'Decision', tone: 'blue', icon: '◆' },
-	not_code: { label: 'Not code', tone: 'gray', icon: '–' },
-	security: { label: 'Security', tone: 'red', icon: '⚠' },
+/** Verdict display metadata — the one verdict→label/tone mapping (§3.4).
+ *  Labels are sentence case, text-only: chips carry no glyph prefixes. */
+export const VERDICT_META: Record<AssessmentVerdict, { label: string; tone: DashboardTone }> = {
+	clear: { label: 'Clear', tone: 'green' },
+	needs_clarification: { label: 'Needs info', tone: 'amber' },
+	human_decision: { label: 'Decision', tone: 'blue' },
+	not_code: { label: 'Not code', tone: 'gray' },
+	security: { label: 'Security', tone: 'red' },
 }
 
 // ---------------------------------------------------------------------------

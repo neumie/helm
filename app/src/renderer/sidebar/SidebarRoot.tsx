@@ -325,7 +325,6 @@ export function SidebarRoot() {
 					<ListPage
 						snapshot={snapshot}
 						archive={route.kind === 'archive'}
-						selectedId={selectedId}
 						onOpenItem={openItem}
 						onNewItem={() => setNewItemOpen(true)}
 						onOpenArchive={() => push({ kind: 'archive' })}

@@ -9,14 +9,7 @@ export function IntentCard({
 	if (!assessment) return null
 	const meta = VERDICT_META[assessment.verdict]
 	return (
-		<Card
-			label="Intent"
-			trailing={
-				<Chip tone={meta.tone}>
-					{meta.icon} {meta.label}
-				</Chip>
-			}
-		>
+		<Card label="Intent" trailing={<Chip tone={meta.tone}>{meta.label}</Chip>}>
 			<p className="intent-text">{assessment.intent}</p>
 			{assessment.clarifyingQuestions.length > 0 && (
 				<ul className="intent-questions">
@@ -107,27 +100,15 @@ export function WorkCard({
 	onTask,
 	onPlan,
 	onRun,
-	onSetup,
-	onOpenOkena,
-	okenaWorkspaceValue,
 	disabled,
-	onlySetup = false,
 }: {
 	item: DashboardItem
 	now: number
 	onTask: () => void
 	onPlan: () => void
 	onRun: () => void
-	onSetup: () => void
-	onOpenOkena: () => void
-	okenaWorkspaceValue: string
 	disabled?: boolean
-	onlySetup?: boolean
 }) {
-	if (onlySetup)
-		return (
-			<ActionRow nav label="Run setup" value="Agent, model, effort, workspace" onClick={onSetup} disabled={disabled} />
-		)
 	const hasTask = Boolean(item.source || item.captured || item.sourceTask)
 	const hasRun =
 		item.workMode === 'agent' &&
@@ -154,19 +135,13 @@ export function WorkCard({
 			disabled={disabled}
 		/>
 	)
+	if (!run && !task && !plan) return null
 	return (
 		<Card label="Work" flush>
 			{runFirst && run}
 			{task}
 			{plan}
 			{!runFirst && run}
-			<ActionRow
-				label="Workspace"
-				value={okenaWorkspaceValue}
-				glyphKind="external"
-				onClick={onOpenOkena}
-				disabled={disabled}
-			/>
 		</Card>
 	)
 }

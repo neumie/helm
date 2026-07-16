@@ -94,36 +94,36 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 				) : (
 					<>
 						{phase === 'stale-error' && <FetchAlert error={error} retry={refetch} />}
+						{item?.planStatus && (
+							<Card label="Status" flush>
+								<InfoRow label="Stage" value={planStatusLabel(item) ?? 'Planning'} />
+								{item.planStatus.specName && <InfoRow label="Spec" value={item.planStatus.specName} mono />}
+								<InfoRow
+									label="Local tickets"
+									value={ticketSummary(
+										item.planStatus.localTickets.total,
+										item.planStatus.localTickets.open,
+										item.planStatus.localTickets.readyForAgent,
+										item.planStatus.localTickets.readyForHuman,
+									)}
+								/>
+								<InfoRow
+									label="GitHub tickets"
+									value={
+										item.planStatus.githubAvailable
+											? ticketSummary(
+													item.planStatus.githubTickets.total,
+													item.planStatus.githubTickets.open,
+													item.planStatus.githubTickets.readyForAgent,
+													item.planStatus.githubTickets.readyForHuman,
+												)
+											: 'Unavailable'
+									}
+								/>
+							</Card>
+						)}
 						{item?.plan && (
-							<Card>
-								{item.planStatus && (
-									<>
-										<InfoRow label="Status" value={planStatusLabel(item) ?? 'Planning'} />
-										{item.planStatus.specName && <InfoRow label="Spec" value={item.planStatus.specName} mono />}
-										<InfoRow
-											label="Local tickets"
-											value={ticketSummary(
-												item.planStatus.localTickets.total,
-												item.planStatus.localTickets.open,
-												item.planStatus.localTickets.readyForAgent,
-												item.planStatus.localTickets.readyForHuman,
-											)}
-										/>
-										<InfoRow
-											label="GitHub tickets"
-											value={
-												item.planStatus.githubAvailable
-													? ticketSummary(
-															item.planStatus.githubTickets.total,
-															item.planStatus.githubTickets.open,
-															item.planStatus.githubTickets.readyForAgent,
-															item.planStatus.githubTickets.readyForHuman,
-														)
-													: 'Unavailable'
-											}
-										/>
-									</>
-								)}
+							<Card label="Workspace" flush>
 								<InfoRow label="Branch" value={item.plan.branchName} mono />
 								<InfoRow label="Plan dir" value={item.plan.planDirName} mono />
 							</Card>
@@ -134,15 +134,17 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 								detail="In the planning agent, run /almanac:prd-create to write the prd.md."
 							/>
 						) : (
-							docs.map((doc, index) => (
-								<details key={doc.name} className="plan-doc" open={docs.length === 1 || index === 0}>
-									<summary>{doc.name}</summary>
-									{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Read-only scroll well needs keyboard focus. */}
-									<section className="plan-well" tabIndex={0} aria-label={`${doc.name} contents`}>
-										{doc.content}
-									</section>
-								</details>
-							))
+							<Card label="Notes">
+								{docs.map((doc, index) => (
+									<details key={doc.name} className="plan-doc" open={docs.length === 1 || index === 0}>
+										<summary>{doc.name}</summary>
+										{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Read-only scroll well needs keyboard focus. */}
+										<section className="plan-well" tabIndex={0} aria-label={`${doc.name} contents`}>
+											{doc.content}
+										</section>
+									</details>
+								))}
+							</Card>
 						)}
 					</>
 				)}
@@ -284,6 +286,7 @@ export function TaskPage({ id, snapshot, onBack }: DetailSubpageProps) {
 
 export function RunDetailsPage({ id, snapshot, onBack }: DetailSubpageProps) {
 	const { item, phase, error, refetch, hasDetail } = useItemDetail(id, snapshot)
+	const now = useNow()
 	const [all, setAll] = useState(false)
 	const [showLog, setShowLog] = useState(false)
 	const [showInput, setShowInput] = useState(false)
@@ -326,7 +329,7 @@ export function RunDetailsPage({ id, snapshot, onBack }: DetailSubpageProps) {
 								<li key={`${event.type}-${event.createdAt}`} className="activity-item">
 									<span>{event.label}</span>
 									<time className="activity-time" dateTime={event.createdAt ?? undefined}>
-										{relativeTime(event.createdAt, Date.now())}
+										{relativeTime(event.createdAt, now)}
 									</time>
 								</li>
 							))}

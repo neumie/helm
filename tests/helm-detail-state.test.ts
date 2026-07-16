@@ -66,16 +66,16 @@ test('detail state stays focused and does not call cancellation an error', () =>
 	])
 })
 
-test('review state does not repeat the visible status with instructional copy', () => {
+test('review state leads with the always-present next-step headline (2026-07 hero spec)', () => {
 	const review = detailState({ ...base, status: 'review' })
-	assert.equal(review.headline, null)
-	assert.equal(review.direction, null)
+	assert.equal(review.headline, 'Ready for your review')
+	assert.equal(review.direction, 'Check the work, then set it as done.')
 })
 
-test('human-owned Active Items rely on status and work details without filler copy', () => {
+test('human-owned Active Items lead with the ownership headline (2026-07 hero spec)', () => {
 	const active = detailState({ ...base, status: 'active', workMode: 'manual' })
-	assert.equal(active.headline, null)
-	assert.equal(active.direction, null)
+	assert.equal(active.headline, "You're working on this")
+	assert.equal(active.direction, 'Set it as done when you finish, or return it to the queue.')
 	assert.deepEqual(active.sections, ['work'])
 })
 

@@ -1,0 +1,8 @@
+/* Workbench canvas chrome ONLY — component styling lives in the app CSS.
+ * The app locks html/body scrolling (it is a fixed Electron shell); the
+ * Storybook canvas must scroll tall stories instead. */
+html,
+body {
+	height: auto;
+	overflow: auto;
+}

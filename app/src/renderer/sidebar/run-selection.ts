@@ -1,6 +1,14 @@
 import type { AppConfig, DashboardItem, SolverAgentBody, SolverEffort, SolverWorkspace } from '../../shared-helm'
 
 export type SolverAgent = 'claude' | 'codex'
+
+export const EFFORT_LABEL: Record<SolverEffort, string> = {
+	low: 'Low',
+	medium: 'Medium',
+	high: 'High',
+	xhigh: 'Extra high',
+	max: 'Max',
+}
 export interface RunSelectionDraft {
 	agent?: SolverAgent
 	model?: string | null

@@ -574,7 +574,7 @@ function Pill(props: { view: Accessor<View>; onExpand: () => void; onSolve: () =
 		<Switch>
 			<Match when={v().kind === 'none'}>
 				<button type="button" class="vg-pill" on:click={props.onExpand}>
-					<span class="vg-pill__brand">V</span>
+					<span class="vg-pill__brand">H</span>
 					<span class="vg-pill__label vg-pill__label--faint">No task</span>
 				</button>
 			</Match>
@@ -595,7 +595,7 @@ function Pill(props: { view: Accessor<View>; onExpand: () => void; onSolve: () =
 					}
 				>
 					<button type="button" class="vg-pill vg-pill--cta" on:click={props.onSolve}>
-						<span class="vg-pill__brand">V</span>
+						<span class="vg-pill__brand">H</span>
 						<span class="vg-pill__label vg-pill__label--accent">Solve</span>
 					</button>
 				</Show>

@@ -14,5 +14,8 @@
 		"forceConsistentCasingInFileNames": true,
 		"noUncheckedIndexedAccess": true
 	},
-	"include": ["src"]
+	"include": ["src"],
+	// Storybook stays out of the app build (design-system.md §7): stories
+	// typecheck via .storybook/tsconfig.json, not the `bun run build` tsc pass.
+	"exclude": ["src/**/*.stories.tsx"]
 }

@@ -16,6 +16,7 @@
 	--hairline-strong: rgba(255, 255, 255, 0.16);
 	--fill-subtle: rgba(255, 255, 255, 0.05);
 	--fill-raised: rgba(255, 255, 255, 0.09);
+	--fill-strong: rgba(255, 255, 255, 0.13);
 	/* Text ladder */
 	--text-0: #ececee;
 	--text-1: #9a9ea6;
@@ -378,12 +379,11 @@ body.tab-dragging .tab {
 	display: none;
 }
 
+/* Label type style (§2.2): 12/500 sentence case — uppercase is retired (§5). */
 .bg-header {
 	padding: 4px 8px 6px;
-	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
+	font-size: 12px;
+	font-weight: 500;
 	color: var(--text-2);
 	user-select: none;
 }

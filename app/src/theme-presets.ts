@@ -25,6 +25,7 @@ const HELM_TOKENS: Record<string, string> = {
 	'--hairline-strong': 'rgba(255, 255, 255, 0.16)',
 	'--fill-subtle': 'rgba(255, 255, 255, 0.05)',
 	'--fill-raised': 'rgba(255, 255, 255, 0.09)',
+	'--fill-strong': 'rgba(255, 255, 255, 0.13)',
 	// Text ladder
 	'--text-0': '#ececee',
 	'--text-1': '#9a9ea6',
@@ -81,6 +82,7 @@ const HIGH_CONTRAST_TOKENS: Record<string, string> = {
 	'--hairline-strong': 'rgba(255, 255, 255, 0.32)',
 	'--fill-subtle': 'rgba(255, 255, 255, 0.09)',
 	'--fill-raised': 'rgba(255, 255, 255, 0.16)',
+	'--fill-strong': 'rgba(255, 255, 255, 0.22)',
 	'--text-0': '#ffffff',
 	'--text-1': '#c2c7cf',
 	'--text-2': '#9096a0',

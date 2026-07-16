@@ -69,8 +69,8 @@ export function detailState(item: DashboardItem): {
 			}
 		case 'ready':
 			return {
-				headline: null,
-				direction: null,
+				headline: 'Waiting in queue',
+				direction: 'Start the agent now, or work it manually.',
 				chipTone: chipTone(item),
 				attention,
 				sections: ['queue', 'run-setup', 'work'],
@@ -85,8 +85,8 @@ export function detailState(item: DashboardItem): {
 						sections: ['work', 'run-setup'],
 					}
 				: {
-						headline: null,
-						direction: null,
+						headline: "You're working on this",
+						direction: 'Set it as done when you finish, or return it to the queue.',
 						chipTone: chipTone(item),
 						attention,
 						sections: ['work'],
@@ -101,8 +101,8 @@ export function detailState(item: DashboardItem): {
 			}
 		case 'review':
 			return {
-				headline: null,
-				direction: null,
+				headline: 'Ready for your review',
+				direction: 'Check the work, then set it as done.',
 				chipTone: chipTone(item),
 				attention,
 				sections: ['outcome', 'delivery', 'work'],

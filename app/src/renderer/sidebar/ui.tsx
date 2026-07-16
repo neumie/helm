@@ -138,8 +138,13 @@ export function ProjectColorText({
 	children: ReactNode
 }) {
 	const style = color ? ({ '--project-color': color } as CSSProperties) : undefined
+	// Only configured projects get the 55/45 color mix (§3.3); unconfigured
+	// slugs stay --text-2 via the base class.
 	return (
-		<span className={`project-color-text${className ? ` ${className}` : ''}`} style={style}>
+		<span
+			className={`project-color-text${color ? ' project-colored' : ''}${className ? ` ${className}` : ''}`}
+			style={style}
+		>
 			{children}
 		</span>
 	)
@@ -373,7 +378,7 @@ export function Segmented<T extends string>({
 			className={`segmented${commit ? ' segmented-commit' : ''}${variant === 'index' ? ' segmented-index' : ''}`}
 			role={variant === 'index' ? 'radiogroup' : 'tablist'}
 			aria-label={label}
-			style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
+			style={variant === 'index' ? undefined : { gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
 			onKeyDown={onKeyDown}
 		>
 			{options.map(option => {
@@ -389,8 +394,12 @@ export function Segmented<T extends string>({
 						className={`segment${active ? ' segment-active' : ''}`}
 						onClick={() => onChange(option.value)}
 					>
-						{option.label}
-						{option.count !== undefined && option.count > 0 && <span className="segment-count">{option.count}</span>}
+						{/* Wrapper sizes the index variant's active underline to exactly
+						    the label+count width (§3.2). */}
+						<span className="segment-body">
+							{option.label}
+							{option.count !== undefined && option.count > 0 && <span className="segment-count">{option.count}</span>}
+						</span>
 					</button>
 				)
 			})}

@@ -9,7 +9,7 @@ Helm is the captain's station: dark, machined, quiet. Everything below serves th
 ## 1. Principles
 
 1. **One bold element per surface.** Each surface gets exactly one signature/high-emphasis element (a detail page owns its single primary button; the sidebar list owns its filter's active segment). The topbar deliberately owns NONE — traffic-light inset, drag region, tab strip; no branding, no status jewelry. Never two filled-accent elements visible at once.
-2. **Depth from the ladder, not decoration.** Hierarchy comes from the three-step background ladder + hairlines + white-alpha fills. No gradients, no borders heavier than 1px, no shadows on inline elements — shadows are for detached surfaces (toast, menu, sheet, widget) only.
+2. **Depth from the ladder, not decoration.** Hierarchy comes from the three-step background ladder + hairlines + white-alpha fills. No gradients, no borders heavier than 1px, no shadows on inline elements — shadows are for detached surfaces (toast, menu, sheet, widget) only. **In-flow content is flat**: grouping comes from section headers, hairline rules, and spacing — bordered/boxed cards are reserved for detached surfaces and wells, never for content sitting in the page flow.
 3. **Quiet motion.** 120–160ms, ease-out, transform/opacity only. `prefers-reduced-motion` MUST be respected globally. Ambient animation (pulse, breathe) is reserved for live status, never decoration.
 4. **Designed for its width.** Every surface is designed at its real width (sidebar: 340px). Never cram a desktop layout into a narrow pane; use push navigation instead of side-by-side panes below 480px.
 5. **Selection is the action; copy gives direction.** No hover-revealed actions in lists — selecting the row is the interaction. All copy is sentence case, active voice; states tell the user what happens next, never how to feel ("Daemon unreachable — retrying", never "Oops!").
@@ -37,7 +37,8 @@ White-alpha fills and lines (always on the ladder, never opaque grays):
 | `--hairline` | `rgba(255,255,255,0.07)` | All borders and separators. The only line weight is 1px |
 | `--hairline-strong` | `rgba(255,255,255,0.16)` | Emphasized border: quiet-button outline, hovered input border, drag-target hover |
 | `--fill-subtle` | `rgba(255,255,255,0.05)` | Hover fill; resting input/segmented-track background |
-| `--fill-raised` | `rgba(255,255,255,0.09)` | Active/selected fill (active tab, selected row, active segment) |
+| `--fill-raised` | `rgba(255,255,255,0.09)` | Active/selected fill (active tab, selected row, active segment); resting quiet-button fill |
+| `--fill-strong` | `rgba(255,255,255,0.13)` | Hovered quiet-button fill — the only step above raised |
 
 Text:
 
@@ -71,17 +72,18 @@ Families:
 | `--font-ui` | `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif` | All UI text |
 | `--font-mono` | `'SF Mono', ui-monospace, SFMono-Regular, Menlo, monospace` | Terminal, branch names, ids, kbd, code |
 
-Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label and Chip styles override it:
+Scale (px / weight / notes). Base letter-spacing is `-0.01em` everywhere; no style overrides it. **Uppercase text does not exist in helm** — the former uppercase Label/Chip styles are retired (see appendix):
 
 | Style | Size/weight | Spec |
 | --- | --- | --- |
-| Page title | 15/600 | Detail-page heading. One per page. `--text-0` |
+| Page/hero title | 17/600, line-height 1.3 | The one leading line of a page: the detail hero's next-step headline, the pushed Task page's canonical title. One per page. `--text-0` |
 | Body / row title | 13/400 (titles 13/500) | Default. Line-height 1.5 for paragraphs, single-line ellipsis in rows |
-| Emphasis / button | 13/600 (buttons 12/600) | Section titles, empty-state titles |
+| Emphasis / button | 13/600 (buttons 12/600) | Empty-state titles, hero headlines |
 | Secondary | 12/400 | Detail lines, toast detail, descriptions. `--text-1` |
 | Meta | 11/400 | Timestamps, counts. `--text-2`, `font-variant-numeric: tabular-nums` for numbers/times |
-| Label | 11/600, uppercase, `0.06em` | Section labels, wordmark, field labels. `--text-2` |
-| Chip | 10/700, uppercase, `0.04em` | Chip/badge text only. Never for standalone labels |
+| Section header | 12/600, sentence case | Group/section titles ("Outcome", "Work", "Daemon", "Comments"). `--text-1` |
+| Label | 12/500, sentence case | Field labels, fact-row labels ("Branch", "Workspace"). `--text-2` |
+| Chip | 11/500, sentence case | Chip/badge text only ("Review", "Needs info"). Tone-colored per §3.4 |
 | Mono inline | 11/400 mono | Branch names, ids, kbd |
 | Terminal | 13/400 mono (default), cell height ≈19px | xterm: `lineHeight: 1.2` multiplier lands 13px at ~19px cells (`app/src/renderer/renderer.ts`) — a literal 1.45 would render ~22px. Size is user-adjustable **9–24px** via ⌘= / ⌘− / ⌘0 or Settings → Appearance (§2.8). Theme comes from the `--term-*` / `--ansi-*` tokens (§2.8): bg `--term-bg`, fg `--term-fg`, cursor `--term-cursor`, selection `--term-selection` |
 
@@ -92,6 +94,8 @@ Scale (px / weight / notes). Base letter-spacing is `-0.01em`; only the Label an
 ### 2.3 Spacing
 
 4px base scale: **4, 8, 12, 16, 20, 24, 32**. No other values (1px is a line, not a space; 2px only as inner padding of segmented tracks and countdown-bar height).
+
+**One text grid.** Every text column in the sidebar pane starts **16px from the pane edge** — the same 16 as the terminal well's text inset, so the whole app shares one left edge. Containers never nest horizontal insets (a group inside the 16px page gutter has 0 side padding); interactive fills may overhang **8px into the gutter** (ghost-on-edge pattern) so the fill breathes while its text stays on the grid. Symptoms of breaking this: text columns at 20px (a leftover sub-inset), labels pinned to the pane edge (a full-bleed control), fills flush with text (a missing overhang).
 
 | Context | Value |
 | --- | --- |
@@ -158,7 +162,7 @@ Exactly two shadows. Attached surfaces (cards in flow, banners, rows) get **no s
 
 ### 2.8 Theming
 
-Every color in this document is a **CSS custom property** — components MUST consume `var(--token)`, never literals; a hex/rgba literal in component CSS is drift. Beyond §2.1, the token set includes `--accent-fill-hover`, `--on-accent` (text on accent fills), `--thumb`/`--thumb-hover` (pane scrollbars + toast countdown), `--term-scroll-thumb`/`--term-scroll-thumb-hover` (the terminal overlay scrollbar, §3.14 — a brighter pair because it floats over `--well`), `--scrim`, `--shadow-1`/`--shadow-2`, the terminal surface (`--term-bg`/`--term-fg`/`--term-cursor`/`--term-cursor-accent`/`--term-selection`), and the ANSI 16 as `--ansi-<name>`/`--ansi-bright-<name>`. The canonical values live in `app/src/theme-presets.ts` (`HELM_TOKENS`); `app/src/renderer/styles.css` `:root` mirrors them only for the pre-JS first paint — keep both in sync.
+Every color in this document is a **CSS custom property** — components MUST consume `var(--token)`, never literals; a hex/rgba literal in component CSS is drift. Beyond §2.1, the token set includes `--fill-strong` (quiet-button hover), `--accent-fill-hover`, `--on-accent` (text on accent fills), `--thumb`/`--thumb-hover` (pane scrollbars + toast countdown), `--term-scroll-thumb`/`--term-scroll-thumb-hover` (the terminal overlay scrollbar, §3.14 — a brighter pair because it floats over `--well`), `--scrim`, `--shadow-1`/`--shadow-2`, the terminal surface (`--term-bg`/`--term-fg`/`--term-cursor`/`--term-cursor-accent`/`--term-selection`), and the ANSI 16 as `--ansi-<name>`/`--ansi-bright-<name>`. The canonical values live in `app/src/theme-presets.ts` (`HELM_TOKENS`); `app/src/renderer/styles.css` `:root` mirrors them only for the pre-JS first paint — keep both in sync.
 
 - **Soft fills are derived, not stored**: `--<tone>-soft: color-mix(in srgb, var(--<tone>) 15%, transparent)`. Themes override the tone; every chip/banner/soft border follows automatically. Never hand-mix a per-component alpha (the §2.1 0.15 rule, mechanized).
 - **A theme is a flat JSON object of token overrides**, stored as `<userData>/themes/<id>.json` (`{ "name": "…", "tokens": { "--token": "value", … } }`). Main seeds the presets as editable files on first list (`themes:list` IPC) and any other `*.json` dropped in the dir appears in the Appearance theme picker; sparse themes backfill missing tokens from the Helm base. Runtime application is owned by `app/src/renderer/appearance.ts`: `documentElement.style.setProperty` per token plus an xterm `options.theme` rebuild from the `--term-*`/`--ansi-*` tokens (`termThemeFromTokens`) — CSS and terminal can never disagree.
@@ -176,26 +180,28 @@ All px values are exact. "Do/Don't" lines are normative.
 
 Sizes:
 
-| Size | Height | Padding | Text |
-| --- | --- | --- | --- |
-| md (default) | 28 | 0 12 | 12/600 |
-| sm | 24 | 0 10 | 12/600 |
-| icon | 28×28 (sm 24×24) | 0 | glyph 14–16px |
+| Size | Height | Padding | Text | Radius |
+| --- | --- | --- | --- | --- |
+| md (default) | 32 | 0 14 | 13/600 | 8 (`--radius-lg`) |
+| sm | 24 | 0 10 | 12/600 | 6 (`--radius-md`) |
+| icon | 28×28 (sm 24×24) | 0 | glyph 14–16px | 6 |
 
 Tones:
 
 | Tone | Resting | Hover | Use |
 | --- | --- | --- | --- |
 | primary | `--accent-fill` bg, `#fff` text | bg `#5a9dff` | THE one primary action of the surface |
-| quiet | transparent, 1px `--hairline-strong` border, `--text-1` text | bg `--fill-subtle`, text `--text-0` | Secondary actions |
-| danger | transparent, 1px danger-soft border, `--danger` text | bg danger-soft | Destructive (reject, cancel run, delete) |
+| quiet | bg `--fill-raised`, no border, `--text-0` text | bg `--fill-strong` | Secondary actions — a filled gray button, never an outline |
+| danger | bg danger-soft, no border, `--danger` text | bg danger soft ×22% (`color-mix(in srgb, var(--danger) 22%, transparent)`) | Destructive (reject, cancel run, delete) |
 | ghost | transparent, no border, `--text-2` | bg `--fill-subtle`, text `--text-0` | Icon buttons, overflow "…", back chevron, close × |
 
-- Radius `--radius-md`. Disabled: `opacity: 0.45; cursor: default` — never a different color set.
+Buttons carry **no borders in any tone** — weight comes from the fill. (The retired outline quiet/danger styles are in the appendix.)
+
+- Disabled: `opacity: 0.45; cursor: default` — never a different color set.
 - A ghost control sitting on a pane edge keeps its **text** on the pane's 12px left-edge rhythm: keep the 8px padding for the hover fill but pull it back with a matching negative margin (`padding: 0 8px; margin-left: -8px` — the list page's project trigger), so the fill extends into the gutter and the label stays flush at x=12.
 - Focus: `outline: 2px solid var(--accent); outline-offset: 2px` on `:focus-visible` only.
 - Transitions: background/color/border 140ms ease-out.
-- **Do** keep exactly one primary button per surface (principle 1). **Don't** place two filled buttons adjacent; **don't** make a destructive action primary-filled — danger tone is always outline-style.
+- **Do** keep exactly one primary button per surface (principle 1). **Don't** place two accent-filled buttons adjacent (a primary beside a quiet gray fill is the intended pair); **don't** make a destructive action primary-filled — danger is always the soft-filled tone, never opaque `--danger`.
 
 ### 3.2 Segmented control
 
@@ -205,17 +211,17 @@ Tones:
 - **Workspace picker** (detail "Run with" card, `Segmented` in `DetailPage.tsx`): a two-option either/or (Worktree / Main) that stays **NEUTRAL** (`--fill-raised` active — the base spec, NOT `commit`), even though it's an either/or, because the Agent picker directly above already owns the card's one accent-filled commit and two accent fills on one surface is banned (§1). A trailing quiet **"Default"** reset (`.field-reset`, text `--text-2`) sits on the field-label row and appears ONLY when an override is active (stored on the Item, or freshly picked); it clears the override back to `config.solver.workspace`. Picking **Main** shows a one-line `.run-caption` (`--text-2`): "Runs in the project's checkout — shares your working tree." The extension widget's own Workspace segmented (`.vg-agent` pattern) DOES reuse the accent-filled chip (its dense card follows the agent-picker precedent), with "no chip active" = follow the daemon default.
 - Trailing count badges inside options: 11px tabular, `--text-2` (active: `--text-1`), separated by 4px. No pill background — bare number.
 - Keyboard: Left/Right arrows move selection; the control is one tab stop (`role="tablist"` semantics).
-- **Work-list lifecycle index:** Needs / Active / Queue / Inbox uses the `index` visual variant: no surrounding track or option fills; four equal-width 40px-high targets spanning the full row (middle labels centered, first/last aligned to the row edges), 11/500 labels with bare 10px counts, one bottom `--hairline`, and `--accent` text for the active option. Because it filters one list rather than switching page panels, its accessibility model is one-tab-stop `radiogroup`/`radio` with `aria-checked`; Left/Right changes and focuses the choice. This is the narrow sidebar's persistent navigation index, not a generic segmented control.
+- **Work-list lifecycle index:** Needs / Active / Queue / Inbox uses the `index` visual variant: no surrounding track or option fills; a **left-aligned flex row of auto-width 44px-high targets** starting on the 16px text grid, **24px gaps**, one bottom `--hairline` spanning the full row. Never a justified full-width grid — edge-pinned first/last labels with centered middles read as uneven padding at 340px. Labels 13/500 `--text-2` with 11px tabular counts (`--text-2`, 6px after the label). The active option is 13/600 `--text-0` with its count at `--text-1`, marked by a **2px `--accent` underline** (radius 1px, exactly the label+count width, sitting on the bottom hairline) — never accent-colored label text, never an option fill. Because it filters one list rather than switching page panels, its accessibility model is one-tab-stop `radiogroup`/`radio` with `aria-checked`; Left/Right changes and focuses the choice. This is the narrow sidebar's persistent navigation index, not a generic segmented control.
 - **Do** cap at 4–5 segments. **Don't** build full-width tab bars with icons; **don't** let labels wrap or ellipsize — shorten the label instead.
 
 ### 3.3 List row
 
 The sidebar work-item row; also the template for any dense list.
 
-- Height **56**, horizontal padding 12, radius 0. Work-list rows are a balanced index with a softened 1px bottom separator (`--hairline` mixed 60% toward transparent); no card border, radius, outer margin, or shadow.
-- Line 1: status dot (8px, §3.5) + 8px gap + title 13/500 `--text-0` single-line ellipsis + trailing relative time 11px tabular `--text-2`.
-- Line 2 (3px below): 11px meta — the project slug itself carries the project's configured color, mixed **72% project / 28% `--text-0`** for dark-theme legibility (`--text-2` when unconfigured), then ONE of: the mini assessment-verdict chip, a compact Agent/Manual ownership marker, or document icon + server-cached planning/ticket progress. Planning has three truthful labels: **Planning** (session exists, no runnable spec detected), **Plan ready** (spec/PRD exists, no explicit queue), or **X of Y tickets complete** (combined local `issues/*.md` + associated GitHub issues; complete = total − open). Once ticket data exists, that progress marker wins in every lifecycle state—including Review and Archive—so completion does not disappear after execution starts.
-- Hover: background `--fill-subtle`. Selected: `--fill-raised` plus a 2px inset `--accent` leading edge (text unchanged).
+- Height **64**, radius **8**, horizontal padding 8 inside the list's 8px side inset (text lands on the pane's 16px rhythm). **No separators** — the 64px pitch and line spacing carry the rhythm; no card border, no shadow.
+- Line 1: title 13/500 `--text-0`, flush on the 16px text grid, single-line ellipsis + trailing relative time 11px tabular `--text-2`. **No leading status dot** — color-only state is banned (§4), and within a lifecycle tab most statuses are uniform, so a dot column was noise that read as an unread marker.
+- Line 2 (4px below): 11px meta — first, a **status word** (11/500, tone-colored text) ONLY where the tab mixes statuses: "Review" (`--warn`) / "Failed" (`--danger`) in Needs, "Done" (`--success`) / "Cancelled" (`--text-2`) in Archive, and "Running" (`--accent`) with the one remaining dot — a **6px pulsing accent dot** before the word (the live-run marker; `statusWord` in `model.ts` owns the mapping, and running rows suppress the redundant "Agent" ownership marker). Then the project slug carrying the project's configured color, mixed **55% project / 45% `--text-1`** so it identifies without shouting (`--text-2` when unconfigured; the old 72%/28% mix read as an alarm — see appendix), then ONE of: the mini assessment-verdict chip, a compact Agent/Manual ownership marker, or document icon + server-cached planning/ticket progress. Planning has three truthful labels: **Planning** (session exists, no runnable spec detected), **Plan ready** (spec/PRD exists, no explicit queue), or **X of Y tickets complete** (combined local `issues/*.md` + associated GitHub issues; complete = total − open). Once ticket data exists, that progress marker wins in every lifecycle state—including Review and Archive—so completion does not disappear after execution starts.
+- Hover: background `--fill-subtle`. Press (`:active`): `--fill-raised`. **No persistent selected state** — under push navigation the list is never visible beside a detail, so a lingering highlight reads as a stuck hover (a selection idiom belongs to side-by-side master/detail only). Returning from a detail restores scroll position and keyboard focus (via `data-item-id`), not a visual highlight.
 - The entire row is the hit target by default. **Queue ownership exception:** undecided Queue rows reserve 64px at the trailing edge for two permanently-visible 28px ghost icon buttons — person = “Work manually”, robot = “Start agent” (or loop). They are sibling controls, never nested inside the row button; each has an accessible label. Permanent visibility avoids the inaccessible hover-action anti-pattern.
 - The same colored-slug treatment appears for the selected project in the toolbar filter and for the project slug in Item detail. Project color never introduces a second dot, rail, badge, or other competing status-like shape; the visible slug remains the accessible identity and color remains supplementary.
 - **Organization menu:** the toolbar's group icon opens a radio menu with **Flat list** / **Group by project**. The active project-grouping state accents the icon; the preference is local and changes only presentation—project scope filtering and server queries are untouched. Grouped mode inserts flat 30px project headers (colored slug + Item count) above the same balanced rows; it does not create rounded project cards.
@@ -223,17 +229,18 @@ The sidebar work-item row; also the template for any dense list.
 
 ### 3.4 Chips & badges
 
-- Padding **2 7**, radius 999, text 10/700 uppercase `0.04em`, line-height 1.4.
-- Color: tone text on tone soft fill (`chip-gray/blue/green/amber/red` map to neutral/accent/success/warn/danger — the tone-class naming in `widget.styles.ts:344` and the web dashboard is the shared vocabulary).
-- Verdict chips (triage assessment) use the mapping in `web/src/verdict.ts` — that file owns verdict→label/tone/icon; do not re-derive it per surface.
-- **Do** cap at one chip per list-row meta line. **Don't** make list-row chips interactive (a chip is a state readout, not a button); the Item detail's current-status control is the sole exception — a chip-styled menu trigger with a down chevron, visible focus ring, and every non-running manual status. **Don't** use chip style for section labels — that's the Label type style.
+- Padding **2 8**, radius 999, text 11/500 **sentence case** ("Review", "Needs info", "Clear"), line-height 1.4. Text only — no glyph prefixes inside chips; the tone carries the signal.
+- Color: tone text on tone soft fill (`chip-gray/blue/green/amber/red` map to neutral/accent/success/warn/danger — the tone-class naming in `widget.styles.ts:344` is the shared vocabulary).
+- Verdict chips (triage assessment) use the mapping in `VERDICT_META` (`app/src/renderer/sidebar/model.ts`) — that file owns verdict→label/tone; do not re-derive it per surface. Labels are sentence case.
+- **Do** cap at one chip per list-row meta line. **Don't** make list-row chips interactive (a chip is a state readout, not a button); the Item detail's current-status control is the sole exception — the **status button**: the chip grown to control size (height 24, padding 0 10, text 12/600, tone soft fill + tone text, down chevron, visible focus ring) opening the manual-status menu, because changing status is a top-3 workflow. The hero's passive chip (run-owned `running`) keeps the same size so the slot never jumps. **Don't** use chip style for section labels — that's the Label type style.
 
 ### 3.5 Status dots
 
-- Standard: **8px** circle, filled with the status tone (§2.1 mapping). Running state adds `pulse 1.6s ease-in-out infinite`.
+- **A dot means "live", never "lifecycle".** List rows carry lifecycle in words (§3.3) — the status dot survives only as a live-run marker: **6px, `--accent`, `pulse 1.6s ease-in-out infinite`, always beside the word "Running"** (list-row meta line, detail action bar's "Agent running"). Never a dot without its word — color-only state is banned (§4).
+- The standard 8px status-tone circle remains available for a future surface that genuinely shows mixed statuses side by side, but no current list uses it.
 - Activity dot (background-terminal popover rows, §3.18): **6px**, `--accent`, no ambient — a quiet "output arrived" mark, not a status.
 - **There is no topbar connection dot.** The topbar carries no branding or status (§1); daemon reachability is the sidebar's job — the waiting empty state ("Waiting for the daemon" / "Start it with helm start") when unreachable, silence when connected. The retired spec (7px, `--success` + glow; unreachable `--warn` + breathe 2.4s) stays on record here only for a future surface that genuinely needs an ambient connection signal.
-- **Don't** add glow/halo to list-row dots — glow is reserved for an ambient connection signal, and no current surface has one; **don't** use a dot and a chip for the same fact in one row.
+- **Don't** reintroduce a per-row lifecycle dot column; **don't** add glow/halo to dots — glow is reserved for an ambient connection signal, and no current surface has one; **don't** use a dot and a chip for the same fact in one row.
 
 ### 3.6 Toast
 
@@ -251,7 +258,7 @@ Reference implementation: `app/src/renderer/toast.ts` + `styles.css` "toasts" bl
 - Height **28** (textarea min-height 64), padding 0 10, background `--fill-subtle`, 1px `--hairline` border, radius `--radius-md`, text 12 `--text-0`, placeholder `--text-2`.
 - Hover: border `--hairline-strong`. Focus: border `--accent`, no outer ring (the border is the ring for fields; buttons/rows use the outline ring).
 - Select: `appearance: none` + inline SVG chevron data-URI, stroke `#62666e` (`--text-2`), positioned `right 10px center`, right padding 28. Option list background `--chrome`.
-- Field labels: Label type style (11/600 uppercase 0.06em, `--text-2`), 4px above the field.
+- Field labels: Label type style (12/500 sentence case, `--text-2`), 4px above the field.
 - Disabled: `opacity: 0.5; cursor: default`.
 - **Color wells** (`<input type="color">`, `.color-input`): well = `--fill-subtle`, 1px `--hairline`, radius 6. Chromium's default swatch bezel (1px gray border, square corners) MUST be stripped via the pseudo-elements: `::-webkit-color-swatch-wrapper { padding: 3px }` + `::-webkit-color-swatch { border: none; border-radius: 3px }` — inner radius = outer radius − padding, so the color chip sits inset on the well with token-only lines.
 - **Don't** use browser-default selects or native focus rings; **don't** make inputs taller than 28 to "feel friendly" — density is the register.
@@ -282,10 +289,10 @@ For pane-scoped tasks like New Item.
 The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page as a push stack inside the pane. **No side-by-side master/detail below 480px pane width, ever.**
 
 - Header: height 36, background inherits the pane, 1px `--hairline` bottom border, z-layer 10. Contents: 28×28 ghost back-chevron button + page title 13/600 single-line ellipsis; optional one trailing icon button.
-- **The header title names the content, never its type, and is the sole visible item-name heading.** An item's detail header shows the item's `displayName ?? title` (single-line ellipsis) at all scroll positions — a literal type word ("Item") never appears as a header title, and the body does NOT repeat the item name. The detail body leads with a state hero (status/project/time, then the 15/600 next-step headline); when an AI display name differs from the canonical source title, the pushed Task page carries the full source title. Sub-pages of an already-named object (Plan, Task) and pages whose name IS the page (Settings, Archive) keep a static header title.
+- **The header title names the content, never its type, and is the sole visible item-name heading.** An item's detail header shows the item's `displayName ?? title` (single-line ellipsis) at all scroll positions — a literal type word ("Item") never appears as a header title, and the body does NOT repeat the item name. The detail body leads with a state hero — the **17/600 next-step headline first** ("Ready for your review", "Waiting in queue"; present in every lifecycle state), then the quiet meta line (status button §3.4 + project slug + time), then the **hero actions row**: the always-available workspace action as a quiet `sm` button ("Open in Okena") with its what-will-happen preview as an 11px caption beside it (§3.15). Lifecycle actions stay in the pinned action bar (§3.11) — the hero row is for the "go to the work" action, never a second lifecycle button. When an AI display name differs from the canonical source title, the pushed Task page carries the full source title. Sub-pages of an already-named object (Plan, Task) and pages whose name IS the page (Settings, Archive) keep a static header title.
 - Forward: incoming page slides `translateX(100%)`→0 over **150ms ease-out**; outgoing page slides 0→`translateX(-25%)` (parallax) and dims to 0.9 opacity. Back: exact reverse at 120ms. Every `.nav-page` remains its own stacking context (`isolation: isolate`) after motion ends, so a previous page's z-indexed pinned bar can never paint through a content-only subpage.
 - Reduced motion: instant swap (the global clamp handles it).
-- The list page preserves scroll position and selection across push/pop. Deep pages (plan preview, settings section) push onto the same stack; Esc = back.
+- The list page preserves scroll position and keyboard focus (the last-opened row) across push/pop — no visual selection highlight (§3.3). Deep pages (plan preview, settings section) push onto the same stack; Esc = back.
 - **Gestures — every pushed page inherits these** (implementation: `app/src/renderer/sidebar/swipe.ts` + the nav-stack wiring in `SidebarRoot.tsx`):
   - **Two-finger swipe-back** (macOS trackpad, wheel `deltaX`): an interactive edge-tracking pop. WheelEvent carries no gesture-phase info in Chromium — fingers-down motion, the lift, and the momentum tail (same-sign deltas decaying roughly exponentially over ~300–800ms) are one undifferentiated delta stream — so every rule below is gap- and threshold-based, never phase-based. **Engagement is a dead zone, not a first-event bet**: tracking engages only once the gesture shows clear back intent — ≥ **30px** accumulated back travel since gesture start AND horizontal dominance `|ΣdeltaX| > 2×|ΣdeltaY|` — with a page to pop and no horizontally-scrollable ancestor under the pointer that can still scroll left (`scrollLeft > 0` consumes the pan; at 0 it falls through to navigation — Safari's edge rule). Below the dead zone the page must not move at all; a gesture whose accumulation first crosses the bar any other way (vertical, diagonal, forward pan, consumed) is rejected for its whole lifetime. While tracking, the top page translates 1:1 with the delta past the dead zone (inline transform, no easing) and the previous page peeks: parallax −25%→0 under a `--scrim` dimming layer fading 1→0. **Commits are eager** — evaluated after every event, firing the moment a bar is crossed (an end-of-gesture decision would wait out the whole momentum tail): past **50% pane width**, or a **genuine flick** — back-velocity ≥ **1.5 px/ms averaged over the trailing 80ms** with ≥ **20% pane width** traveled. Rationale: ordinary two-finger scrolling runs ~0.3–1 px/ms and a deliberate flick 2–4, so 1.5 never fires on scroll speed (the old 0.7 did — hair trigger); the trailing-80ms window means an early burst or a decayed tail can't smuggle a commit through; the 20%-width travel floor kills violent micro-twitches. The remaining travel settles at constant-ish perceived speed — duration proportional to remaining distance, **≤ 200ms with an 80ms floor, ease-out** — then the stack pops with NO pop animation (replaying it would flash). A gesture that ends below both bars (gesture end = **140ms** of wheel idle, long enough to bridge fingers resting mid-drag) **springs back in 180ms**. After ANY engaged gesture settles (commit or spring-back) the controller enters a **refractory quiescence gap — 280ms, restarted by every wheel event** — which outlasts any momentum tail, so one physical swipe can never pop two pages; only a real pause re-arms the gesture. Reduced motion: no tracked animation at all — a threshold-crossing gesture pops instantly (the refractory gap still applies).
   - **Native three-finger swipe**: `BrowserWindow` `'swipe'` event → back/forward over the same channel as the Go menu. Back runs the wheel controller's **single-owner check** (`interceptNativeNav`) first — with the "two or three fingers" system setting, one physical gesture can arrive both as wheel deltas and as a native `'swipe'` event: if the wheel path already owns it (engaged tracking, settle animation, or refractory) the native event is swallowed; otherwise the native pop proceeds and arms the refractory gap so the same gesture's wheel deltas can't double-pop.
@@ -297,7 +304,7 @@ The narrow-pane navigation model (Mail-on-iPhone): list → detail → sub-page 
 
 Detail pages pin their actions; content scrolls, actions don't.
 
-- Height 48 (content 28 + 10px vertical padding), padding 10 12, background `--pane` (opaque), 1px `--hairline` top border, z-layer 10.
+- Height 56 (content 32 + 12px vertical padding), padding 12 16, background `--pane` (opaque), 1px `--hairline` top border, z-layer 10.
 - One **primary** button (the contextual main action) + a quiet or ghost "…" overflow for the rest. The button explains its effect through a concise verb phrase plus a 14px outline icon: check + **Set as done** for a status-only review handoff, tray arrow + **Approve and queue**, play + **Start agent** (or **Start loop**), circular arrow + **Queue retry** (or **Queue loop retry**). **Ownership-choice exception:** an undecided Queue Item shows quiet person + **Work manually** beside primary robot + **Start agent**; a human-owned unplanned Active Item shows quiet tray + **Return to Queue** beside primary check + **Set as done**; a planned Active solve Item shows quiet robot + **Start agent** beside primary circular arrow + **Start loop**, both reusing its prepared worktree. These are the bar's maximum two visible buttons; overflow may remain as the one ghost control. Do not add an instructional caption above the bar; controls must be self-explanatory. Review's Set as done returns to the work list and moves the Item to Archive; Retry moves into overflow. Danger actions live in the overflow unless the page's whole point is destructive.
 - **Inbox completion:** Approve and queue remains the one primary action; check + **Set as done** lives in overflow for work already completed elsewhere. It uses the guarded manual status route and returns to the work list.
 - **Start loop semantics:** on a planned solve Item, this is the autonomous full-queue action—not “run one ticket.” It runs every currently agent-ready local/GitHub ticket in AFK mode, skips human-ready tickets, and uses the effective Agent + Model + Effort from Run setup (Item override, otherwise daemon/agent default).
@@ -309,7 +316,7 @@ Detail pages pin their actions; content scrolls, actions don't.
 - Padding 10 12, radius `--radius-md`, text 12 line-height 1.5, `word-break: break-word`.
 - Error: `--danger` text on danger-soft fill. Warning: `--warn` on warn-soft. Info: `--text-1` on `--fill-subtle`.
 - Optional ghost dismiss × (16px glyph, opacity 0.6→1 on hover), top-aligned.
-- Long content (root-cause paragraphs, result summaries): clamp to 4 lines (`-webkit-line-clamp: 4`), expand on click — the block itself is the toggle (`widget.styles.ts` `.vg-notice`, helm `ClampText`). The toggle gets a quiet **"More"/"Less" cue** in the Label type style (11/600 uppercase 0.06em, `--text-2`, hover `--text-1`), 4px below the text, shown only when the content actually overflows the clamp.
+- Long content (root-cause paragraphs, result summaries): clamp to 4 lines (`-webkit-line-clamp: 4`), expand on click — the block itself is the toggle (`widget.styles.ts` `.vg-notice`, helm `ClampText`). The toggle gets a quiet **"More"/"Less" cue** in the Label type style (12/500 sentence case, `--text-2`, hover `--text-1`), 4px below the text, shown only when the content actually overflows the clamp.
 - **Actionable notice** (info banner + one quiet `sm` button, right-aligned, text flexes; an `<output>` element — implicit `role="status"` — never the clamp-toggle `<button>`, no nested buttons): for a persistent state with exactly one way out, e.g. Settings' pending-restart notice ("Saved. Restart the daemon to apply — 2 runs active." + "Restart now", `.restart-notice` in `sidebar.css`). It may sit stacked above the action-bar primary (`.action-bar-stack`: auto height, column). One action max — two ways out is a sheet or a page, not a banner.
 - **Don't** use a banner for success — success is a status change (dot/chip), not an interruption.
 
@@ -337,16 +344,17 @@ Quiet and directive: say what the state is, then what to do.
 - xterm theme = the `--term-*` / `--ansi-*` tokens (§2.8), rebuilt into an xterm theme object by `appearance.ts` (`termThemeFromTokens`) — `HELM_TOKENS` in `app/src/theme-presets.ts` is the canonical ANSI-16 for any future terminal surface. Defaults: cursor `--accent`, selection `rgba(76,154,255,0.25)`.
 - **Don't** restyle ANSI colors per surface; **don't** put chrome-level controls inside the well.
 
-### 3.15 Cards & info rows (sidebar detail/settings)
+### 3.15 Flat groups & info rows (sidebar detail/settings)
 
-The in-flow content card and its fact/navigation rows (`app/src/renderer/sidebar/ui.tsx`).
+The in-flow content group and its fact/navigation rows (`app/src/renderer/sidebar/ui.tsx`). **There are no bordered cards in flow** (principle 2; the retired boxed `.card` chrome is in the appendix) — every detail and settings surface is one flat editorial stack.
 
-- Card: 1px `--hairline` border, radius `--radius-lg`, padding 12, transparent background by default (depth from the ladder — cards in flow get no shadow). Optional head row: Label-style section label left, one small control or chip right. **Item decision details are the deliberate exception:** they use a flat editorial stack, not visible cards — each evidence section has no box/fill/radius and begins with one full-width `--hairline` rule, 16px top inset, and 4px horizontal text inset. The unframed state hero stays visually dominant; do not reintroduce grouped boxes or repeat low-priority context facts on the base page.
-- Info row (static fact): min-height 20, 12px value `--text-0` right-aligned single-line ellipsis; label is the Label type style. Mono values (branch, refs) use Mono inline 11.
-- **Row rhythm in a flush card** (the Details card, settings lists — `.card-flush`, gap 0, rows at exact pitch): fact rows AND copy/external action rows share **one 28px pitch** (`.card-flush .info-row` min-height 28, center-aligned; `.action-row` min-height 28); only rows that navigate — push rows (chevron ›, `.action-row-push`) and nav rows — sit at the **36px pitch**. Two pitches, one meaning: 28 = read/act in place, 36 = go somewhere.
-- Tappable row (`.action-row`): min-height 28 (push rows 36, above), radius `--radius-sm`, hover `--fill-subtle`. Trailing glyph declares the behavior — chevron ›= pushes a sub-page, ↗ = opens externally, copy glyph = copies to clipboard (confirm with a toast). ONLY external-link values are `--accent`; push/copy values stay `--text-0` so the pane doesn't read as a link farm.
-- **Item workspace row:** every Item detail's Work card ends with one 28px external-action row, `Workspace` → a detail-only, read-only action preview + ↗: `Okena · Focus open workspace`, `Register existing worktree`, `Create workspace from local branch`, `Fetch branch & create workspace`, `Create branch & workspace`, or `Focus main checkout` (plus truthful unavailable/re-association states). Never show only the branch name—the row must explain what clicking will do. It is lifecycle-neutral and available in every status: reuse/focus an existing Okena terminal, register an existing non-Okena worktree, fetch a pushed branch, or explicitly create + persist the Item worktree when none exists. Preview inspection may query Okena and git only on the single-Item detail route; list routes stay DB-only, and the POST recomputes the action for race safety. Success resolves the terminal from Okena's live pane layout, focuses the project, and best-effort raises its window. An already-open workspace receives exactly one BEL attention character so Okena paints its yellow border; no command or `ctrl_c` is sent. Toast **Focused in Okena** with the daemon's truthful focus/attention hint; a newly-opened workspace whose terminal is still becoming ready is still success, not a false retryable error. Actual workspace-open failures stay in Helm's retryable command error.
-- Nav row (`.action-row-nav` — settings section lists and the Item detail's Work/Run setup groups): a tappable row whose **title is the content, not a label** — min-height **36** (36px pitch), title 13/400 `--text-0` sentence case, value 12 `--text-1` right-aligned single-line ellipsis, chevron `--text-2`. Nav rows stack flush (card gap 0 via `.card-flush`) inside cards with head rows; grouping comes from the card head row, never from a title prefix ("AI · …" is a namespace hack). Every nav row shows a current-state value with units and real state ("60s", "2 of 3 on", "default") — a blank cell next to a chevron reads as broken, a unit-less number gives no direction, and independent toggles never collapse into one fake on/off.
+- Group: begins with one full-width `--hairline` rule, 20px top inset, **0 horizontal inset** (the page's 16px gutter is the text grid — §2.3); a Section-header line (12/600 sentence case, `--text-1`) with optionally ONE small control or chip trailing right; rows follow. The first group on a page omits the leading rule (the hero/page header provides the edge). No box, no fill, no radius, no shadow.
+- The unframed state hero stays visually dominant on Item detail; do not reintroduce grouped boxes or repeat low-priority context facts on the base page.
+- Info row (static fact): min-height 20, 12px value `--text-0` right-aligned single-line ellipsis; label is the Label type style (12/500 sentence case, `--text-2`). Mono values (branch, refs) use Mono inline 11.
+- **Row rhythm in a flush group** (the Details stack, settings lists — `.card-flush`, gap 0, rows at exact pitch): fact rows AND copy/external action rows share **one 28px pitch** (`.card-flush .info-row` min-height 28, center-aligned; `.action-row` min-height 28); only rows that navigate — push rows (chevron ›, `.action-row-push`) and nav rows — sit at the **36px pitch**. Two pitches, one meaning: 28 = read/act in place, 36 = go somewhere. Consecutive 36px nav rows are divided by a **soft inset separator** (1px, `--hairline` mixed 60% toward transparent, inset to the text edge); 28px fact rows carry no separators.
+- Tappable row (`.action-row`): min-height 28 (push rows 36, above), radius `--radius-md`, hover `--fill-subtle`; the hover fill overhangs 8px into the page gutter (§2.3 ghost-on-edge) so row text stays on the 16px grid, and the soft nav-row separator insets 8px to land on that text edge. Trailing glyph declares the behavior — chevron ›= pushes a sub-page, ↗ = opens externally, copy glyph = copies to clipboard (confirm with a toast). ONLY external-link values are `--accent`; push/copy values stay `--text-0` so the pane doesn't read as a link farm.
+- **Item workspace action lives in the hero, not the Work group** (`.hero-actions`, §3.10): a quiet `sm` button **"Open in Okena"** followed by an 11px `--text-2` single-line caption carrying the detail-only, read-only action preview: `Focus open workspace`, `Register existing worktree`, `Create workspace from local branch`, `Fetch branch & create workspace`, `Create branch & workspace`, or `Focus main checkout` (plus truthful unavailable/re-association states). Never show only the branch name — the caption must explain what clicking will do. The old 28px `Workspace` fact-row is retired: a top-3 workflow action must read as a button, not metadata. It is lifecycle-neutral and available in every status: reuse/focus an existing Okena terminal, register an existing non-Okena worktree, fetch a pushed branch, or explicitly create + persist the Item worktree when none exists. Preview inspection may query Okena and git only on the single-Item detail route; list routes stay DB-only, and the POST recomputes the action for race safety. Success resolves the terminal from Okena's live pane layout, focuses the project, and best-effort raises its window. An already-open workspace receives exactly one BEL attention character so Okena paints its yellow border; no command or `ctrl_c` is sent. Toast **Focused in Okena** with the daemon's truthful focus/attention hint; a newly-opened workspace whose terminal is still becoming ready is still success, not a false retryable error. Actual workspace-open failures stay in Helm's retryable command error.
+- Nav row (`.action-row-nav` — settings section lists and the Item detail's Work/Run setup groups): a tappable row whose **title is the content, not a label** — min-height **36** (36px pitch), title 13/400 `--text-0` sentence case, value 12 `--text-1` right-aligned single-line ellipsis, chevron `--text-2`. Nav rows stack flush (gap 0 via `.card-flush`) inside groups with Section-header lines; grouping comes from the section header, never from a title prefix ("AI · …" is a namespace hack). Every nav row shows a current-state value with units and real state ("60s", "2 of 3 on", "default") — a blank cell next to a chevron reads as broken, a unit-less number gives no direction, and independent toggles never collapse into one fake on/off.
 - **Don't** mix behaviors on one row; **don't** accent-color a value that doesn't leave the app; **don't** use a placeholder verb ("view", "open") or a bare destination name as a value — the value carries the fact (destination + short id: "Contember #4821", "GitHub #132" parsed from the PR url — "GitHub" alone never appears); one object gets one row — fold source + task views into a single push row and demote the external ↗ to the pushed page's header.
 
 ### 3.16 Toggle switch
@@ -381,8 +389,8 @@ iTerm2's "bury session", helm-style: a tab leaves the strip while its Terminal i
 
 The pushed Task page is a reading surface, not another dashboard. It follows the Item detail's flat editorial language while preserving the source's canonical content.
 
-- Static push title "Task" (or "Imported task") + optional external-source icon; the body begins with a compact source overline and the canonical task title at 15/600.
-- Description, attachments, and comments are full-width sections separated only by `--hairline`, with 16px vertical and 4px horizontal content insets. No cards, fills, or repeated metadata block above the description.
+- Static push title "Task" (or "Imported task") + optional external-source icon; the body begins with a compact source overline (Section-header style — 12/600 sentence case, `--text-1`, e.g. "Contember") and the canonical task title in the Page/hero style (17/600).
+- Description, attachments, and comments are full-width sections separated only by `--hairline`, with 20px vertical insets and no extra horizontal inset (the page's 16px gutter is the grid). No cards, fills, or repeated metadata block above the description.
 - Rich description images render inline in source order, contained by one hairline/radius frame because the media itself needs an edge; clicking opens the source image. Non-inline attachments remain 36px text rows.
 - Comments use quiet author/time metadata and hairline separators between comments — never quote bars or chat bubbles.
 - Provider metadata is secondary and potentially noisy: keep it collapsed in a final "Metadata" disclosure. Its rows may use the standard fact-row pattern only after expansion.
@@ -409,7 +417,7 @@ The pushed Task page is a reading surface, not another dashboard. It follows the
 - States give direction, not mood: name the state, then the way out. No "oops", no apologies, no exclamation marks.
 - "…" only on in-flight progress labels ("Starting…") and — per the macOS convention — on menu items that require further input before acting ("Rename…" opens the inline editor); never on buttons or on menu items that act immediately.
 - Relative timestamps under 24h ("4m", "2h"), absolute after; always tabular numerals.
-- Uppercase is a *style* (Label, Chip) applied via CSS `text-transform` — source strings stay sentence case.
+- **No uppercase text, anywhere.** The former uppercase Label/Chip treatments are retired; section headers, field labels, and chips are sentence case like everything else. Remove `text-transform: uppercase` on sight.
 
 ---
 
@@ -465,6 +473,56 @@ No growth trend measured (321MB at 40s → 328MB at 5min). GPU/utility helpers a
 `dist/renderer.js` is ~6MB with the inline sourcemap (~1.5MB of code: React + xterm); read+parse is inside the measured startup, so it's fine at this size. If startup breaches its budget, moving to an external sourcemap is the first cheap lever. Extension content-script budget: unchanged (see `extension/`), injected pages must not pay for helm's dependencies.
 
 ---
+
+## 7. Component workbench (Storybook)
+
+The sidebar's components live in Storybook (`app/.storybook/`, `app/src/renderer/sidebar/**/*.stories.tsx`; run `bun run storybook` in `app/`). Rules:
+
+- Every §3 component with a React implementation has a story showing **every state in its spec** (tones, sizes, hover-independent states like selected/disabled/active).
+- Stories consume the real `sidebar.css`/`styles.css` and tokens — never story-local styles; a story that needs its own CSS is exposing missing system CSS.
+- Changing a component spec in this document means updating its story in the same slice (same law as the doc itself).
+- Storybook is a workbench, not a build target: it stays out of `make check` and the app build; Electron-coupled data comes from typed mock fixtures, never a live daemon.
+
+---
+
+## Appendix: 2026-07 flat-editorial redesign
+
+Deliberate system-wide restyle (not drift): the machined-terminal register was reworked into a quieter, Apple-flat editorial language. Old values below are RETIRED — never reintroduce them.
+
+| What | Was | Now |
+| --- | --- | --- |
+| Section labels | 11/600 uppercase `0.06em` (`OUTCOME`, `DAEMON`) | Section header 12/600 sentence case `--text-1` |
+| Field/fact labels | 11/600 uppercase `0.06em` | Label 12/500 sentence case `--text-2` |
+| Chip text | 10/700 uppercase `0.04em`, glyph prefixes (`✓ CLEAR`) | 11/500 sentence case, text-only ("Clear") |
+| Quiet button | transparent + 1px `--hairline-strong` outline | filled `--fill-raised`, no border, hover `--fill-strong` |
+| Danger button | transparent + 1px danger-soft outline | filled danger-soft, no border |
+| In-flow cards | 1px `--hairline` boxed `.card`, radius 8 | flat groups: rule + section header + rows (no box) |
+| Lifecycle index active | accent-colored label text | `--text-0` label + 2px accent underline |
+| List-row project slug | 72% project / 28% `--text-0` mix | 55% project / 45% `--text-1` mix |
+| Uppercase via `text-transform` | allowed as a style | banned everywhere |
+
+Second pass (same redesign, after "it looks the same" feedback — scale + air):
+
+| What | Was | Now |
+| --- | --- | --- |
+| Page-leading titles | 15/600 | Page/hero title 17/600, always present in the detail hero, headline-first |
+| md buttons | 28px / 12/600 / radius 6 | 32px / 13/600 / radius 8 |
+| Action bar | 48px, padding 10 12 | 56px, padding 12 16 |
+| List rows | 56px full-bleed + soft separators + accent-edge selection | 64px rounded (radius 8) inside an 8px list inset, no separators, rounded `--fill-raised` selection |
+| Lifecycle index | 40px, 12px labels | 44px, 13px labels |
+| Pane scroll padding / section gap | 12 / 12, groups 16px top inset | 16 / 16, groups 20px top inset |
+
+Third pass (geometry — one text grid, §2.3):
+
+| What | Was | Now |
+| --- | --- | --- |
+| Text columns | mixed 12/16/20px lefts (12px-era toolbar, +4px card/hero/task sub-insets) | one 16px grid; all sub-insets 0 |
+| Lifecycle index | justified full-width grid, edge-pinned first/last, centered middles, 10px counts | left-aligned flex, auto-width targets, 24px gaps, 16px start, 11px counts |
+| Action-row fill | 4px overhang, radius 4 (detail: no overhang, flush separators) | 8px gutter overhang everywhere, radius 6, separators inset 8px to the text edge |
+| Queue row action buttons | floating at their own offset | aligned to the row's 8px padding edge (same column as the time label) |
+| Task page sections | 16px vertical, 4px horizontal insets | 20px vertical, 0 horizontal |
+| List-row status | leading 8px tone dot on every row (color-only) | no dot column; status WORD on mixed-status tabs + 6px pulsing dot only beside "Running" |
+| List-row selection | persistent `--fill-raised` highlight after pop-back | none — hover/press feedback only; pop-back restores scroll + keyboard focus |
 
 ## Appendix: reconciled drift
 

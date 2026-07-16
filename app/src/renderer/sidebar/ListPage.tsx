@@ -1,7 +1,7 @@
 // Work list page — header row (project scope, organization, New item, overflow),
-// text-index bucket filter with counts (§3.2), balanced 56px rows (§3.3). Selection is
-// the action: a row push-navigates to detail. Queue rows also expose two
-// ownership choices (agent/manual) on hover or keyboard focus. Renders purely
+// lifecycle text index with counts (§3.2), balanced 56px rows (§3.3). Selection
+// is the action: a row push-navigates to detail. Undecided Queue rows expose
+// two permanently visible ownership choices (agent/manual). Renders purely
 // from the pushed snapshot — no per-row fetches.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
@@ -16,7 +16,7 @@ import {
 	planStatusLabel,
 	relativeTime,
 	rowTimestamp,
-	statusTone,
+	statusWord,
 	useNow,
 } from './model'
 import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, ProjectColorText, Segmented, StatusDot } from './ui'
@@ -44,7 +44,6 @@ const EMPTY_COPY: Record<BucketKey, { title: string; detail: string }> = {
 
 export interface ListPageProps {
 	snapshot: HelmSnapshot | null
-	selectedId: string | null
 	onOpenItem: (id: string) => void
 	onNewItem: () => void
 	onOpenArchive: () => void
@@ -59,7 +58,6 @@ export interface ListPageProps {
 
 export function ListPage({
 	snapshot,
-	selectedId,
 	onOpenItem,
 	onNewItem,
 	onOpenArchive,
@@ -139,7 +137,6 @@ export function ListPage({
 			key={item.id}
 			item={item}
 			projectColor={colorForProject(snapshot?.config, item.projectSlug)}
-			selected={item.id === selectedId}
 			time={relativeTime(rowTimestamp(item), now)}
 			onOpen={onOpenItem}
 			quickDisabled={quickBusy !== null || !reachable}
@@ -257,12 +254,16 @@ export function ListPage({
 	)
 }
 
-// 56px row (§3.3): dot + title + trailing time; meta line = project tag + one
-// verdict chip. Memoized — re-renders only when the row's item or time changes.
+// 64px row (§3.3): title flush on the text grid + trailing time; meta line =
+// status word where the tab mixes statuses (pulsing mini-dot on Running) +
+// colored project slug + ONE marker (planning progress, ownership, or a
+// text-only verdict chip). No leading status dot — color-only state is banned
+// (§4) and tab-uniform statuses made it noise. No persistent selected state —
+// push navigation means the list is never visible alongside a detail.
+// Memoized — re-renders only when the row's item or time changes.
 const ItemRow = memo(function ItemRow({
 	item,
 	projectColor,
-	selected,
 	time,
 	onOpen,
 	quickDisabled,
@@ -271,7 +272,6 @@ const ItemRow = memo(function ItemRow({
 }: {
 	item: DashboardItem
 	projectColor: string | null
-	selected: boolean
 	time: string
 	onOpen: (id: string) => void
 	quickDisabled: boolean
@@ -281,21 +281,23 @@ const ItemRow = memo(function ItemRow({
 	const verdict = item.assessment ? VERDICT_META[item.assessment.verdict] : null
 	const showQuickActions = item.status === 'ready' && item.workMode === null
 	const planningStatus = planStatusLabel(item)
-	const mode = item.workMode
+	const word = statusWord(item.status)
+	// "Running" already implies the agent owns it — a second "Agent" marker is noise.
+	const mode = item.status === 'running' ? null : item.workMode
 	return (
 		<div className={`item-row-shell${showQuickActions ? ' item-row-shell-actions' : ''}`}>
-			<button
-				type="button"
-				data-item-id={item.id}
-				className={`item-row${selected ? ' item-row-selected' : ''}`}
-				onClick={() => onOpen(item.id)}
-			>
+			<button type="button" data-item-id={item.id} className="item-row" onClick={() => onOpen(item.id)}>
 				<div className="item-row-line1">
-					<StatusDot tone={statusTone(item.status)} pulse={item.card.pulse} />
 					<span className="item-row-title">{itemTitle(item)}</span>
 					<span className="item-row-time">{time}</span>
 				</div>
 				<div className="item-row-line2">
+					{word ? (
+						<span className={`item-row-status tone-${word.tone}`}>
+							{item.status === 'running' && <StatusDot tone="accent" pulse />}
+							{word.label}
+						</span>
+					) : null}
 					<ProjectColorText color={projectColor} className="item-row-project">
 						{item.projectSlug}
 					</ProjectColorText>
@@ -311,7 +313,7 @@ const ItemRow = memo(function ItemRow({
 						</span>
 					) : verdict ? (
 						<Chip tone={verdict.tone} title={`Intent verdict: ${verdict.label}`}>
-							{verdict.icon} {verdict.label}
+							{verdict.label}
 						</Chip>
 					) : null}
 				</div>

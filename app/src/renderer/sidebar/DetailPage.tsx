@@ -15,8 +15,15 @@ import { lifecycleActionPlan, lifecycleActionPresentation, manualStatusOptions }
 import { useItemDetail } from './detail-data'
 import { detailState } from './detail-state'
 import { colorForProject, itemTitle, relativeTime, useNow } from './model'
-import { type RunSelectionDraft, buildPlanBody, buildRunBody } from './run-selection'
 import {
+	EFFORT_LABEL,
+	type RunSelectionDraft,
+	buildPlanBody,
+	buildRunBody,
+	effectiveRunSelection,
+} from './run-selection'
+import {
+	ActionRow,
 	Banner,
 	Btn,
 	Card,
@@ -62,11 +69,13 @@ export function DetailPage(props: DetailPageProps) {
 	const projectColor = colorForProject(snapshot?.config, item.projectSlug)
 	const effectiveWorkspace =
 		item.kind === 'solve' ? (item.solverWorkspace ?? snapshot?.config?.solver?.workspace) : 'worktree'
-	const okenaWorkspaceValue = item.okenaWorkspace
-		? `Okena · ${item.okenaWorkspace.label}`
+	// Caption beside the hero's Okena button — the truthful what-will-happen
+	// preview (§3.10 hero actions); the button itself names the destination.
+	const okenaCaption = item.okenaWorkspace
+		? item.okenaWorkspace.label
 		: effectiveWorkspace === 'main'
-			? 'Okena · Inspecting main checkout…'
-			: 'Okena · Inspecting workspace…'
+			? 'Inspecting main checkout…'
+			: 'Inspecting workspace…'
 	const disabled = busy !== null
 	const run = async (
 		label: string,
@@ -231,12 +240,15 @@ export function DetailPage(props: DetailPageProps) {
 						hideSecurityNote={state.attention?.text === item.assessment?.securityNote}
 					/>
 				)
-			case 'queue':
+			case 'queue': {
+				const queued = relativeTime(item.queuedAt ?? item.createdAt, now)
+				const phrase = queued === 'now' ? 'just now' : /^\d/.test(queued) ? `${queued} ago` : `on ${queued}`
 				return (
 					<Card key="queue" label="Queue">
-						<p className="section-description">Queued {relativeTime(item.queuedAt ?? item.createdAt, now)} ago.</p>
+						<p className="section-description">Queued {phrase}.</p>
 					</Card>
 				)
+			}
 			case 'progress':
 				return <ProgressCard key="progress" item={item} now={now} />
 			case 'outcome':
@@ -252,31 +264,31 @@ export function DetailPage(props: DetailPageProps) {
 						onTask={() => onOpenTask(id)}
 						onPlan={() => onOpenPlan(id)}
 						onRun={() => onOpenRun(id)}
-						onSetup={() => onOpenSetup(id)}
-						onOpenOkena={() => void openOkena()}
-						okenaWorkspaceValue={okenaWorkspaceValue}
 						disabled={disabled}
 					/>
 				)
 			case 'delivery':
 				return <DeliveryCard key="delivery" item={item} />
-			case 'run-setup':
-				return item.kind === 'solve' ? (
+			case 'run-setup': {
+				if (item.kind !== 'solve') return null
+				const selection = effectiveRunSelection(item, snapshot?.config ?? null)
+				const setupValue = [
+					selection.model ?? 'Default model',
+					...(selection.effort ? [`${EFFORT_LABEL[selection.effort]} effort`] : []),
+					selection.workspace === 'main' ? 'Main' : 'Worktree',
+				].join(' · ')
+				return (
 					<Card key="run-setup" label="Run setup" flush>
-						<WorkCard
-							item={item}
-							now={now}
-							onTask={() => onOpenTask(id)}
-							onPlan={() => onOpenPlan(id)}
-							onRun={() => onOpenRun(id)}
-							onOpenOkena={() => void openOkena()}
-							okenaWorkspaceValue={okenaWorkspaceValue}
+						<ActionRow
+							nav
+							label={selection.agent === 'claude' ? 'Claude Code' : 'Codex'}
+							value={setupValue}
+							onClick={() => onOpenSetup(id)}
 							disabled={disabled}
-							onlySetup
-							onSetup={() => onOpenSetup(id)}
 						/>
 					</Card>
-				) : null
+				)
+			}
 		}
 	}
 	return (
@@ -284,6 +296,9 @@ export function DetailPage(props: DetailPageProps) {
 			<PushHeader title={itemTitle(item)} onBack={onBack} />
 			<div className="page-scroll">
 				<section className="detail-hero" aria-label="Current item state">
+					{state.headline && state.direction ? (
+						<StateSummary headline={state.headline} direction={state.direction} />
+					) : null}
 					<div className="detail-identity-meta">
 						{statusOptions.length > 0 ? (
 							<MenuButton
@@ -323,9 +338,15 @@ export function DetailPage(props: DetailPageProps) {
 							)}
 						</span>
 					</div>
-					{state.headline && state.direction ? (
-						<StateSummary headline={state.headline} direction={state.direction} />
-					) : null}
+					<div className="hero-actions">
+						<Btn tone="quiet" sm onClick={() => void openOkena()} disabled={disabled}>
+							{GLYPH.external}
+							Open in Okena
+						</Btn>
+						<span className="hero-action-caption" title={okenaCaption}>
+							{okenaCaption}
+						</span>
+					</div>
 				</section>
 				{phase === 'stale-error' && (
 					<div className="detail-fetch-alert" role="alert">
@@ -492,9 +513,12 @@ function MissingDetail({
 	onRetry,
 }: { phase: string; error: string | null; onBack: () => void; onRetry: () => Promise<void> }) {
 	const notFound = phase === 'not-found'
+	// §3.10: a literal type word ("Item") never appears as a header title —
+	// with no content to name, the header names the state.
+	const title = notFound ? 'Not found' : phase === 'loading' ? 'Loading…' : 'Unavailable'
 	return (
 		<div className="page-frame">
-			<PushHeader title="Item" onBack={onBack} />
+			<PushHeader title={title} onBack={onBack} />
 			<div className="page-scroll" aria-busy={phase === 'loading'}>
 				<EmptyState
 					title={notFound ? 'Item not found' : phase === 'loading' ? 'Loading item' : 'Item unavailable'}

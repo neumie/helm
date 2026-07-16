@@ -143,10 +143,10 @@
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 12px;
+	padding: 16px;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 16px;
 }
 
 /* ---------- buttons (§3.1) ---------- */
@@ -156,24 +156,26 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	height: 28px;
-	padding: 0 12px;
+	height: 32px;
+	padding: 0 14px;
 	border: none;
-	border-radius: 6px;
+	border-radius: 8px;
 	background: none;
 	font-family: inherit;
-	font-size: calc(12px * var(--ui-scale));
+	font-size: calc(13px * var(--ui-scale));
 	font-weight: 600;
 	letter-spacing: -0.01em;
 	cursor: pointer;
 	user-select: none;
 	white-space: nowrap;
-	transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
 .btn-sm {
 	height: 24px;
 	padding: 0 10px;
+	border-radius: 6px;
+	font-size: calc(12px * var(--ui-scale));
 }
 
 .btn-block {
@@ -193,21 +195,21 @@
 	background: var(--accent-fill-hover);
 }
 
+/* Buttons carry no borders in any tone (§3.1) — weight comes from the fill. */
 .btn-quiet {
-	border: 1px solid var(--hairline-strong);
-	color: var(--text-1);
+	background: var(--fill-raised);
+	color: var(--text-0);
 }
 .btn-quiet:hover:not(:disabled) {
-	background: var(--fill-subtle);
-	color: var(--text-0);
+	background: var(--fill-strong);
 }
 
 .btn-danger {
-	border: 1px solid var(--danger-soft);
+	background: var(--danger-soft);
 	color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) {
-	background: var(--danger-soft);
+	background: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
 .btn-ghost {
@@ -239,13 +241,16 @@
 
 /* ---------- list toolbar ---------- */
 
+/* One text grid (§2.3): every text column in the pane lands 16px from the
+ * pane edge; interactive fills may breathe 8px into that gutter. The toolbar
+ * carries 8px side padding and its ghost controls own the remaining 8. */
 .list-toolbar {
 	flex: none;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	padding: 8px 12px 0;
+	padding: 10px 8px 0;
 }
 
 .list-toolbar-actions {
@@ -268,7 +273,6 @@
 	height: 28px;
 	max-width: 180px;
 	padding: 0 8px;
-	margin-left: -8px;
 	border: none;
 	border-radius: 6px;
 	background: none;
@@ -285,8 +289,13 @@
 	background: var(--fill-subtle);
 	color: var(--text-0);
 }
+/* Colored project slug (§3.3): 55% project / 45% --text-1 — identifies without
+ * shouting. Unconfigured projects stay --text-2 (no mix). */
 .project-color-text {
-	color: color-mix(in srgb, var(--project-color, var(--text-2)) 72%, var(--text-0));
+	color: var(--text-2);
+}
+.project-colored {
+	color: color-mix(in srgb, var(--project-color) 55%, var(--text-1));
 }
 .project-trigger-label {
 	min-width: 0;
@@ -335,6 +344,15 @@
 	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
+/* Label + count wrapper — the index variant's active underline spans exactly
+ * this box's width (§3.2). */
+.segment-body {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
 .segment-active {
 	background: var(--fill-raised);
 	color: var(--text-0);
@@ -364,40 +382,59 @@
 	padding-top: 0;
 	padding-bottom: 0;
 }
+/* Lifecycle index (§3.2): a left-aligned row of auto-width targets on the
+ * 16px text grid — never a justified full-width grid (edge-pinned labels and
+ * centered middles read as uneven padding at 340px). */
 .segmented-index {
-	display: grid;
+	display: flex;
 	align-items: center;
-	gap: 0;
+	gap: 24px;
 	width: 100%;
-	height: 40px;
-	padding: 0;
+	height: 44px;
+	padding: 0 16px;
 	border-radius: 0;
 	background: none;
 	box-shadow: inset 0 -1px var(--hairline);
 }
 .segmented-index .segment {
-	justify-content: center;
-	width: 100%;
-	height: 40px;
+	justify-content: flex-start;
+	width: auto;
+	height: 44px;
 	padding: 0;
 	border-radius: 0;
-	font-size: calc(11px * var(--ui-scale));
+	font-size: calc(13px * var(--ui-scale));
 	font-weight: 500;
+	color: var(--text-2);
 }
-.segmented-index .segment:first-child {
-	justify-content: flex-start;
-}
-.segmented-index .segment:last-child {
-	justify-content: flex-end;
-}
+/* Active option: text weight + a 2px accent underline on the bottom hairline —
+ * never accent-colored label text, never an option fill (§3.2). */
 .segmented-index .segment-active {
 	background: none;
-	color: var(--accent);
+	color: var(--text-0);
+	font-weight: 600;
 }
-.segmented-index .segment-count,
-.segmented-index .segment-active .segment-count {
-	font-size: calc(10px * var(--ui-scale));
+.segmented-index .segment-body {
+	position: relative;
+	height: 100%;
+	gap: 6px;
+}
+.segmented-index .segment-active .segment-body::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+.segmented-index .segment-count {
+	font-size: calc(11px * var(--ui-scale));
 	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+.segmented-index .segment-active .segment-count {
+	color: var(--text-1);
 }
 
 /* ---------- list rows (§3.3) ---------- */
@@ -406,7 +443,7 @@
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 0 0 12px;
+	padding: 6px 8px 16px;
 }
 
 .item-row-shell {
@@ -417,8 +454,8 @@
 }
 .item-row-actions {
 	position: absolute;
-	top: 14px;
-	right: 8px;
+	top: 18px;
+	right: 8px; /* aligned to the row's own 8px padding edge, like the time column */
 	display: flex;
 	gap: 2px;
 }
@@ -430,16 +467,19 @@
 	color: var(--text-0);
 }
 
+/* Rounded inset rows (§3.3): no separators — spacing does the work. No
+ * persistent selected state: push navigation never shows list + detail
+ * together, so a lingering highlight reads as a stuck hover. */
 .item-row {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	gap: 3px;
+	gap: 4px;
 	width: 100%;
-	height: 56px;
-	padding: 0 12px;
+	height: 64px;
+	padding: 0 8px;
 	border: none;
-	border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+	border-radius: 8px;
 	background: none;
 	font-family: inherit;
 	letter-spacing: -0.01em;
@@ -450,10 +490,8 @@
 .item-row:hover {
 	background: var(--fill-subtle);
 }
-.item-row-selected,
-.item-row-selected:hover {
+.item-row:active {
 	background: var(--fill-raised);
-	box-shadow: inset 2px 0 var(--accent);
 }
 
 .item-row-line1 {
@@ -486,8 +524,36 @@
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	padding-left: 16px; /* dot 8px + 8px gap — meta aligns under the title */
 	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-2);
+}
+
+/* Status in words (§3.3): shown only where the tab mixes statuses; Running
+ * carries the one remaining dot — a 6px live pulse beside its word. */
+.item-row-status {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-weight: 500;
+}
+.item-row-status .status-dot {
+	width: 6px;
+	height: 6px;
+}
+.item-row-status.tone-accent {
+	color: var(--accent);
+}
+.item-row-status.tone-warn {
+	color: var(--warn);
+}
+.item-row-status.tone-danger {
+	color: var(--danger);
+}
+.item-row-status.tone-success {
+	color: var(--success);
+}
+.item-row-status.tone-neutral {
 	color: var(--text-2);
 }
 
@@ -503,10 +569,8 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	height: 30px;
-	padding: 0 12px;
-	border-bottom: 1px solid var(--hairline);
-	background: var(--fill-subtle);
+	height: 32px;
+	padding: 8px 8px 0;
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 600;
 }
@@ -521,9 +585,6 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-}
-.item-row-mode.mode-agent {
-	color: var(--accent);
 }
 
 /* ---------- status dots (§3.5) ---------- */
@@ -564,18 +625,19 @@
 
 /* ---------- chips (§3.4) ---------- */
 
+/* Chip text is sentence case, text-only — no glyph prefixes; the tone carries
+ * the signal (§3.4). The gap exists for the status-menu trigger's chevron, the
+ * one sanctioned non-text chip content. */
 .chip {
 	display: inline-flex;
 	align-items: center;
-	gap: 3px;
+	gap: 4px;
 	flex: none;
-	padding: 2px 7px;
+	padding: 2px 8px;
 	border-radius: 999px;
-	font-size: calc(10px * var(--ui-scale));
-	font-weight: 700;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 500;
 	line-height: 1.4;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
 	white-space: nowrap;
 	user-select: none;
 }
@@ -740,9 +802,9 @@
 /* ---------- detail page ---------- */
 
 .detail-title {
-	font-size: calc(15px * var(--ui-scale));
+	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
-	line-height: 1.4;
+	line-height: 1.35;
 	color: var(--text-0);
 	overflow-wrap: break-word;
 }
@@ -777,15 +839,26 @@
 	color: var(--text-2);
 }
 
-/* Cards: in-flow, hairline-framed — depth from the ladder, never shadows. */
+/* Flat groups (§3.15): in-flow content is flat — one full-width hairline rule,
+ * 16px top inset, 4px horizontal text inset, section-header line, rows. No
+ * box, fill, radius, or shadow; detached surfaces (menu, toast, sheet) and
+ * wells keep their chrome. */
+/* Groups own no horizontal inset — the page-scroll's 16px gutter IS the text
+ * grid; a nested sub-inset breaks column alignment with the hero and rows. */
 .card {
 	flex: none;
-	border: 1px solid var(--hairline);
-	border-radius: 8px;
-	padding: 12px;
+	padding: 20px 0 0;
+	border-top: 1px solid var(--hairline);
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 10px;
+}
+
+/* The first group on a page omits the leading rule — the page header or hero
+ * above it provides the edge (§3.15). */
+.page-scroll > .card:first-child {
+	border-top: 0;
+	padding-top: 0;
 }
 
 .card-head {
@@ -802,19 +875,18 @@
 	gap: 0;
 }
 .card-flush .card-head {
-	margin-bottom: 4px;
+	margin-bottom: 6px;
 }
 .card-flush .info-row {
 	min-height: 28px;
 	align-items: center;
 }
 
+/* Section header type style (§2.2): 12/600 sentence case. */
 .section-label {
-	font-size: calc(11px * var(--ui-scale));
+	font-size: calc(12px * var(--ui-scale));
 	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: var(--text-2);
+	color: var(--text-1);
 	user-select: none;
 }
 
@@ -834,12 +906,11 @@
 	font-size: calc(12px * var(--ui-scale));
 }
 
+/* Label type style (§2.2): 12/500 sentence case. */
 .info-label {
 	flex: none;
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 500;
 	color: var(--text-2);
 	user-select: none;
 }
@@ -859,17 +930,19 @@
 }
 
 /* Tappable rows: chevron pushes a sub-page, ↗ opens externally. */
+/* Tappable rows keep their text on the 16px grid; the hover fill overhangs
+ * 8px into the page gutter (ghost-on-edge pattern, §3.1). */
 .action-row {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	width: 100%;
 	min-height: 28px;
-	margin: 0 -4px;
-	width: calc(100% + 8px);
-	padding: 0 4px;
+	margin: 0 -8px;
+	width: calc(100% + 16px);
+	padding: 0 8px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 6px;
 	background: none;
 	font-family: inherit;
 	font-size: calc(12px * var(--ui-scale));
@@ -908,6 +981,19 @@
 /* Push rows (chevron ›) read as navigation: 36px pitch, same as nav rows. */
 .action-row-push {
 	min-height: 36px;
+}
+
+/* Consecutive 36px nav/push rows divide with a soft inset separator — 1px,
+ * hairline softened 60% toward transparent, inset to the text edge. 28px fact
+ * rows carry no separators (§3.15). */
+:is(.action-row-nav, .action-row-push) + :is(.action-row-nav, .action-row-push)::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 8px; /* the row overhangs 8px — this lands the line on the text edge */
+	right: 8px;
+	height: 1px;
+	background: color-mix(in srgb, var(--hairline) 60%, transparent);
 }
 
 /* Nav rows (§3.15): the title IS the content — primary text, not a faint
@@ -1006,11 +1092,10 @@ button.banner {
 	color: var(--text-1);
 	background: var(--fill-subtle);
 }
+/* Banner heading: Label type weight in the banner's tone color (§3.12). */
 .banner-label {
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 500;
 	opacity: 0.85;
 	user-select: none;
 }
@@ -1047,14 +1132,12 @@ button.banner {
 	overflow: hidden;
 	white-space: normal;
 }
-/* Quiet More/Less cue — Label type style (11/600 uppercase 0.06em). */
+/* Quiet More/Less cue — Label type style (12/500 sentence case, §3.12). */
 .clamp-cue {
 	display: block;
 	margin-top: 4px;
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 500;
 	color: var(--text-2);
 	user-select: none;
 	transition: color 140ms ease-out;
@@ -1142,8 +1225,8 @@ button.banner {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 48px;
-	padding: 10px 12px;
+	height: 56px;
+	padding: 12px 16px;
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 	z-index: 10;
@@ -1158,7 +1241,7 @@ button.banner {
 /* Stacked variant: an inline notice row above the primary action (§3.11/§3.12). */
 .action-bar-stack {
 	height: auto;
-	min-height: 48px;
+	min-height: 56px;
 	flex-direction: column;
 	align-items: stretch;
 }
@@ -1237,20 +1320,19 @@ button.banner {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	padding: 4px 4px 16px;
+	padding: 4px 0 16px;
 }
+/* Source overline — Section-header type style (12/600 sentence case, §3.19). */
 .task-source-line {
-	font-size: calc(11px * var(--ui-scale));
+	font-size: calc(12px * var(--ui-scale));
 	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-	color: var(--text-2);
+	color: var(--text-1);
 }
 .task-title {
 	margin: 0;
-	font-size: calc(15px * var(--ui-scale));
+	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
-	line-height: 1.35;
+	line-height: 1.3;
 	color: var(--text-0);
 	overflow-wrap: anywhere;
 	user-select: text;
@@ -1259,7 +1341,7 @@ button.banner {
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
-	padding: 16px 4px;
+	padding: 20px 0;
 	border-top: 1px solid var(--hairline);
 }
 .task-section .section-label {
@@ -1372,7 +1454,7 @@ button.banner {
 	user-select: text;
 }
 .task-metadata {
-	padding: 0 4px;
+	padding: 0;
 	border-top: 1px solid var(--hairline);
 }
 .task-metadata summary {
@@ -1404,13 +1486,12 @@ button.banner {
 
 /* ---------- fields (§3.7) ---------- */
 
+/* Field labels: Label type style (12/500 sentence case, §3.7). */
 .field-label {
 	display: block;
 	margin-bottom: 4px;
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 500;
 	color: var(--text-2);
 	user-select: none;
 }
@@ -1659,11 +1740,13 @@ button.banner {
 	user-select: none;
 }
 
-/* Color wells: 2-up grid of token swatches (terminal palette + accent). */
+/* Color wells: 2-up grid of token swatches (terminal palette + accent).
+ * Rows are min-height 28px already — no extra vertical gap, so swatch rows
+ * sit on the flat group's 28px fact pitch (§3.15). */
 .swatch-grid {
 	display: grid;
 	grid-template-columns: repeat(2, 1fr);
-	gap: 4px 12px;
+	gap: 0 12px;
 }
 
 .swatch {

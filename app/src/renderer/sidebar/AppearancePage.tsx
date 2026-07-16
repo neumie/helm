@@ -148,7 +148,8 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 						/>
 					</div>
 				</Card>
-				<Card label="Terminal palette">
+				{/* Flush group: swatch rows sit at the flat group's exact fact pitch (§3.15). */}
+				<Card label="Terminal palette" flush>
 					<div className="swatch-grid">
 						{[...TERM_WELLS, ...ANSI_WELLS].map(well => (
 							<Swatch
