@@ -24,7 +24,7 @@ import {
 	EmptyState,
 	GLYPH,
 	MenuButton,
-	ProjectColorMarker,
+	ProjectColorText,
 	PushHeader,
 	Sheet,
 	StatusDot,
@@ -302,10 +302,9 @@ export function DetailPage(props: DetailPageProps) {
 						) : (
 							<Chip tone={state.chipTone}>{item.card.statusLabel}</Chip>
 						)}
-						<span className="detail-project">
-							<ProjectColorMarker color={projectColor} />
-							<span className="detail-project-label">{item.projectSlug}</span>
-						</span>
+						<ProjectColorText color={projectColor} className="detail-project">
+							{item.projectSlug}
+						</ProjectColorText>
 						{item.workMode ? (
 							<span className={`detail-work-mode mode-${item.workMode}`}>
 								{GLYPH[item.workMode]}

@@ -41,18 +41,15 @@
 	opacity: 0.55;
 }
 .detail-project {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
 	min-width: 0;
-	color: var(--text-1);
+	overflow: hidden;
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 500;
-}
-.detail-project-label {
-	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.detail-project.project-color-text {
+	color: color-mix(in srgb, var(--project-color, var(--text-1)) 72%, var(--text-0));
 }
 .detail-work-mode {
 	flex: none;

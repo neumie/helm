@@ -18,7 +18,7 @@ import {
 	statusTone,
 	useNow,
 } from './model'
-import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, ProjectColorMarker, Segmented, StatusDot } from './ui'
+import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, ProjectColorText, Segmented, StatusDot } from './ui'
 
 const BUCKET_KEY = 'helm.sidebar.bucket'
 const PROJECT_KEY = 'helm.sidebar.project'
@@ -130,8 +130,9 @@ export function ListPage({
 						align="start"
 						trigger={
 							<>
-								{project && <ProjectColorMarker color={selectedProjectColor} />}
-								<span className="project-trigger-label">{project ?? 'All projects'}</span>
+								<ProjectColorText color={selectedProjectColor} className="project-trigger-label">
+									{project ?? 'All projects'}
+								</ProjectColorText>
 								{GLYPH.chevronDown}
 							</>
 						}
@@ -249,14 +250,15 @@ const ItemRow = memo(function ItemRow({
 				className={`item-row${selected ? ' item-row-selected' : ''}`}
 				onClick={() => onOpen(item.id)}
 			>
-				<ProjectColorMarker color={projectColor} rail />
 				<div className="item-row-line1">
 					<StatusDot tone={statusTone(item.status)} pulse={item.card.pulse} />
 					<span className="item-row-title">{itemTitle(item)}</span>
 					<span className="item-row-time">{time}</span>
 				</div>
 				<div className="item-row-line2">
-					<span className="item-row-project">{item.projectSlug}</span>
+					<ProjectColorText color={projectColor} className="item-row-project">
+						{item.projectSlug}
+					</ProjectColorText>
 					{planningStatus ? (
 						<span className="item-row-mode mode-manual" title="Planning readiness">
 							{GLYPH.plan}

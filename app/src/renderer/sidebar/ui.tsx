@@ -4,7 +4,7 @@
 // banners (§3.12), empty states (§3.13).
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import type { DashboardTone } from '../../shared-helm'
 import { CHIP_CLASS } from './model'
 import type { StatusTone } from './model'
@@ -127,15 +127,20 @@ export function StatusDot({ tone, pulse }: { tone: StatusTone; pulse?: boolean }
 	return <span className={`status-dot dot-${tone}${pulse ? ' dot-pulse' : ''}`} aria-hidden="true" />
 }
 
-export function ProjectColorMarker({ color, rail = false }: { color: string | null; rail?: boolean }) {
-	return rail ? (
-		<svg className="project-color-rail" viewBox="0 0 2 24" aria-hidden="true" focusable="false">
-			<rect width="2" height="24" rx="1" fill={color ?? 'currentColor'} />
-		</svg>
-	) : (
-		<svg className="project-color-marker" viewBox="0 0 6 6" aria-hidden="true" focusable="false">
-			<circle cx="3" cy="3" r="3" fill={color ?? 'currentColor'} />
-		</svg>
+export function ProjectColorText({
+	color,
+	className,
+	children,
+}: {
+	color: string | null
+	className?: string
+	children: ReactNode
+}) {
+	const style = color ? ({ '--project-color': color } as CSSProperties) : undefined
+	return (
+		<span className={`project-color-text${className ? ` ${className}` : ''}`} style={style}>
+			{children}
+		</span>
 	)
 }
 
