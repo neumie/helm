@@ -85,16 +85,26 @@ test('openItemInOkena ignores stale hook terminals and marks the live pane for a
 	}
 })
 
-test('openItemInOkena registers an existing worktree beneath its canonical Okena parent', async () => {
+test('openItemInOkena waits for a registered worktree terminal to become visible', async () => {
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-open-register-'))
 	const actions: Record<string, unknown>[] = []
+	let registered = false
+	const parent = { id: 'parent-project', name: 'JVS', path: '/repo' }
+	const child = {
+		id: 'project-2',
+		name: 'fix/register',
+		path: worktreePath,
+		worktree_info: { parent_project_id: 'parent-project' },
+		layout: { type: 'terminal', terminal_id: 'terminal-2', minimized: false, detached: false },
+	}
 	const client = {
 		isAvailable: async () => true,
-		getState: async () => ({ projects: [{ id: 'parent-project', name: 'JVS', path: '/repo' }] }),
+		getState: async () => ({ projects: registered ? [parent, child] : [parent] }),
 		action: async (payload: Record<string, unknown>) => {
 			actions.push(payload)
 			if (payload.action === 'add_discovered_worktree') {
-				return { project_id: 'project-2', terminal_id: 'terminal-2' }
+				registered = true
+				return { project_id: 'project-2', terminal_id: null }
 			}
 			return {}
 		},

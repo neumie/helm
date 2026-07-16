@@ -10,6 +10,7 @@ import { OkenaWorktreeManager, inspectOkenaBranchSource } from './worktree.js'
 
 const execFileAsync = promisify(execFile)
 const FOCUS_RETRY_DELAYS_MS = [0, 100, 250]
+const TERMINAL_READY_DELAYS_MS = [0, 100, 250, 500]
 
 export interface OpenItemInOkenaParams {
 	projectConfig: ProjectConfig
@@ -76,6 +77,16 @@ function firstTerminalId(project: OkenaProject): string | null {
 
 async function liveProject(client: OkenaClient, projectId: string): Promise<OkenaProject | null> {
 	return (await client.getState()).projects.find(project => project.id === projectId) ?? null
+}
+
+async function waitForTerminal(client: OkenaClient, projectId: string): Promise<string | null> {
+	for (const retryDelay of TERMINAL_READY_DELAYS_MS) {
+		if (retryDelay > 0) await delay(retryDelay)
+		const project = await liveProject(client, projectId)
+		const terminalId = project ? firstTerminalId(project) : null
+		if (terminalId) return terminalId
+	}
+	return null
 }
 
 async function focusTerminal(
@@ -311,7 +322,9 @@ export async function openItemInOkena(
 		}
 	}
 
+	terminalId ??= await waitForTerminal(client, projectId)
 	terminalId ??= await worktrees.createTerminal(projectId)
+	terminalId ??= await waitForTerminal(client, projectId)
 	if (!terminalId) throw new Error('Okena could not create or resolve a terminal for this Item')
 	const focus = await focusTerminal(client, projectId, terminalId)
 	terminalId = focus.terminalId
