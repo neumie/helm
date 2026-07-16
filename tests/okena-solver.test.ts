@@ -7,7 +7,7 @@ import { configSchema } from '../src/config.js'
 import type { OkenaClient } from '../src/extensions/okena/client.js'
 import { openItemInOkena } from '../src/extensions/okena/item-opener.js'
 import { OkenaSolver } from '../src/extensions/okena/solver.js'
-import type { OkenaWorktreeManager } from '../src/extensions/okena/worktree.js'
+import { type OkenaWorktreeManager, createOkenaWorktreeForBranch } from '../src/extensions/okena/worktree.js'
 import { errorPhase } from '../src/util/errors.js'
 
 test('openItemInOkena ignores stale hook terminals and marks the live pane for attention', async () => {
@@ -107,6 +107,27 @@ test('openItemInOkena registers an existing non-Okena worktree before focusing i
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })
 	}
+})
+
+test('Okena worktree creation reuses an existing branch without a noisy create attempt', async () => {
+	const actions: Record<string, unknown>[] = []
+	const client = {
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return { project_id: 'worktree-project', terminal_id: null, path: '/repo-wt/existing' }
+		},
+	} as unknown as OkenaClient
+
+	const result = await createOkenaWorktreeForBranch(client, 'parent-project', 'feat/existing', async () => true)
+	assert.equal(result.path, '/repo-wt/existing')
+	assert.deepEqual(actions, [
+		{
+			action: 'create_worktree',
+			project_id: 'parent-project',
+			branch: 'feat/existing',
+			create_branch: false,
+		},
+	])
 })
 
 test('OkenaSolver fails promptly when its execution workspace disappears', async () => {

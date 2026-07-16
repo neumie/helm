@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
-import { excludeHelmFiles, resolveWorktreeStartPoint, withRepoLock } from '../../worktree/manager.js'
+import { excludeHelmFiles, localBranchExists, resolveWorktreeStartPoint, withRepoLock } from '../../worktree/manager.js'
 import type { OkenaClient } from './client.js'
 
 interface CreateWorktreeResponse {
@@ -16,6 +16,37 @@ export interface EnsuredOkenaWorktree {
 	wtProjectId: string
 	/** A terminal created as a side effect of worktree creation, if any. */
 	autoTerminalId: string | null
+}
+
+export async function createOkenaWorktreeForBranch(
+	client: OkenaClient,
+	projectId: string,
+	branchName: string,
+	branchExists: () => Promise<boolean>,
+): Promise<CreateWorktreeResponse> {
+	const createBranch = !(await branchExists())
+	try {
+		return await client.action<CreateWorktreeResponse>({
+			action: 'create_worktree',
+			project_id: projectId,
+			branch: branchName,
+			create_branch: createBranch,
+		})
+	} catch (firstErr) {
+		log.warn(
+			'okena',
+			`create_branch=${createBranch} failed: ${firstErr instanceof Error ? firstErr.message : firstErr}`,
+		)
+		// The branch can appear/disappear between the preflight and Okena's git
+		// call. Retry the opposite mode for that race, but avoid an expected first
+		// failure in the normal "branch already exists" path.
+		return client.action<CreateWorktreeResponse>({
+			action: 'create_worktree',
+			project_id: projectId,
+			branch: branchName,
+			create_branch: !createBranch,
+		})
+	}
 }
 
 export class OkenaWorktreeManager {
@@ -110,25 +141,11 @@ export class OkenaWorktreeManager {
 		log.info('okena', `Creating worktree for branch: ${branchName}`)
 		let wt: CreateWorktreeResponse
 		try {
-			wt = await this.client.action<CreateWorktreeResponse>({
-				action: 'create_worktree',
-				project_id: okenaProject.id,
-				branch: branchName,
-				create_branch: true,
-			})
-		} catch (firstErr) {
-			log.warn('okena', `create_branch=true failed: ${firstErr instanceof Error ? firstErr.message : firstErr}`)
-			try {
-				log.info('okena', 'Branch already exists, reusing')
-				wt = await this.client.action<CreateWorktreeResponse>({
-					action: 'create_worktree',
-					project_id: okenaProject.id,
-					branch: branchName,
-					create_branch: false,
-				})
-			} catch (err) {
-				throw phaseError('worktree', `Okena worktree creation failed: ${err instanceof Error ? err.message : err}`)
-			}
+			wt = await createOkenaWorktreeForBranch(this.client, okenaProject.id, branchName, () =>
+				localBranchExists(repoPath, branchName),
+			)
+		} catch (err) {
+			throw phaseError('worktree', `Okena worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
 
 		const worktreePath = wt.path
