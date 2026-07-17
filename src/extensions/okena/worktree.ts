@@ -27,8 +27,25 @@ export interface EnsuredOkenaWorktree {
 }
 
 export interface CreateTerminalOptions {
+	/** Poll delays for observing a terminal after one accepted Okena action. */
 	retryDelaysMs?: readonly number[]
 	sleep?: (ms: number) => Promise<unknown>
+}
+
+interface TerminalActionResponse {
+	terminal_id?: string | null
+	terminal_ids?: string[]
+	data?: { terminal_id?: string | null; terminal_ids?: string[] }
+}
+
+function terminalIdFromResponse(response: TerminalActionResponse): string | null {
+	return (
+		response.terminal_id ??
+		response.terminal_ids?.[0] ??
+		response.data?.terminal_id ??
+		response.data?.terminal_ids?.[0] ??
+		null
+	)
 }
 
 function liveTerminalIds(layout: OkenaLayoutNode | null | undefined): string[] {
@@ -151,46 +168,68 @@ export class OkenaWorktreeManager {
 	 * project (no layout) has nothing to split, so `split_terminal` returns no id.
 	 */
 	async createTerminal(projectId: string, options: CreateTerminalOptions = {}): Promise<string | null> {
-		const retryDelaysMs = options.retryDelaysMs ?? [0, 100, 250, 500]
+		const pollDelaysMs = options.retryDelaysMs ?? [0, 100, 250, 500, 1_000, 2_000]
 		const sleep = options.sleep ?? delay
-		const failures: Array<{ attempt: number; action: string; error: string }> = []
-		for (const [index, retryDelay] of retryDelaysMs.entries()) {
-			if (retryDelay > 0) await sleep(retryDelay)
-			const attempt = index + 1
-			try {
-				const split = await this.client.action<{ terminal_ids?: string[] }>({
-					action: 'split_terminal',
-					project_id: projectId,
-					path: [],
-					direction: 'horizontal',
-				})
-				const id = split.terminal_ids?.[0]
-				if (id) return id
-				failures.push({ attempt, action: 'split_terminal', error: 'response contained no terminal ID' })
-			} catch (err) {
-				failures.push({
-					attempt,
-					action: 'split_terminal',
-					error: err instanceof Error ? err.message : String(err),
-				})
-			}
-			try {
-				const created = await this.client.action<{ terminal_ids?: string[] }>({
-					action: 'create_terminal',
-					project_id: projectId,
-				})
-				const id = created.terminal_ids?.[0]
-				if (id) return id
-				failures.push({ attempt, action: 'create_terminal', error: 'response contained no terminal ID' })
-			} catch (err) {
-				failures.push({
-					attempt,
-					action: 'create_terminal',
-					error: err instanceof Error ? err.message : String(err),
-				})
-			}
+		const failures: Array<{ action: string; error: string }> = []
+		const projectTerminalIds = async () => {
+			const state = await this.client.getState()
+			return liveTerminalIds(state.projects.find(project => project.id === projectId)?.layout)
 		}
-		log.warn('okena', 'Failed to create terminal after bounded retries', { projectId, failures })
+		let knownIds = new Set(await projectTerminalIds())
+
+		const performOnceAndObserve = async (
+			action: 'split_terminal' | 'create_terminal',
+			payload: Record<string, unknown>,
+		): Promise<string | null> => {
+			try {
+				const response = await this.client.action<TerminalActionResponse>(payload)
+				const responseId = terminalIdFromResponse(response)
+				if (responseId) return responseId
+				failures.push({
+					action,
+					error: `accepted without terminal ID (${JSON.stringify(response)})`,
+				})
+			} catch (err) {
+				failures.push({ action, error: err instanceof Error ? err.message : String(err) })
+			}
+
+			// Okena may accept the action before the new terminal appears in its
+			// state, and recent versions may answer { ok: true } without an id.
+			// Poll the live layout; never repeat the mutating action itself.
+			for (const pollDelay of pollDelaysMs) {
+				if (pollDelay > 0) await sleep(pollDelay)
+				try {
+					const currentIds = await projectTerminalIds()
+					const added = currentIds.find(id => !knownIds.has(id))
+					if (added) return added
+					knownIds = new Set(currentIds)
+				} catch (err) {
+					failures.push({
+						action: `${action}:observe`,
+						error: err instanceof Error ? err.message : String(err),
+					})
+				}
+			}
+			return null
+		}
+
+		const splitId = await performOnceAndObserve('split_terminal', {
+			action: 'split_terminal',
+			project_id: projectId,
+			path: [],
+			direction: 'horizontal',
+		})
+		if (splitId) return splitId
+
+		// split_terminal is a no-op for an empty project. Only after observing
+		// that no terminal appeared do we invoke create_terminal exactly once.
+		const createdId = await performOnceAndObserve('create_terminal', {
+			action: 'create_terminal',
+			project_id: projectId,
+		})
+		if (createdId) return createdId
+
+		log.warn('okena', 'Failed to create terminal after one split and one create action', { projectId, failures })
 		return null
 	}
 

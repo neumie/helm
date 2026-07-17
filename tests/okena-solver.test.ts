@@ -236,17 +236,33 @@ test('Okena worktree creation reuses an existing branch without a noisy create a
 	])
 })
 
-test('Okena terminal creation retries while a new project layout settles', async () => {
+test('Okena terminal creation observes an accepted ID-less action without repeating it', async () => {
 	const actions: string[] = []
-	let splitAttempts = 0
+	let stateReads = 0
 	const client = {
 		action: async (payload: Record<string, unknown>) => {
 			actions.push(String(payload.action))
-			if (payload.action === 'split_terminal') {
-				splitAttempts += 1
-				if (splitAttempts === 2) return { terminal_ids: ['terminal-ready'] }
+			return { ok: true }
+		},
+		getState: async () => {
+			stateReads += 1
+			return {
+				projects: [
+					{
+						id: 'project-racing',
+						layout:
+							stateReads >= 3
+								? {
+										type: 'split',
+										children: [
+											{ type: 'terminal', terminal_id: 'terminal-existing' },
+											{ type: 'terminal', terminal_id: 'terminal-ready' },
+										],
+									}
+								: { type: 'terminal', terminal_id: 'terminal-existing' },
+					},
+				],
 			}
-			throw new Error(`${String(payload.action)} not ready`)
 		},
 	} as unknown as OkenaClient
 	const manager = new OkenaWorktreeManager(client)
@@ -257,7 +273,27 @@ test('Okena terminal creation retries while a new project layout settles', async
 	})
 
 	assert.equal(terminalId, 'terminal-ready')
-	assert.deepEqual(actions, ['split_terminal', 'create_terminal', 'split_terminal'])
+	assert.deepEqual(actions, ['split_terminal'])
+})
+
+test('Okena terminal creation falls back once when split is an observed no-op', async () => {
+	const actions: string[] = []
+	const client = {
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(String(payload.action))
+			return payload.action === 'create_terminal' ? { terminal_id: 'terminal-created' } : { ok: true }
+		},
+		getState: async () => ({ projects: [{ id: 'project-empty', layout: null }] }),
+	} as unknown as OkenaClient
+	const manager = new OkenaWorktreeManager(client)
+
+	const terminalId = await manager.createTerminal('project-empty', {
+		retryDelaysMs: [0],
+		sleep: async () => undefined,
+	})
+
+	assert.equal(terminalId, 'terminal-created')
+	assert.deepEqual(actions, ['split_terminal', 'create_terminal'])
 })
 
 test('Okena plan-terminal reuse ignores stale names outside the live layout', async () => {
