@@ -7,6 +7,7 @@ import { configSchema } from '../src/config.js'
 import type { OkenaClient } from '../src/extensions/okena/client.js'
 import { inspectItemOkenaWorkspace, openItemInOkena } from '../src/extensions/okena/item-opener.js'
 import { OkenaSolver } from '../src/extensions/okena/solver.js'
+import { OkenaSpawner } from '../src/extensions/okena/spawner.js'
 import {
 	OkenaWorktreeManager,
 	createOkenaWorktreeForBranch,
@@ -279,6 +280,61 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 	const manager = new OkenaWorktreeManager(client)
 
 	assert.equal(await manager.findPlanTerminal('project-1'), null)
+})
+
+test('OkenaSpawner does not send another command into a reused planning terminal', async () => {
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-plan-reuse-'))
+	const actions: Record<string, unknown>[] = []
+	let commandRuns = 0
+	const client = {
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return {}
+		},
+		runCommand: async () => {
+			commandRuns += 1
+		},
+	} as unknown as OkenaClient
+	const worktrees = {
+		ensureWorktreeProject: async () => ({
+			wtProjectId: 'project-1',
+			worktreePath,
+			autoTerminalId: null,
+		}),
+		findPlanTerminal: async () => 'terminal-plan',
+		createTerminal: async () => {
+			throw new Error('must not create a terminal when a live plan terminal exists')
+		},
+	} as unknown as OkenaWorktreeManager
+	const config = configSchema.parse({
+		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
+		projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
+		solver: { type: 'okena', agent: 'claude' },
+	})
+
+	try {
+		const result = await new OkenaSpawner(client, worktrees).startPlanningSession({
+			projectConfig: config.projects[0],
+			branchName: 'feat/reuse-plan',
+			planDirName: '2026-07-17-reuse-plan',
+			taskTitle: 'Reuse plan',
+			taskContext: { title: 'Reuse plan' },
+			solverConfig: config.solver,
+		})
+
+		assert.equal(commandRuns, 0)
+		assert.match(result.hint, /existing Claude Code planning session is open/)
+		assert.deepEqual(actions, [
+			{
+				action: 'rename_terminal',
+				project_id: 'project-1',
+				terminal_id: 'terminal-plan',
+				name: 'plan: Reuse plan',
+			},
+		])
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+	}
 })
 
 test('OkenaSolver fails promptly when its execution workspace disappears', async () => {

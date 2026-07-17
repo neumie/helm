@@ -12,8 +12,11 @@ export class OkenaSpawner implements Spawner {
 	readonly name = 'okena'
 	private readonly worktrees: OkenaWorktreeManager
 
-	constructor(private readonly client: OkenaClient) {
-		this.worktrees = new OkenaWorktreeManager(client)
+	constructor(
+		private readonly client: OkenaClient,
+		worktrees?: OkenaWorktreeManager,
+	) {
+		this.worktrees = worktrees ?? new OkenaWorktreeManager(client)
 	}
 
 	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
@@ -59,25 +62,32 @@ export class OkenaSpawner implements Spawner {
 		workspace.writeContext(formatTaskContext(params.taskContext))
 		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName))
 
-		const command = buildInteractiveAgentCommand(
-			params.solverConfig,
-			workspace.rel.planningPrompt,
-			ensured.worktreePath,
-		)
 		const agentLabel = agentLabelFromConfig(params.solverConfig)
-		log.info('okena', `Starting planning session in terminal ${terminalId}`)
-		try {
-			// A fresh/auto terminal needs settling + line-clear; a reused plan
-			// terminal must NOT get ctrl_c (it may have a running agent).
-			await this.client.runCommand(terminalId, command, { freshTerminal: !reusedTerminal })
-		} catch (err) {
-			throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
+		if (reusedTerminal) {
+			// A named live plan terminal may contain a running interactive agent.
+			// Repeated Plan clicks reuse it without sending ctrl_c OR another shell
+			// command into the agent's input prompt.
+			log.info('okena', `Planning session already open in terminal ${terminalId}`)
+		} else {
+			const command = buildInteractiveAgentCommand(
+				params.solverConfig,
+				workspace.rel.planningPrompt,
+				ensured.worktreePath,
+			)
+			log.info('okena', `Starting planning session in terminal ${terminalId}`)
+			try {
+				await this.client.runCommand(terminalId, command, { freshTerminal: true })
+			} catch (err) {
+				throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
+			}
 		}
 
 		return {
 			worktreePath: ensured.worktreePath,
 			branchName: params.branchName,
-			hint: `Switch to Okena -> open the project for branch ${params.branchName}. ${agentLabel} planning is running in the "plan: ${params.taskTitle}" terminal.`,
+			hint: reusedTerminal
+				? `Switch to Okena -> the existing ${agentLabel} planning session is open in the "plan: ${params.taskTitle}" terminal.`
+				: `Switch to Okena -> open the project for branch ${params.branchName}. ${agentLabel} planning is running in the "plan: ${params.taskTitle}" terminal.`,
 		}
 	}
 }
