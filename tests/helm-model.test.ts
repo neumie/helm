@@ -16,12 +16,17 @@ import sharedHelmModule from '../app/src/shared-helm.ts'
 type HelmModelModule = typeof import('../app/src/renderer/sidebar/model.ts')
 type NormalizeHelmModule = typeof import('../app/src/normalize-helm.ts')
 type SharedHelmModule = typeof import('../app/src/shared-helm.ts')
-const { colorForProject, groupItemsByProject, partitionWork, planStatusLabel, statusTone } =
+const { colorForProject, groupItemsByProject, logMessagesNewestFirst, partitionWork, planStatusLabel, statusTone } =
 	helmModelModule as HelmModelModule
 const { normalizeDashboardItem } = normalizeHelmModule as NormalizeHelmModule
 const { ITEM_STATUSES } = sharedHelmModule as SharedHelmModule
 
 type DashboardItem = import('../app/src/shared-helm.ts').DashboardItem
+
+test('run log messages are newest-first and omit blank lines', () => {
+	assert.deepEqual(logMessagesNewestFirst('first\n\nsecond\r\nthird\n'), ['third', 'second', 'first'])
+	assert.deepEqual(logMessagesNewestFirst(''), [])
+})
 
 test('project colors resolve from current and legacy dashboard config', () => {
 	assert.equal(colorForProject({ projects: [{ slug: 'jvs', color: '#2a94e5' }] }, 'jvs'), '#2a94e5')

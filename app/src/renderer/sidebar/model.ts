@@ -17,8 +17,6 @@ export type Route =
 	| { kind: 'detail'; id: string }
 	| { kind: 'plan'; id: string }
 	| { kind: 'task'; id: string }
-	| { kind: 'run'; id: string }
-	| { kind: 'run-setup'; id: string }
 	| { kind: 'settings' }
 	| { kind: 'settings-section'; sectionId: string }
 	| { kind: 'appearance' }
@@ -32,9 +30,24 @@ export function colorForProject(config: AppConfig | null | undefined, slug: stri
 
 export type BucketKey = 'needs' | 'active' | 'queue' | 'inbox'
 
+/** The one local+GitHub ticket aggregation — hero copy and the detail's Plan
+ *  group must never sum the buckets independently. */
+export function planTicketCounts(status: NonNullable<DashboardItem['planStatus']>): {
+	total: number
+	open: number
+	agent: number
+	human: number
+} {
+	return {
+		total: status.localTickets.total + status.githubTickets.total,
+		open: status.localTickets.open + status.githubTickets.open,
+		agent: status.localTickets.readyForAgent + status.githubTickets.readyForAgent,
+		human: status.localTickets.readyForHuman + status.githubTickets.readyForHuman,
+	}
+}
+
 export function planTicketTotal(item: DashboardItem): number {
-	const status = item.planStatus
-	return status ? status.localTickets.total + status.githubTickets.total : 0
+	return item.planStatus ? planTicketCounts(item.planStatus).total : 0
 }
 
 export function planStatusLabel(item: DashboardItem): string | null {
@@ -42,8 +55,7 @@ export function planStatusLabel(item: DashboardItem): string | null {
 	if (!status) return null
 	if (status.stage === 'planning') return 'Planning'
 	if (status.stage === 'plan_ready') return 'Plan ready'
-	const total = planTicketTotal(item)
-	const open = status.localTickets.open + status.githubTickets.open
+	const { total, open } = planTicketCounts(status)
 	const completed = Math.max(0, total - open)
 	return `${completed} of ${total} ${total === 1 ? 'ticket' : 'tickets'} complete`
 }
@@ -57,11 +69,8 @@ export function planStatusDetail(item: DashboardItem): string | null {
 			? `${status.specName ?? 'A runnable spec'} is ready. No local or GitHub ticket queue was found.`
 			: `${status.specName ?? 'A runnable spec'} is ready. Local tickets were checked; GitHub is unavailable.`
 	}
-	const total = planTicketTotal(item)
-	const open = status.localTickets.open + status.githubTickets.open
+	const { total, open, agent, human } = planTicketCounts(status)
 	const completed = Math.max(0, total - open)
-	const agent = status.localTickets.readyForAgent + status.githubTickets.readyForAgent
-	const human = status.localTickets.readyForHuman + status.githubTickets.readyForHuman
 	const sources = [status.localTickets.total > 0 ? 'local' : null, status.githubTickets.total > 0 ? 'GitHub' : null]
 		.filter(Boolean)
 		.join(' + ')
@@ -214,6 +223,15 @@ export function useNow(intervalMs = 30_000): number {
 
 export function itemTitle(item: DashboardItem): string {
 	return item.displayName ?? item.title
+}
+
+/** Raw run logs are append-only and oldest-first on disk; the decision surface
+ * shows non-empty messages newest-first so current activity stays at the top. */
+export function logMessagesNewestFirst(content: string): string[] {
+	return content
+		.split(/\r?\n/)
+		.filter(line => line.trim().length > 0)
+		.reverse()
 }
 
 /** Resolve possibly-relative daemon URLs (ingested attachments) to absolute. */

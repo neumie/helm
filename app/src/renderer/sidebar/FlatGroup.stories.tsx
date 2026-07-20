@@ -2,7 +2,7 @@
 // or shadow. Fact rows (28px), copy/external rows (28px), push/nav rows (36px
 // with soft inset separators). The first group on a page omits its rule.
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { ActionRow, Btn, Card, InfoRow } from './ui'
+import { ActionRow, Btn, Card, Disclosure, InfoRow } from './ui'
 
 const meta: Meta = {
 	title: 'Sidebar/Flat group',
@@ -89,5 +89,45 @@ export const HeaderWithTrailing: Story = {
 			<InfoRow label="Spec" value="prd.md" mono />
 			<InfoRow label="Tickets" value="2 of 5 complete" />
 		</Card>
+	),
+}
+
+/** Inline run evidence on Item detail (§3.15/§3.20): Activity facts + the
+ *  latest-first timeline, the log's two-message newest-first preview, and Run
+ *  setup's summary-at-rest above its own disclosure. */
+export const EvidenceGroups: Story = {
+	render: () => (
+		<>
+			<Card label="Activity">
+				<InfoRow label="Started" value="14m" />
+				<ol className="activity-list">
+					{[
+						['Solver result recorded', '2m'],
+						['Pull request opened', '4m'],
+						['Branch pushed', '5m'],
+					].map(([label, time]) => (
+						<li key={label} className="activity-item">
+							<span>{label}</span>
+							<time className="activity-time">{time}</time>
+						</li>
+					))}
+				</ol>
+				<button type="button" className="detail-disclosure" aria-expanded={false}>
+					Show all
+				</button>
+			</Card>
+			<Card label="Log">
+				<section className="log-well">{'[12:05:19] solver-result.json written\n[12:04:40] tests: 12 passed'}</section>
+				<button type="button" className="detail-disclosure" aria-expanded={false}>
+					Show all
+				</button>
+			</Card>
+			<Card label="Run setup">
+				<p className="run-setup-summary">Claude Code · claude-sonnet-5 · High effort · Worktree</p>
+				<Disclosure label="Change setup" hideLabel="Hide setup">
+					<p className="section-description">Agent, model, effort, and workspace pickers render here.</p>
+				</Disclosure>
+			</Card>
+		</>
 	),
 }
