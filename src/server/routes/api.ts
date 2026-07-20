@@ -160,7 +160,6 @@ type InspectItemOkenaWorkspace = (params: OkenaWorkspaceParams) => Promise<Okena
 function okenaOpenHint(opened: OkenaOpenResult): string {
 	if (!opened.focused) return 'Workspace opened in Okena; its terminal is still becoming ready'
 	if (opened.activated) return 'Focused in Okena'
-	if (opened.notified) return 'Focused and marked for attention in Okena'
 	return 'Focused in Okena — switch to the Okena app'
 }
 

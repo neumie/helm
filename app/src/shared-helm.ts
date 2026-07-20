@@ -269,6 +269,7 @@ export interface OkenaOpenInfo {
 	terminalId: string
 	createdWorkspace: boolean
 	focused: boolean
+	/** Legacy wire field; focus is input-free and this is always false. */
 	notified: boolean
 	activated: boolean
 	hint: string

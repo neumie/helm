@@ -15,7 +15,7 @@ import {
 } from '../src/extensions/okena/worktree.js'
 import { errorPhase } from '../src/util/errors.js'
 
-test('openItemInOkena ignores stale hook terminals and marks the live pane for attention', async () => {
+test('openItemInOkena focuses the live pane without writing terminal input', async () => {
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-open-existing-'))
 	const actions: Record<string, unknown>[] = []
 	const client = {
@@ -74,12 +74,11 @@ test('openItemInOkena ignores stale hook terminals and marks the live pane for a
 			terminalId: 'terminal-live',
 			createdWorkspace: false,
 			focused: true,
-			notified: true,
+			notified: false,
 			activated: true,
 		})
 		assert.deepEqual(actions, [
 			{ action: 'focus_terminal', project_id: 'project-1', terminal_id: 'terminal-live', window: 'main' },
-			{ action: 'send_text', terminal_id: 'terminal-live', text: '\u0007' },
 		])
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })

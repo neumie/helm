@@ -26,6 +26,7 @@ export interface OpenItemInOkenaResult {
 	terminalId: string
 	createdWorkspace: boolean
 	focused: boolean
+	/** Wire compatibility only; always false because focus never writes terminal input. */
 	notified: boolean
 	activated: boolean
 }
@@ -237,9 +238,9 @@ async function activateOkenaApp(): Promise<boolean> {
 
 /**
  * Resolve an Item workspace into Okena, focus its live layout pane, and
- * best-effort raise the native app. A pre-existing workspace also receives one
- * deliberate BEL attention character after focus so Okena paints its yellow
- * notification border; Helm never sends a command or ctrl_c to the terminal.
+ * best-effort raise the native app. Focus is strictly control-plane only: never
+ * write bytes to the terminal, because a foreground TUI/agent may interpret
+ * even an ostensibly harmless BEL as input.
  */
 export async function openItemInOkena(
 	params: OpenItemInOkenaParams,
@@ -258,7 +259,6 @@ export async function openItemInOkena(
 	let terminalId: string | null = null
 	let worktreePath: string
 	let createdWorkspace = false
-	let workspaceAlreadyOpen = false
 
 	if (existingWorktreePath) {
 		if (!existsSync(existingWorktreePath)) {
@@ -274,7 +274,6 @@ export async function openItemInOkena(
 		if (existing) {
 			projectId = existing.id
 			terminalId = firstTerminalId(existing)
-			workspaceAlreadyOpen = true
 		} else {
 			const standalone = state.projects.find(project => project.path === worktreePath)
 			if (standalone) {
@@ -299,13 +298,7 @@ export async function openItemInOkena(
 		terminalId = ensured.autoTerminalId
 		const project = await liveProject(client, projectId)
 		terminalId ??= project ? firstTerminalId(project) : null
-		workspaceAlreadyOpen = true
 	} else {
-		const before = await client.getState()
-		const safeBranch = params.branchName.replace(/\//g, '-')
-		workspaceAlreadyOpen = before.projects.some(
-			project => project.name === params.branchName && project.path.includes(safeBranch),
-		)
 		const ensured = await worktrees.ensureWorktreeProject(
 			params.projectConfig.repoPath,
 			params.baseRef,
@@ -329,15 +322,6 @@ export async function openItemInOkena(
 	const focus = await focusTerminal(client, projectId, terminalId)
 	terminalId = focus.terminalId
 
-	let notified = false
-	if (workspaceAlreadyOpen) {
-		try {
-			await client.action({ action: 'send_text', terminal_id: terminalId, text: '\u0007' })
-			notified = true
-		} catch {
-			// Attention is best-effort; opening/focusing the workspace already succeeded.
-		}
-	}
 	const activated = await (deps.activateApp ?? activateOkenaApp)()
-	return { worktreePath, projectId, terminalId, createdWorkspace, focused: focus.focused, notified, activated }
+	return { worktreePath, projectId, terminalId, createdWorkspace, focused: focus.focused, notified: false, activated }
 }
