@@ -1,7 +1,28 @@
 import type { DashboardItem, DashboardTone } from '../../shared-helm'
 import { planStatusDetail, planStatusLabel, statusTone } from './model'
 
-export type DetailSection = 'intent' | 'queue' | 'progress' | 'outcome' | 'failure' | 'work' | 'delivery' | 'run-setup'
+export type DetailSection =
+	| 'intent'
+	| 'queue'
+	| 'activity'
+	| 'outcome'
+	| 'failure'
+	| 'log'
+	| 'input'
+	| 'setup'
+	| 'plan'
+	| 'source'
+	| 'delivery'
+
+/** One entry in the detail page's flat editorial stack. `open` is the
+ *  disclosure's MOUNT-TIME default only (§3.20): it is never re-applied on a
+ *  status flip, so a mid-read status change cannot collapse a section the
+ *  user opened (or pop one open under their pointer). */
+export interface DetailSectionEntry {
+	kind: DetailSection
+	open?: boolean
+}
+
 export type Attention = { tone: 'error' | 'warning' | 'info'; label: string; text: string } | null
 
 function chipTone(item: DashboardItem): DashboardTone {
@@ -48,24 +69,32 @@ function attentionFor(item: DashboardItem, messy: boolean): Attention {
 	return null
 }
 
-/** Presentation only: lifecycle permissions remain in `allowedActions`. */
+const sections = (...kinds: Array<DetailSection | DetailSectionEntry>): DetailSectionEntry[] =>
+	kinds.map(kind => (typeof kind === 'string' ? { kind } : kind))
+
+/** Presentation only: lifecycle permissions remain in `allowedActions`.
+ *  Sections order the one flat stack per state (decision content first); each
+ *  section component self-gates on its data and renders null when empty. */
 export function detailState(item: DashboardItem): {
 	headline: string | null
 	direction: string | null
 	chipTone: DashboardTone
 	attention: Attention
-	sections: DetailSection[]
+	sections: DetailSectionEntry[]
 } {
 	const messy = item.runOutcome === 'errored' || item.runOutcome === 'no_result'
 	const attention = attentionFor(item, messy)
 	switch (item.status) {
 		case 'inbox':
+			// Run-evidence sections trail every pre-run state: they self-gate to
+			// nothing on a pristine item, but an item moved BACK here after a run
+			// (manual status, Return to Queue) must not lose its history.
 			return {
 				headline: item.source ? 'Review the intent' : 'Ready to plan or start',
 				direction: item.source ? 'Approve to queue this work, or reject it.' : 'Start runs this item now.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['intent', 'work', 'run-setup'],
+				sections: sections('intent', 'source', 'setup', 'plan', 'activity', 'log', 'input'),
 			}
 		case 'ready':
 			return {
@@ -73,7 +102,7 @@ export function detailState(item: DashboardItem): {
 				direction: 'Start the agent now, or work it manually.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['queue', 'run-setup', 'work'],
+				sections: sections('queue', 'setup', 'plan', 'source', 'activity', 'log', 'input'),
 			}
 		case 'active':
 			return item.planStatus
@@ -82,14 +111,14 @@ export function detailState(item: DashboardItem): {
 						direction: planStatusDetail(item),
 						chipTone: chipTone(item),
 						attention,
-						sections: ['work', 'run-setup'],
+						sections: sections('plan', 'setup', 'source', 'activity', 'log', 'input'),
 					}
 				: {
 						headline: "You're working on this",
 						direction: 'Set it as done when you finish, or return it to the queue.',
 						chipTone: chipTone(item),
 						attention,
-						sections: ['work'],
+						sections: sections('plan', 'source', 'activity', 'log', 'input'),
 					}
 		case 'running':
 			return {
@@ -97,7 +126,7 @@ export function detailState(item: DashboardItem): {
 				direction: 'Nothing needs you right now.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['progress', 'work'],
+				sections: sections('activity', 'log', 'input', 'plan', 'source'),
 			}
 		case 'review':
 			return {
@@ -105,7 +134,7 @@ export function detailState(item: DashboardItem): {
 				direction: 'Check the work, then set it as done.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['outcome', 'delivery', 'work'],
+				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'plan', 'source'),
 			}
 		case 'failed':
 			return {
@@ -116,7 +145,17 @@ export function detailState(item: DashboardItem): {
 						: 'Retry starts a new loop run.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['failure', 'outcome', 'run-setup', 'work'],
+				// The log is the diagnostic — open, directly beneath the failure text.
+				sections: sections(
+					'failure',
+					{ kind: 'log', open: true },
+					'activity',
+					'outcome',
+					'setup',
+					'input',
+					'plan',
+					'source',
+				),
 			}
 		case 'done':
 			return {
@@ -124,15 +163,17 @@ export function detailState(item: DashboardItem): {
 				direction: 'Retry starts a new run and replaces the current run result.',
 				chipTone: chipTone(item),
 				attention,
-				sections: ['outcome', 'delivery', 'work'],
+				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'plan', 'source'),
 			}
 		case 'cancelled':
+			// Outcome/input stay reachable: a cancelled run may hold a partial
+			// result, a branch, and the solve input worth reviewing before retry.
 			return {
 				headline: cancellationReason(item),
 				direction: 'Retry queues a new run.',
 				chipTone: chipTone(item),
 				attention: null,
-				sections: ['failure', 'work'],
+				sections: sections('failure', 'outcome', 'activity', 'log', 'input', 'plan', 'source'),
 			}
 		default:
 			throw new Error(`Unsupported item status: ${item.status}`)

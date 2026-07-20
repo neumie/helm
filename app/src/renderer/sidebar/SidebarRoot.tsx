@@ -2,10 +2,11 @@
 // the HelmBridge snapshot. Data arrives exclusively through the main-process
 // bridge (window.helm.daemon) — never fetch :7474 from this file:// renderer.
 //
-// Navigation model: list → detail → plan/task, list → archive, list →
-// settings → section. Every stacked page stays mounted (scroll + state
-// preserved); non-top pages are inert. Esc pops the stack when focus is in
-// the pane (menus/sheets handle their own Esc in the capture phase first).
+// Navigation model: list → detail → plan/task (run evidence and run setup are
+// inline on detail, §3.20), list → archive, list → settings → section. Every
+// stacked page stays mounted (scroll + state preserved); non-top pages are
+// inert. Esc pops the stack when focus is in the pane (menus/sheets handle
+// their own Esc in the capture phase first).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -14,7 +15,7 @@ import type { HelmSnapshot } from '../../shared-helm'
 import { showToast } from '../toast'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
-import { PlanPage, RunDetailsPage, RunSetupPage, TaskPage } from './DetailSubpages'
+import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemSheet } from './NewItemSheet'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
@@ -317,7 +318,7 @@ export function SidebarRoot() {
 		else showToast({ message: label })
 	}, [])
 
-	const renderRoute = (route: Route) => {
+	const renderRoute = (route: Route, isTop: boolean) => {
 		switch (route.kind) {
 			case 'list':
 			case 'archive':
@@ -345,29 +346,17 @@ export function SidebarRoot() {
 						id={route.id}
 						snapshot={snapshot}
 						draft={runDrafts[route.id] ?? {}}
+						onDraftChange={draft => setRunDrafts(current => ({ ...current, [route.id]: draft }))}
+						active={isTop}
 						onBack={pop}
 						onOpenPlan={id => push({ kind: 'plan', id })}
 						onOpenTask={id => push({ kind: 'task', id })}
-						onOpenRun={id => push({ kind: 'run', id })}
-						onOpenSetup={id => push({ kind: 'run-setup', id })}
 					/>
 				)
 			case 'plan':
 				return <PlanPage id={route.id} snapshot={snapshot} onBack={pop} />
 			case 'task':
 				return <TaskPage id={route.id} snapshot={snapshot} onBack={pop} />
-			case 'run':
-				return <RunDetailsPage id={route.id} snapshot={snapshot} onBack={pop} />
-			case 'run-setup':
-				return (
-					<RunSetupPage
-						id={route.id}
-						snapshot={snapshot}
-						onBack={pop}
-						draft={runDrafts[route.id] ?? {}}
-						onDraftChange={draft => setRunDrafts(current => ({ ...current, [route.id]: draft }))}
-					/>
-				)
 			case 'settings':
 				return (
 					<SettingsPage
@@ -409,9 +398,9 @@ export function SidebarRoot() {
 							aria-hidden={!isTop}
 						>
 							{route.kind === 'archive' ? (
-								<ArchiveFrame onBack={pop}>{renderRoute(route)}</ArchiveFrame>
+								<ArchiveFrame onBack={pop}>{renderRoute(route, isTop)}</ArchiveFrame>
 							) : (
-								renderRoute(route)
+								renderRoute(route, isTop)
 							)}
 						</div>
 					)
@@ -419,9 +408,9 @@ export function SidebarRoot() {
 				{nav.leaving && (
 					<div className="nav-page nav-pop-out" inert aria-hidden>
 						{nav.leaving.kind === 'archive' ? (
-							<ArchiveFrame onBack={pop}>{renderRoute(nav.leaving)}</ArchiveFrame>
+							<ArchiveFrame onBack={pop}>{renderRoute(nav.leaving, false)}</ArchiveFrame>
 						) : (
-							renderRoute(nav.leaving)
+							renderRoute(nav.leaving, false)
 						)}
 					</div>
 				)}

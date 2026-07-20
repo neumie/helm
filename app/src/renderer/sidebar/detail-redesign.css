@@ -96,6 +96,12 @@
 	font: 600 calc(11px * var(--ui-scale)) var(--font-ui);
 	cursor: pointer;
 }
+/* Inline disclosure (§3.20): the revealed wrapper is layout-neutral — children
+ * participate in the card's flex flow directly. Content snaps; never animate
+ * height (§2.5). */
+.disclosure-content {
+	display: contents;
+}
 .detail-state {
 	display: flex;
 	flex-direction: column;

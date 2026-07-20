@@ -1196,6 +1196,16 @@ button.banner {
 
 /* ---------- run setup (agent/model pickers) ---------- */
 
+/* The effective selection, readable at rest above the §3.20 disclosure. */
+.run-setup-summary {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+
 .run-setup {
 	display: flex;
 	flex-direction: column;

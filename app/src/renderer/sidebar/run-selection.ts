@@ -80,8 +80,14 @@ export function selectAgent(draft: RunSelectionDraft, agent: SolverAgent, config
 	}
 }
 
+/** The at-rest Run setup line (§3.15): "Claude Code · model · effort · Worktree". */
 export function selectionSummary(selection: EffectiveRunSelection): string {
-	return `${selection.agent === 'claude' ? 'Claude' : 'Codex'} · ${selection.model ?? 'Default'} · ${selection.effort ?? 'Default effort'} · ${selection.workspace === 'main' ? 'Main' : 'Worktree'}`
+	return [
+		selection.agent === 'claude' ? 'Claude Code' : 'Codex',
+		selection.model ?? 'Default model',
+		...(selection.effort ? [`${EFFORT_LABEL[selection.effort]} effort`] : []),
+		selection.workspace === 'main' ? 'Main' : 'Worktree',
+	].join(' · ')
 }
 
 export default { effectiveRunSelection, buildRunBody, buildPlanBody, selectAgent, selectionSummary }

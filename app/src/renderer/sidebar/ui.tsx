@@ -1,7 +1,7 @@
 // Shared sidebar primitives, styled per docs/design-system.md:
 // buttons (§3.1), segmented control (§3.2), chips (§3.4), status dots (§3.5),
 // inputs/selects (§3.7), menus (§3.8), sheets (§3.9), push-nav header (§3.10),
-// banners (§3.12), empty states (§3.13).
+// banners (§3.12), empty states (§3.13), inline disclosure (§3.20).
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
@@ -566,6 +566,60 @@ export function ClampText({ text, lines = 4 }: { text: string; lines?: number })
 			</span>
 			{(overflows || expanded) && <span className="clamp-cue">{expanded ? 'Less' : 'More'}</span>}
 		</button>
+	)
+}
+
+// ---------------------------------------------------------------------------
+// Inline disclosure — §3.20
+
+/** Quiet show/hide toggle for heavy in-place evidence (log, solve input, run
+ *  setup pickers). Content SNAPS open — never height-animated (§2.5) — and is
+ *  rendered only while open, so a collapsed well contributes zero DOM to the
+ *  always-mounted nav-page layers. `defaultOpen` applies at mount only: a
+ *  status flip mid-read must never collapse a section the user opened. */
+export function Disclosure({
+	label,
+	hideLabel,
+	defaultOpen,
+	open: controlledOpen,
+	onToggle,
+	children,
+}: {
+	/** Verb-first cue while closed ("Show log"). */
+	label: string
+	/** Verb-first cue while open ("Hide log"). */
+	hideLabel: string
+	defaultOpen?: boolean
+	/** Controlled mode: the caller owns the open bit (single source of truth
+	 *  when something else — e.g. the live log tail — also reads it). */
+	open?: boolean
+	onToggle?: (open: boolean) => void
+	children: ReactNode
+}) {
+	const [internalOpen, setInternalOpen] = useState(defaultOpen ?? false)
+	const open = controlledOpen ?? internalOpen
+	const contentId = useId()
+	return (
+		<>
+			<button
+				type="button"
+				className="detail-disclosure"
+				aria-expanded={open}
+				aria-controls={contentId}
+				onClick={() => {
+					if (controlledOpen === undefined) setInternalOpen(!open)
+					onToggle?.(!open)
+				}}
+			>
+				{open ? hideLabel : label}
+			</button>
+			{open && (
+				// Layout-neutral (display: contents) — content labels itself.
+				<div id={contentId} className="disclosure-content">
+					{children}
+				</div>
+			)}
+		</>
 	)
 }
 

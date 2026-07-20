@@ -1,29 +1,28 @@
-// State-led item decision surface. Heavy source/plan/run artifacts live on pushed pages.
+// State-led item decision surface. Run evidence (activity/log/input) and run
+// setup live inline (§3.20); only the long-form Task and Plan-document reading
+// surfaces stay on pushed pages.
 import { useRef, useState } from 'react'
 import type { DashboardAction, HelmSnapshot, ItemStatus, PlanInfo } from '../../shared-helm'
 import { showToast } from '../toast'
 import {
+	ActivitySection,
 	DeliveryCard,
 	FailureCard,
+	InputSection,
 	IntentCard,
+	LogSection,
 	OutcomeCard,
-	ProgressCard,
+	PlanSection,
+	SetupSection,
+	SourceRow,
 	StateSummary,
-	WorkCard,
 } from './DetailSections'
 import { lifecycleActionPlan, lifecycleActionPresentation, manualStatusOptions } from './detail-actions'
 import { useItemDetail } from './detail-data'
 import { detailState } from './detail-state'
 import { colorForProject, itemTitle, relativeTime, useNow } from './model'
+import { type RunSelectionDraft, buildPlanBody, buildRunBody } from './run-selection'
 import {
-	EFFORT_LABEL,
-	type RunSelectionDraft,
-	buildPlanBody,
-	buildRunBody,
-	effectiveRunSelection,
-} from './run-selection'
-import {
-	ActionRow,
 	Banner,
 	Btn,
 	Card,
@@ -41,11 +40,12 @@ export interface DetailPageProps {
 	id: string
 	snapshot: HelmSnapshot | null
 	draft: RunSelectionDraft
+	onDraftChange: (next: RunSelectionDraft) => void
+	/** True while this page is the top nav layer — gates the live log tail. */
+	active: boolean
 	onBack: () => void
 	onOpenPlan: (id: string) => void
 	onOpenTask: (id: string) => void
-	onOpenRun: (id: string) => void
-	onOpenSetup: (id: string) => void
 }
 
 interface Confirmation {
@@ -54,8 +54,8 @@ interface Confirmation {
 }
 
 export function DetailPage(props: DetailPageProps) {
-	const { id, snapshot, draft, onBack, onOpenPlan, onOpenTask, onOpenRun, onOpenSetup } = props
-	const { item, phase, error, refetch } = useItemDetail(id, snapshot)
+	const { id, snapshot, draft, onDraftChange, active, onBack, onOpenPlan, onOpenTask } = props
+	const { item, phase, error, refetch, refetchQuietly } = useItemDetail(id, snapshot)
 	const now = useNow()
 	const token = useRef(0)
 	const commandLock = useRef(false)
@@ -231,7 +231,7 @@ export function DetailPage(props: DetailPageProps) {
 		? lifecycleActionPresentation(primaryAction.id, primaryAction.label, item.kind, item.executionMode)
 		: null
 	const content = (section: ReturnType<typeof detailState>['sections'][number]) => {
-		switch (section) {
+		switch (section.kind) {
 			case 'intent':
 				return (
 					<IntentCard
@@ -249,46 +249,40 @@ export function DetailPage(props: DetailPageProps) {
 					</Card>
 				)
 			}
-			case 'progress':
-				return <ProgressCard key="progress" item={item} now={now} />
+			case 'activity':
+				return <ActivitySection key="activity" item={item} now={now} />
 			case 'outcome':
 				return <OutcomeCard key="outcome" item={item} />
 			case 'failure':
 				return <FailureCard key="failure" item={item} hideError={state.attention?.text === item.errorMessage} />
-			case 'work':
+			case 'log':
 				return (
-					<WorkCard
-						key="work"
+					<LogSection
+						key="log"
 						item={item}
-						now={now}
-						onTask={() => onOpenTask(id)}
-						onPlan={() => onOpenPlan(id)}
-						onRun={() => onOpenRun(id)}
-						disabled={disabled}
+						defaultOpen={section.open}
+						live={active && item.status === 'running'}
+						onLiveTick={refetchQuietly}
 					/>
 				)
+			case 'input':
+				return <InputSection key="input" item={item} />
+			case 'setup':
+				return (
+					<SetupSection
+						key="setup"
+						item={item}
+						config={snapshot?.config ?? null}
+						draft={draft}
+						onDraftChange={onDraftChange}
+					/>
+				)
+			case 'plan':
+				return <PlanSection key="plan" item={item} now={now} onOpen={() => onOpenPlan(id)} disabled={disabled} />
+			case 'source':
+				return <SourceRow key="source" item={item} onOpen={() => onOpenTask(id)} disabled={disabled} />
 			case 'delivery':
 				return <DeliveryCard key="delivery" item={item} />
-			case 'run-setup': {
-				if (item.kind !== 'solve') return null
-				const selection = effectiveRunSelection(item, snapshot?.config ?? null)
-				const setupValue = [
-					selection.model ?? 'Default model',
-					...(selection.effort ? [`${EFFORT_LABEL[selection.effort]} effort`] : []),
-					selection.workspace === 'main' ? 'Main' : 'Worktree',
-				].join(' · ')
-				return (
-					<Card key="run-setup" label="Run setup" flush>
-						<ActionRow
-							nav
-							label={selection.agent === 'claude' ? 'Claude Code' : 'Codex'}
-							value={setupValue}
-							onClick={() => onOpenSetup(id)}
-							disabled={disabled}
-						/>
-					</Card>
-				)
-			}
 		}
 	}
 	return (

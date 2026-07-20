@@ -34,32 +34,51 @@ export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
 	const generation = useRef(0)
 	const hasItem = useRef(Boolean(detail || row))
 	hasItem.current = Boolean(detail || row)
+	// Identical-payload guard (mirrors HelmBridge.publish): a live-tail tick that
+	// returns byte-identical detail must not re-render the 20KB log well.
+	const lastComparable = useRef<string | null>(null)
 	const rowUpdatedAt = row?.updatedAt ?? ''
 
-	const apply = useCallback((result: HelmResult<DashboardItem>, current: number) => {
+	const apply = useCallback((result: HelmResult<DashboardItem>, current: number, quiet: boolean) => {
 		if (current !== generation.current) return
 		if (result.error === undefined) {
-			setDetail(result.data)
+			const comparable = JSON.stringify(result.data)
+			if (comparable !== lastComparable.current) {
+				lastComparable.current = comparable
+				setDetail(result.data)
+			}
 			setError(null)
 			setPhase('fresh')
 			return
 		}
+		// Quiet (live-tail) failures keep the last-known detail without flapping
+		// the stale-error alert; the next successful tick or a real refetch wins.
+		if (quiet) return
 		setError(result.error)
 		setPhase(detailPhaseFor(result, hasItem.current))
 	}, [])
 
 	const request = useCallback(
-		(force: boolean) => {
+		(force: boolean, quiet = false) => {
 			const current = ++generation.current
-			setPhase('loading')
-			return fetchItemDetail(id, rowUpdatedAt, force).then(result => apply(result, current))
+			if (!quiet) setPhase('loading')
+			return fetchItemDetail(id, rowUpdatedAt, force).then(result => apply(result, current, quiet))
 		},
 		[id, rowUpdatedAt, apply],
 	)
+	const requestRef = useRef(request)
+	requestRef.current = request
 
 	const refetch = useCallback(async () => {
 		await request(true)
 	}, [request])
+
+	/** Background refresh (live log tail): no loading phase, no error phase — a
+	 *  tick never flickers the page busy or flaps an alert. Identity is stable
+	 *  (ref-backed) so the caller's interval never resets on row updates. */
+	const refetchQuietly = useCallback(async () => {
+		await requestRef.current(true, true)
+	}, [])
 
 	useEffect(() => {
 		void request(false)
@@ -69,5 +88,5 @@ export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
 	}, [request])
 
 	const item = detail ?? row
-	return { item, phase, error, refetch, fresh: phase === 'fresh', hasDetail: detail !== null }
+	return { item, phase, error, refetch, refetchQuietly, fresh: phase === 'fresh', hasDetail: detail !== null }
 }

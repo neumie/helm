@@ -55,15 +55,38 @@ const base = {
 	updatedAt: '2026-01-01T00:00:00Z',
 } as unknown as DashboardItem
 
+const kinds = (sections: Array<{ kind: string }>) => sections.map(section => section.kind)
+
 test('detail state stays focused and does not call cancellation an error', () => {
 	const cancelled = detailState({ ...base, status: 'cancelled', errorMessage: 'Cancelled by user' })
 	assert.equal(cancelled.headline, 'Work was stopped')
 	assert.equal(cancelled.attention, null)
-	assert.deepEqual(cancelled.sections, ['failure', 'work'])
-	assert.deepEqual(detailState({ ...base, status: 'review', runOutcome: 'no_result' }).sections.slice(0, 2), [
+	assert.deepEqual(kinds(cancelled.sections), ['failure', 'outcome', 'activity', 'log', 'input', 'plan', 'source'])
+	assert.deepEqual(kinds(detailState({ ...base, status: 'review', runOutcome: 'no_result' }).sections).slice(0, 2), [
 		'outcome',
 		'delivery',
 	])
+})
+
+test('run evidence is inline: review orders decision content before the log disclosure', () => {
+	const review = detailState({ ...base, status: 'review' })
+	assert.deepEqual(kinds(review.sections), ['outcome', 'delivery', 'activity', 'log', 'input', 'plan', 'source'])
+	// Closed by default in review — outcome and PR are the review evidence.
+	assert.equal(review.sections.find(section => section.kind === 'log')?.open, undefined)
+})
+
+test('failed auto-opens the log directly beneath the failure text (§3.20 mount default)', () => {
+	const failed = detailState({ ...base, status: 'failed', errorMessage: 'boom' })
+	assert.deepEqual(kinds(failed.sections).slice(0, 2), ['failure', 'log'])
+	assert.equal(failed.sections.find(section => section.kind === 'log')?.open, true)
+	// The only state that opens anything by default.
+	for (const status of ['running', 'review', 'done', 'cancelled'] as const) {
+		const state = detailState({ ...base, status })
+		assert.ok(
+			state.sections.every(section => section.open === undefined),
+			`${status} opens nothing by default`,
+		)
+	}
 })
 
 test('review state leads with the always-present next-step headline (2026-07 hero spec)', () => {
@@ -76,7 +99,7 @@ test('human-owned Active Items lead with the ownership headline (2026-07 hero sp
 	const active = detailState({ ...base, status: 'active', workMode: 'manual' })
 	assert.equal(active.headline, "You're working on this")
 	assert.equal(active.direction, 'Set it as done when you finish, or return it to the queue.')
-	assert.deepEqual(active.sections, ['work'])
+	assert.deepEqual(kinds(active.sections), ['plan', 'source', 'activity', 'log', 'input'])
 })
 
 test('planned Active Items expose the executor choice', () => {
@@ -96,7 +119,7 @@ test('planned Active Items expose the executor choice', () => {
 	})
 	assert.equal(active.headline, 'Plan ready')
 	assert.equal(active.direction, 'spec.md is ready. No local or GitHub ticket queue was found.')
-	assert.deepEqual(active.sections, ['work', 'run-setup'])
+	assert.deepEqual(kinds(active.sections), ['plan', 'setup', 'source', 'activity', 'log', 'input'])
 })
 
 test('planned Active Items distinguish planning from a ticket queue', () => {
@@ -140,7 +163,18 @@ test('automatic Inbox Items lead with the approval decision', () => {
 	})
 	assert.equal(inbox.headline, 'Review the intent')
 	assert.equal(inbox.direction, 'Approve to queue this work, or reject it.')
-	assert.deepEqual(inbox.sections, ['intent', 'work', 'run-setup'])
+	assert.deepEqual(kinds(inbox.sections), ['intent', 'source', 'setup', 'plan', 'activity', 'log', 'input'])
+})
+
+test('run evidence stays reachable after a return to pre-run states', () => {
+	// An item moved back to inbox/ready/active after a run keeps its history —
+	// the sections self-gate, so pristine items still render nothing for them.
+	for (const status of ['inbox', 'ready', 'active'] as const) {
+		const state = detailState({ ...base, status })
+		for (const kind of ['activity', 'log', 'input']) {
+			assert.ok(kinds(state.sections).includes(kind), `${status} keeps ${kind} reachable`)
+		}
+	}
 })
 
 test('danger actions are overflow-only while review owns Set as done', () => {
