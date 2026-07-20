@@ -81,15 +81,6 @@ export function FailureCard({ item, hideError = false }: { item: DashboardItem; 
 	)
 }
 
-/** The old Run-details gate: only agent-run items carry run evidence. */
-function hasRunEvidence(item: DashboardItem): boolean {
-	return (
-		item.workMode === 'agent' &&
-		(item.runObservation.source !== 'none' ||
-			Boolean(item.resultSummary || item.errorMessage || item.solveInputSnapshot))
-	)
-}
-
 /** Read-only mono scroll well — the one owner of the well's a11y contract. */
 function EvidenceWell({ label, children }: { label: string; children: ReactNode }) {
 	return (
@@ -100,27 +91,27 @@ function EvidenceWell({ label, children }: { label: string; children: ReactNode 
 	)
 }
 
-/** Inline run history: started/loop facts + the latest-first event timeline.
- *  Running shows 5 events before "Show all"; settled states show 3. Running
- *  always renders (the observation may lag the row while the detail loads). */
+/** Event history only. Current lifecycle and ticket progress already live in
+ *  the Item header; Almanac state/round/summary are implementation details. */
 export function ActivitySection({ item, now }: { item: DashboardItem; now: number }) {
 	const [historyOpen, setHistoryOpen] = useState(false)
 	const listId = useId()
-	const observation = item.runObservation
-	const events = useMemo(() => [...observation.events].reverse(), [observation.events])
-	if (!hasRunEvidence(item) && item.status !== 'running') return null
-	const summary =
-		observation.summary && observation.summary !== item.resultSummary && observation.summary !== item.errorMessage
-			? observation.summary
-			: null
+	const events = useMemo(() => [...item.runObservation.events].reverse(), [item.runObservation.events])
+	if (events.length === 0) return null
+	const historyToggle = (
+		<button
+			type="button"
+			className="detail-disclosure"
+			aria-controls={listId}
+			aria-expanded={historyOpen}
+			onClick={() => setHistoryOpen(value => !value)}
+		>
+			{historyOpen ? 'Hide history' : 'Show history'}
+		</button>
+	)
 	return (
-		<Card label="Activity">
-			<InfoRow label="Started" value={relativeTime(item.startedAt ?? item.queuedAt ?? item.createdAt, now)} />
-			{item.status === 'running' && observation.stateLabel && <InfoRow label="State" value={observation.stateLabel} />}
-			{observation.almanac.status && <InfoRow label="Loop" value={observation.almanac.status} />}
-			{observation.almanac.round && <InfoRow label="Round" value={observation.almanac.round} />}
-			{summary && <ClampText text={summary} />}
-			{historyOpen && events.length > 0 && (
+		<Card label="Activity" trailing={historyToggle}>
+			{historyOpen && (
 				<ol id={listId} className="activity-list">
 					{events.map((event, index) => (
 						<li key={`${event.type}-${event.createdAt}-${index}`} className="activity-item">
@@ -131,17 +122,6 @@ export function ActivitySection({ item, now }: { item: DashboardItem; now: numbe
 						</li>
 					))}
 				</ol>
-			)}
-			{events.length > 0 && (
-				<button
-					type="button"
-					className="detail-disclosure"
-					aria-controls={listId}
-					aria-expanded={historyOpen}
-					onClick={() => setHistoryOpen(value => !value)}
-				>
-					{historyOpen ? 'Hide history' : 'Show history'}
-				</button>
 			)}
 		</Card>
 	)

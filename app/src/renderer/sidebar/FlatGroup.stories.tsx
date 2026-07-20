@@ -90,18 +90,21 @@ export const ItemDestinations: Story = {
 	),
 }
 
-/** Inline run evidence on Item detail (§3.15/§3.20): Activity facts + the
- *  latest-first timeline, the log's two-message newest-first preview, and Run
- *  setup's summary-at-rest above its own disclosure. */
+/** Inline run evidence on Item detail (§3.15/§3.20): collapsed Activity
+ *  history, the log's two-message newest-first preview, and Run setup's
+ *  summary-at-rest above its own disclosure. */
 export const EvidenceGroups: Story = {
 	render: () => (
 		<>
-			<Card label="Activity">
-				<InfoRow label="Started" value="14m" />
-				<InfoRow label="State" value="Running" />
-				<button type="button" className="detail-disclosure" aria-expanded={false}>
-					Show history
-				</button>
+			<Card
+				label="Activity"
+				trailing={
+					<button type="button" className="detail-disclosure" aria-expanded={false}>
+						Show history
+					</button>
+				}
+			>
+				{false}
 			</Card>
 			<Card label="Log">
 				<section className="log-well">{'[12:05:19] solver-result.json written\n[12:04:40] tests: 12 passed'}</section>
