@@ -314,18 +314,15 @@ export function ResourceRows({
 	item,
 	onOpenTask,
 	onOpenPlan,
-	onOpenOkena,
-	okenaAction,
 	disabled,
 }: {
 	item: DashboardItem
 	onOpenTask: () => void
 	onOpenPlan: () => void
-	onOpenOkena: () => void
-	okenaAction: string
 	disabled?: boolean
 }) {
 	const hasTask = Boolean(item.source || item.captured || item.sourceTask)
+	if (!hasTask && !item.plannedAt) return null
 	return (
 		<Card flush>
 			{hasTask && (
@@ -346,13 +343,6 @@ export function ResourceRows({
 					disabled={disabled}
 				/>
 			)}
-			<ActionRow
-				label="Workspace"
-				value={okenaAction}
-				glyphKind="external"
-				onClick={onOpenOkena}
-				disabled={disabled || item.okenaWorkspace?.state === 'unavailable'}
-			/>
 		</Card>
 	)
 }

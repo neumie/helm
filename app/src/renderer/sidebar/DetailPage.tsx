@@ -259,8 +259,6 @@ export function DetailPage(props: DetailPageProps) {
 						item={item}
 						onOpenTask={() => onOpenTask(id)}
 						onOpenPlan={() => onOpenPlan(id)}
-						onOpenOkena={() => void openOkena()}
-						okenaAction={okenaAction}
 						disabled={disabled}
 					/>
 				)
@@ -329,6 +327,18 @@ export function DetailPage(props: DetailPageProps) {
 						{state.attention.text}
 					</Banner>
 				)}
+				<div className="workspace-primary-action">
+					<Btn
+						tone="quiet"
+						block
+						busy={busy === 'Open in Okena'}
+						disabled={disabled || item.okenaWorkspace?.state === 'unavailable'}
+						onClick={() => void openOkena()}
+					>
+						{GLYPH.external}
+						{okenaAction}
+					</Btn>
+				</div>
 				{state.sections.map(content)}
 			</div>
 			{commandError && (
