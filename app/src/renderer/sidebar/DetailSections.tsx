@@ -97,7 +97,8 @@ export function ActivitySection({ item, now }: { item: DashboardItem; now: numbe
 	const [historyOpen, setHistoryOpen] = useState(false)
 	const listId = useId()
 	const events = useMemo(() => [...item.runObservation.events].reverse(), [item.runObservation.events])
-	if (events.length === 0) return null
+	const resultSummary = item.resultSummary?.trim() || null
+	if (events.length === 0 && !resultSummary) return null
 	const historyToggle = (
 		<button
 			type="button"
@@ -112,16 +113,26 @@ export function ActivitySection({ item, now }: { item: DashboardItem; now: numbe
 	return (
 		<Card label="Activity" trailing={historyToggle}>
 			{historyOpen && (
-				<ol id={listId} className="activity-list">
-					{events.map((event, index) => (
-						<li key={`${event.type}-${event.createdAt}-${index}`} className="activity-item">
-							<span>{event.label}</span>
-							<time className="activity-time" dateTime={event.createdAt ?? undefined}>
-								{relativeTime(event.createdAt, now)}
-							</time>
-						</li>
-					))}
-				</ol>
+				<div id={listId} className="activity-history">
+					{resultSummary && (
+						<div className="activity-summary">
+							<span className="activity-summary-label">Result</span>
+							<ClampText text={resultSummary} />
+						</div>
+					)}
+					{events.length > 0 && (
+						<ol className="activity-list">
+							{events.map((event, index) => (
+								<li key={`${event.type}-${event.createdAt}-${index}`} className="activity-item">
+									<span>{event.label}</span>
+									<time className="activity-time" dateTime={event.createdAt ?? undefined}>
+										{relativeTime(event.createdAt, now)}
+									</time>
+								</li>
+							))}
+						</ol>
+					)}
+				</div>
 			)}
 		</Card>
 	)
@@ -167,23 +178,24 @@ export function LogSection({
 	const visible = open ? messages : messages.slice(0, 2)
 	const listId = useId()
 	if (!log.available || messages.length === 0) return null
+	const outputToggle =
+		messages.length > 2 ? (
+			<button
+				type="button"
+				className="detail-disclosure"
+				aria-controls={listId}
+				aria-expanded={open}
+				onClick={() => setOpen(value => !value)}
+			>
+				{open ? 'Show less' : 'Show all'}
+			</button>
+		) : null
 	return (
-		<Card label="Log">
+		<Card label="Log" trailing={outputToggle}>
 			<EvidenceWell label="Run log">
 				<span id={listId}>{visible.join('\n')}</span>
 				{open && log.truncated ? '\n… older log output omitted' : ''}
 			</EvidenceWell>
-			{messages.length > 2 && (
-				<button
-					type="button"
-					className="detail-disclosure"
-					aria-controls={listId}
-					aria-expanded={open}
-					onClick={() => setOpen(value => !value)}
-				>
-					{open ? 'Show less' : 'Show all'}
-				</button>
-			)}
 		</Card>
 	)
 }

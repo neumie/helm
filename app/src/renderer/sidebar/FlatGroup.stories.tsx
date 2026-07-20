@@ -106,11 +106,15 @@ export const EvidenceGroups: Story = {
 			>
 				{false}
 			</Card>
-			<Card label="Log">
+			<Card
+				label="Log"
+				trailing={
+					<button type="button" className="detail-disclosure" aria-expanded={false}>
+						Show all
+					</button>
+				}
+			>
 				<section className="log-well">{'[12:05:19] solver-result.json written\n[12:04:40] tests: 12 passed'}</section>
-				<button type="button" className="detail-disclosure" aria-expanded={false}>
-					Show all
-				</button>
 			</Card>
 			<Card label="Run setup">
 				<p className="run-setup-summary">Claude Code · claude-sonnet-5 · High effort · Worktree</p>

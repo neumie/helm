@@ -139,6 +139,23 @@
 	margin-left: auto;
 	flex: none;
 }
+.activity-history {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+.activity-summary {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.5;
+	color: var(--text-1);
+}
+.activity-summary-label {
+	font-weight: 600;
+	color: var(--text-2);
+}
 .activity-list {
 	display: flex;
 	flex-direction: column;
