@@ -2,7 +2,7 @@
 // or shadow. Fact rows (28px), copy/external rows (28px), push/nav rows (36px
 // with soft inset separators). The first group on a page omits its rule.
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { ActionRow, Card, Chip, Disclosure, InfoRow } from './ui'
+import { ActionRow, Card, Disclosure, InfoRow } from './ui'
 
 const meta: Meta = {
 	title: 'Sidebar/Flat group',
@@ -78,13 +78,23 @@ export const NavRows: Story = {
 export const ItemDestinations: Story = {
 	render: () => (
 		<>
-			<div className="detail-identity-meta">
-				<Chip tone="blue">Active</Chip>
-				<span className="detail-ticket-progress">2 of 5 complete</span>
-			</div>
+			<section className="detail-hero">
+				<div className="detail-identity-primary">
+					<span className="detail-project">jvs</span>
+					<button type="button" className="status-menu-trigger">
+						<span className="detail-status-text">Active⌄</span>
+					</button>
+				</div>
+				<div className="detail-identity-secondary">
+					<span className="detail-ticket-progress">2 of 5 complete</span>
+					<span className="detail-work-mode">Agent</span>
+					<span className="detail-elapsed">14m</span>
+				</div>
+			</section>
 			<Card flush>
 				<ActionRow nav label="Task" value="Contember #4821" onClick={noop} />
 				<ActionRow nav label="Plan documents" value="2 notes" onClick={noop} />
+				<ActionRow label="Workspace" value="Focus in Okena" glyphKind="external" onClick={noop} />
 			</Card>
 		</>
 	),

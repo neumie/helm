@@ -1,5 +1,4 @@
-import type { DashboardItem, DashboardTone } from '../../shared-helm'
-import { statusTone } from './model'
+import type { DashboardItem } from '../../shared-helm'
 
 export type DetailSection =
 	| 'intent'
@@ -19,21 +18,6 @@ export interface DetailSectionEntry {
 }
 
 export type Attention = { tone: 'error' | 'warning' | 'info'; label: string; text: string } | null
-
-function chipTone(item: DashboardItem): DashboardTone {
-	switch (statusTone(item.status)) {
-		case 'accent':
-			return 'blue'
-		case 'success':
-			return 'green'
-		case 'warn':
-			return 'amber'
-		case 'danger':
-			return 'red'
-		default:
-			return 'gray'
-	}
-}
 
 function attentionFor(item: DashboardItem, messy: boolean): Attention {
 	if (item.status === 'failed' && item.errorMessage) {
@@ -62,7 +46,6 @@ const sections = (...kinds: DetailSection[]): DetailSectionEntry[] => kinds.map(
  *  Sections order the one flat stack per state (decision content first); each
  *  section component self-gates on its data and renders null when empty. */
 export function detailState(item: DashboardItem): {
-	chipTone: DashboardTone
 	attention: Attention
 	sections: DetailSectionEntry[]
 } {
@@ -74,19 +57,16 @@ export function detailState(item: DashboardItem): {
 			// nothing on a pristine item, but an item moved BACK here after a run
 			// (manual status, Return to Queue) must not lose its history.
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: sections('intent', 'source', 'setup', 'activity', 'log', 'input'),
 			}
 		case 'ready':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: sections('queue', 'setup', 'source', 'activity', 'log', 'input'),
 			}
 		case 'active':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: item.planStatus
 					? sections('setup', 'source', 'activity', 'log', 'input')
@@ -94,26 +74,22 @@ export function detailState(item: DashboardItem): {
 			}
 		case 'running':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: sections('activity', 'log', 'input', 'source'),
 			}
 		case 'review':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'source'),
 			}
 		case 'failed':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				// The always-expanded log is the diagnostic, directly beneath the failure text.
 				sections: sections('failure', 'log', 'activity', 'outcome', 'setup', 'input', 'source'),
 			}
 		case 'done':
 			return {
-				chipTone: chipTone(item),
 				attention,
 				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'source'),
 			}
@@ -121,7 +97,6 @@ export function detailState(item: DashboardItem): {
 			// Outcome/input stay reachable: a cancelled run may hold a partial
 			// result, a branch, and the solve input worth reviewing before retry.
 			return {
-				chipTone: chipTone(item),
 				attention: null,
 				sections: sections('failure', 'outcome', 'activity', 'log', 'input', 'source'),
 			}

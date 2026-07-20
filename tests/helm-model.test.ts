@@ -16,8 +16,15 @@ import sharedHelmModule from '../app/src/shared-helm.ts'
 type HelmModelModule = typeof import('../app/src/renderer/sidebar/model.ts')
 type NormalizeHelmModule = typeof import('../app/src/normalize-helm.ts')
 type SharedHelmModule = typeof import('../app/src/shared-helm.ts')
-const { colorForProject, groupItemsByProject, logMessagesNewestFirst, partitionWork, planStatusLabel, statusTone } =
-	helmModelModule as HelmModelModule
+const {
+	colorForProject,
+	groupItemsByProject,
+	logMessagesNewestFirst,
+	okenaActionLabel,
+	partitionWork,
+	planStatusLabel,
+	statusTone,
+} = helmModelModule as HelmModelModule
 const { normalizeDashboardItem } = normalizeHelmModule as NormalizeHelmModule
 const { ITEM_STATUSES } = sharedHelmModule as SharedHelmModule
 
@@ -26,6 +33,19 @@ type DashboardItem = import('../app/src/shared-helm.ts').DashboardItem
 test('run log messages are newest-first and omit blank lines', () => {
 	assert.deepEqual(logMessagesNewestFirst('first\n\nsecond\r\nthird\n'), ['third', 'second', 'first'])
 	assert.deepEqual(logMessagesNewestFirst(''), [])
+})
+
+test('Okena workspace buttons state their effect without a separate caption', () => {
+	assert.equal(okenaActionLabel(undefined, 'worktree'), 'Open workspace in Okena')
+	assert.equal(okenaActionLabel(undefined, 'main'), 'Open main checkout in Okena')
+	assert.equal(
+		okenaActionLabel({ state: 'open', label: 'Focus open workspace', detail: '', branchName: 'feat/x' }, 'worktree'),
+		'Focus in Okena',
+	)
+	assert.equal(
+		okenaActionLabel({ state: 'remote', label: '', detail: '', branchName: 'feat/x' }, 'worktree'),
+		'Fetch branch and create Okena workspace',
+	)
 })
 
 test('project colors resolve from current and legacy dashboard config', () => {

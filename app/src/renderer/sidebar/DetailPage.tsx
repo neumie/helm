@@ -18,21 +18,9 @@ import {
 import { lifecycleActionPlan, lifecycleActionPresentation, manualStatusOptions } from './detail-actions'
 import { useItemDetail } from './detail-data'
 import { detailState } from './detail-state'
-import { colorForProject, itemTitle, planTicketCounts, relativeTime, useNow } from './model'
+import { colorForProject, itemTitle, okenaActionLabel, planTicketCounts, relativeTime, useNow } from './model'
 import { type RunSelectionDraft, buildPlanBody, buildRunBody } from './run-selection'
-import {
-	Banner,
-	Btn,
-	Card,
-	Chip,
-	EmptyState,
-	GLYPH,
-	MenuButton,
-	ProjectColorText,
-	PushHeader,
-	Sheet,
-	StatusDot,
-} from './ui'
+import { Banner, Btn, Card, EmptyState, GLYPH, MenuButton, ProjectColorText, PushHeader, Sheet, StatusDot } from './ui'
 
 export interface DetailPageProps {
 	id: string
@@ -67,13 +55,7 @@ export function DetailPage(props: DetailPageProps) {
 	const projectColor = colorForProject(snapshot?.config, item.projectSlug)
 	const effectiveWorkspace =
 		item.kind === 'solve' ? (item.solverWorkspace ?? snapshot?.config?.solver?.workspace) : 'worktree'
-	// Caption beside the hero's Okena button — the truthful what-will-happen
-	// preview (§3.10 hero actions); the button itself names the destination.
-	const okenaCaption = item.okenaWorkspace
-		? item.okenaWorkspace.label
-		: effectiveWorkspace === 'main'
-			? 'Inspecting main checkout…'
-			: 'Inspecting workspace…'
+	const okenaAction = okenaActionLabel(item.okenaWorkspace, effectiveWorkspace)
 	const ticketProgress = item.plannedAt && item.planStatus ? planTicketCounts(item.planStatus) : null
 	const disabled = busy !== null
 	const run = async (
@@ -277,6 +259,8 @@ export function DetailPage(props: DetailPageProps) {
 						item={item}
 						onOpenTask={() => onOpenTask(id)}
 						onOpenPlan={() => onOpenPlan(id)}
+						onOpenOkena={() => void openOkena()}
+						okenaAction={okenaAction}
 						disabled={disabled}
 					/>
 				)
@@ -289,27 +273,29 @@ export function DetailPage(props: DetailPageProps) {
 			<PushHeader title={itemTitle(item)} onBack={onBack} />
 			<div className="page-scroll">
 				<section className="detail-hero" aria-label="Item details">
-					<div className="detail-identity-meta">
+					<div className="detail-identity-primary">
+						<ProjectColorText color={projectColor} className="detail-project">
+							{item.projectSlug}
+						</ProjectColorText>
 						{statusOptions.length > 0 ? (
 							<MenuButton
 								entries={statusEntries}
-								align="start"
+								align="end"
 								trigger={
-									<Chip tone={state.chipTone}>
+									<span className="detail-status-text">
 										{item.card.statusLabel}
 										{GLYPH.chevronDown}
-									</Chip>
+									</span>
 								}
 								triggerLabel={`Change status, currently ${item.card.statusLabel}`}
 								triggerClass="status-menu-trigger"
 								disabled={disabled}
 							/>
 						) : (
-							<Chip tone={state.chipTone}>{item.card.statusLabel}</Chip>
+							<span className="detail-status-text">{item.card.statusLabel}</span>
 						)}
-						<ProjectColorText color={projectColor} className="detail-project">
-							{item.projectSlug}
-						</ProjectColorText>
+					</div>
+					<div className="detail-identity-secondary">
 						{ticketProgress && ticketProgress.total > 0 ? (
 							<span className="detail-ticket-progress">
 								{ticketProgress.total - ticketProgress.open} of {ticketProgress.total} complete
@@ -317,13 +303,9 @@ export function DetailPage(props: DetailPageProps) {
 						) : null}
 						{item.workMode ? (
 							<span className={`detail-work-mode mode-${item.workMode}`}>
-								{GLYPH[item.workMode]}
 								{item.workMode === 'agent' ? 'Agent' : 'Manual'}
 							</span>
 						) : null}
-						<span className="detail-meta-separator" aria-hidden="true">
-							·
-						</span>
 						<span className="detail-elapsed">
 							{relativeTime(
 								item.status === 'active' || item.status === 'running'
@@ -331,15 +313,6 @@ export function DetailPage(props: DetailPageProps) {
 									: (item.completedAt ?? item.updatedAt),
 								now,
 							)}
-						</span>
-					</div>
-					<div className="hero-actions">
-						<Btn tone="quiet" sm onClick={() => void openOkena()} disabled={disabled}>
-							{GLYPH.external}
-							Open in Okena
-						</Btn>
-						<span className="hero-action-caption" title={okenaCaption}>
-							{okenaCaption}
 						</span>
 					</div>
 				</section>

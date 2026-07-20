@@ -50,6 +50,34 @@ export function planTicketTotal(item: DashboardItem): number {
 	return item.planStatus ? planTicketCounts(item.planStatus).total : 0
 }
 
+/** Compact verb phrase for the Item's external workspace action. The server
+ *  owns the preview state; the client turns it into button copy rather than a
+ *  generic button plus an explanatory caption. */
+export function okenaActionLabel(
+	preview: DashboardItem['okenaWorkspace'],
+	workspace: 'main' | 'worktree' | undefined,
+): string {
+	if (!preview) return workspace === 'main' ? 'Open main checkout in Okena' : 'Open workspace in Okena'
+	switch (preview.state) {
+		case 'open':
+			return 'Focus in Okena'
+		case 'main':
+			return 'Focus main checkout in Okena'
+		case 'register':
+			return 'Register worktree in Okena'
+		case 'local':
+			return 'Create Okena workspace from local branch'
+		case 'remote':
+			return 'Fetch branch and create Okena workspace'
+		case 'create':
+			return 'Create branch and Okena workspace'
+		case 'standalone':
+			return 'Open worktree in Okena'
+		case 'unavailable':
+			return preview.label
+	}
+}
+
 export function planStatusLabel(item: DashboardItem): string | null {
 	const status = item.planStatus
 	if (!status) return null
