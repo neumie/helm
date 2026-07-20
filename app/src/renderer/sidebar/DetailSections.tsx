@@ -316,8 +316,27 @@ function planDocumentsValue(item: DashboardItem): string {
 	return `${docs.length} ${docs.length === 1 ? 'note' : 'notes'}`
 }
 
-/** Task and Plan documents are peer reading destinations, so they share one
- *  flush navigation group instead of living under unrelated status facts. */
+function ResourceLink({
+	label,
+	value,
+	onClick,
+	disabled,
+}: {
+	label: string
+	value: string
+	onClick: () => void
+	disabled?: boolean
+}) {
+	return (
+		<Card flush>
+			<ActionRow nav label={label} value={value} onClick={onClick} disabled={disabled} />
+		</Card>
+	)
+}
+
+/** Task and Plan documents are peer reading destinations. Each goes through
+ * the same complete resource-link primitive so both receive identical group
+ * rules, 20px top rhythm, 36px row pitch, and gutter behavior. */
 export function ResourceRows({
 	item,
 	onOpenTask,
@@ -332,10 +351,9 @@ export function ResourceRows({
 	const hasTask = Boolean(item.source || item.captured || item.sourceTask)
 	if (!hasTask && !item.plannedAt) return null
 	return (
-		<Card flush>
+		<>
 			{hasTask && (
-				<ActionRow
-					nav
+				<ResourceLink
 					label={item.captured ? 'Imported task' : 'Task'}
 					value={sourceValue(item)}
 					onClick={onOpenTask}
@@ -343,15 +361,14 @@ export function ResourceRows({
 				/>
 			)}
 			{item.plannedAt && (
-				<ActionRow
-					nav
+				<ResourceLink
 					label="Plan documents"
 					value={planDocumentsValue(item)}
 					onClick={onOpenPlan}
 					disabled={disabled}
 				/>
 			)}
-		</Card>
+		</>
 	)
 }
 

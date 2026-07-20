@@ -97,6 +97,8 @@ export const ItemDestinations: Story = {
 			</Btn>
 			<Card flush>
 				<ActionRow nav label="Task" value="Contember #4821" onClick={noop} />
+			</Card>
+			<Card flush>
 				<ActionRow nav label="Plan documents" value="2 notes" onClick={noop} />
 			</Card>
 		</>
