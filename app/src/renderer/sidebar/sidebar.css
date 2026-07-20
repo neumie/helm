@@ -1333,8 +1333,9 @@ button.banner {
 	outline-offset: 2px;
 }
 
-.task-page-scroll {
-	padding: 16px 12px;
+/* Shared pushed reading-page gutter (Task + Plan documents). */
+.reading-page-scroll {
+	padding: 16px;
 }
 .task-detail {
 	display: flex;
