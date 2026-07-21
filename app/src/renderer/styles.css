@@ -139,12 +139,26 @@ button:focus-visible,
 	min-width: 0;
 	/* 6px strip inset + 10px pill padding = 16px, matching the terminal well text inset */
 	padding: 0 10px 0 6px;
-	/* The whole right cluster opts out of the drag region: #tabs was no-drag but
-	   the cluster's padding and the 4px gaps BETWEEN tabs/+/stack were still
-	   draggable — a double-click landing in a gap read as a titlebar
-	   double-click and zoomed the window. Drag lives in the topbar's left inset
-	   and middle spacer only. */
+	/* The free space to the right of the tab controls is native window chrome.
+	   Interactive controls opt out below; their internal 4px gaps stay no-drag
+	   so a double-click between a tab and + cannot zoom the window. */
+	-webkit-app-region: drag;
+}
+
+.tab-strip-controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
 	-webkit-app-region: no-drag;
+}
+
+/* Explicit flex child makes the visible trailing whitespace a reliable native
+ * drag target instead of inheriting the controls' no-drag hit region. */
+.topbar-drag-space {
+	flex: 1;
+	min-width: 12px;
+	align-self: stretch;
 }
 
 /* ---------- terminal tabs ---------- */
@@ -314,7 +328,6 @@ body.tab-dragging .tab {
 	position: relative;
 	display: inline-flex;
 	flex: none;
-	margin-left: auto;
 	-webkit-app-region: no-drag;
 }
 

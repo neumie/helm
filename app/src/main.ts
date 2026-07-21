@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, Menu, app, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
+import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { HelmBridge } from './helm-bridge'
 import { parseHelmItemUrl } from './protocol'
@@ -48,7 +49,7 @@ function parseWindowSize(): { width: number; height: number } | null {
 }
 const windowSizeArg = parseWindowSize()
 
-app.setName('Helm')
+app.setName(APP_NAME)
 // Must run before anything touches userData so a screenshot run never fights a
 // running Helm instance over the same profile (locks, window-state writes).
 // --user-data-dir=<path> is the STABLE variant: two harness runs sharing one
@@ -444,7 +445,7 @@ function buildMenu(): void {
 		() =>
 			mainWindow?.webContents.send(channel, ...args)
 	const template: Electron.MenuItemConstructorOptions[] = [
-		...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+		...(process.platform === 'darwin' ? [macApplicationMenu()] : []),
 		{
 			label: 'Shell',
 			submenu: [
@@ -798,7 +799,7 @@ ipcMain.handle('themes:list', () => {
 helmBridge.registerIpc()
 
 void app.whenReady().then(() => {
-	app.setAboutPanelOptions({ applicationName: 'Helm', applicationVersion: app.getVersion() })
+	app.setAboutPanelOptions({ applicationName: APP_NAME, applicationVersion: app.getVersion() })
 	buildMenu()
 	helmBridge.start()
 	createWindow()
