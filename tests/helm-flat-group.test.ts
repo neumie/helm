@@ -34,6 +34,15 @@ test('row hover fill leaves breathing room around separators', () => {
 	assert.doesNotMatch(css, /\.action-row:hover:not\(:disabled\)\s*\{[^}]*background:/s)
 })
 
+test('work-list Item rows use square full-width state stripes', () => {
+	assert.match(css, /\.list-scroll\s*\{[^}]*padding:\s*6px 0 16px/s)
+	assert.match(css, /\.item-row\s*\{[^}]*width:\s*100%/s)
+	assert.match(css, /\.item-row\s*\{[^}]*padding:\s*0 16px/s)
+	assert.match(css, /\.item-row\s*\{[^}]*border-radius:\s*0/s)
+	assert.match(css, /\.item-row-actions\s*\{[^}]*right:\s*16px/s)
+	assert.match(css, /\.item-project-group-head\s*\{[^}]*padding:\s*8px 16px 0/s)
+})
+
 test('Flat group stories do not mix navigation pitch into Action rows', () => {
 	const actions = story.slice(story.indexOf('export const ActionRows'), story.indexOf('export const NavRows'))
 	assert.doesNotMatch(actions, /label="Task"/)

@@ -465,19 +465,19 @@
 	min-height: 0;
 	overflow-y: auto;
 	scrollbar-gutter: stable;
-	padding: 6px 8px 16px;
+	padding: 6px 0 16px;
 }
 
 .item-row-shell {
 	position: relative;
 }
 .item-row-shell-actions .item-row {
-	padding-right: 76px;
+	padding-right: 84px;
 }
 .item-row-actions {
 	position: absolute;
 	top: 18px;
-	right: 8px; /* aligned to the row's own 8px padding edge, like the time column */
+	right: 16px; /* aligned to the row's own 16px content edge, like the time column */
 	display: flex;
 	gap: 2px;
 }
@@ -489,9 +489,10 @@
 	color: var(--text-0);
 }
 
-/* Rounded inset rows (§3.3): no separators — spacing does the work. No
- * persistent selected state: push navigation never shows list + detail
- * together, so a lingering highlight reads as a stuck hover. */
+/* Square, full-width state stripes (§3.3); content keeps the pane's 16px
+ * text grid through row-owned padding. No persistent selected state: push
+ * navigation never shows list + detail together, so a lingering highlight
+ * reads as a stuck hover. */
 .item-row {
 	display: flex;
 	flex-direction: column;
@@ -499,9 +500,9 @@
 	gap: 4px;
 	width: 100%;
 	height: 64px;
-	padding: 0 8px;
+	padding: 0 16px;
 	border: none;
-	border-radius: 8px;
+	border-radius: 0;
 	background: none;
 	font-family: inherit;
 	letter-spacing: -0.01em;
@@ -588,7 +589,7 @@
 	align-items: center;
 	justify-content: space-between;
 	height: 32px;
-	padding: 8px 8px 0;
+	padding: 8px 16px 0;
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 600;
 }

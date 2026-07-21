@@ -1,4 +1,4 @@
-// List rows (§3.3): 64px row — title + trailing time, with the shared
+// List rows (§3.3): 64px square full-width state stripe — title + trailing time, with the shared
 // ActivityIndicator before a running Item title; meta line = mixed lifecycle
 // word + project tag + one signal (verdict chip, work mode, or readiness). ListPage's ItemRow is module-private and rides the bridge, so
 // this story mirrors its exact markup/class names with typed fixtures (§7:
@@ -94,6 +94,15 @@ export const Resting: Story = {
 			verdict="clear"
 		/>
 	),
+}
+
+/** Holds the real :hover state so the edge-to-edge square stripe is visible
+ * without adding a story-only production class. */
+export const FullWidthHover: Story = {
+	render: Resting.render,
+	play: async ({ canvas, userEvent }) => {
+		await userEvent.hover(canvas.getByRole('button'))
+	},
 }
 
 /** Mixed lifecycle words remain on line two; Running instead uses the shared
