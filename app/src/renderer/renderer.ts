@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import type { HelmApi, RestoredSession } from '../shared'
-import { createActivityIndicator } from './activity-indicator'
+import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance } from './appearance'
 import { mountSidebar } from './sidebar/SidebarRoot'
 import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
@@ -18,7 +18,11 @@ import {
 } from './tab-drag'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import { terminalShortcut } from './terminal-keybindings'
-import { type TerminalProgressTracker, createTerminalProgressTracker } from './terminal-progress'
+import {
+	type TerminalProgressTracker,
+	createTerminalProgressTracker,
+	shouldMarkTerminalCompletion,
+} from './terminal-progress'
 import { showToast } from './toast'
 
 declare global {
@@ -144,6 +148,8 @@ interface Tab {
 	outputGuard: SynchronizedOutputGuard
 	/** Explicit OSC 9;4 state from Pi; never inferred from terminal output. */
 	agentRunning: boolean
+	/** A protocol-observed active→clear transition not yet viewed by the user. */
+	agentAttention: boolean
 	progressTracker: TerminalProgressTracker
 	runningEl: HTMLOutputElement
 	term: Terminal
@@ -206,17 +212,47 @@ function displayName(tab: Tab): string {
 function renderTabLabel(tab: Tab): void {
 	const text = displayName(tab)
 	tab.labelEl.textContent = text
-	tab.tabButton.setAttribute('aria-label', tab.agentRunning ? `${text} — Running` : text)
+	const state = tab.agentRunning ? 'Running' : tab.agentAttention ? 'Run finished — unchecked' : null
+	tab.tabButton.setAttribute('aria-label', state ? `${text} — ${state}` : text)
 	const tip = tab.customName !== null ? (tab.oscRaw ?? tab.oscTitle ?? (tab.titleRaw || tab.title)) : tab.titleRaw
 	if (tip && tip !== text) tab.labelEl.title = tip
 	else tab.labelEl.removeAttribute('title')
 }
 
+function renderTabAgentState(tab: Tab): void {
+	tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention
+	if (tab.agentAttention) {
+		setActivityIndicatorState(tab.runningEl, 'attention', 'Run finished — open tab to clear')
+	} else {
+		setActivityIndicatorState(tab.runningEl, 'progress', 'Running')
+	}
+	renderTabLabel(tab)
+}
+
+function setTabAgentAttention(tab: Tab, attention: boolean): void {
+	if (tab.agentAttention === attention) return
+	tab.agentAttention = attention
+	renderTabAgentState(tab)
+}
+
+function clearTabAgentAttention(tab: Tab): void {
+	setTabAgentAttention(tab, false)
+}
+
 function setTabAgentRunning(tab: Tab, running: boolean): void {
 	if (tab.agentRunning === running) return
+	const wasRunning = tab.agentRunning
 	tab.agentRunning = running
-	tab.runningEl.hidden = !running
-	renderTabLabel(tab)
+	if (running) tab.agentAttention = false
+	else {
+		tab.agentAttention = shouldMarkTerminalCompletion({
+			wasRunning,
+			closed: tab.closed,
+			tabSelected: activeTab === tab,
+			windowFocused: document.hasFocus(),
+		})
+	}
+	renderTabAgentState(tab)
 }
 
 // ---------- manual rename (double-click a tab / context-menu "Rename…") ----------
@@ -573,6 +609,7 @@ function unfreezeTerminalFrame(tab: Tab): void {
 
 function activate(tab: Tab): void {
 	activeTab = tab
+	clearTabAgentAttention(tab)
 	for (const t of tabs) {
 		t.holder.classList.toggle('active', t === tab)
 		t.tabButton.classList.toggle('active', t === tab)
@@ -589,6 +626,12 @@ function activate(tab: Tab): void {
 		tab.term.focus()
 	})
 }
+
+// A completion that arrived while Helm was behind another app remains unseen
+// even when its tab was selected; focusing Helm is the user's explicit check.
+window.addEventListener('focus', () => {
+	if (activeTab) clearTabAgentAttention(activeTab)
+})
 
 function cycleTab(delta: number): void {
 	if (tabs.length === 0) return
@@ -1298,6 +1341,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		frameFreeze: null,
 		outputGuard,
 		agentRunning: false,
+		agentAttention: false,
 		progressTracker,
 		runningEl: running,
 		term,
@@ -1577,8 +1621,11 @@ window.addEventListener(
 // `background` opens the popover; `background-strip` leaves it closed.
 async function runUiPreview(): Promise<void> {
 	const preview = helm.uiPreview
-	if (preview === 'running-tab') {
-		if (activeTab) setTabAgentRunning(activeTab, true)
+	if (preview === 'running-tab' || preview === 'attention-tab') {
+		if (activeTab) {
+			if (preview === 'running-tab') setTabAgentRunning(activeTab, true)
+			else setTabAgentAttention(activeTab, true)
+		}
 		return
 	}
 	if (preview === 'tab-drag') {

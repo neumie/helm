@@ -245,8 +245,8 @@ body.tab-dragging .tab {
 	text-overflow: ellipsis;
 }
 
-/* Reusable in-progress primitive (§3.21): a monochrome six-dot Braille cell
- * with a clockwise head and a soft three-dot tail. */
+/* Reusable in-progress primitive (§3.21): a six-dot Braille cell whose active
+ * head uses accent while the soft clockwise tail settles to neutral. */
 .activity-indicator {
 	flex: none;
 	display: grid;
@@ -288,20 +288,57 @@ body.tab-dragging .tab {
 
 @keyframes activity-indicator-clockwise {
 	0% {
+		background-color: var(--accent);
 		opacity: 1;
 	}
 	16.66% {
+		background-color: var(--accent);
 		opacity: 0.68;
 	}
 	33.33% {
+		background-color: var(--text-0);
 		opacity: 0.38;
 	}
 	50% {
+		background-color: var(--text-0);
 		opacity: 0.18;
 	}
 	66.66%,
 	100% {
+		background-color: var(--text-0);
 		opacity: 0.1;
+	}
+}
+
+/* Completion becomes a slower diagonal color-wave: top-left leads, equal
+ * diagonals share a phase, and bottom-right closes the gray→accent gradient. */
+.activity-indicator[data-variant="attention"] .activity-indicator-dot {
+	animation: activity-indicator-attention-color 1.8s ease-in-out infinite;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(1) {
+	animation-delay: -0.9s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(2),
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(3) {
+	animation-delay: -0.6s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(4),
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(5) {
+	animation-delay: -0.3s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(6) {
+	animation-delay: 0s;
+}
+
+@keyframes activity-indicator-attention-color {
+	0%,
+	100% {
+		background-color: var(--text-2);
+		opacity: 0.55;
+	}
+	50% {
+		background-color: var(--accent);
+		opacity: 1;
 	}
 }
 

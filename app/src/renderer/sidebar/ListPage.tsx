@@ -6,6 +6,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
+import { ActivityIndicator } from '../activity-indicator'
 import type { BucketKey } from './model'
 import {
 	VERDICT_META,
@@ -19,7 +20,7 @@ import {
 	statusWord,
 	useNow,
 } from './model'
-import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, ProjectColorText, Segmented, StatusDot } from './ui'
+import { Chip, EmptyState, GLYPH, IconBtn, MenuButton, ProjectColorText, Segmented } from './ui'
 
 const BUCKET_KEY = 'helm.sidebar.bucket'
 const PROJECT_KEY = 'helm.sidebar.project'
@@ -254,12 +255,11 @@ export function ListPage({
 	)
 }
 
-// 64px row (§3.3): title flush on the text grid + trailing time; meta line =
-// status word where the tab mixes statuses (pulsing mini-dot on Running) +
-// colored project slug + ONE marker (planning progress, ownership, or a
-// text-only verdict chip). No leading status dot — color-only state is banned
-// (§4) and tab-uniform statuses made it noise. No persistent selected state —
-// push navigation means the list is never visible alongside a detail.
+// 64px row (§3.3): title + trailing time; a running Item places the shared
+// ActivityIndicator before its title. The meta line carries mixed lifecycle
+// words for Needs/Archive, the colored project slug, and ONE marker (planning
+// progress, ownership, or a text-only verdict chip). No persistent selected
+// state — push navigation means the list is never visible beside a detail.
 // Memoized — re-renders only when the row's item or time changes.
 const ItemRow = memo(function ItemRow({
 	item,
@@ -288,16 +288,12 @@ const ItemRow = memo(function ItemRow({
 		<div className={`item-row-shell${showQuickActions ? ' item-row-shell-actions' : ''}`}>
 			<button type="button" data-item-id={item.id} className="item-row" onClick={() => onOpen(item.id)}>
 				<div className="item-row-line1">
+					{item.status === 'running' && <ActivityIndicator label="Running" />}
 					<span className="item-row-title">{itemTitle(item)}</span>
 					<span className="item-row-time">{time}</span>
 				</div>
 				<div className="item-row-line2">
-					{word ? (
-						<span className={`item-row-status tone-${word.tone}`}>
-							{item.status === 'running' && <StatusDot tone="accent" pulse />}
-							{word.label}
-						</span>
-					) : null}
+					{word ? <span className={`item-row-status tone-${word.tone}`}>{word.label}</span> : null}
 					<ProjectColorText color={projectColor} className="item-row-project">
 						{item.projectSlug}
 					</ProjectColorText>

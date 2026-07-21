@@ -173,13 +173,11 @@ export function statusTone(status: ItemStatus): StatusTone {
 	}
 }
 
-/** List rows carry lifecycle in WORDS, not color dots (§3.3/§3.5): only where
- * a tab mixes statuses — Needs (review/failed), Archive (done/cancelled) —
- * plus the live "Running" marker. Tab-uniform statuses return null. */
+/** List rows carry lifecycle in words only where a tab mixes statuses — Needs
+ * (review/failed) and Archive (done/cancelled). Running uses the shared
+ * ActivityIndicator beside the title, so tab-uniform statuses return null. */
 export function statusWord(status: ItemStatus): { label: string; tone: StatusTone } | null {
 	switch (status) {
-		case 'running':
-			return { label: 'Running', tone: 'accent' }
 		case 'review':
 			return { label: 'Review', tone: 'warn' }
 		case 'failed':
@@ -188,7 +186,7 @@ export function statusWord(status: ItemStatus): { label: string; tone: StatusTon
 			return { label: 'Done', tone: 'success' }
 		case 'cancelled':
 			return { label: 'Cancelled', tone: 'neutral' }
-		default: // inbox / ready / active — the tab or ownership marker says it
+		default: // inbox / ready / active / running — the tab, owner, or indicator says it
 			return null
 	}
 }

@@ -22,6 +22,17 @@ export interface TerminalProgressTracker {
 	clear(): void
 }
 
+/** A clear marker needs acknowledgement only when a real active run ended
+ * outside the tab the user was currently viewing. */
+export function shouldMarkTerminalCompletion(input: {
+	wasRunning: boolean
+	closed: boolean
+	tabSelected: boolean
+	windowFocused: boolean
+}): boolean {
+	return input.wasRunning && !input.closed && !(input.tabSelected && input.windowFocused)
+}
+
 /** Incrementally observes Pi's OSC 9;4 active/clear protocol without consuming
  * or changing PTY bytes. State changes are explicit—ordinary output is never
  * treated as evidence that an agent started or finished. */
@@ -51,4 +62,4 @@ export function createTerminalProgressTracker(onChange: (active: boolean) => voi
 	}
 }
 
-export default { createTerminalProgressTracker }
+export default { createTerminalProgressTracker, shouldMarkTerminalCompletion }

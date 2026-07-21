@@ -542,18 +542,14 @@
 	color: var(--text-2);
 }
 
-/* Status in words (§3.3): shown only where the tab mixes statuses; Running
- * carries the one remaining dot — a 6px live pulse beside its word. */
+/* Lifecycle words (§3.3): shown only where Needs/Archive mix statuses.
+ * Running uses the shared ActivityIndicator beside the title instead. */
 .item-row-status {
 	flex: none;
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
 	font-weight: 500;
-}
-.item-row-status .status-dot {
-	width: 6px;
-	height: 6px;
 }
 .item-row-status.tone-accent {
 	color: var(--accent);

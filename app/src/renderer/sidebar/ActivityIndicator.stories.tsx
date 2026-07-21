@@ -30,6 +30,11 @@ export const InProgress: Story = {
 	args: { label: 'Running' },
 }
 
+/** A completed background run stays visible until its tab is checked. */
+export const NeedsAttention: Story = {
+	args: { label: 'Run finished — unchecked', variant: 'attention' },
+}
+
 /** Surfaces may pair the reusable motion primitive with their own visible copy. */
 export const WithVisibleLabel: Story = {
 	render: () => (

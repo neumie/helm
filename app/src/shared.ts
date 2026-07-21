@@ -88,7 +88,7 @@ export interface ConfigApi {
  * styling + select-all shot); `rename` commits the fixed pin "deploy watch" on
  * the active tab through the same commit path (relaunch verifies pin restore).
  * `tab-drag` holds a three-tab pointer drag over slot 0 for visual QA;
- * `running-tab` shows the protocol-owned ActivityIndicator on the active tab.
+ * `running-tab` shows active progress and `attention-tab` an unseen completion.
  */
 export type UiPreview =
 	| 'list'
@@ -110,6 +110,7 @@ export type UiPreview =
 	| 'rename-edit'
 	| 'tab-drag'
 	| 'running-tab'
+	| 'attention-tab'
 
 /** Menu accelerators (cmd+t / cmd+w / cmd+shift+b) fire in main; renderer subscribes here. */
 export interface TabsApi {

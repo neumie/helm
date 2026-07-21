@@ -1,13 +1,13 @@
-// List rows (§3.3): 64px row — title flush on the text grid + trailing time;
-// meta line = status word where the tab mixes statuses (pulsing mini-dot on
-// Running) + project tag + one signal (verdict chip, work mode, or planning
-// readiness). ListPage's ItemRow is module-private and rides the bridge, so
+// List rows (§3.3): 64px row — title + trailing time, with the shared
+// ActivityIndicator before a running Item title; meta line = mixed lifecycle
+// word + project tag + one signal (verdict chip, work mode, or readiness). ListPage's ItemRow is module-private and rides the bridge, so
 // this story mirrors its exact markup/class names with typed fixtures (§7:
 // Electron-coupled data comes from mock fixtures, never a live daemon).
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { AssessmentVerdict, ItemStatus, WorkMode } from '../../shared-helm'
+import { ActivityIndicator } from '../activity-indicator'
 import { VERDICT_META, statusWord } from './model'
-import { Chip, GLYPH, IconBtn, ProjectColorText, StatusDot } from './ui'
+import { Chip, GLYPH, IconBtn, ProjectColorText } from './ui'
 
 const meta: Meta = {
 	title: 'Sidebar/List row',
@@ -44,16 +44,12 @@ function StoryItemRow(fixture: RowFixture) {
 		<div className={`item-row-shell${fixture.quickActions ? ' item-row-shell-actions' : ''}`}>
 			<button type="button" className="item-row">
 				<div className="item-row-line1">
+					{fixture.status === 'running' && <ActivityIndicator label="Running" />}
 					<span className="item-row-title">{fixture.title}</span>
 					<span className="item-row-time">{fixture.time}</span>
 				</div>
 				<div className="item-row-line2">
-					{word ? (
-						<span className={`item-row-status tone-${word.tone}`}>
-							{fixture.status === 'running' && <StatusDot tone="accent" pulse />}
-							{word.label}
-						</span>
-					) : null}
+					{word ? <span className={`item-row-status tone-${word.tone}`}>{word.label}</span> : null}
 					<ProjectColorText color={fixture.projectColor} className="item-row-project">
 						{fixture.projectSlug}
 					</ProjectColorText>
@@ -100,9 +96,8 @@ export const Resting: Story = {
 	),
 }
 
-/** Status-word rows (§3.3): words where a tab mixes statuses — Needs shows
- *  Review/Failed, Archive shows Done/Cancelled, Running carries the one
- *  remaining (6px, pulsing) dot. */
+/** Mixed lifecycle words remain on line two; Running instead uses the shared
+ * ActivityIndicator immediately before the title. */
 export const StatusWords: Story = {
 	render: () => (
 		<>

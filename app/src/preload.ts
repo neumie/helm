@@ -29,6 +29,7 @@ const UI_PREVIEWS: readonly UiPreview[] = [
 	'rename-edit',
 	'tab-drag',
 	'running-tab',
+	'attention-tab',
 ]
 const uiPreview: UiPreview | null = UI_PREVIEWS.find(page => page === uiPreviewArg) ?? null
 

@@ -25,6 +25,7 @@ const {
 	partitionWork,
 	planStatusLabel,
 	statusTone,
+	statusWord,
 } = helmModelModule as HelmModelModule
 const { normalizeDashboardItem } = normalizeHelmModule as NormalizeHelmModule
 const { ITEM_STATUSES } = sharedHelmModule as SharedHelmModule
@@ -39,6 +40,11 @@ test('run log messages are newest-first and omit blank lines', () => {
 test('execution logs name the producer', () => {
 	assert.equal(executionLogLabel('loop'), 'Loop log')
 	assert.equal(executionLogLabel('solve'), 'Agent log')
+})
+
+test('running rows use the title ActivityIndicator instead of repeating a status word', () => {
+	assert.equal(statusWord('running'), null)
+	assert.deepEqual(statusWord('review'), { label: 'Review', tone: 'warn' })
 })
 
 test('Okena workspace buttons state their effect without a separate caption', () => {
