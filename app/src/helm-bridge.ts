@@ -36,6 +36,12 @@ import type {
 
 const POLL_MS = 2500
 const REQUEST_TIMEOUT_MS = 10_000
+// Model-backed helper passes can legitimately consume their full 30s helper
+// budget; workspace commands also include provider IO + git/Okena setup. They
+// must outlive the short budget used by polling and ordinary lifecycle writes,
+// or the app reports failure while the daemon continues and succeeds.
+const HELPER_REQUEST_TIMEOUT_MS = 60_000
+const WORKSPACE_REQUEST_TIMEOUT_MS = 120_000
 
 const ITEM_ACTIONS: ReadonlySet<string> = new Set(['approve', 'reject', 'start', 'cancel', 'retry', 'reopen'])
 const AI_PASSES: ReadonlySet<string> = new Set(['display-name', 'branch-name', 'assess'])
@@ -159,13 +165,18 @@ export class HelmBridge {
 
 	// --- HTTP proxy ------------------------------------------------------------
 
-	private async request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown): Promise<HelmResult<T>> {
+	private async request<T>(
+		method: 'GET' | 'POST' | 'PUT',
+		path: string,
+		body?: unknown,
+		timeoutMs = REQUEST_TIMEOUT_MS,
+	): Promise<HelmResult<T>> {
 		try {
 			const res = await fetch(`${this.baseUrl}/api${path}`, {
 				method,
 				headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
 				body: body === undefined ? undefined : JSON.stringify(body),
-				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+				signal: AbortSignal.timeout(timeoutMs),
 			})
 			const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
 			// Daemon envelope passed through verbatim; a non-ok status without an
@@ -228,13 +239,18 @@ export class HelmBridge {
 		})
 
 		ipcMain.handle('daemon:plan', async (_e, rawId: unknown, body?: unknown) => {
-			const result = await this.request('POST', `/items/${id(rawId)}/plan`, body ?? {})
+			const result = await this.request('POST', `/items/${id(rawId)}/plan`, body ?? {}, WORKSPACE_REQUEST_TIMEOUT_MS)
 			this.kick()
 			return result
 		})
 
 		ipcMain.handle('daemon:openOkena', async (_e, rawId: unknown) => {
-			const result = await this.request('POST', `/items/${id(rawId)}/open-okena`)
+			const result = await this.request(
+				'POST',
+				`/items/${id(rawId)}/open-okena`,
+				undefined,
+				WORKSPACE_REQUEST_TIMEOUT_MS,
+			)
 			this.kick()
 			return result
 		})
@@ -242,7 +258,12 @@ export class HelmBridge {
 		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
 			if (!AI_PASSES.has(pass)) return { error: `Unknown AI pass: ${String(pass)}` }
 			const result = normalizeDashboardItemResult(
-				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/ai/${pass}`),
+				await this.request<DashboardItem>(
+					'POST',
+					`/items/${id(rawId)}/ai/${pass}`,
+					undefined,
+					HELPER_REQUEST_TIMEOUT_MS,
+				),
 			)
 			this.kick()
 			return result
