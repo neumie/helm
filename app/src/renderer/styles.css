@@ -594,6 +594,18 @@ body.dragging {
 	height: 100%;
 }
 
+/* xterm stops honoring DEC synchronized output after one second. A long TUI
+ * history redraw can exceed that guard, so renderer.ts holds this clone of the
+ * last complete viewport above xterm until the replacement frame has parsed. */
+.term-mount .term-frame-freeze {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 8;
+	background: var(--term-bg);
+	pointer-events: none;
+}
+
 /* xterm.css hardcodes .xterm-viewport background #000; with a correct fit the
  * sub-cell remainder gap below/right of the grid would show it as a black seam
  * against --term-bg. Transparent lets the themed well paint the remainder.

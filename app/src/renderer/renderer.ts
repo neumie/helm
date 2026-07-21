@@ -7,6 +7,7 @@ import './styles.css'
 import type { HelmApi, RestoredSession } from '../shared'
 import { appearance } from './appearance'
 import { mountSidebar } from './sidebar/SidebarRoot'
+import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
 import {
 	dragThresholdExceeded,
 	moveToInsertionIndex,
@@ -134,6 +135,11 @@ interface Tab {
 	attachedAt: number
 	/** Output arrived since the last buffer-snapshot save (10s autosave picks it up). */
 	dirty: boolean
+	/** Holds the last complete viewport over xterm while a large DEC synchronized
+	 *  redraw parses; snapshot/scrollbar work also waits for this to clear. */
+	frameOutputPending: boolean
+	frameFreeze: HTMLElement | null
+	outputGuard: SynchronizedOutputGuard
 	term: Terminal
 	fit: FitAddon
 	/** Buffer serializer for snapshot saves (restore-before-attach, app/src/buffers.ts). */
@@ -369,6 +375,9 @@ function thumbMetrics(tab: Tab): { trackHeight: number; thumbHeight: number; max
 }
 
 function syncScrollbar(tab: Tab): void {
+	// xterm's model mutates while a synchronized redraw is still hidden behind
+	// the last complete visual frame. Keep the matching scrollbar stable too.
+	if (tab.frameOutputPending) return
 	const buffer = tab.term.buffer.active
 	// Alt-screen apps (vim/less) own the whole viewport — no scrollbar, like
 	// Terminal.app. baseY === 0 = nothing has scrolled out yet.
@@ -469,6 +478,9 @@ function serializeSnapshot(tab: Tab): string | null {
 }
 
 function saveSnapshot(tab: Tab): void {
+	// Never persist xterm's transient clear/partial replay. Leave dirty set so
+	// the next autosave captures the completed synchronized frame.
+	if (tab.frameOutputPending) return
 	tab.dirty = false
 	if (!tab.sessionId) return
 	const snapshot = serializeSnapshot(tab)
@@ -515,6 +527,36 @@ function filterAttachClear(tab: Tab, data: string): string {
 	return buffered.startsWith(ATTACH_CLEAR) ? buffered.slice(ATTACH_CLEAR.length) : buffered
 }
 
+function freezeTerminalFrame(tab: Tab): void {
+	tab.frameOutputPending = true
+	if (tab.frameFreeze) return
+	const screen = tab.holder.querySelector('.xterm-screen')
+	if (!(screen instanceof HTMLElement) || !screen.parentElement) return
+	const freeze = screen.cloneNode(true)
+	if (!(freeze instanceof HTMLElement)) return
+	freeze.classList.add('term-frame-freeze')
+	freeze.setAttribute('aria-hidden', 'true')
+	// cloneNode does not copy canvas pixels. The current renderer is DOM-based,
+	// but preserving canvases keeps this guard correct if xterm changes renderer.
+	const sourceCanvases = screen.querySelectorAll('canvas')
+	const frozenCanvases = freeze.querySelectorAll('canvas')
+	for (let index = 0; index < Math.min(sourceCanvases.length, frozenCanvases.length); index += 1) {
+		const source = sourceCanvases.item(index)
+		const target = frozenCanvases.item(index)
+		const context = target.getContext('2d')
+		if (context) context.drawImage(source, 0, 0)
+	}
+	screen.parentElement.append(freeze)
+	tab.frameFreeze = freeze
+}
+
+function unfreezeTerminalFrame(tab: Tab): void {
+	tab.frameOutputPending = false
+	tab.frameFreeze?.remove()
+	tab.frameFreeze = null
+	scheduleScrollbarSync(tab)
+}
+
 function activate(tab: Tab): void {
 	activeTab = tab
 	for (const t of tabs) {
@@ -544,6 +586,7 @@ function cycleTab(delta: number): void {
 function closeTab(tab: Tab): void {
 	if (tab.closed) return
 	tab.closed = true
+	tab.outputGuard.abort()
 	const { title, customName } = tab
 	const shown = customName ?? title
 	// Soft close (okena-style): main only DETACHES the pty client and arms a
@@ -1204,7 +1247,12 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	close.setAttribute('aria-label', 'Close terminal')
 	tabButton.append(label, close)
 
-	const tab: Tab = {
+	let tab!: Tab
+	const outputGuard = createSynchronizedOutputGuard({
+		onFreeze: () => freezeTerminalFrame(tab),
+		onUnfreeze: () => unfreezeTerminalFrame(tab),
+	})
+	tab = {
 		ptyId: null,
 		sessionId: null,
 		closed: false,
@@ -1225,6 +1273,9 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		titleSettled: false,
 		attachedAt: Number.POSITIVE_INFINITY,
 		dirty: false,
+		frameOutputPending: false,
+		frameFreeze: null,
+		outputGuard,
 		term,
 		fit,
 		serialize,
@@ -1392,7 +1443,7 @@ helm.pty.onData((id, data) => {
 		output = filterAttachClear(tab, data)
 		if (output === '') return
 	}
-	tab.term.write(output)
+	tab.outputGuard.write(output, (data, onParsed) => tab.term.write(data, onParsed))
 	tab.dirty = true // snapshot autosave picks this tab up on the next tick
 	// Quiet activity dot: first output since parking (once — no per-chunk DOM
 	// work on the pty:data path, §6.2).
@@ -1405,6 +1456,7 @@ helm.pty.onData((id, data) => {
 helm.pty.onExit((id, exitCode) => {
 	const tab = findByPty(id)
 	if (!tab) return
+	tab.outputGuard.abort()
 	tab.ptyId = null // pty is gone; don't kill it again on close
 	tab.dirty = false // session over — its snapshot is reaped with it, don't re-save
 	if (tab.parked) {
