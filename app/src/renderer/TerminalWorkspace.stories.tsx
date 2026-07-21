@@ -65,7 +65,7 @@ function BackgroundRow({
 				<span className="bg-state">{state}</span>
 			</button>
 			<button type="button" className="bg-action" title="Move to tabs and open">
-				Tab
+				⇥
 			</button>
 			<button type="button" className="bg-kill" title="Close" aria-label={`Close ${title}`}>
 				×
@@ -123,9 +123,15 @@ function TerminalShell({ children, popover, left = 0 }: { children?: ReactNode; 
 							+
 						</button>
 					</div>
-					<div className="topbar-drag-space" aria-hidden="true" />
+					<div id="topbar-drag-space" className="topbar-drag-space" aria-hidden="true" />
 					<div id="bg-root">
-						<button id="bg-toggle" type="button" aria-label="Background terminals" aria-expanded={popover}>
+						<button
+							id="bg-toggle"
+							type="button"
+							aria-label="Background terminals"
+							aria-haspopup="dialog"
+							aria-expanded={popover}
+						>
 							<StackIcon />
 							<span id="bg-count" className="bg-count">
 								3
@@ -135,7 +141,12 @@ function TerminalShell({ children, popover, left = 0 }: { children?: ReactNode; 
 							// Mirrors the production non-modal ARIA dialog.
 							// biome-ignore lint/a11y/useSemanticElements: native <dialog> adds modal/top-layer semantics.
 							<div id="bg-popover" className="menu-panel menu-end" role="dialog" aria-label="Background terminals">
-								<div className="bg-header">Background terminals</div>
+								<div className="bg-header">
+									<span>Background terminals</span>
+									<span id="bg-header-count" className="bg-header-count">
+										3
+									</span>
+								</div>
 								<div id="bg-rows">
 									<BackgroundRow title="indexing workspace" state="Running" activity="progress" active />
 									<BackgroundRow title="agent review" state="Running" activity="attention" />

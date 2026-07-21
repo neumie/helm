@@ -41,9 +41,11 @@ const divider = el<HTMLDivElement>('divider')
 const tabsEl = el<HTMLDivElement>('tabs')
 const newTabButton = el<HTMLButtonElement>('new-tab')
 const termsEl = el<HTMLDivElement>('terms')
+const topbarDragSpace = el<HTMLDivElement>('topbar-drag-space')
 const bgRoot = el<HTMLDivElement>('bg-root')
 const bgToggle = el<HTMLButtonElement>('bg-toggle')
 const bgCount = el<HTMLSpanElement>('bg-count')
+const bgHeaderCount = el<HTMLSpanElement>('bg-header-count')
 const bgPopover = el<HTMLDivElement>('bg-popover')
 const bgRows = el<HTMLDivElement>('bg-rows')
 
@@ -784,10 +786,14 @@ function killParkedTab(tab: Tab): void {
 let bgOpen = false
 
 function updateBackgroundUi(): void {
-	bgToggle.hidden = parked.length === 0
+	const empty = parked.length === 0
+	const focusWasInPopover = empty && bgPopover.contains(document.activeElement)
+	bgToggle.hidden = empty
 	bgCount.textContent = String(parked.length)
-	if (parked.length === 0) {
+	bgHeaderCount.textContent = String(parked.length)
+	if (empty) {
 		closeBackgroundPopover()
+		if (focusWasInPopover) newTabButton.focus()
 		return
 	}
 	if (bgOpen) renderBackgroundRows()
@@ -799,13 +805,18 @@ function renderBackgroundRows(): void {
 	const focused = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].indexOf(focusedRow as HTMLElement)
 	bgRows.textContent = ''
 	for (const tab of parked) {
+		const sessionState = tab.exitCode === null ? 'Running' : `Exited (${tab.exitCode})`
+		const agentState = tab.agentAttention ? 'Run finished, needs attention' : tab.agentRunning ? 'Agent running' : null
 		const row = document.createElement('div')
 		row.className = `bg-row${activeTab === tab ? ' active' : ''}`
 
 		const open = document.createElement('button')
 		open.className = 'bg-open'
 		open.title = 'Open and keep in background'
-		open.setAttribute('aria-label', `Open ${displayName(tab)} and keep in background`)
+		open.setAttribute(
+			'aria-label',
+			`Open ${displayName(tab)} and keep in background — ${sessionState}${agentState ? `, ${agentState}` : ''}`,
+		)
 		open.addEventListener('click', () => openParked(tab))
 
 		const activitySlot = document.createElement('span')
@@ -825,12 +836,12 @@ function renderBackgroundRows(): void {
 
 		const state = document.createElement('span')
 		state.className = 'bg-state'
-		state.textContent = tab.exitCode === null ? 'Running' : `Exited (${tab.exitCode})`
+		state.textContent = sessionState
 		open.append(activitySlot, title, state)
 
 		const restore = document.createElement('button')
 		restore.className = 'bg-action'
-		restore.textContent = 'Tab'
+		restore.textContent = '⇥'
 		restore.title = 'Move to tabs and open'
 		restore.setAttribute('aria-label', `Move ${displayName(tab)} to tabs and open`)
 		restore.addEventListener('click', () => restoreParked(tab))
@@ -852,7 +863,12 @@ function renderBackgroundRows(): void {
 }
 
 function onBgOutside(event: PointerEvent): void {
-	if (!(event.target instanceof Node) || !bgRoot.contains(event.target)) closeBackgroundPopover()
+	if (event.target instanceof Node && bgRoot.contains(event.target)) return
+	const clickedTitlebar = event.target === topbarDragSpace
+	closeBackgroundPopover()
+	// A native titlebar target cannot receive DOM focus. Avoid leaving focus in
+	// the now-hidden row; ordinary outside controls receive focus after pointerdown.
+	if (clickedTitlebar) bgToggle.focus()
 }
 
 function onBgKeydown(event: KeyboardEvent): void {
@@ -878,6 +894,10 @@ function openBackgroundPopover(): void {
 	renderBackgroundRows()
 	bgPopover.hidden = false
 	bgToggle.setAttribute('aria-expanded', 'true')
+	// Native Electron drag regions swallow DOM pointer events. While this
+	// non-modal popover is open, make only the trailing whitespace a regular
+	// hit target so clicking the titlebar dismisses it; closing restores drag.
+	topbarDragSpace.classList.add('popover-catcher')
 	bgRows.querySelector<HTMLElement>('.bg-open')?.focus()
 	document.addEventListener('pointerdown', onBgOutside, true)
 	document.addEventListener('keydown', onBgKeydown, true)
@@ -888,6 +908,7 @@ function closeBackgroundPopover(): void {
 	bgOpen = false
 	bgPopover.hidden = true
 	bgToggle.setAttribute('aria-expanded', 'false')
+	topbarDragSpace.classList.remove('popover-catcher')
 	document.removeEventListener('pointerdown', onBgOutside, true)
 	document.removeEventListener('keydown', onBgKeydown, true)
 }

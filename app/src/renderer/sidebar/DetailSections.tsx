@@ -311,16 +311,11 @@ function ResourceLink({
 	onClick: () => void
 	disabled?: boolean
 }) {
-	return (
-		<Card flush>
-			<ActionRow nav label={label} value={value} onClick={onClick} disabled={disabled} />
-		</Card>
-	)
+	return <ActionRow nav label={label} value={value} onClick={onClick} disabled={disabled} />
 }
 
-/** Task and Plan documents are peer reading destinations. Each goes through
- * the same complete resource-link primitive so both receive identical group
- * rules, 20px top rhythm, 36px row pitch, and gutter behavior. */
+/** Task, Run context, and Plan documents are peer reading destinations in one
+ * flat group: one outer rule/inset, then compact consecutive nav rows. */
 export function ResourceRows({
 	item,
 	onOpenTask,
@@ -337,7 +332,7 @@ export function ResourceRows({
 	const hasTask = Boolean(item.source || item.captured || item.sourceTask)
 	if (!hasTask && !item.plannedAt && item.kind !== 'solve') return null
 	return (
-		<>
+		<Card flush>
 			{hasTask && (
 				<ResourceLink
 					label={item.captured ? 'Imported task' : 'Task'}
@@ -362,7 +357,7 @@ export function ResourceRows({
 					disabled={disabled}
 				/>
 			)}
-		</>
+		</Card>
 	)
 }
 

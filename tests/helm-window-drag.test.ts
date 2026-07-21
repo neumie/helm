@@ -16,7 +16,7 @@ function rule(selector: string): string {
 test('terminal header keeps controls interactive and trailing whitespace draggable', () => {
 	assert.match(
 		html,
-		/<div class="tab-strip-controls">[\s\S]*?<div id="tabs"[\s\S]*?<button id="new-tab"[\s\S]*?<\/div>[\s\S]*?<div class="topbar-drag-space" aria-hidden="true"><\/div>[\s\S]*?<div id="bg-root">/,
+		/<div class="tab-strip-controls">[\s\S]*?<div id="tabs"[\s\S]*?<button id="new-tab"[\s\S]*?<\/div>[\s\S]*?<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"><\/div>[\s\S]*?<div id="bg-root">/,
 	)
 	assert.match(rule('.topbar-right'), /-webkit-app-region:\s*drag;/)
 	assert.match(rule('.tab-strip-controls'), /-webkit-app-region:\s*no-drag;/)

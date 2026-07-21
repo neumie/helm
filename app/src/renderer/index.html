@@ -21,14 +21,14 @@
 						<div id="tabs" role="tablist" aria-label="Terminals"></div>
 						<button id="new-tab" title="New terminal (&#8984;T)" aria-label="New terminal">+</button>
 					</div>
-					<div class="topbar-drag-space" aria-hidden="true"></div>
+					<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"></div>
 					<div id="bg-root">
 						<button
 							id="bg-toggle"
 							hidden
 							title="Background terminals"
 							aria-label="Background terminals"
-							aria-haspopup="true"
+							aria-haspopup="dialog"
 							aria-expanded="false"
 						>
 							<svg
@@ -49,7 +49,10 @@
 							<span id="bg-count" class="bg-count">0</span>
 						</button>
 						<div id="bg-popover" class="menu-panel menu-end" hidden role="dialog" aria-label="Background terminals">
-							<div class="bg-header">Background terminals</div>
+							<div class="bg-header">
+								<span>Background terminals</span>
+								<span id="bg-header-count" class="bg-header-count">0</span>
+							</div>
 							<div id="bg-rows"></div>
 						</div>
 					</div>

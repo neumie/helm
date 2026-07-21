@@ -48,15 +48,14 @@ export const FactRows: Story = {
 	),
 }
 
-/** Copy and external rows share the 28px fact pitch; only external links read
- *  as links (accent). Push rows (chevron) sit at the 36px nav pitch. */
+/** Copy and external rows share one 28px in-place-action pitch; navigation
+ * rows have their own specimen below so mixed heights never look accidental. */
 export const ActionRows: Story = {
 	render: () => (
 		<Card label="Links" flush>
 			<ActionRow label="Branch" value="fix/flaky-login-test" glyphKind="copy" mono onClick={noop} />
 			<ActionRow label="PR" value="github.com/neumie/helm/pull/42" glyphKind="external" onClick={noop} />
 			<ActionRow label="Source" value="ClientCare #1043" glyphKind="external" onClick={noop} />
-			<ActionRow label="Task" value="View" onClick={noop} />
 			<ActionRow label="Disabled" value="Unavailable" glyphKind="copy" onClick={noop} disabled />
 		</Card>
 	),
@@ -97,8 +96,7 @@ export const ItemDestinations: Story = {
 			</Btn>
 			<Card flush>
 				<ActionRow nav label="Task" value="Contember #4821" onClick={noop} />
-			</Card>
-			<Card flush>
+				<ActionRow nav label="Run context" value="Source context" onClick={noop} />
 				<ActionRow nav label="Plan documents" value="2 notes" onClick={noop} />
 			</Card>
 		</>

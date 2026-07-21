@@ -157,6 +157,7 @@
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
+	scrollbar-gutter: stable;
 	padding: 16px;
 	display: flex;
 	flex-direction: column;
@@ -457,6 +458,7 @@
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
+	scrollbar-gutter: stable;
 	padding: 6px 8px 16px;
 }
 
@@ -939,20 +941,19 @@
 	font-size: calc(11px * var(--ui-scale));
 }
 
-/* Tappable rows: chevron pushes a sub-page, ↗ opens externally. */
-/* Tappable rows keep their text on the 16px grid; the hover fill overhangs
- * 8px into the page gutter (ghost-on-edge pattern, §3.1). */
+/* Tappable rows: controls stay rounded, but a row's selection/hover fill is a
+ * square full-width stripe. Its text remains on the page's 16px grid (§3.15). */
 .action-row {
 	position: relative;
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	min-height: 28px;
-	margin: 0 -8px;
-	width: calc(100% + 16px);
-	padding: 0 8px;
+	margin: 0 -16px;
+	width: calc(100% + 32px);
+	padding: 0 16px;
 	border: none;
-	border-radius: 6px;
+	border-radius: 0;
 	background: none;
 	font-family: inherit;
 	font-size: calc(12px * var(--ui-scale));
@@ -1000,8 +1001,8 @@
 	content: "";
 	position: absolute;
 	top: 0;
-	left: 8px; /* the row overhangs 8px — this lands the line on the text edge */
-	right: 8px;
+	left: 16px; /* full-bleed row; this lands the line on the text edge */
+	right: 16px;
 	height: 1px;
 	background: color-mix(in srgb, var(--hairline) 60%, transparent);
 }
@@ -1190,6 +1191,7 @@ button.banner {
 	padding: 10px 12px;
 	max-height: 240px;
 	overflow: auto;
+	scrollbar-gutter: stable;
 	border-radius: 8px;
 	background: var(--well);
 	color: var(--text-1);
@@ -1313,6 +1315,7 @@ button.banner {
 	padding: 10px 12px;
 	max-height: 320px;
 	overflow: auto;
+	scrollbar-gutter: stable;
 	font-family: inherit;
 	font-size: calc(12px * var(--ui-scale));
 	line-height: 1.6;
@@ -1704,6 +1707,7 @@ button.banner {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
+	scrollbar-gutter: stable;
 	display: flex;
 	flex-direction: column;
 	gap: 12px;

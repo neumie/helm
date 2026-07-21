@@ -107,6 +107,7 @@
 
 .run-context-editor {
 	overflow: auto;
+	scrollbar-gutter: stable;
 	padding: 28px max(36px, calc((100% - 760px) / 2));
 	background: var(--pane);
 }
@@ -148,6 +149,7 @@
 
 .run-context-source {
 	overflow: auto;
+	scrollbar-gutter: stable;
 	padding: 24px 20px;
 	border-left: 1px solid var(--hairline);
 	background: var(--chrome);
