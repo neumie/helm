@@ -20,12 +20,16 @@ function hasStableGutter(css: string, selector: string): void {
 	assert.match(rule(css, selector), /scrollbar-gutter:\s*stable;/, `${selector} must reserve scrollbar width`)
 }
 
-test('persistent scroll surfaces reserve scrollbar width before overflow', () => {
-	for (const selector of ['.page-scroll', '.list-scroll', '.sheet-body', '.log-well', '.plan-well']) {
+test('persistent reading and editing surfaces reserve scrollbar width before overflow', () => {
+	for (const selector of ['.page-scroll', '.sheet-body', '.log-well', '.plan-well']) {
 		hasStableGutter(sidebar, selector)
 	}
 	hasStableGutter(runContext, '.run-context-editor')
 	hasStableGutter(runContext, '.run-context-source')
+})
+
+test('full-width state-band lists use overlay scrolling without a blank edge gutter', () => {
+	assert.doesNotMatch(rule(sidebar, '.list-scroll'), /scrollbar-gutter/)
 })
 
 test('transient background menu uses overlay scrolling without horizontal overflow', () => {

@@ -36,6 +36,7 @@ test('row hover fill leaves breathing room around separators', () => {
 
 test('work-list Item rows use square full-width state stripes', () => {
 	assert.match(css, /\.list-scroll\s*\{[^}]*padding:\s*6px 0 16px/s)
+	assert.doesNotMatch(css, /\.list-scroll\s*\{[^}]*scrollbar-gutter:/s)
 	assert.match(css, /\.item-row\s*\{[^}]*width:\s*100%/s)
 	assert.match(css, /\.item-row\s*\{[^}]*padding:\s*0 16px/s)
 	assert.match(css, /\.item-row\s*\{[^}]*border-radius:\s*0/s)
