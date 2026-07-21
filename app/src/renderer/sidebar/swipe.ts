@@ -12,20 +12,19 @@
 // the lift, and the momentum tail (same-sign deltas decaying roughly
 // exponentially over ~300-800ms) arrive as one undifferentiated delta stream.
 // Everything below is calibrated around that blindness:
-//   - engagement is a DEAD ZONE (accumulated travel + dominance), not a
-//     first-event bet — no visual movement until intent is clear;
-//   - commits fire EAGERLY the moment a threshold is crossed mid-stream, so a
-//     pop never waits out a momentum tail;
-//   - after any engaged gesture settles, a REFRACTORY quiescence gap swallows
-//     every wheel event and restarts itself, so the rest of the physical
-//     gesture (tail or still-moving fingers) can never pop a second page.
+//   - engagement is an 8px AXIS LOCK (accumulated travel + dominance), not a
+//     first-event bet or a sticky dead zone;
+//   - the page stays finger-owned until the wheel stream reaches its 140ms
+//     release/quiescence boundary; thresholds choose a target only then;
+//   - after settle, a REFRACTORY gap swallows/restarts on back-horizontal tail
+//     events, so one physical gesture can never pop a second page.
 
 // --- tuning constants (documented in design-system.md §3.10) --------------------
 
-/** Dead zone: tracking engages only after this much accumulated back travel
- *  since gesture start. Below it the page must not move at all — filters the
- *  diagonal jitter the old first-event bet let through. */
-export const SWIPE_ENGAGE_PX = 30
+/** Axis-lock slop: enough accumulated travel to classify intent without the
+ *  sticky 30px dead zone the first implementation imposed. Once locked, this
+ *  slop is subtracted so the page begins at exactly 0 with no jump. */
+export const SWIPE_ENGAGE_PX = 8
 /** …and horizontal must dominate: |ΣdeltaX| > this ×|ΣdeltaY| at the engage
  *  decision, or the gesture is rejected for its whole lifetime. */
 export const SWIPE_ENGAGE_DOMINANCE = 2
@@ -39,24 +38,42 @@ export const SWIPE_FLICK_VELOCITY = 1.5
  *  newest event — recent motion only, so an early burst in a long drag or a
  *  decayed momentum tail can't smuggle a commit through. */
 export const SWIPE_FLICK_WINDOW_MS = 80
-/** A flick also needs this fraction of pane width in real travel — a violent
- *  two-event twitch never commits. */
-export const SWIPE_MIN_FLICK_FRACTION = 0.2
+/** A flick also needs this fraction of pane width in real travel — the lower
+ *  axis-lock slop must not turn one early burst into an accidental pop. */
+export const SWIPE_MIN_FLICK_FRACTION = 0.3
 /** No wheel events for this long = the gesture ended. Long enough to bridge
  *  fingers resting mid-drag and intra-tail hiccups; post-release latency is
  *  dominated by the momentum tail (which keeps events flowing), not this. */
 export const SWIPE_WHEEL_IDLE_MS = 140
 /** Refractory quiescence gap after any engaged gesture settles (commit OR
- *  spring-back). Every wheel event restarts it, so it outlasts any momentum
- *  tail; only a real pause re-arms gestures. */
+ *  spring-back). Every back-horizontal tail event restarts it; unrelated
+ *  vertical input stays available. */
 export const SWIPE_COOLDOWN_MS = 280
-/** Commit settle: the remaining travel animates at constant-ish perceived
- *  speed — duration scales with remaining distance, full width taking this. */
-export const SWIPE_COMMIT_MAX_MS = 200
+/** Commit settle: remaining distance and release velocity choose a duration
+ *  inside this range. The curve is compositor-driven and lands with zero snap. */
+export const SWIPE_COMMIT_MAX_MS = 240
 /** …floored so the last few px never blink. */
-export const SWIPE_COMMIT_MIN_MS = 80
-/** Spring back to rest when the gesture ends below both commit bars. */
-export const SWIPE_SPRING_BACK_MS = 180
+export const SWIPE_COMMIT_MIN_MS = 90
+/** Maximum spring-back duration; short drags return faster. */
+export const SWIPE_SPRING_BACK_MS = 240
+/** Apple-style deceleration: fast response, long soft tail, no overshoot. */
+export const SWIPE_COMMIT_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
+/** Soft iOS-style return without overshooting either endpoint. */
+export const SWIPE_SPRING_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+
+export function swipeCommitDuration(remainingPx: number, paneWidth: number, velocityPxMs: number): number {
+	const width = Math.max(1, paneWidth)
+	const remaining = Math.max(0, remainingPx)
+	const baseSpeed = width / SWIPE_COMMIT_MAX_MS
+	const releaseSpeed = Math.max(0, velocityPxMs) * 0.85
+	const duration = remaining / Math.max(baseSpeed, releaseSpeed)
+	return Math.round(Math.min(SWIPE_COMMIT_MAX_MS, Math.max(SWIPE_COMMIT_MIN_MS, duration)))
+}
+
+export function swipeSpringDuration(progressPx: number, paneWidth: number): number {
+	const fraction = Math.min(1, Math.max(0, progressPx / Math.max(1, paneWidth)))
+	return Math.round(140 + (SWIPE_SPRING_BACK_MS - 140) * fraction)
+}
 
 // --- pure gesture core -----------------------------------------------------------
 
@@ -67,7 +84,7 @@ type Sample = { t: number; cum: number }
 /**
  * Accumulates one wheel-gesture's horizontal deltas into back-swipe progress.
  * A gesture starts UNDECIDED ('pending'): deltas accumulate invisibly until
- * either clear back intent emerges (≥ SWIPE_ENGAGE_PX of back travel that
+ * either clear back intent emerges (≥ SWIPE_ENGAGE_PX axis-lock travel that
  * dominates vertical by SWIPE_ENGAGE_DOMINANCE, with a consumer-free start)
  * → engaged, or the accumulation first crosses the threshold any other way
  * (vertical, diagonal, forward pan, consumed) → rejected for its lifetime.
@@ -78,6 +95,7 @@ export class SwipeTracker {
 	private sumY = 0
 	private progress = 0
 	private cum = 0
+	private flickArmed = false
 	private state: 'pending' | 'rejected' | 'engaged' = 'pending'
 	private samples: Sample[] = []
 
@@ -103,12 +121,14 @@ export class SwipeTracker {
 				return 'ignored'
 			}
 			this.state = 'engaged'
-			// Track from the engage point: the dead zone is subtracted so the
+			// Track from the engage point: axis-lock slop is subtracted so the
 			// page starts moving from 0 instead of jumping SWIPE_ENGAGE_PX in.
 			this.progress = Math.min(this.width, back - SWIPE_ENGAGE_PX)
+			this.updateFlickIntent(deltaX)
 			return 'started'
 		}
 		this.progress = Math.min(this.width, Math.max(0, this.progress - deltaX))
+		this.updateFlickIntent(deltaX)
 		return 'tracking'
 	}
 
@@ -118,6 +138,18 @@ export class SwipeTracker {
 			const next = this.samples[1]
 			if (!next || nowMs - next.t < SWIPE_FLICK_WINDOW_MS) break
 			this.samples.shift()
+		}
+	}
+
+	private updateFlickIntent(deltaX: number): void {
+		// A deliberate reversal hands control back to distance at release; an old
+		// fast burst must never force a commit after the user pulls the page home.
+		if (deltaX > 0) {
+			this.flickArmed = false
+			return
+		}
+		if (this.fraction >= SWIPE_MIN_FLICK_FRACTION && this.recentVelocity() >= SWIPE_FLICK_VELOCITY) {
+			this.flickArmed = true
 		}
 	}
 
@@ -146,13 +178,13 @@ export class SwipeTracker {
 		return this.progress / this.width
 	}
 
-	/** Commit decision — evaluated EAGERLY after every fed event, not at
-	 *  gesture end (a spent momentum tail decays recentVelocity to ~0, so an
-	 *  end-of-gesture flick check could never fire). */
+	/** Destination decision, evaluated only when the wheel stream reaches its
+	 *  release/quiescence boundary. Distance uses the final position; a genuine
+	 *  flick is latched before its momentum tail decays the velocity sample. */
 	shouldCommit(): boolean {
 		if (this.state !== 'engaged') return false
 		if (this.fraction >= SWIPE_COMMIT_FRACTION) return true
-		return this.recentVelocity() >= SWIPE_FLICK_VELOCITY && this.fraction >= SWIPE_MIN_FLICK_FRACTION
+		return this.flickArmed && this.fraction >= SWIPE_MIN_FLICK_FRACTION
 	}
 }
 
@@ -187,150 +219,273 @@ export interface SwipeBackControl {
 function hasHorizontalScrollConsumer(target: EventTarget | null, viewport: HTMLElement): boolean {
 	let el = target instanceof Element ? target : null
 	while (el && el !== viewport) {
-		if (el instanceof HTMLElement && el.scrollWidth > el.clientWidth + 1 && el.scrollLeft > 0) {
-			const overflowX = getComputedStyle(el).overflowX
-			if (overflowX === 'auto' || overflowX === 'scroll') return true
-		}
+		if (el instanceof HTMLElement && el.scrollWidth > el.clientWidth + 1 && el.scrollLeft > 0) return true
 		el = el.parentElement
 	}
 	return false
 }
 
+export interface SwipeRuntime {
+	requestFrame(callback: FrameRequestCallback): number
+	cancelFrame(id: number): void
+	setTimer(callback: () => void, ms: number): number
+	clearTimer(id: number): void
+}
+
+const browserSwipeRuntime: SwipeRuntime = {
+	requestFrame: callback => requestAnimationFrame(callback),
+	cancelFrame: id => cancelAnimationFrame(id),
+	setTimer: (callback, ms) => window.setTimeout(callback, ms),
+	clearTimer: id => window.clearTimeout(id),
+}
+
 /**
- * Wires interactive swipe-back onto the nav viewport. Finger-tracking writes
- * inline transforms (no easing); crossing a commit threshold immediately
- * animates the pop, a sub-threshold gesture end springs back. Returns a
- * control with a disposer and the native-nav single-owner check.
+ * Wires interactive swipe-back onto the nav viewport. Input only updates the
+ * logical position; one rAF publishes the newest position to the compositor.
+ * Settlement starts after that exact frame and completes on transitionend,
+ * with an idempotent watchdog for hidden/throttled renderers.
  */
-export function attachSwipeBack(viewport: HTMLElement, handlers: SwipeBackHandlers): SwipeBackControl {
+export function attachSwipeBack(
+	viewport: HTMLElement,
+	handlers: SwipeBackHandlers,
+	runtime: SwipeRuntime = browserSwipeRuntime,
+): SwipeBackControl {
 	let tracker: SwipeTracker | null = null
 	let pages: { top: HTMLElement; under: HTMLElement } | null = null
 	let scrim: HTMLDivElement | null = null
+	let visualsBegun = false
+	let paneWidth = Math.max(1, viewport.clientWidth)
+	let activeWidth = paneWidth
 	let idleTimer: number | null = null
-	let settleTimer: number | null = null
+	let animationTimer: number | null = null
+	let cooldownTimer: number | null = null
+	let visualFrame: number | null = null
+	let settleFrame: number | null = null
+	let pendingVisual: { fraction: number; px: number } | null = null
+	let transitionTarget: HTMLElement | null = null
+	let transitionListener: ((event: TransitionEvent) => void) | null = null
 	/** 'animating' = commit/spring-back in flight; 'cooldown' = refractory gap. */
 	let phase: 'idle' | 'gesturing' | 'animating' | 'cooldown' = 'idle'
+	const resizeObserver =
+		typeof ResizeObserver === 'function'
+			? new ResizeObserver(entries => {
+					const width = entries[0]?.contentRect.width
+					if (width && width > 0) paneWidth = width
+				})
+			: null
+	resizeObserver?.observe(viewport)
 
 	const clearTimer = (id: number | null) => {
-		if (id !== null) clearTimeout(id)
+		if (id !== null) runtime.clearTimer(id)
+	}
+	const clearFrame = (id: number | null) => {
+		if (id !== null) runtime.cancelFrame(id)
+	}
+	const clearTransitionListener = () => {
+		if (transitionTarget && transitionListener)
+			transitionTarget.removeEventListener('transitionend', transitionListener)
+		transitionTarget = null
+		transitionListener = null
+	}
+	const pagesAreCurrent = () => {
+		if (!pages) return false
+		const current = handlers.getPages()
+		return current?.top === pages.top && current.under === pages.under
 	}
 
 	const render = (fraction: number, px: number) => {
 		if (!pages) return
-		pages.top.style.transform = `translateX(${px}px)`
-		// Under page parallaxes -25% → 0 as the top page reveals it (§3.10).
-		pages.under.style.transform = `translateX(${-25 * (1 - fraction)}%)`
+		const underPx = -0.25 * activeWidth * (1 - fraction)
+		pages.top.style.transform = `translate3d(${px}px, 0, 0)`
+		pages.under.style.transform = `translate3d(${underPx}px, 0, 0)`
 		if (scrim) scrim.style.opacity = String(1 - fraction)
 	}
 
+	const publishVisual = (fraction: number, px: number) => {
+		pendingVisual = { fraction, px }
+		if (visualFrame !== null) return
+		visualFrame = runtime.requestFrame(() => {
+			visualFrame = null
+			const next = pendingVisual
+			pendingVisual = null
+			if (!pagesAreCurrent()) {
+				tracker = null
+				cleanupVisuals()
+				enterCooldown()
+				return
+			}
+			if (next) {
+				beginVisuals()
+				render(next.fraction, next.px)
+			}
+		})
+	}
+
 	const beginVisuals = () => {
-		if (!pages) return
-		pages.top.classList.add('nav-swiping')
-		pages.under.classList.add('nav-swiping')
+		if (!pages || visualsBegun) return
+		visualsBegun = true
+		pages.top.classList.add('nav-swiping', 'nav-swipe-top')
+		pages.under.classList.add('nav-swiping', 'nav-swipe-under')
 		scrim = document.createElement('div')
 		scrim.className = 'swipe-scrim'
-		pages.under.appendChild(scrim)
+		pages.under.append(scrim)
 	}
 
 	const cleanupVisuals = () => {
-		if (pages) {
+		clearFrame(visualFrame)
+		clearFrame(settleFrame)
+		visualFrame = null
+		settleFrame = null
+		pendingVisual = null
+		clearTransitionListener()
+		if (pages && visualsBegun) {
+			pages.top.classList.remove('nav-swiping', 'nav-swipe-top')
+			pages.under.classList.remove('nav-swiping', 'nav-swipe-under')
 			for (const el of [pages.top, pages.under]) {
-				el.classList.remove('nav-swiping')
 				el.style.transform = ''
 				el.style.transition = ''
 			}
 		}
 		scrim?.remove()
 		scrim = null
+		visualsBegun = false
 		pages = null
+	}
+
+	const abandonGesture = () => {
+		tracker = null
+		phase = 'animating'
+		if (settleFrame !== null) return
+		settleFrame = runtime.requestFrame(() => {
+			settleFrame = null
+			cleanupVisuals()
+			enterCooldown()
+		})
 	}
 
 	const enterCooldown = () => {
 		phase = 'cooldown'
-		clearTimer(settleTimer)
-		settleTimer = window.setTimeout(() => {
+		clearTimer(cooldownTimer)
+		cooldownTimer = runtime.setTimer(() => {
+			cooldownTimer = null
 			phase = 'idle'
 		}, SWIPE_COOLDOWN_MS)
 	}
 
-	const setTransitions = (ms: number) => {
+	const setTransitions = (ms: number, easing: string) => {
 		if (!pages) return
-		pages.top.style.transition = `transform ${ms}ms ease-out`
-		pages.under.style.transition = `transform ${ms}ms ease-out`
-		if (scrim) scrim.style.transition = `opacity ${ms}ms ease-out`
+		pages.top.style.transition = `transform ${ms}ms ${easing}`
+		pages.under.style.transition = `transform ${ms}ms ${easing}`
+		if (scrim) scrim.style.transition = `opacity ${ms}ms ${easing}`
 	}
 
-	/** Eager commit: fires mid-gesture the moment a threshold is crossed. The
-	 *  rest of the physical gesture lands in 'animating' then the refractory
-	 *  gap — swallowed either way. */
-	const commit = (done: SwipeTracker) => {
+	const settle = (done: SwipeTracker, commits: boolean) => {
 		clearTimer(idleTimer)
 		idleTimer = null
 		tracker = null
-		if (handlers.reducedMotion() || !pages) {
+		clearFrame(visualFrame)
+		visualFrame = null
+		pendingVisual = null
+		if (!pagesAreCurrent()) {
 			cleanupVisuals()
-			handlers.commitPop()
 			enterCooldown()
-			return
-		}
-		phase = 'animating'
-		const width = Math.max(1, viewport.clientWidth)
-		const remaining = Math.max(0, width - done.progressPx)
-		// Constant-ish perceived speed: remaining distance sets the duration.
-		const ms = Math.round(
-			Math.min(SWIPE_COMMIT_MAX_MS, Math.max(SWIPE_COMMIT_MIN_MS, (remaining / width) * SWIPE_COMMIT_MAX_MS)),
-		)
-		setTransitions(ms)
-		// Next frame so the transition sees a start value.
-		requestAnimationFrame(() => render(1, width))
-		clearTimer(settleTimer)
-		settleTimer = window.setTimeout(() => {
-			cleanupVisuals()
-			handlers.commitPop()
-			enterCooldown()
-		}, ms + 30)
-	}
-
-	/** Gesture ended (SWIPE_WHEEL_IDLE_MS of wheel silence) without committing. */
-	const finish = () => {
-		idleTimer = null
-		const done = tracker
-		tracker = null
-		if (!done?.tracking || !pages) {
-			// Never engaged (vertical scroll, dead-zone fizzle, consumed pan):
-			// no refractory — the next distinct gesture may navigate immediately.
-			cleanupVisuals()
-			phase = 'idle'
 			return
 		}
 		if (handlers.reducedMotion()) {
 			cleanupVisuals()
+			if (commits) handlers.commitPop()
 			enterCooldown()
 			return
 		}
+
 		phase = 'animating'
-		setTransitions(SWIPE_SPRING_BACK_MS)
-		requestAnimationFrame(() => render(0, 0))
-		clearTimer(settleTimer)
-		settleTimer = window.setTimeout(() => {
+		const targetPx = commits ? activeWidth : 0
+		const targetFraction = commits ? 1 : 0
+		const ms = commits
+			? swipeCommitDuration(activeWidth - done.progressPx, activeWidth, done.recentVelocity())
+			: swipeSpringDuration(done.progressPx, activeWidth)
+		const easing = commits ? SWIPE_COMMIT_EASING : SWIPE_SPRING_EASING
+		let completed = false
+		const complete = () => {
+			if (completed) return
+			completed = true
+			clearTimer(animationTimer)
+			animationTimer = null
+			clearTransitionListener()
+			// SidebarRoot flushes the pop synchronously, so clearing stale inline
+			// transforms cannot expose one snap-back frame. If another navigation
+			// already replaced this pair, cleanup wins and the stale swipe cannot pop.
+			if (commits && pagesAreCurrent()) handlers.commitPop()
 			cleanupVisuals()
 			enterCooldown()
-		}, SWIPE_SPRING_BACK_MS + 30)
+		}
+
+		// Frame 1 publishes the exact final finger position. Frame 2 installs the
+		// transition and target. No wheel callback writes styles or forces layout.
+		settleFrame = runtime.requestFrame(() => {
+			settleFrame = null
+			if (!pagesAreCurrent()) {
+				complete()
+				return
+			}
+			beginVisuals()
+			render(done.fraction, done.progressPx)
+			if (Math.abs(targetPx - done.progressPx) < 0.5) {
+				complete()
+				return
+			}
+			settleFrame = runtime.requestFrame(() => {
+				settleFrame = null
+				if (!pagesAreCurrent()) {
+					complete()
+					return
+				}
+				setTransitions(ms, easing)
+				transitionTarget = pages?.top ?? null
+				transitionListener = event => {
+					if (event.target === transitionTarget && event.propertyName === 'transform') complete()
+				}
+				transitionTarget?.addEventListener('transitionend', transitionListener)
+				render(targetFraction, targetPx)
+				animationTimer = runtime.setTimer(complete, ms + 80)
+			})
+		})
 	}
 
-	const onWheel = (event: WheelEvent) => {
-		// Settle animation owns the screen; whatever lands here is the same
-		// physical gesture's leftovers, and the refractory gap follows the
-		// animation unconditionally — swallowed either way.
-		if (phase === 'animating') return
-		if (phase === 'cooldown') {
-			// Refractory: any wheel activity (momentum tail, still-moving
-			// fingers) restarts the quiescence gap; only a real pause re-arms.
-			enterCooldown()
+	const finish = () => {
+		idleTimer = null
+		const done = tracker
+		if (!done?.tracking || !pages) {
+			tracker = null
+			cleanupVisuals()
+			phase = 'idle'
 			return
 		}
+		settle(done, done.shouldCommit())
+	}
+
+	const isBackHorizontalPixel = (event: WheelEvent) =>
+		(event.deltaMode === undefined || event.deltaMode === 0) &&
+		event.deltaX < 0 &&
+		Math.abs(event.deltaX) > Math.abs(event.deltaY)
+
+	const onWheel = (event: WheelEvent) => {
+		if (phase === 'gesturing' && pages && !pagesAreCurrent()) {
+			if (isBackHorizontalPixel(event)) event.preventDefault()
+			abandonGesture()
+			return
+		}
+		if (phase === 'animating' || phase === 'cooldown') {
+			if (isBackHorizontalPixel(event)) {
+				event.preventDefault()
+				if (phase === 'cooldown') enterCooldown()
+			}
+			return
+		}
+		if (event.ctrlKey || (event.deltaMode !== undefined && event.deltaMode !== 0)) return
 		if (!tracker) {
-			tracker = new SwipeTracker(viewport.clientWidth)
+			activeWidth = paneWidth
+			tracker = new SwipeTracker(activeWidth)
 			phase = 'gesturing'
 		}
 		const result = tracker.feed(
@@ -341,23 +496,19 @@ export function attachSwipeBack(viewport: HTMLElement, handlers: SwipeBackHandle
 		)
 		if (result === 'started') {
 			pages = handlers.getPages()
-			if (pages) {
-				if (!handlers.reducedMotion()) {
-					beginVisuals()
-					render(tracker.fraction, tracker.progressPx)
-				}
-				event.preventDefault()
+			if (!pages) {
+				tracker = null
+				phase = 'idle'
+				return
 			}
+			if (!handlers.reducedMotion()) publishVisual(tracker.fraction, tracker.progressPx)
+			event.preventDefault()
 		} else if (result === 'tracking' && pages) {
-			if (!handlers.reducedMotion()) render(tracker.fraction, tracker.progressPx)
+			if (!handlers.reducedMotion()) publishVisual(tracker.fraction, tracker.progressPx)
 			event.preventDefault()
 		}
-		if (pages && tracker.shouldCommit()) {
-			commit(tracker)
-			return
-		}
 		clearTimer(idleTimer)
-		idleTimer = window.setTimeout(finish, SWIPE_WHEEL_IDLE_MS)
+		idleTimer = runtime.setTimer(finish, SWIPE_WHEEL_IDLE_MS)
 	}
 
 	const interceptNativeNav = (): boolean => {
@@ -367,9 +518,6 @@ export function attachSwipeBack(viewport: HTMLElement, handlers: SwipeBackHandle
 			return true
 		}
 		if (phase === 'gesturing' && tracker?.tracking) return true
-		// Wheel path not engaged: the native pop proceeds; kill any undecided
-		// tracker and enter the refractory gap so this same physical gesture's
-		// wheel deltas can't ALSO engage and pop after the native one.
 		clearTimer(idleTimer)
 		idleTimer = null
 		tracker = null
@@ -383,7 +531,9 @@ export function attachSwipeBack(viewport: HTMLElement, handlers: SwipeBackHandle
 		dispose: () => {
 			viewport.removeEventListener('wheel', onWheel)
 			clearTimer(idleTimer)
-			clearTimer(settleTimer)
+			clearTimer(animationTimer)
+			clearTimer(cooldownTimer)
+			resizeObserver?.disconnect()
 			cleanupVisuals()
 		},
 		interceptNativeNav,

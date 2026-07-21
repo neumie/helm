@@ -304,6 +304,41 @@ function Frame({ children, width = 340 }: { children: ReactNode; width?: number 
 	)
 }
 
+function SwipeFrame() {
+	return (
+		<div
+			style={{
+				minHeight: '100vh',
+				padding: 24,
+				display: 'grid',
+				placeItems: 'start center',
+				background: 'var(--chrome)',
+			}}
+		>
+			<div className="sidebar" style={{ width: 340, height: 800, boxShadow: 'var(--shadow-2)' }}>
+				<div className="nav-viewport">
+					<div className="nav-page nav-swiping nav-swipe-under" style={{ transform: 'translate3d(-51px, 0, 0)' }}>
+						<DetailPage
+							id={reviewItem.id}
+							snapshot={snapshot}
+							draft={{}}
+							onDraftChange={noOp}
+							active={false}
+							onBack={noOp}
+							onOpenPlan={noOp}
+							onOpenTask={noOp}
+						/>
+						<div className="swipe-scrim" style={{ opacity: 0.6 }} />
+					</div>
+					<div className="nav-page nav-swiping nav-swipe-top" style={{ transform: 'translate3d(136px, 0, 0)' }}>
+						<TaskPage id={reviewItem.id} snapshot={snapshot} onBack={noOp} />
+					</div>
+				</div>
+			</div>
+		</div>
+	)
+}
+
 function noOp(): void {}
 async function noOpAsync(): Promise<void> {}
 
@@ -363,6 +398,12 @@ export const WorkList: Story = {
 			/>
 		</Frame>
 	),
+}
+
+/** Deterministic 40% two-finger Task→Detail gesture: compositor layers, parallax,
+ * scrim, and pane edges without running Electron. */
+export const SwipeBackMidGesture: Story = {
+	render: () => <SwipeFrame />,
 }
 
 export const ItemDetail: Story = {

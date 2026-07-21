@@ -9,6 +9,7 @@
 // their own Esc in the capture phase first).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import './sidebar.css'
 import type { HelmSnapshot } from '../../shared-helm'
@@ -188,7 +189,7 @@ export function SidebarRoot() {
 				const under = pageEls[pageEls.length - 2]
 				return top && under ? { top, under } : null
 			},
-			commitPop: popInstant,
+			commitPop: () => flushSync(popInstant),
 			reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 		})
 		swipeControl.current = control

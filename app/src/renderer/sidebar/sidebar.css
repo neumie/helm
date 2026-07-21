@@ -1749,11 +1749,13 @@ button.banner {
 
 /* ---------- interactive swipe-back (§3.10 gestures) ---------- */
 
-/* While a two-finger gesture drives the pop, inline transforms own the pages:
- * kill entrance animations so tracking is 1:1 with the fingers. The commit /
- * spring-back easing is set inline by the controller (swipe.ts). */
+/* While a two-finger gesture owns the pop, only compositor transforms move.
+ * Promotion is temporary: cleanup removes the class after settle/cancel. */
 .nav-page.nav-swiping {
 	animation: none !important;
+	will-change: transform;
+	backface-visibility: hidden;
+	pointer-events: none;
 }
 
 /* Dimming scrim over the peeking previous page; opacity 1→0 with progress.
@@ -1763,6 +1765,7 @@ button.banner {
 	inset: 0;
 	background: var(--scrim);
 	opacity: 1;
+	will-change: opacity;
 	pointer-events: none;
 	z-index: 30;
 }
