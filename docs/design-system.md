@@ -247,11 +247,12 @@ The sidebar work-item row; also the template for any dense list.
 
 Reference implementation: `app/src/renderer/toast.ts` + `styles.css` "toasts" block.
 
-- **Bottom notice, not corner card:** container fixed bottom-center (`left: 50%`, translateX −50%), 12px bottom inset, width `min(320px, 100vw − 32px)`, column stack, gap 6, newest at bottom, `role="status"` + `aria-live="polite"`. The container ignores pointer events; each notice restores them.
+- **Compact bottom-right notice:** container fixed 12px from the right and bottom edges, width `min(320px, 100vw − 32px)`, column stack, gap 6, newest at bottom, `role="status"` + `aria-live="polite"`. In Helm’s split cockpit this avoids straddling the sidebar divider or covering the active prompt at center. The container ignores pointer events; each notice restores them.
 - Notice: full container width, padding **9 12 11**, background `--chrome`, 1px `--hairline`, radius `--radius-lg`, `--shadow-1`. This consistent low profile is deliberately quieter than a content-sized corner card.
 - Content: message 13/500, 18px line-height, `--text-0`; optional detail 11/400, 14px line-height, `--text-2`, single-line ellipsis 1px below. Optional one action is a borderless quiet control aligned to the first line: height 24, padding 0 6, 12/600 `--accent`, radius `--radius-md`, `--fill-subtle` hover. Never put an outlined button inside the notice.
 - Motion: enter 150ms ease-out (opacity 0→1, translateY(8px)→0, double-rAF before adding the shown class); exit 120ms reverse. Removal by timer, not `transitionend` (unreliable in hidden tabs).
 - TTL default 4000ms. Optional countdown: one **inset 1px hairline** (`left/right 12`, bottom 5, `--thumb` at 0.7 opacity), `transform: scaleX` draining left→right, `linear` over the TTL. It communicates time without becoming a full-width progress bar.
+- Soft-close copy names the terminal in one line: **“<display name> closed” + Undo**. Never suppress generic names such as `zsh`; long names ellipsize before the action.
 - **Do** use a toast + Undo for soft-destructive actions (tab close grace). **Don't** stack more than 3 visible toasts — coalesce; **don't** put more than one action in a toast.
 
 ### 3.7 Inputs & selects

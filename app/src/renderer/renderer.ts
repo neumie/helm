@@ -650,8 +650,7 @@ function closeTab(tab: Tab): void {
 		void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
 			if (!grace) return // non-persistent pty — already fully killed, nothing to undo
 			const toast = showToast({
-				message: 'Terminal closed',
-				detail: shown === 'zsh' ? undefined : shown,
+				message: `${shown} closed`,
 				ttlMs: grace.graceMs,
 				countdown: true,
 				action: {
@@ -755,8 +754,7 @@ function killParkedTab(tab: Tab): void {
 		void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
 			if (!grace) return
 			const toast = showToast({
-				message: 'Background terminal closed',
-				detail: shown === 'zsh' ? undefined : shown,
+				message: `${shown} closed`,
 				ttlMs: grace.graceMs,
 				countdown: true,
 				action: {
