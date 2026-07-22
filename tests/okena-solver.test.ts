@@ -372,6 +372,71 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 	}
 })
 
+test('OkenaSpawner replaces the existing agent for an explicit Re-plan without focusing the project', async () => {
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-replan-replace-'))
+	const actions: Record<string, unknown>[] = []
+	const commandRuns: Array<{ terminalId: string; command: string; freshTerminal?: boolean }> = []
+	const client = {
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return {}
+		},
+		runCommand: async (terminalId: string, command: string, opts?: { freshTerminal?: boolean }) => {
+			commandRuns.push({ terminalId, command, freshTerminal: opts?.freshTerminal })
+		},
+	} as unknown as OkenaClient
+	const worktrees = {
+		ensureWorktreeProject: async () => ({
+			wtProjectId: 'project-1',
+			worktreePath,
+			autoTerminalId: null,
+		}),
+		findPlanTerminal: async () => 'terminal-old-plan',
+		createTerminal: async () => 'terminal-new-plan',
+	} as unknown as OkenaWorktreeManager
+	const config = configSchema.parse({
+		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
+		projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
+		solver: { type: 'okena', agent: 'claude' },
+	})
+
+	try {
+		const result = await new OkenaSpawner(client, worktrees).startPlanningSession({
+			projectConfig: config.projects[0],
+			branchName: 'feat/replace-plan',
+			planDirName: '2026-07-22-replace-plan',
+			taskTitle: 'Replace plan',
+			taskContext: { title: 'Replace plan' },
+			solverConfig: config.solver,
+			replaceExistingSession: true,
+		})
+
+		assert.equal(commandRuns.length, 1)
+		assert.equal(commandRuns[0]?.terminalId, 'terminal-new-plan')
+		assert.equal(commandRuns[0]?.freshTerminal, true)
+		assert.match(result.hint, /restarted/i)
+		assert.deepEqual(actions, [
+			{
+				action: 'close_terminal',
+				project_id: 'project-1',
+				terminal_id: 'terminal-old-plan',
+			},
+			{
+				action: 'rename_terminal',
+				project_id: 'project-1',
+				terminal_id: 'terminal-new-plan',
+				name: 'plan: Replace plan',
+			},
+		])
+		assert.equal(
+			actions.some(action => action.action === 'focus_terminal'),
+			false,
+		)
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+	}
+})
+
 test('OkenaSolver fails promptly when its execution workspace disappears', async () => {
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-vanished-'))
 	const client = {

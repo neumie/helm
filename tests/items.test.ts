@@ -3365,6 +3365,7 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 			assert.ok(first.data.planDirName.startsWith(`${planDate}-plan-item-flow-`))
 			assert.equal(planningSpawner.calls[0].projectConfig.baseBranch, 'release/plan')
 			assert.equal(planningSpawner.calls[0].existingWorktreePath, undefined)
+			assert.equal(planningSpawner.calls[0].replaceExistingSession, false)
 			assert.equal(planningSpawner.calls[0].taskContext.title, 'Plan Item flow')
 			assert.equal(planningSpawner.calls[0].taskContext.description, 'Write a plan for this Item.')
 			assert.match(readFileSync(first.data.readmePath, 'utf-8'), /Planning agent started/)
@@ -3390,6 +3391,7 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 			assert.equal(second.data.worktreePath, first.data.worktreePath)
 			assert.equal(second.data.planDirName, first.data.planDirName)
 			assert.equal(planningSpawner.calls[1].existingWorktreePath, first.data.worktreePath)
+			assert.equal(planningSpawner.calls[1].replaceExistingSession, true)
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}

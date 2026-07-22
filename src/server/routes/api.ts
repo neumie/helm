@@ -1151,6 +1151,7 @@ export function apiRoutes(
 					workspace: effectiveWorkspace,
 				},
 				existingWorktreePath: planningInMain ? projectConfig.repoPath : existingWorktreePath,
+				replaceExistingSession: item.plannedAt !== null,
 			})
 			worktreePath = session.worktreePath
 			hint = session.hint

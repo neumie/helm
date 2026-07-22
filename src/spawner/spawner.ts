@@ -10,6 +10,8 @@ export interface PlanningSessionParams {
 	solverConfig: HelmConfig['solver']
 	/** If set, reuse this worktree instead of creating a new one. */
 	existingWorktreePath?: string
+	/** Explicit Re-plan: replace an existing interactive planning agent instead of reusing it. */
+	replaceExistingSession?: boolean
 	signal?: AbortSignal
 }
 
