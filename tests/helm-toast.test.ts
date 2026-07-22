@@ -15,7 +15,7 @@ test('toasts render as compact bottom-right notices', () => {
 	assert.match(css, /#toasts\s*\{[^}]*width:\s*min\(320px, calc\(100vw - 32px\)\)/s)
 	assert.match(css, /#toasts\s*\{[^}]*pointer-events:\s*none/s)
 	assert.doesNotMatch(css, /#toasts\s*\{[^}]*left:|#toasts\s*\{[^}]*translateX/s)
-	assert.match(css, /\.toast\s*\{[^}]*width:\s*100%[^}]*padding:\s*9px 12px 11px/s)
+	assert.match(css, /\.toast\s*\{[^}]*width:\s*100%[^}]*min-height:\s*48px[^}]*padding:\s*11px 12px 13px/s)
 	assert.match(css, /\.toast\s*\{[^}]*align-items:\s*flex-start/s)
 	assert.match(story, /justifyContent:\s*'flex-end'/)
 	assert.match(story, /width:\s*'min\(320px, calc\(100vw - 32px\)\)'/)

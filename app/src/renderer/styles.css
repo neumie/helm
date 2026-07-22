@@ -814,9 +814,10 @@ body.dragging {
 	display: flex;
 	box-sizing: border-box;
 	width: 100%;
+	min-height: 48px;
 	align-items: flex-start;
 	gap: 10px;
-	padding: 9px 12px 11px;
+	padding: 11px 12px 13px;
 	border: 1px solid var(--hairline);
 	border-radius: 8px;
 	background: var(--chrome);
