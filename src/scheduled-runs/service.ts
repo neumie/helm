@@ -336,6 +336,12 @@ export class ScheduledRunService {
 				onSpawned: identity => {
 					run = commands.recordRuntime(run.id, run.revision, runtimeFields(run, identity))
 				},
+				onQuarantined: quarantine => {
+					if (quarantine.identity)
+						run = commands.recordRuntime(run.id, run.revision, runtimeFields(run, quarantine.identity))
+					if (!commands.isTerminal(run))
+						run = commands.markQuarantined(run.id, run.revision, `Launch cleanup: ${quarantine.reason}`)
+				},
 			})
 			// onSpawned advanced the revision; do not mark running before it was durable.
 			run = commands.markRunning(run.id, run.revision)

@@ -49,6 +49,13 @@ export interface DtachSupervisorDeps {
 	unlink?: (path: string) => Promise<void>
 }
 
+export interface LaunchQuarantine {
+	state: 'quarantined'
+	reason: string
+	/** Present only when command + OS fingerprint rediscovery verified a candidate. */
+	identity?: ScheduledProcessIdentity
+}
+
 export interface LaunchDtachInput {
 	profileId: string
 	sessionId: string
@@ -63,6 +70,8 @@ export interface LaunchDtachInput {
 	onSpawned: (identity: ScheduledProcessIdentity) => Promise<void> | void
 	/** Runs only after the master identity has been persisted. */
 	onReady?: (identity: ScheduledProcessIdentity) => Promise<void> | void
+	/** Durable handoff when failed launch cleanup cannot prove termination. */
+	onQuarantined?: (quarantine: LaunchQuarantine) => Promise<void> | void
 	readinessTimeoutMs?: number
 }
 
@@ -243,7 +252,7 @@ export class DtachSupervisor {
 			throw spawnFailure ?? new Error('Scheduled dtach socket did not become ready')
 		} catch (error) {
 			settled = true
-			await this.cleanupLaunchFailure(socketPath, master, bootstrap, input.diagnosticPath)
+			await this.cleanupLaunchFailure(socketPath, master, bootstrap, input.diagnosticPath, input.onQuarantined)
 			throw error
 		}
 	}
@@ -291,12 +300,15 @@ export class DtachSupervisor {
 		master: ScheduledProcessIdentity | undefined,
 		bootstrap: ProcessFingerprint | undefined,
 		diagnosticPath: string,
+		onQuarantined: LaunchDtachInput['onQuarantined'],
 	): Promise<void> {
 		let owned = master
-		if (!owned && (this.deps.probe ?? probeScheduledSocket)) {
+		if (!owned) {
 			try {
-				if ((await (this.deps.probe ?? probeScheduledSocket)(socketPath)) === 'live')
-					owned = (await this.captureReadyIdentity(socketPath)) ?? undefined
+				// A daemonized dtach master may outlive its launcher before the socket is
+				// observable. Rediscover from its exact derived socket argv and fresh OS
+				// fingerprint, never from socket liveness.
+				owned = (await this.captureReadyIdentity(socketPath)) ?? undefined
 			} catch {
 				// A failed observation is quarantined below; never guess ownership.
 			}
@@ -304,6 +316,8 @@ export class DtachSupervisor {
 		if (owned) {
 			const result = await this.teardownByPath(socketPath, owned, diagnosticPath)
 			appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup', { result })
+			if (result !== 'quarantined') return
+			await this.reportLaunchQuarantine(onQuarantined, diagnosticPath, 'master_teardown_unverified', owned)
 			return
 		}
 		const currentBootstrap = bootstrap ? await (this.deps.inspectProcess ?? processFingerprint)(bootstrap.pid) : null
@@ -315,10 +329,20 @@ export class DtachSupervisor {
 				})
 				return
 			} catch {
-				// Fall through to a durable diagnostic quarantine.
+				// Fall through to a durable quarantine handoff.
 			}
 		}
-		appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_quarantined', { reason: 'master_identity_unavailable' })
+		await this.reportLaunchQuarantine(onQuarantined, diagnosticPath, 'master_identity_unavailable')
+	}
+
+	private async reportLaunchQuarantine(
+		onQuarantined: LaunchDtachInput['onQuarantined'],
+		diagnosticPath: string,
+		reason: string,
+		identity?: ScheduledProcessIdentity,
+	): Promise<void> {
+		appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_quarantined', { reason, pid: identity?.pid ?? null })
+		await onQuarantined?.({ state: 'quarantined', reason, identity })
 	}
 
 	private async teardownByPath(
@@ -379,7 +403,9 @@ export class DtachSupervisor {
 	}
 
 	private isOwnedDtachMaster(candidate: ProcessFingerprint, command: string | null, socketPath: string): boolean {
-		return basename(candidate.executable) === 'dtach' && !!command?.includes(socketPath)
+		// `pgrep -f` is only candidate discovery. Exact derived namespace argv plus
+		// a fresh PID/start fingerprint is the ownership proof before signaling.
+		return basename(candidate.executable) === 'dtach' && !!command?.includes(`-n ${socketPath}`)
 	}
 
 	private async inspectOwnership(socketPath: string, identity: ScheduledProcessIdentity): Promise<OwnershipState> {

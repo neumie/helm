@@ -203,6 +203,131 @@ test('readiness timeout cleans up a still-owned bootstrap launcher', async () =>
 	}
 })
 
+test('exited launcher with a dead probe rediscovers and tears down its daemon master', async () => {
+	const root = mkdtempSync('/tmp/hsf-')
+	const sessionId = scheduledSessionId('exited-launcher')
+	const socket = scheduledSocketPath('work', sessionId, root)
+	const signals: NodeJS.Signals[] = []
+	let launcherInspections = 0
+	try {
+		const supervisor = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'dead',
+			inspectProcess: async pid => {
+				if (pid === launcher.pid) return ++launcherInspections === 1 ? launcher : null
+				return pid === master.pid ? master : null
+			},
+			inspectOwnership: async () => (signals.length ? 'dead' : 'verified'),
+			spawn: () => ({ pid: launcher.pid, once: () => undefined, unref: () => {} }),
+			signalGroup: (_group, signal) => void signals.push(signal),
+			sleep: async () => {},
+			unlink: async () => {},
+		})
+		await assert.rejects(
+			supervisor.launch({
+				profileId: 'work',
+				sessionId,
+				socketRoot: root,
+				dtachBinary: 'dtach',
+				hostCommand: 'node',
+				hostArgs: [],
+				cwd: root,
+				env: {},
+				diagnosticPath: diagnostic,
+				onSpawned: () => {},
+				readinessTimeoutMs: 0,
+			}),
+			/did not become ready/,
+		)
+		assert.equal(launcherInspections, 1)
+		assert.deepEqual(signals, ['SIGTERM'])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('unknown cleanup probe quarantines a rediscovered master through the typed callback', async () => {
+	const root = mkdtempSync('/tmp/hsq-')
+	const sessionId = scheduledSessionId('unknown-cleanup')
+	const socket = scheduledSocketPath('work', sessionId, root)
+	const signals: NodeJS.Signals[] = []
+	const quarantines: unknown[] = []
+	try {
+		let probes = 0
+		const supervisor = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => (++probes === 1 ? 'dead' : 'unknown'),
+			spawn: () => ({ pid: launcher.pid, once: () => undefined, unref: () => {} }),
+			signalGroup: (_group, signal) => void signals.push(signal),
+			sleep: async () => {},
+		})
+		await assert.rejects(
+			supervisor.launch({
+				profileId: 'work',
+				sessionId,
+				socketRoot: root,
+				dtachBinary: 'dtach',
+				hostCommand: 'node',
+				hostArgs: [],
+				cwd: root,
+				env: {},
+				diagnosticPath: diagnostic,
+				onSpawned: () => {},
+				onQuarantined: value => void quarantines.push(value),
+				readinessTimeoutMs: 0,
+			}),
+			/did not become ready/,
+		)
+		assert.deepEqual(signals, [])
+		assert.deepEqual(quarantines, [
+			{ state: 'quarantined', reason: 'master_teardown_unverified', identity: { ...master, socketHolder: master } },
+		])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('mismatched rediscovered master is quarantined without signaling its process group', async () => {
+	const root = mkdtempSync('/tmp/hsm-')
+	const sessionId = scheduledSessionId('mismatch-cleanup')
+	const socket = scheduledSocketPath('work', sessionId, root)
+	const signals: NodeJS.Signals[] = []
+	const quarantines: unknown[] = []
+	try {
+		const supervisor = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'dead',
+			inspectOwnership: async () => 'mismatch',
+			spawn: () => ({ pid: launcher.pid, once: () => undefined, unref: () => {} }),
+			signalGroup: (_group, signal) => void signals.push(signal),
+			sleep: async () => {},
+		})
+		await assert.rejects(
+			supervisor.launch({
+				profileId: 'work',
+				sessionId,
+				socketRoot: root,
+				dtachBinary: 'dtach',
+				hostCommand: 'node',
+				hostArgs: [],
+				cwd: root,
+				env: {},
+				diagnosticPath: diagnostic,
+				onSpawned: () => {},
+				onQuarantined: value => void quarantines.push(value),
+				readinessTimeoutMs: 0,
+			}),
+			/did not become ready/,
+		)
+		assert.deepEqual(signals, [])
+		assert.deepEqual(quarantines, [
+			{ state: 'quarantined', reason: 'master_teardown_unverified', identity: { ...master, socketHolder: master } },
+		])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('launch races socket readiness with asynchronous spawn error', async () => {
 	const root = mkdtempSync('/tmp/hse-')
 	try {
