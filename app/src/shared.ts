@@ -25,6 +25,40 @@ export interface RestoredSession {
 	customName: string | null
 	/** Parked when the previous run ended — restores headless into the background popover. */
 	parked: boolean
+	/** Opaque tab-group membership, or null when ungrouped. */
+	groupId: string | null
+}
+
+export type TabGroupSurface = 'strip' | 'background'
+
+/** Persisted tab-group definition; members remain on their individual session records. */
+export interface TabGroup {
+	id: string
+	name: string
+	collapsedStrip: boolean
+	collapsedBackground: boolean
+}
+
+/** Declarative group actions; their PTY/DOM effects belong to a later adapter. */
+export type TabGroupActionIntent =
+	| { type: 'rename'; groupId: string; name: string }
+	| { type: 'move'; sessionId: string; groupId: string | null }
+	| { type: 'open-all'; groupId: string }
+	| { type: 'restore-all'; groupId: string }
+	| { type: 'move-all-background'; groupId: string }
+	| { type: 'close-all'; groupId: string }
+
+export interface TabGroupsApi {
+	list(): Promise<TabGroup[]>
+	create(name: string, sessionIds: string[]): Promise<TabGroup | null>
+	rename(groupId: string, name: string): Promise<TabGroup | null>
+	delete(groupId: string): Promise<boolean>
+	setMembership(sessionId: string, groupId: string | null): Promise<boolean>
+	setCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): Promise<boolean>
+	/** Persists one group's strip/background placement; it never moves a PTY. */
+	move(groupId: string, parked: boolean): Promise<string[] | null>
+	/** Validates a declarative action without opening, closing, or killing PTYs. */
+	intent(intent: TabGroupActionIntent): Promise<TabGroupActionIntent | null>
 }
 
 export interface PtyApi {
@@ -47,6 +81,8 @@ export interface GraceClose {
 export interface SessionsApi {
 	/** Live sessions from the previous run, oldest first. Empty when none/persistence off. */
 	list(): Promise<RestoredSession[]>
+	/** Profile-token-scoped tab-group metadata and membership mutations. */
+	groups: TabGroupsApi
 	/** Persist the tab title so a restored tab gets its label back. */
 	setTitle(sessionId: string, title: string): void
 	/** Persist (or clear, with null) the manual rename pin. */

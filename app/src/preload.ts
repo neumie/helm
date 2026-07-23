@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
-import type { GraceClose, HelmApi, PtySpawnResult, RestoredSession, ThemeListEntry, UiPreview } from './shared'
+import type {
+	GraceClose,
+	HelmApi,
+	PtySpawnResult,
+	RestoredSession,
+	TabGroup,
+	TabGroupActionIntent,
+	ThemeListEntry,
+	UiPreview,
+} from './shared'
 import type { DaemonApi, HelmResult, HelmSnapshot, ProfilesApi } from './shared-helm'
 
 // Captured synchronously at preload time so the renderer gets the URL without an async hop.
@@ -97,6 +106,28 @@ const api: HelmApi = {
 	},
 	sessions: {
 		list: () => ipcRenderer.invoke('sessions:list', sessionProfileToken) as Promise<RestoredSession[]>,
+		groups: {
+			list: () => ipcRenderer.invoke('tab-groups:list', sessionProfileToken) as Promise<TabGroup[]>,
+			create: (name, sessionIds) =>
+				ipcRenderer.invoke('tab-groups:create', name, sessionIds, sessionProfileToken) as Promise<TabGroup | null>,
+			rename: (groupId, name) =>
+				ipcRenderer.invoke('tab-groups:rename', groupId, name, sessionProfileToken) as Promise<TabGroup | null>,
+			delete: groupId => ipcRenderer.invoke('tab-groups:delete', groupId, sessionProfileToken) as Promise<boolean>,
+			setMembership: (sessionId, groupId) =>
+				ipcRenderer.invoke('tab-groups:set-membership', sessionId, groupId, sessionProfileToken) as Promise<boolean>,
+			setCollapsed: (groupId, surface, collapsed) =>
+				ipcRenderer.invoke(
+					'tab-groups:set-collapsed',
+					groupId,
+					surface,
+					collapsed,
+					sessionProfileToken,
+				) as Promise<boolean>,
+			move: (groupId, parked) =>
+				ipcRenderer.invoke('tab-groups:move', groupId, parked, sessionProfileToken) as Promise<string[] | null>,
+			intent: intent =>
+				ipcRenderer.invoke('tab-groups:intent', intent, sessionProfileToken) as Promise<TabGroupActionIntent | null>,
+		},
 		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title, sessionProfileToken),
 		setCustomName: (sessionId, name) =>
 			ipcRenderer.send('session:set-custom-name', sessionId, name, sessionProfileToken),

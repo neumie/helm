@@ -1188,13 +1188,117 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			customName: support.registry.get(s.sessionId)?.customName ?? null,
 			// Parked sessions restore as parked (popover rows), never as strip tabs.
 			parked: support.registry.get(s.sessionId)?.parked === true,
+			groupId: support.registry.get(s.sessionId)?.groupId ?? null,
 			// Registry createdAt (original spawn) beats socket birthtime for ordering.
 			createdAt: support.registry.get(s.sessionId)?.createdAt ?? s.createdAt,
 			order: support.registry.get(s.sessionId)?.order,
 		}))
 		.sort(sessions.compareSessionOrder)
-		.map(({ sessionId, title, customName, parked }) => ({ sessionId, title, customName, parked }))
+		.map(({ sessionId, title, customName, parked, groupId }) => ({ sessionId, title, customName, parked, groupId }))
 })
+
+const TAB_GROUP_ACTION_TYPES = new Set<sessions.TabGroupActionIntent['type']>([
+	'rename',
+	'move',
+	'open-all',
+	'restore-all',
+	'move-all-background',
+	'close-all',
+])
+
+/** Validate a declarative action only; this adapter must never control a PTY. */
+function parseTabGroupActionIntent(value: unknown): sessions.TabGroupActionIntent | null {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+	const input = value as Record<string, unknown>
+	if (
+		typeof input.type !== 'string' ||
+		!TAB_GROUP_ACTION_TYPES.has(input.type as sessions.TabGroupActionIntent['type'])
+	)
+		return null
+	return sessions.tabGroupActionIntent(input.type as sessions.TabGroupActionIntent['type'], {
+		groupId: input.groupId,
+		name: input.name,
+		sessionId: input.sessionId,
+		targetGroupId: input.type === 'move' ? input.groupId : undefined,
+	})
+}
+
+// Tab groups are persisted metadata only. PTY/DOM effects for declarative
+// actions are intentionally deferred to the renderer adapter slice.
+ipcMain.handle('tab-groups:list', (_event, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, [], () => getSessionSupport()?.registry.getGroups() ?? []),
+)
+
+ipcMain.handle('tab-groups:create', (_event, name: unknown, sessionIds: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		if (
+			typeof name !== 'string' ||
+			!Array.isArray(sessionIds) ||
+			sessionIds.length > 100 ||
+			!sessionIds.every(sessions.isValidSessionId)
+		)
+			return null
+		return getSessionSupport()?.registry.createGroup(name, sessionIds) ?? null
+	}),
+)
+
+ipcMain.handle('tab-groups:rename', (_event, groupId: unknown, name: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		if (!sessions.isValidTabGroupId(groupId) || typeof name !== 'string') return null
+		return getSessionSupport()?.registry.renameGroup(groupId, name) ?? null
+	}),
+)
+
+ipcMain.handle('tab-groups:delete', (_event, groupId: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, false, () =>
+		sessions.isValidTabGroupId(groupId) ? (getSessionSupport()?.registry.deleteGroup(groupId) ?? false) : false,
+	),
+)
+
+ipcMain.handle('tab-groups:set-membership', (_event, sessionId: unknown, groupId: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, false, () => {
+		if (!sessions.isValidSessionId(sessionId) || (groupId !== null && !sessions.isValidTabGroupId(groupId)))
+			return false
+		return getSessionSupport()?.registry.setSessionGroup(sessionId, groupId) ?? false
+	}),
+)
+
+ipcMain.handle(
+	'tab-groups:set-collapsed',
+	(_event, groupId: unknown, surface: unknown, collapsed: unknown, profileToken: unknown) =>
+		sessionIpcGate.handle(profileToken, false, () => {
+			if (
+				!sessions.isValidTabGroupId(groupId) ||
+				(surface !== 'strip' && surface !== 'background') ||
+				typeof collapsed !== 'boolean'
+			)
+				return false
+			return getSessionSupport()?.registry.setGroupCollapsed(groupId, surface, collapsed) ?? false
+		}),
+)
+
+ipcMain.handle('tab-groups:move', (_event, groupId: unknown, parked: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		if (!sessions.isValidTabGroupId(groupId) || typeof parked !== 'boolean') return null
+		return getSessionSupport()?.registry.moveGroup(groupId, parked) ?? null
+	}),
+)
+
+ipcMain.handle('tab-groups:intent', (_event, value: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		const intent = parseTabGroupActionIntent(value)
+		if (!intent) return null
+		const registry = getSessionSupport()?.registry
+		if (!registry) return null
+		if (intent.type === 'move') {
+			return registry.get(intent.sessionId) &&
+				(intent.groupId === null || registry.getGroups().some(group => group.id === intent.groupId))
+				? intent
+				: null
+		}
+		return registry.getGroups().some(group => group.id === intent.groupId) ? intent : null
+	}),
+)
 
 // Park/unpark a session in the registry so background terminals survive a
 // relaunch as background terminals (renderer owns the in-memory tab state).
