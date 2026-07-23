@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -145,6 +145,16 @@ test('PlanningApplication enforces zero, double, and mismatched readiness callba
 			return { worktreePath: returnedRoot, branchName: params.branchName, hint: 'mismatch' }
 		})
 		assert.equal(mismatch.sessionMayExist, true)
+		const branchRoot = mkdtempSync(join(tmpdir(), 'helm-planning-branch-'))
+		try {
+			const wrongBranch = await expectLaunchFailure(async params => {
+				params.onWorktreeReady(branchRoot)
+				return { worktreePath: branchRoot, branchName: `${params.branchName}-wrong`, hint: 'branch mismatch' }
+			})
+			assert.equal(wrongBranch.sessionMayExist, true)
+		} finally {
+			rmSync(branchRoot, { recursive: true, force: true })
+		}
 	} finally {
 		rmSync(callbackRoot, { recursive: true, force: true })
 		rmSync(returnedRoot, { recursive: true, force: true })
@@ -201,6 +211,223 @@ test('PlanningApplication retains the origin profile commands across a deferred 
 		)
 		assert.equal(db.forProfile('two').items.get(item.id), null)
 	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('Plan claims exclude a concurrent Plan and Start, while a Start that arrives first excludes Plan', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-arrival-'))
+	const workspace = mkdtempSync(join(tmpdir(), 'helm-planning-arrival-worktree-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	let release: (() => void) | undefined
+	const blockingSpawner = new ContractSpawner(
+		params =>
+			new Promise(resolve => {
+				release = () => {
+					params.onWorktreeReady(workspace)
+					resolve({ worktreePath: workspace, branchName: params.branchName, hint: 'ready' })
+				}
+			}),
+	)
+	try {
+		const item = commands.createSolveItem({ title: 'Arrival', projectSlug: 'helm', prompt: 'Arrival' })
+		const app = new PlanningApplication(config, commands, provider, blockingSpawner, async () => blockingSpawner)
+		const first = app.prepare({ itemId: item.id })
+		await new Promise(resolve => setImmediate(resolve))
+		await assert.rejects(
+			app.prepare({ itemId: item.id }),
+			(value: unknown) => value instanceof PlanningError && value.code === 'planning_conflict',
+		)
+		assert.throws(() => app.assertStartAllowed(item.id), /incomplete/i)
+		release?.()
+		await first
+
+		const startFirst = commands.createSolveItem({ title: 'Started', projectSlug: 'helm', prompt: 'Started' })
+		commands.startItem(startFirst.id)
+		await assert.rejects(
+			app.prepare({ itemId: startFirst.id }),
+			(value: unknown) => value instanceof PlanningError && value.code === 'not_plannable',
+		)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(workspace, { recursive: true, force: true })
+	}
+})
+
+test('a Drainer candidate captured before Plan cannot start after the synchronous planning claim', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-drainer-race-'))
+	const workspace = mkdtempSync(join(tmpdir(), 'helm-planning-drainer-worktree-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	let release: (() => void) | undefined
+	try {
+		const item = commands.createSolveItem({ title: 'Drainer race', projectSlug: 'helm', prompt: 'Race' })
+		const staleCandidate = commands.getItem(item.id)
+		assert.equal(staleCandidate?.status, 'ready')
+		if (!staleCandidate) throw new Error('Expected a Drainer candidate')
+		const spawner = new ContractSpawner(
+			params =>
+				new Promise(resolve => {
+					release = () => {
+						params.onWorktreeReady(workspace)
+						resolve({ worktreePath: workspace, branchName: params.branchName, hint: 'ready' })
+					}
+				}),
+		)
+		const app = new PlanningApplication(config, commands, provider, spawner, async () => spawner)
+		const planning = app.prepare({ itemId: item.id })
+		await new Promise(resolve => setImmediate(resolve))
+		assert.throws(() => commands.startItem(staleCandidate.id), /Only ready, Inbox, or active planned Items/)
+		release?.()
+		await planning
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(workspace, { recursive: true, force: true })
+	}
+})
+
+test('Main and Worktree planning recognize filesystem aliases without reusing the canonical checkout', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-alias-'))
+	const repo = mkdtempSync(join(tmpdir(), 'helm-planning-repo-'))
+	const repoAlias = `${repo}-alias`
+	const worktree = mkdtempSync(join(tmpdir(), 'helm-planning-worktree-'))
+	symlinkSync(repo, repoAlias)
+	const aliasConfig = { ...config, projects: [{ ...config.projects[0], repoPath: repo }] }
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, aliasConfig)
+	const observed: Array<{ existing?: string; branch: string }> = []
+	const spawner = new ContractSpawner(async params => {
+		observed.push({ existing: params.existingWorktreePath, branch: params.branchName })
+		const path = params.solverConfig.workspace === 'main' ? repoAlias : worktree
+		params.onWorktreeReady(path)
+		return { worktreePath: path, branchName: params.branchName, hint: 'ready' }
+	})
+	try {
+		const mainToWorktree = commands.createSolveItem({ title: 'Main alias', projectSlug: 'helm', prompt: 'Main alias' })
+		commands.beginPlanning(mainToWorktree.id)
+		commands.recordPlanPrepared(mainToWorktree.id, {
+			worktreePath: repoAlias,
+			branchName: null,
+			planDirName: 'main-alias',
+			spawner: 'default',
+		})
+		const app = new PlanningApplication(aliasConfig, commands, provider, spawner, async () => spawner)
+		await app.prepare({ itemId: mainToWorktree.id, solverWorkspace: 'worktree' })
+		assert.equal(observed[0]?.existing, undefined)
+		assert.equal(commands.getItem(mainToWorktree.id)?.worktreePath, worktree)
+		assert.notEqual(commands.getItem(mainToWorktree.id)?.branchName, null)
+
+		const worktreeToMain = commands.createSolveItem({
+			title: 'Worktree alias',
+			projectSlug: 'helm',
+			prompt: 'Worktree alias',
+		})
+		commands.beginPlanning(worktreeToMain.id)
+		commands.recordPlanPrepared(worktreeToMain.id, {
+			worktreePath: worktree,
+			branchName: 'feat/worktree-alias',
+			planDirName: 'worktree-alias',
+			spawner: 'default',
+		})
+		await app.prepare({ itemId: worktreeToMain.id, solverWorkspace: 'main' })
+		assert.equal(observed[1]?.existing, repo)
+		assert.equal(commands.getItem(worktreeToMain.id)?.branchName, null)
+		assert.equal(commands.getItem(worktreeToMain.id)?.worktreePath, repoAlias)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(repoAlias, { force: true })
+		rmSync(repo, { recursive: true, force: true })
+		rmSync(worktree, { recursive: true, force: true })
+	}
+})
+
+test('late Spawner readiness callbacks are ignored after preparation has settled', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-late-'))
+	const workspace = mkdtempSync(join(tmpdir(), 'helm-planning-late-worktree-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	let late: (() => void) | undefined
+	try {
+		const item = commands.createSolveItem({ title: 'Late', projectSlug: 'helm', prompt: 'Late' })
+		const spawner = new ContractSpawner(async params => {
+			params.onWorktreeReady(workspace)
+			late = () => params.onWorktreeReady(workspace)
+			return { worktreePath: workspace, branchName: params.branchName, hint: 'ready' }
+		})
+		const app = new PlanningApplication(config, commands, provider, spawner, async () => spawner)
+		await app.prepare({ itemId: item.id })
+		const eventsBefore = db.items.getEvents(item.id)
+		assert.doesNotThrow(() => late?.())
+		assert.deepEqual(db.items.getEvents(item.id), eventsBefore)
+		assert.equal(commands.getItem(item.id)?.status, 'active')
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(workspace, { recursive: true, force: true })
+	}
+})
+
+test('planning lifecycle row and event writes roll back together on event failures', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-transaction-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	const originalInsertEvent = db.items.insertEvent.bind(db.items)
+	const failEvents = () => {
+		;(db.items as unknown as { insertEvent: typeof db.items.insertEvent }).insertEvent = () => {
+			throw new Error('event write failed')
+		}
+	}
+	const restoreEvents = () => {
+		;(db.items as unknown as { insertEvent: typeof db.items.insertEvent }).insertEvent = originalInsertEvent
+	}
+	try {
+		const begin = commands.createSolveItem({ title: 'begin rollback', projectSlug: 'helm', prompt: 'begin' })
+		failEvents()
+		assert.throws(() => commands.beginPlanning(begin.id), /event write failed/)
+		restoreEvents()
+		assert.equal(commands.getItem(begin.id)?.status, 'ready')
+		assert.equal(db.items.getEvents(begin.id).length, 0)
+
+		const abort = commands.createSolveItem({ title: 'abort rollback', projectSlug: 'helm', prompt: 'abort' })
+		commands.beginPlanning(abort.id)
+		failEvents()
+		assert.throws(() => commands.abortPlanning(abort.id, abort), /event write failed/)
+		restoreEvents()
+		assert.equal(commands.getItem(abort.id)?.status, 'active')
+		assert.equal(commands.getItem(abort.id)?.workMode, 'manual')
+		assert.deepEqual(
+			db.items.getEvents(abort.id).map(event => event.eventType),
+			['planning_started'],
+		)
+
+		const prepared = commands.createSolveItem({ title: 'prepare rollback', projectSlug: 'helm', prompt: 'prepare' })
+		commands.beginPlanning(prepared.id)
+		failEvents()
+		assert.throws(
+			() =>
+				commands.recordPlanPrepared(prepared.id, {
+					worktreePath: '/tmp/prepare-rollback',
+					branchName: 'feat/prepare-rollback',
+					planDirName: 'prepare-rollback',
+					spawner: 'default',
+				}),
+			/event write failed/,
+		)
+		restoreEvents()
+		const afterPrepared = commands.getItem(prepared.id)
+		assert.equal(afterPrepared?.plannedAt, null)
+		assert.equal(afterPrepared?.worktreePath, null)
+		assert.deepEqual(
+			db.items.getEvents(prepared.id).map(event => event.eventType),
+			['planning_started'],
+		)
+	} finally {
+		restoreEvents()
 		db.close()
 		rmSync(root, { recursive: true, force: true })
 	}

@@ -218,8 +218,15 @@ export class PlanningApplication {
 					onWorktreeReady: worktreePath => {
 						// From this boundary onward an adapter may have a workspace or terminal.
 						sessionMayExist = true
-						if (callbackSealed || ++callbackCount !== 1)
-							throw new Error('Spawner called onWorktreeReady more than once')
+						// A callback from a detached adapter continuation cannot change a
+						// completed planning transaction. Throwing here would instead escape
+						// asynchronously and crash the daemon; log and return the canonical
+						// context without materializing or persisting anything.
+						if (callbackSealed) {
+							log.warn('planning', `Ignoring late workspace readiness callback for ${item.id}`)
+							return canonicalContext
+						}
+						if (++callbackCount !== 1) throw new Error('Spawner called onWorktreeReady more than once')
 						callbackPath = worktreePath
 						const context = prepared.onWorktreeReady(worktreePath)
 						commands.recordPlanningWorkspaceIdentity(

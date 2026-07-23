@@ -374,6 +374,76 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 	}
 })
 
+test('OkenaSpawner keeps two Main-project planning terminals owned by their Item ids', async () => {
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-main-ownership-'))
+	const actions: Record<string, unknown>[] = []
+	let commands = 0
+	const client = {
+		getState: async () => ({
+			projects: [
+				{
+					id: 'project-main',
+					path: worktreePath,
+					layout: {
+						type: 'split',
+						children: [
+							{ type: 'terminal', terminal_id: 'terminal-a' },
+							{ type: 'terminal', terminal_id: 'terminal-b' },
+						],
+					},
+					terminal_names: {
+						'terminal-a': 'plan: Same title [helm:item-a]',
+						'terminal-b': 'plan: Same title [helm:item-b]',
+					},
+				},
+			],
+		}),
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return {}
+		},
+		runCommand: async () => {
+			commands++
+		},
+	} as unknown as OkenaClient
+	const finder = new OkenaWorktreeManager(client)
+	const worktrees = {
+		ensureWorktreeProject: async () => ({ wtProjectId: 'project-main', worktreePath, autoTerminalId: null }),
+		findPlanTerminal: finder.findPlanTerminal.bind(finder),
+		createTerminal: async () => {
+			throw new Error('an Item-owned terminal must be reused')
+		},
+	} as unknown as OkenaWorktreeManager
+	const config = configSchema.parse({
+		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
+		projects: [{ slug: 'helm', repoPath: worktreePath, baseBranch: 'main' }],
+		solver: { type: 'okena', agent: 'claude', workspace: 'main' },
+	})
+	try {
+		const spawner = new OkenaSpawner(client, worktrees)
+		for (const itemId of ['item-a', 'item-b']) {
+			await spawner.startPlanningSession({
+				projectConfig: config.projects[0],
+				branchName: `helm/item/${itemId}`,
+				planDirName: `2026-07-23-${itemId}`,
+				itemId,
+				taskTitle: 'Same title',
+				canonicalContext: { title: 'Same title' },
+				onWorktreeReady: () => ({ title: 'Same title' }),
+				solverConfig: config.solver,
+				existingWorktreePath: worktreePath,
+			})
+		}
+		assert.equal(commands, 0)
+		assert.deepEqual(
+			actions.map(action => action.terminal_id),
+			['terminal-a', 'terminal-b'],
+		)
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+	}
+})
+
 test('OkenaSpawner replaces the existing agent for an explicit Re-plan without focusing the project', async () => {
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-replan-replace-'))
 	const actions: Record<string, unknown>[] = []

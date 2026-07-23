@@ -241,7 +241,13 @@ export async function processSolveItem(
 		let readinessPath: string | undefined
 		let readinessSealed = false
 		const onWorktreeReady = (worktreePath: string): TaskContext => {
-			if (readinessSealed || ++readinessCalls !== 1)
+			// A solver may retain this callback beyond solve() resolution. Do not let
+			// that detached continuation write Item state or throw asynchronously.
+			if (readinessSealed) {
+				log.warn('worker', `Ignoring late workspace readiness callback for ${itemId}`)
+				return taskContext
+			}
+			if (++readinessCalls !== 1)
 				throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
 			readinessPath = worktreePath
 			const adapterContext = preparedContext.onWorktreeReady(worktreePath)

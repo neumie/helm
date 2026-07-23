@@ -2607,6 +2607,72 @@ test('processSolveItem continues after best-effort display naming failure', asyn
 	})
 })
 
+test('processSolveItem enforces zero, double, wrong, and late Solver readiness callbacks', async () => {
+	await withTempDb(async db => {
+		const root = mkdtempSync(join(tmpdir(), 'helm-solver-readiness-'))
+		const commands = new ItemCommands(db.items, config)
+		const runInvalid = async (
+			name: string,
+			run: (params: SolveParams, worktreePath: string) => Promise<SolveResult>,
+		) => {
+			const item = commands.createSolveItem({ title: name, projectSlug: 'helm', prompt: name })
+			await processSolveItem(item.id, config, db, provider, { solve: params => run(params, join(root, item.id)) })
+			assert.equal(commands.getItem(item.id)?.status, 'failed')
+		}
+		try {
+			await runInvalid('zero readiness', async (params, worktreePath) => ({
+				worktreePath,
+				branchName: params.branchName,
+				outcome: { exitCode: 0, events: [] },
+			}))
+			await runInvalid('double readiness', async (params, worktreePath) => {
+				mkdirSync(worktreePath, { recursive: true })
+				params.onWorktreeReady(worktreePath)
+				params.onWorktreeReady(worktreePath)
+				throw new Error('unreachable')
+			})
+			await runInvalid('wrong readiness path', async (params, worktreePath) => {
+				const returnedPath = `${worktreePath}-returned`
+				mkdirSync(worktreePath, { recursive: true })
+				mkdirSync(returnedPath, { recursive: true })
+				params.onWorktreeReady(worktreePath)
+				return { worktreePath: returnedPath, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+			})
+			await runInvalid('wrong readiness branch', async (params, worktreePath) => {
+				mkdirSync(worktreePath, { recursive: true })
+				params.onWorktreeReady(worktreePath)
+				return {
+					worktreePath,
+					branchName: `${params.branchName}-wrong`,
+					outcome: { exitCode: 0, events: [] },
+				}
+			})
+
+			const lateItem = commands.createSolveItem({ title: 'late readiness', projectSlug: 'helm', prompt: 'late' })
+			let late: (() => void) | undefined
+			const lateSolver: Solver = {
+				async solve(params) {
+					const worktreePath = join(root, lateItem.id)
+					mkdirSync(worktreePath, { recursive: true })
+					params.onWorktreeReady(worktreePath)
+					late = () => params.onWorktreeReady(worktreePath)
+					const workspace = new PlanWorkspace(worktreePath, params.planDirName)
+					workspace.ensureDir()
+					writeFileSync(workspace.resultPath, JSON.stringify({ summary: 'late', filesChanged: [] }))
+					return { worktreePath, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+				},
+			}
+			await processSolveItem(lateItem.id, config, db, provider, lateSolver)
+			const eventsBefore = db.items.getEvents(lateItem.id)
+			assert.doesNotThrow(() => late?.())
+			assert.deepEqual(db.items.getEvents(lateItem.id), eventsBefore)
+			assert.equal(commands.getItem(lateItem.id)?.status, 'review')
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	})
+})
+
 test('solve Item cancellation preserves the newly-created worktree identity', async () => {
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-cancelled-solve-worktrees-'))
@@ -4689,6 +4755,183 @@ test('planned loop uses the detected queue size and per-Item agent/model overrid
 				model: 'gpt-5.5',
 				effort: 'xhigh',
 			})
+		} finally {
+			rmSync(worktreePath, { recursive: true, force: true })
+		}
+	})
+})
+
+test('planned Start persists projected solver overrides and clears explicit null overrides', async () => {
+	await withTempDb(async db => {
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-start-projection-'))
+		const commands = new ItemCommands(db.items, config)
+		const makePlanned = (title: string, payload?: Partial<Extract<ItemPayload, { kind: 'solve' }>>) => {
+			const item = commands.createSolveItem({ title, projectSlug: 'helm', prompt: title })
+			for (const [key, value] of Object.entries(payload ?? {})) {
+				if (key === 'solverAgent' && value) commands.setSolveItemAgent(item.id, value as 'claude' | 'codex')
+				if (key === 'solverModel' && typeof value === 'string') commands.setSolveItemModel(item.id, value)
+				if (key === 'solverEffort' && value) commands.setSolveItemEffort(item.id, value as SolverEffort)
+				if (key === 'solverWorkspace' && value) commands.setSolveItemWorkspace(item.id, value as 'main' | 'worktree')
+			}
+			recordPreparedPlan(commands, item.id, {
+				worktreePath,
+				branchName: 'feat/start-projection',
+				planDirName: `start-${item.id}`,
+				spawner: 'default',
+			})
+			return item
+		}
+		const routeQueue = {
+			...queue,
+			processOneItem: (id: string) => {
+				commands.startItem(id)
+				return true
+			},
+		}
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			routeQueue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		try {
+			const setItem = makePlanned('set overrides')
+			const set = await api.request(`/items/${setItem.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					executionMode: 'agent',
+					solverAgent: 'codex',
+					solverModel: 'gpt-5.5',
+					solverEffort: 'xhigh',
+					solverWorkspace: 'worktree',
+				}),
+			})
+			assert.equal(set.status, 200)
+			assert.deepEqual(solvePayload(db, setItem.id), {
+				kind: 'solve',
+				prompt: 'set overrides',
+				solverAgent: 'codex',
+				solverModel: 'gpt-5.5',
+				solverEffort: 'xhigh',
+				solverWorkspace: 'worktree',
+				execution: { mode: 'solver' },
+			})
+
+			const clearItem = makePlanned('clear overrides', {
+				solverModel: 'claude-old',
+				solverEffort: 'high',
+				solverWorkspace: 'main',
+			})
+			const clear = await api.request(`/items/${clearItem.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ executionMode: 'agent', solverModel: null, solverEffort: null, solverWorkspace: null }),
+			})
+			assert.equal(clear.status, 200)
+			assert.deepEqual(solvePayload(db, clearItem.id), {
+				kind: 'solve',
+				prompt: 'clear overrides',
+				execution: { mode: 'solver' },
+			})
+		} finally {
+			rmSync(worktreePath, { recursive: true, force: true })
+		}
+	})
+})
+
+test('planned Start feasibility and planning conflicts leave selection, lifecycle, and events unchanged', async () => {
+	await withTempDb(async db => {
+		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-start-no-mutation-'))
+		const commands = new ItemCommands(db.items, config)
+		const queueThatMustNotStart = { ...queue, processOneItem: () => true }
+		try {
+			const feasibility = commands.createSolveItem({ title: 'wrong main', projectSlug: 'helm', prompt: 'wrong main' })
+			const workspace = new PlanWorkspace(worktreePath, 'wrong-main')
+			workspace.ensureDir()
+			writeFileSync(join(workspace.dir, 'spec.md'), '# plan')
+			recordPreparedPlan(commands, feasibility.id, {
+				worktreePath,
+				branchName: 'feat/wrong-main',
+				planDirName: 'wrong-main',
+				spawner: 'default',
+			})
+			const api = apiRoutes(
+				config,
+				'helm.config.json',
+				db,
+				queueThatMustNotStart as never,
+				poller as never,
+				provider as never,
+				spawner as never,
+				fakeEnricher as never,
+			)
+			const beforeFeasibility = JSON.stringify(commands.getItem(feasibility.id))
+			const beforeFeasibilityEvents = JSON.stringify(db.items.getEvents(feasibility.id))
+			const rejected = await api.request(`/items/${feasibility.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ executionMode: 'loop', solverWorkspace: 'main', solverModel: 'gpt-5.5' }),
+			})
+			assert.equal(rejected.status, 400)
+			assert.equal(JSON.stringify(commands.getItem(feasibility.id)), beforeFeasibility)
+			assert.equal(JSON.stringify(db.items.getEvents(feasibility.id)), beforeFeasibilityEvents)
+
+			const blocked = commands.createSolveItem({
+				title: 'planning claim',
+				projectSlug: 'helm',
+				prompt: 'planning claim',
+			})
+			recordPreparedPlan(commands, blocked.id, {
+				worktreePath,
+				branchName: 'feat/planning-claim',
+				planDirName: 'planning-claim',
+				spawner: 'default',
+			})
+			let release: (() => void) | undefined
+			const blockingSpawner: Spawner = {
+				name: 'default',
+				startPlanningSession: params =>
+					new Promise(resolve => {
+						release = () => {
+							params.onWorktreeReady(worktreePath)
+							resolve({ worktreePath, branchName: params.branchName, hint: 'ready' })
+						}
+					}),
+			}
+			const conflictApi = apiRoutes(
+				config,
+				'helm.config.json',
+				db,
+				queueThatMustNotStart as never,
+				poller as never,
+				provider as never,
+				blockingSpawner,
+				fakeEnricher as never,
+			)
+			const plan = conflictApi.request(`/items/${blocked.id}/plan`, { method: 'POST' })
+			await new Promise(resolve => setImmediate(resolve))
+			const beforeConflict = JSON.stringify(commands.getItem(blocked.id))
+			const beforeConflictEvents = JSON.stringify(db.items.getEvents(blocked.id))
+			const conflict = await conflictApi.request(`/items/${blocked.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					executionMode: 'agent',
+					solverAgent: 'codex',
+					solverModel: 'gpt-5.5',
+					solverEffort: 'xhigh',
+				}),
+			})
+			assert.equal(conflict.status, 409)
+			assert.equal(JSON.stringify(commands.getItem(blocked.id)), beforeConflict)
+			assert.equal(JSON.stringify(db.items.getEvents(blocked.id)), beforeConflictEvents)
+			release?.()
+			assert.equal((await plan).status, 200)
 		} finally {
 			rmSync(worktreePath, { recursive: true, force: true })
 		}
