@@ -654,6 +654,7 @@ interface ProfileSwitchAttestationEvidence {
 		activationCalls: string[]
 		readyProfiles: string[]
 		mixedSnapshotObserved: boolean
+		snapshotObservations: Array<{ expectedProfileId: string; snapshotProfileId: string | null; authoritativeProfileId: string; itemProfileIds: string[] }>
 	}
 	window: {
 		before: { browserWindowId: number; webContentsId: number } | null
@@ -740,7 +741,7 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			workSocket: null,
 			targetSocketDir: null,
 		},
-		daemon: { baseUrl: daemonUrl, activationCalls: [], readyProfiles: [], mixedSnapshotObserved: false },
+		daemon: { baseUrl: daemonUrl, activationCalls: [], readyProfiles: [], mixedSnapshotObserved: false, snapshotObservations: [] },
 		window: {
 			before: null,
 			after: null,
@@ -770,6 +771,20 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			restoreObservation: 'dom',
 		},
 		assertions: {},
+	}
+	const observeDaemonSnapshot = (expectedProfileId: string): void => {
+		const snapshot = helmBridge.getSnapshot()
+		const snapshotProfileId = snapshot.status?.profile?.id ?? null
+		const itemProfileIds = [...new Set((snapshot.items ?? []).map(item => item.profileId).filter((id): id is string => id !== undefined))]
+		const authoritativeProfileId = authoritativeProfilesState.activeProfileId
+		const mixed =
+			snapshotProfileId !== expectedProfileId ||
+			authoritativeProfileId !== expectedProfileId ||
+			snapshot.items === null ||
+			itemProfileIds.some(id => id !== snapshotProfileId)
+		evidence.daemon.snapshotObservations.push({ expectedProfileId, snapshotProfileId, authoritativeProfileId, itemProfileIds })
+		evidence.daemon.mixedSnapshotObserved ||= mixed
+		if (mixed) throw new Error(`Mixed daemon snapshot observed while expecting ${expectedProfileId}.`)
 	}
 	try {
 		if (process.platform !== 'darwin') throw new Error('Profile-switch attestation requires macOS.')
@@ -807,6 +822,7 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		const target = await activateProfile(targetId)
 		if (target.error !== undefined) throw new Error(`A → B activation failed: ${target.error}`)
 		evidence.daemon.readyProfiles.push(authoritativeProfilesState.activeProfileId)
+		observeDaemonSnapshot(targetId)
 		evidence.paths.targetSocketDir = sessions.socketDir()
 		await waitForAttestation('old Work attach client to detach', () =>
 			initial.proc.pid !== undefined && !attestationPidAlive(initial.proc.pid) ? true : null,
@@ -817,6 +833,7 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		const returned = await activateProfile('work')
 		if (returned.error !== undefined) throw new Error(`B → A activation failed: ${returned.error}`)
 		evidence.daemon.readyProfiles.push(authoritativeProfilesState.activeProfileId)
+		observeDaemonSnapshot('work')
 		const returnedEntry = await waitForAttestation('reattached Work dtach client', () => {
 			for (const entry of ptys.values()) if (entry.sessionId === sessionId) return entry
 			return null
@@ -854,6 +871,7 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			bufferPersisted: evidence.buffer.snapshotContainsMarkerAfterFlush && evidence.buffer.snapshotContainsMarkerAfterReturn,
 			bufferRestoredInRenderer: evidence.buffer.rendererMarkerVisibleAfterReturn,
 			activationOrder: evidence.daemon.readyProfiles.join(',') === `${targetId},work`,
+			noMixedSnapshot: !evidence.daemon.mixedSnapshotObserved && evidence.daemon.snapshotObservations.length === 2,
 			namespaceIsolation: evidence.paths.targetSocketDir !== null && evidence.paths.targetSocketDir !== path.dirname(workSocket),
 		}
 		if (!Object.values(evidence.assertions).every(Boolean)) throw new Error('One or more profile-switch assertions failed.')

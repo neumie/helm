@@ -92,13 +92,17 @@ async function run() {
 		const termCmd = Buffer.from(`printf '%s\\n' '${marker}'`, 'utf8').toString('base64')
 		const env = { ...process.env, HELM_URL: daemonState.baseUrl, HELM_SOCKET_DIR: socketRoot, HELM_CLOSE_GRACE_MS: '100' }
 		delete env.ELECTRON_RUN_AS_NODE
-		child = await spawnElectron(electron, [
+		const electronRun = spawnElectron(electron, [
 			appRoot,
 			`--user-data-dir=${userDataDir}`,
 			`--term-cmd=${termCmd}`,
 			`--profile-switch-attestation=${childEvidencePath}`,
 			`--profile-switch-attestation-marker=${marker}`,
 		], env, timeoutMs)
+		// Retain ownership before awaiting: timeout cleanup must never orphan the
+		// isolated Electron child merely because its completion promise rejects.
+		child = electronRun.child
+		child = await electronRun.completed
 		childExited = true
 		try {
 			evidence = JSON.parse(readFileSync(childEvidencePath, 'utf8'))
@@ -114,7 +118,6 @@ async function run() {
 			throw new Error(`Unexpected bridge readiness sequence: ${evidence.daemon?.readyProfiles?.join(',')}`)
 		}
 		evidence.daemon.activationCalls = daemonState.activationCalls
-		evidence.daemon.mixedSnapshotObserved = daemonState.mixedSnapshotObserved
 	} catch (error) {
 		if (!evidence) {
 			evidence = {
@@ -158,7 +161,6 @@ async function startFakeDaemon(targetId) {
 	let activeProfileId = 'work'
 	let generation = 1
 	const activationCalls = []
-	let mixedSnapshotObserved = false
 	const state = () => ({
 		version: 1,
 		generation,
@@ -202,36 +204,59 @@ async function startFakeDaemon(targetId) {
 	})
 	const address = server.address()
 	if (!address || typeof address === 'string') throw new Error('Fake daemon did not bind a loopback port.')
-	return { server, baseUrl: `http://127.0.0.1:${address.port}`, activationCalls, mixedSnapshotObserved }
+	return { server, baseUrl: `http://127.0.0.1:${address.port}`, activationCalls }
 }
 
 function spawnElectron(command, argv, env, timeout) {
-	return new Promise((resolveChild, reject) => {
-		const child = spawn(command, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })
-		let stdout = ''
-		let stderr = ''
-		child.stdout.on('data', data => (stdout += data))
-		child.stderr.on('data', data => (stderr += data))
+	const child = spawn(command, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+	let stdout = ''
+	let stderr = ''
+	child.stdout.on('data', data => (stdout += data))
+	child.stderr.on('data', data => (stderr += data))
+	let timedOut = false
+	let settle
+	const completed = new Promise((resolveChild, reject) => {
+		settle = { resolveChild, reject }
+	})
+	const timer = setTimeout(() => {
+		timedOut = true
+		void stopChild({ child }).then(
+			() => settle.reject(new Error(`Electron attestation timed out after ${timeout}ms: ${stderr.slice(-4000)}`)),
+			error => settle.reject(error),
+		)
+	}, timeout)
+	child.once('error', error => {
+		clearTimeout(timer)
+		if (!timedOut) settle.reject(error)
+	})
+	child.once('exit', code => {
+		clearTimeout(timer)
+		if (!timedOut) settle.resolveChild({ child, code, stdout, stderr })
+	})
+	return { child, completed }
+}
+
+function waitForChildExit(child, timeout) {
+	if (child.exitCode !== null) return Promise.resolve(true)
+	return new Promise(resolveExit => {
 		const timer = setTimeout(() => {
-			child.kill('SIGTERM')
-			reject(new Error(`Electron attestation timed out after ${timeout}ms: ${stderr.slice(-4000)}`))
+			child.removeListener('exit', onExit)
+			resolveExit(false)
 		}, timeout)
-		child.once('error', error => {
+		const onExit = () => {
 			clearTimeout(timer)
-			reject(error)
-		})
-		child.once('exit', code => {
-			clearTimeout(timer)
-			resolveChild({ child, code, stdout, stderr })
-		})
+			resolveExit(true)
+		}
+		child.once('exit', onExit)
 	})
 }
 
 async function stopChild(record) {
 	if (!record.child || record.child.exitCode !== null) return
 	record.child.kill('SIGTERM')
-	await new Promise(resolveStop => setTimeout(resolveStop, 500))
-	if (record.child.exitCode === null) record.child.kill('SIGKILL')
+	if (await waitForChildExit(record.child, 500)) return
+	record.child.kill('SIGKILL')
+	if (!(await waitForChildExit(record.child, 2_000))) throw new Error('Timed out waiting for owned Electron child after SIGKILL.')
 }
 
 function socketFiles(root) {

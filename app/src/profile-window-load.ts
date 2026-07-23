@@ -61,3 +61,5 @@ export function reloadOrCreateProfileWindow(options: ProfileWindowReloadOptions)
 		if (existing) win.webContents.reload()
 	})
 }
+
+export default { reloadOrCreateProfileWindow }
