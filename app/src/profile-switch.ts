@@ -7,6 +7,8 @@ export interface ProfileSwitchFence {
 	cancelIfCurrent(): void
 	/** Admit a coherently observed non-target identity to this epoch's renderer fence. */
 	adoptObservedProfile(profileId: string): void
+	/** Supersession invalidates this epoch without restoring ordinary publication. */
+	invalidateIfCurrent(): void
 	/** Releases bridge detail blocking only after this coordinator's forward chain. */
 	completeIfCurrent(): void
 	observeCoherently(): Promise<ProfilesState | null>
@@ -56,6 +58,8 @@ interface Operation {
 	diagnosticTimer: ReturnType<typeof setTimeout> | null
 	superseded: boolean
 	forwardRetries: number
+	forwardRetryTimer: ReturnType<typeof setTimeout> | null
+	activation: HelmResult<ProfileActivationResult> | null
 }
 
 const FORWARD_RETRY_MS = [100, 500, 2_000, 5_000] as const
@@ -86,14 +90,28 @@ function sameIdentity(left: ProfilesState, right: ProfilesState): boolean {
 export class ProfileSwitchCoordinator {
 	private operation: Operation | null = null
 	private nextEpoch = 0
+	private stopped = false
 
 	constructor(private readonly deps: ProfileSwitchCoordinatorDependencies) {}
 
 	isSwitching(): boolean {
-		return this.operation !== null
+		return !this.stopped && this.operation !== null
+	}
+
+	stop(): void {
+		if (this.stopped) return
+		this.stopped = true
+		const operation = this.operation
+		if (!operation) return
+		this.clearOperationTimers(operation)
+		operation.fence?.cancelIfCurrent()
+		operation.drainRelease?.()
+		this.operation = null
+		operation.deferred.resolve({ error: 'Helm is shutting down.' })
 	}
 
 	switchTo(profileId: string, openItemId?: string): Promise<HelmResult<ProfileActivationResult>> {
+		if (this.stopped) return Promise.resolve({ error: 'Helm is shutting down.' })
 		const current = this.operation
 		if (current) {
 			if (current.targetId === profileId) {
@@ -110,11 +128,6 @@ export class ProfileSwitchCoordinator {
 		}
 
 		const state = this.deps.currentState()
-		if (profileId === state.activeProfileId) {
-			return this.deps
-				.listProfiles()
-				.then(result => (result.error === undefined ? { data: { state: result.data, applied: true } } : result))
-		}
 		const operation: Operation = {
 			epoch: ++this.nextEpoch,
 			targetId: profileId,
@@ -129,10 +142,35 @@ export class ProfileSwitchCoordinator {
 			diagnosticTimer: null,
 			superseded: false,
 			forwardRetries: 0,
+			forwardRetryTimer: null,
+			activation: null,
 		}
 		this.operation = operation
-		void this.run(operation)
+		if (profileId === state.activeProfileId) void this.reconcileCachedNoop(operation)
+		else void this.run(operation)
 		return operation.deferred.promise
+	}
+
+	private async reconcileCachedNoop(operation: Operation): Promise<void> {
+		try {
+			const result = await this.deps.listProfiles()
+			if (!this.isCurrent(operation)) return
+			if (result.error !== undefined) {
+				this.finish(operation, result)
+				return
+			}
+			// The daemon document, not the cache, owns a nominal no-op. Refresh a
+			// coherent matching identity (including its generation) before settling.
+			if (result.data.activeProfileId === operation.targetId) {
+				this.deps.installAuthoritativeState(result.data)
+				this.finish(operation, { data: { state: result.data, applied: true } })
+				return
+			}
+			operation.expected = result.data
+			void this.run(operation)
+		} catch (error) {
+			if (this.isCurrent(operation)) this.finish(operation, errorResult(error))
+		}
 	}
 
 	private async run(operation: Operation): Promise<void> {
@@ -153,6 +191,7 @@ export class ProfileSwitchCoordinator {
 			operation.phase = 'activating'
 			const activated = await this.deps.activateDaemon(operation.targetId)
 			if (!this.isCurrent(operation)) return
+			operation.activation = activated
 			const observed = await operation.fence.observeCoherently()
 			if (!this.isCurrent(operation)) return
 			if (observed) {
@@ -167,7 +206,8 @@ export class ProfileSwitchCoordinator {
 				this.finish(operation, errorResult(error))
 				return
 			}
-			this.enterUnknown(operation, errorResult(error).error)
+			operation.activation ??= errorResult(error)
+			this.enterUnknown(operation, operation.activation.error)
 		}
 	}
 
@@ -186,6 +226,10 @@ export class ProfileSwitchCoordinator {
 			// coherent observation of precisely the old daemon document.
 			if (operation.generationAdvanced) this.deps.restorePrecommitGeneration()
 			operation.fence?.cancelIfCurrent()
+			// Unknown activation closes the gate before probes. Exact-old recovery
+			// restores the original namespace/token, so it is the sole rollback path
+			// that may reopen it.
+			this.deps.openSessionIpc()
 			this.finish(operation, activation)
 			return
 		}
@@ -199,6 +243,7 @@ export class ProfileSwitchCoordinator {
 	private enterUnknown(operation: Operation, reason?: string): void {
 		if (!this.isCurrent(operation)) return
 		operation.phase = 'activation-unknown'
+		this.deps.closeSessionIpc()
 		this.deps.log('Profile activation remains unknown; keeping terminal admission closed.', {
 			epoch: operation.epoch,
 			expected: operation.expected.activeProfileId,
@@ -223,7 +268,11 @@ export class ProfileSwitchCoordinator {
 			const observed = await operation.fence.observeCoherently()
 			if (!this.isCurrent(operation)) return
 			if (observed) {
-				await this.reconcileObserved(operation, observed, { error: 'Activation response was unavailable.' })
+				await this.reconcileObserved(
+					operation,
+					observed,
+					operation.activation ?? { error: 'Activation response was unavailable.' },
+				)
 				return
 			}
 		} catch (error) {
@@ -282,7 +331,7 @@ export class ProfileSwitchCoordinator {
 			} catch (error) {
 				this.deps.log('Could not refresh profile menu.', { error: String(error) })
 			}
-			if (operation.requestedItemId) {
+			if (operation.requestedItemId && state.activeProfileId === operation.targetId) {
 				try {
 					this.deps.queueOrDeliverItem(operation.requestedItemId, operation.epoch)
 				} catch (error) {
@@ -313,8 +362,9 @@ export class ProfileSwitchCoordinator {
 			attempt,
 			error: String(error),
 		})
-		this.setTimer(
+		operation.forwardRetryTimer = this.setTimer(
 			() => {
+				operation.forwardRetryTimer = null
 				if (!this.isCurrent(operation)) return
 				void this.commitForward(operation, state, result)
 			},
@@ -324,6 +374,7 @@ export class ProfileSwitchCoordinator {
 
 	private supersedeUnknown(operation: Operation): void {
 		operation.superseded = true
+		operation.fence?.invalidateIfCurrent()
 		this.clearOperationTimers(operation)
 		operation.drainRelease?.()
 		operation.deferred.resolve({
@@ -341,7 +392,7 @@ export class ProfileSwitchCoordinator {
 	}
 
 	private isCurrent(operation: Operation): boolean {
-		return this.operation === operation && !operation.superseded
+		return !this.stopped && this.operation === operation && !operation.superseded
 	}
 
 	private setTimer(callback: () => void, ms: number): ReturnType<typeof setTimeout> {
@@ -352,8 +403,10 @@ export class ProfileSwitchCoordinator {
 		const clear = this.deps.clearTimer ?? clearTimeout
 		if (operation.probeTimer) clear(operation.probeTimer)
 		if (operation.diagnosticTimer) clear(operation.diagnosticTimer)
+		if (operation.forwardRetryTimer) clear(operation.forwardRetryTimer)
 		operation.probeTimer = null
 		operation.diagnosticTimer = null
+		operation.forwardRetryTimer = null
 	}
 }
 

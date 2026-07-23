@@ -20,9 +20,26 @@ test('profile switching preserves the existing application process', () => {
 test('bridge fence has no globally cancellable profile-switch API', () => {
 	assert.match(bridge, /nextProfileFenceEpoch/)
 	assert.match(bridge, /cancelIfCurrent/)
-	assert.match(bridge, /observeCoherently/)
+	assert.match(bridge, /invalidateIfCurrent/)
+	assert.match(bridge, /Object\.assign\(record, makeReady\(\)\)/)
+	assert.match(bridge, /fence !== this\.profileFence/)
 	assert.doesNotMatch(bridge, /cancelProfileSwitch/)
 	assert.doesNotMatch(bridge, /pendingProfileId/)
+})
+
+test('terminal, session, and buffer handlers gate mutable access during a profile fence', () => {
+	for (const channel of [
+		'pty:spawn', 'pty:write', 'pty:resize', 'pty:kill', 'session:close-with-grace', 'session:undo-close',
+		'sessions:list', 'session:set-parked', 'session:set-order', 'session:title', 'session:set-custom-name',
+		'buffer:save', 'buffer:read',
+	]) {
+		const start = main.indexOf(`'${channel}'`)
+		assert.ok(start >= 0, `missing ${channel}`)
+		const handler = main.slice(start, start + 700)
+		assert.match(handler, /acceptsSessionIpcToken/, `${channel} must fail closed before mutable access`)
+	}
+	assert.match(main, /profileSwitchCoordinator\?\.stop\(\)/)
+	assert.match(main, /while \(activeProfileSwitch\)/)
 })
 
 test('run-context preload remains restricted to its editor capability', () => {

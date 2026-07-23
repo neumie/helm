@@ -66,6 +66,7 @@ function fixture() {
 					record.target = id
 					events.push(`adopt:${id}`)
 				},
+				invalidateIfCurrent: () => events.push('invalidate'),
 				completeIfCurrent: () => events.push('complete-fence'),
 				observeCoherently: async () => observation,
 			} satisfies ProfileSwitchFence
@@ -173,6 +174,7 @@ test('only an activation error plus exact-old observation restores the precommit
 		'activate',
 		'restore',
 		'cancel',
+		'open-ipc',
 		'release',
 	])
 })
@@ -211,6 +213,56 @@ test('the old id with a changed daemon generation reconciles forward rather than
 	assert.match((await pending).error ?? '', /work/)
 	assert.ok(f.events.includes('state:work'))
 	assert.ok(!f.events.includes('restore'))
+})
+
+test('successful POST followed by unknown then exact-old reconciles forward without restoring generation', async () => {
+	const f = fixture()
+	f.observation = null
+	const pending = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	assert.ok(f.events.includes('close-ipc'))
+	f.observation = work()
+	const probe = f.timers.at(-2)
+	assert.ok(probe)
+	probe?.()
+	await spin()
+	f.fence.ready.resolve()
+	assert.match((await pending).error ?? '', /resolved to work/)
+	assert.ok(!f.events.includes('restore'))
+	assert.ok(f.events.includes('open-ipc'))
+})
+
+test('cached no-op installs the authoritative daemon generation', async () => {
+	const f = fixture()
+	f.observation = work(2)
+	const result = await f.coordinator.switchTo('work')
+	assert.equal(result.error, undefined)
+	assert.ok(f.events.includes('state:work'))
+	assert.ok(!f.events.includes('activate'))
+})
+
+test('third-profile reconciliation never delivers a target-qualified Item', async () => {
+	const f = fixture()
+	f.observation = other('profile-bbbbbbbbbbbb', 3)
+	const pending = f.coordinator.switchTo('profile-aaaaaaaaaaaa', 'item-for-a')
+	await spin()
+	f.fence.ready.resolve()
+	await pending
+	assert.ok(!f.events.includes('item:item-for-a'))
+})
+
+test('shutdown clears unknown admission work and prevents a later probe from acting', async () => {
+	const f = fixture()
+	f.observation = null
+	const pending = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	assert.ok(f.events.includes('close-ipc'))
+	f.coordinator.stop()
+	assert.equal((await pending).error, 'Helm is shutting down.')
+	const events = [...f.events]
+	for (const timer of f.timers) timer()
+	await spin()
+	assert.deepEqual(f.events, events)
 })
 
 test('critical namespace failure keeps admission closed and retries forward without another activation', async () => {

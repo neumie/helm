@@ -141,6 +141,8 @@ let pendingOpenItem: { itemId: string; epoch: number | null } | null = (() => {
 	return itemId ? { itemId, epoch: null } : null
 })()
 let pendingProfileDestination: HelmItemDestination | null = null
+/** Profile-qualified destinations are serialized so a late link cannot supersede an unknown explicit switch. */
+let deepLinkDelivery: Promise<void> = Promise.resolve()
 
 function deliverOpenItem(itemId: string, epoch: number | null = null): void {
 	pendingOpenItem = { itemId, epoch }
@@ -173,9 +175,13 @@ function flushPendingOpenItem(win: BrowserWindow, loadEpoch: number | null = ren
 // so a cold-start URL isn't missed). Windows/Linux would need a
 // single-instance lock + `second-instance` argv scan instead — not wired.
 async function routeDestination(destination: HelmItemDestination): Promise<void> {
-	// Deep links never supersede an observationally unknown explicit switch.
-	// They wait, then compare the resulting authoritative local identity.
-	if (activeProfileSwitch) await activeProfileSwitch
+	// A completion may itself be superseded. Loop until the authoritative
+	// coordinator has no admitted operation before considering a deep-link switch.
+	while (activeProfileSwitch) {
+		const pending = activeProfileSwitch
+		await pending
+		if (activeProfileSwitch === pending) await Promise.resolve()
+	}
 	if (destination.profileId && destination.profileId !== appProfiles.activeProfileId()) {
 		const result = await activateProfile(destination.profileId, destination.itemId)
 		if (result.error !== undefined) {
@@ -186,6 +192,12 @@ async function routeDestination(destination: HelmItemDestination): Promise<void>
 	deliverOpenItem(destination.itemId)
 }
 
+function enqueueDestination(destination: HelmItemDestination): void {
+	deepLinkDelivery = deepLinkDelivery
+		.catch(error => console.warn('[helm] previous deep-link delivery failed:', error))
+		.then(() => routeDestination(destination))
+}
+
 app.on('open-url', (event, url) => {
 	event.preventDefault()
 	const destination = parseHelmDestination(url)
@@ -194,7 +206,7 @@ app.on('open-url', (event, url) => {
 		pendingProfileDestination = destination
 		return
 	}
-	void routeDestination(destination)
+	enqueueDestination(destination)
 })
 
 interface PtyEntry {
@@ -453,7 +465,7 @@ function captureScreenshot(win: BrowserWindow, outPath: string): void {
 	})
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
 	// Screenshot runs use fixed bounds (default or --window-size) for
 	// deterministic captures.
 	const state = screenshotPath
@@ -534,6 +546,7 @@ function createWindow(): void {
 	})
 	void win.loadFile(path.join(__dirname, 'index.html'))
 	mainWindow = win
+	return win
 }
 
 async function syncProfilesFromDaemon(): Promise<void> {
@@ -545,19 +558,37 @@ async function syncProfilesFromDaemon(): Promise<void> {
 	sessions.configureSessionProfile(sessionProfileId)
 }
 
+const PROFILE_WINDOW_LOAD_TIMEOUT_MS = 15_000
+
 function reloadOrCreateWindowForProfile(epoch: number): Promise<void> {
 	rendererProfileEpoch = epoch
-	const win = mainWindow
-	if (!win || win.isDestroyed()) {
-		createWindow()
-		return Promise.resolve()
-	}
-	return new Promise(resolve => {
-		win.webContents.once('did-finish-load', () => {
+	const existing = mainWindow
+	const win = !existing || existing.isDestroyed() ? createWindow() : existing
+	return new Promise((resolve, reject) => {
+		let settled = false
+		const finish = (error?: Error): void => {
+			if (settled) return
+			settled = true
+			clearTimeout(timeout)
+			win.webContents.removeListener('did-finish-load', onLoaded)
+			win.webContents.removeListener('did-fail-load', onFailed)
+			win.removeListener('closed', onClosed)
+			if (error) reject(error)
+			else resolve()
+		}
+		const onLoaded = (): void => {
+			if (rendererProfileEpoch !== epoch || win.isDestroyed()) return
 			flushPendingOpenItem(win, epoch)
-			resolve()
-		})
-		win.webContents.reload()
+			finish()
+		}
+		const onFailed = (_event: Electron.Event, errorCode: number, errorDescription: string): void =>
+			finish(new Error(`Profile renderer load failed (${errorCode}): ${errorDescription}`))
+		const onClosed = (): void => finish(new Error('Profile renderer window closed during reload.'))
+		const timeout = setTimeout(() => finish(new Error('Timed out waiting for profile renderer reload.')), PROFILE_WINDOW_LOAD_TIMEOUT_MS)
+		win.webContents.once('did-finish-load', onLoaded)
+		win.webContents.once('did-fail-load', onFailed)
+		win.once('closed', onClosed)
+		if (existing && !existing.isDestroyed()) win.webContents.reload()
 	})
 }
 
@@ -758,6 +789,9 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		if (process.platform !== 'darwin') throw new Error('Profile-switch attestation requires macOS.')
 		const win = await waitForAttestation('initial BrowserWindow', () => (mainWindow?.isDestroyed() ? null : mainWindow))
 		evidence.window.before = { browserWindowId: win.id, webContentsId: win.webContents.id }
+		await waitForAttestation('initial renderer load', () => (!win.webContents.isLoading() ? true : null))
+		// Start counting only after the startup document settled; the two profile
+		// transitions below must account for exactly two same-webContents reloads.
 		win.webContents.on('did-finish-load', () => {
 			evidence.window.reloadCount += 1
 		})
@@ -767,9 +801,6 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		})
 		const sessionId = initial.sessionId
 		if (!sessionId) throw new Error('Initial terminal was not session-backed.')
-		// The listener may have observed the initial renderer load while terminal
-		// startup completed; only the two coordinator reloads count as switches.
-		evidence.window.reloadCount = 0
 		const support = getSessionSupport()
 		if (!support) throw new Error('dtach session support is unavailable.')
 		const workSocket = sessions.socketPath(sessionId)
@@ -1339,7 +1370,7 @@ void app.whenReady().then(async () => {
 	if (pendingProfileDestination) {
 		const destination = pendingProfileDestination
 		pendingProfileDestination = null
-		void routeDestination(destination)
+		enqueueDestination(destination)
 	}
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -1369,6 +1400,7 @@ app.on('before-quit', event => {
 })
 
 app.on('will-quit', () => {
+	profileSwitchCoordinator?.stop()
 	helmBridge.stop()
 	killAllPtyClients()
 	sessionSupport?.registry.flush()

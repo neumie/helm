@@ -58,6 +58,7 @@ interface ProfileFenceRecord {
 	resolveReady(): void
 	ready: Promise<void>
 	readyResolved: boolean
+	invalidated: boolean
 }
 
 function errorMessage(err: unknown): string {
@@ -132,6 +133,11 @@ export class HelmBridge {
 			// A poll begun before a new fence is installed is stale. It may not
 			// publish old rows or kick work for the new epoch.
 			if (this.stopped || fence !== this.profileFence) return
+			if (fence?.invalidated) {
+				this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
+				this.publish()
+				return
+			}
 			if (status.error === undefined && !sameProfileSnapshot && fence) this.kick(fence)
 
 			// A fence owns every completion it started. A replaced epoch must not
@@ -158,28 +164,30 @@ export class HelmBridge {
 				}
 			}
 			if (status.data && (await this.restartForProtocolMismatch(status.data))) return
+			if (this.stopped || fence !== this.profileFence) return
 			let config = this.snapshot.config
-			if (reachable && config === null) config = (await this.request<AppConfig>('GET', '/config')).data ?? null
+			if (reachable && config === null) {
+				config = (await this.request<AppConfig>('GET', '/config')).data ?? null
+				if (this.stopped || fence !== this.profileFence) return
+			}
 			this.snapshot = {
 				reachable,
 				status: status.data ?? this.snapshot.status,
 				items: items.data ? normalizeDashboardItems(items.data) : this.snapshot.items,
 				config,
 			}
+			if (this.stopped || fence !== this.profileFence) return
 			this.publish()
 		} finally {
 			this.ticking = false
-			if (
-				!this.stopped &&
-				this.profileFence !== null &&
-				!this.profileFence.readyResolved &&
-				this.profileSwitchTimer === null
-			) {
-				const epoch = this.profileFence.epoch
+			// Only the captured fence can schedule its own recovery. A stale tick
+			// must never borrow a successor's epoch or timer slot.
+			if (!this.stopped && fence !== null && this.profileFence === fence && !fence.invalidated && !fence.readyResolved && this.profileSwitchTimer === null) {
+				const epoch = fence.epoch
 				this.profileSwitchTimer = setTimeout(() => {
-					if (this.profileFence?.epoch === epoch) {
+					if (this.profileFence === fence && fence.epoch === epoch) {
 						this.profileSwitchTimer = null
-						this.kick()
+						this.kick(fence)
 					}
 				}, 150)
 				this.profileSwitchTimer.unref()
@@ -293,15 +301,18 @@ export class HelmBridge {
 		this.profileFence?.resolveReady()
 		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
 		this.profileSwitchTimer = null
-		let resolveReady!: () => void
+		const makeReady = (): Pick<ProfileFenceRecord, 'ready' | 'resolveReady' | 'readyResolved'> => {
+			let resolveReady!: () => void
+			const ready = new Promise<void>(resolve => {
+				resolveReady = resolve
+			})
+			return { ready, resolveReady: () => resolveReady(), readyResolved: false }
+		}
 		const record: ProfileFenceRecord = {
 			epoch: ++this.nextProfileFenceEpoch,
 			targetId: profileId,
-			ready: new Promise<void>(resolve => {
-				resolveReady = resolve
-			}),
-			resolveReady: () => resolveReady(),
-			readyResolved: false,
+			...makeReady(),
+			invalidated: false,
 		}
 		this.profileFence = record
 		this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
@@ -309,7 +320,9 @@ export class HelmBridge {
 		this.kick(record)
 		return {
 			epoch: record.epoch,
-			ready: record.ready,
+			get ready() {
+				return record.ready
+			},
 			cancelIfCurrent: () => {
 				if (this.profileFence !== record) return
 				this.profileFence = null
@@ -318,9 +331,20 @@ export class HelmBridge {
 				this.kick()
 			},
 			adoptObservedProfile: observedId => {
-				if (this.profileFence !== record) return
+				if (this.profileFence !== record || record.invalidated || record.targetId === observedId) return
+				// B's coherent snapshot cannot satisfy C. Replace the promise before
+				// coordinating C's reload so its renderer waits for C's own snapshot.
 				record.targetId = observedId
+				Object.assign(record, makeReady())
 				this.kick(record)
+			},
+			invalidateIfCurrent: () => {
+				if (this.profileFence !== record) return
+				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				this.profileSwitchTimer = null
+				// Keep an inert fence until a successor owns it. Clearing it would
+				// restore ordinary polling and could republish B during C's drain.
+				record.invalidated = true
 			},
 			completeIfCurrent: () => {
 				if (this.profileFence !== record) return
