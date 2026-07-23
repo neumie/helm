@@ -15,6 +15,8 @@ export interface AgentAdapter {
 	agent: SolverAgent
 	label: string
 	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation
+	/** Structured interactive argv for daemon-owned terminals; never shell-interpolate task text. */
+	buildInteractiveInvocation(prompt: string, effort?: SolverEffort): AgentInvocation
 	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string
 	parseTimeline(stdout: string): ClaudeEvent[]
 }
@@ -33,6 +35,15 @@ export function buildHeadlessAgentInvocation(
 	effort?: SolverEffort,
 ): AgentInvocation {
 	return createAgentAdapter(solverConfig).buildHeadlessInvocation(effort)
+}
+
+/** Safe argv form for a scheduled interactive agent; `prompt` remains one argument. */
+export function buildInteractiveAgentInvocation(
+	solverConfig: HelmConfig['solver'],
+	prompt: string,
+	effort?: SolverEffort,
+): AgentInvocation {
+	return createAgentAdapter(solverConfig).buildInteractiveInvocation(prompt, effort)
 }
 
 /**
@@ -76,6 +87,14 @@ class ClaudeAgentAdapter implements AgentAdapter {
 		return { command: 'claude', args, label: 'claude-invoker' }
 	}
 
+	buildInteractiveInvocation(prompt: string, effort?: SolverEffort): AgentInvocation {
+		const args = ['--dangerously-skip-permissions']
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		if (effort) args.push('--effort', effort)
+		args.push(prompt)
+		return { command: 'claude', args, label: 'claude-interactive' }
+	}
+
 	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
 		return buildInteractiveCommand(
 			['claude', '--dangerously-skip-permissions', ...(effort ? ['--effort', effort] : [])],
@@ -101,6 +120,14 @@ class CodexAgentAdapter implements AgentAdapter {
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--config', `model_reasoning_effort="${effort}"`)
 		return { command: 'codex', args, label: 'codex-invoker' }
+	}
+
+	buildInteractiveInvocation(prompt: string, effort?: SolverEffort): AgentInvocation {
+		const args = ['--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'danger-full-access']
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		if (effort) args.push('--config', `model_reasoning_effort="${effort}"`)
+		args.push(prompt)
+		return { command: 'codex', args, label: 'codex-interactive' }
 	}
 
 	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
