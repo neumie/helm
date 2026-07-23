@@ -771,7 +771,11 @@ export class ItemCommands {
 			if (transitionFrom.worktreePath === null || expectedIsMain || !nextIsMain || fields.branchName !== null) {
 				throw new Error('Invalid worktree-to-main planning transition')
 			}
-		} else if (item.worktreePath && item.worktreePath !== fields.worktreePath && existsSync(item.worktreePath)) {
+		} else if (
+			item.worktreePath &&
+			!sameFilesystemPath(item.worktreePath, fields.worktreePath) &&
+			existsSync(item.worktreePath)
+		) {
 			throw new Error('Item already points at a different live worktree')
 		}
 		return this.store.update(id, fields)

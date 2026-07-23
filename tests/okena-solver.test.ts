@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -315,6 +316,26 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 	const manager = new OkenaWorktreeManager(client)
 
 	assert.equal(await manager.findPlanTerminal('project-1', 'item-1'), null)
+})
+
+test('Okena Worktree manager resolves an existing worktree project through a symlink alias', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-worktree-alias-'))
+	const alias = `${repoPath}-alias`
+	execFileSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' })
+	symlinkSync(repoPath, alias)
+	const client = {
+		getState: async () => ({
+			projects: [{ id: 'project-alias', name: 'Alias', path: repoPath, layout: null, terminal_names: {} }],
+		}),
+	} as unknown as OkenaClient
+	try {
+		const ensured = await new OkenaWorktreeManager(client).ensureWorktreeProject(repoPath, 'main', 'feat/alias', alias)
+		assert.equal(ensured.wtProjectId, 'project-alias')
+		assert.equal(ensured.worktreePath, alias)
+	} finally {
+		rmSync(alias, { force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
 })
 
 test('OkenaSpawner does not send another command into a reused planning terminal', async () => {

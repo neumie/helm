@@ -346,6 +346,43 @@ test('Main and Worktree planning recognize filesystem aliases without reusing th
 	}
 })
 
+test('same-mode planning accepts a canonical adapter path for a live symlinked worktree', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-same-mode-alias-'))
+	const worktree = mkdtempSync(join(tmpdir(), 'helm-planning-same-mode-worktree-'))
+	const alias = `${worktree}-alias`
+	symlinkSync(worktree, alias)
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	try {
+		const item = commands.createSolveItem({ title: 'Same-mode alias', projectSlug: 'helm', prompt: 'alias' })
+		commands.beginPlanning(item.id)
+		commands.recordPlanPrepared(item.id, {
+			worktreePath: alias,
+			branchName: 'feat/same-mode-alias',
+			planDirName: 'same-mode-alias',
+			spawner: 'default',
+		})
+		commands.recordPlanningWorkspaceIdentity(
+			item.id,
+			{ worktreePath: worktree, branchName: 'feat/same-mode-alias', planDirName: 'same-mode-alias' },
+			{
+				expectedIdentity: {
+					worktreePath: alias,
+					branchName: 'feat/same-mode-alias',
+					planDirName: 'same-mode-alias',
+				},
+				authorizedTransition: 'none',
+			},
+		)
+		assert.equal(commands.getItem(item.id)?.worktreePath, worktree)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(alias, { force: true })
+		rmSync(worktree, { recursive: true, force: true })
+	}
+})
+
 test('late Spawner readiness callbacks are ignored after preparation has settled', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-planning-late-'))
 	const workspace = mkdtempSync(join(tmpdir(), 'helm-planning-late-worktree-'))

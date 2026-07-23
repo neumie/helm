@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
+import { sameFilesystemPath } from '../../util/path-identity.js'
 import {
 	excludeHelmFiles,
 	inspectRemoteBranch,
@@ -260,7 +261,7 @@ export class OkenaWorktreeManager {
 	): Promise<EnsuredOkenaWorktree> {
 		if (existingWorktreePath) {
 			const { state } = await this.findOkenaProject(repoPath)
-			const wtProject = state.projects.find(p => p.path === existingWorktreePath)
+			const wtProject = state.projects.find(p => sameFilesystemPath(p.path, existingWorktreePath))
 			if (!wtProject) {
 				throw phaseError('worktree', `Okena project not found for worktree path: ${existingWorktreePath}`)
 			}
