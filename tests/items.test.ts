@@ -46,7 +46,7 @@ import {
 	spawnerNameSchema,
 } from '../src/spawner/registry.js'
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from '../src/spawner/spawner.js'
-import type { SolverResult as SolverResultFile } from '../src/types.js'
+import type { SolverEffort, SolverResult as SolverResultFile } from '../src/types.js'
 import { phaseError, taskCancelled } from '../src/util/errors.js'
 import { createWorktree, withRepoLock } from '../src/worktree/manager.js'
 
@@ -116,6 +116,7 @@ const config: HelmConfig = {
 		modelGuidance: {},
 	},
 	spawner: { name: 'default' },
+	scheduledRuns: { enabled: false, systemTargetsEnabled: false },
 	server: { port: 7474, host: 'localhost' },
 	github: {
 		createPrs: false,
@@ -1936,6 +1937,7 @@ test('planned solve Items can run Almanac on the same Item and worktree', async 
 		const drainer = new Drainer(config, db, provider, solver, loopRunner)
 
 		try {
+			drainer.start()
 			assert.equal(drainer.processOneItem(item.id), true)
 			await waitFor(() => db.items.get(item.id)?.status === 'review', 'planned solve loop did not finish')
 
@@ -2319,6 +2321,78 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 		}
 	})
 })
+
+test('Drainer direct starts enforce lane capacity and scheduled reservations', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-direct-capacity-'))
+		const singleSolveConfig = { ...config, solver: { ...config.solver, concurrency: 1 } }
+		const commands = new ItemCommands(db.items, singleSolveConfig)
+		const firstSolve = commands.createSolveItem({ title: 'First direct solve', projectSlug: 'helm', prompt: 'First.' })
+		const secondSolve = commands.createSolveItem({
+			title: 'Second direct solve',
+			projectSlug: 'helm',
+			prompt: 'Second.',
+		})
+		const firstLoop = commands.createLoopItem({
+			title: 'First direct loop',
+			projectSlug: 'helm',
+			prdPath: 'docs/plans/direct-first/prd.md',
+		})
+		const secondLoop = commands.createLoopItem({
+			title: 'Second direct loop',
+			projectSlug: 'helm',
+			prdPath: 'docs/plans/direct-second/prd.md',
+		})
+		const firstLoopWorktree = join(worktreeRoot, 'first-loop')
+		const secondLoopWorktree = join(worktreeRoot, 'second-loop')
+		for (const [item, worktreePath, planDirName] of [
+			[firstLoop, firstLoopWorktree, 'direct-first'],
+			[secondLoop, secondLoopWorktree, 'direct-second'],
+		] as const) {
+			mkdirSync(worktreePath, { recursive: true })
+			recordPreparedPlan(commands, item.id, {
+				worktreePath,
+				branchName: `helm/item/${planDirName}`,
+				planDirName,
+				spawner: 'default',
+			})
+			db.items.update(item.id, { status: 'ready', workMode: null })
+		}
+		const solver = new FakeSolveSolver(worktreeRoot, 50)
+		const loopRunner = new FakeLoopRunner(50)
+		const drainer = new Drainer(singleSolveConfig, db, provider, solver, loopRunner)
+		try {
+			drainer.start()
+			assert.equal(drainer.reserveExternalSolve('scheduled-run'), true)
+			assert.equal(drainer.processOneItem(firstSolve.id), false)
+			assert.equal(drainer.releaseExternalSolve('scheduled-run'), true)
+			assert.equal(drainer.processOneItem(firstSolve.id), true)
+			assert.equal(drainer.processOneItem(secondSolve.id), false)
+			assert.equal(drainer.processOneItem(firstLoop.id), true)
+			assert.equal(drainer.processOneItem(secondLoop.id), false)
+			await waitFor(
+				() => db.items.get(firstSolve.id)?.status === 'review' && db.items.get(firstLoop.id)?.status === 'done',
+				'direct capacity runs did not finish',
+			)
+		} finally {
+			drainer.stop()
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('Drainer rejects direct starts and retries while stopped', () =>
+	withTempDb(db => {
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({
+			title: 'Stopped direct solve',
+			projectSlug: 'helm',
+			prompt: 'Do not start.',
+		})
+		const drainer = new Drainer(config, db, provider, {} as never)
+		assert.equal(drainer.processOneItem(item.id), false)
+		assert.throws(() => drainer.retryItem(item.id), /Drainer is stopped/)
+	}))
 
 test('Drainer leaves ownership-undecided Queue Items until Start agent is chosen', async () => {
 	await withTempDb(async db => {

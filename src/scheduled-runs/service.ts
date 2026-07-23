@@ -55,6 +55,7 @@ export class ScheduledRunService {
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
+	private startInFlight: Promise<void> | null = null
 	private stopped = false
 	private restoringStartup = false
 	private readonly startupReservationFailures = new Set<string>()
@@ -74,24 +75,37 @@ export class ScheduledRunService {
 	 * Restore durable sessions before ordinary Item admission opens. This always
 	 * runs, even when schedule creation/recurrence is rollout-disabled.
 	 */
-	async start(): Promise<void> {
+	start(): Promise<void> {
+		if (this.startInFlight) return this.startInFlight
 		if (this.watchdog) return this.reconcile()
+		this.startInFlight = this.startInternal().finally(() => {
+			this.startInFlight = null
+		})
+		return this.startInFlight
+	}
+
+	private async startInternal(): Promise<void> {
 		this.stopped = false
 		this.startupReservationFailures.clear()
 		this.restoringStartup = true
 		try {
 			await this.reconcile()
+			if (this.startupReservationFailures.size > 0) {
+				throw new Error(
+					`Scheduled startup restoration could not reserve solve capacity for ${this.startupReservationFailures.size} run(s)`,
+				)
+			}
+			if (this.stopped) return
+			this.watchdog = setInterval(() => void this.reconcile(), this.deps.watchdogIntervalMs ?? WATCHDOG_MS)
+			this.watchdog.unref?.()
+		} catch (error) {
+			this.stopped = true
+			if (this.watchdog) clearInterval(this.watchdog)
+			this.watchdog = null
+			throw error
 		} finally {
 			this.restoringStartup = false
 		}
-		if (this.startupReservationFailures.size > 0) {
-			throw new Error(
-				`Scheduled startup restoration could not reserve solve capacity for ${this.startupReservationFailures.size} run(s)`,
-			)
-		}
-		if (this.stopped) return
-		this.watchdog = setInterval(() => void this.reconcile(), this.deps.watchdogIntervalMs ?? WATCHDOG_MS)
-		this.watchdog.unref?.()
 	}
 
 	/** Close recurrence/manual admission without killing already admitted agents. */
@@ -155,7 +169,7 @@ export class ScheduledRunService {
 		let run = runDb.schedules.requireRun(runId)
 		run = commands.report(run.id, run.revision, kind, summary)
 		if (kind === 'needs_attention') {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			return run
 		}
 		// Identical quiet retries converge through the durable state rather than
@@ -171,7 +185,7 @@ export class ScheduledRunService {
 		if (result === 'quarantined')
 			return commands.markQuarantined(run.id, run.revision, 'Scheduled teardown ownership is unknown')
 		run = runDb.schedules.requireRun(run.id)
-		this.drainer.releaseExternalSolve(run.id)
+		this.releaseReservation(run.id)
 		return commands.markCancelled(run.id, run.revision)
 	}
 
@@ -403,7 +417,7 @@ export class ScheduledRunService {
 			}
 			// A supervisor handoff to quarantine means ownership may still be live;
 			// retain the reservation until a definitive probe/teardown resolves it.
-			if (current.state !== 'quarantined') this.drainer.releaseExternalSolve(run.id)
+			if (current.state !== 'quarantined') this.releaseReservation(run.id)
 			throw error
 		}
 	}
@@ -421,7 +435,7 @@ export class ScheduledRunService {
 		if (result === 'quarantined')
 			return commands.markQuarantined(run.id, run.revision, 'Quiet teardown ownership is unknown')
 		run = this.db.forProfile(profileId).schedules.requireRun(run.id)
-		this.drainer.releaseExternalSolve(run.id)
+		this.releaseReservation(run.id)
 		return commands.closeQuiet(run.id, run.revision)
 	}
 
@@ -439,7 +453,7 @@ export class ScheduledRunService {
 		let run = initial
 		const socket = await probeScheduledSocket(scheduledSocketPath(profileId, run.sessionId))
 		if (run.state === 'needs_attention') {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			return
 		}
 		// Unknown ownership is capacity-bearing until a later probe proves death.
@@ -474,19 +488,19 @@ export class ScheduledRunService {
 		// Definitively dead. Reports retain their durable meaning; no report is never quiet.
 		if (run.state === 'reported_quiet' || run.state === 'closing') {
 			if (run.state === 'reported_quiet') run = commands.beginClose(run.id, run.revision)
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			commands.closeQuiet(run.id, run.revision)
 		} else if (run.state === 'cancel_requested') {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			commands.markCancelled(run.id, run.revision)
 		} else if (run.state === 'timeout_requested') {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			commands.markTimedOut(run.id, run.revision)
 		} else if (run.state === 'quarantined') {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			commands.markSessionLost(run.id, run.revision, 'Scheduled session was dead after ownership quarantine')
 		} else {
-			this.drainer.releaseExternalSolve(run.id)
+			this.releaseReservation(run.id)
 			commands.markInterrupted(run.id, run.revision, 'Scheduled session was dead during reconciliation')
 		}
 	}
@@ -499,11 +513,14 @@ export class ScheduledRunService {
 			return
 		}
 		const current = this.db.forProfile(profileId).schedules.requireRun(requested.id)
-		this.drainer.releaseExternalSolve(requested.id)
+		this.releaseReservation(requested.id)
 		commands.markTimedOut(current.id, current.revision)
 	}
 	private restoreReservation(run: ScheduledRunRecord): boolean {
-		if (this.drainer.reserveExternalSolve(run.id)) return true
+		if (this.drainer.reserveExternalSolve(run.id)) {
+			this.startupReservationFailures.delete(run.id)
+			return true
+		}
 		if (this.restoringStartup) this.startupReservationFailures.add(run.id)
 		log.warn(
 			'scheduled-runs',
@@ -512,8 +529,13 @@ export class ScheduledRunService {
 		return false
 	}
 
+	private releaseReservation(runId: string): boolean {
+		this.startupReservationFailures.delete(runId)
+		return this.drainer.releaseExternalSolve(runId)
+	}
+
 	private skip(runDb: DB, run: ScheduledRunRecord, state: 'skipped_overlap' | 'skipped_capacity'): ScheduledRunRecord {
-		this.drainer.releaseExternalSolve(run.id)
+		this.releaseReservation(run.id)
 		return runDb.schedules.transitionRun(run.id, run.revision, state, { closedAt: this.now().toISOString() })
 	}
 	private disableAndSkip(
@@ -533,7 +555,7 @@ export class ScheduledRunService {
 		return runtime
 	}
 	private isAdmissionOpen(): boolean {
-		return this.config.scheduledRuns.enabled && !this.stopped && this.deps.hasResidentLease()
+		return this.config.scheduledRuns.enabled && !this.stopped && !this.restoringStartup && this.deps.hasResidentLease()
 	}
 	private requireReporterPath(): string {
 		if (!this.deps.reporterPath || !isAbsolute(this.deps.reporterPath))

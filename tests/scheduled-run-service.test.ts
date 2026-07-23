@@ -48,9 +48,14 @@ function runInput(schedule: { id: string; revision: number }, slotKey: string) {
 
 function fakeDrainer() {
 	const reservations = new Set<string>()
+	let reserveCalls = 0
 	return {
 		reservations,
+		get reserveCalls() {
+			return reserveCalls
+		},
 		reserveExternalSolve(id: string) {
+			reserveCalls++
 			if (reservations.has(id)) return true
 			if (reservations.size >= 1) return false
 			reservations.add(id)
@@ -128,11 +133,18 @@ async function listenSocket(path: string): Promise<net.Server> {
 	return server
 }
 
-function createRecoverableRun(db: DB, commands: ScheduleCommands, name: string, state: 'needs_attention' | 'running') {
+function createRecoverableRun(
+	db: DB,
+	commands: ScheduleCommands,
+	name: string,
+	state: 'needs_attention' | 'reported_quiet' | 'running',
+	runtime: Partial<ReturnType<typeof runInput>> = {},
+) {
 	const schedule = commands.create({ ...scheduleInput, name })
 	const id = randomUUID()
 	return db.schedules.createRun({
 		...runInput(schedule, `recover-${id}`),
+		...runtime,
 		id,
 		sessionId: scheduledSessionId(id),
 		state,
@@ -154,10 +166,75 @@ test('startup restoration fails closed when capacity-one reservation cannot be r
 		assert.equal(drainer.reserveExternalSolve('item-already-admitted'), true)
 		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
 			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
-			hasResidentLease: () => false,
+			hasResidentLease: () => true,
 		})
 		await assert.rejects(service.start(), /could not reserve solve capacity/)
 		assert.equal(drainer.reservations.has(run.id), false)
+		assert.deepEqual(await service.tick(), { processed: 0, admitted: 0, skipped: 0 })
+		await assert.rejects(service.runNow('work', run.scheduleId), /requires a live resident lease/)
+	} finally {
+		await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve())
+		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previousSocketRoot
+		rmSync(socketRoot, { recursive: true, force: true })
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('concurrent scheduled starts share one restoration pass', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	const socketRoot = mkdtempSync('/tmp/helm-sched-test-')
+	const previousSocketRoot = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = socketRoot
+	let server: net.Server | undefined
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const run = createRecoverableRun(db, commands, 'Live restore', 'running')
+		server = await listenSocket(scheduledSocketPath('work', run.sessionId))
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+		})
+		await Promise.all([service.start(), service.start()])
+		assert.equal(drainer.reserveCalls, 1)
+		assert.deepEqual([...drainer.reservations], [run.id])
+		await service.stop()
+	} finally {
+		await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve())
+		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previousSocketRoot
+		rmSync(socketRoot, { recursive: true, force: true })
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('startup restoration clears a failed reservation when that run closes during reconciliation', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	const socketRoot = mkdtempSync('/tmp/helm-sched-test-')
+	const previousSocketRoot = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = socketRoot
+	let server: net.Server | undefined
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const run = createRecoverableRun(db, commands, 'Closing restore', 'reported_quiet', {
+			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
+			runDir: root,
+		})
+		server = await listenSocket(scheduledSocketPath('work', run.sessionId))
+		const drainer = fakeDrainer()
+		assert.equal(drainer.reserveExternalSolve('item-already-admitted'), true)
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+			supervisor: { teardown: async () => 'closed' } as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+		await service.start()
+		assert.equal(db.schedules.requireRun(run.id).state, 'closed_quiet')
+		assert.equal(drainer.reservations.has(run.id), false)
+		await service.stop()
 	} finally {
 		await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve())
 		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined

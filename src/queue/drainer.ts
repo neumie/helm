@@ -168,7 +168,7 @@ export class Drainer {
 
 	/** Process a single Item immediately, bypassing pause state. */
 	processOneItem(itemId: string): boolean {
-		if (this.quiescing || this.startupAdmissionFenced) return false
+		if (!this.running || this.quiescing || this.startupAdmissionFenced) return false
 		const item = this.db.items.get(itemId)
 		if (!item) return false
 		return itemExecutionMode(item) === 'loop'
@@ -178,6 +178,7 @@ export class Drainer {
 
 	retryItem(itemId: string): ItemRecord {
 		if (this.quiescing) throw new Error('Daemon is restarting — new runs are temporarily unavailable')
+		if (!this.running) throw new Error('Drainer is stopped — new runs are temporarily unavailable')
 		if (this.startupAdmissionFenced)
 			throw new Error('Daemon is restoring scheduled capacity — new runs are temporarily unavailable')
 		const item = this.itemCommands.retryItem(itemId)
@@ -273,7 +274,14 @@ export class Drainer {
 	}
 
 	private startSolveItem(itemId: string, profileId?: string): boolean {
-		if (this.quiescing || this.startupAdmissionFenced || this.activeSolveItems.has(itemId)) return false
+		if (
+			!this.running ||
+			this.quiescing ||
+			this.startupAdmissionFenced ||
+			this.activeSolveItems.has(itemId) ||
+			this.activeSolveCount() >= this.solveCapacity()
+		)
+			return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'solve') return false
 		if (!isStartableItem(item)) return false
@@ -325,7 +333,14 @@ export class Drainer {
 	}
 
 	private startLoopItem(itemId: string, profileId?: string): boolean {
-		if (this.quiescing || this.startupAdmissionFenced || this.activeLoopItems.has(itemId)) return false
+		if (
+			!this.running ||
+			this.quiescing ||
+			this.startupAdmissionFenced ||
+			this.activeLoopItems.has(itemId) ||
+			this.activeLoopCount() >= this.loopCapacity()
+		)
+			return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'loop') return false
 		if (!isStartableItem(item)) return false
