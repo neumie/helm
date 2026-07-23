@@ -46,6 +46,11 @@ cp -p "$ROOT/profiles.json" "$STAGE/profiles.json"
 cp -a "$ROOT/profiles" "$STAGE/profiles"
 node "$MANIFEST" "$STAGE" > "$STAGE/manifest.json"
 BACKUP="$PARENT/architecture-fix-$STAMP"
+# A repeated invocation in the same second must not nest STAGE under an older backup.
+if test -e "$BACKUP" || test -L "$BACKUP"; then
+  printf 'Refusing to overwrite existing backup destination: %s\n' "$BACKUP" >&2
+  exit 1
+fi
 mv "$STAGE" "$BACKUP"
 printf 'Backup: %s\n' "$BACKUP"
 ```

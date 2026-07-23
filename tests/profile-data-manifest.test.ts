@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import {
 	chmodSync,
 	cpSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -23,6 +24,7 @@ import { ProfileStore } from '../src/profiles/store.js'
 
 const manifestScript = join(process.cwd(), 'scripts', 'profile-data-manifest.mjs')
 const runbookHelper = join(process.cwd(), 'scripts', 'profile-data-runbook-helper.mjs')
+const backupRestoreRunbook = join(process.cwd(), 'docs', 'runbooks', 'profile-data-backup-restore.md')
 
 function sha256(path: string): string {
 	return createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -185,6 +187,27 @@ test('profile data manifest rejects foreign keys, event tenant mismatches, and S
 	}
 })
 
+test('profile data manifest mirrors production validation for normalized profile names', async t => {
+	for (const [fixture, name] of [
+		['empty', ''],
+		['long', 'x'.repeat(49)],
+		['control character', 'Personal\u0000'],
+	] as const) {
+		const { root } = createDataset()
+		try {
+			const registry = JSON.parse(readFileSync(join(root, 'profiles.json'), 'utf8'))
+			registry.profiles[0].name = name
+			writeFileSync(join(root, 'profiles.json'), JSON.stringify(registry))
+			assert.throws(() => new ProfileStore(root), /Profile name must be 1-48 visible characters/, fixture)
+			const result = manifestResult(root)
+			assert.equal(result.status, 1, fixture)
+			assert.match(result.stderr, /profile name.*1-48 visible characters/, fixture)
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	}
+})
+
 test('profile data manifest rejects invalid registry IDs and symlink or special managed entries', async t => {
 	const invalid = createDataset()
 	try {
@@ -291,6 +314,40 @@ test('runbook helper fails closed for open or ambiguous lsof checks and accepts 
 		rmSync(root, { recursive: true, force: true })
 		rmSync(bin, { recursive: true, force: true })
 		rmSync(emptyBin, { recursive: true, force: true })
+	}
+})
+
+test('backup recipe refuses an existing same-second destination before mv', () => {
+	const parent = mkdtempSync(join(tmpdir(), 'helm-backup-promotion-'))
+	const stamp = '20260723-121000'
+	const stage = mkdtempSync(join(parent, `.architecture-fix-${stamp}.`))
+	const backup = join(parent, `architecture-fix-${stamp}`)
+	const bin = mkdtempSync(join(tmpdir(), 'helm-fake-mv-'))
+	const marker = join(parent, 'mv-invoked')
+	try {
+		writeFileSync(join(stage, 'helm.db'), 'new')
+		mkdirSync(backup)
+		writeFileSync(join(backup, 'helm.db'), 'old')
+		writeFileSync(join(bin, 'mv'), `#!/bin/sh\nprintf invoked > "$MV_MARKER"\nexit 99\n`)
+		chmodSync(join(bin, 'mv'), 0o755)
+
+		const runbook = readFileSync(backupRestoreRunbook, 'utf8')
+		const promotion = runbook.match(
+			/BACKUP="\$PARENT\/architecture-fix-\$STAMP"\n(?:#.*\n)?if test -e "\$BACKUP" \|\| test -L "\$BACKUP"; then\n(?:.*\n){2}fi\nmv "\$STAGE" "\$BACKUP"/,
+		)?.[0]
+		assert.ok(promotion, 'runbook must guard the final backup destination before mv')
+		const result = spawnSync('/bin/sh', ['-c', promotion], {
+			encoding: 'utf8',
+			env: { ...process.env, PARENT: parent, STAMP: stamp, STAGE: stage, PATH: bin, MV_MARKER: marker },
+		})
+		assert.equal(result.status, 1)
+		assert.match(result.stderr, /Refusing to overwrite existing backup destination/)
+		assert.equal(existsSync(marker), false, 'mv must not run when the final destination already exists')
+		assert.equal(readFileSync(join(backup, 'helm.db'), 'utf8'), 'old')
+		assert.equal(readFileSync(join(stage, 'helm.db'), 'utf8'), 'new')
+	} finally {
+		rmSync(parent, { recursive: true, force: true })
+		rmSync(bin, { recursive: true, force: true })
 	}
 })
 

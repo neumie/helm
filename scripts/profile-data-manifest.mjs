@@ -18,6 +18,7 @@ import Database from 'better-sqlite3'
 
 const MANIFEST_VERSION = 1
 const HASH_BUFFER_SIZE = 1024 * 1024
+const MAX_PROFILE_NAME_LENGTH = 48
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
 
 function usage() {
@@ -30,6 +31,19 @@ function fail(message) {
 
 function compareCodeUnits(left, right) {
 	return left < right ? -1 : left > right ? 1 : 0
+}
+
+function normalizedProfileName(value) {
+	if (typeof value !== 'string') fail('profiles.json contains a profile name that is not text')
+	const name = value.normalize('NFC').trim()
+	const hasControlCharacter = [...name].some(character => {
+		const codePoint = character.codePointAt(0) ?? 0
+		return codePoint <= 0x1f || codePoint === 0x7f
+	})
+	if (name.length === 0 || name.length > MAX_PROFILE_NAME_LENGTH || hasControlCharacter) {
+		fail(`profiles.json contains a profile name that is not 1-${MAX_PROFILE_NAME_LENGTH} visible characters`)
+	}
+	return name
 }
 
 function lstat(path, label) {
@@ -81,6 +95,7 @@ function readProfiles(root) {
 		) {
 			fail('profiles.json contains an invalid profile document')
 		}
+		normalizedProfileName(profile.name)
 		return profile
 	})
 	const profileIds = profiles.map(profile => profile.id)
