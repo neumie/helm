@@ -5,6 +5,7 @@ import test from 'node:test'
 const html = readFileSync(new URL('../app/src/renderer/index.html', import.meta.url), 'utf-8')
 const normalizedHtml = html.replace(/\s+/g, ' ')
 const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf-8')
+const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf-8')
 
 function rule(selector: string): string {
 	const start = css.indexOf(`${selector} {`)
@@ -23,4 +24,12 @@ test('terminal header keeps controls interactive and trailing whitespace draggab
 	assert.match(rule('.tab-strip-controls'), /-webkit-app-region:\s*no-drag;/)
 	assert.match(rule('.topbar-drag-space'), /flex:\s*1;/)
 	assert.match(rule('.topbar-drag-space'), /min-width:\s*12px;/)
+})
+
+test('double-click rename cannot reach native titlebar zoom handling', () => {
+	assert.match(rule('.tab'), /-webkit-app-region:\s*no-drag;/)
+	assert.match(
+		renderer,
+		/tabButton\.addEventListener\('dblclick', event => \{\s*event\.preventDefault\(\)\s*event\.stopPropagation\(\)[\s\S]*?startRename\(tab\)\s*\}\)/,
+	)
 })

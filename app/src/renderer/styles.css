@@ -190,6 +190,7 @@ button:focus-visible,
 .tab {
 	position: relative;
 	display: flex;
+	-webkit-app-region: no-drag;
 	align-items: center;
 	gap: 4px;
 	flex: none;

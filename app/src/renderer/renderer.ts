@@ -1441,8 +1441,11 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		if (suppressTabClick.delete(tab)) return
 		activate(tab)
 	})
-	// Double-click the tab = inline rename (pin); the close × keeps its meaning.
+	// Claim the double-click before the native titlebar sees it: on macOS a
+	// titlebar double-click zooms the window, while a tab double-click renames.
 	tabButton.addEventListener('dblclick', event => {
+		event.preventDefault()
+		event.stopPropagation()
 		if (event.target instanceof Node && close.contains(event.target)) return
 		startRename(tab)
 	})
