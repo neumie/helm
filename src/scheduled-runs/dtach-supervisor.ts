@@ -1,4 +1,4 @@
-import { type ChildProcess, execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process'
+import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process'
 import { unlink } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'
@@ -15,13 +15,15 @@ const execFile = promisify(nodeExecFile)
 export interface ProcessFingerprint {
 	pid: number
 	processGroupId: number
+	sessionId: number
 	startedAt: string
 	executable: string
 }
 
 export interface ScheduledProcessIdentity extends ProcessFingerprint {
+	/** The verified dtach master holding this exact derived socket. */
 	socketHolder?: ProcessFingerprint
-	/** All members observed after dtach became ready. Surviving members must match these OS fingerprints. */
+	/** Legacy observational data; later same-PGID/SID descendants are permitted. */
 	groupMembers?: ProcessFingerprint[]
 }
 
@@ -40,6 +42,7 @@ export interface DtachSupervisorDeps {
 	/** Mandatory ownership decision before every destructive action. */
 	inspectOwnership?: (socketPath: string, identity: ScheduledProcessIdentity) => Promise<OwnershipState>
 	inspectProcess?: (pid: number) => Promise<ProcessFingerprint | null>
+	inspectProcessCommand?: (pid: number) => Promise<string | null>
 	inspectGroup?: (processGroupId: number) => Promise<ProcessFingerprint[] | null>
 	findSocketHolders?: (socketPath: string) => Promise<ProcessFingerprint[] | null>
 	sleep?: (ms: number) => Promise<void>
@@ -56,9 +59,9 @@ export interface LaunchDtachInput {
 	cwd: string
 	env: NodeJS.ProcessEnv
 	diagnosticPath: string
-	/** Persists a restart-safe leader identity before readiness. */
+	/** Persists the verified daemonized master identity before readiness. */
 	onSpawned: (identity: ScheduledProcessIdentity) => Promise<void> | void
-	/** Persists the socket-holder/group fingerprints once the socket is ready. */
+	/** Runs only after the master identity has been persisted. */
 	onReady?: (identity: ScheduledProcessIdentity) => Promise<void> | void
 	readinessTimeoutMs?: number
 }
@@ -72,6 +75,7 @@ function sameFingerprint(expected: ProcessFingerprint, candidate: ProcessFingerp
 		!!candidate &&
 		expected.pid === candidate.pid &&
 		expected.processGroupId === candidate.processGroupId &&
+		expected.sessionId === candidate.sessionId &&
 		expected.startedAt === candidate.startedAt &&
 		basename(expected.executable) === basename(candidate.executable)
 	)
@@ -85,6 +89,8 @@ async function processFingerprint(pid: number): Promise<ProcessFingerprint | nul
 			'-o',
 			'pgid=',
 			'-o',
+			'sess=',
+			'-o',
 			'lstart=',
 			'-o',
 			'comm=',
@@ -97,20 +103,30 @@ async function processFingerprint(pid: number): Promise<ProcessFingerprint | nul
 	}
 }
 
+async function processCommand(pid: number): Promise<string | null> {
+	try {
+		const { stdout } = await execFile('ps', ['-o', 'command=', '-p', String(pid)])
+		return stdout.trim() || null
+	} catch {
+		return null
+	}
+}
+
 function parsePsLine(line: string): ProcessFingerprint | null {
-	const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.+?)\s*$/)
+	const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.{24})\s+(.+?)\s*$/)
 	if (!match) return null
 	return {
 		pid: Number(match[1]),
 		processGroupId: Number(match[2]),
-		startedAt: match[3].trim(),
-		executable: match[4].trim(),
+		sessionId: Number(match[3]),
+		startedAt: match[4].trim(),
+		executable: match[5].trim(),
 	}
 }
 
 async function groupFingerprints(processGroupId: number): Promise<ProcessFingerprint[] | null> {
 	try {
-		const { stdout } = await execFile('ps', ['-eo', 'pid=,pgid=,lstart=,comm='])
+		const { stdout } = await execFile('ps', ['-eo', 'pid=,pgid=,sess=,lstart=,comm='])
 		const rows = stdout
 			.split('\n')
 			.map(parsePsLine)
@@ -123,11 +139,13 @@ async function groupFingerprints(processGroupId: number): Promise<ProcessFingerp
 
 async function socketHolders(socketPath: string): Promise<ProcessFingerprint[] | null> {
 	try {
-		const { stdout } = await execFile('lsof', ['-t', '--', socketPath])
+		// dtach retains its original socket pathname in argv. This works after
+		// daemonization on macOS, where lsof does not reliably expose the listener.
+		const { stdout } = await execFile('pgrep', ['-f', socketPath])
 		const ids = stdout.split(/\s+/).filter(Boolean).map(Number).filter(Number.isSafeInteger)
 		return Promise.all(ids.map(processFingerprint)).then(rows => rows.filter((row): row is ProcessFingerprint => !!row))
 	} catch (error) {
-		// lsof exit 1 means no holder; any other failure is not safe to classify.
+		// pgrep exit 1 means no candidate; any other failure is not safe to classify.
 		if ((error as NodeJS.ErrnoException & { code?: number }).code === 1) return []
 		return null
 	}
@@ -147,7 +165,6 @@ export class DtachSupervisor {
 		const existing = await probe(socketPath)
 		if (existing === 'live') throw new Error('Scheduled session socket is already live')
 		if (existing === 'unknown') throw new Error('Scheduled session socket probe is unknown; quarantined')
-		// This is the expected, derived namespace path and its dead state was proven.
 		try {
 			await (this.deps.unlink ?? unlink)(socketPath)
 		} catch {
@@ -161,48 +178,74 @@ export class DtachSupervisor {
 			detached: true,
 			stdio: 'ignore',
 		})
-		let spawnFailure: Error | undefined
-		let settled = false
-		const failed = new Promise<never>((_resolve, reject) => {
-			child.once('error', error => {
-				if (!settled) {
-					spawnFailure = asError(error)
-					reject(spawnFailure)
-				}
-			})
-			child.once('exit', (code, signal) => {
-				if (!settled) {
-					spawnFailure = new Error(`Scheduled dtach exited before readiness (${String(code ?? signal)})`)
-					reject(spawnFailure)
-				}
-			})
-		})
 		if (!child.pid || child.pid <= 0) throw new Error('Could not start scheduled dtach supervisor')
-		const leader = await (this.deps.inspectProcess ?? processFingerprint)(child.pid)
-		if (!leader || leader.processGroupId !== child.pid) throw new Error('Could not derive scheduled dtach OS identity')
-		const identity: ScheduledProcessIdentity = leader
-		await input.onSpawned(identity)
-		child.unref?.()
-		appendScheduledDiagnostic(input.diagnosticPath, 'dtach_spawned', {
-			pid: identity.pid,
-			processGroupId: identity.processGroupId,
+
+		let settled = false
+		let spawnFailure: Error | undefined
+		let wakeFailure: (() => void) | undefined
+		const failure = new Promise<void>(resolve => {
+			wakeFailure = resolve
 		})
-		const until = Date.now() + (input.readinessTimeoutMs ?? 5_000)
-		while (Date.now() < until) {
-			const state = await Promise.race([probe(socketPath), failed])
-			if (state === 'live') {
-				const ready = await this.captureReadyIdentity(socketPath, identity)
-				if (!ready) throw new Error('Scheduled socket holder ownership is unknown; quarantined')
-				await input.onReady?.(ready)
-				settled = true
-				appendScheduledDiagnostic(input.diagnosticPath, 'socket_ready', {})
-				return ready
-			}
-			if (state === 'unknown') throw new Error('Scheduled socket readiness is unknown; quarantined')
-			await Promise.race([(this.deps.sleep ?? delay)(50), failed])
+		const fail = (error: unknown) => {
+			if (settled || spawnFailure) return
+			spawnFailure = asError(error)
+			wakeFailure?.()
 		}
-		if (spawnFailure) throw spawnFailure
-		throw new Error('Scheduled dtach socket did not become ready')
+		child.once('error', fail)
+		child.once('exit', (code, signal) => {
+			// `dtach -n` is allowed to daemonize normally: its zero launcher exit is
+			// not session failure. Non-zero/terminated launchers still wake the loop.
+			if (code !== 0) fail(new Error(`Scheduled dtach launcher exited before readiness (${String(code ?? signal)})`))
+		})
+
+		let bootstrap: ProcessFingerprint | undefined
+		let master: ScheduledProcessIdentity | undefined
+		try {
+			// The `dtach -n` PID is bootstrap-only and may already have exited after
+			// successfully daemonizing before ps can observe it.
+			const inspectedBootstrap = await (this.deps.inspectProcess ?? processFingerprint)(child.pid)
+			bootstrap =
+				inspectedBootstrap?.pid === child.pid && inspectedBootstrap.processGroupId === child.pid
+					? inspectedBootstrap
+					: undefined
+			child.unref?.()
+			appendScheduledDiagnostic(input.diagnosticPath, 'dtach_launcher_spawned', {
+				pid: child.pid,
+				processGroupId: bootstrap?.processGroupId ?? null,
+			})
+			const until = Date.now() + (input.readinessTimeoutMs ?? 5_000)
+			while (Date.now() < until) {
+				const state = await this.raceFailure(probe(socketPath), failure, () => spawnFailure)
+				if (state === 'live') {
+					const discoveredMaster = await this.captureReadyIdentity(socketPath)
+					// dtach can publish the socket a moment before lsof/ps has a stable
+					// daemon record; keep waiting within the bounded readiness window.
+					if (!discoveredMaster) {
+						await this.raceFailure(this.deps.sleep?.(50) ?? delay(50), failure, () => spawnFailure)
+						continue
+					}
+					master = discoveredMaster
+					// This durable write is deliberately before onReady/public readiness.
+					await input.onSpawned(master)
+					appendScheduledDiagnostic(input.diagnosticPath, 'dtach_master_persisted', {
+						pid: master.pid,
+						processGroupId: master.processGroupId,
+						sessionId: master.sessionId,
+					})
+					await input.onReady?.(master)
+					settled = true
+					appendScheduledDiagnostic(input.diagnosticPath, 'socket_ready', {})
+					return master
+				}
+				if (state === 'unknown') throw new Error('Scheduled socket readiness is unknown; quarantined')
+				await this.raceFailure(this.deps.sleep?.(50) ?? delay(50), failure, () => spawnFailure)
+			}
+			throw spawnFailure ?? new Error('Scheduled dtach socket did not become ready')
+		} catch (error) {
+			settled = true
+			await this.cleanupLaunchFailure(socketPath, master, bootstrap, input.diagnosticPath)
+			throw error
+		}
 	}
 
 	async teardown(
@@ -232,6 +275,73 @@ export class DtachSupervisor {
 		return this.quarantine(diagnosticPath, 'still_live_after_kill')
 	}
 
+	private async raceFailure<T>(
+		operation: Promise<T>,
+		failure: Promise<void>,
+		getFailure: () => Error | undefined,
+	): Promise<T> {
+		return Promise.race([
+			operation,
+			failure.then(() => Promise.reject(getFailure() ?? new Error('Scheduled dtach launcher failed'))),
+		])
+	}
+
+	private async cleanupLaunchFailure(
+		socketPath: string,
+		master: ScheduledProcessIdentity | undefined,
+		bootstrap: ProcessFingerprint | undefined,
+		diagnosticPath: string,
+	): Promise<void> {
+		let owned = master
+		if (!owned && (this.deps.probe ?? probeScheduledSocket)) {
+			try {
+				if ((await (this.deps.probe ?? probeScheduledSocket)(socketPath)) === 'live')
+					owned = (await this.captureReadyIdentity(socketPath)) ?? undefined
+			} catch {
+				// A failed observation is quarantined below; never guess ownership.
+			}
+		}
+		if (owned) {
+			const result = await this.teardownByPath(socketPath, owned, diagnosticPath)
+			appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup', { result })
+			return
+		}
+		const currentBootstrap = bootstrap ? await (this.deps.inspectProcess ?? processFingerprint)(bootstrap.pid) : null
+		if (bootstrap && sameFingerprint(bootstrap, currentBootstrap ?? undefined)) {
+			try {
+				;(this.deps.signalGroup ?? ((group, sig) => process.kill(-group, sig)))(bootstrap.processGroupId, 'SIGTERM')
+				appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_bootstrap_term', {
+					processGroupId: bootstrap.processGroupId,
+				})
+				return
+			} catch {
+				// Fall through to a durable diagnostic quarantine.
+			}
+		}
+		appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_quarantined', { reason: 'master_identity_unavailable' })
+	}
+
+	private async teardownByPath(
+		socketPath: string,
+		identity: ScheduledProcessIdentity,
+		diagnosticPath: string,
+	): Promise<TeardownResult> {
+		const inspect = this.deps.inspectOwnership ?? ((path, candidate) => this.inspectOwnership(path, candidate))
+		let ownership = await inspect(socketPath, identity)
+		if (ownership === 'unknown' || ownership === 'mismatch') return this.quarantine(diagnosticPath, ownership)
+		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'already_dead')
+		const signal = this.deps.signalGroup ?? ((group, sig) => process.kill(-group, sig))
+		signal(identity.processGroupId, 'SIGTERM')
+		if (await this.waitForDeath(inspect, socketPath, identity, 5_000))
+			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
+		ownership = await inspect(socketPath, identity)
+		if (ownership !== 'verified') return this.quarantine(diagnosticPath, ownership)
+		signal(identity.processGroupId, 'SIGKILL')
+		if (await this.waitForDeath(inspect, socketPath, identity, 5_000))
+			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
+		return this.quarantine(diagnosticPath, 'still_live_after_kill')
+	}
+
 	private async waitForDeath(
 		inspect: (path: string, identity: ScheduledProcessIdentity) => Promise<OwnershipState>,
 		socketPath: string,
@@ -248,39 +358,52 @@ export class DtachSupervisor {
 		return false
 	}
 
-	private async captureReadyIdentity(
-		socketPath: string,
-		identity: ScheduledProcessIdentity,
-	): Promise<ScheduledProcessIdentity | null> {
-		const group = await (this.deps.inspectGroup ?? groupFingerprints)(identity.processGroupId)
+	private async captureReadyIdentity(socketPath: string): Promise<ScheduledProcessIdentity | null> {
 		const holders = await (this.deps.findSocketHolders ?? socketHolders)(socketPath)
-		if (!group?.length || !holders?.length) return null
-		const holder = holders.find(candidate => candidate.processGroupId === identity.processGroupId)
-		if (!holder || !group.some(member => sameFingerprint(member, holder))) return null
-		return { ...identity, socketHolder: holder, groupMembers: group }
+		if (!holders?.length) return null
+		const candidates = await Promise.all(
+			holders.map(async holder => {
+				const current = await (this.deps.inspectProcess ?? processFingerprint)(holder.pid)
+				const command = await (this.deps.inspectProcessCommand ?? processCommand)(holder.pid)
+				return current && sameFingerprint(holder, current) && this.isOwnedDtachMaster(current, command, socketPath)
+					? current
+					: null
+			}),
+		)
+		const masters = candidates.filter((candidate): candidate is ProcessFingerprint => !!candidate)
+		if (masters.length !== 1) return null
+		const master = masters[0]
+		// The master PID/start/PGID/SID plus exact original socket command are the
+		// durable ownership anchor. Group enumeration is deferred to teardown.
+		return { ...master, socketHolder: master }
+	}
+
+	private isOwnedDtachMaster(candidate: ProcessFingerprint, command: string | null, socketPath: string): boolean {
+		return basename(candidate.executable) === 'dtach' && !!command?.includes(socketPath)
 	}
 
 	private async inspectOwnership(socketPath: string, identity: ScheduledProcessIdentity): Promise<OwnershipState> {
 		const probe = this.deps.probe ?? probeScheduledSocket
 		const socket = await probe(socketPath)
 		if (socket === 'unknown') return 'unknown'
+		const master = await (this.deps.inspectProcess ?? processFingerprint)(identity.pid)
 		const group = await (this.deps.inspectGroup ?? groupFingerprints)(identity.processGroupId)
-		if (!group) return 'unknown'
-		if (!group.length) return socket === 'dead' ? 'dead' : 'mismatch'
+		if (!group || !master) {
+			return !master && group?.length === 0 && socket === 'dead' ? 'dead' : 'mismatch'
+		}
 		if (
-			!identity.groupMembers?.length ||
-			!group.every(member => identity.groupMembers?.some(expected => sameFingerprint(expected, member)))
+			!sameFingerprint(identity, master) ||
+			master.processGroupId !== identity.processGroupId ||
+			master.sessionId !== identity.sessionId ||
+			!group.some(member => sameFingerprint(master, member))
 		)
 			return 'mismatch'
+		// New shell/tool descendants are allowed: master PID/start/PGID/SID is the anchor.
 		if (socket === 'dead') return 'verified'
 		if (!identity.socketHolder) return 'mismatch'
 		const holders = await (this.deps.findSocketHolders ?? socketHolders)(socketPath)
 		if (!holders) return 'unknown'
-		return holders.some(
-			holder =>
-				sameFingerprint(identity.socketHolder as ProcessFingerprint, holder) &&
-				group.some(member => sameFingerprint(member, holder)),
-		)
+		return holders.some(holder => sameFingerprint(identity.socketHolder as ProcessFingerprint, holder))
 			? 'verified'
 			: 'mismatch'
 	}

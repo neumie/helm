@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import net from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -24,6 +24,21 @@ test('scheduled socket path is deterministic, opaque, profile-scoped, and bounde
 		assert.throws(() => assertScheduledSocketPathUsable('é'.repeat(52)), /AF_UNIX/)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('a namespace symlink is rejected before chmod can change its target mode', () => {
+	const root = mkdtempSync('/tmp/hs-link-')
+	const target = mkdtempSync('/tmp/hs-target-')
+	try {
+		chmodSync(target, 0o755)
+		const before = statSync(target).mode & 0o777
+		symlinkSync(target, join(root, 'work'))
+		assert.throws(() => ensureScheduledSocketDir('work', root), /real directory/)
+		assert.equal(statSync(target).mode & 0o777, before)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+		rmSync(target, { recursive: true, force: true })
 	}
 })
 

@@ -60,13 +60,17 @@ export function assertScheduledSocketPathUsable(path: string): void {
 	}
 }
 
-function assertPrivateRealDirectory(path: string): void {
+function assertOwnedRealDirectory(path: string): void {
 	const stat = lstatSync(path)
 	if (!stat.isDirectory() || stat.isSymbolicLink())
 		throw new Error('Scheduled socket namespace must be a real directory')
 	const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
 	if (uid !== undefined && stat.uid !== uid) throw new Error('Scheduled socket namespace has unexpected owner')
-	if ((stat.mode & 0o077) !== 0) throw new Error('Scheduled socket namespace must be owner-private')
+}
+
+function assertPrivateRealDirectory(path: string): void {
+	assertOwnedRealDirectory(path)
+	if ((lstatSync(path).mode & 0o077) !== 0) throw new Error('Scheduled socket namespace must be owner-private')
 }
 
 /** Create and validate the daemon-owned root and profile namespace fail-closed. */
@@ -74,7 +78,10 @@ export function ensureScheduledSocketDir(profileId: string, root?: string): stri
 	const base = scheduledSocketRoot(root)
 	const dir = scheduledSocketDir(profileId, root)
 	assertScheduledSocketPathUsable(join(dir, `${'sr-a'.padEnd(35, 'a')}.sock`))
+	// lstat validation deliberately precedes chmod: a stale namespace symlink
+	// must not mutate the external target before it is rejected.
 	mkdirSync(base, { recursive: true, mode: 0o700 })
+	assertOwnedRealDirectory(base)
 	chmodSync(base, 0o700)
 	assertPrivateRealDirectory(base)
 	try {
@@ -82,6 +89,7 @@ export function ensureScheduledSocketDir(profileId: string, root?: string): stri
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
 	}
+	assertOwnedRealDirectory(dir)
 	chmodSync(dir, 0o700)
 	assertPrivateRealDirectory(dir)
 	if (!realpathSync(dir).startsWith(`${realpathSync(base)}${sep}`))
