@@ -121,7 +121,7 @@ test('rejects stale profile tokens before freezing and rolls a prepared terminal
 	assert.deepEqual(value.calls.slice(-1), [`unfreeze:${SESSION}`])
 })
 
-test('reserves the transaction and session before awaiting adapters', async () => {
+test('reserves the transaction and session before awaiting adapters, and rejects completion while preparing', async () => {
 	let releaseSnapshot: (() => void) | undefined
 	const value = fixture({
 		saveSnapshot(sessionId) {
@@ -140,6 +140,14 @@ test('reserves the transaction and session before awaiting adapters', async () =
 	assert.deepEqual(await value.controller.prepare(request('move-2')), {
 		status: 'rejected',
 		reason: 'duplicate-session',
+	})
+	assert.deepEqual(await value.controller.commit(request('move-1')), {
+		status: 'rejected',
+		reason: 'transaction-in-progress',
+	})
+	assert.deepEqual(await value.controller.rollback(request('move-1')), {
+		status: 'rejected',
+		reason: 'transaction-in-progress',
 	})
 	assert.ok(releaseSnapshot)
 	releaseSnapshot()
@@ -179,5 +187,116 @@ test('failed snapshot acknowledgement rolls back and releases the session reserv
 	})
 	assert.deepEqual(value.calls, [`freeze:${SESSION}`, `snapshot:${SESSION}`, `unfreeze:${SESSION}`])
 	snapshotFlushed = true
+	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
+})
+
+test('classifies freeze, snapshot, and metadata adapter failures while restoring a frozen terminal', async () => {
+	const freezeFailure = fixture({
+		freeze(sessionId) {
+			freezeFailure.calls.push(`freeze:${sessionId}`)
+			throw new Error('freeze failed')
+		},
+	})
+	assert.deepEqual(await freezeFailure.controller.prepare(request()), {
+		status: 'rejected',
+		reason: 'freeze-failed',
+	})
+	assert.deepEqual(freezeFailure.calls, [`freeze:${SESSION}`])
+
+	const snapshotFailure = fixture({
+		saveSnapshot(sessionId) {
+			snapshotFailure.calls.push(`snapshot:${sessionId}`)
+			throw new Error('snapshot failed')
+		},
+	})
+	assert.deepEqual(await snapshotFailure.controller.prepare(request()), {
+		status: 'rejected',
+		reason: 'snapshot-failed',
+	})
+	assert.deepEqual(snapshotFailure.calls, [`freeze:${SESSION}`, `snapshot:${SESSION}`, `unfreeze:${SESSION}`])
+
+	const metadataFailure = fixture({
+		metadata(sessionId) {
+			metadataFailure.calls.push(`metadata:${sessionId}`)
+			throw new Error('metadata failed')
+		},
+	})
+	assert.deepEqual(await metadataFailure.controller.prepare(request()), {
+		status: 'rejected',
+		reason: 'metadata-failed',
+	})
+	assert.deepEqual(metadataFailure.calls, [
+		`freeze:${SESSION}`,
+		`snapshot:${SESSION}`,
+		`metadata:${SESSION}`,
+		`unfreeze:${SESSION}`,
+	])
+})
+
+test('a failed preparation cleanup reports rollback-failed and leaves its reservation recoverable', async () => {
+	let failSnapshot = true
+	let failUnfreeze = true
+	const value = fixture({
+		saveSnapshot(sessionId) {
+			value.calls.push(`snapshot:${sessionId}`)
+			if (failSnapshot) throw new Error('snapshot failed')
+			return { snapshotFlushed: true }
+		},
+		unfreeze(sessionId) {
+			value.calls.push(`unfreeze:${sessionId}`)
+			if (failUnfreeze) throw new Error('unfreeze failed')
+		},
+	})
+	assert.deepEqual(await value.controller.prepare(request()), { status: 'rejected', reason: 'rollback-failed' })
+	failSnapshot = false
+	failUnfreeze = false
+	assert.equal((await value.controller.rollback(request())).status, 'rolled-back')
+	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
+})
+
+test('dispose failure unfreezes the source and clears its reservation when recovery succeeds', async () => {
+	const value = fixture({
+		dispose(sessionId) {
+			value.calls.push(`dispose:${sessionId}`)
+			throw new Error('dispose failed')
+		},
+	})
+	assert.equal((await value.controller.prepare(request())).status, 'prepared')
+	assert.deepEqual(await value.controller.commit(request()), { status: 'rejected', reason: 'dispose-failed' })
+	assert.deepEqual(value.calls.slice(-2), [`dispose:${SESSION}`, `unfreeze:${SESSION}`])
+	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
+})
+
+test('an unfreeze failure reports rollback-failed and leaves a prepared transaction recoverable', async () => {
+	let failUnfreeze = true
+	const value = fixture({
+		unfreeze(sessionId) {
+			value.calls.push(`unfreeze:${sessionId}`)
+			if (failUnfreeze) throw new Error('unfreeze failed')
+		},
+	})
+	const prepared = await value.controller.prepare(request())
+	assert.equal(prepared.status, 'prepared')
+	if (prepared.status !== 'prepared') return
+	assert.deepEqual(await value.controller.rollback(request()), { status: 'rejected', reason: 'rollback-failed' })
+	failUnfreeze = false
+	assert.deepEqual(await value.controller.rollback(request()), { status: 'rolled-back', prepared: prepared.prepared })
+	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
+})
+
+test('stale-token cleanup reports rollback-failed and can be retried after the unfreeze adapter recovers', async () => {
+	let failUnfreeze = true
+	const value = fixture({
+		unfreeze(sessionId) {
+			value.calls.push(`unfreeze:${sessionId}`)
+			if (failUnfreeze) throw new Error('unfreeze failed')
+		},
+	})
+	assert.equal((await value.controller.prepare(request())).status, 'prepared')
+	value.setCurrentToken('profile:8')
+	assert.deepEqual(await value.controller.commit(request()), { status: 'rejected', reason: 'rollback-failed' })
+	failUnfreeze = false
+	assert.deepEqual(await value.controller.rollback(request()), { status: 'rejected', reason: 'stale-profile-token' })
+	value.setCurrentToken(TOKEN)
 	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
 })

@@ -64,6 +64,7 @@ export type TerminalTransferRendererRejectReason =
 	| 'duplicate-transaction'
 	| 'duplicate-session'
 	| 'missing-terminal'
+	| 'freeze-failed'
 	| 'snapshot-not-flushed'
 	| 'snapshot-failed'
 	| 'metadata-failed'
@@ -84,7 +85,7 @@ export type TerminalTransferRendererCompletionResult =
 
 type PreparedRecord = {
 	prepared: PreparedTerminalTransfer
-	phase: 'prepared' | 'releasing'
+	phase: 'preparing' | 'prepared' | 'releasing'
 }
 
 /**
@@ -110,46 +111,45 @@ export class TerminalTransferRendererController {
 		// prepare calls cannot snapshot or freeze the same terminal twice.
 		const placeholder: PreparedRecord = {
 			prepared: { ...request, metadata: emptyMetadata() },
-			phase: 'prepared',
+			phase: 'preparing',
 		}
 		this.#transactions.set(request.transactionId, placeholder)
 		this.#transactionBySession.set(request.sessionId, request.transactionId)
 
-		let frozen = false
 		try {
 			await this.#deps.freeze(request.sessionId)
-			frozen = true
-			const acknowledgement = await this.#deps.saveSnapshot(request.sessionId)
-			if (!snapshotFlushed(acknowledgement)) {
-				await this.#release(placeholder)
-				return { status: 'rejected', reason: 'snapshot-not-flushed' }
-			}
-			const metadata = await this.#deps.metadata(request.sessionId)
-			if (metadata === null) {
-				await this.#release(placeholder)
-				return { status: 'rejected', reason: 'missing-terminal' }
-			}
-			const prepared: PreparedTerminalTransfer = { ...request, metadata: copyMetadata(metadata) }
-			placeholder.prepared = prepared
-			return { status: 'prepared', prepared }
 		} catch {
-			if (frozen) {
-				try {
-					await this.#release(placeholder)
-				} catch {
-					return { status: 'rejected', reason: 'rollback-failed' }
-				}
-			}
 			this.#forget(placeholder)
-			return { status: 'rejected', reason: frozen ? 'snapshot-failed' : 'metadata-failed' }
+			return { status: 'rejected', reason: 'freeze-failed' }
 		}
+
+		let acknowledgement: boolean | TerminalTransferSnapshotAcknowledgement
+		try {
+			acknowledgement = await this.#deps.saveSnapshot(request.sessionId)
+		} catch {
+			return this.#rejectAfterFreeze(placeholder, 'snapshot-failed')
+		}
+		if (!snapshotFlushed(acknowledgement)) return this.#rejectAfterFreeze(placeholder, 'snapshot-not-flushed')
+
+		let metadata: TerminalTransferRendererMetadata | null
+		try {
+			metadata = await this.#deps.metadata(request.sessionId)
+		} catch {
+			return this.#rejectAfterFreeze(placeholder, 'metadata-failed')
+		}
+		if (metadata === null) return this.#rejectAfterFreeze(placeholder, 'missing-terminal')
+
+		const prepared: PreparedTerminalTransfer = { ...request, metadata: copyMetadata(metadata) }
+		placeholder.prepared = prepared
+		placeholder.phase = 'prepared'
+		return { status: 'prepared', prepared }
 	}
 
 	async commit(request: TerminalTransferRendererRequest): Promise<TerminalTransferRendererCompletionResult> {
 		const record = this.#completionRecord(request)
 		if ('reason' in record) return { status: 'rejected', reason: record.reason }
 		if (!this.#hasCurrentToken(request.profileToken)) {
-			await this.#rollbackStale(record)
+			if (!(await this.#rollbackStale(record))) return { status: 'rejected', reason: 'rollback-failed' }
 			return { status: 'rejected', reason: 'stale-profile-token' }
 		}
 		record.phase = 'releasing'
@@ -158,12 +158,7 @@ export class TerminalTransferRendererController {
 			this.#forget(record)
 			return { status: 'committed', prepared: record.prepared }
 		} catch {
-			try {
-				await this.#release(record)
-			} catch {
-				return { status: 'rejected', reason: 'rollback-failed' }
-			}
-			return { status: 'rejected', reason: 'dispose-failed' }
+			return this.#rejectAfterFreeze(record, 'dispose-failed')
 		}
 	}
 
@@ -171,7 +166,7 @@ export class TerminalTransferRendererController {
 		const record = this.#completionRecord(request)
 		if ('reason' in record) return { status: 'rejected', reason: record.reason }
 		if (!this.#hasCurrentToken(request.profileToken)) {
-			await this.#rollbackStale(record)
+			if (!(await this.#rollbackStale(record))) return { status: 'rejected', reason: 'rollback-failed' }
 			return { status: 'rejected', reason: 'stale-profile-token' }
 		}
 		try {
@@ -193,20 +188,41 @@ export class TerminalTransferRendererController {
 		return record
 	}
 
-	async #rollbackStale(record: PreparedRecord): Promise<void> {
+	async #rollbackStale(record: PreparedRecord): Promise<boolean> {
 		try {
 			await this.#release(record)
+			return true
 		} catch {
-			// The stale caller is rejected regardless. The injection boundary owns
-			// reporting an unfreeze failure to the profile-switch fence.
+			return false
 		}
 	}
 
-	async #release(record: PreparedRecord): Promise<void> {
-		if (record.phase === 'releasing') throw new Error('terminal transfer release already in progress')
+	async #rejectAfterFreeze(
+		record: PreparedRecord,
+		reason: TerminalTransferRendererRejectReason,
+	): Promise<{ status: 'rejected'; reason: TerminalTransferRendererRejectReason }> {
+		try {
+			await this.#release(record, record.phase === 'releasing')
+			return { status: 'rejected', reason }
+		} catch {
+			return { status: 'rejected', reason: 'rollback-failed' }
+		}
+	}
+
+	async #release(record: PreparedRecord, continueRelease = false): Promise<void> {
+		if (record.phase === 'releasing' && !continueRelease)
+			throw new Error('terminal transfer release already in progress')
+		const priorPhase = record.phase === 'releasing' ? 'prepared' : record.phase
 		record.phase = 'releasing'
-		await this.#deps.unfreeze(record.prepared.sessionId)
-		this.#forget(record)
+		try {
+			await this.#deps.unfreeze(record.prepared.sessionId)
+			this.#forget(record)
+		} catch (error) {
+			// A failed unfreeze must stay explicitly recoverable by retrying rollback;
+			// do not leave the reservation indefinitely stuck in `releasing`.
+			record.phase = priorPhase === 'preparing' ? 'prepared' : priorPhase
+			throw error
+		}
 	}
 
 	#forget(record: PreparedRecord): void {
