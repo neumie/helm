@@ -1,4 +1,5 @@
 import { createButton } from './button'
+import { createIconButton } from './icon-button'
 
 // Toast notifications — compact bottom-right notices, stacking, helm design language.
 // Reusable: any renderer feature can call showToast(); the soft-close Undo is
@@ -96,6 +97,15 @@ export function showToast(options: ToastOptions): ToastHandle {
 		// transitionend is unreliable when the tab is hidden; a timer always fires.
 		setTimeout(() => el.remove(), EXIT_MS)
 	}
+
+	const dismissButton = createIconButton({
+		label: 'Dismiss notification',
+		glyph: '×',
+		className: 'toast-dismiss',
+		onClick: dismiss,
+	})
+	if (countdownEl) el.insertBefore(dismissButton, countdownEl)
+	else el.appendChild(dismissButton)
 
 	// Double rAF: element must be laid out with its initial (hidden) styles
 	// before the transition to .shown can animate.

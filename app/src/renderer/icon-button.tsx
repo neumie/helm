@@ -6,17 +6,19 @@ export function IconBtn({
 	children,
 	pressed,
 	disabled,
+	className,
 }: {
 	label: string
 	onClick?: () => void
 	children: ReactNode
 	pressed?: boolean
 	disabled?: boolean
+	className?: string
 }) {
 	return (
 		<button
 			type="button"
-			className="icon-btn"
+			className={`icon-btn${className ? ` ${className}` : ''}`}
 			aria-label={label}
 			title={label}
 			aria-pressed={pressed}
@@ -34,16 +36,18 @@ export function createIconButton({
 	label,
 	glyph,
 	glyphClassName,
+	className,
 	onClick,
 }: {
 	label: string
 	glyph: string
 	glyphClassName?: string
+	className?: string
 	onClick?: () => void
 }): HTMLButtonElement {
 	const button = document.createElement('button')
 	button.type = 'button'
-	button.className = 'icon-btn'
+	button.className = `icon-btn${className ? ` ${className}` : ''}`
 	button.setAttribute('aria-label', label)
 	button.title = label
 	if (onClick) button.addEventListener('click', onClick)

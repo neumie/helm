@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { ReactNode } from 'react'
 import { Btn } from './button'
+import { IconBtn } from './icon-button'
 
 function Toast({
 	message,
@@ -19,6 +20,11 @@ function Toast({
 					{action}
 				</Btn>
 			) : null}
+			<IconBtn label="Dismiss notification" className="toast-dismiss">
+				<span className="icon-btn-glyph" aria-hidden="true">
+					×
+				</span>
+			</IconBtn>
 			{countdown ? <div className="toast-countdown" style={{ transform: 'scaleX(0.62)' }} /> : null}
 		</div>
 	)

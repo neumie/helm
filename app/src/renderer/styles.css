@@ -867,7 +867,12 @@ body.dragging {
 
 .toast-action {
 	flex: none;
-	margin: -3px -6px 0 0;
+	margin: -3px 0 0 0;
+}
+
+.toast-dismiss {
+	flex: none;
+	margin: -3px -6px 0 -6px;
 }
 
 /* Inset hairline: time remains legible without turning the notice into a progress panel. */
