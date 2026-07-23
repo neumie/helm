@@ -45,6 +45,7 @@ const termsEl = el<HTMLDivElement>('terms')
 const topbarDragSpace = el<HTMLDivElement>('topbar-drag-space')
 const bgRoot = el<HTMLDivElement>('bg-root')
 const bgToggle = el<HTMLButtonElement>('bg-toggle')
+const bgCurrent = el<HTMLSpanElement>('bg-current')
 const bgCount = el<HTMLSpanElement>('bg-count')
 const bgPopover = el<HTMLDivElement>('bg-popover')
 const bgRows = el<HTMLDivElement>('bg-rows')
@@ -608,6 +609,7 @@ function activate(tab: Tab): void {
 		t.tabButton.setAttribute('aria-selected', String(t === tab))
 	}
 	syncEmptyState()
+	updateBackgroundUi()
 	// Fit after the holder becomes visible; hidden containers measure as 0x0.
 	requestAnimationFrame(() => {
 		fitActive()
@@ -786,7 +788,13 @@ let bgOpen = false
 function updateBackgroundUi(): void {
 	const empty = parked.length === 0
 	const focusWasInPopover = empty && bgPopover.contains(document.activeElement)
+	const opened = activeTab?.parked ? activeTab : null
+	const openedName = opened ? displayName(opened) : null
 	bgToggle.hidden = empty
+	bgCurrent.hidden = openedName === null
+	bgCurrent.textContent = openedName ?? ''
+	bgToggle.title = openedName ? `Background terminals — viewing ${openedName}` : 'Background terminals'
+	bgToggle.setAttribute('aria-label', bgToggle.title)
 	bgCount.textContent = String(parked.length)
 	if (empty) {
 		closeBackgroundPopover()

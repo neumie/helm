@@ -491,6 +491,24 @@ body.tab-dragging .tab {
 
 #bg-toggle svg {
 	display: block;
+	flex: none;
+}
+
+/* Names the parked terminal currently shown in the pane. It remains quiet
+ * utility context and truncates before it can crowd the draggable titlebar. */
+.bg-current {
+	max-width: min(160px, 25vw);
+	overflow: hidden;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 500;
+	line-height: 1.4;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bg-current[hidden] {
+	display: none;
 }
 
 /* Count badge: chip spec (§3.4), neutral tone — a state readout, not a button. */

@@ -108,7 +108,12 @@ function TerminalOutput() {
 	)
 }
 
-function TerminalShell({ children, popover, left = 0 }: { children?: ReactNode; popover?: boolean; left?: number }) {
+function TerminalShell({
+	children,
+	popover,
+	backgroundName,
+	left = 0,
+}: { children?: ReactNode; popover?: boolean; backgroundName?: string; left?: number }) {
 	return (
 		<div id="app" style={{ '--left-width': `${left}px` } as CSSProperties}>
 			<header id="topbar">
@@ -138,6 +143,11 @@ function TerminalShell({ children, popover, left = 0 }: { children?: ReactNode; 
 							aria-expanded={popover}
 						>
 							<StackIcon />
+							{backgroundName ? (
+								<span id="bg-current" className="bg-current">
+									{backgroundName}
+								</span>
+							) : null}
 							<span id="bg-count" className="bg-count">
 								4
 							</span>
@@ -195,7 +205,7 @@ export const TabStrip: Story = {
 }
 
 export const BackgroundTerminals: Story = {
-	render: () => <TerminalShell popover />,
+	render: () => <TerminalShell popover backgroundName="okena" />,
 }
 
 export const Rename: Story = {

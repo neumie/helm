@@ -25,6 +25,22 @@ test('opening a background terminal activates it without restoring ownership', (
 	assert.match(restore, /setParked\(tab\.sessionId, false\)/)
 })
 
+test('strip control names the currently open background terminal', () => {
+	assert.match(normalizedHtml, /<span id="bg-current" class="bg-current" hidden><\/span>/)
+	const activate = functionSlice('activate', 'cycleTab')
+	const update = functionSlice('updateBackgroundUi', 'renderBackgroundRows')
+	assert.match(activate, /updateBackgroundUi\(\)/)
+	assert.match(update, /const opened = activeTab\?\.parked \? activeTab : null/)
+	assert.match(update, /const openedName = opened \? displayName\(opened\) : null/)
+	assert.match(update, /bgCurrent\.hidden = openedName === null/)
+	assert.match(update, /bgCurrent\.textContent = openedName \?\? ''/)
+	assert.match(update, /bgToggle\.title = openedName \? `Background terminals — viewing \$\{openedName\}`/)
+	assert.match(update, /bgToggle\.setAttribute\('aria-label', bgToggle\.title\)/)
+	assert.match(css, /\.bg-current\s*\{[^}]*max-width:\s*min\(160px, 25vw\)/s)
+	assert.match(css, /\.bg-current\s*\{[^}]*text-overflow:\s*ellipsis/s)
+	assert.match(css, /\.bg-current\[hidden\]\s*\{[^}]*display:\s*none/s)
+})
+
 test('background rows form an editorial list with explicit icon actions', () => {
 	const render = functionSlice('renderBackgroundRows', 'onBgOutside')
 	assert.match(render, /open\.addEventListener\('click', \(\) => openParked\(tab\)\)/)
