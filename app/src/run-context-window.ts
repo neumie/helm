@@ -1,6 +1,7 @@
 import * as path from 'node:path'
 import { BrowserWindow, ipcMain, shell } from 'electron'
 import type { HelmBridge } from './helm-bridge'
+import { RunContextAccess, type RunContextDrainResult } from './run-context-access'
 import type { RunContextDraft } from './shared-helm'
 
 interface EditorState {
@@ -27,15 +28,15 @@ function itemId(raw: unknown): string {
 export class RunContextWindows {
 	private readonly byItem = new Map<string, EditorState>()
 	private readonly byWebContents = new Map<number, EditorState>()
-	/** Requests admitted before this gate closes must finish before activation. */
-	private readonly inFlight = new Set<Promise<unknown>>()
-	private preparingProfileSwitch = false
+	private readonly access: RunContextAccess
 
 	constructor(
 		private readonly bridge: HelmBridge,
 		private readonly distDir: string,
 		private readonly callbacks: RunContextWindowCallbacks = {},
-	) {}
+	) {
+		this.access = new RunContextAccess(() => this.callbacks.canOpen?.() !== false)
+	}
 
 	hasDirtyWindows(): boolean {
 		return [...this.byItem.values()].some(state => state.dirty)
@@ -45,20 +46,16 @@ export class RunContextWindows {
 	 * Synchronously refuse dirty drafts before closing a window or changing
 	 * admission. Once accepted, no new load/save/reset can enter the drain.
 	 */
-	beginProfileSwitchDrain(): { ok: false } | { ok: true; drained: Promise<void> } {
-		if (this.hasDirtyWindows()) return { ok: false }
-		this.preparingProfileSwitch = true
-		for (const state of this.byItem.values()) {
-			state.allowClose = true
-			state.window.close()
-		}
-		const admitted = [...this.inFlight]
-		return { ok: true, drained: Promise.allSettled(admitted).then(() => undefined) }
-	}
-
-	/** Reopen editor admission after a pre-activation failure or completed switch. */
-	finishProfileSwitchDrain(): void {
-		this.preparingProfileSwitch = false
+	beginProfileSwitchDrain(): RunContextDrainResult {
+		return this.access.beginProfileSwitchDrain(
+			() => this.hasDirtyWindows(),
+			() => {
+				for (const state of this.byItem.values()) {
+					state.allowClose = true
+					state.window.close()
+				}
+			},
+		)
 	}
 
 	requestCloseAll(): void {
@@ -66,30 +63,23 @@ export class RunContextWindows {
 	}
 
 	registerIpc(): void {
-		const assertProfileAccess = () => {
-			if (this.preparingProfileSwitch || this.callbacks.canOpen?.() === false) {
-				throw new Error('Profile is switching — use Run Context afterward')
-			}
-		}
 		ipcMain.handle('run-context:open', (_event, rawId: unknown) => {
-			assertProfileAccess()
+			this.access.assertAdmissionOpen()
 			return this.open(itemId(rawId))
 		})
-		ipcMain.handle('run-context:load', (event, profileToken: unknown) => {
-			assertProfileAccess()
-			const state = this.requireEditor(event.sender.id)
-			return this.track(() => this.bridge.loadRunContext(state.itemId, profileToken))
-		})
-		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft, profileToken: unknown) => {
-			assertProfileAccess()
-			const state = this.requireEditor(event.sender.id)
-			return this.track(() => this.bridge.saveRunContext(state.itemId, Number(revision), document, profileToken))
-		})
-		ipcMain.handle('run-context:reset', (event, revision: unknown, profileToken: unknown) => {
-			assertProfileAccess()
-			const state = this.requireEditor(event.sender.id)
-			return this.track(() => this.bridge.resetRunContext(state.itemId, Number(revision), profileToken))
-		})
+		ipcMain.handle('run-context:load', (event, profileToken: unknown) =>
+			this.access.runForEditor(event.sender.id, itemId => this.bridge.loadRunContext(itemId, profileToken)),
+		)
+		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft, profileToken: unknown) =>
+			this.access.runForEditor(event.sender.id, itemId =>
+				this.bridge.saveRunContext(itemId, Number(revision), document, profileToken),
+			),
+		)
+		ipcMain.handle('run-context:reset', (event, revision: unknown, profileToken: unknown) =>
+			this.access.runForEditor(event.sender.id, itemId =>
+				this.bridge.resetRunContext(itemId, Number(revision), profileToken),
+			),
+		)
 		ipcMain.on('run-context:dirty', (event, dirty: unknown) => {
 			const state = this.byWebContents.get(event.sender.id)
 			if (state && typeof dirty === 'boolean') state.dirty = dirty
@@ -103,16 +93,6 @@ export class RunContextWindows {
 		ipcMain.on('run-context:cancel-close', event => {
 			if (this.byWebContents.has(event.sender.id)) this.callbacks.onCloseCancelled?.()
 		})
-	}
-
-	private track<T>(operation: () => Promise<T>): Promise<T> {
-		const promise = Promise.resolve().then(operation)
-		this.inFlight.add(promise)
-		void promise.then(
-			() => this.inFlight.delete(promise),
-			() => this.inFlight.delete(promise),
-		)
-		return promise
 	}
 
 	private async open(id: string): Promise<void> {
@@ -145,6 +125,7 @@ export class RunContextWindows {
 		const webContentsId = win.webContents.id
 		this.byItem.set(id, state)
 		this.byWebContents.set(webContentsId, state)
+		this.access.registerEditor(webContentsId, id, () => win.isDestroyed())
 
 		win.webContents.setWindowOpenHandler(({ url }) => {
 			if (/^https?:/.test(url)) void shell.openExternal(url)
@@ -162,15 +143,10 @@ export class RunContextWindows {
 		win.on('closed', () => {
 			this.byItem.delete(id)
 			this.byWebContents.delete(webContentsId)
+			this.access.unregisterEditor(webContentsId)
 			if (this.byItem.size === 0) this.callbacks.onAllClosed?.()
 		})
 		win.once('ready-to-show', () => win.show())
 		await win.loadFile(path.join(this.distDir, 'run-context-editor.html'))
-	}
-
-	private requireEditor(senderId: number): EditorState {
-		const state = this.byWebContents.get(senderId)
-		if (!state || state.window.isDestroyed()) throw new Error('Run context editor is not registered')
-		return state
 	}
 }

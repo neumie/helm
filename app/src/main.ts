@@ -9,6 +9,7 @@ import { HelmBridge } from './helm-bridge'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
+import { prepareRunContextProfileSwitch } from './run-context-switch-precommit'
 import { RunContextWindows } from './run-context-window'
 import * as sessions from './sessions'
 import { THEME_PRESETS } from './theme-presets'
@@ -522,25 +523,35 @@ async function activateProfile(
 	// Acquire before the first await: menu, Settings, and deep-link activation
 	// can otherwise overlap and commit conflicting active-profile pointers.
 	profileSwitchInProgress = true
-	const runContextDrain = runContextWindows.beginProfileSwitchDrain()
-	if (!runContextDrain.ok) {
-		profileSwitchInProgress = false
-		return { error: 'Save or discard the open Run Context draft before switching profiles.' }
-	}
 	// A Run Context request can mutate the old profile after its renderer has
 	// gone away, so every request admitted before the gate must settle before
 	// buffers, bridge fencing, generation advance, or daemon activation.
-	await runContextDrain.drained
-	if (mainWindow && !mainWindow.isDestroyed()) await flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
-	// Fence before asking the daemon to switch: an old renderer must never see or
-	// command the target profile during the activation response window.
-	const profileReady = helmBridge.beginProfileSwitch(profileId)
-	sessionProfileGeneration += 1
+	const precommit = await prepareRunContextProfileSwitch({
+		beginDrain: () => runContextWindows.beginProfileSwitchDrain(),
+		flushBuffers: () =>
+			mainWindow && !mainWindow.isDestroyed()
+				? flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
+				: Promise.resolve(),
+		// Fence before asking the daemon to switch: an old renderer must never see
+		// or command the target profile during the activation response window.
+		beginBridgeFence: () => helmBridge.beginProfileSwitch(profileId),
+		advanceGeneration: () => {
+			sessionProfileGeneration += 1
+		},
+	})
+	if (!precommit.ok) {
+		profileSwitchInProgress = false
+		if (precommit.error !== undefined) {
+			return { error: precommit.error instanceof Error ? precommit.error.message : String(precommit.error) }
+		}
+		return { error: 'Save or discard the open Run Context draft before switching profiles.' }
+	}
+	const { profileReady } = precommit
 	const result = await helmBridge.activateProfile(profileId)
 	if (result.error !== undefined) {
 		sessionProfileGeneration -= 1
 		helmBridge.cancelProfileSwitch()
-		runContextWindows.finishProfileSwitchDrain()
+		precommit.release()
 		profileSwitchInProgress = false
 		return result
 	}
@@ -567,7 +578,7 @@ async function activateProfile(
 	else createWindow()
 	void profileReady.then(() => {
 		if (pendingProfileReady?.profileId === profileId) pendingProfileReady = null
-		runContextWindows.finishProfileSwitchDrain()
+		precommit.release()
 		profileSwitchInProgress = false
 		if (openItemId) deliverOpenItem(openItemId)
 	})

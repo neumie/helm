@@ -18,6 +18,7 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
 import { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } from './protocol-version'
+import { RunContextBridgeOperations } from './run-context-bridge'
 import type {
 	AiPass,
 	AppConfig,
@@ -65,12 +66,18 @@ export class HelmBridge {
 	private pendingProfileId: string | null = null
 	private profileSwitchTimer: ReturnType<typeof setTimeout> | null = null
 	private resolveProfileSwitch: (() => void) | null = null
+	private readonly runContext: RunContextBridgeOperations
 
 	constructor(
 		daemonUrl: string,
 		private readonly acceptsProfileToken: (token: unknown) => boolean = () => true,
 	) {
 		this.baseUrl = daemonUrl.replace(/\/$/, '')
+		this.runContext = new RunContextBridgeOperations({
+			acceptsProfileToken: token => this.acceptsProfileToken(token),
+			request: (method, path, body) => this.request(method, path, body),
+			kick: () => this.kick(),
+		})
 	}
 
 	start(): void {
@@ -230,18 +237,9 @@ export class HelmBridge {
 		}
 	}
 
-	/** Run Context token policy lives here; windows only authenticate their sender/item. */
-	private staleRunContextToken<T>(token: unknown): HelmResult<T> | null {
-		return this.acceptsProfileToken(token)
-			? null
-			: { error: 'Profile changed — retry in the active profile.', status: 409 }
-	}
-
+	/** Run Context token policy lives in the bridge-owned operations helper. */
 	async loadRunContext(itemId: string, profileToken: unknown): Promise<HelmResult<RunContextLoad>> {
-		const before = this.staleRunContextToken<RunContextLoad>(profileToken)
-		if (before) return before
-		const result = await this.request<RunContextLoad>('GET', `/items/${encodeURIComponent(itemId)}/run-context`)
-		return this.staleRunContextToken<RunContextLoad>(profileToken) ?? result
+		return this.runContext.load(itemId, profileToken)
 	}
 
 	async saveRunContext(
@@ -250,38 +248,11 @@ export class HelmBridge {
 		document: RunContextDraft,
 		profileToken: unknown,
 	): Promise<HelmResult<RunContextSave>> {
-		const before = this.staleRunContextToken<RunContextSave>(profileToken)
-		if (before) return before
-		const result = await this.request<RunContextSave>('PUT', `/items/${encodeURIComponent(itemId)}/run-context`, {
-			revision,
-			document,
-		})
-		const after = this.staleRunContextToken<RunContextSave>(profileToken)
-		if (after) return after
-		if (result.error === undefined) {
-			const beforeKick = this.staleRunContextToken<RunContextSave>(profileToken)
-			if (beforeKick) return beforeKick
-			this.kick()
-		}
-		return result
+		return this.runContext.save(itemId, revision, document, profileToken)
 	}
 
 	async resetRunContext(itemId: string, revision: number, profileToken: unknown): Promise<HelmResult<RunContextReset>> {
-		const before = this.staleRunContextToken<RunContextReset>(profileToken)
-		if (before) return before
-		const result = await this.request<RunContextReset>(
-			'POST',
-			`/items/${encodeURIComponent(itemId)}/run-context/reset`,
-			{ revision },
-		)
-		const after = this.staleRunContextToken<RunContextReset>(profileToken)
-		if (after) return after
-		if (result.error === undefined) {
-			const beforeKick = this.staleRunContextToken<RunContextReset>(profileToken)
-			if (beforeKick) return beforeKick
-			this.kick()
-		}
-		return result
+		return this.runContext.reset(itemId, revision, profileToken)
 	}
 
 	/**
