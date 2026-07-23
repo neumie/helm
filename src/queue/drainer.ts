@@ -41,6 +41,8 @@ export class Drainer {
 	private retryTimers = new Set<ReturnType<typeof setTimeout>>()
 	private running = false
 	private quiescing = false
+	/** Held during daemon startup until durable scheduled runs occupy solve capacity. */
+	private startupAdmissionFenced = false
 	private paused: boolean
 	private readonly recoveredProfiles = new Set<string>()
 	private readonly itemCommands: ItemCommands
@@ -75,6 +77,21 @@ export class Drainer {
 		this.running = false
 		this.clearRetryTimers()
 		log.info('drainer', 'Drainer stopped')
+	}
+
+	/** Close every Item-start surface until startup restoration has accounted for scheduled capacity. */
+	fenceStartupAdmission(): void {
+		this.startupAdmissionFenced = true
+	}
+
+	/** Open Item admission only after startup restoration has completed successfully. */
+	openStartupAdmission(): void {
+		this.startupAdmissionFenced = false
+		this.wake()
+	}
+
+	isStartupAdmissionFenced(): boolean {
+		return this.startupAdmissionFenced
 	}
 
 	/**
@@ -113,7 +130,7 @@ export class Drainer {
 	}
 
 	wake() {
-		if (this.running && !this.quiescing && !this.paused) this.processNext()
+		if (this.running && !this.quiescing && !this.startupAdmissionFenced && !this.paused) this.processNext()
 	}
 
 	/** Active profile changed; existing runs continue and only new admission follows the new tenant. */
@@ -151,7 +168,7 @@ export class Drainer {
 
 	/** Process a single Item immediately, bypassing pause state. */
 	processOneItem(itemId: string): boolean {
-		if (this.quiescing) return false
+		if (this.quiescing || this.startupAdmissionFenced) return false
 		const item = this.db.items.get(itemId)
 		if (!item) return false
 		return itemExecutionMode(item) === 'loop'
@@ -161,6 +178,8 @@ export class Drainer {
 
 	retryItem(itemId: string): ItemRecord {
 		if (this.quiescing) throw new Error('Daemon is restarting — new runs are temporarily unavailable')
+		if (this.startupAdmissionFenced)
+			throw new Error('Daemon is restoring scheduled capacity — new runs are temporarily unavailable')
 		const item = this.itemCommands.retryItem(itemId)
 		this.wake()
 		return item
@@ -220,7 +239,7 @@ export class Drainer {
 	}
 
 	private processNext() {
-		if (!this.running || this.quiescing || this.paused) return
+		if (!this.running || this.quiescing || this.startupAdmissionFenced || this.paused) return
 
 		while (this.activeSolveCount() < this.solveCapacity()) {
 			const item = this.nextQueuedSolveItem()
@@ -254,7 +273,7 @@ export class Drainer {
 	}
 
 	private startSolveItem(itemId: string, profileId?: string): boolean {
-		if (this.quiescing || this.activeSolveItems.has(itemId)) return false
+		if (this.quiescing || this.startupAdmissionFenced || this.activeSolveItems.has(itemId)) return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'solve') return false
 		if (!isStartableItem(item)) return false
@@ -306,7 +325,7 @@ export class Drainer {
 	}
 
 	private startLoopItem(itemId: string, profileId?: string): boolean {
-		if (this.quiescing || this.activeLoopItems.has(itemId)) return false
+		if (this.quiescing || this.startupAdmissionFenced || this.activeLoopItems.has(itemId)) return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'loop') return false
 		if (!isStartableItem(item)) return false

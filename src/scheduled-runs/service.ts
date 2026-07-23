@@ -56,6 +56,8 @@ export class ScheduledRunService {
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
 	private stopped = false
+	private restoringStartup = false
+	private readonly startupReservationFailures = new Set<string>()
 	private watchdog: ReturnType<typeof setInterval> | null = null
 
 	constructor(
@@ -75,7 +77,18 @@ export class ScheduledRunService {
 	async start(): Promise<void> {
 		if (this.watchdog) return this.reconcile()
 		this.stopped = false
-		await this.reconcile()
+		this.startupReservationFailures.clear()
+		this.restoringStartup = true
+		try {
+			await this.reconcile()
+		} finally {
+			this.restoringStartup = false
+		}
+		if (this.startupReservationFailures.size > 0) {
+			throw new Error(
+				`Scheduled startup restoration could not reserve solve capacity for ${this.startupReservationFailures.size} run(s)`,
+			)
+		}
 		if (this.stopped) return
 		this.watchdog = setInterval(() => void this.reconcile(), this.deps.watchdogIntervalMs ?? WATCHDOG_MS)
 		this.watchdog.unref?.()
@@ -176,14 +189,21 @@ export class ScheduledRunService {
 			const profileId = runtime.profile.id
 			const runDb = this.db.forProfile(profileId) // capture tenant seam before await
 			const commands = new ScheduleCommands(runDb.schedules)
-			for (const initial of runDb.schedules.listRecoverableRuns()) {
-				if (this.stopped) return
-				try {
-					await this.reconcileRun(profileId, commands, initial)
-				} catch (error) {
-					// Another durable actor may have won a revision; the next pass converges.
-					log.warn('scheduled-runs', `Recovery failed for ${initial.id}: ${message(error)}`)
+			let after: { createdAt: string; id: string } | null = null
+			for (;;) {
+				const page = runDb.schedules.listRecoverableRunsPage(after)
+				if (page.length === 0) break
+				for (const initial of page) {
+					after = { createdAt: initial.createdAt, id: initial.id }
+					if (this.stopped) return
+					try {
+						await this.reconcileRun(profileId, commands, initial)
+					} catch (error) {
+						// Another durable actor may have won a revision; the next pass converges.
+						log.warn('scheduled-runs', `Recovery failed for ${initial.id}: ${message(error)}`)
+					}
 				}
+				if (page.length < 500) break
 			}
 			for (const terminal of terminalRunsToPrune(runDb.schedules, this.now()).slice(0, 50)) {
 				try {
@@ -482,12 +502,14 @@ export class ScheduledRunService {
 		this.drainer.releaseExternalSolve(requested.id)
 		commands.markTimedOut(current.id, current.revision)
 	}
-	private restoreReservation(run: ScheduledRunRecord): void {
-		if (!this.drainer.reserveExternalSolve(run.id))
-			log.warn(
-				'scheduled-runs',
-				`Scheduled run ${run.id} could not reserve solve capacity; existing restore occupancy fences Items`,
-			)
+	private restoreReservation(run: ScheduledRunRecord): boolean {
+		if (this.drainer.reserveExternalSolve(run.id)) return true
+		if (this.restoringStartup) this.startupReservationFailures.add(run.id)
+		log.warn(
+			'scheduled-runs',
+			`Scheduled run ${run.id} could not reserve solve capacity; Item admission remains fenced`,
+		)
+		return false
 	}
 
 	private skip(runDb: DB, run: ScheduledRunRecord, state: 'skipped_overlap' | 'skipped_capacity'): ScheduledRunRecord {

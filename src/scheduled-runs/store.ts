@@ -18,6 +18,11 @@ export class ScheduleRevisionConflictError extends Error {
 	}
 }
 
+export interface ScheduledRunRecoveryCursor {
+	createdAt: string
+	id: string
+}
+
 function parseJson(value: unknown, field: string): unknown {
 	if (typeof value !== 'string') throw new Error(`Scheduled row ${field} is not JSON`)
 	try {
@@ -215,15 +220,24 @@ export class ScheduleStore {
 				.all(this.profileId, scheduleId, limit) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
 	}
-	/** Bounded tenant-local recovery scan; callers still classify every state. */
-	listRecoverableRuns(limit = 500): ScheduledRunRecord[] {
+	/**
+	 * Bounded tenant-local recovery page. Startup callers must continue until an
+	 * empty page so every capacity-bearing run is accounted for before admission.
+	 */
+	listRecoverableRunsPage(after: ScheduledRunRecoveryCursor | null = null, limit = 500): ScheduledRunRecord[] {
+		const cursorClause = after ? ' AND (created_at > ? OR (created_at = ? AND id > ?))' : ''
+		const values = after ? [this.profileId, after.createdAt, after.createdAt, after.id, limit] : [this.profileId, limit]
 		return (
 			this.db
 				.prepare(
-					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined') ORDER BY created_at ASC, id ASC LIMIT ?",
+					`SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined')${cursorClause} ORDER BY created_at ASC, id ASC LIMIT ?`,
 				)
-				.all(this.profileId, limit) as Record<string, unknown>[]
+				.all(...values) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
+	}
+	/** @deprecated Use the cursor-paged form for startup recovery. */
+	listRecoverableRuns(limit = 500): ScheduledRunRecord[] {
+		return this.listRecoverableRunsPage(null, limit)
 	}
 	listTerminalRuns(limit = 2_000): ScheduledRunRecord[] {
 		return (

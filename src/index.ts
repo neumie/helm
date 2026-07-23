@@ -62,6 +62,9 @@ async function main() {
 		() => profiles.getState().profiles.map(profile => profile.id),
 		() => profiles.activeProfile().id,
 	)
+	// Direct Item start routes must stay closed until durable scheduled sessions
+	// have restored their shared solve-capacity reservations.
+	queue.fenceStartupAdmission()
 
 	// The Drainer recovers stale `processing` Items on start(); queued Items are
 	// pulled from the DB by the Drainer's lanes.
@@ -101,6 +104,13 @@ async function main() {
 		},
 		scheduledRuns,
 	)
+	// Restore durable scheduled agents into the shared solve budget before either
+	// HTTP routes or direct Item-start surfaces can admit work. Disabled recurrence
+	// still recovers sessions.
+	await scheduledRuns.start()
+	queue.openStartupAdmission()
+	queue.start()
+
 	const { serve } = await import('@hono/node-server')
 	serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, () => {
 		log.success('helm', `API: http://${config.server.host}:${config.server.port}/api (clients: helm + extension)`)
@@ -111,13 +121,6 @@ async function main() {
 
 	// One-time backfill of eligible display, assessment, and branch enrichment.
 	enricher.backfill()
-
-	// Restore durable scheduled agents into the shared solve budget before the
-	// Drainer opens Item admission; disabled recurrence still recovers sessions.
-	await scheduledRuns.start()
-
-	// Start processing queue only after scheduled capacity restoration.
-	queue.start()
 
 	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
