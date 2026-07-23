@@ -49,6 +49,11 @@ export interface LegacyProfileDatabase {
 	dbPath: string
 }
 
+/** Removes only a staged migration target, never one of its source databases. */
+function removeTemporaryDatabase(path: string): void {
+	for (const suffix of ['', '-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true })
+}
+
 /**
  * Merge the closed per-profile databases used by protocol 31 into one shared
  * root database. Sources stay untouched as rollback backups. The target is
@@ -64,43 +69,47 @@ export function migrateProfileDatabasesToShared(
 	if (sources.length === 0) return
 	mkdirSync(dirname(sharedPath), { recursive: true })
 	const temporaryPath = `${sharedPath}.${process.pid}.profiles-migration`
-	rmSync(temporaryPath, { force: true })
-	const target = new Database(temporaryPath)
+	let target: Database.Database | undefined
 	try {
-		target.pragma('journal_mode = WAL')
-		target.pragma('foreign_keys = ON')
-		migrateConnection(target)
+		removeTemporaryDatabase(temporaryPath)
+		target = new Database(temporaryPath)
+		const migrationTarget = target
+		migrationTarget.pragma('journal_mode = WAL')
+		migrationTarget.pragma('foreign_keys = ON')
+		migrateConnection(migrationTarget)
 		for (const [index, source] of sources.entries()) {
 			const alias = `legacy_${index}`
-			target.prepare(`ATTACH DATABASE ? AS ${alias}`).run(source.dbPath)
+			migrationTarget.prepare(`ATTACH DATABASE ? AS ${alias}`).run(source.dbPath)
 			try {
-				const versionRow = target.prepare(`SELECT MAX(version) AS v FROM ${alias}.schema_version`).get() as
+				const versionRow = migrationTarget.prepare(`SELECT MAX(version) AS v FROM ${alias}.schema_version`).get() as
 					| { v: number }
 					| undefined
 				if ((versionRow?.v ?? 0) < 25) {
 					throw new Error(`Profile ${source.profileId} database is too old to import safely`)
 				}
-				const importProfile = target.transaction(() => {
-					const itemColumns = (target.prepare(`PRAGMA ${alias}.table_info(items)`).all() as { name: string }[])
+				const importProfile = migrationTarget.transaction(() => {
+					const itemColumns = (migrationTarget.prepare(`PRAGMA ${alias}.table_info(items)`).all() as { name: string }[])
 						.map(column => column.name)
 						.filter(name => name !== 'profile_id')
-					const collision = target
+					const collision = migrationTarget
 						.prepare(`SELECT id FROM items WHERE id IN (SELECT id FROM ${alias}.items) LIMIT 1`)
 						.get() as { id: string } | undefined
 					if (collision) throw new Error(`Item id collision while importing profiles: ${collision.id}`)
 					const quotedItems = itemColumns.map(name => `"${name}"`).join(', ')
-					target
+					migrationTarget
 						.prepare(`INSERT INTO items (${quotedItems}, profile_id) SELECT ${quotedItems}, ? FROM ${alias}.items`)
 						.run(source.profileId)
-					target
+					migrationTarget
 						.prepare(
 							`INSERT INTO item_events (profile_id, item_id, event_type, payload, created_at)
 							 SELECT ?, item_id, event_type, payload, created_at FROM ${alias}.item_events ORDER BY id`,
 						)
 						.run(source.profileId)
-					const pollColumns = target.prepare(`PRAGMA ${alias}.table_info(poll_state)`).all() as { name: string }[]
+					const pollColumns = migrationTarget.prepare(`PRAGMA ${alias}.table_info(poll_state)`).all() as {
+						name: string
+					}[]
 					const hasProfilePollState = pollColumns.some(column => column.name === 'profile_id')
-					target
+					migrationTarget
 						.prepare(
 							hasProfilePollState
 								? `INSERT OR REPLACE INTO poll_state (profile_id, project_slug, last_poll_at, last_task_seen)
@@ -110,25 +119,28 @@ export function migrateProfileDatabasesToShared(
 						)
 						.run(...(hasProfilePollState ? [source.profileId, source.profileId] : [source.profileId]))
 					if (source.profileId === activeProfileId) {
-						target.prepare(`INSERT OR REPLACE INTO app_state SELECT * FROM ${alias}.app_state`).run()
+						migrationTarget.prepare(`INSERT OR REPLACE INTO app_state SELECT * FROM ${alias}.app_state`).run()
 					}
 				})
 				importProfile()
 			} finally {
-				target.prepare(`DETACH DATABASE ${alias}`).run()
+				migrationTarget.prepare(`DETACH DATABASE ${alias}`).run()
 			}
 		}
-		const integrity = target.pragma('integrity_check') as { integrity_check: string }[]
+		const integrity = migrationTarget.pragma('integrity_check') as { integrity_check: string }[]
 		if (integrity.some(row => row.integrity_check !== 'ok'))
 			throw new Error('Shared profile database integrity check failed')
-		const foreignKeys = target.pragma('foreign_key_check') as unknown[]
+		const foreignKeys = migrationTarget.pragma('foreign_key_check') as unknown[]
 		if (foreignKeys.length > 0) throw new Error('Shared profile database foreign-key validation failed')
-		target.pragma('wal_checkpoint(TRUNCATE)')
-		target.close()
+		migrationTarget.pragma('wal_checkpoint(TRUNCATE)')
+		migrationTarget.close()
 		renameSync(temporaryPath, sharedPath)
 	} catch (err) {
-		if (target.open) target.close()
-		rmSync(temporaryPath, { force: true })
+		try {
+			if (target?.open) target.close()
+		} finally {
+			removeTemporaryDatabase(temporaryPath)
+		}
 		throw err
 	}
 }
