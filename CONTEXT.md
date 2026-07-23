@@ -118,13 +118,16 @@ CLI is a thin HTTP client. Dashboard/API, extension, CLI, and provider ingestion
 all enter lifecycle behavior through `ItemCommands` and wake the Drainer where
 appropriate.
 
-An interactive Plan request prepares an Item's planning workspace and invokes the
-selected Spawner. A later autonomous run reuses that workspace when applicable.
-The current route and existing module owners retain this orchestration; a focused
-`PlanningApplication` is an accepted future extraction in the architecture plan,
-not a currently implemented module. Such an extraction must not merge Solver and
-Spawner or move persistence from `ItemCommands` or file ownership from
-`PlanWorkspace`.
+An interactive Plan request is orchestrated by `PlanningApplication`: it captures
+the Item's profile-bound commands before its first mutation/await, takes a
+tenant-qualified claim, and invokes the selected Spawner. Required exact-once
+workspace readiness snapshots/materializes captured attachments before adapter
+context use; canonical existing-path identity prevents Main/worktree aliases from
+changing mode. A later autonomous run reuses the finalized workspace when
+applicable. It remains a saga: external workspaces/sessions cannot be rolled back
+with SQLite, so post-readiness failures truthfully report that a session may exist.
+The orchestrator does not merge Solver and Spawner or move persistence from
+`ItemCommands` or file ownership from `PlanWorkspace`.
 
 Solve execution follows poll/context resolution, workspace plus solve, solver-owned
 timeline persistence, result-file parsing, and dispatch. Dispatch records a
@@ -136,8 +139,8 @@ rules. Loop execution creates or reuses the Item workspace and delegates to
 
 Deploy and plan-status watchers exist today as advisory observers, but the planned
 all-profile bounded reconciliation, fairness, and awaited-shutdown changes have
-not landed unless their owning slice says otherwise. Likewise, the planned atomic
-planning/context preparation and the commit-aware desktop profile coordinator are
-accepted future changes, not current module names or guarantees. Preserve the
-current shared-DB, profile-bound, lifecycle, persistence, Solver, Spawner, and
-PlanWorkspace authorities while implementing those slices.
+not landed unless their owning slice says otherwise. Planning/context preparation is implemented through `PlanningApplication`; its
+lifecycle row/event pairs are transactional, but its external effects remain a
+claimed saga. The commit-aware desktop profile coordinator remains future work.
+Preserve the current shared-DB, profile-bound, lifecycle, persistence, Solver,
+Spawner, and PlanWorkspace authorities while implementing later slices.

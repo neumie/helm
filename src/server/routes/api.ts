@@ -47,6 +47,7 @@ import type { SpawnerName } from '../../spawner/registry.js'
 import type { Spawner } from '../../spawner/spawner.js'
 import { isCancellation } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
+import { sameFilesystemPath } from '../../util/path-identity.js'
 import { defaultDaemonControl, scheduleDaemonRestart } from '../restart.js'
 import type { DaemonControl } from '../restart.js'
 
@@ -218,7 +219,17 @@ export function apiRoutes(
 		return typeof runtime === 'function' ? runtime() : runtime
 	}
 	const aiDeps = aiOneShot ? { runOneShot: aiOneShot } : undefined
-	const planning = new PlanningApplication(config, itemCommands, provider, spawner, createPlanningSpawner, aiDeps)
+	const planning = new PlanningApplication(
+		config,
+		itemCommands,
+		provider,
+		spawner,
+		createPlanningSpawner,
+		aiDeps,
+		// Planning is a long-lived saga. Bind the Item's tenant before the first
+		// mutation/await so activation cannot redirect later lifecycle writes.
+		profileId => new ItemCommands(db.forProfile(profileId).items, config),
+	)
 	const dashboardItem = async (item: ItemRecord) => ({
 		...toDashboardItemWithSiblings(
 			item,
@@ -1021,7 +1032,7 @@ export function apiRoutes(
 				if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
 				if (!item.planDirName || !item.worktreePath || !existsSync(item.worktreePath))
 					return c.json({ error: 'Planned workspace is missing. Re-plan the Item before starting a loop.' }, 400)
-				if (workspaceMode === 'main' && resolve(item.worktreePath) !== resolve(projectConfig.repoPath))
+				if (workspaceMode === 'main' && !sameFilesystemPath(item.worktreePath, projectConfig.repoPath))
 					return c.json(
 						{
 							error:

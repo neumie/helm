@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { resolve as resolvePath } from 'node:path'
 import { z } from 'zod'
 import type { HelmConfig } from '../config.js'
 import { taskContextSchema } from '../providers/provider.js'
@@ -8,6 +7,7 @@ import { solverAgentSchema } from '../solver/agent.js'
 import type { SolverAgent } from '../solver/agent.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 import type { ErrorPhase } from '../types.js'
+import { sameFilesystemPath } from '../util/path-identity.js'
 import { itemExecutionMode } from './execution.js'
 import { RunContextConflictError, parseRunContextDraft } from './run-context.js'
 import type { RunContextDraft } from './run-context.js'
@@ -648,7 +648,7 @@ export class ItemCommands {
 		// any worktree exists, so this never blocks it.
 		const project = this.config.projects.find(candidate => candidate.slug === item.projectSlug)
 		const isMainPointer = Boolean(
-			project && item.worktreePath && resolvePath(item.worktreePath) === resolvePath(project.repoPath),
+			project && item.worktreePath && sameFilesystemPath(item.worktreePath, project.repoPath),
 		)
 		if (item.worktreePath && !(fields.transitionFromMain && isMainPointer)) return item
 		if (item.branchName && !fields.force) return item
@@ -761,8 +761,8 @@ export class ItemCommands {
 		if (!project) throw new Error(`Unknown project slug: ${item.projectSlug}`)
 		const checkout = project.repoPath
 		const expectedIsMain =
-			transitionFrom.worktreePath !== null && resolvePath(transitionFrom.worktreePath) === resolvePath(checkout)
-		const nextIsMain = resolvePath(fields.worktreePath) === resolvePath(checkout)
+			transitionFrom.worktreePath !== null && sameFilesystemPath(transitionFrom.worktreePath, checkout)
+		const nextIsMain = sameFilesystemPath(fields.worktreePath, checkout)
 		if (options.authorizedTransition === 'main-to-worktree') {
 			if (!expectedIsMain || transitionFrom.branchName !== null || nextIsMain || fields.branchName === null) {
 				throw new Error('Invalid main-to-worktree planning transition')

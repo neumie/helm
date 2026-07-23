@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import type { HelmConfig } from '../config.js'
 import type { ItemCommands } from '../items/commands.js'
 import { buildItemExecutionContext, prepareItemExecutionContext, resolveItemSourceContext } from '../items/context.js'
@@ -15,6 +14,7 @@ import type { SpawnerName } from '../spawner/registry.js'
 import type { PlanningSessionResult, Spawner } from '../spawner/spawner.js'
 import { isCancellation } from '../util/errors.js'
 import { log } from '../util/logger.js'
+import { sameFilesystemPath } from '../util/path-identity.js'
 
 export type PlanningErrorCode =
 	| 'not_found'
@@ -90,11 +90,16 @@ export class PlanningApplication {
 		private readonly defaultSpawner: Spawner,
 		private readonly createPlanningSpawner: (config: HelmConfig, name: SpawnerName) => Promise<Spawner>,
 		private readonly namingDeps?: EnsureItemNameDeps,
+		/** Captures a profile-bound persistence seam before Planning's first await. */
+		private readonly commandsForProfile?: (profileId: string) => ItemCommands,
 	) {}
 
 	/** Synchronous first-mutation exclusion used by Start. */
 	assertStartAllowed(itemId: string): void {
-		if (this.claims.has(itemId) || this.commands.isPlanningRecoveryBlocked(itemId)) {
+		const item = this.commands.getItem(itemId)
+		const commands = item ? (this.commandsForProfile?.(item.profileId) ?? this.commands) : this.commands
+		const claim = `${item?.profileId ?? 'unknown'}:${itemId}`
+		if (this.claims.has(claim) || commands.isPlanningRecoveryBlocked(itemId)) {
 			throw new PlanningError(
 				'planning_conflict',
 				'Planning is incomplete for this Item; re-plan successfully before starting',
@@ -105,6 +110,10 @@ export class PlanningApplication {
 	async prepare(input: PlanningInput): Promise<PlanningResult> {
 		const item = this.commands.getItem(input.itemId)
 		if (!item) throw new PlanningError('not_found', 'Not found')
+		// All lifecycle reads/writes after this point belong to the Item's origin
+		// tenant, even if profile activation changes while source/naming awaits.
+		const commands = this.commandsForProfile?.(item.profileId) ?? this.commands
+		const claim = `${item.profileId}:${item.id}`
 		if (item.status === 'running' || !['inbox', 'ready', 'active'].includes(item.status)) {
 			throw new PlanningError('not_plannable', 'Running Items cannot be planned')
 		}
@@ -121,20 +130,19 @@ export class PlanningApplication {
 		if (workspaceMode === 'main' && !existsSync(projectConfig.repoPath)) {
 			throw new PlanningError('missing_checkout', `Project checkout does not exist: ${projectConfig.repoPath}`)
 		}
-		if (this.claims.has(item.id))
-			throw new PlanningError('planning_conflict', 'Planning is already preparing this Item')
-		this.claims.add(item.id)
+		if (this.claims.has(claim)) throw new PlanningError('planning_conflict', 'Planning is already preparing this Item')
+		this.claims.add(claim)
 		const previous = item
 		let began = false
 		try {
-			this.commands.beginPlanning(item.id)
+			commands.beginPlanning(item.id)
 			began = true
 			const transitionFromIdentity = {
 				worktreePath: item.worktreePath,
 				// Legacy Main plans may have retained an old branch; Main identity is
 				// semantically branchless for an authorized mode transition.
 				branchName:
-					item.worktreePath && resolve(item.worktreePath) === resolve(projectConfig.repoPath) ? null : item.branchName,
+					item.worktreePath && sameFilesystemPath(item.worktreePath, projectConfig.repoPath) ? null : item.branchName,
 				planDirName: item.planDirName,
 			}
 			const sourceContext =
@@ -146,10 +154,10 @@ export class PlanningApplication {
 			const agent = input.solverAgent ?? this.config.solver.agent
 			const named =
 				workspaceMode === 'main'
-					? (this.commands.getItem(item.id) ?? item)
+					? (commands.getItem(item.id) ?? item)
 					: await ensureItemWorkspaceName({
-							commands: this.commands,
-							item: this.commands.getItem(item.id) ?? item,
+							commands,
+							item: commands.getItem(item.id) ?? item,
 							taskContext: canonicalContext,
 							config: this.config,
 							repoPath: projectConfig.repoPath,
@@ -157,7 +165,7 @@ export class PlanningApplication {
 							signal: input.signal,
 							deps: this.namingDeps,
 							transitionFromMain: Boolean(
-								item.worktreePath && resolve(item.worktreePath) === resolve(projectConfig.repoPath),
+								item.worktreePath && sameFilesystemPath(item.worktreePath, projectConfig.repoPath),
 							),
 						})
 			const expectedIdentity = {
@@ -169,14 +177,14 @@ export class PlanningApplication {
 			const planningInMain = workspaceMode === 'main'
 			const existingWorktreePath = planningInMain
 				? projectConfig.repoPath
-				: identity.existingWorktreePath && resolve(identity.existingWorktreePath) !== resolve(projectConfig.repoPath)
+				: identity.existingWorktreePath && !sameFilesystemPath(identity.existingWorktreePath, projectConfig.repoPath)
 					? identity.existingWorktreePath
 					: undefined
 			const transition = planningInMain
-				? expectedIdentity.worktreePath && resolve(expectedIdentity.worktreePath) !== resolve(projectConfig.repoPath)
+				? expectedIdentity.worktreePath && !sameFilesystemPath(expectedIdentity.worktreePath, projectConfig.repoPath)
 					? 'worktree-to-main'
 					: 'none'
-				: expectedIdentity.worktreePath && resolve(expectedIdentity.worktreePath) === resolve(projectConfig.repoPath)
+				: expectedIdentity.worktreePath && sameFilesystemPath(expectedIdentity.worktreePath, projectConfig.repoPath)
 					? 'main-to-worktree'
 					: 'none'
 			const prepared = prepareItemExecutionContext(named, canonicalContext)
@@ -185,11 +193,18 @@ export class PlanningApplication {
 				if (!named.spawner || named.spawner === this.defaultSpawner.name) spawner = this.defaultSpawner
 				else spawner = await this.createPlanningSpawner(this.config, named.spawner as SpawnerName)
 			} catch (err) {
-				throw new PlanningError('invalid_spawner', err instanceof Error ? err.message : String(err))
+				const message = err instanceof Error ? err.message : String(err)
+				// A bad or unavailable configured name is a client/configuration error;
+				// importing or constructing an installed adapter is a launch failure.
+				if (/^(Invalid Spawner adapter name|Spawner adapter not installed):/.test(message)) {
+					throw new PlanningError('invalid_spawner', message)
+				}
+				throw new PlanningError('launch_failed', `Planning Spawner could not load: ${message}`)
 			}
 			let callbackCount = 0
 			let callbackPath: string | undefined
 			let callbackSealed = false
+			let sessionMayExist = false
 			const recordedBranchName = planningInMain ? null : identity.branchName
 			let session: PlanningSessionResult
 			try {
@@ -201,11 +216,13 @@ export class PlanningApplication {
 					taskTitle: item.title,
 					canonicalContext,
 					onWorktreeReady: worktreePath => {
+						// From this boundary onward an adapter may have a workspace or terminal.
+						sessionMayExist = true
 						if (callbackSealed || ++callbackCount !== 1)
 							throw new Error('Spawner called onWorktreeReady more than once')
 						callbackPath = worktreePath
 						const context = prepared.onWorktreeReady(worktreePath)
-						this.commands.recordPlanningWorkspaceIdentity(
+						commands.recordPlanningWorkspaceIdentity(
 							item.id,
 							{ worktreePath, branchName: recordedBranchName, planDirName: identity.planDirName },
 							{ expectedIdentity, transitionFromIdentity, authorizedTransition: transition },
@@ -226,19 +243,28 @@ export class PlanningApplication {
 					signal: input.signal,
 				})
 			} catch (err) {
-				if (isCancellation(err, input.signal)) throw new PlanningError('cancelled', 'Request aborted')
+				// Cancellation remains the primary truth even if an adapter observes it
+				// after creating a session; the caller still gets the honest hint.
+				if (isCancellation(err, input.signal)) throw new PlanningError('cancelled', 'Request aborted', sessionMayExist)
 				throw new PlanningError(
 					'launch_failed',
 					`Planning session failed to start: ${err instanceof Error ? err.message : err}`,
+					sessionMayExist,
 				)
 			} finally {
 				callbackSealed = true
 			}
-			if (callbackCount !== 1 || !callbackPath || resolve(callbackPath) !== resolve(session.worktreePath)) {
-				throw new PlanningError('launch_failed', 'Spawner violated the required workspace readiness contract')
+			sessionMayExist = true
+			if (
+				callbackCount !== 1 ||
+				!callbackPath ||
+				!sameFilesystemPath(callbackPath, session.worktreePath) ||
+				(!planningInMain && session.branchName !== identity.branchName)
+			) {
+				throw new PlanningError('launch_failed', 'Spawner violated the required workspace readiness contract', true)
 			}
 			try {
-				this.commands.recordPlanPrepared(item.id, {
+				commands.recordPlanPrepared(item.id, {
 					worktreePath: session.worktreePath,
 					branchName: recordedBranchName,
 					planDirName: identity.planDirName,
@@ -263,7 +289,7 @@ export class PlanningApplication {
 		} catch (err) {
 			if (began) {
 				try {
-					this.commands.abortPlanning(item.id, previous)
+					commands.abortPlanning(item.id, previous)
 				} catch (abortErr) {
 					log.error(
 						'planning',
@@ -278,7 +304,7 @@ export class PlanningApplication {
 				`Item source context failed to load: ${err instanceof Error ? err.message : err}`,
 			)
 		} finally {
-			this.claims.delete(item.id)
+			this.claims.delete(claim)
 		}
 	}
 }

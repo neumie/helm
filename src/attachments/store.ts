@@ -1,4 +1,16 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+	constants,
+	closeSync,
+	existsSync,
+	fstatSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 
@@ -95,10 +107,40 @@ export interface PreparedAttachment {
 	name: string
 	bytes: Buffer
 }
-function assertRegular(path: string, label: string): void {
+
+function assertSafeDirectory(path: string, label: string): void {
 	const stat = lstatSync(path)
-	if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`${label} must be a regular non-symlink file`)
+	if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`${label} is unsafe`)
 }
+
+/** Node lacks openat(2), so ancestor swaps cannot be eliminated completely. The
+ * final open uses O_NOFOLLOW and every owned component is lstat-checked. */
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0
+
+function readRegularNoFollow(path: string, label: string): Buffer {
+	let fd: number | undefined
+	try {
+		fd = openSync(path, constants.O_RDONLY | NO_FOLLOW)
+		const stat = fstatSync(fd)
+		if (!stat.isFile()) throw new Error(`${label} must be a regular file`)
+		return Buffer.from(readFileSync(fd))
+	} finally {
+		if (fd !== undefined) closeSync(fd)
+	}
+}
+
+function writeRegularNoFollow(path: string, bytes: Buffer): void {
+	let fd: number | undefined
+	try {
+		fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | NO_FOLLOW, 0o600)
+		const stat = fstatSync(fd)
+		if (!stat.isFile()) throw new Error(`Attachment destination is not a regular file: ${path}`)
+		writeFileSync(fd, bytes)
+	} finally {
+		if (fd !== undefined) closeSync(fd)
+	}
+}
+
 /** Snapshot exactly the declared source bytes before an adapter may create external state. */
 export function snapshotDeclaredAttachments(
 	itemId: string,
@@ -107,28 +149,29 @@ export function snapshotDeclaredAttachments(
 ): PreparedAttachment[] {
 	const names = filenames.map(sanitizeAttachmentName)
 	if (new Set(names).size !== names.length) throw new Error('Declared attachments contain duplicate final filenames')
+	const root = attachmentsRoot(profileId)
 	const dir = attachmentsDir(itemId, profileId)
-	if (!existsSync(dir)) throw new Error('Declared attachment directory is missing')
-	const dirStat = lstatSync(dir)
-	if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) throw new Error('Attachment source directory is unsafe')
+	if (!existsSync(root) || !existsSync(dir)) throw new Error('Declared attachment directory is missing')
+	// Check the profile attachment root as well as the Item directory: checking
+	// only dir follows a malicious `attachments` ancestor symlink.
+	assertSafeDirectory(root, 'Attachment source root')
+	assertSafeDirectory(dir, 'Attachment source directory')
 	return names.map(name => {
 		const path = join(dir, name)
-		if (!existsSync(path)) throw new Error(`Declared attachment is missing: ${name}`)
-		assertRegular(path, `Attachment ${name}`)
-		return { name, bytes: Buffer.from(readFileSync(path)) }
+		let stat: ReturnType<typeof lstatSync>
+		try {
+			stat = lstatSync(path)
+		} catch {
+			throw new Error(`Declared attachment is missing: ${name}`)
+		}
+		if (stat.isSymbolicLink() || !stat.isFile())
+			throw new Error(`Attachment ${name} must be a regular non-symlink file`)
+		return { name, bytes: readRegularNoFollow(path, `Attachment ${name}`) }
 	})
 }
 function assertDirectoryOrCreate(path: string): void {
-	if (existsSync(path)) {
-		const stat = lstatSync(path)
-		if (stat.isSymbolicLink() || !stat.isDirectory())
-			throw new Error(`Attachment destination component is unsafe: ${path}`)
-		return
-	}
-	mkdirSync(path)
-	const stat = lstatSync(path)
-	if (stat.isSymbolicLink() || !stat.isDirectory())
-		throw new Error(`Attachment destination component is unsafe: ${path}`)
+	if (!existsSync(path)) mkdirSync(path)
+	assertSafeDirectory(path, 'Attachment destination component')
 }
 /** Item-qualified destination avoids Main-checkout collisions between concurrent Items. */
 export function worktreeAttachmentRelativePath(itemId: string, name: string): string {
@@ -140,16 +183,24 @@ export function materializePreparedAttachmentsToWorktree(
 	worktreePath: string,
 ): void {
 	if (files.length === 0) return
+	const names = files.map(file => {
+		const name = sanitizeAttachmentName(file.name)
+		if (name !== file.name) throw new Error(`Attachment destination filename is unsafe: ${file.name}`)
+		return name
+	})
+	if (new Set(names).size !== names.length) throw new Error('Prepared attachments contain duplicate final filenames')
 	const root = join(worktreePath, WORKTREE_ATTACHMENT_SUBDIR)
 	assertDirectoryOrCreate(root)
 	const dest = join(root, sanitizeAttachmentName(itemId))
 	assertDirectoryOrCreate(dest)
-	for (const file of files) {
-		const output = join(dest, file.name)
+	// Validate every destination before the first write; a rejected component
+	// therefore cannot leave a partly copied declared attachment set.
+	for (const name of names) {
+		const output = join(dest, name)
 		if (existsSync(output) && lstatSync(output).isSymbolicLink())
-			throw new Error(`Attachment destination is a symlink: ${file.name}`)
+			throw new Error(`Attachment destination is a symlink: ${name}`)
 	}
-	for (const file of files) writeFileSync(join(dest, file.name), file.bytes, { flag: 'w' })
+	for (const [index, file] of files.entries()) writeRegularNoFollow(join(dest, names[index]), file.bytes)
 }
 /** Compatibility helper for non-prepared callers; new solve/plan paths must snapshot first. */
 export function materializeAttachmentsToWorktree(

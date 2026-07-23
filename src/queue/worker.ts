@@ -18,6 +18,7 @@ import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
+import { sameFilesystemPath } from '../util/path-identity.js'
 import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
@@ -276,7 +277,8 @@ export async function processSolveItem(
 		const { worktreePath, outcome } = solveResult
 		if (
 			readinessCalls !== 1 ||
-			readinessPath !== worktreePath ||
+			!readinessPath ||
+			!sameFilesystemPath(readinessPath, worktreePath) ||
 			(!mainMode && solveResult.branchName !== branchName)
 		) {
 			throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
@@ -378,7 +380,7 @@ export async function processLoopItem(
 			mainMode ? { planDirName, branchName: null } : { planDirName, branchName },
 		)
 		if (item.kind === 'solve' && item.plannedAt) {
-			if (mainMode && (!item.worktreePath || resolve(item.worktreePath) !== resolve(projectConfig.repoPath))) {
+			if (mainMode && (!item.worktreePath || !sameFilesystemPath(item.worktreePath, projectConfig.repoPath))) {
 				throw phaseError(
 					'solve',
 					'This plan was prepared in a Worktree. Re-plan with Workspace set to Main before starting a loop in Main.',

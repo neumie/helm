@@ -34,10 +34,12 @@ and deployment observation remain separate axes rather than replacement statuses
 - `PlanWorkspace` exclusively owns `docs/plans/<planDirName>/` layout and file
   IO. `ItemCommands` remains the persistence owner for planning identity and
   lifecycle facts. Routes remain transport adapters around those owners.
-- A focused `PlanningApplication` use-case orchestrator is an accepted future
-  extraction for the planning/context slice. Until that slice lands, it is not an
-  implemented module. When introduced, it coordinates existing owners only: it
-  must not merge Solver with Spawner, move persistence out of `ItemCommands`, or
+- `PlanningApplication` is the implemented planning/context use-case
+  orchestrator. It captures the Item's `DB.forProfile(profileId)` command seam
+  before its first mutation/await, holds tenant-qualified claims, validates
+  required exact-once readiness callbacks, and uses canonical existing-path
+  identity with a missing-path fallback. It coordinates existing owners only: it
+  does not merge Solver with Spawner, move persistence out of `ItemCommands`, or
   move planning-file ownership out of `PlanWorkspace`.
 
 ## Considered options
@@ -61,5 +63,8 @@ and deployment observation remain separate axes rather than replacement statuses
   future work, including profile switching and observer changes.
 - UI clients render the server-owned Dashboard Contract rather than raw
   persistence rows.
-- Future planning orchestration can become easier to test without changing the
-  established persistence, workspace-layout, Solver, or Spawner authorities.
+- Planning orchestration is testable without changing the established
+  persistence, workspace-layout, Solver, or Spawner authorities. Its lifecycle
+  row/event pairs are transactional; workspace, filesystem, and terminal effects
+  remain an explicitly reported application saga rather than a distributed
+  transaction.

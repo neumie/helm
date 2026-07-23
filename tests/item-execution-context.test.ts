@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -91,6 +91,41 @@ test('prepared captured contexts reject a symlinked attachment destination befor
 		symlinkSync(outside, join(workspace, '.helm-attachments'))
 		assert.throws(() => prepared.onWorktreeReady(workspace), /unsafe|symlink/i)
 		assert.equal(existsSync(join(outside, item.id, 'same.txt')), false)
+	} finally {
+		for (const item of db.items.list()) rmSync(attachmentsDir(item.id), { recursive: true, force: true })
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(workspace, { recursive: true, force: true })
+		rmSync(outside, { recursive: true, force: true })
+	}
+})
+
+test('prepared captured contexts reject final source and Item destination symlinks', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-execution-context-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	const workspace = mkdtempSync(join(tmpdir(), 'helm-symlink-item-'))
+	const outside = mkdtempSync(join(tmpdir(), 'helm-outside-'))
+	try {
+		const sourceItem = captured(commands, 'source symlink', 'safe bytes')
+		const sourcePath = join(attachmentsDir(sourceItem.id), 'same.txt')
+		unlinkSync(sourcePath)
+		symlinkSync(join(outside, 'source.txt'), sourcePath)
+		assert.throws(
+			() => prepareItemExecutionContext(sourceItem, buildItemExecutionContext(sourceItem, sourceItem.capturedContext)),
+			/non-symlink|regular|ELOOP/i,
+		)
+
+		const destItem = captured(commands, 'destination symlink', 'safe bytes')
+		const prepared = prepareItemExecutionContext(
+			destItem,
+			buildItemExecutionContext(destItem, destItem.capturedContext),
+		)
+		const attachmentRoot = join(workspace, '.helm-attachments')
+		mkdirSync(attachmentRoot)
+		symlinkSync(outside, join(attachmentRoot, destItem.id))
+		assert.throws(() => prepared.onWorktreeReady(workspace), /unsafe|symlink/i)
+		assert.equal(existsSync(join(outside, 'same.txt')), false)
 	} finally {
 		for (const item of db.items.list()) rmSync(attachmentsDir(item.id), { recursive: true, force: true })
 		db.close()
