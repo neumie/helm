@@ -46,6 +46,7 @@ const config: HelmConfig = {
 		trackDeployments: false,
 		deployPollSeconds: 120,
 	},
+	scheduledRuns: { enabled: false, systemTargetsEnabled: false },
 }
 
 const poller = { pollOnce: async () => undefined }
@@ -80,7 +81,10 @@ interface Ctx {
 	exitCount: () => number
 }
 
-function withApi(opts: { active: number; managed: boolean }, fn: (ctx: Ctx) => Promise<void>) {
+function withApi(
+	opts: { active: number; managed: boolean; scheduledBlocking?: number },
+	fn: (ctx: Ctx) => Promise<void>,
+) {
 	const dir = mkdtempSync(join(tmpdir(), 'helm-config-restart-'))
 	const db = new DB(join(dir, 'helm.db'))
 	const configPath = join(dir, 'helm.config.json')
@@ -105,6 +109,12 @@ function withApi(opts: { active: number; managed: boolean }, fn: (ctx: Ctx) => P
 		undefined,
 		undefined,
 		control,
+		undefined,
+		undefined,
+		undefined,
+		opts.scheduledBlocking === undefined
+			? undefined
+			: { restartBlockingRunCount: () => opts.scheduledBlocking as number },
 	)
 	return fn({ api, configPath, exitCount: () => exits }).finally(() => {
 		db.close()
@@ -165,6 +175,23 @@ test('config save while runs are active defers with the run count and never exit
 		await sleep(20)
 		assert.equal(ctx.exitCount(), 0)
 	})
+})
+
+test('scheduled active or quarantined runs block config restart with their truthful count', async () => {
+	for (const scheduledBlocking of [1, 2]) {
+		await withApi({ active: 0, managed: true, scheduledBlocking }, async ctx => {
+			const saved = await putConfig(ctx)
+			assert.equal(saved.status, 200)
+			const savedBody = (await saved.json()) as SaveBody
+			assert.equal(savedBody.data.applied, false)
+			assert.equal(savedBody.data.pendingRuns, scheduledBlocking)
+			const restart = await ctx.api.request('/daemon/restart', { method: 'POST' })
+			assert.equal(restart.status, 409)
+			assert.equal((await restart.json()).pendingRuns, scheduledBlocking)
+			await sleep(20)
+			assert.equal(ctx.exitCount(), 0)
+		})
+	}
 })
 
 test('config save outside launchd defers and never exits the dev process', async () => {

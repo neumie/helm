@@ -208,6 +208,9 @@ export function apiRoutes(
 	openItemInOkena: OpenItemInOkena = defaultOpenItemInOkena,
 	inspectItemOkenaWorkspace: InspectItemOkenaWorkspace = defaultInspectItemOkenaWorkspace,
 	profileContext?: ProfileContext,
+	// Scheduled runs have durable processes outside the Drainer. This is a
+	// read-only guard only; scheduled routes/admission remain out of this API.
+	scheduledRestartBlocker?: { restartBlockingRunCount(): number },
 ) {
 	const api = new Hono()
 	if (profileContext) {
@@ -1324,6 +1327,7 @@ export function apiRoutes(
 
 	/** "2 runs" / "1 run" — active-run phrasing shared by save + restart copy. */
 	const activeRunsPhrase = (count: number) => (count === 1 ? '1 run' : `${count} runs`)
+	const pendingRunCount = () => queue.getStatus().active + (scheduledRestartBlocker?.restartBlockingRunCount() ?? 0)
 
 	// Update config (validates and writes to disk). The daemon only loads config
 	// at startup, so a bare save would silently not apply: when it's safe (no
@@ -1350,7 +1354,7 @@ export function apiRoutes(
 		} catch (err) {
 			return c.json({ error: `Failed to write config: ${err instanceof Error ? err.message : err}` }, 500)
 		}
-		const activeRuns = queue.getStatus().active
+		const activeRuns = pendingRunCount()
 		if (activeRuns > 0) {
 			return c.json({
 				data: {
@@ -1367,7 +1371,7 @@ export function apiRoutes(
 			if (queue.isQuiescing()) {
 				return c.json({ data: { message: 'Saved — restart already pending…', applied: true } })
 			}
-			const pendingRuns = queue.getStatus().active
+			const pendingRuns = pendingRunCount()
 			return c.json({
 				data: {
 					message: `Saved. Restart the daemon to apply — ${activeRunsPhrase(pendingRuns)} active.`,
@@ -1383,7 +1387,7 @@ export function apiRoutes(
 	// Explicit deferred restart (same guards as the config-save self-restart):
 	// clients call this when a save answered { applied: false }.
 	api.post('/daemon/restart', c => {
-		const activeRuns = queue.getStatus().active
+		const activeRuns = pendingRunCount()
 		if (activeRuns > 0) {
 			const pronoun = activeRuns === 1 ? 'it' : 'them'
 			return c.json(
@@ -1396,7 +1400,7 @@ export function apiRoutes(
 		}
 		if (!queue.quiesce()) {
 			if (queue.isQuiescing()) return c.json({ data: { message: 'Restarting…', applied: true } })
-			const pendingRuns = queue.getStatus().active
+			const pendingRuns = pendingRunCount()
 			const pronoun = pendingRuns === 1 ? 'it' : 'them'
 			return c.json(
 				{ error: `${activeRunsPhrase(pendingRuns)} active — wait for ${pronoun} to finish.`, pendingRuns },

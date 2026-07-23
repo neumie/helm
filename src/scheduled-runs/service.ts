@@ -93,6 +93,16 @@ export class ScheduledRunService {
 		return this.tickInFlight
 	}
 
+	/** Active or quarantined durable runs make a daemon restart unsafe. */
+	restartBlockingRunCount(): number {
+		let count = 0
+		// Snapshot profile IDs before touching tenant stores so a profile activation
+		// cannot redirect this read to a different tenant mid-count.
+		for (const { profile } of this.deps.profiles())
+			count += this.db.forProfile(profile.id).schedules.listRecoverableRuns().length
+		return count
+	}
+
 	/** Manual execution uses the same tenant preflight and shared capacity budget. */
 	async runNow(profileId: string, scheduleId: string): Promise<ScheduledRunRecord> {
 		if (!this.isAdmissionOpen()) throw new Error('Scheduled admission requires a live resident lease')
@@ -172,7 +182,7 @@ export class ScheduledRunService {
 		for (let cursor = 0; processed < MAX_DUE_PER_TICK; cursor++) {
 			let progressed = false
 			for (const runtime of runtimes) {
-				if (processed >= MAX_DUE_PER_TICK) break
+				if (processed >= MAX_DUE_PER_TICK || !this.isAdmissionOpen()) break
 				const profileId = runtime.profile.id
 				const runDb = this.db.forProfile(profileId) // capture before await/admission
 				const due = runDb.schedules.listDue(this.now().toISOString(), 1)[0]

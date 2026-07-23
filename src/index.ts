@@ -85,11 +85,22 @@ async function main() {
 	})
 
 	// Start API server
-	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher, {
-		store: profiles,
-		runtime: () => profiles.activeRuntime(),
-		applyRuntime: configureProfileRuntime,
-	})
+	const app = createApp(
+		config,
+		configPath,
+		db,
+		queue,
+		poller,
+		provider,
+		spawner,
+		enricher,
+		{
+			store: profiles,
+			runtime: () => profiles.activeRuntime(),
+			applyRuntime: configureProfileRuntime,
+		},
+		scheduledRuns,
+	)
 	const { serve } = await import('@hono/node-server')
 	serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, () => {
 		log.success('helm', `API: http://${config.server.host}:${config.server.port}/api (clients: helm + extension)`)

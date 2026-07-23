@@ -56,6 +56,7 @@ export function createApp(
 	spawner: Spawner,
 	enricher: ItemEnricher,
 	profileContext?: ProfileContext,
+	scheduledRestartBlocker?: { restartBlockingRunCount(): number },
 ) {
 	const app = new Hono()
 
@@ -78,6 +79,7 @@ export function createApp(
 			undefined,
 			undefined,
 			profileContext,
+			scheduledRestartBlocker,
 		),
 	)
 
