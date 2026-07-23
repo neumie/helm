@@ -100,10 +100,13 @@ interface GhDeploymentStatus {
 }
 
 export interface DeployObservationProgress {
+	/** Complete paginated discovery, retained only until every status is observed. */
 	deployments?: GhDeployment[]
 	statuses: Map<number, GhDeploymentStatus | null>
 	incomplete: boolean
 }
+
+type GhResult<T> = { kind: 'ok'; value: T } | { kind: 'failed' | 'deferred' | 'aborted' }
 
 export interface DeployCommandOptions {
 	signal?: AbortSignal
@@ -120,21 +123,24 @@ export interface DeployFetchOptions {
 	command?: DeployCommandRunner
 }
 
-/** Run `gh` and JSON-parse stdout. Failure is a no-result, not a lifecycle failure. */
-async function ghJson<T = unknown>(args: string[], options: DeployFetchOptions = {}): Promise<T | null> {
-	if (aborted(options.signal)) return null
-	const execute = async () => {
+/** Run `gh` and preserve failure/defer distinction for complete observations. */
+async function ghJson<T = unknown>(args: string[], options: DeployFetchOptions = {}): Promise<GhResult<T>> {
+	if (aborted(options.signal)) return { kind: 'aborted' }
+	const execute = async (): Promise<GhResult<T>> => {
 		try {
 			const stdout = options.command
 				? await options.command('gh', args, { signal: options.signal })
 				: (await execFileAsync('gh', args, { timeout: 10_000, maxBuffer: 4 * 1024 * 1024, signal: options.signal }))
 						.stdout
-			return JSON.parse(stdout) as T
+			return { kind: 'ok', value: JSON.parse(stdout) as T }
 		} catch {
-			return null
+			return { kind: 'failed' }
 		}
 	}
-	return options.remote ? ((await options.remote.run(execute)) ?? null) : execute()
+	if (!options.remote) return execute()
+	const result = await options.remote.run(execute)
+	if (result) return result
+	return { kind: aborted(options.signal) ? 'aborted' : 'deferred' }
 }
 
 /** Observe a PR merge and its bounded deployment status fan-out. */
@@ -145,8 +151,9 @@ export async function fetchDeployState(
 ): Promise<DeployState | null> {
 	const repo = parsePrUrl(prUrl)
 	if (!repo || aborted(options.signal)) return null
-	const pr = await ghJson<GhPrView>(['pr', 'view', prUrl, '--json', 'state,mergedAt,mergeCommit'], options)
-	if (!pr || aborted(options.signal)) return null
+	const prResult = await ghJson<GhPrView>(['pr', 'view', prUrl, '--json', 'state,mergedAt,mergeCommit'], options)
+	if (prResult.kind !== 'ok' || aborted(options.signal)) return null
+	const pr = prResult.value
 
 	const merged = pr.state === 'MERGED'
 	const mergedAt = pr.mergedAt ?? null
@@ -155,27 +162,73 @@ export async function fetchDeployState(
 	const progress = options.progress
 	if (merged && mergeSha) {
 		const base = `repos/${repo.owner}/${repo.repo}`
-		const fetched = await ghJson<GhDeployment[]>(['api', `${base}/deployments?sha=${mergeSha}&per_page=100`], options)
-		if (options.remote?.deferred || !Array.isArray(fetched)) return null
+		// Discovery is paginated to exhaustion. The process-local progress object is
+		// deliberately the only place a partial list can live.
+		if (!progress?.deployments) {
+			const discovered: GhDeployment[] = []
+			for (let page = 1; ; page += 1) {
+				const pageResult = await ghJson<GhDeployment[]>(
+					['api', `${base}/deployments?sha=${mergeSha}&per_page=100&page=${page}`],
+					options,
+				)
+				if (pageResult.kind !== 'ok') {
+					if (progress && pageResult.kind === 'failed') progress.incomplete = true
+					return null
+				}
+				if (!Array.isArray(pageResult.value)) {
+					if (progress) progress.incomplete = true
+					return null
+				}
+				discovered.push(...pageResult.value.filter(deployment => deployment.id !== undefined))
+				if (pageResult.value.length < 100) break
+			}
+			if (progress) {
+				progress.deployments = discovered
+				const ids = new Set(discovered.map(deployment => deployment.id as number))
+				for (const id of progress.statuses.keys()) if (!ids.has(id)) progress.statuses.delete(id)
+			} else {
+				// Direct callers do not have a tick budget, so observe the complete list now.
+				for (const deployment of discovered) {
+					const status = await ghJson<GhDeploymentStatus[]>(
+						['api', `${base}/deployments/${deployment.id}/statuses?per_page=1`],
+						options,
+					)
+					if (status.kind !== 'ok' || !Array.isArray(status.value)) return null
+					const latest = status.value[0] ?? null
+					deployments.push({
+						environment: String(deployment.environment ?? 'unknown'),
+						state: latest?.state ? String(latest.state) : 'pending',
+						url: httpUrlOrNull(latest?.environment_url) ?? httpUrlOrNull(latest?.target_url),
+						updatedAt: latest?.updated_at ?? deployment.updated_at ?? null,
+					})
+				}
+				return { merged, mergedAt, mergeSha, deployments, checkedAt }
+			}
+		}
 		if (progress) {
-			progress.deployments = fetched.filter(deployment => deployment.id !== undefined)
-			const ids = new Set(progress.deployments.map(deployment => deployment.id as number))
-			for (const id of progress.statuses.keys()) if (!ids.has(id)) progress.statuses.delete(id)
 			let remaining = DEPLOY_MAX_DEPLOYMENTS_PER_PR
-			for (const deployment of progress.deployments) {
-				if (remaining === 0 || progress.statuses.has(deployment.id as number)) continue
-				if (aborted(options.signal)) return null
-				const statuses = await ghJson<GhDeploymentStatus[]>(
+			for (const deployment of progress.deployments ?? []) {
+				if (progress.statuses.has(deployment.id as number)) continue
+				if (remaining === 0) {
+					progress.incomplete = true
+					return null
+				}
+				const status = await ghJson<GhDeploymentStatus[]>(
 					['api', `${base}/deployments/${deployment.id}/statuses?per_page=1`],
 					options,
 				)
-				if (options.remote?.deferred) return null
-				progress.statuses.set(deployment.id as number, Array.isArray(statuses) ? statuses[0] : null)
+				if (status.kind !== 'ok' || !Array.isArray(status.value)) {
+					if (status.kind === 'failed') progress.incomplete = true
+					return null
+				}
+				progress.statuses.set(deployment.id as number, status.value[0] ?? null)
 				remaining -= 1
 			}
-			progress.incomplete = progress.statuses.size < progress.deployments.length
-			if (progress.incomplete) return null
-			for (const deployment of progress.deployments) {
+			if (progress.statuses.size < (progress.deployments?.length ?? 0)) {
+				progress.incomplete = true
+				return null
+			}
+			for (const deployment of progress.deployments ?? []) {
 				const latest = progress.statuses.get(deployment.id as number) ?? null
 				deployments.push({
 					environment: String(deployment.environment ?? 'unknown'),
@@ -184,24 +237,9 @@ export async function fetchDeployState(
 					updatedAt: latest?.updated_at ?? deployment.updated_at ?? null,
 				})
 			}
-		} else {
-			for (const deployment of fetched.slice(0, DEPLOY_MAX_DEPLOYMENTS_PER_PR)) {
-				const statuses = await ghJson<GhDeploymentStatus[]>(
-					['api', `${base}/deployments/${deployment.id}/statuses?per_page=1`],
-					options,
-				)
-				if (options.remote?.deferred) return null
-				const latest = Array.isArray(statuses) ? statuses[0] : null
-				deployments.push({
-					environment: String(deployment.environment ?? 'unknown'),
-					state: latest?.state ? String(latest.state) : 'pending',
-					url: httpUrlOrNull(latest?.environment_url) ?? httpUrlOrNull(latest?.target_url),
-					updatedAt: latest?.updated_at ?? deployment.updated_at ?? null,
-				})
-			}
+			progress.incomplete = false
 		}
 	}
-	if (progress) progress.incomplete = false
 	return options.remote?.deferred ? null : { merged, mergedAt, mergeSha, deployments, checkedAt }
 }
 
@@ -268,6 +306,8 @@ interface Candidate {
 export class DeployWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
+	/** stop closes manual as well as timer admission before it aborts a tick. */
+	private admissionOpen = true
 	private currentTick: Promise<void> | null = null
 	private currentAbort: AbortController | null = null
 	private stopDrain: Promise<void> | null = null
@@ -308,6 +348,7 @@ export class DeployWatcher {
 			return
 		}
 		this.running = true
+		this.admissionOpen = true
 		this.stopDrain = null
 		log.info('deploy', `Starting deploy watcher (interval: ${this.intervalSeconds}s)`)
 		void this.tick()
@@ -316,6 +357,7 @@ export class DeployWatcher {
 	stop(): Promise<void> {
 		if (this.stopDrain) return this.stopDrain
 		this.running = false
+		this.admissionOpen = false
 		if (this.timer) clearTimeout(this.timer)
 		this.timer = null
 		this.currentAbort?.abort()
@@ -325,6 +367,8 @@ export class DeployWatcher {
 	}
 
 	async pollOnce(signal?: AbortSignal): Promise<void> {
+		// A pre-aborted caller and a stopped watcher have no admission side effects.
+		if (!this.admissionOpen || aborted(signal)) return
 		if (this.currentTick) return this.currentTick
 		const controller = new AbortController()
 		const abortExternal = () => controller.abort()
@@ -373,21 +417,24 @@ export class DeployWatcher {
 			})
 		}
 		const selected: Candidate[] = []
+		// Each round admits at most one candidate per profile. This gives the first
+		// worker wave distinct tenants even when every tenant has both streams.
 		let progress = true
+		let preferDeploy = this.profileStart % 2 === 0
 		while (progress && selected.length < DEPLOY_MAX_REMOTE_COMMANDS_PER_TICK) {
 			progress = false
 			for (const profileId of profiles) {
 				const queue = byProfile.get(profileId)
 				if (!queue) continue
-				for (const kind of ['late', 'deploy'] as const) {
-					const candidate = queue[kind].shift()
-					if (!candidate) continue
-					selected.push(candidate)
-					progress = true
-					if (selected.length === DEPLOY_MAX_REMOTE_COMMANDS_PER_TICK) break
-				}
+				const first = preferDeploy ? queue.deploy : queue.late
+				const second = preferDeploy ? queue.late : queue.deploy
+				const candidate = first.shift() ?? second.shift()
+				if (!candidate) continue
+				selected.push(candidate)
+				progress = true
 				if (selected.length === DEPLOY_MAX_REMOTE_COMMANDS_PER_TICK) break
 			}
+			preferDeploy = !preferDeploy
 		}
 		return selected
 	}
@@ -447,7 +494,14 @@ export class DeployWatcher {
 				memo.set(item.prUrl, observed)
 				const state = await observed
 				candidate.incomplete = item.prUrl ? this.deployProgress.get(item.prUrl)?.incomplete === true : false
-				if (!state || remote.deferred || candidate.incomplete || aborted(remote.signal)) return
+				// A complete no-result (invalid/missing PR or a permanent lookup error)
+				// is handled cursor progress. Only an explicitly incomplete/budgeted
+				// observation retains the original list key for retry.
+				if (!state || remote.deferred || candidate.incomplete || aborted(remote.signal)) {
+					if (!remote.deferred && !candidate.incomplete && !aborted(remote.signal)) candidate.completed = true
+					return
+				}
+				if (aborted(remote.signal)) return
 				const updated = candidate.commands.recordDeployState(item.id, state)
 				candidate.item = updated
 				if (state.merged && updated.status === 'review' && !aborted(remote.signal)) {

@@ -137,9 +137,26 @@ rules. Loop execution creates or reuses the Item workspace and delegates to
 
 ## Current versus planned changes
 
-Deploy and plan-status watchers exist today as advisory observers, but the planned
-all-profile bounded reconciliation, fairness, and awaited-shutdown changes have
-not landed unless their owning slice says otherwise. Planning/context preparation is implemented through `PlanningApplication`; its
+Deploy and plan-status watchers are implemented all-profile advisory observers.
+They snapshot registered (including archived) profile IDs, bind each candidate to
+`DB.forProfile(profileId)` and `ItemCommands` before awaits, avoid overlapping
+ticks, and use original `(updatedAt,id)` cursor keys. Deploy work is capped at 160
+remote commands with four active processes; Plan work is capped at 400 Items, 25
+project GitHub commands, and four active processes. Scheduling gives each ready
+profile one first-wave candidate before continuation. A handled no-result or
+permanent observer failure advances its stream cursor, while incomplete or
+budget-deferred work retains retry priority. Deployment lists are paginated and
+partial discovery/status state remains in memory until a complete `DeployState`
+can be persisted.
+
+Observer `stop()` closes manual and timer admission before aborting and awaits the
+admitted tick; pre-aborted callers do no work. Daemon shutdown intentionally does
+not call `db.close()` after observer drains: Poller, Enricher, Drainer/workers, and
+HTTP lack a complete shared admission-and-drain barrier. Keeping SQLite open until
+process termination prevents continuations from using a closed connection. Do not
+reintroduce an early close until every DB owner can drain.
+
+Planning/context preparation is implemented through `PlanningApplication`; its
 lifecycle row/event pairs are transactional, but its external effects remain a
 claimed saga. The commit-aware desktop profile coordinator remains future work.
 Preserve the current shared-DB, profile-bound, lifecycle, persistence, Solver,

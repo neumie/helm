@@ -91,6 +91,8 @@ interface PlanCandidate {
 export class PlanStatusWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
+	/** stop closes timer and manual poll admission before aborting current work. */
+	private admissionOpen = true
 	private currentTick: Promise<void> | null = null
 	private currentAbort: AbortController | null = null
 	private stopDrain: Promise<void> | null = null
@@ -117,6 +119,7 @@ export class PlanStatusWatcher {
 	start(): void {
 		if (this.running) return
 		this.running = true
+		this.admissionOpen = true
 		this.stopDrain = null
 		log.info('plan-status', `Starting plan status watcher (interval: ${Math.round(this.intervalMs / 1000)}s)`)
 		void this.tick()
@@ -125,6 +128,7 @@ export class PlanStatusWatcher {
 	stop(): Promise<void> {
 		if (this.stopDrain) return this.stopDrain
 		this.running = false
+		this.admissionOpen = false
 		if (this.timer) clearTimeout(this.timer)
 		this.timer = null
 		this.currentAbort?.abort()
@@ -134,6 +138,7 @@ export class PlanStatusWatcher {
 	}
 
 	async pollOnce(signal?: AbortSignal): Promise<void> {
+		if (!this.admissionOpen || aborted(signal)) return
 		if (this.currentTick) return this.currentTick
 		const controller = new AbortController()
 		const abortExternal = () => controller.abort()
