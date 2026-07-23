@@ -1,11 +1,24 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import {
+	chmodSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	unlinkSync,
+	writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
 	composeScheduledAgentArgs,
+	readInvocationDescriptor,
+	runScheduledAgentHost,
 	scheduledAgentEnvironment,
+	writeInvocationDescriptor,
 	writeScheduledPrompt,
 } from '../src/scheduled-runs/agent-host.js'
 import {
@@ -54,6 +67,54 @@ test('scheduled structured invocation appends hostile prompt exactly once for bo
 	}
 	assert.deepEqual(claude.args, ['--dangerously-skip-permissions', '--effort', 'high'])
 	assert.equal(codex.args.at(-1), 'gpt-5')
+})
+
+test('scheduled artifacts are exclusive no-follow private files and leave symlink targets unchanged', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-artifacts-'))
+	const runDir = join(root, 'run')
+	const target = join(root, 'outside.txt')
+	try {
+		writeFileSync(target, 'outside-secret', { mode: 0o600 })
+		mkdirSync(runDir, { mode: 0o700 })
+		symlinkSync(target, join(runDir, 'prompt.txt'))
+		assert.throws(() => writeScheduledPrompt(runDir, 'private prompt'), /stale artifact path already exists/)
+		assert.equal(readFileSync(target, 'utf8'), 'outside-secret')
+		unlinkSync(join(runDir, 'prompt.txt'))
+
+		const promptPath = writeScheduledPrompt(runDir, 'private prompt')
+		assert.equal(lstatSync(promptPath).mode & 0o777, 0o600)
+		assert.throws(() => writeScheduledPrompt(runDir, 'second prompt'), /nonempty stale artifact/)
+		writeInvocationDescriptor(runDir, {
+			cwd: runDir,
+			promptPath,
+			invocation: { command: '/bin/true', args: [] },
+			shell: '/bin/true',
+		})
+		assert.equal(lstatSync(join(runDir, 'invocation.json')).mode & 0o777, 0o600)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('scheduled host rejects mode changes and prompt swaps before agent execution', async () => {
+	const runDir = mkdtempSync(join(tmpdir(), 'helm-scheduled-artifacts-'))
+	try {
+		const promptPath = writeScheduledPrompt(runDir, 'original prompt')
+		const descriptorPath = writeInvocationDescriptor(runDir, {
+			cwd: runDir,
+			promptPath,
+			invocation: { command: '/bin/true', args: [] },
+			shell: '/bin/true',
+		})
+		chmodSync(descriptorPath, 0o644)
+		assert.throws(() => readInvocationDescriptor(descriptorPath), /mode 0600/)
+		chmodSync(descriptorPath, 0o600)
+		unlinkSync(promptPath)
+		writeFileSync(promptPath, 'swapped prompt', { mode: 0o600 })
+		await assert.rejects(() => runScheduledAgentHost(descriptorPath), /Scheduled prompt was replaced/)
+	} finally {
+		rmSync(runDir, { recursive: true, force: true })
+	}
 })
 
 test('scheduled host rejects NUL before file or argv spawn composition', () => {

@@ -1,3 +1,4 @@
+import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import type { CreateScheduledRunInput, ScheduleRecord, ScheduledRunRecord, ScheduledRunState } from './schema.js'
 import { scheduleCreateSchema, scheduledRunDiagnosticSchema, scheduledRunReportSchema } from './schema.js'
@@ -101,7 +102,8 @@ export class ScheduleCommands {
 	}
 	/** First matching report wins; an identical retry is intentionally idempotent. */
 	report(id: string, revision: number, kind: 'quiet' | 'needs_attention', summary: string): ScheduledRunRecord {
-		const report = scheduledRunReportSchema.parse({ kind, summary })
+		// Normalize before schema validation and idempotency so terminal controls never reach persistence.
+		const report = scheduledRunReportSchema.parse({ kind, summary: validateScheduledReportSummary(summary) })
 		const run = this.store.requireRun(id)
 		if (run.reportKind) {
 			if (run.reportKind === report.kind && run.reportSummary === report.summary) return run

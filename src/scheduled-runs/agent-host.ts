@@ -1,26 +1,58 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import {
+	constants,
+	type Stats,
+	closeSync,
+	fchmodSync,
+	fstatSync,
+	fsyncSync,
+	lstatSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+	writeSync,
+} from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AgentInvocation } from '../solver/agent-adapter.js'
 import type { SolverAgent } from '../solver/agent.js'
 
 const MAX_DESCRIPTOR_BYTES = 16 * 1024
 const MAX_PROMPT_BYTES = 80 * 1024
+const PRIVATE_FILE_MODE = 0o600
+const PRIVATE_DIRECTORY_MODE = 0o700
+const PROMPT_FILE = 'prompt.txt'
+const INVOCATION_FILE = 'invocation.json'
+
+export interface ScheduledArtifactIdentity {
+	device: number
+	inode: number
+}
 
 export interface ScheduledInvocationDescriptor {
 	cwd: string
 	promptPath: string
 	invocation: Omit<AgentInvocation, 'label'>
 	shell: string
+	/** Canonical, daemon-created run directory captured while artifacts were written. */
+	runDir: string
+	runDirIdentity: ScheduledArtifactIdentity
+	promptIdentity: ScheduledArtifactIdentity
 }
+
+type ScheduledInvocationInput = Omit<ScheduledInvocationDescriptor, 'runDir' | 'runDirIdentity' | 'promptIdentity'>
 
 export interface ScheduledAgentEnvironmentInput {
 	agent: SolverAgent
 	daemonUrl: string
 	runId: string
 	reportCapability: string
+}
+
+interface RunDirectory {
+	path: string
+	identity: ScheduledArtifactIdentity
 }
 
 const ALLOWED_ENV = new Set([
@@ -61,45 +93,79 @@ export function scheduledAgentEnvironment(
 	return environment
 }
 
+/** Creates the prompt once; stale artifact paths are never followed, overwritten, or reconciled implicitly. */
 export function writeScheduledPrompt(runDir: string, prompt: string): string {
 	assertNoNul(prompt, 'Scheduled prompt')
 	if (Buffer.byteLength(prompt, 'utf8') > MAX_PROMPT_BYTES)
 		throw new Error('Scheduled prompt exceeds private-file limit')
-	const path = join(resolve(runDir), 'prompt.txt')
-	mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-	writeFileSync(path, prompt, { encoding: 'utf8', mode: 0o600 })
-	chmodSync(path, 0o600)
-	return path
+	const run = inspectRunDirectory(runDir)
+	return writePrivateArtifact(run, PROMPT_FILE, Buffer.from(prompt, 'utf8'))
 }
 
-export function writeInvocationDescriptor(runDir: string, descriptor: ScheduledInvocationDescriptor): string {
-	validateInvocationDescriptor(descriptor)
-	const path = join(resolve(runDir), 'invocation.json')
-	const encoded = JSON.stringify(descriptor)
-	if (Buffer.byteLength(encoded, 'utf8') > MAX_DESCRIPTOR_BYTES)
-		throw new Error('Scheduled invocation descriptor too large')
-	mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-	writeFileSync(path, encoded, { encoding: 'utf8', mode: 0o600 })
-	chmodSync(path, 0o600)
-	return path
+/** Writes an invocation that binds the host to the exact run directory and prompt inode. */
+export function writeInvocationDescriptor(runDir: string, input: ScheduledInvocationInput): string {
+	validateInvocationInput(input)
+	const run = inspectRunDirectory(runDir)
+	const promptPath = artifactPath(run, PROMPT_FILE)
+	if (resolve(input.promptPath) !== promptPath)
+		throw new Error('Scheduled descriptor prompt must be the run prompt artifact')
+	const promptIdentity = inspectPrivateArtifact(promptPath, 'Scheduled prompt')
+	const descriptor: ScheduledInvocationDescriptor = {
+		...input,
+		promptPath,
+		runDir: run.path,
+		runDirIdentity: run.identity,
+		promptIdentity,
+	}
+	const encoded = Buffer.from(JSON.stringify(descriptor), 'utf8')
+	if (encoded.byteLength > MAX_DESCRIPTOR_BYTES) throw new Error('Scheduled invocation descriptor too large')
+	return writePrivateArtifact(run, INVOCATION_FILE, encoded)
 }
 
+/** Reads only a no-follow private descriptor located in its captured run directory. */
 export function readInvocationDescriptor(path: string): ScheduledInvocationDescriptor {
-	const source = readFileSync(path)
-	if (source.byteLength > MAX_DESCRIPTOR_BYTES) throw new Error('Scheduled invocation descriptor too large')
-	const value = JSON.parse(source.toString('utf8')) as ScheduledInvocationDescriptor
-	validateInvocationDescriptor(value)
-	return value
+	const fd = openPrivateRead(path, 'Scheduled invocation descriptor')
+	try {
+		const source = readFileSync(fd)
+		if (source.byteLength > MAX_DESCRIPTOR_BYTES) throw new Error('Scheduled invocation descriptor too large')
+		const value = JSON.parse(source.toString('utf8')) as ScheduledInvocationDescriptor
+		validateInvocationDescriptor(value)
+		const run = inspectRunDirectory(value.runDir)
+		assertIdentity(run.identity, value.runDirIdentity, 'Scheduled run directory')
+		if (realpathSync(dirname(path)) !== run.path || resolve(path) !== artifactPath(run, INVOCATION_FILE)) {
+			throw new Error('Scheduled invocation descriptor escaped its captured run directory')
+		}
+		return value
+	} finally {
+		closeSync(fd)
+	}
+}
+
+/** Reopens the prompt no-follow and checks the descriptor's captured run and inode identities before reading it. */
+export function readScheduledPrompt(descriptor: ScheduledInvocationDescriptor): string {
+	const run = inspectRunDirectory(descriptor.runDir)
+	assertIdentity(run.identity, descriptor.runDirIdentity, 'Scheduled run directory')
+	if (resolve(descriptor.promptPath) !== artifactPath(run, PROMPT_FILE)) {
+		throw new Error('Scheduled prompt escaped its captured run directory')
+	}
+	const fd = openPrivateRead(descriptor.promptPath, 'Scheduled prompt')
+	try {
+		assertIdentity(identityForStats(fstatSync(fd), 'Scheduled prompt'), descriptor.promptIdentity, 'Scheduled prompt')
+		const prompt = readFileSync(fd)
+		if (prompt.byteLength > MAX_PROMPT_BYTES) throw new Error('Scheduled prompt exceeds private-file limit')
+		return prompt.toString('utf8')
+	} finally {
+		closeSync(fd)
+	}
 }
 
 export async function runScheduledAgentHost(descriptorPath: string, env = process.env): Promise<void> {
 	const descriptor = readInvocationDescriptor(descriptorPath)
-	const prompt = readFileSync(descriptor.promptPath)
-	if (prompt.byteLength > MAX_PROMPT_BYTES) throw new Error('Scheduled prompt exceeds private-file limit')
+	const prompt = readScheduledPrompt(descriptor)
 	// The prompt is a single argv element, never executable shell source.
 	await waitForChild(
 		descriptor.invocation.command,
-		composeScheduledAgentArgs(descriptor.invocation, prompt.toString('utf8')),
+		composeScheduledAgentArgs(descriptor.invocation, prompt),
 		descriptor.cwd,
 		env,
 	)
@@ -116,7 +182,100 @@ export function composeScheduledAgentArgs(invocation: Omit<AgentInvocation, 'lab
 	return [...invocation.args, prompt]
 }
 
-function validateInvocationDescriptor(value: ScheduledInvocationDescriptor): void {
+function writePrivateArtifact(run: RunDirectory, name: string, content: Buffer): string {
+	const path = artifactPath(run, name)
+	let fd: number | null = null
+	try {
+		fd = openSync(
+			path,
+			constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+			PRIVATE_FILE_MODE,
+		)
+		fchmodSync(fd, PRIVATE_FILE_MODE)
+		const identity = identityForStats(fstatSync(fd), `Scheduled ${name}`)
+		writeAll(fd, content)
+		fsyncSync(fd)
+		assertIdentity(inspectRunDirectory(run.path).identity, run.identity, 'Scheduled run directory')
+		assertIdentity(inspectPrivateArtifact(path, `Scheduled ${name}`), identity, `Scheduled ${name}`)
+		return path
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw staleArtifactError(path)
+		throw error
+	} finally {
+		if (fd !== null) closeSync(fd)
+	}
+}
+
+function writeAll(fd: number, content: Buffer): void {
+	for (let offset = 0; offset < content.byteLength; ) {
+		const written = writeSync(fd, content, offset, content.byteLength - offset)
+		if (written <= 0) throw new Error('Failed to write scheduled private artifact')
+		offset += written
+	}
+}
+
+function openPrivateRead(path: string, label: string): number {
+	const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+	try {
+		identityForStats(fstatSync(fd), label)
+		return fd
+	} catch (error) {
+		closeSync(fd)
+		throw error
+	}
+}
+
+function inspectRunDirectory(path: string): RunDirectory {
+	const resolved = resolve(path)
+	const stats = lstatSync(resolved)
+	if (!stats.isDirectory() || stats.isSymbolicLink())
+		throw new Error('Scheduled run directory must be a real directory')
+	const owner = process.getuid?.()
+	if (owner !== undefined && stats.uid !== owner)
+		throw new Error('Scheduled run directory must be owned by the daemon user')
+	if ((stats.mode & 0o777) !== PRIVATE_DIRECTORY_MODE) throw new Error('Scheduled run directory must have mode 0700')
+	return { path: realpathSync(resolved), identity: { device: stats.dev, inode: stats.ino } }
+}
+
+function inspectPrivateArtifact(path: string, label: string): ScheduledArtifactIdentity {
+	return identityForStats(lstatSync(path), label)
+}
+
+function identityForStats(stats: Stats, label: string): ScheduledArtifactIdentity {
+	if (!stats.isFile() || stats.isSymbolicLink()) throw new Error(`${label} must be a regular file`)
+	const owner = process.getuid?.()
+	if (owner !== undefined && stats.uid !== owner) throw new Error(`${label} must be owned by the daemon user`)
+	if ((stats.mode & 0o777) !== PRIVATE_FILE_MODE) throw new Error(`${label} must have mode 0600`)
+	return { device: stats.dev, inode: stats.ino }
+}
+
+function assertIdentity(actual: ScheduledArtifactIdentity, expected: ScheduledArtifactIdentity, label: string): void {
+	if (actual.device !== expected.device || actual.inode !== expected.inode) throw new Error(`${label} was replaced`)
+}
+
+function artifactPath(run: RunDirectory, name: string): string {
+	const path = join(run.path, name)
+	const rel = relative(run.path, path)
+	if (rel === '' || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) {
+		throw new Error('Scheduled artifact escaped its run directory')
+	}
+	return path
+}
+
+function staleArtifactError(path: string): Error {
+	try {
+		const stale = lstatSync(path)
+		return new Error(
+			stale.size > 0
+				? 'Scheduled nonempty stale artifact path already exists'
+				: 'Scheduled stale artifact path already exists',
+		)
+	} catch {
+		return new Error('Scheduled artifact path already exists')
+	}
+}
+
+function validateInvocationInput(value: ScheduledInvocationInput): void {
 	if (
 		!value ||
 		!isAbsolute(value.cwd) ||
@@ -130,6 +289,24 @@ function validateInvocationDescriptor(value: ScheduledInvocationDescriptor): voi
 	assertNoNul(value.promptPath, 'Scheduled prompt path')
 	assertNoNul(value.shell, 'Scheduled shell')
 	composeScheduledAgentArgs(value.invocation, '')
+}
+
+function validateInvocationDescriptor(value: ScheduledInvocationDescriptor): void {
+	validateInvocationInput(value)
+	if (!isAbsolute(value.runDir) || !validIdentity(value.runDirIdentity) || !validIdentity(value.promptIdentity)) {
+		throw new Error('Invalid scheduled invocation descriptor')
+	}
+	assertNoNul(value.runDir, 'Scheduled run directory')
+}
+
+function validIdentity(value: ScheduledArtifactIdentity): boolean {
+	return (
+		!!value &&
+		Number.isSafeInteger(value.device) &&
+		value.device >= 0 &&
+		Number.isSafeInteger(value.inode) &&
+		value.inode >= 0
+	)
 }
 
 function assertNoNul(value: string, label: string): void {

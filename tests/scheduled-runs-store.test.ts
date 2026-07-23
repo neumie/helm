@@ -80,8 +80,9 @@ test('occurrence identity, active overlap, reports, and safe contracts are guard
 			running.id,
 			running.revision,
 			'needs_attention',
-			'Please choose a deployment target.',
+			'\u001b[31mPlease choose a deployment target.\u001b[0m\u202e',
 		)
+		assert.equal(attention.reportSummary, 'Please choose a deployment target.')
 		assert.equal(
 			commands.report(attention.id, attention.revision, 'needs_attention', 'Please choose a deployment target.').id,
 			attention.id,
@@ -160,6 +161,11 @@ test('scheduled command validation rejects raw hashes and oversized UTF-8 writes
 		const preparing = commands.beginPreparing(run.id, run.revision)
 		const launching = commands.beginLaunching(preparing.id, preparing.revision)
 		const running = commands.markRunning(launching.id, launching.revision)
+		assert.throws(
+			() => commands.report(running.id, running.revision, 'quiet', '\u001b]8;;https://bad\u0007\u202e'),
+			/visible text/,
+		)
+		assert.deepEqual(db.schedules.requireRun(running.id), running)
 		assert.throws(() => commands.report(running.id, running.revision, 'quiet', '😀'.repeat(251)))
 		assert.deepEqual(db.schedules.requireRun(running.id), running)
 		assert.throws(() => commands.markFailed(running.id, running.revision, '😀'.repeat(65_537)))
