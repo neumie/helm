@@ -24,9 +24,14 @@ const DTACH_CANDIDATES = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/o
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
 let activeProfileId = 'work'
 
+/** Opaque profile ids are the only values permitted in terminal filesystem paths. */
+export function isValidSessionProfileId(profileId: unknown): profileId is string {
+	return typeof profileId === 'string' && PROFILE_ID_RE.test(profileId)
+}
+
 /** Configure the process-lifetime terminal namespace before any session operation. */
 export function configureSessionProfile(profileId: string): void {
-	if (!PROFILE_ID_RE.test(profileId)) throw new Error(`invalid profile id: ${profileId}`)
+	if (!isValidSessionProfileId(profileId)) throw new Error(`invalid profile id: ${profileId}`)
 	activeProfileId = profileId
 }
 
@@ -55,18 +60,28 @@ export function resolveDtachBinary(): string | null {
  * HELM_SOCKET_DIR overrides for tests so smoke runs can't pollute (or adopt)
  * the real session pool.
  */
-export function socketDir(): string {
-	const override = process.env.HELM_SOCKET_DIR
+export function socketNamespaceRoot(root = process.env.HELM_SOCKET_DIR): string {
 	const uid = typeof process.getuid === 'function' ? process.getuid() : 0
-	const base = override ?? `/tmp/helm-${uid}`
-	// Work keeps the legacy root so already-running dtach masters remain
-	// attachable after profile migration. Every other profile gets a disjoint
-	// socket pool, preventing list/reap/kill operations from crossing profiles.
-	return activeProfileId === 'work' ? base : path.join(base, 'profiles', activeProfileId)
+	return root ?? `/tmp/helm-${uid}`
 }
 
-export function ensureSocketDir(): string {
-	const dir = socketDir()
+/**
+ * Profile-explicit dtach namespace. Work intentionally keeps the legacy root;
+ * named profiles are below `profiles/<opaque-id>`. Transfer/recovery code MUST
+ * use this helper rather than the mutable active namespace.
+ */
+export function socketDirForProfile(profileId: string, root?: string): string {
+	if (!isValidSessionProfileId(profileId)) throw new Error(`invalid profile id: ${profileId}`)
+	const base = socketNamespaceRoot(root)
+	return profileId === 'work' ? base : path.join(base, 'profiles', profileId)
+}
+
+export function socketDir(): string {
+	return socketDirForProfile(activeProfileId)
+}
+
+export function ensureSocketDirForProfile(profileId: string, root?: string): string {
+	const dir = socketDirForProfile(profileId, root)
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
 	try {
 		fs.chmodSync(dir, 0o700) // pre-existing dir keeps 0700 even if umask interfered
@@ -74,6 +89,10 @@ export function ensureSocketDir(): string {
 		// best-effort; sockets themselves are srwx------
 	}
 	return dir
+}
+
+export function ensureSocketDir(): string {
+	return ensureSocketDirForProfile(activeProfileId)
 }
 
 /** Session ids feed socket paths; reject anything that could traverse. */
@@ -86,9 +105,13 @@ export function newSessionId(): string {
 	return crypto.randomUUID().slice(0, 8)
 }
 
-export function socketPath(sessionId: string): string {
+export function socketPathForProfile(profileId: string, sessionId: string, root?: string): string {
 	if (!isValidSessionId(sessionId)) throw new Error(`invalid session id: ${String(sessionId)}`)
-	return path.join(socketDir(), `${sessionId}.sock`)
+	return path.join(socketDirForProfile(profileId, root), `${sessionId}.sock`)
+}
+
+export function socketPath(sessionId: string): string {
+	return socketPathForProfile(activeProfileId, sessionId)
 }
 
 /**
@@ -103,8 +126,13 @@ export function socketPath(sessionId: string): string {
  */
 const MAX_UNIX_SOCKET_PATH = 103
 
-export function socketDirUsable(dir: string = socketDir()): boolean {
-	return dir.length + '/xxxxxxxx.sock'.length <= MAX_UNIX_SOCKET_PATH
+export function socketPathUsable(sockPath: string): boolean {
+	return sockPath.length <= MAX_UNIX_SOCKET_PATH
+}
+
+/** Check the actual prospective name; callers moving a session must not rely on a generic dir check. */
+export function socketDirUsable(dir: string = socketDir(), sessionId = 'xxxxxxxx'): boolean {
+	return isValidSessionId(sessionId) && socketPathUsable(path.join(dir, `${sessionId}.sock`))
 }
 
 /**
@@ -402,6 +430,8 @@ export class GraceCloser {
 
 // ---------- session registry (tab metadata that can't live in the socket) ----------
 
+export type SessionBacking = 'ordinary' | 'run-owned'
+
 export interface SessionMeta {
 	createdAt: string
 	/** Explicit cross-relaunch order. Missing = legacy registry; createdAt remains fallback. */
@@ -416,6 +446,18 @@ export interface SessionMeta {
 	customName?: string
 	/** Parked in the background list (strip-right popover) instead of the tab strip. */
 	parked?: boolean
+	/** Omitted legacy entries are ordinary user terminals. Run-owned sessions are never transferable. */
+	backing?: SessionBacking
+	/** Protocol-observed activity retained for an inactive destination profile. */
+	agentRunning?: boolean
+	agentAttention?: boolean
+	/** Optional tab-group membership; transfer always clears this at its destination. */
+	groupId?: string | null
+}
+
+export interface SessionRegistryTransferResult {
+	status: 'moved' | 'missing-source' | 'collision' | 'run-owned' | 'failed'
+	meta?: SessionMeta
 }
 
 export function compareSessionOrder(
@@ -445,13 +487,18 @@ export class SessionRegistry {
 			const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
 			for (const [id, meta] of Object.entries(raw)) {
 				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null) continue
-				const { createdAt, order, lastTitle, customName, parked } = meta as Record<string, unknown>
+				const { createdAt, order, lastTitle, customName, parked, backing, agentRunning, agentAttention, groupId } =
+					meta as Record<string, unknown>
 				this.#data[id] = {
 					createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
 					...(typeof order === 'number' && Number.isFinite(order) && order >= 0 ? { order } : {}),
 					...(typeof lastTitle === 'string' ? { lastTitle } : {}),
 					...(typeof customName === 'string' && customName !== '' ? { customName } : {}),
 					...(parked === true ? { parked: true } : {}),
+					...(backing === 'run-owned' ? { backing } : {}),
+					...(agentRunning === true ? { agentRunning: true } : {}),
+					...(agentAttention === true ? { agentAttention: true } : {}),
+					...(typeof groupId === 'string' || groupId === null ? { groupId } : {}),
 				}
 			}
 		} catch {
@@ -514,6 +561,26 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
+	/** Explicitly marks a session as ordinary or immutable run-owned backing. */
+	setBacking(sessionId: string, backing: SessionBacking): void {
+		const meta = this.#data[sessionId]
+		if (!meta || (meta.backing ?? 'ordinary') === backing) return
+		meta.backing = backing === 'run-owned' ? 'run-owned' : undefined
+		this.#scheduleSave()
+	}
+
+	/** Persist protocol-owned activity only; no output/title inference is permitted. */
+	setActivity(sessionId: string, activity: { agentRunning: boolean; agentAttention: boolean }): void {
+		const meta = this.#data[sessionId]
+		if (!meta) return
+		const nextRunning = activity.agentRunning ? true : undefined
+		const nextAttention = activity.agentAttention ? true : undefined
+		if (meta.agentRunning === nextRunning && meta.agentAttention === nextAttention) return
+		meta.agentRunning = nextRunning
+		meta.agentAttention = nextAttention
+		this.#scheduleSave()
+	}
+
 	/** Persist renderer-owned strip/background ordering as compact positions. */
 	setOrder(sessionIds: readonly string[]): void {
 		let changed = false
@@ -531,6 +598,49 @@ export class SessionRegistry {
 			order += 1
 		}
 		if (changed) this.#scheduleSave()
+	}
+
+	/** Path is exposed only to main-process persistence coordinators. */
+	get filePath(): string {
+		return this.#file
+	}
+
+	/**
+	 * Move one ordinary session's metadata between profile registries. Both JSON
+	 * documents are fully prepared before either rename; destination is renamed
+	 * first and a source-write failure is rolled back to its original document.
+	 * It intentionally does not touch sockets or buffers (the journaled
+	 * coordinator will order those operations).
+	 */
+	transferTo(destination: SessionRegistry, sessionId: string): SessionRegistryTransferResult {
+		const sourceMeta = this.#data[sessionId]
+		if (!sourceMeta) return { status: 'missing-source' }
+		if ((sourceMeta.backing ?? 'ordinary') !== 'ordinary') return { status: 'run-owned' }
+		if (destination.#data[sessionId]) return { status: 'collision' }
+		this.#cancelSave()
+		destination.#cancelSave()
+		const sourceBefore = structuredClone(this.#data)
+		const destinationBefore = structuredClone(destination.#data)
+		const moved: SessionMeta = { ...structuredClone(sourceMeta), parked: true, groupId: null }
+		const sourceAfter = structuredClone(sourceBefore)
+		const destinationAfter = { ...destinationBefore, [sessionId]: moved }
+		delete sourceAfter[sessionId]
+		try {
+			SessionRegistry.#writeDocument(destination.#file, destinationAfter)
+			try {
+				SessionRegistry.#writeDocument(this.#file, sourceAfter)
+			} catch (error) {
+				// Destination first is required for crash repair. If source did not
+				// commit, restore destination while source remains authoritative.
+				SessionRegistry.#writeDocument(destination.#file, destinationBefore)
+				throw error
+			}
+			this.#data = sourceAfter
+			destination.#data = destinationAfter
+			return { status: 'moved', meta: structuredClone(moved) }
+		} catch {
+			return { status: 'failed' }
+		}
 	}
 
 	remove(sessionId: string): void {
@@ -561,21 +671,31 @@ export class SessionRegistry {
 	}
 
 	flush(): void {
-		if (this.#saveTimer) {
-			clearTimeout(this.#saveTimer)
-			this.#saveTimer = null
-		}
-		const tempFile = `${this.#file}.${process.pid}.tmp`
+		this.#cancelSave()
 		try {
-			fs.mkdirSync(path.dirname(this.#file), { recursive: true })
-			fs.writeFileSync(tempFile, JSON.stringify(this.#data))
-			fs.renameSync(tempFile, this.#file)
+			SessionRegistry.#writeDocument(this.#file, this.#data)
 		} catch {
 			// best-effort; titles degrade to "zsh" on next restore
+		}
+	}
+
+	#cancelSave(): void {
+		if (!this.#saveTimer) return
+		clearTimeout(this.#saveTimer)
+		this.#saveTimer = null
+	}
+
+	static #writeDocument(file: string, data: Record<string, SessionMeta>): void {
+		const tempFile = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
+		try {
+			fs.mkdirSync(path.dirname(file), { recursive: true })
+			fs.writeFileSync(tempFile, JSON.stringify(data), { mode: 0o600 })
+			fs.renameSync(tempFile, file)
+		} finally {
 			try {
 				fs.unlinkSync(tempFile)
 			} catch {
-				// missing / cleanup best-effort
+				// rename consumed it, or the failed write created nothing
 			}
 		}
 	}

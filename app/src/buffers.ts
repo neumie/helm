@@ -28,6 +28,8 @@ import { isValidSessionId } from './sessions'
  */
 export const MAX_SNAPSHOT_BYTES = 512_000
 
+export type BufferMoveResult = 'moved' | 'missing' | 'collision' | 'cross-device' | 'failed'
+
 export class BufferStore {
 	readonly #dir: string
 
@@ -75,6 +77,34 @@ export class BufferStore {
 			return fs.readFileSync(file, 'utf8')
 		} catch {
 			return null
+		}
+	}
+
+	/**
+	 * Rename a snapshot into another profile store without reading or copying its
+	 * bytes. A cross-device destination is refused rather than falling back to
+	 * copy+unlink, because transfer must preserve the exact snapshot inode.
+	 */
+	moveTo(destination: BufferStore, sessionId: string): BufferMoveResult {
+		let source: string
+		let target: string
+		try {
+			source = this.#file(sessionId)
+			target = destination.#file(sessionId)
+		} catch {
+			return 'failed'
+		}
+		if (!fs.existsSync(source)) return 'missing'
+		if (fs.existsSync(target) || fs.existsSync(`${target}.tmp`)) return 'collision'
+		try {
+			fs.mkdirSync(destination.#dir, { recursive: true, mode: 0o700 })
+			const sourceDevice = fs.statSync(source).dev
+			const destinationDevice = fs.statSync(destination.#dir).dev
+			if (sourceDevice !== destinationDevice) return 'cross-device'
+			fs.renameSync(source, target)
+			return 'moved'
+		} catch {
+			return 'failed'
 		}
 	}
 
