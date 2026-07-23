@@ -5,28 +5,31 @@ import test from 'node:test'
 const main = readFileSync(new URL('../app/src/main.ts', import.meta.url), 'utf8')
 const bridge = readFileSync(new URL('../app/src/helm-bridge.ts', import.meta.url), 'utf8')
 const list = readFileSync(new URL('../app/src/renderer/sidebar/ListPage.tsx', import.meta.url), 'utf8')
+const runContextPreload = readFileSync(new URL('../app/src/preload-run-context.ts', import.meta.url), 'utf8')
 
 test('profile switching preserves the existing application process', () => {
-	const activation = main.slice(main.indexOf('async function activateProfile'), main.indexOf('function profileMenu'))
-	assert.doesNotMatch(activation, /app\.relaunch|app\.quit/)
+	const activation = main.slice(
+		main.indexOf('function createProfileSwitchCoordinator'),
+		main.indexOf('function profileMenu'),
+	)
+	assert.doesNotMatch(activation, /app\.relaunch|app\.quit|sessions\.killSession/)
+	assert.match(activation, /killAllPtyClients/)
+	assert.match(activation, /reloadOrCreateWindowForProfile/)
 })
 
-test('bridge hides old-profile rows and fast-polls for the target daemon runtime', () => {
-	assert.match(bridge, /pendingProfileId/)
-	assert.match(bridge, /status\.data\?\.profile\?\.id !== this\.pendingProfileId/)
-	assert.match(bridge, /items\.data !== undefined/)
-	assert.match(bridge, /items: null/)
-	assert.match(bridge, /}, 150\)/)
-	assert.match(bridge, /pendingProfileId !== null[\s\S]{0,120}Profile is switching/)
+test('bridge fence has no globally cancellable profile-switch API', () => {
+	assert.match(bridge, /nextProfileFenceEpoch/)
+	assert.match(bridge, /cancelIfCurrent/)
+	assert.match(bridge, /observeCoherently/)
+	assert.doesNotMatch(bridge, /cancelProfileSwitch/)
+	assert.doesNotMatch(bridge, /pendingProfileId/)
 })
 
-test('late IPC from the old renderer is rejected by a profile generation token', () => {
-	assert.match(main, /acceptsSessionToken/)
-	assert.match(main, /sessionProfileGeneration \+= 1/)
-	assert.match(main, /buffer:save[\s\S]{0,180}acceptsSessionToken/)
-	assert.match(main, /const support = getSessionSupport\(\)[\s\S]{0,180}sessions\.killSession/)
-	assert.match(main, /graceCloseSupports\.set\(entry\.sessionId, getSessionSupport\(\)\)/)
-	assert.match(main, /graceCloseSupports\.get\(sessionId\)/)
+test('run-context preload remains restricted to its editor capability', () => {
+	assert.match(runContextPreload, /contextBridge\.exposeInMainWorld\('runContextEditor'/)
+	for (const forbidden of ['window.helm', 'pty:', 'session:', 'daemon:config', 'shell:']) {
+		assert.doesNotMatch(runContextPreload, new RegExp(forbidden.replace(':', '\\:')))
+	}
 })
 
 test('work overflow menu exposes direct profile choices and management', () => {

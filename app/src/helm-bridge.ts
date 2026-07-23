@@ -17,6 +17,7 @@
 
 import { BrowserWindow, ipcMain } from 'electron'
 import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
+import type { ProfileSwitchFence } from './profile-switch'
 import { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } from './protocol-version'
 import { RunContextBridgeOperations } from './run-context-bridge'
 import type {
@@ -32,6 +33,7 @@ import type {
 	ProfileActivationResult,
 	ProfileMutationResult,
 	ProfilesDocument,
+	ProfilesState,
 	RunContextDraft,
 	RunContextLoad,
 	RunContextReset,
@@ -50,6 +52,14 @@ const WORKSPACE_REQUEST_TIMEOUT_MS = 120_000
 const ITEM_ACTIONS: ReadonlySet<string> = new Set(['approve', 'reject', 'start', 'cancel', 'retry', 'reopen'])
 const AI_PASSES: ReadonlySet<string> = new Set(['display-name', 'branch-name', 'assess'])
 
+interface ProfileFenceRecord {
+	epoch: number
+	targetId: string
+	resolveReady(): void
+	ready: Promise<void>
+	readyResolved: boolean
+}
+
 function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err)
 }
@@ -62,10 +72,11 @@ export class HelmBridge {
 	private timer: NodeJS.Timeout | null = null
 	private ticking = false
 	private daemonRestartAttempt: string | null = null
-	/** While switching, never publish the previous profile's rows into the reloaded renderer. */
-	private pendingProfileId: string | null = null
+	/** Epoch-owned: stale polls/cancels may never resolve a newer profile fence. */
+	private profileFence: ProfileFenceRecord | null = null
 	private profileSwitchTimer: ReturnType<typeof setTimeout> | null = null
-	private resolveProfileSwitch: (() => void) | null = null
+	private nextProfileFenceEpoch = 0
+	private stopped = false
 	private readonly runContext: RunContextBridgeOperations
 
 	constructor(
@@ -82,15 +93,18 @@ export class HelmBridge {
 
 	start(): void {
 		if (this.timer) return
+		this.stopped = false
 		void this.tick()
 		this.timer = setInterval(() => void this.tick(), POLL_MS)
 	}
 
 	stop(): void {
+		this.stopped = true
 		if (this.timer) clearInterval(this.timer)
 		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
 		this.timer = null
 		this.profileSwitchTimer = null
+		this.profileFence = null
 	}
 
 	getSnapshot(): HelmSnapshot {
@@ -100,8 +114,9 @@ export class HelmBridge {
 	// --- polling ---------------------------------------------------------------
 
 	private async tick(): Promise<void> {
-		if (this.ticking) return // a slow daemon must not stack overlapping polls
+		if (this.stopped || this.ticking) return // a slow daemon must not stack overlapping polls
 		this.ticking = true
+		const fence = this.profileFence
 		try {
 			const [status, items] = await Promise.all([
 				this.request<DaemonStatus>('GET', '/status'),
@@ -114,32 +129,37 @@ export class HelmBridge {
 				items.data !== undefined &&
 				items.data.every(item => item.profileId === statusProfileId)
 			const reachable = status.error === undefined && sameProfileSnapshot
-			if (status.error === undefined && !sameProfileSnapshot) {
-				// Activation raced the parallel status/items reads; never publish a
-				// mixed-tenant snapshot. The next fast/regular tick is coherent.
-				this.kick()
-			}
-			if (this.pendingProfileId !== null) {
-				if (!reachable || status.data?.profile?.id !== this.pendingProfileId) {
+			// A poll begun before a new fence is installed is stale. It may not
+			// publish old rows or kick work for the new epoch.
+			if (this.stopped || fence !== this.profileFence) return
+			if (status.error === undefined && !sameProfileSnapshot && fence) this.kick(fence)
+
+			// A fence owns every completion it started. A replaced epoch must not
+			// blank, publish, resolve, or schedule work for its successor.
+			if (fence && this.profileFence === fence) {
+				const profiles = reachable ? await this.request<ProfilesDocument>('GET', '/profiles') : { error: 'incoherent' }
+				if (this.stopped || this.profileFence !== fence) return
+				const coherentState =
+					profiles.data &&
+					profiles.data.activeProfileId === statusProfileId &&
+					(status.data?.profileGeneration === undefined || status.data.profileGeneration === profiles.data.generation)
+						? profiles.data
+						: null
+				if (!coherentState || coherentState.activeProfileId !== fence.targetId) {
 					this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
 					this.publish()
 					return
 				}
-				this.pendingProfileId = null
 				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
 				this.profileSwitchTimer = null
-				this.resolveProfileSwitch?.()
-				this.resolveProfileSwitch = null
+				if (!fence.readyResolved) {
+					fence.readyResolved = true
+					fence.resolveReady()
+				}
 			}
 			if (status.data && (await this.restartForProtocolMismatch(status.data))) return
-			// Config is fetched once (first reachable tick), then only on demand
-			// (refreshConfig after a save) — it changes through helm itself.
 			let config = this.snapshot.config
-			if (reachable && config === null) {
-				config = (await this.request<AppConfig>('GET', '/config')).data ?? null
-			}
-			// Keep last-known data through an outage — the dot reports unreachable,
-			// the list must not blank out.
+			if (reachable && config === null) config = (await this.request<AppConfig>('GET', '/config')).data ?? null
 			this.snapshot = {
 				reachable,
 				status: status.data ?? this.snapshot.status,
@@ -149,10 +169,18 @@ export class HelmBridge {
 			this.publish()
 		} finally {
 			this.ticking = false
-			if (this.pendingProfileId !== null && this.profileSwitchTimer === null) {
+			if (
+				!this.stopped &&
+				this.profileFence !== null &&
+				!this.profileFence.readyResolved &&
+				this.profileSwitchTimer === null
+			) {
+				const epoch = this.profileFence.epoch
 				this.profileSwitchTimer = setTimeout(() => {
-					this.profileSwitchTimer = null
-					this.kick()
+					if (this.profileFence?.epoch === epoch) {
+						this.profileSwitchTimer = null
+						this.kick()
+					}
 				}, 150)
 				this.profileSwitchTimer.unref()
 			}
@@ -189,7 +217,8 @@ export class HelmBridge {
 	}
 
 	/** Immediate re-poll after a mutating command so the UI catches up before the next interval. */
-	private kick(): void {
+	private kick(fence?: ProfileFenceRecord): void {
+		if (this.stopped || (fence !== undefined && this.profileFence !== fence)) return
 		void this.tick()
 	}
 
@@ -256,27 +285,75 @@ export class HelmBridge {
 	}
 
 	/**
-	 * Keep the window alive during a profile switch while preventing old-profile
-	 * rows from flashing into the fresh renderer during the daemon restart.
+	 * Start an epoch-owned renderer fence. The returned capability is deliberately
+	 * narrow: only its owning coordinator may cancel precommit polling or adopt a
+	 * coherently observed third profile.
 	 */
-	beginProfileSwitch(profileId: string): Promise<void> {
-		this.pendingProfileId = profileId
-		this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
-		this.publish()
-		this.kick()
-		return new Promise(resolve => {
-			this.resolveProfileSwitch = resolve
-		})
-	}
-
-	/** Activation failed before the daemon changed tenant; restore ordinary polling. */
-	cancelProfileSwitch(): void {
-		this.pendingProfileId = null
+	beginProfileSwitch(profileId: string): ProfileSwitchFence {
+		this.profileFence?.resolveReady()
 		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
 		this.profileSwitchTimer = null
-		this.resolveProfileSwitch?.()
-		this.resolveProfileSwitch = null
-		this.kick()
+		let resolveReady!: () => void
+		const record: ProfileFenceRecord = {
+			epoch: ++this.nextProfileFenceEpoch,
+			targetId: profileId,
+			ready: new Promise<void>(resolve => {
+				resolveReady = resolve
+			}),
+			resolveReady: () => resolveReady(),
+			readyResolved: false,
+		}
+		this.profileFence = record
+		this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
+		this.publish()
+		this.kick(record)
+		return {
+			epoch: record.epoch,
+			ready: record.ready,
+			cancelIfCurrent: () => {
+				if (this.profileFence !== record) return
+				this.profileFence = null
+				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				this.profileSwitchTimer = null
+				this.kick()
+			},
+			adoptObservedProfile: observedId => {
+				if (this.profileFence !== record) return
+				record.targetId = observedId
+				this.kick(record)
+			},
+			completeIfCurrent: () => {
+				if (this.profileFence !== record) return
+				this.profileFence = null
+				this.kick()
+			},
+			observeCoherently: () => this.observeCoherently(record),
+		}
+	}
+
+	/** A non-publishing status+items+profiles observation for activation recovery. */
+	private async observeCoherently(record: ProfileFenceRecord): Promise<ProfilesState | null> {
+		const [status, items] = await Promise.all([
+			this.request<DaemonStatus>('GET', '/status'),
+			this.request<DashboardItem[]>('GET', '/items'),
+		])
+		if (this.profileFence !== record) return null
+		const statusProfileId = status.data?.profile?.id
+		if (
+			status.error !== undefined ||
+			!statusProfileId ||
+			items.error !== undefined ||
+			items.data === undefined ||
+			!items.data.every(item => item.profileId === statusProfileId)
+		) {
+			return null
+		}
+		const profiles = await this.request<ProfilesDocument>('GET', '/profiles')
+		if (this.profileFence !== record || profiles.error !== undefined || profiles.data === undefined) return null
+		if (profiles.data.activeProfileId !== statusProfileId) return null
+		if (status.data.profileGeneration !== undefined && status.data.profileGeneration !== profiles.data.generation)
+			return null
+		return profiles.data
 	}
 
 	listProfiles(): Promise<HelmResult<ProfilesDocument>> {
@@ -319,7 +396,7 @@ export class HelmBridge {
 
 		ipcMain.handle('daemon:item', async (_e, rawId: unknown, token: unknown) => {
 			if (stale(token)) return stale(token)
-			if (this.pendingProfileId !== null) return { error: 'Profile is switching — try again shortly.' }
+			if (this.profileFence !== null) return { error: 'Profile is switching — try again shortly.' }
 			return normalizeDashboardItemResult(await this.request<DashboardItem>('GET', `/items/${id(rawId)}`))
 		})
 
