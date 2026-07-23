@@ -400,4 +400,76 @@ CREATE INDEX idx_items_profile_group ON items(profile_id, group_id, created_at);
 CREATE INDEX idx_item_events_profile_item ON item_events(profile_id, item_id, event_type, created_at);
 `,
 	},
+	{
+		// Scheduled interactive runs are a profile-owned domain, deliberately
+		// separate from Items/Drainer/Solver lifecycle state.
+		version: 27,
+		sql: `
+CREATE TABLE scheduled_schedules (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('project', 'system')),
+  project_slug TEXT,
+  definition TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  cadence_kind TEXT NOT NULL CHECK (cadence_kind IN ('hourly', 'daily', 'weekly', 'cron')),
+  timezone TEXT NOT NULL,
+  overlap_policy TEXT NOT NULL DEFAULT 'skip' CHECK (overlap_policy = 'skip'),
+  next_run_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  disabled_reason TEXT,
+  archived_at TEXT,
+  system_risk_acknowledged_at TEXT,
+  CHECK ((target_kind = 'project' AND project_slug IS NOT NULL) OR (target_kind = 'system' AND project_slug IS NULL))
+);
+CREATE TABLE scheduled_runs (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  schedule_id TEXT NOT NULL REFERENCES scheduled_schedules(id),
+  schedule_revision INTEGER NOT NULL,
+  scheduled_for TEXT NOT NULL,
+  local_civil_slot TEXT NOT NULL,
+  utc_offset_minutes INTEGER NOT NULL,
+  slot_key TEXT NOT NULL,
+  definition_snapshot TEXT NOT NULL,
+  state TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  session_id TEXT NOT NULL,
+  socket_descriptor TEXT,
+  report_token_hash TEXT,
+  report_token_version INTEGER NOT NULL DEFAULT 1,
+  process_fingerprint TEXT,
+  cwd TEXT,
+  worktree_path TEXT,
+  branch_name TEXT,
+  run_dir TEXT,
+  started_at TEXT,
+  reported_at TEXT,
+  closed_at TEXT,
+  report_kind TEXT,
+  report_summary TEXT,
+  diagnostic_detail TEXT,
+  notification_claimed_at TEXT,
+  notification_delivered_at TEXT,
+  missed_count INTEGER NOT NULL DEFAULT 0,
+  missed_many INTEGER NOT NULL DEFAULT 0,
+  cleanup_state TEXT,
+  terminal_resolved_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (schedule_id, slot_key),
+  UNIQUE (profile_id, session_id)
+);
+CREATE INDEX idx_scheduled_schedules_due ON scheduled_schedules(profile_id, enabled, next_run_at);
+CREATE INDEX idx_scheduled_runs_history ON scheduled_runs(profile_id, scheduled_for DESC, id DESC);
+CREATE INDEX idx_scheduled_runs_session ON scheduled_runs(profile_id, session_id);
+CREATE INDEX idx_scheduled_runs_active ON scheduled_runs(profile_id, schedule_id, state);
+CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
+  WHERE state IN ('admitted', 'preparing', 'launching', 'running', 'reported_quiet', 'closing', 'needs_attention', 'cancel_requested', 'quarantined');
+`,
+	},
 ]

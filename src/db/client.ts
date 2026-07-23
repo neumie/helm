@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { ItemStore } from '../items/store.js'
+import { ScheduleStore } from '../scheduled-runs/store.js'
 import type { PollState } from '../types.js'
 import { MIGRATIONS } from './schema.js'
 
@@ -177,6 +178,8 @@ export class DB {
 	private readonly db: Database.Database
 	private readonly ownsConnection: boolean
 	readonly items: ItemStore
+	/** Profile-bound scheduled-run persistence; never use it as an Item store. */
+	readonly schedules: ScheduleStore
 
 	constructor(
 		dbPath?: string,
@@ -194,6 +197,7 @@ export class DB {
 			migrateConnection(this.db)
 		}
 		this.items = new ItemStore(this.db, () => this.profileId)
+		this.schedules = new ScheduleStore(this.db, () => this.profileId)
 	}
 
 	private get profileId(): string {
