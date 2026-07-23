@@ -117,6 +117,7 @@ export interface PlanStatus {
 
 export interface DashboardItem {
 	id: string
+	profileId?: string
 	kind: 'solve' | 'loop'
 	executionMode: 'solve' | 'loop'
 	status: string

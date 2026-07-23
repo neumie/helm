@@ -29,6 +29,8 @@ const config: HelmConfig = {
 	solver: {
 		type: 'default',
 		agent: 'claude',
+		workspace: 'worktree',
+		modelGuidance: {},
 		concurrency: 2,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
@@ -66,6 +68,9 @@ function queueWithActive(active: number) {
 	return {
 		getStatus: () => ({ paused: false, pending: 0, active, maxConcurrency: 2, activeTasks: [] }),
 		wake: () => undefined,
+		quiesce: () => active === 0,
+		unquiesce: () => undefined,
+		isQuiescing: () => false,
 	}
 }
 
@@ -107,9 +112,17 @@ function withApi(opts: { active: number; managed: boolean }, fn: (ctx: Ctx) => P
 	})
 }
 
+function readPollingConfig(path: string): { polling: { intervalSeconds: number } } {
+	try {
+		return JSON.parse(readFileSync(path, 'utf-8')) as { polling: { intervalSeconds: number } }
+	} catch (err) {
+		assert.fail(`Could not parse test config: ${err instanceof Error ? err.message : String(err)}`)
+	}
+}
+
 /** PUT the on-disk config back with one observable change. */
 async function putConfig(ctx: Ctx) {
-	const body = JSON.parse(readFileSync(ctx.configPath, 'utf-8')) as { polling: { intervalSeconds: number } }
+	const body = readPollingConfig(ctx.configPath)
 	body.polling.intervalSeconds = 120
 	return ctx.api.request('/config', {
 		method: 'PUT',
@@ -129,7 +142,7 @@ test('config save while idle under launchd applies itself via a scheduled exit',
 		assert.equal(body.data.message, 'Saved — restarting to apply…')
 		assert.equal(body.data.pendingRuns, undefined)
 		// The save hit disk before the restart was scheduled.
-		const saved = JSON.parse(readFileSync(ctx.configPath, 'utf-8')) as { polling: { intervalSeconds: number } }
+		const saved = readPollingConfig(ctx.configPath)
 		assert.equal(saved.polling.intervalSeconds, 120)
 		// Exit is scheduled AFTER the response (injected delay 0) — prove it fires.
 		assert.equal(ctx.exitCount(), 0)
@@ -147,7 +160,7 @@ test('config save while runs are active defers with the run count and never exit
 		assert.equal(body.data.pendingRuns, 2)
 		assert.equal(body.data.message, 'Saved. Restart the daemon to apply — 2 runs active.')
 		// Still written to disk — only the apply is deferred.
-		const saved = JSON.parse(readFileSync(ctx.configPath, 'utf-8')) as { polling: { intervalSeconds: number } }
+		const saved = readPollingConfig(ctx.configPath)
 		assert.equal(saved.polling.intervalSeconds, 120)
 		await sleep(20)
 		assert.equal(ctx.exitCount(), 0)

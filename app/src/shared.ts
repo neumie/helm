@@ -3,6 +3,7 @@
 import type {
 	DaemonApi,
 	HelmResult,
+	ProfilesApi,
 	RunContextDraft,
 	RunContextLoad,
 	RunContextReset,
@@ -181,6 +182,8 @@ export interface HelmApi {
 	nav: NavApi
 	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
 	daemon: DaemonApi
+	/** Profile management and coordinated app/daemon switching. */
+	profiles: ProfilesApi
 	/** Opens/focuses the full-size external editor for one Item. */
 	runContext: RunContextWindowApi
 	/** Host OS, for platform-specific keybindings/layout ('darwin' on macOS). */

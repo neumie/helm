@@ -7,5 +7,5 @@ import { HELM_BUILD_ID } from './build-id.generated.js'
  * and update app/src/protocol-version.ts in the same slice. The app uses it to restart a
  * stale launchd daemon before consuming incompatible responses.
  */
-export const DAEMON_PROTOCOL_VERSION = 30
+export const DAEMON_PROTOCOL_VERSION = 32
 export const DAEMON_BUILD_ID = HELM_BUILD_ID

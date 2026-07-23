@@ -158,6 +158,8 @@ export const itemPayloadSchema = z.discriminatedUnion('kind', [solveItemPayloadS
 
 export const itemRecordSchema = z.object({
 	id: z.string().min(1),
+	// Immutable tenant ownership. Display names never determine persistence paths.
+	profileId: z.string().min(1),
 	kind: itemKindSchema,
 	status: itemStatusSchema,
 	// Who owns/owned the work. Null while a Queue Item is still undecided.

@@ -100,12 +100,20 @@ function validateItem(candidate: unknown): ItemRecord {
 }
 
 export class ItemStore {
-	constructor(private readonly db: Database.Database) {}
+	constructor(
+		private readonly db: Database.Database,
+		private readonly profile: string | (() => string) = 'work',
+	) {}
+
+	private get profileId(): string {
+		return typeof this.profile === 'function' ? this.profile() : this.profile
+	}
 
 	create(input: CreateItemInput): ItemRecord {
 		const now = new Date().toISOString()
 		const item = validateItem({
 			id: input.id ?? randomUUID(),
+			profileId: this.profileId,
 			kind: input.kind,
 			status: input.status,
 			workMode: null,
@@ -144,12 +152,12 @@ export class ItemStore {
 		this.db
 			.prepare(
 				`INSERT INTO items (
-					id, kind, status, work_mode, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
+					id, profile_id, kind, status, work_mode, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, planned_at, plan_status, run_context, run_context_revision, updated_at,
 					error_message, error_phase, result_summary, solve_input_snapshot, pr_url, run_outcome, deploy_state
 				) VALUES (
-					@id, @kind, @status, @workMode, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
+					@id, @profileId, @kind, @status, @workMode, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @plannedAt, @planStatus, @runContext, @runContextRevision, @updatedAt,
 					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @prUrl, @runOutcome, @deployState
@@ -163,14 +171,16 @@ export class ItemStore {
 	}
 
 	get(id: string): ItemRecord | null {
-		const row = this.db.prepare('SELECT * FROM items WHERE id = ?').get(id) as Record<string, unknown> | undefined
+		const row = this.db.prepare('SELECT * FROM items WHERE profile_id = ? AND id = ?').get(this.profileId, id) as
+			| Record<string, unknown>
+			| undefined
 		return row ? this.rowToItem(row) : null
 	}
 
 	findBySourceExternalId(externalId: string): ItemRecord | null {
 		const rows = this.db
-			.prepare('SELECT * FROM items WHERE source IS NOT NULL ORDER BY created_at DESC')
-			.all() as Record<string, unknown>[]
+			.prepare('SELECT * FROM items WHERE profile_id = ? AND source IS NOT NULL ORDER BY created_at DESC')
+			.all(this.profileId) as Record<string, unknown>[]
 		for (const row of rows) {
 			const item = this.rowToItem(row)
 			if (item.source?.externalId === externalId) return item
@@ -180,8 +190,8 @@ export class ItemStore {
 
 	listByGroupId(groupId: string): ItemRecord[] {
 		const rows = this.db
-			.prepare('SELECT * FROM items WHERE group_id = ? ORDER BY created_at ASC, rowid ASC')
-			.all(groupId) as Record<string, unknown>[]
+			.prepare('SELECT * FROM items WHERE profile_id = ? AND group_id = ? ORDER BY created_at ASC, rowid ASC')
+			.all(this.profileId, groupId) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -201,8 +211,10 @@ export class ItemStore {
 			const updatedAt = new Date().toISOString()
 			validateItem({ ...current, ...fields, updatedAt })
 			sets.push('updated_at = ?')
-			values.push(updatedAt, id)
-			const result = this.db.prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+			values.push(updatedAt, this.profileId, id)
+			const result = this.db
+				.prepare(`UPDATE items SET ${sets.join(', ')} WHERE profile_id = ? AND id = ?`)
+				.run(...values)
 			if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		}
 
@@ -219,8 +231,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, deployState, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET deploy_state = ?, updated_at = ? WHERE id = ?')
-			.run(deployState ? JSON.stringify(deployState) : null, updatedAt, id)
+			.prepare('UPDATE items SET deploy_state = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(deployState ? JSON.stringify(deployState) : null, updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -234,8 +246,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, displayName, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET display_name = ?, updated_at = ? WHERE id = ?')
-			.run(displayName, updatedAt, id)
+			.prepare('UPDATE items SET display_name = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(displayName, updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -251,8 +263,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, source, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET source = ?, updated_at = ? WHERE id = ?')
-			.run(JSON.stringify(source), updatedAt, id)
+			.prepare('UPDATE items SET source = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(JSON.stringify(source), updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -266,8 +278,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, assessment, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET assessment = ?, updated_at = ? WHERE id = ?')
-			.run(assessment ? JSON.stringify(assessment) : null, updatedAt, id)
+			.prepare('UPDATE items SET assessment = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(assessment ? JSON.stringify(assessment) : null, updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -282,8 +294,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, planStatus, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET plan_status = ?, updated_at = ? WHERE id = ?')
-			.run(JSON.stringify(planStatus), updatedAt, id)
+			.prepare('UPDATE items SET plan_status = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(JSON.stringify(planStatus), updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -301,10 +313,17 @@ export class ItemStore {
 		const result = this.db
 			.prepare(
 				`UPDATE items
-				 SET run_context = ?, run_context_revision = ?, updated_at = ?
-				 WHERE id = ? AND run_context_revision = ?`,
+					 SET run_context = ?, run_context_revision = ?, updated_at = ?
+					 WHERE profile_id = ? AND id = ? AND run_context_revision = ?`,
 			)
-			.run(runContext ? JSON.stringify(runContext) : null, runContextRevision, updatedAt, id, expectedRevision)
+			.run(
+				runContext ? JSON.stringify(runContext) : null,
+				runContextRevision,
+				updatedAt,
+				this.profileId,
+				id,
+				expectedRevision,
+			)
 		if (result.changes === 0) return null
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -317,7 +336,7 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE kind = 'solve'
+				 WHERE profile_id = ? AND kind = 'solve'
 				   AND (
 				     (source IS NOT NULL
 				       AND (display_name IS NULL OR assessment IS NULL
@@ -328,7 +347,7 @@ export class ItemStore {
 				   )
 				 ORDER BY created_at DESC`,
 			)
-			.all() as Record<string, unknown>[]
+			.all(this.profileId) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -338,8 +357,8 @@ export class ItemStore {
 		const updatedAt = new Date().toISOString()
 		validateItem({ ...current, payload, updatedAt })
 		const result = this.db
-			.prepare('UPDATE items SET payload = ?, updated_at = ? WHERE id = ?')
-			.run(JSON.stringify(payload), updatedAt, id)
+			.prepare('UPDATE items SET payload = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(JSON.stringify(payload), updatedAt, this.profileId, id)
 		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
@@ -352,21 +371,21 @@ export class ItemStore {
 		// timezone marker — the dashboard then `new Date()`-parses it as LOCAL and
 		// shows times off by the UTC offset.
 		this.db
-			.prepare('INSERT INTO item_events (item_id, event_type, payload, created_at) VALUES (?, ?, ?, ?)')
-			.run(itemId, eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString())
+			.prepare('INSERT INTO item_events (profile_id, item_id, event_type, payload, created_at) VALUES (?, ?, ?, ?, ?)')
+			.run(this.profileId, itemId, eventType, payload ? JSON.stringify(payload) : null, new Date().toISOString())
 	}
 
 	countEvents(itemId: string, eventType: string): number {
 		const row = this.db
-			.prepare('SELECT COUNT(*) AS count FROM item_events WHERE item_id = ? AND event_type = ?')
-			.get(itemId, eventType) as { count: number }
+			.prepare('SELECT COUNT(*) AS count FROM item_events WHERE profile_id = ? AND item_id = ? AND event_type = ?')
+			.get(this.profileId, itemId, eventType) as { count: number }
 		return row.count
 	}
 
 	getEvents(itemId: string, limit = 100): ItemEvent[] {
 		const rows = this.db
-			.prepare('SELECT * FROM item_events WHERE item_id = ? ORDER BY created_at ASC, id ASC LIMIT ?')
-			.all(itemId, limit) as Record<string, unknown>[]
+			.prepare('SELECT * FROM item_events WHERE profile_id = ? AND item_id = ? ORDER BY created_at ASC, id ASC LIMIT ?')
+			.all(this.profileId, itemId, limit) as Record<string, unknown>[]
 		return rows.map(row => ({
 			id: row.id as number,
 			itemId: row.item_id as string,
@@ -380,11 +399,11 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'ready' AND work_mode = 'agent'
+				 WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent'
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
-			.all(limit) as Record<string, unknown>[]
+			.all(this.profileId, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -392,11 +411,11 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'ready' AND work_mode = 'agent' AND kind = ?
+				 WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent' AND kind = ?
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
-			.all(kind, limit) as Record<string, unknown>[]
+			.all(this.profileId, kind, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -404,11 +423,11 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE status = 'running' AND kind = ?
+				 WHERE profile_id = ? AND status = 'running' AND kind = ?
 				 ORDER BY started_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
-			.all(kind, limit) as Record<string, unknown>[]
+			.all(this.profileId, kind, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -418,11 +437,11 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE planned_at IS NOT NULL AND worktree_path IS NOT NULL AND plan_dir_name IS NOT NULL
+				 WHERE profile_id = ? AND planned_at IS NOT NULL AND worktree_path IS NOT NULL AND plan_dir_name IS NOT NULL
 				   AND status NOT IN ('done', 'cancelled')
 				 ORDER BY updated_at DESC LIMIT ?`,
 			)
-			.all(limit) as Record<string, unknown>[]
+			.all(this.profileId, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -430,11 +449,11 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'done')
+				 WHERE profile_id = ? AND kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'done')
 				 ORDER BY updated_at DESC
 				 LIMIT ?`,
 			)
-			.all(limit) as Record<string, unknown>[]
+			.all(this.profileId, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -450,19 +469,19 @@ export class ItemStore {
 		const rows = this.db
 			.prepare(
 				`SELECT * FROM items
-				 WHERE kind = 'solve' AND status = 'review' AND pr_url IS NULL
+				 WHERE profile_id = ? AND kind = 'solve' AND status = 'review' AND pr_url IS NULL
 				   AND branch_name IS NOT NULL
 				   AND (
 				     run_outcome IN ('errored', 'no_result')
 				     OR EXISTS (
 				       SELECT 1 FROM item_events e
-				        WHERE e.item_id = items.id AND e.event_type = 'dispatch_failed'
+				        WHERE e.profile_id = items.profile_id AND e.item_id = items.id AND e.event_type = 'dispatch_failed'
 				     )
 				   )
 				 ORDER BY updated_at DESC
 				 LIMIT ?`,
 			)
-			.all(limit) as Record<string, unknown>[]
+			.all(this.profileId, limit) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 
@@ -477,14 +496,16 @@ export class ItemStore {
 
 	countQueuedByKind(kind: ItemKind): number {
 		const row = this.db
-			.prepare("SELECT COUNT(*) AS count FROM items WHERE status = 'ready' AND work_mode = 'agent' AND kind = ?")
-			.get(kind) as { count: number }
+			.prepare(
+				"SELECT COUNT(*) AS count FROM items WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent' AND kind = ?",
+			)
+			.get(this.profileId, kind) as { count: number }
 		return row.count
 	}
 
 	list(opts?: { status?: ItemStatus; projectSlug?: string; limit?: number; offset?: number }): ItemRecord[] {
-		const conditions: string[] = []
-		const params: unknown[] = []
+		const conditions: string[] = ['profile_id = ?']
+		const params: unknown[] = [this.profileId]
 		if (opts?.status) {
 			conditions.push('status = ?')
 			params.push(opts.status)
@@ -493,7 +514,7 @@ export class ItemStore {
 			conditions.push('project_slug = ?')
 			params.push(opts.projectSlug)
 		}
-		const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+		const where = `WHERE ${conditions.join(' AND ')}`
 		const limit = opts?.limit ?? 50
 		const offset = opts?.offset ?? 0
 		params.push(limit, offset)
@@ -511,20 +532,21 @@ export class ItemStore {
 	listDashboard(archiveLimit = 50): ItemRecord[] {
 		const actionableRows = this.db
 			.prepare(
-				"SELECT * FROM items WHERE status NOT IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC",
+				"SELECT * FROM items WHERE profile_id = ? AND status NOT IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC",
 			)
-			.all() as Record<string, unknown>[]
+			.all(this.profileId) as Record<string, unknown>[]
 		const archivedRows = this.db
 			.prepare(
-				"SELECT * FROM items WHERE status IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC LIMIT ?",
+				"SELECT * FROM items WHERE profile_id = ? AND status IN ('done', 'cancelled') ORDER BY updated_at DESC, created_at DESC LIMIT ?",
 			)
-			.all(archiveLimit) as Record<string, unknown>[]
+			.all(this.profileId, archiveLimit) as Record<string, unknown>[]
 		return [...actionableRows, ...archivedRows].map(row => this.rowToItem(row))
 	}
 
 	private toDbParams(item: ItemRecord) {
 		return {
 			id: item.id,
+			profileId: item.profileId,
 			kind: item.kind,
 			status: item.status,
 			workMode: item.workMode,
@@ -564,6 +586,7 @@ export class ItemStore {
 	private rowToItem(row: Record<string, unknown>): ItemRecord {
 		return validateItem({
 			id: row.id,
+			profileId: row.profile_id,
 			kind: row.kind,
 			status: row.status,
 			workMode: row.work_mode ?? null,

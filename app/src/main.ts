@@ -1,12 +1,14 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { BrowserWindow, Menu, app, ipcMain, screen, shell } from 'electron'
+import { BrowserWindow, Menu, app, dialog, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { HelmBridge } from './helm-bridge'
-import { parseHelmItemUrl } from './protocol'
+import { AppProfileStore } from './profiles'
+import { parseHelmDestination } from './protocol'
+import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
 import * as sessions from './sessions'
 import { THEME_PRESETS } from './theme-presets'
@@ -16,7 +18,7 @@ const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://local
 
 // Single owner of daemon HTTP: one poller + command proxy, pushed to the
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
-const helmBridge = new HelmBridge(daemonUrl)
+const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken())
 let pendingEditorQuit = false
 const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 	onAllClosed: () => {
@@ -28,6 +30,7 @@ const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 		pendingEditorQuit = false
 		quitRequested = false
 	},
+	canOpen: () => !profileSwitchInProgress,
 })
 
 // --- CLI modes ---------------------------------------------------------------
@@ -75,6 +78,13 @@ if (userDataDirArg) {
 	app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'helm-')))
 }
 
+const appProfiles = new AppProfileStore(app.getPath('userData'))
+let sessionProfileId = appProfiles.activeProfileId()
+let sessionProfileGeneration = 0
+const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneration}`
+const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
+sessions.configureSessionProfile(sessionProfileId)
+
 // --- helm:// deep links -------------------------------------------------------
 // The app owns the `helm://` scheme (the extension's "Open" link is
 // helm://item/<id> — the browser dashboard is gone) and ALSO registers the
@@ -93,7 +103,19 @@ if (!screenshotPath) {
 }
 
 /** Deep link that arrived before the window/renderer was ready; delivered on load. */
-let pendingOpenItemId: string | null = null
+const startupOpenItem = process.argv.find(argument => argument.startsWith('--open-item='))?.slice('--open-item='.length)
+function decodeStartupOpenItem(raw: string | undefined): string | null {
+	if (!raw) return null
+	try {
+		const decoded = decodeURIComponent(raw)
+		return decoded && !decoded.includes('/') ? decoded : null
+	} catch {
+		return null
+	}
+}
+let pendingOpenItemId: string | null = decodeStartupOpenItem(startupOpenItem)
+let pendingProfileDestination: HelmItemDestination | null = null
+let pendingProfileReady: { profileId: string; promise: Promise<void> } | null = null
 
 function deliverOpenItem(itemId: string): void {
 	pendingOpenItemId = itemId
@@ -118,10 +140,27 @@ function flushPendingOpenItem(win: BrowserWindow): void {
 // macOS delivers protocol launches/activations here (registered before `ready`
 // so a cold-start URL isn't missed). Windows/Linux would need a
 // single-instance lock + `second-instance` argv scan instead — not wired.
+async function routeDestination(destination: HelmItemDestination): Promise<void> {
+	if (pendingProfileReady) await pendingProfileReady.promise
+	if (destination.profileId && destination.profileId !== appProfiles.activeProfileId()) {
+		const result = await activateProfile(destination.profileId, destination.itemId)
+		if (result.error !== undefined) {
+			void dialog.showMessageBox({ type: 'warning', message: 'Could not open Item', detail: result.error })
+		}
+		return
+	}
+	deliverOpenItem(destination.itemId)
+}
+
 app.on('open-url', (event, url) => {
 	event.preventDefault()
-	const itemId = parseHelmItemUrl(url)
-	if (itemId) deliverOpenItem(itemId)
+	const destination = parseHelmDestination(url)
+	if (!destination) return
+	if (!app.isReady()) {
+		pendingProfileDestination = destination
+		return
+	}
+	void routeDestination(destination)
 })
 
 interface PtyEntry {
@@ -185,10 +224,11 @@ function getSessionSupport(): SessionSupport | null {
 		return null
 	}
 	sessions.ensureSocketDir()
+	const profileDir = appProfiles.profileDir(sessionProfileId)
 	sessionSupport = {
 		dtach,
-		registry: new sessions.SessionRegistry(path.join(app.getPath('userData'), 'sessions.json')),
-		buffers: new BufferStore(path.join(app.getPath('userData'), 'buffers')),
+		registry: new sessions.SessionRegistry(path.join(profileDir, 'sessions.json')),
+		buffers: new BufferStore(path.join(profileDir, 'buffers')),
 	}
 	return sessionSupport
 }
@@ -196,8 +236,10 @@ function getSessionSupport(): SessionSupport | null {
 // Soft close: explicit tab close detaches the client and arms this timer; the
 // session dies only when it fires (okena soft_close.rs semantics; 5s default
 // from okena settings.rs:494). Undo cancels the timer and the tab reattaches.
+const graceCloseSupports = new Map<string, SessionSupport | null>()
 const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), sessionId => {
-	const support = getSessionSupport()
+	const support = graceCloseSupports.get(sessionId) ?? null
+	graceCloseSupports.delete(sessionId)
 	support?.registry.remove(sessionId)
 	// The session is truly dead now — its buffer snapshot dies with it.
 	support?.buffers.remove(sessionId)
@@ -215,6 +257,7 @@ const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), sessionId 
  */
 function killAllPtyClients(): void {
 	graceCloser.cancelAll()
+	graceCloseSupports.clear()
 	// Clear the map BEFORE killing: the pty onExit handler treats "still in the
 	// map" as exited-on-its-own and reaps the session — a detach-kill must never
 	// be reapable (see the onExit comment).
@@ -314,17 +357,21 @@ function flushRendererBuffers(win: BrowserWindow, timeoutMs: number): Promise<vo
 			resolve()
 			return
 		}
+		const expectedProfileToken = sessionProfileToken()
 		let settled = false
 		const finish = (): void => {
 			if (settled) return
 			settled = true
 			clearTimeout(timer)
-			ipcMain.removeListener('buffers:flushed', finish)
+			ipcMain.removeListener('buffers:flushed', onFlushed)
 			resolve()
 		}
+		const onFlushed = (_event: Electron.IpcMainEvent, profileToken: unknown): void => {
+			if (profileToken === expectedProfileToken) finish()
+		}
 		const timer = setTimeout(finish, timeoutMs)
-		ipcMain.once('buffers:flushed', finish)
-		win.webContents.send('buffers:flush')
+		ipcMain.on('buffers:flushed', onFlushed)
+		win.webContents.send('buffers:flush', expectedProfileToken)
 	})
 }
 
@@ -452,6 +499,94 @@ function createWindow(): void {
 	mainWindow = win
 }
 
+let profileSwitchInProgress = false
+
+async function syncProfilesFromDaemon(): Promise<void> {
+	const result = await helmBridge.listProfiles()
+	if (result.error !== undefined) return
+	appProfiles.applyDaemonState(result.data)
+	sessionProfileId = appProfiles.activeProfileId()
+	sessions.configureSessionProfile(sessionProfileId)
+}
+
+async function activateProfile(
+	profileId: string,
+	openItemId?: string,
+): Promise<Awaited<ReturnType<HelmBridge['activateProfile']>>> {
+	if (profileSwitchInProgress) return { error: 'A profile switch is already in progress.' }
+	if (profileId === appProfiles.activeProfileId()) {
+		const listed = await helmBridge.listProfiles()
+		if (listed.error !== undefined) return listed
+		return { data: { state: listed.data, applied: true } }
+	}
+	// Acquire before the first await: menu, Settings, and deep-link activation
+	// can otherwise overlap and commit conflicting active-profile pointers.
+	profileSwitchInProgress = true
+	if (!runContextWindows.prepareForProfileSwitch()) {
+		profileSwitchInProgress = false
+		return { error: 'Save or discard the open Run Context draft before switching profiles.' }
+	}
+	if (mainWindow && !mainWindow.isDestroyed()) await flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
+	// Fence before asking the daemon to switch: an old renderer must never see or
+	// command the target profile during the activation response window.
+	const profileReady = helmBridge.beginProfileSwitch(profileId)
+	sessionProfileGeneration += 1
+	const result = await helmBridge.activateProfile(profileId)
+	if (result.error !== undefined) {
+		sessionProfileGeneration -= 1
+		helmBridge.cancelProfileSwitch()
+		profileSwitchInProgress = false
+		return result
+	}
+	try {
+		appProfiles.applyDaemonState(result.data.state)
+	} catch (err) {
+		// Continue the in-memory switch safely; the daemon pointer is already
+		// committed and the profile id—not its display name—owns every path.
+		console.error('[helm] Could not persist app profile cache:', err)
+	}
+
+	// Detach old-profile clients only after daemon activation succeeds. dtach
+	// masters keep running; the reloaded renderer restores the target profile.
+	sessionSupport?.registry.flush()
+	killAllPtyClients()
+	sessionSupport = undefined
+	sessionProfileId = profileId
+	sessions.configureSessionProfile(profileId)
+	pendingProfileReady = { profileId, promise: profileReady }
+	buildMenu()
+
+	const win = mainWindow
+	if (win && !win.isDestroyed()) win.webContents.reload()
+	else createWindow()
+	void profileReady.then(() => {
+		if (pendingProfileReady?.profileId === profileId) pendingProfileReady = null
+		profileSwitchInProgress = false
+		if (openItemId) deliverOpenItem(openItemId)
+	})
+	return result
+}
+
+function profileMenu(): Electron.MenuItemConstructorOptions {
+	const state = appProfiles.getState()
+	return {
+		label: 'Profile',
+		submenu: state.profiles
+			.filter(profile => profile.archivedAt === null)
+			.map(profile => ({
+				label: profile.name,
+				type: 'radio' as const,
+				checked: profile.id === state.activeProfileId,
+				click: () => {
+					void activateProfile(profile.id).then(result => {
+						if (result.error === undefined) return
+						void dialog.showMessageBox({ type: 'warning', message: 'Could not switch profiles', detail: result.error })
+					})
+				},
+			})),
+	}
+}
+
 function buildMenu(): void {
 	const send =
 		(channel: string, ...args: unknown[]) =>
@@ -463,7 +598,7 @@ function buildMenu(): void {
 		else mainWindow?.webContents.send('tab:close')
 	}
 	const template: Electron.MenuItemConstructorOptions[] = [
-		...(process.platform === 'darwin' ? [macApplicationMenu()] : []),
+		...(process.platform === 'darwin' ? [macApplicationMenu(profileMenu())] : [profileMenu()]),
 		{
 			label: 'Shell',
 			submenu: [
@@ -521,6 +656,7 @@ function buildMenu(): void {
 interface SpawnArgs {
 	cols: number
 	rows: number
+	profileToken: string
 	/** Restored session to reattach; omitted = create a fresh session. */
 	sessionId?: string
 }
@@ -541,6 +677,7 @@ function shellEnv(): Record<string, string> {
 }
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
+	if (!acceptsSessionToken(args.profileToken)) throw new Error('Terminal profile changed — reload and try again')
 	const id = nextPtyId++
 	const shell = defaultShell()
 	const support = getSessionSupport()
@@ -571,7 +708,7 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	ptys.set(id, { proc, sessionId })
 	const contents = event.sender
 	proc.onData(data => {
-		if (!contents.isDestroyed()) contents.send('pty:data', id, data)
+		if (!contents.isDestroyed()) contents.send('pty:data', id, data, args.profileToken)
 	})
 	proc.onExit(({ exitCode }) => {
 		// Only a pty still in the map exited ON ITS OWN (shell `exit`, external
@@ -593,16 +730,18 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 				}
 			})
 		}
-		if (!contents.isDestroyed()) contents.send('pty:exit', id, exitCode)
+		if (!contents.isDestroyed()) contents.send('pty:exit', id, exitCode, args.profileToken)
 	})
 	return { id, sessionId }
 })
 
-ipcMain.on('pty:write', (_event, id: number, data: string) => {
+ipcMain.on('pty:write', (_event, id: number, data: string, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return
 	ptys.get(id)?.proc.write(data)
 })
 
-ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number) => {
+ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return
 	const entry = ptys.get(id)
 	if (!entry || !(cols > 0) || !(rows > 0)) return
 	try {
@@ -616,15 +755,17 @@ ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number) => {
 // (okena kill_session, session_backend.rs:398-442). Used for the renderer's
 // spawn-race cleanup (tab closed before spawn resolved); interactive tab
 // closes go through session:close-with-grace instead.
-ipcMain.on('pty:kill', (_event, id: number) => {
+ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return
 	const entry = ptys.get(id)
 	if (!entry) return
 	ptys.delete(id)
 	if (entry.sessionId) {
 		const sid = entry.sessionId
+		const support = getSessionSupport()
 		graceCloser.undo(sid) // a hard kill supersedes any pending grace timer
+		graceCloseSupports.delete(sid)
 		void sessions.killSession(sid).then(() => {
-			const support = getSessionSupport()
 			support?.registry.remove(sid)
 			support?.buffers.remove(sid)
 		})
@@ -641,7 +782,8 @@ ipcMain.on('pty:kill', (_event, id: number) => {
 // session is killed for real only when the timer fires. Returns the grace
 // window so the renderer can show an Undo toast, or null when the pty had no
 // session (non-persistent fallback → the client kill was the real kill).
-ipcMain.handle('session:close-with-grace', (_event, id: number) => {
+ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return null
 	const entry = ptys.get(id)
 	if (!entry) return null
 	ptys.delete(id)
@@ -651,6 +793,7 @@ ipcMain.handle('session:close-with-grace', (_event, id: number) => {
 		// already exited
 	}
 	if (!entry.sessionId) return null
+	graceCloseSupports.set(entry.sessionId, getSessionSupport())
 	graceCloser.schedule(entry.sessionId)
 	return { sessionId: entry.sessionId, graceMs: graceCloser.graceMs }
 })
@@ -658,14 +801,17 @@ ipcMain.handle('session:close-with-grace', (_event, id: number) => {
 // Undo a soft close: cancel the pending kill. True = session untouched, the
 // renderer may reattach it as a new tab. False = timer already fired (or
 // nothing pending) — nothing to restore.
-ipcMain.handle('session:undo-close', (_event, sessionId: unknown) => {
-	if (!sessions.isValidSessionId(sessionId)) return false
-	return graceCloser.undo(sessionId)
+ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken) || !sessions.isValidSessionId(sessionId)) return false
+	const undone = graceCloser.undo(sessionId)
+	if (undone) graceCloseSupports.delete(sessionId)
+	return undone
 })
 
 // Startup restore: live sessions from the socket dir (stale sockets GC'd),
 // labeled from the registry. The renderer reattaches one tab per entry.
-ipcMain.handle('sessions:list', async () => {
+ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return []
 	const support = getSessionSupport()
 	if (!support) return []
 	const { live, unknownIds } = await sessions.scanSessions()
@@ -705,24 +851,35 @@ ipcMain.handle('sessions:list', async () => {
 
 // Park/unpark a session in the registry so background terminals survive a
 // relaunch as background terminals (renderer owns the in-memory tab state).
-ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown) => {
-	if (!sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean') return
+ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken) || !sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean') return
 	getSessionSupport()?.registry.setParked(sessionId, parked)
 })
 
-ipcMain.on('session:set-order', (_event, sessionIds: unknown) => {
-	if (!Array.isArray(sessionIds) || sessionIds.length > 100 || !sessionIds.every(sessions.isValidSessionId)) return
+ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unknown) => {
+	if (
+		!acceptsSessionToken(profileToken) ||
+		!Array.isArray(sessionIds) ||
+		sessionIds.length > 100 ||
+		!sessionIds.every(sessions.isValidSessionId)
+	)
+		return
 	getSessionSupport()?.registry.setOrder(sessionIds)
 })
 
-ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown) => {
-	if (!sessions.isValidSessionId(sessionId) || typeof title !== 'string') return
+ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string') return
 	getSessionSupport()?.registry.setTitle(sessionId, title)
 })
 
 // Manual rename pin: persist so the name survives relaunch/park; null clears.
-ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown) => {
-	if (!sessions.isValidSessionId(sessionId) || (name !== null && typeof name !== 'string')) return
+ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown, profileToken: unknown) => {
+	if (
+		!acceptsSessionToken(profileToken) ||
+		!sessions.isValidSessionId(sessionId) ||
+		(name !== null && typeof name !== 'string')
+	)
+		return
 	getSessionSupport()?.registry.setCustomName(sessionId, name)
 })
 
@@ -731,20 +888,22 @@ ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown
 // are fire-and-forget and size-capped in the store; reads happen once per
 // reattach, BEFORE the live pty stream is written into the fresh xterm.
 
-ipcMain.on('buffer:save', (_event, sessionId: unknown, data: unknown) => {
+ipcMain.on('buffer:save', (_event, sessionId: unknown, data: unknown, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return
 	const support = getSessionSupport()
 	if (!support || !sessions.isValidSessionId(sessionId) || typeof data !== 'string') return
 	support.buffers.save(sessionId, data)
 })
 
-ipcMain.handle('buffer:read', (_event, sessionId: unknown) => {
+ipcMain.handle('buffer:read', (_event, sessionId: unknown, profileToken: unknown) => {
+	if (!acceptsSessionToken(profileToken)) return null
 	const support = getSessionSupport()
 	if (!support || !sessions.isValidSessionId(sessionId)) return null
 	return support.buffers.read(sessionId)
 })
 
 ipcMain.on('config:get', event => {
-	event.returnValue = { daemonUrl }
+	event.returnValue = { daemonUrl, sessionProfileToken: sessionProfileToken() }
 })
 
 // --- Themes (<userData>/themes/*.json, docs/design-system.md §2.8) --------------
@@ -818,11 +977,73 @@ ipcMain.handle('themes:list', () => {
 helmBridge.registerIpc()
 runContextWindows.registerIpc()
 
-void app.whenReady().then(() => {
+function applyProfileMutation(result: Awaited<ReturnType<HelmBridge['createProfile']>>): void {
+	if (result.error !== undefined) return
+	appProfiles.applyDaemonState(result.data.state)
+	buildMenu()
+	for (const window of BrowserWindow.getAllWindows()) window.webContents.send('profiles:changed')
+}
+
+const staleProfileRenderer = (token: unknown) =>
+	acceptsSessionToken(token) ? null : { error: 'Profile changed — reload Helm and try again.', status: 409 }
+
+ipcMain.handle('profiles:list', async (_event, profileToken: unknown) => {
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	const result = await helmBridge.listProfiles()
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	if (result.error === undefined) {
+		appProfiles.applyDaemonState(result.data)
+		buildMenu()
+	}
+	return result
+})
+ipcMain.handle('profiles:create', async (_event, name: string, enabledProjects: string[], profileToken: unknown) => {
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	const result = await helmBridge.createProfile(name, enabledProjects)
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	applyProfileMutation(result)
+	return result
+})
+ipcMain.handle(
+	'profiles:update',
+	async (_event, id: string, body: { name?: string; enabledProjects?: string[] }, profileToken: unknown) => {
+		if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+		const result = await helmBridge.updateProfile(id, body)
+		if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+		applyProfileMutation(result)
+		return result
+	},
+)
+ipcMain.handle('profiles:archive', async (_event, id: string, profileToken: unknown) => {
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	const result = await helmBridge.archiveProfile(id)
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	applyProfileMutation(result)
+	return result
+})
+ipcMain.handle('profiles:restore', async (_event, id: string, profileToken: unknown) => {
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	const result = await helmBridge.restoreProfile(id)
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	applyProfileMutation(result)
+	return result
+})
+ipcMain.handle('profiles:activate', (_event, id: string, profileToken: unknown) => {
+	if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
+	return activateProfile(id)
+})
+
+void app.whenReady().then(async () => {
 	app.setAboutPanelOptions({ applicationName: APP_NAME, applicationVersion: app.getVersion() })
+	await syncProfilesFromDaemon()
 	buildMenu()
 	helmBridge.start()
 	createWindow()
+	if (pendingProfileDestination) {
+		const destination = pendingProfileDestination
+		pendingProfileDestination = null
+		void routeDestination(destination)
+	}
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow()
 	})

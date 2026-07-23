@@ -5,8 +5,9 @@
 // from the pushed snapshot — no per-row fetches.
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
+import type { DashboardItem, HelmSnapshot, ProfilesDocument } from '../../shared-helm'
 import { ActivityIndicator } from '../activity-indicator'
+import { showToast } from '../toast'
 import type { BucketKey } from './model'
 import {
 	VERDICT_META,
@@ -48,6 +49,7 @@ export interface ListPageProps {
 	onOpenItem: (id: string) => void
 	onNewItem: () => void
 	onOpenArchive: () => void
+	onOpenProfiles: () => void
 	onOpenSettings: () => void
 	onPoll: () => void
 	onPauseToggle: () => void
@@ -62,6 +64,7 @@ export function ListPage({
 	onOpenItem,
 	onNewItem,
 	onOpenArchive,
+	onOpenProfiles,
 	onOpenSettings,
 	onPoll,
 	onPauseToggle,
@@ -82,12 +85,27 @@ export function ListPage({
 		return isListOrganization(saved) ? saved : 'flat'
 	})
 	const [quickBusy, setQuickBusy] = useState<string | null>(null)
+	const [profileDocument, setProfileDocument] = useState<ProfilesDocument | null>(null)
 	useEffect(() => localStorage.setItem(BUCKET_KEY, bucket), [bucket])
 	useEffect(() => {
 		if (project) localStorage.setItem(PROJECT_KEY, project)
 		else localStorage.removeItem(PROJECT_KEY)
 	}, [project])
 	useEffect(() => localStorage.setItem(ORGANIZATION_KEY, organization), [organization])
+	useEffect(() => {
+		let cancelled = false
+		const load = () => {
+			void window.helm.profiles.list().then(result => {
+				if (!cancelled && result.data) setProfileDocument(result.data)
+			})
+		}
+		load()
+		const unsubscribe = window.helm.profiles.onChanged(load)
+		return () => {
+			cancelled = true
+			unsubscribe()
+		}
+	}, [])
 
 	const now = useNow()
 	const items = snapshot?.items ?? null
@@ -133,6 +151,14 @@ export function ListPage({
 			setQuickBusy(null)
 		}
 	}
+	const switchProfile = (profileId: string) =>
+		runQuick(`profile:${profileId}`, async () => {
+			const result = await window.helm.profiles.activate(profileId)
+			if (result.error !== undefined) showToast({ message: result.error })
+		})
+	const availableProfiles = profileDocument?.profiles.filter(profile => profile.archivedAt === null) ?? []
+	const activeProfileId = profileDocument?.activeProfileId ?? snapshot?.status?.profile?.id
+
 	const renderItemRow = (item: DashboardItem) => (
 		<ItemRow
 			key={item.id}
@@ -200,6 +226,16 @@ export function ListPage({
 									icon: GLYPH.archive,
 									onSelect: onOpenArchive,
 								},
+								...availableProfiles.map((profile, index) => ({
+									label: profile.name,
+									checked: profile.id === activeProfileId,
+									onSelect: () => {
+										if (profile.id !== activeProfileId) void switchProfile(profile.id)
+									},
+									disabled: quickBusy !== null,
+									group: index === 0,
+								})),
+								{ label: 'Manage profiles…', onSelect: onOpenProfiles, group: availableProfiles.length === 0 },
 								{ label: 'Settings', icon: GLYPH.settings, onSelect: onOpenSettings, group: true },
 							]}
 						/>

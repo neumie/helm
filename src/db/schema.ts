@@ -372,4 +372,32 @@ ALTER TABLE items ADD COLUMN run_context TEXT;
 ALTER TABLE items ADD COLUMN run_context_revision INTEGER NOT NULL DEFAULT 0;
 `,
 	},
+	{
+		// Profiles share one daemon database. Existing single-profile databases are
+		// imported as Work; the startup importer rewrites this value for rows copied
+		// from other legacy profile databases. Item/event identity stays globally
+		// unique while every store operation is additionally tenant-scoped.
+		version: 26,
+		sql: `
+ALTER TABLE items ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'work';
+ALTER TABLE item_events ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'work';
+
+ALTER TABLE poll_state RENAME TO poll_state_legacy;
+CREATE TABLE poll_state (
+  profile_id    TEXT NOT NULL,
+  project_slug  TEXT NOT NULL,
+  last_poll_at  TEXT NOT NULL,
+  last_task_seen TEXT,
+  PRIMARY KEY (profile_id, project_slug)
+);
+INSERT INTO poll_state (profile_id, project_slug, last_poll_at, last_task_seen)
+SELECT 'work', project_slug, last_poll_at, last_task_seen FROM poll_state_legacy;
+DROP TABLE poll_state_legacy;
+
+CREATE INDEX idx_items_profile_status_updated ON items(profile_id, status, updated_at DESC);
+CREATE INDEX idx_items_profile_queue ON items(profile_id, status, work_mode, queued_at, created_at);
+CREATE INDEX idx_items_profile_group ON items(profile_id, group_id, created_at);
+CREATE INDEX idx_item_events_profile_item ON item_events(profile_id, item_id, event_type, created_at);
+`,
+	},
 ]

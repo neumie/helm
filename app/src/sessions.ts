@@ -21,6 +21,14 @@ import * as path from 'node:path'
 // because app bundles inherit a minimal PATH missing /opt/homebrew/bin etc.
 // Same problem under Electron: check well-known locations first, then PATH.
 const DTACH_CANDIDATES = ['/opt/homebrew/bin/dtach', '/usr/local/bin/dtach', '/opt/local/bin/dtach', '/usr/bin/dtach']
+const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
+let activeProfileId = 'work'
+
+/** Configure the process-lifetime terminal namespace before any session operation. */
+export function configureSessionProfile(profileId: string): void {
+	if (!PROFILE_ID_RE.test(profileId)) throw new Error(`invalid profile id: ${profileId}`)
+	activeProfileId = profileId
+}
 
 export function resolveDtachBinary(): string | null {
 	const executable = (p: string): boolean => {
@@ -49,9 +57,12 @@ export function resolveDtachBinary(): string | null {
  */
 export function socketDir(): string {
 	const override = process.env.HELM_SOCKET_DIR
-	if (override) return override
 	const uid = typeof process.getuid === 'function' ? process.getuid() : 0
-	return `/tmp/helm-${uid}`
+	const base = override ?? `/tmp/helm-${uid}`
+	// Work keeps the legacy root so already-running dtach masters remain
+	// attachable after profile migration. Every other profile gets a disjoint
+	// socket pool, preventing list/reap/kill operations from crossing profiles.
+	return activeProfileId === 'work' ? base : path.join(base, 'profiles', activeProfileId)
 }
 
 export function ensureSocketDir(): string {
@@ -224,6 +235,7 @@ export async function scanSessions(): Promise<SessionScan> {
 				// it — and never let the caller prune its metadata either.
 				unknownIds.push(sessionId)
 			}
+			return undefined
 		}),
 	)
 	return { live: live.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), unknownIds }

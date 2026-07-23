@@ -5,10 +5,19 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+// @ts-expect-error -- app is CommonJS under tsx; runtime exports arrive on the default object.
 import helmProtocolModule from '../app/src/protocol.ts'
 
 type HelmProtocolModule = typeof import('../app/src/protocol.ts')
-const { parseHelmItemUrl } = helmProtocolModule as HelmProtocolModule
+const { parseHelmDestination, parseHelmItemUrl } = helmProtocolModule as HelmProtocolModule
+
+test('parses profile-qualified item destinations', () => {
+	assert.deepEqual(parseHelmDestination('helm://profile/profile-0123456789ab/item/abc-123'), {
+		profileId: 'profile-0123456789ab',
+		itemId: 'abc-123',
+	})
+	assert.equal(parseHelmItemUrl('helm://profile/profile-0123456789ab/item/abc-123'), 'abc-123')
+})
 
 test('parses helm://item/<id>', () => {
 	assert.equal(parseHelmItemUrl('helm://item/abc-123'), 'abc-123')
@@ -28,6 +37,8 @@ test('rejects everything that is not exactly one item segment', () => {
 	assert.equal(parseHelmItemUrl('helm://item/'), null)
 	assert.equal(parseHelmItemUrl('helm://item'), null)
 	assert.equal(parseHelmItemUrl('helm://item/a/b'), null)
+	assert.equal(parseHelmItemUrl('helm://profile/work/item/a/b'), null)
+	assert.equal(parseHelmItemUrl('helm://profile/work/task/a'), null)
 	assert.equal(parseHelmItemUrl('helm://settings/x'), null)
 	assert.equal(parseHelmItemUrl('vigil://settings/x'), null)
 	assert.equal(parseHelmItemUrl('https://item/abc'), null)

@@ -38,6 +38,7 @@ import { itemStatusSchema, solverEffortSchema } from '../../items/schema.js'
 import type { ItemRecord, SolverEffort } from '../../items/schema.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
+import type { ProfileRuntime, ProfileStore } from '../../profiles/store.js'
 import { DAEMON_BUILD_ID, DAEMON_PROTOCOL_VERSION } from '../../protocol.js'
 import type { TaskContext, TaskProvider } from '../../providers/provider.js'
 import type { Drainer } from '../../queue/drainer.js'
@@ -88,6 +89,13 @@ const MAX_INGEST_BODY_BYTES = 40 * 1024 * 1024
 // Local editor JSON is bounded before parsing too; the document schema applies
 // tighter Markdown/block-state limits after this coarse transport cap.
 const MAX_RUN_CONTEXT_BODY_BYTES = 1_250_000
+
+export interface ProfileContext {
+	store: ProfileStore
+	/** Function in production; object compatibility keeps route fixtures concise. */
+	runtime: ProfileRuntime | (() => ProfileRuntime)
+	applyRuntime?: (runtime: ProfileRuntime) => void
+}
 
 const ingestSchema = z
 	.object({
@@ -203,9 +211,17 @@ export function apiRoutes(
 	// Keeps the optional Okena extension dynamically loaded and route-testable.
 	openItemInOkena: OpenItemInOkena = defaultOpenItemInOkena,
 	inspectItemOkenaWorkspace: InspectItemOkenaWorkspace = defaultInspectItemOkenaWorkspace,
+	profileContext?: ProfileContext,
 ) {
 	const api = new Hono()
+	if (profileContext) {
+		api.use('*', (_c, next) => db.runInProfile(profileContext.store.activeProfile().id, next))
+	}
 	const itemCommands = new ItemCommands(db.items, config)
+	const currentProfileRuntime = () => {
+		const runtime = profileContext?.runtime
+		return typeof runtime === 'function' ? runtime() : runtime
+	}
 	const aiDeps = aiOneShot ? { runOneShot: aiOneShot } : undefined
 	const dashboardItem = async (item: ItemRecord) => ({
 		...toDashboardItemWithSiblings(
@@ -377,6 +393,14 @@ export function apiRoutes(
 	// Daemon status
 	api.get('/status', c => {
 		const queueStatus = queue.getStatus()
+		const runtime = currentProfileRuntime()
+		const activeProfile = runtime?.profile ?? {
+			id: 'work',
+			name: 'Work',
+			enabledProjects: config.projects.map(project => project.slug),
+			createdAt: '',
+			archivedAt: null,
+		}
 		return c.json({
 			data: {
 				protocolVersion: DAEMON_PROTOCOL_VERSION,
@@ -385,9 +409,105 @@ export function apiRoutes(
 				queue: queueStatus,
 				projects: config.projects.map(p => p.slug),
 				pollInterval: config.polling.intervalSeconds,
+				profile: activeProfile,
+				profileGeneration: runtime?.generation ?? 1,
 			},
 		})
 	})
+
+	// Named profiles are daemon-global metadata. Items share one SQLite database;
+	// activation changes only the tenant used for UI, polling, and new admission.
+	// Already-running jobs retain their captured Item/profile scope.
+	if (profileContext) {
+		const configuredProjects = new Set(config.projects.map(project => project.slug))
+		const profileInputSchema = z
+			.object({
+				name: z.string().optional(),
+				enabledProjects: z.array(z.string()).optional(),
+			})
+			.strict()
+		const parseProfileInput = async (c: Context) => {
+			const parsed = profileInputSchema.safeParse(await c.req.json().catch(() => null))
+			if (!parsed.success) return { error: c.json({ error: 'Invalid profile input' }, 400) }
+			if (parsed.data.enabledProjects?.some(project => !configuredProjects.has(project))) {
+				return { error: c.json({ error: 'Profile references an unknown configured project' }, 400) }
+			}
+			return { data: parsed.data }
+		}
+
+		api.get('/profiles', c =>
+			c.json({
+				data: {
+					...profileContext.store.getState(),
+					configuredProjects: config.projects.map(project => project.slug),
+				},
+			}),
+		)
+
+		api.post('/profiles', async c => {
+			const input = await parseProfileInput(c)
+			if ('error' in input) return input.error
+			if (!input.data.name) return c.json({ error: 'Profile name is required' }, 400)
+			try {
+				const profile = profileContext.store.create(input.data.name, input.data.enabledProjects ?? [])
+				return c.json({ data: { profile, state: profileContext.store.getState() } }, 201)
+			} catch (err) {
+				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+
+		api.put('/profiles/:id', async c => {
+			const input = await parseProfileInput(c)
+			if ('error' in input) return input.error
+			const profileId = c.req.param('id')
+			try {
+				const profile = profileContext.store.update(profileId, input.data)
+				if (profileId === profileContext.store.getState().activeProfileId) {
+					profileContext.applyRuntime?.(profileContext.store.activeRuntime())
+					poller.profileChanged()
+				}
+				return c.json({ data: { profile, state: profileContext.store.getState() } })
+			} catch (err) {
+				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+
+		api.post('/profiles/:id/archive', c => {
+			try {
+				const profile = profileContext.store.archive(c.req.param('id'))
+				return c.json({ data: { profile, state: profileContext.store.getState() } })
+			} catch (err) {
+				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+
+		api.post('/profiles/:id/restore', c => {
+			try {
+				const profile = profileContext.store.restore(c.req.param('id'))
+				return c.json({ data: { profile, state: profileContext.store.getState() } })
+			} catch (err) {
+				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+
+		api.post('/profiles/:id/activate', c => {
+			const id = c.req.param('id')
+			const current = profileContext.store.getState()
+			if (id === current.activeProfileId) return c.json({ data: { state: current, applied: true } })
+			try {
+				const state = profileContext.store.activate(id)
+				profileContext.applyRuntime?.(profileContext.store.activeRuntime())
+				db.runInProfile(id, () => {
+					queue.profileChanged()
+					enricher.backfill()
+				})
+				poller.profileChanged()
+				return c.json({ data: { state, applied: true } })
+			} catch (err) {
+				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+	}
 
 	// Item dashboard contract — the read/write path for all work.
 	api.get('/items', c => {
@@ -487,12 +607,13 @@ export function apiRoutes(
 		// would mis-route the solve to the live provider). On any error, the
 		// already-written attachment files are cleaned up.
 		const id = randomUUID()
+		const ingestProfileId = db.currentProfileId()
 		try {
 			// Relative, same-origin URL: the dashboard renders it regardless of the
 			// host it reached the daemon on; the worker/plan route rewrite it to a
 			// worktree-local path at run time.
 			const savedAttachments = (input.attachments ?? []).map(a => {
-				const finalName = saveAttachment(id, a.name, Buffer.from(a.dataBase64, 'base64'))
+				const finalName = saveAttachment(id, a.name, Buffer.from(a.dataBase64, 'base64'), ingestProfileId)
 				return {
 					name: a.name,
 					url: `/api/items/${id}/attachments/${finalName}`,
@@ -524,7 +645,7 @@ export function apiRoutes(
 			enricher.enqueue([item])
 			return c.json({ data: await dashboardItem(item) }, 201)
 		} catch (err) {
-			removeItemAttachments(id)
+			removeItemAttachments(id, ingestProfileId)
 			const msg = err instanceof Error ? err.message : String(err)
 			log.error('api', `Ingest failed for ${externalId}: ${msg}`)
 			return c.json({ error: `Ingest failed: ${msg}` }, 500)
@@ -542,7 +663,7 @@ export function apiRoutes(
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		const name = c.req.param('name')
-		const bytes = readAttachment(item.id, name)
+		const bytes = readAttachment(item.id, name, item.profileId)
 		if (!bytes) return c.json({ error: 'Attachment not found' }, 404)
 		const contentType = attachmentMimeType(name)
 		const disposition = isInlineSafeContentType(contentType) ? 'inline' : 'attachment'
@@ -565,7 +686,7 @@ export function apiRoutes(
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		const name = c.req.param('name')
 		if (!isOpenableAttachment(name)) return c.json({ error: 'This attachment type cannot be opened' }, 400)
-		const path = attachmentPath(item.id, name)
+		const path = attachmentPath(item.id, name, item.profileId)
 		if (!path) return c.json({ error: 'Attachment not found' }, 404)
 		const opener = process.platform === 'darwin' ? 'open' : process.platform === 'linux' ? 'xdg-open' : null
 		if (!opener) return c.json({ error: 'Opening attachments is only supported on macOS and Linux' }, 501)
@@ -1179,7 +1300,7 @@ export function apiRoutes(
 		// Drop ingested attachments into the planning worktree (gitignored
 		// .helm-attachments/) so the planning agent can open the local files the
 		// localized context.md references. No-op for provider-backed Items.
-		if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath)
+		if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath, item.profileId)
 
 		// Main mode: the Item's branchName stays NULL (no pre-created branch to
 		// record); worktreePath/planDirName still persist so the run and the plan
@@ -1358,6 +1479,19 @@ export function apiRoutes(
 		if (!daemonControl.isManaged()) {
 			return c.json({ data: { message: 'Saved. Restart the daemon to apply.', applied: false } })
 		}
+		if (!queue.quiesce()) {
+			if (queue.isQuiescing()) {
+				return c.json({ data: { message: 'Saved — restart already pending…', applied: true } })
+			}
+			const pendingRuns = queue.getStatus().active
+			return c.json({
+				data: {
+					message: `Saved. Restart the daemon to apply — ${activeRunsPhrase(pendingRuns)} active.`,
+					applied: false,
+					pendingRuns,
+				},
+			})
+		}
 		scheduleDaemonRestart(daemonControl)
 		return c.json({ data: { message: 'Saved — restarting to apply…', applied: true } })
 	})
@@ -1375,6 +1509,15 @@ export function apiRoutes(
 		}
 		if (!daemonControl.isManaged()) {
 			return c.json({ error: 'Daemon is not running under launchd — restart it manually.' }, 400)
+		}
+		if (!queue.quiesce()) {
+			if (queue.isQuiescing()) return c.json({ data: { message: 'Restarting…', applied: true } })
+			const pendingRuns = queue.getStatus().active
+			const pronoun = pendingRuns === 1 ? 'it' : 'them'
+			return c.json(
+				{ error: `${activeRunsPhrase(pendingRuns)} active — wait for ${pronoun} to finish.`, pendingRuns },
+				409,
+			)
 		}
 		scheduleDaemonRestart(daemonControl)
 		return c.json({ data: { message: 'Restarting…', applied: true } })

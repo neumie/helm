@@ -230,11 +230,15 @@ export function SettingsPage({
 	onBack,
 	onOpenSection,
 	onOpenAppearance,
+	onOpenProfiles,
+	activeProfileName,
 }: {
 	store: SettingsStore
 	onBack: () => void
 	onOpenSection: (sectionId: string) => void
 	onOpenAppearance: () => void
+	onOpenProfiles: () => void
+	activeProfileName: string
 }) {
 	const sections = store.doc?.edit.sections ?? []
 	const look = useSyncExternalStore(appearance.subscribe, appearance.getSnapshot)
@@ -244,6 +248,7 @@ export function SettingsPage({
 			<PushHeader title="Settings" onBack={onBack} />
 			<div className="page-scroll">
 				<Card label="Helm" flush>
+					<ActionRow nav label="Profiles" value={activeProfileName} onClick={onOpenProfiles} />
 					<ActionRow
 						nav
 						label="Appearance"

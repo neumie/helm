@@ -47,7 +47,10 @@ export const defaultDaemonControl: DaemonControl = {
 }
 
 /** Schedule the self-restart exit after the response-flush window. */
-export function scheduleDaemonRestart(control: DaemonControl): void {
-	log.info('helm', 'Config applied — restarting under launchd to reload it.')
+export function scheduleDaemonRestart(
+	control: DaemonControl,
+	reason = 'Config applied — restarting under launchd to reload it.',
+): void {
+	log.info('helm', reason)
 	setTimeout(() => control.exit(), control.restartDelayMs ?? RESTART_FLUSH_MS).unref()
 }

@@ -7,6 +7,7 @@ import type { DashboardItem, HelmResult } from './shared-helm'
  */
 export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 	const legacyTriage = (item.status as string) === 'triage'
+	const profileId = item.profileId ?? 'work'
 	const workMode = item.workMode ?? (item.startedAt ? 'agent' : null)
 	const executionMode = item.executionMode ?? (item.kind === 'loop' ? 'loop' : 'solve')
 	const solverEffort = item.solverEffort ?? null
@@ -26,6 +27,7 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 			: null)
 	if (
 		!legacyTriage &&
+		item.profileId === profileId &&
 		item.workMode === workMode &&
 		item.executionMode === executionMode &&
 		item.solverEffort === solverEffort &&
@@ -35,6 +37,7 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 		return item
 	return {
 		...item,
+		profileId,
 		status: legacyTriage ? 'inbox' : item.status,
 		workMode,
 		executionMode,

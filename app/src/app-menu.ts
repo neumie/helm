@@ -4,11 +4,12 @@ export const APP_NAME = 'Helm'
 
 /** Explicit macOS application menu: Electron's `appMenu` role can retain the
  * executable name in unpackaged runs, which exposes "Electron" in the menu bar. */
-export function macApplicationMenu(): MenuItemConstructorOptions {
+export function macApplicationMenu(profileMenu?: MenuItemConstructorOptions): MenuItemConstructorOptions {
 	return {
 		label: APP_NAME,
 		submenu: [
 			{ role: 'about', label: `About ${APP_NAME}` },
+			...(profileMenu ? [{ type: 'separator' as const }, profileMenu] : []),
 			{ type: 'separator' },
 			{ role: 'services' },
 			{ type: 'separator' },

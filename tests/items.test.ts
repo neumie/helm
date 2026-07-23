@@ -345,6 +345,21 @@ test('Drainer defaults to running and persists a deliberate pause across restart
 		assert.equal(afterResume.isPaused(), false)
 	}))
 
+test('Drainer quiesce blocks direct starts and retries without persisting pause', () =>
+	withTempDb(db => {
+		const drainer = new Drainer(config, db, provider, {} as never)
+		drainer.start()
+		assert.equal(drainer.quiesce(), true)
+		assert.equal(drainer.isQuiescing(), true)
+		assert.equal(drainer.quiesce(), false) // second caller cannot acquire/release the first guard
+		assert.equal(drainer.processOneItem('missing'), false)
+		assert.throws(() => drainer.retryItem('missing'), /restarting/)
+		assert.equal(drainer.isPaused(), false)
+		drainer.unquiesce()
+		assert.equal(drainer.isQuiescing(), false)
+		drainer.stop()
+	}))
+
 test('unknownConfigPaths flags config keys the schema does not recognize', () => {
 	const base = {
 		provider: { type: 'contember', apiBaseUrl: 'https://x.test', projectSlug: 'v', apiToken: 't' },
@@ -1792,6 +1807,56 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}
 	})
+})
+
+test('Drainer lets an owning-profile run finish while admission switches profiles', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-drainer-profile-switch-'))
+	const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-profile-worktrees-'))
+	let activeProfile = 'work'
+	const db = new DB(join(root, 'helm.db'), () => activeProfile)
+	const singleSolveConfig = { ...config, solver: { ...config.solver, concurrency: 1 } }
+	const workCommands = new ItemCommands(db.forProfile('work').items, singleSolveConfig)
+	const workItem = workCommands.createSolveItem({
+		title: 'Continue Work run',
+		projectSlug: 'helm',
+		prompt: 'Finish after profile activation.',
+	})
+	db.forProfile('work').items.update(workItem.id, { workMode: 'agent' })
+	const solver = new FakeSolveSolver(worktreeRoot, 50)
+	const drainer = new Drainer(singleSolveConfig, db, provider, solver, undefined, undefined, () => activeProfile)
+	try {
+		drainer.start()
+		drainer.resume()
+		await waitFor(() => db.forProfile('work').items.get(workItem.id)?.status === 'running', 'Work run did not start')
+
+		activeProfile = 'profile-aaaaaaaaaaaa'
+		const personalCommands = new ItemCommands(db.forProfile(activeProfile).items, singleSolveConfig)
+		const personalItem = personalCommands.createSolveItem({
+			title: 'Personal run',
+			projectSlug: 'helm',
+			prompt: 'Start after global capacity is free.',
+		})
+		db.forProfile(activeProfile).items.update(personalItem.id, { workMode: 'agent' })
+		drainer.profileChanged()
+
+		await waitFor(
+			() =>
+				db.forProfile('work').items.get(workItem.id)?.status === 'review' &&
+				db.forProfile(activeProfile).items.get(personalItem.id)?.status === 'review',
+			'profile-scoped runs did not finish',
+		)
+		assert.deepEqual(
+			solver.calls.map(call => call.taskTitle),
+			['Continue Work run', 'Personal run'],
+		)
+		assert.equal(solver.maxConcurrent, 1)
+		assert.equal(db.items.get(workItem.id), null)
+	} finally {
+		drainer.stop()
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+		rmSync(worktreeRoot, { recursive: true, force: true })
+	}
 })
 
 test('Drainer runs queued loop Items through the loop lane and captures AlmanacRunId', async () => {

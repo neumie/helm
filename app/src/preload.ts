@@ -1,10 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { GraceClose, HelmApi, PtySpawnResult, RestoredSession, ThemeListEntry, UiPreview } from './shared'
-import type { DaemonApi, HelmResult, HelmSnapshot } from './shared-helm'
+import type { DaemonApi, HelmResult, HelmSnapshot, ProfilesApi } from './shared-helm'
 
 // Captured synchronously at preload time so the renderer gets the URL without an async hop.
-const { daemonUrl } = ipcRenderer.sendSync('config:get') as { daemonUrl: string }
+const { daemonUrl, sessionProfileToken } = ipcRenderer.sendSync('config:get') as {
+	daemonUrl: string
+	sessionProfileToken: string
+}
 
 // --ui-preview=<...> arrives via webPreferences.additionalArguments; keep this
 // allowlist aligned with UiPreview so every deterministic app/terminal state is capturable.
@@ -68,33 +71,50 @@ function subscribe<Args extends unknown[]>(channel: string, listener: (...args: 
 // All daemon command channels resolve with the daemon's { data } | { error }
 // envelope (the bridge never rejects), so the cast is one shared seam.
 function invokeHelm<T>(channel: string, ...args: unknown[]): Promise<HelmResult<T>> {
-	return ipcRenderer.invoke(channel, ...args) as Promise<HelmResult<T>>
+	return ipcRenderer.invoke(channel, ...args, sessionProfileToken) as Promise<HelmResult<T>>
 }
 
 const api: HelmApi = {
 	pty: {
 		spawn: (cols, rows, sessionId) =>
-			ipcRenderer.invoke('pty:spawn', { cols, rows, sessionId }) as Promise<PtySpawnResult>,
-		write: (id, data) => ipcRenderer.send('pty:write', id, data),
-		resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows),
-		kill: id => ipcRenderer.send('pty:kill', id),
-		onData: listener => subscribe('pty:data', listener),
-		onExit: listener => subscribe('pty:exit', listener),
+			ipcRenderer.invoke('pty:spawn', {
+				cols,
+				rows,
+				sessionId,
+				profileToken: sessionProfileToken,
+			}) as Promise<PtySpawnResult>,
+		write: (id, data) => ipcRenderer.send('pty:write', id, data, sessionProfileToken),
+		resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows, sessionProfileToken),
+		kill: id => ipcRenderer.send('pty:kill', id, sessionProfileToken),
+		onData: listener =>
+			subscribe<[number, string, string]>('pty:data', (id, data, profileToken) => {
+				if (profileToken === sessionProfileToken) listener(id, data)
+			}),
+		onExit: listener =>
+			subscribe<[number, number, string]>('pty:exit', (id, exitCode, profileToken) => {
+				if (profileToken === sessionProfileToken) listener(id, exitCode)
+			}),
 	},
 	sessions: {
-		list: () => ipcRenderer.invoke('sessions:list') as Promise<RestoredSession[]>,
-		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title),
-		setCustomName: (sessionId, name) => ipcRenderer.send('session:set-custom-name', sessionId, name),
-		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked),
-		setOrder: sessionIds => ipcRenderer.send('session:set-order', sessionIds),
-		closeWithGrace: ptyId => ipcRenderer.invoke('session:close-with-grace', ptyId) as Promise<GraceClose | null>,
-		undoClose: sessionId => ipcRenderer.invoke('session:undo-close', sessionId) as Promise<boolean>,
+		list: () => ipcRenderer.invoke('sessions:list', sessionProfileToken) as Promise<RestoredSession[]>,
+		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title, sessionProfileToken),
+		setCustomName: (sessionId, name) =>
+			ipcRenderer.send('session:set-custom-name', sessionId, name, sessionProfileToken),
+		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked, sessionProfileToken),
+		setOrder: sessionIds => ipcRenderer.send('session:set-order', sessionIds, sessionProfileToken),
+		closeWithGrace: ptyId =>
+			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null>,
+		undoClose: sessionId =>
+			ipcRenderer.invoke('session:undo-close', sessionId, sessionProfileToken) as Promise<boolean>,
 	},
 	buffers: {
-		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId) as Promise<string | null>,
-		save: (sessionId, data) => ipcRenderer.send('buffer:save', sessionId, data),
-		onFlush: listener => subscribe('buffers:flush', listener),
-		flushed: () => ipcRenderer.send('buffers:flushed'),
+		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId, sessionProfileToken) as Promise<string | null>,
+		save: (sessionId, data) => ipcRenderer.send('buffer:save', sessionId, data, sessionProfileToken),
+		onFlush: listener =>
+			subscribe<[string]>('buffers:flush', profileToken => {
+				if (profileToken === sessionProfileToken) listener()
+			}),
+		flushed: () => ipcRenderer.send('buffers:flushed', sessionProfileToken),
 	},
 	config: {
 		getDaemonUrl: () => daemonUrl,
@@ -120,6 +140,15 @@ const api: HelmApi = {
 		pauseToggle: () => invokeHelm('daemon:pauseToggle'),
 		poll: () => invokeHelm('daemon:poll'),
 	} satisfies DaemonApi,
+	profiles: {
+		list: () => invokeHelm('profiles:list'),
+		onChanged: listener => subscribe('profiles:changed', listener),
+		create: (name, enabledProjects) => invokeHelm('profiles:create', name, enabledProjects),
+		update: (id, body) => invokeHelm('profiles:update', id, body),
+		archive: id => invokeHelm('profiles:archive', id),
+		restore: id => invokeHelm('profiles:restore', id),
+		activate: id => invokeHelm('profiles:activate', id),
+	} satisfies ProfilesApi,
 	runContext: {
 		open: itemId => ipcRenderer.invoke('run-context:open', itemId) as Promise<void>,
 	},

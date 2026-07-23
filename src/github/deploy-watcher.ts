@@ -159,7 +159,6 @@ export interface DeployWatcherDeps {
 export class DeployWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
-	private readonly commands: ItemCommands
 	private readonly intervalSeconds: number
 	private readonly fetchState: typeof fetchDeployState
 	private readonly discoverPr: typeof discoverPrUrlByBranch
@@ -170,7 +169,6 @@ export class DeployWatcher {
 		private db: DB,
 		deps: DeployWatcherDeps = {},
 	) {
-		this.commands = new ItemCommands(db.items, config)
 		this.intervalSeconds = config.github.deployPollSeconds
 		this.fetchState = deps.fetchDeployState ?? fetchDeployState
 		this.discoverPr = deps.discoverPrUrl ?? discoverPrUrlByBranch
@@ -205,9 +203,10 @@ export class DeployWatcher {
 			try {
 				const state = await this.fetchState(item.prUrl, new Date().toISOString())
 				if (!state) continue
-				const updated = this.commands.recordDeployState(item.id, state)
+				const commands = new ItemCommands(this.db.forProfile(item.profileId).items, this.config)
+				const updated = commands.recordDeployState(item.id, state)
 				// A merged PR means the work landed — drop it out of the review pile.
-				if (state.merged && updated.status === 'review') this.commands.markItemMerged(item.id)
+				if (state.merged && updated.status === 'review') commands.markItemMerged(item.id)
 			} catch (err) {
 				log.error('deploy', `Error checking deploy state for Item ${item.id}`, err)
 			}
@@ -230,7 +229,10 @@ export class DeployWatcher {
 					}
 				}
 				if (!prUrl) continue
-				this.commands.recordDispatchPr(item.id, { prUrl, shippedByAgent: true })
+				new ItemCommands(this.db.forProfile(item.profileId).items, this.config).recordDispatchPr(item.id, {
+					prUrl,
+					shippedByAgent: true,
+				})
 				log.info('deploy', `Backfilled late PR for Item ${item.id}: ${prUrl}`)
 			} catch (err) {
 				// Item may have raced out of `review` between list and write — skip.

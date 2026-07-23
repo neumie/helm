@@ -38,8 +38,9 @@ export class Drainer {
 	private activeLoopItems = new Map<string, ActiveRun>()
 	private retryTimers = new Set<ReturnType<typeof setTimeout>>()
 	private running = false
+	private quiescing = false
 	private paused: boolean
-	private recoveredStaleItems = false
+	private readonly recoveredProfiles = new Set<string>()
 	private readonly itemCommands: ItemCommands
 
 	constructor(
@@ -48,6 +49,8 @@ export class Drainer {
 		private provider: TaskProvider,
 		private solver: Solver,
 		private loopRunner: LoopRunner = new AlmanacLoopRunner(),
+		private readonly profileIds?: () => string[],
+		private readonly activeProfileId?: () => string,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
 		// Default running; a deliberate pause is persisted and survives restarts.
@@ -56,6 +59,7 @@ export class Drainer {
 
 	start() {
 		const recovered = this.recoverStaleProcessingItemsOnce()
+		this.quiescing = false
 		this.running = true
 		log.info(
 			'drainer',
@@ -67,9 +71,30 @@ export class Drainer {
 
 	stop() {
 		this.running = false
-		for (const timer of this.retryTimers) clearTimeout(timer)
-		this.retryTimers.clear()
+		this.clearRetryTimers()
 		log.info('drainer', 'Drainer stopped')
+	}
+
+	/**
+	 * Atomically stop new starts before a process restart. Existing runs make
+	 * quiescing fail; callers must not schedule exit in that case. Unlike pause,
+	 * this is process-local and never persists into the next profile/runtime.
+	 */
+	quiesce(): boolean {
+		// A second caller must not inherit ownership and later unquiesce the
+		// first caller's pending restart guard.
+		if (this.quiescing || this.activeSolveCount() > 0 || this.activeLoopCount() > 0) return false
+		this.quiescing = true
+		this.running = false
+		this.clearRetryTimers()
+		return true
+	}
+
+	unquiesce(): void {
+		if (!this.quiescing) return
+		this.quiescing = false
+		this.running = true
+		if (!this.paused) this.processNext()
 	}
 
 	pause() {
@@ -86,21 +111,35 @@ export class Drainer {
 	}
 
 	wake() {
-		if (this.running && !this.paused) this.processNext()
+		if (this.running && !this.quiescing && !this.paused) this.processNext()
+	}
+
+	/** Active profile changed; existing runs continue and only new admission follows the new tenant. */
+	profileChanged(): void {
+		this.recoverStaleProcessingItemsOnce()
+		this.wake()
 	}
 
 	isPaused(): boolean {
 		return this.paused
 	}
 
+	isQuiescing(): boolean {
+		return this.quiescing
+	}
+
 	/** Process a single Item immediately, bypassing pause state. */
 	processOneItem(itemId: string): boolean {
+		if (this.quiescing) return false
 		const item = this.db.items.get(itemId)
 		if (!item) return false
-		return itemExecutionMode(item) === 'loop' ? this.startLoopItem(itemId) : this.startSolveItem(itemId)
+		return itemExecutionMode(item) === 'loop'
+			? this.startLoopItem(itemId, item.profileId)
+			: this.startSolveItem(itemId, item.profileId)
 	}
 
 	retryItem(itemId: string): ItemRecord {
+		if (this.quiescing) throw new Error('Daemon is restarting — new runs are temporarily unavailable')
 		const item = this.itemCommands.retryItem(itemId)
 		this.wake()
 		return item
@@ -122,7 +161,7 @@ export class Drainer {
 	}
 
 	getStatus(): QueueStatus {
-		const queued = this.itemCommands.nextQueuedAgentItems(10_000)
+		const queued = this.admissionCommands().nextQueuedAgentItems(10_000)
 		const solvePending = queued.filter(item => itemExecutionMode(item) === 'solve').length
 		const loopPending = queued.filter(item => itemExecutionMode(item) === 'loop').length
 		const activeSolve = this.activeSolveCount()
@@ -160,39 +199,52 @@ export class Drainer {
 	}
 
 	private processNext() {
-		if (!this.running || this.paused) return
+		if (!this.running || this.quiescing || this.paused) return
 
 		while (this.activeSolveCount() < this.solveCapacity()) {
 			const item = this.nextQueuedSolveItem()
 			if (!item) break
-			if (!this.startSolveItem(item.id)) break
+			if (!this.startSolveItem(item.id, item.profileId)) break
 		}
 
 		while (this.activeLoopCount() < this.loopCapacity()) {
 			const item = this.nextQueuedLoopItem()
 			if (!item) break
-			if (!this.startLoopItem(item.id)) break
+			if (!this.startLoopItem(item.id, item.profileId)) break
 		}
 	}
 
 	private recoverStaleProcessingItemsOnce(): number {
-		if (this.recoveredStaleItems) return 0
-		this.recoveredStaleItems = true
-		return this.itemCommands.recoverStaleProcessingItems().length
+		const profileIds = this.profileIds?.() ?? []
+		if (profileIds.length === 0) {
+			// Fixed/dynamic test DBs without a registry retain the original behavior.
+			if (this.recoveredProfiles.has('current')) return 0
+			this.recoveredProfiles.add('current')
+			return this.itemCommands.recoverStaleProcessingItems().length
+		}
+		let recovered = 0
+		for (const profileId of profileIds) {
+			if (this.recoveredProfiles.has(profileId)) continue
+			this.recoveredProfiles.add(profileId)
+			const commands = new ItemCommands(this.db.forProfile(profileId).items, this.config)
+			recovered += commands.recoverStaleProcessingItems().length
+		}
+		return recovered
 	}
 
-	private startSolveItem(itemId: string): boolean {
-		if (this.activeSolveItems.has(itemId)) return false
-		const item = this.db.items.get(itemId)
+	private startSolveItem(itemId: string, profileId?: string): boolean {
+		if (this.quiescing || this.activeSolveItems.has(itemId)) return false
+		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'solve') return false
 		if (!isStartableItem(item)) return false
 
 		const controller = new AbortController()
+		const runDb = this.db.forProfile(item.profileId)
 		this.activeSolveItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
 
-		processSolveItem(itemId, this.config, this.db, this.provider, this.solver, controller.signal).finally(() => {
+		processSolveItem(itemId, this.config, runDb, this.provider, this.solver, controller.signal).finally(() => {
 			this.activeSolveItems.delete(itemId)
-			this.maybeScheduleRetry(itemId)
+			this.maybeScheduleRetry(itemId, runDb)
 			this.wake()
 		})
 
@@ -204,12 +256,12 @@ export class Drainer {
 	 * (network/okena/worktree) with a backoff, up to {@link MAX_ATTEMPTS} total
 	 * starts. Real solve failures and cancellations are left alone.
 	 */
-	private maybeScheduleRetry(itemId: string): void {
+	private maybeScheduleRetry(itemId: string, itemDb: DB): void {
 		if (!this.running) return
-		const item = this.db.items.get(itemId)
+		const item = itemDb.items.get(itemId)
 		if (!item || item.status !== 'failed' || !isTransientFailure(item)) return
 
-		const attempts = this.db.items.countEvents(itemId, 'item_started')
+		const attempts = itemDb.items.countEvents(itemId, 'item_started')
 		if (attempts >= MAX_ATTEMPTS) {
 			log.warn('drainer', `Item ${itemId} failed transiently but hit ${MAX_ATTEMPTS} attempts — not retrying`)
 			return
@@ -223,7 +275,7 @@ export class Drainer {
 		const timer = setTimeout(() => {
 			this.retryTimers.delete(timer)
 			try {
-				this.itemCommands.retryItem(itemId)
+				new ItemCommands(itemDb.items, this.config).retryItem(itemId)
 				this.wake()
 			} catch (err) {
 				log.warn('drainer', `Auto-retry of ${itemId} failed: ${err instanceof Error ? err.message : err}`)
@@ -232,18 +284,19 @@ export class Drainer {
 		this.retryTimers.add(timer)
 	}
 
-	private startLoopItem(itemId: string): boolean {
-		if (this.activeLoopItems.has(itemId)) return false
-		const item = this.db.items.get(itemId)
+	private startLoopItem(itemId: string, profileId?: string): boolean {
+		if (this.quiescing || this.activeLoopItems.has(itemId)) return false
+		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item || itemExecutionMode(item) !== 'loop') return false
 		if (!isStartableItem(item)) return false
 
 		const controller = new AbortController()
+		const runDb = this.db.forProfile(item.profileId)
 		this.activeLoopItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
 
-		processLoopItem(itemId, this.config, this.db, this.loopRunner, controller.signal).finally(() => {
+		processLoopItem(itemId, this.config, runDb, this.loopRunner, controller.signal).finally(() => {
 			this.activeLoopItems.delete(itemId)
-			this.maybeScheduleRetry(itemId)
+			this.maybeScheduleRetry(itemId, runDb)
 			this.wake()
 		})
 
@@ -253,7 +306,7 @@ export class Drainer {
 	private nextQueuedSolveItem(): ItemRecord | null {
 		const activeIds = new Set(this.activeSolveItems.keys())
 		return (
-			this.itemCommands
+			this.admissionCommands()
 				.nextQueuedAgentItems()
 				.find(item => itemExecutionMode(item) === 'solve' && !activeIds.has(item.id)) ?? null
 		)
@@ -262,10 +315,23 @@ export class Drainer {
 	private nextQueuedLoopItem(): ItemRecord | null {
 		const activeIds = new Set(this.activeLoopItems.keys())
 		return (
-			this.itemCommands
+			this.admissionCommands()
 				.nextQueuedAgentItems()
 				.find(item => itemExecutionMode(item) === 'loop' && !activeIds.has(item.id)) ?? null
 		)
+	}
+
+	private admissionDb(): DB {
+		return this.activeProfileId ? this.db.forProfile(this.activeProfileId()) : this.db
+	}
+
+	private admissionCommands(): ItemCommands {
+		return new ItemCommands(this.admissionDb().items, this.config)
+	}
+
+	private clearRetryTimers(): void {
+		for (const timer of this.retryTimers) clearTimeout(timer)
+		this.retryTimers.clear()
 	}
 
 	private activeSolveCount(): number {

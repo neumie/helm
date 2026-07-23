@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { profileRuntimeRoot } from '../profiles/runtime.js'
 import { itemExecutionMode } from './execution.js'
 import type { ItemRecord } from './schema.js'
 import type { ItemEvent, ItemStore } from './store.js'
@@ -217,7 +218,7 @@ function readEvents(item: ItemRecord, store: RunObservationOptions['store']): Ru
 }
 
 function readLog(item: ItemRecord, opts: RunObservationOptions): RunObservationLog {
-	const logRoot = opts.logRoot ?? resolve(process.cwd(), 'logs')
+	const logRoot = opts.logRoot ?? resolve(profileRuntimeRoot(item.profileId), 'logs')
 	const logPath = join(logRoot, `${item.id}.log`)
 	const maxBytes = opts.maxLogBytes ?? 20_000
 	try {

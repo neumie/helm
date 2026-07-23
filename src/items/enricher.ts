@@ -23,6 +23,8 @@ export interface EnricherDeps {
 export interface EnricherOptions {
 	/** Injected for tests (stub model + tiny delays); production uses the defaults. */
 	deps?: EnricherDeps
+	/** Production tenant resolver; omitted fixtures keep their fixed ItemStore. */
+	storeForProfile?: (profileId: string) => ItemStore
 	/** Backoff schedule for transient-failure retries; one entry per retry. */
 	retryDelaysMs?: number[]
 }
@@ -50,13 +52,13 @@ const DEFAULT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000]
  * Drainer's transient solve retry.
  */
 export class ItemEnricher {
-	private readonly commands: ItemCommands
-	private readonly queue: string[] = []
+	private readonly queue: Array<{ profileId: string; id: string }> = []
 	private readonly pending = new Set<string>()
 	private readonly attempts = new Map<string, number>()
 	private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>()
 	private readonly deps?: EnricherDeps
 	private readonly retryDelaysMs: number[]
+	private readonly storeForProfile?: (profileId: string) => ItemStore
 	private active = 0
 	private stopped = false
 
@@ -67,8 +69,8 @@ export class ItemEnricher {
 		private readonly concurrency = 3,
 		options: EnricherOptions = {},
 	) {
-		this.commands = new ItemCommands(store, config)
 		this.deps = options.deps
+		this.storeForProfile = options.storeForProfile
 		this.retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS
 	}
 
@@ -105,9 +107,10 @@ export class ItemEnricher {
 		if (this.stopped || !this.enabled) return
 		for (const item of items) {
 			if (!this.needsEnrichment(item)) continue
-			if (this.pending.has(item.id)) continue
-			this.pending.add(item.id)
-			this.queue.push(item.id)
+			const key = this.itemKey(item.profileId, item.id)
+			if (this.pending.has(key)) continue
+			this.pending.add(key)
+			this.queue.push({ profileId: item.profileId, id: item.id })
 		}
 		this.pump()
 	}
@@ -123,14 +126,15 @@ export class ItemEnricher {
 
 	private pump() {
 		while (!this.stopped && this.active < this.concurrency && this.queue.length > 0) {
-			const id = this.queue.shift()
-			if (!id) break
+			const entry = this.queue.shift()
+			if (!entry) break
+			const key = this.itemKey(entry.profileId, entry.id)
 			this.active++
-			void this.enrichOne(id).finally(() => {
+			void this.enrichOne(entry).finally(() => {
 				this.active--
-				this.pending.delete(id)
+				this.pending.delete(key)
 				if (!this.stopped) {
-					this.maybeScheduleRetry(id)
+					this.maybeScheduleRetry(entry)
 					this.pump()
 				}
 			})
@@ -138,39 +142,45 @@ export class ItemEnricher {
 	}
 
 	/** Re-enqueue on a backoff if the Item still wants enrichment and attempts remain. */
-	private maybeScheduleRetry(id: string) {
-		const item = this.store.get(id)
+	private maybeScheduleRetry(entry: { profileId: string; id: string }) {
+		const { id } = entry
+		const key = this.itemKey(entry.profileId, id)
+		const store = this.itemStore(entry.profileId)
+		const item = store.get(id)
 		if (!item || !this.needsEnrichment(item)) {
-			this.attempts.delete(id)
+			this.attempts.delete(key)
 			return
 		}
-		const attempt = this.attempts.get(id) ?? 1
+		const attempt = this.attempts.get(key) ?? 1
 		if (attempt > this.retryDelaysMs.length) {
 			log.warn('enrich', `Giving up enrichment for Item ${id} after ${attempt} attempt(s)`)
-			this.attempts.delete(id)
+			this.attempts.delete(key)
 			return
 		}
 		const delay = this.retryDelaysMs[attempt - 1]
-		this.attempts.set(id, attempt + 1)
+		this.attempts.set(key, attempt + 1)
 		const timer = setTimeout(() => {
 			this.retryTimers.delete(timer)
 			if (this.stopped) return
-			const fresh = this.store.get(id)
+			const fresh = store.get(id)
 			if (fresh && this.needsEnrichment(fresh)) this.enqueue([fresh])
-			else this.attempts.delete(id)
+			else this.attempts.delete(key)
 		}, delay)
 		if (typeof timer.unref === 'function') timer.unref()
 		this.retryTimers.add(timer)
 		log.info('enrich', `Retrying enrichment for Item ${id} in ${Math.round(delay / 1000)}s (attempt ${attempt + 1})`)
 	}
 
-	private async enrichOne(id: string) {
-		let item = this.store.get(id)
+	private async enrichOne(entry: { profileId: string; id: string }) {
+		const { id } = entry
+		const store = this.itemStore(entry.profileId)
+		const commands = new ItemCommands(store, this.config)
+		let item = store.get(id)
 		if (!item) return
 		// Display name first (title-only); it returns the updated row so later
 		// context-based passes start from the freshest Item without a reload.
 		item = await ensureItemDisplayName({
-			commands: this.commands,
+			commands,
 			item,
 			config: this.config,
 			deps: this.deps,
@@ -185,13 +195,13 @@ export class ItemEnricher {
 			const taskContext = buildItemTaskContext(item, await this.fetchContext(item))
 			// Identity is latency-critical: reserve the branch before advisory triage
 			// so a newly hand-added Item can be started with its AI name immediately.
-			const freshItem = this.store.get(id)
+			const freshItem = store.get(id)
 			if (!freshItem) return
 			item = freshItem
 			const projectConfig = this.config.projects.find(project => project.slug === freshItem.projectSlug)
 			if (projectConfig && itemWantsWorkspaceName(freshItem, this.config)) {
 				await ensureItemWorkspaceName({
-					commands: this.commands,
+					commands,
 					item: freshItem,
 					taskContext,
 					config: this.config,
@@ -209,7 +219,7 @@ export class ItemEnricher {
 
 			if (wantsAssessment) {
 				await ensureItemAssessment({
-					commands: this.commands,
+					commands,
 					item,
 					taskContext,
 					config: this.config,
@@ -219,6 +229,14 @@ export class ItemEnricher {
 				})
 			}
 		}
+	}
+
+	private itemKey(profileId: string, id: string): string {
+		return `${profileId}:${id}`
+	}
+
+	private itemStore(profileId: string): ItemStore {
+		return this.storeForProfile?.(profileId) ?? this.store
 	}
 
 	/** Task context for assessment/naming: frozen captured context first (ingested

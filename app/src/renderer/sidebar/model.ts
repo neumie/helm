@@ -19,6 +19,8 @@ export type Route =
 	| { kind: 'task'; id: string }
 	| { kind: 'settings' }
 	| { kind: 'settings-section'; sectionId: string }
+	| { kind: 'profiles' }
+	| { kind: 'profile'; profileId: string }
 	| { kind: 'appearance' }
 
 export function colorForProject(config: AppConfig | null | undefined, slug: string): string | null {

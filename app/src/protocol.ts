@@ -1,21 +1,46 @@
-// helm:// deep links. The only supported form is `helm://item/<id>` — the
-// Chrome extension's "Open" link (extension/src/Widget.tsx) points here since
-// the browser dashboard (web/) was retired; the app is the OS handler
-// (app.setAsDefaultProtocolClient in src/main.ts) and navigates the sidebar to
-// the item. The legacy `vigil://item/<id>` form (pre-rename links) is treated
-// identically. Electron-free module so the parser is testable under plain node.
+// helm:// deep links. Current links are profile-qualified so an Item id is
+// always resolved against the database that owns it:
+//   helm://profile/<profileId>/item/<itemId>
+// Legacy helm://item/<id> and vigil://item/<id> links remain accepted and open
+// in the currently active profile. Electron-free for plain-node tests.
 
-/** Extract the item id from a `helm://item/<id>` (or legacy `vigil://item/<id>`) URL, or null when it isn't one. */
-export function parseHelmItemUrl(raw: string): string | null {
+export interface HelmItemDestination {
+	itemId: string
+	profileId: string | null
+}
+
+function segment(raw: string): string | null {
+	try {
+		const value = decodeURIComponent(raw)
+		return value !== '' && !value.includes('/') ? value : null
+	} catch {
+		return null
+	}
+}
+
+/** Parse a current profile-qualified or legacy Item destination. */
+export function parseHelmDestination(raw: string): HelmItemDestination | null {
 	let url: URL
 	try {
 		url = new URL(raw)
 	} catch {
 		return null
 	}
-	if ((url.protocol !== 'helm:' && url.protocol !== 'vigil:') || url.hostname !== 'item') return null
-	const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
-	// Exactly one path segment; anything deeper is not an item link.
-	if (id === '' || id.includes('/')) return null
-	return id
+	if (url.protocol !== 'helm:' && url.protocol !== 'vigil:') return null
+	const parts = url.pathname.split('/').filter(Boolean)
+	if (url.hostname === 'item' && parts.length === 1) {
+		const itemId = segment(parts[0] ?? '')
+		return itemId ? { itemId, profileId: null } : null
+	}
+	if (url.hostname === 'profile' && parts.length === 3 && parts[1] === 'item') {
+		const profileId = segment(parts[0] ?? '')
+		const itemId = segment(parts[2] ?? '')
+		return profileId && itemId ? { itemId, profileId } : null
+	}
+	return null
+}
+
+/** Legacy compatibility helper retained for callers that only need an Item id. */
+export function parseHelmItemUrl(raw: string): string | null {
+	return parseHelmDestination(raw)?.itemId ?? null
 }

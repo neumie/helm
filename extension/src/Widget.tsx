@@ -112,12 +112,12 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 			setConnError('Cannot connect to Helm')
 		})
 
-	// Deep link into helm (the native cockpit) — the browser dashboard is gone.
-	// the app registers the helm:// scheme (app/src/main.ts) and navigates its
-	// sidebar to the item.
+	// Profile-qualified deep link into helm (the native cockpit). The app can
+	// switch first when this task belongs to another profile, avoiding an Item-id
+	// lookup in the wrong isolated database.
 	const helmUrl = () => {
 		const i = item()
-		return i ? `helm://item/${i.id}` : null
+		return i ? `helm://profile/${encodeURIComponent(i.profileId ?? 'work')}/item/${encodeURIComponent(i.id)}` : null
 	}
 
 	// Poll for the Item backing this source task

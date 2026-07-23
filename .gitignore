@@ -14,6 +14,8 @@ vigil.config.json
 docs/superpowers/
 logs/
 /attachments/
+/profiles/
+/profiles.json
 .almanac/
 docs/plans/*/*.log
 *.tsbuildinfo

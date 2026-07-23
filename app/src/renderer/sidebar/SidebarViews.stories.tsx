@@ -5,6 +5,7 @@ import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
+import { ProfilesPage } from './ProfilesPage'
 import { SettingsPage, type SettingsStore } from './SettingsPage'
 
 const NOW = '2026-07-21T12:00:00.000Z'
@@ -246,9 +247,17 @@ const listItems = [
 const snapshot: HelmSnapshot = {
 	reachable: true,
 	status: {
-		protocolVersion: 30,
+		protocolVersion: 31,
 		buildId: 'storybook',
 		uptime: 3600,
+		profile: {
+			id: 'work',
+			name: 'Work',
+			createdAt: NOW,
+			enabledProjects: ['helm', 'client-care', 'almanac'],
+			archivedAt: null,
+		},
+		profileGeneration: 3,
 		queue: { paused: false, pending: 1, active: 1, maxConcurrency: 3, activeTasks: [] },
 		projects: ['helm', 'client-care', 'almanac'],
 		pollInterval: 30,
@@ -265,6 +274,23 @@ const snapshot: HelmSnapshot = {
 	},
 }
 
+const profileDocument = {
+	version: 1 as const,
+	generation: 3,
+	activeProfileId: 'work',
+	configuredProjects: ['helm', 'clientcare', 'personal'],
+	profiles: [
+		{ id: 'work', name: 'Work', createdAt: NOW, enabledProjects: ['helm', 'clientcare'], archivedAt: null },
+		{
+			id: 'profile-0123456789ab',
+			name: 'Personal',
+			createdAt: NOW,
+			enabledProjects: ['personal'],
+			archivedAt: null,
+		},
+	],
+}
+
 function installBridge(detail: DashboardItem = reviewItem): void {
 	Object.assign(window, {
 		helm: {
@@ -279,6 +305,15 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 			},
 			config: { getDaemonUrl: () => 'http://localhost:7474' },
 			appearance: { listThemes: async () => [] },
+			profiles: {
+				list: async () => ({ data: profileDocument }),
+				onChanged: () => noOp,
+				create: async () => ({ error: 'Preview only' }),
+				update: async () => ({ error: 'Preview only' }),
+				archive: async () => ({ error: 'Preview only' }),
+				restore: async () => ({ error: 'Preview only' }),
+				activate: async () => ({ error: 'Preview only' }),
+			},
 			runContext: { open: async () => ({ data: undefined }) },
 		},
 	})
@@ -390,6 +425,7 @@ export const WorkList: Story = {
 				onOpenItem={noOp}
 				onNewItem={noOp}
 				onOpenArchive={noOp}
+				onOpenProfiles={noOp}
 				onOpenSettings={noOp}
 				onPoll={noOp}
 				onPauseToggle={noOp}
@@ -442,7 +478,22 @@ export const PlanDocuments: Story = {
 export const Settings: Story = {
 	render: () => (
 		<Frame>
-			<SettingsPage store={settingsStore} onBack={noOp} onOpenSection={noOp} onOpenAppearance={noOp} />
+			<SettingsPage
+				store={settingsStore}
+				onBack={noOp}
+				onOpenSection={noOp}
+				onOpenAppearance={noOp}
+				onOpenProfiles={noOp}
+				activeProfileName="Work"
+			/>
+		</Frame>
+	),
+}
+
+export const Profiles: Story = {
+	render: () => (
+		<Frame>
+			<ProfilesPage onBack={noOp} onOpen={noOp} />
 		</Frame>
 	),
 }

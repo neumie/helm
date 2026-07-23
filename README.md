@@ -86,6 +86,22 @@ over the legacy `VIGIL_CONFIG` env var).
 Settings in the Helm app use the same Config Document shape as the API. Secret
 fields are redacted and preserved on save.
 
+### Profiles
+
+Helm supports unlimited named profiles with one globally active profile. Items
+share one tenant-scoped database so a running agent can finish while you switch;
+attachments, run logs, terminal sessions, and terminal buffer snapshots remain
+isolated per profile. Daemon configuration and app appearance are shared.
+Profiles choose which configured projects are polled and which queued work is
+admitted.
+
+Use the Work toolbar's **…** menu or **Helm → Profile** to switch quickly; use
+**Settings → Profiles** to create, rename, configure, archive, and restore
+profiles. The Helm window stays open while its terminals and work list swap in
+place. Active runs continue in their owning profile. Only an unsaved Run Context
+editor blocks switching. Existing per-profile databases are merged idempotently
+into the shared database; existing installation data belongs to **Work**.
+
 ## Running
 
 ```bash

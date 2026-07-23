@@ -1,10 +1,13 @@
+import { join } from 'node:path'
 import { unknownConfigPaths } from './config-document.js'
 import { loadConfig } from './config.js'
-import { DB } from './db/client.js'
+import { DB, migrateProfileDatabasesToShared } from './db/client.js'
 import { DeployWatcher } from './github/deploy-watcher.js'
 import { ItemEnricher } from './items/enricher.js'
 import { PlanStatusWatcher } from './plan/status-watcher.js'
 import { Poller } from './poller/poller.js'
+import { configureProfileRuntime } from './profiles/runtime.js'
+import { ProfileStore } from './profiles/store.js'
 import { createProvider } from './providers/registry.js'
 import { Drainer } from './queue/drainer.js'
 import { createApp } from './server/app.js'
@@ -22,7 +25,22 @@ async function main() {
 		log.warn('helm', `Ignoring unknown config field: ${path} (not in schema — check for typos/removed options)`)
 	}
 
-	const db = new DB()
+	const profiles = new ProfileStore(
+		process.cwd(),
+		config.projects.map(project => project.slug),
+	)
+	const profileRuntime = profiles.activeRuntime()
+	migrateProfileDatabasesToShared(
+		profileRuntime.dbPath,
+		profiles.getState().profiles.map(profile => ({
+			profileId: profile.id,
+			dbPath: join(profiles.profilesDir, profile.id, 'helm.db'),
+		})),
+		profileRuntime.profile.id,
+	)
+	configureProfileRuntime(profileRuntime)
+	const db = new DB(profileRuntime.dbPath, () => profiles.activeProfile().id)
+	log.info('helm', `Active profile: ${profileRuntime.profile.name}`)
 	const provider = createProvider(config.provider)
 	log.info('helm', `Provider: ${provider.name}`)
 
@@ -34,7 +52,15 @@ async function main() {
 	const spawner = await createSpawner(config)
 	log.info('helm', `Spawner configured: ${config.spawner.name}, active: ${spawner.constructor.name}`)
 
-	const queue = new Drainer(config, db, provider, solver)
+	const queue = new Drainer(
+		config,
+		db,
+		provider,
+		solver,
+		undefined,
+		() => profiles.getState().profiles.map(profile => profile.id),
+		() => profiles.activeProfile().id,
+	)
 
 	// The Drainer recovers stale `processing` Items on start(); queued Items are
 	// pulled from the DB by the Drainer's lanes.
@@ -43,13 +69,19 @@ async function main() {
 		log.info('helm', `Found ${queuedSolveItems} queued solve Item(s)`)
 	}
 
-	const enricher = new ItemEnricher(config, db.items, provider)
-	const poller = new Poller(config, db, provider, enricher)
+	const enricher = new ItemEnricher(config, db.items, provider, 3, {
+		storeForProfile: profileId => db.forProfile(profileId).items,
+	})
+	const poller = new Poller(config, db, provider, enricher, () => profiles.activeRuntime())
 	const deployWatcher = new DeployWatcher(config, db)
 	const planStatusWatcher = new PlanStatusWatcher(config, db)
 
 	// Start API server
-	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher)
+	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher, {
+		store: profiles,
+		runtime: () => profiles.activeRuntime(),
+		applyRuntime: configureProfileRuntime,
+	})
 	const { serve } = await import('@hono/node-server')
 	serve({ fetch: app.fetch, port: config.server.port, hostname: config.server.host }, () => {
 		log.success('helm', `API: http://${config.server.host}:${config.server.port}/api (clients: helm + extension)`)

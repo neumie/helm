@@ -19,6 +19,7 @@ import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemSheet } from './NewItemSheet'
+import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
 import type { Route } from './model'
 import type { RunSelectionDraft } from './run-selection'
@@ -330,6 +331,7 @@ export function SidebarRoot() {
 						onOpenItem={openItem}
 						onNewItem={() => setNewItemOpen(true)}
 						onOpenArchive={() => push({ kind: 'archive' })}
+						onOpenProfiles={() => push({ kind: 'profiles' })}
 						onOpenSettings={() => push({ kind: 'settings' })}
 						onPoll={() => void runCommand('Poll requested', () => window.helm.daemon.poll())}
 						onPauseToggle={() =>
@@ -365,10 +367,16 @@ export function SidebarRoot() {
 						onBack={pop}
 						onOpenSection={sectionId => push({ kind: 'settings-section', sectionId })}
 						onOpenAppearance={() => push({ kind: 'appearance' })}
+						onOpenProfiles={() => push({ kind: 'profiles' })}
+						activeProfileName={snapshot?.status?.profile?.name ?? 'Work'}
 					/>
 				)
 			case 'settings-section':
 				return <SettingsSectionPage store={settings} sectionId={route.sectionId} onBack={pop} />
+			case 'profiles':
+				return <ProfilesPage onBack={pop} onOpen={profileId => push({ kind: 'profile', profileId })} />
+			case 'profile':
+				return <ProfileEditorPage profileId={route.profileId} onBack={pop} />
 			case 'appearance':
 				return <AppearancePage onBack={pop} />
 		}

@@ -14,6 +14,7 @@ import { ensureItemDisplayName, ensureItemWorkspaceName } from '../items/naming.
 import type { EnsureItemDisplayNameDeps, EnsureItemNameDeps } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
+import { profileRuntimeRoot } from '../profiles/runtime.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import type { Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
@@ -22,7 +23,7 @@ import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
 
-const LOGS_DIR = resolve(process.cwd(), 'logs')
+const logsDir = (profileId: string) => resolve(profileRuntimeRoot(profileId), 'logs')
 
 const execFileAsync = promisify(execFile)
 
@@ -174,8 +175,9 @@ export async function processSolveItem(
 
 	const item = commands.startItem(itemId)
 
-	mkdirSync(LOGS_DIR, { recursive: true })
-	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
+	const logRoot = logsDir(item.profileId)
+	mkdirSync(logRoot, { recursive: true })
+	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
@@ -257,7 +259,7 @@ export async function processSolveItem(
 			onWorktreeReady: worktreePath => {
 				// Drop ingested-task attachments into the (gitignored) worktree so the
 				// agent can open them as local files. No-op for provider-backed Items.
-				if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath)
+				if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath, item.profileId)
 				commands.recordExecutionWorkspaceIdentity(
 					itemId,
 					mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
@@ -350,8 +352,9 @@ export async function processLoopItem(
 	const mainMode = workspaceMode === 'main'
 
 	commands.startItem(itemId)
-	mkdirSync(LOGS_DIR, { recursive: true })
-	const outputLogPath = resolve(LOGS_DIR, `${itemId}.log`)
+	const logRoot = logsDir(item.profileId)
+	mkdirSync(logRoot, { recursive: true })
+	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
 		// Loop Items keep the deterministic helm/item name: their title is a PRD

@@ -184,6 +184,8 @@ export interface RunObservation {
 
 export interface DashboardItem {
 	id: string
+	/** Added in protocol 31; Work is the compatibility fallback during rollout. */
+	profileId?: string
 	kind: 'solve' | 'loop'
 	executionMode: 'solve' | 'loop'
 	status: ItemStatus
@@ -315,6 +317,35 @@ export interface QueueStatus {
 	}
 }
 
+export interface HelmProfile {
+	id: string
+	name: string
+	createdAt: string
+	enabledProjects: string[]
+	archivedAt: string | null
+}
+
+export interface ProfilesState {
+	version: 1
+	generation: number
+	activeProfileId: string
+	profiles: HelmProfile[]
+}
+
+export interface ProfilesDocument extends ProfilesState {
+	configuredProjects: string[]
+}
+
+export interface ProfileMutationResult {
+	profile: HelmProfile
+	state: ProfilesState
+}
+
+export interface ProfileActivationResult {
+	state: ProfilesState
+	applied: boolean
+}
+
 export interface DaemonStatus {
 	protocolVersion: number
 	buildId: string
@@ -322,6 +353,9 @@ export interface DaemonStatus {
 	queue: QueueStatus
 	projects: string[]
 	pollInterval: number
+	/** Protocol 31; absent only while an older daemon is being restarted. */
+	profile?: HelmProfile
+	profileGeneration?: number
 }
 
 /** One curated model choice for an agent CLI (src/solver/models.ts). */
@@ -477,4 +511,15 @@ export interface DaemonApi {
 	/** Pause when running, resume when paused (reads the latest snapshot). */
 	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
 	poll(): Promise<HelmResult<{ message: string }>>
+}
+
+/** Main-process-owned profile surface: activation coordinates terminal safety and relaunch. */
+export interface ProfilesApi {
+	list(): Promise<HelmResult<ProfilesDocument>>
+	onChanged(listener: () => void): () => void
+	create(name: string, enabledProjects: string[]): Promise<HelmResult<ProfileMutationResult>>
+	update(id: string, body: { name?: string; enabledProjects?: string[] }): Promise<HelmResult<ProfileMutationResult>>
+	archive(id: string): Promise<HelmResult<ProfileMutationResult>>
+	restore(id: string): Promise<HelmResult<ProfileMutationResult>>
+	activate(id: string): Promise<HelmResult<ProfileActivationResult>>
 }

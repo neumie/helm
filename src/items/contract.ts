@@ -52,6 +52,8 @@ export interface DashboardPlan {
 
 export interface DashboardItem {
 	id: string
+	/** Profile-qualified identity for deep links and cross-profile lookup. */
+	profileId: string
 	kind: ItemRecord['kind']
 	executionMode: ItemExecutionMode
 	status: ItemRecord['status']
@@ -276,6 +278,7 @@ export function toDashboardItem(
 ): DashboardItem {
 	return {
 		id: item.id,
+		profileId: item.profileId,
 		kind: item.kind,
 		executionMode: itemExecutionMode(item),
 		status: item.status,

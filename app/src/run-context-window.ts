@@ -13,6 +13,7 @@ interface EditorState {
 interface RunContextWindowCallbacks {
 	onAllClosed?(): void
 	onCloseCancelled?(): void
+	canOpen?(): boolean
 }
 
 function itemId(raw: unknown): string {
@@ -37,21 +38,40 @@ export class RunContextWindows {
 		return [...this.byItem.values()].some(state => state.dirty)
 	}
 
+	/** Close every clean editor before a profile switch; dirty drafts block it. */
+	prepareForProfileSwitch(): boolean {
+		if (this.hasDirtyWindows()) return false
+		for (const state of this.byItem.values()) {
+			state.allowClose = true
+			state.window.close()
+		}
+		return true
+	}
+
 	requestCloseAll(): void {
 		for (const state of this.byItem.values()) state.window.close()
 	}
 
 	registerIpc(): void {
-		ipcMain.handle('run-context:open', (_event, rawId: unknown) => this.open(itemId(rawId)))
+		const assertProfileAccess = () => {
+			if (this.callbacks.canOpen?.() === false) throw new Error('Profile is switching — use Run Context afterward')
+		}
+		ipcMain.handle('run-context:open', (_event, rawId: unknown) => {
+			assertProfileAccess()
+			return this.open(itemId(rawId))
+		})
 		ipcMain.handle('run-context:load', event => {
+			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
 			return this.bridge.loadRunContext(state.itemId)
 		})
 		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft) => {
+			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
 			return this.bridge.saveRunContext(state.itemId, Number(revision), document)
 		})
 		ipcMain.handle('run-context:reset', (event, revision: unknown) => {
+			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
 			return this.bridge.resetRunContext(state.itemId, Number(revision))
 		})

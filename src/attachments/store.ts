@@ -1,19 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
+import { profileRuntimeRoot } from '../profiles/runtime.js'
 
 /**
  * On-disk store for ingested-task attachments (e.g. an email's images/PDFs).
  *
- * Bytes live under `<daemon cwd>/attachments/<itemId>/` — the same daemon-cwd
- * convention as `logs/` and `helm.db` (captured at module load; the daemon
- * never chdirs). They are served read-only over HTTP for the dashboard
+ * Bytes live under the active profile's `attachments/<itemId>/`, beside that
+ * profile's `logs/` and `helm.db`. Tests without profile bootstrap retain the
+ * legacy daemon-cwd fallback. They are served read-only over HTTP for the dashboard
  * (`GET /api/items/:id/attachments/:name`) and copied into the solve worktree
  * under `.helm-attachments/` so the coding agent can open them directly. That
  * subdir matches the `.helm-*` git exclude (`src/worktree/manager.ts`; the old
  * `.vigil-*` pattern stays in the exclude list only for pre-rename worktree
  * artifacts), so attachment files never land on the branch.
  */
-const ATTACHMENTS_ROOT = resolve(process.cwd(), 'attachments')
+const attachmentsRoot = (profileId?: string) => resolve(profileRuntimeRoot(profileId), 'attachments')
 
 /** Worktree subdir attachment files are copied into for the solve agent. Matches the `.helm-*` exclude. */
 export const WORKTREE_ATTACHMENT_SUBDIR = '.helm-attachments'
@@ -57,8 +58,8 @@ export function sanitizeAttachmentName(name: string): string {
 	return safe.length > 0 ? safe : 'file'
 }
 
-export function attachmentsDir(itemId: string): string {
-	return join(ATTACHMENTS_ROOT, sanitizeAttachmentName(itemId))
+export function attachmentsDir(itemId: string, profileId?: string): string {
+	return join(attachmentsRoot(profileId), sanitizeAttachmentName(itemId))
 }
 
 /** MIME type for an attachment, from its extension; `application/octet-stream` when unknown. */
@@ -71,8 +72,8 @@ export function attachmentMimeType(name: string, fallback = 'application/octet-s
  * (sanitized, collision-resolved) filename. Two attachments whose names sanitize
  * to the same string get `-1`, `-2`, … suffixes so neither is clobbered.
  */
-export function saveAttachment(itemId: string, name: string, bytes: Buffer): string {
-	const dir = attachmentsDir(itemId)
+export function saveAttachment(itemId: string, name: string, bytes: Buffer, profileId?: string): string {
+	const dir = attachmentsDir(itemId, profileId)
 	mkdirSync(dir, { recursive: true })
 	let finalName = sanitizeAttachmentName(name)
 	if (existsSync(join(dir, finalName))) {
@@ -87,8 +88,8 @@ export function saveAttachment(itemId: string, name: string, bytes: Buffer): str
 }
 
 /** Read an attachment's bytes, or null if absent. The name is sanitized, so traversal is impossible. */
-export function readAttachment(itemId: string, name: string): Buffer | null {
-	const path = join(attachmentsDir(itemId), sanitizeAttachmentName(name))
+export function readAttachment(itemId: string, name: string, profileId?: string): Buffer | null {
+	const path = join(attachmentsDir(itemId, profileId), sanitizeAttachmentName(name))
 	if (!existsSync(path)) return null
 	return readFileSync(path)
 }
@@ -130,19 +131,19 @@ export function isOpenableAttachment(name: string): boolean {
 }
 
 /** Absolute on-disk path of a saved attachment, or null if it doesn't exist. */
-export function attachmentPath(itemId: string, name: string): string | null {
-	const path = join(attachmentsDir(itemId), sanitizeAttachmentName(name))
+export function attachmentPath(itemId: string, name: string, profileId?: string): string | null {
+	const path = join(attachmentsDir(itemId, profileId), sanitizeAttachmentName(name))
 	return existsSync(path) ? path : null
 }
 
 /** Delete an Item's attachment dir (best-effort) — e.g. to clean up after a failed ingest. */
-export function removeItemAttachments(itemId: string): void {
-	rmSync(attachmentsDir(itemId), { recursive: true, force: true })
+export function removeItemAttachments(itemId: string, profileId?: string): void {
+	rmSync(attachmentsDir(itemId, profileId), { recursive: true, force: true })
 }
 
 /** Copy every saved attachment for an Item into `<worktree>/.helm-attachments/`. No-op when none. */
-export function copyAttachmentsToWorktree(itemId: string, worktreePath: string): void {
-	const dir = attachmentsDir(itemId)
+export function copyAttachmentsToWorktree(itemId: string, worktreePath: string, profileId?: string): void {
+	const dir = attachmentsDir(itemId, profileId)
 	if (!existsSync(dir)) return
 	const dest = join(worktreePath, WORKTREE_ATTACHMENT_SUBDIR)
 	mkdirSync(dest, { recursive: true })

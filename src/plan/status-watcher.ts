@@ -80,7 +80,6 @@ function sameStatus(left: PlanStatus | null, right: PlanStatus): boolean {
 export class PlanStatusWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
-	private readonly commands: ItemCommands
 	private readonly fetchGithubQueues: typeof fetchGithubPlanQueues
 	private readonly intervalMs: number
 	private readonly githubFailures = new Set<string>()
@@ -90,7 +89,6 @@ export class PlanStatusWatcher {
 		private readonly db: DB,
 		deps: PlanStatusWatcherDeps = {},
 	) {
-		this.commands = new ItemCommands(db.items, config)
 		this.fetchGithubQueues = deps.fetchGithubQueues ?? fetchGithubPlanQueues
 		this.intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS
 	}
@@ -157,7 +155,9 @@ export class PlanStatusWatcher {
 				githubAvailable,
 				checkedAt: new Date().toISOString(),
 			}
-			if (!sameStatus(item.planStatus, next)) this.commands.recordPlanStatus(item.id, next)
+			if (!sameStatus(item.planStatus, next)) {
+				new ItemCommands(this.db.forProfile(item.profileId).items, this.config).recordPlanStatus(item.id, next)
+			}
 		} catch (err) {
 			log.warn('plan-status', `Could not inspect plan for Item ${item.id}: ${err instanceof Error ? err.message : err}`)
 		}

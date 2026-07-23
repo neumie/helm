@@ -633,6 +633,8 @@
 	top: calc(100% + 4px);
 	min-width: 180px;
 	max-width: 280px;
+	max-height: min(70vh, 320px);
+	overflow-y: auto;
 	padding: 4px;
 	border: 1px solid var(--hairline);
 	border-radius: 8px;
@@ -1524,6 +1526,24 @@ button.banner {
 
 .settings-field {
 	flex: none;
+}
+
+.profile-project-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 36px;
+	padding: 0 16px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-0);
+	border-bottom: 1px solid var(--hairline);
+}
+.profile-project-row:last-child {
+	border-bottom: 0;
+}
+.profile-actions {
+	display: grid;
+	gap: 8px;
 }
 
 .toggle-row {

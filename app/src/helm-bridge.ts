@@ -28,6 +28,9 @@ import type {
 	HelmResult,
 	HelmSnapshot,
 	ItemStatus,
+	ProfileActivationResult,
+	ProfileMutationResult,
+	ProfilesDocument,
 	RunContextDraft,
 	RunContextLoad,
 	RunContextReset,
@@ -58,8 +61,15 @@ export class HelmBridge {
 	private timer: NodeJS.Timeout | null = null
 	private ticking = false
 	private daemonRestartAttempt: string | null = null
+	/** While switching, never publish the previous profile's rows into the reloaded renderer. */
+	private pendingProfileId: string | null = null
+	private profileSwitchTimer: ReturnType<typeof setTimeout> | null = null
+	private resolveProfileSwitch: (() => void) | null = null
 
-	constructor(daemonUrl: string) {
+	constructor(
+		daemonUrl: string,
+		private readonly acceptsProfileToken: (token: unknown) => boolean = () => true,
+	) {
 		this.baseUrl = daemonUrl.replace(/\/$/, '')
 	}
 
@@ -71,7 +81,9 @@ export class HelmBridge {
 
 	stop(): void {
 		if (this.timer) clearInterval(this.timer)
+		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
 		this.timer = null
+		this.profileSwitchTimer = null
 	}
 
 	getSnapshot(): HelmSnapshot {
@@ -88,7 +100,30 @@ export class HelmBridge {
 				this.request<DaemonStatus>('GET', '/status'),
 				this.request<DashboardItem[]>('GET', '/items'),
 			])
-			const reachable = status.error === undefined
+			const statusProfileId = status.data?.profile?.id
+			const sameProfileSnapshot =
+				statusProfileId !== undefined &&
+				items.error === undefined &&
+				items.data !== undefined &&
+				items.data.every(item => item.profileId === statusProfileId)
+			const reachable = status.error === undefined && sameProfileSnapshot
+			if (status.error === undefined && !sameProfileSnapshot) {
+				// Activation raced the parallel status/items reads; never publish a
+				// mixed-tenant snapshot. The next fast/regular tick is coherent.
+				this.kick()
+			}
+			if (this.pendingProfileId !== null) {
+				if (!reachable || status.data?.profile?.id !== this.pendingProfileId) {
+					this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
+					this.publish()
+					return
+				}
+				this.pendingProfileId = null
+				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				this.profileSwitchTimer = null
+				this.resolveProfileSwitch?.()
+				this.resolveProfileSwitch = null
+			}
 			if (status.data && (await this.restartForProtocolMismatch(status.data))) return
 			// Config is fetched once (first reachable tick), then only on demand
 			// (refreshConfig after a save) — it changes through helm itself.
@@ -107,6 +142,13 @@ export class HelmBridge {
 			this.publish()
 		} finally {
 			this.ticking = false
+			if (this.pendingProfileId !== null && this.profileSwitchTimer === null) {
+				this.profileSwitchTimer = setTimeout(() => {
+					this.profileSwitchTimer = null
+					this.kick()
+				}, 150)
+				this.profileSwitchTimer.unref()
+			}
 		}
 	}
 
@@ -215,36 +257,96 @@ export class HelmBridge {
 		return result
 	}
 
+	/**
+	 * Keep the window alive during a profile switch while preventing old-profile
+	 * rows from flashing into the fresh renderer during the daemon restart.
+	 */
+	beginProfileSwitch(profileId: string): Promise<void> {
+		this.pendingProfileId = profileId
+		this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
+		this.publish()
+		this.kick()
+		return new Promise(resolve => {
+			this.resolveProfileSwitch = resolve
+		})
+	}
+
+	/** Activation failed before the daemon changed tenant; restore ordinary polling. */
+	cancelProfileSwitch(): void {
+		this.pendingProfileId = null
+		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+		this.profileSwitchTimer = null
+		this.resolveProfileSwitch?.()
+		this.resolveProfileSwitch = null
+		this.kick()
+	}
+
+	listProfiles(): Promise<HelmResult<ProfilesDocument>> {
+		return this.request<ProfilesDocument>('GET', '/profiles')
+	}
+
+	activateProfile(profileId: string): Promise<HelmResult<ProfileActivationResult>> {
+		return this.request<ProfileActivationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/activate`)
+	}
+
+	createProfile(name: string, enabledProjects: string[]): Promise<HelmResult<ProfileMutationResult>> {
+		return this.request<ProfileMutationResult>('POST', '/profiles', { name, enabledProjects })
+	}
+
+	updateProfile(
+		profileId: string,
+		body: { name?: string; enabledProjects?: string[] },
+	): Promise<HelmResult<ProfileMutationResult>> {
+		return this.request<ProfileMutationResult>('PUT', `/profiles/${encodeURIComponent(profileId)}`, body)
+	}
+
+	archiveProfile(profileId: string): Promise<HelmResult<ProfileMutationResult>> {
+		return this.request<ProfileMutationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/archive`)
+	}
+
+	restoreProfile(profileId: string): Promise<HelmResult<ProfileMutationResult>> {
+		return this.request<ProfileMutationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/restore`)
+	}
+
 	// --- IPC surface -------------------------------------------------------------
 
 	registerIpc(): void {
 		// Channel args cross the context bridge from renderer code — validate the
-		// path-building ones (id via encodeURIComponent, action/pass/status by
-		// allowlist) so a compromised renderer can't hit arbitrary daemon routes.
+		// path-building ones and reject every stale profile renderer after activation.
 		const id = (raw: unknown): string => encodeURIComponent(String(raw))
+		const stale = (token: unknown): HelmResult<never> | null =>
+			this.acceptsProfileToken(token) ? null : { error: 'Profile changed — retry in the active profile.', status: 409 }
 
 		ipcMain.handle('daemon:subscribe', () => this.snapshot)
 
-		ipcMain.handle('daemon:item', async (_e, rawId: unknown) =>
-			normalizeDashboardItemResult(await this.request<DashboardItem>('GET', `/items/${id(rawId)}`)),
-		)
-
-		ipcMain.handle('daemon:itemAction', async (_e, rawId: unknown, action: DashboardActionId, body?: unknown) => {
-			if (!ITEM_ACTIONS.has(action)) return { error: `Unknown item action: ${String(action)}` }
-			const result = normalizeDashboardItemResult(
-				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/${action}`, body ?? {}),
-			)
-			this.kick()
-			return result
+		ipcMain.handle('daemon:item', async (_e, rawId: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
+			if (this.pendingProfileId !== null) return { error: 'Profile is switching — try again shortly.' }
+			return normalizeDashboardItemResult(await this.request<DashboardItem>('GET', `/items/${id(rawId)}`))
 		})
 
-		ipcMain.handle('daemon:plan', async (_e, rawId: unknown, body?: unknown) => {
+		ipcMain.handle(
+			'daemon:itemAction',
+			async (_e, rawId: unknown, action: DashboardActionId, body: unknown, token: unknown) => {
+				if (stale(token)) return stale(token)
+				if (!ITEM_ACTIONS.has(action)) return { error: `Unknown item action: ${String(action)}` }
+				const result = normalizeDashboardItemResult(
+					await this.request<DashboardItem>('POST', `/items/${id(rawId)}/${action}`, body ?? {}),
+				)
+				this.kick()
+				return result
+			},
+		)
+
+		ipcMain.handle('daemon:plan', async (_e, rawId: unknown, body: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = await this.request('POST', `/items/${id(rawId)}/plan`, body ?? {}, WORKSPACE_REQUEST_TIMEOUT_MS)
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('daemon:openOkena', async (_e, rawId: unknown) => {
+		ipcMain.handle('daemon:openOkena', async (_e, rawId: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = await this.request(
 				'POST',
 				`/items/${id(rawId)}/open-okena`,
@@ -255,7 +357,8 @@ export class HelmBridge {
 			return result
 		})
 
-		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass) => {
+		ipcMain.handle('daemon:aiPass', async (_e, rawId: unknown, pass: AiPass, token: unknown) => {
+			if (stale(token)) return stale(token)
 			if (!AI_PASSES.has(pass)) return { error: `Unknown AI pass: ${String(pass)}` }
 			const result = normalizeDashboardItemResult(
 				await this.request<DashboardItem>(
@@ -269,13 +372,15 @@ export class HelmBridge {
 			return result
 		})
 
-		ipcMain.handle('daemon:createItem', async (_e, body: unknown) => {
+		ipcMain.handle('daemon:createItem', async (_e, body: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = await this.request('POST', '/items', body)
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('daemon:sourceTask', async (_e, rawId: unknown) => {
+		ipcMain.handle('daemon:sourceTask', async (_e, rawId: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = normalizeDashboardItemResult(
 				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/source-task`),
 			)
@@ -283,7 +388,8 @@ export class HelmBridge {
 			return result
 		})
 
-		ipcMain.handle('daemon:setStatus', async (_e, rawId: unknown, status: ItemStatus) => {
+		ipcMain.handle('daemon:setStatus', async (_e, rawId: unknown, status: ItemStatus, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = normalizeDashboardItemResult(
 				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/status`, { status }),
 			)
@@ -291,9 +397,13 @@ export class HelmBridge {
 			return result
 		})
 
-		ipcMain.handle('daemon:config', () => this.request('GET', '/config/full'))
+		ipcMain.handle('daemon:config', (_e, token: unknown) => {
+			if (stale(token)) return stale(token)
+			return this.request('GET', '/config/full')
+		})
 
-		ipcMain.handle('daemon:updateConfig', async (_e, body: unknown) => {
+		ipcMain.handle('daemon:updateConfig', async (_e, body: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = await this.request('PUT', '/config', body)
 			if (result.error === undefined) void this.refreshConfig()
 			return result
@@ -302,16 +412,21 @@ export class HelmBridge {
 		// Deferred config apply: on success the daemon exits ~300ms after
 		// answering and launchd respawns it, so no kick — the poll loop rides
 		// out the blip (last-known snapshot data is kept through an outage).
-		ipcMain.handle('daemon:restart', () => this.request('POST', '/daemon/restart'))
+		ipcMain.handle('daemon:restart', (_e, token: unknown) => {
+			if (stale(token)) return stale(token)
+			return this.request('POST', '/daemon/restart')
+		})
 
-		ipcMain.handle('daemon:pauseToggle', async () => {
+		ipcMain.handle('daemon:pauseToggle', async (_e, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const paused = this.snapshot.status?.queue.paused ?? false
 			const result = await this.request('POST', paused ? '/queue/resume' : '/queue/pause')
 			this.kick()
 			return result
 		})
 
-		ipcMain.handle('daemon:poll', async () => {
+		ipcMain.handle('daemon:poll', async (_e, token: unknown) => {
+			if (stale(token)) return stale(token)
 			const result = await this.request('POST', '/poll/trigger')
 			this.kick()
 			return result

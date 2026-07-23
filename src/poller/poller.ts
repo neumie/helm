@@ -3,21 +3,25 @@ import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
 import type { ItemEnricher } from '../items/enricher.js'
 import type { ItemRecord } from '../items/schema.js'
+import type { ProfileRuntime } from '../profiles/store.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { log } from '../util/logger.js'
 
 export class Poller {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
-	private readonly itemCommands: ItemCommands
+	private readonly runtimeProvider?: () => ProfileRuntime
+	private readonly fixedEnabledProjects?: ReadonlySet<string>
 
 	constructor(
 		private config: HelmConfig,
 		private db: DB,
 		private provider: TaskProvider,
 		private enricher?: ItemEnricher,
+		profileScope?: ReadonlySet<string> | (() => ProfileRuntime),
 	) {
-		this.itemCommands = new ItemCommands(db.items, config)
+		if (typeof profileScope === 'function') this.runtimeProvider = profileScope
+		else this.fixedEnabledProjects = profileScope
 	}
 
 	start() {
@@ -39,10 +43,25 @@ export class Poller {
 		log.info('poller', 'Poller stopped')
 	}
 
+	/** Wake immediately after active-profile metadata changes. */
+	profileChanged(): void {
+		if (!this.running) return
+		if (this.timer) clearTimeout(this.timer)
+		this.timer = null
+		void this.tick()
+	}
+
 	async pollOnce() {
+		// Capture the complete tenant scope before provider awaits. A switch while
+		// polling can never redirect discovered Items or the watermark.
+		const runtime = this.runtimeProvider?.()
+		const scopedDb = runtime ? this.db.forProfile(runtime.profile.id) : this.db
+		const enabledProjects = runtime ? new Set(runtime.profile.enabledProjects) : this.fixedEnabledProjects
+		const commands = new ItemCommands(scopedDb.items, this.config)
 		for (const project of this.config.projects) {
+			if (enabledProjects && !enabledProjects.has(project.slug)) continue
 			try {
-				await this.pollProject(project.slug)
+				await this.pollProject(project.slug, scopedDb, commands)
 			} catch (err) {
 				log.error('poller', `Error polling project ${project.slug}`, err)
 				if (err instanceof Error && err.stack) console.error(err.stack)
@@ -58,8 +77,8 @@ export class Poller {
 		}
 	}
 
-	private async pollProject(projectSlug: string) {
-		const state = this.db.getPollState(projectSlug)
+	private async pollProject(projectSlug: string, db: DB, commands: ItemCommands) {
+		const state = db.getPollState(projectSlug)
 		const since = state?.lastTaskSeen ?? this.config.polling.since ?? new Date().toISOString()
 
 		const tasks = await this.provider.pollNewTasks(projectSlug, since)
@@ -69,10 +88,9 @@ export class Poller {
 		const created: ItemRecord[] = []
 
 		for (const task of tasks) {
-			if (this.db.items.findBySourceExternalId(task.externalId)) continue
-
+			if (db.items.findBySourceExternalId(task.externalId)) continue
 			created.push(
-				this.itemCommands.createSolveItem({
+				commands.createSolveItem({
 					projectSlug,
 					title: task.title,
 					prompt: task.title,
@@ -83,17 +101,12 @@ export class Poller {
 					},
 				}),
 			)
-
-			if (task.createdAt > latestCreatedAt) {
-				latestCreatedAt = task.createdAt
-			}
+			if (task.createdAt > latestCreatedAt) latestCreatedAt = task.createdAt
 		}
 
-		this.db.updatePollState(projectSlug, new Date().toISOString(), latestCreatedAt)
-
+		db.updatePollState(projectSlug, new Date().toISOString(), latestCreatedAt)
 		if (created.length > 0) {
 			log.success('poller', `Discovered ${created.length} new source Item(s) in ${projectSlug}`)
-			// Off the hot path: AI-enrich the new Items (short display name + intent triage).
 			this.enricher?.enqueue(created)
 		}
 	}
