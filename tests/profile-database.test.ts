@@ -25,7 +25,14 @@ function createSolve(db: DB, title: string, externalId?: string, id?: string) {
 
 function migrationArtifacts(sharedPath: string): string[] {
 	const temporaryPath = `${sharedPath}.${process.pid}.profiles-migration`
-	return [sharedPath, temporaryPath, `${temporaryPath}-wal`, `${temporaryPath}-shm`]
+	return [sharedPath, temporaryPath, `${temporaryPath}-wal`, `${temporaryPath}-shm`, `${temporaryPath}.sources`]
+}
+
+function assertNoMigrationScratch(sharedPath: string): void {
+	const temporaryPath = `${sharedPath}.${process.pid}.profiles-migration`
+	for (const path of [temporaryPath, `${temporaryPath}-wal`, `${temporaryPath}-shm`, `${temporaryPath}.sources`]) {
+		assert.equal(existsSync(path), false, `${path} should not exist`)
+	}
 }
 
 function assertNoMigrationTarget(sharedPath: string): void {
@@ -227,13 +234,14 @@ test('legacy databases import atomically with active app state, profile-local wa
 			source.db.close()
 			return { profileId: source.profileId, dbPath: source.dbPath }
 		})
-		const sourceSnapshots = new Map(sources.map(source => [source.dbPath, databaseSnapshot(source.dbPath)]))
 		const expectedManifest = Object.fromEntries(
 			sources.map(source => [source.profileId, sourceManifest(source.dbPath)]),
 		)
+		const sourceSnapshots = new Map(sources.map(source => [source.dbPath, databaseSnapshot(source.dbPath)]))
 
 		const sharedPath = join(root, 'helm.db')
 		migrateProfileDatabasesToShared(sharedPath, sources, 'work')
+		assertNoMigrationScratch(sharedPath)
 		assertSharedIntegrity(sharedPath)
 		assert.deepEqual(sharedManifest(sharedPath, ['work', PROFILE_B]), expectedManifest)
 		for (const source of sources) assert.deepEqual(databaseSnapshot(source.dbPath), sourceSnapshots.get(source.dbPath))
@@ -295,12 +303,15 @@ test('duplicate IDs in the second source leave no target artifacts, preserve sou
 		corrected.items.insertEvent(correctedItem.id, 'corrected_second_event')
 		corrected.close()
 
-		migrateProfileDatabasesToShared(sharedPath, sources, 'work')
 		const expectedManifest = Object.fromEntries(
 			sources.map(source => [source.profileId, sourceManifest(source.dbPath)]),
 		)
+		const retrySnapshots = new Map(sources.map(source => [source.dbPath, databaseSnapshot(source.dbPath)]))
+		migrateProfileDatabasesToShared(sharedPath, sources, 'work')
+		assertNoMigrationScratch(sharedPath)
 		assertSharedIntegrity(sharedPath)
 		assert.deepEqual(sharedManifest(sharedPath, ['work', PROFILE_B]), expectedManifest)
+		for (const source of sources) assert.deepEqual(databaseSnapshot(source.dbPath), retrySnapshots.get(source.dbPath))
 		migrateProfileDatabasesToShared(sharedPath, sources, 'work')
 		assert.deepEqual(sharedManifest(sharedPath, ['work', PROFILE_B]), expectedManifest)
 	} finally {
@@ -348,12 +359,11 @@ test('committed rows in a writer-closed WAL source are imported without changing
 		const sharedPath = join(root, 'helm.db')
 
 		migrateProfileDatabasesToShared(sharedPath, [{ profileId: source.profileId, dbPath: source.dbPath }], 'work')
+		assertNoMigrationScratch(sharedPath)
 		assertSharedIntegrity(sharedPath)
 		assert.deepEqual(sharedManifest(sharedPath, ['work']), { work: { items: 1, events: 1, polls: 0 } })
 		const after = databaseSnapshot(source.dbPath)
-		assert.equal(after.database, before.database)
-		assert.equal(after['-wal'], before['-wal'])
-		assert.notEqual(after['-shm'], null)
+		assert.deepEqual(after, before)
 	} finally {
 		reader?.close()
 		rmSync(root, { recursive: true, force: true })

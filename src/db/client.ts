@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { ItemStore } from '../items/store.js'
@@ -54,6 +54,24 @@ function removeTemporaryDatabase(path: string): void {
 	for (const suffix of ['', '-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true })
 }
 
+function removeTemporarySidecars(path: string): void {
+	for (const suffix of ['-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true })
+}
+
+/**
+ * Copy a closed rollback database and every existing SQLite sidecar before
+ * SQLite opens it. ATTACHing an original WAL database can modify its shared
+ * memory bookkeeping, so migration code must only ever attach this copy.
+ */
+function cloneLegacyDatabase(sourcePath: string, scratchDirectory: string, index: number): string {
+	const clonePath = join(scratchDirectory, `legacy-${index}.db`)
+	for (const suffix of ['', '-wal', '-shm']) {
+		const sourceFile = `${sourcePath}${suffix}`
+		if (existsSync(sourceFile)) copyFileSync(sourceFile, `${clonePath}${suffix}`)
+	}
+	return clonePath
+}
+
 /**
  * Merge the closed per-profile databases used by protocol 31 into one shared
  * root database. Sources stay untouched as rollback backups. The target is
@@ -69,9 +87,12 @@ export function migrateProfileDatabasesToShared(
 	if (sources.length === 0) return
 	mkdirSync(dirname(sharedPath), { recursive: true })
 	const temporaryPath = `${sharedPath}.${process.pid}.profiles-migration`
+	const scratchDirectory = `${temporaryPath}.sources`
 	let target: Database.Database | undefined
 	try {
 		removeTemporaryDatabase(temporaryPath)
+		rmSync(scratchDirectory, { recursive: true, force: true })
+		mkdirSync(scratchDirectory, { recursive: true })
 		target = new Database(temporaryPath)
 		const migrationTarget = target
 		migrationTarget.pragma('journal_mode = WAL')
@@ -79,7 +100,8 @@ export function migrateProfileDatabasesToShared(
 		migrateConnection(migrationTarget)
 		for (const [index, source] of sources.entries()) {
 			const alias = `legacy_${index}`
-			migrationTarget.prepare(`ATTACH DATABASE ? AS ${alias}`).run(source.dbPath)
+			const clonePath = cloneLegacyDatabase(source.dbPath, scratchDirectory, index)
+			migrationTarget.prepare(`ATTACH DATABASE ? AS ${alias}`).run(clonePath)
 			try {
 				const versionRow = migrationTarget.prepare(`SELECT MAX(version) AS v FROM ${alias}.schema_version`).get() as
 					| { v: number }
@@ -134,6 +156,7 @@ export function migrateProfileDatabasesToShared(
 		if (foreignKeys.length > 0) throw new Error('Shared profile database foreign-key validation failed')
 		migrationTarget.pragma('wal_checkpoint(TRUNCATE)')
 		migrationTarget.close()
+		removeTemporarySidecars(temporaryPath)
 		renameSync(temporaryPath, sharedPath)
 	} catch (err) {
 		try {
@@ -142,6 +165,8 @@ export function migrateProfileDatabasesToShared(
 			removeTemporaryDatabase(temporaryPath)
 		}
 		throw err
+	} finally {
+		rmSync(scratchDirectory, { recursive: true, force: true })
 	}
 }
 
