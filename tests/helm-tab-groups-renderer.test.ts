@@ -243,3 +243,33 @@ test('named group action targets are deterministic ordered snapshots and Ungroup
 	assert.deepEqual(ungrouped.actionTargets, [])
 	assert.deepEqual(tabGroupActionTargets(ungrouped), [])
 })
+
+test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {
+	const composition = composeTabGroups({
+		tabs: [
+			{
+				id: 'selected',
+				groupId: 'group-11111111',
+				parked: false,
+				name: 'Deploy',
+				agentRunning: true,
+				agentAttention: true,
+			},
+			{
+				id: 'other',
+				groupId: 'group-11111111',
+				parked: false,
+				name: 'Tests',
+				agentRunning: false,
+				agentAttention: false,
+			},
+		],
+		groups,
+		activeTabId: 'selected',
+	})
+	const proxy = composition.strip[0]?.proxy
+	assert.equal(proxy?.proxyForId, 'selected')
+	assert.equal(proxy?.name, 'Deploy')
+	assert.equal(proxy?.agentRunning, true)
+	assert.equal(proxy?.agentAttention, true)
+})

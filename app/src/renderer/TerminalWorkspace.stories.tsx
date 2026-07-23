@@ -28,6 +28,17 @@ function TerminalTab({ label, active, activity, rename }: TabFixture) {
 	)
 }
 
+function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?: boolean; children?: ReactNode }) {
+	return (
+		<div className={`tab-group-section${collapsed ? ' collapsed' : ''}`}>
+			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
+				{name}
+			</button>
+			<div className="tab-group-members">{children}</div>
+		</div>
+	)
+}
+
 function StackIcon() {
 	return (
 		<svg
@@ -213,6 +224,33 @@ export const Rename: Story = {
 		<TerminalShell>
 			<TerminalTab label="deploy watch" active rename />
 			<TerminalTab label="api" />
+		</TerminalShell>
+	),
+}
+
+export const GroupedTabHeaders: Story = {
+	render: () => (
+		<TerminalShell>
+			<TerminalGroup name="Build">
+				<TerminalTab label="compile" active />
+				<TerminalTab label="tests" activity="progress" />
+			</TerminalGroup>
+			<TerminalGroup name="Ungrouped">
+				<TerminalTab label="scratch" />
+			</TerminalGroup>
+		</TerminalShell>
+	),
+}
+
+export const CollapsedTabGroup: Story = {
+	render: () => (
+		<TerminalShell>
+			<TerminalGroup name="Review" collapsed>
+				<TerminalTab label="needs attention" activity="attention" />
+			</TerminalGroup>
+			<TerminalGroup name="Ungrouped">
+				<TerminalTab label="shell" active />
+			</TerminalGroup>
 		</TerminalShell>
 	),
 }

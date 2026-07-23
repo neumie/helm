@@ -4,7 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
-import type { RestoredSession } from '../shared'
+import type { RestoredSession, TabGroup, TabGroupSurface } from '../shared'
 import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance } from './appearance'
 import { createIconButton } from './icon-button'
@@ -17,6 +17,7 @@ import {
 	stripDropInsertionIndex,
 	tabStripAutoScrollDelta,
 } from './tab-drag'
+import { type TabGroupSection, composeTabGroups } from './tab-groups'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import { terminalShortcut } from './terminal-keybindings'
 import {
@@ -113,6 +114,10 @@ interface Tab {
 	closed: boolean
 	/** In the background list (strip-right stack button + popover) instead of the strip. */
 	parked: boolean
+	/** Persisted opaque membership; fresh tabs are deliberately Ungrouped. */
+	groupId: string | null
+	/** Renderer identity while a fresh pty has not received a session id. */
+	visualId: string
 	/** Exit code when the pty ended while parked — the popover row stays, state "Exited". */
 	exitCode: number | null
 	/** Current APPLIED normalized title (label when unpinned; popover/toast text). */
@@ -173,6 +178,8 @@ interface Tab {
 // pane edge (that exact bug shipped once; don't mount into the holder again).
 
 const tabs: Tab[] = []
+let tabGroups: TabGroup[] = []
+let nextVisualTabId = 1
 // Background terminals (iTerm "bury session" analog): parked tabs leave the
 // strip but keep their Terminal instance mounted in the hidden holder — the
 // pty stays attached and scrollback keeps accumulating. Memory cost equals an
@@ -193,6 +200,84 @@ const findByPty = (id: number): Tab | undefined => tabs.find(t => t.ptyId === id
 /** Displayed tab name: the manual pin wins over the live/restored OSC title. */
 function displayName(tab: Tab): string {
 	return tab.customName ?? tab.title
+}
+
+function tabIdentity(tab: Tab): string {
+	return tab.sessionId ?? tab.visualId
+}
+
+function groupHeader(section: TabGroupSection): HTMLElement {
+	if (section.kind === 'ungrouped') {
+		const label = document.createElement('span')
+		label.className = 'tab-group-header tab-group-ungrouped'
+		label.textContent = section.name
+		return label
+	}
+	const toggle = document.createElement('button')
+	toggle.type = 'button'
+	toggle.className = 'tab-group-header tab-group-toggle'
+	toggle.textContent = section.name
+	toggle.setAttribute('aria-expanded', String(!section.collapsed))
+	toggle.title = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
+	toggle.addEventListener('click', () =>
+		setGroupCollapsed(section.groupId as string, section.surface, !section.collapsed),
+	)
+	return toggle
+}
+
+function tabGroupComposition() {
+	return composeTabGroups({
+		tabs: [...tabs, ...parked].map(tab => ({
+			id: tabIdentity(tab),
+			groupId: tab.groupId,
+			parked: tab.parked,
+			name: displayName(tab),
+			agentRunning: tab.agentRunning,
+			agentAttention: tab.agentAttention,
+		})),
+		groups: tabGroups,
+		activeTabId: activeTab ? tabIdentity(activeTab) : null,
+	})
+}
+
+function renderTabGroups(): void {
+	const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
+	tabsEl.textContent = ''
+	for (const section of tabGroupComposition().strip) {
+		const sectionEl = document.createElement('div')
+		sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
+		sectionEl.append(groupHeader(section))
+		const membersEl = document.createElement('div')
+		membersEl.className = 'tab-group-members'
+		for (const member of section.visibleMembers) {
+			const tab = byId.get(member.id)
+			if (tab) membersEl.append(tab.tabButton)
+		}
+		sectionEl.append(membersEl)
+		tabsEl.append(sectionEl)
+	}
+}
+
+function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): void {
+	tabGroups = tabGroups.map(group =>
+		group.id === groupId
+			? { ...group, ...(surface === 'strip' ? { collapsedStrip: collapsed } : { collapsedBackground: collapsed }) }
+			: group,
+	)
+	renderTabGroups()
+	updateBackgroundUi()
+	void helm.sessions.groups.setCollapsed(groupId, surface, collapsed).catch(() => loadTabGroups())
+}
+
+function loadTabGroups(): void {
+	void helm.sessions.groups
+		.list()
+		.then(groups => {
+			tabGroups = groups
+			renderTabGroups()
+			updateBackgroundUi()
+		})
+		.catch(() => {})
 }
 
 /**
@@ -219,6 +304,7 @@ function renderTabAgentState(tab: Tab): void {
 		setActivityIndicatorState(tab.runningEl, 'progress', 'Running')
 	}
 	renderTabLabel(tab)
+	renderTabGroups()
 	if (tab.parked) updateBackgroundUi()
 }
 
@@ -608,6 +694,7 @@ function activate(tab: Tab): void {
 		t.tabButton.classList.toggle('active', t === tab)
 		t.tabButton.setAttribute('aria-selected', String(t === tab))
 	}
+	renderTabGroups()
 	syncEmptyState()
 	updateBackgroundUi()
 	// Fit after the holder becomes visible; hidden containers measure as 0x0.
@@ -643,7 +730,7 @@ function closeTab(tab: Tab): void {
 	if (tab.ptyId !== null) saveSnapshot(tab)
 	tab.outputGuard.abort()
 	tab.progressTracker.clear()
-	const { title, customName } = tab
+	const { title, customName, groupId } = tab
 	const shown = customName ?? title
 	// Soft close (okena-style): main only DETACHES the pty client and arms a
 	// grace timer — the dtach session dies when it fires. The toast's Undo
@@ -661,7 +748,7 @@ function closeTab(tab: Tab): void {
 						toast.dismiss()
 						void helm.sessions.undoClose(grace.sessionId).then(alive => {
 							// Undo keeps the rename pin — it reattaches the same session.
-							if (alive) void createTerminal({ sessionId: grace.sessionId, title, customName })
+							if (alive) void createTerminal({ sessionId: grace.sessionId, title, customName, groupId })
 						})
 					},
 				},
@@ -673,6 +760,7 @@ function closeTab(tab: Tab): void {
 	tab.tabButton.remove()
 	const index = tabs.indexOf(tab)
 	tabs.splice(index, 1)
+	renderTabGroups()
 	persistTerminalOrder()
 	if (activeTab === tab) {
 		activeTab = null
@@ -697,6 +785,7 @@ function parkTab(tab: Tab): void {
 	parked.push(tab)
 	tab.tabButton.remove()
 	tab.holder.classList.remove('active')
+	renderTabGroups()
 	if (tab.sessionId) helm.sessions.setParked(tab.sessionId, true)
 	persistTerminalOrder()
 	// Park is a persistence point: a parked session relaunches as parked and
@@ -726,7 +815,7 @@ function restoreParked(tab: Tab): void {
 	parked.splice(index, 1)
 	tab.parked = false
 	tabs.push(tab)
-	tabsEl.appendChild(tab.tabButton)
+	renderTabGroups()
 	if (tab.sessionId) helm.sessions.setParked(tab.sessionId, false)
 	persistTerminalOrder()
 	closeBackgroundPopover()
@@ -749,8 +838,9 @@ function killParkedTab(tab: Tab): void {
 	tab.outputGuard.abort()
 	tab.progressTracker.clear()
 	parked.splice(index, 1)
+	renderTabGroups()
 	persistTerminalOrder()
-	const { title, customName } = tab
+	const { title, customName, groupId } = tab
 	const shown = customName ?? title
 	if (tab.ptyId !== null) {
 		void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
@@ -764,7 +854,7 @@ function killParkedTab(tab: Tab): void {
 					onClick: () => {
 						toast.dismiss()
 						void helm.sessions.undoClose(grace.sessionId).then(alive => {
-							if (alive) void createTerminal({ sessionId: grace.sessionId, title, customName, parked: true })
+							if (alive) void createTerminal({ sessionId: grace.sessionId, title, customName, groupId, parked: true })
 						})
 					},
 				},
@@ -809,61 +899,74 @@ function renderBackgroundRows(): void {
 	const focusedRow = document.activeElement?.closest('.bg-row')
 	const focused = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].indexOf(focusedRow as HTMLElement)
 	bgRows.textContent = ''
-	for (const tab of parked) {
-		const exitedState = tab.exitCode === null ? null : `Exited (${tab.exitCode})`
-		const agentState = tab.agentAttention ? 'Run finished, needs attention' : tab.agentRunning ? 'Agent running' : null
-		const accessibleState = [exitedState, agentState].filter(Boolean).join(', ')
-		const row = document.createElement('div')
-		row.className = `bg-row${activeTab === tab ? ' active' : ''}`
+	const byId = new Map(parked.map(tab => [tabIdentity(tab), tab]))
+	for (const section of tabGroupComposition().background) {
+		const sectionEl = document.createElement('section')
+		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
+		sectionEl.append(groupHeader(section))
+		for (const member of section.visibleMembers) {
+			const tab = byId.get(member.id)
+			if (!tab) continue
+			const exitedState = tab.exitCode === null ? null : `Exited (${tab.exitCode})`
+			const agentState = tab.agentAttention
+				? 'Run finished, needs attention'
+				: tab.agentRunning
+					? 'Agent running'
+					: null
+			const accessibleState = [exitedState, agentState].filter(Boolean).join(', ')
+			const row = document.createElement('div')
+			row.className = `bg-row${activeTab === tab ? ' active' : ''}`
 
-		const open = document.createElement('button')
-		open.className = 'bg-open'
-		open.title = 'Open and keep in background'
-		open.setAttribute(
-			'aria-label',
-			`Open ${displayName(tab)} and keep in background${accessibleState ? ` — ${accessibleState}` : ''}`,
-		)
-		open.addEventListener('click', () => openParked(tab))
-
-		if (tab.agentRunning || tab.agentAttention) {
-			const indicator = createActivityIndicator(
-				tab.agentAttention ? 'Run finished — open terminal to clear' : 'Agent running',
-				tab.agentAttention ? 'attention' : 'progress',
+			const open = document.createElement('button')
+			open.className = 'bg-open'
+			open.title = 'Open and keep in background'
+			open.setAttribute(
+				'aria-label',
+				`Open ${displayName(tab)} and keep in background${accessibleState ? ` — ${accessibleState}` : ''}`,
 			)
-			indicator.classList.add('bg-activity')
-			open.append(indicator)
+			open.addEventListener('click', () => openParked(tab))
+
+			if (tab.agentRunning || tab.agentAttention) {
+				const indicator = createActivityIndicator(
+					tab.agentAttention ? 'Run finished — open terminal to clear' : 'Agent running',
+					tab.agentAttention ? 'attention' : 'progress',
+				)
+				indicator.classList.add('bg-activity')
+				open.append(indicator)
+			}
+
+			const copy = document.createElement('span')
+			copy.className = 'bg-open-copy'
+			const title = document.createElement('span')
+			title.className = `bg-title${exitedState ? ' exited' : ''}`
+			title.textContent = displayName(tab) // rename pin shows here too
+			copy.append(title)
+			if (exitedState) {
+				const state = document.createElement('span')
+				state.className = 'bg-state'
+				state.textContent = exitedState
+				copy.append(state)
+			}
+			open.append(copy)
+
+			const restore = createIconButton({
+				label: `Move ${displayName(tab)} to tabs and open`,
+				glyph: '⇥',
+				glyphClassName: 'bg-action-glyph',
+				onClick: () => restoreParked(tab),
+			})
+
+			const kill = createIconButton({
+				label: `Close ${displayName(tab)}`,
+				glyph: '×',
+				glyphClassName: 'bg-kill-glyph',
+				onClick: () => killParkedTab(tab),
+			})
+
+			row.append(open, restore, kill)
+			sectionEl.appendChild(row)
 		}
-
-		const copy = document.createElement('span')
-		copy.className = 'bg-open-copy'
-		const title = document.createElement('span')
-		title.className = `bg-title${exitedState ? ' exited' : ''}`
-		title.textContent = displayName(tab) // rename pin shows here too
-		copy.append(title)
-		if (exitedState) {
-			const state = document.createElement('span')
-			state.className = 'bg-state'
-			state.textContent = exitedState
-			copy.append(state)
-		}
-		open.append(copy)
-
-		const restore = createIconButton({
-			label: `Move ${displayName(tab)} to tabs and open`,
-			glyph: '⇥',
-			glyphClassName: 'bg-action-glyph',
-			onClick: () => restoreParked(tab),
-		})
-
-		const kill = createIconButton({
-			label: `Close ${displayName(tab)}`,
-			glyph: '×',
-			glyphClassName: 'bg-kill-glyph',
-			onClick: () => killParkedTab(tab),
-		})
-
-		row.append(open, restore, kill)
-		bgRows.appendChild(row)
+		bgRows.appendChild(sectionEl)
 	}
 	if (focused >= 0) {
 		const rows = bgRows.querySelectorAll<HTMLElement>('.bg-row')
@@ -959,7 +1062,7 @@ function setTabOrder(next: readonly Tab[], animate: boolean): boolean {
 	if (next.every((candidate, index) => candidate === tabs[index])) return false
 	const previousLeft = new Map(tabs.map(candidate => [candidate, candidate.tabButton.getBoundingClientRect().left]))
 	tabs.splice(0, tabs.length, ...next)
-	for (const candidate of tabs) tabsEl.appendChild(candidate.tabButton)
+	renderTabGroups()
 	if (animate && !reducedMotion()) {
 		for (const candidate of tabs) {
 			const delta = (previousLeft.get(candidate) ?? 0) - candidate.tabButton.getBoundingClientRect().left
@@ -1292,6 +1395,8 @@ interface TerminalOpts {
 	customName?: string | null
 	/** Create straight into the background list (startup parked restore, kill-undo). */
 	parked?: boolean
+	/** Restored opaque membership; new terminals begin Ungrouped. */
+	groupId?: string | null
 }
 
 async function createTerminal(opts?: TerminalOpts): Promise<void> {
@@ -1367,6 +1472,8 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		sessionId: null,
 		closed: false,
 		parked: startParked,
+		groupId: opts?.groupId ?? null,
+		visualId: `tab-${nextVisualTabId++}`,
 		exitCode: null,
 		title: '',
 		titleRaw: '',
@@ -1485,7 +1592,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		updateBackgroundUi()
 	} else {
 		tabs.push(tab)
-		tabsEl.appendChild(tabButton)
+		renderTabGroups()
 		activate(tab)
 		fitTab(tab)
 	}
@@ -1739,6 +1846,7 @@ async function runUiPreview(): Promise<void> {
 // tabs never respawns.
 void (async () => {
 	let restored: RestoredSession[] = []
+	loadTabGroups()
 	try {
 		restored = await helm.sessions.list()
 	} catch {
@@ -1765,6 +1873,7 @@ void (async () => {
 			sessionId: session.sessionId,
 			title: session.title,
 			customName: session.customName,
+			groupId: session.groupId,
 			parked: true,
 		}).catch(() => {})
 	}

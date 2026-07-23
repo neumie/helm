@@ -187,6 +187,56 @@ button:focus-visible,
 	display: none;
 }
 
+/* Group headers project persisted membership without changing tab operations.
+ * They stay compact in the strip; background sections expand vertically below. */
+.tab-group-section,
+.tab-group-members {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+}
+
+.tab-group-section + .tab-group-section {
+	padding-left: 4px;
+	border-left: 1px solid var(--hairline);
+}
+
+.tab-group-header {
+	flex: none;
+	padding: 0 4px;
+	color: var(--text-2);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 600;
+	line-height: 28px;
+	white-space: nowrap;
+	user-select: none;
+}
+
+.tab-group-toggle {
+	border: 0;
+	border-radius: var(--radius-md);
+	background: none;
+	font-family: inherit;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+
+.tab-group-toggle::after {
+	content: "⌄";
+	margin-left: 3px;
+	font-size: 12px;
+}
+
+.tab-group-toggle[aria-expanded="false"]::after {
+	content: "›";
+}
+
+.tab-group-toggle:hover {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
 .tab {
 	position: relative;
 	display: flex;
@@ -552,10 +602,21 @@ body.tab-dragging .tab {
 #bg-rows {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	gap: 8px;
 	min-height: 0;
 	overflow-x: hidden;
 	overflow-y: auto;
+}
+
+.bg-group-section {
+	display: flex;
+	flex-direction: column;
+}
+
+.bg-group-section > .tab-group-header {
+	align-self: flex-start;
+	margin: 0 8px;
+	line-height: 28px;
 }
 
 /* Editorial rows keep Open as the large target; ⇥ restores to the strip and ×
