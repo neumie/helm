@@ -42,6 +42,15 @@ const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 // without focusing it, waits for the sidebar + shell prompt to paint,
 // writes a full-window PNG, and exits 0.
 const screenshotPath = process.argv.find(a => a.startsWith('--screenshot='))?.slice('--screenshot='.length) || null
+// Explicit release-canary mode. It is deliberately main-process-only and is
+// never exposed through preload or the ordinary renderer bridge.
+const profileSwitchAttestationPath =
+	process.argv.find(a => a.startsWith('--profile-switch-attestation='))?.slice('--profile-switch-attestation='.length) || null
+const profileSwitchAttestationMarker =
+	process.argv
+		.find(a => a.startsWith('--profile-switch-attestation-marker='))
+		?.slice('--profile-switch-attestation-marker='.length) || null
+const profileSwitchAttestationMode = profileSwitchAttestationPath !== null
 
 // `--ui-preview=<list|project-list|queue-list|planned-list|detail|queue-detail|planned-detail|archive-detail|task|settings|appearance>` forwards to the renderer
 // (via preload additionalArguments) so screenshot runs can capture a specific
@@ -107,7 +116,7 @@ sessions.configureSessionProfile(sessionProfileId)
 // On macOS an UNPACKAGED run (electron .) can't always claim the scheme —
 // LaunchServices wants CFBundleURLTypes in the bundle's Info.plist — so a
 // failed registration is logged, not fatal; a packaged Helm carries the scheme.
-if (!screenshotPath) {
+if (!screenshotPath && !profileSwitchAttestationMode) {
 	for (const scheme of ['helm', 'vigil']) {
 		if (!app.setAsDefaultProtocolClient(scheme)) {
 			console.warn(`[helm] could not register as ${scheme}:// handler (unpackaged dev run?)`)
@@ -610,6 +619,237 @@ function activateProfile(profileId: string, openItemId?: string): Promise<HelmRe
 	return request
 }
 
+interface ProfileSwitchAttestationEvidence {
+	schemaVersion: 1
+	result: 'passed' | 'failed'
+	platform: string
+	startedAt: string
+	finishedAt: string
+	marker: string
+	paths: {
+		userDataDir: string
+		socketRoot: string
+		workSocket: string | null
+		targetSocketDir: string | null
+	}
+	daemon: {
+		baseUrl: string
+		activationCalls: string[]
+		readyProfiles: string[]
+		mixedSnapshotObserved: boolean
+	}
+	window: {
+		before: { browserWindowId: number; webContentsId: number } | null
+		after: { browserWindowId: number; webContentsId: number } | null
+		sameBrowserWindow: boolean
+		sameWebContents: boolean
+		reloadCount: number
+	}
+	workSession: {
+		sessionId: string | null
+		socketPath: string | null
+		socketProbeBefore: sessions.SocketProbe | null
+		socketProbeAfter: sessions.SocketProbe | null
+		socketExistsAfter: boolean
+		masterHolderPidsBefore: number[]
+		masterHolderPidsAfter: number[]
+		preservedMasterPids: number[]
+		oldAttachClientPid: number | null
+		oldAttachClientDetached: boolean
+		newAttachClientPid: number | null
+		newAttachClientAlive: boolean
+		attachClientReplaced: boolean
+	}
+	buffer: {
+		snapshotContainsMarkerAfterFlush: boolean
+		snapshotContainsMarkerAfterReturn: boolean
+		rendererMarkerVisibleAfterReturn: boolean
+		restoreObservation: 'dom'
+	}
+	assertions: Record<string, boolean>
+	error?: string
+}
+
+const ATTESTATION_TIMEOUT_MS = 25_000
+
+function attestationError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error)
+}
+
+function attestationPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+async function waitForAttestation<T>(label: string, read: () => T | null | Promise<T | null>): Promise<T> {
+	const deadline = Date.now() + ATTESTATION_TIMEOUT_MS
+	while (Date.now() < deadline) {
+		const value = await read()
+		if (value !== null) return value
+		await new Promise(resolve => setTimeout(resolve, 100))
+	}
+	throw new Error(`Timed out waiting for ${label}`)
+}
+
+function writeAttestationEvidence(file: string, evidence: ProfileSwitchAttestationEvidence): void {
+	const resolved = path.resolve(file)
+	fs.mkdirSync(path.dirname(resolved), { recursive: true })
+	const temporary = `${resolved}.tmp-${process.pid}`
+	fs.writeFileSync(temporary, JSON.stringify(evidence, null, 2))
+	fs.renameSync(temporary, resolved)
+}
+
+/**
+ * Flag-gated macOS release canary. It does not add an automation API: its only
+ * controls are the normal startup terminal command and production coordinator.
+ */
+async function runProfileSwitchAttestation(): Promise<void> {
+	const marker = profileSwitchAttestationMarker
+	if (!profileSwitchAttestationPath || !marker) throw new Error('Profile-switch attestation requires an evidence path and marker.')
+	const evidence: ProfileSwitchAttestationEvidence = {
+		schemaVersion: 1,
+		result: 'failed',
+		platform: process.platform,
+		startedAt: new Date().toISOString(),
+		finishedAt: '',
+		marker,
+		paths: {
+			userDataDir: app.getPath('userData'),
+			socketRoot: process.env.HELM_SOCKET_DIR ?? '',
+			workSocket: null,
+			targetSocketDir: null,
+		},
+		daemon: { baseUrl: daemonUrl, activationCalls: [], readyProfiles: [], mixedSnapshotObserved: false },
+		window: {
+			before: null,
+			after: null,
+			sameBrowserWindow: false,
+			sameWebContents: false,
+			reloadCount: 0,
+		},
+		workSession: {
+			sessionId: null,
+			socketPath: null,
+			socketProbeBefore: null,
+			socketProbeAfter: null,
+			socketExistsAfter: false,
+			masterHolderPidsBefore: [],
+			masterHolderPidsAfter: [],
+			preservedMasterPids: [],
+			oldAttachClientPid: null,
+			oldAttachClientDetached: false,
+			newAttachClientPid: null,
+			newAttachClientAlive: false,
+			attachClientReplaced: false,
+		},
+		buffer: {
+			snapshotContainsMarkerAfterFlush: false,
+			snapshotContainsMarkerAfterReturn: false,
+			rendererMarkerVisibleAfterReturn: false,
+			restoreObservation: 'dom',
+		},
+		assertions: {},
+	}
+	try {
+		if (process.platform !== 'darwin') throw new Error('Profile-switch attestation requires macOS.')
+		const win = await waitForAttestation('initial BrowserWindow', () => (mainWindow?.isDestroyed() ? null : mainWindow))
+		evidence.window.before = { browserWindowId: win.id, webContentsId: win.webContents.id }
+		win.webContents.on('did-finish-load', () => {
+			evidence.window.reloadCount += 1
+		})
+		const initial = await waitForAttestation('Work dtach client', () => {
+			for (const entry of ptys.values()) if (entry.sessionId !== null) return entry
+			return null
+		})
+		const sessionId = initial.sessionId
+		if (!sessionId) throw new Error('Initial terminal was not session-backed.')
+		// The listener may have observed the initial renderer load while terminal
+		// startup completed; only the two coordinator reloads count as switches.
+		evidence.window.reloadCount = 0
+		const support = getSessionSupport()
+		if (!support) throw new Error('dtach session support is unavailable.')
+		const workSocket = sessions.socketPath(sessionId)
+		evidence.paths.workSocket = workSocket
+		evidence.workSession.sessionId = sessionId
+		evidence.workSession.socketPath = workSocket
+		await waitForAttestation('marker snapshot after normal renderer flush', async () => {
+			await flushRendererBuffers(win, BUFFER_FLUSH_TIMEOUT_MS)
+			return support.buffers.read(sessionId)?.includes(marker) ? true : null
+		})
+		evidence.buffer.snapshotContainsMarkerAfterFlush = true
+		evidence.workSession.socketProbeBefore = await sessions.probeSocket(workSocket)
+		evidence.workSession.masterHolderPidsBefore = await sessions.pidsHoldingSocket(workSocket)
+		evidence.workSession.oldAttachClientPid = initial.proc.pid
+		if (!attestationPidAlive(initial.proc.pid)) throw new Error('Initial dtach attach client is not alive.')
+
+		const targetId = 'profile-aaaaaaaaaaaa'
+		const target = await activateProfile(targetId)
+		if (target.error !== undefined) throw new Error(`A → B activation failed: ${target.error}`)
+		evidence.daemon.readyProfiles.push(authoritativeProfilesState.activeProfileId)
+		evidence.paths.targetSocketDir = sessions.socketDir()
+		await waitForAttestation('old Work attach client to detach', () =>
+			initial.proc.pid !== undefined && !attestationPidAlive(initial.proc.pid) ? true : null,
+		)
+		evidence.workSession.oldAttachClientDetached = true
+		if ((await sessions.probeSocket(workSocket)) !== 'live') throw new Error('Work dtach socket did not survive A → B.')
+
+		const returned = await activateProfile('work')
+		if (returned.error !== undefined) throw new Error(`B → A activation failed: ${returned.error}`)
+		evidence.daemon.readyProfiles.push(authoritativeProfilesState.activeProfileId)
+		const returnedEntry = await waitForAttestation('reattached Work dtach client', () => {
+			for (const entry of ptys.values()) if (entry.sessionId === sessionId) return entry
+			return null
+		})
+		await waitForAttestation('reattached Work client to become live', () =>
+			attestationPidAlive(returnedEntry.proc.pid) ? true : null,
+		)
+		evidence.window.after = { browserWindowId: win.id, webContentsId: win.webContents.id }
+		evidence.workSession.newAttachClientPid = returnedEntry.proc.pid
+		evidence.workSession.newAttachClientAlive = true
+		evidence.workSession.attachClientReplaced = returnedEntry.proc.pid !== initial.proc.pid
+		evidence.workSession.socketProbeAfter = await sessions.probeSocket(workSocket)
+		evidence.workSession.socketExistsAfter = fs.existsSync(workSocket)
+		evidence.workSession.masterHolderPidsAfter = await sessions.pidsHoldingSocket(workSocket)
+		evidence.workSession.preservedMasterPids = evidence.workSession.masterHolderPidsBefore.filter(
+			pid => pid !== initial.proc.pid && attestationPidAlive(pid),
+		)
+		evidence.buffer.snapshotContainsMarkerAfterReturn = getSessionSupport()?.buffers.read(sessionId)?.includes(marker) === true
+		evidence.buffer.rendererMarkerVisibleAfterReturn = await waitForAttestation('marker in reloaded terminal DOM', async () => {
+			const found = await win.webContents.executeJavaScript(
+				`(() => { const marker = ${JSON.stringify(marker)}; const nodes = document.querySelectorAll('.xterm-screen, .xterm-accessibility, .xterm-accessibility-tree, .xterm-rows, [aria-label]'); return [...nodes].some(node => (node.textContent || node.getAttribute('aria-label') || '').includes(marker)) || document.body.innerText.includes(marker) })()`,
+				true,
+			)
+			return found ? true : null
+		})
+		evidence.window.sameBrowserWindow = evidence.window.before.browserWindowId === evidence.window.after.browserWindowId
+		evidence.window.sameWebContents = evidence.window.before.webContentsId === evidence.window.after.webContentsId
+		evidence.assertions = {
+			sameBrowserWindow: evidence.window.sameBrowserWindow,
+			sameWebContents: evidence.window.sameWebContents,
+			workSocketLive: evidence.workSession.socketProbeBefore === 'live' && evidence.workSession.socketProbeAfter === 'live',
+			workMasterSurvived: evidence.workSession.preservedMasterPids.length > 0,
+			oldAttachDetached: evidence.workSession.oldAttachClientDetached,
+			newAttachReattached: evidence.workSession.newAttachClientAlive && evidence.workSession.attachClientReplaced,
+			bufferPersisted: evidence.buffer.snapshotContainsMarkerAfterFlush && evidence.buffer.snapshotContainsMarkerAfterReturn,
+			bufferRestoredInRenderer: evidence.buffer.rendererMarkerVisibleAfterReturn,
+			activationOrder: evidence.daemon.readyProfiles.join(',') === `${targetId},work`,
+			namespaceIsolation: evidence.paths.targetSocketDir !== null && evidence.paths.targetSocketDir !== path.dirname(workSocket),
+		}
+		if (!Object.values(evidence.assertions).every(Boolean)) throw new Error('One or more profile-switch assertions failed.')
+		evidence.result = 'passed'
+	} catch (error) {
+		evidence.error = attestationError(error)
+	} finally {
+		evidence.finishedAt = new Date().toISOString()
+		writeAttestationEvidence(profileSwitchAttestationPath, evidence)
+	}
+	if (evidence.result !== 'passed') throw new Error(evidence.error ?? 'Profile-switch attestation failed.')
+}
+
 function profileMenu(): Electron.MenuItemConstructorOptions {
 	const state = appProfiles.getState()
 	return {
@@ -1087,6 +1327,15 @@ void app.whenReady().then(async () => {
 	buildMenu()
 	helmBridge.start()
 	createWindow()
+	if (profileSwitchAttestationMode) {
+		void runProfileSwitchAttestation()
+			.then(() => app.quit())
+			.catch(error => {
+				console.error('[helm] profile-switch attestation failed:', error)
+				process.exitCode = 1
+				app.quit()
+			})
+	}
 	if (pendingProfileDestination) {
 		const destination = pendingProfileDestination
 		pendingProfileDestination = null
