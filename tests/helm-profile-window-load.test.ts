@@ -96,7 +96,9 @@ test('profile renderer reload rejects if its window closes', async () => {
 test('profile renderer reload rejects on its bounded timeout', async () => {
 	const f = fixture()
 	assert.equal(f.timers.length, 1)
-	f.timers[0]!()
+	const fireTimeout = f.timers[0]
+	assert.ok(fireTimeout)
+	fireTimeout()
 	await assert.rejects(f.promise, /Timed out waiting for profile renderer reload/)
 	assert.equal(f.loaded(), 0)
 	assert.deepEqual(f.cleared, [1])

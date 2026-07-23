@@ -17,7 +17,10 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 	const root = mkdtempSync(join(tmpdir(), 'helm-profile-composition-'))
 	const evidencePath = join(root, 'evidence.json')
 	try {
-		const result = await run(process.execPath, ['app/scripts/profile-switch-attestation.mjs', `--output=${evidencePath}`])
+		const result = await run(process.execPath, [
+			'app/scripts/profile-switch-attestation.mjs',
+			`--output=${evidencePath}`,
+		])
 		const evidence = JSON.parse(readFileSync(evidencePath, 'utf8')) as {
 			result: 'passed' | 'failed' | 'skipped'
 			skipReason?: string
@@ -32,8 +35,17 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 				newAttachClientAlive: boolean
 				preservedMasterPids: number[]
 			}
-			buffer?: { snapshotContainsMarkerAfterFlush: boolean; snapshotContainsMarkerAfterReturn: boolean; rendererMarkerVisibleAfterReturn: boolean }
-			cleanup?: { electronExited: boolean; fakeDaemonClosed: boolean; harnessSocketHoldersTerminated: boolean; tempRootRemoved: boolean }
+			buffer?: {
+				snapshotContainsMarkerAfterFlush: boolean
+				snapshotContainsMarkerAfterReturn: boolean
+				rendererMarkerVisibleAfterReturn: boolean
+			}
+			cleanup?: {
+				electronExited: boolean
+				fakeDaemonClosed: boolean
+				harnessSocketHoldersTerminated: boolean
+				tempRootRemoved: boolean
+			}
 		}
 		if (evidence.result === 'skipped') {
 			assert.equal(result.code, 0, result.stderr)

@@ -19,7 +19,13 @@ import type * as Electron from 'electron'
 
 // Tests exercise the polling core under Node; Electron is needed only when the
 // desktop IPC surface/publisher is actually used.
-const electron = (() => { try { return require('electron') as typeof Electron } catch { return null } })()
+const electron = (() => {
+	try {
+		return require('electron') as typeof Electron
+	} catch {
+		return null
+	}
+})()
 const BrowserWindow = (electron?.BrowserWindow ?? { getAllWindows: () => [] }) as typeof Electron.BrowserWindow
 const ipcMain = electron?.ipcMain as typeof Electron.ipcMain
 import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
@@ -82,7 +88,9 @@ export interface HelmBridgeOptions {
 	/** Test seam; production uses the daemon HTTP client below. */
 	request?: HelmBridgeRequest
 	/** Test seam; production broadcasts to every Electron window. */
-	windows?: () => Iterable<{ webContents: { isDestroyed(): boolean; send(channel: string, snapshot: HelmSnapshot): void } }>
+	windows?: () => Iterable<{
+		webContents: { isDestroyed(): boolean; send(channel: string, snapshot: HelmSnapshot): void }
+	}>
 	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
 	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
 }
@@ -219,7 +227,14 @@ export class HelmBridge {
 			this.ticking = false
 			// Only the captured fence can schedule its own recovery. A stale tick
 			// must never borrow a successor's epoch or timer slot.
-			if (!this.stopped && fence !== null && this.profileFence === fence && !fence.invalidated && !fence.readyResolved && this.profileSwitchTimer === null) {
+			if (
+				!this.stopped &&
+				fence !== null &&
+				this.profileFence === fence &&
+				!fence.invalidated &&
+				!fence.readyResolved &&
+				this.profileSwitchTimer === null
+			) {
 				const epoch = fence.epoch
 				this.profileSwitchTimer = this.setProfileTimer(() => {
 					if (this.profileFence === fence && fence.epoch === epoch) {

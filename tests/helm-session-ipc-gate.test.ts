@@ -7,10 +7,19 @@ test('closed session IPC admission performs no PTY, support, registry, socket, o
 	const gate = createSessionIpcGate(() => false)
 	const effects: string[] = []
 	const sideEffects = [
-		'pty:spawn', 'pty:write', 'pty:resize', 'pty:kill',
-		'session:close-with-grace', 'session:undo-close', 'sessions:list',
-		'session:set-parked', 'session:set-order', 'session:title', 'session:set-custom-name',
-		'buffer:save', 'buffer:read',
+		'pty:spawn',
+		'pty:write',
+		'pty:resize',
+		'pty:kill',
+		'session:close-with-grace',
+		'session:undo-close',
+		'sessions:list',
+		'session:set-parked',
+		'session:set-order',
+		'session:title',
+		'session:set-custom-name',
+		'buffer:save',
+		'buffer:read',
 	]
 	for (const channel of sideEffects) {
 		if (channel === 'pty:spawn') {
@@ -30,7 +39,10 @@ test('closed session IPC admission performs no PTY, support, registry, socket, o
 test('current session IPC admission invokes operations exactly once', () => {
 	const gate = createSessionIpcGate(token => token === 'work:2')
 	let calls = 0
-	assert.equal(gate.handle('work:2', null, () => ++calls), 1)
+	assert.equal(
+		gate.handle('work:2', null, () => ++calls),
+		1,
+	)
 	gate.event('work:2', () => ++calls)
 	gate.require('work:2')
 	assert.equal(calls, 2)

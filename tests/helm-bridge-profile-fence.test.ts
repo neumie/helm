@@ -37,7 +37,9 @@ function bridgeFixture() {
 	const request = <T>(method: 'GET' | 'POST' | 'PUT', path: string): Promise<HelmResult<T>> => {
 		const queue = requests.get(`${method} ${path}`)
 		if (!queue?.length) throw new Error(`Unexpected request ${method} ${path}`)
-		return queue.shift()!.promise as Promise<HelmResult<T>>
+		const next = queue.shift()
+		if (!next) throw new Error(`Request queue emptied unexpectedly for ${method} ${path}`)
+		return next.promise as Promise<HelmResult<T>>
 	}
 	const push = <T>(method: 'GET' | 'POST' | 'PUT', path: string, value: HelmResult<T>): void => {
 		const entry = deferred<HelmResult<unknown>>()
@@ -53,7 +55,21 @@ function bridgeFixture() {
 	}
 	const bridge = new HelmBridge('http://daemon.test', () => true, {
 		request,
-		windows: () => [{ webContents: { isDestroyed: () => false, send: (_channel: string, snapshot: HelmSnapshot) => publications.push({ profileId: snapshot.status?.profile?.id, itemIds: snapshot.items?.map((item: DashboardItem) => item.profileId).filter((id: string | undefined): id is string => id !== undefined) ?? null }) } }],
+		windows: () => [
+			{
+				webContents: {
+					isDestroyed: () => false,
+					send: (_channel: string, snapshot: HelmSnapshot) =>
+						publications.push({
+							profileId: snapshot.status?.profile?.id,
+							itemIds:
+								snapshot.items
+									?.map((item: DashboardItem) => item.profileId)
+									.filter((id: string | undefined): id is string => id !== undefined) ?? null,
+						}),
+				},
+			},
+		],
 		setTimer: (callback: () => void) => {
 			timers.push(callback)
 			return timers.length as unknown as ReturnType<typeof setTimeout>
@@ -85,7 +101,9 @@ test('fence readiness follows coherent target snapshot publication, including de
 	f.push('POST', '/daemon/restart', { error: 'not managed' })
 	const fence = f.bridge.beginProfileSwitch(target)
 	let ready = false
-	void fence.ready.then(() => (ready = true))
+	void fence.ready.then(() => {
+		ready = true
+	})
 	await spin()
 	assert.equal(ready, false)
 	assert.equal(f.publications.at(-1)?.profileId, undefined)
@@ -105,9 +123,14 @@ test('B to C invalidation suppresses a delayed B profile/config publication and 
 	b.invalidateIfCurrent()
 	delayedProfiles.resolve({ data: profiles(target) })
 	await spin()
-	assert.equal(f.publications.some(entry => entry.profileId === target), false)
+	assert.equal(
+		f.publications.some(entry => entry.profileId === target),
+		false,
+	)
 	let settled = false
-	void b.ready.then(() => (settled = true))
+	void b.ready.then(() => {
+		settled = true
+	})
 	await spin()
 	assert.equal(settled, false)
 
@@ -127,7 +150,10 @@ test('observed-profile adoption replaces readiness and never publishes the old t
 	fence.adoptObservedProfile('profile-cccccccccccc')
 	delayedProfiles.resolve({ data: profiles(target) })
 	await spin()
-	assert.equal(f.publications.some(entry => entry.profileId === target), false)
+	assert.equal(
+		f.publications.some(entry => entry.profileId === target),
+		false,
+	)
 	coherent(f, 'profile-cccccccccccc')
 	// The first poll was still releasing when adoption kicked it; explicitly
 	// drive its owned retry to model the bridge's non-overlapping poller.
@@ -147,5 +173,8 @@ test('stop during protocol restart prevents a later config/publication continuat
 	f.bridge.stop()
 	restart.resolve({ error: 'not managed' })
 	await spin()
-	assert.equal(f.publications.some(entry => entry.profileId === target), false)
+	assert.equal(
+		f.publications.some(entry => entry.profileId === target),
+		false,
+	)
 })

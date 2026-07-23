@@ -2,8 +2,8 @@ export interface ProfileWindowWebContents {
 	isDestroyed(): boolean
 	isLoading(): boolean
 	reload(): void
-	once(event: 'did-finish-load' | 'did-fail-load', listener: (...args: any[]) => void): void
-	removeListener(event: 'did-finish-load' | 'did-fail-load', listener: (...args: any[]) => void): void
+	once(event: 'did-finish-load' | 'did-fail-load', listener: (...args: unknown[]) => void): void
+	removeListener(event: 'did-finish-load' | 'did-fail-load', listener: (...args: unknown[]) => void): void
 }
 
 export interface ProfileWindowLike {
@@ -51,10 +51,16 @@ export function reloadOrCreateProfileWindow(options: ProfileWindowReloadOptions)
 			options.onLoaded()
 			finish()
 		}
-		const onFailed = (_event: unknown, errorCode: number, errorDescription: string): void =>
+		const onFailed = (...args: unknown[]): void => {
+			const errorCode = typeof args[1] === 'number' ? args[1] : 0
+			const errorDescription = typeof args[2] === 'string' ? args[2] : 'unknown error'
 			finish(new Error(`Profile renderer load failed (${errorCode}): ${errorDescription}`))
+		}
 		const onClosed = (): void => finish(new Error('Profile renderer window closed during reload.'))
-		const timeout = setTimer(() => finish(new Error('Timed out waiting for profile renderer reload.')), options.timeoutMs)
+		const timeout = setTimer(
+			() => finish(new Error('Timed out waiting for profile renderer reload.')),
+			options.timeoutMs,
+		)
 		win.webContents.once('did-finish-load', onLoaded)
 		win.webContents.once('did-fail-load', onFailed)
 		win.once('closed', onClosed)

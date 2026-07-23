@@ -47,7 +47,9 @@ const screenshotPath = process.argv.find(a => a.startsWith('--screenshot='))?.sl
 // Explicit release-canary mode. It is deliberately main-process-only and is
 // never exposed through preload or the ordinary renderer bridge.
 const profileSwitchAttestationPath =
-	process.argv.find(a => a.startsWith('--profile-switch-attestation='))?.slice('--profile-switch-attestation='.length) || null
+	process.argv
+		.find(a => a.startsWith('--profile-switch-attestation='))
+		?.slice('--profile-switch-attestation='.length) || null
 const profileSwitchAttestationMarker =
 	process.argv
 		.find(a => a.startsWith('--profile-switch-attestation-marker='))
@@ -654,7 +656,12 @@ interface ProfileSwitchAttestationEvidence {
 		activationCalls: string[]
 		readyProfiles: string[]
 		mixedSnapshotObserved: boolean
-		snapshotObservations: Array<{ expectedProfileId: string; snapshotProfileId: string | null; authoritativeProfileId: string; itemProfileIds: string[] }>
+		snapshotObservations: Array<{
+			expectedProfileId: string
+			snapshotProfileId: string | null
+			authoritativeProfileId: string
+			itemProfileIds: string[]
+		}>
 	}
 	window: {
 		before: { browserWindowId: number; webContentsId: number } | null
@@ -727,7 +734,8 @@ function writeAttestationEvidence(file: string, evidence: ProfileSwitchAttestati
  */
 async function runProfileSwitchAttestation(): Promise<void> {
 	const marker = profileSwitchAttestationMarker
-	if (!profileSwitchAttestationPath || !marker) throw new Error('Profile-switch attestation requires an evidence path and marker.')
+	if (!profileSwitchAttestationPath || !marker)
+		throw new Error('Profile-switch attestation requires an evidence path and marker.')
 	const evidence: ProfileSwitchAttestationEvidence = {
 		schemaVersion: 1,
 		result: 'failed',
@@ -741,7 +749,13 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			workSocket: null,
 			targetSocketDir: null,
 		},
-		daemon: { baseUrl: daemonUrl, activationCalls: [], readyProfiles: [], mixedSnapshotObserved: false, snapshotObservations: [] },
+		daemon: {
+			baseUrl: daemonUrl,
+			activationCalls: [],
+			readyProfiles: [],
+			mixedSnapshotObserved: false,
+			snapshotObservations: [],
+		},
 		window: {
 			before: null,
 			after: null,
@@ -775,14 +789,21 @@ async function runProfileSwitchAttestation(): Promise<void> {
 	const observeDaemonSnapshot = (expectedProfileId: string): void => {
 		const snapshot = helmBridge.getSnapshot()
 		const snapshotProfileId = snapshot.status?.profile?.id ?? null
-		const itemProfileIds = [...new Set((snapshot.items ?? []).map(item => item.profileId).filter((id): id is string => id !== undefined))]
+		const itemProfileIds = [
+			...new Set((snapshot.items ?? []).map(item => item.profileId).filter((id): id is string => id !== undefined)),
+		]
 		const authoritativeProfileId = authoritativeProfilesState.activeProfileId
 		const mixed =
 			snapshotProfileId !== expectedProfileId ||
 			authoritativeProfileId !== expectedProfileId ||
 			snapshot.items === null ||
 			itemProfileIds.some(id => id !== snapshotProfileId)
-		evidence.daemon.snapshotObservations.push({ expectedProfileId, snapshotProfileId, authoritativeProfileId, itemProfileIds })
+		evidence.daemon.snapshotObservations.push({
+			expectedProfileId,
+			snapshotProfileId,
+			authoritativeProfileId,
+			itemProfileIds,
+		})
 		evidence.daemon.mixedSnapshotObserved ||= mixed
 		if (mixed) throw new Error(`Mixed daemon snapshot observed while expecting ${expectedProfileId}.`)
 	}
@@ -851,30 +872,38 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		evidence.workSession.preservedMasterPids = evidence.workSession.masterHolderPidsBefore.filter(
 			pid => pid !== initial.proc.pid && attestationPidAlive(pid),
 		)
-		evidence.buffer.snapshotContainsMarkerAfterReturn = getSessionSupport()?.buffers.read(sessionId)?.includes(marker) === true
-		evidence.buffer.rendererMarkerVisibleAfterReturn = await waitForAttestation('marker in reloaded terminal DOM', async () => {
-			const found = await win.webContents.executeJavaScript(
-				`(() => { const marker = ${JSON.stringify(marker)}; const nodes = document.querySelectorAll('.xterm-screen, .xterm-accessibility, .xterm-accessibility-tree, .xterm-rows, [aria-label]'); return [...nodes].some(node => (node.textContent || node.getAttribute('aria-label') || '').includes(marker)) || document.body.innerText.includes(marker) })()`,
-				true,
-			)
-			return found ? true : null
-		})
+		evidence.buffer.snapshotContainsMarkerAfterReturn =
+			getSessionSupport()?.buffers.read(sessionId)?.includes(marker) === true
+		evidence.buffer.rendererMarkerVisibleAfterReturn = await waitForAttestation(
+			'marker in reloaded terminal DOM',
+			async () => {
+				const found = await win.webContents.executeJavaScript(
+					`(() => { const marker = ${JSON.stringify(marker)}; const nodes = document.querySelectorAll('.xterm-screen, .xterm-accessibility, .xterm-accessibility-tree, .xterm-rows, [aria-label]'); return [...nodes].some(node => (node.textContent || node.getAttribute('aria-label') || '').includes(marker)) || document.body.innerText.includes(marker) })()`,
+					true,
+				)
+				return found ? true : null
+			},
+		)
 		evidence.window.sameBrowserWindow = evidence.window.before.browserWindowId === evidence.window.after.browserWindowId
 		evidence.window.sameWebContents = evidence.window.before.webContentsId === evidence.window.after.webContentsId
 		evidence.assertions = {
 			sameBrowserWindow: evidence.window.sameBrowserWindow,
 			sameWebContents: evidence.window.sameWebContents,
-			workSocketLive: evidence.workSession.socketProbeBefore === 'live' && evidence.workSession.socketProbeAfter === 'live',
+			workSocketLive:
+				evidence.workSession.socketProbeBefore === 'live' && evidence.workSession.socketProbeAfter === 'live',
 			workMasterSurvived: evidence.workSession.preservedMasterPids.length > 0,
 			oldAttachDetached: evidence.workSession.oldAttachClientDetached,
 			newAttachReattached: evidence.workSession.newAttachClientAlive && evidence.workSession.attachClientReplaced,
-			bufferPersisted: evidence.buffer.snapshotContainsMarkerAfterFlush && evidence.buffer.snapshotContainsMarkerAfterReturn,
+			bufferPersisted:
+				evidence.buffer.snapshotContainsMarkerAfterFlush && evidence.buffer.snapshotContainsMarkerAfterReturn,
 			bufferRestoredInRenderer: evidence.buffer.rendererMarkerVisibleAfterReturn,
 			activationOrder: evidence.daemon.readyProfiles.join(',') === `${targetId},work`,
 			noMixedSnapshot: !evidence.daemon.mixedSnapshotObserved && evidence.daemon.snapshotObservations.length === 2,
-			namespaceIsolation: evidence.paths.targetSocketDir !== null && evidence.paths.targetSocketDir !== path.dirname(workSocket),
+			namespaceIsolation:
+				evidence.paths.targetSocketDir !== null && evidence.paths.targetSocketDir !== path.dirname(workSocket),
 		}
-		if (!Object.values(evidence.assertions).every(Boolean)) throw new Error('One or more profile-switch assertions failed.')
+		if (!Object.values(evidence.assertions).every(Boolean))
+			throw new Error('One or more profile-switch assertions failed.')
 		evidence.result = 'passed'
 	} catch (error) {
 		evidence.error = attestationError(error)
@@ -1187,8 +1216,7 @@ ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unkn
 })
 
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string')
-		return
+	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string') return
 	getSessionSupport()?.registry.setTitle(sessionId, title)
 })
 

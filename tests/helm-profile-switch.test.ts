@@ -29,9 +29,19 @@ test('bridge fence has no globally cancellable profile-switch API', () => {
 
 test('terminal, session, and buffer handlers gate mutable access during a profile fence', () => {
 	for (const channel of [
-		'pty:spawn', 'pty:write', 'pty:resize', 'pty:kill', 'session:close-with-grace', 'session:undo-close',
-		'sessions:list', 'session:set-parked', 'session:set-order', 'session:title', 'session:set-custom-name',
-		'buffer:save', 'buffer:read',
+		'pty:spawn',
+		'pty:write',
+		'pty:resize',
+		'pty:kill',
+		'session:close-with-grace',
+		'session:undo-close',
+		'sessions:list',
+		'session:set-parked',
+		'session:set-order',
+		'session:title',
+		'session:set-custom-name',
+		'buffer:save',
+		'buffer:read',
 	]) {
 		const start = main.indexOf(`'${channel}'`)
 		assert.ok(start >= 0, `missing ${channel}`)
