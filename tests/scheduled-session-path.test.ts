@@ -21,6 +21,7 @@ test('scheduled socket path is deterministic, opaque, profile-scoped, and bounde
 		assert.match(path, /\/work\/sr-[a-z2-7]+\.sock$/)
 		assert.equal(ensureScheduledSocketDir('work', root), join(root, 'work'))
 		assert.throws(() => assertScheduledSocketPathUsable('x'.repeat(104)), /AF_UNIX/)
+		assert.throws(() => assertScheduledSocketPathUsable('é'.repeat(52)), /AF_UNIX/)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

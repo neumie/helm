@@ -1,64 +1,173 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { DtachSupervisor } from '../src/scheduled-runs/dtach-supervisor.js'
-import { scheduledAgentEnvironment } from '../src/scheduled-runs/agent-host.js'
+import {
+	DtachSupervisor,
+	type ProcessFingerprint,
+	identityMatchesCandidate,
+} from '../src/scheduled-runs/dtach-supervisor.js'
 import { scheduledSessionId, scheduledSocketPath } from '../src/scheduled-runs/session-path.js'
 
 const diagnostic = join(tmpdir(), 'helm-scheduled-supervisor-test.log')
+const leader: ProcessFingerprint = {
+	pid: 422,
+	processGroupId: 422,
+	startedAt: 'Mon Jan  1 00:00:00 2030',
+	executable: '/usr/bin/dtach',
+}
+const host: ProcessFingerprint = {
+	pid: 423,
+	processGroupId: 422,
+	startedAt: 'Mon Jan  1 00:00:01 2030',
+	executable: '/usr/bin/node',
+}
 
-test('supervisor launches exact dtach argv with a minimal environment and persists before readiness', async () => {
+const readyDeps = () => ({
+	inspectProcess: async () => leader,
+	inspectGroup: async () => [leader, host],
+	findSocketHolders: async () => [leader],
+})
+
+test('supervisor derives its path, removes only a dead expected stale socket, and persists ready identity', async () => {
 	const root = mkdtempSync('/tmp/hss-')
-	const socket = scheduledSocketPath('work', scheduledSessionId('launch'), root)
-	const spawned: { command?: string; args?: string[]; env?: NodeJS.ProcessEnv } = {}
+	const sessionId = scheduledSessionId('launch')
+	const socket = scheduledSocketPath('work', sessionId, root)
+	const spawned: { args?: string[] } = {}
 	const states: ('dead' | 'live')[] = ['dead', 'live']
 	const persisted: number[] = []
+	const removed: string[] = []
 	try {
-		const environment = scheduledAgentEnvironment(
-			{ daemonUrl: 'http://127.0.0.1:7474', runId: 'run-a', reportCapability: 'capability' },
-			{ PATH: '/bin', ANTHROPIC_API_KEY: 'key', BUN_SECRET: 'never', NODE_OPTIONS: '--require evil' },
-		)
 		const supervisor = new DtachSupervisor({
-			spawn: (command, args, options) => {
-				spawned.command = command
+			...readyDeps(),
+			probe: async () => states.shift() ?? 'live',
+			unlink: async path => {
+				removed.push(path)
+			},
+			spawn: (_command, args) => {
 				spawned.args = args
-				spawned.env = options?.env
 				return { pid: 422, once: () => undefined, unref: () => undefined }
 			},
-			probe: async () => states.shift() ?? 'live',
 		})
-		await supervisor.launch({
-			profileId: 'work', socketPath: socket, dtachBinary: '/usr/bin/dtach', hostCommand: '/usr/bin/node', hostArgs: ['/host', '/descriptor'],
-			cwd: root, env: environment, diagnosticPath: diagnostic,
-			onSpawned: identity => void persisted.push(identity.pid),
+		const identity = await supervisor.launch({
+			profileId: 'work',
+			sessionId,
+			socketRoot: root,
+			dtachBinary: '/usr/bin/dtach',
+			hostCommand: '/usr/bin/node',
+			hostArgs: ['/host'],
+			cwd: root,
+			env: {},
+			diagnosticPath: diagnostic,
+			onSpawned: item => void persisted.push(item.pid),
+			onReady: item => void persisted.push(item.socketHolder?.pid ?? 0),
 		})
-		assert.deepEqual(spawned.args, ['-n', socket, '/usr/bin/node', '/host', '/descriptor'])
-		assert.equal(spawned.command, '/usr/bin/dtach')
-		assert.equal(spawned.env?.BUN_SECRET, undefined)
-		assert.equal(spawned.env?.NODE_OPTIONS, undefined)
-		assert.equal(spawned.env?.HELM_SCHEDULED_REPORT_CAPABILITY, 'capability')
-		assert.deepEqual(persisted, [422])
+		assert.deepEqual(spawned.args, ['-n', socket, '/usr/bin/node', '/host'])
+		assert.deepEqual(removed, [socket])
+		assert.deepEqual(persisted, [422, 422])
+		assert.equal(identity.groupMembers?.length, 2)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
 })
 
-test('supervisor TERM then KILLs a verified group, but never destroys unknown or mismatched identity', async () => {
+test('teardown kills TERM-ignoring verified descendants even after socket disappearance', async () => {
 	const signals: NodeJS.Signals[] = []
-	const identity = { pid: 91, processGroupId: 91, startedAt: '2030-01-01T00:00:00.000Z', executable: 'dtach' }
-	let probes: ('live' | 'dead')[] = ['live', 'live', 'dead']
+	const identity = { ...leader, socketHolder: leader, groupMembers: [leader, host] }
+	let calls = 0
 	const supervisor = new DtachSupervisor({
-		probe: async () => probes.shift() ?? 'dead', sleep: async () => new Promise(resolve => setTimeout(resolve, 2)), 
-		signalGroup: (_group, signal) => signals.push(signal), verifyIdentity: async () => true,
+		inspectOwnership: async () => (++calls < 4 ? 'verified' : 'dead'),
+		signalGroup: (_group, signal) => signals.push(signal),
+		sleep: async () => {},
+		unlink: async () => {},
 	})
-	assert.equal(await supervisor.teardown('/tmp/absent.sock', identity, diagnostic, 1), 'closed')
+	assert.equal(
+		await supervisor.teardown('work', scheduledSessionId('term-ignore'), identity, diagnostic, 0, '/tmp'),
+		'closed',
+	)
 	assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
-	const unknownSignals: NodeJS.Signals[] = []
-	const quarantined = new DtachSupervisor({
-		probe: async () => 'unknown', signalGroup: (_group, signal) => unknownSignals.push(signal),
-	})
-	assert.equal(await quarantined.teardown('/tmp/unknown.sock', identity, diagnostic), 'quarantined')
-	assert.deepEqual(unknownSignals, [])
+})
+
+test('PID reuse, unknown state, and mismatched ownership quarantine without signal or unlink', async () => {
+	const signals: NodeJS.Signals[] = []
+	const identity = { ...leader, socketHolder: leader, groupMembers: [leader] }
+	for (const state of ['mismatch', 'unknown'] as const) {
+		const supervisor = new DtachSupervisor({
+			inspectOwnership: async () => state,
+			signalGroup: (_g, sig) => signals.push(sig),
+			unlink: async () => assert.fail('must not unlink'),
+		})
+		assert.equal(
+			await supervisor.teardown('work', scheduledSessionId(`reuse-${state}`), identity, diagnostic, 1, '/tmp'),
+			'quarantined',
+		)
+	}
+	assert.deepEqual(signals, [])
+	assert.equal(identityMatchesCandidate(identity, { ...identity, startedAt: 'different' }), false)
+})
+
+test('launch races socket readiness with asynchronous spawn error', async () => {
+	const root = mkdtempSync('/tmp/hse-')
+	try {
+		let errorListener: ((error: unknown) => void) | undefined
+		let probes = 0
+		const supervisor = new DtachSupervisor({
+			...readyDeps(),
+			probe: async () => (++probes === 1 ? 'dead' : new Promise(() => {})),
+			spawn: () => ({
+				pid: 422,
+				unref: () => {},
+				once: (event, listener) => {
+					if (event === 'error') errorListener = listener
+					if (event === 'exit') return undefined
+				},
+			}),
+		})
+		const launching = supervisor.launch({
+			profileId: 'work',
+			sessionId: scheduledSessionId('spawn-error'),
+			socketRoot: root,
+			dtachBinary: 'dtach',
+			hostCommand: 'node',
+			hostArgs: [],
+			cwd: root,
+			env: {},
+			diagnosticPath: diagnostic,
+			onSpawned: () => {},
+		})
+		await new Promise(resolve => setImmediate(resolve))
+		const rejected = assert.rejects(launching, /spawn failed/)
+		errorListener?.(new Error('spawn failed'))
+		await rejected
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('derived launch namespace cannot be redirected by a profile symlink', async () => {
+	const root = mkdtempSync('/tmp/hsl-')
+	const outside = mkdtempSync('/tmp/hso-')
+	try {
+		symlinkSync(outside, join(root, 'work'))
+		const supervisor = new DtachSupervisor({ ...readyDeps() })
+		await assert.rejects(
+			supervisor.launch({
+				profileId: 'work',
+				sessionId: scheduledSessionId('escape'),
+				socketRoot: root,
+				dtachBinary: 'dtach',
+				hostCommand: 'node',
+				hostArgs: [],
+				cwd: root,
+				env: {},
+				diagnosticPath: diagnostic,
+				onSpawned: () => {},
+			}),
+			/real directory|owner-private|symlink/,
+		)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+		rmSync(outside, { recursive: true, force: true })
+	}
 })

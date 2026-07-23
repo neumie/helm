@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { chmodSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import net from 'node:net'
+import { join, resolve, sep } from 'node:path'
 
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
 const SESSION_ID_RE = /^sr-[a-z2-7]{16,36}$/
@@ -55,20 +55,37 @@ export function scheduledSocketPath(profileId: string, sessionId: string, root?:
 }
 
 export function assertScheduledSocketPathUsable(path: string): void {
-	if (path.length > MAX_UNIX_SOCKET_PATH) {
+	if (Buffer.byteLength(path, 'utf8') > MAX_UNIX_SOCKET_PATH) {
 		throw new Error(`Scheduled socket path exceeds ${MAX_UNIX_SOCKET_PATH}-byte AF_UNIX limit`)
 	}
 }
 
+function assertPrivateRealDirectory(path: string): void {
+	const stat = lstatSync(path)
+	if (!stat.isDirectory() || stat.isSymbolicLink())
+		throw new Error('Scheduled socket namespace must be a real directory')
+	const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+	if (uid !== undefined && stat.uid !== uid) throw new Error('Scheduled socket namespace has unexpected owner')
+	if ((stat.mode & 0o077) !== 0) throw new Error('Scheduled socket namespace must be owner-private')
+}
+
+/** Create and validate the daemon-owned root and profile namespace fail-closed. */
 export function ensureScheduledSocketDir(profileId: string, root?: string): string {
+	const base = scheduledSocketRoot(root)
 	const dir = scheduledSocketDir(profileId, root)
 	assertScheduledSocketPathUsable(join(dir, `${'sr-a'.padEnd(35, 'a')}.sock`))
-	mkdirSync(dir, { recursive: true, mode: 0o700 })
+	mkdirSync(base, { recursive: true, mode: 0o700 })
+	chmodSync(base, 0o700)
+	assertPrivateRealDirectory(base)
 	try {
-		chmodSync(dir, 0o700)
-	} catch {
-		// Existing test/runtime directory may not permit chmod; the path is still safe.
+		mkdirSync(dir, { recursive: false, mode: 0o700 })
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
 	}
+	chmodSync(dir, 0o700)
+	assertPrivateRealDirectory(dir)
+	if (!realpathSync(dir).startsWith(`${realpathSync(base)}${sep}`))
+		throw new Error('Scheduled socket namespace escaped root')
 	return dir
 }
 
