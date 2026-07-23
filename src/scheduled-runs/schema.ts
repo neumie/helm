@@ -1,10 +1,15 @@
 import { z } from 'zod'
+import { scopedCapabilityDigestSchema } from '../auth/scoped-capability.js'
 
 const utcIsoSchema = z
 	.string()
 	.datetime({ offset: true })
 	.refine(value => value.endsWith('Z'), 'must be a UTC ISO timestamp')
-const boundedText = (max: number) => z.string().min(1).max(max)
+const boundedText = (max: number) =>
+	z
+		.string()
+		.min(1)
+		.refine(value => Buffer.byteLength(value, 'utf8') <= max, `must be at most ${max} UTF-8 bytes`)
 
 export const scheduledTargetSchema = z.discriminatedUnion('kind', [
 	z
@@ -67,6 +72,7 @@ export const scheduledRunStateSchema = z.enum([
 	'skipped_capacity',
 ])
 
+/** Operator input; recurrence persistence is command-owned, including nextRunAt. */
 export const scheduleCreateSchema = z
 	.object({
 		id: z.string().min(1).optional(),
@@ -76,9 +82,11 @@ export const scheduleCreateSchema = z
 		cron: fiveFieldCronSchema,
 		cadenceKind: cadenceKindSchema,
 		timezone: boundedText(120),
-		nextRunAt: utcIsoSchema.nullable(),
 	})
 	.strict()
+
+/** Internal persistence input constructed only after recurrence normalization. */
+export const schedulePersistenceSchema = scheduleCreateSchema.extend({ nextRunAt: utcIsoSchema.nullable() }).strict()
 
 export const scheduleUpdateSchema = scheduleCreateSchema
 	.omit({ id: true })
@@ -119,7 +127,7 @@ export const createScheduledRunSchema = z
 		state: scheduledRunStateSchema.default('admitted'),
 		sessionId: boundedText(80),
 		socketDescriptor: z.string().max(500).nullable().default(null),
-		reportTokenHash: z.string().max(200).nullable().default(null),
+		reportTokenHash: scopedCapabilityDigestSchema.nullable().default(null),
 		reportTokenVersion: z.number().int().nonnegative().default(1),
 		processFingerprint: z.string().max(1000).nullable().default(null),
 		cwd: z.string().max(2000).nullable().default(null),
@@ -131,6 +139,11 @@ export const createScheduledRunSchema = z
 	})
 	.strict()
 
+export const scheduledRunReportSchema = z
+	.object({ kind: z.enum(['quiet', 'needs_attention']), summary: boundedText(1000) })
+	.strict()
+export const scheduledRunDiagnosticSchema = boundedText(262_144).nullable()
+
 export const scheduledRunRecordSchema = z.object({
 	...createScheduledRunSchema.shape,
 	id: z.string().min(1),
@@ -140,8 +153,8 @@ export const scheduledRunRecordSchema = z.object({
 	reportedAt: utcIsoSchema.nullable(),
 	closedAt: utcIsoSchema.nullable(),
 	reportKind: z.enum(['quiet', 'needs_attention']).nullable(),
-	reportSummary: z.string().max(1000).nullable(),
-	diagnosticDetail: z.string().max(262_144).nullable(),
+	reportSummary: boundedText(1000).nullable(),
+	diagnosticDetail: scheduledRunDiagnosticSchema,
 	notificationClaimedAt: utcIsoSchema.nullable(),
 	notificationDeliveredAt: utcIsoSchema.nullable(),
 	cleanupState: z.string().nullable(),
@@ -155,4 +168,4 @@ export type ScheduleDefinition = z.infer<typeof scheduleDefinitionSchema>
 export type ScheduleRecord = z.infer<typeof scheduleRecordSchema>
 export type ScheduledRunRecord = z.infer<typeof scheduledRunRecordSchema>
 export type ScheduledRunState = z.infer<typeof scheduledRunStateSchema>
-export type CreateScheduledRunInput = z.infer<typeof createScheduledRunSchema>
+export type CreateScheduledRunInput = z.input<typeof createScheduledRunSchema>

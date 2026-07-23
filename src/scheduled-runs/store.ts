@@ -6,7 +6,7 @@ import {
 	type ScheduledRunRecord,
 	type ScheduledRunState,
 	createScheduledRunSchema,
-	scheduleCreateSchema,
+	schedulePersistenceSchema,
 	scheduleRecordSchema,
 	scheduledRunRecordSchema,
 } from './schema.js'
@@ -40,7 +40,7 @@ export class ScheduleStore {
 	}
 
 	create(input: unknown): ScheduleRecord {
-		const parsed = scheduleCreateSchema.parse(input)
+		const parsed = schedulePersistenceSchema.parse(input)
 		const now = new Date().toISOString()
 		const id = parsed.id ?? randomUUID()
 		const definition = parsed.definition
@@ -97,7 +97,7 @@ export class ScheduleStore {
 	}
 
 	update(id: string, expectedRevision: number, input: unknown): ScheduleRecord {
-		const parsed = scheduleCreateSchema.parse(input)
+		const parsed = schedulePersistenceSchema.parse(input)
 		const current = this.require(id)
 		if (current.revision !== expectedRevision) throw new ScheduleRevisionConflictError()
 		const now = new Date().toISOString()

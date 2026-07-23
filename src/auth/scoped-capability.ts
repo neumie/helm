@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { z } from 'zod'
 
 export const SCOPED_CAPABILITY_BYTES = 32
+export const scopedCapabilityDigestSchema = z.string().regex(/^[a-f0-9]{64}$/, 'must be a lowercase SHA-256 digest')
 export const RESIDENT_LEASE_TTL_MS = 45_000
 
 export interface ResidentLease {
@@ -75,5 +77,5 @@ export class ResidentLeaseManager {
 }
 
 function isCapabilityDigest(value: string): boolean {
-	return /^[a-f0-9]{64}$/.test(value)
+	return scopedCapabilityDigestSchema.safeParse(value).success
 }

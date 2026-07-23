@@ -1,4 +1,6 @@
+import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import type { CreateScheduledRunInput, ScheduleRecord, ScheduledRunRecord, ScheduledRunState } from './schema.js'
+import { scheduleCreateSchema, scheduledRunDiagnosticSchema, scheduledRunReportSchema } from './schema.js'
 import { ScheduleRevisionConflictError, type ScheduleStore } from './store.js'
 
 const ACTIVE_STATES = new Set<ScheduledRunState>([
@@ -13,6 +15,7 @@ const ACTIVE_STATES = new Set<ScheduledRunState>([
 	'quarantined',
 ])
 const LAUNCHABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching'])
+const TIMEOUTABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching', 'running'])
 const TERMINAL_STATES = new Set<ScheduledRunState>([
 	'closed_quiet',
 	'cancelled',
@@ -31,10 +34,10 @@ const TERMINAL_STATES = new Set<ScheduledRunState>([
 export class ScheduleCommands {
 	constructor(private readonly store: ScheduleStore) {}
 	create(input: unknown): ScheduleRecord {
-		return this.store.create(input)
+		return this.store.create(this.prepareSchedule(input))
 	}
 	update(id: string, revision: number, input: unknown): ScheduleRecord {
-		return this.store.update(id, revision, input)
+		return this.store.update(id, revision, this.prepareSchedule(input))
 	}
 	enable(id: string, revision: number): ScheduleRecord {
 		return this.store.setEnabled(id, revision, true)
@@ -82,32 +85,34 @@ export class ScheduleCommands {
 		return this.transition(id, revision, ['cancel_requested'], 'cancelled', { closedAt: new Date().toISOString() })
 	}
 	markFailed(id: string, revision: number, detail: string | null = null): ScheduledRunRecord {
+		const diagnosticDetail = scheduledRunDiagnosticSchema.parse(detail)
 		const run = this.store.requireRun(id)
 		if (!LAUNCHABLE_STATES.has(run.state) && run.state !== 'running' && run.state !== 'closing')
 			throw new Error('Run cannot fail from its current state')
 		return this.transition(id, revision, [run.state], 'failed', {
 			closedAt: new Date().toISOString(),
-			diagnosticDetail: detail,
+			diagnosticDetail,
 		})
 	}
 	markTimedOut(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (!ACTIVE_STATES.has(run.state)) throw new Error('Only an active scheduled run can time out')
+		if (!TIMEOUTABLE_STATES.has(run.state)) throw new Error('Only an unreported scheduled run can time out')
 		return this.transition(id, revision, [run.state], 'timed_out', { closedAt: new Date().toISOString() })
 	}
 	/** First matching report wins; an identical retry is intentionally idempotent. */
 	report(id: string, revision: number, kind: 'quiet' | 'needs_attention', summary: string): ScheduledRunRecord {
+		const report = scheduledRunReportSchema.parse({ kind, summary })
 		const run = this.store.requireRun(id)
 		if (run.reportKind) {
-			if (run.reportKind === kind && run.reportSummary === summary) return run
+			if (run.reportKind === report.kind && run.reportSummary === report.summary) return run
 			throw new Error('Scheduled run already has a conflicting report')
 		}
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
 		if (run.state !== 'running') throw new Error('Only a running scheduled run can report')
-		return this.store.transitionRun(id, revision, kind === 'quiet' ? 'reported_quiet' : 'needs_attention', {
+		return this.store.transitionRun(id, revision, report.kind === 'quiet' ? 'reported_quiet' : 'needs_attention', {
 			reportedAt: new Date().toISOString(),
-			reportKind: kind,
-			reportSummary: summary,
+			reportKind: report.kind,
+			reportSummary: report.summary,
 		})
 	}
 	beginClose(id: string, revision: number): ScheduledRunRecord {
@@ -123,6 +128,13 @@ export class ScheduleCommands {
 	}
 	isTerminal(run: ScheduledRunRecord): boolean {
 		return TERMINAL_STATES.has(run.state)
+	}
+	private prepareSchedule(input: unknown) {
+		const parsed = scheduleCreateSchema.parse(input)
+		const recurrence = normalizeCadence({ kind: 'cron', expression: parsed.cron }, parsed.timezone)
+		const next = nextOccurrence(recurrence.cron, recurrence.timezone, new Date())
+		if (!next) throw new Error('Cron has no occurrence within the recurrence horizon')
+		return { ...parsed, ...recurrence, nextRunAt: next.scheduledFor }
 	}
 	private transition(
 		id: string,
