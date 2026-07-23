@@ -11,11 +11,13 @@ The shared root `helm.db` is current truth for every profile. Retained `profiles
 3. Use the launchd plist's `WorkingDirectory`; do not assume the shell's current directory is the data root.
 4. Prefer a code rollback for a bad canary. A full snapshot restore discards every write made after the backup and requires explicit approval for that data loss.
 
-`profile-data-manifest.mjs` reads `helm.db` read-only, requires `PRAGMA integrity_check` to be `ok` and `PRAGMA foreign_key_check` to return no rows, then emits deterministic JSON. Its `logical` section contains profile generation, active/profile IDs, and profile-scoped Item/event/poll counts. Its `files` section contains SHA-256 values for `helm.db`, `profiles.json`, and every regular file below `profiles/`.
+`profile-data-manifest.mjs` accepts only a stopped, sidecar-free SQLite dataset. It rejects a live `helm.db-wal` or `helm.db-shm`, checks integrity and foreign keys in one read transaction, rejects event/Item tenant mismatches, validates the production profile registry shape and canonical IDs, and emits deterministic JSON. Its `logical` section contains profile generation, active/profile IDs, and profile-scoped Item/event/poll counts. Its `files` section contains SHA-256 values for `helm.db`, `profiles.json`, and every regular file below `profiles/`.
+
+`profile-data-runbook-helper.mjs` is deliberately argv-only: it fails closed if `lsof` is missing, reports diagnostics, or reports an open existing database path; and it compares both `logical` and `files` manifest sections. Do not replace either check with shell interpolation or a `node -e` string.
 
 ## Create a stopped, consistent backup
 
-Run this from any shell. It derives both the data root and manifest script from launchd's configured working directory.
+Run this from any shell. It derives both the data root and helper scripts from launchd's configured working directory.
 
 ```bash
 set -euo pipefail
@@ -23,22 +25,26 @@ set -euo pipefail
 PLIST="$HOME/Library/LaunchAgents/com.helm.daemon.plist"
 ROOT=$(/usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' "$PLIST")
 MANIFEST="$ROOT/scripts/profile-data-manifest.mjs"
+RUNBOOK_HELPER="$ROOT/scripts/profile-data-runbook-helper.mjs"
 printf 'Helm data root: %s\n' "$ROOT"
-test -f "$ROOT/profiles.json" && test -f "$ROOT/helm.db" && test -f "$MANIFEST"
+test -f "$ROOT/profiles.json" && test -f "$ROOT/helm.db" && test -f "$MANIFEST" && test -f "$RUNBOOK_HELPER"
 
 helm stop
 while launchctl print "gui/$UID/com.helm.daemon" >/dev/null 2>&1; do sleep 1; done
-! lsof "$ROOT/helm.db" "$ROOT/helm.db-wal" "$ROOT/helm.db-shm" 2>/dev/null | grep -q .
+node "$RUNBOOK_HELPER" assert-stopped-database "$ROOT"
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 PARENT="$HOME/helm-backups"
 mkdir -p "$PARENT"
 STAGE=$(mktemp -d "$PARENT/.architecture-fix-$STAMP.XXXXXX")
-sqlite3 "$ROOT/helm.db" ".backup '$STAGE/helm.db'"
+# The dot command is constant; sqlite receives all paths as argv or through cd.
+(
+ cd "$STAGE"
+ sqlite3 "$ROOT/helm.db" '.backup helm.db'
+)
 cp -p "$ROOT/profiles.json" "$STAGE/profiles.json"
 cp -a "$ROOT/profiles" "$STAGE/profiles"
 node "$MANIFEST" "$STAGE" > "$STAGE/manifest.json"
-(cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256) > "$STAGE/SHA256SUMS"
 BACKUP="$PARENT/architecture-fix-$STAMP"
 mv "$STAGE" "$BACKUP"
 printf 'Backup: %s\n' "$BACKUP"
@@ -48,24 +54,23 @@ Do not accept the backup yet. First run the empty-dataset rehearsal below. The S
 
 ## Rehearse into an empty dataset directory
 
-Do not rehearse by copying onto an existing profile tree. This creates an actually empty managed dataset directory and proves both byte hashes and logical profile data.
+Do not rehearse by copying onto an existing profile tree. This creates an actually empty managed dataset directory and proves the full managed-file hashes and logical profile data match.
 
 ```bash
 set -euo pipefail
 
-# BACKUP and MANIFEST are from the backup step.
+# BACKUP, MANIFEST, and RUNBOOK_HELPER are from the backup step.
 SCRATCH=$(mktemp -d /tmp/helm-restore-rehearsal.XXXXXX)
 mkdir "$SCRATCH/restored"
 cp -p "$BACKUP/helm.db" "$SCRATCH/restored/helm.db"
 cp -p "$BACKUP/profiles.json" "$SCRATCH/restored/profiles.json"
 cp -a "$BACKUP/profiles" "$SCRATCH/restored/profiles"
-(cd "$BACKUP" && shasum -a 256 -c SHA256SUMS)
 node "$MANIFEST" "$SCRATCH/restored" > "$SCRATCH/restored-manifest.json"
-node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('$BACKUP/manifest.json')); const b=JSON.parse(fs.readFileSync('$SCRATCH/restored-manifest.json')); if(JSON.stringify(a.logical)!==JSON.stringify(b.logical)) process.exit(1)"
+node "$RUNBOOK_HELPER" compare-manifests "$BACKUP/manifest.json" "$SCRATCH/restored-manifest.json"
 printf 'Empty-root rehearsal passed: %s\n' "$SCRATCH"
 ```
 
-The backup is valid only when SHA-256 verification, SQLite integrity, foreign keys, profile generation/IDs, and all Item/event/poll counts match the empty-root rehearsal.
+The backup is valid only when SHA-256 values for every managed file, SQLite integrity, foreign keys, profile generation/IDs, Item/event/poll counts, and tenant ownership match the empty-root rehearsal.
 
 ## Restore only with explicit data-loss approval
 
@@ -74,11 +79,17 @@ Use this only after approving the loss of all post-snapshot writes. Pin the matc
 ```bash
 set -euo pipefail
 
-# ROOT, MANIFEST, and BACKUP must be set as above.
-(cd "$BACKUP" && shasum -a 256 -c SHA256SUMS)
+# ROOT, MANIFEST, RUNBOOK_HELPER, and BACKUP must be set as above.
+CHECKS=$(mktemp -d "$ROOT/.restore-check.XXXXXX")
+cleanup_checks() { rm -rf "$CHECKS"; }
+trap cleanup_checks EXIT
+
+# Re-read the backup before moving the current dataset aside.
+node "$MANIFEST" "$BACKUP" > "$CHECKS/backup-manifest.json"
+node "$RUNBOOK_HELPER" compare-manifests "$BACKUP/manifest.json" "$CHECKS/backup-manifest.json"
 helm stop
 while launchctl print "gui/$UID/com.helm.daemon" >/dev/null 2>&1; do sleep 1; done
-! lsof "$ROOT/helm.db" "$ROOT/helm.db-wal" "$ROOT/helm.db-shm" 2>/dev/null | grep -q .
+node "$RUNBOOK_HELPER" assert-stopped-database "$ROOT"
 
 FAILED="$ROOT/failed-canary-$(date +%Y%m%d-%H%M%S)"
 mkdir "$FAILED"
@@ -91,19 +102,22 @@ RESTORE=$(mktemp -d "$ROOT/.restore.XXXXXX")
 cp -p "$BACKUP/helm.db" "$RESTORE/helm.db"
 cp -p "$BACKUP/profiles.json" "$RESTORE/profiles.json"
 cp -a "$BACKUP/profiles" "$RESTORE/profiles"
-node "$MANIFEST" "$RESTORE" > "$RESTORE/manifest.json"
-node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('$BACKUP/manifest.json')); const b=JSON.parse(fs.readFileSync('$RESTORE/manifest.json')); if(JSON.stringify(a.logical)!==JSON.stringify(b.logical)) process.exit(1)"
+# Keep validation outside RESTORE so its removal cannot block helm start.
+node "$MANIFEST" "$RESTORE" > "$CHECKS/restored-manifest.json"
+node "$RUNBOOK_HELPER" compare-manifests "$BACKUP/manifest.json" "$CHECKS/restored-manifest.json"
 
 # The target dataset is empty now. These are replacements, never an overlay.
 mv "$RESTORE/helm.db" "$ROOT/helm.db"
 mv "$RESTORE/profiles.json" "$ROOT/profiles.json"
 mv "$RESTORE/profiles" "$ROOT/profiles"
 rmdir "$RESTORE"
+rm -rf "$CHECKS"
+trap - EXIT
 helm start
 ```
 
-After startup, verify `/api/status` reports the pinned expected protocol/build ID, confirm the active profile and generation, and run `node "$MANIFEST" "$ROOT"` to compare profile-scoped counts with `$BACKUP/manifest.json` before reopening clients. Record any provider polling or new admission after the restart.
+After startup, verify `/api/status` reports the pinned expected protocol/build ID and confirm the active profile and generation before reopening clients. Do **not** rerun the manifest while the daemon is live: it intentionally rejects live SQLite sidecars. The full logical/file comparison already completed in the stopped restore staging area. Record any provider polling or new admission after the restart.
 
 ## Canary and promotion record
 
-Before production observer changes, run one controlled observer tick against the rehearsed clone/harness. Preserve before/after manifests, affected Item IDs/status/events, GitHub command counts, and a second-tick idempotence check. Promote only when integrity and foreign keys remain clean; no tenant mismatch, SQLite-after-close, unexpected lifecycle/event delta, or restart loop appears; and per-tick command budgets remain within the release limits. Code rollback preserves legitimate observer writes; reserve full snapshot restore for corruption with explicit post-snapshot data-loss approval.
+Before production observer changes, run one controlled observer tick against the rehearsed clone/harness. Preserve before/after manifests, affected Item IDs/status/events, GitHub command counts, and a second-tick idempotence check. Promote only when integrity and foreign keys remain clean; no tenant mismatch, SQLite-after-close, unexpected lifecycle/event delta, or restart loop appears; and per-tick command budgets remain within the release limits. Code rollback preserves legitimate observer changes; reserve full snapshot restore for corruption with explicit post-snapshot data-loss approval.
