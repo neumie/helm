@@ -285,6 +285,126 @@ test('101 deployments paginate, preserve failed status progress, and never retur
 	assert.equal(listPages, 2, 'complete paginated discovery is retained while status work continues')
 })
 
+test('merged multi-command deploy resumes from the exact 159/160 boundary without partial persistence', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-deploy-command-boundary-'))
+	const db = new DB(join(root, 'helm.db'), 'work')
+	try {
+		const target = createShippedItem(db, 'target')
+		for (let index = 0; index < 159; index += 1) createShippedItem(db, `filler-${index}`)
+		const calls: string[][] = []
+		const watcher = new DeployWatcher(config, db, {
+			command: async (_file, args) => {
+				calls.push(args)
+				if (args[0] === 'pr')
+					return JSON.stringify({
+						state: args[2] === target.prUrl ? 'MERGED' : 'OPEN',
+						mergeCommit: args[2] === target.prUrl ? { oid: 'target-sha' } : null,
+					})
+				if (args[1]?.includes('/deployments?'))
+					return JSON.stringify([
+						{ id: 1, environment: 'staging' },
+						{ id: 2, environment: 'production' },
+					])
+				return JSON.stringify([{ state: 'success' }])
+			},
+		})
+
+		await watcher.pollOnce()
+		assert.equal(calls.length, 160, 'every production command, not candidate, consumes the shared budget')
+		assert.equal(
+			calls.findIndex(args => args[0] === 'pr' && args[2] === target.prUrl),
+			159,
+		)
+		assert.equal(db.items.get(target.id)?.deployState, null, 'the partial observation is never persisted')
+
+		await watcher.pollOnce()
+		assert.equal(calls.length, 164, 'the deferred candidate gets a fresh budget on the next tick')
+		assert.deepEqual(
+			db.items.get(target.id)?.deployState?.deployments.map(deployment => deployment.environment),
+			['staging', 'production'],
+		)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('failed deploy status preserves prior state and never duplicates deploy success events', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-deploy-state-preservation-'))
+	const db = new DB(join(root, 'helm.db'), 'work')
+	try {
+		const item = createShippedItem(db, 'preserve')
+		const commands = new ItemCommands(db.items, config)
+		const prior = {
+			merged: true,
+			mergedAt: '2026-01-01T00:00:00.000Z',
+			mergeSha: 'sha',
+			deployments: [{ environment: 'production', state: 'success', url: null, updatedAt: null }],
+			checkedAt: '2026-01-01T00:00:00.000Z',
+		}
+		commands.recordDeployState(item.id, prior)
+		let failStaging = true
+		const watcher = new DeployWatcher(config, db, {
+			command: async (_file, args) => {
+				if (args[0] === 'pr') return JSON.stringify({ state: 'MERGED', mergeCommit: { oid: 'sha' } })
+				if (args[1]?.includes('/deployments?'))
+					return JSON.stringify([
+						{ id: 1, environment: 'production' },
+						{ id: 2, environment: 'staging' },
+					])
+				if (args[1]?.includes('/deployments/2/') && failStaging) throw new Error('transient status failure')
+				return JSON.stringify([{ state: 'success' }])
+			},
+		})
+
+		await watcher.pollOnce()
+		assert.deepEqual(db.items.get(item.id)?.deployState, prior)
+		assert.equal(db.items.getEvents(item.id).filter(event => event.eventType === 'deploy_succeeded').length, 1)
+
+		failStaging = false
+		await watcher.pollOnce()
+		await watcher.pollOnce()
+		assert.equal(db.items.getEvents(item.id).filter(event => event.eventType === 'deploy_succeeded').length, 2)
+		assert.deepEqual(
+			db.items.get(item.id)?.deployState?.deployments.map(deployment => deployment.environment),
+			['production', 'staging'],
+		)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('duplicate PR candidates share one production command observation per tick', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-deploy-pr-memo-'))
+	const db = new DB(join(root, 'helm.db'), 'work')
+	try {
+		const first = createShippedItem(db, 'first')
+		const second = createShippedItem(db, 'second')
+		const commands = new ItemCommands(db.items, config)
+		const prUrl = 'https://github.com/neumie/helm/pull/999'
+		commands.recordDispatchPr(first.id, { prUrl, shippedByAgent: true })
+		commands.recordDispatchPr(second.id, { prUrl, shippedByAgent: true })
+		const calls: string[][] = []
+		const watcher = new DeployWatcher(config, db, {
+			command: async (_file, args) => {
+				calls.push(args)
+				if (args[0] === 'pr') return JSON.stringify({ state: 'MERGED', mergeCommit: { oid: 'shared-sha' } })
+				if (args[1]?.includes('/deployments?')) return JSON.stringify([{ id: 1, environment: 'production' }])
+				return JSON.stringify([{ state: 'success' }])
+			},
+		})
+
+		await watcher.pollOnce()
+		assert.equal(calls.length, 3, 'one PR view, deployment list, and status run for the shared PR')
+		assert.ok(db.items.get(first.id)?.deployState)
+		assert.ok(db.items.get(second.id)?.deployState)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('deploy poison no-result advances beyond the 160-candidate page', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-deploy-poison-'))
 	const db = new DB(join(root, 'helm.db'), 'work')
@@ -402,6 +522,43 @@ test('pre-aborted and post-stop observers admit no deploy or plan work', async (
 		await Promise.all([deploy.pollOnce(), plan.pollOnce()])
 		assert.equal(deployCalls, 0)
 		assert.equal(planCalls, 0)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('plan stop drains an abort-ignoring pre-write barrier and suppresses persistence', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-plan-observer-stop-'))
+	const db = new DB(join(root, 'helm.db'), 'work')
+	try {
+		const item = createPlannedItem(db, 'stop-plan', join(root, 'tree'))
+		let release: (() => void) | undefined
+		const gate = new Promise<void>(resolve => {
+			release = resolve
+		})
+		let reachedBarrier = false
+		const watcher = new PlanStatusWatcher(config, db, {
+			fetchGithubQueues: async () => new Map(),
+			beforeWrite: async () => {
+				reachedBarrier = true
+				await gate
+			},
+		})
+		const tick = watcher.pollOnce()
+		while (!reachedBarrier) await Promise.resolve()
+		const firstStop = watcher.stop()
+		const secondStop = watcher.stop()
+		assert.equal(firstStop, secondStop)
+		let drained = false
+		void firstStop.then(() => {
+			drained = true
+		})
+		await Promise.resolve()
+		assert.equal(drained, false)
+		release?.()
+		await Promise.all([tick, firstStop])
+		assert.equal(db.items.get(item.id)?.planStatus, null)
 	} finally {
 		db.close()
 		rmSync(root, { recursive: true, force: true })

@@ -66,6 +66,8 @@ export async function fetchGithubPlanQueues(
 export interface PlanStatusWatcherDeps {
 	fetchGithubQueues?: typeof fetchGithubPlanQueues
 	intervalMs?: number
+	/** Testable barrier immediately before the only observer persistence write. */
+	beforeWrite?: (item: ItemRecord, signal: AbortSignal) => Promise<void>
 }
 
 function semanticStatus(status: PlanStatus): Omit<PlanStatus, 'checkedAt'> {
@@ -101,6 +103,7 @@ export class PlanStatusWatcher {
 	private readonly cursors = new Map<string, ItemKeysetCursor>()
 	private readonly fetchGithubQueues: typeof fetchGithubPlanQueues
 	private readonly intervalMs: number
+	private readonly beforeWrite: ((item: ItemRecord, signal: AbortSignal) => Promise<void>) | undefined
 	private readonly githubFailures = new Set<string>()
 	private readonly profileIds: () => string[]
 
@@ -114,6 +117,7 @@ export class PlanStatusWatcher {
 		this.profileIds = typeof depsOrProfileIds === 'function' ? depsOrProfileIds : profileIds
 		this.fetchGithubQueues = deps.fetchGithubQueues ?? fetchGithubPlanQueues
 		this.intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS
+		this.beforeWrite = deps.beforeWrite
 	}
 
 	start(): void {
@@ -173,7 +177,7 @@ export class PlanStatusWatcher {
 				candidate.deferred = true
 				continue
 			}
-			this.observeItem(candidate, queues, signal)
+			await this.observeItem(candidate, queues, signal)
 		}
 		if (!aborted(signal)) this.advanceCursors(candidates)
 	}
@@ -260,11 +264,11 @@ export class PlanStatusWatcher {
 		return results
 	}
 
-	private observeItem(
+	private async observeItem(
 		candidate: PlanCandidate,
 		githubQueues: Map<string, TicketQueueSummary> | null,
 		signal: AbortSignal,
-	): void {
+	): Promise<void> {
 		const { item } = candidate
 		if (!item.worktreePath || !item.planDirName || !existsSync(item.worktreePath)) {
 			candidate.completed = true
@@ -286,7 +290,8 @@ export class PlanStatusWatcher {
 				checkedAt: new Date().toISOString(),
 			}
 			if (!sameStatus(item.planStatus, next) && !aborted(signal)) {
-				candidate.item = candidate.commands.recordPlanStatus(item.id, next)
+				await this.beforeWrite?.(item, signal)
+				if (!aborted(signal)) candidate.item = candidate.commands.recordPlanStatus(item.id, next)
 			}
 			if (!aborted(signal)) candidate.completed = true
 		} catch (err) {

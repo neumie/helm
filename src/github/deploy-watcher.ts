@@ -287,6 +287,8 @@ export interface DeployWatcherDeps {
 	fetchDeployState?: typeof fetchDeployState
 	discoverPrUrl?: typeof discoverPrUrlByBranch
 	readWorktreeBranch?: typeof readWorktreeBranch
+	/** Low-level production command seam; every gh fetch still consumes its permit. */
+	command?: DeployCommandRunner
 }
 
 type CandidateKind = 'late-pr' | 'deploy'
@@ -319,6 +321,7 @@ export class DeployWatcher {
 	private readonly fetchState: typeof fetchDeployState
 	private readonly discoverPr: typeof discoverPrUrlByBranch
 	private readonly readBranch: typeof readWorktreeBranch
+	private readonly command: DeployCommandRunner | undefined
 	private readonly profileIds: () => string[]
 	private readonly injectedFetch: boolean
 	private readonly injectedDiscover: boolean
@@ -336,6 +339,7 @@ export class DeployWatcher {
 		this.fetchState = deps.fetchDeployState ?? fetchDeployState
 		this.discoverPr = deps.discoverPrUrl ?? discoverPrUrlByBranch
 		this.readBranch = deps.readWorktreeBranch ?? readWorktreeBranch
+		this.command = deps.command
 		this.injectedFetch = deps.fetchDeployState !== undefined
 		this.injectedDiscover = deps.discoverPrUrl !== undefined
 		this.injectedReadBranch = deps.readWorktreeBranch !== undefined
@@ -527,7 +531,12 @@ export class DeployWatcher {
 		}
 		const progress = this.deployProgress.get(prUrl) ?? { statuses: new Map(), incomplete: false }
 		this.deployProgress.set(prUrl, progress)
-		return this.fetchState(prUrl, new Date().toISOString(), { signal: remote.signal, remote, progress }).then(state => {
+		return this.fetchState(prUrl, new Date().toISOString(), {
+			signal: remote.signal,
+			remote,
+			progress,
+			command: this.command,
+		}).then(state => {
 			if (state && !progress.incomplete) this.deployProgress.delete(prUrl)
 			return state
 		})
