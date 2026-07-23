@@ -36,6 +36,12 @@ export interface ItemEvent {
 	createdAt: string
 }
 
+/** Stable observer cursor: Item IDs break ties in timestamp ordering. */
+export interface ItemKeysetCursor {
+	updatedAt: string
+	id: string
+}
+
 type ItemUpdateInput = Partial<
 	Pick<
 		ItemRecord,
@@ -438,28 +444,21 @@ export class ItemStore {
 
 	// Solve Items that have shipped a PR and may still be merging/deploying — the
 	// DeployWatcher's work-list. review + completed (not failed/cancelled).
-	listPlanWatchable(limit = 200): ItemRecord[] {
-		const rows = this.db
-			.prepare(
-				`SELECT * FROM items
-				 WHERE profile_id = ? AND planned_at IS NOT NULL AND worktree_path IS NOT NULL AND plan_dir_name IS NOT NULL
-				   AND status NOT IN ('done', 'cancelled')
-				 ORDER BY updated_at DESC LIMIT ?`,
-			)
-			.all(this.profileId, limit) as Record<string, unknown>[]
-		return rows.map(row => this.rowToItem(row))
+	listPlanWatchable(limit = 200, cursor?: ItemKeysetCursor): ItemRecord[] {
+		return this.listObserverPage(
+			`planned_at IS NOT NULL AND worktree_path IS NOT NULL AND plan_dir_name IS NOT NULL
+			   AND status NOT IN ('done', 'cancelled')`,
+			limit,
+			cursor,
+		)
 	}
 
-	listDeployWatchable(limit = 100): ItemRecord[] {
-		const rows = this.db
-			.prepare(
-				`SELECT * FROM items
-				 WHERE profile_id = ? AND kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'done')
-				 ORDER BY updated_at DESC
-				 LIMIT ?`,
-			)
-			.all(this.profileId, limit) as Record<string, unknown>[]
-		return rows.map(row => this.rowToItem(row))
+	listDeployWatchable(limit = 100, cursor?: ItemKeysetCursor): ItemRecord[] {
+		return this.listObserverPage(
+			"kind = 'solve' AND pr_url IS NOT NULL AND status IN ('review', 'done')",
+			limit,
+			cursor,
+		)
 	}
 
 	// Review solve Items that have a branch but no recorded PR and where a PR may
@@ -470,23 +469,33 @@ export class ItemStore {
 	// backfills these by asking gh for a PR on the branch. Deliberately excludes
 	// clean runs with dispatch merely SKIPPED (createPrs off) — those are
 	// unshipped on purpose and would be polled forever.
-	listPrBackfillable(limit = 50): ItemRecord[] {
+	listPrBackfillable(limit = 50, cursor?: ItemKeysetCursor): ItemRecord[] {
+		return this.listObserverPage(
+			`kind = 'solve' AND status = 'review' AND pr_url IS NULL
+			   AND branch_name IS NOT NULL
+			   AND (
+			     run_outcome IN ('errored', 'no_result')
+			     OR EXISTS (
+			       SELECT 1 FROM item_events e
+			        WHERE e.profile_id = items.profile_id AND e.item_id = items.id AND e.event_type = 'dispatch_failed'
+			     )
+			   )`,
+			limit,
+			cursor,
+		)
+	}
+
+	private listObserverPage(condition: string, limit: number, cursor?: ItemKeysetCursor): ItemRecord[] {
+		const cursorClause = cursor ? ' AND (updated_at < ? OR (updated_at = ? AND id < ?))' : ''
+		const params: unknown[] = [this.profileId]
+		if (cursor) params.push(cursor.updatedAt, cursor.updatedAt, cursor.id)
+		params.push(limit)
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM items
-				 WHERE profile_id = ? AND kind = 'solve' AND status = 'review' AND pr_url IS NULL
-				   AND branch_name IS NOT NULL
-				   AND (
-				     run_outcome IN ('errored', 'no_result')
-				     OR EXISTS (
-				       SELECT 1 FROM item_events e
-				        WHERE e.profile_id = items.profile_id AND e.item_id = items.id AND e.event_type = 'dispatch_failed'
-				     )
-				   )
-				 ORDER BY updated_at DESC
-				 LIMIT ?`,
+				`SELECT * FROM items WHERE profile_id = ? AND ${condition}${cursorClause}
+				 ORDER BY updated_at DESC, id DESC LIMIT ?`,
 			)
-			.all(this.profileId, limit) as Record<string, unknown>[]
+			.all(...params) as Record<string, unknown>[]
 		return rows.map(row => this.rowToItem(row))
 	}
 

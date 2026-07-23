@@ -123,6 +123,11 @@ export class ProfileStore {
 		return structuredClone(this.requireProfile(this.state.activeProfileId))
 	}
 
+	/** Every registered tenant, including archived profiles, for background observers. */
+	registeredProfileIds(): string[] {
+		return this.state.profiles.map(profile => profile.id)
+	}
+
 	activeRuntime(): ProfileRuntime {
 		return this.runtimeFor(this.state.activeProfileId)
 	}

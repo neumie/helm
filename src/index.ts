@@ -73,8 +73,9 @@ async function main() {
 		storeForProfile: profileId => db.forProfile(profileId).items,
 	})
 	const poller = new Poller(config, db, provider, enricher, () => profiles.activeRuntime())
-	const deployWatcher = new DeployWatcher(config, db)
-	const planStatusWatcher = new PlanStatusWatcher(config, db)
+	const registeredProfileIds = () => profiles.registeredProfileIds()
+	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
+	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
 
 	// Start API server
 	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher, {
@@ -100,19 +101,23 @@ async function main() {
 	deployWatcher.start()
 	planStatusWatcher.start()
 
-	// Graceful shutdown
+	// Graceful shutdown. Poller/Enricher/Drainer/HTTP do not yet expose a complete
+	// admission-and-drain contract, so SQLite deliberately remains open until
+	// process termination rather than being closed after only observer drains.
+	let shuttingDown: Promise<void> | null = null
 	const shutdown = () => {
-		log.info('helm', 'Shutting down...')
-		poller.stop()
-		enricher.stop()
-		queue.stop()
-		deployWatcher.stop()
-		planStatusWatcher.stop()
-		db.close()
-		process.exit(0)
+		shuttingDown ??= (async () => {
+			log.info('helm', 'Shutting down...')
+			poller.stop()
+			enricher.stop()
+			queue.stop()
+			await Promise.allSettled([deployWatcher.stop(), planStatusWatcher.stop()])
+			process.exit(0)
+		})()
+		return shuttingDown
 	}
-	process.on('SIGINT', shutdown)
-	process.on('SIGTERM', shutdown)
+	process.on('SIGINT', () => void shutdown())
+	process.on('SIGTERM', () => void shutdown())
 }
 
 main().catch(err => {
