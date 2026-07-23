@@ -90,7 +90,7 @@ test('registry transfer preserves identity metadata and forces parked ungrouped 
 	const reloaded = new SessionRegistry(path.join(root, 'destination', 'sessions.json'))
 	assert.equal(reloaded.get('aaaa1111')?.customName, 'deploy watch')
 	assert.equal(reloaded.get('aaaa1111')?.parked, true)
-	assert.equal(reloaded.get('aaaa1111')?.groupId, null)
+	assert.equal(reloaded.get('aaaa1111')?.groupId, undefined)
 })
 
 test('registry transfer assigns a destination-owned order after existing parked entries', () => {

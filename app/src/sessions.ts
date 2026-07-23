@@ -432,6 +432,64 @@ export class GraceCloser {
 
 export type SessionBacking = 'ordinary' | 'run-owned'
 
+/** A persisted group can be disclosed independently in either terminal surface. */
+export type TabGroupSurface = 'strip' | 'background'
+
+/** Stable, opaque group metadata stored under the reserved `_tabGroups` registry key. */
+export interface TabGroupMeta {
+	name: string
+	collapsedStrip?: boolean
+	collapsedBackground?: boolean
+}
+
+/** Public group shape with explicit false values for consumers. */
+export interface TabGroup {
+	id: string
+	name: string
+	collapsedStrip: boolean
+	collapsedBackground: boolean
+}
+
+/**
+ * Declarative group commands for UI/main adapters. They deliberately contain
+ * no terminal/PTY operation; an adapter resolves and performs those effects.
+ */
+export type TabGroupActionIntent =
+	| { type: 'rename'; groupId: string; name: string }
+	| { type: 'move'; sessionId: string; groupId: string | null }
+	| { type: 'open-all'; groupId: string }
+	| { type: 'restore-all'; groupId: string }
+	| { type: 'move-all-background'; groupId: string }
+	| { type: 'close-all'; groupId: string }
+
+export function isValidTabGroupId(id: unknown): id is string {
+	return typeof id === 'string' && /^group-[a-f0-9]{8}$/.test(id)
+}
+
+function normalizedTabGroupName(name: unknown): string | null {
+	if (typeof name !== 'string') return null
+	const normalized = name.trim().slice(0, 200)
+	return normalized === '' ? null : normalized
+}
+
+/** Validates and constructs a pure group command; it never changes registry or PTY state. */
+export function tabGroupActionIntent(
+	type: TabGroupActionIntent['type'],
+	params: { groupId?: unknown; name?: unknown; sessionId?: unknown; targetGroupId?: unknown },
+): TabGroupActionIntent | null {
+	if (type === 'move') {
+		if (!isValidSessionId(params.sessionId)) return null
+		if (params.targetGroupId !== null && !isValidTabGroupId(params.targetGroupId)) return null
+		return { type, sessionId: params.sessionId, groupId: params.targetGroupId ?? null }
+	}
+	if (!isValidTabGroupId(params.groupId)) return null
+	if (type === 'rename') {
+		const name = normalizedTabGroupName(params.name)
+		return name ? { type, groupId: params.groupId, name } : null
+	}
+	return { type, groupId: params.groupId }
+}
+
 export interface SessionMeta {
 	createdAt: string
 	/** Explicit cross-relaunch order. Missing = legacy registry; createdAt remains fallback. */
@@ -453,6 +511,10 @@ export interface SessionMeta {
 	agentAttention?: boolean
 	/** Optional tab-group membership; transfer always clears this at its destination. */
 	groupId?: string | null
+}
+
+type SessionRegistryFile = Record<string, SessionMeta | Record<string, TabGroupMeta>> & {
+	_tabGroups?: Record<string, TabGroupMeta>
 }
 
 export interface SessionRegistryTransferResult {
@@ -479,14 +541,29 @@ export function compareSessionOrder(
 export class SessionRegistry {
 	readonly #file: string
 	#data: Record<string, SessionMeta> = {}
+	#groups: Record<string, TabGroupMeta> = {}
 	#saveTimer: NodeJS.Timeout | null = null
 
 	constructor(file: string) {
 		this.#file = file
 		try {
 			const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+			const rawGroups = raw._tabGroups
+			if (typeof rawGroups === 'object' && rawGroups !== null && !Array.isArray(rawGroups)) {
+				for (const [id, meta] of Object.entries(rawGroups)) {
+					if (!isValidTabGroupId(id) || typeof meta !== 'object' || meta === null || Array.isArray(meta)) continue
+					const candidate = meta as Record<string, unknown>
+					const name = normalizedTabGroupName(candidate.name)
+					if (!name) continue
+					this.#groups[id] = {
+						name,
+						...(candidate.collapsedStrip === true ? { collapsedStrip: true } : {}),
+						...(candidate.collapsedBackground === true ? { collapsedBackground: true } : {}),
+					}
+				}
+			}
 			for (const [id, meta] of Object.entries(raw)) {
-				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null) continue
+				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null || Array.isArray(meta)) continue
 				const { createdAt, order, lastTitle, customName, parked, backing, agentRunning, agentAttention, groupId } =
 					meta as Record<string, unknown>
 				this.#data[id] = {
@@ -498,9 +575,10 @@ export class SessionRegistry {
 					...(backing === 'run-owned' ? { backing } : {}),
 					...(agentRunning === true ? { agentRunning: true } : {}),
 					...(agentAttention === true ? { agentAttention: true } : {}),
-					...(typeof groupId === 'string' || groupId === null ? { groupId } : {}),
+					...(typeof groupId === 'string' && this.#groups[groupId] ? { groupId } : {}),
 				}
 			}
+			this.#removeEmptyGroups()
 		} catch {
 			// missing/corrupt file — start empty
 		}
@@ -525,6 +603,99 @@ export class SessionRegistry {
 	/** All known session ids (startup orphan sweeps read this before prune()). */
 	ids(): string[] {
 		return Object.keys(this.#data)
+	}
+
+	/** Current profile-local group definitions in deterministic creation order. */
+	getGroups(): TabGroup[] {
+		return Object.entries(this.#groups).map(([id, meta]) => ({
+			id,
+			name: meta.name,
+			collapsedStrip: meta.collapsedStrip === true,
+			collapsedBackground: meta.collapsedBackground === true,
+		}))
+	}
+
+	/** Creates a non-empty group and assigns all known unique members in one mutation. */
+	createGroup(name: string, sessionIds: readonly string[]): TabGroup | null {
+		const normalized = normalizedTabGroupName(name)
+		if (!normalized) return null
+		const members = [...new Set(sessionIds)].flatMap(sessionId => (this.#data[sessionId] ? [sessionId] : []))
+		if (members.length === 0) return null
+		let id: string
+		do {
+			id = `group-${crypto.randomUUID().slice(0, 8)}`
+		} while (this.#groups[id])
+		this.#groups[id] = { name: normalized }
+		for (const sessionId of members) {
+			const meta = this.#data[sessionId]
+			if (meta) meta.groupId = id
+		}
+		this.#removeEmptyGroups()
+		this.#scheduleSave()
+		return { id, name: normalized, collapsedStrip: false, collapsedBackground: false }
+	}
+
+	renameGroup(groupId: string, name: string): TabGroup | null {
+		const group = this.#groups[groupId]
+		const normalized = normalizedTabGroupName(name)
+		if (!group || !normalized || group.name === normalized) return group ? this.#group(groupId) : null
+		group.name = normalized
+		this.#scheduleSave()
+		return this.#group(groupId)
+	}
+
+	/** Deletes the definition but deliberately retains every member as Ungrouped. */
+	deleteGroup(groupId: string): boolean {
+		if (!this.#groups[groupId]) return false
+		for (const meta of Object.values(this.#data)) {
+			if (meta.groupId === groupId) meta.groupId = undefined
+		}
+		delete this.#groups[groupId]
+		this.#scheduleSave()
+		return true
+	}
+
+	/** Assigns one retained session or clears it to Ungrouped. */
+	setSessionGroup(sessionId: string, groupId: string | null): boolean {
+		const meta = this.#data[sessionId]
+		if (!meta || (groupId !== null && !this.#groups[groupId])) return false
+		const next = groupId ?? undefined
+		if (meta.groupId === next) return false
+		meta.groupId = next
+		this.#removeEmptyGroups()
+		this.#scheduleSave()
+		return true
+	}
+
+	/** Disclosure is presentation metadata only; it never moves sessions. */
+	setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): boolean {
+		const group = this.#groups[groupId]
+		if (!group) return false
+		const key = surface === 'strip' ? 'collapsedStrip' : 'collapsedBackground'
+		const next = collapsed ? true : undefined
+		if (group[key] === next) return false
+		group[key] = next
+		this.#scheduleSave()
+		return true
+	}
+
+	/**
+	 * Atomically changes retained group members' placement metadata. Renderer or
+	 * main adapters own the corresponding PTY/DOM movement.
+	 */
+	moveGroup(groupId: string, parked: boolean): string[] | null {
+		if (!this.#groups[groupId]) return null
+		const members: string[] = []
+		let changed = false
+		for (const [sessionId, meta] of Object.entries(this.#data)) {
+			if (meta.groupId !== groupId) continue
+			members.push(sessionId)
+			if ((meta.parked === true) === parked) continue
+			meta.parked = parked ? true : undefined
+			changed = true
+		}
+		if (changed) this.#scheduleSave()
+		return members
 	}
 
 	setTitle(sessionId: string, title: string): void {
@@ -620,7 +791,9 @@ export class SessionRegistry {
 		this.#cancelSave()
 		destination.#cancelSave()
 		const sourceBefore = structuredClone(this.#data)
+		const sourceGroupsBefore = structuredClone(this.#groups)
 		const destinationBefore = structuredClone(destination.#data)
+		const destinationGroupsBefore = structuredClone(destination.#groups)
 		// Order is profile-local UI metadata. Never carry a source position into
 		// the destination: append after every existing destination entry (and
 		// therefore after its parked Background entries) with a collision-free
@@ -637,20 +810,30 @@ export class SessionRegistry {
 			groupId: null,
 		}
 		const sourceAfter = structuredClone(sourceBefore)
+		const sourceGroupsAfter = structuredClone(sourceGroupsBefore)
 		const destinationAfter = { ...destinationBefore, [sessionId]: moved }
 		delete sourceAfter[sessionId]
+		SessionRegistry.#removeEmptyGroupsFrom(sourceAfter, sourceGroupsAfter)
 		try {
-			SessionRegistry.#writeDocument(destination.#file, destinationAfter)
+			SessionRegistry.#writeDocument(
+				destination.#file,
+				SessionRegistry.#document(destinationAfter, destinationGroupsBefore),
+			)
 			try {
-				SessionRegistry.#writeDocument(this.#file, sourceAfter)
+				SessionRegistry.#writeDocument(this.#file, SessionRegistry.#document(sourceAfter, sourceGroupsAfter))
 			} catch (error) {
 				// Destination first is required for crash repair. If source did not
 				// commit, restore destination while source remains authoritative.
-				SessionRegistry.#writeDocument(destination.#file, destinationBefore)
+				SessionRegistry.#writeDocument(
+					destination.#file,
+					SessionRegistry.#document(destinationBefore, destinationGroupsBefore),
+				)
 				throw error
 			}
 			this.#data = sourceAfter
+			this.#groups = sourceGroupsAfter
 			destination.#data = destinationAfter
+			destination.#groups = destinationGroupsBefore
 			return { status: 'moved', meta: structuredClone(moved) }
 		} catch {
 			return { status: 'failed' }
@@ -660,6 +843,7 @@ export class SessionRegistry {
 	remove(sessionId: string): void {
 		if (!(sessionId in this.#data)) return
 		delete this.#data[sessionId]
+		this.#removeEmptyGroups()
 		this.#scheduleSave()
 	}
 
@@ -672,6 +856,7 @@ export class SessionRegistry {
 				changed = true
 			}
 		}
+		if (this.#removeEmptyGroups()) changed = true
 		if (changed) this.#scheduleSave()
 	}
 
@@ -687,10 +872,64 @@ export class SessionRegistry {
 	flush(): void {
 		this.#cancelSave()
 		try {
-			SessionRegistry.#writeDocument(this.#file, this.#data)
+			SessionRegistry.#writeDocument(this.#file, SessionRegistry.#document(this.#data, this.#groups))
 		} catch {
 			// best-effort; titles degrade to "zsh" on next restore
 		}
+	}
+
+	#group(groupId: string): TabGroup | null {
+		const meta = this.#groups[groupId]
+		return meta
+			? {
+					id: groupId,
+					name: meta.name,
+					collapsedStrip: meta.collapsedStrip === true,
+					collapsedBackground: meta.collapsedBackground === true,
+				}
+			: null
+	}
+
+	#removeEmptyGroups(): boolean {
+		return SessionRegistry.#removeEmptyGroupsFrom(this.#data, this.#groups)
+	}
+
+	static #removeEmptyGroupsFrom(data: Record<string, SessionMeta>, groups: Record<string, TabGroupMeta>): boolean {
+		const memberGroups = new Set(
+			Object.values(data)
+				.map(meta => meta.groupId)
+				.filter((groupId): groupId is string => typeof groupId === 'string'),
+		)
+		let changed = false
+		for (const groupId of Object.keys(groups)) {
+			if (memberGroups.has(groupId)) continue
+			delete groups[groupId]
+			changed = true
+		}
+		return changed
+	}
+
+	static #document(data: Record<string, SessionMeta>, groups: Record<string, TabGroupMeta>): SessionRegistryFile {
+		const document: SessionRegistryFile = {}
+		for (const [sessionId, meta] of Object.entries(data)) {
+			const { groupId: _groupId, ...sessionMeta } = meta
+			document[sessionId] = {
+				...sessionMeta,
+				...(typeof _groupId === 'string' && groups[_groupId] ? { groupId: _groupId } : {}),
+			}
+		}
+		const nonEmptyGroups = Object.fromEntries(
+			Object.entries(groups).map(([groupId, meta]) => [
+				groupId,
+				{
+					name: meta.name,
+					...(meta.collapsedStrip === true ? { collapsedStrip: true } : {}),
+					...(meta.collapsedBackground === true ? { collapsedBackground: true } : {}),
+				},
+			]),
+		)
+		if (Object.keys(nonEmptyGroups).length > 0) document._tabGroups = nonEmptyGroups
+		return document
 	}
 
 	#cancelSave(): void {
@@ -699,7 +938,7 @@ export class SessionRegistry {
 		this.#saveTimer = null
 	}
 
-	static #writeDocument(file: string, data: Record<string, SessionMeta>): void {
+	static #writeDocument(file: string, data: SessionRegistryFile): void {
 		const tempFile = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
 		try {
 			fs.mkdirSync(path.dirname(file), { recursive: true })
