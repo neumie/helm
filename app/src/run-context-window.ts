@@ -27,6 +27,9 @@ function itemId(raw: unknown): string {
 export class RunContextWindows {
 	private readonly byItem = new Map<string, EditorState>()
 	private readonly byWebContents = new Map<number, EditorState>()
+	/** Requests admitted before this gate closes must finish before activation. */
+	private readonly inFlight = new Set<Promise<unknown>>()
+	private preparingProfileSwitch = false
 
 	constructor(
 		private readonly bridge: HelmBridge,
@@ -38,14 +41,24 @@ export class RunContextWindows {
 		return [...this.byItem.values()].some(state => state.dirty)
 	}
 
-	/** Close every clean editor before a profile switch; dirty drafts block it. */
-	prepareForProfileSwitch(): boolean {
-		if (this.hasDirtyWindows()) return false
+	/**
+	 * Synchronously refuse dirty drafts before closing a window or changing
+	 * admission. Once accepted, no new load/save/reset can enter the drain.
+	 */
+	beginProfileSwitchDrain(): { ok: false } | { ok: true; drained: Promise<void> } {
+		if (this.hasDirtyWindows()) return { ok: false }
+		this.preparingProfileSwitch = true
 		for (const state of this.byItem.values()) {
 			state.allowClose = true
 			state.window.close()
 		}
-		return true
+		const admitted = [...this.inFlight]
+		return { ok: true, drained: Promise.allSettled(admitted).then(() => undefined) }
+	}
+
+	/** Reopen editor admission after a pre-activation failure or completed switch. */
+	finishProfileSwitchDrain(): void {
+		this.preparingProfileSwitch = false
 	}
 
 	requestCloseAll(): void {
@@ -54,26 +67,28 @@ export class RunContextWindows {
 
 	registerIpc(): void {
 		const assertProfileAccess = () => {
-			if (this.callbacks.canOpen?.() === false) throw new Error('Profile is switching — use Run Context afterward')
+			if (this.preparingProfileSwitch || this.callbacks.canOpen?.() === false) {
+				throw new Error('Profile is switching — use Run Context afterward')
+			}
 		}
 		ipcMain.handle('run-context:open', (_event, rawId: unknown) => {
 			assertProfileAccess()
 			return this.open(itemId(rawId))
 		})
-		ipcMain.handle('run-context:load', event => {
+		ipcMain.handle('run-context:load', (event, profileToken: unknown) => {
 			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
-			return this.bridge.loadRunContext(state.itemId)
+			return this.track(() => this.bridge.loadRunContext(state.itemId, profileToken))
 		})
-		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft) => {
+		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft, profileToken: unknown) => {
 			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
-			return this.bridge.saveRunContext(state.itemId, Number(revision), document)
+			return this.track(() => this.bridge.saveRunContext(state.itemId, Number(revision), document, profileToken))
 		})
-		ipcMain.handle('run-context:reset', (event, revision: unknown) => {
+		ipcMain.handle('run-context:reset', (event, revision: unknown, profileToken: unknown) => {
 			assertProfileAccess()
 			const state = this.requireEditor(event.sender.id)
-			return this.bridge.resetRunContext(state.itemId, Number(revision))
+			return this.track(() => this.bridge.resetRunContext(state.itemId, Number(revision), profileToken))
 		})
 		ipcMain.on('run-context:dirty', (event, dirty: unknown) => {
 			const state = this.byWebContents.get(event.sender.id)
@@ -88,6 +103,16 @@ export class RunContextWindows {
 		ipcMain.on('run-context:cancel-close', event => {
 			if (this.byWebContents.has(event.sender.id)) this.callbacks.onCloseCancelled?.()
 		})
+	}
+
+	private track<T>(operation: () => Promise<T>): Promise<T> {
+		const promise = Promise.resolve().then(operation)
+		this.inFlight.add(promise)
+		void promise.then(
+			() => this.inFlight.delete(promise),
+			() => this.inFlight.delete(promise),
+		)
+		return promise
 	}
 
 	private async open(id: string): Promise<void> {

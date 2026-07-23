@@ -21,6 +21,23 @@ test('run-context preload exposes only the narrow editor capability set', () => 
 	for (const forbidden of ['window.helm', 'pty:', 'session:', 'daemon:config', 'shell:']) {
 		assert.doesNotMatch(preload, new RegExp(forbidden.replace(':', '\\:')))
 	}
+	assert.match(preload, /ipcRenderer\.sendSync\('config:get'\)/)
+	assert.match(preload, /run-context:load', sessionProfileToken/)
+	assert.match(preload, /run-context:save', revision, document, sessionProfileToken/)
+	assert.match(preload, /run-context:reset', revision, sessionProfileToken/)
+	assert.doesNotMatch(preload, /getDaemonUrl|daemonUrl/)
+})
+
+test('run-context switch drain synchronously refuses dirty editors and closes admission before awaiting requests', () => {
+	assert.match(windowManager, /beginProfileSwitchDrain\(\): \{ ok: false \} \| \{ ok: true; drained: Promise<void> \}/)
+	assert.match(windowManager, /if \(this\.hasDirtyWindows\(\)\) return \{ ok: false \}/)
+	assert.match(windowManager, /this\.preparingProfileSwitch = true[\s\S]*const admitted = \[\.\.\.this\.inFlight\]/)
+	assert.match(windowManager, /Promise\.allSettled\(admitted\)/)
+	assert.match(windowManager, /this\.preparingProfileSwitch \|\| this\.callbacks\.canOpen\?\.\(\) === false/)
+	assert.match(windowManager, /this\.track\(\(\) => this\.bridge\.loadRunContext\(/)
+	assert.match(windowManager, /this\.track\(\(\) => this\.bridge\.saveRunContext\(/)
+	assert.match(windowManager, /this\.track\(\(\) => this\.bridge\.resetRunContext\(/)
+	assert.match(windowManager, /profileToken: unknown/)
 })
 
 test('run-context editor freezes one consistent document during writes', () => {

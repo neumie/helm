@@ -230,30 +230,57 @@ export class HelmBridge {
 		}
 	}
 
-	loadRunContext(itemId: string): Promise<HelmResult<RunContextLoad>> {
-		return this.request('GET', `/items/${encodeURIComponent(itemId)}/run-context`)
+	/** Run Context token policy lives here; windows only authenticate their sender/item. */
+	private staleRunContextToken<T>(token: unknown): HelmResult<T> | null {
+		return this.acceptsProfileToken(token)
+			? null
+			: { error: 'Profile changed — retry in the active profile.', status: 409 }
+	}
+
+	async loadRunContext(itemId: string, profileToken: unknown): Promise<HelmResult<RunContextLoad>> {
+		const before = this.staleRunContextToken<RunContextLoad>(profileToken)
+		if (before) return before
+		const result = await this.request<RunContextLoad>('GET', `/items/${encodeURIComponent(itemId)}/run-context`)
+		return this.staleRunContextToken<RunContextLoad>(profileToken) ?? result
 	}
 
 	async saveRunContext(
 		itemId: string,
 		revision: number,
 		document: RunContextDraft,
+		profileToken: unknown,
 	): Promise<HelmResult<RunContextSave>> {
+		const before = this.staleRunContextToken<RunContextSave>(profileToken)
+		if (before) return before
 		const result = await this.request<RunContextSave>('PUT', `/items/${encodeURIComponent(itemId)}/run-context`, {
 			revision,
 			document,
 		})
-		if (result.error === undefined) this.kick()
+		const after = this.staleRunContextToken<RunContextSave>(profileToken)
+		if (after) return after
+		if (result.error === undefined) {
+			const beforeKick = this.staleRunContextToken<RunContextSave>(profileToken)
+			if (beforeKick) return beforeKick
+			this.kick()
+		}
 		return result
 	}
 
-	async resetRunContext(itemId: string, revision: number): Promise<HelmResult<RunContextReset>> {
+	async resetRunContext(itemId: string, revision: number, profileToken: unknown): Promise<HelmResult<RunContextReset>> {
+		const before = this.staleRunContextToken<RunContextReset>(profileToken)
+		if (before) return before
 		const result = await this.request<RunContextReset>(
 			'POST',
 			`/items/${encodeURIComponent(itemId)}/run-context/reset`,
 			{ revision },
 		)
-		if (result.error === undefined) this.kick()
+		const after = this.staleRunContextToken<RunContextReset>(profileToken)
+		if (after) return after
+		if (result.error === undefined) {
+			const beforeKick = this.staleRunContextToken<RunContextReset>(profileToken)
+			if (beforeKick) return beforeKick
+			this.kick()
+		}
 		return result
 	}
 

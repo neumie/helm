@@ -522,10 +522,15 @@ async function activateProfile(
 	// Acquire before the first await: menu, Settings, and deep-link activation
 	// can otherwise overlap and commit conflicting active-profile pointers.
 	profileSwitchInProgress = true
-	if (!runContextWindows.prepareForProfileSwitch()) {
+	const runContextDrain = runContextWindows.beginProfileSwitchDrain()
+	if (!runContextDrain.ok) {
 		profileSwitchInProgress = false
 		return { error: 'Save or discard the open Run Context draft before switching profiles.' }
 	}
+	// A Run Context request can mutate the old profile after its renderer has
+	// gone away, so every request admitted before the gate must settle before
+	// buffers, bridge fencing, generation advance, or daemon activation.
+	await runContextDrain.drained
 	if (mainWindow && !mainWindow.isDestroyed()) await flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
 	// Fence before asking the daemon to switch: an old renderer must never see or
 	// command the target profile during the activation response window.
@@ -535,6 +540,7 @@ async function activateProfile(
 	if (result.error !== undefined) {
 		sessionProfileGeneration -= 1
 		helmBridge.cancelProfileSwitch()
+		runContextWindows.finishProfileSwitchDrain()
 		profileSwitchInProgress = false
 		return result
 	}
@@ -561,6 +567,7 @@ async function activateProfile(
 	else createWindow()
 	void profileReady.then(() => {
 		if (pendingProfileReady?.profileId === profileId) pendingProfileReady = null
+		runContextWindows.finishProfileSwitchDrain()
 		profileSwitchInProgress = false
 		if (openItemId) deliverOpenItem(openItemId)
 	})
