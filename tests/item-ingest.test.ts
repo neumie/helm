@@ -8,11 +8,11 @@ import {
 	isOpenableAttachment,
 	sanitizeAttachmentName,
 	saveAttachment,
+	worktreeAttachmentRelativePath,
 } from '../src/attachments/store.js'
 import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ItemCommands } from '../src/items/commands.js'
-import { localizeCapturedAttachments } from '../src/items/context.js'
 import type { TaskContext } from '../src/providers/provider.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 
@@ -278,22 +278,9 @@ test('attachment store sanitizes names and de-dups collisions', () => {
 	}
 })
 
-test('localizeCapturedAttachments rewrites served URLs to worktree-relative paths', () => {
-	const ctx: TaskContext = {
-		title: 't',
-		attachments: [
-			{ name: 'shot.png', url: '/api/items/abc/attachments/shot.png', contentType: 'image/png' },
-			{ name: 'doc.pdf', url: '/api/items/abc/attachments/doc.pdf' },
-		],
-	}
-	const out = localizeCapturedAttachments(ctx)
-	assert.deepEqual(
-		out.attachments?.map(a => a.url),
-		['.helm-attachments/shot.png', '.helm-attachments/doc.pdf'],
-	)
-	// Name/contentType preserved; no attachments → unchanged object.
-	assert.equal(out.attachments?.[0].contentType, 'image/png')
-	assert.deepEqual(localizeCapturedAttachments({ title: 't' }), { title: 't' })
+test('captured attachment paths are Item-qualified inside a shared Main checkout', () => {
+	assert.equal(worktreeAttachmentRelativePath('abc', 'shot.png'), '.helm-attachments/abc/shot.png')
+	assert.equal(worktreeAttachmentRelativePath('other', 'shot.png'), '.helm-attachments/other/shot.png')
 })
 
 test('source-task route promotes a captured Item into a provider task and links it', () =>

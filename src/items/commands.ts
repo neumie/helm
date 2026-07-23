@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { z } from 'zod'
 import type { HelmConfig } from '../config.js'
 import { taskContextSchema } from '../providers/provider.js'
@@ -629,6 +630,8 @@ export class ItemCommands {
 			gitTaken: boolean
 			preRunOnly?: boolean
 			force?: boolean
+			/** Planning Main→Worktree may reserve a branch while retaining the old Main pointer. */
+			transitionFromMain?: boolean
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
@@ -643,7 +646,11 @@ export class ItemCommands {
 		// await before the write) closes the window so the on-disk worktree can't
 		// desync from the row's branchName. The automatic naming path runs before
 		// any worktree exists, so this never blocks it.
-		if (item.worktreePath) return item
+		const project = this.config.projects.find(candidate => candidate.slug === item.projectSlug)
+		const isMainPointer = Boolean(
+			project && item.worktreePath && resolvePath(item.worktreePath) === resolvePath(project.repoPath),
+		)
+		if (item.worktreePath && !(fields.transitionFromMain && isMainPointer)) return item
 		if (item.branchName && !fields.force) return item
 		const taken = fields.gitTaken || this.store.branchNameExists(fields.base, id)
 		const branchName = taken ? `${fields.base}-${fields.suffix}` : fields.base
@@ -687,16 +694,18 @@ export class ItemCommands {
 		if (item.status === 'active' && item.workMode !== 'manual') {
 			throw new Error('Only human-owned active Items can be re-planned')
 		}
-		const started = this.store.update(id, {
-			status: 'active',
-			workMode: 'manual',
-			startedAt: item.startedAt ?? new Date().toISOString(),
-			completedAt: null,
-			errorMessage: null,
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const started = this.store.update(id, {
+				status: 'active',
+				workMode: 'manual',
+				startedAt: item.startedAt ?? new Date().toISOString(),
+				completedAt: null,
+				errorMessage: null,
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'planning_started', { from: item.status, to: started.status })
+			return started
 		})
-		this.store.insertEvent(id, 'planning_started', { from: item.status, to: started.status })
-		return started
 	}
 
 	abortPlanning(
@@ -705,16 +714,67 @@ export class ItemCommands {
 	): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.status !== 'active' || item.workMode !== 'manual') return item
-		const restored = this.store.update(id, {
-			status: previous.status,
-			workMode: previous.workMode,
-			startedAt: previous.startedAt,
-			completedAt: previous.completedAt,
-			errorMessage: previous.errorMessage,
-			errorPhase: previous.errorPhase,
+		return this.store.transaction(() => {
+			const restored = this.store.update(id, {
+				status: previous.status,
+				workMode: previous.workMode,
+				startedAt: previous.startedAt,
+				completedAt: previous.completedAt,
+				errorMessage: previous.errorMessage,
+				errorPhase: previous.errorPhase,
+			})
+			this.store.insertEvent(id, 'planning_failed', { from: item.status, to: restored.status })
+			return restored
 		})
-		this.store.insertEvent(id, 'planning_failed', { from: item.status, to: restored.status })
-		return restored
+	}
+
+	/**
+	 * Persist the workspace produced by a planning adapter before it consumes its
+	 * returned context. This is deliberately not plan finalization: it emits no
+	 * event and does not set plannedAt, so a later adapter/finalization failure
+	 * leaves an inspectable provisional identity without pretending a plan exists.
+	 */
+	recordPlanningWorkspaceIdentity(
+		id: string,
+		fields: { worktreePath: string; branchName: string | null; planDirName: string },
+		options: {
+			expectedIdentity: Pick<ItemRecord, 'worktreePath' | 'branchName' | 'planDirName'>
+			/** Pre-naming identity authorizing a Main↔Worktree pointer transition. */
+			transitionFromIdentity?: Pick<ItemRecord, 'worktreePath' | 'branchName' | 'planDirName'>
+			authorizedTransition: 'none' | 'main-to-worktree' | 'worktree-to-main'
+		},
+	): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.status !== 'active' || item.workMode !== 'manual') {
+			throw new Error('Only an active planning Item can record planning workspace identity')
+		}
+		const expected = options.expectedIdentity
+		const transitionFrom = options.transitionFromIdentity ?? expected
+		if (
+			item.worktreePath !== expected.worktreePath ||
+			item.branchName !== expected.branchName ||
+			item.planDirName !== expected.planDirName
+		) {
+			throw new Error('Planning workspace changed while preparing the session')
+		}
+		const project = this.config.projects.find(candidate => candidate.slug === item.projectSlug)
+		if (!project) throw new Error(`Unknown project slug: ${item.projectSlug}`)
+		const checkout = project.repoPath
+		const expectedIsMain =
+			transitionFrom.worktreePath !== null && resolvePath(transitionFrom.worktreePath) === resolvePath(checkout)
+		const nextIsMain = resolvePath(fields.worktreePath) === resolvePath(checkout)
+		if (options.authorizedTransition === 'main-to-worktree') {
+			if (!expectedIsMain || transitionFrom.branchName !== null || nextIsMain || fields.branchName === null) {
+				throw new Error('Invalid main-to-worktree planning transition')
+			}
+		} else if (options.authorizedTransition === 'worktree-to-main') {
+			if (transitionFrom.worktreePath === null || expectedIsMain || !nextIsMain || fields.branchName !== null) {
+				throw new Error('Invalid worktree-to-main planning transition')
+			}
+		} else if (item.worktreePath && item.worktreePath !== fields.worktreePath && existsSync(item.worktreePath)) {
+			throw new Error('Item already points at a different live worktree')
+		}
+		return this.store.update(id, fields)
 	}
 
 	recordPlanPrepared(
@@ -733,21 +793,21 @@ export class ItemCommands {
 			throw new Error('Only an active planning Item can record a prepared plan')
 		}
 
-		const planned = this.store.update(id, {
-			worktreePath: fields.worktreePath,
-			branchName: fields.branchName,
-			planDirName: fields.planDirName,
-			// Stamp the "planned" signal here (not on the worktree fields, which a
-			// normal solve also sets) so the dashboard can tell planned from has-run.
-			plannedAt: item.plannedAt ?? new Date().toISOString(),
+		return this.store.transaction(() => {
+			const planned = this.store.update(id, {
+				worktreePath: fields.worktreePath,
+				branchName: fields.branchName,
+				planDirName: fields.planDirName,
+				plannedAt: item.plannedAt ?? new Date().toISOString(),
+			})
+			this.store.insertEvent(id, 'plan_prepared', {
+				worktreePath: fields.worktreePath,
+				branchName: fields.branchName,
+				planDirName: fields.planDirName,
+				spawner: fields.spawner,
+			})
+			return planned
 		})
-		this.store.insertEvent(id, 'plan_prepared', {
-			worktreePath: fields.worktreePath,
-			branchName: fields.branchName,
-			planDirName: fields.planDirName,
-			spawner: fields.spawner,
-		})
-		return planned
 	}
 
 	recordSolveInputSnapshot(id: string, prompt: string): ItemRecord {
@@ -891,6 +951,21 @@ export class ItemCommands {
 
 	getItem(id: string): ItemRecord | null {
 		return this.store.get(id)
+	}
+
+	/** A failed re-plan retains its provisional pointer but must not be executable. */
+	isPlanningRecoveryBlocked(id: string): boolean {
+		const item = this.requireItem(id)
+		// A fresh failed Plan restores its original unplanned lifecycle; only an
+		// already-prepared Item can otherwise start against a provisional pointer.
+		if (item.plannedAt === null) return false
+		const events = this.store.getEvents(id)
+		for (let index = events.length - 1; index >= 0; index--) {
+			const event = events[index]
+			if (event.eventType === 'plan_prepared') return false
+			if (event.eventType === 'planning_failed') return true
+		}
+		return false
 	}
 
 	getItemBySourceExternalId(externalId: string): ItemRecord | null {

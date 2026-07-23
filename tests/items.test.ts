@@ -396,6 +396,8 @@ class FakeSolveSolver implements Solver {
 					? params.projectConfig.repoPath
 					: (params.existingWorktreePath ?? join(this.worktreeRoot, params.taskId))
 			mkdirSync(worktreePath, { recursive: true })
+			const taskContext = params.onWorktreeReady(worktreePath)
+			void taskContext
 			const workspace = new PlanWorkspace(worktreePath, params.planDirName)
 			workspace.ensureDir()
 			writeFileSync(
@@ -429,7 +431,7 @@ class SnapshotMutatingSolver implements Solver {
 		const worktreePath = params.existingWorktreePath ?? join(this.worktreeRoot, params.taskId)
 		mkdirSync(worktreePath, { recursive: true })
 		const workspace = new PlanWorkspace(worktreePath, params.planDirName)
-		const prompt = buildPrompt(params.taskContext, { planDirName: params.planDirName, worktreePath })
+		const prompt = buildPrompt(params.onWorktreeReady(worktreePath), { planDirName: params.planDirName, worktreePath })
 		const snapshot = (params as { onPromptSnapshot?: (prompt: string) => void }).onPromptSnapshot
 		snapshot?.(prompt)
 		workspace.writeReadme('AFTER snapshot artifact')
@@ -455,7 +457,7 @@ class CancellingWorktreeSolver implements Solver {
 	async solve(params: SolveParams): Promise<SolveResult> {
 		const worktreePath = join(this.worktreeRoot, params.taskId)
 		mkdirSync(worktreePath, { recursive: true })
-		params.onWorktreeReady?.(worktreePath)
+		params.onWorktreeReady(worktreePath)
 		throw taskCancelled()
 	}
 }
@@ -473,9 +475,8 @@ class FakePlanningSpawner implements Spawner {
 		const worktreePath = params.existingWorktreePath ?? join(this.worktreeRoot, params.branchName.replace(/\//g, '-'))
 		mkdirSync(worktreePath, { recursive: true })
 		const workspace = new PlanWorkspace(worktreePath, params.planDirName)
-		workspace.writeContext(
-			`Task: ${params.taskContext.title}\n\nDescription:\n${params.taskContext.description ?? ''}\n`,
-		)
+		const taskContext = params.onWorktreeReady(worktreePath)
+		workspace.writeContext(`Task: ${taskContext.title}\n\nDescription:\n${taskContext.description ?? ''}\n`)
 		workspace.writePlanningPrompt('fake planning prompt')
 		return {
 			worktreePath,
@@ -1789,8 +1790,8 @@ test('Drainer runs queued solve Items oldest-first through the Solver and Item S
 			)
 			assert.equal(solver.maxConcurrent, 1)
 			assert.equal(solver.calls[0].projectConfig.baseBranch, 'release/afk')
-			assert.equal(solver.calls[0].taskContext.title, 'Older solve')
-			assert.equal(solver.calls[0].taskContext.description, 'Run before the newer solve Item.')
+			assert.equal(solver.calls[0].canonicalContext.title, 'Older solve')
+			assert.equal(solver.calls[0].canonicalContext.description, 'Run before the newer solve Item.')
 
 			const olderDone = db.items.get(older.id)
 			const olderPlanDate = olderDone ? new Date(olderDone.createdAt).toISOString().slice(0, 10) : ''
@@ -3431,8 +3432,8 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 			assert.equal(planningSpawner.calls[0].projectConfig.baseBranch, 'release/plan')
 			assert.equal(planningSpawner.calls[0].existingWorktreePath, undefined)
 			assert.equal(planningSpawner.calls[0].replaceExistingSession, false)
-			assert.equal(planningSpawner.calls[0].taskContext.title, 'Plan Item flow')
-			assert.equal(planningSpawner.calls[0].taskContext.description, 'Write a plan for this Item.')
+			assert.equal(planningSpawner.calls[0].canonicalContext.title, 'Plan Item flow')
+			assert.equal(planningSpawner.calls[0].canonicalContext.description, 'Write a plan for this Item.')
 			assert.match(readFileSync(first.data.readmePath, 'utf-8'), /Planning agent started/)
 			assert.match(
 				readFileSync(new PlanWorkspace(first.data.worktreePath, first.data.planDirName).contextPath, 'utf-8'),
@@ -3504,9 +3505,9 @@ test('server plans source-backed solve Items with provider task context', async 
 			const res = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
 
 			assert.equal(res.status, 200)
-			assert.equal(planningSpawner.calls[0].taskContext.title, 'Provider source title')
-			assert.equal(planningSpawner.calls[0].taskContext.description, 'Provider source description.')
-			assert.deepEqual(planningSpawner.calls[0].taskContext.metadata, {
+			assert.equal(planningSpawner.calls[0].canonicalContext.title, 'Provider source title')
+			assert.equal(planningSpawner.calls[0].canonicalContext.description, 'Provider source description.')
+			assert.deepEqual(planningSpawner.calls[0].canonicalContext.metadata, {
 				Priority: 'P1',
 				'Item ID': item.id,
 				Kind: 'solve',
@@ -3719,7 +3720,7 @@ test('server planning route accepts loop Items through the Spawner seam', async 
 			assert.equal(loopRes.status, 200)
 			const loopBody = (await loopRes.json()) as { data: { planDirName: string } }
 			assert.equal(
-				planningSpawner.calls[0].taskContext.description,
+				planningSpawner.calls[0].canonicalContext.description,
 				'Run almanac loop for PRD: docs/plans/afk-rework/prd.md',
 			)
 			assert.equal(db.items.get(loop.id)?.planDirName, loopBody.data.planDirName)
@@ -5351,7 +5352,7 @@ test('main-workspace solve failure reconciles via commits-ahead with a null bran
 
 		class MainModeFailingSolver implements Solver {
 			async solve(params: SolveParams): Promise<SolveResult> {
-				params.onWorktreeReady?.(params.projectConfig.repoPath)
+				params.onWorktreeReady(params.projectConfig.repoPath)
 				throw phaseError('solve', 'agent blew up after committing')
 			}
 		}
@@ -5755,9 +5756,9 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 
 			const planRes = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
 			assert.equal(planRes.status, 200)
-			assert.equal(planningSpawner.calls[0]?.taskContext.description, 'Verified context only.')
-			assert.equal(planningSpawner.calls[0]?.taskContext.comments, undefined)
-			assert.equal(planningSpawner.calls[0]?.taskContext.attachments?.[0]?.name, 'evidence.txt')
+			assert.equal(planningSpawner.calls[0]?.canonicalContext.description, 'Verified context only.')
+			assert.equal(planningSpawner.calls[0]?.canonicalContext.comments, undefined)
+			assert.equal(planningSpawner.calls[0]?.canonicalContext.attachments?.[0]?.name, 'evidence.txt')
 
 			providerFails = true
 			const outageLoadRes = await api.request(`/items/${item.id}/run-context`)
@@ -5820,8 +5821,8 @@ test('processSolveItem hands the saved run-context narrative to the solver', asy
 		const solver = new FakeSolveSolver(worktreeRoot)
 		try {
 			await processSolveItem(item.id, config, db, provider, solver)
-			assert.equal(solver.calls[0]?.taskContext.description, 'Use corrected context.')
-			assert.notEqual(solver.calls[0]?.taskContext.description, 'Original prompt must not reach the solver.')
+			assert.equal(solver.calls[0]?.canonicalContext.description, 'Use corrected context.')
+			assert.notEqual(solver.calls[0]?.canonicalContext.description, 'Original prompt must not reach the solver.')
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}

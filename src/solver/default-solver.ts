@@ -63,16 +63,7 @@ export class DefaultSolver implements Solver {
 	}
 
 	async solve(params: SolveParams): Promise<SolveResult> {
-		const {
-			projectConfig,
-			branchName,
-			planDirName,
-			taskContext,
-			solverConfig,
-			signal,
-			outputLogPath,
-			existingWorktreePath,
-		} = params
+		const { projectConfig, branchName, planDirName, solverConfig, signal, outputLogPath, existingWorktreePath } = params
 
 		if (signal?.aborted) {
 			throw taskCancelled()
@@ -82,7 +73,7 @@ export class DefaultSolver implements Solver {
 		const worktreePath = mainMode
 			? await this.ensureMainCheckout(projectConfig, signal)
 			: await this.ensureWorktree(projectConfig, branchName, existingWorktreePath, signal)
-		params.onWorktreeReady?.(worktreePath)
+		const taskContext = params.onWorktreeReady(worktreePath)
 
 		if (signal?.aborted) {
 			throw taskCancelled()

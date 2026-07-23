@@ -314,7 +314,7 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 	} as unknown as OkenaClient
 	const manager = new OkenaWorktreeManager(client)
 
-	assert.equal(await manager.findPlanTerminal('project-1'), null)
+	assert.equal(await manager.findPlanTerminal('project-1', 'item-1'), null)
 })
 
 test('OkenaSpawner does not send another command into a reused planning terminal', async () => {
@@ -352,8 +352,10 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 			projectConfig: config.projects[0],
 			branchName: 'feat/reuse-plan',
 			planDirName: '2026-07-17-reuse-plan',
+			itemId: 'item-reuse',
 			taskTitle: 'Reuse plan',
-			taskContext: { title: 'Reuse plan' },
+			canonicalContext: { title: 'Reuse plan' },
+			onWorktreeReady: () => ({ title: 'Reuse plan' }),
 			solverConfig: config.solver,
 		})
 
@@ -364,7 +366,7 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 				action: 'rename_terminal',
 				project_id: 'project-1',
 				terminal_id: 'terminal-plan',
-				name: 'plan: Reuse plan',
+				name: 'plan: Reuse plan [helm:item-reuse]',
 			},
 		])
 	} finally {
@@ -405,8 +407,10 @@ test('OkenaSpawner replaces the existing agent for an explicit Re-plan without f
 			projectConfig: config.projects[0],
 			branchName: 'feat/replace-plan',
 			planDirName: '2026-07-22-replace-plan',
+			itemId: 'item-replace',
 			taskTitle: 'Replace plan',
-			taskContext: { title: 'Replace plan' },
+			canonicalContext: { title: 'Replace plan' },
+			onWorktreeReady: () => ({ title: 'Replace plan' }),
 			solverConfig: config.solver,
 			replaceExistingSession: true,
 		})
@@ -425,7 +429,7 @@ test('OkenaSpawner replaces the existing agent for an explicit Re-plan without f
 				action: 'rename_terminal',
 				project_id: 'project-1',
 				terminal_id: 'terminal-new-plan',
-				name: 'plan: Replace plan',
+				name: 'plan: Replace plan [helm:item-replace]',
 			},
 		])
 		assert.equal(
@@ -465,7 +469,8 @@ test('OkenaSolver fails promptly when its execution workspace disappears', async
 				projectConfig: config.projects[0],
 				branchName: 'fix/missing-workspace',
 				planDirName: '2026-07-15-missing-workspace',
-				taskContext: { title: 'Missing workspace' },
+				canonicalContext: { title: 'Missing workspace' },
+				onWorktreeReady: () => ({ title: 'Missing workspace' }),
 				taskId: 'item-1',
 				taskTitle: 'Missing workspace',
 				solverConfig: config.solver,

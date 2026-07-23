@@ -18,8 +18,14 @@ export interface SolveParams {
 	 * file the agent writes lives at `docs/plans/<planDirName>/solver-result.json`.
 	 */
 	planDirName: string
-	/** Raw task context — the solver formats it into the prompt itself. */
-	taskContext: TaskContext
+	/** Canonical, unlocalized context for non-prompt diagnostics only. */
+	canonicalContext: TaskContext
+	/**
+	 * Called exactly once after workspace readiness and before any prompt or agent
+	 * consumption. Returns the adapter-ready context (localized captured
+	 * attachments only after their bytes have been materialized).
+	 */
+	onWorktreeReady(worktreePath: string): TaskContext
 	/** Stable Item/Task id used for logs, worktree naming, and persisted run state. */
 	taskId: string
 	taskTitle: string
@@ -42,12 +48,6 @@ export interface SolveParams {
 	 * any planning artifacts the user wrote under `docs/plans/<planDirName>/`.
 	 */
 	existingWorktreePath?: string
-	/**
-	 * Called immediately after the solver creates or reuses the worktree. Workers
-	 * use this to keep cancellation/failure rows inspectable even if solve() never
-	 * returns a SolveResult.
-	 */
-	onWorktreeReady?: (worktreePath: string) => void
 	/**
 	 * Called immediately after the solver renders the exact prompt and before it
 	 * invokes the agent. Workers use this to persist the immutable solve input.

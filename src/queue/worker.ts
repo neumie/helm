@@ -3,11 +3,10 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { dispatchSolveItem } from '../actions/dispatcher.js'
-import { copyAttachmentsToWorktree } from '../attachments/store.js'
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { ItemCommands } from '../items/commands.js'
-import { buildItemExecutionContext, localizeCapturedAttachments } from '../items/context.js'
+import { buildItemExecutionContext, prepareItemExecutionContext } from '../items/context.js'
 import { loopPayloadForItem } from '../items/execution.js'
 import { resolveItemWorkspace } from '../items/identity.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../items/naming.js'
@@ -16,7 +15,7 @@ import type { ItemRecord } from '../items/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
-import type { Solver } from '../solver/solver.js'
+import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
@@ -134,11 +133,9 @@ async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvide
 		throw phaseError('solve', `Item ${item.id} is ${item.kind}, not solve`)
 	}
 
-	// Frozen captured context (ingested email etc.) wins — its attachments are
-	// worktree-local files, not remote URLs.
-	if (item.capturedContext) {
-		return localizeCapturedAttachments(buildItemExecutionContext(item, item.capturedContext))
-	}
+	// Frozen captured context (ingested email etc.) wins. It stays canonical here;
+	// the required Solver readiness callback localizes it only after bytes exist.
+	if (item.capturedContext) return buildItemExecutionContext(item, item.capturedContext)
 
 	if (item.source) {
 		const sourceContext = await provider.getTaskContext(item.source.externalId)
@@ -230,12 +227,8 @@ export async function processSolveItem(
 					})
 
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
-		// Main mode: the Item's branchName stays NULL until dispatch discovers the
-		// agent-created branch; only the plan dir is recorded up front.
-		commands.recordExecutionWorkspaceIdentity(
-			itemId,
-			mainMode ? { planDirName, branchName: null } : { planDirName, branchName },
-		)
+		const preparedContext = prepareItemExecutionContext(named, taskContext)
+		if (mainMode) commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName: null })
 		const solverConfig = {
 			...config.solver,
 			agent: selectedAgent ?? config.solver.agent,
@@ -243,32 +236,51 @@ export async function processSolveItem(
 			workspace: workspaceMode,
 		}
 
-		const { worktreePath, outcome } = await solver.solve({
-			projectConfig: { ...projectConfig, baseBranch: baseRef },
-			branchName,
-			planDirName,
-			taskContext,
-			taskId: item.id,
-			taskTitle: item.title,
-			solverConfig,
-			solverEffort: selectedEffort,
-			workspaceMode,
-			signal,
-			outputLogPath,
-			existingWorktreePath,
-			onWorktreeReady: worktreePath => {
-				// Drop ingested-task attachments into the (gitignored) worktree so the
-				// agent can open them as local files. No-op for provider-backed Items.
-				if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath, item.profileId)
-				commands.recordExecutionWorkspaceIdentity(
-					itemId,
-					mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
-				)
-			},
-			onPromptSnapshot: prompt => {
-				commands.recordSolveInputSnapshot(itemId, prompt)
-			},
-		})
+		let readinessCalls = 0
+		let readinessPath: string | undefined
+		let readinessSealed = false
+		const onWorktreeReady = (worktreePath: string): TaskContext => {
+			if (readinessSealed || ++readinessCalls !== 1)
+				throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
+			readinessPath = worktreePath
+			const adapterContext = preparedContext.onWorktreeReady(worktreePath)
+			commands.recordExecutionWorkspaceIdentity(
+				itemId,
+				mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
+			)
+			return adapterContext
+		}
+		let solveResult: SolveResult
+		try {
+			solveResult = await solver.solve({
+				projectConfig: { ...projectConfig, baseBranch: baseRef },
+				branchName,
+				planDirName,
+				canonicalContext: taskContext,
+				taskId: item.id,
+				taskTitle: item.title,
+				solverConfig,
+				solverEffort: selectedEffort,
+				workspaceMode,
+				signal,
+				outputLogPath,
+				existingWorktreePath,
+				onWorktreeReady,
+				onPromptSnapshot: prompt => {
+					commands.recordSolveInputSnapshot(itemId, prompt)
+				},
+			})
+		} finally {
+			readinessSealed = true
+		}
+		const { worktreePath, outcome } = solveResult
+		if (
+			readinessCalls !== 1 ||
+			readinessPath !== worktreePath ||
+			(!mainMode && solveResult.branchName !== branchName)
+		) {
+			throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
+		}
 
 		commands.recordExecutionWorkspaceIdentity(
 			itemId,

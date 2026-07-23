@@ -27,7 +27,9 @@ export class OkenaSpawner implements Spawner {
 			params.existingWorktreePath,
 		)
 
-		const reusedTerminal = await this.worktrees.findPlanTerminal(ensured.wtProjectId)
+		// Materialize captured attachments before inspecting or mutating terminals.
+		const taskContext = params.onWorktreeReady(ensured.worktreePath)
+		const reusedTerminal = await this.worktrees.findPlanTerminal(ensured.wtProjectId, params.itemId)
 		log.info('okena', 'Resolving planning terminal', {
 			projectId: ensured.wtProjectId,
 			worktreePath: ensured.worktreePath,
@@ -73,14 +75,14 @@ export class OkenaSpawner implements Spawner {
 				action: 'rename_terminal',
 				project_id: ensured.wtProjectId,
 				terminal_id: terminalId,
-				name: `plan: ${params.taskTitle}`,
+				name: `plan: ${params.taskTitle} [helm:${params.itemId}]`,
 			})
 		} catch {
 			// Non-critical
 		}
 
 		const workspace = new PlanWorkspace(ensured.worktreePath, params.planDirName)
-		workspace.writeContext(formatTaskContext(params.taskContext))
+		workspace.writeContext(formatTaskContext(taskContext))
 		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName))
 
 		const agentLabel = agentLabelFromConfig(params.solverConfig)

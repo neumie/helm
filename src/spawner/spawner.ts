@@ -3,10 +3,15 @@ import type { TaskContext } from '../providers/provider.js'
 
 export interface PlanningSessionParams {
 	projectConfig: ProjectConfig
+	/** Stable ownership identity for interactive terminal reuse; never use title alone. */
+	itemId: string
 	branchName: string
 	planDirName: string
 	taskTitle: string
-	taskContext: TaskContext
+	/** Canonical, unlocalized context; adapter prompt/context writers must not consume it. */
+	canonicalContext: TaskContext
+	/** Required readiness boundary; returns localized/materialized adapter context. */
+	onWorktreeReady(worktreePath: string): TaskContext
 	solverConfig: HelmConfig['solver']
 	/** If set, reuse this worktree instead of creating a new one. */
 	existingWorktreePath?: string

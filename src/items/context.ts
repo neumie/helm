@@ -1,4 +1,9 @@
-import { WORKTREE_ATTACHMENT_SUBDIR } from '../attachments/store.js'
+import {
+	materializePreparedAttachmentsToWorktree,
+	sanitizeAttachmentName,
+	snapshotDeclaredAttachments,
+	worktreeAttachmentRelativePath,
+} from '../attachments/store.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
 import { applyRunContextDocument } from './run-context.js'
 import type { ItemRecord } from './schema.js'
@@ -17,19 +22,70 @@ export async function resolveItemSourceContext(item: ItemRecord, provider: TaskP
 	return null
 }
 
-/**
- * Rewrite a captured task's attachment URLs from their served HTTP path to the
- * worktree-relative `.helm-attachments/<name>` path, so a prompt rendered with
- * the worktree as cwd points the agent at the local copies (placed by
- * `copyAttachmentsToWorktree`). MUST be paired with that copy. No-op when there
- * are no attachments. Used by BOTH the solve worker and the plan route — keep
- * them symmetric (localize + copy together) or the agent gets unfetchable URLs.
- */
-export function localizeCapturedAttachments(ctx: TaskContext): TaskContext {
+function declaredAttachmentNames(item: ItemRecord, context: TaskContext): string[] {
+	return (context.attachments ?? []).map(attachment => {
+		if (!attachment.url.startsWith('/api/')) throw new Error('Captured attachment has an invalid declared served URL')
+		const url = new URL(attachment.url, 'http://helm.local')
+		const segments = url.pathname.split('/')
+		if (
+			segments.length !== 6 ||
+			segments[1] !== 'api' ||
+			segments[2] !== 'items' ||
+			segments[3] !== item.id ||
+			segments[4] !== 'attachments' ||
+			!segments[5] ||
+			url.search ||
+			url.hash
+		) {
+			throw new Error('Captured attachment has an invalid declared served URL')
+		}
+		const name = sanitizeAttachmentName(segments[5])
+		if (name !== segments[5]) throw new Error('Captured attachment has an invalid final filename')
+		return name
+	})
+}
+
+function localizeCapturedAttachments(item: ItemRecord, ctx: TaskContext): TaskContext {
 	if (!ctx.attachments?.length) return ctx
 	return {
 		...ctx,
-		attachments: ctx.attachments.map(a => ({ ...a, url: `${WORKTREE_ATTACHMENT_SUBDIR}/${a.url.split('/').pop()}` })),
+		attachments: ctx.attachments.map((a, index) => ({
+			...a,
+			url: worktreeAttachmentRelativePath(item.id, declaredAttachmentNames(item, ctx)[index]),
+		})),
+	}
+}
+
+/** The adapter-facing half of an execution context, available only after a workspace is ready. */
+export interface PreparedItemExecutionContext {
+	onWorktreeReady(worktreePath: string): TaskContext
+}
+
+/**
+ * Keep execution context canonical until a Solver/Spawner has created its
+ * workspace. Naming and other model helpers must receive this unlocalized
+ * context; captured attachment bytes are validated and materialized only in the
+ * required adapter readiness callback.
+ */
+export function prepareItemExecutionContext(
+	item: ItemRecord,
+	canonicalContext: TaskContext,
+): PreparedItemExecutionContext {
+	if (!item.capturedContext) {
+		return { onWorktreeReady: () => canonicalContext }
+	}
+	const profileId = item.profileId
+	const itemId = item.id
+	const filenames = declaredAttachmentNames(item, canonicalContext)
+	// Snapshot before any adapter can create a worktree/terminal. Buffers are not
+	// re-read at readiness, closing source filesystem TOCTOU.
+	const files = filenames.length > 0 ? snapshotDeclaredAttachments(itemId, filenames, profileId) : []
+	const localized = localizeCapturedAttachments(item, canonicalContext)
+	return {
+		onWorktreeReady(worktreePath) {
+			materializePreparedAttachmentsToWorktree(itemId, files, worktreePath)
+			return localized
+		},
 	}
 }
 

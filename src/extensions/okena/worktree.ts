@@ -302,12 +302,13 @@ export class OkenaWorktreeManager {
 		return { worktreePath, wtProjectId, autoTerminalId: wt.terminal_id }
 	}
 
-	async findPlanTerminal(wtProjectId: string): Promise<string | null> {
+	async findPlanTerminal(wtProjectId: string, itemId: string): Promise<string | null> {
 		const state = await this.client.getState()
 		const wtProject = state.projects.find(p => p.id === wtProjectId)
 		const liveIds = new Set(liveTerminalIds(wtProject?.layout))
+		const ownership = `[helm:${itemId}]`
 		const entry = Object.entries(wtProject?.terminal_names ?? {}).find(
-			([terminalId, name]) => liveIds.has(terminalId) && name.startsWith('plan: '),
+			([terminalId, name]) => liveIds.has(terminalId) && name.endsWith(ownership),
 		)
 		return entry?.[0] ?? null
 	}

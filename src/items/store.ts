@@ -100,6 +100,11 @@ function validateItem(candidate: unknown): ItemRecord {
 }
 
 export class ItemStore {
+	/** Keep lifecycle row/event pairs atomic without leaking the database out of commands. */
+	transaction<T>(fn: () => T): T {
+		return this.db.transaction(fn)()
+	}
+
 	constructor(
 		private readonly db: Database.Database,
 		private readonly profile: string | (() => string) = 'work',

@@ -290,6 +290,8 @@ export interface EnsureItemNameParams {
 	 * (renaming the branch after a worktree is created would desync it).
 	 */
 	force?: boolean
+	/** Authorized Plan Main→Worktree transition; permits branch reservation before pointer swap. */
+	transitionFromMain?: boolean
 }
 
 /**
@@ -323,7 +325,7 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 	// name a loop Item — loop Items keep the deterministic helm/item name.
 	// Structural; applies even to a forced manual run.
 	if (item.kind !== 'solve') return item
-	if (!force && item.branchName) return item // already planned / forked / named
+	if (!force && item.branchName && !params.transitionFromMain) return item // already planned / forked / named
 
 	// A curated model implies its owning CLI; custom model ids retain the
 	// per-feature provider override or effective solve agent.
@@ -368,6 +370,7 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 			gitTaken,
 			preRunOnly: params.preRunOnly,
 			force,
+			transitionFromMain: params.transitionFromMain,
 		})
 		if (named.branchName) {
 			log.info('naming', `Derived branch name for Item ${item.id}: ${named.branchName} (${agent}/${model})`)

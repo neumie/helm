@@ -26,16 +26,7 @@ export class OkenaSolver implements Solver {
 	}
 
 	async solve(params: SolveParams): Promise<SolveResult> {
-		const {
-			projectConfig,
-			branchName,
-			planDirName,
-			taskContext,
-			taskTitle,
-			solverConfig,
-			signal,
-			existingWorktreePath,
-		} = params
+		const { projectConfig, branchName, planDirName, taskTitle, solverConfig, signal, existingWorktreePath } = params
 
 		if (signal?.aborted) {
 			throw taskCancelled()
@@ -54,14 +45,15 @@ export class OkenaSolver implements Solver {
 					branchName,
 					existingWorktreePath,
 				)
+		const worktreePath = ensured.worktreePath
+		// Readiness must complete before terminal lookup/creation or any prompt work.
+		const taskContext = params.onWorktreeReady(worktreePath)
 		// Solve always runs in its own fresh terminal — never the user's planning
 		// terminal. Use the auto-created terminal only for a brand-new worktree.
 		const terminalId = ensured.autoTerminalId ?? (await this.worktrees.createTerminal(ensured.wtProjectId))
 		if (!terminalId) {
 			throw phaseError('worktree', 'Failed to create terminal for solve')
 		}
-		const worktreePath = ensured.worktreePath
-		params.onWorktreeReady?.(worktreePath)
 
 		try {
 			await this.client.action({

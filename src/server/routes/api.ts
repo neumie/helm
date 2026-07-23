@@ -9,7 +9,6 @@ import { z } from 'zod'
 import {
 	attachmentMimeType,
 	attachmentPath,
-	copyAttachmentsToWorktree,
 	isInlineSafeContentType,
 	isOpenableAttachment,
 	readAttachment,
@@ -22,12 +21,7 @@ import type { HelmConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
 import { ensureItemAssessment } from '../../items/assess.js'
 import { ItemCommands } from '../../items/commands.js'
-import {
-	buildItemExecutionContext,
-	buildItemTaskContext,
-	localizeCapturedAttachments,
-	resolveItemSourceContext,
-} from '../../items/context.js'
+import { buildItemTaskContext, resolveItemSourceContext } from '../../items/context.js'
 import { canCreateSourceTask, toDashboardItemWithSiblings, toDashboardItems } from '../../items/contract.js'
 import type { ItemEnricher } from '../../items/enricher.js'
 import { resolveItemWorkspace } from '../../items/identity.js'
@@ -36,6 +30,7 @@ import { observeItemRun } from '../../items/observation.js'
 import { RunContextConflictError, runContextDraftSchema } from '../../items/run-context.js'
 import { itemStatusSchema, solverEffortSchema } from '../../items/schema.js'
 import type { ItemRecord, SolverEffort } from '../../items/schema.js'
+import { PlanningApplication, PlanningError } from '../../plan/application.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
 import type { ProfileRuntime, ProfileStore } from '../../profiles/store.js'
@@ -223,6 +218,7 @@ export function apiRoutes(
 		return typeof runtime === 'function' ? runtime() : runtime
 	}
 	const aiDeps = aiOneShot ? { runOneShot: aiOneShot } : undefined
+	const planning = new PlanningApplication(config, itemCommands, provider, spawner, createPlanningSpawner, aiDeps)
 	const dashboardItem = async (item: ItemRecord) => ({
 		...toDashboardItemWithSiblings(
 			item,
@@ -361,6 +357,26 @@ export function apiRoutes(
 		return null
 	}
 
+	/** Pure projection used by Start validation; never write before Plan conflict exclusion. */
+	function projectSolveSelection(item: ItemRecord, selection: SolveSelection): ItemRecord {
+		if (item.kind !== 'solve' || item.payload.kind !== 'solve') return item
+		const payload = { ...item.payload }
+		if (selection.solverAgent) payload.solverAgent = selection.solverAgent
+		if (selection.solverModel !== undefined) {
+			if (selection.solverModel === null) payload.solverModel = undefined
+			else payload.solverModel = selection.solverModel
+		}
+		if (selection.solverEffort !== undefined) {
+			if (selection.solverEffort === null) payload.solverEffort = undefined
+			else payload.solverEffort = selection.solverEffort
+		}
+		if (selection.solverWorkspace !== undefined) {
+			if (selection.solverWorkspace === null) payload.solverWorkspace = undefined
+			else payload.solverWorkspace = selection.solverWorkspace
+		}
+		return { ...item, payload }
+	}
+
 	function recordSolveSelection(item: ItemRecord, selection: SolveSelection): ItemRecord {
 		if (item.kind !== 'solve') return item
 		let updated = item
@@ -377,13 +393,6 @@ export function apiRoutes(
 	function effectiveSolverWorkspace(item: ItemRecord, selected: SolverWorkspace | null | undefined): SolverWorkspace {
 		const stored = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
 		return selected ?? stored ?? config.solver.workspace ?? 'worktree'
-	}
-
-	async function planningSpawnerForItem(item: ItemRecord): Promise<Spawner> {
-		if (!item.spawner || item.spawner === spawner.name) return spawner
-		const parsed = spawnerNameSchema.safeParse(item.spawner)
-		if (!parsed.success) throw new Error(`Invalid Item spawner: ${item.spawner}`)
-		return createPlanningSpawner(config, parsed.data)
 	}
 
 	function spawnerInstalled(name: string): boolean {
@@ -994,28 +1003,25 @@ export function apiRoutes(
 		if (invalid) return invalid
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
-		if (item.kind !== 'solve' && item.kind !== 'loop') {
+		if (item.kind !== 'solve' && item.kind !== 'loop')
 			return c.json({ error: 'Only solve or loop Items can be started by this drainer' }, 400)
-		}
+		const projectedItem = projectSolveSelection(item, selection)
+		const projectedSolvePayload = projectedItem.payload.kind === 'solve' ? projectedItem.payload : undefined
 		const plannedActive = item.status === 'active' && item.workMode === 'manual' && item.plannedAt != null
-		if (item.status !== 'ready' && item.status !== 'inbox' && !plannedActive) {
+		if (item.status !== 'ready' && item.status !== 'inbox' && !plannedActive)
 			return c.json({ error: 'Item is not ready to start' }, 400)
-		}
-		recordSolveSelection(item, selection)
-		const selectedItem = itemCommands.getItem(item.id) ?? item
-		if (plannedActive && selectedItem.payload.kind === 'solve') {
-			const requested = (body as { executionMode?: unknown }).executionMode
-			if (requested !== 'agent' && requested !== 'loop') {
+		const requested = (body as { executionMode?: unknown }).executionMode
+		let plannedLoop: { prdPath: string; iterations: number } | undefined
+		if (plannedActive && projectedSolvePayload) {
+			if (requested !== 'agent' && requested !== 'loop')
 				return c.json({ error: 'Planned Items require executionMode: agent or loop' }, 400)
-			}
 			if (requested === 'loop') {
-				const workspaceMode = selectedItem.payload.solverWorkspace ?? config.solver.workspace ?? 'worktree'
-				const projectConfig = config.projects.find(project => project.slug === selectedItem.projectSlug)
-				if (!projectConfig) return c.json({ error: `Unknown project slug: ${selectedItem.projectSlug}` }, 400)
-				if (!selectedItem.planDirName || !selectedItem.worktreePath || !existsSync(selectedItem.worktreePath)) {
+				const workspaceMode = effectiveSolverWorkspace(projectedItem, undefined)
+				const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
+				if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
+				if (!item.planDirName || !item.worktreePath || !existsSync(item.worktreePath))
 					return c.json({ error: 'Planned workspace is missing. Re-plan the Item before starting a loop.' }, 400)
-				}
-				if (workspaceMode === 'main' && resolve(selectedItem.worktreePath) !== resolve(projectConfig.repoPath)) {
+				if (workspaceMode === 'main' && resolve(item.worktreePath) !== resolve(projectConfig.repoPath))
 					return c.json(
 						{
 							error:
@@ -1023,42 +1029,48 @@ export function apiRoutes(
 						},
 						400,
 					)
-				}
-				const loopWorkspacePath = workspaceMode === 'main' ? projectConfig.repoPath : selectedItem.worktreePath
-				let prdPath: string
 				try {
-					prdPath = new PlanWorkspace(loopWorkspacePath, selectedItem.planDirName).loopArtifactPath()
+					const loopWorkspacePath = workspaceMode === 'main' ? projectConfig.repoPath : item.worktreePath
+					const prdPath = new PlanWorkspace(loopWorkspacePath, item.planDirName).loopArtifactPath()
+					const localTickets = item.planStatus?.localTickets
+					const githubTickets = item.planStatus?.githubTickets
+					const ticketTotal = (localTickets?.total ?? 0) + (githubTickets?.total ?? 0)
+					const agentReadyTickets = (localTickets?.readyForAgent ?? 0) + (githubTickets?.readyForAgent ?? 0)
+					if (ticketTotal > 0 && agentReadyTickets === 0)
+						return c.json({ error: 'This plan has tickets, but none are ready for an agent.' }, 400)
+					plannedLoop = { prdPath, iterations: agentReadyTickets > 0 ? agentReadyTickets : 10 }
 				} catch (err) {
 					return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
 				}
-				const localTickets = selectedItem.planStatus?.localTickets
-				const githubTickets = selectedItem.planStatus?.githubTickets
-				const ticketTotal = (localTickets?.total ?? 0) + (githubTickets?.total ?? 0)
-				const agentReadyTickets = (localTickets?.readyForAgent ?? 0) + (githubTickets?.readyForAgent ?? 0)
-				if (ticketTotal > 0 && agentReadyTickets === 0) {
-					return c.json({ error: 'This plan has tickets, but none are ready for an agent.' }, 400)
-				}
-				itemCommands.setSolveExecution(item.id, {
-					mode: 'loop',
-					prdPath,
-					options: {
-						// Start loop means finish the autonomous queue, not run one ticket.
-						// An explicit queue gets one iteration per currently agent-ready
-						// ticket; a spec with no queue gets Almanac's bounded decomposition run.
-						mode: 'afk',
-						iterations: agentReadyTickets > 0 ? agentReadyTickets : 10,
-						provider: selectedItem.payload.solverAgent ?? config.solver.agent,
-						model: selectedItem.payload.solverModel ?? config.solver.model,
-						effort: selectedItem.payload.solverEffort,
-					},
-				})
-			} else {
-				itemCommands.setSolveExecution(item.id, { mode: 'solver' })
 			}
 		}
-		const started = queue.processOneItem(item.id)
-		if (!started) return c.json({ error: 'Could not start Item' }, 500)
-		return c.json({ data: await dashboardItem(itemCommands.getItem(item.id) ?? item) })
+		try {
+			// First Start mutation; this synchronous segment cannot interleave Plan.
+			planning.assertStartAllowed(item.id)
+			recordSolveSelection(item, selection)
+			const selectedItem = itemCommands.getItem(item.id) ?? item
+			if (plannedActive && selectedItem.payload.kind === 'solve') {
+				if (plannedLoop)
+					itemCommands.setSolveExecution(item.id, {
+						mode: 'loop',
+						prdPath: plannedLoop.prdPath,
+						options: {
+							mode: 'afk',
+							iterations: plannedLoop.iterations,
+							provider: projectedSolvePayload?.solverAgent ?? config.solver.agent,
+							model: projectedSolvePayload?.solverModel ?? config.solver.model,
+							effort: projectedSolvePayload?.solverEffort,
+						},
+					})
+				else itemCommands.setSolveExecution(item.id, { mode: 'solver' })
+			}
+			const started = queue.processOneItem(item.id)
+			if (!started) return c.json({ error: 'Could not start Item' }, 500)
+			return c.json({ data: await dashboardItem(itemCommands.getItem(item.id) ?? item) })
+		} catch (err) {
+			if (err instanceof PlanningError && err.code === 'planning_conflict') return c.json({ error: err.message }, 409)
+			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+		}
 	})
 
 	api.post('/items/:id/retry', async c => {
@@ -1159,173 +1171,34 @@ export function apiRoutes(
 	})
 
 	api.post('/items/:id/plan', async c => {
-		const item = itemCommands.getItem(c.req.param('id'))
-		if (!item) return c.json({ error: 'Not found' }, 404)
-		if (item.status === 'running') return c.json({ error: 'Running Items cannot be planned' }, 400)
 		const selection = await readSolveSelection(c.req.json())
 		const invalid = invalidSelection(c, selection)
 		if (invalid) return invalid
-		const effectiveSolverAgent = selection.solverAgent ?? config.solver.agent
-		const effectiveSolverModel = selection.solverModel ?? config.solver.model
-		// Like solverAgent, the request's solverWorkspace shapes THIS planning
-		// session only and is never persisted by planning; unlike solverAgent it
-		// also falls back to the Item's stored payload override so planning
-		// artifacts land where the eventual run will read them.
-		const effectiveWorkspace = effectiveSolverWorkspace(item, selection.solverWorkspace)
-		const planningInMain = effectiveWorkspace === 'main'
-
-		const projectConfig = config.projects.find(p => p.slug === item.projectSlug)
-		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
-		if (planningInMain && !existsSync(projectConfig.repoPath)) {
-			return c.json({ error: `Project checkout does not exist: ${projectConfig.repoPath}` }, 400)
-		}
-
-		const planningPrevious = item
 		try {
-			itemCommands.beginPlanning(item.id)
-		} catch (err) {
-			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
-		}
-		const abortPlanning = () => {
-			itemCommands.abortPlanning(item.id, planningPrevious)
-		}
-
-		let sourceContext: TaskContext | null = null
-		if (item.payload.kind === 'solve' && (item.capturedContext || item.source)) {
-			try {
-				sourceContext = await resolveItemSourceContext(item, provider)
-			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err)
-				abortPlanning()
-				return c.json({ error: `Item source context failed to load: ${msg}` }, 502)
-			}
-			if (!sourceContext) {
-				abortPlanning()
-				return c.json({ error: 'Item source not found in source system' }, 502)
-			}
-		}
-		// For a captured (email) Item, rewrite attachment URLs to worktree-local
-		// paths so the planning agent's context.md points at the local copies (placed
-		// below after the worktree exists) — symmetric with the solve path.
-		const taskContext = item.capturedContext
-			? localizeCapturedAttachments(buildItemExecutionContext(item, sourceContext))
-			: buildItemExecutionContext(item, sourceContext)
-
-		// Derive a conventional branch name before resolving identity, so planning
-		// writes its worktree under the AI-chosen name (no-op unless enabled). Wire
-		// the request's abort signal so the model call dies if the client gives up
-		// instead of blocking the handler for the full one-shot timeout.
-		// Main-workspace planning skips naming entirely: no branch is pre-created —
-		// the session runs in the canonical checkout and the agent branches itself.
-		let named: ItemRecord
-		if (planningInMain) {
-			named = item
-		} else {
-			try {
-				named = await ensureItemWorkspaceName({
-					commands: itemCommands,
-					item,
-					taskContext,
-					config,
-					repoPath: projectConfig.repoPath,
-					agent: effectiveSolverAgent,
-					signal: c.req.raw.signal,
-					deps: aiDeps,
-				})
-			} catch (err) {
-				abortPlanning()
-				// Pass the request signal so an error coinciding with a client abort is
-				// classified as cancellation (matching how ensureItemWorkspaceName re-throws),
-				// not mis-reported as a 500.
-				if (isCancellation(err, c.req.raw.signal)) return c.json({ error: 'Request aborted' }, 503)
-				throw err
-			}
-		}
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
-		// Legacy/main-planned Items may persist the canonical checkout as their
-		// workspace path. It is valid only for Main planning; handing it to a
-		// Worktree spawner silently reuses the main Okena project and never creates
-		// the branch worktree the operator selected.
-		let existingPlanningWorkspacePath: string | undefined
-		if (planningInMain) {
-			existingPlanningWorkspacePath = projectConfig.repoPath
-		} else if (existingWorktreePath && resolve(existingWorktreePath) !== resolve(projectConfig.repoPath)) {
-			existingPlanningWorkspacePath = existingWorktreePath
-		}
-
-		let itemSpawner: Spawner
-		try {
-			itemSpawner = await planningSpawnerForItem(item)
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err)
-			abortPlanning()
-			return c.json({ error: msg }, 400)
-		}
-
-		let worktreePath: string
-		let hint: string
-		try {
-			// Main-workspace planning hands the spawner the canonical checkout as the
-			// "existing worktree": both spawners reuse it as-is (no worktree creation,
-			// no checkout mutation; okena reuses the repo's existing project window),
-			// and planning artifacts land in the main repo's docs/plans.
-			const session = await itemSpawner.startPlanningSession({
-				projectConfig: { ...projectConfig, baseBranch: baseRef },
-				branchName,
-				planDirName,
-				taskTitle: item.title,
-				taskContext,
-				solverConfig: {
-					...config.solver,
-					agent: effectiveSolverAgent,
-					model: effectiveSolverModel,
-					workspace: effectiveWorkspace,
-				},
-				existingWorktreePath: existingPlanningWorkspacePath,
-				replaceExistingSession: item.plannedAt !== null,
+			const prepared = await planning.prepare({
+				itemId: c.req.param('id'),
+				solverAgent: selection.solverAgent,
+				solverModel: selection.solverModel,
+				solverWorkspace: selection.solverWorkspace,
+				signal: c.req.raw.signal,
 			})
-			worktreePath = session.worktreePath
-			hint = session.hint
+			return c.json({ data: prepared })
 		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err)
-			log.error(
-				'planning',
-				`Failed to start Item ${item.id} via ${itemSpawner.name} (project=${item.projectSlug}, branch=${branchName}, existingWorktree=${existingPlanningWorkspacePath ?? 'none'})`,
-				err,
-			)
-			abortPlanning()
-			return c.json({ error: `Planning session failed to start: ${msg}` }, 500)
+			if (!(err instanceof PlanningError)) throw err
+			const status =
+				err.code === 'not_found'
+					? 404
+					: err.code === 'planning_conflict'
+						? 409
+						: err.code === 'source_unavailable'
+							? 502
+							: err.code === 'cancelled'
+								? 503
+								: err.code === 'launch_failed' || err.code === 'finalization_failed'
+									? 500
+									: 400
+			return c.json({ error: err.message, ...(err.sessionMayExist ? { sessionMayExist: true } : {}) }, status)
 		}
-
-		// Drop ingested attachments into the planning worktree (gitignored
-		// .helm-attachments/) so the planning agent can open the local files the
-		// localized context.md references. No-op for provider-backed Items.
-		if (item.capturedContext) copyAttachmentsToWorktree(item.id, worktreePath, item.profileId)
-
-		// Main mode: the Item's branchName stays NULL (no pre-created branch to
-		// record); worktreePath/planDirName still persist so the run and the plan
-		// preview find the artifacts in the canonical checkout.
-		const recordedBranchName = planningInMain ? null : branchName
-		const workspace = new PlanWorkspace(worktreePath, planDirName)
-		workspace.writeReadme(buildItemPlanReadmeBody(item, recordedBranchName, planDirName))
-		itemCommands.recordPlanPrepared(item.id, {
-			worktreePath,
-			branchName: recordedBranchName,
-			planDirName,
-			spawner: itemSpawner.name,
-		})
-
-		return c.json({
-			data: {
-				worktreePath,
-				branchName: recordedBranchName,
-				planDirName,
-				readmePath: workspace.readmePath,
-				spawner: itemSpawner.name,
-				solverAgent: effectiveSolverAgent,
-				hint,
-			},
-		})
 	})
 
 	// Manual AI passes — (re)run the cheap agent helpers on demand from the item
