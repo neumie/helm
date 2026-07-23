@@ -95,12 +95,15 @@ export class TerminalTransferJournalStore {
 
 	update(journal: TerminalTransferJournal, state: TerminalTransferState): TerminalTransferJournal {
 		const next = { ...journal, state }
+		next.master = { ...journal.master, currentSocketPath: expectedMasterSocketPath(next) }
 		this.#write(next)
 		return next
 	}
 
 	complete(journal: TerminalTransferJournal): void {
-		this.#write({ ...journal, state: 'completed' })
+		const completed = { ...journal, state: 'completed' as const }
+		completed.master = { ...journal.master, currentSocketPath: expectedMasterSocketPath(completed) }
+		this.#write(completed)
 		fs.unlinkSync(this.#file)
 	}
 
@@ -120,7 +123,69 @@ export class TerminalTransferJournalStore {
 	}
 }
 
+/**
+ * Recovery must distinguish the journaled master from a replacement listener
+ * at either socket path. `dead` is definitive only for the captured PID; a
+ * reused PID or any path/fingerprint disagreement is `mismatch`.
+ */
+export type TerminalMasterRecoveryOwnership = 'verified' | 'dead' | 'unknown' | 'mismatch'
+
+export type TerminalMasterRecoveryEvidence =
+	| {
+			state: 'present'
+			pid: number
+			processStartFingerprint: string
+			originalSocketPath: string
+			currentSocketPath: string
+	  }
+	| { state: 'dead' }
+	| { state: 'unknown' }
+
+function expectedMasterSocketPath(journal: TerminalTransferJournal): string {
+	switch (journal.state) {
+		case 'claimed':
+		case 'snapshot-flushed':
+		case 'client-detached':
+			return journal.sourceSocket
+		case 'socket-moved':
+		case 'registries-committed':
+		case 'completed':
+		case 'rollback-needed':
+			return journal.destinationSocket
+	}
+}
+
+/**
+ * Attest a process observation against the durable master identity. The
+ * process continues to advertise its original dtach path after rename, while
+ * `currentSocketPath` records the sole expected namespace entry. Neither a
+ * listener at the moved path nor a reused PID can produce `verified`.
+ */
+export function attestTerminalTransferMaster(
+	journal: TerminalTransferJournal,
+	evidence: TerminalMasterRecoveryEvidence,
+): TerminalMasterRecoveryOwnership {
+	const identity = journal.master
+	const journalIdentityIsCoherent =
+		Number.isSafeInteger(identity.pid) &&
+		identity.pid > 0 &&
+		identity.processStartFingerprint.length > 0 &&
+		identity.originalSocketPath === journal.sourceSocket &&
+		identity.currentSocketPath === expectedMasterSocketPath(journal)
+	if (!journalIdentityIsCoherent) return 'mismatch'
+	if (evidence.state === 'dead') return 'dead'
+	if (evidence.state === 'unknown') return 'unknown'
+	return evidence.pid === identity.pid &&
+		evidence.processStartFingerprint === identity.processStartFingerprint &&
+		evidence.originalSocketPath === identity.originalSocketPath &&
+		evidence.currentSocketPath === identity.currentSocketPath
+		? 'verified'
+		: 'mismatch'
+}
+
 export interface TerminalTransferRecoveryObservation {
+	/** Attested from the journaled PID/start fingerprint and socket identities. */
+	masterOwnership: TerminalMasterRecoveryOwnership
 	sourceSocket: SocketProbe
 	destinationSocket: SocketProbe
 	sourceRegistryHasSession: boolean
@@ -135,6 +200,8 @@ export type TerminalTransferRecoveryDecision =
 	| { action: 'repair-destination'; reason: string }
 	| { action: 'rollback-destination-transfer'; reason: string }
 	| { action: 'remove-completed-journal'; reason: string }
+	/** Remove only definitively-dead socket directory entries; retain the journal and all metadata. */
+	| { action: 'cleanup-dead-sockets'; reason: string }
 	| { action: 'quarantine'; reason: string }
 
 type BufferPlacement = 'source' | 'destination' | 'none' | 'conflict'
@@ -161,6 +228,21 @@ export function decideTerminalTransferRecovery(
 	journal: TerminalTransferJournal,
 	observation: TerminalTransferRecoveryObservation,
 ): TerminalTransferRecoveryDecision {
+	if (observation.masterOwnership === 'unknown' || observation.masterOwnership === 'mismatch') {
+		return {
+			action: 'quarantine',
+			reason: 'journaled master identity is not verified; preserve both namespaces and journal',
+		}
+	}
+	if (observation.masterOwnership === 'dead') {
+		if (observation.sourceSocket === 'dead' && observation.destinationSocket === 'dead') {
+			return {
+				action: 'cleanup-dead-sockets',
+				reason: 'journaled master is dead and both socket entries are definitively dead; retain journal and metadata',
+			}
+		}
+		return { action: 'quarantine', reason: 'dead journaled master has a live or unknown socket entry' }
+	}
 	if (observation.sourceSocket === 'unknown' || observation.destinationSocket === 'unknown') {
 		return { action: 'quarantine', reason: 'socket probe is unknown; preserve both namespaces and journal' }
 	}

@@ -6,6 +6,7 @@ import test from 'node:test'
 import * as buffersModule from '../app/src/buffers.ts'
 import * as sessionsModule from '../app/src/sessions.ts'
 import * as transferModule from '../app/src/terminal-transfer.ts'
+import type { TerminalTransferRecoveryObservation } from '../app/src/terminal-transfer.ts'
 
 type BuffersModule = typeof import('../app/src/buffers.ts')
 type SessionsModule = typeof import('../app/src/sessions.ts')
@@ -17,7 +18,13 @@ const sessions = ((sessionsModule as { default?: SessionsModule }).default ?? se
 const transfer = ((transferModule as { default?: TransferModule }).default ?? transferModule) as TransferModule
 const { BufferStore } = buffers
 const { SessionRegistry, socketDirForProfile, socketPathForProfile, socketPathUsable } = sessions
-const { TerminalTransferJournalStore, decideTerminalTransferRecovery } = transfer
+const { TerminalTransferJournalStore, attestTerminalTransferMaster, decideTerminalTransferRecovery } = transfer
+
+function recoveryObservation(
+	observation: Omit<TerminalTransferRecoveryObservation, 'masterOwnership'>,
+): TerminalTransferRecoveryObservation {
+	return { masterOwnership: 'verified', ...observation }
+}
 
 function tempDir(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), 'helm-transfer-'))
@@ -157,11 +164,45 @@ test('global journal claims exclusively and updates atomically', () => {
 	assert.equal(store.claim(input), null)
 	const moved = store.update(claimed, 'socket-moved')
 	assert.equal(store.load()?.state, 'socket-moved')
+	assert.equal(moved.master.currentSocketPath, moved.destinationSocket, 'journal records the moved socket identity')
 	store.complete(moved)
 	assert.equal(store.load(), null)
 })
 
-test('journal recovery covers every registry, buffer, and socket placement between commits', () => {
+test('master recovery attestation requires the journaled PID, start fingerprint, and both socket identities', () => {
+	const record = journal()
+	const evidence = {
+		state: 'present' as const,
+		pid: record.master.pid,
+		processStartFingerprint: record.master.processStartFingerprint,
+		originalSocketPath: record.master.originalSocketPath,
+		currentSocketPath: record.master.currentSocketPath,
+	}
+	assert.equal(attestTerminalTransferMaster(record, evidence), 'verified')
+	assert.equal(attestTerminalTransferMaster(record, { ...evidence, pid: evidence.pid + 1 }), 'mismatch')
+	assert.equal(
+		attestTerminalTransferMaster(record, { ...evidence, processStartFingerprint: 'reused-pid-start' }),
+		'mismatch',
+		'PID reuse never authorizes recovery',
+	)
+	assert.equal(
+		attestTerminalTransferMaster(record, { ...evidence, currentSocketPath: record.destinationSocket }),
+		'mismatch',
+		'a replacement listener at the moved path never authorizes recovery before the move is journaled',
+	)
+	assert.equal(attestTerminalTransferMaster(record, { state: 'dead' }), 'dead')
+	assert.equal(attestTerminalTransferMaster(record, { state: 'unknown' }), 'unknown')
+	assert.equal(
+		attestTerminalTransferMaster(
+			{ ...record, master: { ...record.master, originalSocketPath: '/tmp/other.sock' } },
+			evidence,
+		),
+		'mismatch',
+		'incoherent journal socket identities never authorize recovery',
+	)
+})
+
+test('journal recovery covers every registry, buffer, socket, and master ownership placement between commits', () => {
 	const socketPairs = [
 		['live', 'live'],
 		['live', 'dead'],
@@ -173,36 +214,47 @@ test('journal recovery covers every registry, buffer, and socket placement betwe
 			for (const sourceBufferPresent of [false, true]) {
 				for (const destinationBufferPresent of [false, true]) {
 					for (const [sourceSocket, destinationSocket] of socketPairs) {
-						const observation = {
-							sourceSocket,
-							destinationSocket,
-							sourceRegistryHasSession,
-							destinationRegistryHasSession,
-							sourceBufferPresent,
-							destinationBufferPresent,
+						for (const masterOwnership of ['verified', 'dead', 'unknown', 'mismatch'] as const) {
+							const observation = {
+								masterOwnership,
+								sourceSocket,
+								destinationSocket,
+								sourceRegistryHasSession,
+								destinationRegistryHasSession,
+								sourceBufferPresent,
+								destinationBufferPresent,
+							}
+							const buffersConflict = sourceBufferPresent && destinationBufferPresent
+							const movedExpected =
+								masterOwnership === 'verified' &&
+								sourceSocket === 'dead' &&
+								destinationSocket === 'live' &&
+								sourceRegistryHasSession &&
+								!destinationRegistryHasSession &&
+								!buffersConflict
+							const committedExpected =
+								masterOwnership === 'verified' &&
+								sourceSocket === 'dead' &&
+								destinationSocket === 'live' &&
+								destinationRegistryHasSession &&
+								!buffersConflict
+							const deadCleanupExpected =
+								masterOwnership === 'dead' && sourceSocket === 'dead' && destinationSocket === 'dead'
+							assert.equal(
+								decideTerminalTransferRecovery({ ...journal(), state: 'socket-moved' }, observation).action,
+								deadCleanupExpected
+									? 'cleanup-dead-sockets'
+									: movedExpected
+										? 'rollback-destination-transfer'
+										: 'quarantine',
+								`socket-moved ${JSON.stringify(observation)}`,
+							)
+							assert.equal(
+								decideTerminalTransferRecovery({ ...journal(), state: 'registries-committed' }, observation).action,
+								deadCleanupExpected ? 'cleanup-dead-sockets' : committedExpected ? 'repair-destination' : 'quarantine',
+								`registries-committed ${JSON.stringify(observation)}`,
+							)
 						}
-						const buffersConflict = sourceBufferPresent && destinationBufferPresent
-						const movedExpected =
-							sourceSocket === 'dead' &&
-							destinationSocket === 'live' &&
-							sourceRegistryHasSession &&
-							!destinationRegistryHasSession &&
-							!buffersConflict
-						const committedExpected =
-							sourceSocket === 'dead' &&
-							destinationSocket === 'live' &&
-							destinationRegistryHasSession &&
-							!buffersConflict
-						assert.equal(
-							decideTerminalTransferRecovery({ ...journal(), state: 'socket-moved' }, observation).action,
-							movedExpected ? 'rollback-destination-transfer' : 'quarantine',
-							`socket-moved ${JSON.stringify(observation)}`,
-						)
-						assert.equal(
-							decideTerminalTransferRecovery({ ...journal(), state: 'registries-committed' }, observation).action,
-							committedExpected ? 'repair-destination' : 'quarantine',
-							`registries-committed ${JSON.stringify(observation)}`,
-						)
 					}
 				}
 			}
@@ -210,15 +262,64 @@ test('journal recovery covers every registry, buffer, and socket placement betwe
 	}
 })
 
+test('reattach, rollback, repair, and completion require verified master ownership', () => {
+	const sourceOwned = recoveryObservation({
+		sourceSocket: 'live',
+		destinationSocket: 'dead',
+		sourceRegistryHasSession: true,
+		destinationRegistryHasSession: false,
+		sourceBufferPresent: true,
+		destinationBufferPresent: false,
+	})
+	const destinationOwned = recoveryObservation({
+		sourceSocket: 'dead',
+		destinationSocket: 'live',
+		sourceRegistryHasSession: false,
+		destinationRegistryHasSession: true,
+		sourceBufferPresent: false,
+		destinationBufferPresent: true,
+	})
+	assert.equal(
+		decideTerminalTransferRecovery({ ...journal(), state: 'client-detached' }, sourceOwned).action,
+		'reattach-source',
+	)
+	assert.equal(
+		decideTerminalTransferRecovery({ ...journal(), state: 'completed' }, destinationOwned).action,
+		'remove-completed-journal',
+	)
+	for (const masterOwnership of ['dead', 'unknown', 'mismatch'] as const) {
+		assert.equal(
+			decideTerminalTransferRecovery({ ...journal(), state: 'client-detached' }, { ...sourceOwned, masterOwnership })
+				.action,
+			'quarantine',
+			`${masterOwnership} never reattaches`,
+		)
+		assert.equal(
+			decideTerminalTransferRecovery({ ...journal(), state: 'completed' }, { ...destinationOwned, masterOwnership })
+				.action,
+			'quarantine',
+			`${masterOwnership} never removes a completed journal`,
+		)
+	}
+	assert.equal(
+		decideTerminalTransferRecovery(
+			{ ...journal(), state: 'completed' },
+			{ ...destinationOwned, masterOwnership: 'dead', sourceSocket: 'dead', destinationSocket: 'dead' },
+		).action,
+		'cleanup-dead-sockets',
+		'dead ownership only permits explicitly scoped socket-entry cleanup',
+	)
+})
+
 test('journal recovery repairs destination-first registry commit and quarantines every unknown probe', () => {
-	const destinationFirst = {
+	const destinationFirst = recoveryObservation({
 		sourceSocket: 'dead' as const,
 		destinationSocket: 'live' as const,
 		sourceRegistryHasSession: true,
 		destinationRegistryHasSession: true,
 		sourceBufferPresent: true,
 		destinationBufferPresent: false,
-	}
+	})
 	assert.equal(
 		decideTerminalTransferRecovery({ ...journal(), state: 'registries-committed' }, destinationFirst).action,
 		'repair-destination',
@@ -237,14 +338,14 @@ test('journal recovery repairs destination-first registry commit and quarantines
 						assert.equal(
 							decideTerminalTransferRecovery(
 								{ ...journal(), state: 'registries-committed' },
-								{
+								recoveryObservation({
 									sourceSocket,
 									destinationSocket,
 									sourceRegistryHasSession,
 									destinationRegistryHasSession,
 									sourceBufferPresent,
 									destinationBufferPresent,
-								},
+								}),
 							).action,
 							'quarantine',
 							'unknown never authorizes cleanup regardless of durable artifact placement',
@@ -259,25 +360,31 @@ test('journal recovery repairs destination-first registry commit and quarantines
 test('journal cleanup requires proven final destination ownership', () => {
 	const completed = { ...journal(), state: 'completed' as const }
 	assert.equal(
-		decideTerminalTransferRecovery(completed, {
-			sourceSocket: 'dead',
-			destinationSocket: 'live',
-			sourceRegistryHasSession: false,
-			destinationRegistryHasSession: true,
-			sourceBufferPresent: false,
-			destinationBufferPresent: true,
-		}).action,
+		decideTerminalTransferRecovery(
+			completed,
+			recoveryObservation({
+				sourceSocket: 'dead',
+				destinationSocket: 'live',
+				sourceRegistryHasSession: false,
+				destinationRegistryHasSession: true,
+				sourceBufferPresent: false,
+				destinationBufferPresent: true,
+			}),
+		).action,
 		'remove-completed-journal',
 	)
 	assert.equal(
-		decideTerminalTransferRecovery(completed, {
-			sourceSocket: 'dead',
-			destinationSocket: 'dead',
-			sourceRegistryHasSession: false,
-			destinationRegistryHasSession: true,
-			sourceBufferPresent: false,
-			destinationBufferPresent: true,
-		}).action,
+		decideTerminalTransferRecovery(
+			completed,
+			recoveryObservation({
+				sourceSocket: 'dead',
+				destinationSocket: 'dead',
+				sourceRegistryHasSession: false,
+				destinationRegistryHasSession: true,
+				sourceBufferPresent: false,
+				destinationBufferPresent: true,
+			}),
+		).action,
 		'quarantine',
 	)
 })

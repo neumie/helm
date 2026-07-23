@@ -65,6 +65,41 @@ function masterCommand(pid) {
 	return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim()
 }
 
+// Mirrors terminal-transfer's recovery evidence contract without importing the
+// Electron main module. The caller establishes the current entry from this
+// canary's own isolated filesystem; the master command must still attest the
+// original pathname after rename.
+function recoveryMasterEvidence(identity, currentSocketPath) {
+	if (!isAlive(identity.pid)) return { state: 'dead' }
+	try {
+		return {
+			state: 'present',
+			pid: identity.pid,
+			processStartFingerprint: masterFingerprint(identity.pid),
+			originalSocketPath: masterCommand(identity.pid).includes(identity.originalSocketPath)
+				? identity.originalSocketPath
+				: '<unattested-original-socket>',
+			currentSocketPath,
+		}
+	} catch {
+		return { state: 'unknown' }
+	}
+}
+
+function assertVerifiedRecoveryMaster(identity, currentSocketPath) {
+	const evidence = recoveryMasterEvidence(identity, currentSocketPath)
+	if (
+		evidence.state !== 'present' ||
+		evidence.pid !== identity.pid ||
+		evidence.processStartFingerprint !== identity.fingerprint ||
+		evidence.originalSocketPath !== identity.originalSocketPath ||
+		evidence.currentSocketPath !== currentSocketPath
+	) {
+		throw new Error(`recovery master identity is not verified: ${JSON.stringify(evidence)}`)
+	}
+	return evidence
+}
+
 function ownedMasterPid(originalSocketPath) {
 	const candidates = execFileSync('pgrep', ['-f', originalSocketPath], { encoding: 'utf8' })
 		.split('\n')
@@ -187,8 +222,7 @@ try {
 		fingerprint: masterFingerprint(masterPid),
 		originalSocketPath: source,
 	}
-	if (!masterCommand(identity.pid).includes(source))
-		throw new Error('master command does not identify the owned source socket')
+	const sourceEvidence = assertVerifiedRecoveryMaster(identity, source)
 	const sourceStat = statSync(source)
 
 	// Rename while an ordinary attach client is live, then detach only that
@@ -203,9 +237,7 @@ try {
 	if (typeof sourceStat.ino === 'number' && sourceStat.ino !== 0 && sourceStat.ino !== destinationStat.ino) {
 		throw new Error('socket inode changed across rename')
 	}
-	if (!isAlive(identity.pid) || masterFingerprint(identity.pid) !== identity.fingerprint) {
-		throw new Error('master PID/start fingerprint changed after attached-client rename')
-	}
+	const movedEvidence = assertVerifiedRecoveryMaster(identity, destination)
 	process.kill(attached.child.pid, 'SIGTERM')
 	await attached.exited
 
@@ -213,9 +245,7 @@ try {
 	if (!output.includes(work) || !output.includes('MOVE_CANARY')) {
 		throw new Error(`destination attach lost cwd/output marker: ${output}`)
 	}
-	if (!isAlive(identity.pid) || masterFingerprint(identity.pid) !== identity.fingerprint) {
-		throw new Error('master PID/start fingerprint changed after destination attach-only verification')
-	}
+	const destinationEvidence = assertVerifiedRecoveryMaster(identity, destination)
 
 	terminateVerifiedMaster(identity)
 	await waitFor(() => !isAlive(identity.pid), 'verified canary master exit')
@@ -233,6 +263,11 @@ try {
 			destinationPresentBeforeCleanup: true,
 			masterPid: identity.pid,
 			masterStartFingerprint: identity.fingerprint,
+			recoveryEvidence: {
+				source: sourceEvidence,
+				moved: movedEvidence,
+				destination: destinationEvidence,
+			},
 			socketDevice: destinationStat.dev,
 			socketInode: destinationStat.ino,
 			attachedRename: true,
