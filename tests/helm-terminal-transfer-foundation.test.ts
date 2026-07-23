@@ -86,6 +86,30 @@ test('registry transfer preserves identity metadata and forces parked ungrouped 
 	assert.equal(reloaded.get('aaaa1111')?.groupId, null)
 })
 
+test('registry transfer assigns a destination-owned order after existing parked entries', () => {
+	const root = tempDir()
+	const source = new SessionRegistry(path.join(root, 'source', 'sessions.json'))
+	const destination = new SessionRegistry(path.join(root, 'destination', 'sessions.json'))
+	source.add('aaaa1111')
+	source.setOrder(['aaaa1111'])
+	destination.add('bbbb2222')
+	destination.add('cccc3333')
+	destination.add('dddd4444')
+	destination.setParked('bbbb2222', true)
+	destination.setParked('cccc3333', true)
+	destination.setOrder(['bbbb2222', 'cccc3333', 'dddd4444'])
+	source.flush()
+	destination.flush()
+
+	assert.equal(source.transferTo(destination, 'aaaa1111').status, 'moved')
+	assert.equal(destination.get('bbbb2222')?.order, 0)
+	assert.equal(destination.get('cccc3333')?.order, 1)
+	assert.equal(destination.get('dddd4444')?.order, 2)
+	assert.equal(destination.get('aaaa1111')?.order, 3, 'source order must not leak into destination')
+	assert.equal(destination.get('aaaa1111')?.parked, true)
+	assert.equal(destination.get('aaaa1111')?.groupId, null)
+})
+
 test('registry transfer rejects destination collision and run-owned sessions without writes', () => {
 	const root = tempDir()
 	const source = new SessionRegistry(path.join(root, 'source.json'))
@@ -137,43 +161,123 @@ test('global journal claims exclusively and updates atomically', () => {
 	assert.equal(store.load(), null)
 })
 
-test('journal recovery is state-aware and unknown probe always quarantines', () => {
-	const base = {
-		sourceSocket: 'live' as const,
-		destinationSocket: 'dead' as const,
+test('journal recovery covers every registry, buffer, and socket placement between commits', () => {
+	const socketPairs = [
+		['live', 'live'],
+		['live', 'dead'],
+		['dead', 'live'],
+		['dead', 'dead'],
+	] as const
+	for (const sourceRegistryHasSession of [false, true]) {
+		for (const destinationRegistryHasSession of [false, true]) {
+			for (const sourceBufferPresent of [false, true]) {
+				for (const destinationBufferPresent of [false, true]) {
+					for (const [sourceSocket, destinationSocket] of socketPairs) {
+						const observation = {
+							sourceSocket,
+							destinationSocket,
+							sourceRegistryHasSession,
+							destinationRegistryHasSession,
+							sourceBufferPresent,
+							destinationBufferPresent,
+						}
+						const buffersConflict = sourceBufferPresent && destinationBufferPresent
+						const movedExpected =
+							sourceSocket === 'dead' &&
+							destinationSocket === 'live' &&
+							sourceRegistryHasSession &&
+							!destinationRegistryHasSession &&
+							!buffersConflict
+						const committedExpected =
+							sourceSocket === 'dead' &&
+							destinationSocket === 'live' &&
+							destinationRegistryHasSession &&
+							!buffersConflict
+						assert.equal(
+							decideTerminalTransferRecovery({ ...journal(), state: 'socket-moved' }, observation).action,
+							movedExpected ? 'rollback-destination-transfer' : 'quarantine',
+							`socket-moved ${JSON.stringify(observation)}`,
+						)
+						assert.equal(
+							decideTerminalTransferRecovery({ ...journal(), state: 'registries-committed' }, observation).action,
+							committedExpected ? 'repair-destination' : 'quarantine',
+							`registries-committed ${JSON.stringify(observation)}`,
+						)
+					}
+				}
+			}
+		}
+	}
+})
+
+test('journal recovery repairs destination-first registry commit and quarantines every unknown probe', () => {
+	const destinationFirst = {
+		sourceSocket: 'dead' as const,
+		destinationSocket: 'live' as const,
 		sourceRegistryHasSession: true,
-		destinationRegistryHasSession: false,
+		destinationRegistryHasSession: true,
 		sourceBufferPresent: true,
 		destinationBufferPresent: false,
 	}
-	assert.equal(decideTerminalTransferRecovery(journal(), base).action, 'source-authoritative')
 	assert.equal(
-		decideTerminalTransferRecovery({ ...journal(), state: 'client-detached' }, base).action,
-		'reattach-source',
-	)
-	assert.equal(
-		decideTerminalTransferRecovery(
-			{ ...journal(), state: 'socket-moved' },
-			{ ...base, sourceSocket: 'dead', destinationSocket: 'live' },
-		).action,
-		'rollback-destination-socket',
-	)
-	assert.equal(
-		decideTerminalTransferRecovery(
-			{ ...journal(), state: 'registries-committed' },
-			{
-				...base,
-				sourceSocket: 'dead',
-				destinationSocket: 'live',
-				sourceRegistryHasSession: false,
-				destinationRegistryHasSession: true,
-			},
-		).action,
+		decideTerminalTransferRecovery({ ...journal(), state: 'registries-committed' }, destinationFirst).action,
 		'repair-destination',
+		'destination registry commit before source removal moves the remaining source buffer by rename',
 	)
-	assert.equal(decideTerminalTransferRecovery(journal(), { ...base, sourceSocket: 'unknown' }).action, 'quarantine')
+	for (const sourceRegistryHasSession of [false, true]) {
+		for (const destinationRegistryHasSession of [false, true]) {
+			for (const sourceBufferPresent of [false, true]) {
+				for (const destinationBufferPresent of [false, true]) {
+					for (const [sourceSocket, destinationSocket] of [
+						['unknown', 'live'],
+						['unknown', 'dead'],
+						['live', 'unknown'],
+						['dead', 'unknown'],
+					] as const) {
+						assert.equal(
+							decideTerminalTransferRecovery(
+								{ ...journal(), state: 'registries-committed' },
+								{
+									sourceSocket,
+									destinationSocket,
+									sourceRegistryHasSession,
+									destinationRegistryHasSession,
+									sourceBufferPresent,
+									destinationBufferPresent,
+								},
+							).action,
+							'quarantine',
+							'unknown never authorizes cleanup regardless of durable artifact placement',
+						)
+					}
+				}
+			}
+		}
+	}
+})
+
+test('journal cleanup requires proven final destination ownership', () => {
+	const completed = { ...journal(), state: 'completed' as const }
 	assert.equal(
-		decideTerminalTransferRecovery({ ...journal(), state: 'completed' }, base).action,
+		decideTerminalTransferRecovery(completed, {
+			sourceSocket: 'dead',
+			destinationSocket: 'live',
+			sourceRegistryHasSession: false,
+			destinationRegistryHasSession: true,
+			sourceBufferPresent: false,
+			destinationBufferPresent: true,
+		}).action,
 		'remove-completed-journal',
+	)
+	assert.equal(
+		decideTerminalTransferRecovery(completed, {
+			sourceSocket: 'dead',
+			destinationSocket: 'dead',
+			sourceRegistryHasSession: false,
+			destinationRegistryHasSession: true,
+			sourceBufferPresent: false,
+			destinationBufferPresent: true,
+		}).action,
+		'quarantine',
 	)
 })

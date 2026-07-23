@@ -4,7 +4,7 @@
 // Run: node app/scripts/profile-terminal-move-attestation.mjs --require-dtach
 
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,8 +16,10 @@ const userData = join(root, 'user-data')
 const sockets = join(root, 'sockets')
 const sourceDir = join(sockets, 'source')
 const destinationDir = join(sockets, 'destination')
-const source = join(sourceDir, 'canary.sock')
-const destination = join(destinationDir, 'canary.sock')
+const sessionId = 'canary-session'
+const source = join(sourceDir, `${sessionId}.sock`)
+const destination = join(destinationDir, `${sessionId}.sock`)
+const work = join(root, 'work')
 let master
 
 function fail(message) {
@@ -46,22 +48,111 @@ function waitFor(predicate, label, timeout = 3000) {
 	})
 }
 
+function isAlive(pid) {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+function masterFingerprint(pid) {
+	return execFileSync('ps', ['-p', String(pid), '-o', 'pid=', '-o', 'lstart='], { encoding: 'utf8' }).trim()
+}
+
+function masterCommand(pid) {
+	return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim()
+}
+
+function ownedMasterPid(originalSocketPath) {
+	const candidates = execFileSync('pgrep', ['-f', originalSocketPath], { encoding: 'utf8' })
+		.split('\n')
+		.map(value => Number.parseInt(value, 10))
+		.filter(Number.isFinite)
+		.filter(pid => pid !== process.pid)
+		.filter(pid => {
+			try {
+				const command = masterCommand(pid)
+				return command.includes('dtach') && command.includes(originalSocketPath)
+			} catch {
+				return false
+			}
+		})
+	if (candidates.length !== 1)
+		throw new Error(`expected one owned dtach master, found ${candidates.join(', ') || 'none'}`)
+	return candidates[0]
+}
+
+function runExpect(program) {
+	return new Promise((resolve, reject) => {
+		const child = spawn('/usr/bin/expect', ['-c', program], { stdio: ['ignore', 'pipe', 'pipe'] })
+		let output = ''
+		child.stdout.on('data', chunk => {
+			output += chunk
+		})
+		child.stderr.on('data', chunk => {
+			output += chunk
+		})
+		child.once('error', reject)
+		child.once('exit', code => (code === 0 ? resolve(output) : reject(new Error(`expect exited ${code}: ${output}`))))
+	})
+}
+
 async function attachAndRun(socket, command) {
-	// expect supplies a disposable pty. The post-rename invocation is strictly
-	// attach-only (`-a`): it must never create a replacement master via `-A`.
+	// Destination verification is deliberately attach-only (`-a`): it must
+	// never create a replacement master through `-A`. Escape Tcl interpolation
+	// so shell variables such as $PWD reach the disposable shell unchanged.
+	const sendCommand = `${command}\r`.replaceAll('$', '\\$')
+	return runExpect(
+		[
+			'set timeout 8',
+			`spawn dtach -a ${JSON.stringify(socket)} -E -r winch`,
+			`send -- ${JSON.stringify(sendCommand)}`,
+			'expect { "MOVE_CANARY" {} timeout { exit 1 } }',
+			'after 100',
+			'exit 0',
+		].join('; '),
+	)
+}
+
+function attachAndHold(socket) {
 	const program = [
 		'set timeout 8',
 		`spawn dtach -a ${JSON.stringify(socket)} -E -r winch`,
-		`send -- ${JSON.stringify(`${command}\r`)}`,
-		'expect { "MOVE_CANARY" {} timeout { exit 1 } }',
-		'send -- "exit\\r"',
-		'expect eof',
+		'send -- "printf ATTACHED_BEFORE\\r"',
+		'expect { "ATTACHED_BEFORE" {} timeout { exit 1 } }',
+		'after 15000',
 	].join('; ')
-	return new Promise((resolve, reject) => {
-		const child = spawn('/usr/bin/expect', ['-c', program], { stdio: 'ignore' })
+	const child = spawn('/usr/bin/expect', ['-c', program], { stdio: ['ignore', 'pipe', 'pipe'] })
+	let output = ''
+	const attached = new Promise((resolve, reject) => {
+		const onData = chunk => {
+			output += chunk
+			if (output.includes('ATTACHED_BEFORE')) resolve()
+		}
+		child.stdout.on('data', onData)
+		child.stderr.on('data', onData)
 		child.once('error', reject)
-		child.once('exit', code => (code === 0 ? resolve() : reject(new Error(`attach-only dtach exited ${code}`))))
+		child.once('exit', code => {
+			if (!output.includes('ATTACHED_BEFORE')) reject(new Error(`attached-client exited ${code}: ${output}`))
+		})
 	})
+	const exited = new Promise(resolve => child.once('exit', () => resolve()))
+	return { child, attached, exited }
+}
+
+function terminateVerifiedMaster(identity) {
+	if (!isAlive(identity.pid) || masterFingerprint(identity.pid) !== identity.fingerprint) {
+		throw new Error('refusing cleanup: captured master PID/start fingerprint no longer matches')
+	}
+	if (!masterCommand(identity.pid).includes(identity.originalSocketPath)) {
+		throw new Error('refusing cleanup: captured master no longer advertises its original owned socket path')
+	}
+	// The detached child owns this fresh process group. Killing it is scoped to
+	// the canary master and shell only; no holder discovery runs against a shared
+	// Helm/Okena/default pool.
+	process.kill(-identity.pid, 'SIGTERM')
 }
 
 try {
@@ -79,38 +170,86 @@ try {
 	mkdirSync(sourceDir, { recursive: true, mode: 0o700 })
 	mkdirSync(destinationDir, { recursive: true, mode: 0o700 })
 	mkdirSync(userData, { recursive: true, mode: 0o700 })
+	mkdirSync(work, { recursive: true, mode: 0o700 })
 	// -n creates the sole disposable master. The command remains a normal shell
-	// so the attach-only client can prove cwd and continuity after rename.
-	master = spawn('dtach', ['-n', source, '/bin/sh', '-l'], { cwd: root, stdio: 'ignore', detached: true })
+	// so the attached-client and post-rename destination attach both prove cwd
+	// and output continuity without creating a second session.
+	master = spawn('dtach', ['-n', source, '/bin/sh', '-l'], { cwd: work, stdio: 'ignore', detached: true })
 	master.unref()
 	await waitFor(() => existsSync(source), 'source dtach socket')
-	const originalPid = master.pid
+	// `dtach -n` daemonizes, so the launcher child can exit while the master
+	// continues. The source pathname is unique under this mktemp root and is
+	// used only to identify that owned master before its rename.
+	const masterPid = ownedMasterPid(source)
+	master = { pid: masterPid }
+	const identity = {
+		pid: masterPid,
+		fingerprint: masterFingerprint(masterPid),
+		originalSocketPath: source,
+	}
+	if (!masterCommand(identity.pid).includes(source))
+		throw new Error('master command does not identify the owned source socket')
+	const sourceStat = statSync(source)
+
+	// Rename while an ordinary attach client is live, then detach only that
+	// client. The master must continue to be the captured process.
+	const attached = attachAndHold(source)
+	await attached.attached
 	renameSync(source, destination)
 	if (existsSync(source) || !existsSync(destination))
 		throw new Error('socket rename did not produce exactly one destination entry')
-	process.kill(originalPid, 0)
-	await attachAndRun(destination, 'pwd; printf MOVE_CANARY')
-	process.kill(originalPid, 0)
+	const destinationStat = statSync(destination)
+	if (sourceStat.dev !== destinationStat.dev) throw new Error('socket device changed across same-filesystem rename')
+	if (typeof sourceStat.ino === 'number' && sourceStat.ino !== 0 && sourceStat.ino !== destinationStat.ino) {
+		throw new Error('socket inode changed across rename')
+	}
+	if (!isAlive(identity.pid) || masterFingerprint(identity.pid) !== identity.fingerprint) {
+		throw new Error('master PID/start fingerprint changed after attached-client rename')
+	}
+	process.kill(attached.child.pid, 'SIGTERM')
+	await attached.exited
+
+	const output = await attachAndRun(destination, 'pwd; printf "MOVE_CANARY\\n"')
+	if (!output.includes(work) || !output.includes('MOVE_CANARY')) {
+		throw new Error(`destination attach lost cwd/output marker: ${output}`)
+	}
+	if (!isAlive(identity.pid) || masterFingerprint(identity.pid) !== identity.fingerprint) {
+		throw new Error('master PID/start fingerprint changed after destination attach-only verification')
+	}
+
+	terminateVerifiedMaster(identity)
+	await waitFor(() => !isAlive(identity.pid), 'verified canary master exit')
+	// dtach retains the original path in argv after rename and may clean only
+	// that name. Once the verified owner is dead, remove its moved entry only.
+	if (existsSync(destination)) unlinkSync(destination)
+	if (existsSync(source) || existsSync(destination)) throw new Error('owned canary socket cleanup was incomplete')
 	console.log(
 		JSON.stringify({
 			status: 'passed',
 			root,
 			userData,
+			sessionId,
 			sourceAbsent: !existsSync(source),
-			destinationPresent: existsSync(destination),
-			masterPid: originalPid,
+			destinationPresentBeforeCleanup: true,
+			masterPid: identity.pid,
+			masterStartFingerprint: identity.fingerprint,
+			socketDevice: destinationStat.dev,
+			socketInode: destinationStat.ino,
+			attachedRename: true,
+			destinationAttachOnly: true,
+			verifiedOwnedCleanup: true,
 		}),
 	)
 } catch (error) {
 	fail(error instanceof Error ? error.message : String(error))
 } finally {
-	// This script owns only its detached process and mktemp root. It never uses
-	// lsof/pgrep over a shared namespace, so cleanup cannot touch user sessions.
-	if (master?.pid) {
+	// This script owns only its detached process group and mktemp root. It never
+	// reads, scans, renames, attaches, or terminates a default/session pool.
+	if (master?.pid && isAlive(master.pid)) {
 		try {
 			process.kill(-master.pid, 'SIGTERM')
 		} catch {
-			// master already exited after the disposable shell's exit
+			// already exited
 		}
 	}
 	try {

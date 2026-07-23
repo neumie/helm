@@ -133,14 +133,29 @@ export type TerminalTransferRecoveryDecision =
 	| { action: 'source-authoritative'; reason: string }
 	| { action: 'reattach-source'; reason: string }
 	| { action: 'repair-destination'; reason: string }
-	| { action: 'rollback-destination-socket'; reason: string }
+	| { action: 'rollback-destination-transfer'; reason: string }
 	| { action: 'remove-completed-journal'; reason: string }
 	| { action: 'quarantine'; reason: string }
+
+type BufferPlacement = 'source' | 'destination' | 'none' | 'conflict'
+
+function bufferPlacement(observation: TerminalTransferRecoveryObservation): BufferPlacement {
+	if (observation.sourceBufferPresent && observation.destinationBufferPresent) return 'conflict'
+	if (observation.sourceBufferPresent) return 'source'
+	if (observation.destinationBufferPresent) return 'destination'
+	return 'none'
+}
+
+function sourceRegistryOnly(observation: TerminalTransferRecoveryObservation): boolean {
+	return observation.sourceRegistryHasSession && !observation.destinationRegistryHasSession
+}
 
 /**
  * Pure, fail-closed recovery policy. The coordinator performs any rename,
  * registry repair, or attach only after obtaining this decision. In particular
- * unknown probes never authorize deletion or a second attach.
+ * unknown probes never authorize deletion or a second attach. A snapshot can
+ * legitimately be absent, but duplicate snapshots are never reconciled: a
+ * no-copy move has no safe way to choose which bytes are authoritative.
  */
 export function decideTerminalTransferRecovery(
 	journal: TerminalTransferJournal,
@@ -149,35 +164,64 @@ export function decideTerminalTransferRecovery(
 	if (observation.sourceSocket === 'unknown' || observation.destinationSocket === 'unknown') {
 		return { action: 'quarantine', reason: 'socket probe is unknown; preserve both namespaces and journal' }
 	}
-	if (journal.state === 'completed') {
-		return { action: 'remove-completed-journal', reason: 'completed journal survived its final cleanup' }
-	}
 	const sourceLive = observation.sourceSocket === 'live'
 	const destinationLive = observation.destinationSocket === 'live'
 	if (sourceLive && destinationLive) return { action: 'quarantine', reason: 'both socket paths are live' }
 	if (!sourceLive && !destinationLive) return { action: 'quarantine', reason: 'no authoritative live socket' }
 
+	const buffers = bufferPlacement(observation)
+	if (buffers === 'conflict') {
+		return { action: 'quarantine', reason: 'both buffer paths exist; no-copy ownership is ambiguous' }
+	}
+	const sourceOnly = sourceRegistryOnly(observation)
+	const destinationOwnsRegistry = observation.destinationRegistryHasSession
+
 	if (journal.state === 'claimed' || journal.state === 'snapshot-flushed') {
-		return sourceLive
-			? { action: 'source-authoritative', reason: 'socket was not moved' }
-			: { action: 'quarantine', reason: 'pre-detach state lost its source socket' }
+		if (sourceLive && sourceOnly && buffers !== 'destination') {
+			return {
+				action: 'source-authoritative',
+				reason: 'source socket, registry, and snapshot placement are authoritative',
+			}
+		}
+		return { action: 'quarantine', reason: 'pre-move artifacts do not prove source-only ownership' }
 	}
 	if (journal.state === 'client-detached') {
-		return sourceLive
-			? { action: 'reattach-source', reason: 'source master survived detached client' }
-			: { action: 'quarantine', reason: 'detached source master cannot be proven live' }
+		if (sourceLive && sourceOnly && buffers !== 'destination') {
+			return { action: 'reattach-source', reason: 'source master survived detached client with source-owned artifacts' }
+		}
+		return { action: 'quarantine', reason: 'detached state does not prove source-only ownership' }
 	}
 	if (journal.state === 'socket-moved' || journal.state === 'rollback-needed') {
-		return destinationLive
-			? { action: 'rollback-destination-socket', reason: 'socket moved before metadata commit' }
-			: { action: 'quarantine', reason: 'socket location contradicts moved-state journal' }
+		if (destinationLive && sourceOnly) {
+			return {
+				action: 'rollback-destination-transfer',
+				reason: `destination socket moved before registry commit; buffer is ${buffers}-owned`,
+			}
+		}
+		return { action: 'quarantine', reason: 'moved-state artifacts do not prove a reversible source owner' }
 	}
-	// registries-committed: a live destination is sufficient to finish repair;
-	// source must no longer own the entry. Any other combination is preserved.
-	if (destinationLive && observation.destinationRegistryHasSession && !observation.sourceRegistryHasSession) {
-		return { action: 'repair-destination', reason: 'destination socket and registry are authoritative' }
+	if (journal.state === 'registries-committed') {
+		// Destination registry is written first. A remaining source entry is the
+		// expected between-renames crash and is repairable only when the socket is
+		// live at destination and snapshot ownership is unambiguous. A source-only
+		// buffer is moved by rename as part of repair; an absent snapshot is valid.
+		if (destinationLive && destinationOwnsRegistry) {
+			return {
+				action: 'repair-destination',
+				reason: observation.sourceRegistryHasSession
+					? `destination registry committed before source removal; buffer is ${buffers}-owned`
+					: `destination socket and registry are authoritative; buffer is ${buffers}-owned`,
+			}
+		}
+		return { action: 'quarantine', reason: 'committed state does not prove destination ownership' }
 	}
-	return { action: 'quarantine', reason: 'registry state does not prove one owner after commit' }
+	// A completed marker is removable only after verifying the actual terminal
+	// and final single-owner registry/buffer arrangement. Never discard a claim
+	// merely because the final journal write survived a crash.
+	if (destinationLive && destinationOwnsRegistry && !observation.sourceRegistryHasSession && buffers !== 'source') {
+		return { action: 'remove-completed-journal', reason: 'destination owns the completed transfer' }
+	}
+	return { action: 'quarantine', reason: 'completed journal does not match final destination ownership' }
 }
 
 export function isTerminalTransferJournal(value: unknown): value is TerminalTransferJournal {

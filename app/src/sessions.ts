@@ -621,7 +621,21 @@ export class SessionRegistry {
 		destination.#cancelSave()
 		const sourceBefore = structuredClone(this.#data)
 		const destinationBefore = structuredClone(destination.#data)
-		const moved: SessionMeta = { ...structuredClone(sourceMeta), parked: true, groupId: null }
+		// Order is profile-local UI metadata. Never carry a source position into
+		// the destination: append after every existing destination entry (and
+		// therefore after its parked Background entries) with a collision-free
+		// destination-owned value. Legacy unordered entries still consume a slot.
+		const destinationNextOrder =
+			Math.max(
+				destinationBefore ? Object.keys(destinationBefore).length - 1 : -1,
+				...Object.values(destinationBefore).map(meta => meta.order ?? -1),
+			) + 1
+		const moved: SessionMeta = {
+			...structuredClone(sourceMeta),
+			order: destinationNextOrder,
+			parked: true,
+			groupId: null,
+		}
 		const sourceAfter = structuredClone(sourceBefore)
 		const destinationAfter = { ...destinationBefore, [sessionId]: moved }
 		delete sourceAfter[sessionId]
