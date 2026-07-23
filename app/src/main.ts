@@ -7,10 +7,12 @@ import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { HelmBridge } from './helm-bridge'
 import { ProfileSwitchCoordinator } from './profile-switch'
+import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
+import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
 import { THEME_PRESETS } from './theme-presets'
@@ -105,6 +107,7 @@ let sessionIpcAdmissionOpen = true
 const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneration}`
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
+const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
 sessions.configureSessionProfile(sessionProfileId)
 
 // --- helm:// deep links -------------------------------------------------------
@@ -562,33 +565,16 @@ const PROFILE_WINDOW_LOAD_TIMEOUT_MS = 15_000
 
 function reloadOrCreateWindowForProfile(epoch: number): Promise<void> {
 	rendererProfileEpoch = epoch
-	const existing = mainWindow
-	const win = !existing || existing.isDestroyed() ? createWindow() : existing
-	return new Promise((resolve, reject) => {
-		let settled = false
-		const finish = (error?: Error): void => {
-			if (settled) return
-			settled = true
-			clearTimeout(timeout)
-			win.webContents.removeListener('did-finish-load', onLoaded)
-			win.webContents.removeListener('did-fail-load', onFailed)
-			win.removeListener('closed', onClosed)
-			if (error) reject(error)
-			else resolve()
-		}
-		const onLoaded = (): void => {
-			if (rendererProfileEpoch !== epoch || win.isDestroyed()) return
-			flushPendingOpenItem(win, epoch)
-			finish()
-		}
-		const onFailed = (_event: Electron.Event, errorCode: number, errorDescription: string): void =>
-			finish(new Error(`Profile renderer load failed (${errorCode}): ${errorDescription}`))
-		const onClosed = (): void => finish(new Error('Profile renderer window closed during reload.'))
-		const timeout = setTimeout(() => finish(new Error('Timed out waiting for profile renderer reload.')), PROFILE_WINDOW_LOAD_TIMEOUT_MS)
-		win.webContents.once('did-finish-load', onLoaded)
-		win.webContents.once('did-fail-load', onFailed)
-		win.once('closed', onClosed)
-		if (existing && !existing.isDestroyed()) win.webContents.reload()
+	return reloadOrCreateProfileWindow({
+		existing: mainWindow,
+		createWindow,
+		epoch,
+		currentEpoch: () => rendererProfileEpoch,
+		onLoaded: () => {
+			const win = mainWindow
+			if (win && !win.isDestroyed()) flushPendingOpenItem(win, epoch)
+		},
+		timeoutMs: PROFILE_WINDOW_LOAD_TIMEOUT_MS,
 	})
 }
 
@@ -991,7 +977,7 @@ function shellEnv(): Record<string, string> {
 }
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
-	if (!acceptsSessionIpcToken(args.profileToken)) throw new Error('Terminal profile changed — reload and try again')
+	sessionIpcGate.require(args.profileToken)
 	const id = nextPtyId++
 	const shell = defaultShell()
 	const support = getSessionSupport()
@@ -1050,12 +1036,12 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 })
 
 ipcMain.on('pty:write', (_event, id: number, data: string, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return
+	if (!sessionIpcGate.allows(profileToken)) return
 	ptys.get(id)?.proc.write(data)
 })
 
 ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return
+	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
 	if (!entry || !(cols > 0) || !(rows > 0)) return
 	try {
@@ -1070,7 +1056,7 @@ ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profil
 // spawn-race cleanup (tab closed before spawn resolved); interactive tab
 // closes go through session:close-with-grace instead.
 ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return
+	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
 	if (!entry) return
 	ptys.delete(id)
@@ -1097,7 +1083,7 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 // window so the renderer can show an Undo toast, or null when the pty had no
 // session (non-persistent fallback → the client kill was the real kill).
 ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return null
+	if (!sessionIpcGate.allows(profileToken)) return null
 	const entry = ptys.get(id)
 	if (!entry) return null
 	ptys.delete(id)
@@ -1116,7 +1102,7 @@ ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: un
 // renderer may reattach it as a new tab. False = timer already fired (or
 // nothing pending) — nothing to restore.
 ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken) || !sessions.isValidSessionId(sessionId)) return false
+	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId)) return false
 	const undone = graceCloser.undo(sessionId)
 	if (undone) graceCloseSupports.delete(sessionId)
 	return undone
@@ -1125,7 +1111,7 @@ ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: 
 // Startup restore: live sessions from the socket dir (stale sockets GC'd),
 // labeled from the registry. The renderer reattaches one tab per entry.
 ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return []
+	if (!sessionIpcGate.allows(profileToken)) return []
 	const support = getSessionSupport()
 	if (!support) return []
 	const { live, unknownIds } = await sessions.scanSessions()
@@ -1166,14 +1152,14 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 // Park/unpark a session in the registry so background terminals survive a
 // relaunch as background terminals (renderer owns the in-memory tab state).
 ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken) || !sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean')
+	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean')
 		return
 	getSessionSupport()?.registry.setParked(sessionId, parked)
 })
 
 ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unknown) => {
 	if (
-		!acceptsSessionIpcToken(profileToken) ||
+		!sessionIpcGate.allows(profileToken) ||
 		!Array.isArray(sessionIds) ||
 		sessionIds.length > 100 ||
 		!sessionIds.every(sessions.isValidSessionId)
@@ -1183,7 +1169,7 @@ ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unkn
 })
 
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string')
+	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string')
 		return
 	getSessionSupport()?.registry.setTitle(sessionId, title)
 })
@@ -1191,7 +1177,7 @@ ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profile
 // Manual rename pin: persist so the name survives relaunch/park; null clears.
 ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown, profileToken: unknown) => {
 	if (
-		!acceptsSessionIpcToken(profileToken) ||
+		!sessionIpcGate.allows(profileToken) ||
 		!sessions.isValidSessionId(sessionId) ||
 		(name !== null && typeof name !== 'string')
 	)
@@ -1205,14 +1191,14 @@ ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown
 // reattach, BEFORE the live pty stream is written into the fresh xterm.
 
 ipcMain.on('buffer:save', (_event, sessionId: unknown, data: unknown, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return
+	if (!sessionIpcGate.allows(profileToken)) return
 	const support = getSessionSupport()
 	if (!support || !sessions.isValidSessionId(sessionId) || typeof data !== 'string') return
 	support.buffers.save(sessionId, data)
 })
 
 ipcMain.handle('buffer:read', (_event, sessionId: unknown, profileToken: unknown) => {
-	if (!acceptsSessionIpcToken(profileToken)) return null
+	if (!sessionIpcGate.allows(profileToken)) return null
 	const support = getSessionSupport()
 	if (!support || !sessions.isValidSessionId(sessionId)) return null
 	return support.buffers.read(sessionId)

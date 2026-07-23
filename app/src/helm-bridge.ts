@@ -15,7 +15,13 @@
 // It does apply narrow wire-compatibility normalization for mixed-version
 // app/daemon rollouts before values reach the renderer.
 
-import { BrowserWindow, ipcMain } from 'electron'
+import type * as Electron from 'electron'
+
+// Tests exercise the polling core under Node; Electron is needed only when the
+// desktop IPC surface/publisher is actually used.
+const electron = (() => { try { return require('electron') as typeof Electron } catch { return null } })()
+const BrowserWindow = (electron?.BrowserWindow ?? { getAllWindows: () => [] }) as typeof Electron.BrowserWindow
+const ipcMain = electron?.ipcMain as typeof Electron.ipcMain
 import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
 import type { ProfileSwitchFence } from './profile-switch'
 import { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } from './protocol-version'
@@ -65,6 +71,22 @@ function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err)
 }
 
+export type HelmBridgeRequest = <T>(
+	method: 'GET' | 'POST' | 'PUT',
+	path: string,
+	body?: unknown,
+	timeoutMs?: number,
+) => Promise<HelmResult<T>>
+
+export interface HelmBridgeOptions {
+	/** Test seam; production uses the daemon HTTP client below. */
+	request?: HelmBridgeRequest
+	/** Test seam; production broadcasts to every Electron window. */
+	windows?: () => Iterable<{ webContents: { isDestroyed(): boolean; send(channel: string, snapshot: HelmSnapshot): void } }>
+	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
+	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
+
 export class HelmBridge {
 	private readonly baseUrl: string
 	private snapshot: HelmSnapshot = { reachable: false, status: null, items: null, config: null }
@@ -79,11 +101,14 @@ export class HelmBridge {
 	private nextProfileFenceEpoch = 0
 	private stopped = false
 	private readonly runContext: RunContextBridgeOperations
+	private readonly options: HelmBridgeOptions
 
 	constructor(
 		daemonUrl: string,
 		private readonly acceptsProfileToken: (token: unknown) => boolean = () => true,
+		options: HelmBridgeOptions = {},
 	) {
+		this.options = options
 		this.baseUrl = daemonUrl.replace(/\/$/, '')
 		this.runContext = new RunContextBridgeOperations({
 			acceptsProfileToken: token => this.acceptsProfileToken(token),
@@ -102,7 +127,7 @@ export class HelmBridge {
 	stop(): void {
 		this.stopped = true
 		if (this.timer) clearInterval(this.timer)
-		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+		if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
 		this.timer = null
 		this.profileSwitchTimer = null
 		this.profileFence = null
@@ -113,6 +138,18 @@ export class HelmBridge {
 	}
 
 	// --- polling ---------------------------------------------------------------
+
+	private isCurrentFence(fence: ProfileFenceRecord | null): boolean {
+		return !this.stopped && fence === this.profileFence && !fence?.invalidated
+	}
+
+	private setProfileTimer(callback: () => void, ms: number): ReturnType<typeof setTimeout> {
+		return (this.options.setTimer ?? setTimeout)(callback, ms)
+	}
+
+	private clearProfileTimer(timer: ReturnType<typeof setTimeout>): void {
+		;(this.options.clearTimer ?? clearTimeout)(timer)
+	}
 
 	private async tick(): Promise<void> {
 		if (this.stopped || this.ticking) return // a slow daemon must not stack overlapping polls
@@ -132,19 +169,14 @@ export class HelmBridge {
 			const reachable = status.error === undefined && sameProfileSnapshot
 			// A poll begun before a new fence is installed is stale. It may not
 			// publish old rows or kick work for the new epoch.
-			if (this.stopped || fence !== this.profileFence) return
-			if (fence?.invalidated) {
-				this.snapshot = { ...this.snapshot, reachable: false, status: null, items: null }
-				this.publish()
-				return
-			}
+			if (!this.isCurrentFence(fence)) return
 			if (status.error === undefined && !sameProfileSnapshot && fence) this.kick(fence)
 
 			// A fence owns every completion it started. A replaced epoch must not
 			// blank, publish, resolve, or schedule work for its successor.
 			if (fence && this.profileFence === fence) {
 				const profiles = reachable ? await this.request<ProfilesDocument>('GET', '/profiles') : { error: 'incoherent' }
-				if (this.stopped || this.profileFence !== fence) return
+				if (!this.isCurrentFence(fence)) return
 				const coherentState =
 					profiles.data &&
 					profiles.data.activeProfileId === statusProfileId &&
@@ -156,41 +188,46 @@ export class HelmBridge {
 					this.publish()
 					return
 				}
-				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
 				this.profileSwitchTimer = null
-				if (!fence.readyResolved) {
-					fence.readyResolved = true
-					fence.resolveReady()
-				}
 			}
 			if (status.data && (await this.restartForProtocolMismatch(status.data))) return
-			if (this.stopped || fence !== this.profileFence) return
+			if (!this.isCurrentFence(fence)) return
 			let config = this.snapshot.config
 			if (reachable && config === null) {
 				config = (await this.request<AppConfig>('GET', '/config')).data ?? null
-				if (this.stopped || fence !== this.profileFence) return
+				if (!this.isCurrentFence(fence)) return
 			}
+			// No await is permitted between this epoch check, publication, and
+			// readiness. Coordinators may complete the fence as soon as `ready`
+			// resolves, so the target renderer must already own this snapshot.
+			if (!this.isCurrentFence(fence)) return
 			this.snapshot = {
 				reachable,
 				status: status.data ?? this.snapshot.status,
 				items: items.data ? normalizeDashboardItems(items.data) : this.snapshot.items,
 				config,
 			}
-			if (this.stopped || fence !== this.profileFence) return
+			if (!this.isCurrentFence(fence)) return
 			this.publish()
+			if (!this.isCurrentFence(fence)) return
+			if (fence && !fence.readyResolved) {
+				fence.readyResolved = true
+				fence.resolveReady()
+			}
 		} finally {
 			this.ticking = false
 			// Only the captured fence can schedule its own recovery. A stale tick
 			// must never borrow a successor's epoch or timer slot.
 			if (!this.stopped && fence !== null && this.profileFence === fence && !fence.invalidated && !fence.readyResolved && this.profileSwitchTimer === null) {
 				const epoch = fence.epoch
-				this.profileSwitchTimer = setTimeout(() => {
+				this.profileSwitchTimer = this.setProfileTimer(() => {
 					if (this.profileFence === fence && fence.epoch === epoch) {
 						this.profileSwitchTimer = null
 						this.kick(fence)
 					}
 				}, 150)
-				this.profileSwitchTimer.unref()
+				this.profileSwitchTimer.unref?.()
 			}
 		}
 	}
@@ -244,7 +281,7 @@ export class HelmBridge {
 		const comparable = JSON.stringify({ ...rest, status: status ? { ...status, uptime: 0 } : null })
 		if (comparable === this.lastComparable) return
 		this.lastComparable = comparable
-		for (const win of BrowserWindow.getAllWindows()) {
+		for (const win of (this.options.windows ?? (() => BrowserWindow.getAllWindows()))()) {
 			if (!win.webContents.isDestroyed()) win.webContents.send('daemon:snapshot', this.snapshot)
 		}
 	}
@@ -257,6 +294,7 @@ export class HelmBridge {
 		body?: unknown,
 		timeoutMs = REQUEST_TIMEOUT_MS,
 	): Promise<HelmResult<T>> {
+		if (this.options.request) return this.options.request<T>(method, path, body, timeoutMs)
 		try {
 			const res = await fetch(`${this.baseUrl}/api${path}`, {
 				method,
@@ -299,7 +337,7 @@ export class HelmBridge {
 	 */
 	beginProfileSwitch(profileId: string): ProfileSwitchFence {
 		this.profileFence?.resolveReady()
-		if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+		if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
 		this.profileSwitchTimer = null
 		const makeReady = (): Pick<ProfileFenceRecord, 'ready' | 'resolveReady' | 'readyResolved'> => {
 			let resolveReady!: () => void
@@ -326,7 +364,7 @@ export class HelmBridge {
 			cancelIfCurrent: () => {
 				if (this.profileFence !== record) return
 				this.profileFence = null
-				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
 				this.profileSwitchTimer = null
 				this.kick()
 			},
@@ -340,7 +378,7 @@ export class HelmBridge {
 			},
 			invalidateIfCurrent: () => {
 				if (this.profileFence !== record) return
-				if (this.profileSwitchTimer) clearTimeout(this.profileSwitchTimer)
+				if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
 				this.profileSwitchTimer = null
 				// Keep an inert fence until a successor owns it. Clearing it would
 				// restore ordinary polling and could republish B during C's drain.
@@ -361,7 +399,7 @@ export class HelmBridge {
 			this.request<DaemonStatus>('GET', '/status'),
 			this.request<DashboardItem[]>('GET', '/items'),
 		])
-		if (this.profileFence !== record) return null
+		if (!this.isCurrentFence(record)) return null
 		const statusProfileId = status.data?.profile?.id
 		if (
 			status.error !== undefined ||
@@ -373,7 +411,7 @@ export class HelmBridge {
 			return null
 		}
 		const profiles = await this.request<ProfilesDocument>('GET', '/profiles')
-		if (this.profileFence !== record || profiles.error !== undefined || profiles.data === undefined) return null
+		if (!this.isCurrentFence(record) || profiles.error !== undefined || profiles.data === undefined) return null
 		if (profiles.data.activeProfileId !== statusProfileId) return null
 		if (status.data.profileGeneration !== undefined && status.data.profileGeneration !== profiles.data.generation)
 			return null
@@ -532,3 +570,5 @@ export class HelmBridge {
 		})
 	}
 }
+
+export default { HelmBridge }
