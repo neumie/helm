@@ -1312,7 +1312,14 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	term.loadAddon(fit)
 	const serialize = new SerializeAddon()
 	term.loadAddon(serialize)
-	term.loadAddon(new WebLinksAddon())
+	// The addon's default handler opens about:blank before assigning the URL;
+	// Helm denies that transient Electron window. Use the restricted main-process
+	// browser handoff directly so ordinary clicks open safe web links.
+	term.loadAddon(
+		new WebLinksAddon((_event, uri) => {
+			void helm.external.open(uri)
+		}),
+	)
 
 	const holder = document.createElement('div')
 	holder.className = 'term-holder'

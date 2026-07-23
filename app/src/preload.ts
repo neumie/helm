@@ -150,6 +150,9 @@ const api: HelmApi = {
 	config: {
 		getDaemonUrl: () => daemonUrl,
 	},
+	external: {
+		open: url => ipcRenderer.invoke('external:open', url, sessionProfileToken) as Promise<boolean>,
+	},
 	appearance: {
 		listThemes: () => ipcRenderer.invoke('themes:list') as Promise<ThemeListEntry[]>,
 		onFontStep: listener => subscribe('font:step', listener),

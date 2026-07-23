@@ -5,6 +5,7 @@ import { BrowserWindow, Menu, app, dialog, ipcMain, screen, shell } from 'electr
 import * as pty from 'node-pty'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
+import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
 import { ProfileSwitchCoordinator } from './profile-switch'
 import { reloadOrCreateProfileWindow } from './profile-window-load'
@@ -1091,6 +1092,18 @@ function shellEnv(): Record<string, string> {
 	}
 	return env
 }
+
+ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
+	const href = parseExternalHttpUrl(value)
+	if (!href) return false
+	try {
+		await shell.openExternal(href)
+		return true
+	} catch {
+		return false
+	}
+})
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	sessionIpcGate.require(args.profileToken)

@@ -139,6 +139,11 @@ export interface ConfigApi {
 	getDaemonUrl(): string
 }
 
+/** Narrow OS-browser handoff; main accepts only bounded HTTP(S) URLs. */
+export interface ExternalApi {
+	open(url: string): Promise<boolean>
+}
+
 /**
  * Screenshot-harness hook: `--ui-preview=<page>` auto-navigates the sidebar.
  * `background` parks one running + one exited session and opens the popover;
@@ -229,6 +234,8 @@ export interface HelmApi {
 	/** Buffer snapshot IO (restore-before-attach; main owns the files). */
 	buffers: BuffersApi
 	config: ConfigApi
+	/** Open a safe web URL in the host's default browser. */
+	external: ExternalApi
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */
 	appearance: AppearanceApi
 	tabs: TabsApi
