@@ -22,7 +22,7 @@ test('bridge fence has no globally cancellable profile-switch API', () => {
 	assert.match(bridge, /cancelIfCurrent/)
 	assert.match(bridge, /invalidateIfCurrent/)
 	assert.match(bridge, /Object\.assign\(record, makeReady\(\)\)/)
-	assert.match(bridge, /fence !== this\.profileFence/)
+	assert.match(bridge, /isCurrentFence\(fence\)/)
 	assert.doesNotMatch(bridge, /cancelProfileSwitch/)
 	assert.doesNotMatch(bridge, /pendingProfileId/)
 })
@@ -36,7 +36,7 @@ test('terminal, session, and buffer handlers gate mutable access during a profil
 		const start = main.indexOf(`'${channel}'`)
 		assert.ok(start >= 0, `missing ${channel}`)
 		const handler = main.slice(start, start + 700)
-		assert.match(handler, /acceptsSessionIpcToken/, `${channel} must fail closed before mutable access`)
+		assert.match(handler, /sessionIpcGate\.(?:require|allows)/, `${channel} must fail closed before mutable access`)
 	}
 	assert.match(main, /profileSwitchCoordinator\?\.stop\(\)/)
 	assert.match(main, /while \(activeProfileSwitch\)/)

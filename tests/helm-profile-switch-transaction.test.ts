@@ -36,6 +36,7 @@ function fixture() {
 	const activationGate = deferred<HelmResult<ProfileActivationResult>>()
 	let gateActivation = false
 	let namespaceFailures = 0
+	let reloadFailures = 0
 	const events: string[] = []
 	let latestFence: { ready: Deferred<void>; target: string; cancelled: boolean } | null = null
 	const timers: Array<() => void> = []
@@ -93,6 +94,7 @@ function fixture() {
 		openSessionIpc: () => events.push('open-ipc'),
 		reloadOrCreateWindow: async () => {
 			events.push('reload')
+			if (reloadFailures-- > 0) throw new Error('renderer reload unavailable')
 		},
 		queueOrDeliverItem: id => events.push(`item:${id}`),
 		refreshMenuBestEffort: () => events.push('menu'),
@@ -121,6 +123,9 @@ function fixture() {
 		},
 		set namespaceFailures(value: number) {
 			namespaceFailures = value
+		},
+		set reloadFailures(value: number) {
+			reloadFailures = value
 		},
 		resolveActivation(value: HelmResult<ProfileActivationResult>) {
 			activationGate.resolve(value)
@@ -280,6 +285,24 @@ test('critical namespace failure keeps admission closed and retries forward with
 	retry?.()
 	assert.equal((await pending).error, undefined)
 	assert.ok(f.events.filter(event => event === 'close-ipc').length >= 2)
+})
+
+test('failed renderer reload retries forward and settles after the replacement load succeeds', async () => {
+	const f = fixture()
+	f.observation = other('profile-aaaaaaaaaaaa')
+	f.reloadFailures = 1
+	const pending = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	f.fence.ready.resolve()
+	await spin()
+	assert.equal(f.events.filter(event => event === 'reload').length, 1)
+	assert.ok(f.events.includes('close-ipc'))
+	const retry = f.timers.at(-1)
+	assert.ok(retry)
+	retry?.()
+	assert.equal((await pending).error, undefined)
+	assert.equal(f.events.filter(event => event === 'reload').length, 2)
+	assert.equal(f.events.filter(event => event === 'open-ipc').length, 2)
 })
 
 test('same unknown target coalesces and an explicit target supersedes without stale rollback', async () => {
