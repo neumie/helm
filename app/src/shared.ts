@@ -10,6 +10,24 @@ import type {
 	RunContextSave,
 } from './shared-helm'
 
+/**
+ * Reserved main↔renderer terminal-transfer event shape. It is intentionally
+ * not part of HelmApi yet: no preload IPC can start a transfer until a future
+ * renderer capability performs the snapshot/attach hand-off.
+ */
+export type TerminalTransferEventType =
+	| 'prepare'
+	| 'detach-source-client'
+	| 'attach-destination-client'
+	| 'attach-source-client'
+
+export interface TerminalTransferEvent {
+	type: TerminalTransferEventType
+	sessionId: string
+	sourceProfileId: string
+	destinationProfileId: string
+}
+
 export interface PtySpawnResult {
 	id: number
 	/** dtach session backing this pty; null when persistence is unavailable. */

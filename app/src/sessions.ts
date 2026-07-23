@@ -266,7 +266,10 @@ export async function scanSessions(): Promise<SessionScan> {
 			return undefined
 		}),
 	)
-	return { live: live.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), unknownIds }
+	return {
+		live: live.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+		unknownIds,
+	}
 }
 
 /** Live sessions only (restore list). See scanSessions for the full scan. */
@@ -306,6 +309,90 @@ export async function pidsHoldingSocket(sockPath: string): Promise<number[]> {
 	const lsofPids = await runLines('lsof', ['-t', '--', sockPath])
 	const pgrepPids = await runLines('pgrep', ['-f', sockPath])
 	return [...new Set([...lsofPids, ...pgrepPids])]
+}
+
+/**
+ * The master is the process holding the named listening socket. Attach clients
+ * only have unnamed connected endpoints, so unlike pgrep this intentionally
+ * does not match the socket path in argv. Terminal transfer uses this as one
+ * half of its PID/start-time attestation; it never turns this lookup into a
+ * kill list.
+ */
+export async function masterPidsHoldingSocket(sockPath: string): Promise<number[]> {
+	return [...new Set(await runLines('lsof', ['-t', '--', sockPath]))]
+}
+
+/** A PID alone is reusable; pair it with ps's process start value before trusting it. */
+export function processStartFingerprint(pid: number): Promise<string | null> {
+	return new Promise(resolve => {
+		if (!Number.isSafeInteger(pid) || pid <= 0) {
+			resolve(null)
+			return
+		}
+		execFile('ps', ['-o', 'lstart=', '-p', String(pid)], { timeout: 5000 }, (error, stdout) => {
+			const value = stdout.trim()
+			resolve(!error && value !== '' ? value : null)
+		})
+	})
+}
+
+export interface DtachMasterEvidence {
+	pid: number
+	processStartFingerprint: string
+}
+
+/**
+ * Captures exactly one attested dtach master. Ambiguous/unavailable process
+ * tables fail closed: callers must not guess from a destination listener.
+ */
+export async function captureDtachMaster(sockPath: string): Promise<DtachMasterEvidence | null> {
+	if ((await probeSocket(sockPath)) !== 'live') return null
+	const pids = await masterPidsHoldingSocket(sockPath)
+	if (pids.length !== 1) return null
+	const pid = pids[0]
+	if (pid === undefined) return null
+	const fingerprint = await processStartFingerprint(pid)
+	return fingerprint ? { pid, processStartFingerprint: fingerprint } : null
+}
+
+/**
+ * Re-check the journaled master at the current namespace entry. It only reads
+ * process/socket state; terminal transfer must never signal the master.
+ */
+export async function attestDtachMaster(
+	sockPath: string,
+	expected: DtachMasterEvidence,
+): Promise<'verified' | 'dead' | 'unknown'> {
+	const fingerprint = await processStartFingerprint(expected.pid)
+	if (!fingerprint) {
+		try {
+			process.kill(expected.pid, 0)
+			return 'unknown'
+		} catch {
+			return 'dead'
+		}
+	}
+	if (fingerprint !== expected.processStartFingerprint) return 'unknown'
+	const pids = await masterPidsHoldingSocket(sockPath)
+	return pids.includes(expected.pid) ? 'verified' : 'unknown'
+}
+
+/**
+ * Rename only the dtach socket directory entry. This deliberately has no
+ * process signalling fallback: a failed rename leaves recovery to the journal.
+ */
+export function renameSocketEntry(sourceSocket: string, destinationSocket: string): void {
+	if (!socketPathUsable(sourceSocket) || !socketPathUsable(destinationSocket)) {
+		throw new Error('terminal socket path exceeds the AF_UNIX limit')
+	}
+	if (fs.existsSync(destinationSocket)) throw new Error('destination terminal socket already exists')
+	const source = fs.lstatSync(sourceSocket)
+	if (!source.isSocket()) throw new Error('source terminal socket is not a socket')
+	fs.mkdirSync(path.dirname(destinationSocket), {
+		recursive: true,
+		mode: 0o700,
+	})
+	fs.renameSync(sourceSocket, destinationSocket)
 }
 
 /**
@@ -475,12 +562,21 @@ function normalizedTabGroupName(name: unknown): string | null {
 /** Validates and constructs a pure group command; it never changes registry or PTY state. */
 export function tabGroupActionIntent(
 	type: TabGroupActionIntent['type'],
-	params: { groupId?: unknown; name?: unknown; sessionId?: unknown; targetGroupId?: unknown },
+	params: {
+		groupId?: unknown
+		name?: unknown
+		sessionId?: unknown
+		targetGroupId?: unknown
+	},
 ): TabGroupActionIntent | null {
 	if (type === 'move') {
 		if (!isValidSessionId(params.sessionId)) return null
 		if (params.targetGroupId !== null && !isValidTabGroupId(params.targetGroupId)) return null
-		return { type, sessionId: params.sessionId, groupId: params.targetGroupId ?? null }
+		return {
+			type,
+			sessionId: params.sessionId,
+			groupId: params.targetGroupId ?? null,
+		}
 	}
 	if (!isValidTabGroupId(params.groupId)) return null
 	if (type === 'rename') {
@@ -632,7 +728,12 @@ export class SessionRegistry {
 		}
 		this.#removeEmptyGroups()
 		this.#scheduleSave()
-		return { id, name: normalized, collapsedStrip: false, collapsedBackground: false }
+		return {
+			id,
+			name: normalized,
+			collapsedStrip: false,
+			collapsedBackground: false,
+		}
 	}
 
 	renameGroup(groupId: string, name: string): TabGroup | null {

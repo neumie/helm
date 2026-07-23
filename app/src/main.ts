@@ -15,6 +15,7 @@ import { RunContextWindows } from './run-context-window'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
+import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
 
 // HELM_URL preferred; VIGIL_URL still honored (legacy compat).
@@ -190,7 +191,11 @@ async function routeDestination(destination: HelmItemDestination): Promise<void>
 	if (destination.profileId && destination.profileId !== appProfiles.activeProfileId()) {
 		const result = await activateProfile(destination.profileId, destination.itemId)
 		if (result.error !== undefined) {
-			void dialog.showMessageBox({ type: 'warning', message: 'Could not open Item', detail: result.error })
+			void dialog.showMessageBox({
+				type: 'warning',
+				message: 'Could not open Item',
+				detail: result.error,
+			})
 		}
 		return
 	}
@@ -243,6 +248,8 @@ interface SessionSupport {
 }
 
 let sessionSupport: SessionSupport | null | undefined
+let terminalTransferMain: TerminalTransferMainAdapter | null = null
+let terminalTransferRecovery: Promise<void> = Promise.resolve()
 
 function getSessionSupport(): SessionSupport | null {
 	// Session IPC is closed while the daemon identity is committed but the new
@@ -285,6 +292,29 @@ function getSessionSupport(): SessionSupport | null {
 		buffers: new BufferStore(path.join(profileDir, 'buffers')),
 	}
 	return sessionSupport
+}
+
+/** Profile-explicit transfer storage; never derive it from mutable active paths. */
+function transferStorageForProfile(profileId: string): TerminalTransferProfileStorage | null {
+	if (!sessions.isValidSessionProfileId(profileId)) return null
+	if (profileId === sessionProfileId) {
+		const support = getSessionSupport()
+		if (support) {
+			return {
+				registry: support.registry,
+				buffers: support.buffers,
+				registryPath: support.registry.filePath,
+				bufferDir: path.join(appProfiles.profileDir(profileId), 'buffers'),
+			}
+		}
+	}
+	const profileDir = appProfiles.profileDir(profileId)
+	return {
+		registry: new sessions.SessionRegistry(path.join(profileDir, 'sessions.json')),
+		buffers: new BufferStore(path.join(profileDir, 'buffers')),
+		registryPath: path.join(profileDir, 'sessions.json'),
+		bufferDir: path.join(profileDir, 'buffers'),
+	}
 }
 
 // Soft close: explicit tab close detaches the client and arms this timer; the
@@ -629,6 +659,7 @@ function createProfileSwitchCoordinator(): ProfileSwitchCoordinator {
 }
 
 function activateProfile(profileId: string, openItemId?: string): Promise<HelmResult<ProfileActivationResult>> {
+	if (terminalTransferMain?.isBusy()) return Promise.resolve({ error: 'A terminal transfer is in progress.' })
 	if (!profileSwitchCoordinator) return Promise.resolve({ error: 'Helm is still starting.' })
 	const request = profileSwitchCoordinator.switchTo(profileId, openItemId)
 	activeProfileSwitch = request
@@ -810,7 +841,10 @@ async function runProfileSwitchAttestation(): Promise<void> {
 	try {
 		if (process.platform !== 'darwin') throw new Error('Profile-switch attestation requires macOS.')
 		const win = await waitForAttestation('initial BrowserWindow', () => (mainWindow?.isDestroyed() ? null : mainWindow))
-		evidence.window.before = { browserWindowId: win.id, webContentsId: win.webContents.id }
+		evidence.window.before = {
+			browserWindowId: win.id,
+			webContentsId: win.webContents.id,
+		}
 		await waitForAttestation('initial renderer load', () => (!win.webContents.isLoading() ? true : null))
 		// Start counting only after the startup document settled; the two profile
 		// transitions below must account for exactly two same-webContents reloads.
@@ -862,7 +896,10 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		await waitForAttestation('reattached Work client to become live', () =>
 			attestationPidAlive(returnedEntry.proc.pid) ? true : null,
 		)
-		evidence.window.after = { browserWindowId: win.id, webContentsId: win.webContents.id }
+		evidence.window.after = {
+			browserWindowId: win.id,
+			webContentsId: win.webContents.id,
+		}
 		evidence.workSession.newAttachClientPid = returnedEntry.proc.pid
 		evidence.workSession.newAttachClientAlive = true
 		evidence.workSession.attachClientReplaced = returnedEntry.proc.pid !== initial.proc.pid
@@ -927,7 +964,11 @@ function profileMenu(): Electron.MenuItemConstructorOptions {
 				click: () => {
 					void activateProfile(profile.id).then(result => {
 						if (result.error === undefined) return
-						void dialog.showMessageBox({ type: 'warning', message: 'Could not switch profiles', detail: result.error })
+						void dialog.showMessageBox({
+							type: 'warning',
+							message: 'Could not switch profiles',
+							detail: result.error,
+						})
 					})
 				},
 			})),
@@ -949,14 +990,22 @@ function buildMenu(): void {
 		{
 			label: 'Shell',
 			submenu: [
-				{ label: 'New Terminal', accelerator: 'CmdOrCtrl+T', click: send('tab:new') },
+				{
+					label: 'New Terminal',
+					accelerator: 'CmdOrCtrl+T',
+					click: send('tab:new'),
+				},
 				// Main window: close its active terminal. Auxiliary editor: close that
 				// window through its unsaved-draft guard instead of touching a terminal.
 				{ label: 'Close', accelerator: 'CmdOrCtrl+W', click: closeFocused },
 				// Park the active tab (iTerm "bury session" analog): the tab leaves
 				// the strip, the terminal + pty stay alive behind the strip-right
 				// stack button. Renderer owns the actual park (tab state lives there).
-				{ label: 'Move Terminal to Background', accelerator: 'CmdOrCtrl+Shift+B', click: send('tab:background') },
+				{
+					label: 'Move Terminal to Background',
+					accelerator: 'CmdOrCtrl+Shift+B',
+					click: send('tab:background'),
+				},
 			],
 		},
 		{ role: 'editMenu' },
@@ -966,7 +1015,11 @@ function buildMenu(): void {
 			// (renderer applies bounds + persistence, mirroring the cmd+t pattern).
 			label: 'View',
 			submenu: [
-				{ label: 'Bigger text', accelerator: 'CmdOrCtrl+=', click: send('font:step', 1) },
+				{
+					label: 'Bigger text',
+					accelerator: 'CmdOrCtrl+=',
+					click: send('font:step', 1),
+				},
 				// Hidden twin so the literal ⌘⇧= ("cmd +") chord also works.
 				{
 					label: 'Bigger text',
@@ -975,8 +1028,16 @@ function buildMenu(): void {
 					acceleratorWorksWhenHidden: true,
 					click: send('font:step', 1),
 				},
-				{ label: 'Smaller text', accelerator: 'CmdOrCtrl+-', click: send('font:step', -1) },
-				{ label: 'Reset text size', accelerator: 'CmdOrCtrl+0', click: send('font:step', 0) },
+				{
+					label: 'Smaller text',
+					accelerator: 'CmdOrCtrl+-',
+					click: send('font:step', -1),
+				},
+				{
+					label: 'Reset text size',
+					accelerator: 'CmdOrCtrl+0',
+					click: send('font:step', 0),
+				},
 				{ type: 'separator' },
 				{ role: 'reload' },
 				{ role: 'forceReload' },
@@ -991,8 +1052,16 @@ function buildMenu(): void {
 			// renderer keydowns when a terminal has focus.
 			label: 'Go',
 			submenu: [
-				{ label: 'Back', accelerator: 'CmdOrCtrl+[', click: send('nav:go', 'back') },
-				{ label: 'Forward', accelerator: 'CmdOrCtrl+]', click: send('nav:go', 'forward') },
+				{
+					label: 'Back',
+					accelerator: 'CmdOrCtrl+[',
+					click: send('nav:go', 'back'),
+				},
+				{
+					label: 'Forward',
+					accelerator: 'CmdOrCtrl+]',
+					click: send('nav:go', 'forward'),
+				},
 			],
 		},
 		{ label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }] },
@@ -1130,7 +1199,7 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 // window so the renderer can show an Undo toast, or null when the pty had no
 // session (non-persistent fallback → the client kill was the real kill).
 ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken)) return null
+	if (terminalTransferMain?.isBusy() || !sessionIpcGate.allows(profileToken)) return null
 	const entry = ptys.get(id)
 	if (!entry) return null
 	ptys.delete(id)
@@ -1158,6 +1227,7 @@ ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: 
 // Startup restore: live sessions from the socket dir (stale sockets GC'd),
 // labeled from the registry. The renderer reattaches one tab per entry.
 ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
+	await terminalTransferRecovery
 	if (!sessionIpcGate.allows(profileToken)) return []
 	const support = getSessionSupport()
 	if (!support) return []
@@ -1194,7 +1264,13 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			order: support.registry.get(s.sessionId)?.order,
 		}))
 		.sort(sessions.compareSessionOrder)
-		.map(({ sessionId, title, customName, parked, groupId }) => ({ sessionId, title, customName, parked, groupId }))
+		.map(({ sessionId, title, customName, parked, groupId }) => ({
+			sessionId,
+			title,
+			customName,
+			parked,
+			groupId,
+		}))
 })
 
 const TAB_GROUP_ACTION_TYPES = new Set<sessions.TabGroupActionIntent['type']>([
@@ -1385,7 +1461,11 @@ function readThemeFile(file: string): ThemeFileEntry | null {
 		}
 		if (Object.keys(tokens).length === 0) return null
 		const id = path.basename(file, '.json')
-		return { id, name: typeof raw.name === 'string' && raw.name !== '' ? raw.name : id, tokens }
+		return {
+			id,
+			name: typeof raw.name === 'string' && raw.name !== '' ? raw.name : id,
+			tokens,
+		}
 	} catch {
 		return null // unreadable/invalid file — skip, never break the list
 	}
@@ -1488,8 +1568,27 @@ ipcMain.handle('profiles:activate', (_event, id: string, profileToken: unknown) 
 })
 
 void app.whenReady().then(async () => {
-	app.setAboutPanelOptions({ applicationName: APP_NAME, applicationVersion: app.getVersion() })
+	app.setAboutPanelOptions({
+		applicationName: APP_NAME,
+		applicationVersion: app.getVersion(),
+	})
 	await syncProfilesFromDaemon()
+	terminalTransferMain = new TerminalTransferMainAdapter({
+		userDataDir: app.getPath('userData'),
+		runtime: {
+			storageForProfile: transferStorageForProfile,
+			currentProfile: () => ({
+				profileId: sessionProfileId,
+				token: sessionProfileToken(),
+			}),
+		},
+	})
+	// Journal recovery happens before a renderer can invoke sessions:list. A
+	// quarantine is deliberately retained/fenced rather than repaired by guess.
+	terminalTransferRecovery = terminalTransferMain.recoverStartup().then(result => {
+		if (result.status === 'quarantined') console.warn('[helm] terminal transfer recovery quarantined:', result.reason)
+	})
+	await terminalTransferRecovery
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
 	buildMenu()
 	helmBridge.start()
@@ -1523,6 +1622,11 @@ app.on('window-all-closed', () => {
 // snapshots are flushed by the window-close interception (the renderer still
 // holds every xterm buffer after the clients detach).
 app.on('before-quit', event => {
+	if (terminalTransferMain?.isBusy()) {
+		event.preventDefault()
+		void terminalTransferMain.whenIdle().then(() => app.quit())
+		return
+	}
 	if (runContextWindows.hasDirtyWindows()) {
 		// Keep the main window, bridge, and attached dtach clients alive until
 		// every dirty editor explicitly saves/discards. Keep editing cancels quit.
