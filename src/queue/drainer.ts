@@ -1,6 +1,6 @@
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
-import { ItemCommands } from '../items/commands.js'
+import { ItemCommands, isRetryableItem } from '../items/commands.js'
 import { itemExecutionMode } from '../items/execution.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
@@ -12,6 +12,22 @@ import type { LoopRunner } from './loop-runner.js'
 import { processLoopItem, processSolveItem } from './worker.js'
 
 type ActiveRun = { title: string; startedAt: string; controller: AbortController }
+type ExecutionLane = 'solve' | 'loop'
+
+type ItemAdmission =
+	| { ok: true }
+	| {
+			ok: false
+			reason:
+				| 'stopped'
+				| 'quiescing'
+				| 'startup_fenced'
+				| 'capacity'
+				| 'not_found'
+				| 'already_active'
+				| 'not_startable'
+				| 'not_retryable'
+	  }
 
 const PAUSED_STATE_KEY = 'drainer_paused'
 /** Max total starts before an auto-retried Item gives up (1 initial + 2 retries). */
@@ -166,21 +182,38 @@ export class Drainer {
 		return released
 	}
 
+	/**
+	 * Synchronously preflight an immediate start. The route keeps this check and
+	 * its following selection writes in one event-loop turn, then processOneItem
+	 * repeats this exact predicate before admitting the run.
+	 */
+	canProcessOneItem(itemId: string): ItemAdmission {
+		return this.processAdmission(itemId)
+	}
+
+	/**
+	 * Synchronously preflight a retry without changing lifecycle state. Retry
+	 * queues work rather than consuming a lane immediately, so lane capacity is
+	 * intentionally not part of this operation's admission predicate.
+	 */
+	canRetryItem(itemId: string): ItemAdmission {
+		return this.retryAdmission(itemId)
+	}
+
 	/** Process a single Item immediately, bypassing pause state. */
 	processOneItem(itemId: string): boolean {
-		if (!this.running || this.quiescing || this.startupAdmissionFenced) return false
-		const item = this.db.items.get(itemId)
-		if (!item) return false
+		const admission = this.processAdmission(itemId)
+		if (!admission.ok) return false
+		const item = this.admissionDb().items.get(itemId)
+		if (!item) return false // Defensive only: processAdmission just read it synchronously.
 		return itemExecutionMode(item) === 'loop'
 			? this.startLoopItem(itemId, item.profileId)
 			: this.startSolveItem(itemId, item.profileId)
 	}
 
 	retryItem(itemId: string): ItemRecord {
-		if (this.quiescing) throw new Error('Daemon is restarting — new runs are temporarily unavailable')
-		if (!this.running) throw new Error('Drainer is stopped — new runs are temporarily unavailable')
-		if (this.startupAdmissionFenced)
-			throw new Error('Daemon is restoring scheduled capacity — new runs are temporarily unavailable')
+		const admission = this.retryAdmission(itemId)
+		if (!admission.ok) throw new Error(this.admissionMessage(admission.reason))
 		const item = this.itemCommands.retryItem(itemId)
 		this.wake()
 		return item
@@ -274,17 +307,10 @@ export class Drainer {
 	}
 
 	private startSolveItem(itemId: string, profileId?: string): boolean {
-		if (
-			!this.running ||
-			this.quiescing ||
-			this.startupAdmissionFenced ||
-			this.activeSolveItems.has(itemId) ||
-			this.activeSolveCount() >= this.solveCapacity()
-		)
-			return false
+		const admission = this.processAdmission(itemId, profileId, 'solve')
+		if (!admission.ok) return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
-		if (!item || itemExecutionMode(item) !== 'solve') return false
-		if (!isStartableItem(item)) return false
+		if (!item) return false // Defensive only: processAdmission just read it synchronously.
 
 		const controller = new AbortController()
 		const runDb = this.db.forProfile(item.profileId)
@@ -333,17 +359,10 @@ export class Drainer {
 	}
 
 	private startLoopItem(itemId: string, profileId?: string): boolean {
-		if (
-			!this.running ||
-			this.quiescing ||
-			this.startupAdmissionFenced ||
-			this.activeLoopItems.has(itemId) ||
-			this.activeLoopCount() >= this.loopCapacity()
-		)
-			return false
+		const admission = this.processAdmission(itemId, profileId, 'loop')
+		if (!admission.ok) return false
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
-		if (!item || itemExecutionMode(item) !== 'loop') return false
-		if (!isStartableItem(item)) return false
+		if (!item) return false // Defensive only: processAdmission just read it synchronously.
 
 		const controller = new AbortController()
 		const runDb = this.db.forProfile(item.profileId)
@@ -356,6 +375,55 @@ export class Drainer {
 		})
 
 		return true
+	}
+
+	private processAdmission(itemId: string, profileId?: string, expectedLane?: ExecutionLane): ItemAdmission {
+		if (this.quiescing) return { ok: false, reason: 'quiescing' }
+		if (!this.running) return { ok: false, reason: 'stopped' }
+		if (this.startupAdmissionFenced) return { ok: false, reason: 'startup_fenced' }
+
+		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
+		if (!item) return { ok: false, reason: 'not_found' }
+		const lane = itemExecutionMode(item)
+		if (expectedLane && lane !== expectedLane) return { ok: false, reason: 'not_startable' }
+		if (lane === 'solve') {
+			if (this.activeSolveItems.has(itemId)) return { ok: false, reason: 'already_active' }
+			if (this.activeSolveCount() >= this.solveCapacity()) return { ok: false, reason: 'capacity' }
+		} else {
+			if (this.activeLoopItems.has(itemId)) return { ok: false, reason: 'already_active' }
+			if (this.activeLoopCount() >= this.loopCapacity()) return { ok: false, reason: 'capacity' }
+		}
+		return isStartableItem(item) ? { ok: true } : { ok: false, reason: 'not_startable' }
+	}
+
+	private retryAdmission(itemId: string): ItemAdmission {
+		if (this.quiescing) return { ok: false, reason: 'quiescing' }
+		if (!this.running) return { ok: false, reason: 'stopped' }
+		if (this.startupAdmissionFenced) return { ok: false, reason: 'startup_fenced' }
+		const item = this.admissionDb().items.get(itemId)
+		if (!item) return { ok: false, reason: 'not_found' }
+		return isRetryableItem(item) ? { ok: true } : { ok: false, reason: 'not_retryable' }
+	}
+
+	private admissionMessage(reason: Exclude<ItemAdmission, { ok: true }>['reason']): string {
+		switch (reason) {
+			case 'quiescing':
+				return 'Daemon is restarting — new runs are temporarily unavailable'
+			case 'stopped':
+				return 'Drainer is stopped — new runs are temporarily unavailable'
+			case 'startup_fenced':
+				return 'Daemon is restoring scheduled capacity — new runs are temporarily unavailable'
+			case 'capacity':
+				return 'The execution lane is at capacity — try again when a run finishes'
+			case 'not_found':
+				return 'Item not found'
+			case 'already_active':
+				return 'Item is already running'
+			case 'not_startable':
+				return 'Item is not ready to start'
+			case 'not_retryable':
+				return 'Only failed, cancelled, done, or review Items can be retried'
+		}
 	}
 
 	private nextQueuedSolveItem(): ItemRecord | null {

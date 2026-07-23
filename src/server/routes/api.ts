@@ -403,6 +403,26 @@ export function apiRoutes(
 		return updated
 	}
 
+	function admissionFailure(c: Context, admission: ReturnType<Drainer['canProcessOneItem']>) {
+		if (admission.ok) return null
+		const lifecycleFailure = admission.reason === 'not_startable' || admission.reason === 'not_retryable'
+		const message =
+			admission.reason === 'stopped'
+				? 'Drainer is stopped — new runs are temporarily unavailable'
+				: admission.reason === 'quiescing'
+					? 'Daemon is restarting — new runs are temporarily unavailable'
+					: admission.reason === 'startup_fenced'
+						? 'Daemon is restoring scheduled capacity — new runs are temporarily unavailable'
+						: admission.reason === 'capacity'
+							? 'The execution lane is at capacity — try again when a run finishes'
+							: admission.reason === 'already_active'
+								? 'Item is already running'
+								: admission.reason === 'not_retryable'
+									? 'Only failed, cancelled, done, or review Items can be retried'
+									: 'Item is not ready to start'
+		return c.json({ error: message }, lifecycleFailure ? 400 : 409)
+	}
+
 	/** Effective execution workspace for an Item: request override ?? stored payload ?? config. */
 	function effectiveSolverWorkspace(item: ItemRecord, selected: SolverWorkspace | null | undefined): SolverWorkspace {
 		const stored = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
@@ -1059,8 +1079,12 @@ export function apiRoutes(
 			}
 		}
 		try {
-			// First Start mutation; this synchronous segment cannot interleave Plan.
 			planning.assertStartAllowed(item.id)
+			// Selection and execution writes must follow admission in the same
+			// synchronous turn. A rejected Start therefore cannot alter a future run.
+			const admission = queue.canProcessOneItem(item.id)
+			const rejected = admissionFailure(c, admission)
+			if (rejected) return rejected
 			recordSolveSelection(item, selection)
 			const selectedItem = itemCommands.getItem(item.id) ?? item
 			if (plannedActive && selectedItem.payload.kind === 'solve') {
@@ -1094,6 +1118,11 @@ export function apiRoutes(
 		try {
 			const current = itemCommands.getItem(c.req.param('id'))
 			if (!current) return c.json({ error: 'Item not found' }, 404)
+			// Retry lifecycle validation is admission-only until this point; do not
+			// persist a new selection on a status the command would reject.
+			const admission = queue.canRetryItem(current.id)
+			const rejected = admissionFailure(c, admission)
+			if (rejected) return rejected
 			recordSolveSelection(current, selection)
 			const item = queue.retryItem(current.id)
 			return c.json({ data: await dashboardItem(item) })

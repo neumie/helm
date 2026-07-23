@@ -131,7 +131,9 @@ const queue = {
 	getStatus: () => ({ paused: false, pending: 0, active: 0, maxConcurrency: 2, activeTasks: [] }),
 	enqueue: () => undefined,
 	processOne: () => true,
+	canProcessOneItem: () => ({ ok: true as const }),
 	processOneItem: () => true,
+	canRetryItem: () => ({ ok: true as const }),
 	cancel: () => false,
 	cancelItem: () => false,
 	retryItem: () => {
@@ -2364,11 +2366,15 @@ test('Drainer direct starts enforce lane capacity and scheduled reservations', a
 		try {
 			drainer.start()
 			assert.equal(drainer.reserveExternalSolve('scheduled-run'), true)
+			assert.deepEqual(drainer.canProcessOneItem(firstSolve.id), { ok: false, reason: 'capacity' })
 			assert.equal(drainer.processOneItem(firstSolve.id), false)
 			assert.equal(drainer.releaseExternalSolve('scheduled-run'), true)
+			assert.deepEqual(drainer.canProcessOneItem(firstSolve.id), { ok: true })
 			assert.equal(drainer.processOneItem(firstSolve.id), true)
+			assert.deepEqual(drainer.canProcessOneItem(secondSolve.id), { ok: false, reason: 'capacity' })
 			assert.equal(drainer.processOneItem(secondSolve.id), false)
 			assert.equal(drainer.processOneItem(firstLoop.id), true)
+			assert.deepEqual(drainer.canProcessOneItem(secondLoop.id), { ok: false, reason: 'capacity' })
 			assert.equal(drainer.processOneItem(secondLoop.id), false)
 			await waitFor(
 				() => db.items.get(firstSolve.id)?.status === 'review' && db.items.get(firstLoop.id)?.status === 'done',
@@ -5009,6 +5015,91 @@ test('planned Start feasibility and planning conflicts leave selection, lifecycl
 		} finally {
 			rmSync(worktreePath, { recursive: true, force: true })
 		}
+	})
+})
+
+test('server admission preflight rejects unavailable starts and invalid retries without mutating selections', async () => {
+	await withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const stopped = commands.createSolveItem({ title: 'Stopped start', projectSlug: 'helm', prompt: 'stopped' })
+		const full = commands.createSolveItem({ title: 'Full lane start', projectSlug: 'helm', prompt: 'full' })
+		const invalidRetry = commands.createSolveItem({ title: 'Invalid retry', projectSlug: 'helm', prompt: 'invalid' })
+		const startSuccess = commands.createSolveItem({ title: 'Start succeeds', projectSlug: 'helm', prompt: 'start' })
+		const retrySuccess = commands.createSolveItem({ title: 'Retry succeeds', projectSlug: 'helm', prompt: 'retry' })
+		commands.startItem(retrySuccess.id)
+		commands.failItem(retrySuccess.id, 'failed once', 'solve')
+
+		const routeQueue = {
+			...queue,
+			canProcessOneItem: (id: string) => {
+				if (id === stopped.id) return { ok: false as const, reason: 'stopped' as const }
+				if (id === full.id) return { ok: false as const, reason: 'capacity' as const }
+				return { ok: true as const }
+			},
+			canRetryItem: (id: string) =>
+				id === invalidRetry.id ? { ok: false as const, reason: 'not_retryable' as const } : { ok: true as const },
+			processOneItem: (id: string) => {
+				assert.equal(solvePayload(db, id).solverModel, 'claude-fable-5')
+				commands.startItem(id)
+				return true
+			},
+			retryItem: (id: string) => {
+				assert.equal(solvePayload(db, id).solverModel, 'claude-fable-5')
+				return commands.retryItem(id)
+			},
+		}
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			routeQueue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		const postSelection = {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ solverModel: 'claude-fable-5', solverEffort: 'xhigh', solverWorkspace: 'main' }),
+		}
+		const rejectedPayloads = new Map(
+			[stopped, full, invalidRetry].map(item => [item.id, JSON.stringify(solvePayload(db, item.id))]),
+		)
+
+		const stoppedRes = await api.request(`/items/${stopped.id}/start`, postSelection)
+		const fullRes = await api.request(`/items/${full.id}/start`, postSelection)
+		const invalidRetryRes = await api.request(`/items/${invalidRetry.id}/retry`, postSelection)
+		assert.equal(stoppedRes.status, 409)
+		assert.match(((await stoppedRes.json()) as { error: string }).error, /stopped/)
+		assert.equal(fullRes.status, 409)
+		assert.match(((await fullRes.json()) as { error: string }).error, /capacity/)
+		assert.equal(invalidRetryRes.status, 400)
+		assert.match(((await invalidRetryRes.json()) as { error: string }).error, /Only failed, cancelled, done, or review/)
+		for (const item of [stopped, full, invalidRetry]) {
+			assert.equal(JSON.stringify(solvePayload(db, item.id)), rejectedPayloads.get(item.id))
+		}
+
+		const startedRes = await api.request(`/items/${startSuccess.id}/start`, postSelection)
+		const retriedRes = await api.request(`/items/${retrySuccess.id}/retry`, postSelection)
+		assert.equal(startedRes.status, 200)
+		assert.equal(retriedRes.status, 200)
+		assert.equal(db.items.get(startSuccess.id)?.status, 'running')
+		assert.equal(db.items.get(retrySuccess.id)?.status, 'ready')
+		assert.deepEqual(solvePayload(db, startSuccess.id), {
+			kind: 'solve',
+			prompt: 'start',
+			solverModel: 'claude-fable-5',
+			solverEffort: 'xhigh',
+			solverWorkspace: 'main',
+		})
+		assert.deepEqual(solvePayload(db, retrySuccess.id), {
+			kind: 'solve',
+			prompt: 'retry',
+			solverModel: 'claude-fable-5',
+			solverEffort: 'xhigh',
+			solverWorkspace: 'main',
+		})
 	})
 })
 

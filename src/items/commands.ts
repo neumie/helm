@@ -83,6 +83,11 @@ export type CreateLoopItemsInput = z.infer<typeof createLoopItemsInputSchema>
 
 const RETRYABLE_STATUSES = new Set<ItemRecord['status']>(['failed', 'cancelled', 'done', 'review'])
 const ITEM_KINDS: ItemKind[] = ['solve', 'loop']
+
+/** Shared retry lifecycle predicate for admission preflight and the guarded command. */
+export function isRetryableItem(item: ItemRecord): boolean {
+	return RETRYABLE_STATUSES.has(item.status)
+}
 const RESERVED_EVENT_TYPES = new Set([
 	'item_approved',
 	'item_rejected',
@@ -361,7 +366,7 @@ export class ItemCommands {
 
 	retryItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
-		if (!RETRYABLE_STATUSES.has(item.status)) {
+		if (!isRetryableItem(item)) {
 			throw new Error('Only failed, cancelled, done, or review Items can be retried')
 		}
 
