@@ -59,6 +59,7 @@ export const scheduledRunStateSchema = z.enum([
 	'closed_quiet',
 	'needs_attention',
 	'cancel_requested',
+	'timeout_requested',
 	'cancelled',
 	'timed_out',
 	'failed',
@@ -136,6 +137,8 @@ export const createScheduledRunSchema = z
 		runDir: z.string().max(2000).nullable().default(null),
 		missedCount: z.number().int().nonnegative().default(0),
 		missedMany: z.boolean().default(false),
+		/** Only command-owned occurrence claims may create an immediately terminal skip. */
+		closedAt: utcIsoSchema.optional(),
 	})
 	.strict()
 

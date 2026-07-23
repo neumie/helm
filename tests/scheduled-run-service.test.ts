@@ -1,0 +1,169 @@
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import type { HelmConfig } from '../src/config.js'
+import { DB } from '../src/db/client.js'
+import type { ProfileRuntime } from '../src/profiles/store.js'
+import type { Drainer } from '../src/queue/drainer.js'
+import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
+import { ScheduledRunService, type ScheduledRunServiceDeps } from '../src/scheduled-runs/service.js'
+
+const definition = {
+	prompt: 'Review the repository.',
+	target: { kind: 'project' as const, projectSlug: 'helm' },
+	agent: 'claude' as const,
+	maximumRuntimeMinutes: 120,
+}
+const scheduleInput = {
+	name: 'Nightly review',
+	enabled: true,
+	cron: '0 1 * * *',
+	cadenceKind: 'daily' as const,
+	timezone: 'UTC',
+	definition,
+}
+const config = {
+	scheduledRuns: { enabled: true },
+	server: { host: '127.0.0.1', port: 7474 },
+	solver: { agent: 'claude' },
+} as unknown as HelmConfig
+
+function runInput(schedule: { id: string; revision: number }, slotKey: string) {
+	return {
+		scheduleId: schedule.id,
+		scheduleRevision: schedule.revision,
+		scheduledFor: '2030-01-01T01:00:00.000Z',
+		localCivilSlot: '2030-01-01 01:00',
+		utcOffsetMinutes: 0,
+		slotKey,
+		definitionSnapshot: definition,
+		sessionId: `sr-${slotKey}`,
+	}
+}
+
+function fakeDrainer() {
+	const reservations = new Set<string>()
+	return {
+		reservations,
+		reserveExternalSolve(id: string) {
+			if (reservations.has(id)) return true
+			if (reservations.size >= 1) return false
+			reservations.add(id)
+			return true
+		},
+		releaseExternalSolve(id: string) {
+			return reservations.delete(id)
+		},
+	}
+}
+
+test('claimOccurrence atomically records overlap skips and advances cadence before the active index', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const schedule = commands.create(scheduleInput)
+		const first = commands.claimOccurrence(
+			schedule.id,
+			schedule.revision,
+			'2030-01-02T01:00:00.000Z',
+			runInput(schedule, 'slot-1'),
+		)
+		const advanced = db.schedules.require(schedule.id)
+		const skipped = commands.claimOccurrence(
+			schedule.id,
+			advanced.revision,
+			'2030-01-03T01:00:00.000Z',
+			runInput(advanced, 'slot-2'),
+		)
+		assert.equal(first.state, 'admitted')
+		assert.equal(skipped.state, 'skipped_overlap')
+		assert.ok(skipped.closedAt)
+		assert.equal(db.schedules.require(schedule.id).nextRunAt, '2030-01-03T01:00:00.000Z')
+
+		const manual = commands.claimManualOccurrence(
+			schedule.id,
+			db.schedules.require(schedule.id).revision,
+			runInput(db.schedules.require(schedule.id), 'manual-1'),
+		)
+		assert.equal(manual.state, 'skipped_overlap')
+		assert.equal(db.schedules.require(schedule.id).nextRunAt, '2030-01-03T01:00:00.000Z')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('runNow applies the same durable overlap policy without attempting workspace admission', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const schedule = commands.create(scheduleInput)
+		commands.claimOccurrence(schedule.id, schedule.revision, '2030-01-02T01:00:00.000Z', runInput(schedule, 'active'))
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => true,
+		})
+		const skipped = await service.runNow('work', schedule.id)
+		assert.equal(skipped.state, 'skipped_overlap')
+		assert.equal(drainer.reservations.size, 0)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('timeout is durable first-writer state and identical quiet retries converge after closure', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const schedule = commands.create(scheduleInput)
+		const admitted = commands.claimOccurrence(schedule.id, schedule.revision, null, runInput(schedule, 'timeout'))
+		let running = commands.markRunning(
+			commands.beginLaunching(commands.beginPreparing(admitted.id, admitted.revision).id, admitted.revision + 1).id,
+			admitted.revision + 2,
+		)
+		const requested = commands.requestTimeout(running.id, running.revision)
+		assert.equal(requested.state, 'timeout_requested')
+		assert.throws(() => commands.report(requested.id, requested.revision, 'quiet', 'done'), /Only a running/)
+		assert.throws(() => commands.requestCancel(requested.id, requested.revision), /active/)
+		assert.equal(commands.markTimedOut(requested.id, requested.revision).state, 'timed_out')
+
+		const quietSchedule = commands.create({ ...scheduleInput, name: 'Quiet retry' })
+		const quietAdmitted = commands.claimOccurrence(
+			quietSchedule.id,
+			quietSchedule.revision,
+			null,
+			runInput(quietSchedule, 'quiet'),
+		)
+		running = commands.markRunning(
+			commands.beginLaunching(
+				commands.beginPreparing(quietAdmitted.id, quietAdmitted.revision).id,
+				quietAdmitted.revision + 1,
+			).id,
+			quietAdmitted.revision + 2,
+		)
+		running = commands.recordRuntime(running.id, running.revision, {
+			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
+			cwd: root,
+			worktreePath: null,
+			branchName: null,
+			runDir: root,
+			socketDescriptor: null,
+		})
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => true,
+			supervisor: { teardown: async () => 'closed' } as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+		const closed = await service.report('work', running.id, 'quiet', 'done')
+		assert.equal(closed.state, 'closed_quiet')
+		assert.equal((await service.report('work', running.id, 'quiet', 'done')).state, 'closed_quiet')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})

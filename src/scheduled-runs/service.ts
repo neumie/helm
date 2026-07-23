@@ -54,6 +54,7 @@ export class ScheduledRunService {
 	private readonly supervisor: DtachSupervisor
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
+	private reconcileInFlight: Promise<void> | null = null
 	private stopped = false
 	private watchdog: ReturnType<typeof setInterval> | null = null
 
@@ -67,12 +68,17 @@ export class ScheduledRunService {
 		this.now = deps.now ?? (() => new Date())
 	}
 
-	start(): void {
-		if (!this.config.scheduledRuns.enabled || this.watchdog) return
+	/**
+	 * Restore durable sessions before ordinary Item admission opens. This always
+	 * runs, even when schedule creation/recurrence is rollout-disabled.
+	 */
+	async start(): Promise<void> {
+		if (this.watchdog) return this.reconcile()
 		this.stopped = false
+		await this.reconcile()
+		if (this.stopped) return
 		this.watchdog = setInterval(() => void this.reconcile(), this.deps.watchdogIntervalMs ?? WATCHDOG_MS)
 		this.watchdog.unref?.()
-		void this.reconcile()
 	}
 
 	/** Close recurrence/manual admission without killing already admitted agents. */
@@ -80,7 +86,7 @@ export class ScheduledRunService {
 		this.stopped = true
 		if (this.watchdog) clearInterval(this.watchdog)
 		this.watchdog = null
-		await this.tickInFlight
+		await Promise.all([this.tickInFlight, this.reconcileInFlight])
 	}
 
 	/** The only recurrence entrypoint. A missing/expired lease makes no DB claim. */
@@ -99,7 +105,7 @@ export class ScheduledRunService {
 		// Snapshot profile IDs before touching tenant stores so a profile activation
 		// cannot redirect this read to a different tenant mid-count.
 		for (const { profile } of this.deps.profiles())
-			count += this.db.forProfile(profile.id).schedules.listRecoverableRuns().length
+			count += this.db.forProfile(profile.id).schedules.countRecoverableRuns()
 		return count
 	}
 
@@ -139,6 +145,8 @@ export class ScheduledRunService {
 			this.drainer.releaseExternalSolve(run.id)
 			return run
 		}
+		// Identical quiet retries converge through the durable state rather than
+		// attempting a second reported_quiet -> closing transition.
 		return this.closeQuiet(profileId, commands, run)
 	}
 
@@ -156,18 +164,34 @@ export class ScheduledRunService {
 
 	/** Recover durable runs on daemon start; never relaunch an existing session. */
 	async reconcile(): Promise<void> {
+		if (this.reconcileInFlight) return this.reconcileInFlight
+		this.reconcileInFlight = this.reconcileInternal().finally(() => {
+			this.reconcileInFlight = null
+		})
+		return this.reconcileInFlight
+	}
+
+	private async reconcileInternal(): Promise<void> {
 		for (const runtime of this.deps.profiles()) {
 			const profileId = runtime.profile.id
 			const runDb = this.db.forProfile(profileId) // capture tenant seam before await
 			const commands = new ScheduleCommands(runDb.schedules)
 			for (const initial of runDb.schedules.listRecoverableRuns()) {
 				if (this.stopped) return
-				await this.reconcileRun(profileId, commands, initial)
+				try {
+					await this.reconcileRun(profileId, commands, initial)
+				} catch (error) {
+					// Another durable actor may have won a revision; the next pass converges.
+					log.warn('scheduled-runs', `Recovery failed for ${initial.id}: ${message(error)}`)
+				}
 			}
-			// Retention is bounded and never treats attention as history.
 			for (const terminal of terminalRunsToPrune(runDb.schedules, this.now()).slice(0, 50)) {
-				if (!terminal.runDir || (await removeRetainedRunDirectory(runtime.rootDir, terminal, this.now())))
-					runDb.schedules.deleteRun(terminal.id)
+				try {
+					if (!terminal.runDir || (await removeRetainedRunDirectory(runtime.rootDir, terminal, this.now())))
+						runDb.schedules.deleteRun(terminal.id)
+				} catch (error) {
+					log.warn('scheduled-runs', `Retention failed for ${terminal.id}: ${message(error)}`)
+				}
 			}
 		}
 	}
@@ -269,14 +293,9 @@ export class ScheduledRunService {
 			missedMany: occurrence.missedMany,
 		} as const
 		let run: ScheduledRunRecord
-		if (occurrence.manual) {
-			run = runDb.schedules.transaction(() => {
-				if (runDb.schedules.findRunBySlot(schedule.id, claim.slotKey))
-					throw new Error('Manual occurrence already claimed')
-				return runDb.schedules.createRun(claim)
-			})
-		} else run = commands.claimOccurrence(schedule.id, schedule.revision, occurrence.advanceTo, claim)
-		if (occurrence.misfire) return run
+		if (occurrence.manual) run = commands.claimManualOccurrence(schedule.id, schedule.revision, claim)
+		else run = commands.claimOccurrence(schedule.id, schedule.revision, occurrence.advanceTo, claim)
+		if (occurrence.misfire || run.state === 'skipped_overlap') return run
 		if (runtime.profile.archivedAt)
 			return this.disableAndSkip(runDb, commands, schedule.id, run, 'skipped_profile_archived')
 		if (
@@ -287,10 +306,6 @@ export class ScheduledRunService {
 		}
 		if (runDb.schedules.countAttentionRuns() >= MAX_ATTENTION_PER_PROFILE)
 			return this.skip(runDb, run, 'skipped_capacity')
-		const active = runDb.schedules
-			.listRecoverableRuns()
-			.some(candidate => candidate.scheduleId === schedule.id && candidate.id !== run.id)
-		if (active) return this.skip(runDb, run, 'skipped_overlap')
 		if (!this.drainer.reserveExternalSolve(run.id)) return this.skip(runDb, run, 'skipped_capacity')
 		try {
 			run = commands.beginPreparing(run.id, run.revision)
@@ -366,7 +381,9 @@ export class ScheduledRunService {
 					/* preserve first durable failure */
 				}
 			}
-			this.drainer.releaseExternalSolve(run.id)
+			// A supervisor handoff to quarantine means ownership may still be live;
+			// retain the reservation until a definitive probe/teardown resolves it.
+			if (current.state !== 'quarantined') this.drainer.releaseExternalSolve(run.id)
 			throw error
 		}
 	}
@@ -376,7 +393,10 @@ export class ScheduledRunService {
 		commands: ScheduleCommands,
 		reported: ScheduledRunRecord,
 	): Promise<ScheduledRunRecord> {
-		let run = commands.beginClose(reported.id, reported.revision)
+		let run = reported
+		if (run.state === 'closed_quiet') return run
+		if (run.state === 'reported_quiet') run = commands.beginClose(run.id, run.revision)
+		if (run.state !== 'closing') return run
 		const result = await this.teardown(profileId, run)
 		if (result === 'quarantined')
 			return commands.markQuarantined(run.id, run.revision, 'Quiet teardown ownership is unknown')
@@ -398,25 +418,31 @@ export class ScheduledRunService {
 	): Promise<void> {
 		let run = initial
 		const socket = await probeScheduledSocket(scheduledSocketPath(profileId, run.sessionId))
-		if (socket === 'unknown') {
-			if (run.state !== 'quarantined')
-				commands.markQuarantined(run.id, run.revision, 'Scheduled socket probe is unknown')
-			return
-		}
 		if (run.state === 'needs_attention') {
 			this.drainer.releaseExternalSolve(run.id)
 			return
 		}
+		// Unknown ownership is capacity-bearing until a later probe proves death.
+		if (socket === 'unknown') {
+			this.restoreReservation(run)
+			if (run.state !== 'quarantined')
+				commands.markQuarantined(run.id, run.revision, 'Scheduled socket probe is unknown')
+			return
+		}
 		if (socket === 'live') {
-			if (run.state === 'reported_quiet') {
+			this.restoreReservation(run)
+			if (run.state === 'reported_quiet' || run.state === 'closing') {
 				await this.closeQuiet(profileId, commands, run)
 				return
 			}
-			if (run.state === 'closing' || run.state === 'cancel_requested') {
+			if (run.state === 'cancel_requested') {
 				await this.cancel(profileId, run.id)
 				return
 			}
-			if (run.state === 'launching' || run.state === 'running') this.drainer.reserveExternalSolve(run.id)
+			if (run.state === 'timeout_requested') {
+				await this.timeout(profileId, commands, run)
+				return
+			}
 			if (
 				run.startedAt &&
 				Date.parse(run.startedAt) + run.definitionSnapshot.maximumRuntimeMinutes * 60_000 <= this.now().getTime()
@@ -433,21 +459,35 @@ export class ScheduledRunService {
 		} else if (run.state === 'cancel_requested') {
 			this.drainer.releaseExternalSolve(run.id)
 			commands.markCancelled(run.id, run.revision)
-		} else if (run.state !== 'quarantined') {
+		} else if (run.state === 'timeout_requested') {
+			this.drainer.releaseExternalSolve(run.id)
+			commands.markTimedOut(run.id, run.revision)
+		} else if (run.state === 'quarantined') {
+			this.drainer.releaseExternalSolve(run.id)
+			commands.markSessionLost(run.id, run.revision, 'Scheduled session was dead after ownership quarantine')
+		} else {
 			this.drainer.releaseExternalSolve(run.id)
 			commands.markInterrupted(run.id, run.revision, 'Scheduled session was dead during reconciliation')
 		}
 	}
 
 	private async timeout(profileId: string, commands: ScheduleCommands, run: ScheduledRunRecord): Promise<void> {
-		const result = await this.teardown(profileId, run)
+		const requested = run.state === 'timeout_requested' ? run : commands.requestTimeout(run.id, run.revision)
+		const result = await this.teardown(profileId, requested)
 		if (result === 'quarantined') {
-			commands.markQuarantined(run.id, run.revision, 'Timeout teardown ownership is unknown')
+			commands.markQuarantined(requested.id, requested.revision, 'Timeout teardown ownership is unknown')
 			return
 		}
-		const current = this.db.forProfile(profileId).schedules.requireRun(run.id)
-		this.drainer.releaseExternalSolve(run.id)
+		const current = this.db.forProfile(profileId).schedules.requireRun(requested.id)
+		this.drainer.releaseExternalSolve(requested.id)
 		commands.markTimedOut(current.id, current.revision)
+	}
+	private restoreReservation(run: ScheduledRunRecord): void {
+		if (!this.drainer.reserveExternalSolve(run.id))
+			log.warn(
+				'scheduled-runs',
+				`Scheduled run ${run.id} could not reserve solve capacity; existing restore occupancy fences Items`,
+			)
 	}
 
 	private skip(runDb: DB, run: ScheduledRunRecord, state: 'skipped_overlap' | 'skipped_capacity'): ScheduledRunRecord {

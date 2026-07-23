@@ -472,4 +472,14 @@ CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
   WHERE state IN ('admitted', 'preparing', 'launching', 'running', 'reported_quiet', 'closing', 'needs_attention', 'cancel_requested', 'quarantined');
 `,
 	},
+	{
+		// A timeout is claimed durably before teardown. It remains active so a
+		// concurrent report/cancel cannot win after destructive process control.
+		version: 28,
+		sql: `
+DROP INDEX IF EXISTS idx_scheduled_runs_one_active;
+CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
+  WHERE state IN ('admitted', 'preparing', 'launching', 'running', 'reported_quiet', 'closing', 'needs_attention', 'cancel_requested', 'timeout_requested', 'quarantined');
+`,
+	},
 ]

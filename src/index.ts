@@ -112,13 +112,16 @@ async function main() {
 	// One-time backfill of eligible display, assessment, and branch enrichment.
 	enricher.backfill()
 
-	// Start processing queue
+	// Restore durable scheduled agents into the shared solve budget before the
+	// Drainer opens Item admission; disabled recurrence still recovers sessions.
+	await scheduledRuns.start()
+
+	// Start processing queue only after scheduled capacity restoration.
 	queue.start()
 
 	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
 	planStatusWatcher.start()
-	scheduledRuns.start()
 
 	// Graceful shutdown. Poller/Enricher/Drainer/HTTP do not yet expose a complete
 	// admission-and-drain contract, so SQLite deliberately remains open until

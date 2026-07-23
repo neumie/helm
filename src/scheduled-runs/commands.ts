@@ -13,9 +13,21 @@ const ACTIVE_STATES = new Set<ScheduledRunState>([
 	'closing',
 	'needs_attention',
 	'cancel_requested',
+	'timeout_requested',
 	'quarantined',
 ])
 const LAUNCHABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching'])
+const CANCELLABLE_STATES = new Set<ScheduledRunState>([
+	'admitted',
+	'preparing',
+	'launching',
+	'running',
+	'reported_quiet',
+	'closing',
+	'needs_attention',
+	'cancel_requested',
+	'quarantined',
+])
 const TIMEOUTABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching', 'running'])
 const TERMINAL_STATES = new Set<ScheduledRunState>([
 	'closed_quiet',
@@ -50,23 +62,26 @@ export class ScheduleCommands {
 		return this.store.archive(id, revision)
 	}
 
-	/** Atomically advance cadence and claim the one durable occurrence for a slot. */
+	/**
+	 * Atomically advance cadence and classify an occurrence before the active-run
+	 * unique index can reject it. A skipped overlap is durable terminal history,
+	 * not a failed admission attempt, so the cadence always progresses once.
+	 */
 	claimOccurrence(
 		scheduleId: string,
 		expectedRevision: number,
 		nextRunAt: string | null,
 		input: CreateScheduledRunInput,
 	): ScheduledRunRecord {
-		return this.store.transaction(() => {
-			const schedule = this.store.require(scheduleId)
-			if (!schedule.enabled || schedule.archivedAt) throw new Error('Schedule is not enabled')
-			if (schedule.revision !== expectedRevision) throw new ScheduleRevisionConflictError()
-			if (input.scheduleId !== scheduleId || input.scheduleRevision !== expectedRevision)
-				throw new Error('Occurrence does not match schedule revision')
-			if (this.store.findRunBySlot(scheduleId, input.slotKey)) throw new Error('Occurrence already claimed')
-			this.store.advanceNextRun(scheduleId, expectedRevision, nextRunAt)
-			return this.store.createRun(input)
-		})
+		return this.claim(scheduleId, expectedRevision, nextRunAt, input, true)
+	}
+	/** Manual runs share overlap policy but deliberately do not move recurrence cadence. */
+	claimManualOccurrence(
+		scheduleId: string,
+		expectedRevision: number,
+		input: CreateScheduledRunInput,
+	): ScheduledRunRecord {
+		return this.claim(scheduleId, expectedRevision, null, input, false)
 	}
 	beginPreparing(id: string, revision: number): ScheduledRunRecord {
 		return this.transition(id, revision, ['admitted'], 'preparing')
@@ -105,11 +120,17 @@ export class ScheduleCommands {
 	}
 	requestCancel(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (!ACTIVE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')
+		if (!CANCELLABLE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')
 		return this.transition(id, revision, [run.state], 'cancel_requested')
 	}
 	markCancelled(id: string, revision: number): ScheduledRunRecord {
 		return this.transition(id, revision, ['cancel_requested'], 'cancelled', { closedAt: new Date().toISOString() })
+	}
+	markSessionLost(id: string, revision: number, detail: string): ScheduledRunRecord {
+		return this.transition(id, revision, ['quarantined'], 'session_lost', {
+			closedAt: new Date().toISOString(),
+			diagnosticDetail: scheduledRunDiagnosticSchema.parse(detail),
+		})
 	}
 	markFailed(id: string, revision: number, detail: string | null = null): ScheduledRunRecord {
 		const diagnosticDetail = scheduledRunDiagnosticSchema.parse(detail)
@@ -121,10 +142,16 @@ export class ScheduleCommands {
 			diagnosticDetail,
 		})
 	}
-	markTimedOut(id: string, revision: number): ScheduledRunRecord {
+	/** First durable timeout transition wins before ownership-sensitive teardown. */
+	requestTimeout(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
 		if (!TIMEOUTABLE_STATES.has(run.state)) throw new Error('Only an unreported scheduled run can time out')
-		return this.transition(id, revision, [run.state], 'timed_out', { closedAt: new Date().toISOString() })
+		return this.transition(id, revision, [run.state], 'timeout_requested')
+	}
+	markTimedOut(id: string, revision: number): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (run.state !== 'timeout_requested') throw new Error('Only an unreported scheduled run can time out')
+		return this.transition(id, revision, ['timeout_requested'], 'timed_out', { closedAt: new Date().toISOString() })
 	}
 	/** First matching report wins; an identical retry is intentionally idempotent. */
 	report(id: string, revision: number, kind: 'quiet' | 'needs_attention', summary: string): ScheduledRunRecord {
@@ -156,6 +183,27 @@ export class ScheduleCommands {
 	}
 	isTerminal(run: ScheduledRunRecord): boolean {
 		return TERMINAL_STATES.has(run.state)
+	}
+	private claim(
+		scheduleId: string,
+		expectedRevision: number,
+		nextRunAt: string | null,
+		input: CreateScheduledRunInput,
+		advanceCadence: boolean,
+	): ScheduledRunRecord {
+		return this.store.transaction(() => {
+			const schedule = this.store.require(scheduleId)
+			if (!schedule.enabled || schedule.archivedAt) throw new Error('Schedule is not enabled')
+			if (schedule.revision !== expectedRevision) throw new ScheduleRevisionConflictError()
+			if (input.scheduleId !== scheduleId || input.scheduleRevision !== expectedRevision)
+				throw new Error('Occurrence does not match schedule revision')
+			if (this.store.findRunBySlot(scheduleId, input.slotKey)) throw new Error('Occurrence already claimed')
+			const overlap = this.store.findActiveRun(scheduleId)
+			if (advanceCadence) this.store.advanceNextRun(scheduleId, expectedRevision, nextRunAt)
+			return this.store.createRun(
+				overlap ? { ...input, state: 'skipped_overlap', closedAt: new Date().toISOString() } : input,
+			)
+		})
 	}
 	private prepareSchedule(input: unknown) {
 		const parsed = scheduleCreateSchema.parse(input)

@@ -166,7 +166,7 @@ export class ScheduleStore {
 			session_id, socket_descriptor, report_token_hash, report_token_version, process_fingerprint, cwd, worktree_path, branch_name, run_dir,
 			started_at, reported_at, closed_at, report_kind, report_summary, diagnostic_detail, notification_claimed_at, notification_delivered_at,
 			missed_count, missed_many, cleanup_state, terminal_resolved_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, ?, ?)`)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, ?, ?)`)
 			.run(
 				id,
 				this.profileId,
@@ -187,6 +187,7 @@ export class ScheduleStore {
 				parsed.worktreePath,
 				parsed.branchName,
 				parsed.runDir,
+				parsed.closedAt ?? null,
 				parsed.missedCount,
 				Number(parsed.missedMany),
 				now,
@@ -219,7 +220,7 @@ export class ScheduleStore {
 		return (
 			this.db
 				.prepare(
-					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','quarantined') ORDER BY created_at ASC, id ASC LIMIT ?",
+					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined') ORDER BY created_at ASC, id ASC LIMIT ?",
 				)
 				.all(this.profileId, limit) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
@@ -237,6 +238,25 @@ export class ScheduleStore {
 		return (
 			this.db.prepare('DELETE FROM scheduled_runs WHERE profile_id = ? AND id = ?').run(this.profileId, id).changes > 0
 		)
+	}
+	countRecoverableRuns(): number {
+		return Number(
+			(
+				this.db
+					.prepare(
+						"SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined')",
+					)
+					.get(this.profileId) as { count: number }
+			).count,
+		)
+	}
+	findActiveRun(scheduleId: string): ScheduledRunRecord | null {
+		const row = this.db
+			.prepare(
+				"SELECT * FROM scheduled_runs WHERE profile_id = ? AND schedule_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined') LIMIT 1",
+			)
+			.get(this.profileId, scheduleId) as Record<string, unknown> | undefined
+		return row ? this.toRun(row) : null
 	}
 	countAttentionRuns(): number {
 		return Number(
