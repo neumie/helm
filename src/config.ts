@@ -46,69 +46,98 @@ const spawnerSchema = z
 	})
 	.default({ name: 'default' })
 
-export const configSchema = z.object({
-	provider: providerSchema,
-	projects: z.array(projectSchema).min(1),
-	polling: z
-		.object({
-			intervalSeconds: z.number().min(5).default(60),
-			since: z.string().optional(),
-		})
-		.default({}),
-	solver: z
-		.object({
-			type: z.enum(['default', 'okena']).default('default'),
-			agent: solverAgentSchema.default('claude'),
-			// Default execution workspace for solve runs: 'worktree' isolates each run
-			// in a fresh git worktree; 'main' runs the agent directly in the project's
-			// canonical checkout (per-item payload.solverWorkspace overrides this).
-			workspace: solverWorkspaceSchema.default('worktree'),
-			concurrency: z.number().min(1).max(10).default(2),
-			model: z.string().optional(),
-			maxBudgetUsd: z.number().optional(),
-			// Okena solver: IDLE timeout — fail only after this long with no
-			// terminal-screen activity (long ACTIVE runs are legitimate; a 6h hard cap
-			// in the okena solver backstops). Default solver: wall-clock cap on the
-			// spawned agent CLI (src/solver/invoker.ts).
-			timeoutMinutes: z.number().min(1).default(30),
-			// AI helpers (cheap one-shot model calls), each independently configurable
-			// in Settings (on/off, provider, model, prompt). Defaults: model per-agent
-			// (claude → claude-haiku-4-5, codex → gpt-5.6-luna), provider = `solver.agent`.
-			// Branch naming: derive a conventional branch (feat/…, fix/…); failure →
-			// deterministic helm/item/<slug>. Opt-in (default off).
-			branchNaming: aiHelperSchema(false),
-			// Display name: compress each source title into a short dashboard label;
-			// failure → the raw title. Default on.
-			displayName: aiHelperSchema(true),
-			// Intent triage: restate intent + a verdict (clear /
-			// needs_clarification / human_decision / not_code / security) so the human
-			// checkpoint is "approve the intent" not "test the PR". Advisory; never
-			// changes status. Default on.
-			triage: aiHelperSchema(true),
-			// Per-model "how to spend this model" prompt overrides, keyed by model id.
-			// Blank/missing → the built-in default in src/solver/models.ts.
-			modelGuidance: z.record(z.string()).default({}),
-		})
-		.default({}),
-	spawner: spawnerSchema,
-	server: z
-		.object({
-			port: z.number().default(7474),
-			host: z.string().default('localhost'),
-		})
-		.default({}),
-	github: z
-		.object({
-			createPrs: z.boolean().default(true),
-			postComments: z.boolean().default(true),
-			prPrefix: z.string().default('[Helm]'),
-			// DeployWatcher: observe PR merge + GitHub Deployments per environment for
-			// shipped Items and surface the deploy ladder. Read-only GitHub polling.
-			trackDeployments: z.boolean().default(true),
-			deployPollSeconds: z.number().min(15).default(120),
-		})
-		.default({}),
-})
+const scheduledRunsSchema = z
+	.object({
+		enabled: z.boolean().default(false),
+		systemTargetsEnabled: z.boolean().default(false),
+	})
+	.default({})
+
+export const configSchema = z
+	.object({
+		provider: providerSchema,
+		projects: z.array(projectSchema).min(1),
+		polling: z
+			.object({
+				intervalSeconds: z.number().min(5).default(60),
+				since: z.string().optional(),
+			})
+			.default({}),
+		solver: z
+			.object({
+				type: z.enum(['default', 'okena']).default('default'),
+				agent: solverAgentSchema.default('claude'),
+				// Default execution workspace for solve runs: 'worktree' isolates each run
+				// in a fresh git worktree; 'main' runs the agent directly in the project's
+				// canonical checkout (per-item payload.solverWorkspace overrides this).
+				workspace: solverWorkspaceSchema.default('worktree'),
+				concurrency: z.number().min(1).max(10).default(2),
+				model: z.string().optional(),
+				maxBudgetUsd: z.number().optional(),
+				// Okena solver: IDLE timeout — fail only after this long with no
+				// terminal-screen activity (long ACTIVE runs are legitimate; a 6h hard cap
+				// in the okena solver backstops). Default solver: wall-clock cap on the
+				// spawned agent CLI (src/solver/invoker.ts).
+				timeoutMinutes: z.number().min(1).default(30),
+				// AI helpers (cheap one-shot model calls), each independently configurable
+				// in Settings (on/off, provider, model, prompt). Defaults: model per-agent
+				// (claude → claude-haiku-4-5, codex → gpt-5.6-luna), provider = `solver.agent`.
+				// Branch naming: derive a conventional branch (feat/…, fix/…); failure →
+				// deterministic helm/item/<slug>. Opt-in (default off).
+				branchNaming: aiHelperSchema(false),
+				// Display name: compress each source title into a short dashboard label;
+				// failure → the raw title. Default on.
+				displayName: aiHelperSchema(true),
+				// Intent triage: restate intent + a verdict (clear /
+				// needs_clarification / human_decision / not_code / security) so the human
+				// checkpoint is "approve the intent" not "test the PR". Advisory; never
+				// changes status. Default on.
+				triage: aiHelperSchema(true),
+				// Per-model "how to spend this model" prompt overrides, keyed by model id.
+				// Blank/missing → the built-in default in src/solver/models.ts.
+				modelGuidance: z.record(z.string()).default({}),
+			})
+			.default({}),
+		spawner: spawnerSchema,
+		server: z
+			.object({
+				port: z.number().default(7474),
+				host: z.string().default('localhost'),
+			})
+			.default({}),
+		github: z
+			.object({
+				createPrs: z.boolean().default(true),
+				postComments: z.boolean().default(true),
+				prPrefix: z.string().default('[Helm]'),
+				// DeployWatcher: observe PR merge + GitHub Deployments per environment for
+				// shipped Items and surface the deploy ladder. Read-only GitHub polling.
+				trackDeployments: z.boolean().default(true),
+				deployPollSeconds: z.number().min(15).default(120),
+			})
+			.default({}),
+		scheduledRuns: scheduledRunsSchema,
+	})
+	.superRefine((config, ctx) => {
+		if (config.scheduledRuns.enabled && !isLoopbackHost(config.server.host)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ['server', 'host'],
+				message: 'Scheduled runs require server.host to be loopback',
+			})
+		}
+	})
+
+/** Limits rollout-only schedule control to daemon listeners on this machine. */
+export function isLoopbackHost(host: string): boolean {
+	const normalized = host.trim().toLowerCase()
+	return (
+		normalized === 'localhost' ||
+		normalized === '::1' ||
+		normalized === '[::1]' ||
+		/^127(?:\.\d{1,3}){3}$/.test(normalized)
+	)
+}
 
 export type HelmConfig = z.infer<typeof configSchema>
 export type ProjectConfig = z.infer<typeof projectSchema>

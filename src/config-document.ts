@@ -100,6 +100,7 @@ export interface DashboardSafeConfig {
 	solver: HelmConfig['solver']
 	spawner: HelmConfig['spawner']
 	server: HelmConfig['server']
+	scheduledRuns: HelmConfig['scheduledRuns']
 	github: HelmConfig['github']
 	provider: Omit<HelmConfig['provider'], 'apiToken'>
 	spawnerAdapters: SpawnerAdapterInfo[]
@@ -332,6 +333,20 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 			],
 		},
 		{
+			id: 'scheduled-runs',
+			title: 'Scheduled runs',
+			description: 'Disabled by default. System targets have broad host access and require a separate rollout flag.',
+			controls: [
+				{ type: 'field', path: ['scheduledRuns', 'enabled'], label: 'Enable scheduled runs', input: 'boolean' },
+				{
+					type: 'field',
+					path: ['scheduledRuns', 'systemTargetsEnabled'],
+					label: 'Enable system targets',
+					input: 'boolean',
+				},
+			],
+		},
+		{
 			id: 'github',
 			title: 'GitHub',
 			description: 'PR, comment, and deploy-tracking settings',
@@ -463,6 +478,7 @@ export function toDashboardSafeConfig(config: HelmConfig): DashboardSafeConfig {
 		solver: config.solver,
 		spawner: config.spawner,
 		server: config.server,
+		scheduledRuns: config.scheduledRuns,
 		github: config.github,
 		provider,
 		spawnerAdapters: listSpawnerAdapters(),
@@ -606,8 +622,13 @@ function formatConfigPath(path: string[]): string {
 
 function unwrapSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
 	let current = schema
-	while (current instanceof z.ZodDefault || current instanceof z.ZodOptional || current instanceof z.ZodNullable) {
-		current = current._def.innerType
+	while (
+		current instanceof z.ZodDefault ||
+		current instanceof z.ZodOptional ||
+		current instanceof z.ZodNullable ||
+		current instanceof z.ZodEffects
+	) {
+		current = current instanceof z.ZodEffects ? current._def.schema : current._def.innerType
 	}
 	return current
 }
