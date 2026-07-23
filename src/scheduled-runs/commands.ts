@@ -77,6 +77,32 @@ export class ScheduleCommands {
 	markRunning(id: string, revision: number): ScheduledRunRecord {
 		return this.transition(id, revision, ['launching'], 'running', { startedAt: new Date().toISOString() })
 	}
+	/** Persist filesystem/session identity before launch and master identity at readiness. */
+	recordRuntime(
+		id: string,
+		revision: number,
+		fields: Pick<
+			ScheduledRunRecord,
+			'processFingerprint' | 'cwd' | 'worktreePath' | 'branchName' | 'runDir' | 'socketDescriptor'
+		>,
+	): ScheduledRunRecord {
+		return this.store.updateRunRuntime(id, revision, fields)
+	}
+	markInterrupted(id: string, revision: number, detail: string | null = null): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (!LAUNCHABLE_STATES.has(run.state) && run.state !== 'running') throw new Error('Run cannot be interrupted')
+		return this.transition(id, revision, [run.state], 'interrupted', {
+			closedAt: new Date().toISOString(),
+			diagnosticDetail: scheduledRunDiagnosticSchema.parse(detail),
+		})
+	}
+	markQuarantined(id: string, revision: number, detail: string | null = null): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (!ACTIVE_STATES.has(run.state)) throw new Error('Run cannot be quarantined')
+		return this.transition(id, revision, [run.state], 'quarantined', {
+			diagnosticDetail: scheduledRunDiagnosticSchema.parse(detail),
+		})
+	}
 	requestCancel(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
 		if (!ACTIVE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')

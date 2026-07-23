@@ -10,6 +10,7 @@ import { configureProfileRuntime } from './profiles/runtime.js'
 import { ProfileStore } from './profiles/store.js'
 import { createProvider } from './providers/registry.js'
 import { Drainer } from './queue/drainer.js'
+import { ScheduledRunService } from './scheduled-runs/service.js'
 import { createApp } from './server/app.js'
 import { createSolver } from './solver/registry.js'
 import { createSpawner } from './spawner/registry.js'
@@ -76,6 +77,12 @@ async function main() {
 	const registeredProfileIds = () => profiles.registeredProfileIds()
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
+	// Recurrence remains inert unless the disabled-by-default rollout is enabled;
+	// Task 8 supplies the resident lease and reporter route dependencies.
+	const scheduledRuns = new ScheduledRunService(config, db, queue, {
+		profiles: () => profiles.getState().profiles.map(profile => profiles.runtimeFor(profile.id)),
+		hasResidentLease: () => false,
+	})
 
 	// Start API server
 	const app = createApp(config, configPath, db, queue, poller, provider, spawner, enricher, {
@@ -100,6 +107,7 @@ async function main() {
 	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
 	planStatusWatcher.start()
+	scheduledRuns.start()
 
 	// Graceful shutdown. Poller/Enricher/Drainer/HTTP do not yet expose a complete
 	// admission-and-drain contract, so SQLite deliberately remains open until
@@ -111,7 +119,7 @@ async function main() {
 			poller.stop()
 			enricher.stop()
 			queue.stop()
-			await Promise.allSettled([deployWatcher.stop(), planStatusWatcher.stop()])
+			await Promise.allSettled([deployWatcher.stop(), planStatusWatcher.stop(), scheduledRuns.stop()])
 			process.exit(0)
 		})()
 		return shuttingDown

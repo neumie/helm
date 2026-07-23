@@ -214,6 +214,67 @@ export class ScheduleStore {
 				.all(this.profileId, scheduleId, limit) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
 	}
+	/** Bounded tenant-local recovery scan; callers still classify every state. */
+	listRecoverableRuns(limit = 500): ScheduledRunRecord[] {
+		return (
+			this.db
+				.prepare(
+					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','quarantined') ORDER BY created_at ASC, id ASC LIMIT ?",
+				)
+				.all(this.profileId, limit) as Record<string, unknown>[]
+		).map(row => this.toRun(row))
+	}
+	listTerminalRuns(limit = 2_000): ScheduledRunRecord[] {
+		return (
+			this.db
+				.prepare(
+					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state NOT IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','quarantined') ORDER BY closed_at ASC, id ASC LIMIT ?",
+				)
+				.all(this.profileId, limit) as Record<string, unknown>[]
+		).map(row => this.toRun(row))
+	}
+	deleteRun(id: string): boolean {
+		return (
+			this.db.prepare('DELETE FROM scheduled_runs WHERE profile_id = ? AND id = ?').run(this.profileId, id).changes > 0
+		)
+	}
+	countAttentionRuns(): number {
+		return Number(
+			(
+				this.db
+					.prepare("SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state = 'needs_attention'")
+					.get(this.profileId) as { count: number }
+			).count,
+		)
+	}
+	/** Runtime identity is persisted separately from state before/after side effects. */
+	updateRunRuntime(
+		id: string,
+		expectedRevision: number,
+		fields: Pick<
+			ScheduledRunRecord,
+			'processFingerprint' | 'cwd' | 'worktreePath' | 'branchName' | 'runDir' | 'socketDescriptor'
+		>,
+	): ScheduledRunRecord {
+		const result = this.db
+			.prepare(
+				'UPDATE scheduled_runs SET process_fingerprint = ?, cwd = ?, worktree_path = ?, branch_name = ?, run_dir = ?, socket_descriptor = ?, revision = revision + 1, updated_at = ? WHERE profile_id = ? AND id = ? AND revision = ?',
+			)
+			.run(
+				fields.processFingerprint,
+				fields.cwd,
+				fields.worktreePath,
+				fields.branchName,
+				fields.runDir,
+				fields.socketDescriptor,
+				new Date().toISOString(),
+				this.profileId,
+				id,
+				expectedRevision,
+			)
+		if (result.changes === 0) throw new ScheduleRevisionConflictError()
+		return this.requireRun(id)
+	}
 	findRunBySlot(scheduleId: string, slotKey: string): ScheduledRunRecord | null {
 		const row = this.db
 			.prepare('SELECT * FROM scheduled_runs WHERE profile_id = ? AND schedule_id = ? AND slot_key = ?')

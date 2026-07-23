@@ -35,6 +35,8 @@ function isTransientFailure(item: ItemRecord): boolean {
 
 export class Drainer {
 	private activeSolveItems = new Map<string, ActiveRun>()
+	/** Daemon-owned non-Item agents (scheduled runs) share the solve budget. */
+	private externalSolveReservations = new Set<string>()
 	private activeLoopItems = new Map<string, ActiveRun>()
 	private retryTimers = new Set<ReturnType<typeof setTimeout>>()
 	private running = false
@@ -126,6 +128,25 @@ export class Drainer {
 
 	isQuiescing(): boolean {
 		return this.quiescing
+	}
+
+	/**
+	 * Reserve one slot in the global direct-solve budget for a daemon-owned
+	 * execution which is deliberately not an Item. The key makes restore/report
+	 * paths idempotent and prevents capacity races in one daemon process.
+	 */
+	reserveExternalSolve(runKey: string): boolean {
+		if (!runKey) throw new Error('External solve reservation requires a run key')
+		if (this.externalSolveReservations.has(runKey)) return true
+		if (this.activeSolveCount() >= this.solveCapacity()) return false
+		this.externalSolveReservations.add(runKey)
+		return true
+	}
+
+	releaseExternalSolve(runKey: string): boolean {
+		const released = this.externalSolveReservations.delete(runKey)
+		if (released) this.wake()
+		return released
 	}
 
 	/** Process a single Item immediately, bypassing pause state. */
@@ -335,7 +356,7 @@ export class Drainer {
 	}
 
 	private activeSolveCount(): number {
-		return this.activeSolveItems.size
+		return this.activeSolveItems.size + this.externalSolveReservations.size
 	}
 
 	private activeLoopCount(): number {
