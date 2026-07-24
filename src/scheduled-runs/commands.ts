@@ -23,8 +23,6 @@ const CANCELLABLE_STATES = new Set<ScheduledRunState>([
 	'preparing',
 	'launching',
 	'running',
-	'reported_quiet',
-	'closing',
 	'needs_attention',
 	'cancel_requested',
 	'quarantined',

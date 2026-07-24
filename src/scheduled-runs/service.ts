@@ -58,8 +58,10 @@ export class ScheduledRunService {
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
+	private readonly quietCloseInFlight = new Map<string, Promise<ScheduledRunRecord>>()
 	private startInFlight: Promise<void> | null = null
 	private stopped = false
+	private reconcileAdmissionOpen = true
 	private restoringStartup = false
 	private readonly startupReservationFailures = new Set<string>()
 	private watchdog: ReturnType<typeof setInterval> | null = null
@@ -90,6 +92,7 @@ export class ScheduledRunService {
 
 	private async startInternal(): Promise<void> {
 		this.stopped = false
+		this.reconcileAdmissionOpen = true
 		this.startupReservationFailures.clear()
 		this.restoringStartup = true
 		try {
@@ -104,6 +107,7 @@ export class ScheduledRunService {
 			this.watchdog.unref?.()
 		} catch (error) {
 			this.stopped = true
+			this.reconcileAdmissionOpen = false
 			if (this.watchdog) clearInterval(this.watchdog)
 			this.watchdog = null
 			throw error
@@ -115,9 +119,12 @@ export class ScheduledRunService {
 	/** Close recurrence/manual admission without killing already admitted agents. */
 	async stop(): Promise<void> {
 		this.stopped = true
+		this.reconcileAdmissionOpen = false
 		if (this.watchdog) clearInterval(this.watchdog)
 		this.watchdog = null
-		await Promise.all([this.tickInFlight, this.reconcileInFlight])
+		const tick = this.tickInFlight
+		const reconcile = this.reconcileInFlight
+		await Promise.all([tick, reconcile])
 	}
 
 	/** The only recurrence entrypoint. A missing/expired lease makes no DB claim. */
@@ -195,6 +202,7 @@ export class ScheduledRunService {
 
 	/** Recover durable runs on daemon start; never relaunch an existing session. */
 	async reconcile(): Promise<void> {
+		if (!this.reconcileAdmissionOpen) return
 		if (this.reconcileInFlight) return this.reconcileInFlight
 		this.reconcileInFlight = this.reconcileInternal().finally(() => {
 			this.reconcileInFlight = null
@@ -440,12 +448,29 @@ export class ScheduledRunService {
 		}
 	}
 
-	private async closeQuiet(
+	private closeQuiet(
 		profileId: string,
 		commands: ScheduleCommands,
 		reported: ScheduledRunRecord,
 	): Promise<ScheduledRunRecord> {
-		let run = reported
+		const key = `${profileId}:${reported.id}`
+		const inFlight = this.quietCloseInFlight.get(key)
+		if (inFlight) return inFlight
+		const operation: Promise<ScheduledRunRecord> = this.closeQuietInternal(profileId, commands, reported).finally(
+			() => {
+				if (this.quietCloseInFlight.get(key) === operation) this.quietCloseInFlight.delete(key)
+			},
+		)
+		this.quietCloseInFlight.set(key, operation)
+		return operation
+	}
+
+	private async closeQuietInternal(
+		profileId: string,
+		commands: ScheduleCommands,
+		reported: ScheduledRunRecord,
+	): Promise<ScheduledRunRecord> {
+		let run = this.db.forProfile(profileId).schedules.requireRun(reported.id)
 		if (run.state === 'closed_quiet') return run
 		if (run.state === 'reported_quiet') run = commands.beginClose(run.id, run.revision)
 		if (run.state !== 'closing') return run
@@ -453,6 +478,7 @@ export class ScheduledRunService {
 		if (result === 'quarantined')
 			return commands.markQuarantined(run.id, run.revision, 'Quiet teardown ownership is unknown')
 		run = this.db.forProfile(profileId).schedules.requireRun(run.id)
+		if (run.state === 'closed_quiet') return run
 		this.releaseReservation(run.id)
 		return commands.closeQuiet(run.id, run.revision)
 	}

@@ -10,6 +10,7 @@ import { DB } from '../src/db/client.js'
 import type { ProfileRuntime } from '../src/profiles/store.js'
 import type { Drainer } from '../src/queue/drainer.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
+import type { ScheduledRunRecord } from '../src/scheduled-runs/schema.js'
 import { ScheduledRunService, type ScheduledRunServiceDeps } from '../src/scheduled-runs/service.js'
 import { scheduledSessionId, scheduledSocketPath } from '../src/scheduled-runs/session-path.js'
 
@@ -44,6 +45,14 @@ function runInput(schedule: { id: string; revision: number }, slotKey: string) {
 		definitionSnapshot: definition,
 		sessionId: `sr-${slotKey}`,
 	}
+}
+
+function deferred<T>() {
+	let resolve!: (value: T) => void
+	const promise = new Promise<T>(next => {
+		resolve = next
+	})
+	return { promise, resolve }
 }
 
 function fakeDrainer() {
@@ -133,12 +142,25 @@ async function listenSocket(path: string): Promise<net.Server> {
 	return server
 }
 
+function createRunningRun(db: DB, commands: ScheduleCommands, name: string) {
+	const schedule = commands.create({ ...scheduleInput, name })
+	const admitted = commands.claimOccurrence(schedule.id, schedule.revision, null, runInput(schedule, `running-${name}`))
+	const preparing = commands.beginPreparing(admitted.id, admitted.revision)
+	const launching = commands.beginLaunching(preparing.id, preparing.revision)
+	return commands.markRunning(launching.id, launching.revision)
+}
+
 function createRecoverableRun(
 	db: DB,
 	commands: ScheduleCommands,
 	name: string,
 	state: 'needs_attention' | 'reported_quiet' | 'running',
-	runtime: Partial<ReturnType<typeof runInput>> = {},
+	runtime: Partial<
+		Pick<
+			ScheduledRunRecord,
+			'processFingerprint' | 'cwd' | 'worktreePath' | 'branchName' | 'runDir' | 'socketDescriptor'
+		>
+	> = {},
 ) {
 	const schedule = commands.create({ ...scheduleInput, name })
 	const id = randomUUID()
@@ -265,6 +287,134 @@ test('startup restoration pages past 500 recoverable rows to reserve the 501st l
 		await service.start()
 		assert.deepEqual([...drainer.reservations], [live.id])
 		await service.stop()
+	} finally {
+		await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve())
+		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previousSocketRoot
+		rmSync(socketRoot, { recursive: true, force: true })
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('quiet report wins over a later cancel while teardown is pending', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		let running = createRunningRun(db, commands, 'Quiet wins')
+		running = commands.recordRuntime(running.id, running.revision, {
+			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
+			cwd: root,
+			worktreePath: null,
+			branchName: null,
+			runDir: root,
+			socketDescriptor: null,
+		})
+		const teardown = deferred<'closed'>()
+		let teardownCalls = 0
+		const service = new ScheduledRunService(config, db, fakeDrainer() as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => true,
+			supervisor: {
+				teardown: async () => {
+					teardownCalls++
+					return teardown.promise
+				},
+			} as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+
+		const quiet = service.report('work', running.id, 'quiet', 'done')
+		assert.equal(db.schedules.requireRun(running.id).state, 'closing')
+		assert.equal(teardownCalls, 1)
+		await assert.rejects(service.cancel('work', running.id), /Only an active scheduled run can be cancelled/)
+		teardown.resolve('closed')
+		assert.equal((await quiet).state, 'closed_quiet')
+		assert.equal(teardownCalls, 1)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('concurrent identical quiet reports share one per-run teardown', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		let running = createRunningRun(db, commands, 'Duplicate quiet')
+		running = commands.recordRuntime(running.id, running.revision, {
+			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
+			cwd: root,
+			worktreePath: null,
+			branchName: null,
+			runDir: root,
+			socketDescriptor: null,
+		})
+		const teardown = deferred<'closed'>()
+		let teardownCalls = 0
+		const service = new ScheduledRunService(config, db, fakeDrainer() as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => true,
+			supervisor: {
+				teardown: async () => {
+					teardownCalls++
+					return teardown.promise
+				},
+			} as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+
+		const first = service.report('work', running.id, 'quiet', 'done')
+		const second = service.report('work', running.id, 'quiet', 'done')
+		assert.equal(teardownCalls, 1)
+		teardown.resolve('closed')
+		const [firstResult, secondResult] = await Promise.all([first, second])
+		assert.equal(firstResult.state, 'closed_quiet')
+		assert.equal(secondResult.state, 'closed_quiet')
+		assert.equal(teardownCalls, 1)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('stop closes reconciliation admission before awaiting its current pass', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	const socketRoot = mkdtempSync('/tmp/helm-sched-test-')
+	const previousSocketRoot = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = socketRoot
+	let server: net.Server | undefined
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const run = createRecoverableRun(db, commands, 'Stop reconciliation', 'reported_quiet', {
+			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
+			runDir: root,
+		})
+		server = await listenSocket(scheduledSocketPath('work', run.sessionId))
+		const teardownStarted = deferred<void>()
+		const teardown = deferred<'closed'>()
+		let profileReads = 0
+		const service = new ScheduledRunService(config, db, fakeDrainer() as unknown as Drainer, {
+			profiles: () => {
+				profileReads++
+				return [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime]
+			},
+			hasResidentLease: () => false,
+			supervisor: {
+				teardown: async () => {
+					teardownStarted.resolve()
+					return teardown.promise
+				},
+			} as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+
+		const reconciling = service.reconcile()
+		await teardownStarted.promise
+		const stopping = service.stop()
+		await service.reconcile()
+		assert.equal(profileReads, 1)
+		teardown.resolve('closed')
+		await Promise.all([reconciling, stopping])
+		await service.reconcile()
+		assert.equal(profileReads, 1)
 	} finally {
 		await new Promise<void>(resolve => server?.close(() => resolve()) ?? resolve())
 		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined
