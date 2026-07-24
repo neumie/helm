@@ -1,5 +1,6 @@
 import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
+import { isScheduledRunTerminalState } from './retention.js'
 import type { CreateScheduledRunInput, ScheduleRecord, ScheduledRunRecord, ScheduledRunState } from './schema.js'
 import { scheduleCreateSchema, scheduledRunDiagnosticSchema, scheduledRunReportSchema } from './schema.js'
 import { ScheduleRevisionConflictError, type ScheduleStore } from './store.js'
@@ -29,20 +30,6 @@ const CANCELLABLE_STATES = new Set<ScheduledRunState>([
 	'quarantined',
 ])
 const TIMEOUTABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching', 'running'])
-const TERMINAL_STATES = new Set<ScheduledRunState>([
-	'closed_quiet',
-	'cancelled',
-	'timed_out',
-	'failed',
-	'interrupted',
-	'session_lost',
-	'skipped_overlap',
-	'skipped_misfire',
-	'skipped_profile_archived',
-	'skipped_project_disabled',
-	'skipped_capacity',
-])
-
 /** All schedule/run lifecycle changes go through this tenant-bound command seam. */
 export class ScheduleCommands {
 	constructor(private readonly store: ScheduleStore) {}
@@ -182,7 +169,7 @@ export class ScheduleCommands {
 		})
 	}
 	isTerminal(run: ScheduledRunRecord): boolean {
-		return TERMINAL_STATES.has(run.state)
+		return isScheduledRunTerminalState(run.state)
 	}
 	private claim(
 		scheduleId: string,

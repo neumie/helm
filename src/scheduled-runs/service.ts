@@ -18,7 +18,7 @@ import { DtachSupervisor, type ScheduledProcessIdentity } from './dtach-supervis
 import { appendScheduledDiagnostic } from './log.js'
 import { buildScheduledPrompt } from './prompt.js'
 import { latestDueOccurrence, manualSlotKey, nextOccurrence } from './recurrence.js'
-import { removeRetainedRunDirectory, terminalRunsToPrune } from './retention.js'
+import { type ScheduledWorkspaceCleaner, defaultScheduledWorkspaceCleaner, terminalRunsToPrune } from './retention.js'
 import type { ScheduleRecord, ScheduledRunRecord } from './schema.js'
 import { probeScheduledSocket, scheduledSessionId, scheduledSocketPath } from './session-path.js'
 import { prepareScheduledWorkspace } from './workspace.js'
@@ -37,6 +37,8 @@ export interface ScheduledRunServiceDeps {
 	dtachBinary?: string
 	reporterPath?: string
 	watchdogIntervalMs?: number
+	/** Optional future descriptor-pinned workspace cleaner; default is inert and fail-closed. */
+	workspaceCleaner?: ScheduledWorkspaceCleaner
 }
 
 export interface ScheduledTickResult {
@@ -52,6 +54,7 @@ export interface ScheduledTickResult {
  */
 export class ScheduledRunService {
 	private readonly supervisor: DtachSupervisor
+	private readonly workspaceCleaner: ScheduledWorkspaceCleaner
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
@@ -68,6 +71,7 @@ export class ScheduledRunService {
 		private readonly deps: ScheduledRunServiceDeps,
 	) {
 		this.supervisor = deps.supervisor ?? new DtachSupervisor()
+		this.workspaceCleaner = deps.workspaceCleaner ?? defaultScheduledWorkspaceCleaner
 		this.now = deps.now ?? (() => new Date())
 	}
 
@@ -220,11 +224,25 @@ export class ScheduledRunService {
 				if (page.length < 500) break
 			}
 			for (const terminal of terminalRunsToPrune(runDb.schedules, this.now()).slice(0, 50)) {
+				if (terminal.runDir && terminal.closedAt) {
+					try {
+						const cleanup = await this.workspaceCleaner.cleanup({
+							profileId,
+							profileRoot: runtime.rootDir,
+							runId: terminal.id,
+							expectedRunDir: terminal.runDir,
+							closedAt: terminal.closedAt,
+						})
+						if (cleanup.status === 'retained')
+							log.warn('scheduled-runs', `Retention workspace retained for ${terminal.id}: ${cleanup.reason}`)
+					} catch {
+						log.warn('scheduled-runs', `Retention workspace retained for ${terminal.id}: failed`)
+					}
+				}
 				try {
-					if (!terminal.runDir || (await removeRetainedRunDirectory(runtime.rootDir, terminal, this.now())))
-						runDb.schedules.deleteRun(terminal.id)
+					runDb.schedules.deleteRun(terminal.id)
 				} catch (error) {
-					log.warn('scheduled-runs', `Retention failed for ${terminal.id}: ${message(error)}`)
+					log.warn('scheduled-runs', `Retention metadata prune failed for ${terminal.id}: ${message(error)}`)
 				}
 			}
 		}

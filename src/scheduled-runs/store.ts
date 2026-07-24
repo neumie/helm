@@ -243,7 +243,7 @@ export class ScheduleStore {
 		return (
 			this.db
 				.prepare(
-					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state NOT IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','quarantined') ORDER BY closed_at ASC, id ASC LIMIT ?",
+					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state NOT IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined') ORDER BY closed_at ASC, id ASC LIMIT ?",
 				)
 				.all(this.profileId, limit) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
