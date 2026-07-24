@@ -29,6 +29,15 @@ export interface ScheduledProcessIdentity extends ProcessFingerprint {
 
 export type OwnershipState = 'verified' | 'dead' | 'unknown' | 'mismatch'
 
+/** Read-only proof returned to the Electron-main adoption boundary only. */
+export interface AttestedLiveSessionDescriptor {
+	state: 'verified'
+	socketPath: string
+	identity: ScheduledProcessIdentity
+}
+
+export type LiveSessionAttestation = AttestedLiveSessionDescriptor | { state: 'dead' | 'unknown' | 'mismatch' }
+
 export interface SpawnedProcess {
 	pid?: number
 	unref?: () => void
@@ -166,6 +175,58 @@ async function socketHolders(socketPath: string): Promise<ProcessFingerprint[] |
  */
 export class DtachSupervisor {
 	constructor(private readonly deps: DtachSupervisorDeps = {}) {}
+
+	/**
+	 * Re-prove a persisted scheduled master before handing its existing socket to
+	 * another owner. This is deliberately observational: it never launches,
+	 * signals, unlinks, chmods, or emits diagnostics.
+	 */
+	async attestLiveSession(
+		profileId: string,
+		sessionId: string,
+		persistedIdentity: ScheduledProcessIdentity,
+		socketRoot?: string,
+	): Promise<LiveSessionAttestation> {
+		const socketPath = scheduledSocketPath(profileId, sessionId, socketRoot)
+		try {
+			const probe = this.deps.probe ?? probeScheduledSocket
+			const socket = await probe(socketPath)
+			if (socket !== 'live') return { state: socket }
+			if (!persistedIdentity.socketHolder) return { state: 'mismatch' }
+
+			const inspectProcess = this.deps.inspectProcess ?? processFingerprint
+			const inspectCommand = this.deps.inspectProcessCommand ?? processCommand
+			const inspectGroup = this.deps.inspectGroup ?? groupFingerprints
+			const holdersFor = this.deps.findSocketHolders ?? socketHolders
+			const [master, group, holders] = await Promise.all([
+				inspectProcess(persistedIdentity.pid),
+				inspectGroup(persistedIdentity.processGroupId),
+				holdersFor(socketPath),
+			])
+			if (!master || !group || !holders) return { state: 'unknown' }
+			if (
+				!sameFingerprint(persistedIdentity, master) ||
+				master.processGroupId !== persistedIdentity.processGroupId ||
+				master.sessionId !== persistedIdentity.sessionId ||
+				!group.some(member => sameFingerprint(master, member))
+			)
+				return { state: 'mismatch' }
+
+			// More than one command claiming the same socket is ambiguous ownership.
+			if (holders.length !== 1) return { state: 'mismatch' }
+			const holder = holders[0]
+			if (!sameFingerprint(persistedIdentity.socketHolder, holder)) return { state: 'mismatch' }
+			const currentHolder = await inspectProcess(holder.pid)
+			if (!currentHolder) return { state: 'unknown' }
+			if (!sameFingerprint(persistedIdentity.socketHolder, currentHolder) || !sameFingerprint(master, currentHolder))
+				return { state: 'mismatch' }
+			const command = await inspectCommand(currentHolder.pid)
+			if (!this.isOwnedDtachMaster(currentHolder, command, socketPath)) return { state: 'mismatch' }
+			return { state: 'verified', socketPath, identity: { ...master, socketHolder: currentHolder } }
+		} catch {
+			return { state: 'unknown' }
+		}
+	}
 
 	async launch(input: LaunchDtachInput): Promise<ScheduledProcessIdentity> {
 		const socketPath = scheduledSocketPath(input.profileId, input.sessionId, input.socketRoot)
@@ -405,7 +466,12 @@ export class DtachSupervisor {
 	private isOwnedDtachMaster(candidate: ProcessFingerprint, command: string | null, socketPath: string): boolean {
 		// `pgrep -f` is only candidate discovery. Exact derived namespace argv plus
 		// a fresh PID/start fingerprint is the ownership proof before signaling.
-		return basename(candidate.executable) === 'dtach' && !!command?.includes(`-n ${socketPath}`)
+		const escapedPath = socketPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+		return (
+			basename(candidate.executable) === 'dtach' &&
+			!!command &&
+			new RegExp(`(?:^|\\s)-n\\s+${escapedPath}(?=\\s|$)`).test(command)
+		)
 	}
 
 	private async inspectOwnership(socketPath: string, identity: ScheduledProcessIdentity): Promise<OwnershipState> {

@@ -42,6 +42,7 @@ import { ScheduleCommands } from '../../scheduled-runs/commands.js'
 import { toScheduledRunContract, toScheduledScheduleContract } from '../../scheduled-runs/contract.js'
 import {
 	SCHEDULED_REPORT_SUMMARY_MAX_BYTES,
+	attentionAdoptionIdentitySchema,
 	scheduleCreateSchema,
 	scheduleUpdateSchema,
 } from '../../scheduled-runs/schema.js'
@@ -560,6 +561,16 @@ export function apiRoutes(
 		const updateScheduleRequestSchema = scheduleUpdateSchema.extend({ profileId: profileIdSchema }).strict()
 		const profileRequestSchema = z.object({ profileId: profileIdSchema }).strict()
 		const leaseCapabilitySchema = z.object({ capability: z.string().min(1).max(200) }).strict()
+		const adoptionRequestSchema = z
+			.object({ profileId: profileIdSchema, revision: z.number().int().nonnegative() })
+			.merge(attentionAdoptionIdentitySchema)
+			.strict()
+		const attachDescriptorRequestSchema = adoptionRequestSchema
+			.extend({ capability: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+			.strict()
+		const completeAdoptionRequestSchema = adoptionRequestSchema
+			.extend({ ownershipRegistered: z.literal(true) })
+			.strict()
 		const reportRequestSchema = z
 			.object({
 				status: z.enum(['quiet', 'needs_attention']),
@@ -638,6 +649,67 @@ export function apiRoutes(
 			const run = storeFor(target.profileId).getRun(c.req.param('runId'))
 			return run ? c.json({ data: toScheduledRunContract(run) }) : c.json({ error: 'Scheduled run not found' }, 404)
 		})
+		const adoptionUnavailable = (c: Context) => c.json({ error: 'Scheduled attention adoption unavailable' }, 409)
+		const adoptionProfile = (profileId: string): boolean => registeredProfile(profileId)
+		for (const [action, schema] of [
+			['reserve', adoptionRequestSchema],
+			['attach-descriptor', attachDescriptorRequestSchema],
+			['complete', completeAdoptionRequestSchema],
+			['rollback', adoptionRequestSchema],
+		] as const) {
+			api.post(`/scheduled-runs/runs/:runId/attention-adoption/${action}`, scheduledBody, async c => {
+				c.header('Cache-Control', 'no-store')
+				const denied = requireControl(c)
+				if (denied) return denied
+				const input = await parseBody(c, schema)
+				if ('error' in input) return input.error
+				if (!adoptionProfile(input.data.profileId)) return adoptionUnavailable(c)
+				try {
+					const identity = { adoptionId: input.data.adoptionId, adopter: input.data.adopter }
+					if (action === 'reserve') {
+						const result = await scheduled.service.reserveAttentionAdoption(
+							input.data.profileId,
+							c.req.param('runId'),
+							input.data.revision,
+							identity,
+						)
+						return c.json({ data: toScheduledRunContract(result.run), adoption: result.grant })
+					}
+					if (action === 'attach-descriptor') {
+						const attach = input.data as z.infer<typeof attachDescriptorRequestSchema>
+						const result = await scheduled.service.attachAttentionDescriptor(
+							attach.profileId,
+							c.req.param('runId'),
+							attach.revision,
+							{ adoptionId: attach.adoptionId, adopter: attach.adopter },
+							attach.capability,
+						)
+						return c.json({ data: result })
+					}
+					const result =
+						action === 'complete'
+							? (() => {
+									const complete = input.data as z.infer<typeof completeAdoptionRequestSchema>
+									return scheduled.service.completeAttentionAdoption(
+										complete.profileId,
+										c.req.param('runId'),
+										complete.revision,
+										{ adoptionId: complete.adoptionId, adopter: complete.adopter },
+										complete.ownershipRegistered,
+									)
+								})()
+							: scheduled.service.rollbackAttentionAdoption(
+									input.data.profileId,
+									c.req.param('runId'),
+									input.data.revision,
+									identity,
+								)
+					return c.json({ data: toScheduledRunContract(result) })
+				} catch {
+					return adoptionUnavailable(c)
+				}
+			})
+		}
 		api.post('/scheduled-runs/runs/:runId/cancel', scheduledBody, async c => {
 			const denied = requireControl(c)
 			if (denied) return denied

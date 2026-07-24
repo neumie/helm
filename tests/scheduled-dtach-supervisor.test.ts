@@ -52,6 +52,43 @@ function readyDeps(getSocket: () => string) {
 	}
 }
 
+test('attestLiveSession verifies the exact persisted dtach master without side effects', async () => {
+	const root = mkdtempSync('/tmp/hsa-')
+	const sessionId = scheduledSessionId('attest')
+	const socket = scheduledSocketPath('work', sessionId, root)
+	let sideEffects = 0
+	try {
+		const supervisor = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			spawn: () => {
+				sideEffects++
+				return { pid: launcher.pid, once: () => undefined }
+			},
+			signalGroup: () => sideEffects++,
+			unlink: async () => void sideEffects++,
+		})
+		const result = await supervisor.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root)
+		assert.deepEqual(result, {
+			state: 'verified',
+			socketPath: socket,
+			identity: { ...master, socketHolder: master },
+		})
+		assert.equal(sideEffects, 0)
+
+		const mismatch = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			inspectProcessCommand: async () => `/usr/bin/dtach -n ${socket}-other /host`,
+		})
+		assert.deepEqual(await mismatch.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root), {
+			state: 'mismatch',
+		})
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('supervisor persists the daemonized master rather than its zero-exit launcher', async () => {
 	const root = mkdtempSync('/tmp/hss-')
 	const sessionId = scheduledSessionId('launch')

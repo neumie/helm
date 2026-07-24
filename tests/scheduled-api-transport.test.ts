@@ -7,6 +7,7 @@ import { ResidentLeaseManager, createScopedCapability, hashScopedCapability } fr
 import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { ProfileStore } from '../src/profiles/store.js'
+import { AttentionAdoptionGrantManager } from '../src/scheduled-runs/adoption-grants.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
 import { scheduledReporterCommand } from '../src/scheduled-runs/reporter-command.js'
 import { parseScheduledReporterArgs, reportScheduledRun } from '../src/scheduled-runs/reporter.js'
@@ -83,6 +84,7 @@ function withScheduledApi(
 	const leaseClock = { now: 1_000 }
 	const leases = new ResidentLeaseManager(100, () => leaseClock.now)
 	const reportCalls: string[] = []
+	const adoptionGrants = new AttentionAdoptionGrantManager()
 	const service = {
 		tick: async () => ({ processed: 0, admitted: 0, skipped: 0 }),
 		runNow: async (profileId: string, scheduleId: string) => {
@@ -101,6 +103,62 @@ function withScheduledApi(
 			const current = db.forProfile(profileId).schedules.requireRun(runId)
 			return commands.report(runId, current.revision, status, summary)
 		},
+		reserveAttentionAdoption: async (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+		) => {
+			const reserved = new ScheduleCommands(db.forProfile(profileId).schedules).reserveAttentionAdoption(
+				runId,
+				revision,
+				identity,
+			)
+			return {
+				run: reserved,
+				grant: adoptionGrants.issue({ profileId, runId, revision: reserved.revision, ...identity }),
+			}
+		},
+		attachAttentionDescriptor: async (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+			capability: string,
+		) => {
+			if (!adoptionGrants.redeem({ profileId, runId, revision, ...identity }, capability)) throw new Error('replayed')
+			return {
+				socketPath: '/private/tmp/helm-sched-test/socket',
+				mode: 'attach-existing' as const,
+				redraw: 'winch' as const,
+			}
+		},
+		completeAttentionAdoption: (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+			ownershipRegistered: true,
+		) =>
+			new ScheduleCommands(db.forProfile(profileId).schedules).completeAttentionAdoption(
+				runId,
+				revision,
+				identity,
+				adoptionGrants,
+				ownershipRegistered,
+			),
+		rollbackAttentionAdoption: (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+		) =>
+			new ScheduleCommands(db.forProfile(profileId).schedules).rollbackAttentionAdoption(
+				runId,
+				revision,
+				identity,
+				'client',
+			),
 	} as unknown as ScheduledRunService
 	const queue = { getStatus: () => ({ active: 0 }), wake() {} }
 	const api = apiRoutes(
@@ -401,6 +459,104 @@ test('scheduled transport enforces strict bodies, UTF-8 report bounds, and unamb
 			body: oversizedBody,
 		})
 		assert.equal(oversized.status, 413)
+	})
+})
+
+test('attention adoption transport is control-authenticated, no-store, replay-safe, and redacted outside its descriptor', async () => {
+	await withScheduledApi(async ({ api, db, store }) => {
+		const profileId = store.activeProfile().id
+		const commands = new ScheduleCommands(db.forProfile(profileId).schedules)
+		const schedule = commands.create(scheduleInput)
+		let run = commands.claimOccurrence(schedule.id, schedule.revision, null, {
+			id: 'adoption-api-run',
+			scheduleId: schedule.id,
+			scheduleRevision: schedule.revision,
+			scheduledFor: '2030-01-01T01:00:00.000Z',
+			localCivilSlot: '2030-01-01 adoption',
+			utcOffsetMinutes: 0,
+			slotKey: 'adoption-api',
+			definitionSnapshot: schedule.definition,
+			sessionId: 'sr-adoption-api',
+		})
+		run = commands.beginPreparing(run.id, run.revision)
+		run = commands.beginLaunching(run.id, run.revision)
+		run = commands.markRunning(run.id, run.revision)
+		run = commands.report(run.id, run.revision, 'needs_attention', 'choose a target')
+		const identity = { adoptionId: crypto.randomUUID(), adopter: crypto.randomUUID() }
+		const reservePath = `/scheduled-runs/runs/${run.id}/attention-adoption/reserve`
+		assert.equal((await api.request(reservePath, { method: 'POST', body: '{}' })).status, 401)
+		const reserve = await api.request(reservePath, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId, revision: run.revision, ...identity }),
+		})
+		assert.equal(reserve.status, 200)
+		assert.equal(reserve.headers.get('cache-control'), 'no-store')
+		const reserved = (await reserve.json()) as {
+			data: Record<string, unknown>
+			adoption: { capability: string; expiresAt: number }
+		}
+		assert.match(reserved.adoption.capability, /^[A-Za-z0-9_-]{43}$/)
+		for (const sensitive of ['capability', 'socketPath', 'processFingerprint', 'attentionAdoption'])
+			assert.equal(sensitive in reserved.data, false)
+		const attachPath = `/scheduled-runs/runs/${run.id}/attention-adoption/attach-descriptor`
+		assert.equal(
+			(
+				await api.request(attachPath, {
+					method: 'POST',
+					headers: requestHeaders(),
+					body: JSON.stringify({
+						profileId,
+						revision: reserved.data.revision,
+						...identity,
+						capability: reserved.adoption.capability,
+						extra: true,
+					}),
+				})
+			).status,
+			400,
+		)
+		const attached = await api.request(attachPath, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({
+				profileId,
+				revision: reserved.data.revision,
+				...identity,
+				capability: reserved.adoption.capability,
+			}),
+		})
+		assert.equal(attached.status, 200)
+		assert.equal(attached.headers.get('cache-control'), 'no-store')
+		assert.deepEqual((await attached.json()).data, {
+			socketPath: '/private/tmp/helm-sched-test/socket',
+			mode: 'attach-existing',
+			redraw: 'winch',
+		})
+		assert.equal(
+			(
+				await api.request(attachPath, {
+					method: 'POST',
+					headers: requestHeaders(),
+					body: JSON.stringify({
+						profileId,
+						revision: reserved.data.revision,
+						...identity,
+						capability: reserved.adoption.capability,
+					}),
+				})
+			).status,
+			409,
+		)
+		const completed = await api.request(`/scheduled-runs/runs/${run.id}/attention-adoption/complete`, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId, revision: reserved.data.revision, ...identity, ownershipRegistered: true }),
+		})
+		assert.equal(completed.status, 200)
+		const completion = (await completed.json()) as { data: Record<string, unknown> }
+		for (const sensitive of ['socketPath', 'capability', 'processFingerprint', 'attentionAdoption'])
+			assert.equal(sensitive in completion.data, false)
 	})
 })
 

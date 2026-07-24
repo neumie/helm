@@ -9,6 +9,9 @@ import { DB } from '../src/db/client.js'
 import { AttentionAdoptionGrantManager } from '../src/scheduled-runs/adoption-grants.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
 import { toScheduledRunContract } from '../src/scheduled-runs/contract.js'
+import type { DtachSupervisor } from '../src/scheduled-runs/dtach-supervisor.js'
+import { ScheduledRunService } from '../src/scheduled-runs/service.js'
+import { scheduledSessionId } from '../src/scheduled-runs/session-path.js'
 import { ScheduleRevisionConflictError } from '../src/scheduled-runs/store.js'
 
 const scheduleInput = {
@@ -35,7 +38,7 @@ function attentionRun(commands: ScheduleCommands, suffix: string) {
 		utcOffsetMinutes: 0,
 		slotKey: suffix,
 		definitionSnapshot: schedule.definition,
-		sessionId: `sr-adoption-${suffix}`,
+		sessionId: scheduledSessionId(`adoption-${suffix}`),
 	})
 	const preparing = commands.beginPreparing(admitted.id, admitted.revision)
 	const launching = commands.beginLaunching(preparing.id, preparing.revision)
@@ -210,6 +213,154 @@ test('attention adoption completion resolves terminal atomically; rollback never
 		})
 		assert.equal(retry.attentionAdoption?.state, 'reserved')
 		assert.equal(commands.recoverAttentionAdoption(retry.id).attentionAdoption?.state, 'rolled_back')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('service reserves only after attestation, burns grants on descriptor attach, and rolls back failures', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-adoption-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const schedule = commands.create(scheduleInput)
+		let run = commands.claimOccurrence(schedule.id, schedule.revision, null, {
+			scheduleId: schedule.id,
+			scheduleRevision: schedule.revision,
+			scheduledFor: '2030-01-01T01:00:00.000Z',
+			localCivilSlot: '2030-01-01 service',
+			utcOffsetMinutes: 0,
+			slotKey: 'service',
+			definitionSnapshot: schedule.definition,
+			sessionId: scheduledSessionId('service-adoption'),
+		})
+		run = commands.beginPreparing(run.id, run.revision)
+		run = commands.beginLaunching(run.id, run.revision)
+		run = commands.markRunning(run.id, run.revision)
+		run = commands.recordRuntime(run.id, run.revision, {
+			processFingerprint: JSON.stringify({
+				pid: 42,
+				processGroupId: 42,
+				sessionId: 42,
+				startedAt: '2030-01-01T00:00:00.000Z',
+				executable: '/usr/bin/dtach',
+				socketHolder: {
+					pid: 42,
+					processGroupId: 42,
+					sessionId: 42,
+					startedAt: '2030-01-01T00:00:00.000Z',
+					executable: '/usr/bin/dtach',
+				},
+			}),
+			cwd: null,
+			worktreePath: null,
+			branchName: null,
+			runDir: null,
+			socketDescriptor: null,
+		})
+		run = commands.report(run.id, run.revision, 'needs_attention', 'choose a target')
+		let attestations = 0
+		const supervisor = {
+			attestLiveSession: async () => {
+				attestations++
+				return {
+					state: 'verified' as const,
+					socketPath: '/tmp/helm-sched-test/work/sr.sock',
+					identity: JSON.parse(run.processFingerprint as string),
+				}
+			},
+		} as unknown as DtachSupervisor
+		const grants = new AttentionAdoptionGrantManager()
+		const service = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				supervisor,
+				adoptionGrants: grants,
+			},
+		)
+		const identity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const reservation = await service.reserveAttentionAdoption('work', run.id, run.revision, identity)
+		assert.equal(reservation.run.attentionAdoption?.state, 'reserved')
+		const descriptor = await service.attachAttentionDescriptor(
+			'work',
+			run.id,
+			reservation.run.revision,
+			identity,
+			reservation.grant.capability,
+		)
+		assert.deepEqual(descriptor, {
+			socketPath: '/tmp/helm-sched-test/work/sr.sock',
+			mode: 'attach-existing',
+			redraw: 'winch',
+		})
+		await assert.rejects(
+			service.attachAttentionDescriptor(
+				'work',
+				run.id,
+				reservation.run.revision,
+				identity,
+				reservation.grant.capability,
+			),
+			/unavailable/,
+		)
+		const completed = service.completeAttentionAdoption('work', run.id, reservation.run.revision, identity, true)
+		assert.equal(completed.attentionAdoption?.state, 'completed')
+		assert.equal(attestations, 2)
+
+		const failed = attentionRun(commands, 'service-failure')
+		const failedIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const failingService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				supervisor: { attestLiveSession: async () => ({ state: 'mismatch' as const }) } as unknown as DtachSupervisor,
+			},
+		)
+		await assert.rejects(
+			failingService.reserveAttentionAdoption('work', failed.id, failed.revision, failedIdentity),
+			/cannot be attested/,
+		)
+		assert.equal(db.schedules.requireRun(failed.id).attentionAdoption?.state, 'rolled_back')
+
+		const restart = attentionRun(commands, 'restart-service')
+		const restartIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const reservedForRestart = commands.reserveAttentionAdoption(restart.id, restart.revision, restartIdentity)
+		const restartService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+			},
+		)
+		const starting = restartService.start()
+		assert.equal(db.schedules.requireRun(reservedForRestart.id).attentionAdoption?.state, 'rolled_back')
+		await starting
+		await restartService.stop()
+
+		const expiring = attentionRun(commands, 'expiry-service')
+		const expiryIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const reservedForExpiry = commands.reserveAttentionAdoption(expiring.id, expiring.revision, expiryIdentity)
+		const expiryService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				now: () => new Date(Date.now() + 60_000),
+			},
+		)
+		await expiryService.reconcile()
+		assert.equal(db.schedules.requireRun(reservedForExpiry.id).attentionAdoption?.state, 'rolled_back')
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
