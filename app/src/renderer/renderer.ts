@@ -1408,12 +1408,7 @@ interface TabMenuItem {
 	onPick: () => void
 }
 
-function openMenu(
-	items: readonly TabMenuItem[],
-	x: number,
-	y: number,
-	trigger: HTMLElement,
-): void {
+function openMenu(items: readonly TabMenuItem[], x: number, y: number, trigger: HTMLElement): void {
 	closeTabMenu()
 	closeBackgroundPopover()
 	const panel = document.createElement('div')
@@ -1622,8 +1617,7 @@ function openTabMenu(tab: Tab, x: number, y: number): void {
 				label: 'Move to new group…',
 				icon: '+',
 				disabled: !movable,
-				onPick: () =>
-					openGroupNameMenu('Create group', '', x, y, tab.tabButton, name => createGroupForTab(tab, name)),
+				onPick: () => openGroupNameMenu('Create group', '', x, y, tab.tabButton, name => createGroupForTab(tab, name)),
 			},
 			{ label: 'Move to background', icon: '⇩', hint: '⇧⌘B', onPick: () => parkTab(tab), separatorBefore: true },
 			{ label: 'Close', icon: '×', hint: '⌘W', destructive: true, onPick: () => closeTab(tab) },
@@ -1659,41 +1653,55 @@ function deleteGroup(groupId: string): void {
 	})
 }
 
+function openGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonly string[]): void {
+	for (const id of memberIds) {
+		const tab = current.get(id)
+		if (tab?.parked) openParked(tab)
+	}
+}
+
+function restoreGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonly string[]): void {
+	for (const id of memberIds) {
+		const tab = current.get(id)
+		if (tab?.parked) restoreParked(tab)
+	}
+}
+
+function backgroundGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonly string[]): void {
+	for (const id of memberIds) {
+		const tab = current.get(id)
+		if (tab && !tab.parked) parkTab(tab)
+	}
+}
+
+function closeGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonly string[]): void {
+	for (const id of memberIds) {
+		const tab = current.get(id)
+		if (tab?.parked) killParkedTab(tab)
+		else if (tab) closeTab(tab)
+	}
+}
+
 function runGroupAction(target: TabGroupActionTarget): void {
 	void helm.sessions.groups.intent(target.intent).then(accepted => {
 		if (!accepted) return
 		const current = new Map([...tabs, ...parked].map(tab => [tabIdentity(tab), tab]))
 		switch (target.action) {
 			case 'open':
-				for (const id of target.memberIds) {
-					const tab = current.get(id)
-					if (tab?.parked) openParked(tab)
-				}
+				openGroupMembers(current, target.memberIds)
 				break
 			case 'restore':
 				void helm.sessions.groups.move(target.groupId, false).then(sessionIds => {
-					if (!sessionIds) return
-					for (const id of target.memberIds) {
-						const tab = current.get(id)
-						if (tab?.parked) restoreParked(tab)
-					}
+					if (sessionIds) restoreGroupMembers(current, target.memberIds)
 				})
 				break
 			case 'background':
 				void helm.sessions.groups.move(target.groupId, true).then(sessionIds => {
-					if (!sessionIds) return
-					for (const id of target.memberIds) {
-						const tab = current.get(id)
-						if (tab && !tab.parked) parkTab(tab)
-					}
+					if (sessionIds) backgroundGroupMembers(current, target.memberIds)
 				})
 				break
 			case 'close':
-				for (const id of target.memberIds) {
-					const tab = current.get(id)
-					if (tab?.parked) killParkedTab(tab)
-					else if (tab) closeTab(tab)
-				}
+				closeGroupMembers(current, target.memberIds)
 		}
 	})
 }
@@ -1720,7 +1728,8 @@ function openGroupMenu(section: TabGroupSection, x: number, y: number, trigger: 
 			{
 				label: 'Rename…',
 				icon: '✎',
-				onPick: () => openGroupNameMenu('Rename group', section.name, x, y, trigger, name => renameGroup(groupId, name)),
+				onPick: () =>
+					openGroupNameMenu('Rename group', section.name, x, y, trigger, name => renameGroup(groupId, name)),
 			},
 			{ label: 'Delete', icon: '×', destructive: true, onPick: () => deleteGroup(groupId) },
 			...actions,
