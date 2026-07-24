@@ -127,7 +127,10 @@ button:focus-visible,
 	grid-template-columns: var(--left-width) 1px 1fr;
 	background: var(--chrome);
 	border-bottom: 1px solid var(--hairline);
-	-webkit-app-region: drag;
+	/* Never make the whole titlebar native-draggable: overlapping drag/no-drag
+	 * descendants still leak double-click zoom on macOS. Only the two explicit
+	 * whitespace surfaces below opt back into drag. */
+	-webkit-app-region: no-drag;
 }
 
 /* Deliberately empty surface: traffic-light inset + drag region only (no
@@ -137,6 +140,7 @@ button:focus-visible,
 	grid-column: 1;
 	min-width: 0;
 	padding-left: 84px; /* traffic-light inset (hiddenInset titlebar) */
+	-webkit-app-region: drag;
 }
 
 .topbar-right {
@@ -147,10 +151,9 @@ button:focus-visible,
 	min-width: 0;
 	/* 6px strip inset + 10px pill padding = 16px, matching the terminal well text inset */
 	padding: 0 10px 0 6px;
-	/* The free space to the right of the tab controls is native window chrome.
-	   Interactive controls opt out below; their internal 4px gaps stay no-drag
-	   so a double-click between a tab and + cannot zoom the window. */
-	-webkit-app-region: drag;
+	/* Controls and their internal gaps are never native titlebar surface. The
+	 * dedicated trailing whitespace opts into drag separately below. */
+	-webkit-app-region: no-drag;
 }
 
 .tab-strip-controls {
@@ -167,6 +170,7 @@ button:focus-visible,
 	flex: 1;
 	min-width: 12px;
 	align-self: stretch;
+	-webkit-app-region: drag;
 }
 /* Electron's native drag region swallows DOM pointer events. The open
  * background popover temporarily turns only this whitespace into a click-away
