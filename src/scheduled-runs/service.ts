@@ -79,6 +79,7 @@ export class ScheduledRunService {
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
+	private readonly adoptionInFlight = new Set<Promise<unknown>>()
 	/** Per-run single-flight guards duplicate teardown while durable intent arbitrates winners. */
 	private readonly terminalInFlight = new Map<string, Promise<ScheduledRunRecord>>()
 	private startInFlight: Promise<void> | null = null
@@ -149,17 +150,25 @@ export class ScheduledRunService {
 		this.reconcileAdmissionOpen = false
 		if (this.watchdog) clearInterval(this.watchdog)
 		this.watchdog = null
-		this.adoptionGrants.clear()
 		const tick = this.tickInFlight
 		const reconcile = this.reconcileInFlight
-		await Promise.all([tick, reconcile])
+		await Promise.all([tick, reconcile, Promise.allSettled([...this.adoptionInFlight])])
+		this.adoptionGrants.clear()
 	}
 
 	/**
 	 * Reserve one attention-reported run and prove its existing dtach ownership
 	 * before issuing a per-reservation memory-only capability.
 	 */
-	async reserveAttentionAdoption(
+	reserveAttentionAdoption(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+	): Promise<AttentionAdoptionReservation> {
+		return this.trackAdoption(this.reserveAttentionAdoptionInternal(profileId, runId, revision, identity))
+	}
+	private async reserveAttentionAdoptionInternal(
 		profileId: string,
 		runId: string,
 		revision: number,
@@ -167,8 +176,12 @@ export class ScheduledRunService {
 	): Promise<AttentionAdoptionReservation> {
 		const runtime = this.captureProfile(profileId)
 		const runDb = this.db.forProfile(runtime.profile.id)
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
 		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 		let reserved: ScheduledRunRecord | null = null
+		let issued = false
+		const before = runDb.schedules.requireRun(runId)
+		const createdReservation = before.attentionAdoption?.state !== 'reserved'
 		let binding: { profileId: string; runId: string; revision: number; adoptionId: string; adopter: string } | null =
 			null
 		try {
@@ -180,16 +193,28 @@ export class ScheduledRunService {
 			if (attestation.state !== 'verified') throw new Error('Scheduled attention session cannot be attested')
 			const current = runDb.schedules.requireRun(runId)
 			this.assertReservedAdoption(current, reserved.revision, identity)
-			return { run: current, grant: this.adoptionGrants.issue(binding) }
+			const grant = this.adoptionGrants.issue(binding)
+			issued = true
+			return { run: current, grant }
 		} catch (error) {
-			if (binding) this.adoptionGrants.revoke(binding)
-			if (reserved) this.rollbackAdoption(commands, runDb, reserved, identity, 'attestation_failed')
+			if (binding && issued) this.adoptionGrants.revoke(binding)
+			if (reserved && createdReservation && (!binding || !this.adoptionGrants.hasActive(binding)))
+				this.rollbackAdoption(commands, runDb, reserved, identity, 'attestation_failed')
 			throw error
 		}
 	}
 
 	/** Burn the transient bearer synchronously, then re-attest before attach. */
-	async attachAttentionDescriptor(
+	attachAttentionDescriptor(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		capability: string,
+	): Promise<AttentionAttachDescriptor> {
+		return this.trackAdoption(this.attachAttentionDescriptorInternal(profileId, runId, revision, identity, capability))
+	}
+	private async attachAttentionDescriptorInternal(
 		profileId: string,
 		runId: string,
 		revision: number,
@@ -198,6 +223,7 @@ export class ScheduledRunService {
 	): Promise<AttentionAttachDescriptor> {
 		const runtime = this.captureProfile(profileId)
 		const runDb = this.db.forProfile(runtime.profile.id)
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
 		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 		const binding = { profileId, runId, revision, ...identity }
 		if (!this.adoptionGrants.redeem(binding, capability)) throw new Error('Scheduled attention adoption is unavailable')
@@ -225,6 +251,7 @@ export class ScheduledRunService {
 		identity: AttentionAdoptionIdentity,
 		ownershipRegistered: true,
 	): ScheduledRunRecord {
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
 		const runtime = this.captureProfile(profileId)
 		const runDb = this.db.forProfile(runtime.profile.id)
 		return new ScheduleCommands(
@@ -239,6 +266,7 @@ export class ScheduledRunService {
 		revision: number,
 		identity: AttentionAdoptionIdentity,
 	): ScheduledRunRecord {
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
 		const runtime = this.captureProfile(profileId)
 		const runDb = this.db.forProfile(runtime.profile.id)
 		const binding = { profileId, runId, revision, ...identity }
@@ -763,6 +791,11 @@ export class ScheduledRunService {
 		runDb.schedules.setEnabled(schedule.id, schedule.revision, false, state)
 		return runDb.schedules.transitionRun(run.id, run.revision, state, { closedAt: this.now().toISOString() })
 	}
+	private trackAdoption<T>(operation: Promise<T>): Promise<T> {
+		this.adoptionInFlight.add(operation)
+		void operation.finally(() => this.adoptionInFlight.delete(operation)).catch(() => undefined)
+		return operation
+	}
 	private assertReservedAdoption(run: ScheduledRunRecord, revision: number, identity: AttentionAdoptionIdentity): void {
 		if (
 			run.revision !== revision ||
@@ -794,6 +827,8 @@ export class ScheduledRunService {
 		)
 			return
 		const identity = { adoptionId: run.attentionAdoption.adoptionId, adopter: run.attentionAdoption.adopter }
+		const binding = { profileId: run.profileId, runId: run.id, revision: run.revision, ...identity }
+		if (this.adoptionGrants.hasRedeemed(binding)) return
 		this.rollbackAdoption(commands, this.db.forProfile(run.profileId), run, identity, 'expired')
 		this.adoptionGrants.revoke({ profileId: run.profileId, runId: run.id, revision: run.revision, ...identity })
 	}

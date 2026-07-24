@@ -16,18 +16,17 @@ function binding() {
 	}
 }
 
-test('attention adoption grants are independent, exact-bound, replaceable before redemption, and burn on redeem', () => {
+test('attention adoption grants are independent, exact-bound, singular, and burn on redeem', () => {
 	let now = 1_000
 	const grants = new AttentionAdoptionGrantManager(ATTENTION_ADOPTION_GRANT_TTL_MS, () => now)
 	const first = binding()
 	const firstGrant = grants.issue(first)
-	const replacementGrant = grants.issue(first)
-	assert.equal(grants.redeem(first, firstGrant.capability), false, 'same-binding replacement revokes the old bearer')
-	assert.equal(grants.redeem({ ...first, revision: first.revision + 1 }, replacementGrant.capability), false)
-	assert.equal(grants.redeem(first, replacementGrant.capability), true)
+	assert.throws(() => grants.issue(first), /already active/)
+	assert.equal(grants.redeem({ ...first, revision: first.revision + 1 }, firstGrant.capability), false)
+	assert.equal(grants.redeem(first, firstGrant.capability), true)
 	assert.equal(grants.hasRedeemed(first), true)
-	assert.equal(grants.redeem(first, replacementGrant.capability), false, 'replay is burned')
-	assert.throws(() => grants.issue(first), /awaiting completion/)
+	assert.equal(grants.redeem(first, firstGrant.capability), false, 'replay is burned')
+	assert.throws(() => grants.issue(first), /already active/)
 
 	const second = binding()
 	const secondGrant = grants.issue(second)

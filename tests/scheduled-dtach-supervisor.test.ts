@@ -49,6 +49,7 @@ function readyDeps(getSocket: () => string) {
 		inspectGroup: async (group: number) =>
 			group === master.processGroupId ? [master, host] : group === launcher.processGroupId ? [launcher] : [],
 		findSocketHolders: async () => [master],
+		findSocketDescriptorHolders: async () => [master],
 	}
 }
 
@@ -84,6 +85,50 @@ test('attestLiveSession verifies the exact persisted dtach master without side e
 		assert.deepEqual(await mismatch.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root), {
 			state: 'mismatch',
 		})
+
+		const inherited = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			findSocketDescriptorHolders: async () => [master, host],
+		})
+		assert.equal(
+			(await inherited.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root)).state,
+			'verified',
+		)
+
+		const replacement = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			findSocketDescriptorHolders: async () => [{ ...master, pid: master.pid + 100 }],
+		})
+		assert.deepEqual(
+			await replacement.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root),
+			{ state: 'mismatch' },
+		)
+
+		let descriptorChecks = 0
+		const lateReplacement = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			findSocketDescriptorHolders: async () => {
+				descriptorChecks++
+				return descriptorChecks === 1 ? [master] : [{ ...master, pid: master.pid + 100 }]
+			},
+		})
+		assert.deepEqual(
+			await lateReplacement.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root),
+			{ state: 'mismatch' },
+		)
+
+		const executableSwap = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'live',
+			inspectProcess: async () => ({ ...master, executable: '/tmp/attacker/dtach' }),
+		})
+		assert.deepEqual(
+			await executableSwap.attestLiveSession('work', sessionId, { ...master, socketHolder: master }, root),
+			{ state: 'mismatch' },
+		)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
@@ -448,6 +493,7 @@ test(
 			assert.ok(launcherPid)
 			assert.notEqual(ready.pid, launcherPid)
 			assert.equal(ready.socketHolder?.pid, ready.pid)
+			assert.equal((await supervisor.attestLiveSession('work', sessionId, ready, root)).state, 'verified')
 			await new Promise(resolve => setTimeout(resolve, 350))
 			assert.equal(await supervisor.teardown('work', sessionId, ready, diagnostic, 100, root), 'closed')
 			identity = undefined

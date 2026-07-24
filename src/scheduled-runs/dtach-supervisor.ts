@@ -54,6 +54,8 @@ export interface DtachSupervisorDeps {
 	inspectProcessCommand?: (pid: number) => Promise<string | null>
 	inspectGroup?: (processGroupId: number) => Promise<ProcessFingerprint[] | null>
 	findSocketHolders?: (socketPath: string) => Promise<ProcessFingerprint[] | null>
+	/** Current file-descriptor holders for the bound Unix socket, not argv claims. */
+	findSocketDescriptorHolders?: (socketPath: string) => Promise<ProcessFingerprint[] | null>
 	sleep?: (ms: number) => Promise<void>
 	unlink?: (path: string) => Promise<void>
 }
@@ -95,13 +97,14 @@ function sameFingerprint(expected: ProcessFingerprint, candidate: ProcessFingerp
 		expected.processGroupId === candidate.processGroupId &&
 		expected.sessionId === candidate.sessionId &&
 		expected.startedAt === candidate.startedAt &&
-		basename(expected.executable) === basename(candidate.executable)
+		expected.executable === candidate.executable
 	)
 }
 
 async function processFingerprint(pid: number): Promise<ProcessFingerprint | null> {
 	try {
 		const { stdout } = await execFile('ps', [
+			'-ww',
 			'-o',
 			'pid=',
 			'-o',
@@ -144,13 +147,32 @@ function parsePsLine(line: string): ProcessFingerprint | null {
 
 async function groupFingerprints(processGroupId: number): Promise<ProcessFingerprint[] | null> {
 	try {
-		const { stdout } = await execFile('ps', ['-eo', 'pid=,pgid=,sess=,lstart=,comm='])
+		const { stdout } = await execFile('ps', ['-ww', '-eo', 'pid=,pgid=,sess=,lstart=,comm='])
 		const rows = stdout
 			.split('\n')
 			.map(parsePsLine)
 			.filter((row): row is ProcessFingerprint => !!row)
 		return rows.filter(row => row.processGroupId === processGroupId)
 	} catch {
+		return null
+	}
+}
+
+async function socketDescriptorHolders(socketPath: string): Promise<ProcessFingerprint[] | null> {
+	try {
+		// Unlike argv discovery, lsof resolves the pathname to the currently bound
+		// Unix endpoint and reports processes with an open descriptor to it.
+		const { stdout } = await execFile('lsof', ['-n', '-a', '-U', '-Fp', '--', socketPath])
+		const ids = stdout
+			.split('\n')
+			.filter(line => /^p\d+$/.test(line))
+			.map(line => Number(line.slice(1)))
+			.filter(Number.isSafeInteger)
+		return Promise.all([...new Set(ids)].map(processFingerprint)).then(rows =>
+			rows.filter((row): row is ProcessFingerprint => !!row),
+		)
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException & { code?: number }).code === 1) return []
 		return null
 	}
 }
@@ -198,6 +220,9 @@ export class DtachSupervisor {
 			const inspectCommand = this.deps.inspectProcessCommand ?? processCommand
 			const inspectGroup = this.deps.inspectGroup ?? groupFingerprints
 			const holdersFor = this.deps.findSocketHolders ?? socketHolders
+			const descriptorHoldersFor = this.deps.findSocketDescriptorHolders ?? socketDescriptorHolders
+			// Keep argv discovery and lsof sequential: lsof itself includes the exact
+			// socket path in argv and would otherwise look like a second claimant.
 			const [master, group, holders] = await Promise.all([
 				inspectProcess(persistedIdentity.pid),
 				inspectGroup(persistedIdentity.processGroupId),
@@ -212,9 +237,15 @@ export class DtachSupervisor {
 			)
 				return { state: 'mismatch' }
 
-			// More than one command claiming the same socket is ambiguous ownership.
 			if (holders.length !== 1) return { state: 'mismatch' }
 			const holder = holders[0]
+			const descriptorHolders = await descriptorHoldersFor(socketPath)
+			if (!descriptorHolders) return { state: 'unknown' }
+			// Descendants may inherit or connect to the Unix socket, so lsof can
+			// legitimately report more than one descriptor holder. The persisted
+			// daemonized master itself must remain among them; a rebound pathname
+			// reports only the replacement server and therefore fails this proof.
+			if (!descriptorHolders.some(candidate => sameFingerprint(holder, candidate))) return { state: 'mismatch' }
 			if (!sameFingerprint(persistedIdentity.socketHolder, holder)) return { state: 'mismatch' }
 			const currentHolder = await inspectProcess(holder.pid)
 			if (!currentHolder) return { state: 'unknown' }
@@ -222,6 +253,10 @@ export class DtachSupervisor {
 				return { state: 'mismatch' }
 			const command = await inspectCommand(currentHolder.pid)
 			if (!this.isOwnedDtachMaster(currentHolder, command, socketPath)) return { state: 'mismatch' }
+			const finalDescriptorHolders = await descriptorHoldersFor(socketPath)
+			if (!finalDescriptorHolders) return { state: 'unknown' }
+			if (!finalDescriptorHolders.some(candidate => sameFingerprint(currentHolder, candidate)))
+				return { state: 'mismatch' }
 			return { state: 'verified', socketPath, identity: { ...master, socketHolder: currentHolder } }
 		} catch {
 			return { state: 'unknown' }

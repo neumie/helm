@@ -270,7 +270,9 @@ test('service reserves only after attestation, burns grants on descriptor attach
 				}
 			},
 		} as unknown as DtachSupervisor
-		const grants = new AttentionAdoptionGrantManager()
+		let grantNow = Date.now()
+		const grants = new AttentionAdoptionGrantManager(30_000, () => grantNow)
+		let serviceNow = new Date(grantNow)
 		const service = new ScheduledRunService(
 			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
 			db,
@@ -280,11 +282,17 @@ test('service reserves only after attestation, burns grants on descriptor attach
 				hasResidentLease: () => true,
 				supervisor,
 				adoptionGrants: grants,
+				now: () => serviceNow,
 			},
 		)
 		const identity = { adoptionId: randomUUID(), adopter: randomUUID() }
 		const reservation = await service.reserveAttentionAdoption('work', run.id, run.revision, identity)
 		assert.equal(reservation.run.attentionAdoption?.state, 'reserved')
+		await assert.rejects(
+			service.reserveAttentionAdoption('work', run.id, reservation.run.revision, identity),
+			/already active/,
+		)
+		assert.equal(db.schedules.requireRun(run.id).attentionAdoption?.state, 'reserved')
 		const descriptor = await service.attachAttentionDescriptor(
 			'work',
 			run.id,
@@ -297,6 +305,10 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			mode: 'attach-existing',
 			redraw: 'winch',
 		})
+		grantNow += 60_000
+		serviceNow = new Date(grantNow)
+		await service.reconcile()
+		assert.equal(db.schedules.requireRun(run.id).attentionAdoption?.state, 'reserved')
 		await assert.rejects(
 			service.attachAttentionDescriptor(
 				'work',
@@ -309,7 +321,76 @@ test('service reserves only after attestation, burns grants on descriptor attach
 		)
 		const completed = service.completeAttentionAdoption('work', run.id, reservation.run.revision, identity, true)
 		assert.equal(completed.attentionAdoption?.state, 'completed')
-		assert.equal(attestations, 2)
+		assert.equal(attestations, 3)
+
+		let duplicateRace = attentionRun(commands, 'duplicate-race')
+		duplicateRace = commands.recordRuntime(duplicateRace.id, duplicateRace.revision, {
+			processFingerprint: run.processFingerprint,
+			cwd: null,
+			worktreePath: null,
+			branchName: null,
+			runDir: null,
+			socketDescriptor: null,
+		})
+		let releaseFirst!: () => void
+		let firstEntered!: () => void
+		const firstGate = new Promise<void>(resolve => {
+			releaseFirst = resolve
+		})
+		const firstSeen = new Promise<void>(resolve => {
+			firstEntered = resolve
+		})
+		let duplicateAttestations = 0
+		const duplicateService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				supervisor: {
+					attestLiveSession: async () => {
+						duplicateAttestations++
+						if (duplicateAttestations === 1) {
+							firstEntered()
+							await firstGate
+						}
+						return { state: 'verified' as const, socketPath: '/tmp/existing', identity: {} }
+					},
+				} as unknown as DtachSupervisor,
+			},
+		)
+		const duplicateIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const firstReservation = duplicateService.reserveAttentionAdoption(
+			'work',
+			duplicateRace.id,
+			duplicateRace.revision,
+			duplicateIdentity,
+		)
+		await firstSeen
+		const winningReservation = await duplicateService.reserveAttentionAdoption(
+			'work',
+			duplicateRace.id,
+			db.schedules.requireRun(duplicateRace.id).revision,
+			duplicateIdentity,
+		)
+		releaseFirst()
+		await assert.rejects(firstReservation, /already active/)
+		await duplicateService.attachAttentionDescriptor(
+			'work',
+			duplicateRace.id,
+			winningReservation.run.revision,
+			duplicateIdentity,
+			winningReservation.grant.capability,
+		)
+		assert.equal(db.schedules.requireRun(duplicateRace.id).attentionAdoption?.state, 'reserved')
+		duplicateService.completeAttentionAdoption(
+			'work',
+			duplicateRace.id,
+			winningReservation.run.revision,
+			duplicateIdentity,
+			true,
+		)
 
 		const failed = attentionRun(commands, 'service-failure')
 		const failedIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
@@ -361,6 +442,66 @@ test('service reserves only after attestation, burns grants on descriptor attach
 		)
 		await expiryService.reconcile()
 		assert.equal(db.schedules.requireRun(reservedForExpiry.id).attentionAdoption?.state, 'rolled_back')
+
+		let stopping = attentionRun(commands, 'stop-service')
+		stopping = commands.recordRuntime(stopping.id, stopping.revision, {
+			processFingerprint: run.processFingerprint,
+			cwd: null,
+			worktreePath: null,
+			branchName: null,
+			runDir: null,
+			socketDescriptor: null,
+		})
+		const stoppingIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		let releaseAttestation!: () => void
+		let markEntered!: () => void
+		const entered = new Promise<void>(resolve => {
+			markEntered = resolve
+		})
+		const attestationGate = new Promise<void>(resolve => {
+			releaseAttestation = resolve
+		})
+		const stoppingService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				supervisor: {
+					attestLiveSession: async () => {
+						markEntered()
+						await attestationGate
+						return { state: 'verified' as const, socketPath: '/tmp/existing', identity: {} }
+					},
+				} as unknown as DtachSupervisor,
+			},
+		)
+		const pendingReservation = stoppingService.reserveAttentionAdoption(
+			'work',
+			stopping.id,
+			stopping.revision,
+			stoppingIdentity,
+		)
+		await entered
+		let stopFinished = false
+		const stoppingPromise = stoppingService.stop().then(() => {
+			stopFinished = true
+		})
+		await Promise.resolve()
+		assert.equal(stopFinished, false)
+		releaseAttestation()
+		await pendingReservation
+		await stoppingPromise
+		await assert.rejects(
+			stoppingService.reserveAttentionAdoption(
+				'work',
+				stopping.id,
+				db.schedules.requireRun(stopping.id).revision,
+				stoppingIdentity,
+			),
+			/unavailable/,
+		)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

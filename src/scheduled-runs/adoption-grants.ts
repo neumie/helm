@@ -42,8 +42,8 @@ export class AttentionAdoptionGrantManager {
 
 	issue(binding: AttentionAdoptionGrantBinding): AttentionAdoptionGrant {
 		const key = bindingKey(binding)
-		const current = this.grants.get(key)
-		if (current?.redeemed) throw new Error('Redeemed attention adoption grant is awaiting completion')
+		const current = this.matching(binding)
+		if (current) throw new Error('Attention adoption grant is already active')
 		const capability = createScopedCapability()
 		const expiresAt = this.now() + this.ttlMs
 		this.grants.set(key, { ...binding, hash: hashScopedCapability(capability), expiresAt, redeemed: false })
@@ -57,6 +57,10 @@ export class AttentionAdoptionGrantManager {
 		grant.hash = null
 		grant.redeemed = true
 		return true
+	}
+
+	hasActive(binding: AttentionAdoptionGrantBinding): boolean {
+		return this.matching(binding) !== null
 	}
 
 	/** Completion remains permitted after bearer expiry once redemption succeeded. */
