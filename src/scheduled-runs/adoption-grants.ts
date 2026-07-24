@@ -22,13 +22,18 @@ type StoredGrant = AttentionAdoptionGrantBinding & {
 	redeemed: boolean
 }
 
+function bindingKey(binding: AttentionAdoptionGrantBinding): string {
+	return [binding.profileId, binding.runId, binding.revision, binding.adoptionId, binding.adopter].join('\u0000')
+}
+
 /**
- * Memory-only capabilities for the future Electron adoption bridge. Issuing a
- * new grant replaces the old one; redeeming burns its bearer hash synchronously
- * before any caller can await durable registration.
+ * Memory-only capabilities for the Electron adoption bridge. Each reservation
+ * owns an independent slot. Redeeming burns bearer authority synchronously;
+ * its completion marker then survives bearer TTL until complete/rollback/stop
+ * explicitly revokes it.
  */
 export class AttentionAdoptionGrantManager {
-	private grant: StoredGrant | null = null
+	private readonly grants = new Map<string, StoredGrant>()
 
 	constructor(
 		private readonly ttlMs = ATTENTION_ADOPTION_GRANT_TTL_MS,
@@ -36,51 +41,45 @@ export class AttentionAdoptionGrantManager {
 	) {}
 
 	issue(binding: AttentionAdoptionGrantBinding): AttentionAdoptionGrant {
+		const key = bindingKey(binding)
+		const current = this.grants.get(key)
+		if (current?.redeemed) throw new Error('Redeemed attention adoption grant is awaiting completion')
 		const capability = createScopedCapability()
 		const expiresAt = this.now() + this.ttlMs
-		this.grant = { ...binding, hash: hashScopedCapability(capability), expiresAt, redeemed: false }
+		this.grants.set(key, { ...binding, hash: hashScopedCapability(capability), expiresAt, redeemed: false })
 		return { capability, expiresAt }
 	}
 
 	/** Burn the bearer capability before a caller can await Electron registration. */
 	redeem(binding: AttentionAdoptionGrantBinding, capability: string): boolean {
-		if (!this.matches(binding)) return false
-		const grant = this.grant
-		if (!grant || grant.hash === null || !verifyScopedCapability(capability, grant.hash)) return false
+		const grant = this.matching(binding)
+		if (!grant || grant.redeemed || grant.hash === null || !verifyScopedCapability(capability, grant.hash)) return false
 		grant.hash = null
 		grant.redeemed = true
 		return true
 	}
 
-	/** Completion is permitted only after a matching grant was redeemed. */
+	/** Completion remains permitted after bearer expiry once redemption succeeded. */
 	hasRedeemed(binding: AttentionAdoptionGrantBinding): boolean {
-		return this.matches(binding) && this.grant?.redeemed === true
+		return this.matching(binding)?.redeemed === true
 	}
 
 	revoke(binding: AttentionAdoptionGrantBinding): boolean {
-		if (!this.matches(binding)) return false
-		this.grant = null
-		return true
+		return this.grants.delete(bindingKey(binding))
 	}
 
 	clear(): void {
-		this.grant = null
+		this.grants.clear()
 	}
 
-	private matches(binding: AttentionAdoptionGrantBinding): boolean {
-		this.clearExpired()
-		const grant = this.grant
-		return (
-			grant !== null &&
-			grant.profileId === binding.profileId &&
-			grant.runId === binding.runId &&
-			grant.revision === binding.revision &&
-			grant.adoptionId === binding.adoptionId &&
-			grant.adopter === binding.adopter
-		)
-	}
-
-	private clearExpired(): void {
-		if (this.grant && this.grant.expiresAt <= this.now()) this.grant = null
+	private matching(binding: AttentionAdoptionGrantBinding): StoredGrant | null {
+		const key = bindingKey(binding)
+		const grant = this.grants.get(key)
+		if (!grant) return null
+		if (!grant.redeemed && grant.expiresAt <= this.now()) {
+			this.grants.delete(key)
+			return null
+		}
+		return grant
 	}
 }

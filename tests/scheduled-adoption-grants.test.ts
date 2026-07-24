@@ -16,30 +16,36 @@ function binding() {
 	}
 }
 
-test('attention adoption grants are exact-bound, replace prior grants, and burn before completion', () => {
+test('attention adoption grants are independent, exact-bound, replaceable before redemption, and burn on redeem', () => {
 	let now = 1_000
 	const grants = new AttentionAdoptionGrantManager(ATTENTION_ADOPTION_GRANT_TTL_MS, () => now)
 	const first = binding()
 	const firstGrant = grants.issue(first)
-	assert.equal(grants.hasRedeemed(first), false)
-	assert.equal(grants.redeem({ ...first, revision: first.revision + 1 }, firstGrant.capability), false)
-	assert.equal(grants.redeem(first, firstGrant.capability), true)
+	const replacementGrant = grants.issue(first)
+	assert.equal(grants.redeem(first, firstGrant.capability), false, 'same-binding replacement revokes the old bearer')
+	assert.equal(grants.redeem({ ...first, revision: first.revision + 1 }, replacementGrant.capability), false)
+	assert.equal(grants.redeem(first, replacementGrant.capability), true)
 	assert.equal(grants.hasRedeemed(first), true)
-	assert.equal(grants.redeem(first, firstGrant.capability), false, 'replay is burned')
+	assert.equal(grants.redeem(first, replacementGrant.capability), false, 'replay is burned')
+	assert.throws(() => grants.issue(first), /awaiting completion/)
 
-	const replacement = binding()
-	const replacementGrant = grants.issue(replacement)
-	assert.equal(grants.hasRedeemed(first), false, 'issuance replaces prior binding')
-	assert.equal(grants.redeem(first, replacementGrant.capability), false)
-	assert.equal(grants.redeem(replacement, replacementGrant.capability), true)
-	assert.equal(grants.revoke(first), false)
-	assert.equal(grants.revoke(replacement), true)
-	assert.equal(grants.hasRedeemed(replacement), false)
+	const second = binding()
+	const secondGrant = grants.issue(second)
+	assert.equal(grants.hasRedeemed(first), true, 'another reservation cannot replace a redeemed marker')
+	assert.equal(grants.redeem(second, secondGrant.capability), true)
+	assert.equal(grants.hasRedeemed(second), true)
+
+	now += ATTENTION_ADOPTION_GRANT_TTL_MS
+	assert.equal(grants.hasRedeemed(first), true, 'completion authorization survives bearer TTL')
+	assert.equal(grants.hasRedeemed(second), true)
+	assert.equal(grants.revoke(first), true)
+	assert.equal(grants.hasRedeemed(first), false)
+	assert.equal(grants.hasRedeemed(second), true)
 
 	const expiring = binding()
 	const expiringGrant = grants.issue(expiring)
 	now += ATTENTION_ADOPTION_GRANT_TTL_MS
 	assert.equal(grants.redeem(expiring, expiringGrant.capability), false)
 	grants.clear()
-	assert.equal(grants.hasRedeemed(expiring), false)
+	assert.equal(grants.hasRedeemed(second), false)
 })

@@ -319,10 +319,6 @@ export class ScheduleStore {
 		return row ? this.toRun(row) : null
 	}
 	/**
-	 * Atomically claim a pending terminal intent. A matching retry is idempotent;
-	 * a different winner is a fail-closed conflict even when the caller is stale.
-	 */
-	/**
 	 * The only writer for the internal attention-adoption axis. The WHERE clause
 	 * repeats the profile, attention state, report kind, unresolved status, and
 	 * revision guards so a stale caller cannot take over a terminal handoff.
@@ -333,6 +329,7 @@ export class ScheduleStore {
 		expectedRevision: number,
 		adoption: AttentionAdoption,
 		terminalResolvedAt: string | null = null,
+		requireNoTerminalIntent = false,
 	): ScheduledRunRecord {
 		const parsed = attentionAdoptionSchema.parse(adoption)
 		if (parsed.state !== 'completed' && terminalResolvedAt !== null)
@@ -343,9 +340,18 @@ export class ScheduleStore {
 				 SET attention_adoption = ?, terminal_resolved_at = ?, revision = revision + 1, updated_at = ?
 				 WHERE profile_id = ? AND id = ? AND revision = ?
 				   AND state = 'needs_attention' AND report_kind = 'needs_attention'
-				   AND terminal_resolved_at IS NULL`,
+				   AND terminal_resolved_at IS NULL
+				   AND (? = 0 OR pending_terminal_intent IS NULL)`,
 			)
-			.run(JSON.stringify(parsed), terminalResolvedAt, new Date().toISOString(), this.profileId, id, expectedRevision)
+			.run(
+				JSON.stringify(parsed),
+				terminalResolvedAt,
+				new Date().toISOString(),
+				this.profileId,
+				id,
+				expectedRevision,
+				requireNoTerminalIntent ? 1 : 0,
+			)
 		if (result.changes === 0) throw new ScheduleRevisionConflictError()
 		return this.requireRun(id)
 	}

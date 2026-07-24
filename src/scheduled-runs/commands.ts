@@ -275,11 +275,17 @@ export class ScheduleCommands {
 			throw new Error('A rolled-back attention adoption requires a new identity')
 		this.assertAttentionAdoptable(run)
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
-		return this.store.updateAttentionAdoption(id, revision, {
-			state: 'reserved',
-			...parsed,
-			reservedAt: new Date().toISOString(),
-		})
+		return this.store.updateAttentionAdoption(
+			id,
+			revision,
+			{
+				state: 'reserved',
+				...parsed,
+				reservedAt: new Date().toISOString(),
+			},
+			null,
+			true,
+		)
 	}
 	/**
 	 * Completion means Electron has already durably registered ownership of the
@@ -291,7 +297,10 @@ export class ScheduleCommands {
 		revision: number,
 		identity: AttentionAdoptionIdentity,
 		grants: AttentionAdoptionGrantManager,
+		ownershipRegistered: true,
 	): ScheduledRunRecord {
+		if (ownershipRegistered !== true)
+			throw new Error('Electron scheduled-session ownership must be durably registered before completion')
 		const parsed = attentionAdoptionIdentitySchema.parse(identity)
 		const run = this.store.requireRun(id)
 		if (run.attentionAdoption?.state === 'completed' && sameAdoptionIdentity(run.attentionAdoption, parsed)) return run
@@ -326,7 +335,10 @@ export class ScheduleCommands {
 			run.attentionAdoption.reason === reason
 		)
 			return run
-		this.assertAttentionAdoptable(run)
+		if (run.terminalResolvedAt !== null || run.attentionAdoption?.state === 'completed')
+			throw new Error('Scheduled run terminal is already resolved')
+		if (run.state !== 'needs_attention' || run.reportKind !== 'needs_attention')
+			throw new Error('Only an unresolved attention-reported scheduled run can roll back adoption')
 		if (run.attentionAdoption?.state !== 'reserved' || !sameAdoptionIdentity(run.attentionAdoption, parsed))
 			throw new Error('Scheduled run attention adoption reservation does not match')
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
@@ -355,6 +367,7 @@ export class ScheduleCommands {
 	private assertAttentionAdoptable(run: ScheduledRunRecord): void {
 		if (run.state !== 'needs_attention' || run.reportKind !== 'needs_attention')
 			throw new Error('Only an attention-reported scheduled run can be adopted')
+		if (run.pendingTerminalIntent !== null) throw new Error('Scheduled run already has a terminal teardown intent')
 		if (run.terminalResolvedAt !== null) throw new Error('Scheduled run terminal is already resolved')
 	}
 	private claimTerminalIntent(id: string, revision: number, intent: ScheduledTerminalIntent): ScheduledRunRecord {

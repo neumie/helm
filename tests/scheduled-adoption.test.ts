@@ -90,6 +90,47 @@ test('attention adoption is tenant/revision guarded, idempotent by identity, and
 			'reason',
 		])
 			assert.equal(forbidden in contract, false)
+
+		const cancelling = attentionRun(commands, 'cancel-first')
+		const cancelClaimed = db.schedules.claimPendingTerminalIntent(cancelling.id, cancelling.revision, 'cancel')
+		assert.equal(toScheduledRunContract(cancelClaimed).sessionAvailability, 'unavailable')
+		assert.throws(
+			() =>
+				commands.reserveAttentionAdoption(cancelClaimed.id, cancelClaimed.revision, {
+					adoptionId: randomUUID(),
+					adopter: randomUUID(),
+				}),
+			/terminal teardown intent/,
+		)
+		assert.throws(
+			() =>
+				db.schedules.updateAttentionAdoption(
+					cancelClaimed.id,
+					cancelClaimed.revision,
+					{
+						state: 'reserved',
+						adoptionId: randomUUID(),
+						adopter: randomUUID(),
+						reservedAt: new Date().toISOString(),
+					},
+					null,
+					true,
+				),
+			ScheduleRevisionConflictError,
+		)
+
+		const corrupt = attentionRun(commands, 'reserved-then-cancelled')
+		const corruptIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const corruptReserved = commands.reserveAttentionAdoption(corrupt.id, corrupt.revision, corruptIdentity)
+		const corruptCancel = db.schedules.claimPendingTerminalIntent(corrupt.id, corruptReserved.revision, 'cancel')
+		const released = commands.rollbackAttentionAdoption(
+			corruptCancel.id,
+			corruptCancel.revision,
+			corruptIdentity,
+			'client',
+		)
+		assert.equal(released.attentionAdoption?.state, 'rolled_back')
+		assert.equal(released.pendingTerminalIntent, 'cancel')
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
@@ -103,7 +144,8 @@ test('attention adoption completion resolves terminal atomically; rollback never
 		const first = attentionRun(commands, 'complete')
 		const identity = { adoptionId: randomUUID(), adopter: randomUUID() }
 		const reserved = commands.reserveAttentionAdoption(first.id, first.revision, identity)
-		const grants = new AttentionAdoptionGrantManager()
+		let now = 1_000
+		const grants = new AttentionAdoptionGrantManager(10, () => now)
 		assert.throws(
 			() =>
 				commands.completeAttentionAdoption(
@@ -111,11 +153,12 @@ test('attention adoption completion resolves terminal atomically; rollback never
 					reserved.revision,
 					{ adoptionId: identity.adoptionId, adopter: randomUUID() },
 					grants,
+					true,
 				),
 			/reservation does not match/,
 		)
 		assert.throws(
-			() => commands.completeAttentionAdoption(reserved.id, reserved.revision, identity, grants),
+			() => commands.completeAttentionAdoption(reserved.id, reserved.revision, identity, grants, true),
 			/not redeemed/,
 		)
 		const grant = grants.issue({
@@ -131,11 +174,12 @@ test('attention adoption completion resolves terminal atomically; rollback never
 			),
 			true,
 		)
-		const complete = commands.completeAttentionAdoption(reserved.id, reserved.revision, identity, grants)
+		now += 10
+		const complete = commands.completeAttentionAdoption(reserved.id, reserved.revision, identity, grants, true)
 		assert.equal(complete.attentionAdoption?.state, 'completed')
 		assert.ok(complete.terminalResolvedAt)
 		assert.equal(
-			commands.completeAttentionAdoption(complete.id, reserved.revision, identity, grants).revision,
+			commands.completeAttentionAdoption(complete.id, reserved.revision, identity, grants, true).revision,
 			complete.revision,
 		)
 		assert.throws(
