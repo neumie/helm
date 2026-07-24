@@ -20,7 +20,7 @@ import {
 	type ScheduledSessionOwnership,
 	scheduledDtachAttachArgs,
 } from './scheduled-adoption-main'
-import { ScheduledAttentionNotifier } from './scheduled-attention-notifier'
+import { ScheduledAttentionNotifier, showNativeAttentionNotification } from './scheduled-attention-notifier'
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
@@ -2055,10 +2055,7 @@ void app.whenReady().then(async () => {
 		notification: content => {
 			const native = new Notification(content)
 			return {
-				show: () => {
-					native.show()
-					return undefined
-				},
+				show: () => showNativeAttentionNotification(native),
 				onClick: listener => native.on('click', listener),
 			}
 		},

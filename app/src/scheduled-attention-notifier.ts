@@ -13,8 +13,35 @@ export interface ScheduledAttentionNotification {
 }
 
 export interface NativeAttentionNotification {
-	show(): boolean | undefined
+	/** Resolves true only after Electron confirms the native notification was shown. */
+	show(): Promise<boolean>
 	onClick(listener: () => void): void
+}
+
+export interface NativeNotificationEmitter {
+	once(event: 'show' | 'failed', listener: () => void): unknown
+	show(): void
+}
+
+/** Resolve delivery only from Electron's asynchronous native result events. */
+export function showNativeAttentionNotification(
+	native: NativeNotificationEmitter,
+	timeoutMs = 5_000,
+): Promise<boolean> {
+	return new Promise(resolve => {
+		let settled = false
+		const finish = (shown: boolean) => {
+			if (settled) return
+			settled = true
+			clearTimeout(timer)
+			resolve(shown)
+		}
+		const timer = setTimeout(() => finish(false), timeoutMs)
+		timer.unref?.()
+		native.once('show', () => finish(true))
+		native.once('failed', () => finish(false))
+		native.show()
+	})
 }
 
 export interface ScheduledAttentionNotifierOptions {
@@ -129,7 +156,7 @@ export class ScheduledAttentionNotifier {
 			try {
 				const native = this.options.notification(scheduledAttentionNotificationCopy(claimed))
 				native.onClick(() => this.admitClick(claimed))
-				if (native.show() === false) continue
+				if (!(await native.show())) continue
 				this.shown.add(key)
 				// A delivery-write failure is deliberately not retried in-process: the
 				// native alert already exists, and a later process may retry after lease.

@@ -306,7 +306,8 @@ export class ScheduleStore {
 	/**
 	 * Atomically lease one delivery attempt. A process crash after this write
 	 * cannot hide the notification forever: a later control client may claim it
-	 * once the lease is stale. Revision makes simultaneous claimers fail closed.
+	 * once the lease is stale. The lease predicate makes simultaneous claimers
+	 * fail closed without advancing the lifecycle/adoption revision axis.
 	 */
 	claimAttentionNotification(
 		id: string,
@@ -316,7 +317,7 @@ export class ScheduleStore {
 	): ScheduledRunRecord {
 		const result = this.db
 			.prepare(
-				`UPDATE scheduled_runs SET notification_claimed_at = ?, revision = revision + 1, updated_at = ?
+				`UPDATE scheduled_runs SET notification_claimed_at = ?, updated_at = ?
 				 WHERE profile_id = ? AND id = ? AND revision = ?
 				   AND state = 'needs_attention' AND report_kind = 'needs_attention' AND report_summary IS NOT NULL
 				   AND pending_terminal_intent IS NULL AND terminal_resolved_at IS NULL
@@ -328,11 +329,11 @@ export class ScheduleStore {
 		if (result.changes === 0) throw new ScheduleRevisionConflictError()
 		return this.requireRun(id)
 	}
-	/** Delivery is accepted only from the exact still-current leased revision. */
+	/** Delivery is accepted only from the exact still-current lifecycle revision and active lease. */
 	markAttentionNotificationDelivered(id: string, expectedRevision: number, now: string): ScheduledRunRecord {
 		const result = this.db
 			.prepare(
-				`UPDATE scheduled_runs SET notification_delivered_at = ?, revision = revision + 1, updated_at = ?
+				`UPDATE scheduled_runs SET notification_delivered_at = ?, updated_at = ?
 				 WHERE profile_id = ? AND id = ? AND revision = ?
 				   AND state = 'needs_attention' AND report_kind = 'needs_attention' AND report_summary IS NOT NULL
 				   AND pending_terminal_intent IS NULL AND terminal_resolved_at IS NULL

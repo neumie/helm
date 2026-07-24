@@ -275,10 +275,21 @@ test('attention notification claims are atomic, lease-retryable, and guarded by 
 			ScheduleRevisionConflictError,
 		)
 		const retried = commands.claimAttentionNotification(first.id, first.revision, new Date('2030-01-01T00:03:00.000Z'))
-		assert.equal(retried.revision, first.revision + 1)
-		assert.throws(() => commands.markNotificationDelivered(retried.id, first.revision), ScheduleRevisionConflictError)
+		assert.equal(retried.revision, first.revision)
+		assert.throws(
+			() => commands.markNotificationDelivered(retried.id, first.revision - 1),
+			ScheduleRevisionConflictError,
+		)
 		const delivered = commands.markNotificationDelivered(retried.id, retried.revision)
 		assert.ok(delivered.notificationDeliveredAt)
+		assert.equal(delivered.revision, original.revision)
+		assert.equal(
+			commands.reserveAttentionAdoption(delivered.id, delivered.revision, {
+				adoptionId: '33333333-3333-4333-8333-333333333333',
+				adopter: '44444444-4444-4444-8444-444444444444',
+			}).attentionAdoption?.state,
+			'reserved',
+		)
 
 		const intent = attentionRun('notification-intent')
 		const cancelling = commands.requestCancel(intent.id, intent.revision)

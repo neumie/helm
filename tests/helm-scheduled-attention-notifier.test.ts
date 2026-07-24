@@ -5,7 +5,35 @@ import test from 'node:test'
 // @ts-expect-error default-import convention for that bridge
 import notifierModule from '../app/src/scheduled-attention-notifier.ts'
 type NotifierModule = typeof import('../app/src/scheduled-attention-notifier.ts')
-const { ScheduledAttentionNotifier, scheduledAttentionNotificationCopy } = notifierModule as NotifierModule
+const { ScheduledAttentionNotifier, scheduledAttentionNotificationCopy, showNativeAttentionNotification } =
+	notifierModule as NotifierModule
+
+test('native notification delivery waits for show and rejects asynchronous failure', async () => {
+	for (const [event, expected] of [
+		['show', true],
+		['failed', false],
+	] as const) {
+		const listeners = new Map<string, () => void>()
+		const result = showNativeAttentionNotification(
+			{
+				once: (name, listener) => listeners.set(name, listener),
+				show: () => queueMicrotask(() => listeners.get(event)?.()),
+			},
+			100,
+		)
+		assert.equal(await result, expected)
+	}
+	assert.equal(
+		await showNativeAttentionNotification(
+			{
+				once: () => undefined,
+				show: () => undefined,
+			},
+			1,
+		),
+		false,
+	)
+})
 
 const candidate = {
 	profileId: 'alpha',
@@ -32,14 +60,14 @@ function fixture(options: { show?: boolean; switchOk?: boolean; token?: string |
 		},
 		claim: async input => {
 			calls.push(`claim:${input.revision}`)
-			return { ...input, revision: 5, notificationClaimedAt: '2030-01-01T00:00:00.000Z' }
+			return { ...input, notificationClaimedAt: '2030-01-01T00:00:00.000Z' }
 		},
 		markDelivered: async input => {
 			calls.push(`delivered:${input.revision}`)
 			return true
 		},
 		notification: content => ({
-			show: () => {
+			show: async () => {
 				calls.push(`show:${content.title}:${content.body}`)
 				return options.show ?? true
 			},
@@ -118,7 +146,7 @@ test('notification click focuses, waits for a committed switch/current token, th
 		'focus',
 		'switch:alpha',
 		'token:alpha',
-		'adopt:alpha:run-1:5:fresh-adoption:app-adopter:alpha:9',
+		'adopt:alpha:run-1:4:fresh-adoption:app-adopter:alpha:9',
 	])
 	await f.notifier.stop()
 })
