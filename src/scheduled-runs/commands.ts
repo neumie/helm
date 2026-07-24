@@ -200,34 +200,50 @@ export class ScheduleCommands {
 	report(id: string, revision: number, kind: 'quiet' | 'needs_attention', summary: string): ScheduledRunRecord {
 		// Normalize before schema validation and idempotency so terminal controls never reach persistence.
 		const report = scheduledRunReportSchema.parse({ kind, summary: validateScheduledReportSummary(summary) })
+		// Quiet intent and report evidence are one crash-safe write boundary. A process
+		// death between the two statements rolls the transaction back instead of
+		// leaving a capacity-bearing running row with only half the report protocol.
+		return this.store.transaction(() => {
+			const run = this.store.requireRun(id)
+			if (run.reportKind) {
+				if (run.reportKind === report.kind && run.reportSummary === report.summary) return run
+				throw new Error('Scheduled run already has a conflicting report')
+			}
+			if (run.revision !== revision) throw new ScheduleRevisionConflictError()
+			if (run.state !== 'running') throw new Error('Only a running scheduled run can report')
+			if (run.pendingTerminalIntent && !(report.kind === 'quiet' && run.pendingTerminalIntent === 'quiet'))
+				throw new Error('Scheduled run already has a conflicting terminal intent')
+			const claimed = report.kind === 'quiet' ? this.claimTerminalIntent(id, revision, 'quiet') : run
+			return this.store.transitionRun(
+				id,
+				claimed.revision,
+				report.kind === 'quiet' ? 'reported_quiet' : 'needs_attention',
+				{
+					reportedAt: new Date().toISOString(),
+					reportKind: report.kind,
+					reportSummary: report.summary,
+				},
+			)
+		})
+	}
+	/** Materialize pre-migration request-state meaning before quarantine can erase it. */
+	materializeTerminalIntent(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (run.reportKind) {
-			if (run.reportKind === report.kind && run.reportSummary === report.summary) return run
-			throw new Error('Scheduled run already has a conflicting report')
-		}
-		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
-		if (run.state !== 'running') throw new Error('Only a running scheduled run can report')
-		if (run.pendingTerminalIntent) throw new Error('Scheduled run already has a conflicting terminal intent')
-		const claimed = report.kind === 'quiet' ? this.claimTerminalIntent(id, revision, 'quiet') : run
-		if (claimed.state !== 'running') throw new Error('Only a running scheduled run can report')
-		return this.store.transitionRun(
-			id,
-			claimed.revision,
-			report.kind === 'quiet' ? 'reported_quiet' : 'needs_attention',
-			{
-				reportedAt: new Date().toISOString(),
-				reportKind: report.kind,
-				reportSummary: report.summary,
-			},
-		)
+		if (run.pendingTerminalIntent) return run
+		let intent: ScheduledTerminalIntent | null = null
+		if (run.state === 'reported_quiet' || run.state === 'closing') intent = 'quiet'
+		else if (run.state === 'cancel_requested') intent = 'cancel'
+		else if (run.state === 'timeout_requested') intent = 'timeout'
+		return intent ? this.claimTerminalIntent(id, revision, intent) : run
 	}
 	beginClose(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (!['reported_quiet', 'closing', 'quarantined'].includes(run.state))
+		const recoveringPartialQuiet = run.state === 'running' && run.pendingTerminalIntent === 'quiet'
+		if (!recoveringPartialQuiet && !['reported_quiet', 'closing', 'quarantined'].includes(run.state))
 			throw new Error('Only a quiet reported run can close')
 		const claimed = this.claimTerminalIntent(id, revision, 'quiet')
 		if (claimed.state === 'closing' || claimed.state === 'quarantined') return claimed
-		return this.transition(claimed.id, claimed.revision, ['reported_quiet'], 'closing')
+		return this.transition(claimed.id, claimed.revision, ['running', 'reported_quiet'], 'closing')
 	}
 	closeQuiet(id: string, revision: number): ScheduledRunRecord {
 		return this.resolveTerminalIntent(id, revision, ['closing', 'quarantined'], 'closed_quiet', 'quiet')

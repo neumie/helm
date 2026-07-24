@@ -521,6 +521,60 @@ test('reconciliation resolves quarantined quiet, cancel, and timeout by their du
 	}
 })
 
+test('startup materializes legacy request-state intent and resolves a partial quiet claim exactly', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const legacyQuietRunning = createRecoverableRun(db, commands, 'Legacy quiet', 'running')
+		const legacyQuiet = db.schedules.transitionRun(legacyQuietRunning.id, legacyQuietRunning.revision, 'reported_quiet', {
+			reportedAt: new Date().toISOString(),
+			reportKind: 'quiet',
+			reportSummary: 'done before migration',
+		})
+		const legacyCancelRunning = createRecoverableRun(db, commands, 'Legacy cancel', 'running')
+		const legacyCancel = db.schedules.transitionRun(
+			legacyCancelRunning.id,
+			legacyCancelRunning.revision,
+			'cancel_requested',
+		)
+		const legacyTimeoutRunning = createRecoverableRun(db, commands, 'Legacy timeout', 'running')
+		const legacyTimeout = db.schedules.transitionRun(
+			legacyTimeoutRunning.id,
+			legacyTimeoutRunning.revision,
+			'timeout_requested',
+		)
+		const partialQuietRunning = createRecoverableRun(db, commands, 'Partial quiet', 'running')
+		const partialQuiet = db.schedules.claimPendingTerminalIntent(
+			partialQuietRunning.id,
+			partialQuietRunning.revision,
+			'quiet',
+		)
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+		})
+
+		await service.start()
+
+		for (const [run, expected] of [
+			[legacyQuiet, 'closed_quiet'],
+			[legacyCancel, 'cancelled'],
+			[legacyTimeout, 'timed_out'],
+			[partialQuiet, 'closed_quiet'],
+		] as const) {
+			const resolved = db.schedules.requireRun(run.id)
+			assert.equal(resolved.state, expected)
+			assert.equal(resolved.pendingTerminalIntent, null)
+		}
+		assert.equal(drainer.releaseCalls, 4)
+		await service.stop()
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('startup tick durably disables a persisted due system schedule after system targets are turned off', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
 	try {

@@ -510,7 +510,10 @@ export class ScheduledRunService {
 		commands: ScheduleCommands,
 		initial: ScheduledRunRecord,
 	): Promise<void> {
-		let run = initial
+		// Migration 29 deliberately leaves existing rows nullable. Preserve the
+		// exact request encoded by legacy lifecycle state before an unknown probe
+		// can replace that state with the generic quarantine state.
+		let run = commands.materializeTerminalIntent(initial.id, initial.revision)
 		const socket = await probeScheduledSocket(scheduledSocketPath(profileId, run.sessionId))
 		if (run.state === 'needs_attention') {
 			this.releaseReservation(run.id)

@@ -224,6 +224,21 @@ test('terminal intent is first-writer idempotent, conflict-fail-closed, and reta
 		const timeoutQuarantined = commands.markQuarantined(timeout.id, timeout.revision)
 		assert.equal(timeoutQuarantined.pendingTerminalIntent, 'timeout')
 		assert.equal(commands.markTimedOut(timeoutQuarantined.id, timeoutQuarantined.revision).pendingTerminalIntent, null)
+
+		const atomicQuiet = running('atomic-quiet')
+		const originalTransition = db.schedules.transitionRun
+		db.schedules.transitionRun = (() => {
+			throw new Error('simulated crash before report transition')
+		}) as typeof db.schedules.transitionRun
+		assert.throws(
+			() => commands.report(atomicQuiet.id, atomicQuiet.revision, 'quiet', 'done'),
+			/simulated crash/,
+		)
+		db.schedules.transitionRun = originalTransition
+		const rolledBack = db.schedules.requireRun(atomicQuiet.id)
+		assert.equal(rolledBack.state, 'running')
+		assert.equal(rolledBack.pendingTerminalIntent, null)
+		assert.equal(rolledBack.reportKind, null)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
