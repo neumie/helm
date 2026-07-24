@@ -60,7 +60,13 @@ function TerminalMenu({ group = false }: { group?: boolean }) {
 					role="menuitem"
 				>
 					<span className="menu-item-icon" aria-hidden="true">
-						{item === 'Rename…' ? '✎' : item === 'Close' || item === 'Delete' ? '×' : item === 'Move to profile…' ? '→' : '›'}
+						{item === 'Rename…'
+							? '✎'
+							: item === 'Close' || item === 'Delete'
+								? '×'
+								: item === 'Move to profile…'
+									? '→'
+									: '›'}
 					</span>
 					<span className="menu-item-label">{item}</span>
 					{index === 4 && !group ? <span className="menu-hint">⇧⌘B</span> : null}

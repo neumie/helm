@@ -527,11 +527,16 @@ test('startup materializes legacy request-state intent and resolves a partial qu
 		const db = new DB(join(root, 'helm.db'), 'work')
 		const commands = new ScheduleCommands(db.schedules)
 		const legacyQuietRunning = createRecoverableRun(db, commands, 'Legacy quiet', 'running')
-		const legacyQuiet = db.schedules.transitionRun(legacyQuietRunning.id, legacyQuietRunning.revision, 'reported_quiet', {
-			reportedAt: new Date().toISOString(),
-			reportKind: 'quiet',
-			reportSummary: 'done before migration',
-		})
+		const legacyQuiet = db.schedules.transitionRun(
+			legacyQuietRunning.id,
+			legacyQuietRunning.revision,
+			'reported_quiet',
+			{
+				reportedAt: new Date().toISOString(),
+				reportKind: 'quiet',
+				reportSummary: 'done before migration',
+			},
+		)
 		const legacyCancelRunning = createRecoverableRun(db, commands, 'Legacy cancel', 'running')
 		const legacyCancel = db.schedules.transitionRun(
 			legacyCancelRunning.id,
