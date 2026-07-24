@@ -82,7 +82,11 @@ export type HelmBridgeRequest = <T>(
 	path: string,
 	body?: unknown,
 	timeoutMs?: number,
+	headers?: Record<string, string>,
 ) => Promise<HelmResult<T>>
+
+/** Main-process-only resident lease transport; it is intentionally not registered as IPC. */
+export type ResidentLeaseOperation = 'issue' | 'heartbeat' | 'tick' | 'revoke'
 
 export interface HelmBridgeOptions {
 	/** Test seam; production uses the daemon HTTP client below. */
@@ -308,12 +312,13 @@ export class HelmBridge {
 		path: string,
 		body?: unknown,
 		timeoutMs = REQUEST_TIMEOUT_MS,
+		headers?: Record<string, string>,
 	): Promise<HelmResult<T>> {
-		if (this.options.request) return this.options.request<T>(method, path, body, timeoutMs)
+		if (this.options.request) return this.options.request<T>(method, path, body, timeoutMs, headers)
 		try {
 			const res = await fetch(`${this.baseUrl}/api${path}`, {
 				method,
-				headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+				headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: AbortSignal.timeout(timeoutMs),
 			})
@@ -325,6 +330,27 @@ export class HelmBridge {
 		} catch (err) {
 			return { error: errorMessage(err) }
 		}
+	}
+
+	/**
+	 * Narrow main-only transport for the Electron resident-admission controller.
+	 * It deliberately has no IPC registration: local-control auth and resident
+	 * capabilities must never reach a renderer, log, or daemon snapshot.
+	 */
+	async scheduledResidentLease<T>(
+		operation: ResidentLeaseOperation,
+		capability: string,
+		timeoutMs: number,
+	): Promise<HelmResult<T>> {
+		const paths: Record<ResidentLeaseOperation, string> = {
+			issue: '/scheduled-runs/lease',
+			heartbeat: '/scheduled-runs/lease/heartbeat',
+			tick: '/scheduled-runs/lease/tick',
+			revoke: '/scheduled-runs/lease/revoke',
+		}
+		return operation === 'issue'
+			? this.request<T>('POST', paths.issue, undefined, timeoutMs, { Authorization: `Bearer ${capability}` })
+			: this.request<T>('POST', paths[operation], { capability }, timeoutMs)
 	}
 
 	/** Run Context token policy lives in the bridge-owned operations helper. */

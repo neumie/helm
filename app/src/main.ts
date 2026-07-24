@@ -13,6 +13,7 @@ import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
+import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { TerminalTransferEvent } from './shared'
@@ -27,6 +28,10 @@ const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://local
 // Single owner of daemon HTTP: one poller + command proxy, pushed to the
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
 const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken())
+// Main-owned only: its local-control token and resident capability never cross IPC.
+const scheduledResidency = new ElectronResidencyController({
+	request: helmBridge.scheduledResidentLease.bind(helmBridge),
+})
 let profileSwitchCoordinator: ProfileSwitchCoordinator | null = null
 let activeProfileSwitch: Promise<HelmResult<ProfileActivationResult>> | null = null
 let pendingEditorQuit = false
@@ -523,6 +528,8 @@ function flushRendererBuffers(win: BrowserWindow, timeoutMs: number): Promise<vo
 
 /** True once app.quit() started — a flush-intercepted close must resume QUIT, not just re-close. */
 let quitRequested = false
+/** Set only after guarded before-quit has stopped resident admission. */
+let residencyStoppedForQuit = false
 
 // --- Screenshot harness ----------------------------------------------------------
 
@@ -1782,6 +1789,9 @@ void app.whenReady().then(async () => {
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
 	buildMenu()
 	helmBridge.start()
+	// Screenshot harnesses use app.exit(), bypassing guarded lease revocation, and
+	// must never admit real scheduled work as a side effect of rendering fixtures.
+	if (!screenshotPath) void scheduledResidency.start()
 	createWindow()
 	if (profileSwitchAttestationMode) {
 		void runProfileSwitchAttestation()
@@ -1826,11 +1836,21 @@ app.on('before-quit', event => {
 		runContextWindows.requestCloseAll()
 		return
 	}
+	if (!residencyStoppedForQuit) {
+		event.preventDefault()
+		void scheduledResidency.stop().finally(() => {
+			residencyStoppedForQuit = true
+			app.quit()
+		})
+		return
+	}
 	quitRequested = true
 })
 
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
+	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
+	// shutdown always follows the final resident lease attempt.
 	helmBridge.stop()
 	killAllPtyClients()
 	sessionSupport?.registry.flush()
