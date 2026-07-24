@@ -17,7 +17,14 @@ import {
 	stripDropInsertionIndex,
 	tabStripAutoScrollDelta,
 } from './tab-drag'
-import { type TabGroupSection, composeTabGroups } from './tab-groups'
+import {
+	type TabGroupSection,
+	composeTabGroups,
+	mergeGroupPeers,
+	shouldReloadCollapsedGroup,
+	tabGroupMembersId,
+	tabsWithGroupId,
+} from './tab-groups'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import { terminalShortcut } from './terminal-keybindings'
 import {
@@ -218,13 +225,44 @@ function groupHeader(section: TabGroupSection): HTMLElement {
 	const toggle = document.createElement('button')
 	toggle.type = 'button'
 	toggle.className = 'tab-group-header tab-group-toggle'
+	toggle.dataset.tabGroupHeader = 'true'
+	toggle.dataset.groupId = section.groupId as string
+	toggle.dataset.surface = section.surface
 	toggle.textContent = section.name
 	toggle.setAttribute('aria-expanded', String(!section.collapsed))
+	toggle.setAttribute('aria-controls', tabGroupMembersId(section.groupId, section.surface))
 	toggle.title = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
 	toggle.addEventListener('click', () =>
 		setGroupCollapsed(section.groupId as string, section.surface, !section.collapsed),
 	)
 	return toggle
+}
+
+interface FocusedGroupHeader {
+	groupId: string
+	surface: TabGroupSurface
+}
+
+function focusedGroupHeader(root: HTMLElement): FocusedGroupHeader | null {
+	const header =
+		document.activeElement instanceof HTMLElement
+			? document.activeElement.closest<HTMLElement>('[data-tab-group-header]')
+			: null
+	if (!header || !root.contains(header)) return null
+	const groupId = header.dataset.groupId
+	const surface = header.dataset.surface
+	if (!groupId || (surface !== 'strip' && surface !== 'background')) return null
+	return { groupId, surface }
+}
+
+function restoreFocusedGroupHeader(root: HTMLElement, focused: FocusedGroupHeader | null): void {
+	if (!focused) return
+	for (const header of root.querySelectorAll<HTMLElement>('[data-tab-group-header]')) {
+		if (header.dataset.groupId === focused.groupId && header.dataset.surface === focused.surface) {
+			header.focus()
+			return
+		}
+	}
 }
 
 function tabGroupComposition() {
@@ -243,6 +281,7 @@ function tabGroupComposition() {
 }
 
 function renderTabGroups(): void {
+	const focusedHeader = focusedGroupHeader(tabsEl)
 	const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
 	tabsEl.textContent = ''
 	for (const section of tabGroupComposition().strip) {
@@ -251,6 +290,7 @@ function renderTabGroups(): void {
 		sectionEl.append(groupHeader(section))
 		const membersEl = document.createElement('div')
 		membersEl.className = 'tab-group-members'
+		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
 		membersEl.setAttribute('role', 'tablist')
 		membersEl.setAttribute('aria-label', `${section.name} terminals`)
 		const peersVisible = section.groupId !== null && section.groupId === dragVisibleGroupId
@@ -266,6 +306,7 @@ function renderTabGroups(): void {
 		sectionEl.append(membersEl)
 		tabsEl.append(sectionEl)
 	}
+	restoreFocusedGroupHeader(tabsEl, focusedHeader)
 }
 
 function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): void {
@@ -277,9 +318,14 @@ function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed:
 	)
 	renderTabGroups()
 	updateBackgroundUi()
-	void helm.sessions.groups.setCollapsed(groupId, surface, collapsed).catch(() => {
-		if (version === tabGroupsVersion) loadTabGroups()
-	})
+	void helm.sessions.groups
+		.setCollapsed(groupId, surface, collapsed)
+		.then(accepted => {
+			if (shouldReloadCollapsedGroup(version, tabGroupsVersion, accepted)) loadTabGroups()
+		})
+		.catch(() => {
+			if (shouldReloadCollapsedGroup(version, tabGroupsVersion, false)) loadTabGroups()
+		})
 }
 
 function loadTabGroups(): void {
@@ -319,6 +365,9 @@ function renderTabAgentState(tab: Tab): void {
 		setActivityIndicatorState(tab.runningEl, 'progress', 'Running')
 	}
 	renderTabLabel(tab)
+	// Real OSC state changes can change a collapsed group's representative.
+	// Callers return before this function for idempotent active keepalives.
+	renderTabGroups()
 	if (tab.parked) updateBackgroundUi()
 }
 
@@ -909,7 +958,8 @@ function updateBackgroundUi(): void {
 }
 
 function renderBackgroundRows(): void {
-	// Preserve the row across re-renders (OSC activity / exit / title updates).
+	// Preserve the row or a disclosure header across activity/title re-renders.
+	const focusedHeader = focusedGroupHeader(bgRows)
 	const focusedRow = document.activeElement?.closest<HTMLElement>('.bg-row')
 	const focusedId = focusedRow?.dataset.tabId ?? null
 	bgRows.textContent = ''
@@ -989,6 +1039,8 @@ function renderBackgroundRows(): void {
 			candidate => candidate.dataset.tabId === focusedId,
 		)
 		if (!row?.hidden) row?.querySelector<HTMLElement>('.bg-open')?.focus()
+	} else {
+		restoreFocusedGroupHeader(bgRows, focusedHeader)
 	}
 }
 
@@ -1128,11 +1180,13 @@ function updateTabDragTarget(drag: TabPointerDrag): void {
 	}
 
 	drag.dropTarget = 'strip'
+	const peers = tabsWithGroupId(tabs, drag.tab.groupId)
 	const insertionIndex = stripDropInsertionIndex(
 		drag.x,
-		tabs.map(tab => tab.tabButton.getBoundingClientRect()),
+		peers.map(tab => tab.tabButton.getBoundingClientRect()),
 	)
-	setTabOrder(moveToInsertionIndex(tabs, drag.tab, insertionIndex), true)
+	const reorderedPeers = moveToInsertionIndex(peers, drag.tab, insertionIndex)
+	setTabOrder(mergeGroupPeers(tabs, drag.tab.groupId, reorderedPeers), true)
 	positionTabPreview(drag)
 }
 

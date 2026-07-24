@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import tabGroupModule from '../app/src/renderer/tab-groups.ts'
 import type { TabGroupRendererTab } from '../app/src/renderer/tab-groups.ts'
 import type { TabGroup } from '../app/src/shared.ts'
 
 type TabGroupModule = typeof import('../app/src/renderer/tab-groups.ts')
-const { collapsedGroupProxy, composeTabGroups, tabGroupActionTargets } = tabGroupModule as TabGroupModule
+const {
+	collapsedGroupProxy,
+	composeTabGroups,
+	mergeGroupPeers,
+	shouldReloadCollapsedGroup,
+	tabGroupActionTargets,
+	tabGroupMembersId,
+	tabsWithGroupId,
+} = tabGroupModule as TabGroupModule
+const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
 
 const groups: TabGroup[] = [
 	{ id: 'group-11111111', name: 'Build', collapsedStrip: true, collapsedBackground: false },
@@ -242,6 +252,69 @@ test('named group action targets are deterministic ordered snapshots and Ungroup
 	])
 	assert.deepEqual(ungrouped.actionTargets, [])
 	assert.deepEqual(tabGroupActionTargets(ungrouped), [])
+})
+
+test('drag reorders same-group peers only and merges them back without moving other groups', () => {
+	const groupA = { id: 'a', groupId: 'group-a' }
+	const ungrouped = { id: 'u', groupId: null }
+	const groupB = { id: 'b', groupId: 'group-a' }
+	const other = { id: 'x', groupId: 'group-b' }
+	const flat = [groupA, ungrouped, groupB, other]
+	const peers = tabsWithGroupId(flat, 'group-a')
+
+	assert.deepEqual(
+		peers.map(tab => tab.id),
+		['a', 'b'],
+	)
+	assert.deepEqual(
+		mergeGroupPeers(flat, 'group-a', [groupB, groupA]).map(tab => tab.id),
+		['b', 'u', 'a', 'x'],
+	)
+	assert.deepEqual(
+		mergeGroupPeers(flat, 'group-a', [groupA]).map(tab => tab.id),
+		['a', 'u', 'b', 'x'],
+	)
+})
+
+test('collapse rollback only reloads a current rejected or false write', () => {
+	assert.equal(shouldReloadCollapsedGroup(3, 3, true), false)
+	assert.equal(shouldReloadCollapsedGroup(3, 3, false), true)
+	assert.equal(shouldReloadCollapsedGroup(3, 4, false), false)
+	assert.match(
+		renderer,
+		/\.then\(accepted => \{\n\s*if \(shouldReloadCollapsedGroup\(version, tabGroupsVersion, accepted\)\) loadTabGroups\(\)/,
+	)
+	assert.match(
+		renderer,
+		/\.catch\(\(\) => \{\n\s*if \(shouldReloadCollapsedGroup\(version, tabGroupsVersion, false\)\) loadTabGroups\(\)/,
+	)
+})
+
+test('restored membership and disclosure aria ids stay stable across a group rerender', () => {
+	assert.equal(tabGroupMembersId('group-11111111', 'strip'), 'tab-group-members-strip-group-11111111')
+	assert.equal(tabGroupMembersId('group-11111111', 'background'), 'tab-group-members-background-group-11111111')
+	assert.match(renderer, /groupId: session\.groupId/)
+	assert.match(
+		renderer,
+		/toggle\.setAttribute\('aria-controls', tabGroupMembersId\(section\.groupId, section\.surface\)\)/,
+	)
+	assert.match(renderer, /membersEl\.id = tabGroupMembersId\(section\.groupId, section\.surface\)/)
+	assert.match(renderer, /restoreFocusedGroupHeader\(tabsEl, focusedHeader\)/)
+	assert.match(renderer, /restoreFocusedGroupHeader\(bgRows, focusedHeader\)/)
+})
+
+test('real OSC state transitions refresh collapsed representatives while keepalives remain idempotent', () => {
+	const runningSetter = renderer.slice(
+		renderer.indexOf('function setTabAgentRunning'),
+		renderer.indexOf('// ---------- manual rename'),
+	)
+	const agentRender = renderer.slice(
+		renderer.indexOf('function renderTabAgentState'),
+		renderer.indexOf('function setTabAgentAttention'),
+	)
+	assert.match(runningSetter, /if \(tab\.agentRunning === running\) return/)
+	assert.match(runningSetter, /renderTabAgentState\(tab\)/)
+	assert.match(agentRender, /renderTabGroups\(\)/)
 })
 
 test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {

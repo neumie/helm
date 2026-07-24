@@ -69,6 +69,47 @@ export interface TabGroupCompositionInput {
 	activeTabId: string | null
 }
 
+/** Stable disclosure target for one group's independently-collapsible surface. */
+export function tabGroupMembersId(groupId: string | null, surface: TabGroupSurface): string {
+	return `tab-group-members-${surface}-${groupId ?? 'ungrouped'}`
+}
+
+/**
+ * A drag only measures and reorders peers from the dragged tab's own group.
+ * Ungrouped tabs are one peer set too, identified by their shared null id.
+ */
+export function tabsWithGroupId<T extends { groupId: string | null }>(tabs: readonly T[], groupId: string | null): T[] {
+	return tabs.filter(tab => tab.groupId === groupId)
+}
+
+/**
+ * Reinsert an already-reordered group peer sequence into a flat tab order.
+ * Non-peers retain both their positions relative to the flat order and their
+ * relative order, so dragging one group can never move another group.
+ */
+export function mergeGroupPeers<T extends { groupId: string | null }>(
+	tabs: readonly T[],
+	groupId: string | null,
+	reorderedPeers: readonly T[],
+): T[] {
+	const peers = tabsWithGroupId(tabs, groupId)
+	if (
+		peers.length !== reorderedPeers.length ||
+		new Set(peers).size !== peers.length ||
+		new Set(reorderedPeers).size !== reorderedPeers.length ||
+		peers.some(peer => !reorderedPeers.includes(peer))
+	) {
+		return [...tabs]
+	}
+	let peerIndex = 0
+	return tabs.map(tab => (tab.groupId === groupId ? (reorderedPeers[peerIndex++] ?? tab) : tab))
+}
+
+/** A stale collapse write (false or rejected) reloads only if it is still current. */
+export function shouldReloadCollapsedGroup(requestVersion: number, currentVersion: number, accepted: boolean): boolean {
+	return requestVersion === currentVersion && !accepted
+}
+
 const UNGROUPED_ID = 'ungrouped'
 const UNGROUPED_NAME = 'Ungrouped'
 
