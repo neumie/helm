@@ -43,7 +43,7 @@ function TerminalGroup({
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
 				{name}
 			</button>
-			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`}>
+			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`} hidden={collapsed}>
 				{children}
 			</div>
 		</div>

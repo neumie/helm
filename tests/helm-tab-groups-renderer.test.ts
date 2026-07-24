@@ -7,7 +7,6 @@ import type { TabGroup } from '../app/src/shared.ts'
 
 type TabGroupModule = typeof import('../app/src/renderer/tab-groups.ts')
 const {
-	collapsedGroupProxy,
 	composeTabGroups,
 	mergeGroupPeers,
 	shouldReloadCollapsedGroup,
@@ -114,11 +113,16 @@ test('composes canonical surface sections while stale membership returns to the 
 	assert.equal(composition.strip[0]?.members[1]?.active, false)
 })
 
-test('collapsed members override explicit tab and background-row display styles', () => {
-	assert.match(styles, /\.tab\[hidden\],[\s\S]*\.bg-row\[hidden\][^{]*\{[^}]*display:\s*none/)
+test('collapsed groups hide their entire mounted members container despite explicit display styles', () => {
+	assert.match(styles, /\.tab-group-members\[hidden\],[\s\S]*\.bg-group-members\[hidden\][^{]*\{[^}]*display:\s*none/)
+	assert.equal(
+		[...renderer.matchAll(/membersEl\.hidden = section\.collapsed/g)].length,
+		2,
+		'strip and Background must both hide every member',
+	)
 })
 
-test('collapse state is independent per surface and collapsed proxies prefer active, attention, running, then canonical first', () => {
+test('collapse state is independent per surface and exposes no representative tab or row', () => {
 	const composition = composeTabGroups({ tabs, groups, activeTabId: 'build-active' })
 	const build = composition.strip[0]
 	const review = composition.background[0]
@@ -126,23 +130,9 @@ test('collapse state is independent per surface and collapsed proxies prefer act
 	assert.ok(review)
 
 	assert.equal(build.collapsed, true)
-	assert.equal(build.visibleMembers.length, 1)
-	assert.deepEqual(build.proxy, {
-		id: 'build-active',
-		groupId: 'group-11111111',
-		parked: false,
-		name: 'Build active',
-		agentRunning: false,
-		agentAttention: false,
-		active: true,
-		proxyForId: 'build-active',
-	})
+	assert.deepEqual(build.visibleMembers, [])
 	assert.equal(review.collapsed, true)
-	assert.equal(review.visibleMembers.length, 1)
-	assert.equal(review.proxy?.proxyForId, 'review-attention')
-	assert.equal(review.proxy?.name, 'Review attention')
-	assert.equal(review.proxy?.agentAttention, true)
-	assert.equal(review.proxy?.agentRunning, false)
+	assert.deepEqual(review.visibleMembers, [])
 
 	const independent = composeTabGroups({
 		tabs: [
@@ -159,39 +149,13 @@ test('collapse state is independent per surface and collapsed proxies prefer act
 		activeTabId: null,
 	})
 	assert.equal(independent.background[0]?.collapsed, false)
-	assert.equal(independent.background[0]?.proxy, null)
 	assert.deepEqual(
 		independent.background[0]?.visibleMembers.map(member => member.id),
 		['build-background'],
 	)
-
-	assert.equal(collapsedGroupProxy([]), null)
-	assert.equal(
-		collapsedGroupProxy([
-			{
-				id: 'first',
-				groupId: null,
-				parked: false,
-				name: 'First',
-				agentRunning: false,
-				agentAttention: false,
-				active: false,
-			},
-			{
-				id: 'running',
-				groupId: null,
-				parked: false,
-				name: 'Running',
-				agentRunning: true,
-				agentAttention: false,
-				active: false,
-			},
-		])?.proxyForId,
-		'running',
-	)
 })
 
-test('collapsed proxy projection does not mutate input tabs or duplicate a terminal identity', () => {
+test('collapsed projection does not mutate input tabs or duplicate a terminal identity', () => {
 	const before = structuredClone(tabs)
 	const duplicate: TabGroupRendererTab = {
 		id: 'build-active',
@@ -215,10 +179,7 @@ test('collapsed proxy projection does not mutate input tabs or duplicate a termi
 	assert.deepEqual(tabs, before)
 	assert.deepEqual(allMemberIds, [...new Set(allMemberIds)])
 	assert.equal(allMemberIds.filter(id => id === 'build-active').length, 1)
-	assert.deepEqual(
-		composition.strip[0]?.visibleMembers.map(member => member.id),
-		['build-active'],
-	)
+	assert.deepEqual(composition.strip[0]?.visibleMembers, [])
 })
 
 test('only named groups have headings or deterministic bulk commands', () => {
@@ -316,7 +277,7 @@ test('restored membership and disclosure aria ids stay stable across a group rer
 	assert.match(renderer, /restoreFocusedGroupHeader\(bgRows, focusedHeader\)/)
 })
 
-test('real OSC state transitions refresh collapsed representatives while keepalives remain idempotent', () => {
+test('real OSC state transitions refresh group rendering while keepalives remain idempotent', () => {
 	const runningSetter = renderer.slice(
 		renderer.indexOf('function setTabAgentRunning'),
 		renderer.indexOf('// ---------- manual rename'),
@@ -368,34 +329,4 @@ test('profile move menu leaves freeze and rollback exclusively to the transfer c
 	assert.doesNotMatch(menu, /tab\.transferring = true/)
 	assert.doesNotMatch(menu, /disableStdin = false/)
 	assert.match(menu, /helm\.terminalTransfer\.move/)
-})
-
-test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {
-	const composition = composeTabGroups({
-		tabs: [
-			{
-				id: 'selected',
-				groupId: 'group-11111111',
-				parked: false,
-				name: 'Deploy',
-				agentRunning: true,
-				agentAttention: true,
-			},
-			{
-				id: 'other',
-				groupId: 'group-11111111',
-				parked: false,
-				name: 'Tests',
-				agentRunning: false,
-				agentAttention: false,
-			},
-		],
-		groups,
-		activeTabId: 'selected',
-	})
-	const proxy = composition.strip[0]?.proxy
-	assert.equal(proxy?.proxyForId, 'selected')
-	assert.equal(proxy?.name, 'Deploy')
-	assert.equal(proxy?.agentRunning, true)
-	assert.equal(proxy?.agentAttention, true)
 })

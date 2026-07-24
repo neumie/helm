@@ -224,7 +224,7 @@ button:focus-visible,
 .tab-group-toggle {
 	border: 0;
 	border-radius: var(--radius-md);
-	background: color-mix(in srgb, var(--group-color) 15%, transparent);
+	background: none;
 	color: var(--group-color);
 	font-family: inherit;
 	cursor: pointer;
@@ -242,7 +242,7 @@ button:focus-visible,
 }
 
 .tab-group-toggle:hover {
-	background: color-mix(in srgb, var(--group-color) 24%, transparent);
+	background: var(--fill-subtle);
 	color: var(--group-color);
 }
 
@@ -265,22 +265,26 @@ button:focus-visible,
 }
 
 /* Author display rules override the HTML hidden state unless this explicit
- * rule wins. Collapse keeps peers mounted but removes them from layout. */
-.tab[hidden],
-.bg-row[hidden] {
+ * rule wins. Collapse keeps terminal DOM mounted while hiding every member. */
+.tab-group-members[hidden],
+.bg-group-members[hidden] {
 	display: none;
 }
 
-.tab-group-section .tab::before {
+.tab-group-section > .tab-group-members {
+	position: relative;
+}
+
+.tab-group-section > .tab-group-members::before {
 	position: absolute;
 	top: 0;
-	left: 7px;
-	right: 7px;
+	left: 4px;
+	right: 4px;
 	height: 2px;
 	border-radius: 999px;
 	background: var(--group-color);
 	content: "";
-	opacity: 0.82;
+	opacity: 0.9;
 }
 
 body.tab-dragging,
@@ -669,16 +673,21 @@ body.tab-dragging .tab {
 	transition: background-color 140ms ease-out;
 }
 
-.bg-group-section .bg-row::before {
+.bg-group-section > .bg-group-members {
+	position: relative;
+	padding-top: 3px;
+}
+
+.bg-group-section > .bg-group-members::before {
 	position: absolute;
-	top: 6px;
-	bottom: 6px;
-	left: 3px;
-	width: 2px;
+	top: 0;
+	left: 12px;
+	right: 12px;
+	height: 2px;
 	border-radius: 999px;
 	background: var(--group-color);
 	content: "";
-	opacity: 0.82;
+	opacity: 0.9;
 }
 
 .bg-row:hover,

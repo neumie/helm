@@ -193,7 +193,6 @@ interface Tab {
 const tabs: Tab[] = []
 let tabGroups: TabGroup[] = []
 let tabGroupsVersion = 0
-let dragVisibleGroupId: string | null = null
 let nextVisualTabId = 1
 // Background terminals (iTerm "bury session" analog): parked tabs leave the
 // strip but keep their Terminal instance mounted in the hidden holder — the
@@ -313,14 +312,13 @@ function renderTabGroups(): void {
 		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
 		membersEl.setAttribute('role', 'tablist')
 		membersEl.setAttribute('aria-label', section.kind === 'group' ? `${section.name} terminals` : 'Terminals')
-		const peersVisible = section.groupId !== null && section.groupId === dragVisibleGroupId
+		membersEl.hidden = section.collapsed
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
 			if (!tab) continue
-			// Keep collapsed peers mounted so their DOM identity, listeners, and
-			// drag geometry return intact. The representative remains visible;
-			// dragging it temporarily exposes its same-group peers.
-			tab.tabButton.hidden = section.collapsed && !peersVisible && member.id !== section.proxy?.proxyForId
+			// Members stay mounted so terminal DOM identity and listeners survive
+			// collapse, but the entire group container leaves the visual/a11y tree.
+			tab.tabButton.hidden = false
 			membersEl.append(tab.tabButton)
 		}
 		sectionEl.append(membersEl)
@@ -1105,6 +1103,7 @@ function renderBackgroundRows(): void {
 		const membersEl = document.createElement('div')
 		membersEl.className = 'bg-group-members'
 		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
+		membersEl.hidden = section.collapsed
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
 			if (!tab) continue
@@ -1118,7 +1117,6 @@ function renderBackgroundRows(): void {
 			const row = document.createElement('div')
 			row.className = `bg-row${activeTab === tab ? ' active' : ''}`
 			row.dataset.tabId = tabIdentity(tab)
-			row.hidden = section.collapsed && member.id !== section.proxy?.proxyForId
 
 			const open = document.createElement('button')
 			open.className = 'bg-open'
@@ -1354,7 +1352,6 @@ function startTabPointerDrag(drag: TabPointerDrag): void {
 	document.body.appendChild(preview)
 	drag.preview = preview
 	drag.tab.tabButton.classList.add('drag-placeholder')
-	dragVisibleGroupId = drag.tab.groupId
 	renderTabGroups()
 	document.body.classList.add('tab-dragging')
 	bgToggle.hidden = false
@@ -1427,7 +1424,6 @@ function finishTabPointerDrag(cancelled: boolean): void {
 		target = drag.tab.tabButton.getBoundingClientRect()
 	}
 
-	dragVisibleGroupId = null
 	renderTabGroups()
 	document.body.classList.remove('tab-dragging')
 	bgToggle.classList.remove('drag-ready', 'drag-over')

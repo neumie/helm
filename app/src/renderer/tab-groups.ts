@@ -20,14 +20,6 @@ export interface TabGroupMember extends TabGroupRendererTab {
 	active: boolean
 }
 
-/**
- * A collapsed group exposes one projection rather than moving or cloning its
- * terminal tab. Its source member is always present in `members`.
- */
-export interface CollapsedTabGroupProxy extends TabGroupMember {
-	proxyForId: string
-}
-
 export type TabGroupAction = 'open' | 'restore' | 'background' | 'close'
 
 /**
@@ -53,9 +45,8 @@ export interface TabGroupSection {
 	collapsed: boolean
 	/** All members on this surface, in canonical renderer order. */
 	members: readonly TabGroupMember[]
-	/** One proxy when collapsed, otherwise the real ordered members. */
+	/** Empty while collapsed; otherwise the real ordered members. */
 	visibleMembers: readonly TabGroupMember[]
-	proxy: CollapsedTabGroupProxy | null
 	/** Named group commands appropriate to this surface; ungrouped terminals have none. */
 	actionTargets: readonly TabGroupActionTarget[]
 }
@@ -142,20 +133,6 @@ function membersFor(
 	return buckets
 }
 
-/**
- * Active wins for a collapsed proxy. Otherwise attention has priority over
- * running, then the first member in canonical order, preserving activity
- * discoverability without synthesizing group state.
- */
-export function collapsedGroupProxy(members: readonly TabGroupMember[]): CollapsedTabGroupProxy | null {
-	const representative =
-		members.find(member => member.active) ??
-		members.find(member => member.agentAttention) ??
-		members.find(member => member.agentRunning) ??
-		members[0]
-	return representative ? { ...representative, proxyForId: representative.id } : null
-}
-
 /** Returns the deterministic bulk commands available for a named group section. */
 export function tabGroupActionTargets(
 	section: Pick<TabGroupSection, 'groupId' | 'surface' | 'members'>,
@@ -188,7 +165,6 @@ function composeSurface(
 	return [...buckets.entries()].map(([groupId, members]) => {
 		const group = groupId === null ? null : (groups.get(groupId) ?? null)
 		const collapsed = group !== null && (surface === 'strip' ? group.collapsedStrip : group.collapsedBackground)
-		const proxy = collapsed ? collapsedGroupProxy(members) : null
 		const section: TabGroupSection = {
 			kind: group === null ? 'ungrouped' : 'group',
 			id: group?.id ?? UNGROUPED_ID,
@@ -198,8 +174,7 @@ function composeSurface(
 			surface,
 			collapsed,
 			members,
-			visibleMembers: proxy ? [proxy] : members,
-			proxy,
+			visibleMembers: collapsed ? [] : members,
 			actionTargets: [],
 		}
 		section.actionTargets = tabGroupActionTargets(section)
@@ -225,4 +200,4 @@ export function composeTabGroups({ tabs, groups, activeTabId }: TabGroupComposit
 	}
 }
 
-export default { collapsedGroupProxy, composeTabGroups, tabGroupActionTargets, tabGroupHeading }
+export default { composeTabGroups, tabGroupActionTargets, tabGroupHeading }
