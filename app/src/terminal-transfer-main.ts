@@ -4,6 +4,7 @@
 // register an in-process capability before a move can begin; until that future
 // hand-off exists, every request fails closed without detaching a client.
 
+import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { BufferStore } from './buffers'
@@ -72,6 +73,10 @@ export interface TerminalTransferPreflightRequest {
 export interface TerminalTransferMainAdapterDeps {
 	userDataDir: string
 	runtime: TerminalTransferProfileRuntime
+	/** Main-only detach of Helm's attach client; never signals the dtach master. */
+	detachAttachClient?(sessionId: string): Promise<boolean> | boolean
+	/** Reattaches a source client only after a verified rollback. */
+	attachSourceClient?(sessionId: string): Promise<boolean> | boolean
 	journal?: TerminalTransferJournalStore
 	captureMaster?(socketPath: string): Promise<sessions.DtachMasterEvidence | null>
 	attestMaster?(socketPath: string, expected: sessions.DtachMasterEvidence): Promise<'verified' | 'dead' | 'unknown'>
@@ -93,6 +98,8 @@ export class TerminalTransferMainAdapter {
 	) => Promise<'verified' | 'dead' | 'unknown'>
 	readonly #renameSocket: (sourceSocket: string, destinationSocket: string) => Promise<void>
 	readonly #probeSocket: (socketPath: string) => Promise<sessions.SocketProbe>
+	readonly #detachAttachClient: (sessionId: string) => Promise<boolean>
+	readonly #attachSourceClient: (sessionId: string) => Promise<boolean>
 	readonly #capabilities = new Map<string, TerminalTransferRendererCapability>()
 	readonly #coordinator: TerminalTransferCoordinator
 	#activeRequest: TerminalTransferMoveRequest | null = null
@@ -107,6 +114,8 @@ export class TerminalTransferMainAdapter {
 		this.#renameSocket =
 			deps.renameSocket ?? (async (source, destination) => sessions.renameSocketEntry(source, destination))
 		this.#probeSocket = deps.probeSocket ?? sessions.probeSocket
+		this.#detachAttachClient = async sessionId => deps.detachAttachClient?.(sessionId) === true
+		this.#attachSourceClient = async sessionId => deps.attachSourceClient?.(sessionId) === true
 		this.#coordinator = new TerminalTransferCoordinator({
 			journal: this.#journal,
 			runExclusive: async operation => operation(),
@@ -120,6 +129,10 @@ export class TerminalTransferMainAdapter {
 
 	isBusy(): boolean {
 		return this.#busy
+	}
+
+	isSessionBusy(sessionId: string): boolean {
+		return this.#activeRequest?.sessionId === sessionId
 	}
 
 	whenIdle(): Promise<void> {
@@ -242,26 +255,39 @@ export class TerminalTransferMainAdapter {
 			return null
 		const event = (type: TerminalTransferEventType): TerminalTransferEvent => ({
 			type,
+			transactionId: crypto.randomUUID(),
 			sessionId,
 			sourceProfileId: request.sourceProfileId,
 			destinationProfileId: request.destinationProfileId,
+			profileToken: request.profileToken,
 		})
 		let released = false
 		return {
 			prepare: async () => {
 				const acknowledgement = await capability.dispatch(event('prepare'))
-				return isPrepareAcknowledgement(acknowledgement)
-					? acknowledgement
-					: { snapshotFlushed: false, activity: { agentRunning: false, agentAttention: false } }
+				if (!isPrepareAcknowledgement(acknowledgement))
+					return { snapshotFlushed: false, activity: { agentRunning: false, agentAttention: false } }
+				const metadata = (
+					acknowledgement as unknown as {
+						prepared: { metadata: { agentRunning: boolean; agentAttention: boolean } }
+					}
+				).prepared.metadata
+				return {
+					snapshotFlushed: true,
+					activity: { agentRunning: metadata.agentRunning, agentAttention: metadata.agentAttention },
+				}
 			},
 			detachAttachClient: async () => {
-				await capability.dispatch(event('detach-source-client'))
+				if (!(await this.#detachAttachClient(sessionId))) throw new Error('source attach client is unavailable')
 			},
-			attachDestinationClient: async () => {
-				await capability.dispatch(event('attach-destination-client'))
+			commitSource: async () => {
+				await capability.dispatch(event('commit'))
+			},
+			rollbackSource: async () => {
+				await capability.dispatch(event('rollback'))
 			},
 			attachSourceClient: async () => {
-				await capability.dispatch(event('attach-source-client'))
+				if (!(await this.#attachSourceClient(sessionId))) throw new Error('source attach client could not be restored')
 			},
 			release: () => {
 				if (released) return
@@ -338,8 +364,13 @@ function isPrepareAcknowledgement(
 ): value is { snapshotFlushed: boolean; activity: { agentRunning: boolean; agentAttention: boolean } } {
 	if (!value || typeof value !== 'object') return false
 	const candidate = value as Record<string, unknown>
-	if (typeof candidate.snapshotFlushed !== 'boolean' || !candidate.activity || typeof candidate.activity !== 'object')
-		return false
-	const activity = candidate.activity as Record<string, unknown>
+	// Renderer controller returns { status, prepared: { metadata } }; retain this
+	// narrow decoding here so the coordinator never sees renderer DOM state.
+	const metadata =
+		candidate.status === 'prepared' && candidate.prepared && typeof candidate.prepared === 'object'
+			? (candidate.prepared as { metadata?: unknown }).metadata
+			: undefined
+	if (!metadata || typeof metadata !== 'object') return false
+	const activity = metadata as Record<string, unknown>
 	return typeof activity.agentRunning === 'boolean' && typeof activity.agentAttention === 'boolean'
 }

@@ -15,18 +15,22 @@ import type {
  * not part of HelmApi yet: no preload IPC can start a transfer until a future
  * renderer capability performs the snapshot/attach hand-off.
  */
-export type TerminalTransferEventType =
-	| 'prepare'
-	| 'detach-source-client'
-	| 'attach-destination-client'
-	| 'attach-source-client'
+export type TerminalTransferEventType = 'prepare' | 'commit' | 'rollback'
 
+/** Main→source-renderer command for one token-bound terminal hand-off. */
 export interface TerminalTransferEvent {
 	type: TerminalTransferEventType
+	transactionId: string
 	sessionId: string
 	sourceProfileId: string
 	destinationProfileId: string
+	profileToken: string
 }
+
+export type TerminalTransferMoveResult =
+	| { status: 'moved' }
+	| { status: 'busy' | 'quarantined' }
+	| { status: 'rejected'; reason: string }
 
 export interface PtySpawnResult {
 	id: number
@@ -48,8 +52,16 @@ export type TerminalTransferPreflight =
  * capability hand-off, which is not IPC-wired yet.
  */
 export interface TerminalTransferApi {
+	/** Captured at preload creation; used only to authenticate transfer events. */
+	profileToken(): string
 	/** The preload supplies the renderer's captured profile token automatically. */
 	preflight(sessionId: string): Promise<TerminalTransferPreflight>
+	/** Starts a controller-backed move of this renderer-owned ordinary terminal. */
+	move(sessionId: string, destinationProfileId: string): Promise<TerminalTransferMoveResult>
+	/** Main sends only token-bound transfer commands to the current renderer. */
+	onEvent(listener: (event: TerminalTransferEvent) => void): () => void
+	/** Acknowledge a controller prepare/commit/rollback command. */
+	ack(event: TerminalTransferEvent, result: unknown): Promise<boolean>
 }
 
 /** A dtach session that survived the previous app run and can be reattached. */
@@ -63,6 +75,9 @@ export interface RestoredSession {
 	parked: boolean
 	/** Opaque tab-group membership, or null when ungrouped. */
 	groupId: string | null
+	/** Last protocol-observed activity retained across inactive profile restore. */
+	agentRunning: boolean
+	agentAttention: boolean
 }
 
 export type TabGroupSurface = 'strip' | 'background'
@@ -125,6 +140,8 @@ export interface SessionsApi {
 	setCustomName(sessionId: string, name: string | null): void
 	/** Persist the parked flag so background terminals relaunch as background. */
 	setParked(sessionId: string, parked: boolean): void
+	/** Persist only protocol-owned OSC activity for restore/transfer continuity. */
+	setActivity(sessionId: string, activity: { agentRunning: boolean; agentAttention: boolean }): void
 	/** Persist current strip order followed by background-list order. */
 	setOrder(sessionIds: string[]): void
 	/**
@@ -146,6 +163,8 @@ export interface BuffersApi {
 	read(sessionId: string): Promise<string | null>
 	/** Persist a serialized snapshot (fire-and-forget; main validates + caps). */
 	save(sessionId: string, data: string): void
+	/** Transfer-only acknowledged snapshot write. */
+	saveAndAck(sessionId: string, data: string): Promise<boolean>
 	/** Main asks the renderer to serialize + save every session-backed tab NOW
 	 *  (quit/window-close path, before the pty clients detach). */
 	onFlush(listener: () => void): () => void
@@ -249,7 +268,7 @@ export interface RunContextEditorApi {
 export interface HelmApi {
 	pty: PtyApi
 	sessions: SessionsApi
-	/** Cross-profile terminal-transfer eligibility; no production move IPC exists yet. */
+	/** Cross-profile terminal-transfer discovery and controller-backed move. */
 	terminalTransfer: TerminalTransferApi
 	/** Buffer snapshot IO (restore-before-attach; main owns the files). */
 	buffers: BuffersApi

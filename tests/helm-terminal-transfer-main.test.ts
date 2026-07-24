@@ -63,6 +63,13 @@ function fixture() {
 			},
 			currentProfile: () => ({ profileId: profile, token }),
 		},
+		detachAttachClient() {
+			calls.push('detach-client')
+			return true
+		},
+		attachSourceClient() {
+			return false
+		},
 		async captureMaster(socket) {
 			calls.push(`capture:${socket}`)
 			return { pid: 44, processStartFingerprint: 'start-44' }
@@ -189,8 +196,8 @@ test('uses only capability detach events and socket rename; it never calls a mas
 					events.push(event.type)
 					if (event.type === 'prepare') {
 						return {
-							snapshotFlushed: true,
-							activity: { agentRunning: false, agentAttention: false },
+							status: 'prepared',
+							prepared: { metadata: { agentRunning: false, agentAttention: false } },
 						}
 					}
 				},
@@ -204,7 +211,7 @@ test('uses only capability detach events and socket rename; it never calls a mas
 			profileToken: 'work:0',
 		})
 		assert.equal(result.status, 'moved')
-		assert.deepEqual(events, ['prepare', 'detach-source-client', 'attach-destination-client'])
+		assert.deepEqual(events, ['prepare', 'commit'])
 		assert.equal(value.calls.filter(call => call.startsWith('rename:')).length, 1)
 		assert.equal(
 			value.calls.some(call => /kill|signal/i.test(call)),

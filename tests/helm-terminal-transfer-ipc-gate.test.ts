@@ -41,10 +41,13 @@ test('terminal transfer IPC requires both the current main renderer and exact pr
 	assert.equal(calls, 1)
 })
 
-test('production IPC wires only read-only terminal-transfer preflight', () => {
+test('production IPC gates controller-backed transfer commands by sender and captured token', () => {
 	const main = readFileSync(resolve('app/src/main.ts'), 'utf8')
-	assert.match(main, /ipcMain\.handle\('terminal-transfer:preflight'/)
+	assert.match(main, /ipcMain\.handle\(\s*'terminal-transfer:preflight'/)
+	assert.match(main, /ipcMain\.handle\(\s*'terminal-transfer:move'/)
+	assert.match(main, /ipcMain\.handle\(\s*'terminal-transfer:ack'/)
 	assert.match(main, /terminalTransferIpcGate\.handle\(\s*event\.sender,\s*profileToken/s)
-	assert.doesNotMatch(main, /terminal-transfer:move/)
-	assert.doesNotMatch(main, /terminalTransferMain\.move\(/)
+	assert.match(main, /terminalTransferMain\.move\(/)
+	assert.doesNotMatch(main, /sourceSocket:\s*.*event/)
+	assert.doesNotMatch(main, /destinationSocket:\s*.*event/)
 })

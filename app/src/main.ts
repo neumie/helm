@@ -15,6 +15,7 @@ import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
+import type { TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
@@ -259,6 +260,46 @@ interface SessionSupport {
 let sessionSupport: SessionSupport | null | undefined
 let terminalTransferMain: TerminalTransferMainAdapter | null = null
 let terminalTransferRecovery: Promise<void> = Promise.resolve()
+const pendingTerminalTransferEvents = new Map<
+	string,
+	{
+		sender: Electron.WebContents
+		resolve: (value: unknown) => void
+		reject: (error: Error) => void
+		timer: NodeJS.Timeout
+	}
+>()
+
+function dispatchTerminalTransferEvent(sender: Electron.WebContents, event: TerminalTransferEvent): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		if (sender.isDestroyed() || !terminalTransferIpcGate.allows(sender, event.profileToken)) {
+			reject(new Error('source renderer is unavailable'))
+			return
+		}
+		const timer = setTimeout(() => {
+			pendingTerminalTransferEvents.delete(event.transactionId)
+			reject(new Error('terminal transfer renderer acknowledgement timed out'))
+		}, 5_000)
+		pendingTerminalTransferEvents.set(event.transactionId, { sender, resolve, reject, timer })
+		sender.send('terminal-transfer:event', event)
+	})
+}
+
+/** Detach only Helm's client; the dtach master remains alive under its socket. */
+function detachPtyForTransfer(sessionId: string): boolean {
+	for (const [ptyId, entry] of ptys) {
+		if (entry.sessionId !== sessionId) continue
+		ptys.delete(ptyId)
+		try {
+			entry.proc.kill()
+		} catch {
+			// A raced exit is not a safe transfer hand-off.
+			return false
+		}
+		return true
+	}
+	return false
+}
 
 function getSessionSupport(): SessionSupport | null {
 	// Session IPC is closed while the daemon identity is committed but the new
@@ -1167,20 +1208,23 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 				}
 			})
 		}
-		if (!contents.isDestroyed()) contents.send('pty:exit', id, exitCode, args.profileToken)
+		if (!contents.isDestroyed() && !terminalTransferMain?.isSessionBusy(sessionId ?? ''))
+			contents.send('pty:exit', id, exitCode, args.profileToken)
 	})
 	return { id, sessionId }
 })
 
 ipcMain.on('pty:write', (_event, id: number, data: string, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
-	ptys.get(id)?.proc.write(data)
+	const entry = ptys.get(id)
+	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
+	entry.proc.write(data)
 })
 
 ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
-	if (!entry || !(cols > 0) || !(rows > 0)) return
+	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '') || !(cols > 0) || !(rows > 0)) return
 	try {
 		entry.proc.resize(Math.floor(cols), Math.floor(rows))
 	} catch {
@@ -1195,7 +1239,7 @@ ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profil
 ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
-	if (!entry) return
+	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
 	ptys.delete(id)
 	if (entry.sessionId) {
 		const sid = entry.sessionId
@@ -1222,7 +1266,7 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: unknown) => {
 	if (terminalTransferMain?.isBusy() || !sessionIpcGate.allows(profileToken)) return null
 	const entry = ptys.get(id)
-	if (!entry) return null
+	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return null
 	ptys.delete(id)
 	try {
 		entry.proc.kill()
@@ -1280,17 +1324,21 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			// Parked sessions restore as parked (popover rows), never as strip tabs.
 			parked: support.registry.get(s.sessionId)?.parked === true,
 			groupId: support.registry.get(s.sessionId)?.groupId ?? null,
+			agentRunning: support.registry.get(s.sessionId)?.agentRunning === true,
+			agentAttention: support.registry.get(s.sessionId)?.agentAttention === true,
 			// Registry createdAt (original spawn) beats socket birthtime for ordering.
 			createdAt: support.registry.get(s.sessionId)?.createdAt ?? s.createdAt,
 			order: support.registry.get(s.sessionId)?.order,
 		}))
 		.sort(sessions.compareSessionOrder)
-		.map(({ sessionId, title, customName, parked, groupId }) => ({
+		.map(({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention }) => ({
 			sessionId,
 			title,
 			customName,
 			parked,
 			groupId,
+			agentRunning,
+			agentAttention,
 		}))
 })
 
@@ -1405,6 +1453,22 @@ ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown, p
 	getSessionSupport()?.registry.setParked(sessionId, parked)
 })
 
+ipcMain.on('session:set-activity', (_event, sessionId: unknown, activity: unknown, profileToken: unknown) => {
+	if (
+		!sessionIpcGate.allows(profileToken) ||
+		!sessions.isValidSessionId(sessionId) ||
+		!activity ||
+		typeof activity !== 'object'
+	)
+		return
+	const value = activity as { agentRunning?: unknown; agentAttention?: unknown }
+	if (typeof value.agentRunning !== 'boolean' || typeof value.agentAttention !== 'boolean') return
+	getSessionSupport()?.registry.setActivity(sessionId, {
+		agentRunning: value.agentRunning,
+		agentAttention: value.agentAttention,
+	})
+})
+
 ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unknown) => {
 	if (
 		!sessionIpcGate.allows(profileToken) ||
@@ -1451,13 +1515,30 @@ ipcMain.handle('buffer:read', (_event, sessionId: unknown, profileToken: unknown
 	return support.buffers.read(sessionId)
 })
 
+ipcMain.handle('buffer:save-and-ack', (_event, sessionId: unknown, data: unknown, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof data !== 'string')
+		return false
+	const support = getSessionSupport()
+	return support?.buffers.save(sessionId, data) ?? false
+})
+
 ipcMain.on('config:get', event => {
 	event.returnValue = { daemonUrl, sessionProfileToken: sessionProfileToken() }
 })
 
-// Intentionally read-only. The renderer controller is not yet registered as a
-// TerminalTransferRendererCapability, so exposing move() here would begin a
-// durable transfer without the required snapshot/detach/attach hand-off.
+ipcMain.handle('terminal-transfer:ack', (event, command: unknown, result: unknown, profileToken: unknown) => {
+	if (!terminalTransferIpcGate.allows(event.sender, profileToken) || !command || typeof command !== 'object')
+		return false
+	const transactionId = (command as { transactionId?: unknown }).transactionId
+	if (typeof transactionId !== 'string') return false
+	const pending = pendingTerminalTransferEvents.get(transactionId)
+	if (!pending || pending.sender !== event.sender) return false
+	pendingTerminalTransferEvents.delete(transactionId)
+	clearTimeout(pending.timer)
+	pending.resolve(result)
+	return true
+})
+
 ipcMain.handle('terminal-transfer:preflight', (event, sessionId: unknown, profileToken: unknown) =>
 	terminalTransferIpcGate.handle(
 		event.sender,
@@ -1477,6 +1558,49 @@ ipcMain.handle('terminal-transfer:preflight', (event, sessionId: unknown, profil
 			})
 		},
 	),
+)
+
+ipcMain.handle(
+	'terminal-transfer:move',
+	async (event, sessionId: unknown, destinationProfileId: unknown, profileToken: unknown) =>
+		terminalTransferIpcGate.handle(
+			event.sender,
+			profileToken,
+			{ status: 'rejected' as const, reason: 'stale-profile' },
+			async () => {
+				if (
+					!terminalTransferMain ||
+					!sessions.isValidSessionId(sessionId) ||
+					!sessions.isValidSessionProfileId(destinationProfileId)
+				)
+					return { status: 'rejected' as const, reason: 'admission-unavailable' }
+				const destination = appProfiles.getState().profiles.find(profile => profile.id === destinationProfileId)
+				if (!destination || destination.archivedAt !== null)
+					return { status: 'rejected' as const, reason: 'destination-unavailable' }
+				const entry = [...ptys.values()].find(candidate => candidate.sessionId === sessionId)
+				if (!entry || graceCloser.has(sessionId)) return { status: 'rejected' as const, reason: 'session-ineligible' }
+				const capability = {
+					profileToken: profileToken as string,
+					sessionId,
+					dispatch: (command: TerminalTransferEvent) => dispatchTerminalTransferEvent(event.sender, command),
+				}
+				if (!terminalTransferMain.registerRendererCapability(capability))
+					return { status: 'rejected' as const, reason: 'admission-unavailable' }
+				const result = await terminalTransferMain.move({
+					sourceProfileId: sessionProfileId,
+					destinationProfileId,
+					sessionId,
+					profileToken: profileToken as string,
+				})
+				return result.status === 'moved'
+					? { status: 'moved' as const }
+					: result.status === 'busy'
+						? { status: 'busy' as const }
+						: result.status === 'quarantined'
+							? { status: 'quarantined' as const }
+							: { status: 'rejected' as const, reason: result.reason }
+			},
+		),
 )
 
 // --- Themes (<userData>/themes/*.json, docs/design-system.md §2.8) --------------
@@ -1627,6 +1751,10 @@ void app.whenReady().then(async () => {
 				token: sessionProfileToken(),
 			}),
 		},
+		detachAttachClient: sessionId => detachPtyForTransfer(sessionId),
+		// A post-detach ambiguous failure remains journaled rather than creating
+		// another client/session from mutable namespace state.
+		attachSourceClient: () => false,
 	})
 	// Journal recovery happens before a renderer can invoke sessions:list. A
 	// quarantine is deliberately retained/fenced rather than repaired by guess.

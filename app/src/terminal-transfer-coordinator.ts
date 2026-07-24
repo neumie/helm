@@ -26,8 +26,10 @@ export interface TerminalTransferAdmission {
 	prepare(): Promise<{ snapshotFlushed: boolean; activity: TerminalTransferActivity }>
 	/** Detaches only Helm's dtach attach client; it must never signal the master. */
 	detachAttachClient(): Promise<void>
-	/** Attaches a new Helm client in the destination namespace. */
-	attachDestinationClient(): Promise<void>
+	/** Remove/dispose the source renderer tab only after durable ownership commits. */
+	commitSource(): Promise<void>
+	/** Restores the source renderer tab after a reversible rollback. */
+	rollbackSource(): Promise<void>
 	/** Restores the source attach client after a reversible rollback. */
 	attachSourceClient(): Promise<void>
 	/** Reopens normal terminal admission, or keeps the session fenced when quarantined. */
@@ -184,7 +186,9 @@ export class TerminalTransferCoordinator {
 				)
 			}
 			current = this.#deps.journal.update(current, 'registries-committed')
-			await admission.attachDestinationClient()
+			// The target profile may be inactive. It owns a parked registry entry,
+			// not an attach client in this source renderer.
+			await admission.commitSource()
 			this.#deps.journal.complete(current)
 			this.#releaseAdmission(admission, false)
 			fenced = false
@@ -223,6 +227,7 @@ export class TerminalTransferCoordinator {
 				return this.#quarantine(restored, `${reason}; buffer rollback failed`, admission)
 			}
 			await admission.attachSourceClient()
+			await admission.rollbackSource()
 			this.#deps.journal.complete(restored)
 			this.#releaseAdmission(admission, false)
 			return { status: 'quarantined', journal: restored, reason: `${reason}; source transfer rolled back` }

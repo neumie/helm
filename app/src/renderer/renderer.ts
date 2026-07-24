@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import type { RestoredSession, TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
+import { TerminalTransferRendererController } from '../terminal-transfer-renderer'
 import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance } from './appearance'
 import { createIconButton } from './icon-button'
@@ -120,6 +121,8 @@ interface Tab {
 	/** dtach session behind the pty; null while spawning or when persistence is off. */
 	sessionId: string | null
 	closed: boolean
+	/** Transfer fence: blocks input, close, rename, group, and snapshot mutation. */
+	transferring: boolean
 	/** In the background list (strip-right stack button + popover) instead of the strip. */
 	parked: boolean
 	/** Persisted opaque membership; fresh tabs are deliberately Ungrouped. */
@@ -383,9 +386,15 @@ function renderTabAgentState(tab: Tab): void {
 	if (tab.parked) updateBackgroundUi()
 }
 
+function persistTabActivity(tab: Tab): void {
+	if (tab.sessionId)
+		helm.sessions.setActivity(tab.sessionId, { agentRunning: tab.agentRunning, agentAttention: tab.agentAttention })
+}
+
 function setTabAgentAttention(tab: Tab, attention: boolean): void {
 	if (tab.agentAttention === attention) return
 	tab.agentAttention = attention
+	persistTabActivity(tab)
 	renderTabAgentState(tab)
 }
 
@@ -406,6 +415,7 @@ function setTabAgentRunning(tab: Tab, running: boolean): void {
 			windowFocused: document.hasFocus(),
 		})
 	}
+	persistTabActivity(tab)
 	renderTabAgentState(tab)
 }
 
@@ -698,6 +708,84 @@ function saveAllSnapshots(): void {
 	}
 }
 
+function transferredTab(sessionId: string): Tab | null {
+	return [...tabs, ...parked].find(tab => tab.sessionId === sessionId && !tab.closed) ?? null
+}
+
+function disposeTransferredTab(tab: Tab): void {
+	tab.closed = true
+	tab.outputGuard.abort()
+	tab.progressTracker.clear()
+	const stripIndex = tabs.indexOf(tab)
+	if (stripIndex >= 0) tabs.splice(stripIndex, 1)
+	const parkedIndex = parked.indexOf(tab)
+	if (parkedIndex >= 0) parked.splice(parkedIndex, 1)
+	if (activeTab === tab) activeTab = null
+	tab.term.dispose()
+	tab.holder.remove()
+	tab.tabButton.remove()
+	renderTabGroups()
+	syncEmptyState()
+	updateBackgroundUi()
+}
+
+const terminalTransferController = new TerminalTransferRendererController({
+	currentProfileToken: () => helm.terminalTransfer.profileToken(),
+	freeze(sessionId) {
+		const tab = transferredTab(sessionId)
+		if (!tab || tab.transferring) throw new Error('terminal is unavailable')
+		tab.transferring = true
+		tab.term.options.disableStdin = true
+		closeTabMenu()
+	},
+	async saveSnapshot(sessionId) {
+		const tab = transferredTab(sessionId)
+		if (!tab || !tab.sessionId || tab.frameOutputPending) return { snapshotFlushed: false }
+		const snapshot = serializeSnapshot(tab)
+		if (!snapshot) return { snapshotFlushed: false }
+		tab.dirty = false
+		return { snapshotFlushed: await helm.buffers.saveAndAck(sessionId, snapshot) }
+	},
+	metadata(sessionId) {
+		const tab = transferredTab(sessionId)
+		return tab
+			? {
+					title: tab.title,
+					titleRaw: tab.titleRaw,
+					oscTitle: tab.oscTitle,
+					oscRaw: tab.oscRaw,
+					customName: tab.customName,
+					agentRunning: tab.agentRunning,
+					agentAttention: tab.agentAttention,
+				}
+			: null
+	},
+	dispose(sessionId) {
+		const tab = transferredTab(sessionId)
+		if (!tab) throw new Error('terminal disappeared before transfer commit')
+		disposeTransferredTab(tab)
+	},
+	unfreeze(sessionId) {
+		const tab = transferredTab(sessionId)
+		if (!tab) throw new Error('terminal disappeared before rollback')
+		tab.transferring = false
+		tab.term.options.disableStdin = false
+	},
+})
+
+helm.terminalTransfer.onEvent(event => {
+	void (async () => {
+		const request = { transactionId: event.transactionId, sessionId: event.sessionId, profileToken: event.profileToken }
+		const result =
+			event.type === 'prepare'
+				? await terminalTransferController.prepare(request)
+				: event.type === 'commit'
+					? await terminalTransferController.commit(request)
+					: await terminalTransferController.rollback(request)
+		await helm.terminalTransfer.ack(event, result)
+	})()
+})
+
 // Throttled autosave: only tabs whose pty produced output since the last save.
 setInterval(() => {
 	for (const tab of [...tabs, ...parked]) {
@@ -798,7 +886,7 @@ function cycleTab(delta: number): void {
 }
 
 function closeTab(tab: Tab): void {
-	if (tab.closed) return
+	if (tab.closed || tab.transferring) return
 	tab.closed = true
 	// Snapshot before releasing a synchronized redraw guard: saveSnapshot skips
 	// a pending replacement frame, preserving the previous complete snapshot.
@@ -852,7 +940,7 @@ function closeTab(tab: Tab): void {
 // parked.length > 0) opens the popover listing them.
 
 function parkTab(tab: Tab): void {
-	if (tab.closed || tab.parked) return
+	if (tab.closed || tab.parked || tab.transferring) return
 	const index = tabs.indexOf(tab)
 	if (index === -1) return
 	tabs.splice(index, 1)
@@ -885,6 +973,7 @@ function openParked(tab: Tab): void {
 
 /** Move back to the strip end, focused and refit. */
 function restoreParked(tab: Tab): void {
+	if (tab.transferring) return
 	const index = parked.indexOf(tab)
 	if (index === -1) return
 	parked.splice(index, 1)
@@ -905,6 +994,7 @@ function restoreParked(tab: Tab): void {
 
 /** Popover ✕: grace-close path; Undo restores to the BACKGROUND list, not a tab. */
 function killParkedTab(tab: Tab): void {
+	if (tab.transferring) return
 	const index = parked.indexOf(tab)
 	if (index === -1 || tab.closed) return
 	tab.closed = true
@@ -1602,8 +1692,43 @@ function openTabMoveMenu(tab: Tab, x: number, y: number, trigger: HTMLElement): 
 	)
 }
 
+function openProfileMoveMenu(tab: Tab, x: number, y: number): void {
+	if (!tab.sessionId || tab.transferring) return
+	void helm.terminalTransfer.preflight(tab.sessionId).then(async preflight => {
+		if (preflight.status !== 'available') {
+			openMenu([{ label: 'No available profiles', icon: '→', disabled: true, onPick: () => {} }], x, y, tab.tabButton)
+			return
+		}
+		const profiles = await helm.profiles.list()
+		const names = profiles.data
+			? new Map(profiles.data.profiles.map(profile => [profile.id, profile.name]))
+			: new Map<string, string>()
+		openMenu(
+			preflight.targetProfileIds.map(profileId => ({
+				label: names.get(profileId) ?? 'Unavailable profile',
+				icon: '→',
+				onPick: () => {
+					tab.transferring = true
+					void helm.terminalTransfer.move(tab.sessionId as string, profileId).then(result => {
+						if (result.status === 'moved') {
+							showToast({ message: `Moved to Background in ${names.get(profileId) ?? 'profile'}` })
+							return
+						}
+						tab.transferring = false
+						tab.term.options.disableStdin = false
+						showToast({ message: 'Could not move terminal' })
+					})
+				},
+			})),
+			x,
+			y,
+			tab.tabButton,
+		)
+	})
+}
+
 function openTabMenu(tab: Tab, x: number, y: number): void {
-	const movable = tab.sessionId !== null
+	const movable = tab.sessionId !== null && !tab.transferring
 	openMenu(
 		[
 			{ label: 'Rename…', icon: '✎', onPick: () => startRename(tab) },
@@ -1618,6 +1743,12 @@ function openTabMenu(tab: Tab, x: number, y: number): void {
 				icon: '+',
 				disabled: !movable,
 				onPick: () => openGroupNameMenu('Create group', '', x, y, tab.tabButton, name => createGroupForTab(tab, name)),
+			},
+			{
+				label: 'Move to profile…',
+				icon: '→',
+				disabled: !movable,
+				onPick: () => openProfileMoveMenu(tab, x, y),
 			},
 			{ label: 'Move to background', icon: '⇩', hint: '⇧⌘B', onPick: () => parkTab(tab), separatorBefore: true },
 			{ label: 'Close', icon: '×', hint: '⌘W', destructive: true, onPick: () => closeTab(tab) },
@@ -1758,6 +1889,8 @@ interface TerminalOpts {
 	parked?: boolean
 	/** Restored opaque membership; new terminals begin Ungrouped. */
 	groupId?: string | null
+	agentRunning?: boolean
+	agentAttention?: boolean
 }
 
 async function createTerminal(opts?: TerminalOpts): Promise<void> {
@@ -1832,6 +1965,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		ptyId: null,
 		sessionId: null,
 		closed: false,
+		transferring: false,
 		parked: startParked,
 		groupId: opts?.groupId ?? null,
 		visualId: `tab-${nextVisualTabId++}`,
@@ -1850,8 +1984,8 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		frameOutputPending: false,
 		frameFreeze: null,
 		outputGuard,
-		agentRunning: false,
-		agentAttention: false,
+		agentRunning: opts?.agentRunning === true,
+		agentAttention: opts?.agentAttention === true,
 		progressTracker,
 		runningEl: running,
 		term,
@@ -2001,7 +2135,9 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	// committed while the spawn was in flight.
 	if (tab.parked && spawned.sessionId) helm.sessions.setParked(spawned.sessionId, true)
 	if (tab.customName !== null && spawned.sessionId) helm.sessions.setCustomName(spawned.sessionId, tab.customName)
-	term.onData(data => helm.pty.write(spawned.id, data))
+	term.onData(data => {
+		if (!tab.transferring) helm.pty.write(spawned.id, data)
+	})
 	term.onResize(({ cols, rows }) => helm.pty.resize(spawned.id, cols, rows))
 	// spawn → mount → fit → resize pty: re-fit now that layout settled, then
 	// force the pty onto the fitted size (with a WINCH nudge for reattached

@@ -7,6 +7,8 @@ import type {
 	RestoredSession,
 	TabGroup,
 	TabGroupActionIntent,
+	TerminalTransferEvent,
+	TerminalTransferMoveResult,
 	TerminalTransferPreflight,
 	ThemeListEntry,
 	UiPreview,
@@ -133,6 +135,8 @@ const api: HelmApi = {
 		setCustomName: (sessionId, name) =>
 			ipcRenderer.send('session:set-custom-name', sessionId, name, sessionProfileToken),
 		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked, sessionProfileToken),
+		setActivity: (sessionId, activity) =>
+			ipcRenderer.send('session:set-activity', sessionId, activity, sessionProfileToken),
 		setOrder: sessionIds => ipcRenderer.send('session:set-order', sessionIds, sessionProfileToken),
 		closeWithGrace: ptyId =>
 			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null>,
@@ -140,16 +144,32 @@ const api: HelmApi = {
 			ipcRenderer.invoke('session:undo-close', sessionId, sessionProfileToken) as Promise<boolean>,
 	},
 	terminalTransfer: {
+		profileToken: () => sessionProfileToken,
 		preflight: sessionId =>
 			ipcRenderer.invoke(
 				'terminal-transfer:preflight',
 				sessionId,
 				sessionProfileToken,
 			) as Promise<TerminalTransferPreflight>,
+		move: (sessionId, destinationProfileId) =>
+			ipcRenderer.invoke(
+				'terminal-transfer:move',
+				sessionId,
+				destinationProfileId,
+				sessionProfileToken,
+			) as Promise<TerminalTransferMoveResult>,
+		onEvent: listener =>
+			subscribe<[TerminalTransferEvent]>('terminal-transfer:event', event => {
+				if (event.profileToken === sessionProfileToken) listener(event)
+			}),
+		ack: (event, result) =>
+			ipcRenderer.invoke('terminal-transfer:ack', event, result, sessionProfileToken) as Promise<boolean>,
 	},
 	buffers: {
 		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId, sessionProfileToken) as Promise<string | null>,
 		save: (sessionId, data) => ipcRenderer.send('buffer:save', sessionId, data, sessionProfileToken),
+		saveAndAck: (sessionId, data) =>
+			ipcRenderer.invoke('buffer:save-and-ack', sessionId, data, sessionProfileToken) as Promise<boolean>,
 		onFlush: listener =>
 			subscribe<[string]>('buffers:flush', profileToken => {
 				if (profileToken === sessionProfileToken) listener()
