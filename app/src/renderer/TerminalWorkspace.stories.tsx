@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import type { CSSProperties, ReactNode } from 'react'
+import { type CSSProperties, Children, type ReactNode } from 'react'
 import { type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
 import { ActivityIndicator } from './activity-indicator'
 import { IconBtn } from './icon-button'
@@ -41,7 +41,8 @@ function TerminalGroup({
 			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
 		>
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
-				{name}
+				<span>{name}</span>
+				<span className="tab-group-count">{Children.count(children)}</span>
 			</button>
 			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`} hidden={collapsed}>
 				{children}

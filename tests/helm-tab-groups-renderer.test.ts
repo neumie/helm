@@ -122,6 +122,16 @@ test('collapsed groups hide their entire mounted members container despite expli
 	)
 })
 
+test('group header is a colored first-tab slot with count and no visible arrow or member rail', () => {
+	assert.match(renderer, /count\.className = 'tab-group-count'/)
+	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
+	assert.match(styles, /\.tab-group-toggle\s*\{[^}]*background:\s*color-mix\([^;]*var\(--group-color\) 15%/s)
+	assert.match(styles, /\.tab-group-toggle\s*\{[^}]*box-shadow:\s*inset 0 2px var\(--group-color\)/s)
+	assert.doesNotMatch(styles, /\.tab-group-toggle::after/)
+	assert.doesNotMatch(styles, /\.tab-group-members::before/)
+	assert.doesNotMatch(styles, /\.bg-group-members::before/)
+})
+
 test('collapse state is independent per surface and exposes no representative tab or row', () => {
 	const composition = composeTabGroups({ tabs, groups, activeTabId: 'build-active' })
 	const build = composition.strip[0]

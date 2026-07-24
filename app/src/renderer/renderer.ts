@@ -234,7 +234,12 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 	toggle.dataset.groupId = section.groupId as string
 	toggle.dataset.surface = section.surface
 	applyGroupColor(toggle, section.color)
-	toggle.textContent = heading
+	const label = document.createElement('span')
+	label.textContent = heading
+	const count = document.createElement('span')
+	count.className = 'tab-group-count'
+	count.textContent = String(section.members.length)
+	toggle.append(label, count)
 	toggle.setAttribute('aria-expanded', String(!section.collapsed))
 	toggle.setAttribute('aria-controls', tabGroupMembersId(section.groupId, section.surface))
 	toggle.title = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
