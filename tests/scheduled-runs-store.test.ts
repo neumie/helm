@@ -66,6 +66,7 @@ test('occurrence identity, active overlap, reports, and safe contracts are guard
 			() =>
 				commands.claimOccurrence(schedule.id, schedule.revision + 1, '2030-01-03T01:00:00.000Z', {
 					...run,
+					closedAt: undefined,
 					scheduleId: schedule.id,
 					scheduleRevision: schedule.revision + 1,
 					slotKey: run.slotKey,
@@ -240,4 +241,40 @@ test('strict target schemas reject system cwd and project/system runtime violati
 		}).success,
 		false,
 	)
+})
+
+test('system target definitions require the rollout flag while project schedules remain available', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-store-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'alpha')
+		const systemInput = {
+			...scheduleInput,
+			name: 'System review',
+			definition: {
+				...scheduleInput.definition,
+				target: { kind: 'system' as const, riskAcknowledgement: 'broad-host-access' as const },
+			},
+		}
+		const disabled = new ScheduleCommands(db.schedules, false)
+		assert.throws(() => disabled.create(systemInput), /System scheduled targets are disabled/)
+
+		const project = disabled.create(scheduleInput)
+		const disabledProject = disabled.disable(project.id, project.revision)
+		assert.equal(disabled.enable(disabledProject.id, disabledProject.revision).enabled, true)
+		assert.throws(
+			() => disabled.update(project.id, db.schedules.require(project.id).revision, systemInput),
+			/System scheduled targets are disabled/,
+		)
+
+		const enabled = new ScheduleCommands(db.schedules, true)
+		const system = enabled.create(systemInput)
+		const disabledSystem = enabled.disable(system.id, system.revision)
+		assert.throws(
+			() => disabled.enable(disabledSystem.id, disabledSystem.revision),
+			/System scheduled targets are disabled/,
+		)
+		assert.equal(enabled.enable(disabledSystem.id, disabledSystem.revision).enabled, true)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
 })

@@ -101,6 +101,7 @@ test('terminal predicate excludes every recoverable state and includes every ter
 		'skipped_misfire',
 		'skipped_profile_archived',
 		'skipped_project_disabled',
+		'skipped_system_targets_disabled',
 		'skipped_capacity',
 	]
 	for (const state of recoverable) assert.equal(isScheduledRunTerminalState(state), false, state)

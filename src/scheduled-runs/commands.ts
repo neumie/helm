@@ -28,16 +28,27 @@ const CANCELLABLE_STATES = new Set<ScheduledRunState>([
 	'quarantined',
 ])
 const TIMEOUTABLE_STATES = new Set<ScheduledRunState>(['admitted', 'preparing', 'launching', 'running'])
+/** Stable, bounded persisted explanation for a rollout-disabled system target. */
+export const SYSTEM_TARGETS_DISABLED_REASON = 'system_targets_disabled'
+
 /** All schedule/run lifecycle changes go through this tenant-bound command seam. */
 export class ScheduleCommands {
-	constructor(private readonly store: ScheduleStore) {}
+	constructor(
+		private readonly store: ScheduleStore,
+		private readonly systemTargetsEnabled = false,
+	) {}
 	create(input: unknown): ScheduleRecord {
-		return this.store.create(this.prepareSchedule(input))
+		const schedule = this.prepareSchedule(input)
+		this.assertSystemTargetAllowed(schedule)
+		return this.store.create(schedule)
 	}
 	update(id: string, revision: number, input: unknown): ScheduleRecord {
-		return this.store.update(id, revision, this.prepareSchedule(input))
+		const schedule = this.prepareSchedule(input)
+		this.assertSystemTargetAllowed(schedule)
+		return this.store.update(id, revision, schedule)
 	}
 	enable(id: string, revision: number): ScheduleRecord {
+		this.assertSystemTargetAllowed(this.store.require(id))
 		return this.store.setEnabled(id, revision, true)
 	}
 	disable(id: string, revision: number, reason = 'disabled'): ScheduleRecord {
@@ -67,6 +78,35 @@ export class ScheduleCommands {
 		input: CreateScheduledRunInput,
 	): ScheduledRunRecord {
 		return this.claim(scheduleId, expectedRevision, null, input, false)
+	}
+	/**
+	 * A stale persisted system schedule must not remain due after the rollout flag
+	 * is disabled. Advance its cadence, disable it, and persist the terminal slot
+	 * in one transaction so a restart cannot spin on the same occurrence.
+	 */
+	disableSystemTargetAndCloseOccurrence(
+		scheduleId: string,
+		expectedRevision: number,
+		nextRunAt: string | null,
+		input: CreateScheduledRunInput,
+	): ScheduledRunRecord {
+		return this.store.transaction(() => {
+			const schedule = this.store.require(scheduleId)
+			if (!schedule.enabled || schedule.archivedAt) throw new Error('Schedule is not enabled')
+			if (schedule.revision !== expectedRevision) throw new ScheduleRevisionConflictError()
+			if (schedule.definition.target.kind !== 'system') throw new Error('Schedule is not a system target')
+			if (this.systemTargetsEnabled) throw new Error('System scheduled targets are enabled')
+			if (input.scheduleId !== scheduleId || input.scheduleRevision !== expectedRevision)
+				throw new Error('Occurrence does not match schedule revision')
+			if (this.store.findRunBySlot(scheduleId, input.slotKey)) throw new Error('Occurrence already claimed')
+			const advanced = this.store.advanceNextRun(scheduleId, expectedRevision, nextRunAt)
+			this.store.setEnabled(advanced.id, advanced.revision, false, SYSTEM_TARGETS_DISABLED_REASON)
+			return this.store.createRun({
+				...input,
+				state: 'skipped_system_targets_disabled',
+				closedAt: new Date().toISOString(),
+			})
+		})
 	}
 	beginPreparing(id: string, revision: number): ScheduledRunRecord {
 		return this.transition(id, revision, ['admitted'], 'preparing')
@@ -196,6 +236,10 @@ export class ScheduleCommands {
 		const next = nextOccurrence(recurrence.cron, recurrence.timezone, new Date())
 		if (!next) throw new Error('Cron has no occurrence within the recurrence horizon')
 		return { ...parsed, ...recurrence, nextRunAt: next.scheduledFor }
+	}
+	private assertSystemTargetAllowed(schedule: { definition: ScheduleRecord['definition'] }): void {
+		if (!this.systemTargetsEnabled && schedule.definition.target.kind === 'system')
+			throw new Error('System scheduled targets are disabled')
 	}
 	private transition(
 		id: string,

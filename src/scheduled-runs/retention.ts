@@ -27,6 +27,7 @@ const SCHEDULED_RUN_TERMINAL_STATES: Record<ScheduledRunState, boolean> = {
 	skipped_misfire: true,
 	skipped_profile_archived: true,
 	skipped_project_disabled: true,
+	skipped_system_targets_disabled: true,
 	skipped_capacity: true,
 }
 

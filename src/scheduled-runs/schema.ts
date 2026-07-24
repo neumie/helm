@@ -70,6 +70,7 @@ export const scheduledRunStateSchema = z.enum([
 	'skipped_misfire',
 	'skipped_profile_archived',
 	'skipped_project_disabled',
+	'skipped_system_targets_disabled',
 	'skipped_capacity',
 ])
 

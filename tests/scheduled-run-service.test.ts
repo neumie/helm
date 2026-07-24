@@ -476,3 +476,45 @@ test('timeout is durable first-writer state and identical quiet retries converge
 		rmSync(root, { recursive: true, force: true })
 	}
 })
+
+test('startup tick durably disables a persisted due system schedule after system targets are turned off', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const systemDefinition = {
+			...definition,
+			target: { kind: 'system' as const, riskAcknowledgement: 'broad-host-access' as const },
+		}
+		const commandsWhenEnabled = new ScheduleCommands(db.schedules, true)
+		const created = commandsWhenEnabled.create({ ...scheduleInput, definition: systemDefinition })
+		const due = db.schedules.advanceNextRun(created.id, created.revision, '2000-01-01T00:00:00.000Z')
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(
+			{
+				...config,
+				scheduledRuns: { enabled: true, systemTargetsEnabled: false },
+			} as HelmConfig,
+			db,
+			drainer as unknown as Drainer,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+				hasResidentLease: () => true,
+			},
+		)
+
+		await service.start()
+		assert.deepEqual(await service.tick(), { processed: 1, admitted: 0, skipped: 1 })
+		const schedule = db.schedules.require(due.id)
+		const [run] = db.schedules.listRuns(schedule.id)
+		assert.equal(schedule.enabled, false)
+		assert.equal(schedule.disabledReason, 'system_targets_disabled')
+		assert.notEqual(schedule.nextRunAt, '2000-01-01T00:00:00.000Z')
+		assert.equal(run.state, 'skipped_system_targets_disabled')
+		assert.ok(run.closedAt)
+		assert.equal(drainer.reservations.size, 0)
+		assert.deepEqual(await service.tick(), { processed: 0, admitted: 0, skipped: 0 })
+		await service.stop()
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})

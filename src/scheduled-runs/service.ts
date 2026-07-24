@@ -153,9 +153,11 @@ export class ScheduledRunService {
 		const runtime = this.captureProfile(profileId)
 		if (runtime.profile.archivedAt) throw new Error('Archived profile cannot admit scheduled runs')
 		const runDb = this.db.forProfile(profileId)
-		const commands = new ScheduleCommands(runDb.schedules)
+		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 		const schedule = runDb.schedules.require(scheduleId)
 		if (!schedule.enabled || schedule.archivedAt) throw new Error('Schedule is not enabled')
+		if (schedule.definition.target.kind === 'system' && !this.config.scheduledRuns.systemTargetsEnabled)
+			throw new Error('System scheduled targets are disabled')
 		return this.admit(runtime, runDb, commands, schedule, {
 			scheduledFor: this.now().toISOString(),
 			localCivilSlot: 'manual',
@@ -176,7 +178,7 @@ export class ScheduledRunService {
 		summary: string,
 	): Promise<ScheduledRunRecord> {
 		const runDb = this.db.forProfile(profileId)
-		const commands = new ScheduleCommands(runDb.schedules)
+		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 		let run = runDb.schedules.requireRun(runId)
 		run = commands.report(run.id, run.revision, kind, summary)
 		if (kind === 'needs_attention') {
@@ -190,7 +192,7 @@ export class ScheduledRunService {
 
 	async cancel(profileId: string, runId: string): Promise<ScheduledRunRecord> {
 		const runDb = this.db.forProfile(profileId)
-		const commands = new ScheduleCommands(runDb.schedules)
+		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 		let run = commands.requestCancel(runId, runDb.schedules.requireRun(runId).revision)
 		const result = await this.teardown(profileId, run)
 		if (result === 'quarantined')
@@ -214,7 +216,7 @@ export class ScheduledRunService {
 		for (const runtime of this.deps.profiles()) {
 			const profileId = runtime.profile.id
 			const runDb = this.db.forProfile(profileId) // capture tenant seam before await
-			const commands = new ScheduleCommands(runDb.schedules)
+			const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 			let after: { createdAt: string; id: string } | null = null
 			for (;;) {
 				const page = runDb.schedules.listRecoverableRunsPage(after)
@@ -273,7 +275,7 @@ export class ScheduledRunService {
 				if (!due) continue
 				progressed = true
 				processed++
-				const commands = new ScheduleCommands(runDb.schedules)
+				const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
 				try {
 					const result = await this.admitDue(runtime, runDb, commands, due)
 					if (result.state === 'running' || result.state === 'preparing' || result.state === 'launching') admitted++
@@ -297,6 +299,22 @@ export class ScheduledRunService {
 		)
 		if (!latest) throw new Error('Due schedule has no calculable occurrence')
 		const following = nextOccurrence(schedule.cron, schedule.timezone, latest.occurrence.at)?.scheduledFor ?? null
+		if (schedule.definition.target.kind === 'system' && !this.config.scheduledRuns.systemTargetsEnabled) {
+			const runId = randomUUID()
+			return commands.disableSystemTargetAndCloseOccurrence(schedule.id, schedule.revision, following, {
+				id: runId,
+				scheduleId: schedule.id,
+				scheduleRevision: schedule.revision,
+				scheduledFor: latest.occurrence.scheduledFor,
+				localCivilSlot: latest.occurrence.localCivil,
+				utcOffsetMinutes: latest.occurrence.offsetMinutes,
+				slotKey: latest.occurrence.slotKey,
+				definitionSnapshot: schedule.definition,
+				sessionId: scheduledSessionId(runId),
+				missedCount: latest.dropped.count,
+				missedMany: latest.dropped.many,
+			})
+		}
 		return this.admit(runtime, runDb, commands, schedule, {
 			scheduledFor: latest.occurrence.scheduledFor,
 			localCivilSlot: latest.occurrence.localCivil,
@@ -327,6 +345,8 @@ export class ScheduledRunService {
 			misfire?: boolean
 		},
 	): Promise<ScheduledRunRecord> {
+		if (schedule.definition.target.kind === 'system' && !this.config.scheduledRuns.systemTargetsEnabled)
+			throw new Error('System scheduled targets are disabled')
 		const runId = randomUUID()
 		const reportCapability = createScopedCapability()
 		const state = occurrence.misfire ? 'skipped_misfire' : 'admitted'
