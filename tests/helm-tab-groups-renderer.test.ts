@@ -298,7 +298,10 @@ test('restored membership and disclosure aria ids stay stable across a group rer
 		renderer,
 		/toggle\.setAttribute\('aria-controls', tabGroupMembersId\(section\.groupId, section\.surface\)\)/,
 	)
-	assert.match(renderer, /membersEl\.id = tabGroupMembersId\(section\.groupId, section\.surface\)/)
+	assert.equal(
+		[...renderer.matchAll(/membersEl\.id = tabGroupMembersId\(section\.groupId, section\.surface\)/g)].length,
+		2,
+	)
 	assert.match(renderer, /restoreFocusedGroupHeader\(tabsEl, focusedHeader\)/)
 	assert.match(renderer, /restoreFocusedGroupHeader\(bgRows, focusedHeader\)/)
 })

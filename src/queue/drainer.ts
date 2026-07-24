@@ -187,8 +187,8 @@ export class Drainer {
 	 * its following selection writes in one event-loop turn, then processOneItem
 	 * repeats this exact predicate before admitting the run.
 	 */
-	canProcessOneItem(itemId: string): ItemAdmission {
-		return this.processAdmission(itemId)
+	canProcessOneItem(itemId: string, requestedLane?: ExecutionLane): ItemAdmission {
+		return this.processAdmission(itemId, undefined, undefined, requestedLane)
 	}
 
 	/**
@@ -377,15 +377,24 @@ export class Drainer {
 		return true
 	}
 
-	private processAdmission(itemId: string, profileId?: string, expectedLane?: ExecutionLane): ItemAdmission {
+	private processAdmission(
+		itemId: string,
+		profileId?: string,
+		expectedLane?: ExecutionLane,
+		requestedLane?: ExecutionLane,
+	): ItemAdmission {
 		if (this.quiescing) return { ok: false, reason: 'quiescing' }
 		if (!this.running) return { ok: false, reason: 'stopped' }
 		if (this.startupAdmissionFenced) return { ok: false, reason: 'startup_fenced' }
 
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item) return { ok: false, reason: 'not_found' }
-		const lane = itemExecutionMode(item)
-		if (expectedLane && lane !== expectedLane) return { ok: false, reason: 'not_startable' }
+		const persistedLane = itemExecutionMode(item)
+		if (expectedLane && persistedLane !== expectedLane) return { ok: false, reason: 'not_startable' }
+		// A planned Start can synchronously replace its persisted execution mode
+		// after preflight. Capacity must be checked against that requested lane;
+		// the actual start re-runs this predicate against the newly persisted mode.
+		const lane = requestedLane ?? persistedLane
 		if (lane === 'solve') {
 			if (this.activeSolveItems.has(itemId)) return { ok: false, reason: 'already_active' }
 			if (this.activeSolveCount() >= this.solveCapacity()) return { ok: false, reason: 'capacity' }

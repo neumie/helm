@@ -27,7 +27,7 @@ import { buildItemExecutionContext } from '../src/items/context.js'
 import { toDashboardItem, toDashboardItems } from '../src/items/contract.js'
 import { resolveItemWorkspace } from '../src/items/identity.js'
 import { observeItemRun } from '../src/items/observation.js'
-import type { ItemPayload } from '../src/items/schema.js'
+import type { ItemPayload, SolverEffort } from '../src/items/schema.js'
 import { PlanStatusWatcher, parseGithubPlanQueues } from '../src/plan/status-watcher.js'
 import { PlanWorkspace } from '../src/plan/workspace.js'
 import { Poller } from '../src/poller/poller.js'
@@ -46,7 +46,7 @@ import {
 	spawnerNameSchema,
 } from '../src/spawner/registry.js'
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from '../src/spawner/spawner.js'
-import type { SolverEffort, SolverResult as SolverResultFile } from '../src/types.js'
+import type { SolverResult as SolverResultFile } from '../src/types.js'
 import { phaseError, taskCancelled } from '../src/util/errors.js'
 import { createWorktree, withRepoLock } from '../src/worktree/manager.js'
 
@@ -2367,11 +2367,15 @@ test('Drainer direct starts enforce lane capacity and scheduled reservations', a
 			drainer.start()
 			assert.equal(drainer.reserveExternalSolve('scheduled-run'), true)
 			assert.deepEqual(drainer.canProcessOneItem(firstSolve.id), { ok: false, reason: 'capacity' })
+			// Planned execution switches preflight against the requested lane, not
+			// the Item's currently persisted lane.
+			assert.deepEqual(drainer.canProcessOneItem(firstLoop.id, 'solve'), { ok: false, reason: 'capacity' })
 			assert.equal(drainer.processOneItem(firstSolve.id), false)
 			assert.equal(drainer.releaseExternalSolve('scheduled-run'), true)
 			assert.deepEqual(drainer.canProcessOneItem(firstSolve.id), { ok: true })
 			assert.equal(drainer.processOneItem(firstSolve.id), true)
 			assert.deepEqual(drainer.canProcessOneItem(secondSolve.id), { ok: false, reason: 'capacity' })
+			assert.deepEqual(drainer.canProcessOneItem(secondSolve.id, 'loop'), { ok: true })
 			assert.equal(drainer.processOneItem(secondSolve.id), false)
 			assert.equal(drainer.processOneItem(firstLoop.id), true)
 			assert.deepEqual(drainer.canProcessOneItem(secondLoop.id), { ok: false, reason: 'capacity' })

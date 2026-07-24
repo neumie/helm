@@ -608,9 +608,14 @@ body.tab-dragging .tab {
 	overflow-y: auto;
 }
 
-.bg-group-section {
+.bg-group-section,
+.bg-group-members {
 	display: flex;
 	flex-direction: column;
+}
+
+.bg-group-members {
+	gap: 4px;
 }
 
 .bg-group-section > .tab-group-header {

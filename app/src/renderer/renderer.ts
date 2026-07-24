@@ -968,6 +968,9 @@ function renderBackgroundRows(): void {
 		const sectionEl = document.createElement('section')
 		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
 		sectionEl.append(groupHeader(section))
+		const membersEl = document.createElement('div')
+		membersEl.className = 'bg-group-members'
+		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
 			if (!tab) continue
@@ -1030,8 +1033,9 @@ function renderBackgroundRows(): void {
 			})
 
 			row.append(open, restore, kill)
-			sectionEl.appendChild(row)
+			membersEl.appendChild(row)
 		}
+		sectionEl.appendChild(membersEl)
 		bgRows.appendChild(sectionEl)
 	}
 	if (focusedId !== null) {

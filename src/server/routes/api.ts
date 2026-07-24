@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -50,29 +49,6 @@ import { log } from '../../util/logger.js'
 import { sameFilesystemPath } from '../../util/path-identity.js'
 import { defaultDaemonControl, scheduleDaemonRestart } from '../restart.js'
 import type { DaemonControl } from '../restart.js'
-
-function buildItemPlanReadmeBody(item: ItemRecord, branchName: string | null, planDirName: string): string {
-	return [
-		`# ${item.title}`,
-		'',
-		`**Kind:** ${item.kind}`,
-		`**Status:** ${item.status}`,
-		`**BaseRef:** ${item.baseRef}`,
-		`**Branch:** ${branchName ?? '(main checkout — the agent creates the branch at run time)'}`,
-		`**Item ID:** ${item.id}`,
-		'',
-		'## Plan this Item',
-		'',
-		'Planning agent started in this worktree. Tell it what you want to do, or invoke one of:',
-		'',
-		`- \`/almanac:grill-me ${planDirName}\` — stress-test decisions interactively (in-conversation, no file).`,
-		`- \`/almanac:grill-with-docs ${planDirName}\` — challenge the plan against the domain model.`,
-		'- `/almanac:prd-create` — synthesize the decisions into `prd.md`.',
-		'',
-		'Anything committed under this directory is loaded into the autonomous run when the Item executes.',
-		'',
-	].join('\n')
-}
 
 // Generic task ingest (e.g. an email tied to a project): a self-contained task
 // with its content captured up front (no live provider to re-poll). Attachments
@@ -1082,7 +1058,9 @@ export function apiRoutes(
 			planning.assertStartAllowed(item.id)
 			// Selection and execution writes must follow admission in the same
 			// synchronous turn. A rejected Start therefore cannot alter a future run.
-			const admission = queue.canProcessOneItem(item.id)
+			const requestedLane =
+				plannedActive && projectedSolvePayload ? (requested === 'loop' ? 'loop' : 'solve') : undefined
+			const admission = queue.canProcessOneItem(item.id, requestedLane)
 			const rejected = admissionFailure(c, admission)
 			if (rejected) return rejected
 			recordSolveSelection(item, selection)
