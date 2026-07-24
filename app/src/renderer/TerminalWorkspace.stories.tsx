@@ -44,7 +44,7 @@ function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?
 function TerminalMenu({ group = false }: { group?: boolean }) {
 	const items = group
 		? ['Rename…', 'Delete', 'Move group to Background']
-		: ['Rename…', 'Move to existing group', 'Move to new group…', 'Move to background', 'Close']
+		: ['Rename…', 'Move to existing group', 'Move to new group…', 'Move to profile…', 'Move to background', 'Close']
 	return (
 		<div
 			className="menu-panel menu-fixed"
@@ -60,10 +60,10 @@ function TerminalMenu({ group = false }: { group?: boolean }) {
 					role="menuitem"
 				>
 					<span className="menu-item-icon" aria-hidden="true">
-						{item === 'Rename…' ? '✎' : item === 'Close' || item === 'Delete' ? '×' : '›'}
+						{item === 'Rename…' ? '✎' : item === 'Close' || item === 'Delete' ? '×' : item === 'Move to profile…' ? '→' : '›'}
 					</span>
 					<span className="menu-item-label">{item}</span>
-					{index === 3 && !group ? <span className="menu-hint">⇧⌘B</span> : null}
+					{index === 4 && !group ? <span className="menu-hint">⇧⌘B</span> : null}
 				</button>
 			))}
 		</div>
