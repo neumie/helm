@@ -120,10 +120,7 @@ test('group label and member tabs form one continuous colored band with rounded 
 	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
 	assert.match(styles, /\.tab-group-section\s*\{[^}]*background:\s*color-mix\([^;]*var\(--group-color\) 15%/s)
 	assert.doesNotMatch(styles, /\.tab-group-section\s*\{[^}]*box-shadow:/s)
-	assert.match(
-		styles,
-		/\.tab-group-section::before\s*\{[^}]*top:\s*0[^}]*left:\s*6px[^}]*right:\s*6px[^}]*height:\s*2px[^}]*background:\s*var\(--group-color\)/s,
-	)
+	assert.doesNotMatch(styles, /\.tab-group-section::before/)
 	assert.match(styles, /\.tab-group-members\s*\{[^}]*gap:\s*0/s)
 	assert.match(styles, /\.tab-group-toggle\s*\{[^}]*border-radius:\s*0[^}]*background:\s*transparent/s)
 	assert.match(styles, /\.tab-group-section \.tab\s*\{[^}]*border-radius:\s*0[^}]*background:\s*transparent/s)
