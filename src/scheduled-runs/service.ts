@@ -260,6 +260,37 @@ export class ScheduledRunService {
 		).completeAttentionAdoption(runId, revision, identity, this.adoptionGrants, ownershipRegistered)
 	}
 
+	/**
+	 * Main-only restart restoration for an already completed Electron owner.
+	 * It accepts only the durable non-secret registry identity and performs the
+	 * same exact read-only attestation before returning an ephemeral descriptor.
+	 */
+	async restoreCompletedAttentionDescriptor(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+	): Promise<AttentionAttachDescriptor> {
+		const runtime = this.captureProfile(profileId)
+		const runDb = this.db.forProfile(runtime.profile.id)
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
+		const run = runDb.schedules.requireRun(runId)
+		if (
+			run.attentionAdoption?.state !== 'completed' ||
+			run.attentionAdoption.adoptionId !== identity.adoptionId ||
+			run.attentionAdoption.adopter !== identity.adopter ||
+			run.terminalResolvedAt === null ||
+			// Completion itself increments the reservation revision exactly once.
+			run.revision !== revision + 1
+		)
+			throw new Error('Scheduled attention adoption is unavailable')
+		const persistedIdentity = parseIdentity(run.processFingerprint)
+		if (!persistedIdentity) throw new Error('Scheduled attention session cannot be attested')
+		const attestation = await this.supervisor.attestLiveSession(profileId, run.sessionId, persistedIdentity)
+		if (attestation.state !== 'verified') throw new Error('Scheduled attention session cannot be attested')
+		return { socketPath: attestation.socketPath, mode: 'attach-existing', redraw: 'winch' }
+	}
+
 	rollbackAttentionAdoption(
 		profileId: string,
 		runId: string,

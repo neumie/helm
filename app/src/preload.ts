@@ -5,6 +5,7 @@ import type {
 	HelmApi,
 	PtySpawnResult,
 	RestoredSession,
+	ScheduledTerminalOpen,
 	TabGroup,
 	TabGroupActionAuthorization,
 	TerminalTransferEvent,
@@ -109,6 +110,21 @@ const api: HelmApi = {
 	},
 	sessions: {
 		list: () => ipcRenderer.invoke('sessions:list', sessionProfileToken) as Promise<RestoredSession[]>,
+		onScheduledOpen: listener =>
+			subscribe<[ScheduledTerminalOpen, string]>('scheduled-adoption:open', (terminal, profileToken) => {
+				if (profileToken !== sessionProfileToken) return
+				void Promise.resolve(listener(terminal))
+					.then(opened =>
+						ipcRenderer.invoke(
+							'scheduled-adoption:opened',
+							terminal.ptyId,
+							terminal.sessionId,
+							profileToken,
+							opened === true,
+						),
+					)
+					.catch(() => undefined)
+			}),
 		groups: {
 			list: () => ipcRenderer.invoke('tab-groups:list', sessionProfileToken) as Promise<TabGroup[]>,
 			create: (name, sessionIds) =>

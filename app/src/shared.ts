@@ -130,9 +130,16 @@ export interface GraceClose {
 	graceMs: number
 }
 
+/** Main-to-current-renderer scheduled handoff. It deliberately contains no daemon descriptor or identity. */
+export interface ScheduledTerminalOpen extends RestoredSession {
+	ptyId: number
+}
+
 export interface SessionsApi {
 	/** Live sessions from the previous run, oldest first. Empty when none/persistence off. */
 	list(): Promise<RestoredSession[]>
+	/** Main-only scheduled adoption asks the current token-bound renderer to mount an opaque PTY. */
+	onScheduledOpen(listener: (terminal: ScheduledTerminalOpen) => boolean | Promise<boolean>): () => void
 	/** Profile-token-scoped tab-group metadata and membership mutations. */
 	groups: TabGroupsApi
 	/** Persist the tab title so a restored tab gets its label back. */

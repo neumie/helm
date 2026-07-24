@@ -3,6 +3,8 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, Menu, app, dialog, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
+import { readLocalControlToken } from '../../src/auth/local-control'
+import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { parseExternalHttpUrl } from './external-url'
@@ -13,6 +15,7 @@ import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
+import { ScheduledAttentionAdoptionCoordinator, type ScheduledSessionOwnership } from './scheduled-adoption-main'
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
@@ -238,6 +241,11 @@ interface PtyEntry {
 	proc: pty.IPty
 	/** Backing dtach session; null = plain non-persistent shell. */
 	sessionId: string | null
+	/** Scheduled clients detach only; they never signal/unlink another owner’s master. */
+	backing: sessions.SessionBacking
+	profileToken: string
+	ready: boolean
+	pendingOutput: string[]
 }
 
 const ptys = new Map<number, PtyEntry>()
@@ -263,6 +271,7 @@ interface SessionSupport {
 }
 
 let sessionSupport: SessionSupport | null | undefined
+let scheduledAdoption: ScheduledAttentionAdoptionCoordinator | null = null
 let terminalTransferMain: TerminalTransferMainAdapter | null = null
 let terminalTransferRecovery: Promise<void> = Promise.resolve()
 const pendingTerminalTransferEvents = new Map<
@@ -635,7 +644,10 @@ function createWindow(): BrowserWindow {
 		win.once('ready-to-show', () => win.show())
 	}
 	// A helm:// deep link may land before the renderer is up (cold start).
-	win.webContents.on('did-finish-load', () => flushPendingOpenItem(win, rendererProfileEpoch))
+	win.webContents.on('did-finish-load', () => {
+		flushPendingOpenItem(win, rendererProfileEpoch)
+		void scheduledAdoption?.restore(sessionProfileToken())
+	})
 	// Native macOS three-finger swipe (System Settings "Swipe between pages"):
 	// swiping right = back, left = forward — same channel as the Go menu.
 	win.on('swipe', (_event, direction) => {
@@ -1161,6 +1173,149 @@ function shellEnv(): Record<string, string> {
 	return env
 }
 
+const scheduledOpenAcks = new Map<number, { resolve(opened: boolean): void; timer: NodeJS.Timeout }>()
+
+/** Main-to-current-renderer open, fenced by both sender and profile token. */
+function openScheduledRenderer(terminal: import('./shared').ScheduledTerminalOpen): Promise<boolean> {
+	const win = mainWindow
+	const token = sessionProfileToken()
+	if (!win || win.isDestroyed() || !sessionIpcAdmissionOpen) return Promise.resolve(false)
+	return new Promise(resolve => {
+		const timer = setTimeout(() => {
+			scheduledOpenAcks.delete(terminal.ptyId)
+			resolve(false)
+		}, 5_000)
+		scheduledOpenAcks.set(terminal.ptyId, {
+			resolve: opened => {
+				clearTimeout(timer)
+				resolve(opened)
+			},
+			timer,
+		})
+		win.webContents.send('scheduled-adoption:open', terminal, token)
+	})
+}
+
+/** Spawn only a lowercase dtach attach client. It cannot create/rebind a master. */
+async function attachScheduledPty(input: {
+	sessionId: string
+	ownership: ScheduledSessionOwnership
+	descriptor: { socketPath: string; mode: 'attach-existing'; redraw: 'winch' }
+}): Promise<{ ptyId: number }> {
+	if (!acceptsSessionIpcToken(sessionProfileToken()) || input.ownership.profileId !== sessionProfileId)
+		throw new Error('Scheduled session profile changed')
+	const support = getSessionSupport()
+	if (!support) throw new Error('Persistent terminal support is unavailable')
+	const expectedSocket = scheduledSocketPath(input.ownership.profileId, scheduledSessionId(input.ownership.runId))
+	if (
+		input.descriptor.socketPath !== expectedSocket ||
+		input.descriptor.mode !== 'attach-existing' ||
+		input.descriptor.redraw !== 'winch'
+	)
+		throw new Error('Scheduled attach descriptor is invalid')
+	const ptyId = nextPtyId++
+	const token = sessionProfileToken()
+	const proc = pty.spawn(support.dtach, ['-a', expectedSocket, '-E', '-r', 'winch', defaultShell(), '-l'], {
+		name: 'xterm-256color',
+		cols: 80,
+		rows: 24,
+		cwd: os.homedir(),
+		env: shellEnv(),
+	})
+	const entry: PtyEntry = {
+		proc,
+		sessionId: input.sessionId,
+		backing: 'run-owned',
+		profileToken: token,
+		ready: false,
+		pendingOutput: [],
+	}
+	ptys.set(ptyId, entry)
+	proc.onData(data => {
+		if (!entry.ready) {
+			entry.pendingOutput.push(data)
+			return
+		}
+		const win = mainWindow
+		if (win && !win.isDestroyed()) win.webContents.send('pty:data', ptyId, data, token)
+	})
+	proc.onExit(({ exitCode }) => {
+		const selfExit = ptys.has(ptyId)
+		ptys.delete(ptyId)
+		if (selfExit) {
+			const win = mainWindow
+			if (win && !win.isDestroyed()) win.webContents.send('pty:exit', ptyId, exitCode, token)
+		}
+	})
+	return { ptyId }
+}
+
+function detachScheduledPty(ptyId: number): void {
+	const entry = ptys.get(ptyId)
+	if (!entry || entry.backing !== 'run-owned') return
+	ptys.delete(ptyId)
+	try {
+		entry.proc.kill()
+	} catch {
+		// Only the attach client is ours; never infer or signal the scheduled master.
+	}
+}
+
+const scheduledRegistryAdapter = {
+	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
+		return getSessionSupport()?.registry.registerRunOwned(sessionId, ownership) ?? false
+	},
+	removeRunOwned(sessionId: string): void {
+		getSessionSupport()?.registry.removeRunOwned(sessionId)
+	},
+	listRunOwned() {
+		return (getSessionSupport()?.registry.listRunOwned() ?? []).map(entry => ({
+			sessionId: entry.sessionId,
+			ownership: entry.ownership,
+			restored: {
+				sessionId: entry.sessionId,
+				title: entry.meta.lastTitle ?? null,
+				customName: entry.meta.customName ?? null,
+				parked: entry.meta.parked === true,
+				groupId: entry.meta.groupId ?? null,
+				agentRunning: entry.meta.agentRunning === true,
+				agentAttention: entry.meta.agentAttention === true,
+			},
+		}))
+	},
+}
+
+ipcMain.handle(
+	'scheduled-adoption:opened',
+	(event, ptyId: unknown, sessionId: unknown, profileToken: unknown, opened: unknown) => {
+		const validPtyId = typeof ptyId === 'number' ? ptyId : null
+		const ack = validPtyId === null ? undefined : scheduledOpenAcks.get(validPtyId)
+		const entry = validPtyId === null ? undefined : ptys.get(validPtyId)
+		if (
+			validPtyId === null ||
+			!ack ||
+			!entry ||
+			entry.backing !== 'run-owned' ||
+			entry.sessionId !== sessionId ||
+			!sessionIpcGate.allows(profileToken) ||
+			event.sender !== mainWindow?.webContents
+		)
+			return false
+		scheduledOpenAcks.delete(validPtyId)
+		if (opened !== true) {
+			ack.resolve(false)
+			return false
+		}
+		entry.ready = true
+		const win = mainWindow
+		if (win && !win.isDestroyed())
+			for (const data of entry.pendingOutput.splice(0))
+				win.webContents.send('pty:data', validPtyId, data, entry.profileToken)
+		ack.resolve(true)
+		return true
+	},
+)
+
 ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
 	const href = parseExternalHttpUrl(value)
@@ -1202,7 +1357,14 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		cwd: os.homedir(),
 		env: shellEnv(),
 	})
-	ptys.set(id, { proc, sessionId })
+	ptys.set(id, {
+		proc,
+		sessionId,
+		backing: 'ordinary',
+		profileToken: args.profileToken,
+		ready: true,
+		pendingOutput: [],
+	})
 	const contents = event.sender
 	proc.onData(data => {
 		if (!contents.isDestroyed()) contents.send('pty:data', id, data, args.profileToken)
@@ -1216,9 +1378,10 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		// the way out used to get a LIVE session's socket unlinked (the
 		// vanishing-socket bug — quit destroyed what persistence was supposed
 		// to keep).
-		const selfExit = ptys.has(id)
+		const selfEntry = ptys.get(id)
+		const selfExit = selfEntry !== undefined
 		ptys.delete(id)
-		if (selfExit && sessionId && support) {
+		if (selfExit && sessionId && support && selfEntry?.backing !== 'run-owned') {
 			const sid = sessionId
 			void sessions.reapSessionIfDead(sid).then(dead => {
 				if (dead) {
@@ -1260,7 +1423,7 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 	const entry = ptys.get(id)
 	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
 	ptys.delete(id)
-	if (entry.sessionId) {
+	if (entry.sessionId && entry.backing !== 'run-owned') {
 		const sid = entry.sessionId
 		const support = getSessionSupport()
 		graceCloser.undo(sid) // a hard kill supersedes any pending grace timer
@@ -1292,7 +1455,7 @@ ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: un
 	} catch {
 		// already exited
 	}
-	if (!entry.sessionId) return null
+	if (!entry.sessionId || entry.backing === 'run-owned') return null
 	graceCloseSupports.set(entry.sessionId, getSessionSupport())
 	graceCloser.schedule(entry.sessionId)
 	return { sessionId: entry.sessionId, graceMs: graceCloser.graceMs }
@@ -1786,6 +1949,67 @@ void app.whenReady().then(async () => {
 		if (result.status === 'quarantined') console.warn('[helm] terminal transfer recovery quarantined:', result.reason)
 	})
 	await terminalTransferRecovery
+	scheduledAdoption = new ScheduledAttentionAdoptionCoordinator({
+		daemon: {
+			reserve: async ownership => {
+				const token = await readLocalControlToken()
+				const result = await helmBridge.scheduledAttention<{ revision: number; adoption: { capability: string } }>(
+					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/reserve`,
+					ownership,
+					token,
+				)
+				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				return { revision: result.data.revision, capability: result.data.adoption.capability }
+			},
+			descriptor: async input => {
+				const token = await readLocalControlToken()
+				const result = await helmBridge.scheduledAttention<{
+					socketPath: string
+					mode: 'attach-existing'
+					redraw: 'winch'
+				}>(`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-adoption/attach-descriptor`, input, token)
+				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				return result.data
+			},
+			complete: async ownership => {
+				const token = await readLocalControlToken()
+				const result = await helmBridge.scheduledAttention(
+					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/complete`,
+					{ ...ownership, ownershipRegistered: true },
+					token,
+				)
+				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+			},
+			rollback: async ownership => {
+				const token = await readLocalControlToken()
+				await helmBridge.scheduledAttention(
+					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/rollback`,
+					ownership,
+					token,
+				)
+			},
+			restoreDescriptor: async ownership => {
+				const token = await readLocalControlToken()
+				const result = await helmBridge.scheduledAttention<{
+					socketPath: string
+					mode: 'attach-existing'
+					redraw: 'winch'
+				}>(
+					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/completed-owner/attach-descriptor`,
+					ownership,
+					token,
+				)
+				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				return result.data
+			},
+		},
+		attach: { attach: attachScheduledPty, detach: detachScheduledPty },
+		registry: scheduledRegistryAdapter,
+		renderer: { open: openScheduledRenderer },
+		newSessionId: sessions.newSessionId,
+		isCurrent: (profileId, token) => profileId === sessionProfileId && acceptsSessionIpcToken(token),
+	})
+	void scheduledAdoption.recoverAmbiguous()
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
 	buildMenu()
 	helmBridge.start()

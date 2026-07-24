@@ -353,6 +353,17 @@ export class HelmBridge {
 			: this.request<T>('POST', paths[operation], { capability }, timeoutMs)
 	}
 
+	/**
+	 * Privileged scheduled-attention transport for Electron main only. The
+	 * caller owns the local-control token; this method is deliberately not IPC
+	 * registered, so descriptors/capabilities can never reach a renderer.
+	 */
+	async scheduledAttention<T>(path: string, body: unknown, controlToken: string): Promise<HelmResult<T>> {
+		return this.request<T>('POST', path, body, WORKSPACE_REQUEST_TIMEOUT_MS, {
+			Authorization: `Bearer ${controlToken}`,
+		})
+	}
+
 	/** Run Context token policy lives in the bridge-owned operations helper. */
 	async loadRunContext(itemId: string, profileToken: unknown): Promise<HelmResult<RunContextLoad>> {
 		return this.runContext.load(itemId, profileToken)

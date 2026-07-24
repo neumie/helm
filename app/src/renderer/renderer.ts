@@ -1903,6 +1903,8 @@ interface TerminalOpts {
 	groupId?: string | null
 	agentRunning?: boolean
 	agentAttention?: boolean
+	/** Main-only scheduled adoption has already attached this opaque PTY. */
+	attachedPty?: { id: number; sessionId: string }
 }
 
 async function createTerminal(opts?: TerminalOpts): Promise<void> {
@@ -2132,7 +2134,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	// any term.resize in that window is LOST — onResize is attached only below.
 	const spawnCols = term.cols
 	const spawnRows = term.rows
-	const spawned = await helm.pty.spawn(spawnCols, spawnRows, opts?.sessionId)
+	const spawned = opts?.attachedPty ?? (await helm.pty.spawn(spawnCols, spawnRows, opts?.sessionId))
 	if (tab.closed) {
 		helm.pty.kill(spawned.id)
 		return
@@ -2158,7 +2160,7 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	// false again), replaying the fitted size the lost-resize window ate.
 	if (!tab.parked) {
 		fitTab(tab)
-		syncPtySize(tab, spawnCols, spawnRows, opts?.sessionId !== undefined)
+		syncPtySize(tab, spawnCols, spawnRows, opts?.sessionId !== undefined || opts?.attachedPty !== undefined)
 	}
 }
 
@@ -2347,6 +2349,28 @@ async function runUiPreview(): Promise<void> {
 	if (preview === 'background') openBackgroundPopover()
 	else if (preview === 'background-open' && running) openParked(running)
 }
+
+// Main-owned scheduled adoption is deliberately not a renderer command. It
+// hands over only an opaque attached PTY/session pair after durable registry
+// ownership; the preload immediately acknowledges mounting success.
+helm.sessions.onScheduledOpen(async terminal => {
+	if (!tabsReady || tabs.some(tab => tab.ptyId === terminal.ptyId || tab.sessionId === terminal.sessionId)) return false
+	try {
+		await createTerminal({
+			sessionId: terminal.sessionId,
+			title: terminal.title,
+			customName: terminal.customName,
+			parked: terminal.parked,
+			groupId: terminal.groupId,
+			agentRunning: terminal.agentRunning,
+			agentAttention: terminal.agentAttention,
+			attachedPty: { id: terminal.ptyId, sessionId: terminal.sessionId },
+		})
+		return true
+	} catch {
+		return false
+	}
+})
 
 // Startup: reattach every dtach session that survived the previous run —
 // non-parked sessions as strip tabs (saved titles restored), parked sessions

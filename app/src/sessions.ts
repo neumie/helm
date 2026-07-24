@@ -519,6 +519,41 @@ export class GraceCloser {
 
 export type SessionBacking = 'ordinary' | 'run-owned'
 
+/**
+ * Non-secret durable identity for an Electron-owned scheduled dtach client.
+ * Socket paths, PIDs, process identity, and capabilities deliberately never
+ * enter this registry or any renderer-facing restored-session shape.
+ */
+export interface ScheduledSessionOwnership {
+	profileId: string
+	runId: string
+	revision: number
+	adoptionId: string
+	adopter: string
+}
+
+function isUuid(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+	)
+}
+
+export function isScheduledSessionOwnership(value: unknown): value is ScheduledSessionOwnership {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+	const ownership = value as Record<string, unknown>
+	return (
+		isValidSessionProfileId(ownership.profileId) &&
+		typeof ownership.runId === 'string' &&
+		/^[a-z0-9-]{1,80}$/i.test(ownership.runId) &&
+		typeof ownership.revision === 'number' &&
+		Number.isInteger(ownership.revision) &&
+		ownership.revision >= 0 &&
+		isUuid(ownership.adoptionId) &&
+		isUuid(ownership.adopter)
+	)
+}
+
 /** A persisted group can be disclosed independently in either terminal surface. */
 export type TabGroupSurface = 'strip' | 'background'
 
@@ -602,6 +637,8 @@ export interface SessionMeta {
 	parked?: boolean
 	/** Omitted legacy entries are ordinary user terminals. Run-owned sessions are never transferable. */
 	backing?: SessionBacking
+	/** Required for run-owned scheduled sessions; intentionally non-secret. */
+	scheduledOwnership?: ScheduledSessionOwnership
 	/** Protocol-observed activity retained for an inactive destination profile. */
 	agentRunning?: boolean
 	agentAttention?: boolean
@@ -660,15 +697,30 @@ export class SessionRegistry {
 			}
 			for (const [id, meta] of Object.entries(raw)) {
 				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null || Array.isArray(meta)) continue
-				const { createdAt, order, lastTitle, customName, parked, backing, agentRunning, agentAttention, groupId } =
-					meta as Record<string, unknown>
+				const {
+					createdAt,
+					order,
+					lastTitle,
+					customName,
+					parked,
+					backing,
+					scheduledOwnership,
+					agentRunning,
+					agentAttention,
+					groupId,
+				} = meta as Record<string, unknown>
+				// A run-owned record without its complete non-secret identity cannot
+				// be restored safely, so fail closed by ignoring that malformed row.
+				if (backing === 'run-owned' && !isScheduledSessionOwnership(scheduledOwnership)) continue
 				this.#data[id] = {
 					createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
 					...(typeof order === 'number' && Number.isFinite(order) && order >= 0 ? { order } : {}),
 					...(typeof lastTitle === 'string' ? { lastTitle } : {}),
 					...(typeof customName === 'string' && customName !== '' ? { customName } : {}),
 					...(parked === true ? { parked: true } : {}),
-					...(backing === 'run-owned' ? { backing } : {}),
+					...(backing === 'run-owned'
+						? { backing, scheduledOwnership: { ...(scheduledOwnership as ScheduledSessionOwnership) } }
+						: {}),
 					...(agentRunning === true ? { agentRunning: true } : {}),
 					...(agentAttention === true ? { agentAttention: true } : {}),
 					...(typeof groupId === 'string' && this.#groups[groupId] ? { groupId } : {}),
@@ -839,12 +891,43 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
-	/** Explicitly marks a session as ordinary or immutable run-owned backing. */
+	/** Explicitly marks an existing session as ordinary backing. Run-owned records use registerRunOwned(). */
 	setBacking(sessionId: string, backing: SessionBacking): void {
 		const meta = this.#data[sessionId]
-		if (!meta || (meta.backing ?? 'ordinary') === backing) return
-		meta.backing = backing === 'run-owned' ? 'run-owned' : undefined
+		if (!meta || backing === 'run-owned' || (meta.backing ?? 'ordinary') === backing) return
+		meta.backing = undefined
+		meta.scheduledOwnership = undefined
 		this.#scheduleSave()
+	}
+
+	/**
+	 * Atomically records a newly attached scheduled client before daemon
+	 * completion. A false return means no ownership evidence was retained.
+	 */
+	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
+		if (!isValidSessionId(sessionId) || !isScheduledSessionOwnership(ownership) || this.#data[sessionId]) return false
+		this.#data[sessionId] = {
+			createdAt: new Date().toISOString(),
+			backing: 'run-owned',
+			scheduledOwnership: { ...ownership },
+		}
+		return this.flushSync()
+	}
+
+	removeRunOwned(sessionId: string): void {
+		if (this.#data[sessionId]?.backing !== 'run-owned') return
+		delete this.#data[sessionId]
+		this.#removeEmptyGroups()
+		this.flushSync()
+	}
+
+	/** Main-only startup recovery source. Never expose ownership through sessions:list. */
+	listRunOwned(): Array<{ sessionId: string; ownership: ScheduledSessionOwnership; meta: SessionMeta }> {
+		return Object.entries(this.#data).flatMap(([sessionId, meta]) =>
+			meta.backing === 'run-owned' && meta.scheduledOwnership
+				? [{ sessionId, ownership: { ...meta.scheduledOwnership }, meta: structuredClone(meta) }]
+				: [],
+		)
 	}
 
 	/** Persist protocol-owned activity only; no output/title inference is permitted. */
@@ -954,11 +1037,13 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
-	/** Drop metadata for sessions whose sockets are gone (post-scan sync). */
+	/** Drop ordinary metadata for sessions whose sockets are gone (post-scan sync).
+	 * Run-owned scheduled sessions use a separate daemon namespace and are
+	 * retained until their exact completed-owner re-attestation says otherwise. */
 	prune(liveIds: ReadonlySet<string>): void {
 		let changed = false
 		for (const id of Object.keys(this.#data)) {
-			if (!liveIds.has(id)) {
+			if (!liveIds.has(id) && this.#data[id]?.backing !== 'run-owned') {
 				delete this.#data[id]
 				changed = true
 			}
@@ -977,11 +1062,18 @@ export class SessionRegistry {
 	}
 
 	flush(): void {
+		this.flushSync()
+	}
+
+	/** Synchronous atomic persistence result for ownership handoff ordering. */
+	flushSync(): boolean {
 		this.#cancelSave()
 		try {
 			SessionRegistry.#writeDocument(this.#file, SessionRegistry.#document(this.#data, this.#groups))
+			return true
 		} catch {
-			// best-effort; titles degrade to "zsh" on next restore
+			// Cosmetic callers may degrade; handoff callers inspect the false result.
+			return false
 		}
 	}
 

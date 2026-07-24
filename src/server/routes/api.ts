@@ -651,6 +651,32 @@ export function apiRoutes(
 		})
 		const adoptionUnavailable = (c: Context) => c.json({ error: 'Scheduled attention adoption unavailable' }, 409)
 		const adoptionProfile = (profileId: string): boolean => registeredProfile(profileId)
+		// Completed-owner restoration is a separate main-only descriptor transport:
+		// its durable registry identity has no bearer grant, but control auth and
+		// exact completed adoption identity are required on every re-attestation.
+		api.post(
+			'/scheduled-runs/runs/:runId/attention-adoption/completed-owner/attach-descriptor',
+			scheduledBody,
+			async c => {
+				c.header('Cache-Control', 'no-store')
+				const denied = requireControl(c)
+				if (denied) return denied
+				const input = await parseBody(c, adoptionRequestSchema)
+				if ('error' in input) return input.error
+				if (!registeredProfile(input.data.profileId)) return adoptionUnavailable(c)
+				try {
+					const result = await scheduled.service.restoreCompletedAttentionDescriptor(
+						input.data.profileId,
+						c.req.param('runId'),
+						input.data.revision,
+						{ adoptionId: input.data.adoptionId, adopter: input.data.adopter },
+					)
+					return c.json({ data: result })
+				} catch {
+					return adoptionUnavailable(c)
+				}
+			},
+		)
 		for (const [action, schema] of [
 			['reserve', adoptionRequestSchema],
 			['attach-descriptor', attachDescriptorRequestSchema],
@@ -673,7 +699,8 @@ export function apiRoutes(
 							input.data.revision,
 							identity,
 						)
-						return c.json({ data: toScheduledRunContract(result.run), adoption: result.grant })
+						const run = toScheduledRunContract(result.run)
+						return c.json({ data: { ...run, adoption: result.grant }, adoption: result.grant })
 					}
 					if (action === 'attach-descriptor') {
 						const attach = input.data as z.infer<typeof attachDescriptorRequestSchema>
