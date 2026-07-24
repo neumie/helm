@@ -347,6 +347,15 @@ test('menu keyboard focus skips disabled actions and selection restores its trig
 	assert.match(renderer, /if \(trigger\.isConnected\) trigger\.focus\(\)/)
 })
 
+test('profile move menu leaves freeze and rollback exclusively to the transfer controller', () => {
+	const start = renderer.indexOf('function openProfileMoveMenu')
+	const end = renderer.indexOf('function openTabMenu', start)
+	const menu = renderer.slice(start, end)
+	assert.doesNotMatch(menu, /tab\.transferring = true/)
+	assert.doesNotMatch(menu, /disableStdin = false/)
+	assert.match(menu, /helm\.terminalTransfer\.move/)
+})
+
 test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {
 	const composition = composeTabGroups({
 		tabs: [

@@ -1711,14 +1711,13 @@ function openProfileMoveMenu(tab: Tab, x: number, y: number): void {
 				label: names.get(profileId) ?? 'Unavailable profile',
 				icon: '→',
 				onPick: () => {
-					tab.transferring = true
 					void helm.terminalTransfer.move(tab.sessionId as string, profileId).then(result => {
 						if (result.status === 'moved') {
 							showToast({ message: `Moved to Background in ${names.get(profileId) ?? 'profile'}` })
 							return
 						}
-						tab.transferring = false
-						tab.term.options.disableStdin = false
+						// The renderer controller alone owns freeze/rollback. A quarantined
+						// post-detach transfer must remain frozen until ownership is repaired.
 						showToast({ message: 'Could not move terminal' })
 					})
 				},

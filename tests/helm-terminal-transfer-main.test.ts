@@ -188,18 +188,21 @@ test('uses only capability detach events and socket rename; it never calls a mas
 	try {
 		value.source.buffers.save(SESSION, 'snapshot')
 		const events: string[] = []
+		const transactionIds: string[] = []
 		assert.equal(
 			value.adapter.registerRendererCapability({
 				profileToken: 'work:0',
 				sessionId: SESSION,
 				async dispatch(event) {
 					events.push(event.type)
+					transactionIds.push(event.transactionId)
 					if (event.type === 'prepare') {
 						return {
 							status: 'prepared',
 							prepared: { metadata: { agentRunning: false, agentAttention: false } },
 						}
 					}
+					return { status: 'committed' }
 				},
 			}),
 			true,
@@ -212,11 +215,45 @@ test('uses only capability detach events and socket rename; it never calls a mas
 		})
 		assert.equal(result.status, 'moved')
 		assert.deepEqual(events, ['prepare', 'commit'])
+		assert.equal(new Set(transactionIds).size, 1, 'prepare and commit address one renderer transaction')
 		assert.equal(value.calls.filter(call => call.startsWith('rename:')).length, 1)
 		assert.equal(
 			value.calls.some(call => /kill|signal/i.test(call)),
 			false,
 		)
+		assert.equal(value.destination.registry.get(SESSION)?.parked, true)
+	} finally {
+		rmSync(value.root, { recursive: true, force: true })
+	}
+})
+
+test('a rejected renderer commit quarantines durable destination ownership instead of reporting moved', async () => {
+	const value = fixture()
+	try {
+		value.source.buffers.save(SESSION, 'snapshot')
+		assert.equal(
+			value.adapter.registerRendererCapability({
+				profileToken: 'work:0',
+				sessionId: SESSION,
+				async dispatch(event) {
+					return event.type === 'prepare'
+						? {
+								status: 'prepared',
+								prepared: { metadata: { agentRunning: false, agentAttention: false } },
+							}
+						: { status: 'rejected', reason: 'unknown-transaction' }
+				},
+			}),
+			true,
+		)
+		const result = await value.adapter.move({
+			sourceProfileId: SOURCE,
+			destinationProfileId: DESTINATION,
+			sessionId: SESSION,
+			profileToken: 'work:0',
+		})
+		assert.equal(result.status, 'quarantined')
+		assert.equal(value.journal.load()?.state, 'rollback-needed')
 		assert.equal(value.destination.registry.get(SESSION)?.parked, true)
 	} finally {
 		rmSync(value.root, { recursive: true, force: true })

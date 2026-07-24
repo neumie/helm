@@ -253,9 +253,10 @@ export class TerminalTransferMainAdapter {
 		const request = this.#activeRequest
 		if (!capability || !request || capability.profileToken !== current.token || request.sessionId !== sessionId)
 			return null
+		const transactionId = crypto.randomUUID()
 		const event = (type: TerminalTransferEventType): TerminalTransferEvent => ({
 			type,
-			transactionId: crypto.randomUUID(),
+			transactionId,
 			sessionId,
 			sourceProfileId: request.sourceProfileId,
 			destinationProfileId: request.destinationProfileId,
@@ -281,10 +282,12 @@ export class TerminalTransferMainAdapter {
 				if (!(await this.#detachAttachClient(sessionId))) throw new Error('source attach client is unavailable')
 			},
 			commitSource: async () => {
-				await capability.dispatch(event('commit'))
+				if (!isCompletionAcknowledgement(await capability.dispatch(event('commit')), 'committed'))
+					throw new Error('source renderer did not commit the transfer')
 			},
 			rollbackSource: async () => {
-				await capability.dispatch(event('rollback'))
+				if (!isCompletionAcknowledgement(await capability.dispatch(event('rollback')), 'rolled-back'))
+					throw new Error('source renderer did not roll back the transfer')
 			},
 			attachSourceClient: async () => {
 				if (!(await this.#attachSourceClient(sessionId))) throw new Error('source attach client could not be restored')
@@ -357,6 +360,10 @@ export class TerminalTransferMainAdapter {
 			}
 		}
 	}
+}
+
+function isCompletionAcknowledgement(value: unknown, status: 'committed' | 'rolled-back'): boolean {
+	return Boolean(value && typeof value === 'object' && (value as { status?: unknown }).status === status)
 }
 
 function isPrepareAcknowledgement(
