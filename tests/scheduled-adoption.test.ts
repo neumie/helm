@@ -112,6 +112,7 @@ test('attention adoption is tenant/revision guarded, idempotent by identity, and
 						adoptionId: randomUUID(),
 						adopter: randomUUID(),
 						reservedAt: new Date().toISOString(),
+						expiresAt: new Date(Date.now() + 30_000).toISOString(),
 					},
 					null,
 					true,

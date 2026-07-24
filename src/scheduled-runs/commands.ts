@@ -1,4 +1,4 @@
-import type { AttentionAdoptionGrantManager } from './adoption-grants.js'
+import { ATTENTION_ADOPTION_GRANT_TTL_MS, type AttentionAdoptionGrantManager } from './adoption-grants.js'
 import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import { isScheduledRunTerminalState } from './retention.js'
@@ -275,13 +275,15 @@ export class ScheduleCommands {
 			throw new Error('A rolled-back attention adoption requires a new identity')
 		this.assertAttentionAdoptable(run)
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
+		const reservedAt = new Date()
 		return this.store.updateAttentionAdoption(
 			id,
 			revision,
 			{
 				state: 'reserved',
 				...parsed,
-				reservedAt: new Date().toISOString(),
+				reservedAt: reservedAt.toISOString(),
+				expiresAt: new Date(reservedAt.getTime() + ATTENTION_ADOPTION_GRANT_TTL_MS).toISOString(),
 			},
 			null,
 			true,
@@ -314,7 +316,13 @@ export class ScheduleCommands {
 		const completed = this.store.updateAttentionAdoption(
 			id,
 			revision,
-			{ state: 'completed', ...parsed, reservedAt: run.attentionAdoption.reservedAt, completedAt },
+			{
+				state: 'completed',
+				...parsed,
+				reservedAt: run.attentionAdoption.reservedAt,
+				expiresAt: run.attentionAdoption.expiresAt,
+				completedAt,
+			},
 			completedAt,
 		)
 		grants.revoke(grantBinding)
@@ -346,6 +354,7 @@ export class ScheduleCommands {
 			state: 'rolled_back',
 			...parsed,
 			reservedAt: run.attentionAdoption.reservedAt,
+			expiresAt: run.attentionAdoption.expiresAt,
 			rolledBackAt: new Date().toISOString(),
 			reason,
 		})

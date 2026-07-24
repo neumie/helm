@@ -164,14 +164,22 @@ export const attentionAdoptionRollbackReasonSchema = z.enum(['client', 'expired'
  * socket, filesystem, and bearer-capability material.
  */
 export const attentionAdoptionSchema = z.discriminatedUnion('state', [
-	attentionAdoptionIdentitySchema.extend({ state: z.literal('reserved'), reservedAt: utcIsoSchema }).strict(),
 	attentionAdoptionIdentitySchema
-		.extend({ state: z.literal('completed'), reservedAt: utcIsoSchema, completedAt: utcIsoSchema })
+		.extend({ state: z.literal('reserved'), reservedAt: utcIsoSchema, expiresAt: utcIsoSchema })
+		.strict(),
+	attentionAdoptionIdentitySchema
+		.extend({
+			state: z.literal('completed'),
+			reservedAt: utcIsoSchema,
+			expiresAt: utcIsoSchema,
+			completedAt: utcIsoSchema,
+		})
 		.strict(),
 	attentionAdoptionIdentitySchema
 		.extend({
 			state: z.literal('rolled_back'),
 			reservedAt: utcIsoSchema,
+			expiresAt: utcIsoSchema,
 			rolledBackAt: utcIsoSchema,
 			reason: attentionAdoptionRollbackReasonSchema,
 		})
