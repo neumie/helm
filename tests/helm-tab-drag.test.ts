@@ -5,6 +5,7 @@ import dragModule from '../app/src/renderer/tab-drag.ts'
 type DragModule = typeof import('../app/src/renderer/tab-drag.ts')
 const {
 	dragThresholdExceeded,
+	groupDropInsertionIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
 	stripDropInsertionIndex,
@@ -31,6 +32,17 @@ test('same slot and unknown item are stable copies', () => {
 	const items = ['a', 'b', 'c']
 	assert.deepEqual(moveToInsertionIndex(items, 'b', 2), items)
 	assert.deepEqual(moveToInsertionIndex(items, 'missing', 1), items)
+})
+
+test('group drop maps a peer-relative slot into flat tab order', () => {
+	const a = { id: 'a', groupId: 'one' }
+	const b = { id: 'b', groupId: 'one' }
+	const c = { id: 'c', groupId: 'two' }
+	const d = { id: 'd', groupId: 'two' }
+	const items = [a, b, c, d]
+	assert.equal(groupDropInsertionIndex(items, a, 'two', 1, 0), 3)
+	assert.deepEqual(moveToInsertionIndex(items, a, groupDropInsertionIndex(items, a, 'two', 0, 0)), [b, a, c, d])
+	assert.equal(groupDropInsertionIndex(items, a, null, 0, 3), 3)
 })
 
 test('leading strip gutter is an explicit first-position drop target', () => {

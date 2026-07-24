@@ -6,15 +6,8 @@ import type { TabGroupRendererTab } from '../app/src/renderer/tab-groups.ts'
 import type { TabGroup } from '../app/src/shared.ts'
 
 type TabGroupModule = typeof import('../app/src/renderer/tab-groups.ts')
-const {
-	composeTabGroups,
-	mergeGroupPeers,
-	shouldReloadCollapsedGroup,
-	tabGroupActionTargets,
-	tabGroupHeading,
-	tabGroupMembersId,
-	tabsWithGroupId,
-} = tabGroupModule as TabGroupModule
+const { composeTabGroups, shouldReloadCollapsedGroup, tabGroupActionTargets, tabGroupHeading, tabGroupMembersId } =
+	tabGroupModule as TabGroupModule
 const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
 
@@ -248,28 +241,6 @@ test('only named groups have headings or deterministic bulk commands', () => {
 	assert.deepEqual(tabGroupActionTargets(ungrouped), [])
 })
 
-test('drag reorders same-group peers only and merges them back without moving other groups', () => {
-	const groupA = { id: 'a', groupId: 'group-a' }
-	const ungrouped = { id: 'u', groupId: null }
-	const groupB = { id: 'b', groupId: 'group-a' }
-	const other = { id: 'x', groupId: 'group-b' }
-	const flat = [groupA, ungrouped, groupB, other]
-	const peers = tabsWithGroupId(flat, 'group-a')
-
-	assert.deepEqual(
-		peers.map(tab => tab.id),
-		['a', 'b'],
-	)
-	assert.deepEqual(
-		mergeGroupPeers(flat, 'group-a', [groupB, groupA]).map(tab => tab.id),
-		['b', 'u', 'a', 'x'],
-	)
-	assert.deepEqual(
-		mergeGroupPeers(flat, 'group-a', [groupA]).map(tab => tab.id),
-		['a', 'u', 'b', 'x'],
-	)
-})
-
 test('collapse rollback only reloads a current rejected or false write', () => {
 	assert.equal(shouldReloadCollapsedGroup(3, 3, true), false)
 	assert.equal(shouldReloadCollapsedGroup(3, 3, false), true)
@@ -312,6 +283,18 @@ test('real OSC state transitions refresh group rendering while keepalives remain
 	assert.match(runningSetter, /if \(tab\.agentRunning === running\) return/)
 	assert.match(runningSetter, /renderTabAgentState\(tab\)/)
 	assert.match(agentRender, /renderTabGroups\(\)/)
+})
+
+test('pointer drag can join, leave, and cross groups before atomically persisting membership', () => {
+	assert.match(renderer, /sectionEl\.dataset\.groupId = section\.groupId \?\? ''/)
+	assert.match(renderer, /document\.elementFromPoint\(x, y\)/)
+	assert.match(renderer, /hit\.closest<HTMLElement>\('\.tab-group-section'\)/)
+	assert.match(renderer, /const targetGroupId = drag\.tab\.sessionId \? stripGroupAtPoint/)
+	assert.match(renderer, /drag\.tab\.groupId = targetGroupId/)
+	assert.match(renderer, /groupDropInsertionIndex\(/)
+	assert.match(renderer, /function persistTabDragMembership/)
+	assert.match(renderer, /helm\.sessions\.groups\.setMembership\(sessionId, targetGroupId\)/)
+	assert.match(renderer, /restoreTabDragOrigin\(drag, true\)/)
 })
 
 test('renderer action adapter uses the validated intent and membership APIs for tab and group menus', () => {

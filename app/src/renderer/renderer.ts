@@ -14,6 +14,7 @@ import { mountSidebar } from './sidebar/SidebarRoot'
 import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
 import {
 	dragThresholdExceeded,
+	groupDropInsertionIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
 	stripDropInsertionIndex,
@@ -23,11 +24,9 @@ import {
 	type TabGroupActionTarget,
 	type TabGroupSection,
 	composeTabGroups,
-	mergeGroupPeers,
 	shouldReloadCollapsedGroup,
 	tabGroupHeading,
 	tabGroupMembersId,
-	tabsWithGroupId,
 } from './tab-groups'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import { terminalShortcut } from './terminal-keybindings'
@@ -309,6 +308,7 @@ function renderTabGroups(): void {
 	for (const section of tabGroupComposition().strip) {
 		const sectionEl = document.createElement('div')
 		sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
+		sectionEl.dataset.groupId = section.groupId ?? ''
 		applyGroupColor(sectionEl, section.color)
 		const header = groupHeader(section)
 		if (header) sectionEl.append(header)
@@ -1255,9 +1255,11 @@ interface TabPointerDrag {
 	offsetX: number
 	offsetY: number
 	originalTabs: Tab[]
+	originalGroupId: string | null
 	started: boolean
 	preview: HTMLDivElement | null
 	dropTarget: TabDropTarget
+	dropGroupId: string | null
 	frame: number | null
 }
 
@@ -1300,10 +1302,24 @@ function positionTabPreview(drag: TabPointerDrag): void {
 	drag.preview.style.transform = `translate3d(${left}px, ${top}px, 0) scale(${scale})`
 }
 
+function restoreTabDragOrigin(drag: TabPointerDrag, animate: boolean): void {
+	const groupChanged = drag.tab.groupId !== drag.originalGroupId
+	drag.tab.groupId = drag.originalGroupId
+	drag.dropGroupId = drag.originalGroupId
+	if (!setTabOrder(drag.originalTabs, animate) && groupChanged) renderTabGroups()
+}
+
+function stripGroupAtPoint(x: number, y: number): string | null {
+	const hit = document.elementFromPoint(x, y)
+	const section = hit instanceof Element ? hit.closest<HTMLElement>('.tab-group-section') : null
+	return section?.dataset.groupId || null
+}
+
 function updateTabDragTarget(drag: TabPointerDrag): void {
 	const backgroundRect = bgToggle.getBoundingClientRect()
 	const overNewTab = pointInExpandedRect(drag.x, drag.y, newTabButton.getBoundingClientRect())
 	if (!overNewTab && pointInExpandedRect(drag.x, drag.y, backgroundRect, 8)) {
+		restoreTabDragOrigin(drag, true)
 		drag.dropTarget = 'background'
 		bgToggle.classList.add('drag-over')
 		drag.preview?.classList.add('over-background')
@@ -1315,19 +1331,36 @@ function updateTabDragTarget(drag: TabPointerDrag): void {
 	drag.preview?.classList.remove('over-background')
 	const stripRect = tabsEl.getBoundingClientRect()
 	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 10)) {
+		restoreTabDragOrigin(drag, true)
 		drag.dropTarget = null
 		positionTabPreview(drag)
 		return
 	}
 
 	drag.dropTarget = 'strip'
-	const peers = tabsWithGroupId(tabs, drag.tab.groupId)
-	const insertionIndex = stripDropInsertionIndex(
+	const targetGroupId = drag.tab.sessionId ? stripGroupAtPoint(drag.x, drag.y) : drag.originalGroupId
+	const targetPeers = tabs.filter(tab => tab !== drag.tab && tab.groupId === targetGroupId)
+	const visiblePeerRects = targetPeers.map(tab => tab.tabButton.getBoundingClientRect()).filter(rect => rect.width > 0)
+	const peerInsertionIndex =
+		visiblePeerRects.length === targetPeers.length
+			? stripDropInsertionIndex(drag.x, visiblePeerRects)
+			: targetPeers.length
+	const remainingTabs = tabs.filter(tab => tab !== drag.tab)
+	const fallbackInsertionIndex = stripDropInsertionIndex(
 		drag.x,
-		peers.map(tab => tab.tabButton.getBoundingClientRect()),
+		remainingTabs.map(tab => tab.tabButton.getBoundingClientRect()),
 	)
-	const reorderedPeers = moveToInsertionIndex(peers, drag.tab, insertionIndex)
-	setTabOrder(mergeGroupPeers(tabs, drag.tab.groupId, reorderedPeers), true)
+	const insertionIndex = groupDropInsertionIndex(
+		tabs,
+		drag.tab,
+		targetGroupId,
+		peerInsertionIndex,
+		fallbackInsertionIndex,
+	)
+	const groupChanged = drag.tab.groupId !== targetGroupId
+	drag.tab.groupId = targetGroupId
+	drag.dropGroupId = targetGroupId
+	if (!setTabOrder(moveToInsertionIndex(tabs, drag.tab, insertionIndex), true) && groupChanged) renderTabGroups()
 	positionTabPreview(drag)
 }
 
@@ -1408,6 +1441,41 @@ function settleTabPreview(drag: TabPointerDrag, target: DOMRect, intoBackground:
 	animation.addEventListener('cancel', cleanup, { once: true })
 }
 
+function persistTabDragMembership(drag: TabPointerDrag): void {
+	if (drag.dropGroupId === drag.originalGroupId) {
+		persistTerminalOrder()
+		return
+	}
+	const sessionId = drag.tab.sessionId
+	if (!sessionId) {
+		restoreTabDragOrigin(drag, true)
+		return
+	}
+	const targetGroupId = drag.dropGroupId
+	const rollback = (): void => {
+		if (drag.tab.closed || drag.tab.groupId !== targetGroupId) return
+		restoreTabDragOrigin(drag, true)
+		loadTabGroups()
+	}
+	const intent: TabGroupActionIntent = { type: 'move', sessionId, groupId: targetGroupId }
+	void helm.sessions.groups
+		.intent(intent)
+		.then(accepted => {
+			if (!accepted || drag.tab.closed || drag.tab.sessionId !== sessionId || drag.tab.groupId !== targetGroupId)
+				return false
+			return helm.sessions.groups.setMembership(sessionId, targetGroupId)
+		})
+		.then(changed => {
+			if (!changed) {
+				rollback()
+				return
+			}
+			persistTerminalOrder()
+			loadTabGroups()
+		})
+		.catch(rollback)
+}
+
 function finishTabPointerDrag(cancelled: boolean): void {
 	const drag = tabPointerDrag
 	if (!drag) return
@@ -1424,8 +1492,8 @@ function finishTabPointerDrag(cancelled: boolean): void {
 		target = bgToggle.getBoundingClientRect()
 		parkTab(drag.tab)
 	} else {
-		if (cancelled || drag.dropTarget !== 'strip') setTabOrder(drag.originalTabs, true)
-		else persistTerminalOrder()
+		if (cancelled || drag.dropTarget !== 'strip') restoreTabDragOrigin(drag, true)
+		else persistTabDragMembership(drag)
 		target = drag.tab.tabButton.getBoundingClientRect()
 	}
 
@@ -1486,9 +1554,11 @@ function createTabPointerDrag(tab: Tab, pointerId: number, x: number, y: number)
 		offsetX: x - rect.left,
 		offsetY: y - rect.top,
 		originalTabs: [...tabs],
+		originalGroupId: tab.groupId,
 		started: false,
 		preview: null,
 		dropTarget: null,
+		dropGroupId: tab.groupId,
 		frame: null,
 	}
 }

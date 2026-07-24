@@ -54,6 +54,28 @@ export function tabStripAutoScrollDelta(
 	return 0
 }
 
+/**
+ * Resolve a peer-relative group slot back into the flat renderer order. The
+ * moving item is excluded while choosing anchors, so this works both within a
+ * group and when crossing group boundaries. `fallbackInsertionIndex` is used
+ * when the destination currently has no members (notably ungrouping into an
+ * otherwise fully-grouped strip).
+ */
+export function groupDropInsertionIndex<T extends { groupId: string | null }>(
+	items: readonly T[],
+	moving: T,
+	targetGroupId: string | null,
+	peerInsertionIndex: number,
+	fallbackInsertionIndex: number,
+): number {
+	const peers = items.filter(item => item !== moving && item.groupId === targetGroupId)
+	if (peers.length === 0) return Math.max(0, Math.min(items.length, Math.floor(fallbackInsertionIndex)))
+	const slot = Math.max(0, Math.min(peers.length, Math.floor(peerInsertionIndex)))
+	const anchor = peers[slot]
+	if (anchor) return items.indexOf(anchor)
+	return items.indexOf(peers[peers.length - 1] as T) + 1
+}
+
 /** Move one existing item into a pre-removal insertion slot. Input stays untouched. */
 export function moveToInsertionIndex<T>(items: readonly T[], moving: T, insertionIndex: number): T[] {
 	const from = items.indexOf(moving)
@@ -70,6 +92,7 @@ export function moveToInsertionIndex<T>(items: readonly T[], moving: T, insertio
 
 export default {
 	dragThresholdExceeded,
+	groupDropInsertionIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
 	stripDropInsertionIndex,
