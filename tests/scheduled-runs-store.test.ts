@@ -241,6 +241,65 @@ test('terminal intent is first-writer idempotent, conflict-fail-closed, and reta
 	}
 })
 
+test('attention notification claims are atomic, lease-retryable, and guarded by report, teardown, and adoption state', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-notification-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'alpha')
+		const commands = new ScheduleCommands(db.schedules)
+		const attentionRun = (slotKey: string) => {
+			const schedule = commands.create({ ...scheduleInput, name: slotKey })
+			let run = commands.claimOccurrence(schedule.id, schedule.revision, next, {
+				scheduleId: schedule.id,
+				scheduleRevision: schedule.revision,
+				scheduledFor: next,
+				localCivilSlot: `2030-01-01 ${slotKey}`,
+				utcOffsetMinutes: 0,
+				slotKey,
+				definitionSnapshot: schedule.definition,
+				sessionId: `sr-${slotKey}`,
+			})
+			run = commands.beginPreparing(run.id, run.revision)
+			run = commands.beginLaunching(run.id, run.revision)
+			run = commands.markRunning(run.id, run.revision)
+			return commands.report(run.id, run.revision, 'needs_attention', 'Choose a target.')
+		}
+		const original = attentionRun('notification-atomic')
+		const first = commands.claimAttentionNotification(
+			original.id,
+			original.revision,
+			new Date('2030-01-01T00:00:00.000Z'),
+		)
+		assert.ok(first.notificationClaimedAt)
+		assert.throws(
+			() => commands.claimAttentionNotification(original.id, original.revision, new Date('2030-01-01T00:00:01.000Z')),
+			ScheduleRevisionConflictError,
+		)
+		const retried = commands.claimAttentionNotification(first.id, first.revision, new Date('2030-01-01T00:03:00.000Z'))
+		assert.equal(retried.revision, first.revision + 1)
+		assert.throws(() => commands.markNotificationDelivered(retried.id, first.revision), ScheduleRevisionConflictError)
+		const delivered = commands.markNotificationDelivered(retried.id, retried.revision)
+		assert.ok(delivered.notificationDeliveredAt)
+
+		const intent = attentionRun('notification-intent')
+		const cancelling = commands.requestCancel(intent.id, intent.revision)
+		assert.throws(
+			() => commands.claimAttentionNotification(cancelling.id, cancelling.revision),
+			ScheduleRevisionConflictError,
+		)
+		const adoption = attentionRun('notification-adoption')
+		const reserved = commands.reserveAttentionAdoption(adoption.id, adoption.revision, {
+			adoptionId: '11111111-1111-4111-8111-111111111111',
+			adopter: '22222222-2222-4222-8222-222222222222',
+		})
+		assert.throws(
+			() => commands.claimAttentionNotification(reserved.id, reserved.revision),
+			ScheduleRevisionConflictError,
+		)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('ScheduleCommands protect reported, closing, attention, and quarantined runs from timeout', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-store-'))
 	try {

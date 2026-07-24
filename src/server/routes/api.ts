@@ -39,7 +39,11 @@ import { DAEMON_BUILD_ID, DAEMON_PROTOCOL_VERSION } from '../../protocol.js'
 import type { TaskContext, TaskProvider } from '../../providers/provider.js'
 import type { Drainer } from '../../queue/drainer.js'
 import { ScheduleCommands } from '../../scheduled-runs/commands.js'
-import { toScheduledRunContract, toScheduledScheduleContract } from '../../scheduled-runs/contract.js'
+import {
+	toScheduledAttentionNotificationContract,
+	toScheduledRunContract,
+	toScheduledScheduleContract,
+} from '../../scheduled-runs/contract.js'
 import {
 	SCHEDULED_REPORT_SUMMARY_MAX_BYTES,
 	attentionAdoptionIdentitySchema,
@@ -560,6 +564,9 @@ export function apiRoutes(
 		const createScheduleRequestSchema = scheduleCreateSchema.extend({ profileId: profileIdSchema }).strict()
 		const updateScheduleRequestSchema = scheduleUpdateSchema.extend({ profileId: profileIdSchema }).strict()
 		const profileRequestSchema = z.object({ profileId: profileIdSchema }).strict()
+		const notificationRequestSchema = z
+			.object({ profileId: profileIdSchema, revision: z.number().int().nonnegative() })
+			.strict()
 		const leaseCapabilitySchema = z.object({ capability: z.string().min(1).max(200) }).strict()
 		const adoptionRequestSchema = z
 			.object({ profileId: profileIdSchema, revision: z.number().int().nonnegative() })
@@ -619,6 +626,49 @@ export function apiRoutes(
 		const scheduledError = (c: Context, error: unknown, status: 400 | 409 = 400): Response => {
 			if (error instanceof ScheduleRevisionConflictError) return c.json({ error: 'Scheduled revision conflict' }, 409)
 			return c.json({ error: error instanceof Error ? error.message : String(error) }, status)
+		}
+
+		/**
+		 * Main-process-only polling projection. It spans registered profiles but
+		 * returns just canonical report text and delivery facts; no descriptor,
+		 * process, path, prompt, or adoption identity leaves the daemon.
+		 */
+		api.get('/scheduled-runs/attention-notifications', c => {
+			c.header('Cache-Control', 'no-store')
+			const denied = requireControl(c)
+			if (denied) return denied
+			const profileIds = [...scheduled.profileIds()]
+			const data = profileIds.flatMap(profileId => {
+				if (!registeredProfile(profileId)) return []
+				const store = storeFor(profileId)
+				return store.listAttentionNotificationRuns().flatMap(run => {
+					const schedule = store.get(run.scheduleId)
+					return schedule ? [toScheduledAttentionNotificationContract(run, schedule.name)] : []
+				})
+			})
+			return c.json({ data })
+		})
+		for (const action of ['claim', 'delivered'] as const) {
+			api.post(`/scheduled-runs/runs/:runId/attention-notification/${action}`, scheduledBody, async c => {
+				c.header('Cache-Control', 'no-store')
+				const denied = requireControl(c)
+				if (denied) return denied
+				const input = await parseBody(c, notificationRequestSchema)
+				if ('error' in input) return input.error
+				if (!registeredProfile(input.data.profileId))
+					return c.json({ error: 'Scheduled attention notification unavailable' }, 409)
+				try {
+					const commands = commandsFor(input.data.profileId)
+					const run =
+						action === 'claim'
+							? commands.claimAttentionNotification(c.req.param('runId'), input.data.revision)
+							: commands.markNotificationDelivered(c.req.param('runId'), input.data.revision)
+					const schedule = storeFor(input.data.profileId).require(run.scheduleId)
+					return c.json({ data: toScheduledAttentionNotificationContract(run, schedule.name) })
+				} catch (error) {
+					return scheduledError(c, error, 409)
+				}
+			})
 		}
 
 		api.get('/scheduled-runs', c => {

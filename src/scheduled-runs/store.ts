@@ -284,6 +284,65 @@ export class ScheduleStore {
 			).count,
 		)
 	}
+	/**
+	 * Tenant-local candidates for the control-authenticated Electron notifier.
+	 * A reserved/completed adoption or teardown intent owns the terminal already,
+	 * so it must never produce another clickable adoption notification.
+	 */
+	listAttentionNotificationRuns(): ScheduledRunRecord[] {
+		return (
+			this.db
+				.prepare(
+					`SELECT * FROM scheduled_runs
+					 WHERE profile_id = ? AND state = 'needs_attention' AND report_kind = 'needs_attention'
+					   AND report_summary IS NOT NULL AND pending_terminal_intent IS NULL AND terminal_resolved_at IS NULL
+					   AND (attention_adoption IS NULL OR (json_valid(attention_adoption) AND json_extract(attention_adoption, '$.state') = 'rolled_back'))
+					   AND notification_delivered_at IS NULL
+					 ORDER BY reported_at ASC, id ASC`,
+				)
+				.all(this.profileId) as Record<string, unknown>[]
+		).map(row => this.toRun(row))
+	}
+	/**
+	 * Atomically lease one delivery attempt. A process crash after this write
+	 * cannot hide the notification forever: a later control client may claim it
+	 * once the lease is stale. Revision makes simultaneous claimers fail closed.
+	 */
+	claimAttentionNotification(
+		id: string,
+		expectedRevision: number,
+		staleBefore: string,
+		now: string,
+	): ScheduledRunRecord {
+		const result = this.db
+			.prepare(
+				`UPDATE scheduled_runs SET notification_claimed_at = ?, revision = revision + 1, updated_at = ?
+				 WHERE profile_id = ? AND id = ? AND revision = ?
+				   AND state = 'needs_attention' AND report_kind = 'needs_attention' AND report_summary IS NOT NULL
+				   AND pending_terminal_intent IS NULL AND terminal_resolved_at IS NULL
+				   AND (attention_adoption IS NULL OR (json_valid(attention_adoption) AND json_extract(attention_adoption, '$.state') = 'rolled_back'))
+				   AND notification_delivered_at IS NULL
+				   AND (notification_claimed_at IS NULL OR notification_claimed_at <= ?)`,
+			)
+			.run(now, now, this.profileId, id, expectedRevision, staleBefore)
+		if (result.changes === 0) throw new ScheduleRevisionConflictError()
+		return this.requireRun(id)
+	}
+	/** Delivery is accepted only from the exact still-current leased revision. */
+	markAttentionNotificationDelivered(id: string, expectedRevision: number, now: string): ScheduledRunRecord {
+		const result = this.db
+			.prepare(
+				`UPDATE scheduled_runs SET notification_delivered_at = ?, revision = revision + 1, updated_at = ?
+				 WHERE profile_id = ? AND id = ? AND revision = ?
+				   AND state = 'needs_attention' AND report_kind = 'needs_attention' AND report_summary IS NOT NULL
+				   AND pending_terminal_intent IS NULL AND terminal_resolved_at IS NULL
+				   AND (attention_adoption IS NULL OR (json_valid(attention_adoption) AND json_extract(attention_adoption, '$.state') = 'rolled_back'))
+				   AND notification_delivered_at IS NULL AND notification_claimed_at IS NOT NULL`,
+			)
+			.run(now, now, this.profileId, id, expectedRevision)
+		if (result.changes === 0) throw new ScheduleRevisionConflictError()
+		return this.requireRun(id)
+	}
 	/** Runtime identity is persisted separately from state before/after side effects. */
 	updateRunRuntime(
 		id: string,

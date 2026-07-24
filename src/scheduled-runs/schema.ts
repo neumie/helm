@@ -147,6 +147,8 @@ export const createScheduledRunSchema = z
 	.strict()
 
 export const SCHEDULED_REPORT_SUMMARY_MAX_BYTES = 1000
+/** A claimed native notification is retried after this bounded crash-recovery lease. */
+export const ATTENTION_NOTIFICATION_CLAIM_LEASE_MS = 2 * 60 * 1000
 export const scheduledRunReportSchema = z
 	.object({ kind: z.enum(['quiet', 'needs_attention']), summary: boundedText(SCHEDULED_REPORT_SUMMARY_MAX_BYTES) })
 	.strict()

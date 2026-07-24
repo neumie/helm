@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { BrowserWindow, Menu, app, dialog, ipcMain, screen, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
@@ -20,6 +20,7 @@ import {
 	type ScheduledSessionOwnership,
 	scheduledDtachAttachArgs,
 } from './scheduled-adoption-main'
+import { ScheduledAttentionNotifier } from './scheduled-attention-notifier'
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
@@ -276,6 +277,7 @@ interface SessionSupport {
 
 let sessionSupport: SessionSupport | null | undefined
 let scheduledAdoption: ScheduledAttentionAdoptionCoordinator | null = null
+let scheduledAttentionNotifier: ScheduledAttentionNotifier | null = null
 let terminalTransferMain: TerminalTransferMainAdapter | null = null
 let terminalTransferRecovery: Promise<void> = Promise.resolve()
 const pendingTerminalTransferEvents = new Map<
@@ -2015,12 +2017,76 @@ void app.whenReady().then(async () => {
 	})
 	void scheduledAdoption.recoverAmbiguous()
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
+	scheduledAttentionNotifier = new ScheduledAttentionNotifier({
+		list: async () => {
+			const token = await readLocalControlToken()
+			const result = await helmBridge.scheduledAttentionRead<
+				Array<{
+					profileId: string
+					runId: string
+					revision: number
+					scheduleName: string
+					reportSummary: string
+					notificationClaimedAt: string | null
+					notificationDeliveredAt: string | null
+				}>
+			>('/scheduled-runs/attention-notifications', token)
+			if (!result.data) throw new Error('Scheduled attention notifications are unavailable')
+			return result.data
+		},
+		claim: async input => {
+			const token = await readLocalControlToken()
+			const result = await helmBridge.scheduledAttention<typeof input>(
+				`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/claim`,
+				{ profileId: input.profileId, revision: input.revision },
+				token,
+			)
+			return result.data ?? null
+		},
+		markDelivered: async input => {
+			const token = await readLocalControlToken()
+			const result = await helmBridge.scheduledAttention(
+				`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/delivered`,
+				{ profileId: input.profileId, revision: input.revision },
+				token,
+			)
+			return result.data !== undefined
+		},
+		notification: content => {
+			const native = new Notification(content)
+			return {
+				show: () => {
+					native.show()
+					return undefined
+				},
+				onClick: listener => native.on('click', listener),
+			}
+		},
+		focusAndRestore: () => {
+			const win = mainWindow
+			if (!win || win.isDestroyed()) return
+			if (win.isMinimized()) win.restore()
+			win.show()
+			win.focus()
+		},
+		activateProfile: async profileId => {
+			const result = await activateProfile(profileId)
+			return result.data !== undefined && sessionProfileId === profileId
+		},
+		currentProfileToken: profileId =>
+			profileId === sessionProfileId && mainWindow && !mainWindow.isDestroyed() && sessionIpcAdmissionOpen
+				? sessionProfileToken()
+				: null,
+		adopt: input => scheduledAdoption?.adopt(input) ?? Promise.resolve({ status: 'rejected' }),
+	})
 	buildMenu()
 	helmBridge.start()
 	// Screenshot harnesses use app.exit(), bypassing guarded lease revocation, and
 	// must never admit real scheduled work as a side effect of rendering fixtures.
 	if (!screenshotPath) void scheduledResidency.start()
 	createWindow()
+	// A click must fence against an actual current BrowserWindow/token.
+	if (!screenshotPath) scheduledAttentionNotifier.start()
 	if (profileSwitchAttestationMode) {
 		void runProfileSwitchAttestation()
 			.then(() => app.quit())
@@ -2066,7 +2132,7 @@ app.on('before-quit', event => {
 	}
 	if (!residencyStoppedForQuit) {
 		event.preventDefault()
-		void scheduledResidency.stop().finally(() => {
+		void Promise.all([scheduledResidency.stop(), scheduledAttentionNotifier?.stop()]).finally(() => {
 			residencyStoppedForQuit = true
 			app.quit()
 		})

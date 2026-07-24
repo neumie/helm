@@ -2,6 +2,7 @@ import { ATTENTION_ADOPTION_GRANT_TTL_MS, type AttentionAdoptionGrantManager } f
 import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import { isScheduledRunTerminalState } from './retention.js'
+import { ATTENTION_NOTIFICATION_CLAIM_LEASE_MS } from './schema.js'
 import type {
 	AttentionAdoptionIdentity,
 	AttentionAdoptionRollbackReason,
@@ -258,10 +259,15 @@ export class ScheduleCommands {
 	closeQuiet(id: string, revision: number): ScheduledRunRecord {
 		return this.resolveTerminalIntent(id, revision, ['closing', 'quarantined'], 'closed_quiet', 'quiet')
 	}
-	markNotificationDelivered(id: string, revision: number): ScheduledRunRecord {
-		return this.transition(id, revision, ['needs_attention'], 'needs_attention', {
-			notificationDeliveredAt: new Date().toISOString(),
-		})
+	/** Claim a bounded native-notification delivery lease for an unresolved attention run. */
+	claimAttentionNotification(id: string, revision: number, now = new Date()): ScheduledRunRecord {
+		const claimedAt = now.toISOString()
+		const staleBefore = new Date(now.getTime() - ATTENTION_NOTIFICATION_CLAIM_LEASE_MS).toISOString()
+		return this.store.claimAttentionNotification(id, revision, staleBefore, claimedAt)
+	}
+	/** Mark delivery only after the native notification has successfully been shown. */
+	markNotificationDelivered(id: string, revision: number, now = new Date()): ScheduledRunRecord {
+		return this.store.markAttentionNotificationDelivered(id, revision, now.toISOString())
 	}
 	/** A same-identity retry is safe; every other existing adoption fails closed. */
 	reserveAttentionAdoption(id: string, revision: number, identity: AttentionAdoptionIdentity): ScheduledRunRecord {

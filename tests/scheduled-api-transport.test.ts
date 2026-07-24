@@ -462,6 +462,76 @@ test('scheduled transport enforces strict bodies, UTF-8 report bounds, and unamb
 	})
 })
 
+test('attention notification transport is control-authenticated, no-store, cross-profile-safe, and redacted', async () => {
+	await withScheduledApi(async ({ api, db, store }) => {
+		const profileId = store.activeProfile().id
+		const commands = new ScheduleCommands(db.forProfile(profileId).schedules)
+		const schedule = commands.create(scheduleInput)
+		let run = commands.claimOccurrence(schedule.id, schedule.revision, null, {
+			id: 'notification-api-run',
+			scheduleId: schedule.id,
+			scheduleRevision: schedule.revision,
+			scheduledFor: '2030-01-01T01:00:00.000Z',
+			localCivilSlot: '2030-01-01 notification',
+			utcOffsetMinutes: 0,
+			slotKey: 'notification-api',
+			definitionSnapshot: schedule.definition,
+			sessionId: 'sr-notification-api',
+		})
+		run = commands.beginPreparing(run.id, run.revision)
+		run = commands.beginLaunching(run.id, run.revision)
+		run = commands.markRunning(run.id, run.revision)
+		run = commands.report(run.id, run.revision, 'needs_attention', 'choose a deployment target')
+		const listPath = '/scheduled-runs/attention-notifications'
+		assert.equal((await api.request(listPath)).status, 401)
+		const listed = await api.request(listPath, { headers: requestHeaders() })
+		assert.equal(listed.status, 200)
+		assert.equal(listed.headers.get('cache-control'), 'no-store')
+		const notification = (await listed.json()) as { data: Array<Record<string, unknown>> }
+		assert.equal(notification.data.length, 1)
+		assert.equal(notification.data[0].scheduleName, 'Nightly review')
+		assert.equal(notification.data[0].reportSummary, 'choose a deployment target')
+		for (const forbidden of [
+			'prompt',
+			'definition',
+			'socketDescriptor',
+			'processFingerprint',
+			'attentionAdoption',
+			'pendingTerminalIntent',
+		])
+			assert.equal(forbidden in notification.data[0], false)
+
+		const claimPath = `/scheduled-runs/runs/${run.id}/attention-notification/claim`
+		const claim = await api.request(claimPath, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId, revision: run.revision }),
+		})
+		assert.equal(claim.status, 200)
+		assert.equal(claim.headers.get('cache-control'), 'no-store')
+		const claimed = (await claim.json()) as { data: { revision: number } }
+		assert.equal(
+			(
+				await api.request(claimPath, {
+					method: 'POST',
+					headers: requestHeaders(),
+					body: JSON.stringify({ profileId: 'missing', revision: claimed.data.revision }),
+				})
+			).status,
+			409,
+		)
+		const delivered = await api.request(`/scheduled-runs/runs/${run.id}/attention-notification/delivered`, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId, revision: claimed.data.revision }),
+		})
+		assert.equal(delivered.status, 200)
+		assert.equal(delivered.headers.get('cache-control'), 'no-store')
+		const afterDelivery = await api.request(listPath, { headers: requestHeaders() })
+		assert.deepEqual((await afterDelivery.json()).data, [])
+	})
+})
+
 test('attention adoption transport is control-authenticated, no-store, replay-safe, and redacted outside its descriptor', async () => {
 	await withScheduledApi(async ({ api, db, store }) => {
 		const profileId = store.activeProfile().id

@@ -364,6 +364,11 @@ export class HelmBridge {
 		})
 	}
 
+	/** Control-authenticated scheduled attention reads stay in Electron main. */
+	async scheduledAttentionRead<T>(path: string, controlToken: string): Promise<HelmResult<T>> {
+		return this.request<T>('GET', path, undefined, REQUEST_TIMEOUT_MS, { Authorization: `Bearer ${controlToken}` })
+	}
+
 	/** Run Context token policy lives in the bridge-owned operations helper. */
 	async loadRunContext(itemId: string, profileToken: unknown): Promise<HelmResult<RunContextLoad>> {
 		return this.runContext.load(itemId, profileToken)

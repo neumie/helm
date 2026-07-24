@@ -36,6 +36,9 @@ export interface ScheduledRunContract {
 	missedMany: boolean
 	sessionAvailability: 'available' | 'unavailable'
 	terminalResolvedAt: string | null
+	/** Safe operational facts: a stale claim can be retried, delivery cannot. */
+	notificationClaimedAt: string | null
+	notificationDeliveredAt: string | null
 	createdAt: string
 	updatedAt: string
 }
@@ -60,6 +63,39 @@ export function toScheduledScheduleContract(schedule: ScheduleRecord): Scheduled
 		archivedAt: schedule.archivedAt,
 		createdAt: schedule.createdAt,
 		updatedAt: schedule.updatedAt,
+	}
+}
+
+export interface ScheduledAttentionNotificationContract {
+	profileId: string
+	runId: string
+	revision: number
+	scheduleName: string
+	reportSummary: string
+	notificationClaimedAt: string | null
+	notificationDeliveredAt: string | null
+}
+
+/**
+ * The cross-profile native-notification projection. It intentionally omits
+ * definition snapshots, descriptors, diagnostics, terminal state internals,
+ * and adoption identity; all available text is already canonicalized report
+ * summary data.
+ */
+export function toScheduledAttentionNotificationContract(
+	run: ScheduledRunRecord,
+	scheduleName: string,
+): ScheduledAttentionNotificationContract {
+	if (run.state !== 'needs_attention' || run.reportKind !== 'needs_attention' || run.reportSummary === null)
+		throw new Error('Scheduled run is not an unresolved attention notification')
+	return {
+		profileId: run.profileId,
+		runId: run.id,
+		revision: run.revision,
+		scheduleName,
+		reportSummary: run.reportSummary,
+		notificationClaimedAt: run.notificationClaimedAt,
+		notificationDeliveredAt: run.notificationDeliveredAt,
 	}
 }
 
@@ -89,6 +125,8 @@ export function toScheduledRunContract(run: ScheduledRunRecord): ScheduledRunCon
 				? 'available'
 				: 'unavailable',
 		terminalResolvedAt: run.terminalResolvedAt,
+		notificationClaimedAt: run.notificationClaimedAt,
+		notificationDeliveredAt: run.notificationDeliveredAt,
 		createdAt: run.createdAt,
 		updatedAt: run.updatedAt,
 	}
