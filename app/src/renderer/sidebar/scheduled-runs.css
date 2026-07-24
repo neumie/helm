@@ -1,0 +1,82 @@
+/* Scheduled definitions/history reuse flat editorial groups (§3.15). */
+.scheduled-definition-row,
+.scheduled-history-row {
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: var(--text-0);
+	font: inherit;
+	text-align: left;
+}
+.scheduled-definition-row {
+	min-height: 56px;
+	margin: 0 -16px;
+	padding: 8px 16px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	cursor: pointer;
+}
+.scheduled-definition-row:hover {
+	background: var(--fill-subtle);
+}
+.scheduled-definition-main,
+.scheduled-definition-side {
+	min-width: 0;
+	display: grid;
+	gap: 4px;
+}
+.scheduled-definition-main > span {
+	font-size: calc(13px * var(--ui-scale));
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.scheduled-definition-main small,
+.scheduled-definition-side small,
+.scheduled-history-row small {
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+.scheduled-definition-side {
+	text-align: right;
+	flex: none;
+}
+.scheduled-history-row {
+	min-height: 64px;
+	padding: 10px 0;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+.scheduled-history-row + .scheduled-history-row {
+	border-top: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+}
+.scheduled-history-row p {
+	margin: 4px 0;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+	line-height: 1.4;
+}
+.scheduled-history-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+}
+.scheduled-validation {
+	margin: 4px 0 0;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-2);
+}
+.scheduled-actions {
+	gap: 8px;
+}
+.scheduled-actions .menu-root {
+	margin-left: auto;
+}

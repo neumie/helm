@@ -562,7 +562,13 @@ export function apiRoutes(
 		const profileIdSchema = z.string().min(1).max(100)
 		const revisionSchema = z.object({ revision: z.number().int().nonnegative() }).strict()
 		const createScheduleRequestSchema = scheduleCreateSchema.extend({ profileId: profileIdSchema }).strict()
-		const updateScheduleRequestSchema = scheduleUpdateSchema.extend({ profileId: profileIdSchema }).strict()
+		// Update never returns an existing prompt. A missing/blank replacement
+		// preserves the profile-bound persisted prompt, then the complete merged
+		// definition is revalidated by the canonical strict update schema below.
+		const updateScheduleRequestSchema = scheduleUpdateSchema
+			.extend({ definition: scheduleUpdateSchema.shape.definition.innerType().partial({ prompt: true }) })
+			.extend({ profileId: profileIdSchema })
+			.strict()
 		const profileRequestSchema = z.object({ profileId: profileIdSchema }).strict()
 		const notificationRequestSchema = z
 			.object({ profileId: profileIdSchema, revision: z.number().int().nonnegative() })
@@ -838,7 +844,15 @@ export function apiRoutes(
 			if ('error' in input) return input.error
 			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
 			try {
-				const { profileId, revision, ...definition } = input.data
+				const { profileId, revision, definition: requestedDefinition, ...schedule } = input.data
+				const current = storeFor(profileId).require(c.req.param('id'))
+				const prompt = requestedDefinition.prompt?.trim() || current.definition.prompt
+				const merged = scheduleUpdateSchema.parse({
+					...schedule,
+					revision,
+					definition: { ...requestedDefinition, prompt },
+				})
+				const { revision: _validatedRevision, ...definition } = merged
 				return c.json({
 					data: toScheduledScheduleContract(commandsFor(profileId).update(c.req.param('id'), revision, definition)),
 				})

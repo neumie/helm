@@ -50,6 +50,8 @@ import type {
 	RunContextLoad,
 	RunContextReset,
 	RunContextSave,
+	ScheduledRun,
+	ScheduledSchedule,
 } from './shared-helm'
 
 const POLL_MS = 2500
@@ -88,6 +90,13 @@ export type HelmBridgeRequest = <T>(
 /** Main-process-only resident lease transport; it is intentionally not registered as IPC. */
 export type ResidentLeaseOperation = 'issue' | 'heartbeat' | 'tick' | 'revoke'
 
+/** Bind renderer-supplied schedule tenancy to the preload-captured profile token. */
+export function scheduledProfileTokenMatches(profileId: unknown, token: unknown): profileId is string {
+	return (
+		typeof profileId === 'string' && profileId !== '' && typeof token === 'string' && token.startsWith(`${profileId}:`)
+	)
+}
+
 export interface HelmBridgeOptions {
 	/** Test seam; production uses the daemon HTTP client below. */
 	request?: HelmBridgeRequest
@@ -97,6 +106,8 @@ export interface HelmBridgeOptions {
 	}>
 	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
 	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+	/** Main-only local-control capability provider for scheduled definition/history IPC. */
+	scheduledControlToken?: () => Promise<string>
 }
 
 export class HelmBridge {
@@ -625,7 +636,105 @@ export class HelmBridge {
 			this.kick()
 			return result
 		})
+
+		// Schedule definitions/history are profile-owned. Keep profileId in the
+		// renderer request explicit, then fence both before and after any await.
+		const scheduledProfile = (profileId: unknown, token: unknown): HelmResult<never> | null => {
+			if (stale(token)) return stale(token)
+			if (typeof profileId !== 'string' || profileId === '')
+				return { error: 'A scheduled profile is required.', status: 400 }
+			if (!scheduledProfileTokenMatches(profileId, token))
+				return { error: 'Scheduled profile changed. Reload and try again.', status: 409 }
+			return null
+		}
+		const scheduledRead = async <T>(path: string): Promise<HelmResult<T>> => {
+			if (!this.options.scheduledControlToken) return { error: 'Scheduled control is unavailable.', status: 503 }
+			try {
+				const controlToken = await this.options.scheduledControlToken()
+				return this.request<T>('GET', path, undefined, REQUEST_TIMEOUT_MS, {
+					Authorization: `Bearer ${controlToken}`,
+				})
+			} catch {
+				return { error: 'Scheduled control is unavailable.', status: 503 }
+			}
+		}
+		const scheduledWrite = async <T>(method: 'POST' | 'PUT', path: string, body: unknown): Promise<HelmResult<T>> => {
+			if (!this.options.scheduledControlToken) return { error: 'Scheduled control is unavailable.', status: 503 }
+			try {
+				const controlToken = await this.options.scheduledControlToken()
+				return this.request<T>(method, path, body, REQUEST_TIMEOUT_MS, {
+					Authorization: `Bearer ${controlToken}`,
+				})
+			} catch {
+				return { error: 'Scheduled control is unavailable.', status: 503 }
+			}
+		}
+		ipcMain.handle('daemon:scheduled:list', async (_e, profileId: unknown, token: unknown) => {
+			const denied = scheduledProfile(profileId, token)
+			if (denied) return denied
+			const result = await scheduledRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`)
+			return stale(token) ?? result
+		})
+		ipcMain.handle('daemon:scheduled:create', async (_e, profileId: unknown, body: unknown, token: unknown) => {
+			const denied = scheduledProfile(profileId, token)
+			if (denied) return denied
+			const result = await scheduledWrite<ScheduledSchedule>('POST', '/scheduled-runs', {
+				...(body as object),
+				profileId,
+			})
+			return stale(token) ?? result
+		})
+		ipcMain.handle(
+			'daemon:scheduled:update',
+			async (_e, profileId: unknown, rawId: unknown, body: unknown, token: unknown) => {
+				const denied = scheduledProfile(profileId, token)
+				if (denied) return denied
+				const result = await scheduledWrite<ScheduledSchedule>('PUT', `/scheduled-runs/${id(rawId)}`, {
+					...(body as object),
+					profileId,
+				})
+				return stale(token) ?? result
+			},
+		)
+		ipcMain.handle(
+			'daemon:scheduled:action',
+			async (_e, profileId: unknown, rawId: unknown, action: unknown, revision: unknown, token: unknown) => {
+				const denied = scheduledProfile(profileId, token)
+				if (denied) return denied
+				if (action !== 'archive' && action !== 'enable' && action !== 'disable' && action !== 'run')
+					return { error: 'Unknown scheduled action.', status: 400 }
+				const path = action === 'run' ? `/scheduled-runs/${id(rawId)}/run` : `/scheduled-runs/${id(rawId)}/${action}`
+				const body = action === 'run' ? { profileId } : { profileId, revision }
+				const result = await scheduledWrite<ScheduledSchedule | ScheduledRun>('POST', path, body)
+				return stale(token) ?? result
+			},
+		)
+		ipcMain.handle(
+			'daemon:scheduled:history',
+			async (_e, profileId: unknown, rawId: unknown, limit: unknown, token: unknown) => {
+				const denied = scheduledProfile(profileId, token)
+				if (denied) return denied
+				const safeLimit = typeof limit === 'number' && Number.isInteger(limit) ? Math.min(100, Math.max(1, limit)) : 20
+				const result = await scheduledRead<ScheduledRun[]>(
+					`/scheduled-runs/${id(rawId)}/history?profileId=${id(profileId)}&limit=${safeLimit}`,
+				)
+				return stale(token) ?? result
+			},
+		)
+		ipcMain.handle(
+			'daemon:scheduled:cancel-run',
+			async (_e, profileId: unknown, runId: unknown, revision: unknown, token: unknown) => {
+				const denied = scheduledProfile(profileId, token)
+				if (denied) return denied
+				if (typeof runId !== 'string' || typeof revision !== 'number' || !Number.isInteger(revision))
+					return { error: 'Invalid scheduled run identity.', status: 400 }
+				const result = await scheduledWrite<ScheduledRun>('POST', `/scheduled-runs/runs/${id(runId)}/cancel`, {
+					profileId,
+				})
+				return stale(token) ?? result
+			},
+		)
 	}
 }
 
-export default { HelmBridge }
+export default { HelmBridge, scheduledProfileTokenMatches }

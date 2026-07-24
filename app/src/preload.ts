@@ -222,6 +222,16 @@ const api: HelmApi = {
 		restartDaemon: () => invokeHelm('daemon:restart'),
 		pauseToggle: () => invokeHelm('daemon:pauseToggle'),
 		poll: () => invokeHelm('daemon:poll'),
+		listScheduledRuns: profileId => invokeHelm('daemon:scheduled:list', profileId),
+		createScheduledRun: (profileId, body) => invokeHelm('daemon:scheduled:create', profileId, body),
+		updateScheduledRun: (profileId, id, body) => invokeHelm('daemon:scheduled:update', profileId, id, body),
+		scheduledRunAction: (profileId, id, action, revision) =>
+			invokeHelm('daemon:scheduled:action', profileId, id, action, revision),
+		scheduledRunHistory: (profileId, id, limit) => invokeHelm('daemon:scheduled:history', profileId, id, limit),
+		cancelScheduledRun: (profileId, runId, revision) =>
+			invokeHelm('daemon:scheduled:cancel-run', profileId, runId, revision),
+		openScheduledTerminal: (profileId, runId, revision) =>
+			invokeHelm('daemon:scheduled:open-terminal', profileId, runId, revision),
 	} satisfies DaemonApi,
 	profiles: {
 		list: () => invokeHelm('profiles:list'),

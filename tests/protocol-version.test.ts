@@ -8,8 +8,8 @@ type AppProtocolModule = typeof import('../app/src/protocol-version.ts')
 const { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } = appProtocolModule as AppProtocolModule
 
 test('desktop app and daemon wire protocol revisions stay aligned', () => {
-	assert.equal(EXPECTED_DAEMON_PROTOCOL_VERSION, 33)
-	assert.equal(DAEMON_PROTOCOL_VERSION, 33)
+	assert.equal(EXPECTED_DAEMON_PROTOCOL_VERSION, 35)
+	assert.equal(DAEMON_PROTOCOL_VERSION, 35)
 	assert.equal(EXPECTED_DAEMON_PROTOCOL_VERSION, DAEMON_PROTOCOL_VERSION)
 	assert.equal(EXPECTED_DAEMON_BUILD_ID, DAEMON_BUILD_ID)
 })

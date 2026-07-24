@@ -1,11 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { ReactNode } from 'react'
-import type { DashboardItem, HelmSnapshot } from '../../shared-helm'
+import type { DashboardItem, HelmSnapshot, ScheduledScheduleInput } from '../../shared-helm'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { ProfilesPage } from './ProfilesPage'
+import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, type SettingsStore } from './SettingsPage'
 
 const NOW = '2026-07-21T12:00:00.000Z'
@@ -302,6 +303,128 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 				openOkena: async () => ({ error: 'Preview only' }),
 				plan: async () => ({ error: 'Preview only' }),
 				sourceTask: async () => ({ data: detail }),
+				listScheduledRuns: async () => ({
+					data: [
+						{
+							id: 'schedule-story',
+							profileId: 'work',
+							revision: 2,
+							name: 'Morning checks',
+							enabled: true,
+							target: { kind: 'project' as const, projectSlug: 'helm' },
+							agent: 'claude' as const,
+							maximumRuntimeMinutes: 45,
+							cron: '0 9 * * 1-5',
+							cadenceKind: 'cron' as const,
+							timezone: 'America/New_York',
+							nextRunAt: '2026-07-22T13:00:00.000Z',
+							disabledReason: null,
+							archivedAt: null,
+							createdAt: NOW,
+							updatedAt: NOW,
+						},
+					],
+				}),
+				createScheduledRun: async (_profileId: string, body: ScheduledScheduleInput) => ({
+					data: {
+						id: 'schedule-story',
+						profileId: 'work',
+						revision: 1,
+						name: body.name,
+						enabled: body.enabled,
+						target: body.definition.target,
+						agent: body.definition.agent,
+						maximumRuntimeMinutes: body.definition.maximumRuntimeMinutes,
+						cron: body.cron,
+						cadenceKind: body.cadenceKind,
+						timezone: body.timezone,
+						nextRunAt: null,
+						disabledReason: null,
+						archivedAt: null,
+						createdAt: NOW,
+						updatedAt: NOW,
+					},
+				}),
+				updateScheduledRun: async (
+					_profileId: string,
+					_id: string,
+					body: ScheduledScheduleInput & { revision: number },
+				) => ({
+					data: {
+						id: 'schedule-story',
+						profileId: 'work',
+						revision: body.revision + 1,
+						name: body.name,
+						enabled: body.enabled,
+						target: body.definition.target,
+						agent: body.definition.agent,
+						maximumRuntimeMinutes: body.definition.maximumRuntimeMinutes,
+						cron: body.cron,
+						cadenceKind: body.cadenceKind,
+						timezone: body.timezone,
+						nextRunAt: null,
+						disabledReason: null,
+						archivedAt: null,
+						createdAt: NOW,
+						updatedAt: NOW,
+					},
+				}),
+				scheduledRunAction: async () => ({ data: { id: 'schedule-story' } }),
+				cancelScheduledRun: async (_profileId: string, _runId: string, revision: number) => ({
+					data: {
+						id: 'run-story',
+						profileId: 'work',
+						scheduleId: 'schedule-story',
+						scheduleRevision: 1,
+						scheduledFor: NOW,
+						localCivilSlot: '2026-07-21 12:00',
+						utcOffsetMinutes: 0,
+						state: 'cancel_requested',
+						revision: revision + 1,
+						reportKind: 'needs_attention',
+						reportSummary: 'Choose the deployment target.',
+						startedAt: NOW,
+						reportedAt: NOW,
+						closedAt: null,
+						missedCount: 0,
+						missedMany: false,
+						sessionAvailability: 'unavailable',
+						terminalResolvedAt: null,
+						notificationClaimedAt: NOW,
+						notificationDeliveredAt: NOW,
+						createdAt: NOW,
+						updatedAt: NOW,
+					},
+				}),
+				scheduledRunHistory: async () => ({
+					data: [
+						{
+							id: 'run-attention',
+							profileId: 'work',
+							scheduleId: 'schedule-story',
+							scheduleRevision: 2,
+							scheduledFor: NOW,
+							localCivilSlot: '2026-07-21T09:00',
+							utcOffsetMinutes: -240,
+							state: 'needs_attention' as const,
+							revision: 3,
+							reportKind: 'needs_attention' as const,
+							reportSummary: 'Please choose the release window before continuing.',
+							startedAt: NOW,
+							reportedAt: NOW,
+							closedAt: null,
+							missedCount: 0,
+							missedMany: false,
+							sessionAvailability: 'available' as const,
+							terminalResolvedAt: null,
+							notificationClaimedAt: null,
+							notificationDeliveredAt: null,
+							createdAt: NOW,
+							updatedAt: NOW,
+						},
+					],
+				}),
+				openScheduledTerminal: async () => ({ data: { status: 'completed' } }),
 			},
 			config: { getDaemonUrl: () => 'http://localhost:7474' },
 			appearance: { listThemes: async () => [] },
@@ -385,7 +508,7 @@ const settingsStore: SettingsStore = {
 			sections: [
 				{ id: 'projects', title: 'Projects', description: 'Repositories available to Helm.', controls: [] },
 				{ id: 'execution', title: 'Execution', description: 'Agent, model, and workspace defaults.', controls: [] },
-				{ id: 'automation', title: 'Automation', description: 'Polling and deployment observation.', controls: [] },
+				{ id: 'scheduled-runs', title: 'Scheduled runs', description: 'Controls scheduled recurrence.', controls: [] },
 			],
 		},
 		secretRedaction: '••••••••',
@@ -484,8 +607,33 @@ export const Settings: Story = {
 				onOpenSection={noOp}
 				onOpenAppearance={noOp}
 				onOpenProfiles={noOp}
+				onOpenScheduledRuns={noOp}
 				activeProfileName="Work"
 			/>
+		</Frame>
+	),
+}
+
+export const ScheduledRuns: Story = {
+	render: () => (
+		<Frame>
+			<ScheduledRunsPage profileId="work" profileName="Work" schedulingEnabled onBack={noOp} onOpenEditor={noOp} />
+		</Frame>
+	),
+}
+
+export const ScheduledRunEditor: Story = {
+	render: () => (
+		<Frame>
+			<ScheduledRunEditorPage profileId="work" config={snapshot.config} onBack={noOp} />
+		</Frame>
+	),
+}
+
+export const ScheduledRunHistory: Story = {
+	render: () => (
+		<Frame>
+			<ScheduledRunEditorPage profileId="work" scheduleId="schedule-story" config={snapshot.config} onBack={noOp} />
 		</Frame>
 	),
 }

@@ -376,6 +376,7 @@ export interface AppConfig {
 	polling?: Record<string, unknown>
 	server?: Record<string, unknown>
 	github?: Record<string, unknown>
+	scheduledRuns?: { enabled?: boolean; systemTargetsEnabled?: boolean }
 }
 
 export type ConfigFieldInput = 'text' | 'password' | 'number' | 'boolean' | 'select' | 'color' | 'textarea'
@@ -442,6 +443,99 @@ export interface ConfigSaveResult {
 export interface DaemonRestartResult {
 	message: string
 	applied: boolean
+}
+
+// Scheduled-run contracts copied from src/scheduled-runs/contract.ts. They are
+// deliberately display-safe: prompts, capabilities, paths, PIDs, and adoption
+// identities never cross the daemon/main/renderer boundary.
+export interface ScheduledSchedule {
+	id: string
+	profileId: string
+	revision: number
+	name: string
+	enabled: boolean
+	target: { kind: 'project'; projectSlug: string; baseRef?: string } | { kind: 'system' }
+	agent: 'claude' | 'codex'
+	model?: string
+	effort?: SolverEffort
+	maximumRuntimeMinutes: number
+	cron: string
+	cadenceKind: 'hourly' | 'daily' | 'weekly' | 'cron'
+	timezone: string
+	nextRunAt: string | null
+	disabledReason: string | null
+	archivedAt: string | null
+	createdAt: string
+	updatedAt: string
+}
+
+export type ScheduledRunState =
+	| 'admitted'
+	| 'preparing'
+	| 'launching'
+	| 'running'
+	| 'reported_quiet'
+	| 'closing'
+	| 'closed_quiet'
+	| 'needs_attention'
+	| 'cancel_requested'
+	| 'timeout_requested'
+	| 'cancelled'
+	| 'timed_out'
+	| 'failed'
+	| 'interrupted'
+	| 'quarantined'
+	| 'session_lost'
+	| 'skipped_overlap'
+	| 'skipped_misfire'
+	| 'skipped_profile_archived'
+	| 'skipped_project_disabled'
+	| 'skipped_system_targets_disabled'
+	| 'skipped_capacity'
+
+export interface ScheduledRun {
+	id: string
+	profileId: string
+	scheduleId: string
+	scheduleRevision: number
+	scheduledFor: string
+	localCivilSlot: string
+	utcOffsetMinutes: number
+	state: ScheduledRunState
+	revision: number
+	reportKind: 'quiet' | 'needs_attention' | null
+	reportSummary: string | null
+	startedAt: string | null
+	reportedAt: string | null
+	closedAt: string | null
+	missedCount: number
+	missedMany: boolean
+	sessionAvailability: 'available' | 'unavailable'
+	terminalResolvedAt: string | null
+	notificationClaimedAt: string | null
+	notificationDeliveredAt: string | null
+	createdAt: string
+	updatedAt: string
+}
+
+export type ScheduledTargetInput =
+	| { kind: 'project'; projectSlug: string; baseRef?: string }
+	| { kind: 'system'; riskAcknowledgement: 'broad-host-access' }
+
+export interface ScheduledScheduleInput {
+	name: string
+	enabled: boolean
+	definition: {
+		prompt: string
+		target: ScheduledTargetInput
+		agent: 'claude' | 'codex'
+		model?: string
+		effort?: SolverEffort
+		maximumRuntimeMinutes: number
+	}
+	cron: string
+	cadenceKind: 'hourly' | 'daily' | 'weekly' | 'cron'
+	timezone: string
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +605,23 @@ export interface DaemonApi {
 	/** Pause when running, resume when paused (reads the latest snapshot). */
 	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
 	poll(): Promise<HelmResult<{ message: string }>>
+	listScheduledRuns(profileId: string): Promise<HelmResult<ScheduledSchedule[]>>
+	createScheduledRun(profileId: string, body: ScheduledScheduleInput): Promise<HelmResult<ScheduledSchedule>>
+	updateScheduledRun(
+		profileId: string,
+		id: string,
+		body: ScheduledScheduleInput & { revision: number },
+	): Promise<HelmResult<ScheduledSchedule>>
+	scheduledRunAction(
+		profileId: string,
+		id: string,
+		action: 'archive' | 'enable' | 'disable' | 'run',
+		revision?: number,
+	): Promise<HelmResult<ScheduledSchedule | ScheduledRun>>
+	scheduledRunHistory(profileId: string, id: string, limit?: number): Promise<HelmResult<ScheduledRun[]>>
+	cancelScheduledRun(profileId: string, runId: string, revision: number): Promise<HelmResult<ScheduledRun>>
+	/** Renderer supplies only safe run identity; main mints adoption identities and owns descriptors. */
+	openScheduledTerminal(profileId: string, runId: string, revision: number): Promise<HelmResult<{ status: string }>>
 }
 
 /** Main-process-owned profile surface: activation coordinates terminal safety and relaunch. */

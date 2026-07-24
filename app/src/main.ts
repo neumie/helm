@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -35,7 +36,9 @@ const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://local
 
 // Single owner of daemon HTTP: one poller + command proxy, pushed to the
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
-const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken())
+const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken(), {
+	scheduledControlToken: readLocalControlToken,
+})
 // Main-owned only: its local-control token and resident capability never cross IPC.
 const scheduledResidency = new ElectronResidencyController({
 	request: helmBridge.scheduledResidentLease.bind(helmBridge),
@@ -1290,6 +1293,37 @@ const scheduledRegistryAdapter = {
 		}))
 	},
 }
+
+// Renderer may request a durable attention row, but never an attach descriptor
+// or authority. The captured token and sender fence prevent late/old renderers
+// from adopting into a newly activated profile; main mints both opaque UUIDs.
+ipcMain.handle(
+	'daemon:scheduled:open-terminal',
+	async (event, profileId: unknown, runId: unknown, revision: unknown, profileToken: unknown) => {
+		if (
+			event.sender !== mainWindow?.webContents ||
+			!sessionIpcGate.allows(profileToken) ||
+			typeof profileId !== 'string' ||
+			typeof runId !== 'string' ||
+			typeof revision !== 'number' ||
+			!Number.isInteger(revision) ||
+			profileId !== sessionProfileId ||
+			!scheduledAdoption
+		)
+			return { error: 'Scheduled terminal is unavailable in the current profile.', status: 409 }
+		const result = await scheduledAdoption.adopt({
+			profileId,
+			runId,
+			revision,
+			adoptionId: randomUUID(),
+			adopter: randomUUID(),
+			profileToken: String(profileToken),
+		})
+		return result.status === 'completed' || result.status === 'ambiguous'
+			? { data: { status: result.status } }
+			: { error: 'Scheduled terminal could not be opened.', status: 409 }
+	},
+)
 
 ipcMain.handle(
 	'scheduled-adoption:opened',

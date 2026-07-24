@@ -6,7 +6,12 @@ export interface ScheduledScheduleContract {
 	revision: number
 	name: string
 	enabled: boolean
-	target: { kind: 'project'; projectSlug: string } | { kind: 'system' }
+	target: { kind: 'project'; projectSlug: string; baseRef?: string } | { kind: 'system' }
+	/** Definition facts needed for a lossless editor; prompt remains server-only. */
+	agent: ScheduleRecord['definition']['agent']
+	model?: string
+	effort?: ScheduleRecord['definition']['effort']
+	maximumRuntimeMinutes: number
 	cron: string
 	cadenceKind: ScheduleRecord['cadenceKind']
 	timezone: string
@@ -53,8 +58,16 @@ export function toScheduledScheduleContract(schedule: ScheduleRecord): Scheduled
 		enabled: schedule.enabled,
 		target:
 			schedule.definition.target.kind === 'project'
-				? { kind: 'project', projectSlug: schedule.definition.target.projectSlug }
+				? {
+						kind: 'project',
+						projectSlug: schedule.definition.target.projectSlug,
+						...(schedule.definition.target.baseRef ? { baseRef: schedule.definition.target.baseRef } : {}),
+					}
 				: { kind: 'system' },
+		agent: schedule.definition.agent,
+		...(schedule.definition.model ? { model: schedule.definition.model } : {}),
+		...(schedule.definition.effort ? { effort: schedule.definition.effort } : {}),
+		maximumRuntimeMinutes: schedule.definition.maximumRuntimeMinutes,
 		cron: schedule.cron,
 		cadenceKind: schedule.cadenceKind,
 		timezone: schedule.timezone,

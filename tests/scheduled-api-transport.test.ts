@@ -24,8 +24,10 @@ const scheduleInput = {
 	timezone: 'UTC',
 	definition: {
 		prompt: 'Review the repository.',
-		target: { kind: 'project', projectSlug: 'helm' },
+		target: { kind: 'project', projectSlug: 'helm', baseRef: 'release' },
 		agent: 'claude',
+		model: 'claude-sonnet-4-5',
+		effort: 'high',
 		maximumRuntimeMinutes: 120,
 	},
 }
@@ -194,7 +196,7 @@ function withScheduledApi(
 }
 
 test('scheduled control routes authenticate, revision-guard CRUD, and reject disabled system targets', async () => {
-	await withScheduledApi(async ({ api, store }) => {
+	await withScheduledApi(async ({ api, db, store }) => {
 		const profileId = store.activeProfile().id
 		assert.equal((await api.request(`/scheduled-runs?profileId=${profileId}`)).status, 401)
 		const created = await api.request('/scheduled-runs', {
@@ -203,7 +205,24 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 			body: JSON.stringify({ profileId, ...scheduleInput }),
 		})
 		assert.equal(created.status, 201)
-		const schedule = (await created.json()) as { data: { id: string; revision: number } }
+		const schedule = (await created.json()) as {
+			data: {
+				id: string
+				revision: number
+				prompt?: string
+				agent: string
+				model?: string
+				effort?: string
+				target: { kind: string; baseRef?: string }
+				maximumRuntimeMinutes: number
+			}
+		}
+		assert.equal(schedule.data.prompt, undefined)
+		assert.equal(schedule.data.agent, 'claude')
+		assert.equal(schedule.data.model, 'claude-sonnet-4-5')
+		assert.equal(schedule.data.effort, 'high')
+		assert.equal(schedule.data.target.baseRef, 'release')
+		assert.equal(schedule.data.maximumRuntimeMinutes, 120)
 		const stale = await api.request(`/scheduled-runs/${schedule.data.id}/disable`, {
 			method: 'POST',
 			headers: requestHeaders(),
@@ -217,6 +236,7 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 		})
 		assert.equal(disabled.status, 200)
 		const disabledSchedule = (await disabled.json()) as { data: { id: string; revision: number } }
+		const { prompt: _prompt, ...redactedDefinition } = scheduleInput.definition
 		const updated = await api.request(`/scheduled-runs/${schedule.data.id}`, {
 			method: 'PUT',
 			headers: requestHeaders(),
@@ -224,6 +244,7 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 				profileId,
 				revision: disabledSchedule.data.revision,
 				...scheduleInput,
+				definition: redactedDefinition,
 				name: 'Updated review',
 				enabled: false,
 			}),
@@ -231,6 +252,11 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 		assert.equal(updated.status, 200)
 		const updatedSchedule = (await updated.json()) as { data: { revision: number; name: string } }
 		assert.equal(updatedSchedule.data.name, 'Updated review')
+		const persistedDefinition = db.forProfile(profileId).schedules.require(schedule.data.id).definition
+		assert.equal(persistedDefinition.prompt, scheduleInput.definition.prompt)
+		assert.equal(persistedDefinition.model, scheduleInput.definition.model)
+		assert.equal(persistedDefinition.effort, scheduleInput.definition.effort)
+		assert.equal(persistedDefinition.target.kind === 'project' && persistedDefinition.target.baseRef, 'release')
 		const detail = await api.request(`/scheduled-runs/${schedule.data.id}?profileId=${profileId}`, {
 			headers: requestHeaders(),
 		})

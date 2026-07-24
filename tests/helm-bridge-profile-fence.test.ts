@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import helmBridgeModule from '../app/src/helm-bridge.ts'
-const { HelmBridge } = helmBridgeModule
+type HelmBridgeModule = typeof import('../app/src/helm-bridge.ts')
+const { HelmBridge, scheduledProfileTokenMatches } = helmBridgeModule as HelmBridgeModule
+
+test('scheduled renderer requests are bound to the captured profile token', () => {
+	assert.equal(scheduledProfileTokenMatches('work', 'work:3'), true)
+	assert.equal(scheduledProfileTokenMatches('profile-aaaaaaaaaaaa', 'profile-aaaaaaaaaaaa:9'), true)
+	assert.equal(scheduledProfileTokenMatches('work', 'profile-aaaaaaaaaaaa:9'), false)
+	assert.equal(scheduledProfileTokenMatches('work', 'workaround:3'), false)
+})
 import type { DaemonStatus, DashboardItem, HelmResult, HelmSnapshot, ProfilesDocument } from '../app/src/shared-helm.ts'
 
 type Deferred<T> = { promise: Promise<T>; resolve(value: T): void }

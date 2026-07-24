@@ -20,6 +20,7 @@ import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemSheet } from './NewItemSheet'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
+import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
 import type { Route } from './model'
 import type { RunSelectionDraft } from './run-selection'
@@ -146,7 +147,13 @@ export function SidebarRoot() {
 	const newItemOpenRef = useRef(newItemOpen)
 	newItemOpenRef.current = newItemOpen
 
-	const settingsActive = nav.stack.some(route => route.kind === 'settings' || route.kind === 'settings-section')
+	const settingsActive = nav.stack.some(
+		route =>
+			route.kind === 'settings' ||
+			route.kind === 'settings-section' ||
+			route.kind === 'scheduled-runs' ||
+			route.kind === 'scheduled-run-editor',
+	)
 	const settings = useSettingsStore(settingsActive)
 
 	const openItem = useCallback(
@@ -368,6 +375,7 @@ export function SidebarRoot() {
 						onOpenSection={sectionId => push({ kind: 'settings-section', sectionId })}
 						onOpenAppearance={() => push({ kind: 'appearance' })}
 						onOpenProfiles={() => push({ kind: 'profiles' })}
+						onOpenScheduledRuns={() => push({ kind: 'scheduled-runs' })}
 						activeProfileName={snapshot?.status?.profile?.name ?? 'Work'}
 					/>
 				)
@@ -379,13 +387,32 @@ export function SidebarRoot() {
 				return <ProfileEditorPage profileId={route.profileId} onBack={pop} />
 			case 'appearance':
 				return <AppearancePage onBack={pop} />
+			case 'scheduled-runs':
+				return (
+					<ScheduledRunsPage
+						profileId={snapshot?.status?.profile?.id ?? ''}
+						profileName={snapshot?.status?.profile?.name ?? 'Work'}
+						schedulingEnabled={snapshot?.config?.scheduledRuns?.enabled === true}
+						onBack={pop}
+						onOpenEditor={scheduleId => push({ kind: 'scheduled-run-editor', scheduleId })}
+					/>
+				)
+			case 'scheduled-run-editor':
+				return (
+					<ScheduledRunEditorPage
+						profileId={snapshot?.status?.profile?.id ?? ''}
+						scheduleId={route.scheduleId}
+						config={snapshot?.config ?? null}
+						onBack={pop}
+					/>
+				)
 		}
 	}
 
 	// Archive is list-flavored but pushed — give it a header via wrapper below.
 	const pages: Array<{ route: Route; key: string }> = nav.stack.map((route, index) => ({
 		route,
-		key: `${index}-${route.kind}-${'id' in route ? route.id : ''}${route.kind === 'settings-section' ? route.sectionId : ''}`,
+		key: `${index}-${route.kind}-${'id' in route ? route.id : ''}${route.kind === 'settings-section' ? route.sectionId : ''}${route.kind === 'scheduled-run-editor' ? (route.scheduleId ?? 'new') : ''}`,
 	}))
 
 	const topIndex = pages.length - 1

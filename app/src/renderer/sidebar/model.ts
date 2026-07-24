@@ -22,6 +22,8 @@ export type Route =
 	| { kind: 'profiles' }
 	| { kind: 'profile'; profileId: string }
 	| { kind: 'appearance' }
+	| { kind: 'scheduled-runs' }
+	| { kind: 'scheduled-run-editor'; scheduleId?: string }
 
 export function colorForProject(config: AppConfig | null | undefined, slug: string): string | null {
 	return config?.projects?.find(project => project.slug === slug)?.color ?? config?.projectColors?.[slug] ?? null

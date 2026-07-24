@@ -92,7 +92,8 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.match(component, /ACTIVITY_INDICATOR_DOTS = ACTIVITY_DOT_IDS\.length/)
 	assert.equal(component.match(/'(top|middle|bottom)-(left|right)'/g)?.length, 6)
 	assert.match(component, /aria-label=\{label\}/)
-	assert.equal(renderer.match(/progressTracker\.clear\(\)/g)?.length, 3)
+	// Every explicit tab/background close path plus PTY exit clears protocol-owned state.
+	assert.equal(renderer.match(/progressTracker\.clear\(\)/g)?.length, 4)
 	assert.match(css, /\.activity-indicator\s*\{[^}]*grid-template-columns:\s*repeat\(2, 2px\)/s)
 	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--text-0\)/s)
 	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*activity-indicator-clockwise 1s linear infinite/s)

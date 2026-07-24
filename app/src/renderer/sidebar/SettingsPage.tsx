@@ -202,6 +202,7 @@ const SECTION_GROUPS: ReadonlyArray<{ label: string; ids: string[] }> = [
 	{ label: 'Daemon', ids: ['provider', 'projects', 'polling', 'server'] },
 	{ label: 'Execution', ids: ['solver', 'execution', 'spawner'] },
 	{ label: 'AI', ids: ['ai-branch', 'ai-display', 'ai-model-guidance', 'ai-triage'] },
+	{ label: 'Automation', ids: ['scheduled-runs'] },
 	{ label: 'Integrations', ids: ['github'] },
 ]
 
@@ -231,6 +232,7 @@ export function SettingsPage({
 	onOpenSection,
 	onOpenAppearance,
 	onOpenProfiles,
+	onOpenScheduledRuns,
 	activeProfileName,
 }: {
 	store: SettingsStore
@@ -238,6 +240,7 @@ export function SettingsPage({
 	onOpenSection: (sectionId: string) => void
 	onOpenAppearance: () => void
 	onOpenProfiles: () => void
+	onOpenScheduledRuns: () => void
 	activeProfileName: string
 }) {
 	const sections = store.doc?.edit.sections ?? []
@@ -254,6 +257,12 @@ export function SettingsPage({
 						label="Appearance"
 						value={`${themeName} · ${look.state.termFontSize}px`}
 						onClick={onOpenAppearance}
+					/>
+					<ActionRow
+						nav
+						label="Scheduled runs"
+						value={store.doc?.dashboard.scheduledRuns?.enabled ? 'On · this profile' : 'Off · this profile'}
+						onClick={onOpenScheduledRuns}
 					/>
 				</Card>
 				{store.loadError ? (

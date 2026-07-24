@@ -711,9 +711,15 @@ export class SessionRegistry {
 					agentAttention,
 					groupId,
 				} = meta as Record<string, unknown>
-				// A run-owned record without its complete non-secret identity cannot
-				// be restored safely, so fail closed by ignoring that malformed row.
-				if (backing === 'run-owned' && !isScheduledSessionOwnership(scheduledOwnership)) continue
+				// Scheduled ownership, when present, must be complete. A generic
+				// run-owned marker remains valid for transfer/teardown fencing without
+				// becoming eligible for scheduled restoration.
+				if (
+					backing === 'run-owned' &&
+					scheduledOwnership !== undefined &&
+					!isScheduledSessionOwnership(scheduledOwnership)
+				)
+					continue
 				this.#data[id] = {
 					createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
 					...(typeof order === 'number' && Number.isFinite(order) && order >= 0 ? { order } : {}),
@@ -721,7 +727,12 @@ export class SessionRegistry {
 					...(typeof customName === 'string' && customName !== '' ? { customName } : {}),
 					...(parked === true ? { parked: true } : {}),
 					...(backing === 'run-owned'
-						? { backing, scheduledOwnership: { ...(scheduledOwnership as ScheduledSessionOwnership) } }
+						? {
+								backing,
+								...(isScheduledSessionOwnership(scheduledOwnership)
+									? { scheduledOwnership: { ...scheduledOwnership } }
+									: {}),
+							}
 						: {}),
 					...(agentRunning === true ? { agentRunning: true } : {}),
 					...(agentAttention === true ? { agentAttention: true } : {}),
@@ -893,12 +904,12 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
-	/** Explicitly marks an existing session as ordinary backing. Run-owned records use registerRunOwned(). */
+	/** Generic ownership classification; scheduled adoption uses registerRunOwned() for its exact identity. */
 	setBacking(sessionId: string, backing: SessionBacking): void {
 		const meta = this.#data[sessionId]
-		if (!meta || backing === 'run-owned' || (meta.backing ?? 'ordinary') === backing) return
-		meta.backing = undefined
-		meta.scheduledOwnership = undefined
+		if (!meta || (meta.backing ?? 'ordinary') === backing) return
+		meta.backing = backing === 'run-owned' ? backing : undefined
+		if (backing === 'ordinary') meta.scheduledOwnership = undefined
 		this.#scheduleSave()
 	}
 
