@@ -176,6 +176,59 @@ test('scheduled command validation rejects raw hashes and oversized UTF-8 writes
 	}
 })
 
+test('terminal intent is first-writer idempotent, conflict-fail-closed, and retained in quarantine', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-store-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'alpha')
+		const commands = new ScheduleCommands(db.schedules)
+		const running = (name: string) => {
+			const schedule = commands.create({ ...scheduleInput, name })
+			const admitted = commands.claimOccurrence(schedule.id, schedule.revision, next, {
+				scheduleId: schedule.id,
+				scheduleRevision: schedule.revision,
+				scheduledFor: next,
+				localCivilSlot: `2030-01-01 ${name}`,
+				utcOffsetMinutes: 0,
+				slotKey: name,
+				definitionSnapshot: schedule.definition,
+				sessionId: `sr-${name}`,
+			})
+			return commands.markRunning(
+				commands.beginLaunching(commands.beginPreparing(admitted.id, admitted.revision).id, admitted.revision + 1).id,
+				admitted.revision + 2,
+			)
+		}
+		const cancelling = running('cancel-intent')
+		const first = commands.requestCancel(cancelling.id, cancelling.revision)
+		const retry = commands.requestCancel(cancelling.id, cancelling.revision)
+		assert.equal(first.pendingTerminalIntent, 'cancel')
+		assert.equal(retry.revision, first.revision)
+		assert.throws(() => commands.requestTimeout(first.id, first.revision), /conflicting terminal intent/)
+		const quarantined = commands.markQuarantined(first.id, first.revision)
+		assert.equal(quarantined.pendingTerminalIntent, 'cancel')
+		const cancelled = commands.markCancelled(quarantined.id, quarantined.revision)
+		assert.equal(cancelled.pendingTerminalIntent, null)
+
+		const quietRunning = running('quiet-intent')
+		const quiet = commands.report(quietRunning.id, quietRunning.revision, 'quiet', 'done')
+		assert.equal(quiet.pendingTerminalIntent, 'quiet')
+		assert.throws(() => commands.requestCancel(quiet.id, quiet.revision), /conflicting terminal intent/)
+		const closing = commands.beginClose(quiet.id, quiet.revision)
+		assert.equal(commands.beginClose(quiet.id, quiet.revision).revision, closing.revision)
+		const quietQuarantined = commands.markQuarantined(closing.id, closing.revision)
+		assert.equal(commands.closeQuiet(quietQuarantined.id, quietQuarantined.revision).pendingTerminalIntent, null)
+
+		const timeoutRunning = running('timeout-intent')
+		const timeout = commands.requestTimeout(timeoutRunning.id, timeoutRunning.revision)
+		assert.equal(commands.requestTimeout(timeoutRunning.id, timeoutRunning.revision).revision, timeout.revision)
+		const timeoutQuarantined = commands.markQuarantined(timeout.id, timeout.revision)
+		assert.equal(timeoutQuarantined.pendingTerminalIntent, 'timeout')
+		assert.equal(commands.markTimedOut(timeoutQuarantined.id, timeoutQuarantined.revision).pendingTerminalIntent, null)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('ScheduleCommands protect reported, closing, attention, and quarantined runs from timeout', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-store-'))
 	try {

@@ -58,10 +58,14 @@ function deferred<T>() {
 function fakeDrainer() {
 	const reservations = new Set<string>()
 	let reserveCalls = 0
+	let releaseCalls = 0
 	return {
 		reservations,
 		get reserveCalls() {
 			return reserveCalls
+		},
+		get releaseCalls() {
+			return releaseCalls
 		},
 		reserveExternalSolve(id: string) {
 			reserveCalls++
@@ -71,6 +75,7 @@ function fakeDrainer() {
 			return true
 		},
 		releaseExternalSolve(id: string) {
+			releaseCalls++
 			return reservations.delete(id)
 		},
 	}
@@ -326,7 +331,7 @@ test('quiet report wins over a later cancel while teardown is pending', async ()
 		const quiet = service.report('work', running.id, 'quiet', 'done')
 		assert.equal(db.schedules.requireRun(running.id).state, 'closing')
 		assert.equal(teardownCalls, 1)
-		await assert.rejects(service.cancel('work', running.id), /Only an active scheduled run can be cancelled/)
+		await assert.rejects(service.cancel('work', running.id), /conflicting terminal intent/)
 		teardown.resolve('closed')
 		assert.equal((await quiet).state, 'closed_quiet')
 		assert.equal(teardownCalls, 1)
@@ -438,7 +443,7 @@ test('timeout is durable first-writer state and identical quiet retries converge
 		const requested = commands.requestTimeout(running.id, running.revision)
 		assert.equal(requested.state, 'timeout_requested')
 		assert.throws(() => commands.report(requested.id, requested.revision, 'quiet', 'done'), /Only a running/)
-		assert.throws(() => commands.requestCancel(requested.id, requested.revision), /active/)
+		assert.throws(() => commands.requestCancel(requested.id, requested.revision), /conflicting terminal intent/)
 		assert.equal(commands.markTimedOut(requested.id, requested.revision).state, 'timed_out')
 
 		const quietSchedule = commands.create({ ...scheduleInput, name: 'Quiet retry' })
@@ -472,6 +477,45 @@ test('timeout is durable first-writer state and identical quiet retries converge
 		const closed = await service.report('work', running.id, 'quiet', 'done')
 		assert.equal(closed.state, 'closed_quiet')
 		assert.equal((await service.report('work', running.id, 'quiet', 'done')).state, 'closed_quiet')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('reconciliation resolves quarantined quiet, cancel, and timeout by their durable intent after a crash', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules)
+		const toQuarantined = (intent: 'quiet' | 'cancel' | 'timeout') => {
+			let run = createRecoverableRun(db, commands, `Crash ${intent}`, 'running')
+			if (intent === 'quiet') {
+				run = commands.report(run.id, run.revision, 'quiet', 'done')
+				run = commands.beginClose(run.id, run.revision)
+			} else if (intent === 'cancel') run = commands.requestCancel(run.id, run.revision)
+			else run = commands.requestTimeout(run.id, run.revision)
+			return commands.markQuarantined(run.id, run.revision, 'ownership unknown before teardown')
+		}
+		const quiet = toQuarantined('quiet')
+		const cancelled = toQuarantined('cancel')
+		const timedOut = toQuarantined('timeout')
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+		})
+		await service.start()
+		for (const [run, expected] of [
+			[quiet, 'closed_quiet'],
+			[cancelled, 'cancelled'],
+			[timedOut, 'timed_out'],
+		] as const) {
+			const resolved = db.schedules.requireRun(run.id)
+			assert.equal(resolved.state, expected)
+			assert.equal(resolved.pendingTerminalIntent, null)
+		}
+		assert.equal(drainer.releaseCalls, 3)
+		await service.stop()
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

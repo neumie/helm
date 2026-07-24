@@ -1,7 +1,13 @@
 import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import { isScheduledRunTerminalState } from './retention.js'
-import type { CreateScheduledRunInput, ScheduleRecord, ScheduledRunRecord, ScheduledRunState } from './schema.js'
+import type {
+	CreateScheduledRunInput,
+	ScheduleRecord,
+	ScheduledRunRecord,
+	ScheduledRunState,
+	ScheduledTerminalIntent,
+} from './schema.js'
 import { scheduleCreateSchema, scheduledRunDiagnosticSchema, scheduledRunReportSchema } from './schema.js'
 import { ScheduleRevisionConflictError, type ScheduleStore } from './store.js'
 
@@ -145,13 +151,19 @@ export class ScheduleCommands {
 	}
 	requestCancel(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
+		if (run.pendingTerminalIntent && run.pendingTerminalIntent !== 'cancel')
+			throw new Error('Scheduled run already has a conflicting terminal intent')
 		if (!CANCELLABLE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')
-		return this.transition(id, revision, [run.state], 'cancel_requested')
+		const claimed = this.claimTerminalIntent(id, revision, 'cancel')
+		if (claimed.state === 'cancel_requested' || claimed.state === 'quarantined') return claimed
+		return this.transition(claimed.id, claimed.revision, [claimed.state], 'cancel_requested')
 	}
 	markCancelled(id: string, revision: number): ScheduledRunRecord {
-		return this.transition(id, revision, ['cancel_requested'], 'cancelled', { closedAt: new Date().toISOString() })
+		return this.resolveTerminalIntent(id, revision, ['cancel_requested', 'quarantined'], 'cancelled', 'cancel')
 	}
 	markSessionLost(id: string, revision: number, detail: string): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (run.pendingTerminalIntent) throw new Error('Scheduled run has a pending terminal intent')
 		return this.transition(id, revision, ['quarantined'], 'session_lost', {
 			closedAt: new Date().toISOString(),
 			diagnosticDetail: scheduledRunDiagnosticSchema.parse(detail),
@@ -167,16 +179,22 @@ export class ScheduleCommands {
 			diagnosticDetail,
 		})
 	}
-	/** First durable timeout transition wins before ownership-sensitive teardown. */
+	/** First durable timeout intent wins before ownership-sensitive teardown. */
 	requestTimeout(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (!TIMEOUTABLE_STATES.has(run.state)) throw new Error('Only an unreported scheduled run can time out')
-		return this.transition(id, revision, [run.state], 'timeout_requested')
+		if (run.pendingTerminalIntent && run.pendingTerminalIntent !== 'timeout')
+			throw new Error('Scheduled run already has a conflicting terminal intent')
+		if (run.state === 'quarantined' && run.pendingTerminalIntent === 'timeout') return run
+		if (run.state !== 'timeout_requested' && !TIMEOUTABLE_STATES.has(run.state))
+			throw new Error('Only an unreported scheduled run can time out')
+		const claimed = this.claimTerminalIntent(id, revision, 'timeout')
+		if (claimed.state === 'timeout_requested') return claimed
+		return this.transition(claimed.id, claimed.revision, [claimed.state], 'timeout_requested')
 	}
 	markTimedOut(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
-		if (run.state !== 'timeout_requested') throw new Error('Only an unreported scheduled run can time out')
-		return this.transition(id, revision, ['timeout_requested'], 'timed_out', { closedAt: new Date().toISOString() })
+		if (run.pendingTerminalIntent !== 'timeout') throw new Error('Only an unreported scheduled run can time out')
+		return this.resolveTerminalIntent(id, revision, ['timeout_requested', 'quarantined'], 'timed_out', 'timeout')
 	}
 	/** First matching report wins; an identical retry is intentionally idempotent. */
 	report(id: string, revision: number, kind: 'quiet' | 'needs_attention', summary: string): ScheduledRunRecord {
@@ -189,17 +207,30 @@ export class ScheduleCommands {
 		}
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
 		if (run.state !== 'running') throw new Error('Only a running scheduled run can report')
-		return this.store.transitionRun(id, revision, report.kind === 'quiet' ? 'reported_quiet' : 'needs_attention', {
-			reportedAt: new Date().toISOString(),
-			reportKind: report.kind,
-			reportSummary: report.summary,
-		})
+		if (run.pendingTerminalIntent) throw new Error('Scheduled run already has a conflicting terminal intent')
+		const claimed = report.kind === 'quiet' ? this.claimTerminalIntent(id, revision, 'quiet') : run
+		if (claimed.state !== 'running') throw new Error('Only a running scheduled run can report')
+		return this.store.transitionRun(
+			id,
+			claimed.revision,
+			report.kind === 'quiet' ? 'reported_quiet' : 'needs_attention',
+			{
+				reportedAt: new Date().toISOString(),
+				reportKind: report.kind,
+				reportSummary: report.summary,
+			},
+		)
 	}
 	beginClose(id: string, revision: number): ScheduledRunRecord {
-		return this.transition(id, revision, ['reported_quiet'], 'closing')
+		const run = this.store.requireRun(id)
+		if (!['reported_quiet', 'closing', 'quarantined'].includes(run.state))
+			throw new Error('Only a quiet reported run can close')
+		const claimed = this.claimTerminalIntent(id, revision, 'quiet')
+		if (claimed.state === 'closing' || claimed.state === 'quarantined') return claimed
+		return this.transition(claimed.id, claimed.revision, ['reported_quiet'], 'closing')
 	}
 	closeQuiet(id: string, revision: number): ScheduledRunRecord {
-		return this.transition(id, revision, ['closing'], 'closed_quiet', { closedAt: new Date().toISOString() })
+		return this.resolveTerminalIntent(id, revision, ['closing', 'quarantined'], 'closed_quiet', 'quiet')
 	}
 	markNotificationDelivered(id: string, revision: number): ScheduledRunRecord {
 		return this.transition(id, revision, ['needs_attention'], 'needs_attention', {
@@ -208,6 +239,24 @@ export class ScheduleCommands {
 	}
 	isTerminal(run: ScheduledRunRecord): boolean {
 		return isScheduledRunTerminalState(run.state)
+	}
+	private claimTerminalIntent(id: string, revision: number, intent: ScheduledTerminalIntent): ScheduledRunRecord {
+		return this.store.claimPendingTerminalIntent(id, revision, intent)
+	}
+	private resolveTerminalIntent(
+		id: string,
+		revision: number,
+		allowed: ScheduledRunState[],
+		next: ScheduledRunState,
+		intent: ScheduledTerminalIntent,
+	): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (run.pendingTerminalIntent !== intent)
+			throw new Error('Scheduled run does not have the required pending terminal intent')
+		return this.transition(id, revision, allowed, next, {
+			closedAt: new Date().toISOString(),
+			pendingTerminalIntent: null,
+		})
 	}
 	private claim(
 		scheduleId: string,

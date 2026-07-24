@@ -482,4 +482,13 @@ CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
   WHERE state IN ('admitted', 'preparing', 'launching', 'running', 'reported_quiet', 'closing', 'needs_attention', 'cancel_requested', 'timeout_requested', 'quarantined');
 `,
 	},
+	{
+		// Quarantine must not erase the terminal outcome already chosen before
+		// ownership-sensitive teardown. Legacy rows deliberately start with null.
+		version: 29,
+		sql: `
+ALTER TABLE scheduled_runs ADD COLUMN pending_terminal_intent TEXT
+  CHECK (pending_terminal_intent IN ('quiet', 'cancel', 'timeout') OR pending_terminal_intent IS NULL);
+`,
+	},
 ]

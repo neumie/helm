@@ -5,6 +5,7 @@ import {
 	type ScheduleRecord,
 	type ScheduledRunRecord,
 	type ScheduledRunState,
+	type ScheduledTerminalIntent,
 	createScheduledRunSchema,
 	schedulePersistenceSchema,
 	scheduleRecordSchema,
@@ -170,8 +171,8 @@ export class ScheduleStore {
 			id, profile_id, schedule_id, schedule_revision, scheduled_for, local_civil_slot, utc_offset_minutes, slot_key, definition_snapshot, state, revision,
 			session_id, socket_descriptor, report_token_hash, report_token_version, process_fingerprint, cwd, worktree_path, branch_name, run_dir,
 			started_at, reported_at, closed_at, report_kind, report_summary, diagnostic_detail, notification_claimed_at, notification_delivered_at,
-			missed_count, missed_many, cleanup_state, terminal_resolved_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, ?, ?)`)
+			missed_count, missed_many, cleanup_state, terminal_resolved_at, pending_terminal_intent, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?)`)
 			.run(
 				id,
 				this.profileId,
@@ -315,6 +316,34 @@ export class ScheduleStore {
 			.get(this.profileId, scheduleId, slotKey) as Record<string, unknown> | undefined
 		return row ? this.toRun(row) : null
 	}
+	/**
+	 * Atomically claim a pending terminal intent. A matching retry is idempotent;
+	 * a different winner is a fail-closed conflict even when the caller is stale.
+	 */
+	claimPendingTerminalIntent(
+		id: string,
+		expectedRevision: number,
+		intent: ScheduledTerminalIntent,
+	): ScheduledRunRecord {
+		const current = this.requireRun(id)
+		if (current.pendingTerminalIntent) {
+			if (current.pendingTerminalIntent === intent) return current
+			throw new Error('Scheduled run already has a conflicting terminal intent')
+		}
+		if (current.revision !== expectedRevision) throw new ScheduleRevisionConflictError()
+		const result = this.db
+			.prepare(
+				'UPDATE scheduled_runs SET pending_terminal_intent = ?, revision = revision + 1, updated_at = ? WHERE profile_id = ? AND id = ? AND revision = ? AND pending_terminal_intent IS NULL',
+			)
+			.run(intent, new Date().toISOString(), this.profileId, id, expectedRevision)
+		if (result.changes === 0) {
+			const latest = this.requireRun(id)
+			if (latest.pendingTerminalIntent === intent) return latest
+			if (latest.pendingTerminalIntent) throw new Error('Scheduled run already has a conflicting terminal intent')
+			throw new ScheduleRevisionConflictError()
+		}
+		return this.requireRun(id)
+	}
 	transitionRun(
 		id: string,
 		expectedRevision: number,
@@ -332,6 +361,7 @@ export class ScheduleStore {
 				| 'notificationDeliveredAt'
 				| 'cleanupState'
 				| 'terminalResolvedAt'
+				| 'pendingTerminalIntent'
 			>
 		> = {},
 	): ScheduledRunRecord {
@@ -349,6 +379,7 @@ export class ScheduleStore {
 			notificationDeliveredAt: 'notification_delivered_at',
 			cleanupState: 'cleanup_state',
 			terminalResolvedAt: 'terminal_resolved_at',
+			pendingTerminalIntent: 'pending_terminal_intent',
 		}
 		const values: unknown[] = [state]
 		const sets = ['state = ?', 'revision = revision + 1', 'updated_at = ?']
@@ -421,6 +452,7 @@ export class ScheduleStore {
 			missedMany: Boolean(row.missed_many),
 			cleanupState: row.cleanup_state,
 			terminalResolvedAt: row.terminal_resolved_at,
+			pendingTerminalIntent: row.pending_terminal_intent,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 		})

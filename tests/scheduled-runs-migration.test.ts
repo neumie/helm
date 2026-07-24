@@ -6,7 +6,7 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { DB } from '../src/db/client.js'
 
-test('scheduled migrations create profile-owned tables and include timeout in durable active uniqueness', () => {
+test('scheduled migrations create profile-owned tables, active timeout uniqueness, and nullable terminal intent', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-migration-'))
 	try {
 		const path = join(root, 'helm.db')
@@ -15,7 +15,7 @@ test('scheduled migrations create profile-owned tables and include timeout in du
 		const raw = new Database(path)
 		assert.equal(
 			(raw.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			28,
+			29,
 		)
 		for (const table of ['scheduled_schedules', 'scheduled_runs']) {
 			assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
@@ -24,6 +24,10 @@ test('scheduled migrations create profile-owned tables and include timeout in du
 			.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_scheduled_runs_one_active'")
 			.get() as { sql: string }
 		assert.match(activeIndex.sql, /timeout_requested/)
+		const intentColumn = (
+			raw.prepare("PRAGMA table_info('scheduled_runs')").all() as Array<{ name: string; notnull: number }>
+		).find(row => row.name === 'pending_terminal_intent')
+		assert.equal(intentColumn?.notnull, 0)
 		raw.close()
 	} finally {
 		rmSync(root, { recursive: true, force: true })

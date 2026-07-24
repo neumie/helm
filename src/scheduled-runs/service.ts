@@ -19,7 +19,7 @@ import { appendScheduledDiagnostic } from './log.js'
 import { buildScheduledPrompt } from './prompt.js'
 import { latestDueOccurrence, manualSlotKey, nextOccurrence } from './recurrence.js'
 import { type ScheduledWorkspaceCleaner, defaultScheduledWorkspaceCleaner, terminalRunsToPrune } from './retention.js'
-import type { ScheduleRecord, ScheduledRunRecord } from './schema.js'
+import type { ScheduleRecord, ScheduledRunRecord, ScheduledTerminalIntent } from './schema.js'
 import { probeScheduledSocket, scheduledSessionId, scheduledSocketPath } from './session-path.js'
 import { prepareScheduledWorkspace } from './workspace.js'
 
@@ -58,7 +58,8 @@ export class ScheduledRunService {
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
-	private readonly quietCloseInFlight = new Map<string, Promise<ScheduledRunRecord>>()
+	/** Per-run single-flight guards duplicate teardown while durable intent arbitrates winners. */
+	private readonly terminalInFlight = new Map<string, Promise<ScheduledRunRecord>>()
 	private startInFlight: Promise<void> | null = null
 	private stopped = false
 	private reconcileAdmissionOpen = true
@@ -193,13 +194,16 @@ export class ScheduledRunService {
 	async cancel(profileId: string, runId: string): Promise<ScheduledRunRecord> {
 		const runDb = this.db.forProfile(profileId)
 		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
-		let run = commands.requestCancel(runId, runDb.schedules.requireRun(runId).revision)
-		const result = await this.teardown(profileId, run)
-		if (result === 'quarantined')
-			return commands.markQuarantined(run.id, run.revision, 'Scheduled teardown ownership is unknown')
-		run = runDb.schedules.requireRun(run.id)
-		this.releaseReservation(run.id)
-		return commands.markCancelled(run.id, run.revision)
+		const requested = commands.requestCancel(runId, runDb.schedules.requireRun(runId).revision)
+		return this.runTerminalOperation(profileId, runId, async () => {
+			let run = requested
+			const result = await this.teardown(profileId, run)
+			if (result === 'quarantined')
+				return commands.markQuarantined(run.id, run.revision, 'Scheduled teardown ownership is unknown')
+			run = commands.markCancelled(run.id, runDb.schedules.requireRun(run.id).revision)
+			this.releaseReservation(run.id)
+			return run
+		})
 	}
 
 	/** Recover durable runs on daemon start; never relaunch an existing session. */
@@ -473,16 +477,9 @@ export class ScheduledRunService {
 		commands: ScheduleCommands,
 		reported: ScheduledRunRecord,
 	): Promise<ScheduledRunRecord> {
-		const key = `${profileId}:${reported.id}`
-		const inFlight = this.quietCloseInFlight.get(key)
-		if (inFlight) return inFlight
-		const operation: Promise<ScheduledRunRecord> = this.closeQuietInternal(profileId, commands, reported).finally(
-			() => {
-				if (this.quietCloseInFlight.get(key) === operation) this.quietCloseInFlight.delete(key)
-			},
+		return this.runTerminalOperation(profileId, reported.id, () =>
+			this.closeQuietInternal(profileId, commands, reported),
 		)
-		this.quietCloseInFlight.set(key, operation)
-		return operation
 	}
 
 	private async closeQuietInternal(
@@ -492,15 +489,14 @@ export class ScheduledRunService {
 	): Promise<ScheduledRunRecord> {
 		let run = this.db.forProfile(profileId).schedules.requireRun(reported.id)
 		if (run.state === 'closed_quiet') return run
-		if (run.state === 'reported_quiet') run = commands.beginClose(run.id, run.revision)
-		if (run.state !== 'closing') return run
+		run = commands.beginClose(run.id, run.revision)
+		if (run.state !== 'closing' && run.state !== 'quarantined') return run
 		const result = await this.teardown(profileId, run)
 		if (result === 'quarantined')
 			return commands.markQuarantined(run.id, run.revision, 'Quiet teardown ownership is unknown')
-		run = this.db.forProfile(profileId).schedules.requireRun(run.id)
-		if (run.state === 'closed_quiet') return run
+		run = commands.closeQuiet(run.id, this.db.forProfile(profileId).schedules.requireRun(run.id).revision)
 		this.releaseReservation(run.id)
-		return commands.closeQuiet(run.id, run.revision)
+		return run
 	}
 
 	private async teardown(profileId: string, run: ScheduledRunRecord) {
@@ -529,15 +525,16 @@ export class ScheduledRunService {
 		}
 		if (socket === 'live') {
 			this.restoreReservation(run)
-			if (run.state === 'reported_quiet' || run.state === 'closing') {
+			const intent = this.terminalIntent(run)
+			if (intent === 'quiet') {
 				await this.closeQuiet(profileId, commands, run)
 				return
 			}
-			if (run.state === 'cancel_requested') {
+			if (intent === 'cancel') {
 				await this.cancel(profileId, run.id)
 				return
 			}
-			if (run.state === 'timeout_requested') {
+			if (intent === 'timeout') {
 				await this.timeout(profileId, commands, run)
 				return
 			}
@@ -549,36 +546,61 @@ export class ScheduledRunService {
 			}
 			return
 		}
-		// Definitively dead. Reports retain their durable meaning; no report is never quiet.
-		if (run.state === 'reported_quiet' || run.state === 'closing') {
-			if (run.state === 'reported_quiet') run = commands.beginClose(run.id, run.revision)
-			this.releaseReservation(run.id)
+		// A durable intent, including one retained through quarantine, decides the
+		// exact terminal outcome. Only an intent-less quarantine is unknowable.
+		const intent = this.terminalIntent(run)
+		if (intent === 'quiet') {
+			run = commands.beginClose(run.id, run.revision)
 			commands.closeQuiet(run.id, run.revision)
-		} else if (run.state === 'cancel_requested') {
-			this.releaseReservation(run.id)
+		} else if (intent === 'cancel') {
+			run = commands.requestCancel(run.id, run.revision)
 			commands.markCancelled(run.id, run.revision)
-		} else if (run.state === 'timeout_requested') {
-			this.releaseReservation(run.id)
+		} else if (intent === 'timeout') {
+			run = commands.requestTimeout(run.id, run.revision)
 			commands.markTimedOut(run.id, run.revision)
 		} else if (run.state === 'quarantined') {
-			this.releaseReservation(run.id)
 			commands.markSessionLost(run.id, run.revision, 'Scheduled session was dead after ownership quarantine')
 		} else {
-			this.releaseReservation(run.id)
 			commands.markInterrupted(run.id, run.revision, 'Scheduled session was dead during reconciliation')
 		}
+		this.releaseReservation(run.id)
 	}
 
 	private async timeout(profileId: string, commands: ScheduleCommands, run: ScheduledRunRecord): Promise<void> {
 		const requested = run.state === 'timeout_requested' ? run : commands.requestTimeout(run.id, run.revision)
-		const result = await this.teardown(profileId, requested)
-		if (result === 'quarantined') {
-			commands.markQuarantined(requested.id, requested.revision, 'Timeout teardown ownership is unknown')
-			return
-		}
-		const current = this.db.forProfile(profileId).schedules.requireRun(requested.id)
-		this.releaseReservation(requested.id)
-		commands.markTimedOut(current.id, current.revision)
+		await this.runTerminalOperation(profileId, run.id, async () => {
+			const result = await this.teardown(profileId, requested)
+			if (result === 'quarantined')
+				return commands.markQuarantined(requested.id, requested.revision, 'Timeout teardown ownership is unknown')
+			const timedOut = commands.markTimedOut(
+				requested.id,
+				this.db.forProfile(profileId).schedules.requireRun(requested.id).revision,
+			)
+			this.releaseReservation(timedOut.id)
+			return timedOut
+		})
+	}
+	private runTerminalOperation(
+		profileId: string,
+		runId: string,
+		operation: () => Promise<ScheduledRunRecord>,
+	): Promise<ScheduledRunRecord> {
+		const key = `${profileId}:${runId}`
+		const inFlight = this.terminalInFlight.get(key)
+		if (inFlight) return inFlight
+		const pending = operation().finally(() => {
+			if (this.terminalInFlight.get(key) === pending) this.terminalInFlight.delete(key)
+		})
+		this.terminalInFlight.set(key, pending)
+		return pending
+	}
+	/** Persisted intent wins; legacy pre-migration request states are deterministic evidence, never a guess. */
+	private terminalIntent(run: ScheduledRunRecord): ScheduledTerminalIntent | null {
+		if (run.pendingTerminalIntent) return run.pendingTerminalIntent
+		if (run.state === 'reported_quiet' || run.state === 'closing') return 'quiet'
+		if (run.state === 'cancel_requested') return 'cancel'
+		if (run.state === 'timeout_requested') return 'timeout'
+		return null
 	}
 	private restoreReservation(run: ScheduledRunRecord): boolean {
 		if (this.drainer.reserveExternalSolve(run.id)) {

@@ -49,6 +49,9 @@ export const scheduleDefinitionSchema = z
 	})
 
 export const scheduleStateSchema = z.enum(['enabled', 'disabled', 'archived'])
+export const scheduledTerminalIntentSchema = z.enum(['quiet', 'cancel', 'timeout'])
+export type ScheduledTerminalIntent = z.infer<typeof scheduledTerminalIntentSchema>
+
 export const scheduledRunStateSchema = z.enum([
 	'admitted',
 	'preparing',
@@ -163,6 +166,8 @@ export const scheduledRunRecordSchema = z.object({
 	notificationDeliveredAt: utcIsoSchema.nullable(),
 	cleanupState: z.string().nullable(),
 	terminalResolvedAt: utcIsoSchema.nullable(),
+	/** Durable first-writer teardown outcome; cleared only by its terminal transition. */
+	pendingTerminalIntent: scheduledTerminalIntentSchema.nullable(),
 	createdAt: utcIsoSchema,
 	updatedAt: utcIsoSchema,
 })
