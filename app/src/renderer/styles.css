@@ -202,12 +202,16 @@ button:focus-visible,
 	display: flex;
 	align-items: center;
 	flex: none;
+	-webkit-app-region: no-drag;
 }
 
 .tab-group-section {
 	gap: 0;
+	border-radius: 6px;
 	background: color-mix(in srgb, var(--group-color) 15%, transparent);
 	box-shadow: inset 0 2px var(--group-color);
+	overflow: hidden;
+	-webkit-app-region: no-drag;
 }
 
 .tab-group-members {
@@ -333,6 +337,18 @@ body.tab-dragging .tab {
 .tab-group-section .tab {
 	border-radius: 0;
 	background: transparent;
+}
+
+.tab-group-section > .tab-group-toggle:first-child {
+	border-radius: 6px 0 0 6px;
+}
+
+.tab-group-section > .tab-group-members:last-child .tab:last-child {
+	border-radius: 0 6px 6px 0;
+}
+
+.tab-group-section.collapsed > .tab-group-toggle {
+	border-radius: 6px;
 }
 
 .tab-group-section .tab:hover {

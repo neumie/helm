@@ -26,6 +26,11 @@ test('terminal header keeps controls interactive and trailing whitespace draggab
 	assert.match(rule('.topbar-drag-space'), /min-width:\s*12px;/)
 })
 
+test('the complete grouped-tab band cannot reach native titlebar zoom handling', () => {
+	assert.match(rule('.tab-group-section'), /-webkit-app-region:\s*no-drag;/)
+	assert.match(rule('.tab-group-members'), /-webkit-app-region:\s*no-drag;/)
+})
+
 test('double-click rename cannot reach native titlebar zoom handling', () => {
 	assert.match(rule('.tab'), /-webkit-app-region:\s*no-drag;/)
 	assert.match(

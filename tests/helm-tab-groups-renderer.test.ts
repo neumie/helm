@@ -122,7 +122,7 @@ test('collapsed groups hide their entire mounted members container despite expli
 	)
 })
 
-test('group label and member tabs form one square colored band', () => {
+test('group label and member tabs form one continuous colored band with rounded outer edges', () => {
 	assert.match(renderer, /count\.className = 'tab-group-count'/)
 	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
 	assert.match(styles, /\.tab-group-section\s*\{[^}]*background:\s*color-mix\([^;]*var\(--group-color\) 15%/s)
@@ -130,6 +130,11 @@ test('group label and member tabs form one square colored band', () => {
 	assert.match(styles, /\.tab-group-members\s*\{[^}]*gap:\s*0/s)
 	assert.match(styles, /\.tab-group-toggle\s*\{[^}]*border-radius:\s*0[^}]*background:\s*transparent/s)
 	assert.match(styles, /\.tab-group-section \.tab\s*\{[^}]*border-radius:\s*0[^}]*background:\s*transparent/s)
+	assert.match(styles, /\.tab-group-section > \.tab-group-toggle:first-child\s*\{[^}]*border-radius:\s*6px 0 0 6px/s)
+	assert.match(
+		styles,
+		/\.tab-group-section > \.tab-group-members:last-child \.tab:last-child\s*\{[^}]*border-radius:\s*0 6px 6px 0/s,
+	)
 	assert.match(styles, /\.tab-group-section \.tab\.active\s*\{[^}]*var\(--group-color\) 30%/s)
 	assert.doesNotMatch(styles, /\.tab-group-toggle::after/)
 	assert.doesNotMatch(styles, /\.tab-group-members::before/)
