@@ -34,6 +34,24 @@ export interface PtySpawnResult {
 	sessionId: string | null
 }
 
+/** Read-only eligibility for a future cross-profile terminal transfer. */
+export type TerminalTransferPreflight =
+	| { status: 'available'; targetProfileIds: string[] }
+	| {
+			status: 'unavailable'
+			reason: 'busy' | 'stale-profile' | 'invalid-session' | 'missing-source' | 'run-owned' | 'no-targets'
+	  }
+
+/**
+ * Restricted transfer discovery only. There is deliberately no move method:
+ * moving requires the renderer controller's complete snapshot/detach/attach
+ * capability hand-off, which is not IPC-wired yet.
+ */
+export interface TerminalTransferApi {
+	/** The preload supplies the renderer's captured profile token automatically. */
+	preflight(sessionId: string): Promise<TerminalTransferPreflight>
+}
+
 /** A dtach session that survived the previous app run and can be reattached. */
 export interface RestoredSession {
 	sessionId: string
@@ -231,6 +249,8 @@ export interface RunContextEditorApi {
 export interface HelmApi {
 	pty: PtyApi
 	sessions: SessionsApi
+	/** Cross-profile terminal-transfer eligibility; no production move IPC exists yet. */
+	terminalTransfer: TerminalTransferApi
 	/** Buffer snapshot IO (restore-before-attach; main owns the files). */
 	buffers: BuffersApi
 	config: ConfigApi

@@ -92,6 +92,42 @@ function fixture() {
 	}
 }
 
+test('preflight lists only valid destination profiles without capturing or detaching a terminal', () => {
+	const value = fixture()
+	try {
+		assert.deepEqual(
+			value.adapter.preflight({
+				sourceProfileId: SOURCE,
+				sessionId: SESSION,
+				profileToken: 'work:0',
+				destinationProfileIds: [SOURCE, DESTINATION, 'not-a-profile'],
+			}),
+			{ status: 'available', targetProfileIds: [DESTINATION] },
+		)
+		assert.deepEqual(value.calls, [])
+	} finally {
+		rmSync(value.root, { recursive: true, force: true })
+	}
+})
+
+test('preflight fails closed for a stale token without capturing a master', () => {
+	const value = fixture()
+	try {
+		assert.deepEqual(
+			value.adapter.preflight({
+				sourceProfileId: SOURCE,
+				sessionId: SESSION,
+				profileToken: 'work:stale',
+				destinationProfileIds: [DESTINATION],
+			}),
+			{ status: 'unavailable', reason: 'stale-profile' },
+		)
+		assert.deepEqual(value.calls, [])
+	} finally {
+		rmSync(value.root, { recursive: true, force: true })
+	}
+})
+
 test('fails closed for missing capability and never captures or detaches a terminal', async () => {
 	const value = fixture()
 	try {

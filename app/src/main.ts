@@ -16,6 +16,7 @@ import { RunContextWindows } from './run-context-window'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
+import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
 
@@ -112,6 +113,13 @@ const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneratio
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
 const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
+// Transfer preflight is narrower than ordinary terminal IPC: it also requires
+// the current main renderer. A future move must add the controller's complete
+// snapshot/detach/attach capability hand-off before any move channel exists.
+const terminalTransferIpcGate = createTerminalTransferIpcGate(
+	acceptsSessionIpcToken,
+	() => mainWindow?.webContents ?? null,
+)
 sessions.configureSessionProfile(sessionProfileId)
 
 // --- helm:// deep links -------------------------------------------------------
@@ -1446,6 +1454,30 @@ ipcMain.handle('buffer:read', (_event, sessionId: unknown, profileToken: unknown
 ipcMain.on('config:get', event => {
 	event.returnValue = { daemonUrl, sessionProfileToken: sessionProfileToken() }
 })
+
+// Intentionally read-only. The renderer controller is not yet registered as a
+// TerminalTransferRendererCapability, so exposing move() here would begin a
+// durable transfer without the required snapshot/detach/attach hand-off.
+ipcMain.handle('terminal-transfer:preflight', (event, sessionId: unknown, profileToken: unknown) =>
+	terminalTransferIpcGate.handle(
+		event.sender,
+		profileToken,
+		{ status: 'unavailable' as const, reason: 'stale-profile' as const },
+		() => {
+			if (!terminalTransferMain || !sessions.isValidSessionId(sessionId))
+				return { status: 'unavailable' as const, reason: 'invalid-session' as const }
+			return terminalTransferMain.preflight({
+				sourceProfileId: sessionProfileId,
+				sessionId,
+				profileToken: profileToken as string,
+				destinationProfileIds: appProfiles
+					.getState()
+					.profiles.filter(profile => profile.archivedAt === null)
+					.map(profile => profile.id),
+			})
+		},
+	),
+)
 
 // --- Themes (<userData>/themes/*.json, docs/design-system.md §2.8) --------------
 // Main owns the directory: presets are seeded as editable files on first list,

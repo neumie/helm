@@ -9,7 +9,7 @@ import * as path from 'node:path'
 import type { BufferStore } from './buffers'
 import type { SessionRegistry } from './sessions'
 import * as sessions from './sessions'
-import type { TerminalTransferEvent, TerminalTransferEventType } from './shared'
+import type { TerminalTransferEvent, TerminalTransferEventType, TerminalTransferPreflight } from './shared'
 import {
 	type TerminalMasterRecoveryEvidence,
 	type TerminalTransferJournal,
@@ -56,6 +56,17 @@ export interface TerminalTransferMoveRequest {
 	sessionId: string
 	/** Renderer-captured profile token; stale tokens cannot authorize a move. */
 	profileToken: string
+}
+
+/**
+ * Read-only IPC-safe input. The target ids come from main's profile registry;
+ * this adapter still validates source ownership and target socket constraints.
+ */
+export interface TerminalTransferPreflightRequest {
+	sourceProfileId: string
+	sessionId: string
+	profileToken: string
+	destinationProfileIds: readonly string[]
 }
 
 export interface TerminalTransferMainAdapterDeps {
@@ -125,6 +136,34 @@ export class TerminalTransferMainAdapter {
 
 	unregisterRendererCapability(sessionId: string, capability?: TerminalTransferRendererCapability): void {
 		if (!capability || this.#capabilities.get(sessionId) === capability) this.#capabilities.delete(sessionId)
+	}
+
+	/**
+	 * Non-mutating capability/list-target check for the restricted IPC surface.
+	 * It intentionally does not capture a master or register a renderer
+	 * capability: those checks must be repeated by move() after a future
+	 * controller-backed snapshot/detach/attach hand-off is available.
+	 */
+	preflight(request: TerminalTransferPreflightRequest): TerminalTransferPreflight {
+		if (this.#busy) return { status: 'unavailable', reason: 'busy' }
+		const current = this.#runtime.currentProfile()
+		if (request.sourceProfileId !== current.profileId || request.profileToken !== current.token)
+			return { status: 'unavailable', reason: 'stale-profile' }
+		if (!sessions.isValidSessionId(request.sessionId)) return { status: 'unavailable', reason: 'invalid-session' }
+		const source = this.#runtime.storageForProfile(request.sourceProfileId)
+		const sourceMeta = source?.registry.get(request.sessionId)
+		if (!sourceMeta) return { status: 'unavailable', reason: 'missing-source' }
+		if ((sourceMeta.backing ?? 'ordinary') === 'run-owned') return { status: 'unavailable', reason: 'run-owned' }
+		const targetProfileIds = [...new Set(request.destinationProfileIds)].filter(
+			profileId =>
+				profileId !== request.sourceProfileId &&
+				sessions.isValidSessionProfileId(profileId) &&
+				this.#runtime.storageForProfile(profileId) !== null &&
+				sessions.socketPathUsable(sessions.socketPathForProfile(profileId, request.sessionId)),
+		)
+		return targetProfileIds.length > 0
+			? { status: 'available', targetProfileIds }
+			: { status: 'unavailable', reason: 'no-targets' }
 	}
 
 	async move(request: TerminalTransferMoveRequest): Promise<TerminalTransferResult> {

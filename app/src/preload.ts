@@ -7,6 +7,7 @@ import type {
 	RestoredSession,
 	TabGroup,
 	TabGroupActionIntent,
+	TerminalTransferPreflight,
 	ThemeListEntry,
 	UiPreview,
 } from './shared'
@@ -137,6 +138,14 @@ const api: HelmApi = {
 			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null>,
 		undoClose: sessionId =>
 			ipcRenderer.invoke('session:undo-close', sessionId, sessionProfileToken) as Promise<boolean>,
+	},
+	terminalTransfer: {
+		preflight: sessionId =>
+			ipcRenderer.invoke(
+				'terminal-transfer:preflight',
+				sessionId,
+				sessionProfileToken,
+			) as Promise<TerminalTransferPreflight>,
 	},
 	buffers: {
 		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId, sessionProfileToken) as Promise<string | null>,
