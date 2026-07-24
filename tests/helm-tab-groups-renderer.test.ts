@@ -320,6 +320,22 @@ test('real OSC state transitions refresh collapsed representatives while keepali
 	assert.match(agentRender, /renderTabGroups\(\)/)
 })
 
+test('renderer action adapter uses the validated intent and membership APIs for tab and group menus', () => {
+	assert.match(renderer, /label: 'Move to existing group'/)
+	assert.match(renderer, /label: 'Move to new group…'/)
+	assert.match(renderer, /function moveTabToGroup/)
+	assert.match(renderer, /helm\.sessions\.groups\.intent\(intent\)/)
+	assert.match(renderer, /helm\.sessions\.groups\.setMembership\(tab\.sessionId, groupId\)/)
+	assert.match(renderer, /function openGroupMenu/)
+	assert.match(renderer, /\? 'Open all'/)
+	assert.match(renderer, /\? 'Restore all'/)
+	assert.match(renderer, /\? 'Move group to Background'/)
+	assert.match(renderer, /: 'Close all'/)
+	assert.match(renderer, /helm\.sessions\.groups\.move\(target\.groupId, false\)/)
+	assert.match(renderer, /helm\.sessions\.groups\.move\(target\.groupId, true\)/)
+	assert.match(renderer, /event\.key !== 'ContextMenu' && !\(event\.shiftKey && event\.key === 'F10'\)/)
+})
+
 test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {
 	const composition = composeTabGroups({
 		tabs: [

@@ -695,12 +695,34 @@ body.tab-dragging .tab {
 	font-size: 14px;
 }
 
-/* Context menu at the pointer (tab right-click): §3.8 panel, fixed positioning
- * (left/top set inline from the event, clamped to the viewport). */
+/* Context menus at the pointer (tab/group right-click): §3.8 panel, fixed
+ * positioning (left/top set inline from the event, clamped to the viewport). */
 .menu-panel.menu-fixed {
 	position: fixed;
 	top: auto;
 	z-index: 40;
+}
+
+/* The group-name form reuses the existing compact field grammar inside the
+ * detached menu; it is not a second dialog/chrome pattern. */
+.menu-name-form {
+	display: grid;
+	gap: 4px;
+	min-width: 180px;
+}
+
+.menu-name-input {
+	box-sizing: border-box;
+	width: 100%;
+	height: 28px;
+	padding: 0 8px;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	background: var(--fill-subtle);
+	color: var(--text-0);
+	font-family: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	outline: none;
 }
 
 /* ---------- panes ---------- */

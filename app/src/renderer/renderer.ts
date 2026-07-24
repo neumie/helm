@@ -4,7 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
-import type { RestoredSession, TabGroup, TabGroupSurface } from '../shared'
+import type { RestoredSession, TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
 import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance } from './appearance'
 import { createIconButton } from './icon-button'
@@ -18,6 +18,7 @@ import {
 	tabStripAutoScrollDelta,
 } from './tab-drag'
 import {
+	type TabGroupActionTarget,
 	type TabGroupSection,
 	composeTabGroups,
 	mergeGroupPeers,
@@ -235,6 +236,17 @@ function groupHeader(section: TabGroupSection): HTMLElement {
 	toggle.addEventListener('click', () =>
 		setGroupCollapsed(section.groupId as string, section.surface, !section.collapsed),
 	)
+	const openMenu = (x: number, y: number) => openGroupMenu(section, x, y, toggle)
+	toggle.addEventListener('contextmenu', event => {
+		event.preventDefault()
+		openMenu(event.clientX, event.clientY)
+	})
+	toggle.addEventListener('keydown', event => {
+		if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+		event.preventDefault()
+		const rect = toggle.getBoundingClientRect()
+		openMenu(rect.left, rect.bottom)
+	})
 	return toggle
 }
 
@@ -1378,7 +1390,7 @@ function beginTabPointerDrag(tab: Tab, event: PointerEvent): void {
 	window.addEventListener('blur', onTabDragBlur)
 }
 
-// ---------- tab context menu (§3.8 panel at the pointer) ----------
+// ---------- tab/group context menus (§3.8 panels at the pointer) ----------
 
 let tabMenuCleanup: (() => void) | null = null
 
@@ -1388,45 +1400,60 @@ function closeTabMenu(): void {
 
 interface TabMenuItem {
 	label: string
+	icon: string
 	hint?: string
+	destructive?: boolean
+	disabled?: boolean
+	separatorBefore?: boolean
 	onPick: () => void
 }
 
-function openTabMenu(tab: Tab, x: number, y: number): void {
+function openMenu(
+	items: readonly TabMenuItem[],
+	x: number,
+	y: number,
+	trigger: HTMLElement,
+): void {
 	closeTabMenu()
 	closeBackgroundPopover()
 	const panel = document.createElement('div')
 	panel.className = 'menu-panel menu-fixed'
 	panel.setAttribute('role', 'menu')
-
-	const items: TabMenuItem[] = [
-		{ label: 'Rename…', onPick: () => startRename(tab) },
-		{ label: 'Move to background', hint: '⇧⌘B', onPick: () => parkTab(tab) },
-		{ label: 'Close', hint: '⌘W', onPick: () => closeTab(tab) },
-	]
 	const buttons: HTMLButtonElement[] = []
 	for (const item of items) {
+		if (item.separatorBefore) {
+			const separator = document.createElement('div')
+			separator.className = 'menu-separator'
+			separator.setAttribute('role', 'separator')
+			panel.append(separator)
+		}
 		const button = document.createElement('button')
 		button.type = 'button'
-		button.className = 'menu-item'
+		button.className = `menu-item${item.destructive ? ' menu-item-danger' : ''}`
 		button.setAttribute('role', 'menuitem')
+		button.disabled = item.disabled === true
+		const icon = document.createElement('span')
+		icon.className = 'menu-item-icon'
+		icon.setAttribute('aria-hidden', 'true')
+		icon.textContent = item.icon
 		const label = document.createElement('span')
+		label.className = 'menu-item-label'
 		label.textContent = item.label
-		button.appendChild(label)
+		button.append(icon, label)
 		if (item.hint) {
 			const hint = document.createElement('span')
 			hint.className = 'menu-hint'
 			hint.textContent = item.hint
-			button.appendChild(hint)
+			button.append(hint)
 		}
 		button.addEventListener('click', () => {
+			if (button.disabled) return
 			closeTabMenu()
 			item.onPick()
 		})
 		buttons.push(button)
-		panel.appendChild(button)
+		panel.append(button)
 	}
-
 	const onOutside = (event: PointerEvent): void => {
 		if (!(event.target instanceof Node) || !panel.contains(event.target)) closeTabMenu()
 	}
@@ -1434,6 +1461,12 @@ function openTabMenu(tab: Tab, x: number, y: number): void {
 		if (event.key === 'Escape') {
 			event.stopPropagation()
 			closeTabMenu()
+			trigger.focus()
+			return
+		}
+		if (event.key === 'Home' || event.key === 'End') {
+			event.preventDefault()
+			buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus()
 			return
 		}
 		if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
@@ -1450,13 +1483,252 @@ function openTabMenu(tab: Tab, x: number, y: number): void {
 	}
 	document.addEventListener('pointerdown', onOutside, true)
 	document.addEventListener('keydown', onKeydown, true)
-
-	document.body.appendChild(panel)
-	// Clamp inside the viewport now that the panel has a size.
+	document.body.append(panel)
 	const rect = panel.getBoundingClientRect()
 	panel.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`
 	panel.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`
-	buttons[0]?.focus()
+	buttons.find(button => !button.disabled)?.focus()
+}
+
+function openGroupNameMenu(
+	label: string,
+	initialValue: string,
+	x: number,
+	y: number,
+	trigger: HTMLElement,
+	onSubmit: (name: string) => void,
+): void {
+	closeTabMenu()
+	closeBackgroundPopover()
+	const panel = document.createElement('form')
+	panel.className = 'menu-panel menu-fixed menu-name-form'
+	panel.setAttribute('aria-label', label)
+	const input = document.createElement('input')
+	input.className = 'menu-name-input'
+	input.type = 'text'
+	input.maxLength = 200
+	input.value = initialValue
+	input.setAttribute('aria-label', label)
+	const submit = document.createElement('button')
+	submit.type = 'submit'
+	submit.className = 'menu-item'
+	const icon = document.createElement('span')
+	icon.className = 'menu-item-icon'
+	icon.setAttribute('aria-hidden', 'true')
+	icon.textContent = '✓'
+	const copy = document.createElement('span')
+	copy.className = 'menu-item-label'
+	copy.textContent = label
+	submit.append(icon, copy)
+	panel.append(input, submit)
+	const dismiss = (): void => {
+		closeTabMenu()
+		trigger.focus()
+	}
+	panel.addEventListener('submit', event => {
+		event.preventDefault()
+		const name = input.value.trim()
+		if (!name) return
+		closeTabMenu()
+		onSubmit(name)
+	})
+	const onOutside = (event: PointerEvent): void => {
+		if (!(event.target instanceof Node) || !panel.contains(event.target)) dismiss()
+	}
+	const onKeydown = (event: KeyboardEvent): void => {
+		if (event.key !== 'Escape') return
+		event.preventDefault()
+		event.stopPropagation()
+		dismiss()
+	}
+	tabMenuCleanup = () => {
+		tabMenuCleanup = null
+		panel.remove()
+		document.removeEventListener('pointerdown', onOutside, true)
+		document.removeEventListener('keydown', onKeydown, true)
+	}
+	document.addEventListener('pointerdown', onOutside, true)
+	document.addEventListener('keydown', onKeydown, true)
+	document.body.append(panel)
+	const rect = panel.getBoundingClientRect()
+	panel.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`
+	panel.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`
+	input.focus()
+	input.select()
+}
+
+function moveTabToGroup(tab: Tab, groupId: string | null): void {
+	if (!tab.sessionId) return
+	const intent: TabGroupActionIntent = { type: 'move', sessionId: tab.sessionId, groupId }
+	void helm.sessions.groups.intent(intent).then(accepted => {
+		if (!accepted || tab.closed || !tab.sessionId) return
+		void helm.sessions.groups.setMembership(tab.sessionId, groupId).then(changed => {
+			if (changed) {
+				tab.groupId = groupId
+				renderTabGroups()
+				updateBackgroundUi()
+			}
+			loadTabGroups()
+		})
+	})
+}
+
+function createGroupForTab(tab: Tab, name: string): void {
+	if (!tab.sessionId) return
+	void helm.sessions.groups.create(name, [tab.sessionId]).then(group => {
+		if (!group || tab.closed) return
+		tab.groupId = group.id
+		tabGroups = [...tabGroups, group]
+		renderTabGroups()
+		updateBackgroundUi()
+	})
+}
+
+function openTabMoveMenu(tab: Tab, x: number, y: number, trigger: HTMLElement): void {
+	const groups = tabGroups.filter(group => group.id !== tab.groupId)
+	openMenu(
+		[
+			...groups.map(group => ({
+				label: group.name,
+				icon: '›',
+				onPick: () => moveTabToGroup(tab, group.id),
+			})),
+			{
+				label: 'Ungrouped',
+				icon: '–',
+				disabled: tab.groupId === null,
+				separatorBefore: groups.length > 0,
+				onPick: () => moveTabToGroup(tab, null),
+			},
+		],
+		x,
+		y,
+		trigger,
+	)
+}
+
+function openTabMenu(tab: Tab, x: number, y: number): void {
+	const movable = tab.sessionId !== null
+	openMenu(
+		[
+			{ label: 'Rename…', icon: '✎', onPick: () => startRename(tab) },
+			{
+				label: 'Move to existing group',
+				icon: '›',
+				disabled: !movable || tabGroups.length === 0,
+				onPick: () => openTabMoveMenu(tab, x, y, tab.tabButton),
+			},
+			{
+				label: 'Move to new group…',
+				icon: '+',
+				disabled: !movable,
+				onPick: () =>
+					openGroupNameMenu('Create group', '', x, y, tab.tabButton, name => createGroupForTab(tab, name)),
+			},
+			{ label: 'Move to background', icon: '⇩', hint: '⇧⌘B', onPick: () => parkTab(tab), separatorBefore: true },
+			{ label: 'Close', icon: '×', hint: '⌘W', destructive: true, onPick: () => closeTab(tab) },
+		],
+		x,
+		y,
+		tab.tabButton,
+	)
+}
+
+function renameGroup(groupId: string, name: string): void {
+	const intent: TabGroupActionIntent = { type: 'rename', groupId, name }
+	void helm.sessions.groups.intent(intent).then(accepted => {
+		if (!accepted) return
+		void helm.sessions.groups.rename(groupId, name).then(group => {
+			if (!group) return
+			tabGroups = tabGroups.map(current => (current.id === group.id ? group : current))
+			renderTabGroups()
+			updateBackgroundUi()
+		})
+	})
+}
+
+function deleteGroup(groupId: string): void {
+	void helm.sessions.groups.delete(groupId).then(deleted => {
+		if (!deleted) return
+		for (const tab of [...tabs, ...parked]) {
+			if (tab.groupId === groupId) tab.groupId = null
+		}
+		tabGroups = tabGroups.filter(group => group.id !== groupId)
+		renderTabGroups()
+		updateBackgroundUi()
+	})
+}
+
+function runGroupAction(target: TabGroupActionTarget): void {
+	void helm.sessions.groups.intent(target.intent).then(accepted => {
+		if (!accepted) return
+		const current = new Map([...tabs, ...parked].map(tab => [tabIdentity(tab), tab]))
+		switch (target.action) {
+			case 'open':
+				for (const id of target.memberIds) {
+					const tab = current.get(id)
+					if (tab?.parked) openParked(tab)
+				}
+				break
+			case 'restore':
+				void helm.sessions.groups.move(target.groupId, false).then(sessionIds => {
+					if (!sessionIds) return
+					for (const id of target.memberIds) {
+						const tab = current.get(id)
+						if (tab?.parked) restoreParked(tab)
+					}
+				})
+				break
+			case 'background':
+				void helm.sessions.groups.move(target.groupId, true).then(sessionIds => {
+					if (!sessionIds) return
+					for (const id of target.memberIds) {
+						const tab = current.get(id)
+						if (tab && !tab.parked) parkTab(tab)
+					}
+				})
+				break
+			case 'close':
+				for (const id of target.memberIds) {
+					const tab = current.get(id)
+					if (tab?.parked) killParkedTab(tab)
+					else if (tab) closeTab(tab)
+				}
+		}
+	})
+}
+
+function openGroupMenu(section: TabGroupSection, x: number, y: number, trigger: HTMLElement): void {
+	if (section.groupId === null) return
+	const groupId = section.groupId
+	const actions = section.actionTargets.map((target, index) => ({
+		label:
+			target.action === 'open'
+				? 'Open all'
+				: target.action === 'restore'
+					? 'Restore all'
+					: target.action === 'background'
+						? 'Move group to Background'
+						: 'Close all',
+		icon: target.action === 'close' ? '×' : target.action === 'background' ? '⇩' : '⇥',
+		destructive: target.action === 'close',
+		separatorBefore: index === 0,
+		onPick: () => runGroupAction(target),
+	}))
+	openMenu(
+		[
+			{
+				label: 'Rename…',
+				icon: '✎',
+				onPick: () => openGroupNameMenu('Rename group', section.name, x, y, trigger, name => renameGroup(groupId, name)),
+			},
+			{ label: 'Delete', icon: '×', destructive: true, onPick: () => deleteGroup(groupId) },
+			...actions,
+		],
+		x,
+		y,
+		trigger,
+	)
 }
 
 // Zero terminals is a valid state — show a quiet hint instead of respawning

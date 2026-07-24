@@ -41,6 +41,35 @@ function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?
 	)
 }
 
+function TerminalMenu({ group = false }: { group?: boolean }) {
+	const items = group
+		? ['Rename…', 'Delete', 'Move group to Background']
+		: ['Rename…', 'Move to existing group', 'Move to new group…', 'Move to background', 'Close']
+	return (
+		<div
+			className="menu-panel menu-fixed"
+			role="menu"
+			aria-label={group ? 'Build group actions' : 'compile terminal actions'}
+			style={{ position: 'absolute', top: 40, right: 8 }}
+		>
+			{items.map((item, index) => (
+				<button
+					key={item}
+					type="button"
+					className={`menu-item${item === 'Delete' || item === 'Close' ? ' menu-item-danger' : ''}`}
+					role="menuitem"
+				>
+					<span className="menu-item-icon" aria-hidden="true">
+						{item === 'Rename…' ? '✎' : item === 'Close' || item === 'Delete' ? '×' : '›'}
+					</span>
+					<span className="menu-item-label">{item}</span>
+					{index === 3 && !group ? <span className="menu-hint">⇧⌘B</span> : null}
+				</button>
+			))}
+		</div>
+	)
+}
+
 function StackIcon() {
 	return (
 		<svg
@@ -253,6 +282,29 @@ export const CollapsedTabGroup: Story = {
 			<TerminalGroup name="Ungrouped">
 				<TerminalTab label="shell" active />
 			</TerminalGroup>
+		</TerminalShell>
+	),
+}
+
+export const TabActions: Story = {
+	render: () => (
+		<TerminalShell>
+			<TerminalGroup name="Build">
+				<TerminalTab label="compile" active />
+			</TerminalGroup>
+			<TerminalMenu />
+		</TerminalShell>
+	),
+}
+
+export const GroupActions: Story = {
+	render: () => (
+		<TerminalShell>
+			<TerminalGroup name="Build">
+				<TerminalTab label="compile" active />
+				<TerminalTab label="tests" />
+			</TerminalGroup>
+			<TerminalMenu group />
 		</TerminalShell>
 	),
 }
