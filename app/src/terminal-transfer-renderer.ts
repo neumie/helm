@@ -80,12 +80,12 @@ export type TerminalTransferRendererPrepareResult =
 
 export type TerminalTransferRendererCompletionResult =
 	| { status: 'committed'; prepared: PreparedTerminalTransfer }
-	| { status: 'rolled-back'; prepared: PreparedTerminalTransfer }
+	| { status: 'rolled-back'; prepared: PreparedTerminalTransfer | null }
 	| { status: 'rejected'; reason: TerminalTransferRendererRejectReason }
 
 type PreparedRecord = {
 	prepared: PreparedTerminalTransfer
-	phase: 'preparing' | 'prepared' | 'releasing'
+	phase: 'preparing' | 'cleanup-pending' | 'prepared' | 'releasing'
 }
 
 /**
@@ -146,7 +146,7 @@ export class TerminalTransferRendererController {
 	}
 
 	async commit(request: TerminalTransferRendererRequest): Promise<TerminalTransferRendererCompletionResult> {
-		const record = this.#completionRecord(request)
+		const record = this.#completionRecord(request, false)
 		if ('reason' in record) return { status: 'rejected', reason: record.reason }
 		if (!this.#hasCurrentToken(request.profileToken)) {
 			if (!(await this.#rollbackStale(record))) return { status: 'rejected', reason: 'rollback-failed' }
@@ -163,15 +163,16 @@ export class TerminalTransferRendererController {
 	}
 
 	async rollback(request: TerminalTransferRendererRequest): Promise<TerminalTransferRendererCompletionResult> {
-		const record = this.#completionRecord(request)
+		const record = this.#completionRecord(request, true)
 		if ('reason' in record) return { status: 'rejected', reason: record.reason }
 		if (!this.#hasCurrentToken(request.profileToken)) {
 			if (!(await this.#rollbackStale(record))) return { status: 'rejected', reason: 'rollback-failed' }
 			return { status: 'rejected', reason: 'stale-profile-token' }
 		}
+		const prepared = record.phase === 'prepared' ? record.prepared : null
 		try {
 			await this.#release(record)
-			return { status: 'rolled-back', prepared: record.prepared }
+			return { status: 'rolled-back', prepared }
 		} catch {
 			return { status: 'rejected', reason: 'rollback-failed' }
 		}
@@ -179,10 +180,12 @@ export class TerminalTransferRendererController {
 
 	#completionRecord(
 		request: TerminalTransferRendererRequest,
+		allowCleanupPending: boolean,
 	): PreparedRecord | { reason: TerminalTransferRendererRejectReason } {
 		const record = this.#transactions.get(request.transactionId)
 		if (!record) return { reason: 'unknown-transaction' }
-		if (record.phase !== 'prepared') return { reason: 'transaction-in-progress' }
+		if (record.phase !== 'prepared' && !(allowCleanupPending && record.phase === 'cleanup-pending'))
+			return { reason: 'transaction-in-progress' }
 		if (record.prepared.sessionId !== request.sessionId || record.prepared.profileToken !== request.profileToken)
 			return { reason: 'transaction-mismatch' }
 		return record
@@ -218,9 +221,10 @@ export class TerminalTransferRendererController {
 			await this.#deps.unfreeze(record.prepared.sessionId)
 			this.#forget(record)
 		} catch (error) {
-			// A failed unfreeze must stay explicitly recoverable by retrying rollback;
-			// do not leave the reservation indefinitely stuck in `releasing`.
-			record.phase = priorPhase === 'preparing' ? 'prepared' : priorPhase
+			// Failed preparation cleanup is rollback-only: placeholder metadata was
+			// never completed, so commit must remain impossible. Other cleanup
+			// failures return to their prepared phase for an explicit retry.
+			record.phase = priorPhase === 'preparing' ? 'cleanup-pending' : priorPhase
 			throw error
 		}
 	}

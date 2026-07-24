@@ -248,9 +248,17 @@ test('a failed preparation cleanup reports rollback-failed and leaves its reserv
 		},
 	})
 	assert.deepEqual(await value.controller.prepare(request()), { status: 'rejected', reason: 'rollback-failed' })
+	assert.deepEqual(await value.controller.commit(request()), {
+		status: 'rejected',
+		reason: 'transaction-in-progress',
+	})
+	assert.equal(
+		value.calls.some(call => call === `dispose:${SESSION}`),
+		false,
+	)
 	failSnapshot = false
 	failUnfreeze = false
-	assert.equal((await value.controller.rollback(request())).status, 'rolled-back')
+	assert.deepEqual(await value.controller.rollback(request()), { status: 'rolled-back', prepared: null })
 	assert.equal((await value.controller.prepare(request('move-2'))).status, 'prepared')
 })
 
