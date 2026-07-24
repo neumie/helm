@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { chmod, lstat, mkdir, open } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
@@ -21,11 +21,11 @@ export async function loadOrCreateLocalControlToken(path?: string): Promise<stri
 	const tokenPath = localControlTokenPath(path)
 	const parent = dirname(tokenPath)
 	await mkdir(parent, { recursive: true, mode: 0o700 })
-	await chmod(parent, 0o700)
 	const parentStat = await lstat(parent)
 	if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
 		throw new Error('Local control-token parent must be a real directory')
 	}
+	await chmod(parent, 0o700)
 
 	try {
 		const token = randomControlToken()
@@ -73,6 +73,12 @@ export function redactLocalControlToken(value: string, token?: string): string {
 export function isLocalControlToken(value: string): boolean {
 	if (!TOKEN_PATTERN.test(value)) return false
 	return Buffer.from(value, 'base64url').byteLength === TOKEN_BYTES
+}
+
+/** Constant-time comparison for the daemon-local control capability. */
+export function verifyLocalControlToken(capability: string, expected: string): boolean {
+	if (!isLocalControlToken(capability) || !isLocalControlToken(expected)) return false
+	return timingSafeEqual(Buffer.from(capability), Buffer.from(expected))
 }
 
 function randomControlToken(): string {

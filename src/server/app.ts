@@ -39,8 +39,8 @@ export async function daemonCorsMiddleware(c: Context, next: Next): Promise<Resp
 	if (allowedOrigin) {
 		c.header('Access-Control-Allow-Origin', allowedOrigin)
 		c.header('Vary', 'Origin')
-		c.header('Access-Control-Allow-Headers', 'Content-Type')
-		c.header('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, OPTIONS')
+		c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+		c.header('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, DELETE, OPTIONS')
 	}
 	if (c.req.method === 'OPTIONS') return c.body(null, allowedOrigin ? 204 : 403)
 	await next()

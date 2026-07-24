@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { loadOrCreateLocalControlToken } from './auth/local-control.js'
+import { ResidentLeaseManager } from './auth/scoped-capability.js'
 import { unknownConfigPaths } from './config-document.js'
 import { loadConfig } from './config.js'
 import { DB, migrateProfileDatabasesToShared } from './db/client.js'
@@ -10,6 +12,7 @@ import { configureProfileRuntime } from './profiles/runtime.js'
 import { ProfileStore } from './profiles/store.js'
 import { createProvider } from './providers/registry.js'
 import { Drainer } from './queue/drainer.js'
+import { scheduledReporterCommand } from './scheduled-runs/reporter-command.js'
 import { ScheduledRunService } from './scheduled-runs/service.js'
 import { createApp } from './server/app.js'
 import { createSolver } from './solver/registry.js'
@@ -80,11 +83,14 @@ async function main() {
 	const registeredProfileIds = () => profiles.registeredProfileIds()
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
-	// Recurrence remains inert unless the disabled-by-default rollout is enabled;
-	// Task 8 supplies the resident lease and reporter route dependencies.
+	// The only resident-admission lease is daemon-memory scoped. Scheduled recovery
+	// still starts before HTTP and queue admission, even while recurrence is disabled.
+	const residentLeases = new ResidentLeaseManager()
+	const localControlToken = await loadOrCreateLocalControlToken()
 	const scheduledRuns = new ScheduledRunService(config, db, queue, {
 		profiles: () => profiles.getState().profiles.map(profile => profiles.runtimeFor(profile.id)),
-		hasResidentLease: () => false,
+		hasResidentLease: () => residentLeases.isActive(),
+		reporterCommand: scheduledReporterCommand(),
 	})
 
 	// Start API server
@@ -101,6 +107,12 @@ async function main() {
 			store: profiles,
 			runtime: () => profiles.activeRuntime(),
 			applyRuntime: configureProfileRuntime,
+			scheduled: {
+				service: scheduledRuns,
+				controlToken: localControlToken,
+				residentLeases,
+				profileIds: () => profiles.registeredProfileIds(),
+			},
 		},
 		scheduledRuns,
 	)

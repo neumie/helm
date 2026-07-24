@@ -35,7 +35,7 @@ export interface ScheduledRunServiceDeps {
 	supervisor?: DtachSupervisor
 	now?: () => Date
 	dtachBinary?: string
-	reporterPath?: string
+	reporterCommand?: readonly [string, ...string[]]
 	watchdogIntervalMs?: number
 	/** Optional future descriptor-pinned workspace cleaner; default is inert and fail-closed. */
 	workspaceCleaner?: ScheduledWorkspaceCleaner
@@ -410,8 +410,8 @@ export class ScheduledRunService {
 				socketDescriptor: socketPath,
 			})
 			const diagnosticPath = diagnosticPathFor(workspace.runDir)
-			const reporterPath = this.requireReporterPath()
-			const prompt = buildScheduledPrompt({ definition: run.definitionSnapshot, reporterPath })
+			const reporterCommand = this.requireReporterCommand()
+			const prompt = buildScheduledPrompt({ definition: run.definitionSnapshot, reporterCommand })
 			const promptPath = writeScheduledPrompt(workspace.runDir, prompt)
 			const invocation = buildInteractiveAgentInvocation(
 				{
@@ -646,10 +646,11 @@ export class ScheduledRunService {
 	private isAdmissionOpen(): boolean {
 		return this.config.scheduledRuns.enabled && !this.stopped && !this.restoringStartup && this.deps.hasResidentLease()
 	}
-	private requireReporterPath(): string {
-		if (!this.deps.reporterPath || !isAbsolute(this.deps.reporterPath))
-			throw new Error('Scheduled reporter helper is not configured')
-		return this.deps.reporterPath
+	private requireReporterCommand(): readonly [string, ...string[]] {
+		const command = this.deps.reporterCommand
+		if (!command || command.some(part => !isAbsolute(part)))
+			throw new Error('Scheduled reporter command is not configured')
+		return command
 	}
 }
 

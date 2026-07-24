@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, lstat, mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -70,6 +70,16 @@ test('local control token refuses a symlink', async () => {
 	await writeFile(target, 'x'.repeat(43), { mode: 0o600 })
 	await symlink(target, tokenPath)
 	await assert.rejects(() => loadOrCreateLocalControlToken(tokenPath))
+})
+
+test('local control token rejects a symlinked parent before changing target permissions', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'helm-scheduled-auth-'))
+	const target = join(root, 'target')
+	const linkedParent = join(root, 'private')
+	await mkdir(target, { mode: 0o755 })
+	await symlink(target, linkedParent)
+	await assert.rejects(() => loadOrCreateLocalControlToken(join(linkedParent, 'control-token')), /real directory/)
+	assert.equal((await lstat(target)).mode & 0o777, 0o755)
 })
 
 test('scoped capabilities hash and verify without cross-capability access', () => {

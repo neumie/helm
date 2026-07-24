@@ -66,6 +66,11 @@ export class ResidentLeaseManager {
 		return this.lease !== null
 	}
 
+	/** Verify current ownership without extending the lease. */
+	isHeld(capability: string): boolean {
+		return this.matchesCurrent(capability)
+	}
+
 	private matchesCurrent(capability: string): boolean {
 		this.clearExpired()
 		return this.lease !== null && verifyScopedCapability(capability, this.lease.hash)

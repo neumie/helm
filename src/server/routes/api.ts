@@ -15,6 +15,8 @@ import {
 	sanitizeAttachmentName,
 	saveAttachment,
 } from '../../attachments/store.js'
+import { verifyLocalControlToken } from '../../auth/local-control.js'
+import { type ResidentLeaseManager, verifyScopedCapability } from '../../auth/scoped-capability.js'
 import { buildConfigDocument, parseConfigUpdate, parseConfigWithFallback } from '../../config-document.js'
 import type { HelmConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
@@ -36,6 +38,15 @@ import type { ProfileRuntime, ProfileStore } from '../../profiles/store.js'
 import { DAEMON_BUILD_ID, DAEMON_PROTOCOL_VERSION } from '../../protocol.js'
 import type { TaskContext, TaskProvider } from '../../providers/provider.js'
 import type { Drainer } from '../../queue/drainer.js'
+import { ScheduleCommands } from '../../scheduled-runs/commands.js'
+import { toScheduledRunContract, toScheduledScheduleContract } from '../../scheduled-runs/contract.js'
+import {
+	SCHEDULED_REPORT_SUMMARY_MAX_BYTES,
+	scheduleCreateSchema,
+	scheduleUpdateSchema,
+} from '../../scheduled-runs/schema.js'
+import type { ScheduledRunService } from '../../scheduled-runs/service.js'
+import { ScheduleRevisionConflictError } from '../../scheduled-runs/store.js'
 import { solverAgentSchema } from '../../solver/agent.js'
 import type { SolverAgent } from '../../solver/agent.js'
 import type { OneShotOptions } from '../../solver/one-shot.js'
@@ -62,11 +73,21 @@ const MAX_INGEST_BODY_BYTES = 40 * 1024 * 1024
 // tighter Markdown/block-state limits after this coarse transport cap.
 const MAX_RUN_CONTEXT_BODY_BYTES = 1_250_000
 
+export interface ScheduledRouteDependencies {
+	service: ScheduledRunService
+	controlToken: string
+	residentLeases: ResidentLeaseManager
+	/** Snapshot registered profile IDs before any cross-tenant lookup. */
+	profileIds: () => string[]
+}
+
 export interface ProfileContext {
 	store: ProfileStore
 	/** Function in production; object compatibility keeps route fixtures concise. */
 	runtime: ProfileRuntime | (() => ProfileRuntime)
 	applyRuntime?: (runtime: ProfileRuntime) => void
+	/** Named optional transport dependencies; avoids extending apiRoutes positional arguments. */
+	scheduled?: ScheduledRouteDependencies
 }
 
 const ingestSchema = z
@@ -524,6 +545,243 @@ export function apiRoutes(
 				return c.json({ data: { state, applied: true } })
 			} catch (err) {
 				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+			}
+		})
+	}
+
+	// Scheduled runs are intentionally a separately authenticated transport: extension
+	// Item routes remain unauthenticated, while local control and scoped capabilities
+	// gate every schedule mutation, resident lease, and reporter operation.
+	const scheduled = profileContext?.scheduled
+	if (scheduled) {
+		const profileIdSchema = z.string().min(1).max(100)
+		const revisionSchema = z.object({ revision: z.number().int().nonnegative() }).strict()
+		const createScheduleRequestSchema = scheduleCreateSchema.extend({ profileId: profileIdSchema }).strict()
+		const updateScheduleRequestSchema = scheduleUpdateSchema.extend({ profileId: profileIdSchema }).strict()
+		const profileRequestSchema = z.object({ profileId: profileIdSchema }).strict()
+		const leaseCapabilitySchema = z.object({ capability: z.string().min(1).max(200) }).strict()
+		const reportRequestSchema = z
+			.object({
+				status: z.enum(['quiet', 'needs_attention']),
+				summary: z
+					.string()
+					.min(1)
+					.refine(
+						value => Buffer.byteLength(value, 'utf8') <= SCHEDULED_REPORT_SUMMARY_MAX_BYTES,
+						`must be at most ${SCHEDULED_REPORT_SUMMARY_MAX_BYTES} UTF-8 bytes`,
+					),
+			})
+			.strict()
+		const scheduledBody = bodyLimit({ maxSize: 96 * 1024 })
+		const reportBody = bodyLimit({ maxSize: 8 * 1024 })
+		const registeredProfile = (profileId: string) => scheduled.profileIds().includes(profileId)
+		const storeFor = (profileId: string) => db.forProfile(profileId).schedules
+		const commandsFor = (profileId: string) =>
+			new ScheduleCommands(storeFor(profileId), config.scheduledRuns.systemTargetsEnabled)
+		const controlAuthorized = (c: Context) => {
+			const authorization = c.req.header('Authorization') ?? ''
+			const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization)
+			return !!match && verifyLocalControlToken(match[1], scheduled.controlToken)
+		}
+		const leaseAuthorized = (capability: string) => {
+			if (!leaseCapabilitySchema.safeParse({ capability }).success) return false
+			return scheduled.residentLeases.isHeld(capability)
+		}
+		const requireControl = (c: Context): Response | null =>
+			controlAuthorized(c) ? null : c.json({ error: 'Scheduled control authorization required' }, 401)
+		const parseBody = async <T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> => {
+			try {
+				const parsed = schema.safeParse(await c.req.json())
+				return parsed.success
+					? { data: parsed.data }
+					: { error: c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400) }
+			} catch {
+				return { error: c.json({ error: 'Invalid JSON body' }, 400) }
+			}
+		}
+		const queryProfile = (c: Context): { profileId: string } | { error: Response } => {
+			const parsed = profileIdSchema.safeParse(c.req.query('profileId'))
+			if (!parsed.success) return { error: c.json({ error: 'A valid profileId is required' }, 400) }
+			if (!registeredProfile(parsed.data)) return { error: c.json({ error: 'Scheduled profile not found' }, 404) }
+			return { profileId: parsed.data }
+		}
+		const scheduledError = (c: Context, error: unknown, status: 400 | 409 = 400): Response => {
+			if (error instanceof ScheduleRevisionConflictError) return c.json({ error: 'Scheduled revision conflict' }, 409)
+			return c.json({ error: error instanceof Error ? error.message : String(error) }, status)
+		}
+
+		api.get('/scheduled-runs', c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			return c.json({ data: storeFor(target.profileId).list().map(toScheduledScheduleContract) })
+		})
+		api.post('/scheduled-runs', scheduledBody, async c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, createScheduleRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
+			try {
+				const { profileId, ...definition } = input.data
+				return c.json({ data: toScheduledScheduleContract(commandsFor(profileId).create(definition)) }, 201)
+			} catch (error) {
+				return scheduledError(c, error)
+			}
+		})
+		api.get('/scheduled-runs/runs/:runId', c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			const run = storeFor(target.profileId).getRun(c.req.param('runId'))
+			return run ? c.json({ data: toScheduledRunContract(run) }) : c.json({ error: 'Scheduled run not found' }, 404)
+		})
+		api.post('/scheduled-runs/runs/:runId/cancel', scheduledBody, async c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, profileRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
+			if (!storeFor(input.data.profileId).getRun(c.req.param('runId')))
+				return c.json({ error: 'Scheduled run not found' }, 404)
+			try {
+				return c.json({
+					data: toScheduledRunContract(await scheduled.service.cancel(input.data.profileId, c.req.param('runId'))),
+				})
+			} catch (error) {
+				return scheduledError(c, error, 409)
+			}
+		})
+		api.get('/scheduled-runs/:id/history', c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			const parsedLimit = z.coerce
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.safeParse(c.req.query('limit') ?? '50')
+			if (!parsedLimit.success) return c.json({ error: 'limit must be an integer from 1 to 100' }, 400)
+			if (!storeFor(target.profileId).get(c.req.param('id')))
+				return c.json({ error: 'Scheduled definition not found' }, 404)
+			return c.json({
+				data: storeFor(target.profileId).listRuns(c.req.param('id'), parsedLimit.data).map(toScheduledRunContract),
+			})
+		})
+		api.get('/scheduled-runs/:id', c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			const schedule = storeFor(target.profileId).get(c.req.param('id'))
+			return schedule
+				? c.json({ data: toScheduledScheduleContract(schedule) })
+				: c.json({ error: 'Scheduled definition not found' }, 404)
+		})
+		api.put('/scheduled-runs/:id', scheduledBody, async c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, updateScheduleRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
+			try {
+				const { profileId, revision, ...definition } = input.data
+				return c.json({
+					data: toScheduledScheduleContract(commandsFor(profileId).update(c.req.param('id'), revision, definition)),
+				})
+			} catch (error) {
+				return scheduledError(c, error)
+			}
+		})
+		for (const action of ['archive', 'enable', 'disable'] as const) {
+			api.post(`/scheduled-runs/:id/${action}`, scheduledBody, async c => {
+				const denied = requireControl(c)
+				if (denied) return denied
+				const input = await parseBody(c, revisionSchema.extend({ profileId: profileIdSchema }).strict())
+				if ('error' in input) return input.error
+				if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
+				try {
+					const commands = commandsFor(input.data.profileId)
+					const result =
+						action === 'archive'
+							? commands.archive(c.req.param('id'), input.data.revision)
+							: action === 'enable'
+								? commands.enable(c.req.param('id'), input.data.revision)
+								: commands.disable(c.req.param('id'), input.data.revision)
+					return c.json({ data: toScheduledScheduleContract(result) })
+				} catch (error) {
+					return scheduledError(c, error)
+				}
+			})
+		}
+		api.post('/scheduled-runs/:id/run', scheduledBody, async c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, profileRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
+			if (!storeFor(input.data.profileId).get(c.req.param('id')))
+				return c.json({ error: 'Scheduled definition not found' }, 404)
+			try {
+				return c.json({
+					data: toScheduledRunContract(await scheduled.service.runNow(input.data.profileId, c.req.param('id'))),
+				})
+			} catch (error) {
+				return scheduledError(c, error, 409)
+			}
+		})
+		api.post('/scheduled-runs/lease', c => {
+			const denied = requireControl(c)
+			if (denied) return denied
+			return c.json({ data: scheduled.residentLeases.issue() })
+		})
+		api.post('/scheduled-runs/lease/heartbeat', scheduledBody, async c => {
+			const input = await parseBody(c, leaseCapabilitySchema)
+			if ('error' in input) return input.error
+			const lease = scheduled.residentLeases.heartbeat(input.data.capability)
+			return lease ? c.json({ data: lease }) : c.json({ error: 'Resident lease is invalid or expired' }, 401)
+		})
+		api.post('/scheduled-runs/lease/tick', scheduledBody, async c => {
+			const input = await parseBody(c, leaseCapabilitySchema)
+			if ('error' in input) return input.error
+			if (!leaseAuthorized(input.data.capability)) return c.json({ error: 'Resident lease is invalid or expired' }, 401)
+			return c.json({ data: await scheduled.service.tick() })
+		})
+		api.post('/scheduled-runs/lease/revoke', scheduledBody, async c => {
+			const input = await parseBody(c, leaseCapabilitySchema)
+			if ('error' in input) return input.error
+			return scheduled.residentLeases.revoke(input.data.capability)
+				? c.json({ data: { revoked: true } })
+				: c.json({ error: 'Resident lease is invalid or expired' }, 401)
+		})
+		api.post('/scheduled-runs/:runId/report', reportBody, async c => {
+			const authorization = c.req.header('Authorization') ?? ''
+			const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization)
+			if (!match) return c.json({ error: 'Scheduled report authorization required' }, 401)
+			const input = await parseBody(c, reportRequestSchema)
+			if ('error' in input) return input.error
+			const candidates = scheduled.profileIds().flatMap(profileId => {
+				const run = db.forProfile(profileId).schedules.getRun(c.req.param('runId'))
+				return run?.reportTokenHash && verifyScopedCapability(match[1], run.reportTokenHash) ? [{ profileId, run }] : []
+			})
+			if (candidates.length !== 1) return c.json({ error: 'Scheduled report authorization required' }, 401)
+			try {
+				return c.json({
+					data: toScheduledRunContract(
+						await scheduled.service.report(
+							candidates[0].profileId,
+							candidates[0].run.id,
+							input.data.status,
+							input.data.summary,
+						),
+					),
+				})
+			} catch (error) {
+				return scheduledError(c, error, 409)
 			}
 		})
 	}
