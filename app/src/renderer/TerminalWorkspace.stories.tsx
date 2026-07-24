@@ -272,9 +272,7 @@ export const GroupedTabHeaders: Story = {
 				<TerminalTab label="compile" active />
 				<TerminalTab label="tests" activity="progress" />
 			</TerminalGroup>
-			<TerminalGroup name="Ungrouped">
-				<TerminalTab label="scratch" />
-			</TerminalGroup>
+			<TerminalTab label="scratch" />
 		</TerminalShell>
 	),
 }
@@ -285,9 +283,7 @@ export const CollapsedTabGroup: Story = {
 			<TerminalGroup name="Review" collapsed>
 				<TerminalTab label="needs attention" activity="attention" />
 			</TerminalGroup>
-			<TerminalGroup name="Ungrouped">
-				<TerminalTab label="shell" active />
-			</TerminalGroup>
+			<TerminalTab label="shell" active />
 		</TerminalShell>
 	),
 }

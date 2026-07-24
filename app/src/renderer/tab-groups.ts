@@ -4,7 +4,7 @@ import type { TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
 export interface TabGroupRendererTab {
 	/** Stable renderer identity (normally the session id once one exists). */
 	id: string
-	/** Null and stale/unknown group ids both render in Ungrouped. */
+	/** Null and stale/unknown group ids both render in the ordinary terminal flow. */
 	groupId: string | null
 	/** Background ownership remains independent of group membership. */
 	parked: boolean
@@ -42,7 +42,7 @@ export interface TabGroupActionTarget {
 }
 
 export interface TabGroupSection {
-	/** Named groups have a persisted id; Ungrouped is the non-persisted bucket. */
+	/** Named groups have a persisted id; ungrouped terminals use the non-persisted bucket. */
 	kind: 'group' | 'ungrouped'
 	id: string
 	groupId: string | null
@@ -54,7 +54,7 @@ export interface TabGroupSection {
 	/** One proxy when collapsed, otherwise the real ordered members. */
 	visibleMembers: readonly TabGroupMember[]
 	proxy: CollapsedTabGroupProxy | null
-	/** Named group commands appropriate to this surface; Ungrouped has none. */
+	/** Named group commands appropriate to this surface; ungrouped terminals have none. */
 	actionTargets: readonly TabGroupActionTarget[]
 }
 
@@ -76,7 +76,7 @@ export function tabGroupMembersId(groupId: string | null, surface: TabGroupSurfa
 
 /**
  * A drag only measures and reorders peers from the dragged tab's own group.
- * Ungrouped tabs are one peer set too, identified by their shared null id.
+ * Tabs without a group are one peer set too, identified by their shared null id.
  */
 export function tabsWithGroupId<T extends { groupId: string | null }>(tabs: readonly T[], groupId: string | null): T[] {
 	return tabs.filter(tab => tab.groupId === groupId)
@@ -111,7 +111,12 @@ export function shouldReloadCollapsedGroup(requestVersion: number, currentVersio
 }
 
 const UNGROUPED_ID = 'ungrouped'
-const UNGROUPED_NAME = 'Ungrouped'
+const UNGROUPED_NAME = 'Terminals'
+
+/** Only user-created groups own a visible disclosure heading. */
+export function tabGroupHeading(section: Pick<TabGroupSection, 'kind' | 'name'>): string | null {
+	return section.kind === 'group' ? section.name : null
+}
 
 function membersFor(
 	tabs: readonly TabGroupRendererTab[],
@@ -202,7 +207,7 @@ function composeSurface(
 /**
  * Projects flat renderer tabs and persisted group metadata into independent
  * strip/background sections. Sections appear in first-member order on each
- * surface; stale membership falls back to Ungrouped and empty groups disappear.
+ * surface; stale membership falls back to the ordinary ungrouped flow and empty groups disappear.
  */
 export function composeTabGroups({ tabs, groups, activeTabId }: TabGroupCompositionInput): TabGroupComposition {
 	const groupsById = new Map<string, TabGroup>()
@@ -217,4 +222,4 @@ export function composeTabGroups({ tabs, groups, activeTabId }: TabGroupComposit
 	}
 }
 
-export default { collapsedGroupProxy, composeTabGroups, tabGroupActionTargets }
+export default { collapsedGroupProxy, composeTabGroups, tabGroupActionTargets, tabGroupHeading }

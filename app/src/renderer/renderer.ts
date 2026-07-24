@@ -24,6 +24,7 @@ import {
 	composeTabGroups,
 	mergeGroupPeers,
 	shouldReloadCollapsedGroup,
+	tabGroupHeading,
 	tabGroupMembersId,
 	tabsWithGroupId,
 } from './tab-groups'
@@ -125,7 +126,7 @@ interface Tab {
 	transferring: boolean
 	/** In the background list (strip-right stack button + popover) instead of the strip. */
 	parked: boolean
-	/** Persisted opaque membership; fresh tabs are deliberately Ungrouped. */
+	/** Persisted opaque membership; fresh tabs begin without a group. */
 	groupId: string | null
 	/** Renderer identity while a fresh pty has not received a session id. */
 	visualId: string
@@ -219,20 +220,16 @@ function tabIdentity(tab: Tab): string {
 	return tab.sessionId ?? tab.visualId
 }
 
-function groupHeader(section: TabGroupSection): HTMLElement {
-	if (section.kind === 'ungrouped') {
-		const label = document.createElement('span')
-		label.className = 'tab-group-header tab-group-ungrouped'
-		label.textContent = section.name
-		return label
-	}
+function groupHeader(section: TabGroupSection): HTMLElement | null {
+	const heading = tabGroupHeading(section)
+	if (heading === null) return null
 	const toggle = document.createElement('button')
 	toggle.type = 'button'
 	toggle.className = 'tab-group-header tab-group-toggle'
 	toggle.dataset.tabGroupHeader = 'true'
 	toggle.dataset.groupId = section.groupId as string
 	toggle.dataset.surface = section.surface
-	toggle.textContent = section.name
+	toggle.textContent = heading
 	toggle.setAttribute('aria-expanded', String(!section.collapsed))
 	toggle.setAttribute('aria-controls', tabGroupMembersId(section.groupId, section.surface))
 	toggle.title = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
@@ -302,12 +299,13 @@ function renderTabGroups(): void {
 	for (const section of tabGroupComposition().strip) {
 		const sectionEl = document.createElement('div')
 		sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
-		sectionEl.append(groupHeader(section))
+		const header = groupHeader(section)
+		if (header) sectionEl.append(header)
 		const membersEl = document.createElement('div')
 		membersEl.className = 'tab-group-members'
 		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
 		membersEl.setAttribute('role', 'tablist')
-		membersEl.setAttribute('aria-label', `${section.name} terminals`)
+		membersEl.setAttribute('aria-label', section.kind === 'group' ? `${section.name} terminals` : 'Terminals')
 		const peersVisible = section.groupId !== null && section.groupId === dragVisibleGroupId
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
@@ -319,7 +317,7 @@ function renderTabGroups(): void {
 			membersEl.append(tab.tabButton)
 		}
 		sectionEl.append(membersEl)
-		tabsEl.append(sectionEl)
+		tabsEl.append(section.kind === 'group' ? sectionEl : membersEl)
 	}
 	restoreFocusedGroupHeader(tabsEl, focusedHeader)
 }
@@ -1079,7 +1077,8 @@ function renderBackgroundRows(): void {
 	for (const section of tabGroupComposition().background) {
 		const sectionEl = document.createElement('section')
 		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
-		sectionEl.append(groupHeader(section))
+		const header = groupHeader(section)
+		if (header) sectionEl.append(header)
 		const membersEl = document.createElement('div')
 		membersEl.className = 'bg-group-members'
 		membersEl.id = tabGroupMembersId(section.groupId, section.surface)
@@ -1148,7 +1147,7 @@ function renderBackgroundRows(): void {
 			membersEl.appendChild(row)
 		}
 		sectionEl.appendChild(membersEl)
-		bgRows.appendChild(sectionEl)
+		bgRows.appendChild(section.kind === 'group' ? sectionEl : membersEl)
 	}
 	if (focusedId !== null) {
 		const row = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].find(
@@ -1691,13 +1690,16 @@ function openTabMoveMenu(tab: Tab, x: number, y: number, trigger: HTMLElement): 
 				icon: '›',
 				onPick: () => moveTabToGroup(tab, group.id),
 			})),
-			{
-				label: 'Ungrouped',
-				icon: '–',
-				disabled: tab.groupId === null,
-				separatorBefore: groups.length > 0,
-				onPick: () => moveTabToGroup(tab, null),
-			},
+			...(tab.groupId === null
+				? []
+				: [
+						{
+							label: 'Remove from group',
+							icon: '–',
+							separatorBefore: groups.length > 0,
+							onPick: () => moveTabToGroup(tab, null),
+						},
+					]),
 		],
 		x,
 		y,
@@ -1899,7 +1901,7 @@ interface TerminalOpts {
 	customName?: string | null
 	/** Create straight into the background list (startup parked restore, kill-undo). */
 	parked?: boolean
-	/** Restored opaque membership; new terminals begin Ungrouped. */
+	/** Restored opaque membership; new terminals begin without a group. */
 	groupId?: string | null
 	agentRunning?: boolean
 	agentAttention?: boolean

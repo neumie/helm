@@ -12,6 +12,7 @@ const {
 	mergeGroupPeers,
 	shouldReloadCollapsedGroup,
 	tabGroupActionTargets,
+	tabGroupHeading,
 	tabGroupMembersId,
 	tabsWithGroupId,
 } = tabGroupModule as TabGroupModule
@@ -75,7 +76,7 @@ const tabs: TabGroupRendererTab[] = [
 	},
 ]
 
-test('composes canonical surface sections, preserving first-member order and placing stale membership in Ungrouped', () => {
+test('composes canonical surface sections while stale membership returns to the ordinary terminal flow', () => {
 	const composition = composeTabGroups({ tabs, groups, activeTabId: 'build-active' })
 
 	assert.deepEqual(
@@ -87,7 +88,7 @@ test('composes canonical surface sections, preserving first-member order and pla
 		]),
 		[
 			['group', 'group-11111111', 'Build', ['build-active', 'build-attention']],
-			['ungrouped', 'ungrouped', 'Ungrouped', ['ungrouped-strip', 'stale-membership']],
+			['ungrouped', 'ungrouped', 'Terminals', ['ungrouped-strip', 'stale-membership']],
 		],
 	)
 	assert.deepEqual(
@@ -99,7 +100,7 @@ test('composes canonical surface sections, preserving first-member order and pla
 		]),
 		[
 			['group', 'group-22222222', 'Review', ['review-running', 'review-attention']],
-			['ungrouped', 'ungrouped', 'Ungrouped', ['ungrouped-background']],
+			['ungrouped', 'ungrouped', 'Terminals', ['ungrouped-background']],
 		],
 	)
 	assert.equal(
@@ -213,7 +214,7 @@ test('collapsed proxy projection does not mutate input tabs or duplicate a termi
 	)
 })
 
-test('named group action targets are deterministic ordered snapshots and Ungrouped has no invented bulk command', () => {
+test('only named groups have headings or deterministic bulk commands', () => {
 	const composition = composeTabGroups({ tabs, groups, activeTabId: null })
 	const build = composition.strip[0]
 	const review = composition.background[0]
@@ -250,6 +251,8 @@ test('named group action targets are deterministic ordered snapshots and Ungroup
 			intent: { type: 'close-all', groupId: 'group-22222222' },
 		},
 	])
+	assert.equal(tabGroupHeading(build), 'Build')
+	assert.equal(tabGroupHeading(ungrouped), null)
 	assert.deepEqual(ungrouped.actionTargets, [])
 	assert.deepEqual(tabGroupActionTargets(ungrouped), [])
 })
@@ -323,6 +326,8 @@ test('real OSC state transitions refresh collapsed representatives while keepali
 test('renderer action adapter uses the validated intent and membership APIs for tab and group menus', () => {
 	assert.match(renderer, /label: 'Move to existing group'/)
 	assert.match(renderer, /label: 'Move to new group…'/)
+	assert.match(renderer, /label: 'Remove from group'/)
+	assert.doesNotMatch(renderer, /label: 'Ungrouped'/)
 	assert.match(renderer, /function moveTabToGroup/)
 	assert.match(renderer, /helm\.sessions\.groups\.intent\(intent\)/)
 	assert.match(renderer, /helm\.sessions\.groups\.setMembership\(tab\.sessionId, groupId\)/)
