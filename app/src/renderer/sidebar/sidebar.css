@@ -685,6 +685,11 @@
 	align-items: center;
 	justify-content: center;
 }
+.menu-item-color {
+	color: var(--group-color);
+	font-size: calc(14px * var(--ui-scale));
+}
+
 .menu-item-icon-empty {
 	visibility: hidden;
 }

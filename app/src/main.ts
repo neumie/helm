@@ -27,6 +27,7 @@ import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
+import { isTabGroupColor } from './tab-group-colors'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
@@ -1613,6 +1614,13 @@ ipcMain.handle('tab-groups:rename', (_event, groupId: unknown, name: unknown, pr
 	sessionIpcGate.handle(profileToken, null, () => {
 		if (!sessions.isValidTabGroupId(groupId) || typeof name !== 'string') return null
 		return getSessionSupport()?.registry.renameGroup(groupId, name) ?? null
+	}),
+)
+
+ipcMain.handle('tab-groups:set-color', (_event, groupId: unknown, color: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		if (!sessions.isValidTabGroupId(groupId) || !isTabGroupColor(color)) return null
+		return getSessionSupport()?.registry.setGroupColor(groupId, color) ?? null
 	}),
 )
 

@@ -21,6 +21,7 @@ test('closed session IPC admission performs no PTY, support, registry, socket, o
 		'tab-groups:list',
 		'tab-groups:create',
 		'tab-groups:rename',
+		'tab-groups:set-color',
 		'tab-groups:delete',
 		'tab-groups:set-membership',
 		'tab-groups:set-collapsed',

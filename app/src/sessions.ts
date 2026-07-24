@@ -16,6 +16,7 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { type TabGroupColor, defaultTabGroupColor, isTabGroupColor } from './tab-group-colors'
 
 // okena resolves tools through get_extended_path (session_backend.rs:751-793)
 // because app bundles inherit a minimal PATH missing /opt/homebrew/bin etc.
@@ -560,6 +561,7 @@ export type TabGroupSurface = 'strip' | 'background'
 /** Stable, opaque group metadata stored under the reserved `_tabGroups` registry key. */
 export interface TabGroupMeta {
 	name: string
+	color: TabGroupColor
 	collapsedStrip?: boolean
 	collapsedBackground?: boolean
 }
@@ -568,6 +570,7 @@ export interface TabGroupMeta {
 export interface TabGroup {
 	id: string
 	name: string
+	color: TabGroupColor
 	collapsedStrip: boolean
 	collapsedBackground: boolean
 }
@@ -692,6 +695,7 @@ export class SessionRegistry {
 					if (!name) continue
 					this.#groups[id] = {
 						name,
+						color: isTabGroupColor(candidate.color) ? candidate.color : defaultTabGroupColor(id),
 						...(candidate.collapsedStrip === true ? { collapsedStrip: true } : {}),
 						...(candidate.collapsedBackground === true ? { collapsedBackground: true } : {}),
 					}
@@ -771,6 +775,7 @@ export class SessionRegistry {
 		return Object.entries(this.#groups).map(([id, meta]) => ({
 			id,
 			name: meta.name,
+			color: meta.color,
 			collapsedStrip: meta.collapsedStrip === true,
 			collapsedBackground: meta.collapsedBackground === true,
 		}))
@@ -792,7 +797,8 @@ export class SessionRegistry {
 		do {
 			id = `group-${crypto.randomUUID().slice(0, 8)}`
 		} while (this.#groups[id])
-		this.#groups[id] = { name: normalized }
+		const color = defaultTabGroupColor(id)
+		this.#groups[id] = { name: normalized, color }
 		for (const sessionId of members) {
 			const meta = this.#data[sessionId]
 			if (meta) meta.groupId = id
@@ -802,6 +808,7 @@ export class SessionRegistry {
 		return {
 			id,
 			name: normalized,
+			color,
 			collapsedStrip: false,
 			collapsedBackground: false,
 		}
@@ -816,7 +823,17 @@ export class SessionRegistry {
 		return this.#group(groupId)
 	}
 
-	/** Deletes the definition but deliberately retains every member as Ungrouped. */
+	setGroupColor(groupId: string, color: TabGroupColor): TabGroup | null {
+		const group = this.#groups[groupId]
+		if (!group || !isTabGroupColor(color)) return null
+		if (group.color !== color) {
+			group.color = color
+			this.#scheduleSave()
+		}
+		return this.#group(groupId)
+	}
+
+	/** Deletes the definition but deliberately retains every member without a group. */
 	deleteGroup(groupId: string): boolean {
 		if (!this.#groups[groupId]) return false
 		for (const meta of Object.values(this.#data)) {
@@ -1106,6 +1123,7 @@ export class SessionRegistry {
 			? {
 					id: groupId,
 					name: meta.name,
+					color: meta.color,
 					collapsedStrip: meta.collapsedStrip === true,
 					collapsedBackground: meta.collapsedBackground === true,
 				}
@@ -1145,6 +1163,7 @@ export class SessionRegistry {
 				groupId,
 				{
 					name: meta.name,
+					color: meta.color,
 					...(meta.collapsedStrip === true ? { collapsedStrip: true } : {}),
 					...(meta.collapsedBackground === true ? { collapsedBackground: true } : {}),
 				},

@@ -30,6 +30,14 @@
 	--warn: #e0b341;
 	--danger: #f2585b;
 	--neutral: #8a8f98;
+	/* User-selectable terminal group palette (§3.18). */
+	--group-blue: #4c9aff;
+	--group-purple: #c08ae0;
+	--group-pink: #e477b5;
+	--group-red: #f2585b;
+	--group-orange: #e08a41;
+	--group-green: #4ec98a;
+	--group-cyan: #54c6d6;
 	/* Derived soft fills — exactly 15% of the tone (§2.1); themes override the
 	 * tone and the soft fill follows automatically. Never hand-mix per component. */
 	--accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -216,7 +224,8 @@ button:focus-visible,
 .tab-group-toggle {
 	border: 0;
 	border-radius: var(--radius-md);
-	background: none;
+	background: color-mix(in srgb, var(--group-color) 15%, transparent);
+	color: var(--group-color);
 	font-family: inherit;
 	cursor: pointer;
 	-webkit-app-region: no-drag;
@@ -233,8 +242,8 @@ button:focus-visible,
 }
 
 .tab-group-toggle:hover {
-	background: var(--fill-subtle);
-	color: var(--text-1);
+	background: color-mix(in srgb, var(--group-color) 24%, transparent);
+	color: var(--group-color);
 }
 
 .tab {
@@ -253,6 +262,25 @@ button:focus-visible,
 	cursor: default;
 	user-select: none;
 	transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
+}
+
+/* Author display rules override the HTML hidden state unless this explicit
+ * rule wins. Collapse keeps peers mounted but removes them from layout. */
+.tab[hidden],
+.bg-row[hidden] {
+	display: none;
+}
+
+.tab-group-section .tab::before {
+	position: absolute;
+	top: 0;
+	left: 7px;
+	right: 7px;
+	height: 2px;
+	border-radius: 999px;
+	background: var(--group-color);
+	content: "";
+	opacity: 0.82;
 }
 
 body.tab-dragging,
@@ -628,6 +656,7 @@ body.tab-dragging .tab {
  * closes through the grace path. A live idle terminal is one compact title
  * line; the OSC indicator appears only when an agent reports state. */
 .bg-row {
+	position: relative;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto auto;
 	align-items: center;
@@ -638,6 +667,18 @@ body.tab-dragging .tab {
 	border-radius: 0;
 	user-select: none;
 	transition: background-color 140ms ease-out;
+}
+
+.bg-group-section .bg-row::before {
+	position: absolute;
+	top: 6px;
+	bottom: 6px;
+	left: 3px;
+	width: 2px;
+	border-radius: 999px;
+	background: var(--group-color);
+	content: "";
+	opacity: 0.82;
 }
 
 .bg-row:hover,

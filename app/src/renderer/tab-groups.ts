@@ -1,4 +1,5 @@
 import type { TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
+import type { TabGroupColor } from '../tab-group-colors'
 
 /** The renderer-only terminal state needed to project persisted groups. */
 export interface TabGroupRendererTab {
@@ -47,6 +48,7 @@ export interface TabGroupSection {
 	id: string
 	groupId: string | null
 	name: string
+	color: TabGroupColor | null
 	surface: TabGroupSurface
 	collapsed: boolean
 	/** All members on this surface, in canonical renderer order. */
@@ -192,6 +194,7 @@ function composeSurface(
 			id: group?.id ?? UNGROUPED_ID,
 			groupId: group?.id ?? null,
 			name: group?.name ?? UNGROUPED_NAME,
+			color: group?.color ?? null,
 			surface,
 			collapsed,
 			members,

@@ -131,6 +131,8 @@ const api: HelmApi = {
 				ipcRenderer.invoke('tab-groups:create', name, sessionIds, sessionProfileToken) as Promise<TabGroup | null>,
 			rename: (groupId, name) =>
 				ipcRenderer.invoke('tab-groups:rename', groupId, name, sessionProfileToken) as Promise<TabGroup | null>,
+			setColor: (groupId, color) =>
+				ipcRenderer.invoke('tab-groups:set-color', groupId, color, sessionProfileToken) as Promise<TabGroup | null>,
 			delete: groupId => ipcRenderer.invoke('tab-groups:delete', groupId, sessionProfileToken) as Promise<boolean>,
 			setMembership: (sessionId, groupId) =>
 				ipcRenderer.invoke('tab-groups:set-membership', sessionId, groupId, sessionProfileToken) as Promise<boolean>,

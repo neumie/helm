@@ -10,6 +10,7 @@ const channels = [
 	'tab-groups:list',
 	'tab-groups:create',
 	'tab-groups:rename',
+	'tab-groups:set-color',
 	'tab-groups:delete',
 	'tab-groups:set-membership',
 	'tab-groups:set-collapsed',
@@ -41,5 +42,7 @@ test('tab-group main adapter is fail-closed and declarative rather than a PTY co
 	assert.match(adapter, /registry\.groupMembers\(intent\.groupId\)/)
 	assert.match(adapter, /\{ intent, memberIds \}/)
 	assert.match(main, /sessions\.tabGroupActionIntent/)
+	assert.match(adapter, /isTabGroupColor\(color\)/)
+	assert.match(adapter, /registry\.setGroupColor\(groupId, color\)/)
 	assert.doesNotMatch(adapter, /\bptys\b|\.proc\.|killSession|pty:/)
 })

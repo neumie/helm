@@ -17,11 +17,12 @@ const {
 	tabsWithGroupId,
 } = tabGroupModule as TabGroupModule
 const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+const styles = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
 
 const groups: TabGroup[] = [
-	{ id: 'group-11111111', name: 'Build', collapsedStrip: true, collapsedBackground: false },
-	{ id: 'group-22222222', name: 'Review', collapsedStrip: false, collapsedBackground: true },
-	{ id: 'group-empty000', name: 'Empty', collapsedStrip: true, collapsedBackground: true },
+	{ id: 'group-11111111', name: 'Build', color: 'blue', collapsedStrip: true, collapsedBackground: false },
+	{ id: 'group-22222222', name: 'Review', color: 'purple', collapsedStrip: false, collapsedBackground: true },
+	{ id: 'group-empty000', name: 'Empty', color: 'green', collapsedStrip: true, collapsedBackground: true },
 ]
 
 const tabs: TabGroupRendererTab[] = [
@@ -107,8 +108,14 @@ test('composes canonical surface sections while stale membership returns to the 
 		composition.strip.some(section => section.id === 'group-empty000'),
 		false,
 	)
+	assert.equal(composition.strip[0]?.color, 'blue')
+	assert.equal(composition.background[0]?.color, 'purple')
 	assert.equal(composition.strip[0]?.members[0]?.active, true)
 	assert.equal(composition.strip[0]?.members[1]?.active, false)
+})
+
+test('collapsed members override explicit tab and background-row display styles', () => {
+	assert.match(styles, /\.tab\[hidden\],[\s\S]*\.bg-row\[hidden\][^{]*\{[^}]*display:\s*none/)
 })
 
 test('collapse state is independent per surface and collapsed proxies prefer active, attention, running, then canonical first', () => {
@@ -327,6 +334,8 @@ test('renderer action adapter uses the validated intent and membership APIs for 
 	assert.match(renderer, /label: 'Move to existing group'/)
 	assert.match(renderer, /label: 'Move to new group…'/)
 	assert.match(renderer, /label: 'Remove from group'/)
+	assert.match(renderer, /label: 'Color…'/)
+	assert.match(renderer, /\.setColor\(groupId, color\)/)
 	assert.doesNotMatch(renderer, /label: 'Ungrouped'/)
 	assert.match(renderer, /function moveTabToGroup/)
 	assert.match(renderer, /helm\.sessions\.groups\.intent\(intent\)/)

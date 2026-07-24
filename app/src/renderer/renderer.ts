@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import type { RestoredSession, TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
+import { TAB_GROUP_COLORS, TAB_GROUP_COLOR_LABELS, type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
 import { TerminalTransferRendererController } from '../terminal-transfer-renderer'
 import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance } from './appearance'
@@ -220,6 +221,10 @@ function tabIdentity(tab: Tab): string {
 	return tab.sessionId ?? tab.visualId
 }
 
+function applyGroupColor(element: HTMLElement, color: TabGroupColor | null): void {
+	if (color !== null) element.style.setProperty('--group-color', tabGroupColorCssVar(color))
+}
+
 function groupHeader(section: TabGroupSection): HTMLElement | null {
 	const heading = tabGroupHeading(section)
 	if (heading === null) return null
@@ -229,6 +234,7 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 	toggle.dataset.tabGroupHeader = 'true'
 	toggle.dataset.groupId = section.groupId as string
 	toggle.dataset.surface = section.surface
+	applyGroupColor(toggle, section.color)
 	toggle.textContent = heading
 	toggle.setAttribute('aria-expanded', String(!section.collapsed))
 	toggle.setAttribute('aria-controls', tabGroupMembersId(section.groupId, section.surface))
@@ -299,6 +305,7 @@ function renderTabGroups(): void {
 	for (const section of tabGroupComposition().strip) {
 		const sectionEl = document.createElement('div')
 		sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
+		applyGroupColor(sectionEl, section.color)
 		const header = groupHeader(section)
 		if (header) sectionEl.append(header)
 		const membersEl = document.createElement('div')
@@ -338,6 +345,21 @@ function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed:
 		})
 		.catch(() => {
 			if (shouldReloadCollapsedGroup(version, tabGroupsVersion, false)) loadTabGroups()
+		})
+}
+
+function changeGroupColor(groupId: string, color: TabGroupColor): void {
+	const version = ++tabGroupsVersion
+	tabGroups = tabGroups.map(group => (group.id === groupId ? { ...group, color } : group))
+	renderTabGroups()
+	updateBackgroundUi()
+	void helm.sessions.groups
+		.setColor(groupId, color)
+		.then(updated => {
+			if (version === tabGroupsVersion && updated === null) loadTabGroups()
+		})
+		.catch(() => {
+			if (version === tabGroupsVersion) loadTabGroups()
 		})
 }
 
@@ -1077,6 +1099,7 @@ function renderBackgroundRows(): void {
 	for (const section of tabGroupComposition().background) {
 		const sectionEl = document.createElement('section')
 		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
+		applyGroupColor(sectionEl, section.color)
 		const header = groupHeader(section)
 		if (header) sectionEl.append(header)
 		const membersEl = document.createElement('div')
@@ -1500,6 +1523,7 @@ function closeTabMenu(): void {
 interface TabMenuItem {
 	label: string
 	icon: string
+	color?: TabGroupColor
 	hint?: string
 	destructive?: boolean
 	disabled?: boolean
@@ -1527,8 +1551,9 @@ function openMenu(items: readonly TabMenuItem[], x: number, y: number, trigger: 
 		button.setAttribute('role', 'menuitem')
 		button.disabled = item.disabled === true
 		const icon = document.createElement('span')
-		icon.className = 'menu-item-icon'
+		icon.className = `menu-item-icon${item.color ? ' menu-item-color' : ''}`
 		icon.setAttribute('aria-hidden', 'true')
+		if (item.color) applyGroupColor(icon, item.color)
 		icon.textContent = item.icon
 		const label = document.createElement('span')
 		label.className = 'menu-item-label'
@@ -1851,9 +1876,32 @@ function runGroupAction(target: TabGroupActionTarget): void {
 	})
 }
 
+function openGroupColorMenu(
+	groupId: string,
+	currentColor: TabGroupColor,
+	x: number,
+	y: number,
+	trigger: HTMLElement,
+): void {
+	openMenu(
+		TAB_GROUP_COLORS.map(color => ({
+			label: TAB_GROUP_COLOR_LABELS[color],
+			icon: '●',
+			color,
+			disabled: color === currentColor,
+			hint: color === currentColor ? 'Current' : undefined,
+			onPick: () => changeGroupColor(groupId, color),
+		})),
+		x,
+		y,
+		trigger,
+	)
+}
+
 function openGroupMenu(section: TabGroupSection, x: number, y: number, trigger: HTMLElement): void {
 	if (section.groupId === null) return
 	const groupId = section.groupId
+	const color = section.color ?? 'blue'
 	const actions = section.actionTargets.map((target, index) => ({
 		label:
 			target.action === 'open'
@@ -1875,6 +1923,12 @@ function openGroupMenu(section: TabGroupSection, x: number, y: number, trigger: 
 				icon: '✎',
 				onPick: () =>
 					openGroupNameMenu('Rename group', section.name, x, y, trigger, name => renameGroup(groupId, name)),
+			},
+			{
+				label: 'Color…',
+				icon: '●',
+				color,
+				onPick: () => openGroupColorMenu(groupId, color, x, y, trigger),
 			},
 			{ label: 'Delete', icon: '×', destructive: true, onPick: () => deleteGroup(groupId) },
 			...actions,

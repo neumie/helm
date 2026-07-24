@@ -9,6 +9,7 @@ import type {
 	RunContextReset,
 	RunContextSave,
 } from './shared-helm'
+import type { TabGroupColor } from './tab-group-colors'
 
 /**
  * Main↔renderer terminal-transfer event shape. Prepare freezes and validates
@@ -81,6 +82,7 @@ export type TabGroupSurface = 'strip' | 'background'
 export interface TabGroup {
 	id: string
 	name: string
+	color: TabGroupColor
 	collapsedStrip: boolean
 	collapsedBackground: boolean
 }
@@ -104,6 +106,7 @@ export interface TabGroupsApi {
 	list(): Promise<TabGroup[]>
 	create(name: string, sessionIds: string[]): Promise<TabGroup | null>
 	rename(groupId: string, name: string): Promise<TabGroup | null>
+	setColor(groupId: string, color: TabGroupColor): Promise<TabGroup | null>
 	delete(groupId: string): Promise<boolean>
 	setMembership(sessionId: string, groupId: string | null): Promise<boolean>
 	setCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): Promise<boolean>

@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { CSSProperties, ReactNode } from 'react'
+import { type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
 import { ActivityIndicator } from './activity-indicator'
 import { IconBtn } from './icon-button'
 
@@ -28,9 +29,17 @@ function TerminalTab({ label, active, activity, rename }: TabFixture) {
 	)
 }
 
-function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?: boolean; children?: ReactNode }) {
+function TerminalGroup({
+	name,
+	color,
+	collapsed,
+	children,
+}: { name: string; color: TabGroupColor; collapsed?: boolean; children?: ReactNode }) {
 	return (
-		<div className={`tab-group-section${collapsed ? ' collapsed' : ''}`}>
+		<div
+			className={`tab-group-section${collapsed ? ' collapsed' : ''}`}
+			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
+		>
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
 				{name}
 			</button>
@@ -43,7 +52,7 @@ function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?
 
 function TerminalMenu({ group = false }: { group?: boolean }) {
 	const items = group
-		? ['Rename…', 'Delete', 'Move group to Background']
+		? ['Rename…', 'Color…', 'Delete', 'Move group to Background']
 		: ['Rename…', 'Move to existing group', 'Move to new group…', 'Move to profile…', 'Move to background', 'Close']
 	return (
 		<div
@@ -59,14 +68,20 @@ function TerminalMenu({ group = false }: { group?: boolean }) {
 					className={`menu-item${item === 'Delete' || item === 'Close' ? ' menu-item-danger' : ''}`}
 					role="menuitem"
 				>
-					<span className="menu-item-icon" aria-hidden="true">
+					<span
+						className={`menu-item-icon${item === 'Color…' ? ' menu-item-color' : ''}`}
+						style={item === 'Color…' ? ({ '--group-color': 'var(--group-orange)' } as CSSProperties) : undefined}
+						aria-hidden="true"
+					>
 						{item === 'Rename…'
 							? '✎'
-							: item === 'Close' || item === 'Delete'
-								? '×'
-								: item === 'Move to profile…'
-									? '→'
-									: '›'}
+							: item === 'Color…'
+								? '●'
+								: item === 'Close' || item === 'Delete'
+									? '×'
+									: item === 'Move to profile…'
+										? '→'
+										: '›'}
 					</span>
 					<span className="menu-item-label">{item}</span>
 					{index === 4 && !group ? <span className="menu-hint">⇧⌘B</span> : null}
@@ -268,7 +283,7 @@ export const Rename: Story = {
 export const GroupedTabHeaders: Story = {
 	render: () => (
 		<TerminalShell>
-			<TerminalGroup name="Build">
+			<TerminalGroup name="Build" color="blue">
 				<TerminalTab label="compile" active />
 				<TerminalTab label="tests" activity="progress" />
 			</TerminalGroup>
@@ -280,7 +295,7 @@ export const GroupedTabHeaders: Story = {
 export const CollapsedTabGroup: Story = {
 	render: () => (
 		<TerminalShell>
-			<TerminalGroup name="Review" collapsed>
+			<TerminalGroup name="Review" color="purple" collapsed>
 				<TerminalTab label="needs attention" activity="attention" />
 			</TerminalGroup>
 			<TerminalTab label="shell" active />
@@ -291,7 +306,7 @@ export const CollapsedTabGroup: Story = {
 export const TabActions: Story = {
 	render: () => (
 		<TerminalShell>
-			<TerminalGroup name="Build">
+			<TerminalGroup name="Build" color="green">
 				<TerminalTab label="compile" active />
 			</TerminalGroup>
 			<TerminalMenu />
@@ -302,7 +317,7 @@ export const TabActions: Story = {
 export const GroupActions: Story = {
 	render: () => (
 		<TerminalShell>
-			<TerminalGroup name="Build">
+			<TerminalGroup name="Build" color="orange">
 				<TerminalTab label="compile" active />
 				<TerminalTab label="tests" />
 			</TerminalGroup>

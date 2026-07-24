@@ -4,13 +4,28 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
 import * as sessionsModule from '../app/src/sessions.ts'
+import * as tabGroupColorModule from '../app/src/tab-group-colors.ts'
 
 type SessionsModule = typeof import('../app/src/sessions.ts')
+type TabGroupColorModule = typeof import('../app/src/tab-group-colors.ts')
 const sessions = ((sessionsModule as { default?: SessionsModule }).default ?? sessionsModule) as SessionsModule
 const { SessionRegistry, isValidTabGroupId, tabGroupActionIntent } = sessions
+const tabGroupColors = ((tabGroupColorModule as unknown as { default?: TabGroupColorModule }).default ??
+	tabGroupColorModule) as TabGroupColorModule
+const { TAB_GROUP_COLORS, defaultTabGroupColor } = tabGroupColors
 
 function registryFile(): string {
 	return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'helm-groups-')), 'sessions.json')
+}
+
+function registryDocument(file: string): {
+	_tabGroups: Record<string, { name: string; color?: string; collapsedStrip?: boolean; collapsedBackground?: boolean }>
+} {
+	try {
+		return JSON.parse(fs.readFileSync(file, 'utf8'))
+	} catch (error) {
+		assert.fail(`invalid registry fixture: ${String(error)}`)
+	}
 }
 
 function grouped(file = registryFile()) {
@@ -34,13 +49,35 @@ test('legacy session registries remain ungrouped and group metadata round-trips 
 	assert.ok(group)
 	legacy.setGroupCollapsed(group.id, 'strip', true)
 	legacy.flush()
-	const disk = JSON.parse(fs.readFileSync(file, 'utf8'))
+	const disk = registryDocument(file)
 	assert.equal(disk._tabGroups[group.id].name, 'Deploy watch')
+	assert.equal(disk._tabGroups[group.id].color, group.color)
 	assert.equal(disk._tabGroups[group.id].collapsedStrip, true)
 	assert.equal('collapsedBackground' in disk._tabGroups[group.id], false)
 	const reloaded = new SessionRegistry(file)
 	assert.deepEqual(reloaded.getGroups(), [{ ...group, collapsedStrip: true }])
 	assert.equal(reloaded.get('aaaa1111')?.groupId, group.id)
+})
+
+test('legacy groups get a stable palette color and explicit changes persist', () => {
+	const file = registryFile()
+	fs.writeFileSync(
+		file,
+		JSON.stringify({
+			aaaa1111: { createdAt: '2026-01-01T00:00:00.000Z', groupId: 'group-deadbeef' },
+			_tabGroups: { 'group-deadbeef': { name: 'Legacy' } },
+		}),
+	)
+	const registry = new SessionRegistry(file)
+	assert.equal(registry.getGroups()[0]?.color, defaultTabGroupColor('group-deadbeef'))
+	const replacement = TAB_GROUP_COLORS.find(color => color !== registry.getGroups()[0]?.color)
+	assert.ok(replacement)
+	assert.equal(registry.setGroupColor('group-deadbeef', replacement)?.color, replacement)
+	registry.flush()
+	const disk = registryDocument(file)
+	assert.equal(disk._tabGroups['group-deadbeef'].color, replacement)
+	assert.equal(new SessionRegistry(file).getGroups()[0]?.color, replacement)
+	assert.equal(registry.setGroupColor('group-deadbeef', 'invalid' as never), null)
 })
 
 test('members can split across strip and background while collapse is independent per surface', () => {
