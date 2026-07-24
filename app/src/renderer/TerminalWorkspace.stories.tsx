@@ -34,7 +34,9 @@ function TerminalGroup({ name, collapsed, children }: { name: string; collapsed?
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
 				{name}
 			</button>
-			<div className="tab-group-members">{children}</div>
+			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`}>
+				{children}
+			</div>
 		</div>
 	)
 }
@@ -131,7 +133,7 @@ function TerminalShell({
 				<div className="topbar-left" aria-hidden="true" />
 				<div className="topbar-right">
 					<div className="tab-strip-controls">
-						<div id="tabs" role="tablist" aria-label="Terminals">
+						<div id="tabs">
 							{children ?? (
 								<>
 									<TerminalTab label="helm — storybook" active />

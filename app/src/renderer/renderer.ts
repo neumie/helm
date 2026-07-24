@@ -179,6 +179,8 @@ interface Tab {
 
 const tabs: Tab[] = []
 let tabGroups: TabGroup[] = []
+let tabGroupsVersion = 0
+let dragVisibleGroupId: string | null = null
 let nextVisualTabId = 1
 // Background terminals (iTerm "bury session" analog): parked tabs leave the
 // strip but keep their Terminal instance mounted in the hidden holder — the
@@ -249,9 +251,17 @@ function renderTabGroups(): void {
 		sectionEl.append(groupHeader(section))
 		const membersEl = document.createElement('div')
 		membersEl.className = 'tab-group-members'
-		for (const member of section.visibleMembers) {
+		membersEl.setAttribute('role', 'tablist')
+		membersEl.setAttribute('aria-label', `${section.name} terminals`)
+		const peersVisible = section.groupId !== null && section.groupId === dragVisibleGroupId
+		for (const member of section.members) {
 			const tab = byId.get(member.id)
-			if (tab) membersEl.append(tab.tabButton)
+			if (!tab) continue
+			// Keep collapsed peers mounted so their DOM identity, listeners, and
+			// drag geometry return intact. The representative remains visible;
+			// dragging it temporarily exposes its same-group peers.
+			tab.tabButton.hidden = section.collapsed && !peersVisible && member.id !== section.proxy?.proxyForId
+			membersEl.append(tab.tabButton)
 		}
 		sectionEl.append(membersEl)
 		tabsEl.append(sectionEl)
@@ -259,6 +269,7 @@ function renderTabGroups(): void {
 }
 
 function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): void {
+	const version = ++tabGroupsVersion
 	tabGroups = tabGroups.map(group =>
 		group.id === groupId
 			? { ...group, ...(surface === 'strip' ? { collapsedStrip: collapsed } : { collapsedBackground: collapsed }) }
@@ -266,13 +277,17 @@ function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed:
 	)
 	renderTabGroups()
 	updateBackgroundUi()
-	void helm.sessions.groups.setCollapsed(groupId, surface, collapsed).catch(() => loadTabGroups())
+	void helm.sessions.groups.setCollapsed(groupId, surface, collapsed).catch(() => {
+		if (version === tabGroupsVersion) loadTabGroups()
+	})
 }
 
 function loadTabGroups(): void {
+	const version = ++tabGroupsVersion
 	void helm.sessions.groups
 		.list()
 		.then(groups => {
+			if (version !== tabGroupsVersion) return
 			tabGroups = groups
 			renderTabGroups()
 			updateBackgroundUi()
@@ -304,7 +319,6 @@ function renderTabAgentState(tab: Tab): void {
 		setActivityIndicatorState(tab.runningEl, 'progress', 'Running')
 	}
 	renderTabLabel(tab)
-	renderTabGroups()
 	if (tab.parked) updateBackgroundUi()
 }
 
@@ -896,15 +910,15 @@ function updateBackgroundUi(): void {
 
 function renderBackgroundRows(): void {
 	// Preserve the row across re-renders (OSC activity / exit / title updates).
-	const focusedRow = document.activeElement?.closest('.bg-row')
-	const focused = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].indexOf(focusedRow as HTMLElement)
+	const focusedRow = document.activeElement?.closest<HTMLElement>('.bg-row')
+	const focusedId = focusedRow?.dataset.tabId ?? null
 	bgRows.textContent = ''
 	const byId = new Map(parked.map(tab => [tabIdentity(tab), tab]))
 	for (const section of tabGroupComposition().background) {
 		const sectionEl = document.createElement('section')
 		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
 		sectionEl.append(groupHeader(section))
-		for (const member of section.visibleMembers) {
+		for (const member of section.members) {
 			const tab = byId.get(member.id)
 			if (!tab) continue
 			const exitedState = tab.exitCode === null ? null : `Exited (${tab.exitCode})`
@@ -916,6 +930,8 @@ function renderBackgroundRows(): void {
 			const accessibleState = [exitedState, agentState].filter(Boolean).join(', ')
 			const row = document.createElement('div')
 			row.className = `bg-row${activeTab === tab ? ' active' : ''}`
+			row.dataset.tabId = tabIdentity(tab)
+			row.hidden = section.collapsed && member.id !== section.proxy?.proxyForId
 
 			const open = document.createElement('button')
 			open.className = 'bg-open'
@@ -968,9 +984,11 @@ function renderBackgroundRows(): void {
 		}
 		bgRows.appendChild(sectionEl)
 	}
-	if (focused >= 0) {
-		const rows = bgRows.querySelectorAll<HTMLElement>('.bg-row')
-		rows[Math.min(focused, rows.length - 1)]?.querySelector<HTMLElement>('.bg-open')?.focus()
+	if (focusedId !== null) {
+		const row = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].find(
+			candidate => candidate.dataset.tabId === focusedId,
+		)
+		if (!row?.hidden) row?.querySelector<HTMLElement>('.bg-open')?.focus()
 	}
 }
 
@@ -1144,6 +1162,8 @@ function startTabPointerDrag(drag: TabPointerDrag): void {
 	document.body.appendChild(preview)
 	drag.preview = preview
 	drag.tab.tabButton.classList.add('drag-placeholder')
+	dragVisibleGroupId = drag.tab.groupId
+	renderTabGroups()
 	document.body.classList.add('tab-dragging')
 	bgToggle.hidden = false
 	bgToggle.classList.add('drag-ready')
@@ -1215,6 +1235,8 @@ function finishTabPointerDrag(cancelled: boolean): void {
 		target = drag.tab.tabButton.getBoundingClientRect()
 	}
 
+	dragVisibleGroupId = null
+	renderTabGroups()
 	document.body.classList.remove('tab-dragging')
 	bgToggle.classList.remove('drag-ready', 'drag-over')
 	bgToggle.title = 'Background terminals'
@@ -1863,6 +1885,7 @@ void (async () => {
 				sessionId: session.sessionId,
 				title: session.title,
 				customName: session.customName,
+				groupId: session.groupId,
 			}).catch(() => {})
 		}
 		const first = tabs[0]
