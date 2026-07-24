@@ -1,14 +1,22 @@
+import type { AttentionAdoptionGrantManager } from './adoption-grants.js'
 import { validateScheduledReportSummary } from './prompt.js'
 import { nextOccurrence, normalizeCadence } from './recurrence.js'
 import { isScheduledRunTerminalState } from './retention.js'
 import type {
+	AttentionAdoptionIdentity,
+	AttentionAdoptionRollbackReason,
 	CreateScheduledRunInput,
 	ScheduleRecord,
 	ScheduledRunRecord,
 	ScheduledRunState,
 	ScheduledTerminalIntent,
 } from './schema.js'
-import { scheduleCreateSchema, scheduledRunDiagnosticSchema, scheduledRunReportSchema } from './schema.js'
+import {
+	attentionAdoptionIdentitySchema,
+	scheduleCreateSchema,
+	scheduledRunDiagnosticSchema,
+	scheduledRunReportSchema,
+} from './schema.js'
 import { ScheduleRevisionConflictError, type ScheduleStore } from './store.js'
 
 const ACTIVE_STATES = new Set<ScheduledRunState>([
@@ -151,6 +159,8 @@ export class ScheduleCommands {
 	}
 	requestCancel(id: string, revision: number): ScheduledRunRecord {
 		const run = this.store.requireRun(id)
+		if (run.attentionAdoption?.state === 'reserved')
+			throw new Error('Scheduled run attention adoption is actively reserved')
 		if (run.pendingTerminalIntent && run.pendingTerminalIntent !== 'cancel')
 			throw new Error('Scheduled run already has a conflicting terminal intent')
 		if (!CANCELLABLE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')
@@ -253,8 +263,99 @@ export class ScheduleCommands {
 			notificationDeliveredAt: new Date().toISOString(),
 		})
 	}
+	/** A same-identity retry is safe; every other existing adoption fails closed. */
+	reserveAttentionAdoption(id: string, revision: number, identity: AttentionAdoptionIdentity): ScheduledRunRecord {
+		const parsed = attentionAdoptionIdentitySchema.parse(identity)
+		const run = this.store.requireRun(id)
+		if (run.attentionAdoption?.state === 'reserved' || run.attentionAdoption?.state === 'completed') {
+			if (sameAdoptionIdentity(run.attentionAdoption, parsed)) return run
+			throw new Error('Scheduled run attention adoption belongs to another attempt')
+		}
+		if (run.attentionAdoption?.state === 'rolled_back' && sameAdoptionIdentity(run.attentionAdoption, parsed))
+			throw new Error('A rolled-back attention adoption requires a new identity')
+		this.assertAttentionAdoptable(run)
+		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
+		return this.store.updateAttentionAdoption(id, revision, {
+			state: 'reserved',
+			...parsed,
+			reservedAt: new Date().toISOString(),
+		})
+	}
+	/**
+	 * Completion means Electron has already durably registered ownership of the
+	 * scheduled session. It atomically resolves the daemon terminal; Electron
+	 * later owns close and teardown finalization.
+	 */
+	completeAttentionAdoption(
+		id: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		grants: AttentionAdoptionGrantManager,
+	): ScheduledRunRecord {
+		const parsed = attentionAdoptionIdentitySchema.parse(identity)
+		const run = this.store.requireRun(id)
+		if (run.attentionAdoption?.state === 'completed' && sameAdoptionIdentity(run.attentionAdoption, parsed)) return run
+		this.assertAttentionAdoptable(run)
+		if (run.attentionAdoption?.state !== 'reserved' || !sameAdoptionIdentity(run.attentionAdoption, parsed))
+			throw new Error('Scheduled run attention adoption reservation does not match')
+		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
+		const grantBinding = { profileId: run.profileId, runId: run.id, revision, ...parsed }
+		if (!grants.hasRedeemed(grantBinding)) throw new Error('Scheduled run attention adoption grant was not redeemed')
+		const completedAt = new Date().toISOString()
+		const completed = this.store.updateAttentionAdoption(
+			id,
+			revision,
+			{ state: 'completed', ...parsed, reservedAt: run.attentionAdoption.reservedAt, completedAt },
+			completedAt,
+		)
+		grants.revoke(grantBinding)
+		return completed
+	}
+	/** Rollback releases a reservation without resolving the daemon terminal. */
+	rollbackAttentionAdoption(
+		id: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		reason: AttentionAdoptionRollbackReason,
+	): ScheduledRunRecord {
+		const parsed = attentionAdoptionIdentitySchema.parse(identity)
+		const run = this.store.requireRun(id)
+		if (
+			run.attentionAdoption?.state === 'rolled_back' &&
+			sameAdoptionIdentity(run.attentionAdoption, parsed) &&
+			run.attentionAdoption.reason === reason
+		)
+			return run
+		this.assertAttentionAdoptable(run)
+		if (run.attentionAdoption?.state !== 'reserved' || !sameAdoptionIdentity(run.attentionAdoption, parsed))
+			throw new Error('Scheduled run attention adoption reservation does not match')
+		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
+		return this.store.updateAttentionAdoption(id, revision, {
+			state: 'rolled_back',
+			...parsed,
+			reservedAt: run.attentionAdoption.reservedAt,
+			rolledBackAt: new Date().toISOString(),
+			reason,
+		})
+	}
+	/** Startup recovery only releases an incomplete reservation. */
+	recoverAttentionAdoption(id: string): ScheduledRunRecord {
+		const run = this.store.requireRun(id)
+		if (run.attentionAdoption?.state !== 'reserved') return run
+		return this.rollbackAttentionAdoption(
+			run.id,
+			run.revision,
+			{ adoptionId: run.attentionAdoption.adoptionId, adopter: run.attentionAdoption.adopter },
+			'restart',
+		)
+	}
 	isTerminal(run: ScheduledRunRecord): boolean {
 		return isScheduledRunTerminalState(run.state)
+	}
+	private assertAttentionAdoptable(run: ScheduledRunRecord): void {
+		if (run.state !== 'needs_attention' || run.reportKind !== 'needs_attention')
+			throw new Error('Only an attention-reported scheduled run can be adopted')
+		if (run.terminalResolvedAt !== null) throw new Error('Scheduled run terminal is already resolved')
 	}
 	private claimTerminalIntent(id: string, revision: number, intent: ScheduledTerminalIntent): ScheduledRunRecord {
 		return this.store.claimPendingTerminalIntent(id, revision, intent)
@@ -318,4 +419,11 @@ export class ScheduleCommands {
 		if (!allowed.includes(run.state)) throw new Error(`Invalid scheduled run transition: ${run.state} -> ${next}`)
 		return this.store.transitionRun(id, revision, next, fields)
 	}
+}
+
+function sameAdoptionIdentity(
+	adoption: { adoptionId: string; adopter: string },
+	identity: AttentionAdoptionIdentity,
+): boolean {
+	return adoption.adoptionId === identity.adoptionId && adoption.adopter === identity.adopter
 }

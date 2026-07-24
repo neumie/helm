@@ -491,4 +491,12 @@ ALTER TABLE scheduled_runs ADD COLUMN pending_terminal_intent TEXT
   CHECK (pending_terminal_intent IN ('quiet', 'cancel', 'timeout') OR pending_terminal_intent IS NULL);
 `,
 	},
+	{
+		// Electron ownership adoption is an internal, strict-validated JSON record.
+		// Existing rows intentionally remain unadopted until an explicit reservation.
+		version: 30,
+		sql: `
+ALTER TABLE scheduled_runs ADD COLUMN attention_adoption TEXT;
+`,
+	},
 ]

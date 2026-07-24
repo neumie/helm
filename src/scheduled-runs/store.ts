@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import {
+	type AttentionAdoption,
 	type CreateScheduledRunInput,
 	type ScheduleRecord,
 	type ScheduledRunRecord,
 	type ScheduledRunState,
 	type ScheduledTerminalIntent,
+	attentionAdoptionSchema,
 	createScheduledRunSchema,
 	schedulePersistenceSchema,
 	scheduleRecordSchema,
@@ -171,8 +173,8 @@ export class ScheduleStore {
 			id, profile_id, schedule_id, schedule_revision, scheduled_for, local_civil_slot, utc_offset_minutes, slot_key, definition_snapshot, state, revision,
 			session_id, socket_descriptor, report_token_hash, report_token_version, process_fingerprint, cwd, worktree_path, branch_name, run_dir,
 			started_at, reported_at, closed_at, report_kind, report_summary, diagnostic_detail, notification_claimed_at, notification_delivered_at,
-			missed_count, missed_many, cleanup_state, terminal_resolved_at, pending_terminal_intent, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?)`)
+			missed_count, missed_many, cleanup_state, terminal_resolved_at, attention_adoption, pending_terminal_intent, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`)
 			.run(
 				id,
 				this.profileId,
@@ -320,6 +322,33 @@ export class ScheduleStore {
 	 * Atomically claim a pending terminal intent. A matching retry is idempotent;
 	 * a different winner is a fail-closed conflict even when the caller is stale.
 	 */
+	/**
+	 * The only writer for the internal attention-adoption axis. The WHERE clause
+	 * repeats the profile, attention state, report kind, unresolved status, and
+	 * revision guards so a stale caller cannot take over a terminal handoff.
+	 * Completion is the sole path that atomically resolves terminal ownership.
+	 */
+	updateAttentionAdoption(
+		id: string,
+		expectedRevision: number,
+		adoption: AttentionAdoption,
+		terminalResolvedAt: string | null = null,
+	): ScheduledRunRecord {
+		const parsed = attentionAdoptionSchema.parse(adoption)
+		if (parsed.state !== 'completed' && terminalResolvedAt !== null)
+			throw new Error('Only completed attention adoption may resolve a terminal')
+		const result = this.db
+			.prepare(
+				`UPDATE scheduled_runs
+				 SET attention_adoption = ?, terminal_resolved_at = ?, revision = revision + 1, updated_at = ?
+				 WHERE profile_id = ? AND id = ? AND revision = ?
+				   AND state = 'needs_attention' AND report_kind = 'needs_attention'
+				   AND terminal_resolved_at IS NULL`,
+			)
+			.run(JSON.stringify(parsed), terminalResolvedAt, new Date().toISOString(), this.profileId, id, expectedRevision)
+		if (result.changes === 0) throw new ScheduleRevisionConflictError()
+		return this.requireRun(id)
+	}
 	claimPendingTerminalIntent(
 		id: string,
 		expectedRevision: number,
@@ -360,7 +389,6 @@ export class ScheduleStore {
 				| 'notificationClaimedAt'
 				| 'notificationDeliveredAt'
 				| 'cleanupState'
-				| 'terminalResolvedAt'
 				| 'pendingTerminalIntent'
 			>
 		> = {},
@@ -378,7 +406,6 @@ export class ScheduleStore {
 			notificationClaimedAt: 'notification_claimed_at',
 			notificationDeliveredAt: 'notification_delivered_at',
 			cleanupState: 'cleanup_state',
-			terminalResolvedAt: 'terminal_resolved_at',
 			pendingTerminalIntent: 'pending_terminal_intent',
 		}
 		const values: unknown[] = [state]
@@ -452,6 +479,8 @@ export class ScheduleStore {
 			missedMany: Boolean(row.missed_many),
 			cleanupState: row.cleanup_state,
 			terminalResolvedAt: row.terminal_resolved_at,
+			attentionAdoption:
+				row.attention_adoption === null ? null : parseJson(row.attention_adoption, 'attention_adoption'),
 			pendingTerminalIntent: row.pending_terminal_intent,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,

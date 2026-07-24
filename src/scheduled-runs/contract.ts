@@ -82,7 +82,11 @@ export function toScheduledRunContract(run: ScheduledRunRecord): ScheduledRunCon
 		missedCount: run.missedCount,
 		missedMany: run.missedMany,
 		sessionAvailability:
-			run.state === 'needs_attention' && run.terminalResolvedAt === null ? 'available' : 'unavailable',
+			run.state === 'needs_attention' &&
+			run.terminalResolvedAt === null &&
+			(run.attentionAdoption === null || run.attentionAdoption.state === 'rolled_back')
+				? 'available'
+				: 'unavailable',
 		terminalResolvedAt: run.terminalResolvedAt,
 		createdAt: run.createdAt,
 		updatedAt: run.updatedAt,

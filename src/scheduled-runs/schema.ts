@@ -152,6 +152,35 @@ export const scheduledRunReportSchema = z
 	.strict()
 export const scheduledRunDiagnosticSchema = boundedText(262_144).nullable()
 
+export const attentionAdoptionIdentitySchema = z
+	.object({
+		adoptionId: z.string().uuid(),
+		adopter: z.string().uuid(),
+	})
+	.strict()
+export const attentionAdoptionRollbackReasonSchema = z.enum(['client', 'expired', 'restart', 'attestation_failed'])
+/**
+ * Internal-only Electron handoff record. It deliberately excludes process,
+ * socket, filesystem, and bearer-capability material.
+ */
+export const attentionAdoptionSchema = z.discriminatedUnion('state', [
+	attentionAdoptionIdentitySchema.extend({ state: z.literal('reserved'), reservedAt: utcIsoSchema }).strict(),
+	attentionAdoptionIdentitySchema
+		.extend({ state: z.literal('completed'), reservedAt: utcIsoSchema, completedAt: utcIsoSchema })
+		.strict(),
+	attentionAdoptionIdentitySchema
+		.extend({
+			state: z.literal('rolled_back'),
+			reservedAt: utcIsoSchema,
+			rolledBackAt: utcIsoSchema,
+			reason: attentionAdoptionRollbackReasonSchema,
+		})
+		.strict(),
+])
+export type AttentionAdoption = z.infer<typeof attentionAdoptionSchema>
+export type AttentionAdoptionIdentity = z.infer<typeof attentionAdoptionIdentitySchema>
+export type AttentionAdoptionRollbackReason = z.infer<typeof attentionAdoptionRollbackReasonSchema>
+
 export const scheduledRunRecordSchema = z.object({
 	...createScheduledRunSchema.shape,
 	id: z.string().min(1),
@@ -167,6 +196,8 @@ export const scheduledRunRecordSchema = z.object({
 	notificationDeliveredAt: utcIsoSchema.nullable(),
 	cleanupState: z.string().nullable(),
 	terminalResolvedAt: utcIsoSchema.nullable(),
+	/** Internal durable Electron ownership handoff; never exposed by contracts. */
+	attentionAdoption: attentionAdoptionSchema.nullable(),
 	/** Durable first-writer teardown outcome; cleared only by its terminal transition. */
 	pendingTerminalIntent: scheduledTerminalIntentSchema.nullable(),
 	createdAt: utcIsoSchema,
