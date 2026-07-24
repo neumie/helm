@@ -8,10 +8,11 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
-import sessionsModule from '../app/src/sessions.ts'
+import * as sessionsNamespace from '../app/src/sessions.ts'
 
-type SessionsModule = typeof import('../app/src/sessions.ts')
-const { SessionRegistry, compareSessionOrder } = sessionsModule as SessionsModule
+const sessionsModule =
+	(sessionsNamespace as unknown as { default?: typeof sessionsNamespace }).default ?? sessionsNamespace
+const { SessionRegistry, compareSessionOrder } = sessionsModule
 
 function tempRegistryFile(): string {
 	return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'helm-park-')), 'sessions.json')
@@ -84,6 +85,34 @@ test('explicit terminal order survives relaunch and ignores unknown or duplicate
 		restored.map(entry => entry.id),
 		['cccc3333', 'aaaa1111', 'bbbb2222'],
 	)
+})
+
+test('run-owned persistence failures restore complete in-memory ownership and groups', () => {
+	const ownership = {
+		profileId: 'work',
+		runId: 'run-1',
+		revision: 2,
+		adoptionId: '11111111-1111-4111-8111-111111111111',
+		adopter: '22222222-2222-4222-8222-222222222222',
+	}
+	const rejected = new SessionRegistry(tempRegistryFile(), () => {
+		throw new Error('disk unavailable')
+	})
+	assert.equal(rejected.registerRunOwned('scheduled-rejected', ownership), false)
+	assert.equal(rejected.get('scheduled-rejected'), undefined)
+
+	let failWrites = false
+	const registry = new SessionRegistry(tempRegistryFile(), () => {
+		if (failWrites) throw new Error('disk unavailable')
+	})
+	assert.equal(registry.registerRunOwned('scheduled-owned', ownership), true)
+	const group = registry.createGroup('Scheduled', ['scheduled-owned'])
+	assert.ok(group)
+	registry.flush()
+	failWrites = true
+	assert.equal(registry.removeRunOwned('scheduled-owned'), false)
+	assert.equal(registry.get('scheduled-owned')?.groupId, group.id)
+	assert.equal(registry.getGroups()[0]?.id, group.id)
 })
 
 test('legacy sessions without explicit order fall back to creation time', () => {

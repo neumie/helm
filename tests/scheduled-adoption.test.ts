@@ -321,7 +321,12 @@ test('service reserves only after attestation, burns grants on descriptor attach
 		)
 		const completed = service.completeAttentionAdoption('work', run.id, reservation.run.revision, identity, true)
 		assert.equal(completed.attentionAdoption?.state, 'completed')
-		assert.equal(attestations, 3)
+		const notified = commands.markNotificationDelivered(completed.id, completed.revision)
+		assert.deepEqual(
+			await service.restoreCompletedAttentionDescriptor('work', notified.id, reservation.run.revision, identity),
+			{ socketPath: '/tmp/helm-sched-test/work/sr.sock', mode: 'attach-existing', redraw: 'winch' },
+		)
+		assert.equal(attestations, 4)
 
 		let duplicateRace = attentionRun(commands, 'duplicate-race')
 		duplicateRace = commands.recordRuntime(duplicateRace.id, duplicateRace.revision, {

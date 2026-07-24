@@ -15,7 +15,11 @@ import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
 import { RunContextWindows } from './run-context-window'
-import { ScheduledAttentionAdoptionCoordinator, type ScheduledSessionOwnership } from './scheduled-adoption-main'
+import {
+	ScheduledAttentionAdoptionCoordinator,
+	type ScheduledSessionOwnership,
+	scheduledDtachAttachArgs,
+} from './scheduled-adoption-main'
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
@@ -1184,7 +1188,7 @@ function openScheduledRenderer(terminal: import('./shared').ScheduledTerminalOpe
 		const timer = setTimeout(() => {
 			scheduledOpenAcks.delete(terminal.ptyId)
 			resolve(false)
-		}, 5_000)
+		}, 30_000)
 		scheduledOpenAcks.set(terminal.ptyId, {
 			resolve: opened => {
 				clearTimeout(timer)
@@ -1215,7 +1219,7 @@ async function attachScheduledPty(input: {
 		throw new Error('Scheduled attach descriptor is invalid')
 	const ptyId = nextPtyId++
 	const token = sessionProfileToken()
-	const proc = pty.spawn(support.dtach, ['-a', expectedSocket, '-E', '-r', 'winch', defaultShell(), '-l'], {
+	const proc = pty.spawn(support.dtach, scheduledDtachAttachArgs(expectedSocket), {
 		name: 'xterm-256color',
 		cols: 80,
 		rows: 24,
@@ -1265,8 +1269,8 @@ const scheduledRegistryAdapter = {
 	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
 		return getSessionSupport()?.registry.registerRunOwned(sessionId, ownership) ?? false
 	},
-	removeRunOwned(sessionId: string): void {
-		getSessionSupport()?.registry.removeRunOwned(sessionId)
+	removeRunOwned(sessionId: string): boolean {
+		return getSessionSupport()?.registry.removeRunOwned(sessionId) ?? false
 	},
 	listRunOwned() {
 		return (getSessionSupport()?.registry.listRunOwned() ?? []).map(entry => ({

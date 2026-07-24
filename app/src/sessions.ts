@@ -676,9 +676,11 @@ export class SessionRegistry {
 	#data: Record<string, SessionMeta> = {}
 	#groups: Record<string, TabGroupMeta> = {}
 	#saveTimer: NodeJS.Timeout | null = null
+	readonly #persistDocument: (file: string, document: SessionRegistryFile) => void
 
-	constructor(file: string) {
+	constructor(file: string, writeDocument = SessionRegistry.#writeDocument) {
 		this.#file = file
+		this.#persistDocument = writeDocument
 		try {
 			const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
 			const rawGroups = raw._tabGroups
@@ -911,14 +913,24 @@ export class SessionRegistry {
 			backing: 'run-owned',
 			scheduledOwnership: { ...ownership },
 		}
-		return this.flushSync()
+		if (this.flushSync()) return true
+		// Atomic write failure leaves the previous on-disk document intact; restore
+		// the same state in memory so a later cosmetic flush cannot persist a
+		// reservation the coordinator already rejected.
+		delete this.#data[sessionId]
+		return false
 	}
 
-	removeRunOwned(sessionId: string): void {
-		if (this.#data[sessionId]?.backing !== 'run-owned') return
+	removeRunOwned(sessionId: string): boolean {
+		const existing = this.#data[sessionId]
+		if (existing?.backing !== 'run-owned') return true
+		const previousGroups = structuredClone(this.#groups)
 		delete this.#data[sessionId]
 		this.#removeEmptyGroups()
-		this.flushSync()
+		if (this.flushSync()) return true
+		this.#data[sessionId] = existing
+		this.#groups = previousGroups
+		return false
 	}
 
 	/** Main-only startup recovery source. Never expose ownership through sessions:list. */
@@ -1069,7 +1081,7 @@ export class SessionRegistry {
 	flushSync(): boolean {
 		this.#cancelSave()
 		try {
-			SessionRegistry.#writeDocument(this.#file, SessionRegistry.#document(this.#data, this.#groups))
+			this.#persistDocument(this.#file, SessionRegistry.#document(this.#data, this.#groups))
 			return true
 		} catch {
 			// Cosmetic callers may degrade; handoff callers inspect the false result.

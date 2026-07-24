@@ -4,7 +4,11 @@ import test from 'node:test'
 // @ts-expect-error default-import convention for that bridge
 import adoptionModule from '../app/src/scheduled-adoption-main.ts'
 type AdoptionModule = typeof import('../app/src/scheduled-adoption-main.ts')
-const { ScheduledAttentionAdoptionCoordinator } = adoptionModule as AdoptionModule
+const { ScheduledAttentionAdoptionCoordinator, scheduledDtachAttachArgs } = adoptionModule as AdoptionModule
+
+test('scheduled dtach adoption uses exact lowercase attach-only argv', () => {
+	assert.deepEqual(scheduledDtachAttachArgs('/tmp/existing.sock'), ['-a', '/tmp/existing.sock', '-E', '-r', 'winch'])
+})
 
 const ownership = {
 	profileId: 'work',
@@ -14,7 +18,7 @@ const ownership = {
 	adopter: '22222222-2222-4222-8222-222222222222',
 }
 
-function fixture(options: { fail?: string; current?: boolean } = {}) {
+function fixture(options: { fail?: string; current?: boolean; currentSequence?: boolean[] } = {}) {
 	const calls: string[] = []
 	const retained: Array<{ sessionId: string; ownership: typeof ownership }> = []
 	const coordinator = new ScheduledAttentionAdoptionCoordinator({
@@ -38,11 +42,14 @@ function fixture(options: { fail?: string; current?: boolean } = {}) {
 			rollback: async () => {
 				calls.push('rollback')
 			},
-			restoreDescriptor: async () => ({
-				socketPath: '/private/socket',
-				mode: 'attach-existing' as const,
-				redraw: 'winch' as const,
-			}),
+			restoreDescriptor: async () => {
+				calls.push('restore-descriptor')
+				return {
+					socketPath: '/private/socket',
+					mode: 'attach-existing' as const,
+					redraw: 'winch' as const,
+				}
+			},
 		},
 		attach: {
 			attach: async input => {
@@ -59,7 +66,10 @@ function fixture(options: { fail?: string; current?: boolean } = {}) {
 				retained.push({ sessionId, ownership: value })
 				return true
 			},
-			removeRunOwned: () => calls.push('remove'),
+			removeRunOwned: () => {
+				calls.push('remove')
+				return options.fail !== 'remove'
+			},
 			listRunOwned: () =>
 				retained.map(entry => ({
 					...entry,
@@ -74,9 +84,14 @@ function fixture(options: { fail?: string; current?: boolean } = {}) {
 					},
 				})),
 		},
-		renderer: { open: async () => options.fail !== 'renderer' },
+		renderer: {
+			open: async () => {
+				calls.push('open')
+				return options.fail !== 'renderer' && options.fail !== 'remove'
+			},
+		},
 		newSessionId: () => 'safe-session',
-		isCurrent: () => options.current !== false,
+		isCurrent: () => options.currentSequence?.shift() ?? options.current !== false,
 	})
 	return { coordinator, calls, retained }
 }
@@ -85,7 +100,7 @@ test('scheduled adoption orders reserve, descriptor, lowercase-compatible attach
 	const f = fixture()
 	const result = await f.coordinator.adopt({ ...ownership, profileToken: 'work:0' })
 	assert.deepEqual(result, { status: 'completed', sessionId: 'safe-session', ptyId: 42 })
-	assert.deepEqual(f.calls, ['reserve', 'descriptor', 'attach:attach-existing:winch', 'flush', 'complete'])
+	assert.deepEqual(f.calls, ['reserve', 'descriptor', 'attach:attach-existing:winch', 'flush', 'open', 'complete'])
 })
 
 test('attach or registry failure detaches only the newly attached client and rolls back', async () => {
@@ -99,6 +114,14 @@ test('attach or registry failure detaches only the newly attached client and rol
 	}
 })
 
+test('failed ownership-evidence removal keeps daemon reservation ambiguous', async () => {
+	const f = fixture({ fail: 'remove' })
+	const result = await f.coordinator.adopt({ ...ownership, profileToken: 'work:0' })
+	assert.deepEqual(result, { status: 'ambiguous', sessionId: 'safe-session', ptyId: 42 })
+	assert.equal(f.calls.includes('rollback'), false)
+	assert.equal(f.calls.includes('detach:42'), true)
+})
+
 test('completion ambiguity retains attached client and durable registry then retries idempotently', async () => {
 	const f = fixture({ fail: 'complete' })
 	const result = await f.coordinator.adopt({ ...ownership, profileToken: 'work:0' })
@@ -107,6 +130,14 @@ test('completion ambiguity retains attached client and durable registry then ret
 	assert.equal(f.retained.length, 1)
 	await f.coordinator.recoverAmbiguous()
 	assert.equal(f.calls.filter(call => call === 'complete').length, 2)
+})
+
+test('restore detaches when the profile changes during attach', async () => {
+	const f = fixture({ currentSequence: [true, true, false] })
+	f.retained.push({ sessionId: 'scheduled-session', ownership })
+	await f.coordinator.restore('work:0')
+	assert.equal(f.calls.includes('detach:42'), true)
+	assert.equal(f.calls.includes('open'), false)
 })
 
 test('stale profile admission does not reserve or leak descriptors', async () => {

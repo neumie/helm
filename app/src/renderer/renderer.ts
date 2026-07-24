@@ -2233,6 +2233,10 @@ void document.fonts.ready.then(() => fitActive())
 // New-tab actions are gated until session restore finishes, so restored tabs
 // always come first and a fast cmd+T can't interleave with reattachment.
 let tabsReady = false
+let resolveTabsReady!: () => void
+const tabsReadyPromise = new Promise<void>(resolve => {
+	resolveTabsReady = resolve
+})
 
 newTabButton.addEventListener('click', () => {
 	if (tabsReady) void createTerminal()
@@ -2354,7 +2358,8 @@ async function runUiPreview(): Promise<void> {
 // hands over only an opaque attached PTY/session pair after durable registry
 // ownership; the preload immediately acknowledges mounting success.
 helm.sessions.onScheduledOpen(async terminal => {
-	if (!tabsReady || tabs.some(tab => tab.ptyId === terminal.ptyId || tab.sessionId === terminal.sessionId)) return false
+	if (!tabsReady) await tabsReadyPromise
+	if (tabs.some(tab => tab.ptyId === terminal.ptyId || tab.sessionId === terminal.sessionId)) return false
 	try {
 		await createTerminal({
 			sessionId: terminal.sessionId,
@@ -2412,6 +2417,7 @@ void (async () => {
 		}).catch(() => {})
 	}
 	tabsReady = true
+	resolveTabsReady()
 	// --term-cmd (screenshot harness): type a command into the first tab's
 	// shell. The pty input buffer holds it until the shell is ready to read.
 	// (read through a closure: top-level CFA otherwise keeps activeTab narrowed

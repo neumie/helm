@@ -265,7 +265,15 @@ export class ScheduledRunService {
 	 * It accepts only the durable non-secret registry identity and performs the
 	 * same exact read-only attestation before returning an ephemeral descriptor.
 	 */
-	async restoreCompletedAttentionDescriptor(
+	restoreCompletedAttentionDescriptor(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+	): Promise<AttentionAttachDescriptor> {
+		return this.trackAdoption(this.restoreCompletedAttentionDescriptorInternal(profileId, runId, revision, identity))
+	}
+	private async restoreCompletedAttentionDescriptorInternal(
 		profileId: string,
 		runId: string,
 		revision: number,
@@ -280,14 +288,24 @@ export class ScheduledRunService {
 			run.attentionAdoption.adoptionId !== identity.adoptionId ||
 			run.attentionAdoption.adopter !== identity.adopter ||
 			run.terminalResolvedAt === null ||
-			// Completion itself increments the reservation revision exactly once.
-			run.revision !== revision + 1
+			// Completion increments the reservation revision once; later independent
+			// lifecycle writers may advance it further without invalidating ownership.
+			run.revision < revision + 1
 		)
 			throw new Error('Scheduled attention adoption is unavailable')
 		const persistedIdentity = parseIdentity(run.processFingerprint)
 		if (!persistedIdentity) throw new Error('Scheduled attention session cannot be attested')
 		const attestation = await this.supervisor.attestLiveSession(profileId, run.sessionId, persistedIdentity)
-		if (attestation.state !== 'verified') throw new Error('Scheduled attention session cannot be attested')
+		if (attestation.state !== 'verified' || this.stopped)
+			throw new Error('Scheduled attention session cannot be attested')
+		const current = runDb.schedules.requireRun(runId)
+		if (
+			current.attentionAdoption?.state !== 'completed' ||
+			current.attentionAdoption.adoptionId !== identity.adoptionId ||
+			current.attentionAdoption.adopter !== identity.adopter ||
+			current.terminalResolvedAt === null
+		)
+			throw new Error('Scheduled attention adoption is unavailable')
 		return { socketPath: attestation.socketPath, mode: 'attach-existing', redraw: 'winch' }
 	}
 

@@ -25,6 +25,11 @@ export interface ScheduledAdoptionDaemon {
 	restoreDescriptor(input: ScheduledSessionOwnership): Promise<ScheduledAttachDescriptor>
 }
 
+export function scheduledDtachAttachArgs(socketPath: string): string[] {
+	if (typeof socketPath !== 'string' || socketPath === '') throw new Error('Scheduled attach socket is invalid')
+	return ['-a', socketPath, '-E', '-r', 'winch']
+}
+
 export interface ScheduledAdoptionAttach {
 	attach(input: {
 		sessionId: string
@@ -36,7 +41,7 @@ export interface ScheduledAdoptionAttach {
 
 export interface ScheduledAdoptionRegistry {
 	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean
-	removeRunOwned(sessionId: string): void
+	removeRunOwned(sessionId: string): boolean
 	listRunOwned(): Array<{ sessionId: string; ownership: ScheduledSessionOwnership; restored: RestoredSession }>
 }
 
@@ -56,7 +61,7 @@ export interface ScheduledAdoptionOptions {
 
 export type ScheduledAdoptionResult =
 	| { status: 'completed'; sessionId: string; ptyId: number }
-	| { status: 'ambiguous'; sessionId: string; ptyId: number }
+	| { status: 'ambiguous'; sessionId: string; ptyId: number | null }
 	| { status: 'rejected' | 'rolled-back' }
 
 /**
@@ -110,6 +115,10 @@ export class ScheduledAttentionAdoptionCoordinator {
 				const descriptor = await this.options.daemon.restoreDescriptor(ownership)
 				if (!this.validDescriptor(descriptor) || !this.current(ownership, profileToken)) continue
 				const { ptyId } = await this.options.attach.attach({ sessionId, ownership, descriptor })
+				if (!this.current(ownership, profileToken)) {
+					this.options.attach.detach(ptyId)
+					continue
+				}
 				if (!(await this.options.renderer.open({ ...safe, ptyId }))) this.options.attach.detach(ptyId)
 			} catch {
 				// Ownership evidence is intentionally retained: a failed re-attest or
@@ -159,7 +168,11 @@ export class ScheduledAttentionAdoptionCoordinator {
 		registered: boolean,
 	): Promise<ScheduledAdoptionResult> {
 		if (ptyId !== null) this.options.attach.detach(ptyId)
-		if (registered && sessionId !== null) this.options.registry.removeRunOwned(sessionId)
+		if (registered && sessionId !== null && !this.options.registry.removeRunOwned(sessionId)) {
+			// The durable registry may still claim ownership. Keep the daemon
+			// reservation unresolved so startup can safely reconcile that evidence.
+			return { status: 'ambiguous', sessionId, ptyId }
+		}
 		try {
 			await this.options.daemon.rollback(ownership)
 		} catch {
