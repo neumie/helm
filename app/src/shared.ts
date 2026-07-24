@@ -11,11 +11,10 @@ import type {
 } from './shared-helm'
 
 /**
- * Reserved main↔renderer terminal-transfer event shape. It is intentionally
- * not part of HelmApi yet: no preload IPC can start a transfer until a future
- * renderer capability performs the snapshot/attach hand-off.
+ * Main↔renderer terminal-transfer event shape. Prepare freezes and validates
+ * the source; checkpoint captures the stable screen after client detach.
  */
-export type TerminalTransferEventType = 'prepare' | 'commit' | 'rollback'
+export type TerminalTransferEventType = 'prepare' | 'checkpoint' | 'commit' | 'rollback'
 
 /** Main→source-renderer command for one token-bound terminal hand-off. */
 export interface TerminalTransferEvent {
@@ -38,7 +37,7 @@ export interface PtySpawnResult {
 	sessionId: string | null
 }
 
-/** Read-only eligibility for a future cross-profile terminal transfer. */
+/** Read-only eligibility for a controller-backed cross-profile terminal transfer. */
 export type TerminalTransferPreflight =
 	| { status: 'available'; targetProfileIds: string[] }
 	| {
@@ -46,11 +45,7 @@ export type TerminalTransferPreflight =
 			reason: 'busy' | 'stale-profile' | 'invalid-session' | 'missing-source' | 'run-owned' | 'no-targets'
 	  }
 
-/**
- * Restricted transfer discovery only. There is deliberately no move method:
- * moving requires the renderer controller's complete snapshot/detach/attach
- * capability hand-off, which is not IPC-wired yet.
- */
+/** Restricted controller-backed transfer bridge; paths and profile tokens stay preload/main-owned. */
 export interface TerminalTransferApi {
 	/** Captured at preload creation; used only to authenticate transfer events. */
 	profileToken(): string
@@ -60,7 +55,7 @@ export interface TerminalTransferApi {
 	move(sessionId: string, destinationProfileId: string): Promise<TerminalTransferMoveResult>
 	/** Main sends only token-bound transfer commands to the current renderer. */
 	onEvent(listener: (event: TerminalTransferEvent) => void): () => void
-	/** Acknowledge a controller prepare/commit/rollback command. */
+	/** Acknowledge a controller prepare/checkpoint/commit/rollback command. */
 	ack(event: TerminalTransferEvent, result: unknown): Promise<boolean>
 }
 

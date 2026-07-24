@@ -145,6 +145,29 @@ export class TerminalTransferRendererController {
 		return { status: 'prepared', prepared }
 	}
 
+	/** Capture the stable final screen after main confirms the attach client exited. */
+	async checkpoint(request: TerminalTransferRendererRequest): Promise<TerminalTransferRendererPrepareResult> {
+		const record = this.#completionRecord(request, false)
+		if ('reason' in record) return { status: 'rejected', reason: record.reason }
+		if (!this.#hasCurrentToken(request.profileToken)) return { status: 'rejected', reason: 'stale-profile-token' }
+		let acknowledgement: boolean | TerminalTransferSnapshotAcknowledgement
+		try {
+			acknowledgement = await this.#deps.saveSnapshot(request.sessionId)
+		} catch {
+			return { status: 'rejected', reason: 'snapshot-failed' }
+		}
+		if (!snapshotFlushed(acknowledgement)) return { status: 'rejected', reason: 'snapshot-not-flushed' }
+		let metadata: TerminalTransferRendererMetadata | null
+		try {
+			metadata = await this.#deps.metadata(request.sessionId)
+		} catch {
+			return { status: 'rejected', reason: 'metadata-failed' }
+		}
+		if (metadata === null) return { status: 'rejected', reason: 'missing-terminal' }
+		record.prepared = { ...request, metadata: copyMetadata(metadata) }
+		return { status: 'prepared', prepared: record.prepared }
+	}
+
 	async commit(request: TerminalTransferRendererRequest): Promise<TerminalTransferRendererCompletionResult> {
 		const record = this.#completionRecord(request, false)
 		if ('reason' in record) return { status: 'rejected', reason: record.reason }

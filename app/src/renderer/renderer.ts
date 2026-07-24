@@ -692,6 +692,7 @@ function serializeSnapshot(tab: Tab): string | null {
 }
 
 function saveSnapshot(tab: Tab): void {
+	if (tab.transferring) return
 	// Never persist xterm's transient clear/partial replay. Leave dirty set so
 	// the next autosave captures the completed synchronized frame.
 	if (tab.frameOutputPending) return
@@ -710,6 +711,11 @@ function saveAllSnapshots(): void {
 
 function transferredTab(sessionId: string): Tab | null {
 	return [...tabs, ...parked].find(tab => tab.sessionId === sessionId && !tab.closed) ?? null
+}
+
+/** Resolve only after xterm parsed every output chunk queued before this barrier. */
+function waitForTerminalWrites(tab: Tab): Promise<void> {
+	return new Promise(resolve => tab.term.write('', resolve))
 }
 
 function disposeTransferredTab(tab: Tab): void {
@@ -740,7 +746,9 @@ const terminalTransferController = new TerminalTransferRendererController({
 	},
 	async saveSnapshot(sessionId) {
 		const tab = transferredTab(sessionId)
-		if (!tab || !tab.sessionId || tab.frameOutputPending) return { snapshotFlushed: false }
+		if (!tab || !tab.sessionId) return { snapshotFlushed: false }
+		await waitForTerminalWrites(tab)
+		if (tab.frameOutputPending) return { snapshotFlushed: false }
 		const snapshot = serializeSnapshot(tab)
 		if (!snapshot) return { snapshotFlushed: false }
 		tab.dirty = false
@@ -779,9 +787,11 @@ helm.terminalTransfer.onEvent(event => {
 		const result =
 			event.type === 'prepare'
 				? await terminalTransferController.prepare(request)
-				: event.type === 'commit'
-					? await terminalTransferController.commit(request)
-					: await terminalTransferController.rollback(request)
+				: event.type === 'checkpoint'
+					? await terminalTransferController.checkpoint(request)
+					: event.type === 'commit'
+						? await terminalTransferController.commit(request)
+						: await terminalTransferController.rollback(request)
 		await helm.terminalTransfer.ack(event, result)
 	})()
 })
@@ -789,7 +799,7 @@ helm.terminalTransfer.onEvent(event => {
 // Throttled autosave: only tabs whose pty produced output since the last save.
 setInterval(() => {
 	for (const tab of [...tabs, ...parked]) {
-		if (!tab.closed && tab.dirty && tab.ptyId !== null && tab.sessionId) saveSnapshot(tab)
+		if (!tab.closed && !tab.transferring && tab.dirty && tab.ptyId !== null && tab.sessionId) saveSnapshot(tab)
 	}
 }, SNAPSHOT_AUTOSAVE_MS)
 

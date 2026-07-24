@@ -26,6 +26,8 @@ export interface TerminalTransferAdmission {
 	prepare(): Promise<{ snapshotFlushed: boolean; activity: TerminalTransferActivity }>
 	/** Detaches only Helm's dtach attach client; it must never signal the master. */
 	detachAttachClient(): Promise<void>
+	/** Re-snapshots after the attach client has exited, establishing the stable final screen boundary. */
+	checkpoint(): Promise<{ snapshotFlushed: boolean; activity: TerminalTransferActivity }>
 	/** Remove/dispose the source renderer tab only after durable ownership commits. */
 	commitSource(): Promise<void>
 	/** Restores the source renderer tab after a reversible rollback. */
@@ -152,6 +154,11 @@ export class TerminalTransferCoordinator {
 			let current = this.#deps.journal.update(journal, 'snapshot-flushed')
 			await admission.detachAttachClient()
 			current = this.#deps.journal.update(current, 'client-detached')
+			const checkpoint = await admission.checkpoint()
+			if (!checkpoint.snapshotFlushed) {
+				return this.#quarantine(current, 'stable post-detach snapshot acknowledgement is incomplete', admission)
+			}
+			request.sourceRegistry.setActivity(request.sessionId, checkpoint.activity)
 			if (attestTerminalTransferMaster(current, await this.#deps.attestMaster(current)) !== 'verified') {
 				return this.#quarantine(current, 'master attestation failed before socket rename', admission)
 			}

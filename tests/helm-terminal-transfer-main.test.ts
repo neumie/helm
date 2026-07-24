@@ -29,7 +29,7 @@ const SESSION = 'term-1234'
 const SOURCE = 'work'
 const DESTINATION = 'profile-123456789abc'
 
-function fixture() {
+function fixture(captureGate?: Promise<void>) {
 	const root = mkdtempSync(join(tmpdir(), 'helm-transfer-main-'))
 	const sourceDir = join(root, SOURCE)
 	const destinationDir = join(root, DESTINATION)
@@ -72,6 +72,7 @@ function fixture() {
 		},
 		async captureMaster(socket) {
 			calls.push(`capture:${socket}`)
+			await captureGate
 			return { pid: 44, processStartFingerprint: 'start-44' }
 		},
 		async attestMaster(socket) {
@@ -183,6 +184,61 @@ test('rejects a stale renderer token without registering a startable transfer ca
 	}
 })
 
+test('busy admission fences profile-facing preflight before asynchronous master capture completes', async () => {
+	let releaseCapture!: () => void
+	const captureGate = new Promise<void>(resolve => {
+		releaseCapture = resolve
+	})
+	const value = fixture(captureGate)
+	try {
+		assert.equal(
+			value.adapter.registerRendererCapability({
+				profileToken: 'work:0',
+				sessionId: SESSION,
+				async dispatch(event) {
+					return event.type === 'prepare' || event.type === 'checkpoint'
+						? {
+								status: 'prepared',
+								prepared: { metadata: { agentRunning: false, agentAttention: false } },
+							}
+						: { status: 'committed' }
+				},
+			}),
+			true,
+		)
+		const moving = value.adapter.move({
+			sourceProfileId: SOURCE,
+			destinationProfileId: DESTINATION,
+			sessionId: SESSION,
+			profileToken: 'work:0',
+		})
+		await new Promise(resolve => setImmediate(resolve))
+		assert.deepEqual(
+			value.adapter.preflight({
+				sourceProfileId: SOURCE,
+				sessionId: SESSION,
+				profileToken: 'work:0',
+				destinationProfileIds: [DESTINATION],
+			}),
+			{ status: 'unavailable', reason: 'busy' },
+		)
+		assert.deepEqual(
+			await value.adapter.move({
+				sourceProfileId: SOURCE,
+				destinationProfileId: DESTINATION,
+				sessionId: SESSION,
+				profileToken: 'work:0',
+			}),
+			{ status: 'busy' },
+		)
+		releaseCapture()
+		assert.equal((await moving).status, 'moved')
+	} finally {
+		releaseCapture()
+		rmSync(value.root, { recursive: true, force: true })
+	}
+})
+
 test('uses only capability detach events and socket rename; it never calls a master-kill seam', async () => {
 	const value = fixture()
 	try {
@@ -196,7 +252,7 @@ test('uses only capability detach events and socket rename; it never calls a mas
 				async dispatch(event) {
 					events.push(event.type)
 					transactionIds.push(event.transactionId)
-					if (event.type === 'prepare') {
+					if (event.type === 'prepare' || event.type === 'checkpoint') {
 						return {
 							status: 'prepared',
 							prepared: { metadata: { agentRunning: false, agentAttention: false } },
@@ -214,7 +270,7 @@ test('uses only capability detach events and socket rename; it never calls a mas
 			profileToken: 'work:0',
 		})
 		assert.equal(result.status, 'moved')
-		assert.deepEqual(events, ['prepare', 'commit'])
+		assert.deepEqual(events, ['prepare', 'checkpoint', 'commit'])
 		assert.equal(new Set(transactionIds).size, 1, 'prepare and commit address one renderer transaction')
 		assert.equal(value.calls.filter(call => call.startsWith('rename:')).length, 1)
 		assert.equal(
@@ -236,7 +292,7 @@ test('a rejected renderer commit quarantines durable destination ownership inste
 				profileToken: 'work:0',
 				sessionId: SESSION,
 				async dispatch(event) {
-					return event.type === 'prepare'
+					return event.type === 'prepare' || event.type === 'checkpoint'
 						? {
 								status: 'prepared',
 								prepared: { metadata: { agentRunning: false, agentAttention: false } },

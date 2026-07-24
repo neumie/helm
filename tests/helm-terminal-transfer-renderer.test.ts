@@ -95,6 +95,22 @@ test('prepares then commits only the source terminal while preserving exact titl
 	])
 })
 
+test('checkpoint refreshes the same prepared transaction without releasing its freeze', async () => {
+	const value = fixture()
+	assert.equal((await value.controller.prepare(request())).status, 'prepared')
+	value.metadata.title = 'final detached screen'
+	value.metadata.agentRunning = false
+	value.metadata.agentAttention = true
+	const checkpoint = await value.controller.checkpoint(request())
+	assert.equal(checkpoint.status, 'prepared')
+	if (checkpoint.status !== 'prepared') return
+	assert.equal(checkpoint.prepared.transactionId, 'move-1')
+	assert.equal(checkpoint.prepared.metadata.title, 'final detached screen')
+	assert.equal(checkpoint.prepared.metadata.agentAttention, true)
+	assert.deepEqual(value.calls.slice(-2), [`snapshot:${SESSION}`, `metadata:${SESSION}`])
+	assert.equal((await value.controller.commit(request())).status, 'committed')
+})
+
 test('rollback reopens the same prepared source terminal without disposing it', async () => {
 	const value = fixture()
 	assert.equal((await value.controller.prepare(request())).status, 'prepared')

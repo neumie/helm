@@ -200,12 +200,14 @@ export class TerminalTransferMainAdapter {
 		const sourceSocket = sessions.socketPathForProfile(request.sourceProfileId, request.sessionId)
 		const destinationSocket = sessions.socketPathForProfile(request.destinationProfileId, request.sessionId)
 		if (!sessions.socketPathUsable(destinationSocket)) return { status: 'rejected', reason: 'admission-unavailable' }
-		const master = await this.#captureMaster(sourceSocket)
-		if (!master) return { status: 'rejected', reason: 'admission-unavailable' }
 
 		return this.#runBusy(async () => {
 			this.#activeRequest = request
 			try {
+				// Busy/profile-switch/grace-close fencing is already active before
+				// this first await; captured ownership may not race another mutation.
+				const master = await this.#captureMaster(sourceSocket)
+				if (!master) return { status: 'rejected', reason: 'admission-unavailable' }
 				return await this.#coordinator.move({
 					sourceProfileId: request.sourceProfileId,
 					destinationProfileId: request.destinationProfileId,
@@ -263,24 +265,26 @@ export class TerminalTransferMainAdapter {
 			profileToken: request.profileToken,
 		})
 		let released = false
-		return {
-			prepare: async () => {
-				const acknowledgement = await capability.dispatch(event('prepare'))
-				if (!isPrepareAcknowledgement(acknowledgement))
-					return { snapshotFlushed: false, activity: { agentRunning: false, agentAttention: false } }
-				const metadata = (
-					acknowledgement as unknown as {
-						prepared: { metadata: { agentRunning: boolean; agentAttention: boolean } }
-					}
-				).prepared.metadata
-				return {
-					snapshotFlushed: true,
-					activity: { agentRunning: metadata.agentRunning, agentAttention: metadata.agentAttention },
+		const snapshot = async (type: 'prepare' | 'checkpoint') => {
+			const acknowledgement = await capability.dispatch(event(type))
+			if (!isPrepareAcknowledgement(acknowledgement))
+				return { snapshotFlushed: false, activity: { agentRunning: false, agentAttention: false } }
+			const metadata = (
+				acknowledgement as unknown as {
+					prepared: { metadata: { agentRunning: boolean; agentAttention: boolean } }
 				}
-			},
+			).prepared.metadata
+			return {
+				snapshotFlushed: true,
+				activity: { agentRunning: metadata.agentRunning, agentAttention: metadata.agentAttention },
+			}
+		}
+		return {
+			prepare: () => snapshot('prepare'),
 			detachAttachClient: async () => {
 				if (!(await this.#detachAttachClient(sessionId))) throw new Error('source attach client is unavailable')
 			},
+			checkpoint: () => snapshot('checkpoint'),
 			commitSource: async () => {
 				if (!isCompletionAcknowledgement(await capability.dispatch(event('commit')), 'committed'))
 					throw new Error('source renderer did not commit the transfer')

@@ -60,6 +60,10 @@ function fixture(overrides: Partial<TerminalTransferCoordinatorDeps> = {}): Fixt
 		async detachAttachClient() {
 			calls.push('detach')
 		},
+		async checkpoint() {
+			calls.push('checkpoint')
+			return { snapshotFlushed: true, activity: { agentRunning: true, agentAttention: false } }
+		},
 		async commitSource() {
 			calls.push('commit-source')
 		},
@@ -142,7 +146,15 @@ test('moves an ordinary terminal through snapshot fence, attestation, destinatio
 	try {
 		const result = await new TerminalTransferCoordinator(value.deps).move(value.request)
 		assert.equal(result.status, 'moved')
-		assert.deepEqual(value.calls, ['admit', 'prepare', 'detach', 'rename:forward', 'commit-source', 'release:false'])
+		assert.deepEqual(value.calls, [
+			'admit',
+			'prepare',
+			'detach',
+			'checkpoint',
+			'rename:forward',
+			'commit-source',
+			'release:false',
+		])
 		assert.equal(value.request.sourceRegistry.get(SESSION_ID), undefined)
 		const moved = value.request.destinationRegistry.get(SESSION_ID)
 		assert.ok(moved)
@@ -172,6 +184,28 @@ test('quarantines without detaching when prepare acknowledgement does not confir
 		const result = await new TerminalTransferCoordinator(value.deps).move(value.request)
 		assert.equal(result.status, 'quarantined')
 		assert.deepEqual(value.calls, ['prepare', 'release:true'])
+		assert.equal(value.journal.load()?.state, 'rollback-needed')
+	} finally {
+		dispose(value)
+	}
+})
+
+test('quarantines before rename when the stable post-detach snapshot is not acknowledged', async () => {
+	const value = fixture({
+		async beginAdmission() {
+			return {
+				...value.admission,
+				async checkpoint() {
+					value.calls.push('checkpoint')
+					return { snapshotFlushed: false, activity: { agentRunning: true, agentAttention: false } }
+				},
+			}
+		},
+	})
+	try {
+		const result = await new TerminalTransferCoordinator(value.deps).move(value.request)
+		assert.equal(result.status, 'quarantined')
+		assert.deepEqual(value.calls, ['prepare', 'detach', 'checkpoint', 'release:true'])
 		assert.equal(value.journal.load()?.state, 'rollback-needed')
 	} finally {
 		dispose(value)

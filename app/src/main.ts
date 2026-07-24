@@ -285,18 +285,30 @@ function dispatchTerminalTransferEvent(sender: Electron.WebContents, event: Term
 	})
 }
 
-/** Detach only Helm's client; the dtach master remains alive under its socket. */
-function detachPtyForTransfer(sessionId: string): boolean {
+/** Detach only Helm's client; resolve after its final data/exit events, never kill the dtach master. */
+async function detachPtyForTransfer(sessionId: string): Promise<boolean> {
 	for (const [ptyId, entry] of ptys) {
 		if (entry.sessionId !== sessionId) continue
 		ptys.delete(ptyId)
-		try {
-			entry.proc.kill()
-		} catch {
-			// A raced exit is not a safe transfer hand-off.
-			return false
-		}
-		return true
+		return new Promise(resolve => {
+			let settled = false
+			const finish = (detached: boolean): void => {
+				if (settled) return
+				settled = true
+				clearTimeout(timer)
+				exitListener.dispose()
+				resolve(detached)
+			}
+			const exitListener = entry.proc.onExit(() => finish(true))
+			const timer = setTimeout(() => finish(false), 2_000)
+			try {
+				entry.proc.kill()
+			} catch {
+				// Kill did not begin, so restore the still-owned client entry.
+				ptys.set(ptyId, entry)
+				finish(false)
+			}
+		})
 	}
 	return false
 }
