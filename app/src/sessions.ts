@@ -711,6 +711,12 @@ export class SessionRegistry {
 		}))
 	}
 
+	/** Current retained members, or null when the definition no longer exists. */
+	groupMembers(groupId: string): string[] | null {
+		if (!this.#groups[groupId]) return null
+		return Object.entries(this.#data).flatMap(([sessionId, meta]) => (meta.groupId === groupId ? [sessionId] : []))
+	}
+
 	/** Creates a non-empty group and assigns all known unique members in one mutation. */
 	createGroup(name: string, sessionIds: readonly string[]): TabGroup | null {
 		const normalized = normalizedTabGroupName(name)

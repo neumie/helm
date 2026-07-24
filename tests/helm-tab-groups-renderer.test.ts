@@ -332,8 +332,19 @@ test('renderer action adapter uses the validated intent and membership APIs for 
 	assert.match(renderer, /\? 'Move group to Background'/)
 	assert.match(renderer, /: 'Close all'/)
 	assert.match(renderer, /helm\.sessions\.groups\.move\(target\.groupId, false\)/)
+	assert.match(renderer, /restoreGroupMembers\(current, sessionIds\)/)
 	assert.match(renderer, /helm\.sessions\.groups\.move\(target\.groupId, true\)/)
+	assert.match(renderer, /backgroundGroupMembers\(current, sessionIds\)/)
+	assert.match(renderer, /openGroupMembers\(current, authorization\.memberIds\)/)
+	assert.match(renderer, /closeGroupMembers\(current, authorization\.memberIds\)/)
 	assert.match(renderer, /event\.key !== 'ContextMenu' && !\(event\.shiftKey && event\.key === 'F10'\)/)
+})
+
+test('menu keyboard focus skips disabled actions and selection restores its trigger', () => {
+	assert.match(renderer, /const enabledButtons = buttons\.filter\(button => !button\.disabled\)/)
+	assert.match(renderer, /enabledButtons\[event\.key === 'Home' \? 0 : enabledButtons\.length - 1\]/)
+	assert.match(renderer, /enabledButtons\[\(current \+ delta \+ enabledButtons\.length\) % enabledButtons\.length\]/)
+	assert.match(renderer, /if \(trigger\.isConnected\) trigger\.focus\(\)/)
 })
 
 test('collapsed proxy keeps the selected terminal’s exact OSC state instead of synthesizing group activity', () => {

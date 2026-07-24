@@ -1438,10 +1438,11 @@ ipcMain.handle('tab-groups:intent', (_event, value: unknown, profileToken: unkno
 		if (intent.type === 'move') {
 			return registry.get(intent.sessionId) &&
 				(intent.groupId === null || registry.getGroups().some(group => group.id === intent.groupId))
-				? intent
+				? { intent, memberIds: [] }
 				: null
 		}
-		return registry.getGroups().some(group => group.id === intent.groupId) ? intent : null
+		const memberIds = registry.groupMembers(intent.groupId)
+		return memberIds ? { intent, memberIds } : null
 	}),
 )
 
@@ -1566,7 +1567,7 @@ ipcMain.handle(
 		terminalTransferIpcGate.handle(
 			event.sender,
 			profileToken,
-			{ status: 'rejected' as const, reason: 'stale-profile' },
+			Promise.resolve({ status: 'rejected' as const, reason: 'stale-profile' }),
 			async () => {
 				if (
 					!terminalTransferMain ||
@@ -1586,19 +1587,23 @@ ipcMain.handle(
 				}
 				if (!terminalTransferMain.registerRendererCapability(capability))
 					return { status: 'rejected' as const, reason: 'admission-unavailable' }
-				const result = await terminalTransferMain.move({
-					sourceProfileId: sessionProfileId,
-					destinationProfileId,
-					sessionId,
-					profileToken: profileToken as string,
-				})
-				return result.status === 'moved'
-					? { status: 'moved' as const }
-					: result.status === 'busy'
-						? { status: 'busy' as const }
-						: result.status === 'quarantined'
-							? { status: 'quarantined' as const }
-							: { status: 'rejected' as const, reason: result.reason }
+				try {
+					const result = await terminalTransferMain.move({
+						sourceProfileId: sessionProfileId,
+						destinationProfileId,
+						sessionId,
+						profileToken: profileToken as string,
+					})
+					return result.status === 'moved'
+						? { status: 'moved' as const }
+						: result.status === 'busy'
+							? { status: 'busy' as const }
+							: result.status === 'quarantined'
+								? { status: 'quarantined' as const }
+								: { status: 'rejected' as const, reason: result.reason }
+				} finally {
+					terminalTransferMain.unregisterRendererCapability(sessionId, capability)
+				}
 			},
 		),
 )

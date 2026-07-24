@@ -99,6 +99,12 @@ export type TabGroupActionIntent =
 	| { type: 'move-all-background'; groupId: string }
 	| { type: 'close-all'; groupId: string }
 
+/** Main-validated action plus the current profile registry's authoritative members. */
+export interface TabGroupActionAuthorization {
+	intent: TabGroupActionIntent
+	memberIds: string[]
+}
+
 export interface TabGroupsApi {
 	list(): Promise<TabGroup[]>
 	create(name: string, sessionIds: string[]): Promise<TabGroup | null>
@@ -108,8 +114,8 @@ export interface TabGroupsApi {
 	setCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): Promise<boolean>
 	/** Persists one group's strip/background placement; it never moves a PTY. */
 	move(groupId: string, parked: boolean): Promise<string[] | null>
-	/** Validates a declarative action without opening, closing, or killing PTYs. */
-	intent(intent: TabGroupActionIntent): Promise<TabGroupActionIntent | null>
+	/** Validates a declarative action and snapshots current members without controlling PTYs. */
+	intent(intent: TabGroupActionIntent): Promise<TabGroupActionAuthorization | null>
 }
 
 export interface PtyApi {

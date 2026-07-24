@@ -1534,6 +1534,7 @@ function openMenu(items: readonly TabMenuItem[], x: number, y: number, trigger: 
 		button.addEventListener('click', () => {
 			if (button.disabled) return
 			closeTabMenu()
+			if (trigger.isConnected) trigger.focus()
 			item.onPick()
 		})
 		buttons.push(button)
@@ -1549,16 +1550,17 @@ function openMenu(items: readonly TabMenuItem[], x: number, y: number, trigger: 
 			trigger.focus()
 			return
 		}
+		const enabledButtons = buttons.filter(button => !button.disabled)
 		if (event.key === 'Home' || event.key === 'End') {
 			event.preventDefault()
-			buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus()
+			enabledButtons[event.key === 'Home' ? 0 : enabledButtons.length - 1]?.focus()
 			return
 		}
 		if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
 		event.preventDefault()
-		const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+		const current = enabledButtons.indexOf(document.activeElement as HTMLButtonElement)
 		const delta = event.key === 'ArrowDown' ? 1 : -1
-		buttons[(current + delta + buttons.length) % buttons.length]?.focus()
+		enabledButtons[(current + delta + enabledButtons.length) % enabledButtons.length]?.focus()
 	}
 	tabMenuCleanup = () => {
 		tabMenuCleanup = null
@@ -1615,6 +1617,7 @@ function openGroupNameMenu(
 		const name = input.value.trim()
 		if (!name) return
 		closeTabMenu()
+		if (trigger.isConnected) trigger.focus()
 		onSubmit(name)
 	})
 	const onOutside = (event: PointerEvent): void => {
@@ -1814,25 +1817,25 @@ function closeGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonl
 }
 
 function runGroupAction(target: TabGroupActionTarget): void {
-	void helm.sessions.groups.intent(target.intent).then(accepted => {
-		if (!accepted) return
+	void helm.sessions.groups.intent(target.intent).then(authorization => {
+		if (!authorization) return
 		const current = new Map([...tabs, ...parked].map(tab => [tabIdentity(tab), tab]))
 		switch (target.action) {
 			case 'open':
-				openGroupMembers(current, target.memberIds)
+				openGroupMembers(current, authorization.memberIds)
 				break
 			case 'restore':
 				void helm.sessions.groups.move(target.groupId, false).then(sessionIds => {
-					if (sessionIds) restoreGroupMembers(current, target.memberIds)
+					if (sessionIds) restoreGroupMembers(current, sessionIds)
 				})
 				break
 			case 'background':
 				void helm.sessions.groups.move(target.groupId, true).then(sessionIds => {
-					if (sessionIds) backgroundGroupMembers(current, target.memberIds)
+					if (sessionIds) backgroundGroupMembers(current, sessionIds)
 				})
 				break
 			case 'close':
-				closeGroupMembers(current, target.memberIds)
+				closeGroupMembers(current, authorization.memberIds)
 		}
 	})
 }

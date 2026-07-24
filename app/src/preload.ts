@@ -6,7 +6,7 @@ import type {
 	PtySpawnResult,
 	RestoredSession,
 	TabGroup,
-	TabGroupActionIntent,
+	TabGroupActionAuthorization,
 	TerminalTransferEvent,
 	TerminalTransferMoveResult,
 	TerminalTransferPreflight,
@@ -129,7 +129,11 @@ const api: HelmApi = {
 			move: (groupId, parked) =>
 				ipcRenderer.invoke('tab-groups:move', groupId, parked, sessionProfileToken) as Promise<string[] | null>,
 			intent: intent =>
-				ipcRenderer.invoke('tab-groups:intent', intent, sessionProfileToken) as Promise<TabGroupActionIntent | null>,
+				ipcRenderer.invoke(
+					'tab-groups:intent',
+					intent,
+					sessionProfileToken,
+				) as Promise<TabGroupActionAuthorization | null>,
 		},
 		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title, sessionProfileToken),
 		setCustomName: (sessionId, name) =>

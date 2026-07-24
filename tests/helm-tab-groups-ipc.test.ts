@@ -38,6 +38,8 @@ test('tab-group main adapter is fail-closed and declarative rather than a PTY co
 	}
 	assert.match(adapter, /sessionIpcGate\.handle\(profileToken/)
 	assert.match(adapter, /parseTabGroupActionIntent/)
+	assert.match(adapter, /registry\.groupMembers\(intent\.groupId\)/)
+	assert.match(adapter, /\{ intent, memberIds \}/)
 	assert.match(main, /sessions\.tabGroupActionIntent/)
 	assert.doesNotMatch(adapter, /\bptys\b|\.proc\.|killSession|pty:/)
 })
