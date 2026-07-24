@@ -206,15 +206,16 @@ button:focus-visible,
 
 .tab-group-section {
 	gap: 0;
+	background: color-mix(in srgb, var(--group-color) 15%, transparent);
+	box-shadow: inset 0 2px var(--group-color);
 }
 
 .tab-group-members {
-	gap: 4px;
+	gap: 0;
 }
 
 .tab-group-section + .tab-group-section {
-	padding-left: 4px;
-	border-left: 1px solid var(--hairline);
+	margin-left: 4px;
 }
 
 .tab-group-header {
@@ -234,9 +235,8 @@ button:focus-visible,
 	align-items: center;
 	gap: 5px;
 	border: 0;
-	border-radius: var(--radius-md);
-	background: color-mix(in srgb, var(--group-color) 15%, transparent);
-	box-shadow: inset 0 2px var(--group-color);
+	border-radius: 0;
+	background: transparent;
 	color: var(--group-color);
 	font-family: inherit;
 	cursor: pointer;
@@ -253,6 +253,15 @@ button:focus-visible,
 .tab-group-toggle:hover {
 	background: color-mix(in srgb, var(--group-color) 22%, transparent);
 	color: var(--group-color);
+}
+
+.bg-group-section > .tab-group-toggle {
+	background: color-mix(in srgb, var(--group-color) 15%, transparent);
+	box-shadow: inset 0 2px var(--group-color);
+}
+
+.bg-group-section > .tab-group-toggle:hover {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
 }
 
 .tab {
@@ -318,6 +327,21 @@ body.tab-dragging .tab {
 
 .tab.active {
 	background: var(--fill-raised);
+	color: var(--text-0);
+}
+
+.tab-group-section .tab {
+	border-radius: 0;
+	background: transparent;
+}
+
+.tab-group-section .tab:hover {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
+	color: var(--text-1);
+}
+
+.tab-group-section .tab.active {
+	background: color-mix(in srgb, var(--group-color) 30%, transparent);
 	color: var(--text-0);
 }
 
