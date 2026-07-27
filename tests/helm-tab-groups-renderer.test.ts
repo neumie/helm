@@ -115,9 +115,16 @@ test('collapsed groups hide their entire mounted members container despite expli
 	)
 })
 
-test('group label and member tabs form one continuous colored band with rounded outer edges', () => {
-	assert.match(renderer, /count\.className = 'tab-group-count'/)
-	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
+test('group label and member tabs form one continuous colored band with a quiet expanded label', () => {
+	assert.match(renderer, /if \(section\.collapsed\) \{[\s\S]*count\.className = 'tab-group-count'/)
+	assert.match(renderer, /count\.textContent = `· \$\{section\.members\.length\}`/)
+	assert.match(
+		styles,
+		/\.tab-group-toggle\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\) 55%[^;]*var\(--text-1\)/s,
+	)
+	const expandedHover = styles.match(/\.tab-group-toggle:hover\s*\{([^}]*)\}/)?.[1] ?? ''
+	assert.doesNotMatch(expandedHover, /background:/)
+	assert.match(styles, /\.tab-group-section\.collapsed > \.tab-group-toggle:hover\s*\{[^}]*var\(--group-color\) 22%/s)
 	assert.match(styles, /\.tab-group-section\s*\{[^}]*background:\s*color-mix\([^;]*var\(--group-color\) 15%/s)
 	assert.doesNotMatch(styles, /\.tab-group-section\s*\{[^}]*box-shadow:/s)
 	assert.doesNotMatch(styles, /\.tab-group-section::before/)

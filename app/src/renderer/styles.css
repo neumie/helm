@@ -228,7 +228,7 @@ button:focus-visible,
 .tab-group-header {
 	flex: none;
 	height: 28px;
-	padding: 0 10px;
+	padding: 0 8px;
 	color: var(--text-2);
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 600;
@@ -244,9 +244,10 @@ button:focus-visible,
 	border: 0;
 	border-radius: 0;
 	background: transparent;
-	color: var(--group-color);
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-1));
 	font-family: inherit;
 	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 	-webkit-app-region: no-drag;
 }
 
@@ -258,8 +259,11 @@ button:focus-visible,
 }
 
 .tab-group-toggle:hover {
-	background: color-mix(in srgb, var(--group-color) 22%, transparent);
 	color: var(--group-color);
+}
+
+.tab-group-section.collapsed > .tab-group-toggle:hover {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
 }
 
 .bg-group-section > .tab-group-toggle {

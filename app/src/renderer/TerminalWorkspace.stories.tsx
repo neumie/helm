@@ -42,7 +42,7 @@ function TerminalGroup({
 		>
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
 				<span>{name}</span>
-				<span className="tab-group-count">{Children.count(children)}</span>
+				{collapsed ? <span className="tab-group-count">· {Children.count(children)}</span> : null}
 			</button>
 			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`} hidden={collapsed}>
 				{children}
