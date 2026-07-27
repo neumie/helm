@@ -80,13 +80,15 @@ export function tabGroupHeading(section: Pick<TabGroupSection, 'kind' | 'name'>)
 	return section.kind === 'group' ? section.name : null
 }
 
+type MemberBucket = readonly [groupId: string | null, members: TabGroupMember[]]
+
 function membersFor(
 	tabs: readonly TabGroupRendererTab[],
 	groups: ReadonlyMap<string, TabGroup>,
 	surface: TabGroupSurface,
 	activeTabId: string | null,
-): Map<string | null, TabGroupMember[]> {
-	const buckets = new Map<string | null, TabGroupMember[]>()
+): MemberBucket[] {
+	const eligible: Array<{ groupId: string | null; member: TabGroupMember }> = []
 	const seenIds = new Set<string>()
 	for (const tab of tabs) {
 		// A tab must have a single visual identity. Retaining the first malformed
@@ -94,12 +96,44 @@ function membersFor(
 		if (seenIds.has(tab.id)) continue
 		seenIds.add(tab.id)
 		if ((surface === 'background') !== tab.parked) continue
-		const groupId = tab.groupId !== null && groups.has(tab.groupId) ? tab.groupId : null
-		const members = buckets.get(groupId) ?? []
-		members.push({ ...tab, active: tab.id === activeTabId })
-		buckets.set(groupId, members)
+		eligible.push({
+			groupId: tab.groupId !== null && groups.has(tab.groupId) ? tab.groupId : null,
+			member: { ...tab, active: tab.id === activeTabId },
+		})
 	}
-	return buckets
+
+	const namedBuckets = new Map<string, TabGroupMember[]>()
+	for (const entry of eligible) {
+		if (entry.groupId === null) continue
+		const members = namedBuckets.get(entry.groupId) ?? []
+		members.push(entry.member)
+		namedBuckets.set(entry.groupId, members)
+	}
+
+	if (surface === 'strip') {
+		const emittedGroups = new Set<string>()
+		const ordered: MemberBucket[] = []
+		for (const entry of eligible) {
+			if (entry.groupId === null) {
+				// Each ordinary tab remains its own strip unit so a named group can
+				// be reordered between any two ungrouped tabs.
+				ordered.push([null, [entry.member]])
+				continue
+			}
+			if (emittedGroups.has(entry.groupId)) continue
+			emittedGroups.add(entry.groupId)
+			ordered.push([entry.groupId, namedBuckets.get(entry.groupId) ?? []])
+		}
+		return ordered
+	}
+
+	const background = new Map<string | null, TabGroupMember[]>()
+	for (const entry of eligible) {
+		const members = background.get(entry.groupId) ?? []
+		members.push(entry.member)
+		background.set(entry.groupId, members)
+	}
+	return [...background.entries()]
 }
 
 /** Returns the deterministic bulk commands available for a named group section. */
@@ -131,7 +165,7 @@ function composeSurface(
 	activeTabId: string | null,
 ): TabGroupSection[] {
 	const buckets = membersFor(tabs, groups, surface, activeTabId)
-	return [...buckets.entries()].map(([groupId, members]) => {
+	return buckets.map(([groupId, members]) => {
 		const group = groupId === null ? null : (groups.get(groupId) ?? null)
 		const collapsed = group !== null && (surface === 'strip' ? group.collapsedStrip : group.collapsedBackground)
 		const section: TabGroupSection = {

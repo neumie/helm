@@ -6,6 +6,7 @@ const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.
 const html = readFileSync(new URL('../app/src/renderer/index.html', import.meta.url), 'utf8')
 const normalizedHtml = html.replace(/\s+/g, ' ')
 const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+const thirdPartyNotices = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8')
 
 function functionSlice(name: string, nextName: string): string {
 	const start = renderer.indexOf(`function ${name}`)
@@ -25,10 +26,16 @@ test('opening a background terminal activates it without restoring ownership', (
 	assert.match(restore, /setParked\(tab\.sessionId, false\)/)
 })
 
-test('background strip layers icon is authored on its native 14px stroke grid', () => {
-	assert.match(normalizedHtml, /<svg class="layers-icon" width="14" height="14" viewBox="0 0 14 14"/)
-	assert.match(normalizedHtml, /stroke-width="1"/)
-	assert.doesNotMatch(normalizedHtml, /viewBox="0 0 24 24"/)
+test('background strip uses the selected native 16px Heroicons down-to-stack glyph', () => {
+	assert.match(normalizedHtml, /<svg class="background-icon" width="16" height="16" viewBox="0 0 16 16"/)
+	assert.match(normalizedHtml, /fill="currentColor"/)
+	assert.match(normalizedHtml, /M7 1a\.75\.75 0 0 1 \.75\.75V6/)
+	assert.match(normalizedHtml, /M4\.268 14A2 2 0 0 0 6 15h6/)
+	assert.doesNotMatch(normalizedHtml, /M3 2a1 1 0 0 0-1 1v1/)
+	assert.doesNotMatch(normalizedHtml, /stroke-width=/)
+	assert.match(thirdPartyNotices, /Heroicons/)
+	assert.match(thirdPartyNotices, /Arrow Down on Square Stack/)
+	assert.match(thirdPartyNotices, /MIT License/)
 })
 
 test('strip control names the currently open background terminal', () => {

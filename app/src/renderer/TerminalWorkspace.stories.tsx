@@ -29,20 +29,11 @@ function TerminalTab({ label, active, activity, rename }: TabFixture) {
 	)
 }
 
-function LayersIcon() {
+function GroupIcon() {
 	return (
-		<svg
-			className="layers-icon"
-			viewBox="0 0 14 14"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="1"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-			aria-hidden="true"
-		>
-			<path d="M7 1.5 12.5 4.5 7 7.5 1.5 4.5 7 1.5Z" vectorEffect="non-scaling-stroke" />
-			<path d="m1.5 7.5 5.5 3 5.5-3M1.5 10.5l5.5 3 5.5-3" vectorEffect="non-scaling-stroke" />
+		<svg className="group-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+			{/* Heroicons “Folder”, 16px solid (MIT). See THIRD_PARTY_NOTICES.md. */}
+			<path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h2.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 4H12.5A1.5 1.5 0 0 1 14 5.5v1.401a2.986 2.986 0 0 0-1.5-.401h-9c-.546 0-1.059.146-1.5.401V3.5ZM2 9.5v3A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-3A1.5 1.5 0 0 0 12.5 8h-9A1.5 1.5 0 0 0 2 9.5Z" />
 		</svg>
 	)
 }
@@ -59,9 +50,11 @@ function TerminalGroup({
 			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
 		>
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
-				{collapsed ? null : <LayersIcon />}
-				<span>{name}</span>
-				{collapsed ? <span className="tab-group-count">· {Children.count(children)}</span> : null}
+				<span className="tab-group-summary">
+					<GroupIcon />
+					<span>{name}</span>
+				</span>
+				{collapsed ? <span className="tab-group-count">{Children.count(children)}</span> : null}
 			</button>
 			<div className="tab-group-members" role="tablist" aria-label={`${name} terminals`} hidden={collapsed}>
 				{children}
@@ -111,22 +104,12 @@ function TerminalMenu({ group = false }: { group?: boolean }) {
 	)
 }
 
-function StackIcon() {
+function BackgroundIcon() {
 	return (
-		<svg
-			width="14"
-			height="14"
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-			aria-hidden="true"
-		>
-			<polygon points="12 2 2 7 12 12 22 7 12 2" />
-			<polyline points="2 12 12 17 22 12" />
-			<polyline points="2 17 12 22 22 17" />
+		<svg className="background-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+			{/* Heroicons “Arrow Down on Square Stack”, 16px solid (MIT). See THIRD_PARTY_NOTICES.md. */}
+			<path d="M7 1a.75.75 0 0 1 .75.75V6h-1.5V1.75A.75.75 0 0 1 7 1ZM6.25 6v2.94L5.03 7.72a.75.75 0 0 0-1.06 1.06l2.5 2.5a.75.75 0 0 0 1.06 0l2.5-2.5a.75.75 0 1 0-1.06-1.06L7.75 8.94V6H10a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.25Z" />
+			<path d="M4.268 14A2 2 0 0 0 6 15h6a2 2 0 0 0 2-2v-3a2 2 0 0 0-1-1.732V11a3 3 0 0 1-3 3H4.268Z" />
 		</svg>
 	)
 }
@@ -225,7 +208,7 @@ function TerminalShell({
 							aria-haspopup="dialog"
 							aria-expanded={popover}
 						>
-							<StackIcon />
+							<BackgroundIcon />
 							{backgroundName ? (
 								<span id="bg-current" className="bg-current">
 									{backgroundName}

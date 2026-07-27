@@ -76,6 +76,16 @@ export function groupDropInsertionIndex<T extends { groupId: string | null }>(
 	return items.indexOf(peers[peers.length - 1] as T) + 1
 }
 
+/** Insert one contiguous block between visual strip units. Inputs stay untouched. */
+export function insertBlockAtUnitIndex<T>(
+	units: readonly (readonly T[])[],
+	block: readonly T[],
+	unitIndex: number,
+): T[] {
+	const slot = Math.max(0, Math.min(units.length, Math.floor(unitIndex)))
+	return [...units.slice(0, slot).flat(), ...block, ...units.slice(slot).flat()]
+}
+
 /** Move one existing item into a pre-removal insertion slot. Input stays untouched. */
 export function moveToInsertionIndex<T>(items: readonly T[], moving: T, insertionIndex: number): T[] {
 	const from = items.indexOf(moving)
@@ -93,6 +103,7 @@ export function moveToInsertionIndex<T>(items: readonly T[], moving: T, insertio
 export default {
 	dragThresholdExceeded,
 	groupDropInsertionIndex,
+	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
 	stripDropInsertionIndex,

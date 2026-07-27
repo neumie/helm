@@ -221,6 +221,10 @@ button:focus-visible,
 	gap: 0;
 }
 
+.ungrouped-tab-members {
+	gap: 4px;
+}
+
 .tab-group-section + .tab-group-section {
 	margin-left: 4px;
 }
@@ -240,7 +244,8 @@ button:focus-visible,
 .tab-group-toggle {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 0;
+	padding: 0;
 	border: 0;
 	border-radius: 0;
 	background: transparent;
@@ -251,16 +256,24 @@ button:focus-visible,
 	-webkit-app-region: no-drag;
 }
 
-.layers-icon {
+.group-icon,
+.background-icon {
 	display: block;
 	flex: none;
-	width: 14px;
-	height: 14px;
-	shape-rendering: geometricPrecision;
+	width: 16px;
+	height: 16px;
 }
 
-.tab-group-toggle .layers-icon {
+.tab-group-toggle .group-icon {
 	color: var(--group-color);
+}
+
+.tab-group-summary {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	height: 28px;
+	padding: 0 8px;
 }
 
 .tab-group-section:not(.collapsed) > .tab-group-toggle {
@@ -268,10 +281,22 @@ button:focus-visible,
 }
 
 .tab-group-count {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	min-width: 28px;
+	height: 28px;
+	padding: 0 8px;
 	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
 	font-family: "SF Mono", Menlo, ui-monospace, monospace;
 	font-size: calc(10px * var(--ui-scale));
 	font-weight: 500;
+}
+
+.tab-group-section.collapsed > .tab-group-toggle .tab-group-count,
+.bg-group-section.collapsed > .tab-group-toggle .tab-group-count {
+	border-left: 1px solid color-mix(in srgb, var(--group-color) 20%, transparent);
 }
 
 .tab-group-toggle:hover {
@@ -317,12 +342,34 @@ button:focus-visible,
 }
 
 body.tab-dragging,
-body.tab-dragging .tab {
+body.tab-dragging .tab,
+body.group-dragging,
+body.group-dragging .tab-group-toggle {
 	cursor: grabbing;
 }
 
-.tab.drag-placeholder {
+.tab.drag-placeholder,
+.tab-group-section.group-drag-placeholder {
 	opacity: 0;
+}
+
+.tab-group-drag-preview {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 60;
+	display: flex;
+	flex: none;
+	height: 28px;
+	border-radius: 6px;
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+	opacity: 0.98;
+	pointer-events: none;
+	will-change: transform;
+}
+
+.tab-group-drag-preview.over-background {
+	background: var(--fill-subtle);
 }
 
 .tab-drag-preview {
@@ -627,7 +674,7 @@ body.tab-dragging .tab {
 	display: none; /* visible ONLY when the background count > 0 */
 }
 
-#bg-toggle .layers-icon {
+#bg-toggle .background-icon {
 	color: currentColor;
 }
 

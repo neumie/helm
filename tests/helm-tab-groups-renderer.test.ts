@@ -11,6 +11,12 @@ const { composeTabGroups, shouldReloadCollapsedGroup, tabGroupActionTargets, tab
 const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
 
+function functionSlice(name: string, nextName: string): string {
+	const start = renderer.indexOf(`function ${name}`)
+	const end = nextName ? renderer.indexOf(`function ${nextName}`, start) : renderer.length
+	return renderer.slice(start, end)
+}
+
 const groups: TabGroup[] = [
 	{ id: 'group-11111111', name: 'Build', color: 'blue', collapsedStrip: true, collapsedBackground: false },
 	{ id: 'group-22222222', name: 'Review', color: 'purple', collapsedStrip: false, collapsedBackground: true },
@@ -81,7 +87,8 @@ test('composes canonical surface sections while stale membership returns to the 
 		]),
 		[
 			['group', 'group-11111111', 'Build', ['build-active', 'build-attention']],
-			['ungrouped', 'ungrouped', 'Terminals', ['ungrouped-strip', 'stale-membership']],
+			['ungrouped', 'ungrouped', 'Terminals', ['ungrouped-strip']],
+			['ungrouped', 'ungrouped', 'Terminals', ['stale-membership']],
 		],
 	)
 	assert.deepEqual(
@@ -115,12 +122,57 @@ test('collapsed groups hide their entire mounted members container despite expli
 	)
 })
 
-test('group label uses a layers disclosure while member tabs remain one continuous band', () => {
-	assert.match(renderer, /if \(!section\.collapsed\) toggle\.append\(createLayersIcon\(\)\)/)
+test('strip projection preserves a named group between two ungrouped tabs', () => {
+	const orderedTabs: TabGroupRendererTab[] = [
+		{ id: 'plain-a', groupId: null, parked: false, name: 'A', agentRunning: false, agentAttention: false },
+		{ id: 'group-a', groupId: 'group-11111111', parked: false, name: 'G1', agentRunning: false, agentAttention: false },
+		{ id: 'plain-b', groupId: null, parked: false, name: 'B', agentRunning: false, agentAttention: false },
+		{ id: 'group-b', groupId: 'group-11111111', parked: false, name: 'G2', agentRunning: false, agentAttention: false },
+	]
+	const composition = composeTabGroups({ tabs: orderedTabs, groups, activeTabId: null })
+	assert.deepEqual(
+		composition.strip.map(section => [section.kind, section.members.map(member => member.id)]),
+		[
+			['ungrouped', ['plain-a']],
+			['group', ['group-a', 'group-b']],
+			['ungrouped', ['plain-b']],
+		],
+	)
+})
+
+test('ungrouped tabs keep ordinary spacing while named groups remain continuous', () => {
+	assert.match(
+		renderer,
+		/membersEl\.className = section\.kind === 'group' \? 'tab-group-members' : 'tab-group-members ungrouped-tab-members'/,
+	)
+	assert.match(renderer, /if \(section\.kind === 'group'\) membersEl\.id = tabGroupMembersId/)
+	assert.match(styles, /\.ungrouped-tab-members\s*\{[^}]*gap:\s*4px/s)
+	assert.match(styles, /\.tab-group-members\s*\{[^}]*gap:\s*0/s)
+})
+
+test('group label uses a folder disclosure while member tabs remain one continuous band', () => {
+	assert.match(renderer, /summary\.className = 'tab-group-summary'/)
+	assert.match(
+		renderer,
+		/summary\.append\(createGroupIcon\(\)\)\s*summary\.append\(label\)\s*toggle\.append\(summary\)/,
+	)
+	assert.doesNotMatch(renderer, /if \(!section\.collapsed\) [^\n]*createGroupIcon/)
+	const groupIcon = functionSlice('createGroupIcon', 'groupHeader')
+	assert.match(groupIcon, /svg\.setAttribute\('viewBox', '0 0 16 16'\)/)
+	assert.match(groupIcon, /svg\.setAttribute\('fill', 'currentColor'\)/)
+	assert.match(renderer, /M2 3\.5A1\.5 1\.5 0 0 1 3\.5 2h2\.879/)
+	assert.doesNotMatch(renderer, /M7\.628 1\.099/)
+	assert.doesNotMatch(groupIcon, /stroke-width/)
 	assert.match(renderer, /if \(section\.collapsed\) \{[\s\S]*count\.className = 'tab-group-count'/)
-	assert.match(renderer, /count\.textContent = `· \$\{section\.members\.length\}`/)
+	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
 	assert.match(styles, /\.tab-group-section:not\(\.collapsed\) > \.tab-group-toggle\s*\{[^}]*border-right:/s)
-	assert.match(styles, /\.layers-icon\s*\{[^}]*width:\s*14px[^}]*height:\s*14px/s)
+	assert.match(styles, /\.group-icon,\s*\.background-icon\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s)
+	assert.match(styles, /\.tab-group-summary\s*\{[^}]*height:\s*28px[^}]*padding:\s*0 8px/s)
+	assert.match(
+		styles,
+		/\.tab-group-section\.collapsed > \.tab-group-toggle \.tab-group-count,\s*\.bg-group-section\.collapsed > \.tab-group-toggle \.tab-group-count\s*\{[^}]*border-left:/s,
+	)
+	assert.match(styles, /\.tab-group-count\s*\{[^}]*min-width:\s*28px/s)
 	assert.match(
 		styles,
 		/\.tab-group-toggle\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\) 55%[^;]*var\(--text-1\)/s,
@@ -302,6 +354,27 @@ test('pointer drag can join, leave, and cross groups before atomically persistin
 	assert.match(renderer, /function persistTabDragMembership/)
 	assert.match(renderer, /helm\.sessions\.groups\.setMembership\(sessionId, targetGroupId\)/)
 	assert.match(renderer, /restoreTabDragOrigin\(drag, true\)/)
+})
+
+test('collapsed group header drags every member as one reorderable strip block', () => {
+	const header = functionSlice('groupHeader', 'focusedGroupHeader')
+	assert.match(
+		header,
+		/section\.surface === 'strip' && section\.collapsed[\s\S]*beginCollapsedGroupPointerDrag\(section, toggle, event\)/,
+	)
+	assert.match(renderer, /function beginCollapsedGroupPointerDrag/)
+	assert.match(renderer, /dragThresholdExceeded\(drag\.startX, drag\.startY, drag\.x, drag\.y\)/)
+	assert.match(renderer, /insertBlockAtUnitIndex\([\s\S]*units\.map\(unit => unit\.members\)[\s\S]*drag\.members/)
+	assert.match(renderer, /if \(cancelled \|\| drag\.dropTarget !== 'strip'\) restoreCollapsedGroupDragOrigin\(drag\)/)
+	assert.match(renderer, /else persistTerminalOrder\(\)/)
+	assert.match(renderer, /pointInExpandedRect\(drag\.x, drag\.y, backgroundRect, 8\)/)
+	assert.match(renderer, /drag\.dropTarget = 'background'/)
+	assert.match(renderer, /executeGroupAction\(\{[\s\S]*action: 'background'[\s\S]*type: 'move-all-background'/)
+	assert.match(renderer, /if \(!moved\) restoreCollapsedGroupDragOrigin\(drag\)/)
+	assert.match(renderer, /suppressedGroupToggleClicks\.add\(toggleKey\)/)
+	assert.match(styles, /\.tab-group-section\.group-drag-placeholder\s*\{[^}]*opacity:\s*0/s)
+	assert.match(styles, /\.tab-group-drag-preview\s*\{[^}]*position:\s*fixed[^}]*height:\s*28px/s)
+	assert.match(styles, /\.tab-group-drag-preview\.over-background\s*\{[^}]*background:/s)
 })
 
 test('renderer action adapter uses the validated intent and membership APIs for tab and group menus', () => {

@@ -6,6 +6,7 @@ type DragModule = typeof import('../app/src/renderer/tab-drag.ts')
 const {
 	dragThresholdExceeded,
 	groupDropInsertionIndex,
+	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
 	stripDropInsertionIndex,
@@ -20,6 +21,26 @@ test('tab midpoint chooses before or after insertion slot', () => {
 
 test('moving right accounts for removal before insertion', () => {
 	assert.deepEqual(moveToInsertionIndex(['a', 'b', 'c', 'd'], 'a', 3), ['b', 'c', 'a', 'd'])
+})
+
+test('collapsed group block moves between individual ungrouped strip units', () => {
+	const units = [['plain-a'], ['plain-b'], ['group-b-1', 'group-b-2']]
+	assert.deepEqual(insertBlockAtUnitIndex(units, ['group-a-1', 'group-a-2'], 1), [
+		'plain-a',
+		'group-a-1',
+		'group-a-2',
+		'plain-b',
+		'group-b-1',
+		'group-b-2',
+	])
+	assert.deepEqual(insertBlockAtUnitIndex(units, ['group-a-1', 'group-a-2'], 99), [
+		'plain-a',
+		'plain-b',
+		'group-b-1',
+		'group-b-2',
+		'group-a-1',
+		'group-a-2',
+	])
 })
 
 test('moving left and to strip edges preserves every tab once', () => {
