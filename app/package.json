@@ -6,12 +6,13 @@
 	"description": "Orchestrator cockpit for the helm daemon: native sidebar + real terminal",
 	"main": "dist/main.cjs",
 	"scripts": {
-		"build": "npm --prefix .. run build && tsc --noEmit && node build.mjs",
+		"build": "npm --prefix .. run build && node scripts/rebuild-native-window-zoom-guard.mjs && tsc --noEmit && node build.mjs",
 		"start": "bun run build && bun run brand-electron && electron .",
-		"rebuild": "electron-rebuild -f -w node-pty",
+		"rebuild": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force",
+		"rebuild-native-window-zoom": "node scripts/rebuild-native-window-zoom-guard.mjs --force",
 		"brand-electron": "node scripts/brand-macos-electron.mjs",
 		"attest:profile-switch": "node scripts/profile-switch-attestation.mjs --require-electron --require-dtach",
-		"postinstall": "electron-rebuild -f -w node-pty && node scripts/brand-macos-electron.mjs",
+		"postinstall": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force && node scripts/brand-macos-electron.mjs",
 		"storybook": "storybook dev -p 6006",
 		"storybook:build": "storybook build"
 	},

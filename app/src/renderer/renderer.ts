@@ -2195,17 +2195,29 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	term.onWriteParsed(() => scheduleScrollbarSync(tab))
 
 	tabButton.addEventListener('pointerdown', event => beginTabPointerDrag(tab, event))
+	// Keep the second press owned by the completed rename gesture rather than
+	// re-dispatching activation while dblclick is still being assembled.
+	tabButton.addEventListener(
+		'mousedown',
+		event => {
+			if (event.detail < 2) return
+			helm.tabs.guardNativeDoubleClick()
+			event.preventDefault()
+			event.stopImmediatePropagation()
+		},
+		{ capture: true },
+	)
 	tabButton.addEventListener('click', () => {
 		if (suppressTabClick.delete(tab)) return
 		activate(tab)
 	})
-	// Claim the double-click before the native titlebar sees it: on macOS a
-	// titlebar double-click zooms the window, while a tab double-click renames.
+	// Double-clicking a tab is rename only; native AppKit zoom is disabled in main.
 	tabButton.addEventListener('dblclick', event => {
 		event.preventDefault()
-		event.stopPropagation()
+		event.stopImmediatePropagation()
 		if (event.target instanceof Node && close.contains(event.target)) return
-		startRename(tab)
+		// Finish dispatch before replacing the label with a focused native input.
+		requestAnimationFrame(() => startRename(tab))
 	})
 	tabButton.addEventListener('keydown', event => {
 		if (event.key === 'Enter' || event.key === ' ') {

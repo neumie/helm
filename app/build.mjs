@@ -10,7 +10,7 @@ await build({
 	platform: 'node',
 	format: 'cjs',
 	outfile: 'dist/main.cjs',
-	external: ['electron', 'node-pty'],
+	external: ['electron', 'node-pty', '../native/window-zoom-guard/build/Release/helm_native_window_zoom_guard.node'],
 })
 
 await build({

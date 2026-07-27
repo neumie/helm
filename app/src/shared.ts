@@ -235,6 +235,8 @@ export interface TabsApi {
 	onClose(listener: () => void): () => void
 	/** Move the active tab to the background (⌘⇧B). */
 	onBackground(listener: () => void): () => void
+	/** Arm the native frame guard for this tab's second click. */
+	guardNativeDoubleClick(): boolean
 }
 
 /** A theme file from <userData>/themes/<id>.json (docs/design-system.md §2.8). */

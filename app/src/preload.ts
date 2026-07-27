@@ -251,6 +251,7 @@ const api: HelmApi = {
 		onNew: listener => subscribe('tab:new', listener),
 		onClose: listener => subscribe('tab:close', listener),
 		onBackground: listener => subscribe('tab:background', listener),
+		guardNativeDoubleClick: () => ipcRenderer.sendSync('window:guard-tab-double-click', sessionProfileToken) as boolean,
 	},
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

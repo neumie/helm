@@ -10,6 +10,7 @@ import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
+import { guardNativeTabDoubleClick, installNativeWindowZoomGuard } from './native-window-zoom'
 import { ProfileSwitchCoordinator } from './profile-switch'
 import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
@@ -604,8 +605,13 @@ function createWindow(): BrowserWindow {
 		title: 'Helm',
 		show: false,
 		backgroundColor: '#141517',
-		titleBarStyle: 'hiddenInset',
+		// Keep native traffic lights while rendering the cockpit into the titlebar.
+		// AppKit zoom is disabled by installNativeWindowZoomGuard() before creation;
+		// CSS no-drag and BrowserWindow capability flags cannot enforce that alone.
+		titleBarStyle: 'hidden',
 		trafficLightPosition: { x: 14, y: 12 },
+		// Also disable the exposed green-control capabilities at Electron's API layer.
+		...(process.platform === 'darwin' ? { maximizable: false, fullscreenable: false } : {}),
 		webPreferences: {
 			preload: path.join(__dirname, 'preload.cjs'),
 			contextIsolation: true,
@@ -1133,8 +1139,6 @@ function buildMenu(): void {
 				{ role: 'reload' },
 				{ role: 'forceReload' },
 				{ role: 'toggleDevTools' },
-				{ type: 'separator' },
-				{ role: 'togglefullscreen' },
 			],
 		},
 		{
@@ -1155,7 +1159,7 @@ function buildMenu(): void {
 				},
 			],
 		},
-		{ label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }] },
+		{ label: 'Window', submenu: [{ role: 'minimize' }] },
 	]
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
@@ -1757,6 +1761,12 @@ ipcMain.on('config:get', event => {
 	event.returnValue = { daemonUrl, sessionProfileToken: sessionProfileToken() }
 })
 
+ipcMain.on('window:guard-tab-double-click', (event, profileToken: unknown) => {
+	const window = mainWindow
+	const allowed = window !== null && event.sender === window.webContents && sessionIpcGate.allows(profileToken)
+	event.returnValue = allowed ? guardNativeTabDoubleClick(window.getNativeWindowHandle()) : false
+})
+
 ipcMain.handle('terminal-transfer:ack', (event, command: unknown, result: unknown, profileToken: unknown) => {
 	if (!terminalTransferIpcGate.allows(event.sender, profileToken) || !command || typeof command !== 'object')
 		return false
@@ -1972,6 +1982,9 @@ ipcMain.handle('profiles:activate', (_event, id: string, profileToken: unknown) 
 })
 
 void app.whenReady().then(async () => {
+	// Electron 43 hardcodes windowShouldZoom=YES even for maximizable:false.
+	// Install the AppKit delegate override before constructing any BrowserWindow.
+	installNativeWindowZoomGuard()
 	app.setAboutPanelOptions({
 		applicationName: APP_NAME,
 		applicationVersion: app.getVersion(),
