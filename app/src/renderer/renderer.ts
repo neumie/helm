@@ -223,6 +223,25 @@ function applyGroupColor(element: HTMLElement, color: TabGroupColor | null): voi
 	if (color !== null) element.style.setProperty('--group-color', tabGroupColorCssVar(color))
 }
 
+function createLayersIcon(): SVGSVGElement {
+	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+	svg.classList.add('layers-icon')
+	svg.setAttribute('viewBox', '0 0 14 14')
+	svg.setAttribute('fill', 'none')
+	svg.setAttribute('stroke', 'currentColor')
+	svg.setAttribute('stroke-width', '1')
+	svg.setAttribute('stroke-linecap', 'round')
+	svg.setAttribute('stroke-linejoin', 'round')
+	svg.setAttribute('aria-hidden', 'true')
+	for (const d of ['M7 1.5 12.5 4.5 7 7.5 1.5 4.5 7 1.5Z', 'm1.5 7.5 5.5 3 5.5-3M1.5 10.5l5.5 3 5.5-3']) {
+		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+		path.setAttribute('d', d)
+		path.setAttribute('vector-effect', 'non-scaling-stroke')
+		svg.append(path)
+	}
+	return svg
+}
+
 function groupHeader(section: TabGroupSection): HTMLElement | null {
 	const heading = tabGroupHeading(section)
 	if (heading === null) return null
@@ -235,6 +254,7 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 	applyGroupColor(toggle, section.color)
 	const label = document.createElement('span')
 	label.textContent = heading
+	if (!section.collapsed) toggle.append(createLayersIcon())
 	toggle.append(label)
 	if (section.collapsed) {
 		const count = document.createElement('span')

@@ -29,6 +29,24 @@ function TerminalTab({ label, active, activity, rename }: TabFixture) {
 	)
 }
 
+function LayersIcon() {
+	return (
+		<svg
+			className="layers-icon"
+			viewBox="0 0 14 14"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="1"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M7 1.5 12.5 4.5 7 7.5 1.5 4.5 7 1.5Z" vectorEffect="non-scaling-stroke" />
+			<path d="m1.5 7.5 5.5 3 5.5-3M1.5 10.5l5.5 3 5.5-3" vectorEffect="non-scaling-stroke" />
+		</svg>
+	)
+}
+
 function TerminalGroup({
 	name,
 	color,
@@ -41,6 +59,7 @@ function TerminalGroup({
 			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
 		>
 			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
+				{collapsed ? null : <LayersIcon />}
 				<span>{name}</span>
 				{collapsed ? <span className="tab-group-count">· {Children.count(children)}</span> : null}
 			</button>

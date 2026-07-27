@@ -115,9 +115,12 @@ test('collapsed groups hide their entire mounted members container despite expli
 	)
 })
 
-test('group label and member tabs form one continuous colored band with a quiet expanded label', () => {
+test('group label uses a layers disclosure while member tabs remain one continuous band', () => {
+	assert.match(renderer, /if \(!section\.collapsed\) toggle\.append\(createLayersIcon\(\)\)/)
 	assert.match(renderer, /if \(section\.collapsed\) \{[\s\S]*count\.className = 'tab-group-count'/)
 	assert.match(renderer, /count\.textContent = `· \$\{section\.members\.length\}`/)
+	assert.match(styles, /\.tab-group-section:not\(\.collapsed\) > \.tab-group-toggle\s*\{[^}]*border-right:/s)
+	assert.match(styles, /\.layers-icon\s*\{[^}]*width:\s*14px[^}]*height:\s*14px/s)
 	assert.match(
 		styles,
 		/\.tab-group-toggle\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\) 55%[^;]*var\(--text-1\)/s,

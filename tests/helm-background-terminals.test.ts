@@ -25,6 +25,12 @@ test('opening a background terminal activates it without restoring ownership', (
 	assert.match(restore, /setParked\(tab\.sessionId, false\)/)
 })
 
+test('background strip layers icon is authored on its native 14px stroke grid', () => {
+	assert.match(normalizedHtml, /<svg class="layers-icon" width="14" height="14" viewBox="0 0 14 14"/)
+	assert.match(normalizedHtml, /stroke-width="1"/)
+	assert.doesNotMatch(normalizedHtml, /viewBox="0 0 24 24"/)
+})
+
 test('strip control names the currently open background terminal', () => {
 	assert.match(normalizedHtml, /<span id="bg-current" class="bg-current" hidden><\/span>/)
 	const activate = functionSlice('activate', 'cycleTab')

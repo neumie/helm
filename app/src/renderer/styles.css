@@ -251,6 +251,22 @@ button:focus-visible,
 	-webkit-app-region: no-drag;
 }
 
+.layers-icon {
+	display: block;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	shape-rendering: geometricPrecision;
+}
+
+.tab-group-toggle .layers-icon {
+	color: var(--group-color);
+}
+
+.tab-group-section:not(.collapsed) > .tab-group-toggle {
+	border-right: 1px solid color-mix(in srgb, var(--group-color) 20%, transparent);
+}
+
 .tab-group-count {
 	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
 	font-family: "SF Mono", Menlo, ui-monospace, monospace;
@@ -611,9 +627,8 @@ body.tab-dragging .tab {
 	display: none; /* visible ONLY when the background count > 0 */
 }
 
-#bg-toggle svg {
-	display: block;
-	flex: none;
+#bg-toggle .layers-icon {
+	color: currentColor;
 }
 
 /* Names the parked terminal currently shown in the pane. It remains quiet
