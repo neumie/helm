@@ -99,6 +99,52 @@ test('OkenaClient retains the TCP fallback when local_endpoint is absent', async
 	}
 })
 
+test('OkenaClient routes a repository to the profile that owns it instead of stale last_used', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'ho-'))
+	const baseDir = join(root, 'config')
+	const defaultServer = createServer((_request, response) => {
+		response.writeHead(200, { 'Content-Type': 'application/json' })
+		response.end(JSON.stringify({ projects: [{ id: 'jvs', name: 'JVS', path: '/repo/crane-rental' }] }))
+	})
+	const perfServer = createServer((_request, response) => {
+		response.writeHead(200, { 'Content-Type': 'application/json' })
+		response.end(JSON.stringify({ projects: [{ id: 'perf', name: 'perf', path: '/tmp/perf' }] }))
+	})
+	await listen(defaultServer, { port: 0, host: '127.0.0.1' })
+	await listen(perfServer, { port: 0, host: '127.0.0.1' })
+	const defaultAddress = defaultServer.address()
+	const perfAddress = perfServer.address()
+	assert.ok(defaultAddress && typeof defaultAddress !== 'string')
+	assert.ok(perfAddress && typeof perfAddress !== 'string')
+	for (const [id, port, projects] of [
+		['default', defaultAddress.port, [{ path: '/repo/crane-rental' }]],
+		['perf-test', perfAddress.port, [{ path: '/tmp/perf' }]],
+	] as const) {
+		const profileDir = join(baseDir, 'profiles', id)
+		mkdirSync(profileDir, { recursive: true })
+		writeFileSync(join(profileDir, 'cli.json'), JSON.stringify({ token: TOKEN, token_id: 'token-id' }))
+		writeFileSync(join(profileDir, 'remote.json'), JSON.stringify({ pid: process.pid, port }))
+		writeFileSync(join(profileDir, 'workspace.json'), JSON.stringify({ projects }))
+	}
+	writeFileSync(
+		join(baseDir, 'profiles.json'),
+		JSON.stringify({
+			last_used: 'perf-test',
+			default_profile: 'default',
+			profiles: [{ id: 'default' }, { id: 'perf-test' }],
+		}),
+	)
+
+	try {
+		const state = await new OkenaClient(baseDir).forProject('/repo/crane-rental').getState()
+		assert.equal(state.projects[0]?.name, 'JVS')
+	} finally {
+		await close(defaultServer)
+		await close(perfServer)
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('OkenaClient rejects a truncated Unix-socket response instead of hanging', { timeout: 1000 }, async () => {
 	const root = mkdtempSync(join(tmpdir(), 'ho-'))
 	const socketPath = join(root, 'okena.sock')

@@ -5,7 +5,7 @@ import { buildPlanningPrompt } from '../../solver/prompt-builder.js'
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from '../../spawner/spawner.js'
 import { formatTaskContext } from '../../task-context.js'
 import { log } from '../../util/logger.js'
-import { OkenaClient } from './client.js'
+import { OkenaClient, okenaClientForProject } from './client.js'
 import { OkenaWorktreeManager } from './worktree.js'
 
 export class OkenaSpawner implements Spawner {
@@ -20,7 +20,9 @@ export class OkenaSpawner implements Spawner {
 	}
 
 	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
-		const ensured = await this.worktrees.ensureWorktreeProject(
+		const client = okenaClientForProject(this.client, params.projectConfig.repoPath)
+		const worktrees = client === this.client ? this.worktrees : new OkenaWorktreeManager(client)
+		const ensured = await worktrees.ensureWorktreeProject(
 			params.projectConfig.repoPath,
 			params.projectConfig.baseBranch,
 			params.branchName,
@@ -29,7 +31,7 @@ export class OkenaSpawner implements Spawner {
 
 		// Materialize captured attachments before inspecting or mutating terminals.
 		const taskContext = params.onWorktreeReady(ensured.worktreePath)
-		const reusedTerminal = await this.worktrees.findPlanTerminal(ensured.wtProjectId, params.itemId)
+		const reusedTerminal = await worktrees.findPlanTerminal(ensured.wtProjectId, params.itemId)
 		log.info('okena', 'Resolving planning terminal', {
 			projectId: ensured.wtProjectId,
 			worktreePath: ensured.worktreePath,
@@ -41,7 +43,7 @@ export class OkenaSpawner implements Spawner {
 		if (reusedTerminal && params.replaceExistingSession) {
 			log.info('okena', `Replacing planning session in terminal ${reusedTerminal}`)
 			try {
-				await this.client.action({
+				await client.action({
 					action: 'close_terminal',
 					project_id: ensured.wtProjectId,
 					terminal_id: reusedTerminal,
@@ -49,11 +51,10 @@ export class OkenaSpawner implements Spawner {
 			} catch (err) {
 				throw new Error(`Failed to stop existing planning session: ${err instanceof Error ? err.message : err}`)
 			}
-			terminalId = await this.worktrees.createTerminal(ensured.wtProjectId)
+			terminalId = await worktrees.createTerminal(ensured.wtProjectId)
 			replacedTerminal = true
 		} else {
-			terminalId =
-				reusedTerminal ?? ensured.autoTerminalId ?? (await this.worktrees.createTerminal(ensured.wtProjectId))
+			terminalId = reusedTerminal ?? ensured.autoTerminalId ?? (await worktrees.createTerminal(ensured.wtProjectId))
 		}
 		if (!terminalId) {
 			throw new Error(
@@ -71,7 +72,7 @@ export class OkenaSpawner implements Spawner {
 		})
 
 		try {
-			await this.client.action({
+			await client.action({
 				action: 'rename_terminal',
 				project_id: ensured.wtProjectId,
 				terminal_id: terminalId,
@@ -100,7 +101,7 @@ export class OkenaSpawner implements Spawner {
 			)
 			log.info('okena', `Starting planning session in terminal ${terminalId}`)
 			try {
-				await this.client.runCommand(terminalId, command, { freshTerminal: true })
+				await client.runCommand(terminalId, command, { freshTerminal: true })
 			} catch (err) {
 				throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
 			}

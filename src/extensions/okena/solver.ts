@@ -8,7 +8,7 @@ import type { SolveParams, SolveResult, Solver } from '../../solver/solver.js'
 import { phaseError, taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { getCurrentBranch } from '../../worktree/manager.js'
-import { OkenaClient } from './client.js'
+import { OkenaClient, okenaClientForProject } from './client.js'
 import { OkenaWorktreeManager } from './worktree.js'
 
 /** Absolute ceiling on a single okena solve, however lively the terminal looks. */
@@ -31,6 +31,8 @@ export class OkenaSolver implements Solver {
 		if (signal?.aborted) {
 			throw taskCancelled()
 		}
+		const client = okenaClientForProject(this.client, projectConfig.repoPath)
+		const worktrees = client === this.client ? this.worktrees : new OkenaWorktreeManager(client)
 
 		// Main-workspace runs open a terminal PANE in the item's EXISTING okena
 		// project window (the canonical checkout) — never a new worktree workspace,
@@ -38,8 +40,8 @@ export class OkenaSolver implements Solver {
 		// state is sacred and the agent branches itself.
 		const mainMode = params.workspaceMode === 'main'
 		const ensured = mainMode
-			? await this.worktrees.ensureMainRepoProject(projectConfig.repoPath)
-			: await this.worktrees.ensureWorktreeProject(
+			? await worktrees.ensureMainRepoProject(projectConfig.repoPath)
+			: await worktrees.ensureWorktreeProject(
 					projectConfig.repoPath,
 					projectConfig.baseBranch,
 					branchName,
@@ -50,13 +52,13 @@ export class OkenaSolver implements Solver {
 		const taskContext = params.onWorktreeReady(worktreePath)
 		// Solve always runs in its own fresh terminal — never the user's planning
 		// terminal. Use the auto-created terminal only for a brand-new worktree.
-		const terminalId = ensured.autoTerminalId ?? (await this.worktrees.createTerminal(ensured.wtProjectId))
+		const terminalId = ensured.autoTerminalId ?? (await worktrees.createTerminal(ensured.wtProjectId))
 		if (!terminalId) {
 			throw phaseError('worktree', 'Failed to create terminal for solve')
 		}
 
 		try {
-			await this.client.action({
+			await client.action({
 				action: 'rename_terminal',
 				project_id: ensured.wtProjectId,
 				terminal_id: terminalId,
@@ -91,7 +93,7 @@ export class OkenaSolver implements Solver {
 		try {
 			// Solve always uses a fresh/auto terminal — let it settle and clear the
 			// prompt line so leftover input can't merge into the command.
-			await this.client.runCommand(terminalId, command, { freshTerminal: true })
+			await client.runCommand(terminalId, command, { freshTerminal: true })
 		} catch (err) {
 			throw phaseError('solve', `Failed to run command in Okena terminal: ${err instanceof Error ? err.message : err}`)
 		}
@@ -128,7 +130,7 @@ export class OkenaSolver implements Solver {
 					}
 					if (signal?.aborted) {
 						try {
-							await this.client.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
+							await client.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
 						} catch {
 							/* best effort */
 						}
@@ -151,7 +153,7 @@ export class OkenaSolver implements Solver {
 					// activity credit, so a vanished terminal still idles out.
 					if (poll % SCREEN_SAMPLE_EVERY === 0) {
 						try {
-							const res = await this.client.action<{ content?: string }>({
+							const res = await client.action<{ content?: string }>({
 								action: 'read_content',
 								terminal_id: terminalId,
 							})

@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import type { ProjectConfig } from '../../config.js'
 import type { SolverWorkspace } from '../../solver/workspace.js'
 import { worktreePathForBranch } from '../../worktree/manager.js'
-import { OkenaClient, type OkenaLayoutNode, type OkenaState } from './client.js'
+import { OkenaClient, type OkenaLayoutNode, type OkenaState, okenaClientForProject } from './client.js'
 import { OkenaWorktreeManager, inspectOkenaBranchSource } from './worktree.js'
 
 const execFileAsync = promisify(execFile)
@@ -116,7 +116,7 @@ export async function inspectItemOkenaWorkspace(
 	params: OpenItemInOkenaParams,
 	deps: Pick<OkenaItemOpenerDeps, 'client' | 'inspectBranchSource'> = {},
 ): Promise<OkenaWorkspacePreview> {
-	const client = deps.client ?? new OkenaClient()
+	const client = okenaClientForProject(deps.client ?? new OkenaClient(), params.projectConfig.repoPath)
 	const branchName = params.branchName
 	if (!(await client.isAvailable())) {
 		return { state: 'unavailable', label: 'Okena unavailable', detail: 'Okena is not running', branchName }
@@ -246,7 +246,7 @@ export async function openItemInOkena(
 	params: OpenItemInOkenaParams,
 	deps: OkenaItemOpenerDeps = {},
 ): Promise<OpenItemInOkenaResult> {
-	const client = deps.client ?? new OkenaClient()
+	const client = okenaClientForProject(deps.client ?? new OkenaClient(), params.projectConfig.repoPath)
 	if (!(await client.isAvailable())) throw new Error('Okena is not running or configured')
 	const worktrees = new OkenaWorktreeManager(client)
 	const existingWorktreePath =

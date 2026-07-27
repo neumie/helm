@@ -20,6 +20,7 @@ interface RemoteConfig {
 interface ProfilesConfig {
 	last_used?: string
 	default_profile?: string
+	profiles?: Array<{ id: string }>
 }
 
 type OkenaEndpoint = { kind: 'unixSocket'; socketPath: string } | { kind: 'http'; baseUrl: string }
@@ -35,12 +36,46 @@ const EXPIRED_TOKEN_HINT =
 export class OkenaClient {
 	private baseDir: string
 
-	constructor(baseDir?: string) {
+	constructor(
+		baseDir?: string,
+		private readonly profileId?: string,
+	) {
 		this.baseDir =
 			baseDir ??
 			(process.platform === 'darwin'
 				? join(homedir(), 'Library', 'Application Support', 'okena')
 				: join(homedir(), '.config', 'okena'))
+	}
+
+	/**
+	 * Pin subsequent requests to the profile whose workspace owns `repoPath`.
+	 * Multiple Okena profile windows can remain live at once; `last_used` only
+	 * describes the most recently launched one and can disagree with the window
+	 * the operator is using.
+	 */
+	forProject(repoPath: string): OkenaClient {
+		const profilesPath = join(this.baseDir, 'profiles.json')
+		try {
+			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const ids = [
+				this.profileId,
+				profiles.last_used,
+				profiles.default_profile,
+				...(profiles.profiles ?? []).map(p => p.id),
+			]
+			for (const id of new Set(ids.filter((value): value is string => Boolean(value)))) {
+				const workspacePath = join(this.baseDir, 'profiles', id, 'workspace.json')
+				if (!existsSync(workspacePath)) continue
+				const workspace: { projects?: Array<{ path?: string }> } = JSON.parse(readFileSync(workspacePath, 'utf-8'))
+				if (workspace.projects?.some(project => project.path === repoPath)) {
+					return new OkenaClient(this.baseDir, id)
+				}
+			}
+		} catch {
+			// Preserve the existing active-profile behavior when registry inspection
+			// is unavailable or malformed.
+		}
+		return this
 	}
 
 	/**
@@ -55,7 +90,7 @@ export class OkenaClient {
 		if (!existsSync(profilesPath)) return null
 		try {
 			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
-			const id = profiles.last_used ?? profiles.default_profile
+			const id = this.profileId ?? profiles.last_used ?? profiles.default_profile
 			if (!id) return null
 			const dir = join(this.baseDir, 'profiles', id)
 			return existsSync(dir) ? dir : null
@@ -180,6 +215,12 @@ export class OkenaClient {
 		}
 		return res.json() as Promise<OkenaState>
 	}
+}
+
+/** Compatibility wrapper for injected test/client doubles created before profile routing. */
+export function okenaClientForProject(client: OkenaClient, repoPath: string): OkenaClient {
+	const select = (client as { forProject?: (path: string) => OkenaClient }).forProject
+	return typeof select === 'function' ? select.call(client, repoPath) : client
 }
 
 export type OkenaLayoutNode =
