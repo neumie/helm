@@ -1,6 +1,6 @@
 import { DEFAULT_SERVER_URL, getSync } from './storage'
 
-export type SolverAgent = 'claude' | 'codex'
+export type SolverAgent = 'claude' | 'codex' | 'pi'
 export type SolverEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type SolverWorkspace = 'worktree' | 'main'
 

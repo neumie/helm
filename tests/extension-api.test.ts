@@ -132,7 +132,7 @@ test('extension API passes selected solver agent to Item actions that can start 
 			solverEffort: 'xhigh',
 			solverWorkspace: null,
 		})
-		await api.itemAction('item-1', 'retry', { solverAgent: 'codex' })
+		await api.itemAction('item-1', 'retry', { solverAgent: 'pi' })
 
 		// solverWorkspace mirrors solverModel: a value rides along, explicit null
 		// clears the override, and an absent field stays absent.
@@ -141,7 +141,7 @@ test('extension API passes selected solver agent to Item actions that can start 
 			[
 				{ solverAgent: 'codex', solverWorkspace: 'main' },
 				{ solverAgent: 'codex', solverModel: 'gpt-5.5', solverEffort: 'xhigh', solverWorkspace: null },
-				{ solverAgent: 'codex' },
+				{ solverAgent: 'pi' },
 			],
 		)
 	} finally {

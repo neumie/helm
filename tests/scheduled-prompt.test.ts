@@ -55,11 +55,15 @@ test('scheduled prompt encodes hostile operator content inside an unescapable da
 	)
 })
 
-test('scheduled structured invocation appends hostile prompt exactly once for both agents', () => {
+test('scheduled structured invocation appends hostile prompt exactly once for every agent', () => {
 	const hostile = '"; touch /tmp/pwned; #\u001b[2J\u202e'
 	const claude = buildInteractiveAgentInvocation({ agent: 'claude', type: 'default' } as never, 'high')
 	const codex = buildInteractiveAgentInvocation({ agent: 'codex', type: 'default', model: 'gpt-5' } as never)
-	for (const invocation of [claude, codex]) {
+	const pi = buildInteractiveAgentInvocation(
+		{ agent: 'pi', type: 'default', model: 'openai-codex/gpt-5.6-luna' } as never,
+		'max',
+	)
+	for (const invocation of [claude, codex, pi]) {
 		const args = composeScheduledAgentArgs(invocation, hostile)
 		assert.equal(args.at(-1), hostile)
 		assert.equal(args.filter(arg => arg === hostile).length, 1)
@@ -67,6 +71,7 @@ test('scheduled structured invocation appends hostile prompt exactly once for bo
 	}
 	assert.deepEqual(claude.args, ['--dangerously-skip-permissions', '--effort', 'high'])
 	assert.equal(codex.args.at(-1), 'gpt-5')
+	assert.deepEqual(pi.args, ['--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'])
 })
 
 test('scheduled artifacts are exclusive no-follow private files and leave symlink targets unchanged', () => {
@@ -138,10 +143,13 @@ test('scheduled environment exposes only the selected provider credential and ap
 	const input = { daemonUrl: 'http://127.0.0.1:7474', runId: 'run-a', reportCapability: 'capability' }
 	const claude = scheduledAgentEnvironment({ ...input, agent: 'claude' }, parent)
 	const codex = scheduledAgentEnvironment({ ...input, agent: 'codex' }, parent)
+	const pi = scheduledAgentEnvironment({ ...input, agent: 'pi' }, parent)
 	assert.equal(claude.ANTHROPIC_API_KEY, 'claude-key')
 	assert.equal(claude.OPENAI_API_KEY, undefined)
 	assert.equal(codex.OPENAI_API_KEY, 'codex-key')
 	assert.equal(codex.ANTHROPIC_API_KEY, undefined)
+	assert.equal(pi.ANTHROPIC_API_KEY, 'claude-key')
+	assert.equal(pi.OPENAI_API_KEY, 'codex-key')
 	assert.equal(claude.GH_TOKEN, 'gh-key')
 	assert.equal(claude.BUN_SECRET, undefined)
 })

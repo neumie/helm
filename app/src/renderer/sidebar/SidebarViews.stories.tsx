@@ -271,6 +271,7 @@ const snapshot: HelmSnapshot = {
 		modelCatalog: {
 			claude: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }],
 			codex: [{ id: 'gpt-5.6-luna', label: 'Luna' }],
+			pi: [{ id: 'anthropic/claude-sonnet-5', label: 'Anthropic · Sonnet 5' }],
 		},
 	},
 }

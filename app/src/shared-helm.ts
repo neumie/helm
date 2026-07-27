@@ -212,7 +212,7 @@ export interface DashboardItem {
 	resultSummary: string | null
 	solveInputSnapshot: string | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
-	solverAgent: 'claude' | 'codex' | null
+	solverAgent: 'claude' | 'codex' | 'pi' | null
 	solverModel: string | null
 	solverEffort: SolverEffort | null
 	solverWorkspace: SolverWorkspace | null
@@ -281,7 +281,7 @@ export interface PlanInfo {
 	planDirName: string
 	readmePath: string
 	spawner: string
-	solverAgent: 'claude' | 'codex'
+	solverAgent: 'claude' | 'codex' | 'pi'
 	hint: string
 }
 
@@ -367,11 +367,16 @@ export interface ModelOption {
 export interface AppConfig {
 	projectColors?: Record<string, string>
 	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
-	solver?: { type?: 'default' | 'okena'; agent?: 'claude' | 'codex'; model?: string; workspace?: SolverWorkspace }
+	solver?: {
+		type?: 'default' | 'okena'
+		agent?: 'claude' | 'codex' | 'pi'
+		model?: string
+		workspace?: SolverWorkspace
+	}
 	spawner?: { name?: string }
 	spawnerAdapters?: Array<{ name: string; available: boolean }>
 	/** Curated per-agent model options for model pickers (server-owned). */
-	modelCatalog?: Record<'claude' | 'codex', ModelOption[]>
+	modelCatalog?: Record<'claude' | 'codex' | 'pi', ModelOption[]>
 	provider?: Record<string, unknown>
 	polling?: Record<string, unknown>
 	server?: Record<string, unknown>
@@ -455,7 +460,7 @@ export interface ScheduledSchedule {
 	name: string
 	enabled: boolean
 	target: { kind: 'project'; projectSlug: string; baseRef?: string } | { kind: 'system' }
-	agent: 'claude' | 'codex'
+	agent: 'claude' | 'codex' | 'pi'
 	model?: string
 	effort?: SolverEffort
 	maximumRuntimeMinutes: number
@@ -528,7 +533,7 @@ export interface ScheduledScheduleInput {
 	definition: {
 		prompt: string
 		target: ScheduledTargetInput
-		agent: 'claude' | 'codex'
+		agent: 'claude' | 'codex' | 'pi'
 		model?: string
 		effort?: SolverEffort
 		maximumRuntimeMinutes: number
@@ -572,7 +577,7 @@ export type SolverWorkspace = 'worktree' | 'main'
  * override), and an execution-workspace override (`null` = config default).
  */
 export interface SolverAgentBody {
-	solverAgent?: 'claude' | 'codex'
+	solverAgent?: 'claude' | 'codex' | 'pi'
 	solverModel?: string | null
 	solverEffort?: SolverEffort | null
 	solverWorkspace?: SolverWorkspace | null

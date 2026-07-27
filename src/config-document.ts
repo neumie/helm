@@ -3,6 +3,7 @@ import { configSchema } from './config.js'
 import type { HelmConfig } from './config.js'
 import { DEFAULT_ASSESSMENT_INSTRUCTIONS } from './items/assess.js'
 import { DEFAULT_DISPLAY_INSTRUCTIONS, DEFAULT_NAMING_INSTRUCTIONS } from './items/naming.js'
+import type { SolverAgent } from './solver/agent.js'
 import {
 	DEFAULT_MODEL_GUIDANCE,
 	MODEL_CATALOG,
@@ -33,6 +34,7 @@ function aiHelperControls(base: string[], promptDefault: string): ConfigEditFiel
 				{ value: '', label: 'Use solver agent' },
 				{ value: 'claude', label: 'Claude Code' },
 				{ value: 'codex', label: 'Codex' },
+				{ value: 'pi', label: 'Pi' },
 			],
 		},
 		{
@@ -105,7 +107,7 @@ export interface DashboardSafeConfig {
 	provider: Omit<HelmConfig['provider'], 'apiToken'>
 	spawnerAdapters: SpawnerAdapterInfo[]
 	/** Curated per-agent model options for model pickers (dashboard + extension). */
-	modelCatalog: Record<'claude' | 'codex', ModelOption[]>
+	modelCatalog: Record<SolverAgent, ModelOption[]>
 	taskBaseUrl?: string
 }
 
@@ -229,6 +231,7 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 					options: [
 						{ value: 'claude', label: 'Claude Code' },
 						{ value: 'codex', label: 'Codex' },
+						{ value: 'pi', label: 'Pi' },
 					],
 				},
 				{ type: 'field', path: ['solver', 'concurrency'], label: 'Concurrency', input: 'number' },

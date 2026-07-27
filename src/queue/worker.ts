@@ -377,6 +377,11 @@ export async function processLoopItem(
 	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
+		const loopProvider = loopPayload.provider ?? config.solver.agent
+		if (loopProvider === 'pi') {
+			throw phaseError('loop', 'Pi is supported for direct agent runs, not Almanac loop execution.')
+		}
+		const runnableLoopPayload = { ...loopPayload, provider: loopProvider }
 		// Loop Items keep the deterministic helm/item name: their title is a PRD
 		// path, not a single conventional change, so
 		// AI naming is scoped to solve Items only.
@@ -410,7 +415,7 @@ export async function processLoopItem(
 
 		log.info('worker', 'Starting almanac loop with effective Item selection', {
 			itemId,
-			provider: loopPayload.provider ?? config.solver.agent,
+			provider: loopProvider,
 			model: loopPayload.model ?? config.solver.model ?? 'default',
 			effort: loopPayload.effort ?? 'default',
 			workspace: workspaceMode,
@@ -420,7 +425,7 @@ export async function processLoopItem(
 			solverConfig: config.solver,
 			itemId,
 			itemTitle: item.title,
-			payload: loopPayload,
+			payload: runnableLoopPayload,
 			worktreePath,
 			branchName,
 			planDirName,

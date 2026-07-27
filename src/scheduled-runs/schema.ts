@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { scopedCapabilityDigestSchema } from '../auth/scoped-capability.js'
+import { solverAgentSchema } from '../solver/agent.js'
 
 const utcIsoSchema = z
 	.string()
@@ -17,7 +18,7 @@ export const scheduledTargetSchema = z.discriminatedUnion('kind', [
 		.strict(),
 	z.object({ kind: z.literal('system'), riskAcknowledgement: z.literal('broad-host-access') }).strict(),
 ])
-export const scheduledAgentSchema = z.enum(['claude', 'codex'])
+export const scheduledAgentSchema = solverAgentSchema
 export const scheduledEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 export const cadenceKindSchema = z.enum(['hourly', 'daily', 'weekly', 'cron'])
 export const fiveFieldCronSchema = z

@@ -1,5 +1,6 @@
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext } from '../providers/provider.js'
+import type { SolverAgent } from '../solver/agent.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 import { itemExecutionMode } from './execution.js'
 import type { ItemExecutionMode } from './execution.js'
@@ -89,7 +90,7 @@ export interface DashboardItem {
 	resultSummary: string | null
 	solveInputSnapshot: string | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
-	solverAgent: 'claude' | 'codex' | null
+	solverAgent: SolverAgent | null
 	solverModel: string | null
 	solverEffort: SolverEffort | null
 	solverWorkspace: SolverWorkspace | null

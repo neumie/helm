@@ -70,9 +70,12 @@ const ALLOWED_ENV = new Set([
 	'GITHUB_TOKEN',
 ])
 
-const PROVIDER_CREDENTIAL: Record<SolverAgent, 'ANTHROPIC_API_KEY' | 'OPENAI_API_KEY'> = {
-	claude: 'ANTHROPIC_API_KEY',
-	codex: 'OPENAI_API_KEY',
+const PROVIDER_CREDENTIALS: Record<SolverAgent, readonly ('ANTHROPIC_API_KEY' | 'OPENAI_API_KEY')[]> = {
+	claude: ['ANTHROPIC_API_KEY'],
+	codex: ['OPENAI_API_KEY'],
+	// Pi normally reads its own auth from HOME, but direct API-key setups need
+	// the credentials for either curated provider family.
+	pi: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
 }
 
 /** Minimal environment is accidental-secret reduction, not system-target containment. */
@@ -85,8 +88,9 @@ export function scheduledAgentEnvironment(
 		if (!value) continue
 		if (ALLOWED_ENV.has(key) || key.startsWith('LC_')) environment[key] = value
 	}
-	const providerCredential = PROVIDER_CREDENTIAL[input.agent]
-	if (parent[providerCredential]) environment[providerCredential] = parent[providerCredential]
+	for (const providerCredential of PROVIDER_CREDENTIALS[input.agent]) {
+		if (parent[providerCredential]) environment[providerCredential] = parent[providerCredential]
+	}
 	environment.HELM_SCHEDULED_DAEMON_URL = input.daemonUrl
 	environment.HELM_SCHEDULED_RUN_ID = input.runId
 	environment.HELM_SCHEDULED_REPORT_CAPABILITY = input.reportCapability

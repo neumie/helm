@@ -26,12 +26,23 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 		{ id: 'gpt-5.6-luna', label: 'Luna' },
 		{ id: 'gpt-5.5', label: 'GPT-5.5' },
 	],
+	// Pi spans providers; qualified ids make the owning subscription explicit.
+	pi: [
+		{ id: 'anthropic/claude-fable-5', label: 'Anthropic · Fable 5' },
+		{ id: 'anthropic/claude-opus-4-8', label: 'Anthropic · Opus 4.8' },
+		{ id: 'anthropic/claude-sonnet-5', label: 'Anthropic · Sonnet 5' },
+		{ id: 'anthropic/claude-haiku-4-5', label: 'Anthropic · Haiku 4.5' },
+		{ id: 'openai-codex/gpt-5.6-sol', label: 'OpenAI Codex · Sol' },
+		{ id: 'openai-codex/gpt-5.6-terra', label: 'OpenAI Codex · Terra' },
+		{ id: 'openai-codex/gpt-5.6-luna', label: 'OpenAI Codex · Luna' },
+		{ id: 'openai-codex/gpt-5.5', label: 'OpenAI Codex · GPT-5.5' },
+	],
 }
 
 /** Return the owning CLI for a curated model id; custom ids remain unresolved. */
 export function agentForModel(model: string | undefined): SolverAgent | undefined {
 	if (!model) return undefined
-	for (const agent of ['claude', 'codex'] satisfies SolverAgent[]) {
+	for (const agent of ['claude', 'codex', 'pi'] satisfies SolverAgent[]) {
 		if (MODEL_CATALOG[agent].some(option => option.id === model)) return agent
 	}
 	return undefined
@@ -39,7 +50,14 @@ export function agentForModel(model: string | undefined): SolverAgent | undefine
 
 /** Default model for the cheap AI-helper one-shots (naming/triage). */
 export function defaultHelperModel(agent: SolverAgent | undefined): string {
-	return agent === 'codex' ? 'gpt-5.6-luna' : 'claude-haiku-4-5'
+	switch (agent) {
+		case 'codex':
+			return 'gpt-5.6-luna'
+		case 'pi':
+			return 'anthropic/claude-haiku-4-5'
+		default:
+			return 'claude-haiku-4-5'
+	}
 }
 
 /**
@@ -57,7 +75,14 @@ export function resolveHelperInvocation(
 }
 
 export function agentModelLabel(agent: SolverAgent): string {
-	return agent === 'codex' ? 'Codex' : 'Claude'
+	switch (agent) {
+		case 'claude':
+			return 'Claude'
+		case 'codex':
+			return 'Codex'
+		case 'pi':
+			return 'Pi'
+	}
 }
 
 /**
@@ -99,6 +124,21 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'You are running as GPT-5.5 — a strong premium tier. Plan briefly, then make one decisive, well-verified pass; avoid redundant re-reads of files you have already seen.',
 }
 
+const PI_MODEL_GUIDANCE: Record<string, string> = {
+	'anthropic/claude-fable-5':
+		'Pi is running Fable 5 — use this expensive tier for architecture and judgment, delegate only through extensions or tools that are actually available, and verify decisively.',
+	'anthropic/claude-opus-4-8':
+		'Pi is running Opus 4.8 — keep broad exploration structured, do the tricky reasoning directly, and verify the complete change.',
+	'anthropic/claude-sonnet-5':
+		'Pi is running Sonnet 5 — work directly, stay scoped, and use available skills when they materially reduce risk.',
+	'anthropic/claude-haiku-4-5':
+		'Pi is running Haiku 4.5 — keep the change tightly scoped and stop with an honest summary if it becomes architectural or ambiguous.',
+	'openai-codex/gpt-5.6-sol': DEFAULT_MODEL_GUIDANCE['gpt-5.6-sol'],
+	'openai-codex/gpt-5.6-terra': DEFAULT_MODEL_GUIDANCE['gpt-5.6-terra'],
+	'openai-codex/gpt-5.6-luna': DEFAULT_MODEL_GUIDANCE['gpt-5.6-luna'],
+	'openai-codex/gpt-5.5': DEFAULT_MODEL_GUIDANCE['gpt-5.5'],
+}
+
 /**
  * Guidance for the model the run will actually use, or null when unknown/
  * default. A Settings override (`solver.modelGuidance[model]`) wins over the
@@ -106,15 +146,15 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
  */
 export function modelGuidance(model: string | undefined, overrides?: Record<string, string>): string | null {
 	if (!model) return null
-	return overrides?.[model] || DEFAULT_MODEL_GUIDANCE[model] || null
+	return overrides?.[model] || DEFAULT_MODEL_GUIDANCE[model] || PI_MODEL_GUIDANCE[model] || null
 }
 
 /**
- * Flat select options across both agents (Settings model dropdowns aren't
+ * Flat select options across all agents (Settings model dropdowns aren't
  * agent-scoped — the sibling Provider field can change independently).
  */
 export function modelSelectOptions(): Array<{ value: string; label: string }> {
-	const agents: SolverAgent[] = ['claude', 'codex']
+	const agents: SolverAgent[] = ['claude', 'codex', 'pi']
 	return agents.flatMap(agent =>
 		MODEL_CATALOG[agent].map(m => ({ value: m.id, label: `${agentModelLabel(agent)} · ${m.label}` })),
 	)

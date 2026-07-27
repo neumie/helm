@@ -400,12 +400,13 @@ export function ScheduledRunEditorPage({
 							onChange={agent =>
 								setDraft(current => ({
 									...current,
-									definition: { ...current.definition, agent: agent as 'claude' | 'codex' },
+									definition: { ...current.definition, agent: agent as 'claude' | 'codex' | 'pi' },
 								}))
 							}
 							options={[
 								{ value: 'claude', label: 'Claude Code' },
 								{ value: 'codex', label: 'Codex' },
+								{ value: 'pi', label: 'Pi' },
 							]}
 						/>
 					</div>

@@ -1,6 +1,6 @@
 import type { AppConfig, DashboardItem, SolverAgentBody, SolverEffort, SolverWorkspace } from '../../shared-helm'
 
-export type SolverAgent = 'claude' | 'codex'
+export type SolverAgent = 'claude' | 'codex' | 'pi'
 
 export const EFFORT_LABEL: Record<SolverEffort, string> = {
 	low: 'Low',
@@ -69,9 +69,14 @@ export function buildPlanBody(item: DashboardItem, draft: RunSelectionDraft): So
 	return Object.keys(body).length ? body : undefined
 }
 
-export function selectAgent(draft: RunSelectionDraft, agent: SolverAgent, config: AppConfig | null): RunSelectionDraft {
+export function selectAgent(
+	draft: RunSelectionDraft,
+	agent: SolverAgent,
+	config: AppConfig | null,
+	effectiveModel: string | null = null,
+): RunSelectionDraft {
 	const catalog = config?.modelCatalog?.[agent] ?? []
-	const model = draft.model
+	const model = draft.model !== undefined ? draft.model : effectiveModel
 	return {
 		...draft,
 		agent,
@@ -82,8 +87,9 @@ export function selectAgent(draft: RunSelectionDraft, agent: SolverAgent, config
 
 /** The at-rest Run setup line (§3.15): "Claude Code · model · effort · Worktree". */
 export function selectionSummary(selection: EffectiveRunSelection): string {
+	const agentLabel: Record<SolverAgent, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi' }
 	return [
-		selection.agent === 'claude' ? 'Claude Code' : 'Codex',
+		agentLabel[selection.agent],
 		selection.model ?? 'Default model',
 		...(selection.effort ? [`${EFFORT_LABEL[selection.effort]} effort`] : []),
 		selection.workspace === 'main' ? 'Main' : 'Worktree',

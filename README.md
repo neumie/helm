@@ -99,7 +99,7 @@ agent ownership, while **Work manually** moves the Item to human-owned Active.
 - Bun for the desktop app;
 - Git;
 - `gh`, authenticated for repositories where Helm creates or observes PRs;
-- `claude` and/or `codex`, installed and authenticated;
+- at least one supported agent CLI—`claude`, `codex`, or `pi`—installed and authenticated;
 - `almanac`, including its CLI and agent plugin/commands;
 - `dtach` for persistent desktop terminal sessions; and
 - optionally, Okena with its remote server enabled.
@@ -207,10 +207,10 @@ Important fields:
 | `polling.intervalSeconds` | Provider polling interval; minimum 5 seconds, default 60. |
 | `polling.since` | Optional ISO lower bound for provider discovery. |
 | `solver.type` | `default` for direct headless execution or `okena` for Okena execution. |
-| `solver.agent` | Default CLI: `claude` or `codex`. |
+| `solver.agent` | Default CLI: `claude`, `codex`, or `pi`. |
 | `solver.workspace` | Default execution location: `worktree` or `main`. |
 | `solver.concurrency` | Shared direct-solve capacity, from 1 to 10; default 2. |
-| `solver.model` | Optional default model passed to the selected agent CLI. |
+| `solver.model` | Optional default model passed to the selected agent CLI. Pi accepts provider-qualified IDs such as `anthropic/claude-sonnet-5` or `openai-codex/gpt-5.6-luna`. |
 | `solver.timeoutMinutes` | Direct-agent wall-clock timeout; Okena uses it as an idle timeout. |
 | `solver.branchNaming` | Optional AI-generated conventional branch names; disabled by default. |
 | `solver.displayName` | Short AI-generated Item labels; enabled by default. |
@@ -221,6 +221,8 @@ Important fields:
 | `github.postComments` | Post provider comments for eligible source tasks; default true. |
 | `github.trackDeployments` | Observe merge and GitHub Deployment state; default true. |
 | `server.host` / `port` | Local API listener; defaults to `localhost:7474`. |
+
+To use Pi, install it globally (`npm install -g --ignore-scripts @earendil-works/pi-coding-agent`), run `pi` and `/login`, then choose **Pi** in Settings or an Item's Execution setup. Helm does not read Pi credentials; the daemon process uses Pi's own authentication under its HOME. Ensure `pi` is on the launchd daemon's PATH. Pi model choices are provider-qualified because one Pi installation can use several providers.
 
 The desktop Settings UI edits the same validated Config Document. Secret values
 are redacted on reads and preserved when unrelated settings are saved. A

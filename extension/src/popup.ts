@@ -2,6 +2,7 @@ import { DEFAULT_SERVER_URL, getSync, setSync } from './storage'
 
 const urlInput = document.getElementById('url') as HTMLInputElement
 const statusEl = document.getElementById('status') as HTMLElement
+const AGENT_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
 
 // Load saved URL
 getSync({ serverUrl: DEFAULT_SERVER_URL })
@@ -69,7 +70,7 @@ async function loadModelCatalog(): Promise<void> {
 		for (const [agent, models] of Object.entries(catalog)) {
 			const group = document.createElement('div')
 			group.className = 'group'
-			group.textContent = agent === 'codex' ? 'Codex' : 'Claude'
+			group.textContent = AGENT_LABEL[agent] ?? agent
 			modelListEl.appendChild(group)
 			for (const model of models) {
 				const row = document.createElement('label')

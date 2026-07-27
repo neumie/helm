@@ -73,6 +73,7 @@ export const Select: Story = {
 						options={[
 							{ value: 'claude', label: 'Claude Code' },
 							{ value: 'codex', label: 'Codex' },
+							{ value: 'pi', label: 'Pi' },
 						]}
 					/>
 				</div>

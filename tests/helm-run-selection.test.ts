@@ -3,7 +3,7 @@ import test from 'node:test'
 import selectionModule from '../app/src/renderer/sidebar/run-selection.ts'
 import type { AppConfig, DashboardItem } from '../app/src/shared-helm.ts'
 
-const { buildPlanBody, buildRunBody, effectiveRunSelection, selectAgent } = selectionModule
+const { buildPlanBody, buildRunBody, effectiveRunSelection, selectAgent, selectionSummary } = selectionModule
 const item = {
 	solverAgent: 'codex',
 	solverModel: 'gpt-x',
@@ -12,7 +12,11 @@ const item = {
 } as unknown as DashboardItem
 const config = {
 	solver: { agent: 'claude', model: 'claude-default', workspace: 'worktree' },
-	modelCatalog: { claude: [{ id: 'claude-default', label: 'Claude' }], codex: [{ id: 'gpt-x', label: 'GPT' }] },
+	modelCatalog: {
+		claude: [{ id: 'claude-default', label: 'Claude' }],
+		codex: [{ id: 'gpt-x', label: 'GPT' }],
+		pi: [{ id: 'openai-codex/gpt-x', label: 'Pi · GPT' }],
+	},
 } as AppConfig
 
 test('run selection preserves absent, value, and null reset semantics', () => {
@@ -41,7 +45,14 @@ test('planning carries stored selections while an untouched run body stays absen
 	})
 })
 
-test('switching agent clears foreign model and Claude-only max effort', () => {
+test('switching agent clears foreign models while Pi retains max effort', () => {
 	assert.equal(selectAgent({ model: 'gpt-x' }, 'claude', config).model, null)
+	assert.equal(selectAgent({}, 'claude', config, 'gpt-x').model, null)
+	assert.equal(selectAgent({}, 'pi', config, 'claude-default').model, null)
 	assert.equal(selectAgent({ effort: 'max' }, 'codex', config).effort, null)
+	assert.equal(selectAgent({ effort: 'max' }, 'pi', config).effort, 'max')
+	assert.equal(
+		selectionSummary({ ...effectiveRunSelection(item, config, {}), agent: 'pi' }),
+		'Pi · gpt-x · High effort · Main',
+	)
 })

@@ -16,8 +16,10 @@ import { getSync, setSync } from './storage'
 
 type Tone = DashboardTone
 
-const agentLabel = (agent: SolverAgent) => (agent === 'codex' ? 'Codex' : 'Claude')
-const isSolverAgent = (value: unknown): value is SolverAgent => value === 'claude' || value === 'codex'
+const AGENT_LABEL: Record<SolverAgent, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
+const agentLabel = (agent: SolverAgent) => AGENT_LABEL[agent]
+const isSolverAgent = (value: unknown): value is SolverAgent =>
+	value === 'claude' || value === 'codex' || value === 'pi'
 const workspaceLabel = (workspace: SolverWorkspace) => (workspace === 'main' ? 'Main' : 'Worktree')
 // '' = follow the daemon default (no per-item override).
 const isStoredWorkspace = (value: unknown): value is '' | SolverWorkspace =>
@@ -82,7 +84,11 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 	// the agent choice so the quick-switch survives popup/tab reloads.
 	const [solverModel, setSolverModel] = createSignal<string>('')
 	const [modelTouched, setModelTouched] = createSignal(false)
-	const [modelCatalog, setModelCatalog] = createSignal<Record<SolverAgent, ModelOption[]>>({ claude: [], codex: [] })
+	const [modelCatalog, setModelCatalog] = createSignal<Record<SolverAgent, ModelOption[]>>({
+		claude: [],
+		codex: [],
+		pi: [],
+	})
 	const [favoriteModels, setFavoriteModels] = createSignal<string[]>([])
 	// '' = no per-item override (the daemon's configured workspace). Persisted like
 	// the agent/model picks so the quick-switch survives popup/tab reloads.
@@ -315,7 +321,7 @@ function AgentSelect(props: {
 	onChange: (agent: SolverAgent) => void
 	disabled?: boolean
 }) {
-	const options: SolverAgent[] = ['claude', 'codex']
+	const options: SolverAgent[] = ['claude', 'codex', 'pi']
 	return (
 		<div class="vg-agent">
 			<span class="vg-agent__label">Agent</span>

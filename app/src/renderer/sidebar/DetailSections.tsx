@@ -204,7 +204,7 @@ export function SetupSection({
 	const effortOptions = [
 		{ value: '', label: 'Default (agent)' },
 		...(['low', 'medium', 'high', 'xhigh'] as const).map(value => ({ value, label: EFFORT_LABEL[value] })),
-		...(selection.agent === 'claude' ? [{ value: 'max', label: EFFORT_LABEL.max }] : []),
+		...(selection.agent !== 'codex' ? [{ value: 'max', label: EFFORT_LABEL.max }] : []),
 	]
 	return (
 		<Disclosure
@@ -220,10 +220,11 @@ export function SetupSection({
 						label="Solver agent"
 						commit
 						value={selection.agent}
-						onChange={agent => onDraftChange(selectAgent(draft, agent, config))}
+						onChange={agent => onDraftChange(selectAgent(draft, agent, config, selection.model))}
 						options={[
 							{ value: 'claude', label: 'Claude' },
 							{ value: 'codex', label: 'Codex' },
+							{ value: 'pi', label: 'Pi' },
 						]}
 					/>
 				</div>

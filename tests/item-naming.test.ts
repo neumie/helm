@@ -113,6 +113,17 @@ test('custom helper models retain the explicitly configured agent', () => {
 		agent: 'claude',
 		model: 'custom-private-model',
 	})
+	assert.deepEqual(resolveHelperInvocation('pi', 'claude', 'custom-pi-model'), {
+		agent: 'pi',
+		model: 'custom-pi-model',
+	})
+})
+
+test('provider-qualified Pi catalog models own the Pi helper invocation', () => {
+	assert.deepEqual(resolveHelperInvocation('claude', 'codex', 'openai-codex/gpt-5.6-luna'), {
+		agent: 'pi',
+		model: 'openai-codex/gpt-5.6-luna',
+	})
 })
 
 test('ensureItemWorkspaceName persists and returns a derived branch and plan dir', () =>

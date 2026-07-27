@@ -45,6 +45,7 @@ export const Commit: Story = {
 				options={[
 					{ value: 'claude', label: 'Claude' },
 					{ value: 'codex', label: 'Codex' },
+					{ value: 'pi', label: 'Pi' },
 				]}
 			/>
 		)

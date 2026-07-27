@@ -56,7 +56,19 @@ export interface PlanningResult {
 	hint: string
 }
 
-function readmeBody(item: ItemRecord, branchName: string | null, planDirName: string): string {
+function readmeBody(item: ItemRecord, branchName: string | null, planDirName: string, agent: SolverAgent): string {
+	const planningOptions =
+		agent === 'pi'
+			? [
+					'- `/skill:grilling` — stress-test decisions interactively.',
+					'- `/skill:domain-model` — challenge the plan against the domain model.',
+					'- Ask Pi to synthesize the decisions into `prd.md` under this directory.',
+				]
+			: [
+					`- \`/almanac:grill-me ${planDirName}\` — stress-test decisions interactively (in-conversation, no file).`,
+					`- \`/almanac:grill-with-docs ${planDirName}\` — challenge the plan against the domain model.`,
+					'- `/almanac:prd-create` — synthesize the decisions into `prd.md`.',
+				]
 	return [
 		`# ${item.title}`,
 		'',
@@ -70,9 +82,7 @@ function readmeBody(item: ItemRecord, branchName: string | null, planDirName: st
 		'',
 		'Planning agent started in this worktree. Tell it what you want to do, or invoke one of:',
 		'',
-		`- \`/almanac:grill-me ${planDirName}\` — stress-test decisions interactively (in-conversation, no file).`,
-		`- \`/almanac:grill-with-docs ${planDirName}\` — challenge the plan against the domain model.`,
-		'- `/almanac:prd-create` — synthesize the decisions into `prd.md`.',
+		...planningOptions,
 		'',
 		'Anything committed under this directory is loaded into the autonomous run when the Item executes.',
 		'',
@@ -235,7 +245,7 @@ export class PlanningApplication {
 							{ expectedIdentity, transitionFromIdentity, authorizedTransition: transition },
 						)
 						new PlanWorkspace(worktreePath, identity.planDirName).writeReadme(
-							readmeBody(item, recordedBranchName, identity.planDirName),
+							readmeBody(item, recordedBranchName, identity.planDirName, agent),
 						)
 						return context
 					},

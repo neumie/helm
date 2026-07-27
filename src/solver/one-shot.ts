@@ -23,7 +23,7 @@ export interface OneShotOptions {
 	 * Optional images for a multimodal completion (e.g. reading a screenshot
 	 * during triage). Only honoured for the `claude` agent — it switches the
 	 * invocation to the streaming-JSON input format so the image rides along with
-	 * the prompt. Ignored for `codex` (falls back to text-only).
+	 * the prompt. Ignored for `codex` and `pi` (falls back to text-only).
 	 */
 	images?: OneShotImage[]
 }
@@ -42,8 +42,8 @@ const VISION_ONE_SHOT_TIMEOUT_MS = 60_000
  * Runs in a throwaway temp dir, NOT the repo: naming needs no repo context (all
  * input is in the prompt), and an isolated cwd means an agentic CLI granted broad
  * permissions/sandbox can't mutate the canonical working tree before the real
- * worktree exists. Both agents get their permission/approval bypass so a no-tool
- * naming call can't stall on an interactive prompt that piped stdin can't answer.
+ * worktree exists. Claude/Codex receive their non-interactive bypass; Pi disables
+ * project trust, tools, and resource discovery entirely for this helper pass.
  * Reuses the sanctioned `spawnClaude` primitive. Callers MUST treat `null` as
  * "fall back to the deterministic default". Cancellation (an aborted `signal`) is
  * re-thrown, not swallowed, so callers can abort the pipeline promptly.
@@ -88,6 +88,24 @@ export async function runOneShot(opts: OneShotOptions): Promise<string | null> {
 }
 
 function buildOneShotInvocation(agent: SolverAgent, model: string): { command: string; args: string[] } {
+	if (agent === 'pi') {
+		return {
+			command: 'pi',
+			args: [
+				'-p',
+				'--no-session',
+				'--no-approve',
+				'--no-tools',
+				'--no-extensions',
+				'--no-skills',
+				'--no-prompt-templates',
+				'--no-themes',
+				'--no-context-files',
+				'--model',
+				model,
+			],
+		}
+	}
 	if (agent === 'codex') {
 		// Bypass approvals/sandbox so a non-interactive exec can't hang on a prompt
 		// (it does no tool work, and runs in a throwaway cwd, so full access is moot).

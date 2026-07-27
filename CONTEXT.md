@@ -90,7 +90,7 @@ provider implementation.
 
 **Solver and AgentAdapter** — `Solver` is the code-execution seam for solve Items.
 `createSolver(config)` is its construction site; the configured solver has no
-silent fallback. `AgentAdapter` owns Claude/Codex command and timeline variation.
+silent fallback. `AgentAdapter` owns Claude Code/Codex/Pi command and timeline variation.
 Loop Items use the loop runner rather than Solver.
 
 **Spawner and PlanWorkspace** — `Spawner` is the interactive planning-surface

@@ -81,7 +81,8 @@ export const configSchema = z
 				timeoutMinutes: z.number().min(1).default(30),
 				// AI helpers (cheap one-shot model calls), each independently configurable
 				// in Settings (on/off, provider, model, prompt). Defaults: model per-agent
-				// (claude → claude-haiku-4-5, codex → gpt-5.6-luna), provider = `solver.agent`.
+				// (claude → claude-haiku-4-5, codex → gpt-5.6-luna,
+				// pi → anthropic/claude-haiku-4-5), provider = `solver.agent`.
 				// Branch naming: derive a conventional branch (feat/…, fix/…); failure →
 				// deterministic helm/item/<slug>. Opt-in (default off).
 				branchNaming: aiHelperSchema(false),
@@ -165,6 +166,12 @@ export function resolveConfigPath(configPath?: string): string {
 export function loadConfig(configPath?: string): { config: HelmConfig; configPath: string; raw: unknown } {
 	const path = resolveConfigPath(configPath)
 	const raw = readFileSync(path, 'utf-8')
-	const json = JSON.parse(raw)
+	let json: unknown
+	try {
+		json = JSON.parse(raw)
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error)
+		throw new Error(`Invalid JSON in Helm config ${path}: ${detail}`)
+	}
 	return { config: configSchema.parse(json), configPath: path, raw: json }
 }

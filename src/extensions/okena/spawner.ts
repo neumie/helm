@@ -83,7 +83,7 @@ export class OkenaSpawner implements Spawner {
 
 		const workspace = new PlanWorkspace(ensured.worktreePath, params.planDirName)
 		workspace.writeContext(formatTaskContext(taskContext))
-		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName))
+		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName, params.solverConfig.agent))
 
 		const agentLabel = agentLabelFromConfig(params.solverConfig)
 		if (reusedTerminal && !replacedTerminal) {

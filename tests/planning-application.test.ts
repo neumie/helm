@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -507,6 +507,29 @@ test('Spawner adapter name errors are client errors while factory failures are l
 			factory.prepare({ itemId: item.id }),
 			(value: unknown) => value instanceof PlanningError && value.code === 'launch_failed',
 		)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('Pi planning README uses Pi skills instead of Claude commands', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-pi-planning-readme-'))
+	const worktree = join(root, 'worktree')
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	const spawner = new ContractSpawner(async params => {
+		params.onWorktreeReady(worktree)
+		return { worktreePath: worktree, branchName: params.branchName, hint: 'ready' }
+	})
+	const app = new PlanningApplication(config, commands, provider, spawner, async () => spawner)
+	try {
+		const item = commands.createSolveItem({ title: 'Pi plan', projectSlug: 'helm', prompt: 'plan it' })
+		const result = await app.prepare({ itemId: item.id, solverAgent: 'pi' })
+		const readme = readFileSync(result.readmePath, 'utf8')
+		assert.match(readme, /\/skill:grilling/)
+		assert.match(readme, /\/skill:domain-model/)
+		assert.doesNotMatch(readme, /\/almanac:/)
 	} finally {
 		db.close()
 		rmSync(root, { recursive: true, force: true })

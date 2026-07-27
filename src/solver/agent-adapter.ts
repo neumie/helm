@@ -22,8 +22,14 @@ export interface AgentAdapter {
 }
 
 export function createAgentAdapter(solverConfig: HelmConfig['solver']): AgentAdapter {
-	const agent = resolveSolverAgent(solverConfig)
-	return agent === 'codex' ? new CodexAgentAdapter(solverConfig) : new ClaudeAgentAdapter(solverConfig)
+	switch (resolveSolverAgent(solverConfig)) {
+		case 'claude':
+			return new ClaudeAgentAdapter(solverConfig)
+		case 'codex':
+			return new CodexAgentAdapter(solverConfig)
+		case 'pi':
+			return new PiAgentAdapter(solverConfig)
+	}
 }
 
 export function resolveSolverAgent(solverConfig: HelmConfig['solver']): SolverAgent {
@@ -142,6 +148,44 @@ class CodexAgentAdapter implements AgentAdapter {
 		)
 	}
 
+	parseTimeline(): ClaudeEvent[] {
+		return []
+	}
+}
+
+class PiAgentAdapter implements AgentAdapter {
+	readonly agent = 'pi'
+	readonly label = solverAgentLabel(this.agent)
+
+	constructor(private readonly solverConfig: HelmConfig['solver']) {}
+
+	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation {
+		// Pi's JSON mode is itself non-interactive (not merely an output flag): it
+		// consumes the piped stdin prompt, emits JSONL, and exits. Runtime-attested.
+		const args = ['--mode', 'json', '--no-session', '--approve']
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		if (effort) args.push('--thinking', effort)
+		return { command: 'pi', args, label: 'pi-invoker' }
+	}
+
+	buildInteractiveInvocation(effort?: SolverEffort): AgentInvocation {
+		const args = ['--no-session', '--approve']
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		if (effort) args.push('--thinking', effort)
+		return { command: 'pi', args, label: 'pi-interactive' }
+	}
+
+	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
+		return buildInteractiveCommand(
+			['pi', '--no-session', '--approve', ...(effort ? ['--thinking', effort] : [])],
+			this.solverConfig,
+			promptPath,
+			worktreePath,
+		)
+	}
+
+	// Pi emits JSONL, but Helm does not yet project those events into the legacy
+	// ClaudeEvent timeline. The run log still contains the complete stream.
 	parseTimeline(): ClaudeEvent[] {
 		return []
 	}

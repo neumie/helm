@@ -37,7 +37,7 @@ import type { LoopRunParams, LoopRunResult, LoopRunner } from '../src/queue/loop
 import { processLoopItem, processSolveItem } from '../src/queue/worker.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 import { createAgentAdapter } from '../src/solver/agent-adapter.js'
-import { buildPrompt } from '../src/solver/prompt-builder.js'
+import { buildPlanningPrompt, buildPrompt } from '../src/solver/prompt-builder.js'
 import type { SolveParams, SolveResult, Solver } from '../src/solver/solver.js'
 import {
 	createSpawner,
@@ -644,6 +644,25 @@ test('Agent Adapter selects command shape, labels, interactive commands, and tim
 		codex.buildInteractiveCommand('docs/plans/demo/.planning-prompt.txt', '/tmp/work tree', 'xhigh'),
 		"cd '/tmp/work tree' && 'codex' '--dangerously-bypass-approvals-and-sandbox' '--sandbox' 'danger-full-access' '--config' 'model_reasoning_effort=\"xhigh\"' '--model' 'gpt-5' \"$(cat 'docs/plans/demo/.planning-prompt.txt')\"",
 	)
+
+	const pi = createAgentAdapter({ ...config.solver, agent: 'pi', model: 'openai-codex/gpt-5.6-luna' })
+	assert.equal(pi.agent, 'pi')
+	assert.equal(pi.label, 'Pi')
+	assert.deepEqual(pi.buildHeadlessInvocation('max'), {
+		command: 'pi',
+		args: ['--mode', 'json', '--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'],
+		label: 'pi-invoker',
+	})
+	assert.deepEqual(pi.buildInteractiveInvocation('high'), {
+		command: 'pi',
+		args: ['--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'high'],
+		label: 'pi-interactive',
+	})
+	assert.equal(
+		pi.buildInteractiveCommand('docs/plans/demo/.planning-prompt.txt', '/tmp/work tree', 'max'),
+		"cd '/tmp/work tree' && 'pi' '--no-session' '--approve' '--thinking' 'max' '--model' 'openai-codex/gpt-5.6-luna' \"$(cat 'docs/plans/demo/.planning-prompt.txt')\"",
+	)
+	assert.deepEqual(pi.parseTimeline('pi jsonl'), [])
 })
 
 test('config routes use Config Document and preserve redacted secrets while rejecting stale fields', async () => {
@@ -4852,7 +4871,7 @@ test('planned Start persists projected solver overrides and clears explicit null
 		const makePlanned = (title: string, payload?: Partial<Extract<ItemPayload, { kind: 'solve' }>>) => {
 			const item = commands.createSolveItem({ title, projectSlug: 'helm', prompt: title })
 			for (const [key, value] of Object.entries(payload ?? {})) {
-				if (key === 'solverAgent' && value) commands.setSolveItemAgent(item.id, value as 'claude' | 'codex')
+				if (key === 'solverAgent' && value) commands.setSolveItemAgent(item.id, value as 'claude' | 'codex' | 'pi')
 				if (key === 'solverModel' && typeof value === 'string') commands.setSolveItemModel(item.id, value)
 				if (key === 'solverEffort' && value) commands.setSolveItemEffort(item.id, value as SolverEffort)
 				if (key === 'solverWorkspace' && value) commands.setSolveItemWorkspace(item.id, value as 'main' | 'worktree')
@@ -4962,6 +4981,16 @@ test('planned Start feasibility and planning conflicts leave selection, lifecycl
 				body: JSON.stringify({ executionMode: 'loop', solverWorkspace: 'main', solverModel: 'gpt-5.5' }),
 			})
 			assert.equal(rejected.status, 400)
+			assert.equal(JSON.stringify(commands.getItem(feasibility.id)), beforeFeasibility)
+			assert.equal(JSON.stringify(db.items.getEvents(feasibility.id)), beforeFeasibilityEvents)
+
+			const piLoop = await api.request(`/items/${feasibility.id}/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ executionMode: 'loop', solverAgent: 'pi' }),
+			})
+			assert.equal(piLoop.status, 400)
+			assert.match(((await piLoop.json()) as { error: string }).error, /not Almanac loop execution/)
 			assert.equal(JSON.stringify(commands.getItem(feasibility.id)), beforeFeasibility)
 			assert.equal(JSON.stringify(db.items.getEvents(feasibility.id)), beforeFeasibilityEvents)
 
@@ -5603,6 +5632,18 @@ test('buildPrompt injects model-tier guidance for known models only', () => {
 		})
 		assert.ok(overridden.includes('Custom marching orders.'))
 		assert.ok(!overridden.includes('orchestrator'))
+		const pi = buildPrompt(task as never, ctx as never, {
+			agent: 'pi',
+			model: 'anthropic/claude-fable-5',
+		})
+		assert.ok(pi.includes('Pi is running Fable 5'))
+		assert.ok(!pi.includes('Task tool'))
+		assert.ok(pi.includes('/skill:ship'))
+		assert.ok(pi.includes('/skill:commit'))
+		assert.ok(!pi.includes('/almanac:task-start'))
+		const piPlanning = buildPlanningPrompt('guide-plan', 'pi')
+		assert.ok(piPlanning.includes('/skill:grilling'))
+		assert.ok(!piPlanning.includes('/almanac:grill-me'))
 	} finally {
 		rmSync(dir, { recursive: true, force: true })
 	}

@@ -1442,11 +1442,14 @@ export function apiRoutes(
 		if (item.status !== 'ready' && item.status !== 'inbox' && !plannedActive)
 			return c.json({ error: 'Item is not ready to start' }, 400)
 		const requested = (body as { executionMode?: unknown }).executionMode
-		let plannedLoop: { prdPath: string; iterations: number } | undefined
+		let plannedLoop: { prdPath: string; iterations: number; provider: 'claude' | 'codex' } | undefined
 		if (plannedActive && projectedSolvePayload) {
 			if (requested !== 'agent' && requested !== 'loop')
 				return c.json({ error: 'Planned Items require executionMode: agent or loop' }, 400)
 			if (requested === 'loop') {
+				const loopProvider = projectedSolvePayload.solverAgent ?? config.solver.agent
+				if (loopProvider === 'pi')
+					return c.json({ error: 'Pi is supported for direct agent runs, not Almanac loop execution.' }, 400)
 				const workspaceMode = effectiveSolverWorkspace(projectedItem, undefined)
 				const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
 				if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
@@ -1469,7 +1472,7 @@ export function apiRoutes(
 					const agentReadyTickets = (localTickets?.readyForAgent ?? 0) + (githubTickets?.readyForAgent ?? 0)
 					if (ticketTotal > 0 && agentReadyTickets === 0)
 						return c.json({ error: 'This plan has tickets, but none are ready for an agent.' }, 400)
-					plannedLoop = { prdPath, iterations: agentReadyTickets > 0 ? agentReadyTickets : 10 }
+					plannedLoop = { prdPath, iterations: agentReadyTickets > 0 ? agentReadyTickets : 10, provider: loopProvider }
 				} catch (err) {
 					return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
 				}
@@ -1494,7 +1497,7 @@ export function apiRoutes(
 						options: {
 							mode: 'afk',
 							iterations: plannedLoop.iterations,
-							provider: projectedSolvePayload?.solverAgent ?? config.solver.agent,
+							provider: plannedLoop.provider,
 							model: projectedSolvePayload?.solverModel ?? config.solver.model,
 							effort: projectedSolvePayload?.solverEffort,
 						},
