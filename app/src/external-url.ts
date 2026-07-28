@@ -1,5 +1,15 @@
 const MAX_EXTERNAL_URL_LENGTH = 2048
 
+export interface TerminalLinkClick {
+	button: number
+	metaKey: boolean
+}
+
+/** Terminal URLs are inert on ordinary clicks; macOS browser handoff is explicit. */
+export function shouldOpenTerminalLink(event: TerminalLinkClick): boolean {
+	return event.button === 0 && event.metaKey
+}
+
 /**
  * Accept only bounded HTTP(S) URLs for OS-browser handoff. Renderer content is
  * untrusted input at this boundary; file, javascript, data, and custom schemes
@@ -19,4 +29,4 @@ export function parseExternalHttpUrl(value: unknown): string | null {
 
 // app/package.json is CommonJS; plain-Node tests loaded through tsx receive the
 // module namespace through the default export.
-export default { parseExternalHttpUrl }
+export default { parseExternalHttpUrl, shouldOpenTerminalLink }

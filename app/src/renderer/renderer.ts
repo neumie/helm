@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
+import { shouldOpenTerminalLink } from '../external-url'
 import type { RestoredSession, TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
 import { TAB_GROUP_COLORS, TAB_GROUP_COLOR_LABELS, type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
 import { TerminalTransferRendererController } from '../terminal-transfer-renderer'
@@ -2807,9 +2808,11 @@ async function createTerminal(opts?: TerminalOpts): Promise<void> {
 	term.loadAddon(serialize)
 	// The addon's default handler opens about:blank before assigning the URL;
 	// Helm denies that transient Electron window. Use the restricted main-process
-	// browser handoff directly so ordinary clicks open safe web links.
+	// browser handoff directly, gated behind the explicit macOS Command-click.
 	term.loadAddon(
-		new WebLinksAddon((_event, uri) => {
+		new WebLinksAddon((event, uri) => {
+			if (!shouldOpenTerminalLink(event)) return
+			event.preventDefault()
 			void helm.external.open(uri)
 		}),
 	)
