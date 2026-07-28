@@ -376,7 +376,8 @@ test('group header drags every member as one block in every state and surface', 
 	assert.match(renderer, /executeGroupAction\(\{[\s\S]*action: 'background'[\s\S]*type: 'move-all-background'/)
 	assert.match(renderer, /executeGroupAction\(\{[\s\S]*action: 'restore'[\s\S]*type: 'restore-all'/)
 	assert.match(renderer, /drag\.dropUnitIndex = stripDropInsertionIndex/)
-	assert.match(renderer, /if \(moved\) \{[\s\S]*setTabOrder\([\s\S]*drag\.dropUnitIndex/)
+	assert.match(renderer, /projectBackgroundGroupAtUnit\(drag, units, drag\.dropUnitIndex\)/)
+	assert.match(renderer, /if \(moved\) commitBackgroundGroupProjection\(drag\)/)
 	assert.match(renderer, /if \(!moved\) restoreGroupDragOrigin\(drag\)/)
 	assert.match(renderer, /suppressedGroupToggleClicks\.add\(toggleKey\)/)
 	assert.match(

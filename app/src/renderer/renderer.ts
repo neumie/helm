@@ -202,6 +202,9 @@ const suppressedGroupToggleClicks = new Set<string>()
 // pty stays attached and scrollback keeps accumulating. Memory cost equals an
 // inactive strip tab (those are already hidden, live xterm instances).
 const parked: Tab[] = []
+// Renderer-only admission projection: actual placement remains parked until an
+// authorized drop commits, so PTY/title events keep their background semantics.
+const stripProjectedTabs = new Set<Tab>()
 let activeTab: Tab | null = null
 
 function persistTerminalOrder(): void {
@@ -337,7 +340,7 @@ function tabGroupComposition() {
 		tabs: [...tabs, ...parked].map(tab => ({
 			id: tabIdentity(tab),
 			groupId: tab.groupId,
-			parked: tab.parked,
+			parked: stripProjectedTabs.has(tab) ? false : tab.parked,
 			name: displayName(tab),
 			agentRunning: tab.agentRunning,
 			agentAttention: tab.agentAttention,
@@ -972,7 +975,7 @@ function cycleTab(delta: number): void {
 }
 
 function closeTab(tab: Tab): void {
-	if (tab.closed || tab.transferring) return
+	if (stripProjectedTabs.has(tab) || groupPointerDrag?.settling || tab.closed || tab.transferring) return
 	tab.closed = true
 	// Snapshot before releasing a synchronized redraw guard: saveSnapshot skips
 	// a pending replacement frame, preserving the previous complete snapshot.
@@ -1025,8 +1028,15 @@ function closeTab(tab: Tab): void {
 // keeps landing in scrollback. The strip-right stack button (visible only when
 // parked.length > 0) opens the popover listing them.
 
-function parkTab(tab: Tab): void {
-	if (tab.closed || tab.parked || tab.transferring) return
+function parkTab(tab: Tab, allowDuringGroupSettle = false): void {
+	if (
+		stripProjectedTabs.has(tab) ||
+		(!allowDuringGroupSettle && groupPointerDrag?.settling) ||
+		tab.closed ||
+		tab.parked ||
+		tab.transferring
+	)
+		return
 	const index = tabs.indexOf(tab)
 	if (index === -1) return
 	tabs.splice(index, 1)
@@ -1059,7 +1069,7 @@ function openParked(tab: Tab): void {
 
 /** Move back to the strip end, focused and refit. */
 function restoreParked(tab: Tab, targetOrder?: readonly Tab[]): void {
-	if (tab.transferring) return
+	if (stripProjectedTabs.has(tab) || groupPointerDrag?.settling || tab.transferring) return
 	const index = parked.indexOf(tab)
 	if (index === -1) return
 	parked.splice(index, 1)
@@ -1083,7 +1093,7 @@ function restoreParked(tab: Tab, targetOrder?: readonly Tab[]): void {
 
 /** Popover ✕: grace-close path; Undo restores to the BACKGROUND list, not a tab. */
 function killParkedTab(tab: Tab): void {
-	if (tab.transferring) return
+	if (stripProjectedTabs.has(tab) || groupPointerDrag?.settling || tab.transferring) return
 	const index = parked.indexOf(tab)
 	if (index === -1 || tab.closed) return
 	tab.closed = true
@@ -1728,7 +1738,7 @@ function projectBackgroundTabAtUnit(drag: BackgroundTabPointerDrag, unitIndex: n
 	const units = stripDragUnitsExcluding(drag.tab.groupId ?? '', drag.tab)
 	const block = backgroundTabProjectedBlock(drag)
 	const ownershipChanged = drag.tab.parked
-	drag.tab.parked = false
+	stripProjectedTabs.add(drag.tab)
 	drag.projected = true
 	drag.dropUnitIndex = unitIndex
 	drag.tab.tabButton.classList.add('background-tab-drop-placeholder', 'active')
@@ -1748,7 +1758,7 @@ function projectBackgroundTabAtUnit(drag: BackgroundTabPointerDrag, unitIndex: n
 
 function restoreBackgroundTabProjection(drag: BackgroundTabPointerDrag, animate: boolean): void {
 	if (!drag.projected) return
-	drag.tab.parked = true
+	stripProjectedTabs.delete(drag.tab)
 	drag.projected = false
 	drag.tab.tabButton.classList.remove('background-tab-drop-placeholder')
 	drag.tab.tabButton.classList.toggle('active', drag.originalActive)
@@ -1760,6 +1770,7 @@ function commitBackgroundTabProjection(drag: BackgroundTabPointerDrag): boolean 
 	const index = parked.indexOf(drag.tab)
 	if (index === -1) return false
 	parked.splice(index, 1)
+	stripProjectedTabs.delete(drag.tab)
 	drag.projected = false
 	drag.tab.parked = false
 	if (drag.tab.sessionId) helm.sessions.setParked(drag.tab.sessionId, false)
@@ -1981,8 +1992,10 @@ interface GroupPointerDrag {
 	sourceHeight: number
 	originalTabs: Tab[]
 	started: boolean
+	projected: boolean
+	settling: boolean
+	settlingTabs: Tab[] | null
 	preview: HTMLDivElement | null
-	placeholder: HTMLElement | null
 	dropTarget: 'strip' | 'background' | null
 	dropUnitIndex: number
 	frame: number | null
@@ -2041,44 +2054,75 @@ function stripDragUnitsExcluding(groupId: string, excludedTab?: Tab): StripDragU
 	return units
 }
 
-function createProjectedStripGroup(drag: GroupPointerDrag): HTMLElement | null {
-	const composition = tabGroupComposition()
-	const source = composition.background.find(section => section.kind === 'group' && section.groupId === drag.groupId)
-	const stripSource = composition.strip.find(section => section.kind === 'group' && section.groupId === drag.groupId)
-	const group = tabGroups.find(candidate => candidate.id === drag.groupId)
-	if (!source || !group) return null
-	const members = [...(stripSource?.members ?? []), ...source.members]
-	const projected: TabGroupSection = {
-		...source,
-		surface: 'strip',
-		collapsed: group.collapsedStrip,
-		members,
-		visibleMembers: group.collapsedStrip ? [] : members,
-	}
-	const byId = new Map([...tabs, ...parked].map(tab => [tabIdentity(tab), tab]))
-	const placeholder = createStripSection(projected, byId, true)
-	placeholder.classList.add('group-drop-placeholder')
-	placeholder.setAttribute('aria-hidden', 'true')
-	placeholder.inert = true
-	for (const descendant of placeholder.querySelectorAll<HTMLElement>('[id], button, [tabindex]')) {
-		descendant.removeAttribute('id')
-		descendant.tabIndex = -1
-	}
-	return placeholder
+function backgroundGroupProjectedBlock(drag: GroupPointerDrag): Tab[] {
+	return [...drag.originalTabs.filter(tab => tab.groupId === drag.groupId), ...drag.members]
 }
 
-function placeProjectedStripGroup(drag: GroupPointerDrag, units: readonly StripDragUnit[]): void {
-	const placeholder = drag.placeholder
-	if (!placeholder) return
-	const target = units[drag.dropUnitIndex]?.element ?? null
-	tabsEl.insertBefore(placeholder, target)
+function projectBackgroundGroupAtUnit(
+	drag: GroupPointerDrag,
+	units: readonly StripDragUnit[],
+	unitIndex: number,
+): void {
+	for (const member of drag.members) stripProjectedTabs.add(member)
+	drag.projected = true
+	setTabOrder(
+		insertBlockAtUnitIndex(
+			units.map(unit => unit.members),
+			backgroundGroupProjectedBlock(drag),
+			unitIndex,
+		),
+		true,
+	)
+	stripGroupElement(drag.groupId)?.classList.add('group-drop-placeholder')
+}
+
+function groupDragSnapshotUnchanged(drag: GroupPointerDrag): boolean {
+	return (
+		drag.settlingTabs === null ||
+		(drag.settlingTabs.length === tabs.length && drag.settlingTabs.every((tab, index) => tab === tabs[index]))
+	)
+}
+
+function restoreBackgroundGroupProjection(drag: GroupPointerDrag, animate: boolean): void {
+	if (!drag.projected) return
+	for (const member of drag.members) {
+		stripProjectedTabs.delete(member)
+		if (member.closed) {
+			const parkedIndex = parked.indexOf(member)
+			if (parkedIndex !== -1) parked.splice(parkedIndex, 1)
+		}
+	}
+	drag.projected = false
+	setTabOrder(
+		groupDragSnapshotUnchanged(drag) ? drag.originalTabs : tabs.filter(tab => !drag.members.includes(tab)),
+		animate,
+	)
+}
+
+function commitBackgroundGroupProjection(drag: GroupPointerDrag): void {
+	if (!drag.projected) return
+	for (const member of drag.members) {
+		const parkedIndex = parked.indexOf(member)
+		if (parkedIndex !== -1) parked.splice(parkedIndex, 1)
+		stripProjectedTabs.delete(member)
+		member.parked = false
+	}
+	drag.projected = false
+	renderTabGroups()
+	persistTerminalOrder()
+	closeBackgroundPopover()
+	updateBackgroundUi()
+	syncEmptyState()
+	const focusTarget = drag.members.at(-1)
+	if (focusTarget) activate(focusTarget)
 }
 
 function markGroupDragPlaceholder(drag: GroupPointerDrag): void {
+	if (drag.originSurface === 'background') {
+		if (drag.projected) stripGroupElement(drag.groupId)?.classList.add('group-drop-placeholder')
+		return
+	}
 	groupElement(drag.groupId, drag.originSurface)?.classList.add('group-drag-placeholder')
-	// A split-surface group moves as one visual unit: hide its existing strip
-	// projection while the complete destination ghost owns the insertion slot.
-	if (drag.originSurface === 'background') stripGroupElement(drag.groupId)?.classList.add('group-drag-placeholder')
 }
 
 function positionGroupPreview(drag: GroupPointerDrag): void {
@@ -2088,12 +2132,14 @@ function positionGroupPreview(drag: GroupPointerDrag): void {
 }
 
 function restoreGroupDragOrigin(drag: GroupPointerDrag): void {
-	if (drag.originSurface === 'strip') setTabOrder(drag.originalTabs, true)
-	markGroupDragPlaceholder(drag)
+	if (drag.originSurface === 'background') restoreBackgroundGroupProjection(drag, true)
+	else {
+		if (groupDragSnapshotUnchanged(drag)) setTabOrder(drag.originalTabs, true)
+		markGroupDragPlaceholder(drag)
+	}
 }
 
 function updateGroupDragTarget(drag: GroupPointerDrag): void {
-	drag.placeholder?.remove()
 	tabStripRegion.classList.remove('background-restore-over')
 	const backgroundRect = bgToggle.getBoundingClientRect()
 	const overNewTab = pointInExpandedRect(drag.x, drag.y, newTabButton.getBoundingClientRect())
@@ -2134,7 +2180,7 @@ function updateGroupDragTarget(drag: GroupPointerDrag): void {
 		)
 		markGroupDragPlaceholder(drag)
 	} else {
-		placeProjectedStripGroup(drag, units)
+		projectBackgroundGroupAtUnit(drag, units, drag.dropUnitIndex)
 	}
 	positionGroupPreview(drag)
 }
@@ -2182,10 +2228,7 @@ function startGroupPointerDrag(drag: GroupPointerDrag): void {
 	const previewRect = preview.getBoundingClientRect()
 	drag.offsetX = (drag.offsetX / drag.sourceWidth) * previewRect.width
 	drag.offsetY = (drag.offsetY / drag.sourceHeight) * previewRect.height
-	if (drag.originSurface === 'background') {
-		drag.placeholder = createProjectedStripGroup(drag)
-		tabStripRegion.classList.add('background-restore-ready')
-	}
+	if (drag.originSurface === 'background') tabStripRegion.classList.add('background-restore-ready')
 	markGroupDragPlaceholder(drag)
 	closeBackgroundPopover()
 	document.body.classList.add('group-dragging')
@@ -2278,19 +2321,8 @@ async function finishGroupStripRestore(drag: GroupPointerDrag): Promise<void> {
 	} catch {
 		moved = false
 	}
-	if (moved) {
-		const units = stripDragUnitsExcluding(drag.groupId)
-		const restoredMembers = tabs.filter(tab => tab.groupId === drag.groupId)
-		setTabOrder(
-			insertBlockAtUnitIndex(
-				units.map(unit => unit.members),
-				restoredMembers,
-				drag.dropUnitIndex,
-			),
-			false,
-		)
-		persistTerminalOrder()
-	}
+	if (moved) commitBackgroundGroupProjection(drag)
+	else restoreBackgroundGroupProjection(drag, true)
 	renderTabGroups()
 	const target = moved
 		? (stripGroupElement(drag.groupId)?.getBoundingClientRect() ?? tabsEl.getBoundingClientRect())
@@ -2302,29 +2334,35 @@ async function finishGroupStripRestore(drag: GroupPointerDrag): Promise<void> {
 function finishGroupPointerDrag(cancelled: boolean): void {
 	const drag = groupPointerDrag
 	if (!drag) return
-	groupPointerDrag = null
 	removeGroupPointerListeners(drag)
 	if (drag.frame !== null) cancelAnimationFrame(drag.frame)
-	if (!drag.started) return
+	if (!drag.started) {
+		groupPointerDrag = null
+		return
+	}
 
 	const intoBackground = drag.originSurface === 'strip' && !cancelled && drag.dropTarget === 'background'
 	const intoStrip = drag.originSurface === 'background' && !cancelled && drag.dropTarget === 'strip'
 	if (drag.originSurface === 'strip' && (cancelled || drag.dropTarget !== 'strip')) restoreGroupDragOrigin(drag)
 	else if (drag.originSurface === 'strip') persistTerminalOrder()
+	else if (!intoStrip) restoreGroupDragOrigin(drag)
 	const toggleKey = `${drag.originSurface}:${drag.groupId}`
 	suppressedGroupToggleClicks.add(toggleKey)
 	setTimeout(() => suppressedGroupToggleClicks.delete(toggleKey), 0)
-	if (intoBackground) {
+	if (intoBackground || intoStrip) {
+		drag.settling = true
+		drag.settlingTabs = [...tabs]
 		document.body.classList.remove('group-dragging')
-		void finishGroupBackgroundDrop(drag)
-		return
-	}
-	if (intoStrip) {
-		document.body.classList.remove('group-dragging')
-		void finishGroupStripRestore(drag)
+		const operation = intoBackground ? finishGroupBackgroundDrop(drag) : finishGroupStripRestore(drag)
+		void operation.finally(() => {
+			drag.settling = false
+			drag.settlingTabs = null
+			if (groupPointerDrag === drag) groupPointerDrag = null
+		})
 		return
 	}
 
+	groupPointerDrag = null
 	renderTabGroups()
 	const target =
 		drag.originSurface === 'strip'
@@ -2403,8 +2441,10 @@ function createGroupPointerDrag(
 		sourceHeight: rect.height,
 		originalTabs: [...tabs],
 		started: false,
+		projected: false,
+		settling: false,
+		settlingTabs: null,
 		preview: null,
-		placeholder: null,
 		dropTarget: null,
 		dropUnitIndex: 0,
 		frame: null,
@@ -2679,6 +2719,7 @@ function openProfileMoveMenu(tab: Tab, x: number, y: number): void {
 }
 
 function openTabMenu(tab: Tab, x: number, y: number): void {
+	if (groupPointerDrag?.settling) return
 	const movable = tab.sessionId !== null && !tab.transferring
 	openMenu(
 		[
@@ -2752,7 +2793,7 @@ function restoreGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: reado
 function backgroundGroupMembers(current: ReadonlyMap<string, Tab>, memberIds: readonly string[]): void {
 	for (const id of memberIds) {
 		const tab = current.get(id)
-		if (tab && !tab.parked) parkTab(tab)
+		if (tab && !tab.parked) parkTab(tab, true)
 	}
 }
 
@@ -2791,6 +2832,7 @@ async function executeGroupAction(target: TabGroupActionTarget): Promise<boolean
 }
 
 function runGroupAction(target: TabGroupActionTarget): void {
+	if (groupPointerDrag?.settling) return
 	void executeGroupAction(target)
 }
 
@@ -2817,7 +2859,7 @@ function openGroupColorMenu(
 }
 
 function openGroupMenu(section: TabGroupSection, x: number, y: number, trigger: HTMLElement): void {
-	if (section.groupId === null) return
+	if (groupPointerDrag?.settling || section.groupId === null) return
 	const groupId = section.groupId
 	const color = section.color ?? 'blue'
 	const actions = section.actionTargets.map((target, index) => ({
