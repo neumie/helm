@@ -272,9 +272,7 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 		if (suppressedGroupToggleClicks.delete(toggleKey)) return
 		setGroupCollapsed(section.groupId as string, section.surface, !section.collapsed)
 	})
-	if (section.surface === 'strip' && section.collapsed) {
-		toggle.addEventListener('pointerdown', event => beginCollapsedGroupPointerDrag(section, toggle, event))
-	}
+	toggle.addEventListener('pointerdown', event => beginGroupPointerDrag(section, toggle, event))
 	const openMenu = (x: number, y: number) => openGroupMenu(section, x, y, toggle)
 	toggle.addEventListener('contextmenu', event => {
 		event.preventDefault()
@@ -286,7 +284,20 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 		const rect = toggle.getBoundingClientRect()
 		openMenu(rect.left, rect.bottom)
 	})
-	return toggle
+	if (section.surface !== 'background') return toggle
+	const restoreTarget = section.actionTargets.find(target => target.action === 'restore')
+	if (!restoreTarget) return toggle
+	const row = document.createElement('div')
+	row.className = 'bg-group-header-row'
+	const restore = createIconButton({
+		label: `Restore ${section.name} group to tabs`,
+		glyph: '⇥',
+		glyphClassName: 'bg-action-glyph',
+		onClick: () => runGroupAction(restoreTarget),
+	})
+	restore.classList.add('bg-group-restore')
+	row.append(toggle, restore)
+	return row
 }
 
 interface FocusedGroupHeader {
@@ -1132,6 +1143,7 @@ function renderBackgroundRows(): void {
 	for (const section of tabGroupComposition().background) {
 		const sectionEl = document.createElement('section')
 		sectionEl.className = `bg-group-section${section.collapsed ? ' collapsed' : ''}`
+		sectionEl.dataset.groupId = section.groupId ?? ''
 		applyGroupColor(sectionEl, section.color)
 		const header = groupHeader(section)
 		if (header) sectionEl.append(header)
@@ -1613,8 +1625,9 @@ function beginTabPointerDrag(tab: Tab, event: PointerEvent): void {
 	window.addEventListener('blur', onTabDragBlur)
 }
 
-interface CollapsedGroupPointerDrag {
+interface GroupPointerDrag {
 	groupId: string
+	originSurface: TabGroupSurface
 	members: Tab[]
 	header: HTMLButtonElement
 	pointerId: number
@@ -1624,10 +1637,13 @@ interface CollapsedGroupPointerDrag {
 	y: number
 	offsetX: number
 	offsetY: number
+	sourceWidth: number
+	sourceHeight: number
 	originalTabs: Tab[]
 	started: boolean
 	preview: HTMLDivElement | null
 	dropTarget: 'strip' | 'background' | null
+	dropUnitIndex: number
 	frame: number | null
 }
 
@@ -1636,7 +1652,7 @@ interface StripDragUnit {
 	rect: DOMRect
 }
 
-let collapsedGroupPointerDrag: CollapsedGroupPointerDrag | null = null
+let groupPointerDrag: GroupPointerDrag | null = null
 
 function stripGroupElement(groupId: string): HTMLElement | null {
 	return ([...tabsEl.children].find(
@@ -1645,6 +1661,18 @@ function stripGroupElement(groupId: string): HTMLElement | null {
 			child.classList.contains('tab-group-section') &&
 			child.dataset.groupId === groupId,
 	) ?? null) as HTMLElement | null
+}
+
+function backgroundGroupElement(groupId: string): HTMLElement | null {
+	return (
+		[...bgRows.querySelectorAll<HTMLElement>('.bg-group-section')].find(
+			section => section.dataset.groupId === groupId,
+		) ?? null
+	)
+}
+
+function groupElement(groupId: string, surface: TabGroupSurface): HTMLElement | null {
+	return surface === 'strip' ? stripGroupElement(groupId) : backgroundGroupElement(groupId)
 }
 
 function stripDragUnitsExcluding(groupId: string): StripDragUnit[] {
@@ -1669,30 +1697,30 @@ function stripDragUnitsExcluding(groupId: string): StripDragUnit[] {
 	return units
 }
 
-function markCollapsedGroupDragPlaceholder(groupId: string): void {
-	stripGroupElement(groupId)?.classList.add('group-drag-placeholder')
+function markGroupDragPlaceholder(drag: GroupPointerDrag): void {
+	groupElement(drag.groupId, drag.originSurface)?.classList.add('group-drag-placeholder')
 }
 
-function positionCollapsedGroupPreview(drag: CollapsedGroupPointerDrag): void {
+function positionGroupPreview(drag: GroupPointerDrag): void {
 	if (!drag.preview) return
 	const scale = drag.dropTarget === 'background' ? 0.92 : 1.02
 	drag.preview.style.transform = `translate3d(${drag.x - drag.offsetX}px, ${drag.y - drag.offsetY}px, 0) scale(${scale})`
 }
 
-function restoreCollapsedGroupDragOrigin(drag: CollapsedGroupPointerDrag): void {
-	setTabOrder(drag.originalTabs, true)
-	markCollapsedGroupDragPlaceholder(drag.groupId)
+function restoreGroupDragOrigin(drag: GroupPointerDrag): void {
+	if (drag.originSurface === 'strip') setTabOrder(drag.originalTabs, true)
+	markGroupDragPlaceholder(drag)
 }
 
-function updateCollapsedGroupDragTarget(drag: CollapsedGroupPointerDrag): void {
+function updateGroupDragTarget(drag: GroupPointerDrag): void {
 	const backgroundRect = bgToggle.getBoundingClientRect()
 	const overNewTab = pointInExpandedRect(drag.x, drag.y, newTabButton.getBoundingClientRect())
-	if (!overNewTab && pointInExpandedRect(drag.x, drag.y, backgroundRect, 8)) {
-		restoreCollapsedGroupDragOrigin(drag)
+	if (drag.originSurface === 'strip' && !overNewTab && pointInExpandedRect(drag.x, drag.y, backgroundRect, 8)) {
+		restoreGroupDragOrigin(drag)
 		drag.dropTarget = 'background'
 		bgToggle.classList.add('drag-over')
 		drag.preview?.classList.add('over-background')
-		positionCollapsedGroupPreview(drag)
+		positionGroupPreview(drag)
 		return
 	}
 
@@ -1700,84 +1728,102 @@ function updateCollapsedGroupDragTarget(drag: CollapsedGroupPointerDrag): void {
 	drag.preview?.classList.remove('over-background')
 	const stripRect = tabsEl.getBoundingClientRect()
 	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 10)) {
-		restoreCollapsedGroupDragOrigin(drag)
+		restoreGroupDragOrigin(drag)
 		drag.dropTarget = null
-		positionCollapsedGroupPreview(drag)
+		positionGroupPreview(drag)
 		return
 	}
 
 	drag.dropTarget = 'strip'
 	const units = stripDragUnitsExcluding(drag.groupId)
-	const unitIndex = stripDropInsertionIndex(
+	drag.dropUnitIndex = stripDropInsertionIndex(
 		drag.x,
 		units.map(unit => unit.rect),
 	)
-	setTabOrder(
-		insertBlockAtUnitIndex(
-			units.map(unit => unit.members),
-			drag.members,
-			unitIndex,
-		),
-		true,
-	)
-	markCollapsedGroupDragPlaceholder(drag.groupId)
-	positionCollapsedGroupPreview(drag)
+	if (drag.originSurface === 'strip') {
+		setTabOrder(
+			insertBlockAtUnitIndex(
+				units.map(unit => unit.members),
+				drag.members,
+				drag.dropUnitIndex,
+			),
+			true,
+		)
+		markGroupDragPlaceholder(drag)
+	}
+	positionGroupPreview(drag)
 }
 
-function collapsedGroupDragFrame(): void {
-	const drag = collapsedGroupPointerDrag
+function groupDragFrame(): void {
+	const drag = groupPointerDrag
 	if (!drag?.started) return
 	if (drag.dropTarget === 'strip') {
 		const stripRect = tabsEl.getBoundingClientRect()
 		const delta = tabStripAutoScrollDelta(drag.x, stripRect, tabsEl.scrollLeft, tabsEl.scrollWidth, tabsEl.clientWidth)
 		if (delta !== 0) {
 			tabsEl.scrollLeft += delta
-			updateCollapsedGroupDragTarget(drag)
+			updateGroupDragTarget(drag)
 		}
 	}
-	drag.frame = requestAnimationFrame(collapsedGroupDragFrame)
+	drag.frame = requestAnimationFrame(groupDragFrame)
 }
 
-function startCollapsedGroupPointerDrag(drag: CollapsedGroupPointerDrag): void {
-	const sectionEl = stripGroupElement(drag.groupId)
+function createGroupDragPreview(drag: GroupPointerDrag, sectionEl: HTMLElement): HTMLDivElement {
+	const preview = document.createElement('div')
+	preview.className = 'tab-group-section collapsed tab-group-drag-preview'
+	preview.setAttribute('aria-hidden', 'true')
+	const groupColor = sectionEl.style.getPropertyValue('--group-color')
+	if (groupColor) preview.style.setProperty('--group-color', groupColor)
+	const header = drag.header.cloneNode(true) as HTMLButtonElement
+	header.tabIndex = -1
+	if (!header.querySelector('.tab-group-count')) {
+		const count = document.createElement('span')
+		count.className = 'tab-group-count'
+		count.textContent = String(drag.members.length)
+		header.append(count)
+	}
+	preview.append(header)
+	return preview
+}
+
+function startGroupPointerDrag(drag: GroupPointerDrag): void {
+	const sectionEl = groupElement(drag.groupId, drag.originSurface)
 	if (!sectionEl) return
 	drag.started = true
 	closeTabMenu()
-	closeBackgroundPopover()
-	const rect = sectionEl.getBoundingClientRect()
-	const preview = sectionEl.cloneNode(false) as HTMLDivElement
-	preview.classList.add('tab-group-drag-preview')
-	preview.setAttribute('aria-hidden', 'true')
-	preview.style.width = `${rect.width}px`
-	const header = drag.header.cloneNode(true) as HTMLButtonElement
-	header.tabIndex = -1
-	preview.append(header)
+	const preview = createGroupDragPreview(drag, sectionEl)
 	document.body.append(preview)
 	drag.preview = preview
-	markCollapsedGroupDragPlaceholder(drag.groupId)
+	const previewRect = preview.getBoundingClientRect()
+	drag.offsetX = (drag.offsetX / drag.sourceWidth) * previewRect.width
+	drag.offsetY = (drag.offsetY / drag.sourceHeight) * previewRect.height
+	markGroupDragPlaceholder(drag)
+	closeBackgroundPopover()
 	document.body.classList.add('group-dragging')
-	bgToggle.hidden = false
-	bgToggle.classList.add('drag-ready')
-	bgToggle.title = 'Move group to background'
-	positionCollapsedGroupPreview(drag)
-	updateCollapsedGroupDragTarget(drag)
-	drag.frame = requestAnimationFrame(collapsedGroupDragFrame)
+	if (drag.originSurface === 'strip') {
+		bgToggle.hidden = false
+		bgToggle.classList.add('drag-ready')
+		bgToggle.title = 'Move group to background'
+	}
+	positionGroupPreview(drag)
+	updateGroupDragTarget(drag)
+	drag.frame = requestAnimationFrame(groupDragFrame)
 }
 
-function removeCollapsedGroupPointerListeners(drag: CollapsedGroupPointerDrag): void {
-	document.removeEventListener('pointermove', onCollapsedGroupPointerMove)
-	document.removeEventListener('pointerup', onCollapsedGroupPointerUp)
-	document.removeEventListener('pointercancel', onCollapsedGroupPointerCancel)
-	document.removeEventListener('keydown', onCollapsedGroupDragKeydown, true)
-	window.removeEventListener('blur', onCollapsedGroupDragBlur)
+function removeGroupPointerListeners(drag: GroupPointerDrag): void {
+	document.removeEventListener('pointermove', onGroupPointerMove)
+	document.removeEventListener('pointerup', onGroupPointerUp)
+	document.removeEventListener('pointercancel', onGroupPointerCancel)
+	document.removeEventListener('keydown', onGroupDragKeydown, true)
+	window.removeEventListener('blur', onGroupDragBlur)
 	try {
 		if (drag.header.hasPointerCapture(drag.pointerId)) drag.header.releasePointerCapture(drag.pointerId)
 	} catch {
-		// Header may have been replaced by a live strip reorder.
+		// Header may have been replaced by a live strip reorder or hidden popover.
 	}
 }
 
-function settleCollapsedGroupPreview(drag: CollapsedGroupPointerDrag, target: DOMRect, intoBackground = false): void {
+function settleGroupPreview(drag: GroupPointerDrag, target: DOMRect, intoBackground = false): void {
 	const preview = drag.preview
 	const cleanup = () => preview?.remove()
 	if (!preview || reducedMotion()) {
@@ -1802,14 +1848,14 @@ function settleCollapsedGroupPreview(drag: CollapsedGroupPointerDrag, target: DO
 	animation.addEventListener('cancel', cleanup, { once: true })
 }
 
-function resetCollapsedGroupDragChrome(): void {
+function resetGroupDragChrome(): void {
 	document.body.classList.remove('group-dragging')
 	bgToggle.classList.remove('drag-ready', 'drag-over')
 	bgToggle.title = 'Background terminals'
 	updateBackgroundUi()
 }
 
-async function finishCollapsedGroupBackgroundDrop(drag: CollapsedGroupPointerDrag): Promise<void> {
+async function finishGroupBackgroundDrop(drag: GroupPointerDrag): Promise<void> {
 	let moved = false
 	try {
 		moved = await executeGroupAction({
@@ -1821,95 +1867,132 @@ async function finishCollapsedGroupBackgroundDrop(drag: CollapsedGroupPointerDra
 	} catch {
 		moved = false
 	}
-	if (!moved) restoreCollapsedGroupDragOrigin(drag)
+	if (!moved) restoreGroupDragOrigin(drag)
 	renderTabGroups()
 	const target = moved
 		? bgToggle.getBoundingClientRect()
 		: (stripGroupElement(drag.groupId)?.getBoundingClientRect() ?? drag.header.getBoundingClientRect())
-	resetCollapsedGroupDragChrome()
-	settleCollapsedGroupPreview(drag, target, moved)
+	resetGroupDragChrome()
+	settleGroupPreview(drag, target, moved)
 }
 
-function finishCollapsedGroupPointerDrag(cancelled: boolean): void {
-	const drag = collapsedGroupPointerDrag
+async function finishGroupStripRestore(drag: GroupPointerDrag): Promise<void> {
+	let moved = false
+	try {
+		moved = await executeGroupAction({
+			action: 'restore',
+			groupId: drag.groupId,
+			memberIds: drag.members.map(tabIdentity),
+			intent: { type: 'restore-all', groupId: drag.groupId },
+		})
+	} catch {
+		moved = false
+	}
+	if (moved) {
+		const units = stripDragUnitsExcluding(drag.groupId)
+		setTabOrder(
+			insertBlockAtUnitIndex(
+				units.map(unit => unit.members),
+				drag.members,
+				drag.dropUnitIndex,
+			),
+			false,
+		)
+		persistTerminalOrder()
+	}
+	renderTabGroups()
+	const target = moved
+		? (stripGroupElement(drag.groupId)?.getBoundingClientRect() ?? tabsEl.getBoundingClientRect())
+		: bgToggle.getBoundingClientRect()
+	resetGroupDragChrome()
+	settleGroupPreview(drag, target, !moved)
+}
+
+function finishGroupPointerDrag(cancelled: boolean): void {
+	const drag = groupPointerDrag
 	if (!drag) return
-	collapsedGroupPointerDrag = null
-	removeCollapsedGroupPointerListeners(drag)
+	groupPointerDrag = null
+	removeGroupPointerListeners(drag)
 	if (drag.frame !== null) cancelAnimationFrame(drag.frame)
 	if (!drag.started) return
 
-	const intoBackground = !cancelled && drag.dropTarget === 'background'
-	if (cancelled || drag.dropTarget !== 'strip') restoreCollapsedGroupDragOrigin(drag)
-	else persistTerminalOrder()
-	const toggleKey = `strip:${drag.groupId}`
+	const intoBackground = drag.originSurface === 'strip' && !cancelled && drag.dropTarget === 'background'
+	const intoStrip = drag.originSurface === 'background' && !cancelled && drag.dropTarget === 'strip'
+	if (drag.originSurface === 'strip' && (cancelled || drag.dropTarget !== 'strip')) restoreGroupDragOrigin(drag)
+	else if (drag.originSurface === 'strip') persistTerminalOrder()
+	const toggleKey = `${drag.originSurface}:${drag.groupId}`
 	suppressedGroupToggleClicks.add(toggleKey)
 	setTimeout(() => suppressedGroupToggleClicks.delete(toggleKey), 0)
 	if (intoBackground) {
 		document.body.classList.remove('group-dragging')
-		void finishCollapsedGroupBackgroundDrop(drag)
+		void finishGroupBackgroundDrop(drag)
+		return
+	}
+	if (intoStrip) {
+		document.body.classList.remove('group-dragging')
+		void finishGroupStripRestore(drag)
 		return
 	}
 
 	renderTabGroups()
-	const target = stripGroupElement(drag.groupId)?.getBoundingClientRect() ?? drag.header.getBoundingClientRect()
-	resetCollapsedGroupDragChrome()
-	settleCollapsedGroupPreview(drag, target)
+	const target =
+		drag.originSurface === 'strip'
+			? (stripGroupElement(drag.groupId)?.getBoundingClientRect() ?? drag.header.getBoundingClientRect())
+			: bgToggle.getBoundingClientRect()
+	resetGroupDragChrome()
+	settleGroupPreview(drag, target, drag.originSurface === 'background')
 }
 
-function onCollapsedGroupPointerMove(event: PointerEvent): void {
-	const drag = collapsedGroupPointerDrag
+function onGroupPointerMove(event: PointerEvent): void {
+	const drag = groupPointerDrag
 	if (!drag || event.pointerId !== drag.pointerId) return
 	drag.x = event.clientX
 	drag.y = event.clientY
 	if (!drag.started) {
 		if (!dragThresholdExceeded(drag.startX, drag.startY, drag.x, drag.y)) return
-		startCollapsedGroupPointerDrag(drag)
+		startGroupPointerDrag(drag)
 	} else {
-		updateCollapsedGroupDragTarget(drag)
+		updateGroupDragTarget(drag)
 	}
 	event.preventDefault()
 }
 
-function onCollapsedGroupPointerUp(event: PointerEvent): void {
-	const drag = collapsedGroupPointerDrag
+function onGroupPointerUp(event: PointerEvent): void {
+	const drag = groupPointerDrag
 	if (!drag || event.pointerId !== drag.pointerId) return
 	drag.x = event.clientX
 	drag.y = event.clientY
-	if (drag.started) updateCollapsedGroupDragTarget(drag)
-	finishCollapsedGroupPointerDrag(false)
+	if (drag.started) updateGroupDragTarget(drag)
+	finishGroupPointerDrag(false)
 }
 
-function onCollapsedGroupPointerCancel(event: PointerEvent): void {
-	if (collapsedGroupPointerDrag && event.pointerId === collapsedGroupPointerDrag.pointerId) {
-		finishCollapsedGroupPointerDrag(true)
-	}
+function onGroupPointerCancel(event: PointerEvent): void {
+	if (groupPointerDrag && event.pointerId === groupPointerDrag.pointerId) finishGroupPointerDrag(true)
 }
 
-function onCollapsedGroupDragKeydown(event: KeyboardEvent): void {
-	if (event.key !== 'Escape' || !collapsedGroupPointerDrag) return
+function onGroupDragKeydown(event: KeyboardEvent): void {
+	if (event.key !== 'Escape' || !groupPointerDrag) return
 	event.preventDefault()
-	finishCollapsedGroupPointerDrag(true)
+	finishGroupPointerDrag(true)
 }
 
-function onCollapsedGroupDragBlur(): void {
-	if (collapsedGroupPointerDrag) finishCollapsedGroupPointerDrag(true)
+function onGroupDragBlur(): void {
+	if (groupPointerDrag) finishGroupPointerDrag(true)
 }
 
-function beginCollapsedGroupPointerDrag(
-	section: TabGroupSection,
-	header: HTMLButtonElement,
-	event: PointerEvent,
-): void {
-	if (tabPointerDrag || collapsedGroupPointerDrag || event.button !== 0 || section.groupId === null) return
-	const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
+function beginGroupPointerDrag(section: TabGroupSection, header: HTMLButtonElement, event: PointerEvent): void {
+	if (tabPointerDrag || groupPointerDrag || event.button !== 0 || section.groupId === null) return
+	const sourceTabs = section.surface === 'strip' ? tabs : parked
+	const byId = new Map(sourceTabs.map(tab => [tabIdentity(tab), tab]))
 	const members = section.members.flatMap(member => {
 		const tab = byId.get(member.id)
 		return tab ? [tab] : []
 	})
 	if (members.length === 0) return
 	const rect = header.getBoundingClientRect()
-	collapsedGroupPointerDrag = {
+	groupPointerDrag = {
 		groupId: section.groupId,
+		originSurface: section.surface,
 		members,
 		header,
 		pointerId: event.pointerId,
@@ -1919,18 +2002,21 @@ function beginCollapsedGroupPointerDrag(
 		y: event.clientY,
 		offsetX: event.clientX - rect.left,
 		offsetY: event.clientY - rect.top,
+		sourceWidth: rect.width,
+		sourceHeight: rect.height,
 		originalTabs: [...tabs],
 		started: false,
 		preview: null,
 		dropTarget: null,
+		dropUnitIndex: 0,
 		frame: null,
 	}
 	header.setPointerCapture(event.pointerId)
-	document.addEventListener('pointermove', onCollapsedGroupPointerMove, { passive: false })
-	document.addEventListener('pointerup', onCollapsedGroupPointerUp)
-	document.addEventListener('pointercancel', onCollapsedGroupPointerCancel)
-	document.addEventListener('keydown', onCollapsedGroupDragKeydown, true)
-	window.addEventListener('blur', onCollapsedGroupDragBlur)
+	document.addEventListener('pointermove', onGroupPointerMove, { passive: false })
+	document.addEventListener('pointerup', onGroupPointerUp)
+	document.addEventListener('pointercancel', onGroupPointerCancel)
+	document.addEventListener('keydown', onGroupDragKeydown, true)
+	window.addEventListener('blur', onGroupDragBlur)
 }
 
 // ---------- tab/group context menus (§3.8 panels at the pointer) ----------

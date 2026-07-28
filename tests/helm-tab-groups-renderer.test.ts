@@ -356,23 +356,33 @@ test('pointer drag can join, leave, and cross groups before atomically persistin
 	assert.match(renderer, /restoreTabDragOrigin\(drag, true\)/)
 })
 
-test('collapsed group header drags every member as one reorderable strip block', () => {
+test('group header drags every member as one block in every state and surface', () => {
 	const header = functionSlice('groupHeader', 'focusedGroupHeader')
 	assert.match(
 		header,
-		/section\.surface === 'strip' && section\.collapsed[\s\S]*beginCollapsedGroupPointerDrag\(section, toggle, event\)/,
+		/toggle\.addEventListener\('pointerdown', event => beginGroupPointerDrag\(section, toggle, event\)\)/,
 	)
-	assert.match(renderer, /function beginCollapsedGroupPointerDrag/)
+	assert.doesNotMatch(
+		header,
+		/if \([^)]*(?:section\.collapsed|section\.surface === 'strip')[^)]*\) \{?\s*toggle\.addEventListener\('pointerdown'/,
+	)
+	assert.match(renderer, /function beginGroupPointerDrag/)
+	assert.match(renderer, /const sourceTabs = section\.surface === 'strip' \? tabs : parked/)
+	assert.match(renderer, /originSurface: section\.surface/)
 	assert.match(renderer, /dragThresholdExceeded\(drag\.startX, drag\.startY, drag\.x, drag\.y\)/)
 	assert.match(renderer, /insertBlockAtUnitIndex\([\s\S]*units\.map\(unit => unit\.members\)[\s\S]*drag\.members/)
-	assert.match(renderer, /if \(cancelled \|\| drag\.dropTarget !== 'strip'\) restoreCollapsedGroupDragOrigin\(drag\)/)
-	assert.match(renderer, /else persistTerminalOrder\(\)/)
 	assert.match(renderer, /pointInExpandedRect\(drag\.x, drag\.y, backgroundRect, 8\)/)
 	assert.match(renderer, /drag\.dropTarget = 'background'/)
 	assert.match(renderer, /executeGroupAction\(\{[\s\S]*action: 'background'[\s\S]*type: 'move-all-background'/)
-	assert.match(renderer, /if \(!moved\) restoreCollapsedGroupDragOrigin\(drag\)/)
+	assert.match(renderer, /executeGroupAction\(\{[\s\S]*action: 'restore'[\s\S]*type: 'restore-all'/)
+	assert.match(renderer, /drag\.dropUnitIndex = stripDropInsertionIndex/)
+	assert.match(renderer, /if \(moved\) \{[\s\S]*setTabOrder\([\s\S]*drag\.dropUnitIndex/)
+	assert.match(renderer, /if \(!moved\) restoreGroupDragOrigin\(drag\)/)
 	assert.match(renderer, /suppressedGroupToggleClicks\.add\(toggleKey\)/)
-	assert.match(styles, /\.tab-group-section\.group-drag-placeholder\s*\{[^}]*opacity:\s*0/s)
+	assert.match(
+		styles,
+		/\.tab-group-section\.group-drag-placeholder,\s*\.bg-group-section\.group-drag-placeholder\s*\{[^}]*opacity:\s*0/s,
+	)
 	assert.match(styles, /\.tab-group-drag-preview\s*\{[^}]*position:\s*fixed[^}]*height:\s*28px/s)
 	assert.match(styles, /\.tab-group-drag-preview\.over-background\s*\{[^}]*background:/s)
 })

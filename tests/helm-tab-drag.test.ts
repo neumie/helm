@@ -23,7 +23,7 @@ test('moving right accounts for removal before insertion', () => {
 	assert.deepEqual(moveToInsertionIndex(['a', 'b', 'c', 'd'], 'a', 3), ['b', 'c', 'a', 'd'])
 })
 
-test('collapsed group block moves between individual ungrouped strip units', () => {
+test('group block moves between individual ungrouped strip units', () => {
 	const units = [['plain-a'], ['plain-b'], ['group-b-1', 'group-b-2']]
 	assert.deepEqual(insertBlockAtUnitIndex(units, ['group-a-1', 'group-a-2'], 1), [
 		'plain-a',

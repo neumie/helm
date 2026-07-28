@@ -74,13 +74,18 @@ function BackgroundGroup({
 			className={`bg-group-section${collapsed ? ' collapsed' : ''}`}
 			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
 		>
-			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
-				<span className="tab-group-summary">
-					<GroupIcon />
-					<span>{name}</span>
-				</span>
-				<span className="tab-group-count">{Children.count(children)}</span>
-			</button>
+			<div className="bg-group-header-row">
+				<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
+					<span className="tab-group-summary">
+						<GroupIcon />
+						<span>{name}</span>
+					</span>
+					<span className="tab-group-count">{Children.count(children)}</span>
+				</button>
+				<IconBtn label={`Restore ${name} group to tabs`} className="bg-group-restore">
+					<span className="bg-action-glyph">⇥</span>
+				</IconBtn>
+			</div>
 			<div className="bg-group-members" hidden={collapsed}>
 				{children}
 			</div>

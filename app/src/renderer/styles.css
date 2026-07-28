@@ -306,28 +306,36 @@ button:focus-visible,
 	background: color-mix(in srgb, var(--group-color) 22%, transparent);
 }
 
-.bg-group-section > .tab-group-toggle {
-	width: 100%;
+.bg-group-header-row > .tab-group-toggle {
+	flex: none;
+	min-width: 0;
+	max-width: calc(100% - 32px);
 	height: 32px;
-	padding: 0 12px;
+	padding: 0 8px 0 12px;
 	border-radius: 0;
 	background: transparent;
 	box-shadow: none;
 }
 
-.bg-group-section > .tab-group-toggle:hover {
+.bg-group-header-row > .tab-group-toggle:hover {
 	background: color-mix(in srgb, var(--group-color) 12%, transparent);
 }
 
-.bg-group-section > .tab-group-toggle .tab-group-summary {
+.bg-group-header-row > .tab-group-toggle .tab-group-summary {
+	min-width: 0;
 	height: 32px;
 	padding: 0;
 }
 
-.bg-group-section > .tab-group-toggle .tab-group-count {
+.bg-group-header-row > .tab-group-toggle .tab-group-summary > span:last-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.bg-group-header-row > .tab-group-toggle .tab-group-count {
 	min-width: 0;
 	height: 32px;
-	margin-left: auto;
+	margin-left: 8px;
 	padding: 0;
 	border-left: 0;
 }
@@ -365,7 +373,8 @@ body.group-dragging .tab-group-toggle {
 }
 
 .tab.drag-placeholder,
-.tab-group-section.group-drag-placeholder {
+.tab-group-section.group-drag-placeholder,
+.bg-group-section.group-drag-placeholder {
 	opacity: 0;
 }
 
@@ -772,8 +781,16 @@ body.group-dragging .tab-group-toggle {
 	gap: 4px;
 }
 
-.bg-group-section > .tab-group-header {
-	align-self: stretch;
+.bg-group-header-row {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	height: 32px;
+}
+
+.bg-group-restore {
+	flex: none;
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
 }
 
 /* Editorial rows keep Open as the large target; ⇥ restores to the strip and ×
