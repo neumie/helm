@@ -54,6 +54,7 @@ const divider = el<HTMLDivElement>('divider')
 const tabsEl = el<HTMLDivElement>('tabs')
 const newTabButton = el<HTMLButtonElement>('new-tab')
 const termsEl = el<HTMLDivElement>('terms')
+const tabStripRegion = el<HTMLDivElement>('tab-strip-region')
 const topbarDragSpace = el<HTMLDivElement>('topbar-drag-space')
 const bgRoot = el<HTMLDivElement>('bg-root')
 const bgToggle = el<HTMLButtonElement>('bg-toggle')
@@ -1649,6 +1650,7 @@ interface BackgroundTabPointerDrag {
 	offsetY: number
 	started: boolean
 	preview: HTMLDivElement | null
+	placeholder: HTMLDivElement | null
 	dropTarget: 'strip' | null
 	dropUnitIndex: number
 	dropPeerIndex: number
@@ -1657,10 +1659,41 @@ interface BackgroundTabPointerDrag {
 
 let backgroundTabPointerDrag: BackgroundTabPointerDrag | null = null
 
-function clearBackgroundTabDropTarget(): void {
+function clearBackgroundTabDropTarget(drag?: BackgroundTabPointerDrag): void {
 	for (const section of tabsEl.querySelectorAll('.background-tab-drop-target')) {
 		section.classList.remove('background-tab-drop-target')
 	}
+	drag?.placeholder?.remove()
+	tabStripRegion.classList.remove('background-restore-over')
+}
+
+function placeBackgroundTabPlaceholder(
+	drag: BackgroundTabPointerDrag,
+	units: readonly StripDragUnit[],
+	groupedPeers: readonly Tab[],
+): void {
+	const placeholder = drag.placeholder
+	if (!placeholder) return
+	if (drag.tab.groupId && groupedPeers.length > 0) {
+		const section = stripGroupElement(drag.tab.groupId)
+		const members = section?.querySelector<HTMLElement>('.tab-group-members')
+		if (!section || section.classList.contains('collapsed') || !members) return
+		members.insertBefore(placeholder, groupedPeers[drag.dropPeerIndex]?.tabButton ?? null)
+		return
+	}
+	const target = units[drag.dropUnitIndex]?.element
+	if (target) {
+		const ungroupedMembers = target.parentElement?.classList.contains('ungrouped-tab-members')
+			? target.parentElement
+			: null
+		if (ungroupedMembers) ungroupedMembers.insertBefore(placeholder, target)
+		else tabsEl.insertBefore(placeholder, target)
+		return
+	}
+	const last = units.at(-1)?.element
+	const ungroupedMembers = last?.parentElement?.classList.contains('ungrouped-tab-members') ? last.parentElement : null
+	if (ungroupedMembers) ungroupedMembers.append(placeholder)
+	else tabsEl.append(placeholder)
 }
 
 function positionBackgroundTabPreview(drag: BackgroundTabPointerDrag): void {
@@ -1669,15 +1702,16 @@ function positionBackgroundTabPreview(drag: BackgroundTabPointerDrag): void {
 }
 
 function updateBackgroundTabDragTarget(drag: BackgroundTabPointerDrag): void {
-	clearBackgroundTabDropTarget()
-	const stripRect = tabsEl.getBoundingClientRect()
-	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 10)) {
+	clearBackgroundTabDropTarget(drag)
+	const stripRect = tabStripRegion.getBoundingClientRect()
+	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 6)) {
 		drag.dropTarget = null
 		positionBackgroundTabPreview(drag)
 		return
 	}
 
 	drag.dropTarget = 'strip'
+	tabStripRegion.classList.add('background-restore-over')
 	const units = stripDragUnitsExcluding('')
 	const groupedPeers = drag.tab.groupId ? tabs.filter(tab => tab.groupId === drag.tab.groupId) : []
 	if (drag.tab.groupId && groupedPeers.length > 0) {
@@ -1694,6 +1728,7 @@ function updateBackgroundTabDragTarget(drag: BackgroundTabPointerDrag): void {
 		)
 		drag.dropPeerIndex = 0
 	}
+	placeBackgroundTabPlaceholder(drag, units, groupedPeers)
 	positionBackgroundTabPreview(drag)
 }
 
@@ -1714,13 +1749,21 @@ function backgroundTabDragFrame(): void {
 function startBackgroundTabPointerDrag(drag: BackgroundTabPointerDrag): void {
 	drag.started = true
 	const rect = drag.source.getBoundingClientRect()
+	const width = Math.min(Math.max(rect.width, 120), 180)
 	const preview = document.createElement('div')
 	preview.className = 'tab tab-drag-preview background-tab-drag-preview'
 	preview.setAttribute('aria-hidden', 'true')
-	preview.style.width = `${Math.min(Math.max(rect.width, 120), 180)}px`
+	preview.style.width = `${width}px`
 	preview.textContent = displayName(drag.tab)
+	const placeholder = document.createElement('div')
+	placeholder.className = 'tab background-tab-drop-placeholder'
+	placeholder.setAttribute('aria-hidden', 'true')
+	placeholder.style.width = `${width}px`
+	placeholder.textContent = displayName(drag.tab)
 	document.body.append(preview)
 	drag.preview = preview
+	drag.placeholder = placeholder
+	tabStripRegion.classList.add('background-restore-ready')
 	closeBackgroundPopover()
 	document.body.classList.add('tab-dragging')
 	positionBackgroundTabPreview(drag)
@@ -1806,7 +1849,8 @@ function finishBackgroundTabPointerDrag(cancelled: boolean): void {
 			? (stripGroupElement(drag.tab.groupId)?.getBoundingClientRect() ?? drag.tab.tabButton.getBoundingClientRect())
 			: drag.tab.tabButton.getBoundingClientRect()
 	}
-	clearBackgroundTabDropTarget()
+	clearBackgroundTabDropTarget(drag)
+	tabStripRegion.classList.remove('background-restore-ready')
 	document.body.classList.remove('tab-dragging')
 	updateBackgroundUi()
 	settleBackgroundTabPreview(drag, target, restored)
@@ -1849,27 +1893,38 @@ function onBackgroundTabDragBlur(): void {
 	if (backgroundTabPointerDrag) finishBackgroundTabPointerDrag(true)
 }
 
-function beginBackgroundTabPointerDrag(tab: Tab, source: HTMLButtonElement, event: PointerEvent): void {
-	if (backgroundTabPointerDrag || tabPointerDrag || groupPointerDrag || event.button !== 0 || tab.closed || !tab.parked)
-		return
+function createBackgroundTabPointerDrag(
+	tab: Tab,
+	source: HTMLButtonElement,
+	pointerId: number,
+	x: number,
+	y: number,
+): BackgroundTabPointerDrag {
 	const rect = source.getBoundingClientRect()
-	backgroundTabPointerDrag = {
+	return {
 		tab,
 		source,
-		pointerId: event.pointerId,
-		startX: event.clientX,
-		startY: event.clientY,
-		x: event.clientX,
-		y: event.clientY,
-		offsetX: Math.min(event.clientX - rect.left, 168),
-		offsetY: Math.min(event.clientY - rect.top, 26),
+		pointerId,
+		startX: x,
+		startY: y,
+		x,
+		y,
+		offsetX: Math.min(x - rect.left, 168),
+		offsetY: Math.min(y - rect.top, 26),
 		started: false,
 		preview: null,
+		placeholder: null,
 		dropTarget: null,
 		dropUnitIndex: tabs.length,
 		dropPeerIndex: 0,
 		frame: null,
 	}
+}
+
+function beginBackgroundTabPointerDrag(tab: Tab, source: HTMLButtonElement, event: PointerEvent): void {
+	if (backgroundTabPointerDrag || tabPointerDrag || groupPointerDrag || event.button !== 0 || tab.closed || !tab.parked)
+		return
+	backgroundTabPointerDrag = createBackgroundTabPointerDrag(tab, source, event.pointerId, event.clientX, event.clientY)
 	source.setPointerCapture(event.pointerId)
 	document.addEventListener('pointermove', onBackgroundTabPointerMove, { passive: false })
 	document.addEventListener('pointerup', onBackgroundTabPointerUp)
@@ -1903,6 +1958,7 @@ interface GroupPointerDrag {
 interface StripDragUnit {
 	members: Tab[]
 	rect: DOMRect
+	element: HTMLElement
 }
 
 let groupPointerDrag: GroupPointerDrag | null = null
@@ -1939,12 +1995,13 @@ function stripDragUnitsExcluding(groupId: string): StripDragUnit[] {
 				const tab = byId.get(member.id)
 				return tab ? [tab] : []
 			})
-			if (sectionEl && members.length > 0) units.push({ members, rect: sectionEl.getBoundingClientRect() })
+			if (sectionEl && members.length > 0)
+				units.push({ members, rect: sectionEl.getBoundingClientRect(), element: sectionEl })
 			continue
 		}
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
-			if (tab) units.push({ members: [tab], rect: tab.tabButton.getBoundingClientRect() })
+			if (tab) units.push({ members: [tab], rect: tab.tabButton.getBoundingClientRect(), element: tab.tabButton })
 		}
 	}
 	return units
@@ -3171,7 +3228,13 @@ async function runUiPreview(): Promise<void> {
 		if (tab) commitCustomName(tab, 'deploy watch')
 		return
 	}
-	if (preview !== 'background' && preview !== 'background-strip' && preview !== 'background-open') return
+	if (
+		preview !== 'background' &&
+		preview !== 'background-strip' &&
+		preview !== 'background-open' &&
+		preview !== 'background-drag'
+	)
+		return
 	await createTerminal().catch(() => {})
 	const exiting = activeTab
 	if (exiting) {
@@ -3182,11 +3245,35 @@ async function runUiPreview(): Promise<void> {
 	await createTerminal().catch(() => {})
 	const running = activeTab
 	if (running) {
+		if (preview === 'background-drag') commitCustomName(running, 'background deploy')
 		parkTab(running)
 		setTabAgentRunning(running, true)
 	}
 	if (preview === 'background') openBackgroundPopover()
 	else if (preview === 'background-open' && running) openParked(running)
+	else if (preview === 'background-drag' && running) {
+		openBackgroundPopover()
+		await new Promise(requestAnimationFrame)
+		const row = [...bgRows.querySelectorAll<HTMLElement>('.bg-row')].find(
+			candidate => candidate.dataset.tabId === tabIdentity(running),
+		)
+		const source = row?.querySelector<HTMLButtonElement>('.bg-open')
+		if (source) {
+			const sourceRect = source.getBoundingClientRect()
+			const drag = createBackgroundTabPointerDrag(
+				running,
+				source,
+				-1,
+				sourceRect.left + sourceRect.width / 2,
+				sourceRect.top + sourceRect.height / 2,
+			)
+			backgroundTabPointerDrag = drag
+			const receiver = tabStripRegion.getBoundingClientRect()
+			drag.x = receiver.left + receiver.width * 0.72
+			drag.y = receiver.top + receiver.height / 2
+			startBackgroundTabPointerDrag(drag)
+		}
+	}
 }
 
 // Main-owned scheduled adoption is deliberately not a renderer command. It

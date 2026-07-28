@@ -199,7 +199,8 @@ export interface ExternalApi {
  * `background-park` parks the ACTIVE tab (after any --term-cmd output landed) so
  * a relaunch can verify parked snapshot restore; `background-open` opens the
  * first parked holder while keeping it backgrounded; `background-restore` moves
- * the first startup-parked session back to a tab.
+ * the first startup-parked session back to a tab; `background-drag` holds a real
+ * Background-origin drag over trailing header whitespace with its exact slot ghost.
  * `rename-edit` opens the inline tab-rename editor on the active tab (input
  * styling + select-all shot); `rename` commits the fixed pin "deploy watch" on
  * the active tab through the same commit path (relaunch verifies pin restore).
@@ -223,6 +224,7 @@ export type UiPreview =
 	| 'background-park'
 	| 'background-open'
 	| 'background-restore'
+	| 'background-drag'
 	| 'rename'
 	| 'rename-edit'
 	| 'tab-drag'

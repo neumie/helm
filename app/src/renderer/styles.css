@@ -175,8 +175,17 @@ button:focus-visible,
 /* Electron's native drag region swallows DOM pointer events. The open
  * background popover temporarily turns only this whitespace into a click-away
  * target; closing restores native window dragging. */
-.topbar-drag-space.popover-catcher {
+.topbar-drag-space.popover-catcher,
+.topbar-right.background-restore-ready .topbar-drag-space {
 	-webkit-app-region: no-drag;
+}
+
+.topbar-right.background-restore-ready {
+	box-shadow: inset 0 -1px color-mix(in srgb, var(--text-2) 35%, transparent);
+}
+
+.topbar-right.background-restore-over {
+	background: color-mix(in srgb, var(--text-2) 6%, transparent);
 }
 
 /* ---------- terminal tabs ---------- */
@@ -417,9 +426,24 @@ body.group-dragging .tab-group-toggle {
 	opacity: 0;
 }
 
-.background-tab-drag-preview {
+.background-tab-drag-preview,
+.background-tab-drop-placeholder {
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.background-tab-drop-placeholder {
+	flex: none;
+	background: var(--fill-subtle);
+	box-shadow: inset 0 0 0 1px var(--hairline-strong);
+	color: var(--text-2);
+	opacity: 0.72;
+	pointer-events: none;
+}
+
+.tab-group-section .background-tab-drop-placeholder {
+	background: color-mix(in srgb, var(--group-color) 30%, transparent);
+	color: var(--group-color);
 }
 
 .tab-drag-preview.over-background {

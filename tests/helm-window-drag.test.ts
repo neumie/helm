@@ -25,7 +25,7 @@ test('macOS window avoids hiddenInset native double-click hit-testing', () => {
 test('terminal header isolates native dragging to trailing whitespace only', () => {
 	assert.match(
 		normalizedHtml,
-		/<div class="tab-strip-controls">[\s\S]*?<div id="tabs"[\s\S]*?<button id="new-tab"[\s\S]*?<\/div>[\s\S]*?<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"\s*><\/div>[\s\S]*?<div id="bg-root">/,
+		/<div id="tab-strip-region" class="topbar-right">[\s\S]*?<div class="tab-strip-controls">[\s\S]*?<div id="tabs"[\s\S]*?<button id="new-tab"[\s\S]*?<\/div>[\s\S]*?<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"\s*><\/div>[\s\S]*?<div id="bg-root">/,
 	)
 	assert.match(rule('#topbar'), /-webkit-app-region:\s*no-drag;/)
 	assert.match(rule('.topbar-left'), /-webkit-app-region:\s*drag;/)
@@ -34,6 +34,10 @@ test('terminal header isolates native dragging to trailing whitespace only', () 
 	assert.match(rule('.topbar-drag-space'), /-webkit-app-region:\s*drag;/)
 	assert.match(rule('.topbar-drag-space'), /flex:\s*1;/)
 	assert.match(rule('.topbar-drag-space'), /min-width:\s*12px;/)
+	assert.match(
+		css,
+		/\.topbar-right\.background-restore-ready \.topbar-drag-space\s*\{[^}]*-webkit-app-region:\s*no-drag/s,
+	)
 })
 
 test('the complete grouped-tab band cannot reach native titlebar zoom handling', () => {

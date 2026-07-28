@@ -78,7 +78,7 @@ const profileSwitchAttestationMarker =
 		?.slice('--profile-switch-attestation-marker='.length) || null
 const profileSwitchAttestationMode = profileSwitchAttestationPath !== null
 
-// `--ui-preview=<list|project-list|queue-list|planned-list|detail|queue-detail|planned-detail|archive-detail|task|settings|appearance>` forwards to the renderer
+// `--ui-preview=<…|background-drag|tab-drag|…>` forwards a deterministic destination/interaction to the renderer
 // (via preload additionalArguments) so screenshot runs can capture a specific
 // sidebar page. `--ui-theme=<presetId>` applies a theme preset for the run
 // (no persistence) so theme presets are screenshot-verifiable.

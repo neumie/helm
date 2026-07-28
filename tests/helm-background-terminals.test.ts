@@ -97,6 +97,7 @@ test('background group headers expose Restore all without a context menu', () =>
 
 test('background terminal title target drags directly back to the strip', () => {
 	const rows = functionSlice('renderBackgroundRows', 'openBackgroundPopover')
+	const target = functionSlice('updateBackgroundTabDragTarget', 'backgroundTabDragFrame')
 	const start = functionSlice('startBackgroundTabPointerDrag', 'removeBackgroundTabPointerListeners')
 	const finish = functionSlice('finishBackgroundTabPointerDrag', 'onBackgroundTabPointerMove')
 	assert.match(
@@ -105,6 +106,13 @@ test('background terminal title target drags directly back to the strip', () => 
 	)
 	assert.match(rows, /open\.title = 'Open and keep in background · Drag to tabs'/)
 	assert.match(rows, /if \(suppressTabClick\.has\(tab\)\) return/)
+	assert.match(normalizedHtml, /id="tab-strip-region" class="topbar-right"/)
+	assert.match(target, /const stripRect = tabStripRegion\.getBoundingClientRect\(\)/)
+	assert.doesNotMatch(target, /const stripRect = tabsEl\.getBoundingClientRect\(\)/)
+	assert.match(target, /placeBackgroundTabPlaceholder\(drag, units, groupedPeers\)/)
+	assert.match(start, /placeholder\.className = 'tab background-tab-drop-placeholder'/)
+	assert.match(start, /tabStripRegion\.classList\.add\('background-restore-ready'\)/)
+	assert.ok(start.indexOf("classList.add('background-restore-ready')") < start.indexOf('closeBackgroundPopover()'))
 	assert.match(start, /closeBackgroundPopover\(\)/)
 	assert.match(start, /preview\.className = 'tab tab-drag-preview background-tab-drag-preview'/)
 	assert.match(finish, /drag\.dropTarget === 'strip'/)
@@ -113,8 +121,10 @@ test('background terminal title target drags directly back to the strip', () => 
 	assert.doesNotMatch(finish, /setTabOrder|persistTerminalOrder/)
 	assert.match(renderer, /drag\.tab\.groupId \? tabs\.filter\(tab => tab\.groupId === drag\.tab\.groupId\) : \[\]/)
 	assert.doesNotMatch(finish, /setMembership|groups\.intent/)
-	assert.match(css, /\.background-tab-drag-preview\s*\{[^}]*text-overflow:\s*ellipsis/s)
+	assert.match(css, /\.background-tab-drop-placeholder\s*\{[^}]*box-shadow:[^}]*opacity:\s*0\.72/s)
 	assert.match(css, /\.tab-group-section\.background-tab-drop-target\s*\{[^}]*var\(--group-color\) 22%/s)
+	assert.match(css, /\.topbar-right\.background-restore-over\s*\{[^}]*background:/s)
+	assert.match(finish, /tabStripRegion\.classList\.remove\('background-restore-ready'\)/)
 })
 
 test('background rows form an editorial list with explicit icon actions', () => {
@@ -150,7 +160,10 @@ test('background rows form an editorial list with explicit icon actions', () => 
 
 test('background popover catches a click on native titlebar whitespace', () => {
 	assert.match(normalizedHtml, /<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"\s*><\/div>/)
-	assert.match(css, /\.topbar-drag-space\.popover-catcher\s*\{[^}]*-webkit-app-region:\s*no-drag/s)
+	assert.match(
+		css,
+		/\.topbar-drag-space\.popover-catcher,\s*\.topbar-right\.background-restore-ready \.topbar-drag-space\s*\{[^}]*-webkit-app-region:\s*no-drag/s,
+	)
 	const outside = functionSlice('onBgOutside', 'onBgKeydown')
 	const open = functionSlice('openBackgroundPopover', 'closeBackgroundPopover')
 	const close = functionSlice('closeBackgroundPopover', '')
