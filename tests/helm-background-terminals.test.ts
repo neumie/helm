@@ -58,10 +58,10 @@ test('background groups use a flat full-width section row instead of the strip p
 	assert.match(css, /\.bg-group-section\s*\{[^}]*box-shadow:\s*inset 2px 0/s)
 	assert.match(
 		css,
-		/\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*height:\s*32px[^}]*padding:\s*0 8px 0 12px[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
+		/\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*height:\s*44px[^}]*padding:\s*0 8px 0 12px[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
 	)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-summary\s*\{[^}]*padding:\s*0/s)
-	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
+	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*border-left:\s*0/s)
 	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*box-shadow:\s*inset 0 2px/s)
 	assert.doesNotMatch(css, /\.bg-group-header-row\s*\{[^}]*margin:/s)
@@ -77,15 +77,15 @@ test('background group headers expose Restore all without a context menu', () =>
 		header,
 		/createIconButton\(\{[\s\S]*label: `Restore \$\{section\.name\} group to tabs`[\s\S]*glyph: '⇥'[\s\S]*onClick: \(\) => runGroupAction\(restoreTarget\)/,
 	)
-	assert.match(css, /\.bg-group-header-row\s*\{[^}]*display:\s*flex[^}]*width:\s*100%/s)
+	assert.match(css, /\.bg-group-header-row\s*\{[^}]*display:\s*flex[^}]*width:\s*100%[^}]*height:\s*44px/s)
 	assert.match(
 		css,
 		/\.bg-group-header-row:hover\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--group-color\) 12%, transparent\)/s,
 	)
 	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle:hover\s*\{[^}]*background:/s)
-	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*none/s)
-	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*1/s)
-	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*8px/s)
+	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*1/s)
+	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*none/s)
+	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
 	assert.match(css, /\.bg-group-restore\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\)/s)
 })
 
