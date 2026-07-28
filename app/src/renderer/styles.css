@@ -386,10 +386,6 @@ body.group-dragging .tab-group-toggle {
 	opacity: 0;
 }
 
-.tab-group-section.background-tab-drop-target {
-	background: color-mix(in srgb, var(--group-color) 22%, transparent);
-}
-
 .tab-group-drag-preview {
 	position: fixed;
 	top: 0;

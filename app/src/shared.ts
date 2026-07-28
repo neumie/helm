@@ -201,7 +201,8 @@ export interface ExternalApi {
  * first parked holder while keeping it backgrounded; `background-restore` moves
  * the first startup-parked session back to a tab; `background-drag` holds a real
  * Background-origin terminal drag over trailing header whitespace with its exact
- * slot ghost; `background-group-drag` does the same for an expanded named group.
+ * slot ghost; `background-grouped-tab-drag` projects one parked group member into
+ * an existing strip group; `background-group-drag` drags the whole named group.
  * `rename-edit` opens the inline tab-rename editor on the active tab (input
  * styling + select-all shot); `rename` commits the fixed pin "deploy watch" on
  * the active tab through the same commit path (relaunch verifies pin restore).
@@ -226,6 +227,7 @@ export type UiPreview =
 	| 'background-open'
 	| 'background-restore'
 	| 'background-drag'
+	| 'background-grouped-tab-drag'
 	| 'background-group-drag'
 	| 'rename'
 	| 'rename-edit'
