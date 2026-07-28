@@ -78,6 +78,11 @@ test('background group headers expose Restore all without a context menu', () =>
 		/createIconButton\(\{[\s\S]*label: `Restore \$\{section\.name\} group to tabs`[\s\S]*glyph: '⇥'[\s\S]*onClick: \(\) => runGroupAction\(restoreTarget\)/,
 	)
 	assert.match(css, /\.bg-group-header-row\s*\{[^}]*display:\s*flex[^}]*width:\s*100%/s)
+	assert.match(
+		css,
+		/\.bg-group-header-row:hover\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--group-color\) 12%, transparent\)/s,
+	)
+	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle:hover\s*\{[^}]*background:/s)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*none/s)
 	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*1/s)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*8px/s)

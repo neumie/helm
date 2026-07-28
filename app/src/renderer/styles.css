@@ -317,7 +317,7 @@ button:focus-visible,
 	box-shadow: none;
 }
 
-.bg-group-header-row > .tab-group-toggle:hover {
+.bg-group-header-row:hover {
 	background: color-mix(in srgb, var(--group-color) 12%, transparent);
 }
 
@@ -786,6 +786,7 @@ body.group-dragging .tab-group-toggle {
 	align-items: center;
 	width: 100%;
 	height: 32px;
+	transition: background-color 140ms ease-out;
 }
 
 .bg-group-restore {
