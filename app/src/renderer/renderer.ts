@@ -347,34 +347,41 @@ function tabGroupComposition() {
 	})
 }
 
+function createStripSection(
+	section: TabGroupSection,
+	byId: ReadonlyMap<string, Tab>,
+	cloneMembers = false,
+): HTMLElement {
+	const sectionEl = document.createElement('div')
+	sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
+	sectionEl.dataset.groupId = section.groupId ?? ''
+	applyGroupColor(sectionEl, section.color)
+	const header = groupHeader(section)
+	if (header) sectionEl.append(header)
+	const membersEl = document.createElement('div')
+	membersEl.className = section.kind === 'group' ? 'tab-group-members' : 'tab-group-members ungrouped-tab-members'
+	if (section.kind === 'group') membersEl.id = tabGroupMembersId(section.groupId, section.surface)
+	membersEl.setAttribute('role', 'tablist')
+	membersEl.setAttribute('aria-label', section.kind === 'group' ? `${section.name} terminals` : 'Terminals')
+	membersEl.hidden = section.collapsed
+	for (const member of section.members) {
+		const tab = byId.get(member.id)
+		if (!tab) continue
+		// Live sections retain terminal button identity. Drag projections clone the
+		// same DOM so their intrinsic width cannot drift from the eventual result.
+		const button = cloneMembers ? createTabStripProjection(tab) : tab.tabButton
+		button.hidden = false
+		membersEl.append(button)
+	}
+	sectionEl.append(membersEl)
+	return section.kind === 'group' ? sectionEl : membersEl
+}
+
 function renderTabGroups(): void {
 	const focusedHeader = focusedGroupHeader(tabsEl)
 	const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
 	tabsEl.textContent = ''
-	for (const section of tabGroupComposition().strip) {
-		const sectionEl = document.createElement('div')
-		sectionEl.className = `tab-group-section${section.collapsed ? ' collapsed' : ''}`
-		sectionEl.dataset.groupId = section.groupId ?? ''
-		applyGroupColor(sectionEl, section.color)
-		const header = groupHeader(section)
-		if (header) sectionEl.append(header)
-		const membersEl = document.createElement('div')
-		membersEl.className = section.kind === 'group' ? 'tab-group-members' : 'tab-group-members ungrouped-tab-members'
-		if (section.kind === 'group') membersEl.id = tabGroupMembersId(section.groupId, section.surface)
-		membersEl.setAttribute('role', 'tablist')
-		membersEl.setAttribute('aria-label', section.kind === 'group' ? `${section.name} terminals` : 'Terminals')
-		membersEl.hidden = section.collapsed
-		for (const member of section.members) {
-			const tab = byId.get(member.id)
-			if (!tab) continue
-			// Members stay mounted so terminal DOM identity and listeners survive
-			// collapse, but the entire group container leaves the visual/a11y tree.
-			tab.tabButton.hidden = false
-			membersEl.append(tab.tabButton)
-		}
-		sectionEl.append(membersEl)
-		tabsEl.append(section.kind === 'group' ? sectionEl : membersEl)
-	}
+	for (const section of tabGroupComposition().strip) tabsEl.append(createStripSection(section, byId))
 	restoreFocusedGroupHeader(tabsEl, focusedHeader)
 }
 
@@ -1660,6 +1667,22 @@ interface BackgroundTabPointerDrag {
 
 let backgroundTabPointerDrag: BackgroundTabPointerDrag | null = null
 
+function createTabStripProjection(tab: Tab, className = '', forceActive = false): HTMLDivElement {
+	const clone = tab.tabButton.cloneNode(true) as HTMLDivElement
+	clone.hidden = false
+	clone.removeAttribute('id')
+	clone.classList.remove('drag-placeholder')
+	if (className) clone.classList.add(className)
+	if (forceActive) clone.classList.add('active')
+	clone.tabIndex = -1
+	clone.setAttribute('aria-hidden', 'true')
+	for (const descendant of clone.querySelectorAll<HTMLElement>('[id], button, [tabindex]')) {
+		descendant.removeAttribute('id')
+		descendant.tabIndex = -1
+	}
+	return clone
+}
+
 function clearBackgroundTabDropTarget(drag?: BackgroundTabPointerDrag): void {
 	for (const section of tabsEl.querySelectorAll('.background-tab-drop-target')) {
 		section.classList.remove('background-tab-drop-target')
@@ -1749,18 +1772,9 @@ function backgroundTabDragFrame(): void {
 
 function startBackgroundTabPointerDrag(drag: BackgroundTabPointerDrag): void {
 	drag.started = true
-	const rect = drag.source.getBoundingClientRect()
-	const width = Math.min(Math.max(rect.width, 120), 180)
-	const preview = document.createElement('div')
-	preview.className = 'tab tab-drag-preview background-tab-drag-preview'
-	preview.setAttribute('aria-hidden', 'true')
-	preview.style.width = `${width}px`
-	preview.textContent = displayName(drag.tab)
-	const placeholder = document.createElement('div')
-	placeholder.className = 'tab background-tab-drop-placeholder'
-	placeholder.setAttribute('aria-hidden', 'true')
-	placeholder.style.width = `${width}px`
-	placeholder.textContent = displayName(drag.tab)
+	const preview = createTabStripProjection(drag.tab, 'background-tab-drag-preview', true)
+	preview.classList.add('tab-drag-preview')
+	const placeholder = createTabStripProjection(drag.tab, 'background-tab-drop-placeholder', true)
 	document.body.append(preview)
 	drag.preview = preview
 	drag.placeholder = placeholder
@@ -1951,6 +1965,7 @@ interface GroupPointerDrag {
 	originalTabs: Tab[]
 	started: boolean
 	preview: HTMLDivElement | null
+	placeholder: HTMLElement | null
 	dropTarget: 'strip' | 'background' | null
 	dropUnitIndex: number
 	frame: number | null
@@ -2008,8 +2023,44 @@ function stripDragUnitsExcluding(groupId: string): StripDragUnit[] {
 	return units
 }
 
+function createProjectedStripGroup(drag: GroupPointerDrag): HTMLElement | null {
+	const composition = tabGroupComposition()
+	const source = composition.background.find(section => section.kind === 'group' && section.groupId === drag.groupId)
+	const stripSource = composition.strip.find(section => section.kind === 'group' && section.groupId === drag.groupId)
+	const group = tabGroups.find(candidate => candidate.id === drag.groupId)
+	if (!source || !group) return null
+	const members = [...(stripSource?.members ?? []), ...source.members]
+	const projected: TabGroupSection = {
+		...source,
+		surface: 'strip',
+		collapsed: group.collapsedStrip,
+		members,
+		visibleMembers: group.collapsedStrip ? [] : members,
+	}
+	const byId = new Map([...tabs, ...parked].map(tab => [tabIdentity(tab), tab]))
+	const placeholder = createStripSection(projected, byId, true)
+	placeholder.classList.add('group-drop-placeholder')
+	placeholder.setAttribute('aria-hidden', 'true')
+	placeholder.inert = true
+	for (const descendant of placeholder.querySelectorAll<HTMLElement>('[id], button, [tabindex]')) {
+		descendant.removeAttribute('id')
+		descendant.tabIndex = -1
+	}
+	return placeholder
+}
+
+function placeProjectedStripGroup(drag: GroupPointerDrag, units: readonly StripDragUnit[]): void {
+	const placeholder = drag.placeholder
+	if (!placeholder) return
+	const target = units[drag.dropUnitIndex]?.element ?? null
+	tabsEl.insertBefore(placeholder, target)
+}
+
 function markGroupDragPlaceholder(drag: GroupPointerDrag): void {
 	groupElement(drag.groupId, drag.originSurface)?.classList.add('group-drag-placeholder')
+	// A split-surface group moves as one visual unit: hide its existing strip
+	// projection while the complete destination ghost owns the insertion slot.
+	if (drag.originSurface === 'background') stripGroupElement(drag.groupId)?.classList.add('group-drag-placeholder')
 }
 
 function positionGroupPreview(drag: GroupPointerDrag): void {
@@ -2024,6 +2075,8 @@ function restoreGroupDragOrigin(drag: GroupPointerDrag): void {
 }
 
 function updateGroupDragTarget(drag: GroupPointerDrag): void {
+	drag.placeholder?.remove()
+	tabStripRegion.classList.remove('background-restore-over')
 	const backgroundRect = bgToggle.getBoundingClientRect()
 	const overNewTab = pointInExpandedRect(drag.x, drag.y, newTabButton.getBoundingClientRect())
 	if (drag.originSurface === 'strip' && !overNewTab && pointInExpandedRect(drag.x, drag.y, backgroundRect, 8)) {
@@ -2037,8 +2090,8 @@ function updateGroupDragTarget(drag: GroupPointerDrag): void {
 
 	bgToggle.classList.remove('drag-over')
 	drag.preview?.classList.remove('over-background')
-	const stripRect = tabsEl.getBoundingClientRect()
-	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 10)) {
+	const stripRect = tabStripRegion.getBoundingClientRect()
+	if (!pointInExpandedRect(drag.x, drag.y, stripRect, 6)) {
 		restoreGroupDragOrigin(drag)
 		drag.dropTarget = null
 		positionGroupPreview(drag)
@@ -2046,6 +2099,7 @@ function updateGroupDragTarget(drag: GroupPointerDrag): void {
 	}
 
 	drag.dropTarget = 'strip'
+	if (drag.originSurface === 'background') tabStripRegion.classList.add('background-restore-over')
 	const units = stripDragUnitsExcluding(drag.groupId)
 	drag.dropUnitIndex = stripDropInsertionIndex(
 		drag.x,
@@ -2061,6 +2115,8 @@ function updateGroupDragTarget(drag: GroupPointerDrag): void {
 			true,
 		)
 		markGroupDragPlaceholder(drag)
+	} else {
+		placeProjectedStripGroup(drag, units)
 	}
 	positionGroupPreview(drag)
 }
@@ -2108,6 +2164,10 @@ function startGroupPointerDrag(drag: GroupPointerDrag): void {
 	const previewRect = preview.getBoundingClientRect()
 	drag.offsetX = (drag.offsetX / drag.sourceWidth) * previewRect.width
 	drag.offsetY = (drag.offsetY / drag.sourceHeight) * previewRect.height
+	if (drag.originSurface === 'background') {
+		drag.placeholder = createProjectedStripGroup(drag)
+		tabStripRegion.classList.add('background-restore-ready')
+	}
 	markGroupDragPlaceholder(drag)
 	closeBackgroundPopover()
 	document.body.classList.add('group-dragging')
@@ -2161,6 +2221,7 @@ function settleGroupPreview(drag: GroupPointerDrag, target: DOMRect, intoBackgro
 
 function resetGroupDragChrome(): void {
 	document.body.classList.remove('group-dragging')
+	tabStripRegion.classList.remove('background-restore-ready', 'background-restore-over')
 	bgToggle.classList.remove('drag-ready', 'drag-over')
 	bgToggle.title = 'Background terminals'
 	updateBackgroundUi()
@@ -2201,10 +2262,11 @@ async function finishGroupStripRestore(drag: GroupPointerDrag): Promise<void> {
 	}
 	if (moved) {
 		const units = stripDragUnitsExcluding(drag.groupId)
+		const restoredMembers = tabs.filter(tab => tab.groupId === drag.groupId)
 		setTabOrder(
 			insertBlockAtUnitIndex(
 				units.map(unit => unit.members),
-				drag.members,
+				restoredMembers,
 				drag.dropUnitIndex,
 			),
 			false,
@@ -2291,38 +2353,51 @@ function onGroupDragBlur(): void {
 	if (groupPointerDrag) finishGroupPointerDrag(true)
 }
 
-function beginGroupPointerDrag(section: TabGroupSection, header: HTMLButtonElement, event: PointerEvent): void {
-	if (tabPointerDrag || backgroundTabPointerDrag || groupPointerDrag || event.button !== 0 || section.groupId === null)
-		return
+function createGroupPointerDrag(
+	section: TabGroupSection,
+	header: HTMLButtonElement,
+	pointerId: number,
+	clientX: number,
+	clientY: number,
+): GroupPointerDrag | null {
+	if (section.groupId === null) return null
 	const sourceTabs = section.surface === 'strip' ? tabs : parked
 	const byId = new Map(sourceTabs.map(tab => [tabIdentity(tab), tab]))
 	const members = section.members.flatMap(member => {
 		const tab = byId.get(member.id)
 		return tab ? [tab] : []
 	})
-	if (members.length === 0) return
+	if (members.length === 0) return null
 	const rect = header.getBoundingClientRect()
-	groupPointerDrag = {
+	return {
 		groupId: section.groupId,
 		originSurface: section.surface,
 		members,
 		header,
-		pointerId: event.pointerId,
-		startX: event.clientX,
-		startY: event.clientY,
-		x: event.clientX,
-		y: event.clientY,
-		offsetX: event.clientX - rect.left,
-		offsetY: event.clientY - rect.top,
+		pointerId,
+		startX: clientX,
+		startY: clientY,
+		x: clientX,
+		y: clientY,
+		offsetX: clientX - rect.left,
+		offsetY: clientY - rect.top,
 		sourceWidth: rect.width,
 		sourceHeight: rect.height,
 		originalTabs: [...tabs],
 		started: false,
 		preview: null,
+		placeholder: null,
 		dropTarget: null,
 		dropUnitIndex: 0,
 		frame: null,
 	}
+}
+
+function beginGroupPointerDrag(section: TabGroupSection, header: HTMLButtonElement, event: PointerEvent): void {
+	if (tabPointerDrag || backgroundTabPointerDrag || groupPointerDrag || event.button !== 0) return
+	const drag = createGroupPointerDrag(section, header, event.pointerId, event.clientX, event.clientY)
+	if (!drag) return
+	groupPointerDrag = drag
 	header.setPointerCapture(event.pointerId)
 	document.addEventListener('pointermove', onGroupPointerMove, { passive: false })
 	document.addEventListener('pointerup', onGroupPointerUp)
@@ -3235,7 +3310,8 @@ async function runUiPreview(): Promise<void> {
 		preview !== 'background' &&
 		preview !== 'background-strip' &&
 		preview !== 'background-open' &&
-		preview !== 'background-drag'
+		preview !== 'background-drag' &&
+		preview !== 'background-group-drag'
 	)
 		return
 	await createTerminal().catch(() => {})
@@ -3247,6 +3323,23 @@ async function runUiPreview(): Promise<void> {
 	}
 	await createTerminal().catch(() => {})
 	const running = activeTab
+	if (preview === 'background-group-drag' && exiting && running) {
+		const groupId = 'preview-background-group'
+		exiting.groupId = groupId
+		running.groupId = groupId
+		commitCustomName(exiting, 'release logs')
+		commitCustomName(running, 'deploy agent')
+		tabGroups = [
+			...tabGroups.filter(group => group.id !== groupId),
+			{
+				id: groupId,
+				name: 'Delivery',
+				color: 'cyan',
+				collapsedStrip: false,
+				collapsedBackground: false,
+			},
+		]
+	}
 	if (running) {
 		if (preview === 'background-drag') commitCustomName(running, 'background deploy')
 		parkTab(running)
@@ -3275,6 +3368,29 @@ async function runUiPreview(): Promise<void> {
 			drag.x = receiver.left + receiver.width * 0.72
 			drag.y = receiver.top + receiver.height / 2
 			startBackgroundTabPointerDrag(drag)
+		}
+	} else if (preview === 'background-group-drag') {
+		openBackgroundPopover()
+		await new Promise(requestAnimationFrame)
+		const section = tabGroupComposition().background.find(candidate => candidate.groupId === 'preview-background-group')
+		const header =
+			backgroundGroupElement('preview-background-group')?.querySelector<HTMLButtonElement>('[data-tab-group-header]')
+		if (section && header) {
+			const sourceRect = header.getBoundingClientRect()
+			const drag = createGroupPointerDrag(
+				section,
+				header,
+				-1,
+				sourceRect.left + sourceRect.width / 2,
+				sourceRect.top + sourceRect.height / 2,
+			)
+			if (drag) {
+				groupPointerDrag = drag
+				const receiver = tabStripRegion.getBoundingClientRect()
+				drag.x = receiver.left + receiver.width * 0.72
+				drag.y = receiver.top + receiver.height / 2
+				startGroupPointerDrag(drag)
+			}
 		}
 	}
 }

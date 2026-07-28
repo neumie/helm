@@ -43,6 +43,7 @@ const UI_PREVIEWS: readonly UiPreview[] = [
 	'background-open',
 	'background-restore',
 	'background-drag',
+	'background-group-drag',
 	'rename',
 	'rename-edit',
 	'tab-drag',

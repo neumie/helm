@@ -9,11 +9,19 @@ interface TabFixture {
 	active?: boolean
 	activity?: 'progress' | 'attention'
 	rename?: boolean
+	placeholder?: boolean
 }
 
-function TerminalTab({ label, active, activity, rename }: TabFixture) {
+function TerminalTab({ label, active, activity, rename, placeholder }: TabFixture) {
 	return (
-		<div className={`tab${active ? ' active' : ''}`} role="tab" aria-selected={active} tabIndex={0}>
+		<div
+			className={`tab${active ? ' active' : ''}${placeholder ? ' background-tab-drop-placeholder' : ''}`}
+			role="tab"
+			aria-selected={active}
+			aria-hidden={placeholder || undefined}
+			inert={placeholder || undefined}
+			tabIndex={placeholder ? -1 : 0}
+		>
 			{activity ? (
 				<ActivityIndicator variant={activity} label={activity === 'attention' ? 'Run finished' : 'Running'} />
 			) : null}
@@ -42,14 +50,22 @@ function TerminalGroup({
 	name,
 	color,
 	collapsed,
+	placeholder,
 	children,
-}: { name: string; color: TabGroupColor; collapsed?: boolean; children?: ReactNode }) {
+}: { name: string; color: TabGroupColor; collapsed?: boolean; placeholder?: boolean; children?: ReactNode }) {
 	return (
 		<div
-			className={`tab-group-section${collapsed ? ' collapsed' : ''}`}
+			className={`tab-group-section${collapsed ? ' collapsed' : ''}${placeholder ? ' group-drop-placeholder' : ''}`}
 			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
+			aria-hidden={placeholder || undefined}
+			inert={placeholder || undefined}
 		>
-			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
+			<button
+				type="button"
+				className="tab-group-header tab-group-toggle"
+				aria-expanded={!collapsed}
+				tabIndex={placeholder ? -1 : 0}
+			>
 				<span className="tab-group-summary">
 					<GroupIcon />
 					<span>{name}</span>
@@ -210,19 +226,24 @@ function TerminalShell({
 	popover,
 	backgroundName,
 	backgroundChildren,
+	restoreOver,
 	left = 0,
 }: {
 	children?: ReactNode
 	popover?: boolean
 	backgroundName?: string
 	backgroundChildren?: ReactNode
+	restoreOver?: boolean
 	left?: number
 }) {
 	return (
 		<div id="app" style={{ '--left-width': `${left}px` } as CSSProperties}>
 			<header id="topbar">
 				<div className="topbar-left" aria-hidden="true" />
-				<div className="topbar-right">
+				<div
+					id="tab-strip-region"
+					className={`topbar-right${restoreOver ? ' background-restore-ready background-restore-over' : ''}`}
+				>
 					<div className="tab-strip-controls">
 						<div id="tabs">
 							{children ?? (
@@ -344,6 +365,27 @@ export const CollapsedBackgroundGroup: Story = {
 				</>
 			}
 		/>
+	),
+}
+
+export const TerminalRestoreTarget: Story = {
+	render: () => (
+		<TerminalShell restoreOver>
+			<TerminalTab label="zsh" />
+			<TerminalTab label="background deploy" active activity="progress" placeholder />
+		</TerminalShell>
+	),
+}
+
+export const GroupRestoreTarget: Story = {
+	render: () => (
+		<TerminalShell restoreOver>
+			<TerminalTab label="zsh" active />
+			<TerminalGroup name="Delivery" color="cyan" placeholder>
+				<TerminalTab label="release logs" />
+				<TerminalTab label="deploy agent" activity="progress" />
+			</TerminalGroup>
+		</TerminalShell>
 	),
 }
 

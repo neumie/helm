@@ -99,6 +99,7 @@ test('background terminal title target drags directly back to the strip', () => 
 	const rows = functionSlice('renderBackgroundRows', 'openBackgroundPopover')
 	const target = functionSlice('updateBackgroundTabDragTarget', 'backgroundTabDragFrame')
 	const start = functionSlice('startBackgroundTabPointerDrag', 'removeBackgroundTabPointerListeners')
+	const projection = functionSlice('createTabStripProjection', 'clearBackgroundTabDropTarget')
 	const finish = functionSlice('finishBackgroundTabPointerDrag', 'onBackgroundTabPointerMove')
 	assert.match(
 		rows,
@@ -110,21 +111,62 @@ test('background terminal title target drags directly back to the strip', () => 
 	assert.match(target, /const stripRect = tabStripRegion\.getBoundingClientRect\(\)/)
 	assert.doesNotMatch(target, /const stripRect = tabsEl\.getBoundingClientRect\(\)/)
 	assert.match(target, /placeBackgroundTabPlaceholder\(drag, units, groupedPeers\)/)
-	assert.match(start, /placeholder\.className = 'tab background-tab-drop-placeholder'/)
+	assert.match(projection, /tab\.tabButton\.cloneNode\(true\)/)
+	assert.match(projection, /clone\.classList\.add\('active'/)
+	assert.match(start, /createTabStripProjection\(drag\.tab, 'background-tab-drag-preview'/)
+	assert.match(start, /createTabStripProjection\(drag\.tab, 'background-tab-drop-placeholder'/)
+	assert.doesNotMatch(start, /Math\.min\(Math\.max\(rect\.width, 120\), 180\)/)
+	assert.doesNotMatch(start, /placeholder\.style\.width|preview\.style\.width/)
 	assert.match(start, /tabStripRegion\.classList\.add\('background-restore-ready'\)/)
 	assert.ok(start.indexOf("classList.add('background-restore-ready')") < start.indexOf('closeBackgroundPopover()'))
 	assert.match(start, /closeBackgroundPopover\(\)/)
-	assert.match(start, /preview\.className = 'tab tab-drag-preview background-tab-drag-preview'/)
+	assert.match(start, /preview\.classList\.add\('tab-drag-preview'\)/)
 	assert.match(finish, /drag\.dropTarget === 'strip'/)
 	assert.match(finish, /const nextOrder = backgroundTabRestoreOrder\(drag\)/)
 	assert.match(finish, /restoreParked\(drag\.tab, nextOrder\)/)
 	assert.doesNotMatch(finish, /setTabOrder|persistTerminalOrder/)
 	assert.match(renderer, /drag\.tab\.groupId \? tabs\.filter\(tab => tab\.groupId === drag\.tab\.groupId\) : \[\]/)
 	assert.doesNotMatch(finish, /setMembership|groups\.intent/)
-	assert.match(css, /\.background-tab-drop-placeholder\s*\{[^}]*box-shadow:[^}]*opacity:\s*0\.72/s)
+	assert.match(
+		css,
+		/\.background-tab-drop-placeholder,\s*\.tab-group-section\.group-drop-placeholder\s*\{[^}]*opacity:\s*0\.58/s,
+	)
+	assert.doesNotMatch(css, /\.background-tab-drop-placeholder(?:,|\s*\{)[^}]*background:/s)
 	assert.match(css, /\.tab-group-section\.background-tab-drop-target\s*\{[^}]*var\(--group-color\) 22%/s)
 	assert.match(css, /\.topbar-right\.background-restore-over\s*\{[^}]*background:/s)
 	assert.match(finish, /tabStripRegion\.classList\.remove\('background-restore-ready'\)/)
+})
+
+test('background groups and terminals share the full strip receiver and exact destination geometry', () => {
+	const update = functionSlice('updateGroupDragTarget', 'groupDragFrame')
+	const projection = functionSlice('createProjectedStripGroup', 'placeProjectedStripGroup')
+	const place = functionSlice('placeProjectedStripGroup', 'markGroupDragPlaceholder')
+	const mark = functionSlice('markGroupDragPlaceholder', 'positionGroupPreview')
+	const start = functionSlice('startGroupPointerDrag', 'removeGroupPointerListeners')
+	const reset = functionSlice('resetGroupDragChrome', 'finishGroupBackgroundDrop')
+	const finish = functionSlice('finishGroupStripRestore', 'finishGroupPointerDrag')
+	assert.match(update, /const stripRect = tabStripRegion\.getBoundingClientRect\(\)/)
+	assert.doesNotMatch(update, /const stripRect = tabsEl\.getBoundingClientRect\(\)/)
+	assert.match(update, /tabStripRegion\.classList\.add\('background-restore-over'\)/)
+	assert.match(update, /placeProjectedStripGroup\(drag, units\)/)
+	assert.match(projection, /const stripSource = composition\.strip\.find/)
+	assert.match(projection, /const members = \[\.\.\.\(stripSource\?\.members \?\? \[\]\), \.\.\.source\.members\]/)
+	assert.match(projection, /createStripSection\(projected, byId, true\)/)
+	assert.match(projection, /collapsed: group\.collapsedStrip/)
+	assert.match(projection, /placeholder\.inert = true/)
+	assert.match(projection, /querySelectorAll<HTMLElement>\('\[id\], button, \[tabindex\]'\)/)
+	assert.match(place, /const target = units\[drag\.dropUnitIndex\]\?\.element \?\? null/)
+	assert.match(place, /tabsEl\.insertBefore\(placeholder, target\)/)
+	assert.match(
+		mark,
+		/if \(drag\.originSurface === 'background'\) stripGroupElement\(drag\.groupId\)\?\.classList\.add\('group-drag-placeholder'\)/,
+	)
+	assert.match(start, /drag\.placeholder = createProjectedStripGroup\(drag\)/)
+	assert.match(start, /tabStripRegion\.classList\.add\('background-restore-ready'\)/)
+	assert.match(finish, /const restoredMembers = tabs\.filter\(tab => tab\.groupId === drag\.groupId\)/)
+	assert.match(finish, /restoredMembers,/)
+	assert.match(reset, /tabStripRegion\.classList\.remove\('background-restore-ready', 'background-restore-over'\)/)
+	assert.match(css, /\.tab-group-section\.group-drop-placeholder\s*\{[^}]*opacity:\s*0\.58/s)
 })
 
 test('background rows form an editorial list with explicit icon actions', () => {
