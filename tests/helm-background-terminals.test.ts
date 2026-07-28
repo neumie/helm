@@ -60,7 +60,7 @@ test('background groups use a flat full-width section row instead of the strip p
 	assert.match(css, /\.bg-group-section\s*\{[^}]*box-shadow:\s*inset 2px 0/s)
 	assert.match(
 		css,
-		/\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*height:\s*44px[^}]*padding:\s*0 8px 0 12px[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
+		/\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*width:\s*100%[^}]*height:\s*44px[^}]*padding:\s*0[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
 	)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-summary\s*\{[^}]*padding:\s*0/s)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
@@ -79,16 +79,20 @@ test('background group headers expose Restore all without a context menu', () =>
 		header,
 		/createIconButton\(\{[\s\S]*label: `Restore \$\{section\.name\} group to tabs`[\s\S]*glyph: '⇥'[\s\S]*onClick: \(\) => runGroupAction\(restoreTarget\)/,
 	)
-	assert.match(css, /\.bg-group-header-row\s*\{[^}]*display:\s*flex[^}]*width:\s*100%[^}]*height:\s*44px/s)
+	assert.match(
+		css,
+		/\.bg-group-header-row\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 28px 28px[^}]*gap:\s*4px[^}]*width:\s*100%[^}]*height:\s*44px[^}]*padding:\s*0 12px/s,
+	)
 	assert.match(
 		css,
 		/\.bg-group-header-row:hover\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--group-color\) 12%, transparent\)/s,
 	)
 	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle:hover\s*\{[^}]*background:/s)
-	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*1/s)
-	assert.doesNotMatch(css, /\.bg-group-header-row > \.tab-group-toggle\s*\{[^}]*flex:\s*none/s)
 	assert.match(css, /\.bg-group-header-row > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
 	assert.match(css, /\.bg-group-restore\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\)/s)
+	assert.match(css, /\.bg-group-close-slot\s*\{[^}]*width:\s*28px[^}]*height:\s*28px/s)
+	assert.match(header, /closeSlot\.className = 'bg-group-close-slot'/)
+	assert.match(header, /row\.append\(toggle, restore, closeSlot\)/)
 })
 
 test('background terminal title target drags directly back to the strip', () => {

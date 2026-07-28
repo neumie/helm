@@ -85,6 +85,7 @@ function BackgroundGroup({
 				<IconBtn label={`Restore ${name} group to tabs`} className="bg-group-restore">
 					<span className="bg-action-glyph">⇥</span>
 				</IconBtn>
+				<span className="bg-group-close-slot" aria-hidden="true" />
 			</div>
 			<div className="bg-group-members" hidden={collapsed}>
 				{children}

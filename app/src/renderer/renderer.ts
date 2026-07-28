@@ -296,7 +296,10 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 		onClick: () => runGroupAction(restoreTarget),
 	})
 	restore.classList.add('bg-group-restore')
-	row.append(toggle, restore)
+	const closeSlot = document.createElement('span')
+	closeSlot.className = 'bg-group-close-slot'
+	closeSlot.setAttribute('aria-hidden', 'true')
+	row.append(toggle, restore, closeSlot)
 	return row
 }
 
