@@ -152,7 +152,7 @@ function BackgroundRow({
 }: { title: string; state?: string; activity?: 'progress' | 'attention'; active?: boolean }) {
 	return (
 		<div className={`bg-row${active ? ' active' : ''}`}>
-			<button type="button" className="bg-open" title="Open and keep in background">
+			<button type="button" className="bg-open" title="Open and keep in background · Drag to tabs">
 				{activity ? (
 					<ActivityIndicator variant={activity} label={activity === 'attention' ? 'Run finished' : 'Agent running'} />
 				) : null}

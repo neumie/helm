@@ -378,6 +378,10 @@ body.group-dragging .tab-group-toggle {
 	opacity: 0;
 }
 
+.tab-group-section.background-tab-drop-target {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
+}
+
 .tab-group-drag-preview {
 	position: fixed;
 	top: 0;
@@ -412,6 +416,11 @@ body.group-dragging .tab-group-toggle {
 
 .tab-drag-preview .tab-close {
 	opacity: 0;
+}
+
+.background-tab-drag-preview {
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .tab-drag-preview.over-background {

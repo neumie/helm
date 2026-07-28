@@ -23,6 +23,8 @@ test('opening a background terminal activates it without restoring ownership', (
 	const restore = functionSlice('restoreParked', 'killParkedTab')
 	assert.match(restore, /parked\.splice/)
 	assert.match(restore, /tab\.parked = false/)
+	assert.match(restore, /targetOrder\.every\(candidate => tabs\.includes\(candidate\)\)/)
+	assert.ok(restore.indexOf('tabs.splice(0, tabs.length, ...targetOrder)') < restore.indexOf('renderTabGroups()'))
 	assert.match(restore, /setParked\(tab\.sessionId, false\)/)
 })
 
@@ -89,9 +91,31 @@ test('background group headers expose Restore all without a context menu', () =>
 	assert.match(css, /\.bg-group-restore\s*\{[^}]*color:\s*color-mix\([^;]*var\(--group-color\)/s)
 })
 
+test('background terminal title target drags directly back to the strip', () => {
+	const rows = functionSlice('renderBackgroundRows', 'openBackgroundPopover')
+	const start = functionSlice('startBackgroundTabPointerDrag', 'removeBackgroundTabPointerListeners')
+	const finish = functionSlice('finishBackgroundTabPointerDrag', 'onBackgroundTabPointerMove')
+	assert.match(
+		rows,
+		/open\.addEventListener\('pointerdown', event => beginBackgroundTabPointerDrag\(tab, open, event\)\)/,
+	)
+	assert.match(rows, /open\.title = 'Open and keep in background · Drag to tabs'/)
+	assert.match(rows, /if \(suppressTabClick\.has\(tab\)\) return/)
+	assert.match(start, /closeBackgroundPopover\(\)/)
+	assert.match(start, /preview\.className = 'tab tab-drag-preview background-tab-drag-preview'/)
+	assert.match(finish, /drag\.dropTarget === 'strip'/)
+	assert.match(finish, /const nextOrder = backgroundTabRestoreOrder\(drag\)/)
+	assert.match(finish, /restoreParked\(drag\.tab, nextOrder\)/)
+	assert.doesNotMatch(finish, /setTabOrder|persistTerminalOrder/)
+	assert.match(renderer, /drag\.tab\.groupId \? tabs\.filter\(tab => tab\.groupId === drag\.tab\.groupId\) : \[\]/)
+	assert.doesNotMatch(finish, /setMembership|groups\.intent/)
+	assert.match(css, /\.background-tab-drag-preview\s*\{[^}]*text-overflow:\s*ellipsis/s)
+	assert.match(css, /\.tab-group-section\.background-tab-drop-target\s*\{[^}]*var\(--group-color\) 22%/s)
+})
+
 test('background rows form an editorial list with explicit icon actions', () => {
 	const render = functionSlice('renderBackgroundRows', 'onBgOutside')
-	assert.match(render, /open\.addEventListener\('click', \(\) => openParked\(tab\)\)/)
+	assert.match(render, /open\.addEventListener\('click', \(\) => \{[\s\S]*openParked\(tab\)[\s\S]*\}\)/)
 	assert.match(
 		render,
 		/createIconButton\(\{[\s\S]*label: `Move \$\{displayName\(tab\)\} to tabs and open`[\s\S]*glyph: '⇥'/,
