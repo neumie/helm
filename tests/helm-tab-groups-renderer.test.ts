@@ -163,15 +163,15 @@ test('group label uses a folder disclosure while member tabs remain one continuo
 	assert.match(renderer, /M2 3\.5A1\.5 1\.5 0 0 1 3\.5 2h2\.879/)
 	assert.doesNotMatch(renderer, /M7\.628 1\.099/)
 	assert.doesNotMatch(groupIcon, /stroke-width/)
-	assert.match(renderer, /if \(section\.collapsed\) \{[\s\S]*count\.className = 'tab-group-count'/)
+	assert.match(
+		renderer,
+		/if \(section\.collapsed \|\| section\.surface === 'background'\) \{[\s\S]*count\.className = 'tab-group-count'/,
+	)
 	assert.match(renderer, /count\.textContent = String\(section\.members\.length\)/)
 	assert.match(styles, /\.tab-group-section:not\(\.collapsed\) > \.tab-group-toggle\s*\{[^}]*border-right:/s)
 	assert.match(styles, /\.group-icon,\s*\.background-icon\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s)
 	assert.match(styles, /\.tab-group-summary\s*\{[^}]*height:\s*28px[^}]*padding:\s*0 8px/s)
-	assert.match(
-		styles,
-		/\.tab-group-section\.collapsed > \.tab-group-toggle \.tab-group-count,\s*\.bg-group-section\.collapsed > \.tab-group-toggle \.tab-group-count\s*\{[^}]*border-left:/s,
-	)
+	assert.match(styles, /\.tab-group-section\.collapsed > \.tab-group-toggle \.tab-group-count\s*\{[^}]*border-left:/s)
 	assert.match(styles, /\.tab-group-count\s*\{[^}]*min-width:\s*28px/s)
 	assert.match(
 		styles,

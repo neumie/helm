@@ -258,7 +258,7 @@ function groupHeader(section: TabGroupSection): HTMLElement | null {
 	summary.append(createGroupIcon())
 	summary.append(label)
 	toggle.append(summary)
-	if (section.collapsed) {
+	if (section.collapsed || section.surface === 'background') {
 		const count = document.createElement('span')
 		count.className = 'tab-group-count'
 		count.textContent = String(section.members.length)

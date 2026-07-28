@@ -54,6 +54,20 @@ test('strip control names the currently open background terminal', () => {
 	assert.match(css, /\.bg-current\[hidden\]\s*\{[^}]*display:\s*none/s)
 })
 
+test('background groups use a flat full-width section row instead of the strip pill', () => {
+	assert.match(css, /\.bg-group-section\s*\{[^}]*box-shadow:\s*inset 2px 0/s)
+	assert.match(
+		css,
+		/\.bg-group-section > \.tab-group-toggle\s*\{[^}]*width:\s*100%[^}]*height:\s*32px[^}]*padding:\s*0 12px[^}]*background:\s*transparent[^}]*box-shadow:\s*none/s,
+	)
+	assert.match(css, /\.bg-group-section > \.tab-group-toggle \.tab-group-summary\s*\{[^}]*padding:\s*0/s)
+	assert.match(css, /\.bg-group-section > \.tab-group-toggle \.tab-group-count\s*\{[^}]*margin-left:\s*auto/s)
+	assert.match(css, /\.bg-group-section > \.tab-group-toggle \.tab-group-count\s*\{[^}]*border-left:\s*0/s)
+	assert.doesNotMatch(css, /\.bg-group-section > \.tab-group-toggle\s*\{[^}]*box-shadow:\s*inset 0 2px/s)
+	assert.doesNotMatch(css, /\.bg-group-section > \.tab-group-header\s*\{[^}]*margin:/s)
+	assert.match(renderer, /if \(section\.collapsed \|\| section\.surface === 'background'\)/)
+})
+
 test('background rows form an editorial list with explicit icon actions', () => {
 	const render = functionSlice('renderBackgroundRows', 'onBgOutside')
 	assert.match(render, /open\.addEventListener\('click', \(\) => openParked\(tab\)\)/)

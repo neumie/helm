@@ -63,6 +63,31 @@ function TerminalGroup({
 	)
 }
 
+function BackgroundGroup({
+	name,
+	color,
+	collapsed,
+	children,
+}: { name: string; color: TabGroupColor; collapsed?: boolean; children?: ReactNode }) {
+	return (
+		<section
+			className={`bg-group-section${collapsed ? ' collapsed' : ''}`}
+			style={{ '--group-color': tabGroupColorCssVar(color) } as CSSProperties}
+		>
+			<button type="button" className="tab-group-header tab-group-toggle" aria-expanded={!collapsed}>
+				<span className="tab-group-summary">
+					<GroupIcon />
+					<span>{name}</span>
+				</span>
+				<span className="tab-group-count">{Children.count(children)}</span>
+			</button>
+			<div className="bg-group-members" hidden={collapsed}>
+				{children}
+			</div>
+		</section>
+	)
+}
+
 function TerminalMenu({ group = false }: { group?: boolean }) {
 	const items = group
 		? ['Rename…', 'Color…', 'Delete', 'Move group to Background']
@@ -178,8 +203,15 @@ function TerminalShell({
 	children,
 	popover,
 	backgroundName,
+	backgroundChildren,
 	left = 0,
-}: { children?: ReactNode; popover?: boolean; backgroundName?: string; left?: number }) {
+}: {
+	children?: ReactNode
+	popover?: boolean
+	backgroundName?: string
+	backgroundChildren?: ReactNode
+	left?: number
+}) {
 	return (
 		<div id="app" style={{ '--left-width': `${left}px` } as CSSProperties}>
 			<header id="topbar">
@@ -224,10 +256,14 @@ function TerminalShell({
 							<div id="bg-popover" className="menu-panel menu-end" role="dialog" aria-label="Background terminals">
 								<div className="bg-header">Background terminals</div>
 								<div id="bg-rows">
-									<BackgroundRow title="okena" active />
-									<BackgroundRow title="indexing workspace" activity="progress" />
-									<BackgroundRow title="agent review" activity="attention" />
-									<BackgroundRow title="completed tests" state="Exited (0)" />
+									{backgroundChildren ?? (
+										<>
+											<BackgroundRow title="okena" active />
+											<BackgroundRow title="indexing workspace" activity="progress" />
+											<BackgroundRow title="agent review" activity="attention" />
+											<BackgroundRow title="completed tests" state="Exited (0)" />
+										</>
+									)}
 								</div>
 							</div>
 						) : null}
@@ -271,7 +307,38 @@ export const TabStrip: Story = {
 }
 
 export const BackgroundTerminals: Story = {
-	render: () => <TerminalShell popover backgroundName="okena" />,
+	render: () => (
+		<TerminalShell
+			popover
+			backgroundName="indexing workspace"
+			backgroundChildren={
+				<>
+					<BackgroundGroup name="General" color="cyan">
+						<BackgroundRow title="indexing workspace" activity="progress" active />
+						<BackgroundRow title="agent review" activity="attention" />
+					</BackgroundGroup>
+					<BackgroundRow title="completed tests" state="Exited (0)" />
+				</>
+			}
+		/>
+	),
+}
+
+export const CollapsedBackgroundGroup: Story = {
+	render: () => (
+		<TerminalShell
+			popover
+			backgroundChildren={
+				<>
+					<BackgroundGroup name="Review" color="purple" collapsed>
+						<BackgroundRow title="needs attention" activity="attention" />
+						<BackgroundRow title="finished checks" state="Exited (0)" />
+					</BackgroundGroup>
+					<BackgroundRow title="ordinary shell" />
+				</>
+			}
+		/>
+	),
 }
 
 export const Rename: Story = {
