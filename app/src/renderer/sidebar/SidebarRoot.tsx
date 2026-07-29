@@ -22,6 +22,7 @@ import { NewItemSheet } from './NewItemSheet'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
+import { TerminalSettingsPage } from './TerminalSettingsPage'
 import type { Route } from './model'
 import type { RunSelectionDraft } from './run-selection'
 import { type SwipeBackControl, attachSwipeBack } from './swipe'
@@ -151,6 +152,7 @@ export function SidebarRoot() {
 		route =>
 			route.kind === 'settings' ||
 			route.kind === 'settings-section' ||
+			route.kind === 'terminal-settings' ||
 			route.kind === 'scheduled-runs' ||
 			route.kind === 'scheduled-run-editor',
 	)
@@ -375,6 +377,7 @@ export function SidebarRoot() {
 						onOpenSection={sectionId => push({ kind: 'settings-section', sectionId })}
 						onOpenAppearance={() => push({ kind: 'appearance' })}
 						onOpenProfiles={() => push({ kind: 'profiles' })}
+						onOpenTerminal={() => push({ kind: 'terminal-settings' })}
 						onOpenScheduledRuns={() => push({ kind: 'scheduled-runs' })}
 						activeProfileName={snapshot?.status?.profile?.name ?? 'Work'}
 					/>
@@ -387,6 +390,8 @@ export function SidebarRoot() {
 				return <ProfileEditorPage profileId={route.profileId} onBack={pop} />
 			case 'appearance':
 				return <AppearancePage onBack={pop} />
+			case 'terminal-settings':
+				return <TerminalSettingsPage onBack={pop} />
 			case 'scheduled-runs':
 				return (
 					<ScheduledRunsPage

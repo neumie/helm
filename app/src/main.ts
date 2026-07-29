@@ -3,6 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
@@ -29,6 +30,7 @@ import * as sessions from './sessions'
 import type { TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
 import { isTabGroupColor } from './tab-group-colors'
+import { TerminalPreferencesStore } from './terminal-preferences'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
@@ -118,6 +120,9 @@ if (userDataDirArg) {
 }
 
 const appProfiles = new AppProfileStore(app.getPath('userData'))
+// Global by design: unlike sessions/buffers, a terminal launch preference does
+// not change when the active Helm profile changes.
+const terminalPreferences = new TerminalPreferencesStore(app.getPath('userData'))
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
 let authoritativeProfilesState: ProfilesState = {
@@ -1374,6 +1379,40 @@ ipcMain.handle('external:open', async (event, value: unknown, profileToken: unkn
 	}
 })
 
+function requireCurrentTerminalPreferencesSender(event: IpcMainInvokeEvent, profileToken: unknown): BrowserWindow {
+	sessionIpcGate.require(profileToken)
+	const win = mainWindow
+	if (!win || win.isDestroyed() || event.sender !== win.webContents)
+		throw new Error('Terminal settings are unavailable.')
+	return win
+}
+
+ipcMain.handle('terminal-preferences:get', (event, profileToken: unknown) => {
+	requireCurrentTerminalPreferencesSender(event, profileToken)
+	return terminalPreferences.snapshot()
+})
+
+ipcMain.handle('terminal-preferences:choose', async (event, profileToken: unknown) => {
+	const win = requireCurrentTerminalPreferencesSender(event, profileToken)
+	const current = terminalPreferences.snapshot()
+	const result = await dialog.showOpenDialog(win, {
+		title: 'Choose terminal starting folder',
+		defaultPath: current.effectiveCwd,
+		properties: ['openDirectory', 'createDirectory'],
+	})
+	// A profile switch reloads the renderer while the native dialog may still be
+	// open. Re-authenticate after the await so that stale renderer authority can
+	// never persist a late choice, even though this preference is global.
+	requireCurrentTerminalPreferencesSender(event, profileToken)
+	if (result.canceled || !result.filePaths[0]) return null
+	return terminalPreferences.setDefaultCwd(result.filePaths[0])
+})
+
+ipcMain.handle('terminal-preferences:reset', (event, profileToken: unknown) => {
+	requireCurrentTerminalPreferencesSender(event, profileToken)
+	return terminalPreferences.resetDefaultCwd()
+})
+
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	sessionIpcGate.require(args.profileToken)
 	const id = nextPtyId++
@@ -1400,7 +1439,9 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		name: 'xterm-256color',
 		cols: Math.max(2, Math.floor(args.cols) || 80),
 		rows: Math.max(2, Math.floor(args.rows) || 24),
-		cwd: os.homedir(),
+		// cwd is main-owned. The renderer can select it only through the OS folder
+		// picker above and can never smuggle an arbitrary path into pty:spawn.
+		cwd: terminalPreferences.snapshot().effectiveCwd,
 		env: shellEnv(),
 	})
 	ptys.set(id, {

@@ -22,6 +22,7 @@ export type Route =
 	| { kind: 'profiles' }
 	| { kind: 'profile'; profileId: string }
 	| { kind: 'appearance' }
+	| { kind: 'terminal-settings' }
 	| { kind: 'scheduled-runs' }
 	| { kind: 'scheduled-run-editor'; scheduleId?: string }
 

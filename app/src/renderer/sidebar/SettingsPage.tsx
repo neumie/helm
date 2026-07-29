@@ -232,6 +232,7 @@ export function SettingsPage({
 	onOpenSection,
 	onOpenAppearance,
 	onOpenProfiles,
+	onOpenTerminal,
 	onOpenScheduledRuns,
 	activeProfileName,
 }: {
@@ -240,6 +241,7 @@ export function SettingsPage({
 	onOpenSection: (sectionId: string) => void
 	onOpenAppearance: () => void
 	onOpenProfiles: () => void
+	onOpenTerminal: () => void
 	onOpenScheduledRuns: () => void
 	activeProfileName: string
 }) {
@@ -258,6 +260,7 @@ export function SettingsPage({
 						value={`${themeName} · ${look.state.termFontSize}px`}
 						onClick={onOpenAppearance}
 					/>
+					<ActionRow nav label="Terminal" value="Starting folder" onClick={onOpenTerminal} />
 					<ActionRow
 						nav
 						label="Scheduled runs"

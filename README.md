@@ -417,7 +417,8 @@ Desktop terminal features include:
 - Open versus Restore as separate operations;
 - a visible Background control that names the currently viewed parked terminal;
 - grace-close with Undo;
-- protocol-owned agent activity and needs-attention indicators; and
+- protocol-owned agent activity and needs-attention indicators;
+- a global **Settings → Terminal** starting folder for new ordinary terminals, with Home fallback; and
 - a Helm-owned overlay scrollbar and synchronized-output guard for large redraws.
 
 Helm never infers agent activity from output, process names, shell prompts, or

@@ -231,6 +231,20 @@ export interface ConfigApi {
 	getDaemonUrl(): string
 }
 
+/** Main-owned, global ordinary-terminal launch preference. */
+export interface TerminalPreferencesSnapshot {
+	defaultCwd: string | null
+	effectiveCwd: string
+	usingFallback: boolean
+}
+
+export interface TerminalPreferencesApi {
+	get(): Promise<TerminalPreferencesSnapshot>
+	/** Opens the OS folder picker. Null means the user cancelled. */
+	chooseDefaultCwd(): Promise<TerminalPreferencesSnapshot | null>
+	resetDefaultCwd(): Promise<TerminalPreferencesSnapshot>
+}
+
 /** Narrow OS-browser handoff; main accepts only bounded HTTP(S) URLs. */
 export interface ExternalApi {
 	open(url: string): Promise<boolean>
@@ -336,6 +350,8 @@ export interface HelmApi {
 	/** Buffer snapshot IO (restore-before-attach; main owns the files). */
 	buffers: BuffersApi
 	config: ConfigApi
+	/** Global starting folder for newly-created ordinary terminals. */
+	terminalPreferences: TerminalPreferencesApi
 	/** Open a safe web URL in the host's default browser. */
 	external: ExternalApi
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */

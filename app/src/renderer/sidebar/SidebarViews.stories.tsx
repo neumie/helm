@@ -8,6 +8,7 @@ import { ListPage } from './ListPage'
 import { ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, type SettingsStore } from './SettingsPage'
+import { TerminalSettingsPage } from './TerminalSettingsPage'
 
 const NOW = '2026-07-21T12:00:00.000Z'
 
@@ -297,6 +298,19 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 	Object.assign(window, {
 		helm: {
 			uiPreview: null,
+			terminalPreferences: {
+				get: async () => ({
+					defaultCwd: '/Users/you/Developer',
+					effectiveCwd: '/Users/you/Developer',
+					usingFallback: false,
+				}),
+				chooseDefaultCwd: async () => null,
+				resetDefaultCwd: async () => ({
+					defaultCwd: null,
+					effectiveCwd: '/Users/you',
+					usingFallback: false,
+				}),
+			},
 			daemon: {
 				item: async () => ({ data: detail }),
 				itemAction: async () => ({ data: detail }),
@@ -608,9 +622,18 @@ export const Settings: Story = {
 				onOpenSection={noOp}
 				onOpenAppearance={noOp}
 				onOpenProfiles={noOp}
+				onOpenTerminal={noOp}
 				onOpenScheduledRuns={noOp}
 				activeProfileName="Work"
 			/>
+		</Frame>
+	),
+}
+
+export const TerminalSettings: Story = {
+	render: () => (
+		<Frame>
+			<TerminalSettingsPage onBack={noOp} />
 		</Frame>
 	),
 }

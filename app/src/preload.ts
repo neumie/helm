@@ -209,6 +209,11 @@ const api: HelmApi = {
 	config: {
 		getDaemonUrl: () => daemonUrl,
 	},
+	terminalPreferences: {
+		get: () => ipcRenderer.invoke('terminal-preferences:get', sessionProfileToken),
+		chooseDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:choose', sessionProfileToken),
+		resetDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:reset', sessionProfileToken),
+	},
 	external: {
 		open: url => ipcRenderer.invoke('external:open', url, sessionProfileToken) as Promise<boolean>,
 	},

@@ -32,7 +32,15 @@ test('every design-system component family has a named Storybook home', () => {
 
 test('large Sidebar views cover primary review destinations', () => {
 	const views = read('app/src/renderer/sidebar/SidebarViews.stories.tsx')
-	for (const story of ['WorkList', 'ItemDetail', 'TaskReading', 'PlanDocuments', 'Settings', 'Appearance']) {
+	for (const story of [
+		'WorkList',
+		'ItemDetail',
+		'TaskReading',
+		'PlanDocuments',
+		'Settings',
+		'Appearance',
+		'TerminalSettings',
+	]) {
 		assert.ok(views.includes(`export const ${story}: Story`), story)
 	}
 })
