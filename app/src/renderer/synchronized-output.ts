@@ -20,6 +20,8 @@ function markerOffsets(text: string, marker: string, mode: Marker['mode']): Mark
 interface SynchronizedOutputHooks {
 	onFreeze(): void
 	onUnfreeze(): void
+	/** Hold the frozen frame after parsing until the terminal has visibly painted it. */
+	scheduleVisualRelease?(release: () => void): () => void
 	/** Injectable for the missing-end-marker regression test. */
 	scheduleIdleRelease?(release: () => void): () => void
 }
@@ -43,6 +45,7 @@ export function createSynchronizedOutputGuard(hooks: SynchronizedOutputHooks): S
 	let generation = 0
 	let markerTail = ''
 	let cancelIdleRelease: (() => void) | null = null
+	let cancelVisualRelease: (() => void) | null = null
 	const scheduleIdleRelease =
 		hooks.scheduleIdleRelease ??
 		((release: () => void): (() => void) => {
@@ -53,6 +56,8 @@ export function createSynchronizedOutputGuard(hooks: SynchronizedOutputHooks): S
 	const release = (): void => {
 		cancelIdleRelease?.()
 		cancelIdleRelease = null
+		cancelVisualRelease?.()
+		cancelVisualRelease = null
 		sequenceActive = false
 		markerTail = ''
 		generation += 1
@@ -71,6 +76,8 @@ export function createSynchronizedOutputGuard(hooks: SynchronizedOutputHooks): S
 			for (const marker of markers) {
 				if (marker.mode === 'h') {
 					if (sequenceActive) continue
+					cancelVisualRelease?.()
+					cancelVisualRelease = null
 					sequenceActive = true
 					generation += 1
 					if (frozen) continue
@@ -93,8 +100,17 @@ export function createSynchronizedOutputGuard(hooks: SynchronizedOutputHooks): S
 			}
 			write(data, () => {
 				if (sequenceActive || generation !== closesGeneration || !frozen) return
-				frozen = false
-				hooks.onUnfreeze()
+				const complete = (): void => {
+					cancelVisualRelease = null
+					if (sequenceActive || generation !== closesGeneration || !frozen) return
+					frozen = false
+					hooks.onUnfreeze()
+				}
+				if (hooks.scheduleVisualRelease) {
+					cancelVisualRelease = hooks.scheduleVisualRelease(complete)
+				} else {
+					complete()
+				}
 			})
 		},
 

@@ -26,6 +26,8 @@ export interface TerminalWorkspaceFixture {
 	calls: {
 		placement: TerminalPlacementCommitCommand[]
 	}
+	/** Emits raw PTY output through the production terminal write path. */
+	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
 	/** Emits the narrow Shell-menu event through the real workspace subscription. */
 	emitTabPrevious(): void
@@ -356,6 +358,10 @@ export function createTerminalWorkspaceFixture(
 	return {
 		helm,
 		calls,
+		emitData(sessionId, data) {
+			const id = ptyBySession.get(sessionId)
+			if (id !== undefined) for (const listener of ptyDataListeners) listener(id, data)
+		},
 		emitExit(sessionId, code) {
 			const id = ptyBySession.get(sessionId)
 			if (id !== undefined) for (const listener of ptyExitListeners) listener(id, code)

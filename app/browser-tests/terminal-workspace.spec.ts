@@ -4,6 +4,7 @@ import type { TerminalWorkspaceFixture } from '../src/renderer/terminal-workspac
 declare global {
 	interface Window {
 		__helmWorkspaceFixture?: TerminalWorkspaceFixture
+		__helmFlushHeldFrames?: () => void
 		__helmTabDragSettles?: Array<{
 			duration: number
 			from: string
@@ -23,6 +24,52 @@ test.beforeEach(async ({ page }) => {
 	await page.goto(story)
 	await expect(page.getByRole('button', { name: 'Background terminals' })).toBeVisible()
 	await expect(page.getByRole('dialog', { name: 'Background terminals' })).toBeVisible()
+})
+
+test('a synchronized redraw stays covered until xterm paints it through a resize', async ({ page }) => {
+	const liveRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
+	await expect(liveRows).toBeVisible()
+	await page.evaluate(() => window.__helmWorkspaceFixture?.emitData('shell', 'stable frame'))
+	await expect(liveRows).toContainText('stable frame')
+
+	await page.evaluate(() => {
+		const originalRequest = window.requestAnimationFrame.bind(window)
+		const originalCancel = window.cancelAnimationFrame.bind(window)
+		const held = new Map<number, FrameRequestCallback>()
+		let nextId = 1
+		window.requestAnimationFrame = callback => {
+			const id = nextId++
+			held.set(id, callback)
+			return id
+		}
+		window.cancelAnimationFrame = id => {
+			held.delete(id)
+		}
+		window.__helmFlushHeldFrames = () => {
+			window.requestAnimationFrame = originalRequest
+			window.cancelAnimationFrame = originalCancel
+			window.__helmFlushHeldFrames = undefined
+			for (const callback of held.values()) originalRequest(callback)
+			held.clear()
+		}
+		window.__helmWorkspaceFixture?.emitData('shell', '\u001b[?2026h\u001b[2J\u001b[Hreplacement frame\u001b[?2026l')
+	})
+
+	// Parsing completes on xterm's write queue while its DOM paint remains held.
+	// Helm must keep the last complete frame over the live screen until that paint.
+	await page.waitForTimeout(100)
+	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(1)
+	await expect(liveRows).toContainText('stable frame')
+
+	// A resize before paint changes xterm's last row. The pending release must
+	// follow the current viewport rather than wait forever for the old row bound.
+	const viewport = page.viewportSize()
+	if (!viewport) throw new Error('browser test requires a fixed viewport')
+	await page.setViewportSize({ width: viewport.width, height: viewport.height - 120 })
+	await page.waitForTimeout(100)
+	await page.evaluate(() => window.__helmFlushHeldFrames?.())
+	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(0)
+	await expect(liveRows).toContainText('replacement frame')
 })
 
 test('Open keeps a Background terminal parked while Restore moves it into the strip', async ({ page }) => {

@@ -33,6 +33,57 @@ test('keeps the previous frame frozen until a synchronized redraw has parsed', (
 	assert.deepEqual(events, ['freeze', 'unfreeze'])
 })
 
+test('keeps the frame frozen after parsing until its visible release runs', () => {
+	const events: string[] = []
+	let releaseVisible: (() => void) | undefined
+	const writes: Array<{ done?: () => void }> = []
+	const guard = createSynchronizedOutputGuard({
+		onFreeze: () => events.push('freeze'),
+		onUnfreeze: () => events.push('unfreeze'),
+		scheduleVisualRelease: release => {
+			events.push('schedule-visible')
+			releaseVisible = release
+			return () => {
+				events.push('cancel-visible')
+				releaseVisible = undefined
+			}
+		},
+	})
+
+	guard.write(`${START}replacement${END}`, (_data, done) => writes.push({ ...(done ? { done } : {}) }))
+	writes[0].done?.()
+	assert.deepEqual(events, ['freeze', 'schedule-visible'])
+	releaseVisible?.()
+	assert.deepEqual(events, ['freeze', 'schedule-visible', 'unfreeze'])
+})
+
+test('a newer redraw cancels an older parsed frame awaiting paint', () => {
+	const events: string[] = []
+	const visibleReleases: Array<() => void> = []
+	const writes: Array<{ done?: () => void }> = []
+	const guard = createSynchronizedOutputGuard({
+		onFreeze: () => events.push('freeze'),
+		onUnfreeze: () => events.push('unfreeze'),
+		scheduleVisualRelease: release => {
+			visibleReleases.push(release)
+			return () => events.push('cancel-visible')
+		},
+	})
+	const write = (_data: string, done?: () => void): void => {
+		writes.push({ ...(done ? { done } : {}) })
+	}
+
+	guard.write(`${START}first${END}`, write)
+	writes[0].done?.()
+	guard.write(`${START}second${END}`, write)
+	assert.deepEqual(events, ['freeze', 'cancel-visible'])
+	visibleReleases[0]?.()
+	assert.deepEqual(events, ['freeze', 'cancel-visible'])
+	writes[1].done?.()
+	visibleReleases[1]?.()
+	assert.deepEqual(events, ['freeze', 'cancel-visible', 'unfreeze'])
+})
+
 test('recognizes synchronized-output markers split across PTY chunks', () => {
 	const { guard, events, writes, write } = harness()
 	guard.write('\x1b[?20', write)

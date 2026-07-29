@@ -1033,6 +1033,27 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		scheduleScrollbarSync(tab)
 	}
 
+	function scheduleTerminalFrameRelease(tab: Tab, release: () => void): () => void {
+		const lastRow = Math.max(0, tab.term.rows - 1)
+		if (!tab.frameFreeze || !tab.holder.classList.contains('active')) {
+			release()
+			return () => {}
+		}
+		let cancelled = false
+		const rendered = tab.term.onRender(({ start, end }) => {
+			if (start > 0 || end < Math.max(0, tab.term.rows - 1)) return
+			rendered.dispose()
+			if (!cancelled) release()
+		})
+		// Parsing and painting are separate xterm queues. Request a complete viewport
+		// paint after the closing marker parsed and keep the old frame until onRender.
+		tab.term.refresh(0, lastRow)
+		return () => {
+			cancelled = true
+			rendered.dispose()
+		}
+	}
+
 	function activate(tab: Tab): void {
 		if (placementHydrated && !applyingPlacementSnapshot) {
 			void placement.execute({ type: 'select', id: placementId(tab) })
@@ -2925,6 +2946,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const outputGuard = createSynchronizedOutputGuard({
 			onFreeze: () => freezeTerminalFrame(tab),
 			onUnfreeze: () => unfreezeTerminalFrame(tab),
+			scheduleVisualRelease: release => scheduleTerminalFrameRelease(tab, release),
 		})
 		const progressTracker = createTerminalProgressTracker(active => setTabAgentRunning(tab, active))
 		tab = {
