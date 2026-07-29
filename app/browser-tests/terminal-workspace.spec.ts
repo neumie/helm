@@ -137,6 +137,26 @@ test('a parked exit remains a visible exited row and foreground focus remains us
 	await expect(page.locator('#tab-strip-region.background-restore-ready')).toHaveCount(0)
 })
 
+test('strip drag keeps predicting after leaving and re-entering the strip', async ({ page }) => {
+	const source = page.getByRole('tab', { name: /active shell/i })
+	const target = page.getByRole('tab', { name: /compile/i })
+	const terminal = page.locator('#right')
+	const sourceBox = await source.boundingBox()
+	const targetBox = await target.boundingBox()
+	const terminalBox = await terminal.boundingBox()
+	expect(sourceBox).not.toBeNull()
+	expect(targetBox).not.toBeNull()
+	expect(terminalBox).not.toBeNull()
+	if (!sourceBox || !targetBox || !terminalBox) return
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+	await page.mouse.down()
+	await page.mouse.move(terminalBox.x + terminalBox.width / 2, terminalBox.y + 80, { steps: 3 })
+	await expect(page.locator('body')).toHaveClass(/tab-dragging/)
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 3 })
+	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"] [role="tab"]')).toHaveCount(2)
+	await page.keyboard.press('Escape')
+})
+
 test('strip drag joins a group through one atomic membership commit', async ({ page }) => {
 	const source = page.getByRole('tab', { name: /active shell/i })
 	const target = page.getByRole('tab', { name: /compile/i })

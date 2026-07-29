@@ -263,6 +263,13 @@ test('drag projection is synchronous and visible without changing committed Back
 	assert.deepEqual(value.snapshot().drag?.background, [])
 	assert.equal(value.snapshot().busy, true)
 
+	const reset = drag.reset()
+	assert.equal(reset.ok, true)
+	assert.equal(value.snapshot().drag, null)
+	assert.equal(value.snapshot().busy, true)
+	assert.equal(drag.project({ surface: 'strip', index: 2 }).ok, true)
+	assert.deepEqual(value.snapshot().drag?.strip, [id('a'), id('c'), id('b'), id('d')])
+
 	const cancelled = drag.cancel()
 	assert.equal(cancelled.ok, true)
 	assert.equal(value.snapshot().drag, null)

@@ -1453,7 +1453,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 
 	function restoreTabDragOrigin(drag: TabPointerDrag, _animate: boolean): void {
 		drag.dropGroupId = drag.originalGroupId
-		drag.placementDrag?.cancel()
+		drag.placementDrag?.reset()
 	}
 
 	function stripGroupAtPoint(x: number, y: number): string | null {
@@ -1617,7 +1617,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		suppressTabClick.add(drag.tab)
 		setTimeout(() => suppressTabClick.delete(drag.tab), 0)
 		const acceptedDrop = !cancelled && drag.dropTarget !== null
-		if (!acceptedDrop) restoreTabDragOrigin(drag, true)
+		if (!acceptedDrop) {
+			restoreTabDragOrigin(drag, true)
+			drag.placementDrag?.cancel()
+		}
 		const target =
 			drag.dropTarget === 'background' ? bgToggle.getBoundingClientRect() : drag.tab.tabButton.getBoundingClientRect()
 		document.body.classList.remove('tab-dragging')
@@ -1763,7 +1766,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (!drag.projected) return
 		drag.projected = false
 		drag.tab.tabButton.classList.remove('background-tab-drop-placeholder')
-		drag.placementDrag?.cancel()
+		drag.placementDrag?.reset()
 	}
 
 	async function commitBackgroundTabProjection(drag: BackgroundTabPointerDrag): Promise<boolean> {
@@ -1893,7 +1896,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		suppressTabClick.add(drag.tab)
 		setTimeout(() => suppressTabClick.delete(drag.tab), 0)
 		const restored = !cancelled && drag.dropTarget === 'strip' && drag.projected
-		if (!restored) restoreBackgroundTabProjection(drag, true)
+		if (!restored) {
+			restoreBackgroundTabProjection(drag, true)
+			drag.placementDrag?.cancel()
+		}
 		const target = restored ? drag.tab.tabButton.getBoundingClientRect() : bgToggle.getBoundingClientRect()
 		clearBackgroundTabDropTarget()
 		tabStripRegion.classList.remove('background-restore-ready')
@@ -2089,7 +2095,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	function restoreBackgroundGroupProjection(drag: GroupPointerDrag, _animate: boolean): void {
 		if (!drag.projected) return
 		drag.projected = false
-		drag.placementDrag?.cancel()
+		drag.placementDrag?.reset()
 	}
 
 	async function commitBackgroundGroupProjection(drag: GroupPointerDrag): Promise<boolean> {
@@ -2117,7 +2123,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 
 	function restoreGroupDragOrigin(drag: GroupPointerDrag): void {
 		if (drag.originSurface === 'background') restoreBackgroundGroupProjection(drag, true)
-		else drag.placementDrag?.cancel()
+		else drag.placementDrag?.reset()
 		markGroupDragPlaceholder(drag)
 	}
 
@@ -2281,7 +2287,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (drag.frame !== null) cancelAnimationFrame(drag.frame)
 		if (!drag.started) return
 		const acceptedDrop = !cancelled && drag.dropTarget !== null
-		if (!acceptedDrop) restoreGroupDragOrigin(drag)
+		if (!acceptedDrop) {
+			restoreGroupDragOrigin(drag)
+			drag.placementDrag?.cancel()
+		}
 		const toggleKey = `${drag.originSurface}:${drag.groupId}`
 		suppressedGroupToggleClicks.add(toggleKey)
 		setTimeout(() => suppressedGroupToggleClicks.delete(toggleKey), 0)

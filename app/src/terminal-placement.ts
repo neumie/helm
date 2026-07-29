@@ -163,6 +163,8 @@ export type PlacementTransitionResult = PlacementAccepted | PlacementRejected
 
 export interface PlacementDrag {
 	project(target: PlacementTarget): PlacementTransitionResult
+	/** Clear the visual candidate without ending this pointer gesture. */
+	reset(): PlacementTransitionResult
 	cancel(): PlacementTransitionResult
 	commit(signal?: AbortSignal): Promise<PlacementResult>
 }
@@ -539,6 +541,12 @@ export class TerminalPlacement {
 				)
 					return this.#rejected('unknown-group')
 				state.projection = this.#projectionFor(state, target)
+				return { ok: true, snapshot: this.#publish() }
+			},
+			reset: () => {
+				const reason = stale()
+				if (reason || !state) return this.#rejected(reason ?? 'stale-drag')
+				state.projection = null
 				return { ok: true, snapshot: this.#publish() }
 			},
 			cancel: () => {
