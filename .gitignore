@@ -22,3 +22,4 @@ docs/plans/*/*.log
 src/build-id.generated.ts
 app/src/build-id.generated.ts
 /app/native/window-zoom-guard/build/
+/app/test-results/

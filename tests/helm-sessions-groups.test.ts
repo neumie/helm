@@ -143,6 +143,165 @@ test('last global member removal and prune delete groups, but retained unknown m
 	assert.equal(fs.readFileSync(file, 'utf8').includes('_tabGroups'), false)
 })
 
+test('placement commits atomically rewrite the complete document and preserve run-owned evidence', () => {
+	const file = registryFile()
+	const registry = new SessionRegistry(file)
+	registry.add('aaaa1111')
+	registry.add('bbbb2222')
+	registry.add('cccc3333')
+	const group = registry.createGroup('Deploy', ['aaaa1111', 'bbbb2222'])
+	assert.ok(group)
+	assert.equal(
+		registry.registerRunOwned('dddd4444', {
+			profileId: 'work',
+			runId: 'run-1',
+			revision: 1,
+			adoptionId: '11111111-1111-4111-8111-111111111111',
+			adopter: '22222222-2222-4222-8222-222222222222',
+		}),
+		true,
+	)
+
+	const result = registry.commitPlacement({
+		type: 'move',
+		affectedIds: ['bbbb2222'],
+		strip: ['bbbb2222', 'aaaa1111'],
+		background: ['cccc3333'],
+	})
+	assert.ok(result)
+	assert.equal(result.registryEpoch, 1)
+	assert.deepEqual(result.affectedIds, ['bbbb2222'])
+	assert.deepEqual(result.authoritativeOrder, ['bbbb2222', 'aaaa1111', 'dddd4444', 'cccc3333'])
+	assert.deepEqual(result.authoritativeGroups, [{ ...group, memberIds: ['bbbb2222', 'aaaa1111'] }])
+	const disk = registryDocument(file) as Record<string, unknown>
+	assert.deepEqual((disk.dddd4444 as { scheduledOwnership?: unknown }).scheduledOwnership, {
+		profileId: 'work',
+		runId: 'run-1',
+		revision: 1,
+		adoptionId: '11111111-1111-4111-8111-111111111111',
+		adopter: '22222222-2222-4222-8222-222222222222',
+	})
+	assert.equal((disk.cccc3333 as { parked?: boolean }).parked, true)
+
+	const runOwnedMove = registry.commitPlacement({
+		type: 'move',
+		affectedIds: ['dddd4444'],
+		strip: ['bbbb2222', 'aaaa1111', 'cccc3333'],
+		background: [],
+	})
+	assert.ok(runOwnedMove)
+	assert.equal(registry.get('dddd4444')?.parked, undefined)
+	assert.equal(registry.get('dddd4444')?.backing, 'run-owned')
+	assert.deepEqual(
+		((registryDocument(file) as Record<string, unknown>).dddd4444 as { scheduledOwnership?: unknown })
+			.scheduledOwnership,
+		{
+			profileId: 'work',
+			runId: 'run-1',
+			revision: 1,
+			adoptionId: '11111111-1111-4111-8111-111111111111',
+			adopter: '22222222-2222-4222-8222-222222222222',
+		},
+	)
+})
+
+test('group placement commits reject stale captured membership and return current authoritative members', () => {
+	const registry = new SessionRegistry(registryFile())
+	registry.add('aaaa1111')
+	registry.add('bbbb2222')
+	registry.add('cccc3333')
+	const group = registry.createGroup('Deploy', ['aaaa1111', 'bbbb2222'])
+	assert.ok(group)
+	assert.equal(
+		registry.commitPlacement({
+			type: 'move',
+			groupId: group.id,
+			affectedIds: ['aaaa1111'],
+			strip: ['cccc3333'],
+			background: ['aaaa1111', 'bbbb2222'],
+		}),
+		null,
+	)
+	const moved = registry.commitPlacement({
+		type: 'move',
+		groupId: group.id,
+		affectedIds: ['bbbb2222', 'aaaa1111'],
+		strip: ['cccc3333'],
+		background: ['aaaa1111', 'bbbb2222'],
+	})
+	assert.ok(moved)
+	assert.deepEqual(moved.affectedIds, ['aaaa1111', 'bbbb2222'])
+	assert.deepEqual(moved.authoritativeOrder, ['cccc3333', 'aaaa1111', 'bbbb2222'])
+})
+
+test('placement membership and collapse commands revalidate current groups and return authoritative members', () => {
+	const registry = new SessionRegistry(registryFile())
+	registry.add('aaaa1111')
+	registry.add('bbbb2222')
+	const group = registry.createGroup('Deploy', ['aaaa1111'])
+	assert.ok(group)
+	const membership = registry.commitPlacement({
+		type: 'set-membership',
+		terminalId: 'bbbb2222',
+		groupId: group.id,
+		strip: ['bbbb2222'],
+		background: ['aaaa1111'],
+	})
+	assert.ok(membership)
+	assert.deepEqual(membership.authoritativeGroups, [{ ...group, memberIds: ['bbbb2222', 'aaaa1111'] }])
+	const collapsed = registry.commitPlacement({
+		type: 'set-collapsed',
+		groupId: group.id,
+		surface: 'background',
+		collapsed: true,
+	})
+	assert.ok(collapsed)
+	assert.equal(collapsed.registryEpoch, 2)
+	assert.deepEqual(collapsed.affectedIds, ['bbbb2222', 'aaaa1111'])
+	assert.deepEqual(collapsed.authoritativeGroups, [
+		{ ...group, collapsedBackground: true, memberIds: ['bbbb2222', 'aaaa1111'] },
+	])
+	assert.equal(
+		registry.commitPlacement({
+			type: 'set-membership',
+			terminalId: 'bbbb2222',
+			groupId: 'group-deadbeef',
+			strip: ['bbbb2222'],
+			background: ['aaaa1111'],
+		}),
+		null,
+	)
+})
+
+test('placement commit restores complete in-memory state when the atomic write fails', async () => {
+	const file = registryFile()
+	let writes = 0
+	const registry = new SessionRegistry(file, () => {
+		writes += 1
+		throw new Error('disk full')
+	})
+	registry.add('aaaa1111')
+	registry.add('bbbb2222')
+	const group = registry.createGroup('Deploy', ['aaaa1111'])
+	assert.ok(group)
+	assert.equal(
+		registry.commitPlacement({
+			type: 'set-membership',
+			terminalId: 'bbbb2222',
+			groupId: group.id,
+			strip: ['bbbb2222', 'aaaa1111'],
+			background: [],
+		}),
+		null,
+	)
+	assert.equal(registry.get('bbbb2222')?.groupId, undefined)
+	assert.deepEqual(registry.groupMembers(group.id), ['aaaa1111'])
+	assert.equal(registry.get('aaaa1111')?.order, undefined)
+	assert.equal(writes, 1)
+	await new Promise(resolve => setTimeout(resolve, 350))
+	assert.equal(writes, 2, 'the pre-existing debounce is restored after the rejected transaction')
+})
+
 test('corrupt entries, dangling memberships, invalid inputs, and pure action intents cannot create orphan state', () => {
 	const file = registryFile()
 	fs.writeFileSync(

@@ -5,7 +5,7 @@ import test from 'node:test'
 const html = readFileSync(new URL('../app/src/renderer/index.html', import.meta.url), 'utf-8')
 const normalizedHtml = html.replace(/\s+/g, ' ')
 const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf-8')
-const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf-8')
+const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf-8')
 const main = readFileSync(new URL('../app/src/main.ts', import.meta.url), 'utf-8')
 
 function rule(selector: string): string {
@@ -54,6 +54,6 @@ test('double-click rename consumes the second press before mounting its input', 
 	)
 	assert.match(
 		renderer,
-		/tabButton\.addEventListener\('dblclick', event => \{\s*event\.preventDefault\(\)\s*event\.stopImmediatePropagation\(\)[\s\S]*?requestAnimationFrame\(\(\) => startRename\(tab\)\)\s*\}\)/,
+		/tabButton\.addEventListener\('dblclick', event => \{\s*event\.preventDefault\(\)\s*event\.stopImmediatePropagation\(\)[\s\S]*?requestAnimationFrame\(\(\) => \{\s*if \(!disposed\) startRename\(tab\)\s*\}\)\s*\}\)/,
 	)
 })

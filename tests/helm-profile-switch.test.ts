@@ -36,8 +36,7 @@ test('terminal, session, and buffer handlers gate mutable access during a profil
 		'session:close-with-grace',
 		'session:undo-close',
 		'sessions:list',
-		'session:set-parked',
-		'session:set-order',
+		'sessions:placement:commit',
 		'session:title',
 		'session:set-custom-name',
 		'buffer:save',
@@ -46,7 +45,11 @@ test('terminal, session, and buffer handlers gate mutable access during a profil
 		const start = main.indexOf(`'${channel}'`)
 		assert.ok(start >= 0, `missing ${channel}`)
 		const handler = main.slice(start, start + 700)
-		assert.match(handler, /sessionIpcGate\.(?:require|allows)/, `${channel} must fail closed before mutable access`)
+		assert.match(
+			handler,
+			/sessionIpcGate\.(?:handle|require|allows)/,
+			`${channel} must fail closed before mutable access`,
+		)
 	}
 	assert.match(main, /profileSwitchCoordinator\?\.stop\(\)/)
 	assert.match(main, /while \(activeProfileSwitch\)/)

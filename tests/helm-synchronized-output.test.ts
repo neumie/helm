@@ -73,7 +73,7 @@ test('passes ordinary output through and abort releases any frozen frame', () =>
 })
 
 test('close paths preserve the last complete snapshot before releasing a redraw guard', () => {
-	const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+	const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 	for (const name of ['closeTab', 'killParkedTab']) {
 		const start = renderer.indexOf(`function ${name}`)
 		const end = renderer.indexOf('\nfunction ', start + 1)

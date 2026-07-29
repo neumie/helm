@@ -7,8 +7,10 @@ export interface TabGroupRendererTab {
 	id: string
 	/** Null and stale/unknown group ids both render in the ordinary terminal flow. */
 	groupId: string | null
-	/** Background ownership remains independent of group membership. */
+	/** Committed ownership remains independent of group membership. */
 	parked: boolean
+	/** Optional visual drag surface; committed `parked` still owns PTY/runtime semantics. */
+	surface?: TabGroupSurface
 	/** Already-arbitrated terminal label (manual pin or current title). */
 	name: string
 	/** Exact OSC-derived state; this helper never infers activity. */
@@ -95,7 +97,7 @@ function membersFor(
 		// duplicate makes the projection deterministic without inventing a copy.
 		if (seenIds.has(tab.id)) continue
 		seenIds.add(tab.id)
-		if ((surface === 'background') !== tab.parked) continue
+		if ((surface === 'background') !== (tab.surface === undefined ? tab.parked : tab.surface === 'background')) continue
 		eligible.push({
 			groupId: tab.groupId !== null && groups.has(tab.groupId) ? tab.groupId : null,
 			member: { ...tab, active: tab.id === activeTabId },

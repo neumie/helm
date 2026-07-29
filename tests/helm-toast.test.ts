@@ -8,7 +8,7 @@ const toast = readFileSync(new URL('../app/src/renderer/toast.ts', import.meta.u
 const button = readFileSync(new URL('../app/src/renderer/button.tsx', import.meta.url), 'utf8')
 const iconButton = readFileSync(new URL('../app/src/renderer/icon-button.tsx', import.meta.url), 'utf8')
 const sidebarUi = readFileSync(new URL('../app/src/renderer/sidebar/ui.tsx', import.meta.url), 'utf8')
-const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 const story = readFileSync(new URL('../app/src/renderer/Toast.stories.tsx', import.meta.url), 'utf8')
 
 test('toasts render as compact bottom-right notices', () => {

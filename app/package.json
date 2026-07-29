@@ -14,7 +14,10 @@
 		"attest:profile-switch": "node scripts/profile-switch-attestation.mjs --require-electron --require-dtach",
 		"postinstall": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force && node scripts/brand-macos-electron.mjs",
 		"storybook": "storybook dev -p 6006",
-		"storybook:build": "storybook build"
+		"storybook:build": "storybook build",
+		"playwright:install": "playwright install chromium",
+		"test:browser": "playwright test",
+		"test:browser:headed": "playwright test --headed"
 	},
 	"dependencies": {
 		"@blocknote/ariakit": "0.51.4",
@@ -30,6 +33,7 @@
 	},
 	"devDependencies": {
 		"@electron/rebuild": "^4.1.0",
+		"@playwright/test": "^1.62.0",
 		"@storybook/react-vite": "^10.5.0",
 		"@types/node": "^24.0.0",
 		"@types/react": "^19.2.17",

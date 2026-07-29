@@ -191,5 +191,6 @@ function restored(sessionId: string): RestoredSession {
 		groupId: null,
 		agentRunning: false,
 		agentAttention: false,
+		placementEligible: true,
 	}
 }

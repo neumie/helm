@@ -16,6 +16,7 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import type { TerminalPlacementCommitCommand, TerminalPlacementCommitResult, TerminalPlacementGroup } from './shared'
 import { type TabGroupColor, defaultTabGroupColor, isTabGroupColor } from './tab-group-colors'
 
 // okena resolves tools through get_extended_path (session_backend.rs:751-793)
@@ -658,6 +659,9 @@ export interface SessionRegistryTransferResult {
 	meta?: SessionMeta
 }
 
+/** Complete-document result of one narrow, synchronous placement mutation. */
+export type SessionPlacementCommitResult = TerminalPlacementCommitResult
+
 export function compareSessionOrder(
 	a: Pick<SessionMeta, 'order' | 'createdAt'>,
 	b: Pick<SessionMeta, 'order' | 'createdAt'>,
@@ -679,6 +683,8 @@ export class SessionRegistry {
 	#data: Record<string, SessionMeta> = {}
 	#groups: Record<string, TabGroupMeta> = {}
 	#saveTimer: NodeJS.Timeout | null = null
+	/** Process-local only: never persisted into sessions.json. */
+	#registryEpoch = 0
 	readonly #persistDocument: (file: string, document: SessionRegistryFile) => void
 
 	constructor(file: string, writeDocument = SessionRegistry.#writeDocument) {
@@ -999,6 +1005,141 @@ export class SessionRegistry {
 			order += 1
 		}
 		if (changed) this.#scheduleSave()
+	}
+
+	/**
+	 * Apply one placement command to the latest complete registry document.
+	 *
+	 * This is deliberately synchronous: it validates all referenced same-profile
+	 * session IDs, mutates only placement metadata, atomically rewrites the full
+	 * document once, and restores every in-memory field on failure. Run-owned
+	 * scheduled sessions are placement-eligible but their ownership evidence is
+	 * never returned or mutated by this command.
+	 */
+	commitPlacement(command: TerminalPlacementCommitCommand): SessionPlacementCommitResult | null {
+		const hadPendingSave = this.#saveTimer !== null
+		this.#cancelSave()
+		const beforeData = structuredClone(this.#data)
+		const beforeGroups = structuredClone(this.#groups)
+		const placementIds = this.#placementIds()
+		const validateOrder = (strip: readonly string[], background: readonly string[]): boolean => {
+			const order = [...strip, ...background]
+			// The renderer may have fresh/non-persistent terminals with no registry
+			// binding. Its port commits the complete bound subset; omitted ordinary
+			// rows retain their surface and relative order below.
+			return order.length > 0 && new Set(order).size === order.length && order.every(id => placementIds.includes(id))
+		}
+		const reject = (): null => {
+			this.#data = beforeData
+			this.#groups = beforeGroups
+			// A rejected placement must not discard an unrelated title/activity/group
+			// debounce that was already pending when this transaction entered.
+			if (hadPendingSave) this.#scheduleSave()
+			return null
+		}
+
+		let affectedIds: string[]
+		if (command.type === 'move') {
+			if (
+				command.affectedIds.length === 0 ||
+				new Set(command.affectedIds).size !== command.affectedIds.length ||
+				!command.affectedIds.every(id => placementIds.includes(id)) ||
+				!validateOrder(command.strip, command.background)
+			)
+				return reject()
+			if (command.groupId) {
+				if (!this.#groups[command.groupId]) return reject()
+				const currentMembers = placementIds.filter(id => this.#data[id]?.groupId === command.groupId)
+				if (
+					currentMembers.length === 0 ||
+					currentMembers.length !== command.affectedIds.length ||
+					!currentMembers.every(id => command.affectedIds.includes(id))
+				)
+					return reject()
+				affectedIds = currentMembers
+			} else affectedIds = [...command.affectedIds]
+			if (command.memberships) {
+				if (
+					command.memberships.length > 100 ||
+					new Set(command.memberships.map(entry => entry.terminalId)).size !== command.memberships.length ||
+					!command.memberships.every(
+						entry =>
+							placementIds.includes(entry.terminalId) && (entry.groupId === null || !!this.#groups[entry.groupId]),
+					)
+				)
+					return reject()
+				for (const entry of command.memberships) {
+					const meta = this.#data[entry.terminalId]
+					if (!meta) return reject()
+					meta.groupId = entry.groupId ?? undefined
+				}
+				this.#removeEmptyGroups()
+			}
+			this.#applyPlacementOrder(command.strip, command.background)
+		} else if (command.type === 'set-membership') {
+			if (
+				!placementIds.includes(command.terminalId) ||
+				(command.groupId !== null && !this.#groups[command.groupId]) ||
+				!validateOrder(command.strip, command.background)
+			)
+				return reject()
+			const meta = this.#data[command.terminalId]
+			if (!meta) return reject()
+			meta.groupId = command.groupId ?? undefined
+			this.#applyPlacementOrder(command.strip, command.background)
+			this.#removeEmptyGroups()
+			affectedIds = [command.terminalId]
+		} else {
+			const group = this.#groups[command.groupId]
+			if (!group || (command.surface !== 'strip' && command.surface !== 'background')) return reject()
+			affectedIds = placementIds.filter(id => this.#data[id]?.groupId === command.groupId)
+			if (affectedIds.length === 0 || !affectedIds.every(id => placementIds.includes(id))) return reject()
+			if (command.surface === 'strip') group.collapsedStrip = command.collapsed ? true : undefined
+			else group.collapsedBackground = command.collapsed ? true : undefined
+		}
+
+		try {
+			this.#persistDocument(this.#file, SessionRegistry.#document(this.#data, this.#groups))
+		} catch {
+			return reject()
+		}
+		this.#registryEpoch += 1
+		return {
+			registryEpoch: this.#registryEpoch,
+			affectedIds,
+			authoritativeOrder: this.#placementIds(),
+			authoritativeGroups: this.#placementGroups(),
+		}
+	}
+
+	#placementIds(): string[] {
+		// Same-profile placement is independent of scheduled run ownership. Transfer
+		// and close retain their ordinary-only guards elsewhere.
+		return Object.entries(this.#data)
+			.sort(([, a], [, b]) => compareSessionOrder(a, b))
+			.map(([id]) => id)
+	}
+
+	#applyPlacementOrder(strip: readonly string[], background: readonly string[]): void {
+		const explicit = new Set([...strip, ...background])
+		const remaining = this.#placementIds().filter(id => !explicit.has(id))
+		const completeStrip = [...strip, ...remaining.filter(id => !this.#data[id]?.parked)]
+		const completeBackground = [...background, ...remaining.filter(id => this.#data[id]?.parked)]
+		let order = 0
+		for (const id of [...completeStrip, ...completeBackground]) {
+			const meta = this.#data[id]
+			if (!meta) continue
+			meta.order = order++
+			meta.parked = completeBackground.includes(id) ? true : undefined
+		}
+	}
+
+	#placementGroups(): TerminalPlacementGroup[] {
+		const order = this.#placementIds()
+		return this.getGroups().flatMap(group => {
+			const memberIds = order.filter(id => this.#data[id]?.groupId === group.id)
+			return memberIds.length > 0 ? [{ ...group, memberIds }] : []
+		})
 	}
 
 	/** Path is exposed only to main-process persistence coordinators. */

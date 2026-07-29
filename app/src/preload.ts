@@ -8,6 +8,7 @@ import type {
 	ScheduledTerminalOpen,
 	TabGroup,
 	TabGroupActionAuthorization,
+	TerminalPlacementCommitResult,
 	TerminalTransferEvent,
 	TerminalTransferMoveResult,
 	TerminalTransferPreflight,
@@ -113,6 +114,12 @@ const api: HelmApi = {
 	},
 	sessions: {
 		list: () => ipcRenderer.invoke('sessions:list', sessionProfileToken) as Promise<RestoredSession[]>,
+		placementCommit: command =>
+			ipcRenderer.invoke(
+				'sessions:placement:commit',
+				command,
+				sessionProfileToken,
+			) as Promise<TerminalPlacementCommitResult | null>,
 		onScheduledOpen: listener =>
 			subscribe<[ScheduledTerminalOpen, string]>('scheduled-adoption:open', (terminal, profileToken) => {
 				if (profileToken !== sessionProfileToken) return
@@ -159,10 +166,8 @@ const api: HelmApi = {
 		setTitle: (sessionId, title) => ipcRenderer.send('session:title', sessionId, title, sessionProfileToken),
 		setCustomName: (sessionId, name) =>
 			ipcRenderer.send('session:set-custom-name', sessionId, name, sessionProfileToken),
-		setParked: (sessionId, parked) => ipcRenderer.send('session:set-parked', sessionId, parked, sessionProfileToken),
 		setActivity: (sessionId, activity) =>
 			ipcRenderer.send('session:set-activity', sessionId, activity, sessionProfileToken),
-		setOrder: sessionIds => ipcRenderer.send('session:set-order', sessionIds, sessionProfileToken),
 		closeWithGrace: ptyId =>
 			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null>,
 		undoClose: sessionId =>

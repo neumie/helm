@@ -26,7 +26,7 @@ import { ScheduledAttentionNotifier, showNativeAttentionNotification } from './s
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
-import type { TerminalTransferEvent } from './shared'
+import type { TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
 import { isTabGroupColor } from './tab-group-colors'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
@@ -1294,6 +1294,7 @@ const scheduledRegistryAdapter = {
 				groupId: entry.meta.groupId ?? null,
 				agentRunning: entry.meta.agentRunning === true,
 				agentAttention: entry.meta.agentAttention === true,
+				placementEligible: true,
 			},
 		}))
 	},
@@ -1553,12 +1554,13 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			groupId: support.registry.get(s.sessionId)?.groupId ?? null,
 			agentRunning: support.registry.get(s.sessionId)?.agentRunning === true,
 			agentAttention: support.registry.get(s.sessionId)?.agentAttention === true,
+			placementEligible: true,
 			// Registry createdAt (original spawn) beats socket birthtime for ordering.
 			createdAt: support.registry.get(s.sessionId)?.createdAt ?? s.createdAt,
 			order: support.registry.get(s.sessionId)?.order,
 		}))
 		.sort(sessions.compareSessionOrder)
-		.map(({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention }) => ({
+		.map(({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention, placementEligible }) => ({
 			sessionId,
 			title,
 			customName,
@@ -1566,6 +1568,7 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			groupId,
 			agentRunning,
 			agentAttention,
+			placementEligible,
 		}))
 })
 
@@ -1595,10 +1598,89 @@ function parseTabGroupActionIntent(value: unknown): sessions.TabGroupActionInten
 	})
 }
 
+function parseTerminalPlacementCommit(value: unknown): TerminalPlacementCommitCommand | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+	const input = value as Record<string, unknown>
+	const sessionIds = (candidate: unknown): candidate is string[] =>
+		Array.isArray(candidate) &&
+		candidate.length <= 100 &&
+		candidate.every(sessions.isValidSessionId) &&
+		new Set(candidate).size === candidate.length
+	if (input.type === 'move') {
+		return sessionIds(input.affectedIds) &&
+			input.affectedIds.length > 0 &&
+			(input.groupId === undefined || sessions.isValidTabGroupId(input.groupId)) &&
+			sessionIds(input.strip) &&
+			sessionIds(input.background)
+			? (() => {
+					const memberships = input.memberships
+					if (
+						memberships !== undefined &&
+						(!Array.isArray(memberships) ||
+							memberships.length > 100 ||
+							!memberships.every(
+								entry =>
+									typeof entry === 'object' &&
+									entry !== null &&
+									sessions.isValidSessionId((entry as { terminalId?: unknown }).terminalId) &&
+									((entry as { groupId?: unknown }).groupId === null ||
+										sessions.isValidTabGroupId((entry as { groupId?: unknown }).groupId)),
+							) ||
+							new Set(memberships.map(entry => (entry as { terminalId: string }).terminalId)).size !==
+								memberships.length)
+					)
+						return null
+					return {
+						type: 'move' as const,
+						affectedIds: input.affectedIds,
+						...(typeof input.groupId === 'string' ? { groupId: input.groupId } : {}),
+						strip: input.strip,
+						background: input.background,
+						...(memberships
+							? { memberships: memberships as Array<{ terminalId: string; groupId: string | null }> }
+							: {}),
+					}
+				})()
+			: null
+	}
+	if (input.type === 'set-membership') {
+		return sessions.isValidSessionId(input.terminalId) &&
+			(input.groupId === null || sessions.isValidTabGroupId(input.groupId)) &&
+			sessionIds(input.strip) &&
+			sessionIds(input.background)
+			? {
+					type: 'set-membership',
+					terminalId: input.terminalId,
+					groupId: input.groupId,
+					strip: input.strip,
+					background: input.background,
+				}
+			: null
+	}
+	if (input.type === 'set-collapsed') {
+		return sessions.isValidTabGroupId(input.groupId) &&
+			(input.surface === 'strip' || input.surface === 'background') &&
+			typeof input.collapsed === 'boolean'
+			? { type: 'set-collapsed', groupId: input.groupId, surface: input.surface, collapsed: input.collapsed }
+			: null
+	}
+	return null
+}
+
 // Tab groups are persisted metadata only. PTY/DOM effects for declarative
 // actions are intentionally deferred to the renderer adapter slice.
 ipcMain.handle('tab-groups:list', (_event, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, [], () => getSessionSupport()?.registry.getGroups() ?? []),
+)
+
+// Canonical same-profile placement persistence. The renderer sends only narrow
+// placement facts; main retains the complete registry and run-owned evidence.
+ipcMain.handle('sessions:placement:commit', (_event, value: unknown, profileToken: unknown) =>
+	sessionIpcGate.handle(profileToken, null, () => {
+		const command = parseTerminalPlacementCommit(value)
+		if (!command) return null
+		return getSessionSupport()?.registry.commitPlacement(command) ?? null
+	}),
 )
 
 ipcMain.handle('tab-groups:create', (_event, name: unknown, sessionIds: unknown, profileToken: unknown) =>
@@ -1680,14 +1762,6 @@ ipcMain.handle('tab-groups:intent', (_event, value: unknown, profileToken: unkno
 	}),
 )
 
-// Park/unpark a session in the registry so background terminals survive a
-// relaunch as background terminals (renderer owns the in-memory tab state).
-ipcMain.on('session:set-parked', (_event, sessionId: unknown, parked: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof parked !== 'boolean')
-		return
-	getSessionSupport()?.registry.setParked(sessionId, parked)
-})
-
 ipcMain.on('session:set-activity', (_event, sessionId: unknown, activity: unknown, profileToken: unknown) => {
 	if (
 		!sessionIpcGate.allows(profileToken) ||
@@ -1702,17 +1776,6 @@ ipcMain.on('session:set-activity', (_event, sessionId: unknown, activity: unknow
 		agentRunning: value.agentRunning,
 		agentAttention: value.agentAttention,
 	})
-})
-
-ipcMain.on('session:set-order', (_event, sessionIds: unknown, profileToken: unknown) => {
-	if (
-		!sessionIpcGate.allows(profileToken) ||
-		!Array.isArray(sessionIds) ||
-		sessionIds.length > 100 ||
-		!sessionIds.every(sessions.isValidSessionId)
-	)
-		return
-	getSessionSupport()?.registry.setOrder(sessionIds)
 })
 
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profileToken: unknown) => {

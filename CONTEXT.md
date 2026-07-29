@@ -71,6 +71,13 @@ from mutable project configuration at execution time.
 lifecycle, workspace, and retry state; one sibling's failure or cancellation does
 not change another's.
 
+**Terminal placement** — profile-scoped desktop arrangement of terminal identities
+across the foreground strip and Background, including order, manual group
+membership, the selected terminal, and transient drag projection. It is separate
+from xterm/PTY/dtach runtime and from run ownership: changing placement never
+creates, kills, or transfers the underlying process; the runtime only applies the
+selected identity as focus/fit.
+
 ## Core modules and ownership
 
 **ItemStore and ItemCommands** — all Item persistence and event queries go through
@@ -158,6 +165,17 @@ reintroduce an early close until every DB owner can drain.
 
 Planning/context preparation is implemented through `PlanningApplication`; its
 lifecycle row/event pairs are transactional, but its external effects remain a
-claimed saga. The commit-aware desktop profile coordinator remains future work.
-Preserve the current shared-DB, profile-bound, lifecycle, persistence, Solver,
-Spawner, and PlanWorkspace authorities while implementing later slices.
+claimed saga. Desktop profile activation is implemented through the
+`ProfileSwitchCoordinator` and namespace-installation fence recorded by ADR-0002;
+inconclusive activation stays fenced rather than guessing. Preserve the current
+shared-DB, profile-bound, lifecycle, persistence, Solver, Spawner, PlanWorkspace,
+and profile-activation authorities while implementing later slices.
+
+ADR-0003 is implemented through `TerminalPlacement` and the shared mountable
+`TerminalWorkspace`: the placement module is the profile-generation-scoped
+canonical authority for order, Background ownership, group membership/collapse,
+selection, and drag projection. `renderer.ts` mounts it while runtime Tab/xterm
+objects remain ID-keyed projection adapters. Main atomically persists narrow,
+same-profile placement facts; run-owned sessions remain placement-eligible but
+non-transferable/non-ordinary-close, and their ownership evidence stays hidden.
+Storybook and Playwright mount the production workspace via its typed fixture.

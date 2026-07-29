@@ -14,7 +14,7 @@ const native = readFileSync(
 )
 const packageSource = readFileSync(new URL('../app/package.json', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../app/src/preload.ts', import.meta.url), 'utf8')
-const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 
 test('native zoom guard is a no-op outside macOS', () => {
 	assert.equal(installNativeWindowZoomGuard('linux'), false)

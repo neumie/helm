@@ -74,9 +74,53 @@ export interface RestoredSession {
 	/** Last protocol-observed activity retained across inactive profile restore. */
 	agentRunning: boolean
 	agentAttention: boolean
+	/** False only for exited/missing local rows; run-owned sessions remain placeable. */
+	placementEligible: boolean
 }
 
 export type TabGroupSurface = 'strip' | 'background'
+
+/**
+ * Narrow renderer→main placement operation. This deliberately carries only
+ * terminal IDs and requested placement metadata: never a registry document,
+ * path, process identity, or scheduled-run ownership evidence.
+ */
+export type TerminalPlacementCommitCommand =
+	| {
+			type: 'move'
+			affectedIds: string[]
+			groupId?: string
+			strip: string[]
+			background: string[]
+			/** Binding-time-only membership replay for previously unbound terminals. */
+			memberships?: Array<{ terminalId: string; groupId: string | null }>
+	  }
+	| {
+			type: 'set-membership'
+			terminalId: string
+			groupId: string | null
+			strip: string[]
+			background: string[]
+	  }
+	| {
+			type: 'set-collapsed'
+			groupId: string
+			surface: TabGroupSurface
+			collapsed: boolean
+	  }
+
+/** Main-authoritative group facts for placement; this is not a registry snapshot. */
+export interface TerminalPlacementGroup extends TabGroup {
+	memberIds: string[]
+}
+
+/** Result of one synchronous main-registry placement transaction. */
+export interface TerminalPlacementCommitResult {
+	registryEpoch: number
+	affectedIds: string[]
+	authoritativeOrder: string[]
+	authoritativeGroups: TerminalPlacementGroup[]
+}
 
 /** Persisted tab-group definition; members remain on their individual session records. */
 export interface TabGroup {
@@ -141,6 +185,10 @@ export interface ScheduledTerminalOpen extends RestoredSession {
 export interface SessionsApi {
 	/** Live sessions from the previous run, oldest first. Empty when none/persistence off. */
 	list(): Promise<RestoredSession[]>
+	/**
+	 * Atomic, profile-token-fenced placement persistence used by TerminalPlacement.
+	 */
+	placementCommit(command: TerminalPlacementCommitCommand): Promise<TerminalPlacementCommitResult | null>
 	/** Main-only scheduled adoption asks the current token-bound renderer to mount an opaque PTY. */
 	onScheduledOpen(listener: (terminal: ScheduledTerminalOpen) => boolean | Promise<boolean>): () => void
 	/** Profile-token-scoped tab-group metadata and membership mutations. */
@@ -149,12 +197,8 @@ export interface SessionsApi {
 	setTitle(sessionId: string, title: string): void
 	/** Persist (or clear, with null) the manual rename pin. */
 	setCustomName(sessionId: string, name: string | null): void
-	/** Persist the parked flag so background terminals relaunch as background. */
-	setParked(sessionId: string, parked: boolean): void
 	/** Persist only protocol-owned OSC activity for restore/transfer continuity. */
 	setActivity(sessionId: string, activity: { agentRunning: boolean; agentAttention: boolean }): void
-	/** Persist current strip order followed by background-list order. */
-	setOrder(sessionIds: string[]): void
 	/**
 	 * Soft-close a tab: detaches the pty client now, kills the session only
 	 * after the grace period. Null when the pty had no session (already dead).

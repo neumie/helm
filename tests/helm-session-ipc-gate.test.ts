@@ -14,6 +14,7 @@ test('closed session IPC admission performs no PTY, support, registry, socket, o
 		'session:close-with-grace',
 		'session:undo-close',
 		'sessions:list',
+		'sessions:placement:commit',
 		'session:set-parked',
 		'session:set-order',
 		'session:title',

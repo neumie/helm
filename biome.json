@@ -28,7 +28,8 @@
 			"vigil.config.json",
 			"profiles.json",
 			"profiles",
-			"storybook-static"
+			"storybook-static",
+			"app/test-results"
 		]
 	}
 }

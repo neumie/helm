@@ -73,7 +73,7 @@ test('only an unseen active-to-clear transition requests attention', () => {
 })
 
 test('renderer wires explicit progress into visible, accessible tab state', () => {
-	const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+	const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 	const preload = readFileSync(new URL('../app/src/preload.ts', import.meta.url), 'utf8')
 	const component = readFileSync(new URL('../app/src/renderer/activity-indicator.tsx', import.meta.url), 'utf8')
 	const story = readFileSync(
@@ -93,7 +93,8 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.equal(component.match(/'(top|middle|bottom)-(left|right)'/g)?.length, 6)
 	assert.match(component, /aria-label=\{label\}/)
 	// Every explicit tab/background close path plus PTY exit clears protocol-owned state.
-	assert.equal(renderer.match(/progressTracker\.clear\(\)/g)?.length, 4)
+	// The mount disposer also clears protocol state before terminal teardown.
+	assert.equal(renderer.match(/progressTracker\.clear\(\)/g)?.length, 5)
 	assert.match(css, /\.activity-indicator\s*\{[^}]*grid-template-columns:\s*repeat\(2, 2px\)/s)
 	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--text-0\)/s)
 	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*activity-indicator-clockwise 1s linear infinite/s)

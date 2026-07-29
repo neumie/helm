@@ -4,7 +4,7 @@ import test from 'node:test'
 import externalUrlModule from '../app/src/external-url.ts'
 
 const { parseExternalHttpUrl, shouldOpenTerminalLink } = externalUrlModule
-const renderer = readFileSync(new URL('../app/src/renderer/renderer.ts', import.meta.url), 'utf8')
+const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../app/src/preload.ts', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../app/src/main.ts', import.meta.url), 'utf8')
 
