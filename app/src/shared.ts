@@ -293,12 +293,16 @@ export type UiPreview =
 	| 'running-tab'
 	| 'attention-tab'
 
-/** Menu accelerators (cmd+t / cmd+w / cmd+shift+b) fire in main; renderer subscribes here. */
+/** Shell-menu terminal accelerators fire in main; renderer subscribes here. */
 export interface TabsApi {
 	onNew(listener: () => void): () => void
 	onClose(listener: () => void): () => void
 	/** Move the active tab to the background (⌘⇧B). */
 	onBackground(listener: () => void): () => void
+	/** Shell-menu foreground terminal cycling (⌘⌥←). */
+	onPrevious(listener: () => void): () => void
+	/** Shell-menu foreground terminal cycling (⌘⌥→). */
+	onNext(listener: () => void): () => void
 	/** Arm the native frame guard for this tab's second click. */
 	guardNativeDoubleClick(): boolean
 }

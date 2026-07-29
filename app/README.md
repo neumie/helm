@@ -35,4 +35,4 @@ bun run start
 Daemon URL comes from `HELM_URL` (default `http://localhost:7474`; legacy
 `VIGIL_URL` is still honored). If the daemon is down, the topbar dot breathes
 amber and the bridge keeps polling until it is reachable.
-Shortcuts: cmd+t new terminal tab, cmd+w close tab. Divider position persists.
+Shortcuts: cmd+t new terminal tab, cmd+w close tab, cmd+alt+left previous terminal, cmd+alt+right next terminal. Terminal cycling wraps foreground tabs and excludes Background terminals. Divider position persists.

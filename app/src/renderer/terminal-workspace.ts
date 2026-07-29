@@ -1382,6 +1382,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	let tabPointerDrag: TabPointerDrag | null = null
+	/** A committed pointer-up keeps its real clone/placeholder until authorization settles. */
+	let pendingTabDragSettlement: TabPointerDrag | null = null
 	const suppressTabClick = new WeakSet<Tab>()
 	const stripReflowAnimations = new WeakMap<HTMLElement, Animation>()
 
@@ -1573,13 +1575,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		}
 	}
 
-	function settleTabPreview(drag: TabPointerDrag, target: DOMRect, intoBackground: boolean): void {
+	function settleTabPreview(drag: TabPointerDrag, target: DOMRect | null, intoBackground: boolean): void {
 		const preview = drag.preview
 		const cleanup = () => {
 			preview?.remove()
 			drag.tab.tabButton.classList.remove('drag-placeholder')
+			if (pendingTabDragSettlement === drag) pendingTabDragSettlement = null
 		}
-		if (disposed || !preview || reducedMotion()) {
+		if (disposed || !preview || !target || reducedMotion()) {
 			cleanup()
 			return
 		}
@@ -1587,23 +1590,55 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const top = drag.y - drag.offsetY
 		const destinationX = intoBackground ? target.left + (target.width - preview.offsetWidth) / 2 : target.left
 		const destinationY = intoBackground ? target.top + (target.height - preview.offsetHeight) / 2 : target.top
-		const animation = preview.animate(
-			[
-				{ transform: `translate3d(${left}px, ${top}px, 0) scale(${intoBackground ? 0.92 : 1.02})`, opacity: 1 },
-				{
-					transform: `translate3d(${destinationX}px, ${destinationY}px, 0) scale(${intoBackground ? 0.72 : 1})`,
-					opacity: intoBackground ? 0 : 1,
-				},
-			],
-			{ duration: intoBackground ? 140 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
-		)
-		animation.addEventListener('finish', cleanup, { once: true })
-		animation.addEventListener('cancel', cleanup, { once: true })
+		try {
+			const animation = preview.animate(
+				[
+					{ transform: `translate3d(${left}px, ${top}px, 0) scale(${intoBackground ? 0.92 : 1.02})`, opacity: 1 },
+					{
+						transform: `translate3d(${destinationX}px, ${destinationY}px, 0) scale(${intoBackground ? 0.72 : 1})`,
+						opacity: intoBackground ? 0 : 1,
+					},
+				],
+				{ duration: intoBackground ? 140 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+			)
+			animation.addEventListener('finish', cleanup, { once: true })
+			animation.addEventListener('cancel', cleanup, { once: true })
+		} catch {
+			// A tab/workspace can disappear between final target lookup and animation.
+			cleanup()
+		}
+	}
+
+	function visibleElementTarget(element: HTMLElement | null): DOMRect | null {
+		if (!element?.isConnected) return null
+		const rect = element.getBoundingClientRect()
+		return rect.width > 0 && rect.height > 0 ? rect : null
+	}
+
+	function connectedTabTarget(tab: Tab): DOMRect | null {
+		if (tab.closed) return null
+		const tabTarget = visibleElementTarget(tab.tabButton)
+		if (tabTarget || !tab.groupId) return tabTarget
+		// A collapsed group's member buttons stay mounted inside display:none.
+		// Settle into its visible header instead of flying toward their 0×0 rect.
+		for (const header of tabsEl.querySelectorAll<HTMLElement>('[data-tab-group-header]')) {
+			if (header.dataset.groupId === tab.groupId && header.dataset.surface === 'strip')
+				return visibleElementTarget(header)
+		}
+		return null
+	}
+
+	function connectedDropTarget(drag: TabPointerDrag): DOMRect | null {
+		return drag.dropTarget === 'background' ? visibleElementTarget(bgToggle) : connectedTabTarget(drag.tab)
 	}
 
 	async function commitTabDrag(drag: TabPointerDrag): Promise<boolean> {
 		// Membership and order are carried in the same PlacementDrag projection.
-		return (await drag.placementDrag?.commit())?.ok === true
+		try {
+			return (await drag.placementDrag?.commit())?.ok === true
+		} catch {
+			return false
+		}
 	}
 
 	function finishTabPointerDrag(cancelled: boolean): void {
@@ -1621,14 +1656,21 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			restoreTabDragOrigin(drag, true)
 			drag.placementDrag?.cancel()
 		}
-		const target =
-			drag.dropTarget === 'background' ? bgToggle.getBoundingClientRect() : drag.tab.tabButton.getBoundingClientRect()
 		document.body.classList.remove('tab-dragging')
 		bgToggle.classList.remove('drag-ready', 'drag-over')
 		bgToggle.title = 'Background terminals'
 		updateBackgroundUi()
-		settleTabPreview(drag, target, drag.dropTarget === 'background')
-		if (acceptedDrop) void commitTabDrag(drag)
+		if (!acceptedDrop) {
+			settleTabPreview(drag, connectedTabTarget(drag.tab), false)
+			return
+		}
+		// Keep the live projection, clone, and placeholder intact while main authorizes
+		// the durable placement. The resolved snapshot renders the connected target.
+		pendingTabDragSettlement = drag
+		void commitTabDrag(drag).then(accepted => {
+			if (accepted) settleTabPreview(drag, connectedDropTarget(drag), drag.dropTarget === 'background')
+			else settleTabPreview(drag, connectedTabTarget(drag.tab), false)
+		})
 	}
 
 	function onTabPointerMove(event: PointerEvent): void {
@@ -3194,6 +3236,13 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	const unsubscribeTabBackground = helm.tabs.onBackground(() => {
 		if (tabsReady && activeTab) parkTab(activeTab)
 	})
+	// Shell menu accelerators are main-process events because xterm owns terminal input.
+	const unsubscribeTabPrevious = helm.tabs.onPrevious(() => {
+		if (tabsReady) cycleTab(-1)
+	})
+	const unsubscribeTabNext = helm.tabs.onNext(() => {
+		if (tabsReady) cycleTab(1)
+	})
 
 	// cmd+1..9 select tab, cmd+shift+[ / ] cycle. Capture phase so the shortcuts
 	// win over xterm's own key handling when a terminal has focus.
@@ -3480,6 +3529,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			unsubscribeTabNew()
 			unsubscribeTabClose()
 			unsubscribeTabBackground()
+			unsubscribeTabPrevious()
+			unsubscribeTabNext()
 			unsubscribeScheduledOpen()
 			window.removeEventListener('focus', onWindowFocus)
 			window.removeEventListener('keydown', onWorkspaceKeydown, { capture: true })
@@ -3490,6 +3541,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			terminalResizeObserver.disconnect()
 			clearInterval(snapshotAutosave)
 			finishTabPointerDrag(true)
+			if (pendingTabDragSettlement) settleTabPreview(pendingTabDragSettlement, null, false)
 			finishBackgroundTabPointerDrag(true)
 			finishGroupPointerDrag(true)
 			clearTimeout(fitTimer)

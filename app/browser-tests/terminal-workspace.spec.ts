@@ -4,6 +4,16 @@ import type { TerminalWorkspaceFixture } from '../src/renderer/terminal-workspac
 declare global {
 	interface Window {
 		__helmWorkspaceFixture?: TerminalWorkspaceFixture
+		__helmTabDragSettles?: Array<{
+			duration: number
+			from: string
+			to: string
+			targetConnected: boolean
+			targetLeft: number
+			targetTop: number
+			targetWidth: number
+			targetHeight: number
+		}>
 	}
 }
 
@@ -157,6 +167,129 @@ test('strip drag keeps predicting after leaving and re-entering the strip', asyn
 	await page.keyboard.press('Escape')
 })
 
+test('an accepted collapsed-group drop settles into its visible committed group header', async ({ page }) => {
+	await page.evaluate(() => {
+		const animate = HTMLElement.prototype.animate
+		window.__helmTabDragSettles = []
+		HTMLElement.prototype.animate = function (keyframes, options) {
+			const duration = typeof options === 'number' ? options : Number(options?.duration ?? 0)
+			const frames = Array.isArray(keyframes) ? keyframes : []
+			if (this.classList.contains('tab-drag-preview') && duration === 180) {
+				const target = document.querySelector<HTMLElement>(
+					'.tab-group-header[data-group-id="group-000000a1"][data-surface="strip"]',
+				)
+				const rect = target?.getBoundingClientRect()
+				window.__helmTabDragSettles?.push({
+					duration,
+					from: String(frames[0]?.transform ?? ''),
+					to: String(frames.at(-1)?.transform ?? ''),
+					targetConnected: target?.isConnected === true,
+					targetLeft: rect?.left ?? 0,
+					targetTop: rect?.top ?? 0,
+					targetWidth: rect?.width ?? 0,
+					targetHeight: rect?.height ?? 0,
+				})
+			}
+			return animate.call(this, keyframes, options)
+		}
+	})
+	const target = page.locator('.tab-group-header[data-group-id="group-000000a1"]')
+	await target.click()
+	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"]')).toHaveClass(/collapsed/)
+	await page.evaluate(() => window.__helmWorkspaceFixture?.deferNextPlacement())
+	const source = page.getByRole('tab', { name: /active shell/i })
+	const sourceBox = await source.boundingBox()
+	const targetBox = await target.boundingBox()
+	expect(sourceBox).not.toBeNull()
+	expect(targetBox).not.toBeNull()
+	if (!sourceBox || !targetBox) return
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+	await page.mouse.down()
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 4 })
+	await page.mouse.up()
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.placement.at(-1)?.type))
+		.toBe('set-membership')
+	await expect(page.locator('.tab-drag-preview')).toHaveCount(1)
+	await expect(page.locator('.drag-placeholder')).toHaveCount(1)
+	await page.evaluate(() => window.__helmWorkspaceFixture?.resolveDeferredPlacement())
+	await expect
+		.poll(() =>
+			page.evaluate(() => {
+				const settle = window.__helmTabDragSettles?.find(candidate => candidate.duration === 180)
+				if (!settle) return false
+				const destination = /translate3d\(([-\d.]+)px, ([-\d.]+)px, 0\)/.exec(settle.to)
+				return (
+					settle.targetConnected &&
+					settle.targetWidth > 0 &&
+					settle.targetHeight > 0 &&
+					settle.from !== settle.to &&
+					destination !== null &&
+					Math.abs(Number(destination[1]) - settle.targetLeft) < 1 &&
+					Math.abs(Number(destination[2]) - settle.targetTop) < 1
+				)
+			}),
+		)
+		.toBe(true)
+	await expect(page.locator('.tab-drag-preview, .drag-placeholder')).toHaveCount(0)
+	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"] [role="tab"]')).toHaveCount(2)
+})
+
+test('a rejected group drop holds the clone through authorization then settles back without membership', async ({
+	page,
+}) => {
+	await page.evaluate(() => {
+		const animate = HTMLElement.prototype.animate
+		window.__helmTabDragSettles = []
+		HTMLElement.prototype.animate = function (keyframes, options) {
+			const duration = typeof options === 'number' ? options : Number(options?.duration ?? 0)
+			const frames = Array.isArray(keyframes) ? keyframes : []
+			if (this.classList.contains('tab-drag-preview') && duration === 180) {
+				const target = document.querySelector<HTMLElement>('[role="tab"][aria-label="active shell"]')
+				const rect = target?.getBoundingClientRect()
+				window.__helmTabDragSettles?.push({
+					duration,
+					from: String(frames[0]?.transform ?? ''),
+					to: String(frames.at(-1)?.transform ?? ''),
+					targetConnected: target?.isConnected === true,
+					targetLeft: rect?.left ?? 0,
+					targetTop: rect?.top ?? 0,
+					targetWidth: rect?.width ?? 0,
+					targetHeight: rect?.height ?? 0,
+				})
+			}
+			return animate.call(this, keyframes, options)
+		}
+	})
+	await page.evaluate(() => window.__helmWorkspaceFixture?.deferNextPlacement())
+	const source = page.getByRole('tab', { name: /active shell/i })
+	const target = page.getByRole('tab', { name: /compile/i })
+	const sourceBox = await source.boundingBox()
+	const targetBox = await target.boundingBox()
+	expect(sourceBox).not.toBeNull()
+	expect(targetBox).not.toBeNull()
+	if (!sourceBox || !targetBox) return
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+	await page.mouse.down()
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, { steps: 4 })
+	await page.mouse.up()
+	await expect(page.locator('.tab-drag-preview')).toHaveCount(1)
+	await expect(page.locator('.drag-placeholder')).toHaveCount(1)
+	await page.evaluate(() => window.__helmWorkspaceFixture?.rejectDeferredPlacement())
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					window.__helmTabDragSettles?.some(
+						settle => settle.duration === 180 && settle.targetConnected && settle.from !== settle.to,
+					) ?? false,
+			),
+		)
+		.toBe(true)
+	await expect(page.locator('.tab-drag-preview, .drag-placeholder')).toHaveCount(0)
+	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"] [role="tab"]')).toHaveCount(1)
+})
+
 test('strip drag joins a group through one atomic membership commit', async ({ page }) => {
 	const source = page.getByRole('tab', { name: /active shell/i })
 	const target = page.getByRole('tab', { name: /compile/i })
@@ -173,6 +306,17 @@ test('strip drag joins a group through one atomic membership commit', async ({ p
 		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.placement.at(-1)?.type))
 		.toBe('set-membership')
 	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"] [role="tab"]')).toHaveCount(2)
+})
+
+test('Shell-menu terminal cycling wraps foreground tabs and excludes Background terminals', async ({ page }) => {
+	await expect(page.getByRole('tab', { name: /active shell/i })).toHaveAttribute('aria-selected', 'true')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.emitTabPrevious())
+	await expect(page.getByRole('tab', { name: /compile/i })).toHaveAttribute('aria-selected', 'true')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.emitTabNext())
+	await expect(page.getByRole('tab', { name: /active shell/i })).toHaveAttribute('aria-selected', 'true')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.emitTabNext())
+	await expect(page.getByRole('tab', { name: /compile/i })).toHaveAttribute('aria-selected', 'true')
+	await expect(page.getByRole('dialog', { name: 'Background terminals' }).getByText('tests')).toBeVisible()
 })
 
 test('context-menu Escape restores focus to its production tab trigger', async ({ page }) => {

@@ -1108,6 +1108,16 @@ function buildMenu(): void {
 					accelerator: 'CmdOrCtrl+Shift+B',
 					click: send('tab:background'),
 				},
+				{
+					label: 'Previous Terminal',
+					accelerator: 'CmdOrCtrl+Alt+Left',
+					click: send('tab:previous'),
+				},
+				{
+					label: 'Next Terminal',
+					accelerator: 'CmdOrCtrl+Alt+Right',
+					click: send('tab:next'),
+				},
 			],
 		},
 		{ role: 'editMenu' },

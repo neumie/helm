@@ -27,11 +27,16 @@ export interface TerminalWorkspaceFixture {
 		placement: TerminalPlacementCommitCommand[]
 	}
 	emitExit(sessionId: string, code: number): void
+	/** Emits the narrow Shell-menu event through the real workspace subscription. */
+	emitTabPrevious(): void
+	/** Emits the narrow Shell-menu event through the real workspace subscription. */
+	emitTabNext(): void
 	/** Browser-only control: exercises the production mount cleanup boundary. */
 	dispose(): void
-	/** Browser-only control: the next durable placement completion waits for rejectDeferredPlacement. */
+	/** Browser-only control: the next durable placement completion waits for settlement. */
 	deferNextPlacement(): void
 	rejectDeferredPlacement(): void
+	resolveDeferredPlacement(): void
 }
 
 function shellNode<K extends keyof HTMLElementTagNameMap>(
@@ -142,8 +147,10 @@ export function createTerminalWorkspaceFixture(
 	const ptyExitListeners = new Set<(id: number, exitCode: number) => void>()
 	const ptyDataListeners = new Set<(id: number, data: string) => void>()
 	let nextPty = 1
-	let deferredPlacement: { reject: () => void } | null = null
+	let deferredPlacement: { settle: (accepted: boolean) => void } | null = null
 	let deferNextPlacement = false
+	const tabPreviousListeners = new Set<() => void>()
+	const tabNextListeners = new Set<() => void>()
 	const noOpUnsubscribe = () => {}
 
 	const placementCommit = async (
@@ -152,9 +159,10 @@ export function createTerminalWorkspaceFixture(
 		calls.placement.push(command)
 		if (deferNextPlacement) {
 			deferNextPlacement = false
-			return await new Promise<TerminalPlacementCommitResult | null>(resolve => {
-				deferredPlacement = { reject: () => resolve(null) }
+			const accepted = await new Promise<boolean>(resolve => {
+				deferredPlacement = { settle: resolve }
 			})
+			if (!accepted) return null
 		}
 		if (command.type === 'set-collapsed') {
 			const group = groups.find(candidate => candidate.id === command.groupId)
@@ -320,6 +328,14 @@ export function createTerminalWorkspaceFixture(
 			onNew: () => noOpUnsubscribe,
 			onClose: () => noOpUnsubscribe,
 			onBackground: () => noOpUnsubscribe,
+			onPrevious: listener => {
+				tabPreviousListeners.add(listener)
+				return () => tabPreviousListeners.delete(listener)
+			},
+			onNext: listener => {
+				tabNextListeners.add(listener)
+				return () => tabNextListeners.delete(listener)
+			},
 			guardNativeDoubleClick: () => true,
 		},
 		profiles: {
@@ -344,12 +360,22 @@ export function createTerminalWorkspaceFixture(
 			const id = ptyBySession.get(sessionId)
 			if (id !== undefined) for (const listener of ptyExitListeners) listener(id, code)
 		},
+		emitTabPrevious() {
+			for (const listener of tabPreviousListeners) listener()
+		},
+		emitTabNext() {
+			for (const listener of tabNextListeners) listener()
+		},
 		dispose() {},
 		deferNextPlacement() {
 			deferNextPlacement = true
 		},
 		rejectDeferredPlacement() {
-			deferredPlacement?.reject()
+			deferredPlacement?.settle(false)
+			deferredPlacement = null
+		},
+		resolveDeferredPlacement() {
+			deferredPlacement?.settle(true)
 			deferredPlacement = null
 		},
 	}
