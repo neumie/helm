@@ -23,6 +23,7 @@ export type Route =
 	| { kind: 'profile'; profileId: string }
 	| { kind: 'appearance' }
 	| { kind: 'terminal-settings' }
+	| { kind: 'agent-integrations' }
 	| { kind: 'scheduled-runs' }
 	| { kind: 'scheduled-run-editor'; scheduleId?: string }
 

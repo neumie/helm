@@ -40,6 +40,7 @@ test('large Sidebar views cover primary review destinations', () => {
 		'Settings',
 		'Appearance',
 		'TerminalSettings',
+		'AgentIntegrations',
 	]) {
 		assert.ok(views.includes(`export const ${story}: Story`), story)
 	}

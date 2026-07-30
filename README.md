@@ -417,12 +417,16 @@ Desktop terminal features include:
 - Open versus Restore as separate operations;
 - a visible Background control that names the currently viewed parked terminal;
 - grace-close with Undo;
-- protocol-owned agent activity and needs-attention indicators;
+- protocol-owned agent activity and needs-attention indicators, with optional precise Pi lifecycle and tool-name tooltips;
+- explicit **Settings → Agent integrations** installation for Helm's privacy-bounded Pi reporter;
 - a global **Settings → Terminal** starting folder for new ordinary terminals, with Home fallback; and
 - a Helm-owned overlay scrollbar and synchronized-output guard for large redraws.
 
-Helm never infers agent activity from output, process names, shell prompts, or
-silence. Pi's OSC 9;4 progress protocol is the source of truth.
+Helm never infers agent activity from output, process names, shell prompts,
+silence, or PTY liveness. OSC 9;4 remains the compatibility signal. When the
+operator installs Helm's managed Pi extension, its versioned heartbeat becomes
+the precise source for idle/working/blocked state and bounded safe phase labels;
+missed heartbeats degrade to unknown rather than leaving stale confidence.
 
 ## Okena integration
 

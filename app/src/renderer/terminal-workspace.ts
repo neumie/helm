@@ -27,6 +27,11 @@ import {
 	tabGroupMembersId,
 } from './tab-groups'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
+import {
+	type TerminalAgentStateTracker,
+	type TerminalAgentStatus,
+	createTerminalAgentStateTracker,
+} from './terminal-agent-state'
 import { terminalShortcut } from './terminal-keybindings'
 import {
 	type TerminalProgressTracker,
@@ -137,9 +142,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		frameOutputPending: boolean
 		frameFreeze: HTMLElement | null
 		outputGuard: SynchronizedOutputGuard
-		/** Explicit OSC 9;4 state from Pi; never inferred from terminal output. */
+		/** Compatibility projection persisted for restore/transfer; never output-inferred. */
 		agentRunning: boolean
-		/** A protocol-observed active→clear transition not yet viewed by the user. */
+		/** Last exact OSC 9;4 state, used only when no fresh structured reporter owns the tab. */
+		legacyAgentRunning: boolean
+		/** Precise Pi lifecycle/phase report; heartbeat expiry becomes unknown. */
+		agentStatus: TerminalAgentStatus
+		agentStateTracker: TerminalAgentStateTracker
+		/** A protocol-observed active→idle transition not yet viewed by the user. */
 		agentAttention: boolean
 		progressTracker: TerminalProgressTracker
 		runningEl: HTMLOutputElement
@@ -174,6 +184,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	const tabs: Tab[] = []
 	/** Runtime remains xterm/PTY-owned; placement only stores stable visual IDs. */
 	const runtimeById = new Map<string, Tab>()
+	const agentStateExpiryTimer = window.setInterval(() => {
+		for (const tab of runtimeById.values()) tab.agentStateTracker.tick()
+	}, 1_000)
 	let tabGroups: TabGroup[] = []
 	let tabGroupsVersion = 0
 	let placementInventoryVersion = 0
@@ -352,6 +365,18 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		return svg
 	}
 
+	function collapsedGroupAgentDisplay(
+		section: TabGroupSection,
+	): { variant: 'progress' | 'attention'; label: string } | null {
+		if (!section.collapsed) return null
+		const representative =
+			section.members.find(member => member.agentVariant === 'attention') ??
+			section.members.find(member => member.agentVariant === 'progress')
+		return representative?.agentVariant && representative.agentLabel
+			? { variant: representative.agentVariant, label: representative.agentLabel }
+			: null
+	}
+
 	function groupHeader(section: TabGroupSection): HTMLElement | null {
 		const heading = tabGroupHeading(section)
 		if (heading === null) return null
@@ -367,6 +392,13 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const summary = document.createElement('span')
 		summary.className = 'tab-group-summary'
 		summary.append(createGroupIcon())
+		const groupAgent = collapsedGroupAgentDisplay(section)
+		if (groupAgent) {
+			const indicator = createActivityIndicator(groupAgent.label, groupAgent.variant)
+			indicator.classList.add('tab-group-activity')
+			indicator.title = groupAgent.label
+			summary.append(indicator)
+		}
 		summary.append(label)
 		toggle.append(summary)
 		if (section.collapsed || section.surface === 'background') {
@@ -377,7 +409,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		}
 		toggle.setAttribute('aria-expanded', String(!section.collapsed))
 		toggle.setAttribute('aria-controls', tabGroupMembersId(section.groupId, section.surface))
-		toggle.title = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
+		const actionLabel = `${section.collapsed ? 'Expand' : 'Collapse'} ${section.name}`
+		if (groupAgent) toggle.setAttribute('aria-label', `${actionLabel} — ${groupAgent.label}`)
+		toggle.title = actionLabel
 		const toggleKey = `${section.surface}:${section.groupId as string}`
 		toggle.addEventListener('click', () => {
 			if (suppressedGroupToggleClicks.delete(toggleKey)) return
@@ -451,6 +485,17 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				name: displayName(tab),
 				agentRunning: tab.agentRunning,
 				agentAttention: tab.agentAttention,
+				agentVariant:
+					tab.agentRunning || tab.agentAttention
+						? tabAgentBlocked(tab) || tab.agentAttention
+							? 'attention'
+							: 'progress'
+						: null,
+				agentLabel: tabAgentBlocked(tab)
+					? tab.agentStatus.label
+					: tab.agentAttention
+						? 'Run finished — open tab to clear'
+						: tabAgentLabel(tab),
 			})),
 			groups: tabGroups,
 			activeTabId: activeTab ? tabIdentity(activeTab) : null,
@@ -529,10 +574,21 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	 * Pinned: label = customName, tooltip = the live OSC title (raw preferred) so
 	 * the underlying shell/program identity stays one hover away.
 	 */
+	function tabAgentLabel(tab: Tab): string | null {
+		if (tab.agentStatus.structured) return tab.agentStatus.label
+		if (tab.agentAttention) return 'Run finished — unchecked'
+		if (tab.agentRunning) return 'Running'
+		return null
+	}
+
+	function tabAgentBlocked(tab: Tab): boolean {
+		return tab.agentStatus.structured && tab.agentStatus.state === 'blocked'
+	}
+
 	function renderTabLabel(tab: Tab): void {
 		const text = displayName(tab)
 		tab.labelEl.textContent = text
-		const state = tab.agentRunning ? 'Running' : tab.agentAttention ? 'Run finished — unchecked' : null
+		const state = tabAgentLabel(tab)
 		tab.tabButton.setAttribute('aria-label', state ? `${text} — ${state}` : text)
 		const tip = tab.customName !== null ? (tab.oscRaw ?? tab.oscTitle ?? (tab.titleRaw || tab.title)) : tab.titleRaw
 		if (tip && tip !== text) tab.labelEl.title = tip
@@ -540,12 +596,18 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function renderTabAgentState(tab: Tab): void {
+		const blocked = tabAgentBlocked(tab)
+		const indicatorLabel = blocked
+			? tab.agentStatus.label
+			: tab.agentAttention
+				? 'Run finished — open tab to clear'
+				: tab.agentStatus.structured
+					? tab.agentStatus.label
+					: 'Running'
 		tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention
-		if (tab.agentAttention) {
-			setActivityIndicatorState(tab.runningEl, 'attention', 'Run finished — open tab to clear')
-		} else {
-			setActivityIndicatorState(tab.runningEl, 'progress', 'Running')
-		}
+		setActivityIndicatorState(tab.runningEl, blocked || tab.agentAttention ? 'attention' : 'progress', indicatorLabel)
+		if (tab.runningEl.hidden) tab.runningEl.removeAttribute('title')
+		else tab.runningEl.title = indicatorLabel
 		renderTabLabel(tab)
 		// Real OSC state changes can change a collapsed group's representative.
 		// Callers return before this function for idempotent active keepalives.
@@ -569,21 +631,37 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		setTabAgentAttention(tab, false)
 	}
 
-	function setTabAgentRunning(tab: Tab, running: boolean): void {
-		if (tab.agentRunning === running) return
+	function setTabAgentRunning(tab: Tab, running: boolean, markCompletion = true): boolean {
+		if (tab.agentRunning === running) return false
 		const wasRunning = tab.agentRunning
 		tab.agentRunning = running
 		if (running) tab.agentAttention = false
 		else {
-			tab.agentAttention = shouldMarkTerminalCompletion({
-				wasRunning,
-				closed: tab.closed,
-				tabSelected: activeTab === tab,
-				windowFocused: document.hasFocus(),
-			})
+			tab.agentAttention =
+				markCompletion &&
+				shouldMarkTerminalCompletion({
+					wasRunning,
+					closed: tab.closed,
+					tabSelected: activeTab === tab,
+					windowFocused: document.hasFocus(),
+				})
 		}
 		persistTabActivity(tab)
 		renderTabAgentState(tab)
+		return true
+	}
+
+	function setTabLegacyAgentRunning(tab: Tab, running: boolean): void {
+		tab.legacyAgentRunning = running
+		if (!tab.agentStatus.structured) setTabAgentRunning(tab, running)
+	}
+
+	function setTabPreciseAgentStatus(tab: Tab, status: TerminalAgentStatus): void {
+		tab.agentStatus = status
+		const changed = status.structured
+			? setTabAgentRunning(tab, status.state === 'working' || status.state === 'blocked')
+			: setTabAgentRunning(tab, tab.legacyAgentRunning, false)
+		if (!changed) renderTabAgentState(tab)
 	}
 
 	// ---------- manual rename (double-click a tab / context-menu "Rename…") ----------
@@ -1246,11 +1324,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				const tab = byId.get(member.id)
 				if (!tab) continue
 				const exitedState = tab.exitCode === null ? null : `Exited (${tab.exitCode})`
-				const agentState = tab.agentAttention
-					? 'Run finished, needs attention'
-					: tab.agentRunning
-						? 'Agent running'
-						: null
+				const agentState = tabAgentLabel(tab)
 				const accessibleState = [exitedState, agentState].filter(Boolean).join(', ')
 				const row = document.createElement('div')
 				row.className = `bg-row${activeTab === tab ? ' active' : ''}`
@@ -1270,11 +1344,15 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				open.addEventListener('pointerdown', event => beginBackgroundTabPointerDrag(tab, open, event))
 
 				if (tab.agentRunning || tab.agentAttention) {
-					const indicator = createActivityIndicator(
-						tab.agentAttention ? 'Run finished — open terminal to clear' : 'Agent running',
-						tab.agentAttention ? 'attention' : 'progress',
-					)
+					const blocked = tabAgentBlocked(tab)
+					const label = blocked
+						? tab.agentStatus.label
+						: tab.agentAttention
+							? 'Run finished — open terminal to clear'
+							: (tabAgentLabel(tab) ?? 'Agent running')
+					const indicator = createActivityIndicator(label, blocked || tab.agentAttention ? 'attention' : 'progress')
 					indicator.classList.add('bg-activity')
+					indicator.title = label
 					open.append(indicator)
 				}
 
@@ -2948,7 +3026,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			onUnfreeze: () => unfreezeTerminalFrame(tab),
 			scheduleVisualRelease: release => scheduleTerminalFrameRelease(tab, release),
 		})
-		const progressTracker = createTerminalProgressTracker(active => setTabAgentRunning(tab, active))
+		const progressTracker = createTerminalProgressTracker(active => setTabLegacyAgentRunning(tab, active))
+		const agentStateTracker = createTerminalAgentStateTracker({
+			onChange: status => setTabPreciseAgentStatus(tab, status),
+		})
 		tab = {
 			ptyId: null,
 			sessionId: null,
@@ -2974,6 +3055,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			frameFreeze: null,
 			outputGuard,
 			agentRunning: opts?.agentRunning === true,
+			legacyAgentRunning: opts?.agentRunning === true,
+			agentStatus: agentStateTracker.status(),
+			agentStateTracker,
 			agentAttention: opts?.agentAttention === true,
 			progressTracker,
 			runningEl: running,
@@ -3166,6 +3250,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const tab = findByPty(id)
 		if (!tab) return
 		tab.progressTracker.feed(data)
+		tab.agentStateTracker.feed(data)
 		// Session-backed spawns: swallow dtach's one-time attach clear so it can't
 		// wipe the restored snapshot (non-dtach fallback ptys emit no such prefix).
 		let output = data
@@ -3183,6 +3268,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (!tab) return
 		tab.outputGuard.abort()
 		tab.progressTracker.clear()
+		tab.agentStateTracker.clear()
 		tab.ptyId = null // pty is gone; don't kill it again on close
 		tab.dirty = false // session over — its snapshot is reaped with it, don't re-save
 		if (tab.parked) {
@@ -3562,6 +3648,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			closeTabMenu()
 			terminalResizeObserver.disconnect()
 			clearInterval(snapshotAutosave)
+			clearInterval(agentStateExpiryTimer)
 			finishTabPointerDrag(true)
 			if (pendingTabDragSettlement) settleTabPreview(pendingTabDragSettlement, null, false)
 			finishBackgroundTabPointerDrag(true)
@@ -3571,6 +3658,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			for (const tab of [...tabs, ...parked]) {
 				tab.outputGuard.abort()
 				tab.progressTracker.clear()
+				tab.agentStateTracker.clear()
 				tab.term.dispose()
 			}
 		},

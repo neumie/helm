@@ -245,6 +245,19 @@ export interface TerminalPreferencesApi {
 	resetDefaultCwd(): Promise<TerminalPreferencesSnapshot>
 }
 
+export type PiAgentStatusIntegrationStatus = 'installed' | 'outdated' | 'not-installed' | 'conflict' | 'unavailable'
+
+export interface PiAgentStatusIntegrationSnapshot {
+	status: PiAgentStatusIntegrationStatus
+	message: string
+}
+
+export interface AgentIntegrationsApi {
+	piStatus(): Promise<PiAgentStatusIntegrationSnapshot>
+	installPiStatus(): Promise<PiAgentStatusIntegrationSnapshot>
+	removePiStatus(): Promise<PiAgentStatusIntegrationSnapshot>
+}
+
 /** Narrow OS-browser handoff; main accepts only bounded HTTP(S) URLs. */
 export interface ExternalApi {
 	open(url: string): Promise<boolean>
@@ -356,6 +369,8 @@ export interface HelmApi {
 	config: ConfigApi
 	/** Global starting folder for newly-created ordinary terminals. */
 	terminalPreferences: TerminalPreferencesApi
+	/** Explicitly managed coding-agent integrations; never installed silently. */
+	agentIntegrations: AgentIntegrationsApi
 	/** Open a safe web URL in the host's default browser. */
 	external: ExternalApi
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */

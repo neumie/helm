@@ -20,6 +20,18 @@ declare global {
 
 const story = '/iframe.html?id=views-terminal-workspace--browser-harness&viewMode=story'
 
+function piStatusFrame(report: {
+	seq: number
+	state: 'idle' | 'working' | 'blocked'
+	phase?: { kind: 'thinking' } | { kind: 'tool'; name: string; count: number } | { kind: 'waiting'; reason: 'question' }
+}): string {
+	const payload = Buffer.from(
+		JSON.stringify({ v: 1, agent: 'pi', instance: 'browser_01', ...report }),
+		'utf8',
+	).toString('base64url')
+	return `\u001b]777;helm-agent-state;${payload}\u0007`
+}
+
 test.beforeEach(async ({ page }) => {
 	await page.goto(story)
 	await expect(page.getByRole('button', { name: 'Background terminals' })).toBeVisible()
@@ -353,6 +365,50 @@ test('strip drag joins a group through one atomic membership commit', async ({ p
 		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.placement.at(-1)?.type))
 		.toBe('set-membership')
 	await expect(page.locator('.tab-group-section[data-group-id="group-000000a1"] [role="tab"]')).toHaveCount(2)
+})
+
+test('structured Pi state drives precise tab and Background tooltips without visible status text', async ({ page }) => {
+	const compile = page.getByRole('tab', { name: /compile/i })
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('compile', frame),
+		piStatusFrame({ seq: 1, state: 'working', phase: { kind: 'tool', name: 'bash', count: 1 } }),
+	)
+	await expect(compile).toHaveAttribute('aria-label', 'compile — Pi is using bash')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('title', 'Pi is using bash')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'progress')
+
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('compile', frame),
+		piStatusFrame({ seq: 2, state: 'blocked', phase: { kind: 'waiting', reason: 'question' } }),
+	)
+	await expect(compile).toHaveAttribute('aria-label', 'compile — Pi is waiting for an answer')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'attention')
+	await page.locator('.tab-group-toggle[title="Collapse Build"]').click()
+	const collapsedBuild = page.getByRole('button', { name: 'Expand Build — Pi is waiting for an answer' })
+	await expect(collapsedBuild.locator('.tab-group-activity')).toHaveAttribute('title', 'Pi is waiting for an answer')
+	await expect(collapsedBuild.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'attention')
+	await collapsedBuild.click()
+	await page.locator('#bg-toggle').click()
+
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('tests', frame),
+		piStatusFrame({ seq: 3, state: 'working', phase: { kind: 'thinking' } }),
+	)
+	const background = page.getByRole('button', { name: /Open tests and keep in background.*Pi is thinking/i })
+	await expect(background.locator('.bg-activity')).toHaveAttribute('title', 'Pi is thinking')
+	await page.locator('.bg-group-header-row .tab-group-toggle[title="Collapse Review"]').click()
+	const collapsedReview = page.getByRole('button', { name: 'Expand Review — Pi is thinking' })
+	await expect(collapsedReview.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'progress')
+
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('compile', frame),
+		piStatusFrame({ seq: 4, state: 'idle' }),
+	)
+	await expect(compile).toHaveAttribute('aria-label', 'compile — Pi is idle')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('title', 'Run finished — open tab to clear')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'attention')
+	await compile.click()
+	await expect(compile.locator('.tab-running')).toBeHidden()
 })
 
 test('Shell-menu terminal cycling wraps foreground tabs and excludes Background terminals', async ({ page }) => {

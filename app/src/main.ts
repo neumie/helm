@@ -12,6 +12,7 @@ import { BufferStore } from './buffers'
 import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
 import { guardNativeTabDoubleClick, installNativeWindowZoomGuard } from './native-window-zoom'
+import { PiAgentStatusIntegration } from './pi-agent-status-integration'
 import { ProfileSwitchCoordinator } from './profile-switch'
 import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
@@ -27,7 +28,7 @@ import { ScheduledAttentionNotifier, showNativeAttentionNotification } from './s
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
-import type { TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
+import type { PiAgentStatusIntegrationSnapshot, TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
 import { isTabGroupColor } from './tab-group-colors'
 import { TerminalPreferencesStore } from './terminal-preferences'
@@ -123,6 +124,7 @@ const appProfiles = new AppProfileStore(app.getPath('userData'))
 // Global by design: unlike sessions/buffers, a terminal launch preference does
 // not change when the active Helm profile changes.
 const terminalPreferences = new TerminalPreferencesStore(app.getPath('userData'))
+const piAgentStatusIntegration = new PiAgentStatusIntegration()
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
 let authoritativeProfilesState: ProfilesState = {
@@ -1199,6 +1201,9 @@ function shellEnv(): Record<string, string> {
 		if (key.startsWith('npm_') || key.startsWith('BUN_') || key === 'NODE_ENV' || key === 'INIT_CWD') continue
 		env[key] = value
 	}
+	// Non-secret capability hint: the explicitly installed global Pi extension
+	// stays inert everywhere except an ordinary Helm terminal shell.
+	env.HELM_TERMINAL_AGENT_STATUS = '1'
 	return env
 }
 
@@ -1421,6 +1426,39 @@ ipcMain.handle('terminal-preferences:choose', async (event, profileToken: unknow
 ipcMain.handle('terminal-preferences:reset', (event, profileToken: unknown) => {
 	requireCurrentTerminalPreferencesSender(event, profileToken)
 	return terminalPreferences.resetDefaultCwd()
+})
+
+function requireCurrentAgentIntegrationsSender(event: IpcMainInvokeEvent, profileToken: unknown): void {
+	sessionIpcGate.require(profileToken)
+	if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents)
+		throw new Error('Agent integrations are unavailable.')
+}
+
+function publicAgentIntegrationSnapshot(
+	snapshot: Awaited<ReturnType<PiAgentStatusIntegration['status']>>,
+): PiAgentStatusIntegrationSnapshot {
+	return { status: snapshot.status, message: snapshot.message }
+}
+
+ipcMain.handle('agent-integrations:pi-status', async (event, profileToken: unknown) => {
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	const result = await piAgentStatusIntegration.status()
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	return publicAgentIntegrationSnapshot(result)
+})
+
+ipcMain.handle('agent-integrations:pi-install', async (event, profileToken: unknown) => {
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	const result = await piAgentStatusIntegration.install()
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	return publicAgentIntegrationSnapshot(result)
+})
+
+ipcMain.handle('agent-integrations:pi-remove', async (event, profileToken: unknown) => {
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	const result = await piAgentStatusIntegration.remove()
+	requireCurrentAgentIntegrationsSender(event, profileToken)
+	return publicAgentIntegrationSnapshot(result)
 })
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {

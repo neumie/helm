@@ -14,6 +14,7 @@ import { createRoot } from 'react-dom/client'
 import './sidebar.css'
 import type { HelmSnapshot } from '../../shared-helm'
 import { showToast } from '../toast'
+import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
@@ -153,6 +154,7 @@ export function SidebarRoot() {
 			route.kind === 'settings' ||
 			route.kind === 'settings-section' ||
 			route.kind === 'terminal-settings' ||
+			route.kind === 'agent-integrations' ||
 			route.kind === 'scheduled-runs' ||
 			route.kind === 'scheduled-run-editor',
 	)
@@ -378,6 +380,7 @@ export function SidebarRoot() {
 						onOpenAppearance={() => push({ kind: 'appearance' })}
 						onOpenProfiles={() => push({ kind: 'profiles' })}
 						onOpenTerminal={() => push({ kind: 'terminal-settings' })}
+						onOpenAgentIntegrations={() => push({ kind: 'agent-integrations' })}
 						onOpenScheduledRuns={() => push({ kind: 'scheduled-runs' })}
 						activeProfileName={snapshot?.status?.profile?.name ?? 'Work'}
 					/>
@@ -392,6 +395,8 @@ export function SidebarRoot() {
 				return <AppearancePage onBack={pop} />
 			case 'terminal-settings':
 				return <TerminalSettingsPage onBack={pop} />
+			case 'agent-integrations':
+				return <AgentIntegrationsPage onBack={pop} />
 			case 'scheduled-runs':
 				return (
 					<ScheduledRunsPage

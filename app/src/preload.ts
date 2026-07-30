@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type {
+	AgentIntegrationsApi,
 	GraceClose,
 	HelmApi,
 	PtySpawnResult,
@@ -214,6 +215,11 @@ const api: HelmApi = {
 		chooseDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:choose', sessionProfileToken),
 		resetDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:reset', sessionProfileToken),
 	},
+	agentIntegrations: {
+		piStatus: () => ipcRenderer.invoke('agent-integrations:pi-status', sessionProfileToken),
+		installPiStatus: () => ipcRenderer.invoke('agent-integrations:pi-install', sessionProfileToken),
+		removePiStatus: () => ipcRenderer.invoke('agent-integrations:pi-remove', sessionProfileToken),
+	} satisfies AgentIntegrationsApi,
 	external: {
 		open: url => ipcRenderer.invoke('external:open', url, sessionProfileToken) as Promise<boolean>,
 	},

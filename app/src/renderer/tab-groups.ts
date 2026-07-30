@@ -13,9 +13,12 @@ export interface TabGroupRendererTab {
 	surface?: TabGroupSurface
 	/** Already-arbitrated terminal label (manual pin or current title). */
 	name: string
-	/** Exact OSC-derived state; this helper never infers activity. */
+	/** Protocol-owned state; this helper never infers activity. */
 	agentRunning: boolean
 	agentAttention: boolean
+	/** Optional precise display projection for collapsed group representatives. */
+	agentVariant?: 'progress' | 'attention' | null
+	agentLabel?: string | null
 }
 
 export interface TabGroupMember extends TabGroupRendererTab {

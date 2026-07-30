@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { ReactNode } from 'react'
 import type { DashboardItem, HelmSnapshot, ScheduledScheduleInput } from '../../shared-helm'
+import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
@@ -298,6 +299,20 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 	Object.assign(window, {
 		helm: {
 			uiPreview: null,
+			agentIntegrations: {
+				piStatus: async () => ({
+					status: 'not-installed' as const,
+					message: 'Install the Pi integration for precise terminal status.',
+				}),
+				installPiStatus: async () => ({
+					status: 'installed' as const,
+					message: 'Precise Pi terminal status is installed.',
+				}),
+				removePiStatus: async () => ({
+					status: 'not-installed' as const,
+					message: 'Install the Pi integration for precise terminal status.',
+				}),
+			},
 			terminalPreferences: {
 				get: async () => ({
 					defaultCwd: '/Users/you/Developer',
@@ -623,6 +638,7 @@ export const Settings: Story = {
 				onOpenAppearance={noOp}
 				onOpenProfiles={noOp}
 				onOpenTerminal={noOp}
+				onOpenAgentIntegrations={noOp}
 				onOpenScheduledRuns={noOp}
 				activeProfileName="Work"
 			/>
@@ -634,6 +650,14 @@ export const TerminalSettings: Story = {
 	render: () => (
 		<Frame>
 			<TerminalSettingsPage onBack={noOp} />
+		</Frame>
+	),
+}
+
+export const AgentIntegrations: Story = {
+	render: () => (
+		<Frame>
+			<AgentIntegrationsPage onBack={noOp} />
 		</Frame>
 	),
 }

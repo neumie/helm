@@ -233,6 +233,7 @@ export function SettingsPage({
 	onOpenAppearance,
 	onOpenProfiles,
 	onOpenTerminal,
+	onOpenAgentIntegrations,
 	onOpenScheduledRuns,
 	activeProfileName,
 }: {
@@ -242,6 +243,7 @@ export function SettingsPage({
 	onOpenAppearance: () => void
 	onOpenProfiles: () => void
 	onOpenTerminal: () => void
+	onOpenAgentIntegrations: () => void
 	onOpenScheduledRuns: () => void
 	activeProfileName: string
 }) {
@@ -261,6 +263,7 @@ export function SettingsPage({
 						onClick={onOpenAppearance}
 					/>
 					<ActionRow nav label="Terminal" value="Starting folder" onClick={onOpenTerminal} />
+					<ActionRow nav label="Agent integrations" value="Pi status" onClick={onOpenAgentIntegrations} />
 					<ActionRow
 						nav
 						label="Scheduled runs"
