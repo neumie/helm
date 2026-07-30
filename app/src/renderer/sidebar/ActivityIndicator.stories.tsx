@@ -30,6 +30,11 @@ export const InProgress: Story = {
 	args: { label: 'Running' },
 }
 
+/** An authoritative idle agent remains identifiable without motion or accent. */
+export const Idle: Story = {
+	args: { label: 'Pi is idle', variant: 'idle' },
+}
+
 /** Only a completed background run introduces accent, until its tab is checked. */
 export const NeedsAttention: Story = {
 	args: { label: 'Run finished — unchecked', variant: 'attention' },

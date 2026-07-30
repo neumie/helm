@@ -8,7 +8,7 @@ import { TAB_GROUP_COLORS, TAB_GROUP_COLOR_LABELS, type TabGroupColor, tabGroupC
 import { type PlacementDrag, type PlacementSnapshot, TerminalPlacement, terminalId } from '../terminal-placement'
 import { ProductionSessionPlacementPort } from '../terminal-placement-production-port'
 import { TerminalTransferRendererController } from '../terminal-transfer-renderer'
-import { createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
+import { type ActivityIndicatorVariant, createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance as productionAppearance } from './appearance'
 import { createIconButton } from './icon-button'
 import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
@@ -371,11 +371,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 
 	function collapsedGroupAgentDisplay(
 		section: TabGroupSection,
-	): { variant: 'progress' | 'attention'; label: string } | null {
+	): { variant: ActivityIndicatorVariant; label: string } | null {
 		if (!section.collapsed) return null
 		const representative =
 			section.members.find(member => member.agentVariant === 'attention') ??
-			section.members.find(member => member.agentVariant === 'progress')
+			section.members.find(member => member.agentVariant === 'progress') ??
+			section.members.find(member => member.agentVariant === 'idle')
 		return representative?.agentVariant && representative.agentLabel
 			? { variant: representative.agentVariant, label: representative.agentLabel }
 			: null
@@ -489,12 +490,15 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				name: displayName(tab),
 				agentRunning: tab.agentRunning,
 				agentAttention: tab.agentAttention,
-				agentVariant:
-					tab.agentRunning || tab.agentAttention
-						? tabAgentBlocked(tab) || tab.agentAttention
+				agentVariant: tab.agentAttention
+					? 'attention'
+					: tab.agentRunning
+						? tabAgentBlocked(tab)
 							? 'attention'
 							: 'progress'
-						: null,
+						: tabAgentIdle(tab)
+							? 'idle'
+							: null,
 				agentLabel: tabAgentBlocked(tab)
 					? tab.agentStatus.label
 					: tab.agentAttention
@@ -589,6 +593,16 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		return tab.agentStatus.structured && tab.agentStatus.state === 'blocked'
 	}
 
+	function tabAgentIdle(tab: Tab): boolean {
+		return tab.agentStatus.structured && tab.agentStatus.state === 'idle'
+	}
+
+	function tabAgentVariant(tab: Tab): ActivityIndicatorVariant {
+		if (tabAgentBlocked(tab) || tab.agentAttention) return 'attention'
+		if (tabAgentIdle(tab)) return 'idle'
+		return 'progress'
+	}
+
 	function renderTabLabel(tab: Tab): void {
 		const text = displayName(tab)
 		tab.labelEl.textContent = text
@@ -608,8 +622,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				: tab.agentStatus.structured
 					? tab.agentStatus.label
 					: 'Running'
-		tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention
-		setActivityIndicatorState(tab.runningEl, blocked || tab.agentAttention ? 'attention' : 'progress', indicatorLabel)
+		tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention && !tabAgentIdle(tab)
+		setActivityIndicatorState(tab.runningEl, tabAgentVariant(tab), indicatorLabel)
 		if (tab.runningEl.hidden) tab.runningEl.removeAttribute('title')
 		else tab.runningEl.title = indicatorLabel
 		renderTabLabel(tab)
@@ -1363,14 +1377,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				})
 				open.addEventListener('pointerdown', event => beginBackgroundTabPointerDrag(tab, open, event))
 
-				if (tab.agentRunning || tab.agentAttention) {
+				if (tab.agentRunning || tab.agentAttention || tabAgentIdle(tab)) {
 					const blocked = tabAgentBlocked(tab)
 					const label = blocked
 						? tab.agentStatus.label
 						: tab.agentAttention
 							? 'Run finished — open terminal to clear'
 							: (tabAgentLabel(tab) ?? 'Agent running')
-					const indicator = createActivityIndicator(label, blocked || tab.agentAttention ? 'attention' : 'progress')
+					const indicator = createActivityIndicator(label, tabAgentVariant(tab))
 					indicator.classList.add('bg-activity')
 					indicator.title = label
 					open.append(indicator)

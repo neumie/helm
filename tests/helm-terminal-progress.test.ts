@@ -107,7 +107,13 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.match(progressStyles, /opacity:\s*1/)
 	assert.doesNotMatch(progressStyles, /var\(--accent\)/)
 	assert.match(component, /variant\?: ActivityIndicatorVariant/)
+	assert.match(component, /'progress' \| 'attention' \| 'idle'/)
 	assert.match(story, /variant: 'attention'/)
+	assert.match(story, /variant: 'idle'/)
+	assert.match(
+		css,
+		/\.activity-indicator\[data-variant=["']idle["']\][^{]*\.activity-indicator-dot\s*\{[^}]*animation:\s*none[^}]*opacity:\s*0\.45/s,
+	)
 	assert.match(css, /\.activity-indicator\[data-variant=["']attention["']\]/)
 	assert.match(
 		css,

@@ -447,7 +447,31 @@ test('structured Pi state drives precise tab and Background tooltips without vis
 	await expect(compile.locator('.tab-running')).toHaveAttribute('title', 'Run finished — open tab to clear')
 	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'attention')
 	await compile.click()
-	await expect(compile.locator('.tab-running')).toBeHidden()
+	await expect(compile.locator('.tab-running')).toBeVisible()
+	await expect(compile.locator('.tab-running')).toHaveAttribute('title', 'Pi is idle')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'idle')
+
+	await page.locator('.tab-group-toggle[title="Collapse Build"]').click()
+	const idleBuild = page.getByRole('button', { name: 'Expand Build — Pi is idle' })
+	await expect(idleBuild.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'idle')
+
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('tests', frame),
+		piStatusFrame({ seq: 4, state: 'idle' }),
+	)
+	if (await page.locator('#bg-popover').isHidden()) await page.locator('#bg-toggle').click()
+	const finishedReview = page.getByRole('button', { name: 'Expand Review — Run finished — open tab to clear' })
+	await expect(finishedReview.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'attention')
+	await finishedReview.click()
+	await page.getByRole('button', { name: /Open tests and keep in background.*Run finished/i }).click()
+	await page.evaluate(
+		frame => window.__helmWorkspaceFixture?.emitData('tests', frame),
+		piStatusFrame({ seq: 5, state: 'idle' }),
+	)
+	if (await page.locator('#bg-popover').isHidden()) await page.locator('#bg-toggle').click()
+	await page.locator('.bg-group-header-row .tab-group-toggle[title="Collapse Review"]').click()
+	const idleReview = page.getByRole('button', { name: 'Expand Review — Pi is idle' })
+	await expect(idleReview.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'idle')
 })
 
 test('Shell-menu terminal cycling wraps foreground tabs and excludes Background terminals', async ({ page }) => {

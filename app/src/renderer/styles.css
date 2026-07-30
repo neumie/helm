@@ -538,6 +538,13 @@ body.group-dragging .tab-group-toggle {
 	}
 }
 
+/* Authoritative idle remains visible without implying work or urgency. */
+.activity-indicator[data-variant="idle"] .activity-indicator-dot {
+	background: var(--text-2);
+	animation: none;
+	opacity: 0.45;
+}
+
 /* Completion becomes a slower diagonal color-wave: top-left leads, equal
  * diagonals share a phase, and bottom-right closes the gray→accent gradient. */
 .activity-indicator[data-variant="attention"] .activity-indicator-dot {
