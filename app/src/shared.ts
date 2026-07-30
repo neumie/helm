@@ -245,13 +245,7 @@ export interface TerminalPreferencesApi {
 	resetDefaultCwd(): Promise<TerminalPreferencesSnapshot>
 }
 
-export type PiAgentStatusIntegrationStatus =
-	| 'installed'
-	| 'external'
-	| 'outdated'
-	| 'not-installed'
-	| 'conflict'
-	| 'unavailable'
+export type PiAgentStatusIntegrationStatus = 'external' | 'not-installed' | 'conflict' | 'unavailable'
 
 export interface PiAgentStatusIntegrationSnapshot {
 	status: PiAgentStatusIntegrationStatus
@@ -260,8 +254,6 @@ export interface PiAgentStatusIntegrationSnapshot {
 
 export interface AgentIntegrationsApi {
 	piStatus(): Promise<PiAgentStatusIntegrationSnapshot>
-	installPiStatus(): Promise<PiAgentStatusIntegrationSnapshot>
-	removePiStatus(): Promise<PiAgentStatusIntegrationSnapshot>
 }
 
 /** Narrow OS-browser handoff; main accepts only bounded HTTP(S) URLs. */

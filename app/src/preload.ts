@@ -218,8 +218,6 @@ const api: HelmApi = {
 	},
 	agentIntegrations: {
 		piStatus: () => ipcRenderer.invoke('agent-integrations:pi-status', sessionProfileToken),
-		installPiStatus: () => ipcRenderer.invoke('agent-integrations:pi-install', sessionProfileToken),
-		removePiStatus: () => ipcRenderer.invoke('agent-integrations:pi-remove', sessionProfileToken),
 	} satisfies AgentIntegrationsApi,
 	external: {
 		open: url => ipcRenderer.invoke('external:open', url, sessionProfileToken) as Promise<boolean>,

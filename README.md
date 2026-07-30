@@ -418,13 +418,13 @@ Desktop terminal features include:
 - a visible Background control that names the currently viewed parked terminal;
 - grace-close with Undo;
 - protocol-owned agent activity and needs-attention indicators, with optional precise Pi lifecycle and tool-name tooltips;
-- standalone [`pi-agent-status`](https://github.com/neumie/pi-agent-status) package support plus explicit **Settings → Agent integrations** fallback installation;
+- standalone [`pi-agent-status`](https://github.com/neumie/pi-agent-status) package support with read-only detection and setup guidance in **Settings → Agent integrations**;
 - a global **Settings → Terminal** starting folder for new ordinary terminals, with Home fallback; and
 - a Helm-owned overlay scrollbar and synchronized-output guard for large redraws.
 
 Helm never infers agent activity from output, process names, shell prompts,
 silence, or PTY liveness. OSC 9;4 remains the compatibility signal. When the
-operator configures `pi-agent-status` (or installs Helm's fallback), its versioned heartbeat becomes
+operator configures `pi-agent-status`, its versioned heartbeat becomes
 the precise source for idle/working/blocked state and bounded safe phase labels;
 missed heartbeats degrade to unknown rather than leaving stale confidence.
 

@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PiAgentStatusIntegrationSnapshot } from '../../shared'
-import { showToast } from '../toast'
 import { Banner, Btn, Card, EmptyState, InfoRow, PushHeader } from './ui'
+
+const PI_AGENT_STATUS_SETUP_URL = 'https://github.com/neumie/pi-agent-status#installation'
 
 function integrationStatusLabel(status: PiAgentStatusIntegrationSnapshot['status']): string {
 	switch (status) {
-		case 'installed':
-			return 'Installed'
 		case 'external':
 			return 'Managed by Pi'
-		case 'outdated':
-			return 'Update available'
 		case 'not-installed':
-			return 'Not installed'
+			return 'Not configured'
 		case 'conflict':
-			return 'Conflicting file'
+			return 'Legacy extension detected'
 		case 'unavailable':
 			return 'Unavailable'
 	}
@@ -23,7 +20,6 @@ function integrationStatusLabel(status: PiAgentStatusIntegrationSnapshot['status
 export function AgentIntegrationsPage({ onBack }: { onBack: () => void }) {
 	const [integration, setIntegration] = useState<PiAgentStatusIntegrationSnapshot | null>(null)
 	const [error, setError] = useState<string | null>(null)
-	const [working, setWorking] = useState(false)
 	const requestRevision = useRef(0)
 
 	const refresh = useCallback(async () => {
@@ -48,37 +44,17 @@ export function AgentIntegrationsPage({ onBack }: { onBack: () => void }) {
 		}
 	}, [refresh])
 
-	const install = async () => {
-		setWorking(true)
-		setError(null)
+	const openSetup = async () => {
 		try {
-			const next = await window.helm.agentIntegrations.installPiStatus()
-			requestRevision.current++
-			setIntegration(next)
-			showToast({ message: 'Pi status integration installed', detail: 'Run /reload in an open Pi session.' })
+			if (!(await window.helm.external.open(PI_AGENT_STATUS_SETUP_URL))) {
+				setError('Could not open the pi-agent-status setup instructions.')
+			}
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : String(reason))
-		} finally {
-			setWorking(false)
 		}
 	}
 
-	const remove = async () => {
-		setWorking(true)
-		setError(null)
-		try {
-			const next = await window.helm.agentIntegrations.removePiStatus()
-			requestRevision.current++
-			setIntegration(next)
-			showToast({ message: 'Pi status integration removed', detail: 'Run /reload in an open Pi session.' })
-		} catch (reason) {
-			setError(reason instanceof Error ? reason.message : String(reason))
-		} finally {
-			setWorking(false)
-		}
-	}
-
-	const installable = integration?.status === 'not-installed' || integration?.status === 'outdated'
+	const needsSetup = integration?.status === 'not-installed' || integration?.status === 'conflict'
 	return (
 		<div className="page-frame">
 			<PushHeader title="Agent integrations" onBack={onBack} />
@@ -97,16 +73,16 @@ export function AgentIntegrationsPage({ onBack }: { onBack: () => void }) {
 					<Card
 						label="Pi"
 						trailing={
-							installable ? (
-								<Btn sm tone="primary" busy={working} onClick={() => void install()}>
-									{integration.status === 'outdated' ? 'Update' : 'Install'}
+							needsSetup ? (
+								<Btn sm tone="primary" onClick={() => void openSetup()}>
+									View setup
 								</Btn>
 							) : undefined
 						}
 					>
 						<InfoRow label="Status" value={integrationStatusLabel(integration.status)} />
 						{(integration.status === 'conflict' || integration.status === 'unavailable') && (
-							<Banner tone="warning" label="Installation unavailable">
+							<Banner tone="warning" label="Package setup required">
 								{integration.message}
 							</Banner>
 						)}
@@ -115,11 +91,6 @@ export function AgentIntegrationsPage({ onBack }: { onBack: () => void }) {
 							Reports Pi lifecycle and active tool names only inside new ordinary Helm terminals. It never reports
 							prompts, commands, paths, or tool results.
 						</p>
-						{integration.status === 'installed' && (
-							<button type="button" className="field-reset" disabled={working} onClick={() => void remove()}>
-								Remove integration
-							</button>
-						)}
 					</Card>
 				)}
 			</div>

@@ -26,29 +26,17 @@ test('renderer integration contract exposes no filesystem path or extension cont
 	assert.doesNotMatch(snapshot, /path|content|source/)
 })
 
-test('Pi integration IPC is profile-tokened and reauthenticates after every filesystem await', () => {
+test('Pi integration IPC is read-only, profile-tokened, and reauthenticates after filesystem awaits', () => {
 	const bridge = between(preload, '\tagentIntegrations: {', '\texternal: {')
 	assert.match(bridge, /piStatus: \(\) => ipcRenderer\.invoke\('agent-integrations:pi-status', sessionProfileToken\)/)
-	assert.match(
-		bridge,
-		/installPiStatus: \(\) => ipcRenderer\.invoke\('agent-integrations:pi-install', sessionProfileToken\)/,
-	)
-	assert.match(
-		bridge,
-		/removePiStatus: \(\) => ipcRenderer\.invoke\('agent-integrations:pi-remove', sessionProfileToken\)/,
-	)
+	assert.doesNotMatch(bridge, /install|remove|update/i)
+	assert.doesNotMatch(main, /agent-integrations:pi-(?:install|remove|update)/)
 
-	for (const [start, end] of [
-		["ipcMain.handle('agent-integrations:pi-status'", "ipcMain.handle('agent-integrations:pi-install'"],
-		["ipcMain.handle('agent-integrations:pi-install'", "ipcMain.handle('agent-integrations:pi-remove'"],
-		["ipcMain.handle('agent-integrations:pi-remove'", "ipcMain.handle('pty:spawn'"],
-	] as const) {
-		const handler = between(main, start, end)
-		const awaitAt = handler.indexOf('await piAgentStatusIntegration.')
-		assert.ok(awaitAt > handler.indexOf('requireCurrentAgentIntegrationsSender'))
-		assert.ok(handler.lastIndexOf('requireCurrentAgentIntegrationsSender') > awaitAt)
-		assert.match(handler, /publicAgentIntegrationSnapshot\(result\)/)
-	}
+	const handler = between(main, "ipcMain.handle('agent-integrations:pi-status'", "ipcMain.handle('pty:spawn'")
+	const awaitAt = handler.indexOf('await piAgentStatusIntegration.status()')
+	assert.ok(awaitAt > handler.indexOf('requireCurrentAgentIntegrationsSender'))
+	assert.ok(handler.lastIndexOf('requireCurrentAgentIntegrationsSender') > awaitAt)
+	assert.match(handler, /publicAgentIntegrationSnapshot\(result\)/)
 })
 
 test('precise Pi reporting is enabled only through the ordinary shell environment', () => {

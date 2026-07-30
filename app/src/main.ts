@@ -1447,20 +1447,6 @@ ipcMain.handle('agent-integrations:pi-status', async (event, profileToken: unkno
 	return publicAgentIntegrationSnapshot(result)
 })
 
-ipcMain.handle('agent-integrations:pi-install', async (event, profileToken: unknown) => {
-	requireCurrentAgentIntegrationsSender(event, profileToken)
-	const result = await piAgentStatusIntegration.install()
-	requireCurrentAgentIntegrationsSender(event, profileToken)
-	return publicAgentIntegrationSnapshot(result)
-})
-
-ipcMain.handle('agent-integrations:pi-remove', async (event, profileToken: unknown) => {
-	requireCurrentAgentIntegrationsSender(event, profileToken)
-	const result = await piAgentStatusIntegration.remove()
-	requireCurrentAgentIntegrationsSender(event, profileToken)
-	return publicAgentIntegrationSnapshot(result)
-})
-
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	sessionIpcGate.require(args.profileToken)
 	const id = nextPtyId++

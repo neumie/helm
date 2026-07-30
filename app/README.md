@@ -40,15 +40,14 @@ Shortcuts: cmd+t new terminal tab, cmd+w close tab, cmd+alt+left previous termin
 
 ## Precise Pi terminal status
 
-The canonical integration is the standalone
+The integration is the standalone
 [`pi-agent-status`](https://github.com/neumie/pi-agent-status) package. Settings →
 Agent integrations recognizes package ownership as **Managed by Pi** and exposes
-no mutation controls. For users without the package, Settings can explicitly
-install Helm's embedded fallback at `~/.pi/agent/extensions/helm-agent-status.ts`;
-Helm never overwrites an unmanaged file or symlink and writes its fallback
-atomically with private permissions. Either form is enabled only for newly
-created ordinary Helm terminals. Existing/restored dtach sessions retain their
-original environment.
+no mutation controls. Without the package it offers only **View setup**; a legacy
+direct `~/.pi/agent/extensions/helm-agent-status.ts` file is reported as a
+conflict rather than read or changed. Reporting is enabled only for newly created
+ordinary Helm terminals. Existing/restored dtach sessions retain their original
+environment.
 
 The extension reports only semantic lifecycle and bounded display metadata
 (thinking, a sanitized tool name/count, or a fixed waiting reason) through a

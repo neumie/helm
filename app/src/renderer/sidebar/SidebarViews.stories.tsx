@@ -21,6 +21,7 @@ type StoryWindow = Window & {
 	__createItemCalls?: number
 	__deferCreateItem?: boolean
 	__resolveCreateItem?: () => void
+	__openedExternalUrls?: string[]
 }
 
 export function item(overrides: Partial<DashboardItem>): DashboardItem {
@@ -328,7 +329,7 @@ function installBridge(
 	detail: DashboardItem = reviewItem,
 	piStatus: PiAgentStatusIntegrationSnapshot = {
 		status: 'not-installed',
-		message: 'Install the Pi integration for precise terminal status.',
+		message: 'Configure the pi-agent-status package for precise terminal status.',
 	},
 ): void {
 	Object.assign(window, {
@@ -336,14 +337,13 @@ function installBridge(
 			uiPreview: null,
 			agentIntegrations: {
 				piStatus: async () => piStatus,
-				installPiStatus: async () => ({
-					status: 'installed' as const,
-					message: 'Precise Pi terminal status is installed.',
-				}),
-				removePiStatus: async () => ({
-					status: 'not-installed' as const,
-					message: 'Install the Pi integration for precise terminal status.',
-				}),
+			},
+			external: {
+				open: async (url: string) => {
+					const storyWindow = window as StoryWindow
+					storyWindow.__openedExternalUrls = [...(storyWindow.__openedExternalUrls ?? []), url]
+					return true
+				},
 			},
 			terminalPreferences: {
 				get: async () => ({
