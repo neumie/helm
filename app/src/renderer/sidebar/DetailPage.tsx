@@ -4,6 +4,7 @@
 import { useRef, useState } from 'react'
 import type { DashboardAction, HelmSnapshot, ItemStatus, PlanInfo } from '../../shared-helm'
 import { showToast } from '../toast'
+import { AssignItemSheet } from './AssignItemSheet'
 import {
 	ActivitySection,
 	DeliveryCard,
@@ -18,7 +19,15 @@ import {
 import { lifecycleActionPlan, lifecycleActionPresentation, manualStatusOptions } from './detail-actions'
 import { useItemDetail } from './detail-data'
 import { detailState } from './detail-state'
-import { colorForProject, itemTitle, okenaActionLabel, planTicketCounts, relativeTime, useNow } from './model'
+import {
+	colorForProject,
+	itemTitle,
+	okenaActionLabel,
+	planTicketCounts,
+	projectLabel,
+	relativeTime,
+	useNow,
+} from './model'
 import { type RunSelectionDraft, buildPlanBody, buildRunBody } from './run-selection'
 import { Banner, Btn, Card, EmptyState, GLYPH, MenuButton, ProjectColorText, PushHeader, Sheet, StatusDot } from './ui'
 
@@ -49,8 +58,10 @@ export function DetailPage(props: DetailPageProps) {
 	const [commandError, setCommandError] = useState<string | null>(null)
 	const [retryCommand, setRetryCommand] = useState<(() => void) | null>(null)
 	const [confirm, setConfirm] = useState<Confirmation | null>(null)
+	const [assignmentOpen, setAssignmentOpen] = useState(false)
 
 	if (!item) return <MissingDetail phase={phase} error={error} onBack={onBack} onRetry={refetch} />
+	const assigned = item.projectSlug !== null && item.baseRef !== null
 	const state = detailState(item)
 	const projectColor = colorForProject(snapshot?.config, item.projectSlug)
 	const effectiveWorkspace =
@@ -144,7 +155,9 @@ export function DetailPage(props: DetailPageProps) {
 		primary,
 		rest,
 	} = lifecycleActionPlan(item.status, item.allowedActions)
-	const statusOptions = manualStatusOptions(item.status)
+	const statusOptions = manualStatusOptions(item.status).filter(
+		option => assigned || option.status === 'ready' || option.status === 'done' || option.status === 'cancelled',
+	)
 	const statusEntries = statusOptions.map(option => ({
 		label: option.label,
 		danger: option.status === 'failed' || option.status === 'cancelled',
@@ -152,7 +165,7 @@ export function DetailPage(props: DetailPageProps) {
 		group: option.status === 'done',
 		onSelect: () => void setManualStatus(option.status, option.label),
 	}))
-	const canPlan = ['inbox', 'ready', 'active'].includes(item.status)
+	const canPlan = assigned && ['inbox', 'ready', 'active'].includes(item.status)
 	const askOrRun = (action: DashboardAction) => {
 		if (action.id === 'cancel' && item.status === 'running') {
 			setConfirm({
@@ -248,6 +261,7 @@ export function DetailPage(props: DetailPageProps) {
 			case 'input':
 				return <InputSection key="input" item={item} />
 			case 'setup':
+				if (!assigned) return null
 				return (
 					<SetupSection
 						key="setup"
@@ -279,7 +293,7 @@ export function DetailPage(props: DetailPageProps) {
 				<section className="detail-hero" aria-label="Item details">
 					<div className="detail-identity-primary">
 						<ProjectColorText color={projectColor} className="detail-project">
-							{item.projectSlug}
+							{projectLabel(item.projectSlug)}
 						</ProjectColorText>
 						{statusOptions.length > 0 ? (
 							<MenuButton
@@ -333,18 +347,25 @@ export function DetailPage(props: DetailPageProps) {
 						{state.attention.text}
 					</Banner>
 				)}
-				<div className="workspace-primary-action">
-					<Btn
-						tone="quiet"
-						block
-						busy={busy === 'Open in Okena'}
-						disabled={disabled || item.okenaWorkspace?.state === 'unavailable'}
-						onClick={() => void openOkena()}
-					>
-						{GLYPH.external}
-						{okenaAction}
-					</Btn>
-				</div>
+				{!assigned ? (
+					<Banner tone="info" label="Project needed">
+						Choose a project before planning or starting this item.
+					</Banner>
+				) : null}
+				{assigned ? (
+					<div className="workspace-primary-action">
+						<Btn
+							tone="quiet"
+							block
+							busy={busy === 'Open in Okena'}
+							disabled={disabled || item.okenaWorkspace?.state === 'unavailable'}
+							onClick={() => void openOkena()}
+						>
+							{GLYPH.external}
+							{okenaAction}
+						</Btn>
+					</div>
+				) : null}
 				{state.sections.map(content)}
 			</div>
 			{commandError && (
@@ -360,7 +381,12 @@ export function DetailPage(props: DetailPageProps) {
 			</output>
 			<div className="action-bar" aria-busy={disabled}>
 				<div className="action-bar-main">
-					{plannedSolve ? (
+					{!assigned && item.canAssignProject ? (
+						<Btn tone="primary" block disabled={disabled} onClick={() => setAssignmentOpen(true)}>
+							{GLYPH.settings}
+							Finish setup
+						</Btn>
+					) : plannedSolve ? (
 						<>
 							<Btn
 								tone="quiet"
@@ -486,6 +512,14 @@ export function DetailPage(props: DetailPageProps) {
 					</Sheet>
 				)}
 			</div>
+			{assignmentOpen ? (
+				<AssignItemSheet
+					item={item}
+					projects={snapshot?.config?.projects ?? []}
+					onClose={() => setAssignmentOpen(false)}
+					onAssigned={() => void refetch()}
+				/>
+			) : null}
 		</div>
 	)
 }

@@ -255,7 +255,7 @@ export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 		<div className="run-context-shell" aria-busy={busy !== null}>
 			<header className="run-context-header">
 				<div className="run-context-heading">
-					<div className="run-context-kicker">{loaded.item.projectSlug}</div>
+					<div className="run-context-kicker">{loaded.item.projectSlug ?? 'Unassigned'}</div>
 					<h1>{loaded.item.title}</h1>
 				</div>
 				<output className="run-context-save-state" aria-live="polite">

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { computePlanDirName, slugify } from '../util/slug.js'
+import { requireItemAssignment } from './assignment.js'
 import type { ItemRecord } from './schema.js'
 
 export interface ItemWorkspaceIdentity {
@@ -35,6 +36,7 @@ export function derivedItemPlanDirName(item: ItemRecord, slug: string): string {
  * title/id/createdAt and never from legacy Task fields or mutable project config.
  */
 export function resolveItemWorkspace(item: ItemRecord): ItemWorkspaceIdentity {
+	requireItemAssignment(item)
 	const suffix = itemSuffix(item)
 	return {
 		baseRef: item.baseRef,

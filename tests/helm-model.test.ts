@@ -24,6 +24,7 @@ const {
 	okenaActionLabel,
 	partitionWork,
 	planStatusLabel,
+	projectLabel,
 	statusTone,
 	statusWord,
 } = helmModelModule as HelmModelModule
@@ -64,19 +65,25 @@ test('project colors resolve from current and legacy dashboard config', () => {
 	assert.equal(colorForProject({ projects: [{ slug: 'jvs', color: '#2a94e5' }] }, 'jvs'), '#2a94e5')
 	assert.equal(colorForProject({ projectColors: { jvs: '#940fd2' } }, 'jvs'), '#940fd2')
 	assert.equal(colorForProject({ projects: [{ slug: 'jvs' }] }, 'jvs'), null)
+	assert.equal(colorForProject({ projects: [{ slug: 'jvs', color: '#2a94e5' }] }, null), null)
+	assert.equal(projectLabel(null), 'Unassigned')
 })
 
-test('project grouping preserves first-seen project and Item order', () => {
+test('project grouping preserves nullable identity, first-seen project, and Item order', () => {
 	const grouped = groupItemsByProject([
 		{ id: 'j1', projectSlug: 'jvs' } as DashboardItem,
 		{ id: 'c1', projectSlug: 'crane' } as DashboardItem,
 		{ id: 'j2', projectSlug: 'jvs' } as DashboardItem,
+		{ id: 'named-unassigned', projectSlug: 'Unassigned' } as DashboardItem,
+		{ id: 'draft', projectSlug: null } as DashboardItem,
 	])
 	assert.deepEqual(
-		grouped.map(([slug, items]) => [slug, items.map(item => item.id)]),
+		grouped.map(group => [group.projectSlug, group.items.map(item => item.id)]),
 		[
 			['jvs', ['j1', 'j2']],
 			['crane', ['c1']],
+			['Unassigned', ['named-unassigned']],
+			[null, ['draft']],
 		],
 	)
 })

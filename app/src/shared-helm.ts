@@ -82,7 +82,7 @@ export interface RunContextDocument extends RunContextDraft {
 }
 
 export interface RunContextLoad {
-	item: { id: string; title: string; projectSlug: string; status: ItemStatus }
+	item: { id: string; title: string; projectSlug: string | null; status: ItemStatus }
 	source: SourceTask
 	document: RunContextDocument | null
 	revision: number
@@ -190,7 +190,7 @@ export interface DashboardItem {
 	executionMode: 'solve' | 'loop'
 	status: ItemStatus
 	workMode: WorkMode | null
-	projectSlug: string
+	projectSlug: string | null
 	title: string
 	displayName: string | null
 	assessment: Assessment | null
@@ -201,7 +201,8 @@ export interface DashboardItem {
 	runContextEdited: boolean
 	/** Single-item routes only: the "create source task" action applies. */
 	canCreateSourceTask?: boolean
-	baseRef: string
+	canAssignProject: boolean
+	baseRef: string | null
 	spawner: string | null
 	groupId: string | null
 	group: DashboardGroup | null
@@ -245,12 +246,14 @@ export interface DashboardItem {
 	updatedAt: string
 }
 
+export const UNTITLED_ITEM_TITLE = 'Untitled item'
+
 export type CreateItemInput =
 	| {
 			kind: 'solve'
-			title: string
-			projectSlug: string
-			prompt: string
+			title?: string
+			projectSlug?: string | null
+			prompt?: string
 			baseRef?: string
 			baseItemId?: string
 			spawner?: string
@@ -274,6 +277,11 @@ export type CreateItemInput =
 			parallelism?: number
 			intent?: 'queue' | 'plan'
 	  }
+
+export interface AssignItemInput {
+	projectSlug: string
+	title?: string
+}
 
 export interface PlanInfo {
 	worktreePath: string
@@ -600,6 +608,7 @@ export interface DaemonApi {
 	openOkena(id: string): Promise<HelmResult<OkenaOpenInfo>>
 	aiPass(id: string, pass: AiPass): Promise<HelmResult<DashboardItem>>
 	createItem(body: CreateItemInput): Promise<HelmResult<DashboardItem | DashboardItem[]>>
+	assignItem(id: string, body: AssignItemInput): Promise<HelmResult<DashboardItem>>
 	/** Promote a captured (ingested) Item into a real task in the source system. */
 	sourceTask(id: string): Promise<HelmResult<DashboardItem>>
 	setStatus(id: string, status: ItemStatus): Promise<HelmResult<DashboardItem>>

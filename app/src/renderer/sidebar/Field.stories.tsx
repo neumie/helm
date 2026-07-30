@@ -47,6 +47,7 @@ export const TextInputs: Story = {
 	),
 }
 
+/** Natural-language textareas use the UI typeface; mono belongs to code-shaped editors. */
 export const TextAreaField: Story = {
 	render: function TextAreaStory() {
 		const [value, setValue] = useState('Investigate the failing deploy.\n\nRepro:\n1. Push to main\n2. Watch CI')

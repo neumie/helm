@@ -584,6 +584,15 @@ export class HelmBridge {
 			return result
 		})
 
+		ipcMain.handle('daemon:assignItem', async (_e, rawId: unknown, body: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
+			const result = normalizeDashboardItemResult(
+				await this.request<DashboardItem>('POST', `/items/${id(rawId)}/assign`, body),
+			)
+			this.kick()
+			return result
+		})
+
 		ipcMain.handle('daemon:sourceTask', async (_e, rawId: unknown, token: unknown) => {
 			if (stale(token)) return stale(token)
 			const result = normalizeDashboardItemResult(

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import type { HelmConfig } from '../config.js'
+import { isItemAssigned, requireItemAssignment } from '../items/assignment.js'
 import type { ItemCommands } from '../items/commands.js'
 import { buildItemExecutionContext, prepareItemExecutionContext, resolveItemSourceContext } from '../items/context.js'
 import { resolveItemWorkspace } from '../items/identity.js'
@@ -130,6 +131,7 @@ export class PlanningApplication {
 		if (item.status === 'active' && item.workMode !== 'manual') {
 			throw new PlanningError('not_plannable', 'Only human-owned active Items can be re-planned')
 		}
+		if (!isItemAssigned(item)) throw new PlanningError('not_plannable', 'Assign a project before planning this Item')
 		const projectConfig = this.config.projects.find(project => project.slug === item.projectSlug)
 		if (!projectConfig) throw new PlanningError('unknown_project', `Unknown project slug: ${item.projectSlug}`)
 		const workspaceMode =
@@ -178,6 +180,7 @@ export class PlanningApplication {
 								item.worktreePath && sameFilesystemPath(item.worktreePath, projectConfig.repoPath),
 							),
 						})
+			requireItemAssignment(named)
 			const expectedIdentity = {
 				worktreePath: named.worktreePath,
 				branchName: named.branchName,

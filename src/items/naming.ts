@@ -8,6 +8,7 @@ import { isCancellation } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { slugify } from '../util/slug.js'
 import { localBranchExists, remoteBranchExists } from '../worktree/manager.js'
+import { isItemAssigned } from './assignment.js'
 import type { ItemCommands } from './commands.js'
 import { derivedItemPlanDirName, itemSuffix } from './identity.js'
 import type { ItemRecord } from './schema.js'
@@ -161,10 +162,12 @@ export async function ensureItemDisplayName(params: EnsureItemDisplayNameParams)
 			return commands.getItem(item.id) ?? current
 		}
 
-		// The background Enricher may finish while this one-shot is in flight. Re-read
-		// synchronously before writing so the first successful name wins.
+		// The background Enricher may finish, or prompt-draft assignment may change
+		// the canonical title, while this one-shot is in flight. Re-read synchronously
+		// before writing so the first successful name wins and output derived from an
+		// old title can never overwrite the assigned Item's display state.
 		const latest = commands.getItem(item.id) ?? current
-		if (!force && latest.displayName) return latest
+		if (latest.title !== current.title || (!force && latest.displayName)) return latest
 		const named = commands.recordDisplayName(item.id, name)
 		log.info('naming', `Derived display name for Item ${item.id}: "${name}" (${agent}/${model})`)
 		return named
@@ -307,6 +310,7 @@ export interface EnsureItemNameParams {
 export function itemWantsWorkspaceName(item: ItemRecord, config: HelmConfig): boolean {
 	if (
 		!config.solver.branchNaming.enabled ||
+		!isItemAssigned(item) ||
 		item.kind !== 'solve' ||
 		item.payload.kind !== 'solve' ||
 		item.branchName ||
@@ -321,6 +325,10 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 	const { commands, item, taskContext, config, repoPath, signal, deps, force } = params
 	const feature = config.solver.branchNaming
 	if (!force && !feature.enabled) return item
+	if (!isItemAssigned(item)) {
+		if (force) throw new Error('Assign a project before naming its branch')
+		return item
+	}
 	// Solve-only: enforced here (not just at call sites) so the plan route can't
 	// name a loop Item — loop Items keep the deterministic helm/item name.
 	// Structural; applies even to a forced manual run.

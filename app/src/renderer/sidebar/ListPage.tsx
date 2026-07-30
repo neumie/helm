@@ -16,6 +16,7 @@ import {
 	itemTitle,
 	partitionWork,
 	planStatusLabel,
+	projectLabel,
 	relativeTime,
 	rowTimestamp,
 	statusWord,
@@ -28,6 +29,23 @@ const PROJECT_KEY = 'helm.sidebar.project'
 const ORGANIZATION_KEY = 'helm.sidebar.organization'
 
 type ListOrganization = 'flat' | 'project'
+type ProjectFilter = { kind: 'all' } | { kind: 'unassigned' } | { kind: 'project'; slug: string }
+
+function readProjectFilter(): ProjectFilter {
+	const saved = localStorage.getItem(PROJECT_KEY)
+	if (!saved) return { kind: 'all' }
+	try {
+		const parsed = JSON.parse(saved) as { kind?: unknown; slug?: unknown }
+		if (parsed.kind === 'unassigned') return { kind: 'unassigned' }
+		if (parsed.kind === 'project' && typeof parsed.slug === 'string' && parsed.slug) {
+			return { kind: 'project', slug: parsed.slug }
+		}
+	} catch {
+		// Legacy versions persisted the project slug directly.
+		return { kind: 'project', slug: saved }
+	}
+	return { kind: 'all' }
+}
 
 function isBucket(value: string | null): value is BucketKey {
 	return value === 'needs' || value === 'active' || value === 'queue' || value === 'inbox'
@@ -78,7 +96,7 @@ export function ListPage({
 		const saved = localStorage.getItem(BUCKET_KEY)
 		return isBucket(saved) ? saved : 'needs'
 	})
-	const [project, setProject] = useState<string | null>(() => localStorage.getItem(PROJECT_KEY) || null)
+	const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readProjectFilter)
 	const [organization, setOrganization] = useState<ListOrganization>(() => {
 		if (window.helm.uiPreview === 'project-list') return 'project'
 		const saved = localStorage.getItem(ORGANIZATION_KEY)
@@ -88,9 +106,9 @@ export function ListPage({
 	const [profileDocument, setProfileDocument] = useState<ProfilesDocument | null>(null)
 	useEffect(() => localStorage.setItem(BUCKET_KEY, bucket), [bucket])
 	useEffect(() => {
-		if (project) localStorage.setItem(PROJECT_KEY, project)
-		else localStorage.removeItem(PROJECT_KEY)
-	}, [project])
+		if (projectFilter.kind === 'all') localStorage.removeItem(PROJECT_KEY)
+		else localStorage.setItem(PROJECT_KEY, JSON.stringify(projectFilter))
+	}, [projectFilter])
 	useEffect(() => localStorage.setItem(ORGANIZATION_KEY, organization), [organization])
 	useEffect(() => {
 		let cancelled = false
@@ -112,17 +130,19 @@ export function ListPage({
 	const reachable = snapshot?.reachable ?? false
 	const paused = snapshot?.status?.queue.paused ?? false
 
-	const selectedProjectColor = project ? colorForProject(snapshot?.config, project) : null
+	const selectedProjectSlug = projectFilter.kind === 'project' ? projectFilter.slug : null
+	const selectedProjectColor = colorForProject(snapshot?.config, selectedProjectSlug)
 	const projectSlugs = useMemo(() => {
 		const fromConfig = (snapshot?.config?.projects ?? []).map(p => p.slug)
-		const fromItems = (items ?? []).map(i => i.projectSlug)
+		const fromItems = (items ?? []).map(i => i.projectSlug).filter((slug): slug is string => slug !== null)
 		return [...new Set([...fromConfig, ...fromItems])]
 	}, [snapshot?.config?.projects, items])
 
-	const filtered = useMemo(
-		() => (project ? (items ?? []).filter(i => i.projectSlug === project) : (items ?? [])),
-		[items, project],
-	)
+	const filtered = useMemo(() => {
+		if (projectFilter.kind === 'all') return items ?? []
+		if (projectFilter.kind === 'unassigned') return (items ?? []).filter(item => item.projectSlug === null)
+		return (items ?? []).filter(item => item.projectSlug === projectFilter.slug)
+	}, [items, projectFilter])
 	const buckets = useMemo(() => partitionWork(filtered), [filtered])
 	const visible = archive ? buckets.archived : buckets[bucket]
 	const groupedVisible = useMemo(() => groupItemsByProject(visible), [visible])
@@ -183,14 +203,31 @@ export function ListPage({
 						trigger={
 							<>
 								<ProjectColorText color={selectedProjectColor} className="project-trigger-label">
-									{project ?? 'All projects'}
+									{projectFilter.kind === 'all'
+										? 'All projects'
+										: projectFilter.kind === 'unassigned'
+											? 'Unassigned'
+											: projectFilter.slug}
 								</ProjectColorText>
 								{GLYPH.chevronDown}
 							</>
 						}
 						entries={[
-							{ label: 'All projects', onSelect: () => setProject(null) },
-							...projectSlugs.map(slug => ({ label: slug, onSelect: () => setProject(slug) })),
+							{
+								label: 'All projects',
+								checked: projectFilter.kind === 'all',
+								onSelect: () => setProjectFilter({ kind: 'all' }),
+							},
+							{
+								label: 'Unassigned',
+								checked: projectFilter.kind === 'unassigned',
+								onSelect: () => setProjectFilter({ kind: 'unassigned' }),
+							},
+							...projectSlugs.map(slug => ({
+								label: slug,
+								checked: projectFilter.kind === 'project' && projectFilter.slug === slug,
+								onSelect: () => setProjectFilter({ kind: 'project', slug }),
+							})),
 						]}
 					/>
 					<div className="list-toolbar-actions">
@@ -274,10 +311,16 @@ export function ListPage({
 						<EmptyState title={EMPTY_COPY[bucket].title} detail={EMPTY_COPY[bucket].detail} />
 					)
 				) : organization === 'project' && !archive ? (
-					groupedVisible.map(([slug, group], index) => (
-						<section className="item-project-group" aria-labelledby={`item-project-group-${index}`} key={slug}>
+					groupedVisible.map(({ projectSlug, items: group }, index) => (
+						<section
+							className="item-project-group"
+							aria-labelledby={`item-project-group-${index}`}
+							key={projectSlug === null ? 'drafts:unassigned' : `project:${projectSlug}`}
+						>
 							<div className="item-project-group-head" id={`item-project-group-${index}`}>
-								<ProjectColorText color={colorForProject(snapshot?.config, slug)}>{slug}</ProjectColorText>
+								<ProjectColorText color={colorForProject(snapshot?.config, projectSlug)}>
+									{projectLabel(projectSlug)}
+								</ProjectColorText>
 								<span>{group.length === 1 ? '1 item' : `${group.length} items`}</span>
 							</div>
 							{group.map(renderItemRow)}
@@ -315,7 +358,7 @@ const ItemRow = memo(function ItemRow({
 	onWorkManually: (id: string) => Promise<void>
 }) {
 	const verdict = item.assessment ? VERDICT_META[item.assessment.verdict] : null
-	const showQuickActions = item.status === 'ready' && item.workMode === null
+	const showQuickActions = item.status === 'ready' && item.workMode === null && item.projectSlug !== null
 	const planningStatus = planStatusLabel(item)
 	const word = statusWord(item.status)
 	// "Running" already implies the agent owns it — a second "Agent" marker is noise.
@@ -331,7 +374,7 @@ const ItemRow = memo(function ItemRow({
 				<div className="item-row-line2">
 					{word ? <span className={`item-row-status tone-${word.tone}`}>{word.label}</span> : null}
 					<ProjectColorText color={projectColor} className="item-row-project">
-						{item.projectSlug}
+						{projectLabel(item.projectSlug)}
 					</ProjectColorText>
 					{planningStatus ? (
 						<span className="item-row-mode mode-manual" title="Planning readiness">

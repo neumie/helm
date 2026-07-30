@@ -1,5 +1,6 @@
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
+import { isItemAssigned } from '../items/assignment.js'
 import { ItemCommands, isRetryableItem } from '../items/commands.js'
 import { itemExecutionMode } from '../items/execution.js'
 import type { ItemRecord } from '../items/schema.js'
@@ -25,6 +26,7 @@ type ItemAdmission =
 				| 'capacity'
 				| 'not_found'
 				| 'already_active'
+				| 'unassigned'
 				| 'not_startable'
 				| 'not_retryable'
 	  }
@@ -36,9 +38,10 @@ const RETRY_BACKOFF_MS = 30_000
 
 function isStartableItem(item: ItemRecord): boolean {
 	return (
-		item.status === 'ready' ||
-		item.status === 'inbox' ||
-		(item.status === 'active' && item.workMode === 'manual' && item.plannedAt != null)
+		isItemAssigned(item) &&
+		(item.status === 'ready' ||
+			item.status === 'inbox' ||
+			(item.status === 'active' && item.workMode === 'manual' && item.plannedAt != null))
 	)
 }
 
@@ -389,6 +392,7 @@ export class Drainer {
 
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item) return { ok: false, reason: 'not_found' }
+		if (!isItemAssigned(item)) return { ok: false, reason: 'unassigned' }
 		const persistedLane = itemExecutionMode(item)
 		if (expectedLane && persistedLane !== expectedLane) return { ok: false, reason: 'not_startable' }
 		// A planned Start can synchronously replace its persisted execution mode
@@ -411,6 +415,7 @@ export class Drainer {
 		if (this.startupAdmissionFenced) return { ok: false, reason: 'startup_fenced' }
 		const item = this.admissionDb().items.get(itemId)
 		if (!item) return { ok: false, reason: 'not_found' }
+		if (!isItemAssigned(item)) return { ok: false, reason: 'unassigned' }
 		return isRetryableItem(item) ? { ok: true } : { ok: false, reason: 'not_retryable' }
 	}
 
@@ -428,6 +433,8 @@ export class Drainer {
 				return 'Item not found'
 			case 'already_active':
 				return 'Item is already running'
+			case 'unassigned':
+				return 'Assign a project before starting this Item'
 			case 'not_startable':
 				return 'Item is not ready to start'
 			case 'not_retryable':

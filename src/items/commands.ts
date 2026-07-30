@@ -8,6 +8,7 @@ import type { SolverAgent } from '../solver/agent.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 import type { ErrorPhase } from '../types.js'
 import { sameFilesystemPath } from '../util/path-identity.js'
+import { canAssignItem, requireItemAssignment } from './assignment.js'
 import { itemExecutionMode } from './execution.js'
 import { RunContextConflictError, parseRunContextDraft } from './run-context.js'
 import type { RunContextDraft } from './run-context.js'
@@ -32,8 +33,8 @@ const createSolveItemInputSchema = z
 		// zombie window). Only valid with parallelism 1 (a shared id can't fan out).
 		id: z.string().min(1).optional(),
 		title: z.string().min(1),
-		projectSlug: z.string().min(1),
-		prompt: z.string().min(1),
+		projectSlug: z.string().min(1).nullable(),
+		prompt: z.string().min(1).optional(),
 		baseRef: z.string().min(1).optional(),
 		baseItemId: z.string().min(1).optional(),
 		spawner: z.string().min(1).optional(),
@@ -53,6 +54,15 @@ const createSolveItemsInputSchema = createSolveItemInputSchema
 	.strict()
 
 export type CreateSolveItemsInput = z.infer<typeof createSolveItemsInputSchema>
+
+const assignItemInputSchema = z
+	.object({
+		projectSlug: z.string().min(1),
+		title: z.string().trim().min(1).optional(),
+	})
+	.strict()
+
+export type AssignItemInput = z.infer<typeof assignItemInputSchema>
 
 const createLoopItemInputSchema = z
 	.object({
@@ -96,6 +106,7 @@ const RESERVED_EVENT_TYPES = new Set([
 	'item_recovered',
 	'item_reconciled',
 	'item_reopened',
+	'item_assigned',
 	'item_cancelled',
 	'item_failed',
 	'solve_completed',
@@ -156,12 +167,31 @@ export class ItemCommands {
 		const parsed = createSolveItemsInputSchema.safeParse(input)
 		if (!parsed.success) throw new Error(`Invalid solve Item input: ${parsed.error.message}`)
 
-		const project = this.config.projects.find(p => p.slug === parsed.data.projectSlug)
-		if (!project) throw new Error(`Unknown project slug: ${parsed.data.projectSlug}`)
-		const baseRef = this.resolveBaseRef(parsed.data, project.baseBranch)
-
 		const count = parsed.data.parallelism ?? 1
 		if (parsed.data.id && count > 1) throw new Error('A caller-supplied id is incompatible with parallelism > 1')
+		let baseRef: string | null
+		if (parsed.data.projectSlug === null) {
+			if (parsed.data.source || parsed.data.capturedContext) {
+				throw new Error('Captured or source-backed Items require a project')
+			}
+			if (parsed.data.baseRef || parsed.data.baseItemId) {
+				throw new Error('Assign a project before choosing a BaseRef or base Item')
+			}
+			if (parsed.data.spawner || parsed.data.solverAgent) {
+				throw new Error('Assign a project before choosing execution setup')
+			}
+			if (count > 1) throw new Error('Assign a project before creating parallel attempts')
+			baseRef = null
+		} else {
+			const projectSlug = parsed.data.projectSlug
+			const project = this.config.projects.find(p => p.slug === projectSlug)
+			if (!project) throw new Error(`Unknown project slug: ${projectSlug}`)
+			baseRef = this.resolveBaseRef(
+				{ projectSlug, baseRef: parsed.data.baseRef, baseItemId: parsed.data.baseItemId },
+				project.baseBranch,
+			)
+		}
+
 		const groupId = count > 1 ? randomUUID() : null
 		return Array.from({ length: count }, () =>
 			this.store.create({
@@ -177,11 +207,37 @@ export class ItemCommands {
 				groupId,
 				payload: {
 					kind: 'solve',
-					prompt: parsed.data.prompt,
+					...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
 					...(parsed.data.solverAgent ? { solverAgent: parsed.data.solverAgent } : {}),
 				},
 			}),
 		)
+	}
+
+	/** One-way transition from an unassigned capture draft to a configured Item. */
+	assignItem(id: string, input: AssignItemInput): ItemRecord {
+		const parsed = assignItemInputSchema.safeParse(input)
+		if (!parsed.success) throw new Error(`Invalid Item assignment: ${parsed.error.message}`)
+		const item = this.requireItem(id)
+		if (!canAssignItem(item)) throw new Error('Only an unassigned Item without workspace state can be assigned')
+		const project = this.config.projects.find(candidate => candidate.slug === parsed.data.projectSlug)
+		if (!project) throw new Error(`Unknown project slug: ${parsed.data.projectSlug}`)
+		const title = parsed.data.title ?? item.title
+		return this.store.transaction(() => {
+			const assigned = this.store.assignProject(id, {
+				projectSlug: project.slug,
+				baseRef: project.baseBranch,
+				title,
+				resetDisplayName: title !== item.title,
+			})
+			if (!assigned) throw new Error('Item was assigned by another request')
+			this.store.insertEvent(id, 'item_assigned', {
+				projectSlug: project.slug,
+				baseRef: project.baseBranch,
+				titleChanged: title !== item.title,
+			})
+			return assigned
+		})
 	}
 
 	setSolveItemAgent(id: string, solverAgent: SolverAgent): ItemRecord {
@@ -189,6 +245,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items can store a selected solver agent')
 		}
+		requireItemAssignment(item)
 		return this.store.updatePayload(id, { ...item.payload, solverAgent })
 	}
 
@@ -198,6 +255,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items can store a selected solver workspace')
 		}
+		requireItemAssignment(item)
 		const { solverWorkspace: _prev, ...payload } = item.payload
 		return this.store.updatePayload(id, solverWorkspace ? { ...payload, solverWorkspace } : payload)
 	}
@@ -207,6 +265,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items can select planned execution')
 		}
+		requireItemAssignment(item)
 		if (item.status !== 'active' || item.workMode !== 'manual' || !item.plannedAt || !item.worktreePath) {
 			throw new Error('Only an active planned Item can select its executor')
 		}
@@ -219,6 +278,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items can store a selected solver effort')
 		}
+		requireItemAssignment(item)
 		const { solverEffort: _prev, ...payload } = item.payload
 		return this.store.updatePayload(id, solverEffort ? { ...payload, solverEffort } : payload)
 	}
@@ -229,6 +289,7 @@ export class ItemCommands {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items can store a selected solver model')
 		}
+		requireItemAssignment(item)
 		const { solverModel: _prev, ...payload } = item.payload
 		return this.store.updatePayload(id, solverModel ? { ...payload, solverModel } : payload)
 	}
@@ -347,6 +408,7 @@ export class ItemCommands {
 
 	startItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		const plannedActive = item.status === 'active' && item.workMode === 'manual' && item.plannedAt != null
 		if (item.status !== 'ready' && item.status !== 'inbox' && !plannedActive) {
 			throw new Error('Only ready, Inbox, or active planned Items can be started')
@@ -366,6 +428,7 @@ export class ItemCommands {
 
 	retryItem(id: string): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (!isRetryableItem(item)) {
 			throw new Error('Only failed, cancelled, done, or review Items can be retried')
 		}
@@ -640,6 +703,7 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		// Background source-Item naming may finish after the user clicks Start.
 		// Once execution owns the Item, keep the deterministic identity the worker
 		// is about to record instead of racing in a late AI-derived branch.
@@ -671,6 +735,7 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (item.status !== 'running') {
 			throw new Error('Only running Items can record execution workspace identity')
 		}
@@ -682,6 +747,7 @@ export class ItemCommands {
 		fields: { worktreePath: string; branchName: string; planDirName: string },
 	): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (item.status === 'running') {
 			throw new Error('A running Item must record its workspace through the active run')
 		}
@@ -693,6 +759,7 @@ export class ItemCommands {
 
 	beginPlanning(id: string): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (!['inbox', 'ready', 'active'].includes(item.status)) {
 			throw new Error('Only Inbox, Queue, or active Items can begin planning')
 		}
@@ -750,6 +817,7 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (item.status !== 'active' || item.workMode !== 'manual') {
 			throw new Error('Only an active planning Item can record planning workspace identity')
 		}
@@ -798,6 +866,7 @@ export class ItemCommands {
 		},
 	): ItemRecord {
 		const item = this.requireItem(id)
+		requireItemAssignment(item)
 		if (item.status !== 'active' || item.workMode !== 'manual') {
 			throw new Error('Only an active planning Item can record a prepared plan')
 		}
@@ -904,6 +973,10 @@ export class ItemCommands {
 	setItemStatus(id: string, status: ItemRecord['status']): ItemRecord {
 		const item = this.requireItem(id)
 		if (status === item.status) return item
+		if (item.projectSlug === null && status !== 'ready' && status !== 'done' && status !== 'cancelled') {
+			throw new Error('Assign a project before moving this Item into a work lifecycle')
+		}
+		if (status === 'active') requireItemAssignment(item)
 		if (item.status === 'running') throw new Error('Cancel the running Item before changing its status')
 		if (status === 'running') throw new Error('Cannot manually set an Item to running')
 

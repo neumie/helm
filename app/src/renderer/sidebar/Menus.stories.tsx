@@ -1,7 +1,8 @@
 // Menus (§3.8), push-nav header (§3.10), and the pane-scoped sheet (§3.9).
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useState } from 'react'
-import { Btn, FieldLabel, GLYPH, IconBtn, MenuButton, PushHeader, Sheet, TextInput } from './ui'
+import { AssignItemSheet } from './AssignItemSheet'
+import { item } from './SidebarViews.stories'
+import { GLYPH, IconBtn, MenuButton, PushHeader } from './ui'
 
 const meta: Meta = {
 	title: 'Compositions/Menu and navigation',
@@ -72,34 +73,40 @@ export const PushNavHeaderLongTitle: Story = {
 	),
 }
 
-/** Pane-scoped modal sheet (§3.9): scrim + focus trap + Esc close. */
-export const NewItemSheet: Story = {
-	render: function SheetStory() {
-		const [open, setOpen] = useState(true)
-		const [title, setTitle] = useState('')
-		return (
-			<div style={{ position: 'relative', width: 360, height: 420 }}>
-				<Btn onClick={() => setOpen(true)}>New item</Btn>
-				{open && (
-					<Sheet
-						title="New item"
-						onClose={() => setOpen(false)}
-						footer={
-							<>
-								<Btn tone="ghost" onClick={() => setOpen(false)}>
-									Cancel
-								</Btn>
-								<Btn tone="primary">Create</Btn>
-							</>
-						}
-					>
-						<div className="sheet-field">
-							<FieldLabel htmlFor="sheet-title">Title</FieldLabel>
-							<TextInput id="sheet-title" value={title} onChange={setTitle} placeholder="What needs doing?" />
-						</div>
-					</Sheet>
-				)}
-			</div>
-		)
-	},
+const unassignedItem = item({
+	id: 'unassigned-story',
+	status: 'ready',
+	workMode: null,
+	projectSlug: null,
+	baseRef: null,
+	title: 'Untitled item',
+	displayName: null,
+	assessment: null,
+	source: null,
+	canAssignProject: true,
+	spawner: null,
+	branchName: null,
+	solverAgent: null,
+	solverModel: null,
+	solverEffort: null,
+	solverWorkspace: null,
+	runOutcome: null,
+	startedAt: null,
+	completedAt: null,
+	allowedActions: [{ id: 'cancel', label: 'Cancel', tone: 'danger' }],
+	links: { source: null, branch: null, pr: null },
+})
+
+/** Deferred repository assignment, mounting the production setup component. */
+export const FinishItemSetupSheet: Story = {
+	render: () => (
+		<div style={{ position: 'relative', width: 340, height: 420 }}>
+			<AssignItemSheet
+				item={unassignedItem}
+				projects={[{ slug: 'helm' }, { slug: 'client-care' }]}
+				onClose={noop}
+				onAssigned={noop}
+			/>
+		</div>
+	),
 }

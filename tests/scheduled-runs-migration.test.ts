@@ -16,7 +16,7 @@ test('scheduled migrations create profile-owned tables, active timeout uniquenes
 		const raw = new Database(path)
 		assert.equal(
 			(raw.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			30,
+			31,
 		)
 		for (const table of ['scheduled_schedules', 'scheduled_runs']) {
 			assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
@@ -67,7 +67,7 @@ test('migration 30 preserves populated v29 runs with null adoption state', () =>
 
 		const v29 = new Database(path)
 		v29.exec('ALTER TABLE scheduled_runs DROP COLUMN attention_adoption')
-		v29.prepare('DELETE FROM schema_version WHERE version = 30').run()
+		v29.prepare('DELETE FROM schema_version WHERE version >= 30').run()
 		v29.close()
 
 		const migrated = new DB(path, 'alpha')

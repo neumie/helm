@@ -13,6 +13,7 @@ import type { AppConfig, AssessmentVerdict, DashboardItem, DashboardTone, ItemSt
 
 export type Route =
 	| { kind: 'list' }
+	| { kind: 'new-item' }
 	| { kind: 'archive' }
 	| { kind: 'detail'; id: string }
 	| { kind: 'plan'; id: string }
@@ -27,7 +28,14 @@ export type Route =
 	| { kind: 'scheduled-runs' }
 	| { kind: 'scheduled-run-editor'; scheduleId?: string }
 
-export function colorForProject(config: AppConfig | null | undefined, slug: string): string | null {
+export const UNASSIGNED_PROJECT_LABEL = 'Unassigned'
+
+export function projectLabel(slug: string | null): string {
+	return slug ?? UNASSIGNED_PROJECT_LABEL
+}
+
+export function colorForProject(config: AppConfig | null | undefined, slug: string | null): string | null {
+	if (!slug) return null
 	return config?.projects?.find(project => project.slug === slug)?.color ?? config?.projectColors?.[slug] ?? null
 }
 
@@ -139,14 +147,19 @@ export function partitionWork(items: DashboardItem[]): WorkBuckets {
 	}
 }
 
-export function groupItemsByProject(items: DashboardItem[]): Array<[string, DashboardItem[]]> {
-	const groups = new Map<string, DashboardItem[]>()
+export interface ProjectItemGroup {
+	projectSlug: string | null
+	items: DashboardItem[]
+}
+
+export function groupItemsByProject(items: DashboardItem[]): ProjectItemGroup[] {
+	const groups = new Map<string | null, DashboardItem[]>()
 	for (const item of items) {
 		const group = groups.get(item.projectSlug)
 		if (group) group.push(item)
 		else groups.set(item.projectSlug, [item])
 	}
-	return [...groups]
+	return [...groups].map(([projectSlug, projectItems]) => ({ projectSlug, items: projectItems }))
 }
 
 /** Most meaningful timestamp to age a row by, per state (mirrors the web list). */

@@ -2,6 +2,7 @@ import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
+import { canAssignItem, isItemAssigned } from './assignment.js'
 import { itemExecutionMode } from './execution.js'
 import type { ItemExecutionMode } from './execution.js'
 import { emptyRunObservation } from './observation.js'
@@ -60,7 +61,8 @@ export interface DashboardItem {
 	status: ItemRecord['status']
 	/** Agent-owned, human-owned, or undecided while waiting in Queue. */
 	workMode: ItemRecord['workMode']
-	projectSlug: string
+	/** Null only for an unassigned manual solve waiting for repository assignment. */
+	projectSlug: string | null
 	title: string
 	/** Short AI-derived label; null until named. Clients show `displayName ?? title`. */
 	displayName: string | null
@@ -78,7 +80,9 @@ export interface DashboardItem {
 	 * rows leave it undefined (the button lives in the detail pane).
 	 */
 	canCreateSourceTask?: boolean
-	baseRef: string
+	/** Server-owned guard for the one-way prompt-draft assignment route. */
+	canAssignProject: boolean
+	baseRef: string | null
 	spawner: string | null
 	groupId: string | null
 	group: DashboardGroup | null
@@ -153,7 +157,9 @@ function actionsForStatus(
 	kind: ItemRecord['kind'],
 	hasSource: boolean,
 	planned: boolean,
+	assigned: boolean,
 ): DashboardAction[] {
+	if (!assigned) return status === 'ready' || status === 'inbox' || status === 'running' ? [ACTIONS.cancel] : []
 	switch (status) {
 		case 'inbox':
 			// Automatic/source tasks enter Inbox → approve/reject (the go/no-go gate).
@@ -291,6 +297,7 @@ export function toDashboardItem(
 		source: item.source,
 		captured: item.capturedContext != null,
 		runContextEdited: item.runContext != null,
+		canAssignProject: canAssignItem(item),
 		baseRef: item.baseRef,
 		spawner: item.spawner,
 		groupId: item.groupId,
@@ -315,7 +322,13 @@ export function toDashboardItem(
 			statusTone: STATUS_TONE[item.status],
 			pulse: item.status === 'running',
 		},
-		allowedActions: actionsForStatus(item.status, item.kind, item.source != null, item.plannedAt != null),
+		allowedActions: actionsForStatus(
+			item.status,
+			item.kind,
+			item.source != null,
+			item.plannedAt != null,
+			isItemAssigned(item),
+		),
 		runObservation,
 		links: linksForItem(item),
 		createdAt: item.createdAt,

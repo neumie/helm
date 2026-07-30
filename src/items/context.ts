@@ -93,8 +93,8 @@ function itemMetadata(item: ItemRecord): Record<string, string> {
 	const metadata: Record<string, string> = {
 		'Item ID': item.id,
 		Kind: item.kind,
-		BaseRef: item.baseRef,
 	}
+	if (item.baseRef) metadata.BaseRef = item.baseRef
 	if (item.source) {
 		metadata.Source = item.source.externalId
 		// Clickable source URL so the agent can link it when it ships the PR itself.
@@ -119,7 +119,7 @@ export function buildItemTaskContext(item: ItemRecord, sourceContext?: TaskConte
 			}
 			return {
 				title: item.title,
-				description: item.payload.prompt,
+				...(item.payload.prompt ? { description: item.payload.prompt } : {}),
 				metadata,
 			}
 		case 'loop':

@@ -122,10 +122,11 @@ export interface DashboardItem {
 	executionMode: 'solve' | 'loop'
 	status: string
 	workMode: 'agent' | 'manual' | null
-	projectSlug: string
+	projectSlug: string | null
 	title: string
 	source: { provider: string; externalId: string; url?: string } | null
-	baseRef: string
+	canAssignProject: boolean
+	baseRef: string | null
 	spawner: string | null
 	groupId: string | null
 	group: DashboardGroup | null

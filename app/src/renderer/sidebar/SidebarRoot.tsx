@@ -19,7 +19,7 @@ import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
-import { NewItemSheet } from './NewItemSheet'
+import { type NewItemDraft, NewItemPage } from './NewItemPage'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
@@ -142,12 +142,15 @@ function useNavStack() {
 export function SidebarRoot() {
 	const snapshot = useHelmSnapshot()
 	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
-	const [newItemOpen, setNewItemOpen] = useState(false)
 	const [selectedId, setSelectedId] = useState<string | null>(null)
+	const [newItemDraft, setNewItemDraft] = useState<NewItemDraft>({ title: '', prompt: '' })
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunSelectionDraft>>({})
 	const viewportRef = useRef<HTMLDivElement>(null)
-	const newItemOpenRef = useRef(newItemOpen)
-	newItemOpenRef.current = newItemOpen
+	const newItemOpenerRef = useRef<HTMLElement | null>(null)
+	const newItemSubmittingRef = useRef(false)
+	const setNewItemSubmitting = useCallback((submitting: boolean) => {
+		newItemSubmittingRef.current = submitting
+	}, [])
 
 	const settingsActive = nav.stack.some(
 		route =>
@@ -167,24 +170,32 @@ export function SidebarRoot() {
 		},
 		[push],
 	)
-
-	// helm://item/<id> (main's open-url → preload nav channel): jump straight
-	// to the item, replacing whatever was stacked — a deep link is an absolute
-	// destination, and repeated clicks must not pile up detail pages.
-	useEffect(
-		() =>
-			window.helm.nav.onOpenItem(id => {
-				setNewItemOpen(false)
-				setSelectedId(id)
-				reset([{ kind: 'list' }, { kind: 'detail', id }])
-			}),
+	const openNewItem = useCallback(() => {
+		const active = document.activeElement
+		newItemOpenerRef.current = active instanceof HTMLElement && active.matches('button') ? active : null
+		newItemSubmittingRef.current = false
+		setNewItemDraft({ title: '', prompt: '' })
+		push({ kind: 'new-item' })
+	}, [push])
+	const openItemAbsolute = useCallback(
+		(id: string) => {
+			newItemOpenerRef.current = null
+			setSelectedId(id)
+			reset([{ kind: 'list' }, { kind: 'detail', id }])
+		},
 		[reset],
 	)
 
+	// helm://item/<id> (main's open-url → preload nav channel): jump straight
+	// to the item, replacing whatever was stacked — a deep link is an absolute
+	// destination, and repeated clicks must not pile up detail pages. A newly
+	// captured Item uses the same replacement so Back never returns to its form.
+	useEffect(() => window.helm.nav.onOpenItem(openItemAbsolute), [openItemAbsolute])
+
 	// Two-finger swipe-back (§3.10 gestures): interactive edge-tracking pop.
 	// The controller lives outside React (inline transforms on the page
-	// elements); refs feed it the current stack/sheet state. The control ref
-	// lets the Go channel run the native/wheel single-owner check.
+	// elements); refs feed it the current stack state. The control ref lets the
+	// Go channel run the native/wheel single-owner check.
 	const swipeControl = useRef<SwipeBackControl | null>(null)
 	useEffect(() => {
 		const viewport = viewportRef.current
@@ -194,7 +205,7 @@ export function SidebarRoot() {
 				navRef.current.stack.length > 1 &&
 				navRef.current.phase === null &&
 				navRef.current.leaving === null &&
-				!newItemOpenRef.current,
+				!newItemSubmittingRef.current,
 			getPages: () => {
 				const pageEls = viewport.querySelectorAll<HTMLElement>(':scope > .nav-page')
 				const top = pageEls[pageEls.length - 1]
@@ -219,7 +230,7 @@ export function SidebarRoot() {
 	useEffect(
 		() =>
 			window.helm.nav.onGo(direction => {
-				if (newItemOpenRef.current) return
+				if (newItemSubmittingRef.current) return
 				if (direction === 'back') {
 					if (swipeControl.current?.interceptNativeNav()) return
 					pop()
@@ -232,8 +243,8 @@ export function SidebarRoot() {
 	useEffect(() => {
 		const onMouseUp = (event: MouseEvent) => {
 			if (event.button !== 3 && event.button !== 4) return
-			if (newItemOpenRef.current) return
 			event.preventDefault()
+			if (newItemSubmittingRef.current) return
 			if (event.button === 3) pop()
 			else goForward()
 		}
@@ -242,19 +253,21 @@ export function SidebarRoot() {
 	}, [pop, goForward])
 
 	// Esc = back (§4) — only when the event came from inside the pane, never
-	// from the terminal, and not from a typing context. Menus and the sheet
+	// from the terminal, and not from a typing context. Menus and sheets
 	// intercept Esc in the capture phase before this bubble listener runs.
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key !== 'Escape' || newItemOpen) return
+			if (event.key !== 'Escape' || newItemSubmittingRef.current) return
 			const target = event.target as HTMLElement | null
 			if (!target || !target.closest('#left')) return
-			if (target.matches('input, textarea, select')) return
+			const top = navRef.current.stack[navRef.current.stack.length - 1]
+			if (target.matches('input, textarea, select') && top?.kind !== 'new-item') return
+			event.preventDefault()
 			pop()
 		}
 		window.addEventListener('keydown', onKeyDown)
 		return () => window.removeEventListener('keydown', onKeyDown)
-	}, [pop, newItemOpen])
+	}, [pop, navRef])
 
 	// --ui-preview=<page>: auto-navigate once for the screenshot harness (list
 	// is the default state; the background* previews are terminal-strip-owned —
@@ -263,6 +276,11 @@ export function SidebarRoot() {
 	useEffect(() => {
 		if (previewDone.current) return
 		const preview: string | null = window.helm.uiPreview
+		if (preview === 'new-item') {
+			previewDone.current = true
+			openNewItem()
+			return
+		}
 		if (preview === 'settings') {
 			previewDone.current = true
 			push({ kind: 'settings' })
@@ -306,7 +324,7 @@ export function SidebarRoot() {
 			reset([{ kind: 'list' }, { kind: 'archive' }])
 			window.setTimeout(() => openItem(pick.id), PUSH_MS + 40)
 		} else if (pick) openItem(pick.id)
-	}, [snapshot, push, reset, openItem])
+	}, [snapshot, push, reset, openItem, openNewItem])
 
 	useEffect(() => {
 		// Focusing an element while its page is translated offscreen makes Chromium
@@ -316,9 +334,17 @@ export function SidebarRoot() {
 		const top = nav.stack[nav.stack.length - 1]
 		requestAnimationFrame(() => {
 			if (top?.kind === 'list' || top?.kind === 'archive') {
+				const opener = newItemOpenerRef.current
+				if (opener?.isConnected) {
+					opener.focus()
+					newItemOpenerRef.current = null
+					return
+				}
 				const selected = document.querySelector<HTMLElement>(`[data-item-id="${selectedId ?? ''}"]`)
 				selected?.focus()
 				if (!selected) document.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) button')?.focus()
+			} else if (top?.kind === 'new-item') {
+				document.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) #new-item-title')?.focus()
 			} else {
 				document.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) [data-page-heading]')?.focus()
 			}
@@ -340,7 +366,7 @@ export function SidebarRoot() {
 						snapshot={snapshot}
 						archive={route.kind === 'archive'}
 						onOpenItem={openItem}
-						onNewItem={() => setNewItemOpen(true)}
+						onNewItem={openNewItem}
 						onOpenArchive={() => push({ kind: 'archive' })}
 						onOpenProfiles={() => push({ kind: 'profiles' })}
 						onOpenSettings={() => push({ kind: 'settings' })}
@@ -352,6 +378,16 @@ export function SidebarRoot() {
 						}
 						onStartAgent={id => runCommand('Agent started', () => window.helm.daemon.itemAction(id, 'start', {}))}
 						onWorkManually={id => runCommand('Marked active', () => window.helm.daemon.setStatus(id, 'active'))}
+					/>
+				)
+			case 'new-item':
+				return (
+					<NewItemPage
+						draft={newItemDraft}
+						onDraftChange={setNewItemDraft}
+						onBack={pop}
+						onCreated={openItemAbsolute}
+						onSubmittingChange={setNewItemSubmitting}
 					/>
 				)
 			case 'detail':
@@ -437,12 +473,7 @@ export function SidebarRoot() {
 					if (nav.phase === 'push' && index === topIndex - 1) classes.push('nav-under-away')
 					if (nav.phase === 'pop' && index === topIndex) classes.push('nav-under-back')
 					return (
-						<div
-							key={key}
-							className={classes.join(' ')}
-							inert={!isTop || newItemOpen ? true : undefined}
-							aria-hidden={!isTop}
-						>
+						<div key={key} className={classes.join(' ')} inert={!isTop ? true : undefined} aria-hidden={!isTop}>
 							{route.kind === 'archive' ? (
 								<ArchiveFrame onBack={pop}>{renderRoute(route, isTop)}</ArchiveFrame>
 							) : (
@@ -461,7 +492,6 @@ export function SidebarRoot() {
 					</div>
 				)}
 			</div>
-			{newItemOpen && <NewItemSheet snapshot={snapshot} onClose={() => setNewItemOpen(false)} onCreated={openItem} />}
 		</div>
 	)
 }

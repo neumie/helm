@@ -6,7 +6,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { AssessmentVerdict, ItemStatus, WorkMode } from '../../shared-helm'
 import { ActivityIndicator } from '../activity-indicator'
-import { VERDICT_META, statusWord } from './model'
+import { VERDICT_META, projectLabel, statusWord } from './model'
 import { Chip, GLYPH, IconBtn, ProjectColorText } from './ui'
 
 const meta: Meta = {
@@ -28,7 +28,7 @@ interface RowFixture {
 	title: string
 	time: string
 	status: ItemStatus
-	projectSlug: string
+	projectSlug: string | null
 	projectColor: string | null
 	workMode?: WorkMode
 	verdict?: AssessmentVerdict
@@ -51,7 +51,7 @@ function StoryItemRow(fixture: RowFixture) {
 				<div className="item-row-line2">
 					{word ? <span className={`item-row-status tone-${word.tone}`}>{word.label}</span> : null}
 					<ProjectColorText color={fixture.projectColor} className="item-row-project">
-						{fixture.projectSlug}
+						{projectLabel(fixture.projectSlug)}
 					</ProjectColorText>
 					{fixture.planningLabel ? (
 						<span className="item-row-mode mode-manual" title="Planning readiness">
@@ -253,6 +253,10 @@ export const UnconfiguredProject: Story = {
 			projectColor={null}
 		/>
 	),
+}
+
+export const UnassignedDraft: Story = {
+	render: () => <StoryItemRow title="Untitled item" time="now" status="ready" projectSlug={null} projectColor={null} />,
 }
 
 /** Client-side project grouping: group head (slug + count) above its rows. */

@@ -240,12 +240,12 @@ export class ItemEnricher {
 	}
 
 	/** Task context for assessment/naming: frozen captured context first (ingested
-	 *  email etc.), else live provider context; degrades to canonical title plus
-	 *  the hand-authored prompt for manual solve Items. */
+	 *  email etc.), else live provider context; degrades to the canonical title
+	 *  plus the hand-authored prompt when a manual solve Item has one. */
 	private async fetchContext(item: ItemRecord): Promise<TaskContext> {
 		const fallback: TaskContext = {
 			title: item.title,
-			...(item.payload.kind === 'solve' ? { description: item.payload.prompt } : {}),
+			...(item.payload.kind === 'solve' && item.payload.prompt ? { description: item.payload.prompt } : {}),
 		}
 		if (item.capturedContext) return item.capturedContext
 		if (!item.source) return fallback

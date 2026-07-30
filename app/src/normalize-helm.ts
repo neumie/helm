@@ -12,6 +12,7 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 	const executionMode = item.executionMode ?? (item.kind === 'loop' ? 'loop' : 'solve')
 	const solverEffort = item.solverEffort ?? null
 	const runContextEdited = item.runContextEdited ?? false
+	const canAssignProject = item.canAssignProject ?? false
 	const emptyTickets = { total: 0, open: 0, readyForAgent: 0, readyForHuman: 0 }
 	const planStatus =
 		item.planStatus ??
@@ -32,6 +33,7 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 		item.executionMode === executionMode &&
 		item.solverEffort === solverEffort &&
 		item.runContextEdited === runContextEdited &&
+		item.canAssignProject === canAssignProject &&
 		item.planStatus === planStatus
 	)
 		return item
@@ -43,6 +45,7 @@ export function normalizeDashboardItem(item: DashboardItem): DashboardItem {
 		executionMode,
 		solverEffort,
 		runContextEdited,
+		canAssignProject,
 		planStatus,
 		card: legacyTriage
 			? {

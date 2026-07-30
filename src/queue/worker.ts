@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { dispatchSolveItem } from '../actions/dispatcher.js'
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
+import { isItemAssigned, requireItemAssignment } from '../items/assignment.js'
 import { ItemCommands } from '../items/commands.js'
 import { buildItemExecutionContext, prepareItemExecutionContext } from '../items/context.js'
 import { loopPayloadForItem } from '../items/execution.js'
@@ -107,7 +108,7 @@ async function failOrReconcileSolve(
 		const current = commands.getItem(itemId)
 		// branchName may be null (main-workspace run) — commits-ahead detection
 		// still applies; only the by-branch PR lookup degrades away.
-		if (current?.worktreePath) {
+		if (current?.worktreePath && isItemAssigned(current)) {
 			const { baseRef } = resolveItemWorkspace(current)
 			const work = await detectShippableWork(current.worktreePath, baseRef, current.branchName)
 			// A cancel can land while detection awaits (the Item is still `running`
@@ -167,11 +168,13 @@ export async function processSolveItem(
 	const pending = commands.getItem(itemId)
 	if (!pending) throw new Error(`Item ${itemId} not found in DB`)
 	if (pending.kind !== 'solve') throw new Error(`Item ${itemId} is ${pending.kind}, not solve`)
+	requireItemAssignment(pending)
 
 	const projectConfig = config.projects.find(p => p.slug === pending.projectSlug)
 	if (!projectConfig) throw new Error(`No project config for slug: ${pending.projectSlug}`)
 
 	const item = commands.startItem(itemId)
+	requireItemAssignment(item)
 
 	const logRoot = logsDir(item.profileId)
 	mkdirSync(logRoot, { recursive: true })
@@ -227,6 +230,7 @@ export async function processSolveItem(
 						deps: deps.workspaceName,
 					})
 
+		requireItemAssignment(named)
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
 		const preparedContext = prepareItemExecutionContext(named, taskContext)
 		if (mainMode) commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName: null })
@@ -351,6 +355,7 @@ export async function processLoopItem(
 	if (!item) throw new Error(`Item ${itemId} not found in DB`)
 	const storedLoopPayload = loopPayloadForItem(item)
 	if (!storedLoopPayload) throw new Error(`Item ${itemId} is not configured for loop execution`)
+	requireItemAssignment(item)
 	// Planned solve Items retain one stable execution descriptor, but the user may
 	// change agent/model/effort when retrying. Resolve those fields from the
 	// current Item at execution time so the first loop attempt cannot pin every

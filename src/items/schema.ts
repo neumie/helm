@@ -131,7 +131,9 @@ export const solveExecutionSchema = z.discriminatedUnion('mode', [
 export const solveItemPayloadSchema = z
 	.object({
 		kind: z.literal('solve'),
-		prompt: z.string().min(1),
+		// A capture draft may be title-only; the canonical Item title then carries
+		// the complete task context without synthesizing duplicate prompt text.
+		prompt: z.string().min(1).optional(),
 		solverAgent: solverAgentSchema.optional(),
 		// Per-item model override (extension quick-switch / action routes); free
 		// string passed to the agent CLI's --model, wins over config.solver.model.
@@ -156,53 +158,121 @@ export const loopItemPayloadSchema = loopOptionsSchema
 
 export const itemPayloadSchema = z.discriminatedUnion('kind', [solveItemPayloadSchema, loopItemPayloadSchema])
 
-export const itemRecordSchema = z.object({
-	id: z.string().min(1),
-	// Immutable tenant ownership. Display names never determine persistence paths.
-	profileId: z.string().min(1),
-	kind: itemKindSchema,
-	status: itemStatusSchema,
-	// Who owns/owned the work. Null while a Queue Item is still undecided.
-	workMode: workModeSchema.nullable(),
-	projectSlug: z.string().min(1),
-	title: z.string().min(1),
-	// Short AI-derived label for the dashboard; null until named. `title` stays canonical.
-	displayName: z.string().nullable(),
-	// Pre-solve intent triage; null until assessed. Advisory, never changes status.
-	assessment: assessmentSchema.nullable(),
-	source: itemSourceSchema.nullable(),
-	// Frozen TaskContext for an Item with no live provider (ingested email etc.):
-	// resolved in place of provider.getTaskContext. Null for provider-polled Items.
-	capturedContext: taskContextSchema.nullable(),
-	baseRef: z.string().min(1),
-	spawner: z.string().min(1).nullable(),
-	groupId: z.string().nullable(),
-	payload: itemPayloadSchema,
-	worktreePath: z.string().nullable(),
-	branchName: z.string().nullable(),
-	planDirName: z.string().nullable(),
-	almanacRunId: z.string().nullable(),
-	createdAt: z.string().min(1),
-	queuedAt: z.string().nullable(),
-	startedAt: z.string().nullable(),
-	completedAt: z.string().nullable(),
-	// Set once when an interactive planning session is prepared; the unambiguous
-	// "the user planned this" signal (worktree fields are also set by a normal run).
-	plannedAt: z.string().nullable(),
-	// Cached plan/spec/ticket readiness, maintained by PlanStatusWatcher.
-	planStatus: planStatusSchema.nullable(),
-	// Operator-authored narrative used by planning + execution; source remains immutable.
-	runContext: runContextDocumentSchema.nullable(),
-	runContextRevision: z.number().int().nonnegative(),
-	updatedAt: z.string().min(1),
-	errorMessage: z.string().nullable(),
-	errorPhase: z.string().nullable(),
-	resultSummary: z.string().nullable(),
-	solveInputSnapshot: z.string().nullable(),
-	prUrl: z.string().nullable(),
-	runOutcome: runOutcomeSchema.nullable(),
-	deployState: deployStateSchema.nullable(),
-})
+export const itemRecordSchema = z
+	.object({
+		id: z.string().min(1),
+		// Immutable tenant ownership. Display names never determine persistence paths.
+		profileId: z.string().min(1),
+		kind: itemKindSchema,
+		status: itemStatusSchema,
+		// Who owns/owned the work. Null while a Queue Item is still undecided.
+		workMode: workModeSchema.nullable(),
+		// A capture-only manual solve may wait in Queue before the operator assigns
+		// its repository. Project + BaseRef are one atomic assignment pair.
+		projectSlug: z.string().min(1).nullable(),
+		title: z.string().min(1),
+		// Short AI-derived label for the dashboard; null until named. `title` stays canonical.
+		displayName: z.string().nullable(),
+		// Pre-solve intent triage; null until assessed. Advisory, never changes status.
+		assessment: assessmentSchema.nullable(),
+		source: itemSourceSchema.nullable(),
+		// Frozen TaskContext for an Item with no live provider (ingested email etc.):
+		// resolved in place of provider.getTaskContext. Null for provider-polled Items.
+		capturedContext: taskContextSchema.nullable(),
+		baseRef: z.string().min(1).nullable(),
+		spawner: z.string().min(1).nullable(),
+		groupId: z.string().nullable(),
+		payload: itemPayloadSchema,
+		worktreePath: z.string().nullable(),
+		branchName: z.string().nullable(),
+		planDirName: z.string().nullable(),
+		almanacRunId: z.string().nullable(),
+		createdAt: z.string().min(1),
+		queuedAt: z.string().nullable(),
+		startedAt: z.string().nullable(),
+		completedAt: z.string().nullable(),
+		// Set once when an interactive planning session is prepared; the unambiguous
+		// "the user planned this" signal (worktree fields are also set by a normal run).
+		plannedAt: z.string().nullable(),
+		// Cached plan/spec/ticket readiness, maintained by PlanStatusWatcher.
+		planStatus: planStatusSchema.nullable(),
+		// Operator-authored narrative used by planning + execution; source remains immutable.
+		runContext: runContextDocumentSchema.nullable(),
+		runContextRevision: z.number().int().nonnegative(),
+		updatedAt: z.string().min(1),
+		errorMessage: z.string().nullable(),
+		errorPhase: z.string().nullable(),
+		resultSummary: z.string().nullable(),
+		solveInputSnapshot: z.string().nullable(),
+		prUrl: z.string().nullable(),
+		runOutcome: runOutcomeSchema.nullable(),
+		deployState: deployStateSchema.nullable(),
+	})
+	.superRefine((item, ctx) => {
+		const projectMissing = item.projectSlug === null
+		const baseMissing = item.baseRef === null
+		if (projectMissing !== baseMissing) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Project and BaseRef must be assigned together',
+				path: projectMissing ? ['projectSlug'] : ['baseRef'],
+			})
+		}
+		if (!projectMissing) return
+		if (item.kind !== 'solve' || item.payload.kind !== 'solve' || item.source || item.capturedContext || item.groupId) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'Only standalone source-less solve Items may be unassigned',
+				path: ['projectSlug'],
+			})
+		}
+		if (
+			item.worktreePath ||
+			item.branchName ||
+			item.planDirName ||
+			item.almanacRunId ||
+			item.plannedAt ||
+			item.planStatus ||
+			item.prUrl ||
+			item.deployState ||
+			item.startedAt ||
+			(item.errorMessage && item.status !== 'cancelled') ||
+			item.errorPhase ||
+			item.resultSummary ||
+			item.solveInputSnapshot ||
+			item.runOutcome
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'An unassigned Item cannot own workspace, run, or delivery state',
+				path: ['projectSlug'],
+			})
+		}
+		if (item.status !== 'ready' && item.status !== 'done' && item.status !== 'cancelled') {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'An unassigned Item must stay ready, done, or cancelled',
+				path: ['status'],
+			})
+		}
+		if (
+			item.workMode !== null ||
+			item.spawner !== null ||
+			item.assessment !== null ||
+			(item.payload.kind === 'solve' &&
+				(item.payload.solverAgent !== undefined ||
+					item.payload.solverModel !== undefined ||
+					item.payload.solverEffort !== undefined ||
+					item.payload.solverWorkspace !== undefined ||
+					item.payload.execution !== undefined))
+		) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: 'An unassigned Item cannot carry execution setup or assessment',
+				path: ['projectSlug'],
+			})
+		}
+	})
 
 export type ItemKind = z.infer<typeof itemKindSchema>
 export type ItemStatus = z.infer<typeof itemStatusSchema>

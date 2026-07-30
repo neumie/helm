@@ -355,17 +355,19 @@ export function Segmented<T extends string>({
 export function PushHeader({
 	title,
 	onBack,
+	backDisabled,
 	trailing,
 }: {
 	/** Names the content (§3.10): an item page passes the item's display name,
 	 *  never a type word ("Item"); single-line ellipsis handles length. */
 	title: string
 	onBack: () => void
+	backDisabled?: boolean
 	trailing?: ReactNode
 }) {
 	return (
 		<header className="push-header">
-			<IconBtn label="Back" onClick={onBack}>
+			<IconBtn label="Back" onClick={onBack} disabled={backDisabled}>
 				{GLYPH.back}
 			</IconBtn>
 			<h1 className="push-title" data-page-heading tabIndex={-1}>
@@ -691,6 +693,7 @@ export function TextInput({
 	placeholder,
 	type = 'text',
 	invalid,
+	className,
 }: {
 	id?: string
 	value: string
@@ -698,11 +701,12 @@ export function TextInput({
 	placeholder?: string
 	type?: 'text' | 'password' | 'number'
 	invalid?: boolean
+	className?: string
 }) {
 	return (
 		<input
 			id={id}
-			className={`input${invalid ? ' input-invalid' : ''}`}
+			className={`input${invalid ? ' input-invalid' : ''}${className ? ` ${className}` : ''}`}
 			type={type}
 			value={value}
 			placeholder={placeholder}
@@ -717,20 +721,26 @@ export function TextArea({
 	onChange,
 	placeholder,
 	rows = 5,
+	required,
+	className,
 }: {
 	id?: string
 	value: string
 	onChange: (value: string) => void
 	placeholder?: string
 	rows?: number
+	required?: boolean
+	className?: string
 }) {
 	return (
 		<textarea
 			id={id}
-			className="input textarea"
+			className={`input textarea${className ? ` ${className}` : ''}`}
 			value={value}
 			placeholder={placeholder}
 			rows={rows}
+			required={required}
+			aria-required={required || undefined}
 			onChange={event => onChange(event.target.value)}
 		/>
 	)
@@ -743,6 +753,7 @@ export function SelectInput({
 	options,
 	ariaLabel,
 	disabled,
+	required,
 }: {
 	id?: string
 	value: string
@@ -750,6 +761,7 @@ export function SelectInput({
 	options: Array<{ value: string; label: string }>
 	ariaLabel?: string
 	disabled?: boolean
+	required?: boolean
 }) {
 	return (
 		<select
@@ -758,6 +770,8 @@ export function SelectInput({
 			value={value}
 			aria-label={ariaLabel}
 			disabled={disabled}
+			required={required}
+			aria-required={required || undefined}
 			onChange={event => onChange(event.target.value)}
 		>
 			{options.map(option => (
@@ -789,17 +803,23 @@ export function Toggle({ label, value, onChange }: { label: string; value: boole
 
 export function Sheet({
 	title,
+	description,
 	onClose,
 	children,
 	footer,
 }: {
 	title: string
+	description?: ReactNode
 	onClose: () => void
 	children: ReactNode
 	footer: ReactNode
 }) {
-	const sheetRef = useRef<HTMLDivElement>(null)
+	const sheetRef = useRef<HTMLDialogElement>(null)
 	const openerRef = useRef<HTMLElement | null>(null)
+	const onCloseRef = useRef(onClose)
+	onCloseRef.current = onClose
+	const titleId = useId()
+	const descriptionId = useId()
 
 	// Esc closes (capture, so the push stack never also pops); focus is trapped
 	// inside the sheet; initial focus lands on the first field.
@@ -816,7 +836,7 @@ export function Sheet({
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === 'Escape') {
 				event.stopPropagation()
-				onClose()
+				onCloseRef.current()
 				return
 			}
 			if (event.key !== 'Tab') return
@@ -837,22 +857,38 @@ export function Sheet({
 			window.removeEventListener('keydown', onKeyDown, { capture: true })
 			openerRef.current?.focus()
 		}
-	}, [onClose])
+	}, [])
 
 	return (
 		<div className="sheet-layer">
 			<button type="button" className="sheet-scrim" aria-label="Close" onClick={onClose} tabIndex={-1} />
-			{/* biome-ignore lint/a11y/useSemanticElements: native <dialog>.showModal() escapes the pane — this sheet is pane-scoped (§3.9); role+trap+Esc keep it accessible */}
-			<div className="sheet" role="dialog" aria-modal="true" aria-label={title} ref={sheetRef}>
+			{/* Deliberately non-top-layer: `open` keeps this native dialog pane-scoped; Helm owns the scrim, trap, and Esc behavior. */}
+			<dialog
+				open
+				className="sheet"
+				aria-modal="true"
+				aria-labelledby={titleId}
+				aria-describedby={description ? descriptionId : undefined}
+				ref={sheetRef}
+			>
 				<div className="sheet-head">
-					<div className="sheet-title">{title}</div>
+					<div className="sheet-heading">
+						<h2 className="sheet-title" id={titleId}>
+							{title}
+						</h2>
+						{description ? (
+							<p className="sheet-description" id={descriptionId}>
+								{description}
+							</p>
+						) : null}
+					</div>
 					<IconBtn label="Close" onClick={onClose}>
 						{GLYPH.close}
 					</IconBtn>
 				</div>
 				<div className="sheet-body">{children}</div>
 				<div className="sheet-footer">{footer}</div>
-			</div>
+			</dialog>
 		</div>
 	)
 }

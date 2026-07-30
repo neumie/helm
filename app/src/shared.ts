@@ -265,6 +265,7 @@ export interface ExternalApi {
 
 /**
  * Screenshot-harness hook: `--ui-preview=<page>` auto-navigates the sidebar.
+ * `new-item` opens the pushed capture composer without mutating daemon state.
  * `background` parks one running + one exited session and opens the popover;
  * `background-strip` parks them but keeps the popover closed (strip + badge shot).
  * `background-park` parks the ACTIVE tab (after any --term-cmd output landed) so
@@ -285,6 +286,7 @@ export type UiPreview =
 	| 'project-list'
 	| 'queue-list'
 	| 'planned-list'
+	| 'new-item'
 	| 'detail'
 	| 'queue-detail'
 	| 'planned-detail'

@@ -1,4 +1,5 @@
 import type { HelmConfig } from '../config.js'
+import { requireItemAssignment } from '../items/assignment.js'
 import type { ItemCommands } from '../items/commands.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { TaskProvider } from '../providers/provider.js'
@@ -46,6 +47,8 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 	const item = args.commands.getItem(args.itemId)
 	if (!item) throw new Error(`Item ${args.itemId} not found`)
 	if (item.kind !== 'solve') throw new Error(`Item ${args.itemId} is ${item.kind}, not solve`)
+	requireItemAssignment(item)
+	const baseRef = item.baseRef
 
 	if (args.result.prUrl) {
 		log.info('dispatcher', `Agent already shipped PR: ${args.result.prUrl}`)
@@ -79,7 +82,7 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 		if (!branchName) {
 			throw new Error(`Item ${args.itemId} has no current branch to dispatch (main-workspace run, detached HEAD?)`)
 		}
-		const base = item.baseRef.replace(/^origin\//, '')
+		const base = baseRef.replace(/^origin\//, '')
 		if (branchName === base) {
 			throw new Error(
 				`Item ${args.itemId} is still on the base branch "${branchName}" — the agent did not create a task branch; refusing to push it`,
@@ -99,7 +102,7 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 	const prUrl = await sideEffects.createPr({
 		worktreePath,
 		branchName,
-		baseBranch: item.baseRef,
+		baseBranch: baseRef,
 		title: `${args.config.github.prPrefix} ${args.result.prTitle ?? item.title}`,
 		body: `${baseBody}${sourceLink}`,
 		draft: false,

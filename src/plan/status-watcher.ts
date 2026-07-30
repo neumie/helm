@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
+import { isItemAssigned } from '../items/assignment.js'
+import type { AssignedItem } from '../items/assignment.js'
 import { ItemCommands } from '../items/commands.js'
 import type { ItemRecord, PlanStatus, TicketQueueSummary } from '../items/schema.js'
 import type { ItemKeysetCursor } from '../items/store.js'
@@ -81,7 +83,7 @@ function sameStatus(left: PlanStatus | null, right: PlanStatus): boolean {
 
 interface PlanCandidate {
 	profileId: string
-	item: ItemRecord
+	item: AssignedItem
 	/** Original list key; plan-status writes change updatedAt. */
 	cursor: ItemKeysetCursor
 	commands: ItemCommands
@@ -192,7 +194,7 @@ export class PlanStatusWatcher {
 			)
 			queues.set(
 				profileId,
-				items.map(item => ({
+				items.filter(isItemAssigned).map(item => ({
 					profileId,
 					item,
 					cursor: { updatedAt: item.updatedAt, id: item.id },
@@ -291,7 +293,10 @@ export class PlanStatusWatcher {
 			}
 			if (!sameStatus(item.planStatus, next) && !aborted(signal)) {
 				await this.beforeWrite?.(item, signal)
-				if (!aborted(signal)) candidate.item = candidate.commands.recordPlanStatus(item.id, next)
+				if (!aborted(signal)) {
+					const updated = candidate.commands.recordPlanStatus(item.id, next)
+					if (isItemAssigned(updated)) candidate.item = updated
+				}
 			}
 			if (!aborted(signal)) candidate.completed = true
 		} catch (err) {

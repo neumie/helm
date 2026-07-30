@@ -7,6 +7,7 @@ import type { OneShotImage, OneShotOptions } from '../solver/one-shot.js'
 import { isCancellation } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { isSafePublicHttpUrl } from '../util/ssrf.js'
+import { isItemAssigned } from './assignment.js'
 import type { ItemCommands } from './commands.js'
 import { assessmentInputSchema } from './schema.js'
 import type { Assessment, ItemRecord } from './schema.js'
@@ -108,7 +109,7 @@ export function parseAssessment(raw: string): Omit<Assessment, 'assessedAt'> | n
  * timeout/parse miss) and is worth retrying.
  */
 export function itemWantsAssessment(item: ItemRecord, config: HelmConfig): boolean {
-	return config.solver.triage.enabled && !item.assessment
+	return isItemAssigned(item) && config.solver.triage.enabled && !item.assessment
 }
 
 export interface EnsureItemAssessmentDeps {
@@ -219,6 +220,10 @@ export async function ensureItemAssessment(params: EnsureItemAssessmentParams): 
 	const { commands, item, taskContext, config, signal, deps, force } = params
 	const feature = config.solver.triage
 	if (!force && !feature.enabled) return item
+	if (!isItemAssigned(item)) {
+		if (force) throw new Error('Assign a project before assessing this Item')
+		return item
+	}
 	if (!force && item.assessment) return item
 
 	const { agent, model } = resolveHelperInvocation(feature.agent, params.agent ?? config.solver.agent, feature.model)
@@ -231,7 +236,7 @@ export async function ensureItemAssessment(params: EnsureItemAssessmentParams): 
 		const raw = await run({
 			agent,
 			model,
-			prompt: buildAssessmentPrompt(taskContext, feature.prompt, item.projectSlug),
+			prompt: buildAssessmentPrompt(taskContext, feature.prompt, item.projectSlug ?? undefined),
 			images,
 			signal,
 		})

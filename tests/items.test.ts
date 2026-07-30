@@ -199,6 +199,58 @@ test('DB migration drops legacy Task + chat storage, keeps Items and poll_state'
 	}
 })
 
+test('DB migration permits unassigned Item identity without changing existing Items or events', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'helm-unassigned-migration-'))
+	const dbPath = join(dir, 'helm.db')
+	const legacy = new Database(dbPath)
+	try {
+		for (const migration of MIGRATIONS.filter(entry => entry.version <= 30)) {
+			legacy.exec(migration.sql)
+			legacy.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(migration.version)
+		}
+		legacy
+			.prepare(
+				`INSERT INTO items (id, kind, status, project_slug, title, base_ref, payload, created_at, updated_at)
+				 VALUES ('assigned-before-v31', 'solve', 'ready', 'helm', 'Existing', 'main', '{"kind":"solve","prompt":"x"}', ?, ?)`,
+			)
+			.run('2026-07-30T00:00:00.000Z', '2026-07-30T00:00:00.000Z')
+		legacy
+			.prepare('INSERT INTO item_events (profile_id, item_id, event_type, created_at) VALUES (?, ?, ?, ?)')
+			.run('work', 'assigned-before-v31', 'existing_event', '2026-07-30T00:00:01.000Z')
+	} finally {
+		legacy.close()
+	}
+
+	const db = new DB(dbPath)
+	try {
+		assert.equal(db.items.get('assigned-before-v31')?.projectSlug, 'helm')
+		assert.equal(db.items.get('assigned-before-v31')?.baseRef, 'main')
+		assert.equal(db.items.getEvents('assigned-before-v31')[0]?.eventType, 'existing_event')
+		const sqlite = new Database(dbPath)
+		try {
+			const columns = sqlite.prepare('PRAGMA table_info(items)').all() as Array<{ name: string; notnull: number }>
+			assert.equal(columns.find(column => column.name === 'project_slug')?.notnull, 0)
+			assert.equal(columns.find(column => column.name === 'base_ref')?.notnull, 0)
+			assert.throws(
+				() =>
+					sqlite
+						.prepare(
+							`INSERT INTO items (id, kind, status, project_slug, title, base_ref, payload, created_at, updated_at)
+							 VALUES ('invalid-half-assigned', 'solve', 'ready', NULL, 'Invalid', 'main', '{"kind":"solve","prompt":"x"}', ?, ?)`,
+						)
+						.run('2026-07-30T00:00:00.000Z', '2026-07-30T00:00:00.000Z'),
+				/CHECK constraint failed/,
+			)
+			assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(), [])
+		} finally {
+			sqlite.close()
+		}
+	} finally {
+		db.close()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
 test('DB migration renames legacy loop Items and removes harden Items', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'helm-remove-harden-'))
 	const dbPath = join(dir, 'helm.db')
@@ -1376,6 +1428,192 @@ test('server creates queued loop Items with PRD path and almanac flags', async (
 			iterations: 3,
 			noOversee: true,
 		})
+	})
+})
+
+test('server creates prompt-only drafts and requires one-way project assignment before work', async () => {
+	await withTempDb(async db => {
+		const enqueued: string[] = []
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			{ enqueue: (items: Array<{ id: string }>) => enqueued.push(...items.map(item => item.id)) } as never,
+		)
+
+		const createdResponse = await api.request('/items', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				kind: 'solve',
+				title: '   ',
+				prompt: 'Capture this now and choose the repository later.',
+			}),
+		})
+		assert.equal(createdResponse.status, 201)
+		const created = (await createdResponse.json()) as { data: ReturnType<typeof toDashboardItem> }
+		assert.equal(created.data.title, 'Untitled item')
+		assert.equal(created.data.projectSlug, null)
+		assert.equal(created.data.baseRef, null)
+		assert.equal(created.data.status, 'ready')
+		assert.equal(created.data.canAssignProject, true)
+		assert.deepEqual(
+			created.data.allowedActions.map(action => action.id),
+			['cancel'],
+		)
+		assert.deepEqual(enqueued, [created.data.id])
+		assert.throws(
+			() => new ItemCommands(db.items, config).setSolveItemAgent(created.data.id, 'codex'),
+			/Assign a project/,
+		)
+
+		const before = JSON.stringify(db.items.get(created.data.id))
+		const start = await api.request(`/items/${created.data.id}/start`, { method: 'POST' })
+		assert.equal(start.status, 400)
+		assert.match(((await start.json()) as { error: string }).error, /Assign a project/)
+		const plan = await api.request(`/items/${created.data.id}/plan`, { method: 'POST' })
+		assert.equal(plan.status, 400)
+		assert.match(((await plan.json()) as { error: string }).error, /Assign a project/)
+		const assess = await api.request(`/items/${created.data.id}/ai/assess`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}',
+		})
+		assert.equal(assess.status, 400)
+		assert.match(((await assess.json()) as { error: string }).error, /Assign a project/)
+		const reviewStatus = await api.request(`/items/${created.data.id}/status`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'review' }),
+		})
+		assert.equal(reviewStatus.status, 400)
+		assert.match(((await reviewStatus.json()) as { error: string }).error, /Assign a project/)
+		await assert.rejects(
+			processSolveItem(created.data.id, config, db, provider as never, {} as never),
+			/Assign a project/,
+		)
+		assert.equal(JSON.stringify(db.items.get(created.data.id)), before)
+
+		const planAtCreation = await api.request('/items', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kind: 'solve', prompt: 'Plan this later.', intent: 'plan' }),
+		})
+		assert.equal(planAtCreation.status, 400)
+		assert.equal(db.items.list().length, 1)
+
+		const doneResponse = await api.request(`/items/${created.data.id}/status`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'done' }),
+		})
+		assert.equal(doneResponse.status, 200)
+		const done = (await doneResponse.json()) as { data: ReturnType<typeof toDashboardItem> }
+		assert.equal(done.data.canAssignProject, false)
+		assert.equal(
+			(
+				await api.request(`/items/${created.data.id}/assign`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ projectSlug: 'helm' }),
+				})
+			).status,
+			400,
+		)
+		const readyResponse = await api.request(`/items/${created.data.id}/status`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ status: 'ready' }),
+		})
+		assert.equal(readyResponse.status, 200)
+		const ready = (await readyResponse.json()) as { data: ReturnType<typeof toDashboardItem> }
+		assert.equal(ready.data.canAssignProject, true)
+
+		const assignedResponse = await api.request(`/items/${created.data.id}/assign`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ projectSlug: 'helm', title: 'Configure draft Item' }),
+		})
+		assert.equal(assignedResponse.status, 200)
+		const assigned = (await assignedResponse.json()) as { data: ReturnType<typeof toDashboardItem> }
+		assert.equal(assigned.data.title, 'Configure draft Item')
+		assert.equal(assigned.data.projectSlug, 'helm')
+		assert.equal(assigned.data.baseRef, 'main')
+		assert.equal(assigned.data.canAssignProject, false)
+		assert.deepEqual(
+			assigned.data.allowedActions.map(action => action.id),
+			['start', 'cancel'],
+		)
+		assert.equal(db.items.getEvents(created.data.id).at(-1)?.eventType, 'item_assigned')
+		assert.equal(
+			(
+				await api.request(`/items/${created.data.id}/assign`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ projectSlug: 'helm' }),
+				})
+			).status,
+			400,
+		)
+	})
+})
+
+test('server creates title-only drafts without synthesizing a prompt', async () => {
+	await withTempDb(async db => {
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		const response = await api.request('/items', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kind: 'solve', title: 'Fix title-only capture', prompt: '   ' }),
+		})
+		assert.equal(response.status, 201)
+		const created = (await response.json()) as { data: ReturnType<typeof toDashboardItem> }
+		assert.equal(created.data.title, 'Fix title-only capture')
+		assert.equal(created.data.projectSlug, null)
+		const stored = db.items.get(created.data.id)
+		assert.ok(stored)
+		assert.deepEqual(stored.payload, { kind: 'solve' })
+		const context = buildItemExecutionContext(stored)
+		assert.equal(context.title, 'Fix title-only capture')
+		assert.equal(context.description, undefined)
+	})
+})
+
+test('server rejects unassigned drafts with neither a title nor a prompt', async () => {
+	await withTempDb(async db => {
+		const api = apiRoutes(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			provider as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		for (const body of [{ kind: 'solve' }, { kind: 'solve', title: '   ', prompt: '   ' }]) {
+			const response = await api.request('/items', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			})
+			assert.equal(response.status, 400)
+			assert.deepEqual(await response.json(), { error: 'Add a title or prompt' })
+		}
+		assert.deepEqual(db.items.list(), [])
 	})
 })
 
@@ -3418,7 +3656,7 @@ test('ItemStore validates payload kind and shape at the persistence seam', async
 					source: null,
 					baseRef: 'main',
 					groupId: null,
-					payload: { kind: 'solve' },
+					payload: { kind: 'solve', prompt: '' },
 				}),
 			/payload/i,
 		)

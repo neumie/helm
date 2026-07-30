@@ -9,7 +9,7 @@ import { DB } from '../src/db/client.js'
 import { itemWantsAssessment } from '../src/items/assess.js'
 import { ItemCommands } from '../src/items/commands.js'
 import { ItemEnricher } from '../src/items/enricher.js'
-import { itemWantsDisplayName, itemWantsWorkspaceName } from '../src/items/naming.js'
+import { ensureItemDisplayName, itemWantsDisplayName, itemWantsWorkspaceName } from '../src/items/naming.js'
 import type { ItemRecord } from '../src/items/schema.js'
 import type { OneShotOptions } from '../src/solver/one-shot.js'
 
@@ -36,6 +36,7 @@ function makeConfig(over?: { branchNaming?: boolean; displayName?: boolean; tria
 			modelGuidance: {},
 		},
 		spawner: { name: 'default' },
+		scheduledRuns: { enabled: false, systemTargetsEnabled: false },
 		server: { port: 7474, host: 'localhost' },
 		github: {
 			createPrs: false,
@@ -96,11 +97,43 @@ test('itemWantsDisplayName mirrors the skip gates', () => {
 	assert.equal(itemWantsDisplayName(fakeItem({ title: LONG_TITLE }), makeConfig({ displayName: false })), false)
 })
 
+test('display naming cannot publish output from a title changed during draft assignment', async () => {
+	await withTempDb(async db => {
+		const config = makeConfig()
+		const commands = new ItemCommands(db.items, config)
+		const draft = commands.createSolveItem({
+			title: LONG_TITLE,
+			projectSlug: null,
+			prompt: 'Captured before choosing a project.',
+		})
+		let resolveName: ((value: string) => void) | undefined
+		const naming = ensureItemDisplayName({
+			commands,
+			item: draft,
+			config,
+			deps: {
+				runOneShot: () =>
+					new Promise<string>(resolve => {
+						resolveName = resolve
+					}),
+			},
+		})
+
+		commands.assignItem(draft.id, { projectSlug: 'helm', title: 'Use the final assigned title' })
+		resolveName?.('Stale generated title')
+		const result = await naming
+		assert.equal(result.title, 'Use the final assigned title')
+		assert.equal(result.displayName, null)
+		assert.equal(commands.getItem(draft.id)?.displayName, null)
+	})
+})
+
 test('itemWantsAssessment mirrors the skip gates', () => {
 	const cfg = makeConfig()
 	assert.equal(itemWantsAssessment(fakeItem({}), cfg), true)
 	assert.equal(itemWantsAssessment(fakeItem({ assessment: { verdict: 'clear' } as never }), cfg), false)
 	assert.equal(itemWantsAssessment(fakeItem({}), makeConfig({ triage: false })), false)
+	assert.equal(itemWantsAssessment(fakeItem({ projectSlug: null, baseRef: null, source: null }), cfg), false)
 })
 
 test('itemWantsWorkspaceName only prewarms runnable worktree solve Items', () => {
@@ -116,6 +149,10 @@ test('itemWantsWorkspaceName only prewarms runnable worktree solve Items', () =>
 		false,
 	)
 	assert.equal(itemWantsWorkspaceName(fakeItem({}), makeConfig({ branchNaming: false })), false)
+	assert.equal(
+		itemWantsWorkspaceName(fakeItem({ projectSlug: null, baseRef: null, source: null, status: 'ready' }), cfg),
+		false,
+	)
 })
 
 test('startup backfill includes source and manual Queue branches but excludes running Items', () =>

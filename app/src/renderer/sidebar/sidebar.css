@@ -1510,11 +1510,105 @@ button.banner {
 .textarea {
 	height: auto;
 	min-height: 64px;
-	padding: 6px 10px;
+	padding: 8px 10px;
 	line-height: 1.5;
 	resize: vertical;
-	font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-family: inherit;
+	font-size: calc(12px * var(--ui-scale));
+}
+
+/* New-item capture is a pushed editorial composer, not a form card (§3.10).
+ * The page itself supplies the boundary, so its two writing controls stay flat. */
+.new-item-composer {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.new-item-editor {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	padding: 24px 16px 16px;
+}
+.new-item-title-field {
+	flex: none;
+}
+.input.new-item-title-input {
+	height: 36px;
+	padding: 0 0 8px;
+	border: 0;
+	border-bottom: 1px solid var(--hairline);
+	border-radius: 0;
+	background: transparent;
+	font-size: calc(17px * var(--ui-scale));
+	font-weight: 600;
+}
+.input.new-item-title-input:hover {
+	border-color: var(--hairline-strong);
+}
+.input.new-item-title-input:focus {
+	border-color: var(--accent);
+}
+.new-item-prompt-field {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.new-item-prompt-field::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -8px;
+	width: 2px;
+	border-radius: 1px;
+	background: transparent;
+	pointer-events: none;
+	transition: background-color 140ms ease-out;
+}
+.new-item-prompt-field:focus-within::before {
+	background: var(--accent);
+}
+.new-item-prompt-field .field-label {
+	margin-bottom: 8px;
+}
+.input.textarea.new-item-prompt-input {
+	flex: 1;
+	height: 100%;
+	min-height: 160px;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	font-size: calc(13px * var(--ui-scale));
+	line-height: 1.5;
+	resize: none;
+}
+.new-item-actions {
+	justify-content: space-between;
+}
+.new-item-setup-note {
+	flex: 1;
+	min-width: 0;
+	margin: 0;
 	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-2);
+}
+.new-item-setup-note span {
+	display: block;
+}
+.new-item-requirement {
+	color: var(--text-1);
+}
+.new-item-actions .btn {
+	flex: none;
 }
 
 .select {
@@ -1626,7 +1720,7 @@ button.banner {
 	inset: 0;
 	z-index: 60;
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	justify-content: center;
 	padding: 16px;
 }
@@ -1634,6 +1728,7 @@ button.banner {
 .sheet-scrim {
 	position: absolute;
 	inset: 0;
+	z-index: 0;
 	border: none;
 	background: var(--scrim);
 	cursor: default;
@@ -1647,16 +1742,19 @@ button.banner {
 
 .sheet {
 	position: relative;
+	z-index: 1;
 	width: 100%;
 	max-width: 400px;
 	max-height: 100%;
 	display: flex;
 	flex-direction: column;
-	margin-top: 24px;
-	padding: 16px;
+	overflow: hidden;
+	margin: 0;
+	padding: 0;
 	border: 1px solid var(--hairline);
-	border-radius: 8px;
+	border-radius: var(--radius-lg);
 	background: var(--chrome);
+	color: inherit;
 	box-shadow: var(--shadow-2);
 	animation: sheet-in 150ms ease-out;
 }
@@ -1668,16 +1766,29 @@ button.banner {
 }
 
 .sheet-head {
+	flex: none;
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
-	gap: 8px;
-	margin-bottom: 12px;
+	gap: 12px;
+	padding: 16px;
+}
+.sheet-heading {
+	min-width: 0;
+	padding-top: 2px;
 }
 .sheet-title {
-	font-size: calc(13px * var(--ui-scale));
+	margin: 0;
+	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
+	line-height: 1.3;
 	color: var(--text-0);
+}
+.sheet-description {
+	margin: 4px 0 0;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.5;
+	color: var(--text-1);
 }
 
 .sheet-body {
@@ -1687,7 +1798,8 @@ button.banner {
 	scrollbar-gutter: stable;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 16px;
+	padding: 0 16px 16px;
 }
 
 .sheet-field {
@@ -1695,10 +1807,13 @@ button.banner {
 }
 
 .sheet-footer {
+	flex: none;
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
-	margin-top: 16px;
+	padding: 12px 16px;
+	border-top: 1px solid var(--hairline);
+	background: var(--pane);
 }
 
 /* ---------- interactive swipe-back (§3.10 gestures) ---------- */

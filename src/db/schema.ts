@@ -499,4 +499,81 @@ ALTER TABLE scheduled_runs ADD COLUMN pending_terminal_intent TEXT
 ALTER TABLE scheduled_runs ADD COLUMN attention_adoption TEXT;
 `,
 	},
+	{
+		// Capture-only manual solve Items may wait in Queue without choosing a
+		// repository. Project + BaseRef stay null together until the guarded
+		// assignment command resolves the configured project's default branch.
+		// SQLite cannot drop NOT NULL in place, so rebuild the parent table while
+		// preserving item_events' stable FK target and every existing index.
+		version: 31,
+		sql: `
+PRAGMA foreign_keys = OFF;
+BEGIN;
+CREATE TABLE items_v31 (
+  id                         TEXT PRIMARY KEY,
+  kind                       TEXT NOT NULL,
+  status                     TEXT NOT NULL,
+  project_slug               TEXT,
+  title                      TEXT NOT NULL,
+  source                     TEXT,
+  base_ref                   TEXT,
+  group_id                   TEXT,
+  payload                    TEXT NOT NULL,
+  worktree_path              TEXT,
+  branch_name                TEXT,
+  plan_dir_name              TEXT,
+  almanac_run_id             TEXT,
+  created_at                 TEXT NOT NULL,
+  queued_at                  TEXT,
+  started_at                 TEXT,
+  completed_at               TEXT,
+  updated_at                 TEXT NOT NULL,
+  error_message              TEXT,
+  error_phase                TEXT,
+  result_summary             TEXT,
+  pr_url                     TEXT,
+  solve_input_snapshot       TEXT,
+  spawner                    TEXT,
+  run_outcome                TEXT,
+  deploy_state               TEXT,
+  display_name               TEXT,
+  assessment                 TEXT,
+  captured_context           TEXT,
+  planned_at                 TEXT,
+  work_mode                  TEXT,
+  plan_status                TEXT,
+  run_context                TEXT,
+  run_context_revision       INTEGER NOT NULL DEFAULT 0,
+  profile_id                 TEXT NOT NULL DEFAULT 'work',
+  CHECK ((project_slug IS NULL) = (base_ref IS NULL))
+);
+INSERT INTO items_v31 (
+  id, kind, status, project_slug, title, source, base_ref, group_id, payload,
+  worktree_path, branch_name, plan_dir_name, almanac_run_id, created_at,
+  queued_at, started_at, completed_at, updated_at, error_message, error_phase,
+  result_summary, pr_url, solve_input_snapshot, spawner, run_outcome,
+  deploy_state, display_name, assessment, captured_context, planned_at,
+  work_mode, plan_status, run_context, run_context_revision, profile_id
+)
+SELECT
+  id, kind, status, project_slug, title, source, base_ref, group_id, payload,
+  worktree_path, branch_name, plan_dir_name, almanac_run_id, created_at,
+  queued_at, started_at, completed_at, updated_at, error_message, error_phase,
+  result_summary, pr_url, solve_input_snapshot, spawner, run_outcome,
+  deploy_state, display_name, assessment, captured_context, planned_at,
+  work_mode, plan_status, run_context, run_context_revision, profile_id
+FROM items;
+DROP TABLE items;
+ALTER TABLE items_v31 RENAME TO items;
+CREATE INDEX idx_items_status_queued_at ON items(status, queued_at);
+CREATE INDEX idx_items_kind ON items(kind);
+CREATE INDEX idx_items_project ON items(project_slug);
+CREATE INDEX idx_items_group ON items(group_id);
+CREATE INDEX idx_items_profile_status_updated ON items(profile_id, status, updated_at DESC);
+CREATE INDEX idx_items_profile_queue ON items(profile_id, status, work_mode, queued_at, created_at);
+CREATE INDEX idx_items_profile_group ON items(profile_id, group_id, created_at);
+COMMIT;
+PRAGMA foreign_keys = ON;
+`,
+	},
 ]

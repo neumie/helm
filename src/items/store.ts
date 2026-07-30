@@ -18,11 +18,11 @@ export interface CreateItemInput {
 	id?: string
 	kind: ItemKind
 	status: ItemStatus
-	projectSlug: string
+	projectSlug: string | null
 	title: string
 	source?: ItemSource | null
 	capturedContext?: TaskContext | null
-	baseRef: string
+	baseRef: string | null
 	spawner?: string | null
 	groupId?: string | null
 	payload: unknown
@@ -265,6 +265,38 @@ export class ItemStore {
 		return updated
 	}
 
+	/** Atomically fills the repository identity of an unassigned capture draft. The
+	 * guarded WHERE is the persistence backstop against concurrent/repeated assignment. */
+	assignProject(
+		id: string,
+		fields: { projectSlug: string; baseRef: string; title: string; resetDisplayName: boolean },
+	): ItemRecord | null {
+		const current = this.get(id)
+		if (!current) throw new Error(`Item not found: ${id}`)
+		const updatedAt = new Date().toISOString()
+		const candidate = {
+			...current,
+			projectSlug: fields.projectSlug,
+			baseRef: fields.baseRef,
+			title: fields.title,
+			displayName: fields.resetDisplayName ? null : current.displayName,
+			assessment: null,
+			updatedAt,
+		}
+		validateItem(candidate)
+		const result = this.db
+			.prepare(
+				`UPDATE items
+				 SET project_slug = ?, base_ref = ?, title = ?, display_name = ?, assessment = NULL, updated_at = ?
+				 WHERE profile_id = ? AND id = ? AND project_slug IS NULL AND base_ref IS NULL`,
+			)
+			.run(fields.projectSlug, fields.baseRef, fields.title, candidate.displayName, updatedAt, this.profileId, id)
+		if (result.changes === 0) return null
+		const updated = this.get(id)
+		if (!updated) throw new Error(`Item not found: ${id}`)
+		return updated
+	}
+
 	// Re-points a captured Item at a real provider task (source-task promotion).
 	// Dedicated JSON writer (like deploy_state) — `source` is deliberately absent
 	// from ITEM_UPDATE_COLUMNS so nothing else can rewrite an Item's provenance.
@@ -411,6 +443,7 @@ export class ItemStore {
 			.prepare(
 				`SELECT * FROM items
 				 WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent'
+				   AND project_slug IS NOT NULL AND base_ref IS NOT NULL
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
@@ -423,6 +456,7 @@ export class ItemStore {
 			.prepare(
 				`SELECT * FROM items
 				 WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent' AND kind = ?
+				   AND project_slug IS NOT NULL AND base_ref IS NOT NULL
 				 ORDER BY queued_at ASC, created_at ASC
 				 LIMIT ?`,
 			)
@@ -511,7 +545,7 @@ export class ItemStore {
 	countQueuedByKind(kind: ItemKind): number {
 		const row = this.db
 			.prepare(
-				"SELECT COUNT(*) AS count FROM items WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent' AND kind = ?",
+				"SELECT COUNT(*) AS count FROM items WHERE profile_id = ? AND status = 'ready' AND work_mode = 'agent' AND kind = ? AND project_slug IS NOT NULL AND base_ref IS NOT NULL",
 			)
 			.get(this.profileId, kind) as { count: number }
 		return row.count

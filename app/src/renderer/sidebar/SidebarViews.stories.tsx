@@ -1,19 +1,28 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import type { ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import type { DashboardItem, HelmSnapshot, ScheduledScheduleInput } from '../../shared-helm'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
+import { NewItemPage } from './NewItemPage'
 import { ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, type SettingsStore } from './SettingsPage'
+import { SidebarRoot } from './SidebarRoot'
 import { TerminalSettingsPage } from './TerminalSettingsPage'
 
 const NOW = '2026-07-21T12:00:00.000Z'
 
-function item(overrides: Partial<DashboardItem>): DashboardItem {
+type StoryWindow = Window & {
+	__createdItemBody?: unknown
+	__createItemCalls?: number
+	__deferCreateItem?: boolean
+	__resolveCreateItem?: () => void
+}
+
+export function item(overrides: Partial<DashboardItem>): DashboardItem {
 	const status = overrides.status ?? 'review'
 	return {
 		id: overrides.id ?? `item-${status}`,
@@ -28,6 +37,7 @@ function item(overrides: Partial<DashboardItem>): DashboardItem {
 		source: { provider: 'Contember', externalId: 'task-story', url: 'https://example.test/tasks/story' },
 		captured: false,
 		runContextEdited: false,
+		canAssignProject: false,
 		baseRef: 'main',
 		spawner: 'okena',
 		groupId: null,
@@ -181,7 +191,25 @@ const reviewItem = item({
 	},
 })
 
+const unassignedItem = item({
+	id: 'unassigned-story',
+	status: 'ready',
+	workMode: null,
+	projectSlug: null,
+	title: 'Untitled item',
+	displayName: null,
+	source: null,
+	canAssignProject: true,
+	baseRef: null,
+	branchName: null,
+	startedAt: null,
+	completedAt: null,
+	runOutcome: null,
+	allowedActions: [{ id: 'cancel', label: 'Cancel', tone: 'danger' }],
+})
+
 const listItems = [
+	unassignedItem,
 	reviewItem,
 	item({
 		id: 'failed-story',
@@ -250,7 +278,7 @@ const listItems = [
 const snapshot: HelmSnapshot = {
 	reachable: true,
 	status: {
-		protocolVersion: 31,
+		protocolVersion: 37,
 		buildId: 'storybook',
 		uptime: 3600,
 		profile: {
@@ -327,8 +355,22 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 				}),
 			},
 			daemon: {
+				createItem: async (body: unknown) => {
+					const storyWindow = window as StoryWindow
+					storyWindow.__createdItemBody = body
+					storyWindow.__createItemCalls = (storyWindow.__createItemCalls ?? 0) + 1
+					if (storyWindow.__deferCreateItem) {
+						await new Promise<void>(resolve => {
+							storyWindow.__resolveCreateItem = resolve
+						})
+					}
+					return { data: { id: 'draft-created' } }
+				},
+				subscribe: async () => snapshot,
+				onSnapshot: () => noOp,
 				item: async () => ({ data: detail }),
 				itemAction: async () => ({ data: detail }),
+				assignItem: async () => ({ data: detail }),
 				setStatus: async () => ({ data: detail }),
 				openOkena: async () => ({ error: 'Preview only' }),
 				plan: async () => ({ error: 'Preview only' }),
@@ -456,6 +498,10 @@ function installBridge(detail: DashboardItem = reviewItem): void {
 				}),
 				openScheduledTerminal: async () => ({ data: { status: 'completed' } }),
 			},
+			nav: {
+				onOpenItem: () => noOp,
+				onGo: () => noOp,
+			},
 			config: { getDaemonUrl: () => 'http://localhost:7474' },
 			appearance: { listThemes: async () => [] },
 			profiles: {
@@ -487,6 +533,24 @@ function Frame({ children, width = 340 }: { children: ReactNode; width?: number 
 				<div className="nav-viewport">
 					<div className="nav-page">{children}</div>
 				</div>
+			</div>
+		</div>
+	)
+}
+
+function SidebarRootFrame() {
+	return (
+		<div
+			style={{
+				minHeight: '100vh',
+				padding: 24,
+				display: 'grid',
+				placeItems: 'start center',
+				background: 'var(--chrome)',
+			}}
+		>
+			<div id="left" style={{ width: 340, height: 800, boxShadow: 'var(--shadow-2)' }}>
+				<SidebarRoot />
 			</div>
 		</div>
 	)
@@ -589,6 +653,22 @@ export const WorkList: Story = {
 	),
 }
 
+export const NewItem: Story = {
+	render: function NewItemStory() {
+		const [draft, setDraft] = useState({ title: '', prompt: '' })
+		return (
+			<Frame>
+				<NewItemPage draft={draft} onDraftChange={setDraft} onBack={noOp} onCreated={noOp} />
+			</Frame>
+		)
+	},
+}
+
+/** Production push-stack integration: opener focus, Escape, and create admission. */
+export const NewItemNavigation: Story = {
+	render: () => <SidebarRootFrame />,
+}
+
 /** Deterministic 40% two-finger Task→Detail gesture: compositor layers, parallax,
  * scrim, and pane edges without running Electron. */
 export const SwipeBackMidGesture: Story = {
@@ -610,6 +690,26 @@ export const ItemDetail: Story = {
 			/>
 		</Frame>
 	),
+}
+
+export const UnassignedItemDetail: Story = {
+	render: () => {
+		installBridge(unassignedItem)
+		return (
+			<Frame>
+				<DetailPage
+					id={unassignedItem.id}
+					snapshot={{ ...snapshot, items: [unassignedItem, ...(snapshot.items ?? [])] }}
+					draft={{}}
+					onDraftChange={noOp}
+					active
+					onBack={noOp}
+					onOpenPlan={noOp}
+					onOpenTask={noOp}
+				/>
+			</Frame>
+		)
+	},
 }
 
 export const TaskReading: Story = {

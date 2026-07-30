@@ -21,6 +21,7 @@ import { buildConfigDocument, parseConfigUpdate, parseConfigWithFallback } from 
 import type { HelmConfig } from '../../config.js'
 import type { DB } from '../../db/client.js'
 import { ensureItemAssessment } from '../../items/assess.js'
+import { UNTITLED_ITEM_TITLE, isItemAssigned, requireItemAssignment } from '../../items/assignment.js'
 import { ItemCommands } from '../../items/commands.js'
 import { buildItemTaskContext, resolveItemSourceContext } from '../../items/context.js'
 import { canCreateSourceTask, toDashboardItemWithSiblings, toDashboardItems } from '../../items/contract.js'
@@ -407,7 +408,8 @@ export function apiRoutes(
 
 	function admissionFailure(c: Context, admission: ReturnType<Drainer['canProcessOneItem']>) {
 		if (admission.ok) return null
-		const lifecycleFailure = admission.reason === 'not_startable' || admission.reason === 'not_retryable'
+		const lifecycleFailure =
+			admission.reason === 'not_startable' || admission.reason === 'not_retryable' || admission.reason === 'unassigned'
 		const message =
 			admission.reason === 'stopped'
 				? 'Drainer is stopped — new runs are temporarily unavailable'
@@ -417,11 +419,13 @@ export function apiRoutes(
 						? 'Daemon is restoring scheduled capacity — new runs are temporarily unavailable'
 						: admission.reason === 'capacity'
 							? 'The execution lane is at capacity — try again when a run finishes'
-							: admission.reason === 'already_active'
-								? 'Item is already running'
-								: admission.reason === 'not_retryable'
-									? 'Only failed, cancelled, done, or review Items can be retried'
-									: 'Item is not ready to start'
+							: admission.reason === 'unassigned'
+								? 'Assign a project before starting this Item'
+								: admission.reason === 'already_active'
+									? 'Item is already running'
+									: admission.reason === 'not_retryable'
+										? 'Only failed, cancelled, done, or review Items can be retried'
+										: 'Item is not ready to start'
 		return c.json({ error: message }, lifecycleFailure ? 400 : 409)
 	}
 
@@ -1169,23 +1173,26 @@ export function apiRoutes(
 		// refs and the Okena registry, but never creates/focuses a workspace. The
 		// POST recomputes at click time, so this advisory value can safely go stale.
 		let okenaWorkspace: OkenaWorkspacePreview | null = null
-		const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
-		if (projectConfig) {
-			const identity = resolveItemWorkspace(item)
-			const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
-			try {
-				okenaWorkspace = await inspectItemOkenaWorkspace({
-					projectConfig,
-					workspaceMode,
-					baseRef: identity.baseRef,
-					branchName: identity.branchName,
-					existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
-				})
-			} catch (err) {
-				log.warn(
-					'api',
-					`Failed to inspect Okena workspace for Item ${item.id}: ${err instanceof Error ? err.message : err}`,
-				)
+		if (isItemAssigned(item)) {
+			requireItemAssignment(item)
+			const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
+			if (projectConfig) {
+				const identity = resolveItemWorkspace(item)
+				const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+				try {
+					okenaWorkspace = await inspectItemOkenaWorkspace({
+						projectConfig,
+						workspaceMode,
+						baseRef: identity.baseRef,
+						branchName: identity.branchName,
+						existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
+					})
+				} catch (err) {
+					log.warn(
+						'api',
+						`Failed to inspect Okena workspace for Item ${item.id}: ${err instanceof Error ? err.message : err}`,
+					)
+				}
 			}
 		}
 		return c.json({ data: { ...(await dashboardItem(item)), sourceTask, planArtifacts, okenaWorkspace } })
@@ -1287,9 +1294,9 @@ export function apiRoutes(
 				z
 					.object({
 						kind: z.literal('solve'),
-						title: z.string().min(1),
-						projectSlug: z.string().min(1),
-						prompt: z.string().min(1),
+						title: z.string().trim().optional(),
+						projectSlug: z.string().min(1).nullable().optional(),
+						prompt: z.string().trim().optional(),
 						baseRef: z.string().min(1).optional(),
 						baseItemId: z.string().min(1).optional(),
 						spawner: spawnerNameSchema.optional(),
@@ -1319,17 +1326,23 @@ export function apiRoutes(
 			])
 			.safeParse(body)
 		if (!parsed.success) return c.json({ error: 'Only valid solve or loop Item creation is supported' }, 400)
+		if (parsed.data.kind === 'solve' && !parsed.data.title && !parsed.data.prompt) {
+			return c.json({ error: 'Add a title or prompt' }, 400)
+		}
 		if (parsed.data.spawner && !spawnerInstalled(parsed.data.spawner)) {
 			return c.json({ error: `Spawner adapter not installed: ${parsed.data.spawner}` }, 400)
+		}
+		if (parsed.data.kind === 'solve' && parsed.data.projectSlug == null && parsed.data.intent === 'plan') {
+			return c.json({ error: 'Assign a project before planning this Item' }, 400)
 		}
 		try {
 			const items = (() => {
 				switch (parsed.data.kind) {
 					case 'solve':
 						return itemCommands.createSolveItems({
-							title: parsed.data.title,
-							projectSlug: parsed.data.projectSlug,
-							prompt: parsed.data.prompt,
+							title: parsed.data.title || UNTITLED_ITEM_TITLE,
+							projectSlug: parsed.data.projectSlug ?? null,
+							...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
 							baseRef: parsed.data.baseRef,
 							baseItemId: parsed.data.baseItemId,
 							spawner: parsed.data.spawner,
@@ -1359,6 +1372,22 @@ export function apiRoutes(
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			return c.json({ error: msg }, 400)
+		}
+	})
+
+	api.post('/items/:id/assign', async c => {
+		const parsed = z
+			.object({ projectSlug: z.string().min(1), title: z.string().trim().min(1).optional() })
+			.strict()
+			.safeParse(await c.req.json().catch(() => null))
+		if (!parsed.success) return c.json({ error: 'Choose a valid project' }, 400)
+		if (!itemCommands.getItem(c.req.param('id'))) return c.json({ error: 'Item not found' }, 404)
+		try {
+			const item = itemCommands.assignItem(c.req.param('id'), parsed.data)
+			enricher.enqueue([item])
+			return c.json({ data: await dashboardItem(item) })
+		} catch (err) {
+			return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
 		}
 	})
 
@@ -1397,9 +1426,12 @@ export function apiRoutes(
 		if (typeof provider.createTask !== 'function') {
 			return c.json({ error: `The ${provider.name} provider does not support task creation` }, 400)
 		}
+		if (!isItemAssigned(item)) return c.json({ error: 'Assign a project before creating a source task' }, 400)
+		requireItemAssignment(item)
+		const projectSlug = item.projectSlug
 		try {
 			const created = await provider.createTask({
-				projectSlug: item.projectSlug,
+				projectSlug,
 				title: item.title,
 				description: item.capturedContext.description,
 			})
@@ -1436,6 +1468,7 @@ export function apiRoutes(
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		if (item.kind !== 'solve' && item.kind !== 'loop')
 			return c.json({ error: 'Only solve or loop Items can be started by this drainer' }, 400)
+		if (!isItemAssigned(item)) return c.json({ error: 'Assign a project before starting this Item' }, 400)
 		const projectedItem = projectSolveSelection(item, selection)
 		const projectedSolvePayload = projectedItem.payload.kind === 'solve' ? projectedItem.payload : undefined
 		const plannedActive = item.status === 'active' && item.workMode === 'manual' && item.plannedAt != null
@@ -1520,6 +1553,7 @@ export function apiRoutes(
 		try {
 			const current = itemCommands.getItem(c.req.param('id'))
 			if (!current) return c.json({ error: 'Item not found' }, 404)
+			if (!isItemAssigned(current)) return c.json({ error: 'Assign a project before retrying this Item' }, 400)
 			// Retry lifecycle validation is admission-only until this point; do not
 			// persist a new selection on a status the command would reject.
 			const admission = queue.canRetryItem(current.id)
@@ -1578,6 +1612,8 @@ export function apiRoutes(
 	api.post('/items/:id/open-okena', async c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Item not found' }, 404)
+		if (!isItemAssigned(item)) return c.json({ error: 'Assign a project before opening a workspace' }, 400)
+		requireItemAssignment(item)
 		const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
 		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
 
@@ -1667,12 +1703,17 @@ export function apiRoutes(
 		const agent = selection.solverAgent ?? config.solver.agent
 		const signal = c.req.raw.signal
 
+		if (pass === 'assess' && !isItemAssigned(item)) {
+			return c.json({ error: 'Assign a project before assessing this Item' }, 400)
+		}
+
 		// branch-name has structural guards: solve-only, not running, and only before
 		// a worktree exists — renaming the branch afterward would orphan the worktree.
 		// Main-workspace Items never carry a pre-created branch (the agent branches
 		// itself in the checkout), so there is nothing to name.
 		if (pass === 'branch-name') {
 			if (item.kind !== 'solve') return c.json({ error: 'Branch naming applies to solve Items only' }, 400)
+			if (!isItemAssigned(item)) return c.json({ error: 'Assign a project before naming its branch' }, 400)
 			if (item.status === 'running') return c.json({ error: 'Cannot rename a running Item' }, 400)
 			if (item.worktreePath) {
 				return c.json({ error: 'Cannot rename the branch once a worktree exists — re-plan instead' }, 400)
