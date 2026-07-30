@@ -1,12 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { link, lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const MANAGED_MARKER = '// HELM_MANAGED_PI_AGENT_STATUS_V1'
 const FILE_NAME = 'helm-agent-status.ts'
 
-export type PiAgentStatusIntegrationStatus = 'installed' | 'outdated' | 'not-installed' | 'conflict' | 'unavailable'
+export type PiAgentStatusIntegrationStatus =
+	| 'installed'
+	| 'external'
+	| 'outdated'
+	| 'not-installed'
+	| 'conflict'
+	| 'unavailable'
 
 export interface PiAgentStatusIntegrationSnapshot {
 	status: PiAgentStatusIntegrationStatus
@@ -20,6 +26,7 @@ export interface PiAgentStatusIntegrationOptions {
 }
 
 export const PI_AGENT_STATUS_EXTENSION_SOURCE = `${MANAGED_MARKER}
+// Standalone package: https://github.com/neumie/pi-agent-status
 // Installed and updated by Helm through Settings → Agent integrations.
 // This extension is inert outside ordinary Helm terminal sessions.
 // @ts-nocheck
@@ -135,11 +142,17 @@ function integrationPath(options: PiAgentStatusIntegrationOptions = {}): {
 	agentDir: string
 	extensionsDir: string
 	file: string
+	settings: string
 } {
 	const env = options.env ?? process.env
 	const agentDir = env.PI_CODING_AGENT_DIR || join(options.home ?? homedir(), '.pi', 'agent')
 	const extensionsDir = join(agentDir, 'extensions')
-	return { agentDir, extensionsDir, file: join(extensionsDir, FILE_NAME) }
+	return {
+		agentDir,
+		extensionsDir,
+		file: join(extensionsDir, FILE_NAME),
+		settings: join(agentDir, 'settings.json'),
+	}
 }
 
 async function safeDirectory(path: string): Promise<'directory' | 'missing' | 'unsafe'> {
@@ -148,6 +161,30 @@ async function safeDirectory(path: string): Promise<'directory' | 'missing' | 'u
 		return stat.isDirectory() && !stat.isSymbolicLink() ? 'directory' : 'unsafe'
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unsafe'
+	}
+}
+
+const MAX_SETTINGS_BYTES = 512 * 1024
+
+function isAgentStatusPackage(value: unknown): boolean {
+	if (typeof value !== 'string') return false
+	const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '')
+	return (
+		normalized === 'git:github.com/neumie/pi-agent-status' ||
+		normalized === 'npm:@neumie/pi-agent-status' ||
+		normalized.endsWith('/pi-agent-status') ||
+		normalized.endsWith('/pi-agent-status.git')
+	)
+}
+
+async function hasExternalPackage(settingsPath: string): Promise<boolean> {
+	try {
+		const metadata = await stat(settingsPath)
+		if (!metadata.isFile() || metadata.size > MAX_SETTINGS_BYTES) return false
+		const parsed = JSON.parse(await readFile(settingsPath, 'utf8')) as { packages?: unknown }
+		return Array.isArray(parsed.packages) && parsed.packages.some(isAgentStatusPackage)
+	} catch {
+		return false
 	}
 }
 
@@ -178,12 +215,20 @@ async function inspect(options: PiAgentStatusIntegrationOptions = {}): Promise<P
 			? { status: 'installed', path: paths.file, message: 'Precise Pi terminal status is installed.' }
 			: { status: 'outdated', path: paths.file, message: 'A Helm-managed Pi status integration update is available.' }
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			if (await hasExternalPackage(paths.settings)) {
+				return {
+					status: 'external',
+					path: paths.file,
+					message: 'Precise Pi terminal status is managed by a Pi package.',
+				}
+			}
 			return {
 				status: 'not-installed',
 				path: paths.file,
 				message: 'Install the Pi integration for precise terminal status.',
 			}
+		}
 		return { status: 'unavailable', path: paths.file, message: 'Could not inspect the Pi status integration.' }
 	}
 }
@@ -201,7 +246,7 @@ export class PiAgentStatusIntegration {
 
 	async install(): Promise<PiAgentStatusIntegrationSnapshot> {
 		const before = await inspect(this.#options)
-		if (before.status === 'installed') return before
+		if (before.status === 'installed' || before.status === 'external') return before
 		if (before.status === 'conflict' || before.status === 'unavailable') throw new Error(before.message)
 		const paths = integrationPath(this.#options)
 		if ((await safeDirectory(paths.extensionsDir)) === 'missing') await mkdir(paths.extensionsDir, { mode: 0o700 })
@@ -238,6 +283,7 @@ export class PiAgentStatusIntegration {
 
 	async remove(): Promise<PiAgentStatusIntegrationSnapshot> {
 		const before = await inspect(this.#options)
+		if (before.status === 'external') return before
 		if (before.status === 'conflict') throw new Error(before.message)
 		if (before.status === 'installed' || before.status === 'outdated') {
 			const current = await inspect(this.#options)

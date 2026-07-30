@@ -28,6 +28,20 @@ test('managed Pi integration installs atomically with private mode and is idempo
 	assert.equal((await lstat(installed.path)).mode & 0o777, 0o600)
 })
 
+test('standalone Pi package is detected but never modified by Helm', async () => {
+	const { home, integration } = await fixture()
+	await writeFile(
+		join(home, '.pi', 'agent', 'settings.json'),
+		JSON.stringify({ packages: ['/Users/example/code/pi-agent-status'] }),
+	)
+	const external = await integration.status()
+	assert.equal(external.status, 'external')
+	assert.match(external.message, /managed by a Pi package/)
+	assert.equal((await integration.install()).status, 'external')
+	assert.equal((await integration.remove()).status, 'external')
+	await assert.rejects(() => lstat(external.path), { code: 'ENOENT' })
+})
+
 test('managed Pi integration updates only its own marked file', async () => {
 	const { integration } = await fixture()
 	const path = (await integration.status()).path

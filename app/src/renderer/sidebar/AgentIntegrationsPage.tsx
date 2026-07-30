@@ -7,6 +7,8 @@ function integrationStatusLabel(status: PiAgentStatusIntegrationSnapshot['status
 	switch (status) {
 		case 'installed':
 			return 'Installed'
+		case 'external':
+			return 'Managed by Pi'
 		case 'outdated':
 			return 'Update available'
 		case 'not-installed':
@@ -108,6 +110,7 @@ export function AgentIntegrationsPage({ onBack }: { onBack: () => void }) {
 								{integration.message}
 							</Banner>
 						)}
+						{integration.status === 'external' && <p className="meta-text">{integration.message}</p>}
 						<p className="meta-text">
 							Reports Pi lifecycle and active tool names only inside new ordinary Helm terminals. It never reports
 							prompts, commands, paths, or tool results.

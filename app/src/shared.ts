@@ -245,7 +245,13 @@ export interface TerminalPreferencesApi {
 	resetDefaultCwd(): Promise<TerminalPreferencesSnapshot>
 }
 
-export type PiAgentStatusIntegrationStatus = 'installed' | 'outdated' | 'not-installed' | 'conflict' | 'unavailable'
+export type PiAgentStatusIntegrationStatus =
+	| 'installed'
+	| 'external'
+	| 'outdated'
+	| 'not-installed'
+	| 'conflict'
+	| 'unavailable'
 
 export interface PiAgentStatusIntegrationSnapshot {
 	status: PiAgentStatusIntegrationStatus

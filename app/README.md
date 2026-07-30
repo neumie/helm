@@ -40,11 +40,15 @@ Shortcuts: cmd+t new terminal tab, cmd+w close tab, cmd+alt+left previous termin
 
 ## Precise Pi terminal status
 
-Settings → Agent integrations can install Helm's managed Pi extension at
-`~/.pi/agent/extensions/helm-agent-status.ts`. Installation is explicit: Helm
-never overwrites an unmanaged file or symlink, writes the extension atomically
-with private permissions, and enables it only for newly created ordinary Helm
-terminals. Existing/restored dtach sessions retain their original environment.
+The canonical integration is the standalone
+[`pi-agent-status`](https://github.com/neumie/pi-agent-status) package. Settings →
+Agent integrations recognizes package ownership as **Managed by Pi** and exposes
+no mutation controls. For users without the package, Settings can explicitly
+install Helm's embedded fallback at `~/.pi/agent/extensions/helm-agent-status.ts`;
+Helm never overwrites an unmanaged file or symlink and writes its fallback
+atomically with private permissions. Either form is enabled only for newly
+created ordinary Helm terminals. Existing/restored dtach sessions retain their
+original environment.
 
 The extension reports only semantic lifecycle and bounded display metadata
 (thinking, a sanitized tool name/count, or a fixed waiting reason) through a

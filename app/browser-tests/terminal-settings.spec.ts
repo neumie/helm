@@ -19,3 +19,11 @@ test('agent integrations require an explicit Pi status installation', async ({ p
 	await expect(page.getByText('Installed', { exact: true })).toBeVisible()
 	await expect(page.getByRole('button', { name: 'Remove integration' })).toBeVisible()
 })
+
+test('externally managed Pi status packages expose no Helm mutation controls', async ({ page }) => {
+	await page.goto('/iframe.html?id=views-sidebar--agent-integrations-external&viewMode=story')
+	await expect(page.getByText('Managed by Pi', { exact: true })).toBeVisible()
+	await expect(page.getByText('Precise Pi terminal status is managed by a Pi package.')).toBeVisible()
+	await expect(page.getByRole('button', { name: 'Install' })).toHaveCount(0)
+	await expect(page.getByRole('button', { name: 'Remove integration' })).toHaveCount(0)
+})
