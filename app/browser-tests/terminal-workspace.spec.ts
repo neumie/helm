@@ -84,6 +84,45 @@ test('a synchronized redraw stays covered until xterm paints it through a resize
 	await expect(liveRows).toContainText('replacement frame')
 })
 
+test('a Pi full-history redraw preserves a user-scrolled viewport', async ({ page }) => {
+	await page.locator('#bg-toggle').click()
+	const liveRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
+	const scrollbar = page.locator('.term-holder.active .term-scrollbar')
+	const history = Array.from({ length: 200 }, (_, index) => `history-${String(index).padStart(3, '0')}`)
+	const visibleRows = () => liveRows.locator(':scope > div').allTextContents()
+
+	await page.evaluate(lines => window.__helmWorkspaceFixture?.emitData('shell', lines.join('\r\n')), history)
+	await expect(liveRows).toContainText('history-199')
+	await expect(scrollbar).toBeVisible()
+	const scrollbarBox = await scrollbar.boundingBox()
+	if (!scrollbarBox) throw new Error('terminal scrollbar must be measurable')
+	await scrollbar.click({ position: { x: 6, y: Math.floor(scrollbarBox.height * 0.45) } })
+	await expect
+		.poll(async () => {
+			const rows = await visibleRows()
+			return rows[0] ?? ''
+		})
+		.not.toBe('')
+	const rowsBefore = await visibleRows()
+	expect(rowsBefore[0]).toMatch(/^history-\d{3}$/)
+	expect(rowsBefore.at(-1)).toMatch(/^history-\d{3}$/)
+
+	await page.evaluate(() => window.__helmWorkspaceFixture?.emitData('shell', '\r\nhistory-200'))
+	await expect.poll(visibleRows).toEqual(rowsBefore)
+
+	const redraw = `\u001b[?2026h\u001b[2J\u001b[H\u001b[3J${[...history, 'history-200', 'history-201'].join('\r\n')}\u001b[?2026l`
+	await page.evaluate(data => window.__helmWorkspaceFixture?.emitData('shell', data), redraw)
+	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(0)
+	await expect.poll(visibleRows).toEqual(rowsBefore)
+
+	await scrollbar.click({ position: { x: 6, y: Math.max(0, scrollbarBox.height - 2) } })
+	await expect.poll(async () => (await visibleRows()).at(-1)?.trimEnd()).toBe('history-201')
+	const tailRedraw = `\u001b[?2026h\u001b[2J\u001b[H\u001b[3J${[...history, 'history-200', 'history-201', 'history-202'].join('\r\n')}\u001b[?2026l`
+	await page.evaluate(data => window.__helmWorkspaceFixture?.emitData('shell', data), tailRedraw)
+	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(0)
+	await expect.poll(async () => (await visibleRows()).at(-1)?.trimEnd()).toBe('history-202')
+})
+
 test('Open keeps a Background terminal parked while Restore moves it into the strip', async ({ page }) => {
 	const open = page.getByRole('button', { name: /Open tests and keep in background/i })
 	await open.click()

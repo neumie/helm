@@ -141,6 +141,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		 *  redraw parses; snapshot/scrollbar work also waits for this to clear. */
 		frameOutputPending: boolean
 		frameFreeze: HTMLElement | null
+		/** Absolute normal-buffer line the user was viewing before Pi cleared and
+		 *  rebuilt scrollback; null while following the live tail. Retained until
+		 *  the final unfreeze so overlapping synchronized redraws reuse it. */
+		frameViewportAnchor: number | null
 		outputGuard: SynchronizedOutputGuard
 		/** Compatibility projection persisted for restore/transfer; never output-inferred. */
 		agentRunning: boolean
@@ -1082,6 +1086,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function freezeTerminalFrame(tab: Tab): void {
+		const buffer = tab.term.buffer.active
+		tab.frameViewportAnchor = buffer.type === 'normal' && buffer.viewportY < buffer.baseY ? buffer.viewportY : null
 		tab.frameOutputPending = true
 		if (tab.frameFreeze) return
 		const screen = tab.holder.querySelector('.xterm-screen')
@@ -1104,7 +1110,16 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tab.frameFreeze = freeze
 	}
 
+	function restoreTerminalViewport(tab: Tab): void {
+		if (tab.frameViewportAnchor === null) return
+		const buffer = tab.term.buffer.active
+		if (buffer.type !== 'normal') return
+		tab.term.scrollToLine(Math.min(tab.frameViewportAnchor, buffer.baseY))
+	}
+
 	function unfreezeTerminalFrame(tab: Tab): void {
+		restoreTerminalViewport(tab)
+		tab.frameViewportAnchor = null
 		tab.frameOutputPending = false
 		tab.frameFreeze?.remove()
 		tab.frameFreeze = null
@@ -1112,6 +1127,11 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function scheduleTerminalFrameRelease(tab: Tab, release: () => void): () => void {
+		// Pi's full redraw clears scrollback before replaying it. xterm clamps a
+		// user-scrolled viewport to line 0 during that temporary shrink and does not
+		// move it back as history regrows. Restore the captured absolute line before
+		// requesting the replacement paint; a tail-following viewport has no anchor.
+		restoreTerminalViewport(tab)
 		const lastRow = Math.max(0, tab.term.rows - 1)
 		if (!tab.frameFreeze || !tab.holder.classList.contains('active')) {
 			release()
@@ -3053,6 +3073,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			dirty: false,
 			frameOutputPending: false,
 			frameFreeze: null,
+			frameViewportAnchor: null,
 			outputGuard,
 			agentRunning: opts?.agentRunning === true,
 			legacyAgentRunning: opts?.agentRunning === true,
