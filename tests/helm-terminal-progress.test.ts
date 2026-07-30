@@ -90,9 +90,8 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	const waitingPriority = renderer.indexOf("member.agentVariant === 'waiting'")
 	const completionPriority = renderer.indexOf("member.agentVariant === 'attention'", waitingPriority)
 	const progressPriority = renderer.indexOf("member.agentVariant === 'progress'", completionPriority)
-	const idlePriority = renderer.indexOf("member.agentVariant === 'idle'", progressPriority)
 	assert.ok(waitingPriority >= 0 && waitingPriority < completionPriority)
-	assert.ok(completionPriority < progressPriority && progressPriority < idlePriority)
+	assert.ok(completionPriority < progressPriority)
 	assert.match(preload, /'running-tab'/)
 	assert.match(preload, /'attention-tab'/)
 	assert.match(component, /ACTIVITY_INDICATOR_DOTS = ACTIVITY_DOT_IDS\.length/)
@@ -113,14 +112,9 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.match(progressStyles, /opacity:\s*1/)
 	assert.doesNotMatch(progressStyles, /var\(--accent\)/)
 	assert.match(component, /variant\?: ActivityIndicatorVariant/)
-	assert.match(component, /'progress' \| 'attention' \| 'idle' \| 'waiting'/)
+	assert.match(component, /'progress' \| 'attention' \| 'waiting'/)
 	assert.match(story, /variant: 'attention'/)
-	assert.match(story, /variant: 'idle'/)
 	assert.match(story, /variant: 'waiting'/)
-	assert.match(
-		css,
-		/\.activity-indicator\[data-variant=["']idle["']\][^{]*\.activity-indicator-dot\s*\{[^}]*animation:\s*none[^}]*opacity:\s*0\.45/s,
-	)
 	assert.match(
 		css,
 		/\.activity-indicator\[data-variant=["']waiting["']\][^{]*\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--warn\)[^}]*activity-indicator-waiting[^}]*0\.9s/s,

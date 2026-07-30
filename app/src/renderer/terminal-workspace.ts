@@ -376,8 +376,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const representative =
 			section.members.find(member => member.agentVariant === 'waiting') ??
 			section.members.find(member => member.agentVariant === 'attention') ??
-			section.members.find(member => member.agentVariant === 'progress') ??
-			section.members.find(member => member.agentVariant === 'idle')
+			section.members.find(member => member.agentVariant === 'progress')
 		return representative?.agentVariant && representative.agentLabel
 			? { variant: representative.agentVariant, label: representative.agentLabel }
 			: null
@@ -497,9 +496,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 						? 'attention'
 						: tab.agentRunning
 							? 'progress'
-							: tabAgentIdle(tab)
-								? 'idle'
-								: null,
+							: null,
 				agentLabel: tabAgentBlocked(tab)
 					? tab.agentStatus.label
 					: tab.agentAttention
@@ -594,14 +591,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		return tab.agentStatus.structured && tab.agentStatus.state === 'blocked'
 	}
 
-	function tabAgentIdle(tab: Tab): boolean {
-		return tab.agentStatus.structured && tab.agentStatus.state === 'idle'
-	}
-
 	function tabAgentVariant(tab: Tab): ActivityIndicatorVariant {
 		if (tabAgentBlocked(tab)) return 'waiting'
 		if (tab.agentAttention) return 'attention'
-		if (tabAgentIdle(tab)) return 'idle'
 		return 'progress'
 	}
 
@@ -624,7 +616,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				: tab.agentStatus.structured
 					? tab.agentStatus.label
 					: 'Running'
-		tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention && !tabAgentIdle(tab)
+		tab.runningEl.hidden = !tab.agentRunning && !tab.agentAttention
 		setActivityIndicatorState(tab.runningEl, tabAgentVariant(tab), indicatorLabel)
 		if (tab.runningEl.hidden) tab.runningEl.removeAttribute('title')
 		else tab.runningEl.title = indicatorLabel
@@ -1379,7 +1371,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				})
 				open.addEventListener('pointerdown', event => beginBackgroundTabPointerDrag(tab, open, event))
 
-				if (tab.agentRunning || tab.agentAttention || tabAgentIdle(tab)) {
+				if (tab.agentRunning || tab.agentAttention) {
 					const blocked = tabAgentBlocked(tab)
 					const label = blocked
 						? tab.agentStatus.label

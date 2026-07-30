@@ -8,14 +8,14 @@ const ACTIVITY_DOT_IDS = [
 ] as const
 export const ACTIVITY_INDICATOR_DOTS = ACTIVITY_DOT_IDS.length
 
-export type ActivityIndicatorVariant = 'progress' | 'attention' | 'idle' | 'waiting'
+export type ActivityIndicatorVariant = 'progress' | 'attention' | 'waiting'
 
 export interface ActivityIndicatorProps {
 	/** Accessible state announced when the indicator becomes visible. */
 	label?: string
 	className?: string
 	hidden?: boolean
-	/** Progress chases clockwise, completion and waiting use semantic color, and idle stays static. */
+	/** Progress chases clockwise; completion and waiting use distinct semantic color. */
 	variant?: ActivityIndicatorVariant
 }
 
@@ -23,7 +23,7 @@ function classes(className?: string): string {
 	return `activity-indicator${className ? ` ${className}` : ''}`
 }
 
-/** Shared activity primitive for React surfaces. Progress and idle stay neutral;
+/** Shared activity primitive for React surfaces. Progress stays neutral;
  * completion uses accent, waiting uses warning, and words remain assistive-only. */
 export function ActivityIndicator({
 	label = 'In progress',

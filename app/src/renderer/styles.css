@@ -538,13 +538,6 @@ body.group-dragging .tab-group-toggle {
 	}
 }
 
-/* Authoritative idle remains visible without implying work or urgency. */
-.activity-indicator[data-variant="idle"] .activity-indicator-dot {
-	background: var(--text-2);
-	animation: none;
-	opacity: 0.45;
-}
-
 /* Waiting for the operator is the highest-priority agent state: every dot
  * pulses together in warning amber, distinct from completion's diagonal wave. */
 .activity-indicator[data-variant="waiting"] .activity-indicator-dot {

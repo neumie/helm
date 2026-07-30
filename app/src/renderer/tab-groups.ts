@@ -17,7 +17,7 @@ export interface TabGroupRendererTab {
 	agentRunning: boolean
 	agentAttention: boolean
 	/** Optional precise display projection for collapsed group representatives. */
-	agentVariant?: 'progress' | 'attention' | 'idle' | 'waiting' | null
+	agentVariant?: 'progress' | 'attention' | 'waiting' | null
 	agentLabel?: string | null
 }
 

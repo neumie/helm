@@ -30,11 +30,6 @@ export const InProgress: Story = {
 	args: { label: 'Running' },
 }
 
-/** An authoritative idle agent remains identifiable without motion or accent. */
-export const Idle: Story = {
-	args: { label: 'Pi is idle', variant: 'idle' },
-}
-
 /** Waiting for operator input pulses in warning amber and outranks completion. */
 export const Waiting: Story = {
 	args: { label: 'Pi is waiting for an answer', variant: 'waiting' },
