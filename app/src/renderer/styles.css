@@ -545,6 +545,23 @@ body.group-dragging .tab-group-toggle {
 	opacity: 0.45;
 }
 
+/* Waiting for the operator is the highest-priority agent state: every dot
+ * pulses together in warning amber, distinct from completion's diagonal wave. */
+.activity-indicator[data-variant="waiting"] .activity-indicator-dot {
+	background: var(--warn);
+	animation: activity-indicator-waiting 0.9s ease-in-out infinite;
+}
+
+@keyframes activity-indicator-waiting {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
 /* Completion becomes a slower diagonal color-wave: top-left leads, equal
  * diagonals share a phase, and bottom-right closes the gray→accent gradient. */
 .activity-indicator[data-variant="attention"] .activity-indicator-dot {

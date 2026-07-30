@@ -374,6 +374,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	): { variant: ActivityIndicatorVariant; label: string } | null {
 		if (!section.collapsed) return null
 		const representative =
+			section.members.find(member => member.agentVariant === 'waiting') ??
 			section.members.find(member => member.agentVariant === 'attention') ??
 			section.members.find(member => member.agentVariant === 'progress') ??
 			section.members.find(member => member.agentVariant === 'idle')
@@ -490,15 +491,15 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				name: displayName(tab),
 				agentRunning: tab.agentRunning,
 				agentAttention: tab.agentAttention,
-				agentVariant: tab.agentAttention
-					? 'attention'
-					: tab.agentRunning
-						? tabAgentBlocked(tab)
-							? 'attention'
-							: 'progress'
-						: tabAgentIdle(tab)
-							? 'idle'
-							: null,
+				agentVariant: tabAgentBlocked(tab)
+					? 'waiting'
+					: tab.agentAttention
+						? 'attention'
+						: tab.agentRunning
+							? 'progress'
+							: tabAgentIdle(tab)
+								? 'idle'
+								: null,
 				agentLabel: tabAgentBlocked(tab)
 					? tab.agentStatus.label
 					: tab.agentAttention
@@ -598,7 +599,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function tabAgentVariant(tab: Tab): ActivityIndicatorVariant {
-		if (tabAgentBlocked(tab) || tab.agentAttention) return 'attention'
+		if (tabAgentBlocked(tab)) return 'waiting'
+		if (tab.agentAttention) return 'attention'
 		if (tabAgentIdle(tab)) return 'idle'
 		return 'progress'
 	}

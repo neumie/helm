@@ -421,11 +421,11 @@ test('structured Pi state drives precise tab and Background tooltips without vis
 		piStatusFrame({ seq: 2, state: 'blocked', phase: { kind: 'waiting', reason: 'question' } }),
 	)
 	await expect(compile).toHaveAttribute('aria-label', 'compile — Pi is waiting for an answer')
-	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'attention')
+	await expect(compile.locator('.tab-running')).toHaveAttribute('data-variant', 'waiting')
 	await page.locator('.tab-group-toggle[title="Collapse Build"]').click()
 	const collapsedBuild = page.getByRole('button', { name: 'Expand Build — Pi is waiting for an answer' })
 	await expect(collapsedBuild.locator('.tab-group-activity')).toHaveAttribute('title', 'Pi is waiting for an answer')
-	await expect(collapsedBuild.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'attention')
+	await expect(collapsedBuild.locator('.tab-group-activity')).toHaveAttribute('data-variant', 'waiting')
 	await collapsedBuild.click()
 	await page.locator('#bg-toggle').click()
 

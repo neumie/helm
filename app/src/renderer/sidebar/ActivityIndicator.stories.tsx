@@ -35,7 +35,12 @@ export const Idle: Story = {
 	args: { label: 'Pi is idle', variant: 'idle' },
 }
 
-/** Only a completed background run introduces accent, until its tab is checked. */
+/** Waiting for operator input pulses in warning amber and outranks completion. */
+export const Waiting: Story = {
+	args: { label: 'Pi is waiting for an answer', variant: 'waiting' },
+}
+
+/** An unseen completed run keeps the slower blue diagonal wave until checked. */
 export const NeedsAttention: Story = {
 	args: { label: 'Run finished — unchecked', variant: 'attention' },
 }
