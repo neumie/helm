@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PiAgentStatusIntegrationSnapshot } from '../../shared'
 import { Banner, Btn, Card, EmptyState, InfoRow, PushHeader } from './ui'
 
-const PI_AGENT_STATUS_SETUP_URL = 'https://github.com/neumie/pi-agent-status#installation'
+const PI_AGENT_STATUS_SETUP_URL = 'https://github.com/neumie/pi-agent-status#install'
 
 function integrationStatusLabel(status: PiAgentStatusIntegrationSnapshot['status']): string {
 	switch (status) {

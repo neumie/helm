@@ -20,7 +20,7 @@ test('agent integrations direct package setup without installing files', async (
 		.poll(() =>
 			page.evaluate(() => (window as typeof window & { __openedExternalUrls?: string[] }).__openedExternalUrls),
 		)
-		.toEqual(['https://github.com/neumie/pi-agent-status#installation'])
+		.toEqual(['https://github.com/neumie/pi-agent-status#install'])
 	await expect(page.getByRole('button', { name: 'Install' })).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'Remove integration' })).toHaveCount(0)
 })
