@@ -139,6 +139,16 @@ function useNavStack() {
 	return { nav, navRef, push, pop, popInstant, goForward, reset }
 }
 
+function schedulingEnabledInDraft(draft: Record<string, unknown> | null): boolean {
+	const scheduledRuns = draft?.scheduledRuns
+	return (
+		typeof scheduledRuns === 'object' &&
+		scheduledRuns !== null &&
+		!Array.isArray(scheduledRuns) &&
+		(scheduledRuns as Record<string, unknown>).enabled === true
+	)
+}
+
 export function SidebarRoot() {
 	const snapshot = useHelmSnapshot()
 	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
@@ -162,6 +172,7 @@ export function SidebarRoot() {
 			route.kind === 'scheduled-run-editor',
 	)
 	const settings = useSettingsStore(settingsActive)
+	const schedulingConfigured = schedulingEnabledInDraft(settings.draft)
 
 	const openItem = useCallback(
 		(id: string) => {
@@ -369,6 +380,7 @@ export function SidebarRoot() {
 						onNewItem={openNewItem}
 						onOpenArchive={() => push({ kind: 'archive' })}
 						onOpenProfiles={() => push({ kind: 'profiles' })}
+						onOpenScheduledRuns={() => push({ kind: 'scheduled-runs' })}
 						onOpenSettings={() => push({ kind: 'settings' })}
 						onPoll={() => void runCommand('Poll requested', () => window.helm.daemon.poll())}
 						onPauseToggle={() =>
@@ -439,6 +451,16 @@ export function SidebarRoot() {
 						profileId={snapshot?.status?.profile?.id ?? ''}
 						profileName={snapshot?.status?.profile?.name ?? 'Work'}
 						schedulingEnabled={snapshot?.config?.scheduledRuns?.enabled === true}
+						schedulingControl={{
+							configured: schedulingConfigured,
+							ready: settings.draft !== null && settings.loadError === null,
+							saving: settings.saving,
+							restartPending: settings.pendingRestart !== null,
+							restarting: settings.restarting,
+							enable: () => settings.updateAndSave(['scheduledRuns', 'enabled'], true),
+							restart: settings.restartNow,
+						}}
+						active={isTop}
 						onBack={pop}
 						onOpenEditor={scheduleId => push({ kind: 'scheduled-run-editor', scheduleId })}
 					/>

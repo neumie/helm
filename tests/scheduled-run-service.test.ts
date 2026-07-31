@@ -10,6 +10,7 @@ import { DB } from '../src/db/client.js'
 import type { ProfileRuntime } from '../src/profiles/store.js'
 import type { Drainer } from '../src/queue/drainer.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
+import type { DtachSupervisor } from '../src/scheduled-runs/dtach-supervisor.js'
 import type { ScheduledRunRecord } from '../src/scheduled-runs/schema.js'
 import { ScheduledRunService, type ScheduledRunServiceDeps } from '../src/scheduled-runs/service.js'
 import { scheduledSessionId, scheduledSocketPath } from '../src/scheduled-runs/session-path.js'
@@ -137,6 +138,71 @@ test('runNow applies the same durable overlap policy without attempting workspac
 	}
 })
 
+test('reconciliation does not interrupt a run while this daemon is launching it', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	const socketRoot = mkdtempSync('/tmp/helm-scheduled-sockets-')
+	const previousSocketRoot = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = socketRoot
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules, true)
+		const schedule = commands.create({
+			...scheduleInput,
+			definition: {
+				...definition,
+				target: { kind: 'system', riskAcknowledgement: 'broad-host-access' },
+			},
+		})
+		const launchStarted = deferred<void>()
+		const finishLaunch = deferred<void>()
+		const identity = {
+			pid: 123,
+			processGroupId: 123,
+			sessionId: 123,
+			startedAt: '2030-01-01T00:00:00.000Z',
+			executable: '/usr/bin/dtach',
+		}
+		const service = new ScheduledRunService(
+			{
+				...config,
+				scheduledRuns: { enabled: true, systemTargetsEnabled: true },
+			} as HelmConfig,
+			db,
+			fakeDrainer() as unknown as Drainer,
+			{
+				profiles: () => [
+					{
+						profile: { id: 'work', archivedAt: null, enabledProjects: [] },
+						rootDir: root,
+					} as unknown as ProfileRuntime,
+				],
+				hasResidentLease: () => true,
+				reporterCommand: ['/usr/bin/true'],
+				supervisor: {
+					launch: async (input: Parameters<DtachSupervisor['launch']>[0]) => {
+						launchStarted.resolve()
+						await finishLaunch.promise
+						await input.onSpawned(identity)
+						return identity
+					},
+				} as unknown as DtachSupervisor,
+			},
+		)
+
+		const admission = service.runNow('work', schedule.id)
+		await launchStarted.promise
+		await service.reconcile()
+		finishLaunch.resolve()
+
+		assert.equal((await admission).state, 'running')
+	} finally {
+		if (previousSocketRoot === undefined) process.env.HELM_SCHEDULED_SOCKET_DIR = undefined
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previousSocketRoot
+		rmSync(socketRoot, { recursive: true, force: true })
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 async function listenSocket(path: string): Promise<net.Server> {
 	mkdirSync(dirname(path), { recursive: true })
 	const server = net.createServer()
@@ -147,7 +213,7 @@ async function listenSocket(path: string): Promise<net.Server> {
 	return server
 }
 
-function createRunningRun(db: DB, commands: ScheduleCommands, name: string) {
+function createRunningRun(commands: ScheduleCommands, name: string) {
 	const schedule = commands.create({ ...scheduleInput, name })
 	const admitted = commands.claimOccurrence(schedule.id, schedule.revision, null, runInput(schedule, `running-${name}`))
 	const preparing = commands.beginPreparing(admitted.id, admitted.revision)
@@ -306,7 +372,7 @@ test('quiet report wins over a later cancel while teardown is pending', async ()
 	try {
 		const db = new DB(join(root, 'helm.db'), 'work')
 		const commands = new ScheduleCommands(db.schedules)
-		let running = createRunningRun(db, commands, 'Quiet wins')
+		let running = createRunningRun(commands, 'Quiet wins')
 		running = commands.recordRuntime(running.id, running.revision, {
 			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
 			cwd: root,
@@ -345,7 +411,7 @@ test('concurrent identical quiet reports share one per-run teardown', async () =
 	try {
 		const db = new DB(join(root, 'helm.db'), 'work')
 		const commands = new ScheduleCommands(db.schedules)
-		let running = createRunningRun(db, commands, 'Duplicate quiet')
+		let running = createRunningRun(commands, 'Duplicate quiet')
 		running = commands.recordRuntime(running.id, running.revision, {
 			processFingerprint: JSON.stringify({ pid: 1, processGroupId: 1, sessionId: 1 }),
 			cwd: root,

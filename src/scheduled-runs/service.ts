@@ -79,6 +79,8 @@ export class ScheduledRunService {
 	private readonly now: () => Date
 	private tickInFlight: Promise<ScheduledTickResult> | null = null
 	private reconcileInFlight: Promise<void> | null = null
+	/** Current-process workspace/launch ownership; crash recovery sees an empty set. */
+	private readonly admissionInFlight = new Set<string>()
 	private readonly adoptionInFlight = new Set<Promise<unknown>>()
 	/** Per-run single-flight guards duplicate teardown while durable intent arbitrates winners. */
 	private readonly terminalInFlight = new Map<string, Promise<ScheduledRunRecord>>()
@@ -592,6 +594,7 @@ export class ScheduledRunService {
 		if (runDb.schedules.countAttentionRuns() >= MAX_ATTENTION_PER_PROFILE)
 			return this.skip(runDb, run, 'skipped_capacity')
 		if (!this.drainer.reserveExternalSolve(run.id)) return this.skip(runDb, run, 'skipped_capacity')
+		this.admissionInFlight.add(run.id)
 		try {
 			run = commands.beginPreparing(run.id, run.revision)
 			const workspace = await prepareScheduledWorkspace({
@@ -670,6 +673,8 @@ export class ScheduledRunService {
 			// retain the reservation until a definitive probe/teardown resolves it.
 			if (current.state !== 'quarantined') this.releaseReservation(run.id)
 			throw error
+		} finally {
+			this.admissionInFlight.delete(run.id)
 		}
 	}
 
@@ -711,6 +716,9 @@ export class ScheduledRunService {
 		commands: ScheduleCommands,
 		initial: ScheduledRunRecord,
 	): Promise<void> {
+		// A workspace or dtach launch owned by this process has not necessarily
+		// published its socket yet. Only a future process may recover that row.
+		if (this.admissionInFlight.has(initial.id)) return
 		this.rollbackExpiredAdoption(commands, initial)
 		// Migration 29 deliberately leaves existing rows nullable. Preserve the
 		// exact request encoded by legacy lifecycle state before an unknown probe

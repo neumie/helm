@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ReactNode, useState } from 'react'
 import type { PiAgentStatusIntegrationSnapshot } from '../../shared'
-import type { DashboardItem, HelmSnapshot, ScheduledScheduleInput } from '../../shared-helm'
+import type { DashboardItem, HelmSnapshot, ScheduledSchedule, ScheduledScheduleInput } from '../../shared-helm'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
@@ -22,6 +22,9 @@ type StoryWindow = Window & {
 	__deferCreateItem?: boolean
 	__resolveCreateItem?: () => void
 	__openedExternalUrls?: string[]
+	__updatedConfigBody?: Record<string, unknown>
+	__restartDaemonCalls?: number
+	__failNextScheduledAction?: boolean
 }
 
 export function item(overrides: Partial<DashboardItem>): DashboardItem {
@@ -332,6 +335,26 @@ function installBridge(
 		message: 'Configure the pi-agent-status package for precise terminal status.',
 	},
 ): void {
+	const scheduledRuns: ScheduledSchedule[] = [
+		{
+			id: 'schedule-story',
+			profileId: 'work',
+			revision: 2,
+			name: 'Morning checks',
+			enabled: true,
+			target: { kind: 'project', projectSlug: 'helm' },
+			agent: 'claude',
+			maximumRuntimeMinutes: 45,
+			cron: '0 9 * * 1-5',
+			cadenceKind: 'cron',
+			timezone: 'America/New_York',
+			nextRunAt: '2026-07-22T13:00:00.000Z',
+			disabledReason: null,
+			archivedAt: null,
+			createdAt: NOW,
+			updatedAt: NOW,
+		},
+	]
 	Object.assign(window, {
 		helm: {
 			uiPreview: null,
@@ -359,6 +382,16 @@ function installBridge(
 				}),
 			},
 			daemon: {
+				config: async () => (settingsStore.doc ? { data: settingsStore.doc } : { error: 'Settings unavailable' }),
+				updateConfig: async (body: Record<string, unknown>) => {
+					;(window as StoryWindow).__updatedConfigBody = structuredClone(body)
+					return { data: { message: 'Restart required for preview', applied: false } }
+				},
+				restartDaemon: async () => {
+					const storyWindow = window as StoryWindow
+					storyWindow.__restartDaemonCalls = (storyWindow.__restartDaemonCalls ?? 0) + 1
+					return { data: { message: 'Daemon restarting', applied: true } }
+				},
 				createItem: async (body: unknown) => {
 					const storyWindow = window as StoryWindow
 					storyWindow.__createdItemBody = body
@@ -379,31 +412,10 @@ function installBridge(
 				openOkena: async () => ({ error: 'Preview only' }),
 				plan: async () => ({ error: 'Preview only' }),
 				sourceTask: async () => ({ data: detail }),
-				listScheduledRuns: async () => ({
-					data: [
-						{
-							id: 'schedule-story',
-							profileId: 'work',
-							revision: 2,
-							name: 'Morning checks',
-							enabled: true,
-							target: { kind: 'project' as const, projectSlug: 'helm' },
-							agent: 'claude' as const,
-							maximumRuntimeMinutes: 45,
-							cron: '0 9 * * 1-5',
-							cadenceKind: 'cron' as const,
-							timezone: 'America/New_York',
-							nextRunAt: '2026-07-22T13:00:00.000Z',
-							disabledReason: null,
-							archivedAt: null,
-							createdAt: NOW,
-							updatedAt: NOW,
-						},
-					],
-				}),
-				createScheduledRun: async (_profileId: string, body: ScheduledScheduleInput) => ({
-					data: {
-						id: 'schedule-story',
+				listScheduledRuns: async () => ({ data: structuredClone(scheduledRuns) }),
+				createScheduledRun: async (_profileId: string, body: ScheduledScheduleInput) => {
+					const created: ScheduledSchedule = {
+						id: `schedule-story-${scheduledRuns.length + 1}`,
 						profileId: 'work',
 						revision: 1,
 						name: body.name,
@@ -419,8 +431,10 @@ function installBridge(
 						archivedAt: null,
 						createdAt: NOW,
 						updatedAt: NOW,
-					},
-				}),
+					}
+					scheduledRuns.push(created)
+					return { data: structuredClone(created) }
+				},
 				updateScheduledRun: async (
 					_profileId: string,
 					_id: string,
@@ -445,7 +459,40 @@ function installBridge(
 						updatedAt: NOW,
 					},
 				}),
-				scheduledRunAction: async () => ({ data: { id: 'schedule-story' } }),
+				scheduledRunAction: async (_profileId: string, _id: string, action: string) => {
+					const storyWindow = window as StoryWindow
+					if (storyWindow.__failNextScheduledAction) {
+						storyWindow.__failNextScheduledAction = false
+						return { error: 'Validation failed' }
+					}
+					if (action !== 'run') return { data: structuredClone(scheduledRuns[0]) }
+					return {
+						data: {
+							id: 'run-overlap',
+							profileId: 'work',
+							scheduleId: 'schedule-story',
+							scheduleRevision: 2,
+							scheduledFor: NOW,
+							localCivilSlot: 'manual',
+							utcOffsetMinutes: 0,
+							state: 'skipped_overlap' as const,
+							revision: 0,
+							reportKind: null,
+							reportSummary: null,
+							startedAt: null,
+							reportedAt: null,
+							closedAt: NOW,
+							missedCount: 0,
+							missedMany: false,
+							sessionAvailability: 'unavailable' as const,
+							terminalResolvedAt: null,
+							notificationClaimedAt: null,
+							notificationDeliveredAt: null,
+							createdAt: NOW,
+							updatedAt: NOW,
+						},
+					}
+				},
 				cancelScheduledRun: async (_profileId: string, _runId: string, revision: number) => ({
 					data: {
 						id: 'run-story',
@@ -600,7 +647,10 @@ async function noOpAsync(): Promise<void> {}
 
 const settingsStore: SettingsStore = {
 	doc: {
-		config: {},
+		config: {
+			...(snapshot.config ?? {}),
+			scheduledRuns: { enabled: false, systemTargetsEnabled: false },
+		},
 		dashboard: snapshot.config ?? {},
 		edit: {
 			sections: [
@@ -618,10 +668,11 @@ const settingsStore: SettingsStore = {
 	pendingRestart: 'The daemon must restart before these settings take effect.',
 	restarting: false,
 	update: noOp,
+	updateAndSave: async () => ({ message: 'Settings applied', applied: true }),
 	addListItem: noOp,
 	removeListItem: noOp,
 	save: noOpAsync,
-	restartNow: noOpAsync,
+	restartNow: async () => true,
 }
 
 const meta: Meta = {
@@ -647,6 +698,7 @@ export const WorkList: Story = {
 				onNewItem={noOp}
 				onOpenArchive={noOp}
 				onOpenProfiles={noOp}
+				onOpenScheduledRuns={noOp}
 				onOpenSettings={noOp}
 				onPoll={noOp}
 				onPauseToggle={noOp}
@@ -784,6 +836,29 @@ export const ScheduledRuns: Story = {
 	render: () => (
 		<Frame>
 			<ScheduledRunsPage profileId="work" profileName="Work" schedulingEnabled onBack={noOp} onOpenEditor={noOp} />
+		</Frame>
+	),
+}
+
+export const ScheduledRunsDisabled: Story = {
+	render: () => (
+		<Frame>
+			<ScheduledRunsPage
+				profileId="work"
+				profileName="Work"
+				schedulingEnabled={false}
+				schedulingControl={{
+					configured: false,
+					ready: true,
+					saving: false,
+					restartPending: false,
+					restarting: false,
+					enable: async () => ({ message: 'Restart required', applied: false }),
+					restart: async () => true,
+				}}
+				onBack={noOp}
+				onOpenEditor={noOp}
+			/>
 		</Frame>
 	),
 }

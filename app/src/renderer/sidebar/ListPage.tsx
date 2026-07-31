@@ -1,5 +1,6 @@
-// Work list page — header row (project scope, organization, New item, overflow),
-// lifecycle text index with counts (§3.2), balanced 56px rows (§3.3). Selection
+// Work list page — header row (project scope, New item, overflow; infrequent
+// organization choices live inside More), lifecycle text index with counts
+// (§3.2), balanced 64px rows (§3.3). Selection
 // is the action: a row push-navigates to detail. Undecided Queue rows expose
 // two permanently visible ownership choices (agent/manual). Renders purely
 // from the pushed snapshot — no per-row fetches.
@@ -68,6 +69,7 @@ export interface ListPageProps {
 	onNewItem: () => void
 	onOpenArchive: () => void
 	onOpenProfiles: () => void
+	onOpenScheduledRuns: () => void
 	onOpenSettings: () => void
 	onPoll: () => void
 	onPauseToggle: () => void
@@ -83,6 +85,7 @@ export function ListPage({
 	onNewItem,
 	onOpenArchive,
 	onOpenProfiles,
+	onOpenScheduledRuns,
 	onOpenSettings,
 	onPoll,
 	onPauseToggle,
@@ -231,19 +234,6 @@ export function ListPage({
 						]}
 					/>
 					<div className="list-toolbar-actions">
-						<MenuButton
-							triggerClass={`icon-btn${organization === 'project' ? ' organization-trigger-active' : ''}`}
-							triggerLabel={`Organize items: ${organization === 'project' ? 'group by project' : 'flat list'}`}
-							trigger={GLYPH.group}
-							entries={[
-								{ label: 'Flat list', checked: organization === 'flat', onSelect: () => setOrganization('flat') },
-								{
-									label: 'Group by project',
-									checked: organization === 'project',
-									onSelect: () => setOrganization('project'),
-								},
-							]}
-						/>
 						<IconBtn label="New item" onClick={onNewItem}>
 							{GLYPH.plus}
 						</IconBtn>
@@ -251,7 +241,24 @@ export function ListPage({
 							triggerLabel="More"
 							trigger={GLYPH.ellipsis}
 							entries={[
-								{ label: 'Poll now', icon: GLYPH.retry, onSelect: onPoll, disabled: !reachable },
+								{
+									label: 'Scheduled runs',
+									icon: GLYPH.calendar,
+									section: 'Work',
+									onSelect: onOpenScheduledRuns,
+								},
+								{
+									label: 'Archive',
+									icon: GLYPH.archive,
+									meta: buckets.archived.length || undefined,
+									onSelect: onOpenArchive,
+								},
+								{
+									label: 'Poll now',
+									icon: GLYPH.retry,
+									onSelect: onPoll,
+									disabled: !reachable,
+								},
 								{
 									label: paused ? 'Resume queue' : 'Pause queue',
 									icon: paused ? GLYPH.play : GLYPH.pause,
@@ -259,20 +266,26 @@ export function ListPage({
 									disabled: !reachable,
 								},
 								{
-									label: buckets.archived.length > 0 ? `Archive (${buckets.archived.length})` : 'Archive',
-									icon: GLYPH.archive,
-									onSelect: onOpenArchive,
+									label: 'Group by project',
+									checked: organization === 'project',
+									checkedRole: 'checkbox',
+									section: 'View',
+									onSelect: () => setOrganization(organization === 'project' ? 'flat' : 'project'),
 								},
 								...availableProfiles.map((profile, index) => ({
 									label: profile.name,
 									checked: profile.id === activeProfileId,
+									section: index === 0 ? 'Profiles' : undefined,
 									onSelect: () => {
 										if (profile.id !== activeProfileId) void switchProfile(profile.id)
 									},
 									disabled: quickBusy !== null,
-									group: index === 0,
 								})),
-								{ label: 'Manage profiles…', onSelect: onOpenProfiles, group: availableProfiles.length === 0 },
+								{
+									label: 'Manage profiles…',
+									section: availableProfiles.length === 0 ? 'Profiles' : undefined,
+									onSelect: onOpenProfiles,
+								},
 								{ label: 'Settings', icon: GLYPH.settings, onSelect: onOpenSettings, group: true },
 							]}
 						/>

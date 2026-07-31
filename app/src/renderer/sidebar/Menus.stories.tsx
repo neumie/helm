@@ -33,17 +33,30 @@ export const OverflowMenu: Story = {
 	),
 }
 
-/** Radio-menu group (organization picker): checked entry carries the check. */
-export const RadioMenu: Story = {
+/** Work's More menu: named sections, aligned labels, one view preference, and trailing metadata. */
+export const WorkMenu: Story = {
 	render: () => (
-		<div style={{ height: 180 }}>
+		<div style={{ height: 340 }}>
 			<MenuButton
-				triggerLabel="Organize"
-				trigger={GLYPH.group}
+				triggerLabel="More"
+				trigger={GLYPH.ellipsis}
 				align="start"
 				entries={[
-					{ label: 'Balanced index', checked: true, onSelect: noop },
-					{ label: 'Group by project', checked: false, onSelect: noop },
+					{ label: 'Scheduled runs', icon: GLYPH.calendar, section: 'Work', onSelect: noop },
+					{ label: 'Archive', icon: GLYPH.archive, meta: 12, onSelect: noop },
+					{ label: 'Poll now', icon: GLYPH.retry, onSelect: noop },
+					{ label: 'Pause queue', icon: GLYPH.pause, onSelect: noop },
+					{
+						label: 'Group by project',
+						checked: false,
+						checkedRole: 'checkbox',
+						section: 'View',
+						onSelect: noop,
+					},
+					{ label: 'Work', checked: true, section: 'Profiles', onSelect: noop },
+					{ label: 'Personal', checked: false, onSelect: noop },
+					{ label: 'Manage profiles…', onSelect: noop },
+					{ label: 'Settings', icon: GLYPH.settings, onSelect: noop, group: true },
 				]}
 			/>
 		</div>

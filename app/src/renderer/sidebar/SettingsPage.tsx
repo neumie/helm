@@ -11,6 +11,7 @@ import type {
 	ConfigEditFieldControl,
 	ConfigEditListControl,
 	ConfigEditSection,
+	ConfigSaveResult,
 } from '../../shared-helm'
 import { appearance } from '../appearance'
 import { showToast } from '../toast'
@@ -40,11 +41,13 @@ export interface SettingsStore {
 	pendingRestart: string | null
 	restarting: boolean
 	update: (path: string[], value: unknown) => void
+	/** Apply one narrow edit and persist the complete Config Document draft in one operation. */
+	updateAndSave: (path: string[], value: unknown) => Promise<ConfigSaveResult | null>
 	addListItem: (control: ConfigEditListControl) => void
 	removeListItem: (control: ConfigEditListControl, index: number) => void
 	save: () => Promise<void>
 	/** "Restart now" on the pending-restart notice → POST /api/daemon/restart. */
-	restartNow: () => Promise<void>
+	restartNow: () => Promise<boolean>
 }
 
 /** Owned by SidebarRoot while any settings route is on the stack. */
@@ -114,40 +117,65 @@ export function useSettingsStore(active: boolean): SettingsStore {
 		})
 	}, [])
 
-	const save = useCallback(async () => {
-		if (!draft) return
+	const persistDraft = useCallback(async (nextDraft: Draft): Promise<ConfigSaveResult | null> => {
 		setSaving(true)
 		try {
-			const result = await window.helm.daemon.updateConfig(draft)
-			if (result.error !== undefined) showToast({ message: 'Save failed', detail: result.error, ttlMs: 6000 })
-			else {
-				setDirty(false)
-				if (result.data.applied) {
-					// The daemon restarts itself to load the change (~2s blip the
-					// bridge rides out on last-known data) — the save IS applied.
-					setPendingRestart(null)
-					showToast({ message: 'Settings applied' })
-				} else {
-					// Saved to disk but the daemon still runs the old config —
-					// keep a persistent notice with the way out (§3.12).
-					setPendingRestart(result.data.message)
-				}
+			const result = await window.helm.daemon.updateConfig(nextDraft)
+			if (result.error !== undefined) {
+				showToast({ message: 'Save failed', detail: result.error, ttlMs: 6000 })
+				return null
 			}
+			setDirty(false)
+			if (result.data.applied) {
+				// The daemon restarts itself to load the change (~2s blip the
+				// bridge rides out on last-known data) — the save IS applied.
+				setPendingRestart(null)
+				showToast({ message: 'Settings applied' })
+			} else {
+				// Saved to disk but the daemon still runs the old config —
+				// keep a persistent notice with the way out (§3.12).
+				setPendingRestart(result.data.message)
+			}
+			return result.data
 		} finally {
 			setSaving(false)
 		}
-	}, [draft])
+	}, [])
 
-	const restartNow = useCallback(async () => {
+	const updateAndSave = useCallback(
+		async (path: string[], value: unknown): Promise<ConfigSaveResult | null> => {
+			if (!draft) return null
+			const previous = draft
+			const wasDirty = dirty
+			const next = structuredClone(draft)
+			setAtPath(next, path, value)
+			setDraft(next)
+			setDirty(true)
+			const result = await persistDraft(next)
+			if (!result) {
+				setDraft(previous)
+				setDirty(wasDirty)
+			}
+			return result
+		},
+		[dirty, draft, persistDraft],
+	)
+
+	const save = useCallback(async () => {
+		if (draft) await persistDraft(draft)
+	}, [draft, persistDraft])
+
+	const restartNow = useCallback(async (): Promise<boolean> => {
 		setRestarting(true)
 		try {
 			const result = await window.helm.daemon.restartDaemon()
 			if (result.error !== undefined) {
 				showToast({ message: 'Restart failed', detail: result.error, ttlMs: 6000 })
-			} else {
-				setPendingRestart(null)
-				showToast({ message: 'Daemon restarting', detail: 'Settings apply in a few seconds.' })
+				return false
 			}
+			setPendingRestart(null)
+			showToast({ message: 'Daemon restarting', detail: 'Settings apply in a few seconds.' })
+			return true
 		} finally {
 			setRestarting(false)
 		}
@@ -162,6 +190,7 @@ export function useSettingsStore(active: boolean): SettingsStore {
 		pendingRestart,
 		restarting,
 		update,
+		updateAndSave,
 		addListItem,
 		removeListItem,
 		save,

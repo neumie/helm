@@ -48,6 +48,16 @@ export const GLYPH = {
 	return: glyph('M6.5 4 3 7.5 6.5 11M3.5 7.5H9a4 4 0 0 1 4 4'),
 	plan: glyph('M4 2.5h6l2 2V13.5H4zM10 2.5v2h2M6 7h4M6 9.5h4', 13),
 	archive: glyph('M3 5h10v8H3zM2.5 3h11v2h-11M6.5 8h3'),
+	calendar: (
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+			<path d="M5.75 7.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM5 10.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0ZM10.25 7.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM7.25 8.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0ZM8 9.5A.75.75 0 1 0 8 11a.75.75 0 0 0 0-1.5Z" />
+			<path
+				fillRule="evenodd"
+				d="M4.75 1a.75.75 0 0 0-.75.75V3a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2V1.75a.75.75 0 0 0-1.5 0V3h-5V1.75A.75.75 0 0 0 4.75 1ZM3.5 7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v4.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7Z"
+				clipRule="evenodd"
+			/>
+		</svg>
+	),
 	group: glyph('M3 3.5h10v3H3zM3 9.5h7v3H3z'),
 	settings: glyph(
 		'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5M8 2.5v1M8 12.5v1M2.5 8h1M12.5 8h1M4.1 4.1l.7.7M11.2 11.2l.7.7M11.9 4.1l-.7.7M4.8 11.2l-.7.7',
@@ -101,9 +111,14 @@ export interface MenuEntry {
 	onSelect: () => void
 	danger?: boolean
 	disabled?: boolean
-	/** When present, renders this entry as one choice in a radio-menu group. */
+	/** When present, renders selection state; radio is the default semantic. */
 	checked?: boolean
-	/** Renders a separator ABOVE this entry. */
+	checkedRole?: 'radio' | 'checkbox'
+	/** Quiet heading rendered above this entry for structured mixed-domain menus. */
+	section?: string
+	/** Secondary trailing fact such as a count. */
+	meta?: ReactNode
+	/** Renders an unlabeled separator ABOVE this entry. */
 	group?: boolean
 }
 
@@ -157,6 +172,7 @@ export function MenuButton({
 	}, [open, close])
 
 	const enabled = entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => !entry.disabled)
+	const hasIconColumn = entries.some(entry => entry.checked !== undefined || entry.icon !== undefined)
 
 	const focusIndex = (index: number) => {
 		setActiveIndex(index)
@@ -168,11 +184,12 @@ export function MenuButton({
 		const next = enabled[(position + delta + enabled.length) % enabled.length]
 		if (next) focusIndex(next.index)
 	}
-	const openMenu = (last = false) => {
+	const openMenu = (last = false, focusEntry = true) => {
 		if (disabled || enabled.length === 0) return
 		const next = last ? enabled[enabled.length - 1] : enabled[0]
 		setOpen(true)
-		if (next) focusIndex(next.index)
+		if (focusEntry && next) focusIndex(next.index)
+		else setActiveIndex(-1)
 	}
 
 	const onMenuKeyDown = (event: React.KeyboardEvent) => {
@@ -221,7 +238,7 @@ export function MenuButton({
 				aria-expanded={open}
 				aria-controls={open ? menuId : undefined}
 				disabled={disabled}
-				onClick={() => (open ? close(false) : openMenu())}
+				onClick={() => (open ? close(false) : openMenu(false, false))}
 				onKeyDown={event => {
 					if (event.key === 'ArrowDown') {
 						event.preventDefault()
@@ -244,34 +261,42 @@ export function MenuButton({
 					className={`menu-panel menu-${align}`}
 					onKeyDown={onMenuKeyDown}
 				>
-					{entries.map((entry, index) => (
-						<div key={entry.label}>
-							{entry.group && index > 0 && <div className="menu-separator" aria-hidden="true" />}
-							<button
-								type="button"
-								role={entry.checked === undefined ? 'menuitem' : 'menuitemradio'}
-								aria-checked={entry.checked}
-								className={`menu-item${entry.danger ? ' menu-item-danger' : ''}${index === activeIndex ? ' menu-item-active' : ''}`}
-								disabled={entry.disabled}
-								ref={node => {
-									itemRefs.current[index] = node
-								}}
-								tabIndex={index === activeIndex ? 0 : -1}
-								onMouseEnter={() => focusIndex(index)}
-								onClick={() => {
-									close(true)
-									entry.onSelect()
-								}}
-							>
-								{entry.checked !== undefined ? (
-									<span className={`menu-item-icon${entry.checked ? '' : ' menu-item-icon-empty'}`}>{GLYPH.check}</span>
-								) : entry.icon ? (
-									<span className="menu-item-icon">{entry.icon}</span>
-								) : null}
-								<span className="menu-item-label">{entry.label}</span>
-							</button>
-						</div>
-					))}
+					{entries.map((entry, index) => {
+						const icon = entry.checked !== undefined ? (entry.checked ? GLYPH.check : null) : entry.icon
+						const checkedRole = entry.checkedRole ?? 'radio'
+						return (
+							<div key={entry.label}>
+								{entry.group && index > 0 && !entry.section && <div className="menu-separator" aria-hidden="true" />}
+								{entry.section && (
+									<div className={`menu-section-label${index > 0 ? ' menu-section-label-spaced' : ''}`}>
+										{entry.section}
+									</div>
+								)}
+								<button
+									type="button"
+									role={entry.checked === undefined ? 'menuitem' : `menuitem${checkedRole}`}
+									aria-checked={entry.checked}
+									className={`menu-item${entry.danger ? ' menu-item-danger' : ''}${index === activeIndex ? ' menu-item-active' : ''}`}
+									disabled={entry.disabled}
+									ref={node => {
+										itemRefs.current[index] = node
+									}}
+									tabIndex={index === activeIndex ? 0 : -1}
+									onMouseEnter={() => focusIndex(index)}
+									onClick={() => {
+										close(true)
+										entry.onSelect()
+									}}
+								>
+									{hasIconColumn && (
+										<span className={`menu-item-icon${icon ? '' : ' menu-item-icon-empty'}`}>{icon}</span>
+									)}
+									<span className="menu-item-label">{entry.label}</span>
+									{entry.meta !== undefined && <span className="menu-item-meta">{entry.meta}</span>}
+								</button>
+							</div>
+						)
+					})}
 				</div>
 			)}
 		</div>

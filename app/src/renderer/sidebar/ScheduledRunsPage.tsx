@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './scheduled-runs.css'
-import type { AppConfig, ScheduledRun, ScheduledSchedule, ScheduledScheduleInput } from '../../shared-helm'
+import type {
+	AppConfig,
+	ConfigSaveResult,
+	ScheduledRun,
+	ScheduledSchedule,
+	ScheduledScheduleInput,
+} from '../../shared-helm'
 import { showToast } from '../toast'
 import { relativeTime, useNow } from './model'
 import { canCancelScheduledRun, isFiveFieldCron, isIanaTimezone, scheduledRunStateLabel } from './scheduled-runs-model'
@@ -30,6 +36,16 @@ const CADENCE_PRESETS: Array<{ value: ScheduledScheduleInput['cadenceKind']; lab
 ]
 
 type EditorDraft = ScheduledScheduleInput & { promptReplacement: string }
+
+interface SchedulingControl {
+	configured: boolean
+	ready: boolean
+	saving: boolean
+	restartPending: boolean
+	restarting: boolean
+	enable: () => Promise<ConfigSaveResult | null>
+	restart: () => Promise<boolean>
+}
 
 function blankDraft(config: AppConfig | null): EditorDraft {
 	const projectSlug = config?.projects?.[0]?.slug ?? ''
@@ -78,12 +94,16 @@ export function ScheduledRunsPage({
 	profileId,
 	profileName,
 	schedulingEnabled,
+	schedulingControl,
+	active = true,
 	onBack,
 	onOpenEditor,
 }: {
 	profileId: string
 	profileName: string
 	schedulingEnabled: boolean
+	schedulingControl?: SchedulingControl
+	active?: boolean
 	onBack: () => void
 	onOpenEditor: (scheduleId?: string) => void
 }) {
@@ -99,8 +119,10 @@ export function ScheduledRunsPage({
 		}
 	}, [profileId])
 	useEffect(() => {
-		void reload()
-	}, [reload])
+		if (active) void reload()
+	}, [active, reload])
+	const schedulingConfigured = schedulingControl?.configured === true
+	const schedulingNeedsRestart = schedulingConfigured && schedulingControl?.restartPending === true
 	return (
 		<div className="page-frame">
 			<PushHeader
@@ -114,8 +136,45 @@ export function ScheduledRunsPage({
 			/>
 			<div className="page-scroll scheduled-page">
 				{!schedulingEnabled && (
-					<Banner tone="info" label="Scheduling is off">
-						Definitions are saved, but they will not run until Scheduled runs is enabled in daemon settings.
+					<Banner
+						tone="info"
+						label={
+							schedulingNeedsRestart
+								? 'Restart required'
+								: schedulingConfigured
+									? 'Enabling scheduling'
+									: 'Scheduling is off'
+						}
+						action={
+							schedulingControl ? (
+								schedulingNeedsRestart ? (
+									<Btn
+										sm
+										tone="quiet"
+										busy={schedulingControl.restarting}
+										onClick={() => void schedulingControl.restart()}
+									>
+										Restart now
+									</Btn>
+								) : (
+									<Btn
+										sm
+										tone="quiet"
+										busy={schedulingControl.saving || schedulingConfigured}
+										disabled={!schedulingControl.ready || schedulingConfigured}
+										onClick={() => void schedulingControl.enable()}
+									>
+										{schedulingConfigured ? 'Applying' : 'Enable'}
+									</Btn>
+								)
+							) : undefined
+						}
+					>
+						{schedulingNeedsRestart
+							? 'Scheduling is saved, but the daemon must restart before definitions can run.'
+							: schedulingConfigured
+								? 'Scheduling is saved. Helm is restarting the daemon to apply it.'
+								: 'Definitions are saved, but they will not run until scheduling is enabled.'}
 					</Banner>
 				)}
 				<Card label="Profile" flush>
@@ -267,14 +326,28 @@ export function ScheduledRunEditorPage({
 	}
 	const action = async (actionName: 'enable' | 'disable' | 'archive' | 'run') => {
 		if (!schedule) return
+		setError(null)
 		const result = await window.helm.daemon.scheduledRunAction(profileId, schedule.id, actionName, schedule.revision)
 		if (result.error) {
 			setError(result.error)
 			return
 		}
 		if (actionName === 'run') {
-			if (result.data && 'state' in result.data) setHistory(current => [result.data as ScheduledRun, ...current])
-			showToast({ message: 'Scheduled run started' })
+			if (!result.data || !('state' in result.data)) {
+				setError('The daemon returned no scheduled occurrence.')
+				return
+			}
+			const run = result.data as ScheduledRun
+			setHistory(current => [run, ...current])
+			if (run.state.startsWith('skipped_')) {
+				showToast({
+					message: 'Run not started',
+					detail:
+						run.state === 'skipped_overlap'
+							? 'Another occurrence is already active.'
+							: `Result: ${scheduledRunStateLabel(run.state)}.`,
+				})
+			} else showToast({ message: 'Scheduled run started' })
 			return
 		}
 		const updated = result.data as ScheduledSchedule
@@ -284,11 +357,13 @@ export function ScheduledRunEditorPage({
 		if (actionName === 'archive') onBack()
 	}
 	const openTerminal = async (run: ScheduledRun) => {
+		setError(null)
 		const result = await window.helm.daemon.openScheduledTerminal(profileId, run.id, run.revision)
 		if (result.error) setError(result.error)
 		else showToast({ message: 'Opening scheduled terminal' })
 	}
 	const cancelRun = async (run: ScheduledRun) => {
+		setError(null)
 		const result = await window.helm.daemon.cancelScheduledRun(profileId, run.id, run.revision)
 		if (result.error) {
 			setError(result.error)

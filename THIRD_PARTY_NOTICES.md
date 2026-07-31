@@ -2,10 +2,11 @@
 
 ## Heroicons (16px solid)
 
-Helm vendors two native-size Heroicons for distinct terminal concepts:
+Helm vendors three native-size Heroicons for distinct concepts:
 
 - Terminal groups — **Folder**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/folder.svg>
 - Background terminals — **Arrow Down on Square Stack**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
+- Scheduled runs — **Calendar Days**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
 - Project: <https://heroicons.com>
 - Copyright © Tailwind Labs, Inc.
 - License: MIT
