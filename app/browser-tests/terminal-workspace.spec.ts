@@ -73,8 +73,8 @@ test('a synchronized redraw stays covered until xterm paints it through a resize
 	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(1)
 	await expect(liveRows).toContainText('stable frame')
 
-	// A resize before paint changes xterm's last row. The pending release must
-	// follow the current viewport rather than wait forever for the old row bound.
+	// A physical resize before paint must leave xterm's logical grid untouched;
+	// the latest fit applies only after the old-grid replacement becomes visible.
 	const viewport = page.viewportSize()
 	if (!viewport) throw new Error('browser test requires a fixed viewport')
 	await page.setViewportSize({ width: viewport.width, height: viewport.height - 120 })
@@ -82,6 +82,53 @@ test('a synchronized redraw stays covered until xterm paints it through a resize
 	await page.evaluate(() => window.__helmFlushHeldFrames?.())
 	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(0)
 	await expect(liveRows).toContainText('replacement frame')
+})
+
+test('a resize during a synchronized Pi frame does not leave stale status rows', async ({ page }) => {
+	const start = '\u001b[?2026h'
+	const end = '\u001b[?2026l'
+	const columns = 160
+	const row = (text: string) => text.padEnd(columns)
+	const initial = [
+		...Array.from({ length: 28 }, (_, index) => row(`history-${index}`)),
+		row('status'),
+		row(''),
+		row('cwd'),
+		row('footer'),
+	].join('\r\n')
+	const update = (text: string) => `${start}\u001b[3A\r\u001b[2K${row(text)}${end}`
+	const updates = `${update('Working...')}${update('Working...')}${update('Ready')}`
+
+	// This viewport fits the exact 32x160 grid used to construct the Pi frames.
+	await page.setViewportSize({ width: 1627, height: 627 })
+	await page.locator('#bg-toggle').click()
+	const liveRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
+	await expect(liveRows).toBeVisible()
+	await expect(liveRows.locator(':scope > div')).toHaveCount(32)
+	const initialScreenWidth = await liveRows.evaluate(rows => rows.parentElement?.getBoundingClientRect().width ?? 0)
+	await page.evaluate(data => window.__helmWorkspaceFixture?.emitData('shell', data), initial)
+
+	const frameFreeze = page.locator('.term-holder.active .term-frame-freeze')
+	await page.evaluate(data => window.__helmWorkspaceFixture?.emitData('shell', data), start)
+	await expect(frameFreeze).toHaveCount(1)
+	// Narrow the pane while the old-grid frame is still open. Resizing xterm here
+	// wraps each 160-column status row and makes Pi's cursor-up target stale rows.
+	await page.setViewportSize({ width: 1580, height: 646 })
+	await page.waitForTimeout(100)
+	await expect(liveRows.locator(':scope > div')).toHaveCount(32)
+	expect(await liveRows.evaluate(rows => rows.parentElement?.getBoundingClientRect().width ?? 0)).toBe(
+		initialScreenWidth,
+	)
+	await page.evaluate(data => window.__helmWorkspaceFixture?.emitData('shell', data), updates.slice(start.length))
+	await expect(frameFreeze).toHaveCount(0)
+	await expect(liveRows.locator(':scope > div')).toHaveCount(33)
+	await expect
+		.poll(() => liveRows.evaluate(rows => rows.parentElement?.getBoundingClientRect().width ?? 0))
+		.toBeLessThan(initialScreenWidth)
+
+	const rows = (await liveRows.locator(':scope > div').allTextContents()).map(value => value.trimEnd())
+	expect(rows.some(value => value.includes('Ready'))).toBe(true)
+	expect(rows.filter(value => value.includes('Working...'))).toEqual([])
 })
 
 test('a Pi full-history redraw preserves a user-scrolled viewport', async ({ page }) => {

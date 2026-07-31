@@ -140,6 +140,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		/** Holds the last complete viewport over xterm while a large DEC synchronized
 		 *  redraw parses; snapshot/scrollbar work also waits for this to clear. */
 		frameOutputPending: boolean
+		/** A pane resize arrived while Pi was emitting a frame for the old grid.
+		 *  Apply it only after that frame paints so cursor-relative rows stay coherent. */
+		fitDeferredForOutput: boolean
 		frameFreeze: HTMLElement | null
 		/** Absolute normal-buffer line the user was viewing before Pi cleared and
 		 *  rebuilt scrollback; null while following the live tail. Retained until
@@ -753,6 +756,15 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function fitTab(tab: Tab): void {
+		// Pi computes cursor-relative updates for the grid that was current when a
+		// synchronized frame began. Resizing xterm before the frame finishes makes
+		// full-width rows wrap differently; every later cursor-up then targets the
+		// wrong row and leaves stale Working/status lines in the buffer. Keep the
+		// logical grid stable and apply the latest physical pane size on unfreeze.
+		if (tab.frameOutputPending) {
+			tab.fitDeferredForOutput = true
+			return
+		}
 		// Hidden/zero-size holders measure 0x0 — fitting then would clamp the grid
 		// to FitAddon's 2x1 floor. DEFER instead of silently skipping: retry on the
 		// next frames until the holder is measurable (first-paint guard — an open
@@ -780,6 +792,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tab.holder.style.paddingTop = `${padTop}px`
 		tab.holder.style.paddingBottom = `${padBottom}px`
 		const cols = Math.max(2, proposal.cols)
+		tab.fitDeferredForOutput = false
 		if (tab.term.cols !== cols || tab.term.rows !== rows) {
 			// Mirror FitAddon.fit(): clear the renderer before resizing, else the
 			// DOM renderer can leave artifacts of the old grid.
@@ -1132,6 +1145,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tab.frameFreeze?.remove()
 		tab.frameFreeze = null
 		scheduleScrollbarSync(tab)
+		// Resize only after the replacement frame is actually visible. term.resize
+		// then emits the PTY resize/WINCH, prompting Pi to render the new geometry.
+		if (tab.fitDeferredForOutput && !disposed && !tab.closed && tab === activeTab) fitTab(tab)
 	}
 
 	function scheduleTerminalFrameRelease(tab: Tab, release: () => void): () => void {
@@ -3080,6 +3096,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			attachedAt: Number.POSITIVE_INFINITY,
 			dirty: false,
 			frameOutputPending: false,
+			fitDeferredForOutput: false,
 			frameFreeze: null,
 			frameViewportAnchor: null,
 			outputGuard,
