@@ -290,6 +290,79 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 	})
 })
 
+test('status and active-run projection expose only profile-bound executing schedules', async () => {
+	await withScheduledApi(async ({ api, db, store }) => {
+		const profileId = store.activeProfile().id
+		const commands = new ScheduleCommands(db.forProfile(profileId).schedules)
+		const schedule = commands.create(scheduleInput)
+		let run = commands.claimOccurrence(schedule.id, schedule.revision, null, {
+			id: 'visible-running',
+			scheduleId: schedule.id,
+			scheduleRevision: schedule.revision,
+			scheduledFor: '2030-01-01T01:00:00.000Z',
+			localCivilSlot: '2030-01-01 01:00',
+			utcOffsetMinutes: 0,
+			slotKey: 'visible-running',
+			definitionSnapshot: schedule.definition,
+			sessionId: 'sr-visible-running',
+			socketDescriptor: '/private/socket',
+			reportTokenHash: 'b'.repeat(64),
+		})
+		run = commands.beginPreparing(run.id, run.revision)
+		run = commands.beginLaunching(run.id, run.revision)
+		run = commands.markRunning(run.id, run.revision)
+		const otherProfileId = store.create('Other profile', ['helm']).id
+		const otherCommands = new ScheduleCommands(db.forProfile(otherProfileId).schedules)
+		const otherSchedule = otherCommands.create({ ...scheduleInput, name: 'Other profile schedule' })
+		const otherRun = otherCommands.claimOccurrence(otherSchedule.id, otherSchedule.revision, null, {
+			id: 'other-profile-running',
+			scheduleId: otherSchedule.id,
+			scheduleRevision: otherSchedule.revision,
+			scheduledFor: '2030-01-01T01:00:00.000Z',
+			localCivilSlot: '2030-01-01 01:00',
+			utcOffsetMinutes: 0,
+			slotKey: 'other-profile-running',
+			definitionSnapshot: otherSchedule.definition,
+			sessionId: 'sr-other-profile-running',
+		})
+
+		const status = (await (await api.request('/status')).json()) as {
+			data: { scheduledRuns: { running: number } }
+		}
+		assert.equal(status.data.scheduledRuns.running, 1)
+		assert.equal((await api.request(`/scheduled-runs/active?profileId=${profileId}`)).status, 401)
+		const active = await api.request(`/scheduled-runs/active?profileId=${profileId}`, {
+			headers: requestHeaders(),
+		})
+		assert.equal(active.status, 200)
+		const body = (await active.json()) as { data: Array<Record<string, unknown>> }
+		assert.deepEqual(
+			body.data.map(candidate => ({ id: candidate.id, state: candidate.state })),
+			[{ id: run.id, state: 'running' }],
+		)
+		for (const forbidden of ['socketDescriptor', 'reportTokenHash', 'processFingerprint', 'cwd', 'runDir']) {
+			assert.equal(forbidden in body.data[0], false)
+		}
+		const otherActive = await api.request(`/scheduled-runs/active?profileId=${otherProfileId}`, {
+			headers: requestHeaders(),
+		})
+		assert.deepEqual(
+			((await otherActive.json()) as { data: Array<{ id: string }> }).data.map(candidate => candidate.id),
+			[otherRun.id],
+		)
+
+		commands.report(run.id, run.revision, 'needs_attention', 'Choose a release window.')
+		const settledStatus = (await (await api.request('/status')).json()) as {
+			data: { scheduledRuns: { running: number } }
+		}
+		assert.equal(settledStatus.data.scheduledRuns.running, 0)
+		const settled = await api.request(`/scheduled-runs/active?profileId=${profileId}`, {
+			headers: requestHeaders(),
+		})
+		assert.deepEqual((await settled.json()) as { data: unknown[] }, { data: [] })
+	})
+})
+
 test('scheduled lease and report capabilities are scoped and extension routes remain control-token free', async () => {
 	await withScheduledApi(async ({ api, db, store, leaseClock, reportCalls }) => {
 		const profileId = store.activeProfile().id

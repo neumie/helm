@@ -223,6 +223,31 @@ export class ScheduleStore {
 				.all(this.profileId, scheduleId, limit) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
 	}
+
+	/** Runs whose agent is being prepared, launched, or is actively executing. */
+	listExecutingRuns(limit = 50): ScheduledRunRecord[] {
+		const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)))
+		return (
+			this.db
+				.prepare(
+					"SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running') ORDER BY created_at DESC, id DESC LIMIT ?",
+				)
+				.all(this.profileId, boundedLimit) as Record<string, unknown>[]
+		).map(row => this.toRun(row))
+	}
+
+	countExecutingRuns(): number {
+		return Number(
+			(
+				this.db
+					.prepare(
+						"SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running')",
+					)
+					.get(this.profileId) as { count: number }
+			).count,
+		)
+	}
+
 	/**
 	 * Bounded tenant-local recovery page. Startup callers must continue until an
 	 * empty page so every capacity-bearing run is accounted for before admission.

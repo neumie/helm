@@ -62,6 +62,11 @@ test('occurrence identity, active overlap, reports, and safe contracts are guard
 			cwd: '/private/cwd',
 			runDir: '/private/run',
 		})
+		assert.equal(db.schedules.countExecutingRuns(), 1)
+		assert.deepEqual(
+			db.schedules.listExecutingRuns().map(executing => executing.id),
+			[run.id],
+		)
 		assert.throws(
 			() =>
 				commands.claimOccurrence(schedule.id, schedule.revision + 1, '2030-01-03T01:00:00.000Z', {
@@ -83,6 +88,8 @@ test('occurrence identity, active overlap, reports, and safe contracts are guard
 			'needs_attention',
 			'\u001b[31mPlease choose a deployment target.\u001b[0m\u202e',
 		)
+		assert.equal(db.schedules.countExecutingRuns(), 0)
+		assert.deepEqual(db.schedules.listExecutingRuns(), [])
 		assert.equal(attention.reportSummary, 'Please choose a deployment target.')
 		assert.equal(
 			commands.report(attention.id, attention.revision, 'needs_attention', 'Please choose a deployment target.').id,

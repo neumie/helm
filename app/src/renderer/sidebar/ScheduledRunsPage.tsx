@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './scheduled-runs.css'
 import type {
 	AppConfig,
@@ -28,6 +28,7 @@ import {
 } from './ui'
 
 const HISTORY_LIMIT = 20
+const ACTIVE_REFRESH_MS = 5_000
 const CADENCE_PRESETS: Array<{ value: ScheduledScheduleInput['cadenceKind']; label: string; cron: string }> = [
 	{ value: 'hourly', label: 'Hourly', cron: '0 * * * *' },
 	{ value: 'daily', label: 'Daily', cron: '0 9 * * *' },
@@ -90,11 +91,19 @@ function scheduleTone(run: ScheduledRun): 'gray' | 'blue' | 'green' | 'amber' | 
 	return 'gray'
 }
 
+function executingStateLabel(state: ScheduledRun['state']): string {
+	if (state === 'admitted' || state === 'preparing') return 'Preparing'
+	if (state === 'launching') return 'Starting'
+	if (state === 'running') return 'Running'
+	return scheduledRunStateLabel(state)
+}
+
 export function ScheduledRunsPage({
 	profileId,
 	profileName,
 	schedulingEnabled,
 	schedulingControl,
+	runningCount = 0,
 	active = true,
 	onBack,
 	onOpenEditor,
@@ -103,24 +112,55 @@ export function ScheduledRunsPage({
 	profileName: string
 	schedulingEnabled: boolean
 	schedulingControl?: SchedulingControl
+	runningCount?: number
 	active?: boolean
 	onBack: () => void
 	onOpenEditor: (scheduleId?: string) => void
 }) {
 	const [schedules, setSchedules] = useState<ScheduledSchedule[] | null>(null)
+	const [activeRuns, setActiveRuns] = useState<ScheduledRun[] | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const now = useNow()
 	const reload = useCallback(async () => {
-		const result = await window.helm.daemon.listScheduledRuns(profileId)
-		if (result.error) setError(result.error)
+		const [definitions, executing] = await Promise.all([
+			window.helm.daemon.listScheduledRuns(profileId),
+			window.helm.daemon.activeScheduledRuns(profileId),
+		])
+		const failure = definitions.error ?? executing.error
+		if (failure) setError(failure)
 		else {
-			setSchedules(result.data ?? [])
+			setSchedules(definitions.data ?? [])
+			setActiveRuns(executing.data ?? [])
 			setError(null)
 		}
 	}, [profileId])
 	useEffect(() => {
 		if (active) void reload()
 	}, [active, reload])
+	const previousRunningCount = useRef(runningCount)
+	useEffect(() => {
+		const changed = previousRunningCount.current !== runningCount
+		previousRunningCount.current = runningCount
+		if (active && changed) void reload()
+	}, [active, reload, runningCount])
+	const activeRunCount = activeRuns?.length ?? 0
+	useEffect(() => {
+		if (!active || (runningCount === 0 && activeRunCount === 0)) return
+		let cancelled = false
+		let timer: ReturnType<typeof setTimeout> | null = null
+		const refresh = async () => {
+			const result = await window.helm.daemon.activeScheduledRuns(profileId)
+			if (!cancelled && result.data) setActiveRuns(result.data)
+			if (!cancelled) timer = setTimeout(refresh, ACTIVE_REFRESH_MS)
+		}
+		timer = setTimeout(refresh, ACTIVE_REFRESH_MS)
+		return () => {
+			cancelled = true
+			if (timer) clearTimeout(timer)
+		}
+	}, [active, activeRunCount, profileId, runningCount])
+	const visibleSchedules = useMemo(() => schedules?.filter(schedule => !schedule.archivedAt) ?? [], [schedules])
+	const scheduleById = useMemo(() => new Map((schedules ?? []).map(schedule => [schedule.id, schedule])), [schedules])
 	const schedulingConfigured = schedulingControl?.configured === true
 	const schedulingNeedsRestart = schedulingConfigured && schedulingControl?.restartPending === true
 	return (
@@ -182,40 +222,66 @@ export function ScheduledRunsPage({
 				</Card>
 				{error ? (
 					<EmptyState title="Scheduled runs unavailable" detail={error} />
-				) : schedules === null ? (
+				) : schedules === null || activeRuns === null ? (
 					<EmptyState title="Loading scheduled runs" detail="Fetching definitions for this profile." />
-				) : schedules.length === 0 ? (
-					<EmptyState title="No scheduled runs" detail="Create a schedule to run work at a fixed time." />
 				) : (
-					<Card label="Definitions" flush>
-						{schedules
-							.filter(schedule => !schedule.archivedAt)
-							.map(schedule => (
-								<button
-									key={schedule.id}
-									type="button"
-									className="scheduled-definition-row"
-									onClick={() => onOpenEditor(schedule.id)}
-								>
-									<span className="scheduled-definition-main">
-										<span>{schedule.name}</span>
-										<small>
-											{schedule.target.kind === 'project' ? schedule.target.projectSlug : 'System'} ·{' '}
-											{schedule.timezone}
-										</small>
-									</span>
-									<span className="scheduled-definition-side">
-										<small>
-											{schedule.enabled
-												? schedule.nextRunAt
-													? `Next ${relativeTime(schedule.nextRunAt, now)}`
-													: 'Enabled'
-												: 'Disabled'}
-										</small>
-									</span>
-								</button>
-							))}
-					</Card>
+					<>
+						{activeRuns.length > 0 && (
+							<Card label="Running now" flush>
+								{activeRuns.map(run => {
+									const schedule = scheduleById.get(run.scheduleId)
+									if (!schedule) return null
+									return (
+										<button
+											key={run.id}
+											type="button"
+											className="scheduled-definition-row scheduled-running-row"
+											onClick={() => onOpenEditor(schedule.id)}
+										>
+											<span className="scheduled-definition-main">
+												<span>{schedule.name}</span>
+												<small>{run.startedAt ? `Started ${relativeTime(run.startedAt, now)}` : 'Starting now'}</small>
+											</span>
+											<span className="scheduled-definition-side">
+												<Chip tone="blue">{executingStateLabel(run.state)}</Chip>
+											</span>
+										</button>
+									)
+								})}
+							</Card>
+						)}
+						{visibleSchedules.length === 0 ? (
+							<EmptyState title="No scheduled runs" detail="Create a schedule to run work at a fixed time." />
+						) : (
+							<Card label="Definitions" flush>
+								{visibleSchedules.map(schedule => (
+									<button
+										key={schedule.id}
+										type="button"
+										className="scheduled-definition-row"
+										onClick={() => onOpenEditor(schedule.id)}
+									>
+										<span className="scheduled-definition-main">
+											<span>{schedule.name}</span>
+											<small>
+												{schedule.target.kind === 'project' ? schedule.target.projectSlug : 'System'} ·{' '}
+												{schedule.timezone}
+											</small>
+										</span>
+										<span className="scheduled-definition-side">
+											<small>
+												{schedule.enabled
+													? schedule.nextRunAt
+														? `Next ${relativeTime(schedule.nextRunAt, now)}`
+														: 'Enabled'
+													: 'Disabled'}
+											</small>
+										</span>
+									</button>
+								))}
+							</Card>
+						)}
+					</>
 				)}
 			</div>
 		</div>

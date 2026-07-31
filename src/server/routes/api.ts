@@ -458,6 +458,7 @@ export function apiRoutes(
 				queue: queueStatus,
 				projects: config.projects.map(p => p.slug),
 				pollInterval: config.polling.intervalSeconds,
+				scheduledRuns: { running: db.schedules.countExecutingRuns() },
 				profile: activeProfile,
 				profileGeneration: runtime?.generation ?? 1,
 			},
@@ -687,6 +688,14 @@ export function apiRoutes(
 			const target = queryProfile(c)
 			if ('error' in target) return target.error
 			return c.json({ data: storeFor(target.profileId).list().map(toScheduledScheduleContract) })
+		})
+		api.get('/scheduled-runs/active', c => {
+			c.header('Cache-Control', 'no-store')
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			return c.json({ data: storeFor(target.profileId).listExecutingRuns().map(toScheduledRunContract) })
 		})
 		api.post('/scheduled-runs', scheduledBody, async c => {
 			const denied = requireControl(c)

@@ -684,6 +684,12 @@ export class HelmBridge {
 			const result = await scheduledRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`)
 			return stale(token) ?? result
 		})
+		ipcMain.handle('daemon:scheduled:active', async (_e, profileId: unknown, token: unknown) => {
+			const denied = scheduledProfile(profileId, token)
+			if (denied) return denied
+			const result = await scheduledRead<ScheduledRun[]>(`/scheduled-runs/active?profileId=${id(profileId)}`)
+			return stale(token) ?? result
+		})
 		ipcMain.handle('daemon:scheduled:create', async (_e, profileId: unknown, body: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied

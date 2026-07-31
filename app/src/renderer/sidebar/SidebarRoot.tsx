@@ -451,6 +451,7 @@ export function SidebarRoot() {
 						profileId={snapshot?.status?.profile?.id ?? ''}
 						profileName={snapshot?.status?.profile?.name ?? 'Work'}
 						schedulingEnabled={snapshot?.config?.scheduledRuns?.enabled === true}
+						runningCount={snapshot?.status?.scheduledRuns?.running ?? 0}
 						schedulingControl={{
 							configured: schedulingConfigured,
 							ready: settings.draft !== null && settings.loadError === null,

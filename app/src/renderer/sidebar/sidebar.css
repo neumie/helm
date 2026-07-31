@@ -189,6 +189,24 @@
 	line-height: 1;
 }
 
+/* Conditional live count on the existing More control (§3.8). The control
+ * expands only while work runs; zero returns to the ordinary 28px icon button. */
+.icon-btn.menu-trigger-counted {
+	width: auto;
+	gap: 4px;
+	padding: 0 4px 0 8px;
+}
+.menu-trigger-badge {
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.4;
+}
+
 /* ---------- list toolbar ---------- */
 
 /* One text grid (§2.3): every text column in the pane lands 16px from the

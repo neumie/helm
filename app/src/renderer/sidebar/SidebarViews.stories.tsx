@@ -1,7 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ReactNode, useState } from 'react'
 import type { PiAgentStatusIntegrationSnapshot } from '../../shared'
-import type { DashboardItem, HelmSnapshot, ScheduledSchedule, ScheduledScheduleInput } from '../../shared-helm'
+import type {
+	DashboardItem,
+	HelmSnapshot,
+	ScheduledRun,
+	ScheduledSchedule,
+	ScheduledScheduleInput,
+} from '../../shared-helm'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
@@ -25,6 +31,7 @@ type StoryWindow = Window & {
 	__updatedConfigBody?: Record<string, unknown>
 	__restartDaemonCalls?: number
 	__failNextScheduledAction?: boolean
+	__activeScheduledState?: ScheduledRun['state']
 }
 
 export function item(overrides: Partial<DashboardItem>): DashboardItem {
@@ -311,6 +318,11 @@ const snapshot: HelmSnapshot = {
 	},
 }
 
+const scheduledRunningSnapshot: HelmSnapshot = {
+	...snapshot,
+	status: snapshot.status ? { ...snapshot.status, scheduledRuns: { running: 1 } } : null,
+}
+
 const profileDocument = {
 	version: 1 as const,
 	generation: 3,
@@ -355,6 +367,30 @@ function installBridge(
 			updatedAt: NOW,
 		},
 	]
+	const activeScheduledRun: ScheduledRun = {
+		id: 'run-running',
+		profileId: 'work',
+		scheduleId: 'schedule-story',
+		scheduleRevision: 2,
+		scheduledFor: NOW,
+		localCivilSlot: '2026-07-21T09:00',
+		utcOffsetMinutes: -240,
+		state: 'running',
+		revision: 3,
+		reportKind: null,
+		reportSummary: null,
+		startedAt: NOW,
+		reportedAt: null,
+		closedAt: null,
+		missedCount: 0,
+		missedMany: false,
+		sessionAvailability: 'unavailable',
+		terminalResolvedAt: null,
+		notificationClaimedAt: null,
+		notificationDeliveredAt: null,
+		createdAt: NOW,
+		updatedAt: NOW,
+	}
 	Object.assign(window, {
 		helm: {
 			uiPreview: null,
@@ -413,6 +449,14 @@ function installBridge(
 				plan: async () => ({ error: 'Preview only' }),
 				sourceTask: async () => ({ data: detail }),
 				listScheduledRuns: async () => ({ data: structuredClone(scheduledRuns) }),
+				activeScheduledRuns: async () => ({
+					data: [
+						{
+							...structuredClone(activeScheduledRun),
+							state: (window as StoryWindow).__activeScheduledState ?? activeScheduledRun.state,
+						},
+					],
+				}),
 				createScheduledRun: async (_profileId: string, body: ScheduledScheduleInput) => {
 					const created: ScheduledSchedule = {
 						id: `schedule-story-${scheduledRuns.length + 1}`,
@@ -709,6 +753,26 @@ export const WorkList: Story = {
 	),
 }
 
+export const WorkListScheduledRunning: Story = {
+	render: () => (
+		<Frame>
+			<ListPage
+				snapshot={scheduledRunningSnapshot}
+				onOpenItem={noOp}
+				onNewItem={noOp}
+				onOpenArchive={noOp}
+				onOpenProfiles={noOp}
+				onOpenScheduledRuns={noOp}
+				onOpenSettings={noOp}
+				onPoll={noOp}
+				onPauseToggle={noOp}
+				onStartAgent={noOpAsync}
+				onWorkManually={noOpAsync}
+			/>
+		</Frame>
+	),
+}
+
 export const NewItem: Story = {
 	render: function NewItemStory() {
 		const [draft, setDraft] = useState({ title: '', prompt: '' })
@@ -835,7 +899,14 @@ export const AgentIntegrationsExternal: Story = {
 export const ScheduledRuns: Story = {
 	render: () => (
 		<Frame>
-			<ScheduledRunsPage profileId="work" profileName="Work" schedulingEnabled onBack={noOp} onOpenEditor={noOp} />
+			<ScheduledRunsPage
+				profileId="work"
+				profileName="Work"
+				schedulingEnabled
+				runningCount={1}
+				onBack={noOp}
+				onOpenEditor={noOp}
+			/>
 		</Frame>
 	),
 }

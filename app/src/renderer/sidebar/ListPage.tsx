@@ -132,6 +132,12 @@ export function ListPage({
 	const items = snapshot?.items ?? null
 	const reachable = snapshot?.reachable ?? false
 	const paused = snapshot?.status?.queue.paused ?? false
+	const scheduledRunningCount = snapshot?.status?.scheduledRuns?.running ?? 0
+	const scheduledRunningMeta = scheduledRunningCount === 1 ? '1 running' : `${scheduledRunningCount} running`
+	const moreLabel =
+		scheduledRunningCount > 0
+			? `More, ${scheduledRunningCount} scheduled ${scheduledRunningCount === 1 ? 'run' : 'runs'} running`
+			: 'More'
 
 	const selectedProjectSlug = projectFilter.kind === 'project' ? projectFilter.slug : null
 	const selectedProjectColor = colorForProject(snapshot?.config, selectedProjectSlug)
@@ -238,12 +244,23 @@ export function ListPage({
 							{GLYPH.plus}
 						</IconBtn>
 						<MenuButton
-							triggerLabel="More"
-							trigger={GLYPH.ellipsis}
+							triggerLabel={moreLabel}
+							triggerClass={scheduledRunningCount > 0 ? 'icon-btn menu-trigger-counted' : undefined}
+							trigger={
+								<>
+									{GLYPH.ellipsis}
+									{scheduledRunningCount > 0 && (
+										<span className="menu-trigger-badge">
+											{scheduledRunningCount > 99 ? '99+' : scheduledRunningCount}
+										</span>
+									)}
+								</>
+							}
 							entries={[
 								{
 									label: 'Scheduled runs',
 									icon: GLYPH.calendar,
+									meta: scheduledRunningCount > 0 ? scheduledRunningMeta : undefined,
 									section: 'Work',
 									onSelect: onOpenScheduledRuns,
 								},

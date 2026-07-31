@@ -244,6 +244,7 @@ const api: HelmApi = {
 		pauseToggle: () => invokeHelm('daemon:pauseToggle'),
 		poll: () => invokeHelm('daemon:poll'),
 		listScheduledRuns: profileId => invokeHelm('daemon:scheduled:list', profileId),
+		activeScheduledRuns: profileId => invokeHelm('daemon:scheduled:active', profileId),
 		createScheduledRun: (profileId, body) => invokeHelm('daemon:scheduled:create', profileId, body),
 		updateScheduledRun: (profileId, id, body) => invokeHelm('daemon:scheduled:update', profileId, id, body),
 		scheduledRunAction: (profileId, id, action, revision) =>

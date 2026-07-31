@@ -361,6 +361,8 @@ export interface DaemonStatus {
 	queue: QueueStatus
 	projects: string[]
 	pollInterval: number
+	/** Profile-bound executing scheduled agents; absent only during mixed-version restart. */
+	scheduledRuns?: { running: number }
 	/** Protocol 31; absent only while an older daemon is being restarted. */
 	profile?: HelmProfile
 	profileGeneration?: number
@@ -620,6 +622,7 @@ export interface DaemonApi {
 	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
 	poll(): Promise<HelmResult<{ message: string }>>
 	listScheduledRuns(profileId: string): Promise<HelmResult<ScheduledSchedule[]>>
+	activeScheduledRuns(profileId: string): Promise<HelmResult<ScheduledRun[]>>
 	createScheduledRun(profileId: string, body: ScheduledScheduleInput): Promise<HelmResult<ScheduledSchedule>>
 	updateScheduledRun(
 		profileId: string,
