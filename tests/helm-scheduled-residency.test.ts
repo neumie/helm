@@ -308,7 +308,7 @@ test('resident lifecycle stays main-only and quits only after existing guards', 
 	const preload = readFileSync(new URL('../app/src/preload.ts', import.meta.url), 'utf8')
 	const shared = readFileSync(new URL('../app/src/shared-helm.ts', import.meta.url), 'utf8')
 	assert.ok(main.indexOf('helmBridge.start()') < main.indexOf('scheduledResidency.start()'))
-	assert.match(main, /if \(!screenshotPath\) void scheduledResidency\.start\(\)/)
+	assert.match(main, /if \(!screenshotPath && !profileSwitchAttestationMode\) void scheduledResidency\.start\(\)/)
 	const quit = main.slice(main.indexOf("app.on('before-quit'"), main.indexOf("app.on('will-quit'"))
 	assert.ok(quit.indexOf('terminalTransferMain?.isBusy()') < quit.indexOf('scheduledResidency.stop()'))
 	assert.ok(quit.indexOf('runContextWindows.hasDirtyWindows()') < quit.indexOf('scheduledResidency.stop()'))

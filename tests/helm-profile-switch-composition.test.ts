@@ -26,7 +26,18 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 			skipReason?: string
 			assertions?: Record<string, boolean>
 			daemon?: { activationCalls: string[]; readyProfiles: string[]; mixedSnapshotObserved: boolean }
-			window?: { sameBrowserWindow: boolean; sameWebContents: boolean; reloadCount: number }
+			window?: {
+				sameBrowserWindow: boolean
+				sameWebContents: boolean
+				reloadCount: number
+				activationPolicyProhibited: boolean
+				everShown: boolean
+				everFocused: boolean
+				visibleAtStart: boolean
+				focusedAtStart: boolean
+				visibleAtEnd: boolean
+				focusedAtEnd: boolean
+			}
 			workSession?: {
 				socketProbeBefore: string
 				socketProbeAfter: string
@@ -42,6 +53,7 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 			}
 			cleanup?: {
 				electronExited: boolean
+				processGroupEmpty: boolean
 				fakeDaemonClosed: boolean
 				harnessSocketHoldersTerminated: boolean
 				tempRootRemoved: boolean
@@ -50,6 +62,9 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 		if (evidence.result === 'skipped') {
 			assert.equal(result.code, 0, result.stderr)
 			assert.match(evidence.skipReason ?? '', /macOS|Electron|dtach|built/)
+			if (process.platform === 'darwin' && process.env.CI) {
+				assert.fail(`macOS CI must execute the black-box attestation: ${evidence.skipReason ?? 'unknown skip'}`)
+			}
 			return
 		}
 		assert.equal(result.code, 0, `${result.stderr}\n${result.stdout}`)
@@ -60,6 +75,26 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 		assert.equal(evidence.window?.sameBrowserWindow, true)
 		assert.equal(evidence.window?.sameWebContents, true)
 		assert.equal(evidence.window?.reloadCount, 2)
+		assert.deepEqual(
+			evidence.window && {
+				activationPolicyProhibited: evidence.window.activationPolicyProhibited,
+				everShown: evidence.window.everShown,
+				everFocused: evidence.window.everFocused,
+				visibleAtStart: evidence.window.visibleAtStart,
+				focusedAtStart: evidence.window.focusedAtStart,
+				visibleAtEnd: evidence.window.visibleAtEnd,
+				focusedAtEnd: evidence.window.focusedAtEnd,
+			},
+			{
+				activationPolicyProhibited: true,
+				everShown: false,
+				everFocused: false,
+				visibleAtStart: false,
+				focusedAtStart: false,
+				visibleAtEnd: false,
+				focusedAtEnd: false,
+			},
+		)
 		assert.equal(evidence.workSession?.socketProbeBefore, 'live')
 		assert.equal(evidence.workSession?.socketProbeAfter, 'live')
 		assert.equal(evidence.workSession?.oldAttachClientDetached, true)
@@ -75,6 +110,7 @@ test('profile-switch attestation is a black-box Electron/dtach evidence contract
 		assert.deepEqual(evidence.assertions && Object.values(evidence.assertions).every(Boolean), true)
 		assert.deepEqual(evidence.cleanup, {
 			electronExited: true,
+			processGroupEmpty: true,
 			fakeDaemonClosed: true,
 			harnessSocketHoldersTerminated: true,
 			tempRootRemoved: true,

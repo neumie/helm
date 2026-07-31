@@ -14,6 +14,7 @@ import { HelmBridge } from './helm-bridge'
 import { guardNativeTabDoubleClick, installNativeWindowZoomGuard } from './native-window-zoom'
 import { PiAgentStatusIntegration } from './pi-agent-status-integration'
 import { ProfileSwitchCoordinator } from './profile-switch'
+import { parseProfileSwitchAttestationLaunch } from './profile-switch-attestation'
 import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
@@ -69,17 +70,26 @@ const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 // without focusing it, waits for the sidebar + shell prompt to paint,
 // writes a full-window PNG, and exits 0.
 const screenshotPath = process.argv.find(a => a.startsWith('--screenshot='))?.slice('--screenshot='.length) || null
-// Explicit release-canary mode. It is deliberately main-process-only and is
-// never exposed through preload or the ordinary renderer bridge.
-const profileSwitchAttestationPath =
-	process.argv
-		.find(a => a.startsWith('--profile-switch-attestation='))
-		?.slice('--profile-switch-attestation='.length) || null
-const profileSwitchAttestationMarker =
-	process.argv
-		.find(a => a.startsWith('--profile-switch-attestation-marker='))
-		?.slice('--profile-switch-attestation-marker='.length) || null
-const profileSwitchAttestationMode = profileSwitchAttestationPath !== null
+// Explicit release-canary mode. Parse and fail-closed validate its complete
+// private namespace BEFORE any profile/session store can touch userData.
+const profileSwitchAttestationLaunch = parseProfileSwitchAttestationLaunch(process.argv, process.env)
+if (profileSwitchAttestationLaunch) {
+	// Burn the one-launch capability before any renderer/PTY inherits the env.
+	fs.rmSync(path.join(profileSwitchAttestationLaunch.root, '.attestation-capability'), { force: true })
+	process.env.HELM_PROFILE_SWITCH_ATTESTATION_CAPABILITY = ''
+}
+const profileSwitchAttestationPath = profileSwitchAttestationLaunch?.evidencePath ?? null
+const profileSwitchAttestationMarker = profileSwitchAttestationLaunch?.marker ?? null
+const profileSwitchAttestationMode = profileSwitchAttestationLaunch !== null
+let attestationActivationPolicyProhibited = false
+let attestationWindowEverShown = false
+let attestationWindowEverFocused = false
+if (profileSwitchAttestationMode && process.platform === 'darwin') {
+	// Prohibited is stronger than merely hiding the BrowserWindow: AppKit cannot
+	// activate this process, steal focus, or present a Dock/menu-bar identity.
+	app.setActivationPolicy('prohibited')
+	attestationActivationPolicyProhibited = true
+}
 
 // `--ui-preview=<…|background-drag|tab-drag|…>` forwards a deterministic destination/interaction to the renderer
 // (via preload additionalArguments) so screenshot runs can capture a specific
@@ -107,7 +117,7 @@ function parseWindowSize(): { width: number; height: number } | null {
 }
 const windowSizeArg = parseWindowSize()
 
-app.setName(APP_NAME)
+app.setName(profileSwitchAttestationMode ? 'Helm Attestation' : APP_NAME)
 // Must run before anything touches userData so a screenshot run never fights a
 // running Helm instance over the same profile (locks, window-state writes).
 // --user-data-dir=<path> is the STABLE variant: two harness runs sharing one
@@ -623,8 +633,8 @@ function createWindow(): BrowserWindow {
 			preload: path.join(__dirname, 'preload.cjs'),
 			contextIsolation: true,
 			nodeIntegration: false,
-			// A screenshot run captures an unfocused window; keep it painting.
-			backgroundThrottling: !screenshotPath,
+			// Screenshot/attestation runs are unfocused or hidden; keep them painting.
+			backgroundThrottling: !screenshotPath && !profileSwitchAttestationMode,
 			...(uiPreviewArg || uiThemeArg || termCmdArg || termScrollArg
 				? {
 						additionalArguments: [uiPreviewArg, uiThemeArg, termCmdArg, termScrollArg].filter(
@@ -634,6 +644,14 @@ function createWindow(): BrowserWindow {
 				: {}),
 		},
 	})
+	if (profileSwitchAttestationMode) {
+		win.on('show', () => {
+			attestationWindowEverShown = true
+		})
+		win.on('focus', () => {
+			attestationWindowEverFocused = true
+		})
+	}
 	// Terminal web-links + sidebar external links open in the default browser, never a new Electron window.
 	win.webContents.setWindowOpenHandler(({ url }) => {
 		if (/^https?:/.test(url)) void shell.openExternal(url)
@@ -662,6 +680,9 @@ function createWindow(): BrowserWindow {
 		captureScreenshot(win, screenshotPath)
 		// showInactive: window must paint for capturePage, but never steal focus.
 		win.once('ready-to-show', () => win.showInactive())
+	} else if (profileSwitchAttestationMode) {
+		// Never surface or focus the branded canary window. BrowserWindow still has
+		// real bounds and backgroundThrottling=false, so xterm can render evidence.
 	} else {
 		trackWindowState(win)
 		win.once('ready-to-show', () => win.show())
@@ -669,7 +690,7 @@ function createWindow(): BrowserWindow {
 	// A helm:// deep link may land before the renderer is up (cold start).
 	win.webContents.on('did-finish-load', () => {
 		flushPendingOpenItem(win, rendererProfileEpoch)
-		void scheduledAdoption?.restore(sessionProfileToken())
+		if (!profileSwitchAttestationMode) void scheduledAdoption?.restore(sessionProfileToken())
 	})
 	// Native macOS three-finger swipe (System Settings "Swipe between pages"):
 	// swiping right = back, left = forward — same channel as the Go menu.
@@ -783,6 +804,7 @@ interface ProfileSwitchAttestationEvidence {
 	paths: {
 		userDataDir: string
 		socketRoot: string
+		homeDir: string
 		workSocket: string | null
 		targetSocketDir: string | null
 	}
@@ -799,6 +821,13 @@ interface ProfileSwitchAttestationEvidence {
 		}>
 	}
 	window: {
+		activationPolicyProhibited: boolean
+		everShown: boolean
+		everFocused: boolean
+		visibleAtStart: boolean
+		focusedAtStart: boolean
+		visibleAtEnd: boolean
+		focusedAtEnd: boolean
 		before: { browserWindowId: number; webContentsId: number } | null
 		after: { browserWindowId: number; webContentsId: number } | null
 		sameBrowserWindow: boolean
@@ -881,6 +910,7 @@ async function runProfileSwitchAttestation(): Promise<void> {
 		paths: {
 			userDataDir: app.getPath('userData'),
 			socketRoot: process.env.HELM_SOCKET_DIR ?? '',
+			homeDir: process.env.HOME ?? '',
 			workSocket: null,
 			targetSocketDir: null,
 		},
@@ -892,6 +922,13 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			snapshotObservations: [],
 		},
 		window: {
+			activationPolicyProhibited: attestationActivationPolicyProhibited,
+			everShown: false,
+			everFocused: false,
+			visibleAtStart: false,
+			focusedAtStart: false,
+			visibleAtEnd: false,
+			focusedAtEnd: false,
 			before: null,
 			after: null,
 			sameBrowserWindow: false,
@@ -949,6 +986,8 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			browserWindowId: win.id,
 			webContentsId: win.webContents.id,
 		}
+		evidence.window.visibleAtStart = win.isVisible()
+		evidence.window.focusedAtStart = win.isFocused()
 		await waitForAttestation('initial renderer load', () => (!win.webContents.isLoading() ? true : null))
 		// Start counting only after the startup document settled; the two profile
 		// transitions below must account for exactly two same-webContents reloads.
@@ -1004,6 +1043,10 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			browserWindowId: win.id,
 			webContentsId: win.webContents.id,
 		}
+		evidence.window.visibleAtEnd = win.isVisible()
+		evidence.window.focusedAtEnd = win.isFocused()
+		evidence.window.everShown = attestationWindowEverShown
+		evidence.window.everFocused = attestationWindowEverFocused
 		evidence.workSession.newAttachClientPid = returnedEntry.proc.pid
 		evidence.workSession.newAttachClientAlive = true
 		evidence.workSession.attachClientReplaced = returnedEntry.proc.pid !== initial.proc.pid
@@ -1042,6 +1085,19 @@ async function runProfileSwitchAttestation(): Promise<void> {
 			noMixedSnapshot: !evidence.daemon.mixedSnapshotObserved && evidence.daemon.snapshotObservations.length === 2,
 			namespaceIsolation:
 				evidence.paths.targetSocketDir !== null && evidence.paths.targetSocketDir !== path.dirname(workSocket),
+			privateLaunchPaths:
+				profileSwitchAttestationLaunch !== null &&
+				evidence.paths.userDataDir === profileSwitchAttestationLaunch.userDataDir &&
+				evidence.paths.socketRoot === profileSwitchAttestationLaunch.socketRoot &&
+				evidence.paths.homeDir === profileSwitchAttestationLaunch.homeDir,
+			windowNeverActivated:
+				evidence.window.activationPolicyProhibited &&
+				!evidence.window.everShown &&
+				!evidence.window.everFocused &&
+				!evidence.window.visibleAtStart &&
+				!evidence.window.focusedAtStart &&
+				!evidence.window.visibleAtEnd &&
+				!evidence.window.focusedAtEnd,
 		}
 		if (!Object.values(evidence.assertions).every(Boolean))
 			throw new Error('One or more profile-switch assertions failed.')
@@ -1049,6 +1105,22 @@ async function runProfileSwitchAttestation(): Promise<void> {
 	} catch (error) {
 		evidence.error = attestationError(error)
 	} finally {
+		evidence.window.everShown = attestationWindowEverShown
+		evidence.window.everFocused = attestationWindowEverFocused
+		const currentWindow = mainWindow
+		if (currentWindow && !currentWindow.isDestroyed()) {
+			evidence.window.visibleAtEnd = currentWindow.isVisible()
+			evidence.window.focusedAtEnd = currentWindow.isFocused()
+		}
+		if (
+			evidence.window.everShown ||
+			evidence.window.everFocused ||
+			evidence.window.visibleAtEnd ||
+			evidence.window.focusedAtEnd
+		) {
+			evidence.result = 'failed'
+			evidence.error = 'Attestation BrowserWindow became visible or focused.'
+		}
 		evidence.finishedAt = new Date().toISOString()
 		writeAttestationEvidence(profileSwitchAttestationPath, evidence)
 	}
@@ -2120,6 +2192,7 @@ ipcMain.handle('profiles:activate', (_event, id: string, profileToken: unknown) 
 })
 
 void app.whenReady().then(async () => {
+	if (profileSwitchAttestationMode) app.dock?.hide()
 	// Electron 43 hardcodes windowShouldZoom=YES even for maximizable:false.
 	// Install the AppKit delegate override before constructing any BrowserWindow.
 	installNativeWindowZoomGuard()
@@ -2148,135 +2221,143 @@ void app.whenReady().then(async () => {
 		if (result.status === 'quarantined') console.warn('[helm] terminal transfer recovery quarantined:', result.reason)
 	})
 	await terminalTransferRecovery
-	scheduledAdoption = new ScheduledAttentionAdoptionCoordinator({
-		daemon: {
-			reserve: async ownership => {
-				const token = await readLocalControlToken()
-				const result = await helmBridge.scheduledAttention<{ revision: number; adoption: { capability: string } }>(
-					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/reserve`,
-					ownership,
-					token,
-				)
-				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
-				return { revision: result.data.revision, capability: result.data.adoption.capability }
+	if (!profileSwitchAttestationMode) {
+		scheduledAdoption = new ScheduledAttentionAdoptionCoordinator({
+			daemon: {
+				reserve: async ownership => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention<{ revision: number; adoption: { capability: string } }>(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/reserve`,
+						ownership,
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+					return { revision: result.data.revision, capability: result.data.adoption.capability }
+				},
+				descriptor: async input => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention<{
+						socketPath: string
+						mode: 'attach-existing'
+						redraw: 'winch'
+					}>(
+						`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-adoption/attach-descriptor`,
+						input,
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+					return result.data
+				},
+				complete: async ownership => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/complete`,
+						{ ...ownership, ownershipRegistered: true },
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				},
+				rollback: async ownership => {
+					const token = await readLocalControlToken()
+					await helmBridge.scheduledAttention(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/rollback`,
+						ownership,
+						token,
+					)
+				},
+				restoreDescriptor: async ownership => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention<{
+						socketPath: string
+						mode: 'attach-existing'
+						redraw: 'winch'
+					}>(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/completed-owner/attach-descriptor`,
+						ownership,
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+					return result.data
+				},
 			},
-			descriptor: async input => {
+			attach: { attach: attachScheduledPty, detach: detachScheduledPty },
+			registry: scheduledRegistryAdapter,
+			renderer: { open: openScheduledRenderer },
+			newSessionId: sessions.newSessionId,
+			isCurrent: (profileId, token) => profileId === sessionProfileId && acceptsSessionIpcToken(token),
+		})
+		void scheduledAdoption.recoverAmbiguous()
+	}
+	profileSwitchCoordinator = createProfileSwitchCoordinator()
+	if (!profileSwitchAttestationMode) {
+		scheduledAttentionNotifier = new ScheduledAttentionNotifier({
+			list: async () => {
 				const token = await readLocalControlToken()
-				const result = await helmBridge.scheduledAttention<{
-					socketPath: string
-					mode: 'attach-existing'
-					redraw: 'winch'
-				}>(`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-adoption/attach-descriptor`, input, token)
-				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				const result = await helmBridge.scheduledAttentionRead<
+					Array<{
+						profileId: string
+						runId: string
+						revision: number
+						scheduleName: string
+						reportSummary: string
+						notificationClaimedAt: string | null
+						notificationDeliveredAt: string | null
+					}>
+				>('/scheduled-runs/attention-notifications', token)
+				if (!result.data) throw new Error('Scheduled attention notifications are unavailable')
 				return result.data
 			},
-			complete: async ownership => {
+			claim: async input => {
+				const token = await readLocalControlToken()
+				const result = await helmBridge.scheduledAttention<typeof input>(
+					`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/claim`,
+					{ profileId: input.profileId, revision: input.revision },
+					token,
+				)
+				return result.data ?? null
+			},
+			markDelivered: async input => {
 				const token = await readLocalControlToken()
 				const result = await helmBridge.scheduledAttention(
-					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/complete`,
-					{ ...ownership, ownershipRegistered: true },
+					`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/delivered`,
+					{ profileId: input.profileId, revision: input.revision },
 					token,
 				)
-				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
+				return result.data !== undefined
 			},
-			rollback: async ownership => {
-				const token = await readLocalControlToken()
-				await helmBridge.scheduledAttention(
-					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/rollback`,
-					ownership,
-					token,
-				)
+			notification: content => {
+				const native = new Notification(content)
+				return {
+					show: () => showNativeAttentionNotification(native),
+					onClick: listener => native.on('click', listener),
+				}
 			},
-			restoreDescriptor: async ownership => {
-				const token = await readLocalControlToken()
-				const result = await helmBridge.scheduledAttention<{
-					socketPath: string
-					mode: 'attach-existing'
-					redraw: 'winch'
-				}>(
-					`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/completed-owner/attach-descriptor`,
-					ownership,
-					token,
-				)
-				if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
-				return result.data
+			focusAndRestore: () => {
+				const win = mainWindow
+				if (!win || win.isDestroyed()) return
+				if (win.isMinimized()) win.restore()
+				win.show()
+				win.focus()
 			},
-		},
-		attach: { attach: attachScheduledPty, detach: detachScheduledPty },
-		registry: scheduledRegistryAdapter,
-		renderer: { open: openScheduledRenderer },
-		newSessionId: sessions.newSessionId,
-		isCurrent: (profileId, token) => profileId === sessionProfileId && acceptsSessionIpcToken(token),
-	})
-	void scheduledAdoption.recoverAmbiguous()
-	profileSwitchCoordinator = createProfileSwitchCoordinator()
-	scheduledAttentionNotifier = new ScheduledAttentionNotifier({
-		list: async () => {
-			const token = await readLocalControlToken()
-			const result = await helmBridge.scheduledAttentionRead<
-				Array<{
-					profileId: string
-					runId: string
-					revision: number
-					scheduleName: string
-					reportSummary: string
-					notificationClaimedAt: string | null
-					notificationDeliveredAt: string | null
-				}>
-			>('/scheduled-runs/attention-notifications', token)
-			if (!result.data) throw new Error('Scheduled attention notifications are unavailable')
-			return result.data
-		},
-		claim: async input => {
-			const token = await readLocalControlToken()
-			const result = await helmBridge.scheduledAttention<typeof input>(
-				`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/claim`,
-				{ profileId: input.profileId, revision: input.revision },
-				token,
-			)
-			return result.data ?? null
-		},
-		markDelivered: async input => {
-			const token = await readLocalControlToken()
-			const result = await helmBridge.scheduledAttention(
-				`/scheduled-runs/runs/${encodeURIComponent(input.runId)}/attention-notification/delivered`,
-				{ profileId: input.profileId, revision: input.revision },
-				token,
-			)
-			return result.data !== undefined
-		},
-		notification: content => {
-			const native = new Notification(content)
-			return {
-				show: () => showNativeAttentionNotification(native),
-				onClick: listener => native.on('click', listener),
-			}
-		},
-		focusAndRestore: () => {
-			const win = mainWindow
-			if (!win || win.isDestroyed()) return
-			if (win.isMinimized()) win.restore()
-			win.show()
-			win.focus()
-		},
-		activateProfile: async profileId => {
-			const result = await activateProfile(profileId)
-			return result.data !== undefined && sessionProfileId === profileId
-		},
-		currentProfileToken: profileId =>
-			profileId === sessionProfileId && mainWindow && !mainWindow.isDestroyed() && sessionIpcAdmissionOpen
-				? sessionProfileToken()
-				: null,
-		adopt: input => scheduledAdoption?.adopt(input) ?? Promise.resolve({ status: 'rejected' }),
-	})
-	buildMenu()
+			activateProfile: async profileId => {
+				const result = await activateProfile(profileId)
+				return result.data !== undefined && sessionProfileId === profileId
+			},
+			currentProfileToken: profileId =>
+				profileId === sessionProfileId && mainWindow && !mainWindow.isDestroyed() && sessionIpcAdmissionOpen
+					? sessionProfileToken()
+					: null,
+			adopt: input => scheduledAdoption?.adopt(input) ?? Promise.resolve({ status: 'rejected' }),
+		})
+	}
+	if (!profileSwitchAttestationMode) buildMenu()
 	helmBridge.start()
-	// Screenshot harnesses use app.exit(), bypassing guarded lease revocation, and
-	// must never admit real scheduled work as a side effect of rendering fixtures.
-	if (!screenshotPath) void scheduledResidency.start()
+	// Screenshot and attestation harnesses use isolated lifecycle control and must
+	// never admit or poll real scheduled work as a side effect of their fixture.
+	if (!screenshotPath && !profileSwitchAttestationMode) void scheduledResidency.start()
 	createWindow()
 	// A click must fence against an actual current BrowserWindow/token.
-	if (!screenshotPath) scheduledAttentionNotifier.start()
+	if (!screenshotPath && !profileSwitchAttestationMode) scheduledAttentionNotifier?.start()
 	if (profileSwitchAttestationMode) {
 		void runProfileSwitchAttestation()
 			.then(() => app.quit())
@@ -2291,9 +2372,11 @@ void app.whenReady().then(async () => {
 		pendingProfileDestination = null
 		enqueueDestination(destination)
 	}
-	app.on('activate', () => {
-		if (BrowserWindow.getAllWindows().length === 0) createWindow()
-	})
+	if (!profileSwitchAttestationMode) {
+		app.on('activate', () => {
+			if (BrowserWindow.getAllWindows().length === 0) createWindow()
+		})
+	}
 })
 
 app.on('window-all-closed', () => {

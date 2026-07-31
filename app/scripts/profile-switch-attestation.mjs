@@ -5,7 +5,9 @@
  * coordinator through the explicit guarded main-process mode.
  */
 import { execFile, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -18,8 +20,13 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+	findConflictingHelmDesktopPids,
+	isAttestedDtachCommand,
+	terminateOwnedProcessGroup,
+} from './profile-switch-attestation-safety.mjs'
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = new Set(process.argv.slice(2))
@@ -29,6 +36,15 @@ const requireDtach = args.has('--require-dtach')
 const keepArtifacts = args.has('--keep-artifacts')
 const outputPath = valueArg('--output=')
 const timeoutMs = Number(valueArg('--timeout-ms=') ?? 90_000)
+
+function builtAppIdentity() {
+	const protocolSource = readFileSync(join(appRoot, 'src', 'protocol-version.ts'), 'utf8')
+	const buildSource = readFileSync(join(appRoot, 'src', 'build-id.generated.ts'), 'utf8')
+	const protocol = /EXPECTED_DAEMON_PROTOCOL_VERSION\s*=\s*(\d+)/.exec(protocolSource)?.[1]
+	const buildId = /HELM_BUILD_ID\s*=\s*'([^']+)'/.exec(buildSource)?.[1]
+	if (!protocol || !buildId) throw new Error('Could not read the built Helm protocol identity')
+	return { protocolVersion: Number(protocol), buildId }
+}
 
 function atomicWrite(file, value) {
 	mkdirSync(dirname(file), { recursive: true })
@@ -65,6 +81,16 @@ function requiredFailure(reason) {
 }
 
 const electron = join(appRoot, 'node_modules', '.bin', 'electron')
+const electronExecutable = join(
+	appRoot,
+	'node_modules',
+	'electron',
+	'dist',
+	'Electron.app',
+	'Contents',
+	'MacOS',
+	'Electron',
+)
 const dtach = resolveDtach()
 const unavailable =
 	process.platform !== 'darwin'
@@ -80,38 +106,86 @@ if (unavailable) {
 	if (requireElectron || requireDtach) requiredFailure(unavailable)
 	else skipped(unavailable)
 } else {
-	await run()
+	const conflicts = await conflictingHelmDesktopPids()
+	if (conflicts === null) {
+		skipped('Electron/Helm desktop safety preflight unavailable; refusing to launch the attestation')
+	} else {
+		if (conflicts.length > 0) {
+			skipped(`Electron/Helm desktop already running (pids: ${conflicts.join(', ')}); attestation not launched`)
+		} else {
+			await run()
+		}
+	}
 }
 
 async function run() {
 	const root = mkdtempSync(join(tmpdir(), 'hpsa-'))
+	chmodSync(root, 0o700)
 	const socketRoot = join(root, 's')
 	const userDataDir = join(root, 'user-data')
+	const homeDir = join(root, 'home')
+	const xdgConfigHome = join(homeDir, '.config')
+	const xdgStateHome = join(homeDir, '.local', 'state')
+	const xdgCacheHome = join(homeDir, '.cache')
+	const xdgDataHome = join(homeDir, '.local', 'share')
+	const xdgRuntimeDir = join(homeDir, '.runtime')
 	const childEvidencePath = join(root, 'child-evidence.json')
+	for (const directory of [
+		socketRoot,
+		userDataDir,
+		homeDir,
+		xdgConfigHome,
+		xdgStateHome,
+		xdgCacheHome,
+		xdgDataHome,
+		xdgRuntimeDir,
+	]) {
+		mkdirSync(directory, { recursive: true, mode: 0o700 })
+		chmodSync(directory, 0o700)
+	}
+	const capability = randomBytes(32).toString('hex')
+	writeFileSync(join(root, '.attestation-capability'), capability, { mode: 0o600 })
 	const finalEvidencePath = outputPath
 		? resolve(outputPath)
 		: join(tmpdir(), `helm-profile-switch-attestation-${process.pid}.json`)
 	const marker = `helm-profile-attestation-${process.pid}-${Date.now()}`
 	const targetId = 'profile-aaaaaaaaaaaa'
-	let child = null
+	let electronRun = null
 	let server = null
 	let serverClosed = false
 	let childExited = false
+	let processGroupEmpty = true
 	let holdersTerminated = false
 	let daemonState = null
 	let evidence = null
 	try {
-		daemonState = await startFakeDaemon(targetId)
+		daemonState = await startFakeDaemon(targetId, builtAppIdentity())
 		server = daemonState.server
 		const termCmd = Buffer.from(`printf '%s\\n' '${marker}'`, 'utf8').toString('base64')
 		const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...baseEnv } = process.env
 		const env = {
 			...baseEnv,
+			HOME: homeDir,
+			ZDOTDIR: homeDir,
+			HISTFILE: join(homeDir, '.zsh_history'),
+			XDG_CONFIG_HOME: xdgConfigHome,
+			XDG_STATE_HOME: xdgStateHome,
+			XDG_CACHE_HOME: xdgCacheHome,
+			XDG_DATA_HOME: xdgDataHome,
+			XDG_RUNTIME_DIR: xdgRuntimeDir,
 			HELM_URL: daemonState.baseUrl,
 			HELM_SOCKET_DIR: socketRoot,
 			HELM_CLOSE_GRACE_MS: '100',
+			HELM_TERMINAL_AGENT_STATUS: '0',
+			HELM_PROFILE_SWITCH_ATTESTATION_ROOT: root,
+			HELM_PROFILE_SWITCH_ATTESTATION_CAPABILITY: capability,
 		}
-		const electronRun = spawnElectron(
+		const latestConflicts = await conflictingHelmDesktopPids()
+		if (latestConflicts === null) throw new Error('Electron/Helm desktop safety preflight became unavailable')
+		if (latestConflicts.length > 0) {
+			throw new Error(`Electron/Helm desktop started during attestation setup (pids: ${latestConflicts.join(', ')})`)
+		}
+		electronRun = spawnElectron(
 			electron,
 			[
 				appRoot,
@@ -123,11 +197,13 @@ async function run() {
 			env,
 			timeoutMs,
 		)
-		// Retain ownership before awaiting: timeout cleanup must never orphan the
-		// isolated Electron child merely because its completion promise rejects.
-		child = electronRun.child
-		child = await electronRun.completed
+		// Retain the complete ownership record before awaiting: timeout/error
+		// cleanup must signal only this canary's private process group.
+		processGroupEmpty = false
+		const child = await electronRun.completed
 		childExited = true
+		await stopChild(electronRun)
+		processGroupEmpty = true
 		try {
 			evidence = JSON.parse(readFileSync(childEvidencePath, 'utf8'))
 		} catch (error) {
@@ -150,25 +226,47 @@ async function run() {
 				result: 'failed',
 				platform: process.platform,
 				error: error instanceof Error ? error.message : String(error),
-				paths: { userDataDir, socketRoot },
+				paths: { userDataDir, socketRoot, homeDir },
 			}
 		} else {
 			evidence.result = 'failed'
 			evidence.error = error instanceof Error ? error.message : String(error)
 		}
 	} finally {
-		if (child && !childExited) await stopChild(child)
+		let cleanupError = null
+		if (electronRun && !processGroupEmpty) {
+			try {
+				await stopChild(electronRun)
+				processGroupEmpty = true
+			} catch (error) {
+				cleanupError = error instanceof Error ? error.message : String(error)
+			}
+		}
 		if (server) {
 			await new Promise(resolveServer => server.close(() => resolveServer()))
 			serverClosed = true
 		}
-		holdersTerminated = await terminateOwnedSocketHolders(socketRoot)
-		const removeRoot = !keepArtifacts
-		if (removeRoot) rmSync(root, { recursive: true, force: true })
+		try {
+			holdersTerminated = await terminateOwnedSocketHolders(socketRoot)
+			if (!holdersTerminated) {
+				cleanupError = `${cleanupError ? `${cleanupError} ` : ''}Could not prove every harness socket holder terminated.`
+			}
+		} catch (error) {
+			const socketError = error instanceof Error ? error.message : String(error)
+			cleanupError = `${cleanupError ? `${cleanupError} ` : ''}${socketError}`
+			holdersTerminated = false
+		}
 		if (!evidence)
 			evidence = { schemaVersion: 1, result: 'failed', platform: process.platform, error: 'No evidence produced.' }
+		if (cleanupError) {
+			evidence.result = 'failed'
+			evidence.error = `${evidence.error ? `${evidence.error} ` : ''}Cleanup refused: ${cleanupError}`
+		}
+		const removeRoot = !keepArtifacts && processGroupEmpty && holdersTerminated
+		if (removeRoot) rmSync(root, { recursive: true, force: true })
 		evidence.cleanup = {
-			electronExited: childExited || child?.code !== null,
+			electronExited: childExited || (electronRun !== null && electronRun.child.exitCode !== null),
+			processGroupEmpty,
 			fakeDaemonClosed: serverClosed,
 			harnessSocketHoldersTerminated: holdersTerminated,
 			tempRootRemoved: removeRoot,
@@ -189,7 +287,7 @@ function profile(id) {
 	}
 }
 
-async function startFakeDaemon(targetId) {
+async function startFakeDaemon(targetId, appIdentity) {
 	let activeProfileId = 'work'
 	let generation = 1
 	const activationCalls = []
@@ -207,12 +305,13 @@ async function startFakeDaemon(targetId) {
 	const server = createServer((req, res) => {
 		const url = new URL(req.url ?? '/', 'http://127.0.0.1')
 		const status = () => ({
-			protocolVersion: 33,
-			buildId: 'profile-attestation',
+			protocolVersion: appIdentity.protocolVersion,
+			buildId: appIdentity.buildId,
 			uptime: 1,
 			queue: { paused: false, pending: 0, active: 0, maxConcurrency: 1, activeTasks: [] },
 			projects: [],
 			pollInterval: 60,
+			scheduledRuns: { running: 0 },
 			profile: profile(activeProfileId),
 			profileGeneration: generation,
 		})
@@ -241,7 +340,9 @@ async function startFakeDaemon(targetId) {
 }
 
 function spawnElectron(command, argv, env, timeout) {
-	const child = spawn(command, argv, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+	// A private process group lets timeout/error cleanup terminate the wrapper,
+	// Electron main/helpers, and no unrelated operator-owned process.
+	const child = spawn(command, argv, { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
 	let stdout = ''
 	let stderr = ''
 	child.stdout.on('data', data => {
@@ -273,28 +374,9 @@ function spawnElectron(command, argv, env, timeout) {
 	return { child, completed }
 }
 
-function waitForChildExit(child, timeout) {
-	if (child.exitCode !== null) return Promise.resolve(true)
-	return new Promise(resolveExit => {
-		const timer = setTimeout(() => {
-			child.removeListener('exit', onExit)
-			resolveExit(false)
-		}, timeout)
-		const onExit = () => {
-			clearTimeout(timer)
-			resolveExit(true)
-		}
-		child.once('exit', onExit)
-	})
-}
-
 async function stopChild(record) {
-	if (!record.child || record.child.exitCode !== null) return
-	record.child.kill('SIGTERM')
-	if (await waitForChildExit(record.child, 500)) return
-	record.child.kill('SIGKILL')
-	if (!(await waitForChildExit(record.child, 2_000)))
-		throw new Error('Timed out waiting for owned Electron child after SIGKILL.')
+	if (!record.child?.pid) return
+	await terminateOwnedProcessGroup(record.child.pid)
 }
 
 function socketFiles(root) {
@@ -316,6 +398,25 @@ function socketFiles(root) {
 	return files
 }
 
+function readProcessList() {
+	return new Promise(resolveList => {
+		execFile('ps', ['-axo', 'pid=,command='], { timeout: 5_000 }, (error, stdout) => {
+			resolveList(error ? null : stdout)
+		})
+	})
+}
+
+async function conflictingHelmDesktopPids() {
+	const processList = await readProcessList()
+	if (processList === null) return null
+	return findConflictingHelmDesktopPids(processList, {
+		electronLauncher: electron,
+		electronExecutable,
+		appRoot,
+		currentPid: process.pid,
+	})
+}
+
 function execLines(command, args) {
 	return new Promise(resolveLines => {
 		execFile(command, args, { timeout: 5_000 }, (_error, stdout) => {
@@ -329,23 +430,78 @@ function execLines(command, args) {
 	})
 }
 
+function processFingerprint(pid) {
+	return new Promise(resolveFingerprint => {
+		execFile('ps', ['-p', String(pid), '-o', 'lstart=,command='], { timeout: 5_000 }, (error, stdout) => {
+			if (error) return resolveFingerprint(null)
+			const match = /^(.{24})\s+(.+)$/.exec(stdout.trim())
+			resolveFingerprint(match ? { startedAt: match[1], command: match[2] } : null)
+		})
+	})
+}
+
+function pidAlive(pid) {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+async function waitForPidExit(pid, timeoutMs) {
+	const deadline = Date.now() + timeoutMs
+	while (Date.now() < deadline) {
+		if (!pidAlive(pid)) return true
+		await new Promise(resolveWait => setTimeout(resolveWait, 50))
+	}
+	return !pidAlive(pid)
+}
+
+async function terminateAttestedDtachHolder(pid, socket) {
+	const initial = await processFingerprint(pid)
+	if (!initial || !isAttestedDtachCommand(initial.command, socket, dtach)) {
+		throw new Error(`Refusing to signal unattested pid ${pid} for ${socket}`)
+	}
+	if (!(await execLines('lsof', ['-t', '--', socket])).includes(pid)) return true
+	const beforeTerm = await processFingerprint(pid)
+	if (
+		!beforeTerm ||
+		beforeTerm.startedAt !== initial.startedAt ||
+		!isAttestedDtachCommand(beforeTerm.command, socket, dtach) ||
+		!(await execLines('lsof', ['-t', '--', socket])).includes(pid)
+	) {
+		throw new Error(`Lost ownership proof before signaling pid ${pid} for ${socket}`)
+	}
+	process.kill(pid, 'SIGTERM')
+	if (await waitForPidExit(pid, 750)) return true
+
+	const current = await processFingerprint(pid)
+	if (
+		!current ||
+		current.startedAt !== initial.startedAt ||
+		!isAttestedDtachCommand(current.command, socket, dtach) ||
+		!(await execLines('lsof', ['-t', '--', socket])).includes(pid)
+	) {
+		throw new Error(`Lost ownership proof before escalating pid ${pid} for ${socket}`)
+	}
+	process.kill(pid, 'SIGKILL')
+	return waitForPidExit(pid, 2_000)
+}
+
 async function terminateOwnedSocketHolders(root) {
-	let touched = false
 	for (const socket of socketFiles(root)) {
 		if (relative(root, socket).startsWith('..')) throw new Error(`Refusing to inspect non-owned socket: ${socket}`)
-		const pids = new Set([
-			...(await execLines('lsof', ['-t', '--', socket])),
-			...(await execLines('pgrep', ['-f', socket])),
-		])
+		const pids = await execLines('lsof', ['-t', '--', socket])
+		if (pids.length === 0) return false
 		for (const pid of pids) {
-			if (pid === process.pid) continue
-			try {
-				process.kill(pid, 'SIGTERM')
-				touched = true
-			} catch {
-				// Process already exited.
-			}
+			if (!(await terminateAttestedDtachHolder(pid, socket))) return false
 		}
 	}
-	return touched || socketFiles(root).length === 0
+	const deadline = Date.now() + 2_000
+	while (Date.now() < deadline) {
+		if (socketFiles(root).length === 0) return true
+		await new Promise(resolveWait => setTimeout(resolveWait, 50))
+	}
+	return socketFiles(root).length === 0
 }

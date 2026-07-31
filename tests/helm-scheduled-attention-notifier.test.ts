@@ -169,6 +169,9 @@ test('failed switch or missing current token leaves attention unresolved and doe
 test('production main wires the main-only notifier beside resident startup and stops it before bridge shutdown', () => {
 	const main = readFileSync(new URL('../app/src/main.ts', import.meta.url), 'utf8')
 	assert.match(main, /scheduledAttentionNotifier = new ScheduledAttentionNotifier/)
-	assert.match(main, /createWindow\(\)[\s\S]*if \(!screenshotPath\) scheduledAttentionNotifier\.start\(\)/)
+	assert.match(
+		main,
+		/createWindow\(\)[\s\S]*if \(!screenshotPath && !profileSwitchAttestationMode\) scheduledAttentionNotifier\?\.start\(\)/,
+	)
 	assert.match(main, /Promise\.all\(\[scheduledResidency\.stop\(\), scheduledAttentionNotifier\?\.stop\(\)\]\)/)
 })
