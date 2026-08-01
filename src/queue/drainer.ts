@@ -76,8 +76,9 @@ export class Drainer {
 		private readonly activeProfileId?: () => string,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
-		// Default running; a deliberate pause is persisted and survives restarts.
-		this.paused = db.getAppState(PAUSED_STATE_KEY) === 'true'
+		// Automatic queue admission is opt-in: a missing state starts paused,
+		// while an explicit Resume persists "false" across daemon restarts.
+		this.paused = db.getAppState(PAUSED_STATE_KEY) !== 'false'
 	}
 
 	start() {

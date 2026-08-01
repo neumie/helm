@@ -383,26 +383,27 @@ INSERT INTO items (
 	}
 })
 
-test('Drainer defaults to running and persists a deliberate pause across restarts', () =>
+test('Drainer defaults to paused and persists explicit queue admission choices across restarts', () =>
 	withTempDb(db => {
 		const fresh = new Drainer(config, db, provider, {} as never)
-		assert.equal(fresh.isPaused(), false) // default: running
+		assert.equal(fresh.isPaused(), true) // default: automatic admission is off
 
-		fresh.pause()
-		assert.equal(fresh.isPaused(), true)
+		fresh.resume()
+		assert.equal(fresh.isPaused(), false)
 
-		// A new Drainer on the same DB (simulating a daemon restart) stays paused.
-		const restarted = new Drainer(config, db, provider, {} as never)
-		assert.equal(restarted.isPaused(), true)
+		// A new Drainer on the same DB (simulating a daemon restart) stays resumed.
+		const resumed = new Drainer(config, db, provider, {} as never)
+		assert.equal(resumed.isPaused(), false)
 
-		restarted.resume()
-		const afterResume = new Drainer(config, db, provider, {} as never)
-		assert.equal(afterResume.isPaused(), false)
+		resumed.pause()
+		const afterPause = new Drainer(config, db, provider, {} as never)
+		assert.equal(afterPause.isPaused(), true)
 	}))
 
 test('Drainer quiesce blocks direct starts and retries without persisting pause', () =>
 	withTempDb(db => {
 		const drainer = new Drainer(config, db, provider, {} as never)
+		drainer.resume()
 		drainer.start()
 		assert.equal(drainer.quiesce(), true)
 		assert.equal(drainer.isQuiescing(), true)

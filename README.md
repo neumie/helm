@@ -270,7 +270,9 @@ helm add solve \
 ```
 
 This creates a Queue Item through the running daemon. Track and start it in the
-Helm app.
+Helm app. Automatic Queue admission starts paused; choose **Resume queue** from
+Work's More menu to opt into background pulling. An explicit **Start agent**
+still starts that Item while automatic admission is paused.
 
 Equivalent API request:
 
