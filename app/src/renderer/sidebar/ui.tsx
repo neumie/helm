@@ -808,7 +808,17 @@ export function SelectInput({
 	)
 }
 
-export function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({
+	label,
+	value,
+	onChange,
+	disabled,
+}: {
+	label: string
+	value: boolean
+	onChange: (v: boolean) => void
+	disabled?: boolean
+}) {
 	return (
 		<button
 			type="button"
@@ -816,6 +826,7 @@ export function Toggle({ label, value, onChange }: { label: string; value: boole
 			role="switch"
 			aria-checked={value}
 			aria-label={label}
+			disabled={disabled}
 			onClick={() => onChange(!value)}
 		>
 			<span className="toggle-knob" />

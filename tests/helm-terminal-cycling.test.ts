@@ -7,15 +7,12 @@ const preload = readFileSync(new URL('../app/src/preload.ts', import.meta.url), 
 const shared = readFileSync(new URL('../app/src/shared.ts', import.meta.url), 'utf8')
 const workspace = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf8')
 
-test('Shell menu forwards previous and next terminal accelerators over narrow tab events', () => {
-	assert.match(
-		main,
-		/label: 'Previous Terminal',[\s\S]*?accelerator: 'CmdOrCtrl\+Alt\+Left',[\s\S]*?click: send\('tab:previous'\)/,
-	)
-	assert.match(
-		main,
-		/label: 'Next Terminal',[\s\S]*?accelerator: 'CmdOrCtrl\+Alt\+Right',[\s\S]*?click: send\('tab:next'\)/,
-	)
+test('Shell menu forwards configurable previous and next terminal actions over narrow tab events', () => {
+	assert.match(main, /previousTerminal: send\('tab:previous'\)/)
+	assert.match(main, /nextTerminal: send\('tab:next'\)/)
+	assert.match(main, /menuItem\('Previous Terminal', 'previousTerminal'\)/)
+	assert.match(main, /menuItem\('Next Terminal', 'nextTerminal'\)/)
+	assert.match(main, /registerAccelerator: false/)
 	assert.match(preload, /onPrevious: listener => subscribe\('tab:previous', listener\)/)
 	assert.match(preload, /onNext: listener => subscribe\('tab:next', listener\)/)
 	assert.match(shared, /onPrevious\(listener: \(\) => void\): \(\) => void/)

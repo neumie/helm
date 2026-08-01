@@ -41,6 +41,33 @@ test('folder selection is main-owned and reauthenticates after the native dialog
 	assert.ok(dialogAt >= 0 && reauthAt > dialogAt && persistAt > reauthAt)
 })
 
+test('shortcut preference IPC is token-fenced, publishes changes, and recorder revokes on lifecycle boundaries', () => {
+	assert.match(preload, /terminal-preferences:update', update, sessionProfileToken/)
+	assert.match(preload, /terminal-preferences:record-shortcut', sessionProfileToken/)
+	assert.match(preload, /terminal-preferences:cancel-recorder', sessionProfileToken/)
+	assert.match(main, /ipcMain\.handle\('terminal-preferences:update'/)
+	assert.match(main, /requireCurrentTerminalPreferencesSender\(event, profileToken\)/)
+	assert.match(main, /terminal-preferences:changed', snapshot, sessionProfileToken\(\)/)
+	assert.match(main, /before-input-event/)
+	assert.match(main, /recordedShortcutInput/)
+	assert.match(main, /event\.preventDefault/)
+	assert.match(main, /did-start-loading/)
+	assert.match(main, /cancelShortcutRecorder\(\)/)
+})
+
+test('menus display cached effective bindings but physical-code dispatcher owns activation', () => {
+	assert.match(main, /const bindings = currentTerminalPreferences\.shortcuts/)
+	const dispatch = between(main, 'function dispatchShortcutInput', "app.on('browser-window-created'")
+	assert.match(dispatch, /currentTerminalPreferences\.shortcuts/)
+	assert.match(dispatch, /input\.isComposing/)
+	assert.doesNotMatch(dispatch, /terminalPreferences\.snapshot/)
+	assert.match(main, /electronAccelerator\(binding\)/)
+	assert.match(main, /registerAccelerator: false/)
+	assert.match(main, /matchingShortcutAction/)
+	assert.match(main, /app\.on\('browser-window-created'/)
+	assert.match(main, /const closeFocused = \(window/)
+})
+
 test('main resolves the persisted preference for ordinary spawns while scheduled adoption stays on HOME', () => {
 	const ordinarySpawn = between(main, "ipcMain.handle('pty:spawn'", "ipcMain.on('pty:write'")
 	assert.match(ordinarySpawn, /cwd: terminalPreferences\.snapshot\(\)\.effectiveCwd/)

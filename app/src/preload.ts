@@ -10,6 +10,7 @@ import type {
 	TabGroup,
 	TabGroupActionAuthorization,
 	TerminalPlacementCommitResult,
+	TerminalPreferencesSnapshot,
 	TerminalTransferEvent,
 	TerminalTransferMoveResult,
 	TerminalTransferPreflight,
@@ -213,8 +214,17 @@ const api: HelmApi = {
 	},
 	terminalPreferences: {
 		get: () => ipcRenderer.invoke('terminal-preferences:get', sessionProfileToken),
+		update: update => ipcRenderer.invoke('terminal-preferences:update', update, sessionProfileToken),
+		resetShortcuts: revision =>
+			ipcRenderer.invoke('terminal-preferences:reset-shortcuts', revision, sessionProfileToken),
 		chooseDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:choose', sessionProfileToken),
 		resetDefaultCwd: () => ipcRenderer.invoke('terminal-preferences:reset', sessionProfileToken),
+		onChanged: listener =>
+			subscribe<[TerminalPreferencesSnapshot, string]>('terminal-preferences:changed', (snapshot, profileToken) => {
+				if (profileToken === sessionProfileToken) listener(snapshot)
+			}),
+		recordShortcut: () => ipcRenderer.invoke('terminal-preferences:record-shortcut', sessionProfileToken),
+		cancelShortcutRecorder: () => ipcRenderer.send('terminal-preferences:cancel-recorder', sessionProfileToken),
 	},
 	agentIntegrations: {
 		piStatus: () => ipcRenderer.invoke('agent-integrations:pi-status', sessionProfileToken),

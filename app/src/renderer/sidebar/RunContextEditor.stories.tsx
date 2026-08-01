@@ -3,6 +3,7 @@ import { Suspense, lazy } from 'react'
 import '../run-context/run-context-editor.css'
 import type { RunContextEditorApi } from '../../shared'
 import type { RunContextLoad } from '../../shared-helm'
+import { type ShortcutChord, effectiveShortcuts } from '../../shortcuts'
 
 const RunContextEditor = lazy(async () => {
 	const module = await import('../run-context/RunContextEditor')
@@ -41,11 +42,28 @@ const sourceFixture: RunContextLoad = {
 	revision: 0,
 }
 
+declare global {
+	interface Window {
+		__runContextSaveCalls?: number
+		__emitRunContextSaveBindings?: (bindings: ShortcutChord[]) => void
+	}
+}
+
+const saveBindingListeners = new Set<(bindings: ShortcutChord[]) => void>()
 const mockApi: RunContextEditorApi = {
+	platform: 'darwin',
+	saveBindings: effectiveShortcuts().runContextSave,
+	onSaveBindingsChanged: listener => {
+		saveBindingListeners.add(listener)
+		return () => saveBindingListeners.delete(listener)
+	},
 	load: async () => ({ data: sourceFixture }),
-	save: async (revision, document) => ({
-		data: { document: { ...document, updatedAt: new Date().toISOString() }, revision: revision + 1 },
-	}),
+	save: async (revision, document) => {
+		window.__runContextSaveCalls = (window.__runContextSaveCalls ?? 0) + 1
+		return {
+			data: { document: { ...document, updatedAt: new Date().toISOString() }, revision: revision + 1 },
+		}
+	},
 	reset: async revision => ({ data: { source: sourceFixture.source, document: null, revision: revision + 1 } }),
 	setDirty() {},
 	close() {},
@@ -58,6 +76,10 @@ const meta: Meta = {
 	parameters: { layout: 'fullscreen' },
 	decorators: [
 		story => {
+			window.__runContextSaveCalls = 0
+			window.__emitRunContextSaveBindings = bindings => {
+				for (const listener of saveBindingListeners) listener(bindings.map(binding => ({ ...binding })))
+			}
 			window.runContextEditor = mockApi
 			return <div style={{ width: '100vw', height: '100vh' }}>{story()}</div>
 		},

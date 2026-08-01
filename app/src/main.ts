@@ -31,8 +31,10 @@ import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { PiAgentStatusIntegrationSnapshot, TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
 import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
+import { recordedShortcutInput } from './shortcut-recorder'
+import { type ShortcutAction, type ShortcutChord, electronAccelerator, matchingShortcutAction } from './shortcuts'
 import { isTabGroupColor } from './tab-group-colors'
-import { TerminalPreferencesStore } from './terminal-preferences'
+import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './terminal-preferences'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
@@ -63,6 +65,9 @@ const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 		quitRequested = false
 	},
 	canOpen: () => !profileSwitchCoordinator?.isSwitching(),
+	shortcutSaveBindings: () => currentTerminalPreferences.shortcuts.runContextSave,
+	profileToken: () => sessionProfileToken(),
+	allowsProfileToken: token => token === sessionProfileToken(),
 })
 
 // --- CLI modes ---------------------------------------------------------------
@@ -134,6 +139,9 @@ const appProfiles = new AppProfileStore(app.getPath('userData'))
 // Global by design: unlike sessions/buffers, a terminal launch preference does
 // not change when the active Helm profile changes.
 const terminalPreferences = new TerminalPreferencesStore(app.getPath('userData'))
+// Keyboard dispatch runs before every renderer key event. Keep its validated
+// snapshot in memory; never stat/read/parse preferences on each terminal key.
+let currentTerminalPreferences = terminalPreferences.snapshot()
 const piAgentStatusIntegration = new PiAgentStatusIntegration()
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
@@ -278,6 +286,97 @@ interface PtyEntry {
 const ptys = new Map<number, PtyEntry>()
 let nextPtyId = 1
 let mainWindow: BrowserWindow | null = null
+
+const SHORTCUT_RECORD_TIMEOUT_MS = 15_000
+interface ActiveShortcutRecorder {
+	window: BrowserWindow
+	cancel(): void
+	record(input: Parameters<typeof recordedShortcutInput>[0]): ReturnType<typeof recordedShortcutInput>
+}
+let shortcutRecorder: ActiveShortcutRecorder | null = null
+let menuShortcutHandlers: Partial<Record<ShortcutAction, (window: BrowserWindow) => void>> = {}
+
+/** Captures one renderer-owned Primary chord in main, never raw terminal input. */
+function recordShortcut(win: BrowserWindow): Promise<ShortcutChord | null> {
+	shortcutRecorder?.cancel()
+	return new Promise(resolve => {
+		let done = false
+		const finish = (value: ShortcutChord | null) => {
+			if (done) return
+			done = true
+			clearTimeout(timeout)
+			win.removeListener('blur', cancel)
+			win.webContents.removeListener('destroyed', cancel)
+			win.webContents.removeListener('did-start-loading', cancel)
+			if (shortcutRecorder?.cancel === cancel) shortcutRecorder = null
+			resolve(value)
+		}
+		const cancel = () => finish(null)
+		const timeout = setTimeout(cancel, SHORTCUT_RECORD_TIMEOUT_MS)
+		shortcutRecorder = {
+			window: win,
+			cancel,
+			record: input => {
+				const recorded = recordedShortcutInput(input, process.platform)
+				if (recorded.complete) finish(recorded.value)
+				return recorded
+			},
+		}
+		win.on('blur', cancel)
+		win.webContents.on('destroyed', cancel)
+		win.webContents.on('did-start-loading', cancel)
+	})
+}
+
+function cancelShortcutRecorder(): void {
+	shortcutRecorder?.cancel()
+}
+
+/**
+ * Electron accelerators are printable-key based. This dispatcher is the sole
+ * authoritative physical-code menu path and is installed for every Helm window.
+ */
+function dispatchShortcutInput(
+	window: BrowserWindow,
+	event: { preventDefault(): void },
+	input: Parameters<typeof recordedShortcutInput>[0],
+): void {
+	const recorder = shortcutRecorder
+	if (recorder?.window === window) {
+		const recorded = recorder.record(input)
+		// Recorder arbitration deliberately precedes persistent shortcuts.
+		if (recorded.consume) event.preventDefault()
+		if (recorded.consume) return
+	}
+	if (
+		input.type !== 'keyDown' ||
+		input.isAutoRepeat ||
+		input.isComposing ||
+		input.key === 'Dead' ||
+		input.key === 'Process' ||
+		!input.code
+	)
+		return
+	const action = matchingShortcutAction(
+		currentTerminalPreferences.shortcuts,
+		'menu',
+		{
+			code: input.code,
+			metaKey: input.meta === true,
+			ctrlKey: input.control === true,
+			altKey: input.alt === true,
+			shiftKey: input.shift === true,
+		},
+		process.platform,
+	)
+	if (!action) return
+	event.preventDefault()
+	menuShortcutHandlers[action]?.(window)
+}
+
+app.on('browser-window-created', (_event, window) => {
+	window.webContents.on('before-input-event', (event, input) => dispatchShortcutInput(window, event, input))
+})
 
 function defaultShell(): string {
 	if (process.platform === 'win32') return process.env.COMSPEC ?? 'powershell.exe'
@@ -658,6 +757,7 @@ function createWindow(): BrowserWindow {
 		return { action: 'deny' }
 	})
 	win.on('closed', () => {
+		cancelShortcutRecorder()
 		if (mainWindow === win) mainWindow = null
 		killAllPtyClients()
 	})
@@ -766,6 +866,7 @@ function createProfileSwitchCoordinator(): ProfileSwitchCoordinator {
 		},
 		closeSessionIpc: () => {
 			sessionIpcAdmissionOpen = false
+			cancelShortcutRecorder()
 		},
 		flushOldRegistryBestEffort: () => sessionSupport?.registry.flush(),
 		detachOldClients: () => {
@@ -1156,74 +1257,53 @@ function buildMenu(): void {
 		(channel: string, ...args: unknown[]) =>
 		() =>
 			mainWindow?.webContents.send(channel, ...args)
-	const closeFocused = () => {
-		const focused = BrowserWindow.getFocusedWindow()
-		if (focused && focused !== mainWindow) focused.close()
+	const bindings = currentTerminalPreferences.shortcuts
+	const closeFocused = (window = BrowserWindow.getFocusedWindow()) => {
+		if (window && window !== mainWindow) window.close()
 		else mainWindow?.webContents.send('tab:close')
+	}
+	menuShortcutHandlers = {
+		newTerminal: send('tab:new'),
+		closeFocused,
+		moveTerminalToBackground: send('tab:background'),
+		previousTerminal: send('tab:previous'),
+		nextTerminal: send('tab:next'),
+		fontBigger: send('font:step', 1),
+		fontSmaller: send('font:step', -1),
+		fontReset: send('font:step', 0),
+		sidebarBack: send('nav:go', 'back'),
+		sidebarForward: send('nav:go', 'forward'),
+	}
+	const menuItem = (label: string, action: keyof typeof bindings): Electron.MenuItemConstructorOptions => {
+		const binding = bindings[action][0]
+		return {
+			label,
+			...(binding ? { accelerator: electronAccelerator(binding), registerAccelerator: false } : {}),
+			click: () => {
+				const target = BrowserWindow.getFocusedWindow() ?? mainWindow
+				if (target) menuShortcutHandlers[action]?.(target)
+			},
+		}
 	}
 	const template: Electron.MenuItemConstructorOptions[] = [
 		...(process.platform === 'darwin' ? [macApplicationMenu(profileMenu())] : [profileMenu()]),
 		{
 			label: 'Shell',
 			submenu: [
-				{
-					label: 'New Terminal',
-					accelerator: 'CmdOrCtrl+T',
-					click: send('tab:new'),
-				},
-				// Main window: close its active terminal. Auxiliary editor: close that
-				// window through its unsaved-draft guard instead of touching a terminal.
-				{ label: 'Close', accelerator: 'CmdOrCtrl+W', click: closeFocused },
-				// Park the active tab (iTerm "bury session" analog): the tab leaves
-				// the strip, the terminal + pty stay alive behind the strip-right
-				// stack button. Renderer owns the actual park (tab state lives there).
-				{
-					label: 'Move Terminal to Background',
-					accelerator: 'CmdOrCtrl+Shift+B',
-					click: send('tab:background'),
-				},
-				{
-					label: 'Previous Terminal',
-					accelerator: 'CmdOrCtrl+Alt+Left',
-					click: send('tab:previous'),
-				},
-				{
-					label: 'Next Terminal',
-					accelerator: 'CmdOrCtrl+Alt+Right',
-					click: send('tab:next'),
-				},
+				menuItem('New Terminal', 'newTerminal'),
+				menuItem('Close', 'closeFocused'),
+				menuItem('Move Terminal to Background', 'moveTerminalToBackground'),
+				menuItem('Previous Terminal', 'previousTerminal'),
+				menuItem('Next Terminal', 'nextTerminal'),
 			],
 		},
 		{ role: 'editMenu' },
 		{
-			// Custom View menu: the stock viewMenu role owns cmd+= / cmd+- / cmd+0
-			// as webContents zoom — helm gives those to the terminal font size
-			// (renderer applies bounds + persistence, mirroring the cmd+t pattern).
 			label: 'View',
 			submenu: [
-				{
-					label: 'Bigger text',
-					accelerator: 'CmdOrCtrl+=',
-					click: send('font:step', 1),
-				},
-				// Hidden twin so the literal ⌘⇧= ("cmd +") chord also works.
-				{
-					label: 'Bigger text',
-					accelerator: 'CmdOrCtrl+Shift+=',
-					visible: false,
-					acceleratorWorksWhenHidden: true,
-					click: send('font:step', 1),
-				},
-				{
-					label: 'Smaller text',
-					accelerator: 'CmdOrCtrl+-',
-					click: send('font:step', -1),
-				},
-				{
-					label: 'Reset text size',
-					accelerator: 'CmdOrCtrl+0',
-					click: send('font:step', 0),
-				},
+				menuItem('Bigger text', 'fontBigger'),
+				menuItem('Smaller text', 'fontSmaller'),
+				menuItem('Reset text size', 'fontReset'),
 				{ type: 'separator' },
 				{ role: 'reload' },
 				{ role: 'forceReload' },
@@ -1231,22 +1311,8 @@ function buildMenu(): void {
 			],
 		},
 		{
-			// Sidebar push-stack navigation (design-system.md §3.10 gestures):
-			// keyboard equivalents live in the menu because xterm swallows
-			// renderer keydowns when a terminal has focus.
 			label: 'Go',
-			submenu: [
-				{
-					label: 'Back',
-					accelerator: 'CmdOrCtrl+[',
-					click: send('nav:go', 'back'),
-				},
-				{
-					label: 'Forward',
-					accelerator: 'CmdOrCtrl+]',
-					click: send('nav:go', 'forward'),
-				},
-			],
+			submenu: [menuItem('Back', 'sidebarBack'), menuItem('Forward', 'sidebarForward')],
 		},
 		{ label: 'Window', submenu: [{ role: 'minimize' }] },
 	]
@@ -1474,9 +1540,44 @@ function requireCurrentTerminalPreferencesSender(event: IpcMainInvokeEvent, prof
 	return win
 }
 
+function publishTerminalPreferences(snapshot: ReturnType<TerminalPreferencesStore['snapshot']>): void {
+	currentTerminalPreferences = snapshot
+	buildMenu()
+	mainWindow?.webContents.send('terminal-preferences:changed', snapshot, sessionProfileToken())
+	runContextWindows.publishShortcutSaveBindings(snapshot.shortcuts.runContextSave, sessionProfileToken())
+}
+
 ipcMain.handle('terminal-preferences:get', (event, profileToken: unknown) => {
 	requireCurrentTerminalPreferencesSender(event, profileToken)
 	return terminalPreferences.snapshot()
+})
+
+ipcMain.handle('terminal-preferences:update', (event, update: TerminalPreferencesUpdate, profileToken: unknown) => {
+	requireCurrentTerminalPreferencesSender(event, profileToken)
+	const snapshot = terminalPreferences.update(update)
+	publishTerminalPreferences(snapshot)
+	return snapshot
+})
+
+ipcMain.handle('terminal-preferences:reset-shortcuts', (event, revision: unknown, profileToken: unknown) => {
+	requireCurrentTerminalPreferencesSender(event, profileToken)
+	if (!Number.isSafeInteger(revision)) throw new Error('Invalid terminal preferences revision.')
+	const snapshot = terminalPreferences.resetShortcuts(revision as number)
+	publishTerminalPreferences(snapshot)
+	return snapshot
+})
+
+ipcMain.handle('terminal-preferences:record-shortcut', async (event, profileToken: unknown) => {
+	const win = requireCurrentTerminalPreferencesSender(event, profileToken)
+	const recorded = await recordShortcut(win)
+	// A reload/profile switch/blur may have completed the recorder late.
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return null
+	return recorded
+})
+
+ipcMain.on('terminal-preferences:cancel-recorder', (event, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return
+	cancelShortcutRecorder()
 })
 
 ipcMain.handle('terminal-preferences:choose', async (event, profileToken: unknown) => {
@@ -1492,12 +1593,16 @@ ipcMain.handle('terminal-preferences:choose', async (event, profileToken: unknow
 	// never persist a late choice, even though this preference is global.
 	requireCurrentTerminalPreferencesSender(event, profileToken)
 	if (result.canceled || !result.filePaths[0]) return null
-	return terminalPreferences.setDefaultCwd(result.filePaths[0])
+	const snapshot = terminalPreferences.setDefaultCwd(result.filePaths[0])
+	publishTerminalPreferences(snapshot)
+	return snapshot
 })
 
 ipcMain.handle('terminal-preferences:reset', (event, profileToken: unknown) => {
 	requireCurrentTerminalPreferencesSender(event, profileToken)
-	return terminalPreferences.resetDefaultCwd()
+	const snapshot = terminalPreferences.resetDefaultCwd()
+	publishTerminalPreferences(snapshot)
+	return snapshot
 })
 
 function requireCurrentAgentIntegrationsSender(event: IpcMainInvokeEvent, profileToken: unknown): void {

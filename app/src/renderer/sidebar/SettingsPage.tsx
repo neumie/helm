@@ -291,7 +291,7 @@ export function SettingsPage({
 						value={`${themeName} · ${look.state.termFontSize}px`}
 						onClick={onOpenAppearance}
 					/>
-					<ActionRow nav label="Terminal" value="Starting folder" onClick={onOpenTerminal} />
+					<ActionRow nav label="Terminal" value="Folder · Option · shortcuts" onClick={onOpenTerminal} />
 					<ActionRow nav label="Agent integrations" value="Pi status" onClick={onOpenAgentIntegrations} />
 					<ActionRow
 						nav

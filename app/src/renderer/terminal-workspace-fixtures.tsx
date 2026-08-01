@@ -9,7 +9,9 @@ import type {
 	TabGroupsApi,
 	TerminalPlacementCommitCommand,
 	TerminalPlacementCommitResult,
+	TerminalPreferencesSnapshot,
 } from '../shared'
+import { effectiveShortcuts } from '../shortcuts'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
 export interface TerminalWorkspaceFixtureOptions {
@@ -25,7 +27,17 @@ export interface TerminalWorkspaceFixture {
 	helm: TerminalWorkspaceHelm
 	calls: {
 		placement: TerminalPlacementCommitCommand[]
+		/** PTY writes, including exact terminal shortcut bytes. */
+		writes: Array<{ id: number; data: string }>
 	}
+	/** Pushes a stateful preference snapshot through the production subscription. */
+	emitPreferences(snapshot: TerminalPreferencesSnapshot): void
+	/** Read-only current state for browser assertions and controlled revisions. */
+	preferenceSnapshot(): TerminalPreferencesSnapshot
+	/** Makes exact terminal input assertions independent between browser steps. */
+	clearWrites(): void
+	/** Listener count is observable so fixture cleanup is testable. */
+	preferenceListenerCount(): number
 	/** Emits raw PTY output through the production terminal write path. */
 	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
@@ -144,7 +156,7 @@ export function createTerminalWorkspaceFixture(
 	const sessions = (options.sessions ?? fixtureSessions()).map(copySession)
 	const groups = (options.groups ?? fixtureGroups()).map(group => ({ ...group }))
 	let authoritativeOrder = sessions.map(session => session.sessionId)
-	const calls: TerminalWorkspaceFixture['calls'] = { placement: [] }
+	const calls: TerminalWorkspaceFixture['calls'] = { placement: [], writes: [] }
 	const ptyBySession = new Map<string, number>()
 	const ptyExitListeners = new Set<(id: number, exitCode: number) => void>()
 	const ptyDataListeners = new Set<(id: number, data: string) => void>()
@@ -153,6 +165,27 @@ export function createTerminalWorkspaceFixture(
 	let deferNextPlacement = false
 	const tabPreviousListeners = new Set<() => void>()
 	const tabNextListeners = new Set<() => void>()
+	const preferenceListeners = new Set<(snapshot: TerminalPreferencesSnapshot) => void>()
+	let preferences: TerminalPreferencesSnapshot = {
+		defaultCwd: null,
+		effectiveCwd: '/',
+		usingFallback: false,
+		revision: 0,
+		optionAsMeta: true,
+		shortcuts: effectiveShortcuts(),
+	}
+	const emitPreferences = (snapshot: TerminalPreferencesSnapshot) => {
+		preferences = {
+			...snapshot,
+			shortcuts: Object.fromEntries(
+				Object.entries(snapshot.shortcuts).map(([action, bindings]) => [
+					action,
+					bindings.map(binding => ({ ...binding })),
+				]),
+			) as TerminalPreferencesSnapshot['shortcuts'],
+		}
+		for (const listener of preferenceListeners) listener(preferences)
+	}
 	const noOpUnsubscribe = () => {}
 
 	const placementCommit = async (
@@ -281,6 +314,7 @@ export function createTerminalWorkspaceFixture(
 			return { id, sessionId: bound }
 		},
 		write: (id, data) => {
+			calls.writes.push({ id, data })
 			for (const listener of ptyDataListeners) listener(id, data)
 		},
 		resize: () => {},
@@ -326,6 +360,30 @@ export function createTerminalWorkspaceFixture(
 		buffers,
 		external: { open: async () => true },
 		appearance: { listThemes: async () => [], onFontStep: () => noOpUnsubscribe },
+		terminalPreferences: {
+			get: async () => preferences,
+			update: async update => {
+				if (update.revision !== preferences.revision) throw new Error('Terminal settings changed in another window.')
+				emitPreferences({ ...preferences, ...update, revision: preferences.revision + 1 })
+				return preferences
+			},
+			resetShortcuts: async revision => {
+				if (revision !== preferences.revision) throw new Error('Terminal settings changed in another window.')
+				emitPreferences({ ...preferences, shortcuts: effectiveShortcuts(), revision: preferences.revision + 1 })
+				return preferences
+			},
+			chooseDefaultCwd: async () => null,
+			resetDefaultCwd: async () => {
+				emitPreferences({ ...preferences, defaultCwd: null, revision: preferences.revision + 1 })
+				return preferences
+			},
+			onChanged: listener => {
+				preferenceListeners.add(listener)
+				return () => preferenceListeners.delete(listener)
+			},
+			recordShortcut: async () => null,
+			cancelShortcutRecorder: () => {},
+		},
 		tabs: {
 			onNew: () => noOpUnsubscribe,
 			onClose: () => noOpUnsubscribe,
@@ -358,6 +416,12 @@ export function createTerminalWorkspaceFixture(
 	return {
 		helm,
 		calls,
+		emitPreferences,
+		preferenceSnapshot: () => preferences,
+		clearWrites() {
+			calls.writes.splice(0)
+		},
+		preferenceListenerCount: () => preferenceListeners.size,
 		emitData(sessionId, data) {
 			const id = ptyBySession.get(sessionId)
 			if (id !== undefined) for (const listener of ptyDataListeners) listener(id, data)

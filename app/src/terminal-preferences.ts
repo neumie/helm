@@ -6,14 +6,31 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+	type ShortcutAction,
+	type ShortcutBindings,
+	type ShortcutChord,
+	effectiveShortcuts,
+	shortcutDeviation,
+	validateShortcutBindings,
+} from './shortcuts'
 
-const DOCUMENT_VERSION = 1
+const DOCUMENT_VERSION = 2
 const MAX_DOCUMENT_BYTES = 16 * 1024
 const MAX_PATH_LENGTH = 4096
 
+interface TerminalPreferencesDocumentV1 {
+	version: 1
+	defaultCwd: string | null
+}
+
 interface TerminalPreferencesDocument {
 	version: typeof DOCUMENT_VERSION
+	revision: number
 	defaultCwd: string | null
+	optionAsMeta: boolean
+	/** Only values which differ from the canonical shortcut registry. */
+	shortcuts: ShortcutBindings
 }
 
 export interface TerminalPreferencesSnapshot {
@@ -23,6 +40,19 @@ export interface TerminalPreferencesSnapshot {
 	effectiveCwd: string
 	/** The selected folder is unavailable, so effectiveCwd is the home folder. */
 	usingFallback: boolean
+	revision: number
+	/** Option sends Meta by default, matching Terminal.app. */
+	optionAsMeta: boolean
+	/** Effective shortcuts, with canonical defaults merged with deviations. */
+	shortcuts: Record<ShortcutAction, ShortcutChord[]>
+}
+
+export interface TerminalPreferencesUpdate {
+	revision: number
+	defaultCwd?: string | null
+	optionAsMeta?: boolean
+	/** Effective bindings; defaults are stored as omitted deviations. */
+	shortcuts?: Record<ShortcutAction, ShortcutChord[]>
 }
 
 function existingDirectory(value: string): string | null {
@@ -41,52 +71,102 @@ export class TerminalPreferencesStore {
 	readonly filePath: string
 	readonly homeDirectory: string
 
-	constructor(userDataDir: string, homeDirectory = os.homedir()) {
+	constructor(
+		userDataDir: string,
+		homeDirectory = os.homedir(),
+		private readonly platform: NodeJS.Platform = process.platform,
+	) {
 		this.filePath = path.join(userDataDir, 'terminal-preferences.json')
 		this.homeDirectory = homeDirectory
 	}
 
 	snapshot(): TerminalPreferencesSnapshot {
-		const defaultCwd = this.readDefaultCwd()
-		const selected = defaultCwd === null ? null : existingDirectory(defaultCwd)
-		return {
-			defaultCwd,
-			effectiveCwd: selected ?? this.homeDirectory,
-			usingFallback: defaultCwd !== null && selected === null,
+		return this.snapshotFor(this.readDocument())
+	}
+
+	/** Revisioned optimistic update for shortcut and keyboard settings. */
+	update(input: TerminalPreferencesUpdate): TerminalPreferencesSnapshot {
+		if (!Number.isSafeInteger(input.revision) || input.revision < 0)
+			throw new Error('Invalid terminal preferences revision.')
+		const current = this.readDocument()
+		if (input.revision !== current.revision) throw new Error('Terminal preferences changed in another window.')
+		let defaultCwd = current.defaultCwd
+		if (input.defaultCwd !== undefined) {
+			if (input.defaultCwd === null) defaultCwd = null
+			else {
+				const canonical = existingDirectory(input.defaultCwd)
+				if (canonical === null) throw new Error('Choose an existing, accessible folder.')
+				defaultCwd = canonical
+			}
 		}
+		if (input.optionAsMeta !== undefined && typeof input.optionAsMeta !== 'boolean')
+			throw new Error('Invalid Option key preference.')
+		if (input.shortcuts !== undefined) validateShortcutBindings(input.shortcuts, this.platform)
+		const next: TerminalPreferencesDocument = {
+			version: DOCUMENT_VERSION,
+			revision: current.revision + 1,
+			defaultCwd,
+			optionAsMeta: input.optionAsMeta ?? current.optionAsMeta,
+			shortcuts: input.shortcuts === undefined ? current.shortcuts : deviationsFor(input.shortcuts, this.platform),
+		}
+		this.write(next)
+		return this.snapshotFor(next)
 	}
 
 	setDefaultCwd(value: string): TerminalPreferencesSnapshot {
 		const canonical = existingDirectory(value)
 		if (canonical === null) throw new Error('Choose an existing, accessible folder.')
-		this.write({ version: DOCUMENT_VERSION, defaultCwd: canonical })
-		return this.snapshot()
+		const current = this.readDocument()
+		return this.update({ revision: current.revision, defaultCwd: canonical })
 	}
 
 	resetDefaultCwd(): TerminalPreferencesSnapshot {
-		this.write({ version: DOCUMENT_VERSION, defaultCwd: null })
-		return this.snapshot()
+		const current = this.readDocument()
+		return this.update({ revision: current.revision, defaultCwd: null })
 	}
 
-	private readDefaultCwd(): string | null {
+	resetShortcuts(revision: number): TerminalPreferencesSnapshot {
+		return this.update({ revision, shortcuts: effectiveShortcuts({}, this.platform) })
+	}
+
+	private snapshotFor(document: TerminalPreferencesDocument): TerminalPreferencesSnapshot {
+		const selected = document.defaultCwd === null ? null : existingDirectory(document.defaultCwd)
+		return {
+			defaultCwd: document.defaultCwd,
+			effectiveCwd: selected ?? this.homeDirectory,
+			usingFallback: document.defaultCwd !== null && selected === null,
+			revision: document.revision,
+			optionAsMeta: document.optionAsMeta,
+			shortcuts: effectiveShortcuts(document.shortcuts, this.platform),
+		}
+	}
+
+	private readDocument(): TerminalPreferencesDocument {
 		try {
 			const stat = fs.statSync(this.filePath)
-			if (!stat.isFile() || stat.size > MAX_DOCUMENT_BYTES) return null
+			if (!stat.isFile() || stat.size > MAX_DOCUMENT_BYTES) return defaults()
 			const parsed: unknown = JSON.parse(fs.readFileSync(this.filePath, 'utf8'))
-			if (!parsed || typeof parsed !== 'object') return null
-			const document = parsed as Partial<TerminalPreferencesDocument>
-			if (document.version !== DOCUMENT_VERSION) return null
-			if (document.defaultCwd === null) return null
+			if (!parsed || typeof parsed !== 'object') return defaults()
+			const document = parsed as Partial<TerminalPreferencesDocument> | Partial<TerminalPreferencesDocumentV1>
+			if (document.version === 1) {
+				const defaultCwd = validStoredPath(document.defaultCwd)
+				return { ...defaults(), defaultCwd }
+			}
 			if (
-				typeof document.defaultCwd !== 'string' ||
-				document.defaultCwd.length === 0 ||
-				document.defaultCwd.length > MAX_PATH_LENGTH ||
-				!path.isAbsolute(document.defaultCwd)
+				document.version !== DOCUMENT_VERSION ||
+				!Number.isSafeInteger(document.revision) ||
+				(document.revision as number) < 0
 			)
-				return null
-			return document.defaultCwd
+				return defaults()
+			if (typeof document.optionAsMeta !== 'boolean' || !isShortcutBindings(document.shortcuts)) return defaults()
+			const defaultCwd = validStoredPath(document.defaultCwd)
+			validateShortcutBindings(document.shortcuts, this.platform)
+			const revision = document.revision as number
+			const optionAsMeta = document.optionAsMeta as boolean
+			const shortcuts = document.shortcuts as ShortcutBindings
+			return { version: DOCUMENT_VERSION, revision, defaultCwd, optionAsMeta, shortcuts }
 		} catch {
-			return null
+			return defaults()
 		}
 	}
 
@@ -101,12 +181,31 @@ export class TerminalPreferencesStore {
 			try {
 				fs.unlinkSync(temporary)
 			} catch {
-				// Rename consumed it, or the write failed before a file existed.
+				/* rename consumed it */
 			}
 		}
 	}
 }
 
-// app/package.json is CommonJS; root Node tests import app modules through tsx's
-// default interop and destructure named exports from this object.
+function defaults(): TerminalPreferencesDocument {
+	return { version: DOCUMENT_VERSION, revision: 0, defaultCwd: null, optionAsMeta: true, shortcuts: {} }
+}
+
+function validStoredPath(value: unknown): string | null {
+	return typeof value === 'string' && value.length > 0 && value.length <= MAX_PATH_LENGTH && path.isAbsolute(value)
+		? value
+		: null
+}
+
+function isShortcutBindings(value: unknown): value is ShortcutBindings {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+	return Object.values(value).every(
+		bindings => Array.isArray(bindings) && bindings.every(chord => chord && typeof chord === 'object'),
+	)
+}
+
+function deviationsFor(bindings: Record<ShortcutAction, ShortcutChord[]>, platform: NodeJS.Platform): ShortcutBindings {
+	return shortcutDeviation(bindings, platform)
+}
+
 export default { TerminalPreferencesStore }

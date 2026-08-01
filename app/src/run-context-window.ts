@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain, shell } from 'electron'
 import type { HelmBridge } from './helm-bridge'
 import { RunContextAccess, type RunContextDrainResult } from './run-context-access'
 import type { RunContextDraft } from './shared-helm'
+import type { ShortcutChord } from './shortcuts'
 
 interface EditorState {
 	itemId: string
@@ -15,6 +16,9 @@ interface RunContextWindowCallbacks {
 	onAllClosed?(): void
 	onCloseCancelled?(): void
 	canOpen?(): boolean
+	shortcutSaveBindings?(): ShortcutChord[]
+	profileToken(): string
+	allowsProfileToken(token: unknown): boolean
 }
 
 function itemId(raw: unknown): string {
@@ -33,7 +37,7 @@ export class RunContextWindows {
 	constructor(
 		private readonly bridge: HelmBridge,
 		private readonly distDir: string,
-		private readonly callbacks: RunContextWindowCallbacks = {},
+		private readonly callbacks: RunContextWindowCallbacks,
 	) {
 		this.access = new RunContextAccess(() => this.callbacks.canOpen?.() !== false)
 	}
@@ -63,22 +67,42 @@ export class RunContextWindows {
 	}
 
 	registerIpc(): void {
+		ipcMain.on('run-context:bootstrap', event => {
+			try {
+				this.access.assertAdmissionOpen()
+				this.access.itemIdFor(event.sender.id)
+				const profileToken = this.callbacks.profileToken()
+				if (!profileToken) throw new Error('Run Context profile capability is unavailable')
+				event.returnValue = {
+					profileToken,
+					saveBindings: this.callbacks.shortcutSaveBindings?.() ?? [],
+				}
+			} catch {
+				// A main renderer, destroyed editor, or switching profile receives no capability.
+				event.returnValue = null
+			}
+		})
 		ipcMain.handle('run-context:open', (_event, rawId: unknown) => {
 			this.access.assertAdmissionOpen()
 			return this.open(itemId(rawId))
 		})
 		ipcMain.handle('run-context:load', (event, profileToken: unknown) =>
-			this.access.runForEditor(event.sender.id, itemId => this.bridge.loadRunContext(itemId, profileToken)),
+			this.access.runForEditor(event.sender.id, itemId => {
+				this.requireCurrentProfileToken(profileToken)
+				return this.bridge.loadRunContext(itemId, profileToken)
+			}),
 		)
 		ipcMain.handle('run-context:save', (event, revision: unknown, document: RunContextDraft, profileToken: unknown) =>
-			this.access.runForEditor(event.sender.id, itemId =>
-				this.bridge.saveRunContext(itemId, Number(revision), document, profileToken),
-			),
+			this.access.runForEditor(event.sender.id, itemId => {
+				this.requireCurrentProfileToken(profileToken)
+				return this.bridge.saveRunContext(itemId, Number(revision), document, profileToken)
+			}),
 		)
 		ipcMain.handle('run-context:reset', (event, revision: unknown, profileToken: unknown) =>
-			this.access.runForEditor(event.sender.id, itemId =>
-				this.bridge.resetRunContext(itemId, Number(revision), profileToken),
-			),
+			this.access.runForEditor(event.sender.id, itemId => {
+				this.requireCurrentProfileToken(profileToken)
+				return this.bridge.resetRunContext(itemId, Number(revision), profileToken)
+			}),
 		)
 		ipcMain.on('run-context:dirty', (event, dirty: unknown) => {
 			const state = this.byWebContents.get(event.sender.id)
@@ -93,6 +117,19 @@ export class RunContextWindows {
 		ipcMain.on('run-context:cancel-close', event => {
 			if (this.byWebContents.has(event.sender.id)) this.callbacks.onCloseCancelled?.()
 		})
+	}
+
+	/** Publish only Save aliases: no generic preferences ever enter this preload. */
+	publishShortcutSaveBindings(bindings: readonly ShortcutChord[], profileToken: string): void {
+		for (const state of this.byItem.values()) {
+			if (!state.window.isDestroyed())
+				state.window.webContents.send('run-context:save-bindings', bindings, profileToken)
+		}
+	}
+
+	private requireCurrentProfileToken(profileToken: unknown): void {
+		if (this.callbacks.allowsProfileToken(profileToken) !== true)
+			throw new Error('Run Context editor is no longer current')
 	}
 
 	private async open(id: string): Promise<void> {

@@ -3,7 +3,15 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { shouldOpenTerminalLink } from '../external-url'
-import type { HelmApi, RestoredSession, TabGroup, TabGroupActionIntent, TabGroupSurface } from '../shared'
+import type {
+	HelmApi,
+	RestoredSession,
+	TabGroup,
+	TabGroupActionIntent,
+	TabGroupSurface,
+	TerminalPreferencesSnapshot,
+} from '../shared'
+import { effectiveShortcuts, matchesShortcut, shortcutDisplay } from '../shortcuts'
 import { TAB_GROUP_COLORS, TAB_GROUP_COLOR_LABELS, type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
 import { type PlacementDrag, type PlacementSnapshot, TerminalPlacement, terminalId } from '../terminal-placement'
 import { ProductionSessionPlacementPort } from '../terminal-placement-production-port'
@@ -32,7 +40,7 @@ import {
 	type TerminalAgentStatus,
 	createTerminalAgentStateTracker,
 } from './terminal-agent-state'
-import { terminalShortcut } from './terminal-keybindings'
+import { terminalInputShortcut } from './terminal-keybindings'
 import {
 	type TerminalProgressTracker,
 	createTerminalProgressTracker,
@@ -53,6 +61,7 @@ export type TerminalWorkspaceHelm = Pick<
 	| 'termCmd'
 	| 'termScroll'
 	| 'terminalTransfer'
+	| 'terminalPreferences'
 	| 'titleStickyMs'
 	| 'uiPreview'
 >
@@ -168,6 +177,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tabButton: HTMLDivElement
 		/** The tab's label span — renderTabLabel owns its text/tooltip. */
 		labelEl: HTMLSpanElement
+		/** Close tooltip follows the effective menu binding. */
+		closeButton: HTMLButtonElement
 		/** Custom overlay scrollbar (§3.14): full-pane track + pill thumb. */
 		scrollbar: HTMLDivElement
 		thumb: HTMLDivElement
@@ -189,6 +200,31 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	// pane edge (that exact bug shipped once; don't mount into the holder again).
 
 	const tabs: Tab[] = []
+	let terminalPreferences: TerminalPreferencesSnapshot | null = null
+	const shortcutHint = (action: keyof TerminalPreferencesSnapshot['shortcuts']): string | null => {
+		const binding = (terminalPreferences?.shortcuts ?? effectiveShortcuts())[action][0]
+		return binding ? shortcutDisplay(binding, helm.platform) : null
+	}
+	const refreshTerminalShortcutHints = () => {
+		const closeHint = shortcutHint('closeFocused')
+		for (const tab of [...tabs, ...parked]) {
+			tab.closeButton.title = closeHint ? `Close (${closeHint})` : 'Close'
+			tab.closeButton.setAttribute('aria-label', closeHint ? `Close terminal (${closeHint})` : 'Close terminal')
+		}
+	}
+	const applyTerminalPreferences = (snapshot: TerminalPreferencesSnapshot) => {
+		// IPC notifications and the bootstrap read may race. Never let an older
+		// snapshot undo Option-as-Meta or bindings already applied to a live term.
+		if (terminalPreferences && snapshot.revision < terminalPreferences.revision) return
+		terminalPreferences = snapshot
+		for (const tab of [...tabs, ...parked]) tab.term.options.macOptionIsMeta = snapshot.optionAsMeta
+		refreshTerminalShortcutHints()
+	}
+	const unsubscribeTerminalPreferences = helm.terminalPreferences.onChanged(applyTerminalPreferences)
+	const terminalPreferencesReady = helm.terminalPreferences
+		.get()
+		.then(applyTerminalPreferences)
+		.catch(() => {})
 	/** Runtime remains xterm/PTY-owned; placement only stores stable visual IDs. */
 	const runtimeById = new Map<string, Tab>()
 	const agentStateExpiryTimer = window.setInterval(() => {
@@ -2846,8 +2882,20 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 					disabled: !movable,
 					onPick: () => openProfileMoveMenu(tab, x, y),
 				},
-				{ label: 'Move to background', icon: '⇩', hint: '⇧⌘B', onPick: () => parkTab(tab), separatorBefore: true },
-				{ label: 'Close', icon: '×', hint: '⌘W', destructive: true, onPick: () => closeTab(tab) },
+				{
+					label: 'Move to background',
+					icon: '⇩',
+					hint: shortcutHint('moveTerminalToBackground') ?? undefined,
+					onPick: () => parkTab(tab),
+					separatorBefore: true,
+				},
+				{
+					label: 'Close',
+					icon: '×',
+					hint: shortcutHint('closeFocused') ?? undefined,
+					destructive: true,
+					onPick: () => closeTab(tab),
+				},
 			],
 			x,
 			y,
@@ -3011,7 +3059,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			// multiplies the font's natural cell height (~15.5px here), so 1.2 lands
 			// at that same ~19px; a literal 1.45 would render ~22px cells.
 			lineHeight: 1.2,
-			macOptionIsMeta: true,
+			macOptionIsMeta: terminalPreferences?.optionAsMeta ?? true,
 			theme: appearance.getTermTheme(),
 		})
 		const fit = new FitAddon()
@@ -3060,8 +3108,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const close = document.createElement('button')
 		close.className = 'tab-close'
 		close.textContent = '×'
-		close.title = 'Close (⌘W)'
-		close.setAttribute('aria-label', 'Close terminal')
+		const closeHint = shortcutHint('closeFocused')
+		close.title = closeHint ? `Close (${closeHint})` : 'Close'
+		close.setAttribute('aria-label', closeHint ? `Close terminal (${closeHint})` : 'Close terminal')
 		tabButton.append(running, label, close)
 
 		let tab!: Tab
@@ -3113,6 +3162,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			holder,
 			tabButton,
 			labelEl: label,
+			closeButton: close,
 			scrollbar,
 			thumb,
 			fitRetryPending: false,
@@ -3121,12 +3171,15 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			attachClearHeld: '',
 		}
 		attachScrollbarInput(tab)
+		const terminalShortcut = (event: KeyboardEvent) =>
+			terminalInputShortcut(helm.platform, event, terminalPreferences?.shortcuts ?? effectiveShortcuts())
 		term.attachCustomKeyEventHandler(event => {
-			const shortcut = terminalShortcut(helm.platform, event)
+			// Ctrl+Z remains fixed inside terminalInputShortcut; configurable aliases
+			// are applied only at this focused xterm boundary.
+			const shortcut = terminalShortcut(event)
 			if (!shortcut) return true
-			if (event.type === 'keydown' && tab.ptyId !== null) {
-				helm.pty.write(tab.ptyId, shortcut.input)
-			}
+			if (shortcut.suppress) event.preventDefault()
+			if (event.type === 'keydown') term.input(shortcut.input, true)
 			return !shortcut.suppress
 		})
 		// Restored tabs keep the label persisted from the previous run until the
@@ -3398,21 +3451,17 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (tabsReady) cycleTab(1)
 	})
 
-	// cmd+1..9 select tab, cmd+shift+[ / ] cycle. Capture phase so the shortcuts
-	// win over xterm's own key handling when a terminal has focus.
+	// Terminal selection is renderer-owned; menu-owned actions stay menu-driven.
 	const onWorkspaceKeydown = (event: KeyboardEvent) => {
-		if (!event.metaKey || event.ctrlKey || event.altKey) return
-		if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-			const target = tabs[Number(event.key) - 1]
-			if (target) {
-				event.preventDefault()
-				activate(target)
-			}
-			return
-		}
-		if (event.shiftKey && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
+		if (event.repeat || event.isComposing || event.key === 'Dead' || event.key === 'Process') return
+		const bindings = terminalPreferences?.shortcuts ?? effectiveShortcuts()
+		for (let index = 1; index <= 9; index++) {
+			const action = `selectTerminal${index}` as keyof typeof bindings
+			if (!bindings[action].some(chord => matchesShortcut(event, chord, helm.platform))) continue
 			event.preventDefault()
-			cycleTab(event.code === 'BracketRight' ? 1 : -1)
+			const target = tabs[index - 1]
+			if (target) activate(target)
+			return
 		}
 	}
 	window.addEventListener('keydown', onWorkspaceKeydown, { capture: true })
@@ -3602,6 +3651,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	// tabs never respawns.
 	let previewTimer: ReturnType<typeof setTimeout> | undefined
 	const ready = (async () => {
+		// No terminal accepts input until the persisted Option-as-Meta snapshot is
+		// known; a failed read deliberately preserves the historical default.
+		await terminalPreferencesReady
 		let restored: RestoredSession[] = []
 		try {
 			const loaded = await Promise.all([helm.sessions.list(), helm.sessions.groups.list()])
@@ -3680,6 +3732,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			unsubscribePtyExit()
 			unsubscribeAppearance()
 			unsubscribeFontStep()
+			unsubscribeTerminalPreferences()
 			unsubscribeTabNew()
 			unsubscribeTabClose()
 			unsubscribeTabBackground()

@@ -2,9 +2,10 @@ import { BlockNoteView } from '@blocknote/ariakit'
 import type { Block, PartialBlock } from '@blocknote/core'
 import '@blocknote/ariakit/style.css'
 import { useCreateBlockNote } from '@blocknote/react'
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RunContextEditorApi } from '../../shared'
 import type { RunContextDraft, RunContextLoad, SourceTask } from '../../shared-helm'
+import { type ShortcutChord, matchesShortcut } from '../../shortcuts'
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn } from '../sidebar/ui'
 
@@ -132,6 +133,9 @@ export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 	const [conflict, setConflict] = useState(false)
 	const [confirmReset, setConfirmReset] = useState(false)
 	const [confirmClose, setConfirmClose] = useState(false)
+	const [saveBindings, setSaveBindings] = useState<ShortcutChord[]>(() =>
+		window.runContextEditor.saveBindings.map(binding => ({ ...binding })),
+	)
 
 	const markDirty = () => {
 		if (dirty || locked) return
@@ -141,7 +145,7 @@ export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 		window.runContextEditor.setDirty(true)
 	}
 
-	const save = async (): Promise<boolean> => {
+	const save = useCallback(async (): Promise<boolean> => {
 		if (busy || locked) return false
 		setBusy('save')
 		setError(null)
@@ -166,7 +170,7 @@ export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 		setMessage('Saved')
 		window.runContextEditor.setDirty(false)
 		return true
-	}
+	}, [busy, editor, locked, revision])
 
 	const reload = async () => {
 		setBusy('reload')
@@ -233,16 +237,18 @@ export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 		}
 	}, [busy, loaded.item.status, onReload, revision])
 
+	useEffect(() => window.runContextEditor.onSaveBindingsChanged(setSaveBindings), [])
+
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-				event.preventDefault()
-				void save()
-			}
+			if (event.repeat || event.isComposing || event.key === 'Dead' || event.key === 'Process') return
+			if (!saveBindings.some(binding => matchesShortcut(event, binding, window.runContextEditor.platform))) return
+			event.preventDefault()
+			void save()
 		}
 		window.addEventListener('keydown', onKeyDown)
 		return () => window.removeEventListener('keydown', onKeyDown)
-	})
+	}, [saveBindings, save])
 
 	const cancelClose = () => {
 		setConfirmClose(false)

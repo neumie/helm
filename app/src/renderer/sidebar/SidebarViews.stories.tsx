@@ -1,6 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { type ReactNode, useState } from 'react'
-import type { PiAgentStatusIntegrationSnapshot } from '../../shared'
+import type {
+	PiAgentStatusIntegrationSnapshot,
+	TerminalPreferencesSnapshot,
+	TerminalPreferencesUpdate,
+} from '../../shared'
 import type {
 	DashboardItem,
 	HelmSnapshot,
@@ -8,6 +12,7 @@ import type {
 	ScheduledSchedule,
 	ScheduledScheduleInput,
 } from '../../shared-helm'
+import { type ShortcutChord, effectiveShortcuts } from '../../shortcuts'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
 import { DetailPage } from './DetailPage'
@@ -32,6 +37,8 @@ type StoryWindow = Window & {
 	__restartDaemonCalls?: number
 	__failNextScheduledAction?: boolean
 	__activeScheduledState?: ScheduledRun['state']
+	/** Scripted main-process recorder results for Terminal Settings browser tests. */
+	__shortcutRecordings?: ShortcutChord[]
 }
 
 export function item(overrides: Partial<DashboardItem>): DashboardItem {
@@ -391,9 +398,24 @@ function installBridge(
 		createdAt: NOW,
 		updatedAt: NOW,
 	}
+	let terminalPreferences = {
+		defaultCwd: '/Users/you/Developer' as string | null,
+		effectiveCwd: '/Users/you/Developer',
+		usingFallback: false,
+		revision: 0,
+		optionAsMeta: true,
+		shortcuts: effectiveShortcuts(),
+	}
+	const terminalPreferenceListeners = new Set<(snapshot: typeof terminalPreferences) => void>()
+	const publishTerminalPreferences = (next: typeof terminalPreferences) => {
+		terminalPreferences = structuredClone(next)
+		for (const listener of terminalPreferenceListeners) listener(structuredClone(terminalPreferences))
+		return structuredClone(terminalPreferences)
+	}
 	Object.assign(window, {
 		helm: {
 			uiPreview: null,
+			platform: 'darwin',
 			agentIntegrations: {
 				piStatus: async () => piStatus,
 			},
@@ -405,17 +427,39 @@ function installBridge(
 				},
 			},
 			terminalPreferences: {
-				get: async () => ({
-					defaultCwd: '/Users/you/Developer',
-					effectiveCwd: '/Users/you/Developer',
-					usingFallback: false,
-				}),
+				get: async () => structuredClone(terminalPreferences),
+				update: async (update: TerminalPreferencesUpdate) => {
+					if (update.revision !== terminalPreferences.revision)
+						throw new Error('Terminal preferences changed in another window.')
+					return publishTerminalPreferences({
+						...terminalPreferences,
+						...update,
+						revision: terminalPreferences.revision + 1,
+					})
+				},
+				resetShortcuts: async (revision: number) => {
+					if (revision !== terminalPreferences.revision)
+						throw new Error('Terminal preferences changed in another window.')
+					return publishTerminalPreferences({
+						...terminalPreferences,
+						revision: terminalPreferences.revision + 1,
+						shortcuts: effectiveShortcuts(),
+					})
+				},
 				chooseDefaultCwd: async () => null,
-				resetDefaultCwd: async () => ({
-					defaultCwd: null,
-					effectiveCwd: '/Users/you',
-					usingFallback: false,
-				}),
+				resetDefaultCwd: async () =>
+					publishTerminalPreferences({
+						...terminalPreferences,
+						defaultCwd: null,
+						effectiveCwd: '/Users/you',
+						revision: terminalPreferences.revision + 1,
+					}),
+				onChanged: (listener: (snapshot: TerminalPreferencesSnapshot) => void) => {
+					terminalPreferenceListeners.add(listener)
+					return () => terminalPreferenceListeners.delete(listener)
+				},
+				recordShortcut: async () => (window as StoryWindow).__shortcutRecordings?.shift() ?? null,
+				cancelShortcutRecorder: () => {},
 			},
 			daemon: {
 				config: async () => (settingsStore.doc ? { data: settingsStore.doc } : { error: 'Settings unavailable' }),

@@ -38,6 +38,126 @@ test.beforeEach(async ({ page }) => {
 	await expect(page.getByRole('dialog', { name: 'Background terminals' })).toBeVisible()
 })
 
+test('terminal shortcut remaps update live and disabled aliases stop writing', async ({ page }) => {
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.click()
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Control+z')
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data)))
+		.toEqual(['\u001a'])
+
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Meta+Backspace')
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data)))
+		.toEqual(['\u0015'])
+
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Meta+Period')
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data)))
+		.toEqual(['\u0003'])
+
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('fixture unavailable')
+		const snapshot = structuredClone(fixture.preferenceSnapshot())
+		snapshot.revision += 1
+		snapshot.shortcuts.deleteLineStart = [{ code: 'KeyK' }]
+		snapshot.shortcuts.sendInterrupt = [{ code: 'KeyJ' }]
+		fixture.emitPreferences(snapshot)
+		fixture.clearWrites()
+	})
+	await page.evaluate(() => {
+		const input = document.querySelector('.term-holder.active .xterm-helper-textarea')
+		if (!(input instanceof HTMLElement)) throw new Error('terminal input unavailable')
+		input.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true, isComposing: true, bubbles: true }),
+		)
+		input.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true, repeat: true, bubbles: true }),
+		)
+	})
+	await page.waitForTimeout(50)
+	await expect.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes)).toEqual([])
+	await page.keyboard.press('Meta+k')
+	await page.keyboard.press('Meta+j')
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data)))
+		.toEqual(['\u0015', '\u0003'])
+
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('fixture unavailable')
+		const snapshot = structuredClone(fixture.preferenceSnapshot())
+		snapshot.revision += 1
+		snapshot.shortcuts.deleteLineStart = []
+		snapshot.shortcuts.sendInterrupt = []
+		fixture.emitPreferences(snapshot)
+		fixture.clearWrites()
+	})
+	await page.keyboard.press('Meta+k')
+	await page.keyboard.press('Meta+j')
+	await page.waitForTimeout(50)
+	await expect.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes)).toEqual([])
+
+	// An older bootstrap/read result cannot restore bindings already disabled by
+	// a newer push.
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('fixture unavailable')
+		const stale = structuredClone(fixture.preferenceSnapshot())
+		stale.revision -= 1
+		stale.shortcuts.deleteLineStart = [{ code: 'Backspace' }]
+		fixture.emitPreferences(stale)
+		fixture.clearWrites()
+	})
+	await page.keyboard.press('Meta+Backspace')
+	await expect
+		.poll(() => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data)))
+		.toEqual(['\u007f'])
+})
+
+test('Command-number terminal selection follows live configurable bindings', async ({ page }) => {
+	const tabs = page.getByRole('tab')
+	await expect(tabs).toHaveCount(2)
+	await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+	await page.evaluate(() => {
+		const input = document.querySelector('.term-holder.active .xterm-helper-textarea')
+		if (!(input instanceof HTMLElement)) throw new Error('terminal input unavailable')
+		input.dispatchEvent(
+			new KeyboardEvent('keydown', {
+				key: '2',
+				code: 'Digit2',
+				metaKey: true,
+				isComposing: true,
+				bubbles: true,
+			}),
+		)
+	})
+	await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+	await page.keyboard.press('Meta+2')
+	await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+	await page.keyboard.press('Meta+1')
+	await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('fixture unavailable')
+		const snapshot = structuredClone(fixture.preferenceSnapshot())
+		snapshot.revision += 1
+		snapshot.shortcuts.selectTerminal2 = [{ code: 'KeyJ' }]
+		fixture.emitPreferences(snapshot)
+	})
+	await page.keyboard.press('Meta+j')
+	await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+	await page.keyboard.press('Meta+1')
+	await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+	await page.keyboard.press('Meta+2')
+	await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+})
+
 test('a synchronized redraw stays covered until xterm paints it through a resize', async ({ page }) => {
 	const liveRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
 	await expect(liveRows).toBeVisible()

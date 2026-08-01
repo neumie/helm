@@ -9,6 +9,7 @@ import type {
 	RunContextReset,
 	RunContextSave,
 } from './shared-helm'
+import type { ShortcutAction, ShortcutChord } from './shortcuts'
 import type { TabGroupColor } from './tab-group-colors'
 
 /**
@@ -236,13 +237,29 @@ export interface TerminalPreferencesSnapshot {
 	defaultCwd: string | null
 	effectiveCwd: string
 	usingFallback: boolean
+	revision: number
+	optionAsMeta: boolean
+	shortcuts: Record<ShortcutAction, ShortcutChord[]>
+}
+
+export interface TerminalPreferencesUpdate {
+	revision: number
+	defaultCwd?: string | null
+	optionAsMeta?: boolean
+	shortcuts?: Record<ShortcutAction, ShortcutChord[]>
 }
 
 export interface TerminalPreferencesApi {
 	get(): Promise<TerminalPreferencesSnapshot>
+	update(update: TerminalPreferencesUpdate): Promise<TerminalPreferencesSnapshot>
+	resetShortcuts(revision: number): Promise<TerminalPreferencesSnapshot>
 	/** Opens the OS folder picker. Null means the user cancelled. */
 	chooseDefaultCwd(): Promise<TerminalPreferencesSnapshot | null>
 	resetDefaultCwd(): Promise<TerminalPreferencesSnapshot>
+	onChanged(listener: (snapshot: TerminalPreferencesSnapshot) => void): () => void
+	/** Captures one valid Primary shortcut in main without exposing raw input. */
+	recordShortcut(): Promise<ShortcutChord | null>
+	cancelShortcutRecorder(): void
 }
 
 export type PiAgentStatusIntegrationStatus = 'external' | 'not-installed' | 'conflict' | 'unavailable'
@@ -350,6 +367,11 @@ export interface RunContextWindowApi {
 
 /** Restricted preload surface for the dedicated editor window. */
 export interface RunContextEditorApi {
+	/** Narrow keyboard surface for this editor only; never a raw preference document. */
+	platform: NodeJS.Platform
+	/** Captured before first editor input; projected updates arrive via subscription. */
+	saveBindings: ShortcutChord[]
+	onSaveBindingsChanged(listener: (bindings: ShortcutChord[]) => void): () => void
 	load(): Promise<HelmResult<RunContextLoad>>
 	save(revision: number, document: RunContextDraft): Promise<HelmResult<RunContextSave>>
 	reset(revision: number): Promise<HelmResult<RunContextReset>>

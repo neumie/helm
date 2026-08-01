@@ -64,7 +64,9 @@ test('run-context preload exposes only the narrow editor capability set', () => 
 	for (const forbidden of ['window.helm', 'pty:', 'session:', 'daemon:config', 'shell:']) {
 		assert.doesNotMatch(preload, new RegExp(forbidden.replace(':', '\\:')))
 	}
-	assert.match(preload, /ipcRenderer\.sendSync\('config:get'\)/)
+	assert.match(preload, /ipcRenderer\.sendSync\('run-context:bootstrap'\)/)
+	assert.match(preload, /run-context:save-bindings/)
+	assert.doesNotMatch(preload, /run-context:shortcuts|config:get/)
 	assert.match(preload, /run-context:load', sessionProfileToken/)
 	assert.match(preload, /run-context:save', revision, document, sessionProfileToken/)
 	assert.match(preload, /run-context:reset', revision, sessionProfileToken/)
@@ -372,4 +374,12 @@ test('run-context BrowserWindow keeps renderer privileges disabled', () => {
 	assert.match(windowManager, /will-navigate/)
 	assert.match(windowManager, /this\.byItem\.get\(id\)/)
 	assert.match(windowManager, /existing\.window\.focus\(\)/)
+	assert.match(windowManager, /ipcMain\.on\('run-context:bootstrap'/)
+	assert.match(windowManager, /this\.access\.itemIdFor\(event\.sender\.id\)/)
+	assert.match(windowManager, /event\.returnValue = null/)
+	assert.match(windowManager, /profileToken\(\): string/)
+	assert.match(windowManager, /allowsProfileToken\(token: unknown\): boolean/)
+	assert.match(windowManager, /this\.callbacks\.allowsProfileToken\(profileToken\) !== true/)
+	assert.match(windowManager, /requireCurrentProfileToken\(profileToken\)/)
+	assert.doesNotMatch(windowManager, /run-context:shortcuts|additionalArguments/)
 })
