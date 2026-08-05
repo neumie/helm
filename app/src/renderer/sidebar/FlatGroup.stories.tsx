@@ -88,7 +88,7 @@ export const ItemDestinations: Story = {
 		<>
 			<section className="detail-hero">
 				<div className="detail-identity-primary">
-					<span className="detail-project">jvs</span>
+					<span className="detail-project">sample-project</span>
 					<button type="button" className="status-menu-trigger">
 						<span className="detail-status-text">Active⌄</span>
 					</button>

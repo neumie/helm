@@ -538,6 +538,17 @@ function redactEditableConfig(config: HelmConfig): HelmConfig {
 			...config.provider,
 			apiToken: CONFIG_SECRET_REDACTION,
 		},
+		...(config.knowledge === undefined
+			? {}
+			: {
+					knowledge: {
+						providers: config.knowledge.providers.map(provider => ({
+							...provider,
+							socketPath: CONFIG_SECRET_REDACTION,
+							capabilityFile: CONFIG_SECRET_REDACTION,
+						})),
+					},
+				}),
 	}
 }
 
@@ -547,6 +558,16 @@ function preserveRedactedSecrets(body: unknown, currentConfig: HelmConfig): unkn
 	const provider = next.provider
 	if (isRecord(provider) && provider.apiToken === CONFIG_SECRET_REDACTION) {
 		provider.apiToken = currentConfig.provider.apiToken
+	}
+	const knowledge = next.knowledge
+	if (isRecord(knowledge) && Array.isArray(knowledge.providers)) {
+		for (const candidate of knowledge.providers) {
+			if (!isRecord(candidate) || typeof candidate.id !== 'string') continue
+			const current = currentConfig.knowledge?.providers.find(entry => entry.id === candidate.id)
+			if (!current) continue
+			if (candidate.socketPath === CONFIG_SECRET_REDACTION) candidate.socketPath = current.socketPath
+			if (candidate.capabilityFile === CONFIG_SECRET_REDACTION) candidate.capabilityFile = current.capabilityFile
+		}
 	}
 	return next
 }

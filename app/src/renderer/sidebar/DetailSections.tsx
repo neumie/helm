@@ -183,6 +183,64 @@ export function InputSection({ item }: { item: DashboardItem }) {
 	)
 }
 
+export function KnowledgeEvidenceSection({
+	item,
+	onRetryDelivery,
+	onRecoverDelivery,
+	disabled,
+}: {
+	item: DashboardItem
+	onRetryDelivery?: (deliveryId: string) => void
+	onRecoverDelivery?: () => void
+	disabled?: boolean
+}) {
+	const snapshot = item.knowledgeSnapshot
+	if (!snapshot || item.status === 'running') return null
+	const deliveries = item.knowledgeDeliveries ?? []
+	return (
+		<Disclosure
+			heading="Knowledge used"
+			label="Show"
+			hideLabel="Hide"
+			summary={
+				<p className="run-setup-summary">
+					{snapshot.provider ? `${snapshot.provider.providerId} · ` : ''}
+					{snapshot.manifest.length} {snapshot.manifest.length === 1 ? 'source' : 'sources'} · {snapshot.purpose}{' '}
+					{snapshot.sequence}
+				</p>
+			}
+		>
+			<EvidenceWell label="Knowledge used">{snapshot.context}</EvidenceWell>
+			{(deliveries.length > 0 || item.knowledgeRecovery) && (
+				<Card label="Candidate delivery">
+					{item.knowledgeRecovery && onRecoverDelivery && (
+						<ActionRow
+							label="Recover delivery"
+							value={`${item.knowledgeRecovery.candidateCount} ${item.knowledgeRecovery.candidateCount === 1 ? 'candidate' : 'candidates'} · not queued`}
+							onClick={onRecoverDelivery}
+							disabled={disabled}
+						/>
+					)}
+					{deliveries.map(delivery => {
+						const value = `${delivery.candidateCount} ${delivery.candidateCount === 1 ? 'candidate' : 'candidates'} · ${delivery.state}`
+						return delivery.state === 'blocked' && delivery.providerId && onRetryDelivery ? (
+							<ActionRow
+								key={delivery.id}
+								label="Retry delivery"
+								value={delivery.lastErrorMessage ? `${value} · ${delivery.lastErrorMessage}` : value}
+								onClick={() => onRetryDelivery(delivery.id)}
+								disabled={disabled}
+							/>
+						) : (
+							<InfoRow key={delivery.id} label={delivery.providerId ?? 'Legacy destination'} value={value} />
+						)
+					})}
+				</Card>
+			)}
+		</Disclosure>
+	)
+}
+
 /** Run setup, inline: the effective selection reads at rest (zero clicks);
  *  the four pickers (relocated from the retired Run setup page) open in
  *  place. Draft edits are local until a run action sends them (buildRunBody),

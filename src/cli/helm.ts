@@ -18,7 +18,7 @@ Commands:
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
 
-File a self-contained task — an email, an Obsidian note, anything tied to a
+File a self-contained task — an email, a Markdown note, anything tied to a
 project — into Helm. Posts to the RUNNING daemon's /api/items/ingest, so it
 works from ANY directory (no helm.config.json needed) and any agent can use it.
 The task lands in Inbox with a security-aware assessment; you approve it into

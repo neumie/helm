@@ -134,6 +134,57 @@ test('profile data manifest reports stable shared-DB counts and every managed fi
 	}
 })
 
+test('profile data manifest accepts legacy v1 registries and validates v2 knowledge bindings', () => {
+	const { root, personal } = createDataset()
+	try {
+		const registryPath = join(root, 'profiles.json')
+		const registry = JSON.parse(readFileSync(registryPath, 'utf8'))
+		registry.profiles[0].enabledProjects = ['helm']
+		registry.profiles[0].knowledgeBindings = [
+			{
+				projectSlug: 'helm',
+				providerId: 'local-hold',
+				providerProjectId: 'prj_opaque',
+				characterBudget: 20_000,
+				allowSharedProject: false,
+			},
+		]
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.equal(readManifest(root).logical.activeProfileId, registry.activeProfileId)
+
+		registry.profiles[0].knowledgeBindings[0].characterBudget = 99
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.match(manifestResult(root).stderr, /invalid profile document/)
+
+		registry.profiles[0].knowledgeBindings[0].characterBudget = 20_000
+		registry.profiles[0].knowledgeBindings[0].providerProjectId = '   '
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.match(manifestResult(root).stderr, /invalid profile document/)
+
+		registry.profiles[0].knowledgeBindings[0].providerProjectId = 'prj_opaque'
+		const personalProfile = registry.profiles.find((profile: { id: string }) => profile.id === personal.id)
+		personalProfile.enabledProjects = ['helm']
+		personalProfile.knowledgeBindings = [
+			{
+				...registry.profiles[0].knowledgeBindings[0],
+				allowSharedProject: false,
+			},
+		]
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.match(manifestResult(root).stderr, /sharing.*acknowledgement/i)
+
+		registry.version = 1
+		registry.profiles[0].knowledgeBindings = 'invalid'
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.match(manifestResult(root).stderr, /invalid profile document/)
+		for (const profile of registry.profiles) profile.knowledgeBindings = undefined
+		writeFileSync(registryPath, JSON.stringify(registry))
+		assert.equal(readManifest(root).logical.activeProfileId, registry.activeProfileId)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('profile data manifest rejects foreign keys, event tenant mismatches, and SQLite sidecars', () => {
 	const { root, personal } = createDataset()
 	try {
@@ -187,7 +238,7 @@ test('profile data manifest rejects foreign keys, event tenant mismatches, and S
 	}
 })
 
-test('profile data manifest mirrors production validation for normalized profile names', async t => {
+test('profile data manifest mirrors production validation for normalized profile names', () => {
 	for (const [fixture, name] of [
 		['empty', ''],
 		['long', 'x'.repeat(49)],

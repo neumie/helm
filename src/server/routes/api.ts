@@ -32,6 +32,7 @@ import { observeItemRun } from '../../items/observation.js'
 import { RunContextConflictError, runContextDraftSchema } from '../../items/run-context.js'
 import { itemStatusSchema, solverEffortSchema } from '../../items/schema.js'
 import type { ItemRecord, SolverEffort } from '../../items/schema.js'
+import type { KnowledgeIntegration } from '../../knowledge/integration.js'
 import { PlanningApplication, PlanningError } from '../../plan/application.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
@@ -92,8 +93,12 @@ export interface ProfileContext {
 	/** Function in production; object compatibility keeps route fixtures concise. */
 	runtime: ProfileRuntime | (() => ProfileRuntime)
 	applyRuntime?: (runtime: ProfileRuntime) => void
+	/** Main-process-only daemon control capability used by privileged evidence reads. */
+	localControlToken?: string
 	/** Named optional transport dependencies; avoids extending apiRoutes positional arguments. */
 	scheduled?: ScheduledRouteDependencies
+	/** Optional external context provider. Immutable evidence remains DB-owned by Helm. */
+	knowledge?: KnowledgeIntegration
 }
 
 const ingestSchema = z
@@ -224,6 +229,14 @@ export function apiRoutes(
 		const runtime = profileContext?.runtime
 		return typeof runtime === 'function' ? runtime() : runtime
 	}
+	const localControlToken = profileContext?.localControlToken ?? profileContext?.scheduled?.controlToken
+	const localControlAuthorized = (c: Context) => {
+		if (!localControlToken) return false
+		const authorization = c.req.header('Authorization') ?? ''
+		const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization)
+		return !!match && verifyLocalControlToken(match[1], localControlToken)
+	}
+	const controlProfileMatches = (c: Context, item: ItemRecord) => c.req.header('X-Helm-Profile-Id') === item.profileId
 	const aiDeps = aiOneShot ? { runOneShot: aiOneShot } : undefined
 	const planning = new PlanningApplication(
 		config,
@@ -235,15 +248,50 @@ export function apiRoutes(
 		// Planning is a long-lived saga. Bind the Item's tenant before the first
 		// mutation/await so activation cannot redirect later lifecycle writes.
 		profileId => new ItemCommands(db.forProfile(profileId).items, config),
+		profileContext?.knowledge,
+		profileId => db.forProfile(profileId).knowledge,
 	)
-	const dashboardItem = async (item: ItemRecord) => ({
-		...toDashboardItemWithSiblings(
+	const dashboardItem = async (item: ItemRecord, includeKnowledge = false) => {
+		const profileDb = db.forProfile(item.profileId)
+		const profileCommands = new ItemCommands(profileDb.items, config)
+		const knowledgeSnapshot = item.knowledgeSnapshotId
+			? profileDb.knowledge.snapshotForItem(item.knowledgeSnapshotId, item.id)
+			: null
+		const knowledgeDeliveries = profileDb.knowledge.listCandidateBatches(item.id).map(entry => ({
+			id: entry.id,
+			state: entry.state,
+			providerId: entry.providerId,
+			candidateCount: entry.candidates.length,
+			attemptCount: entry.attemptCount,
+			lastErrorCode: entry.lastErrorCode,
+			lastErrorMessage: entry.lastError,
+			updatedAt: entry.updatedAt,
+			deliveredAt: entry.deliveredAt,
+		}))
+		let knowledgeRecovery: { candidateCount: number } | null = null
+		if (includeKnowledge && item.worktreePath && item.planDirName) {
+			const workspace = new PlanWorkspace(item.worktreePath, item.planDirName)
+			if (workspace.knowledgeCandidatesExist()) {
+				const candidates = workspace.readKnowledgeCandidates()
+				if (candidates.length > 0) knowledgeRecovery = { candidateCount: candidates.length }
+			}
+		}
+		const knowledgeEnabled = knowledgeSnapshot !== null
+		const contract = toDashboardItemWithSiblings(
 			item,
-			item.groupId ? itemCommands.listGroupItems(item.groupId) : [],
-			await observeItemRun(item, { store: db.items }),
-		),
-		canCreateSourceTask: canCreateSourceTask(item, provider),
-	})
+			item.groupId ? profileCommands.listGroupItems(item.groupId) : [],
+			await observeItemRun(item, { store: profileDb.items }),
+		)
+		return {
+			...contract,
+			// The immutable solve input is exact run evidence and may embed the
+			// selected knowledge text. Only Electron main's control-authenticated
+			// detail request may receive it for a knowledge-backed attempt.
+			solveInputSnapshot: !includeKnowledge && knowledgeEnabled ? null : contract.solveInputSnapshot,
+			canCreateSourceTask: canCreateSourceTask(item, provider),
+			...(includeKnowledge ? { knowledgeSnapshot, knowledgeDeliveries, knowledgeRecovery } : {}),
+		}
+	}
 	const resolveRunContextSource = async (item: ItemRecord): Promise<TaskContext> => {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items have editable run context')
@@ -447,6 +495,7 @@ export function apiRoutes(
 			id: 'work',
 			name: 'Work',
 			enabledProjects: config.projects.map(project => project.slug),
+			knowledgeBindings: [],
 			createdAt: '',
 			archivedAt: null,
 		}
@@ -459,7 +508,7 @@ export function apiRoutes(
 				projects: config.projects.map(p => p.slug),
 				pollInterval: config.polling.intervalSeconds,
 				scheduledRuns: { running: db.schedules.countExecutingRuns() },
-				profile: activeProfile,
+				profile: { ...activeProfile, knowledgeBindings: [] },
 				profileGeneration: runtime?.generation ?? 1,
 			},
 		})
@@ -469,11 +518,28 @@ export function apiRoutes(
 	// activation changes only the tenant used for UI, polling, and new admission.
 	// Already-running jobs retain their captured Item/profile scope.
 	if (profileContext) {
+		const requireProfileControl = async (c: Context, next: () => Promise<void>) => {
+			if (!localControlAuthorized(c)) return c.json({ error: 'Unauthorized' }, 401)
+			await next()
+		}
+		api.use('/profiles', requireProfileControl)
+		api.use('/profiles/*', requireProfileControl)
 		const configuredProjects = new Set(config.projects.map(project => project.slug))
+		const configuredKnowledgeProviders = new Set(config.knowledge?.providers.map(provider => provider.id) ?? [])
+		const profileKnowledgeBindingSchema = z
+			.object({
+				projectSlug: z.string().min(1),
+				providerId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+				providerProjectId: z.string().trim().min(1).max(200),
+				characterBudget: z.number().int().min(100).max(200_000),
+				allowSharedProject: z.boolean(),
+			})
+			.strict()
 		const profileInputSchema = z
 			.object({
 				name: z.string().optional(),
 				enabledProjects: z.array(z.string()).optional(),
+				knowledgeBindings: z.array(profileKnowledgeBindingSchema).optional(),
 			})
 			.strict()
 		const parseProfileInput = async (c: Context) => {
@@ -481,6 +547,14 @@ export function apiRoutes(
 			if (!parsed.success) return { error: c.json({ error: 'Invalid profile input' }, 400) }
 			if (parsed.data.enabledProjects?.some(project => !configuredProjects.has(project))) {
 				return { error: c.json({ error: 'Profile references an unknown configured project' }, 400) }
+			}
+			if (
+				parsed.data.knowledgeBindings?.some(
+					binding =>
+						!configuredProjects.has(binding.projectSlug) || !configuredKnowledgeProviders.has(binding.providerId),
+				)
+			) {
+				return { error: c.json({ error: 'Profile knowledge binding references unknown configuration' }, 400) }
 			}
 			return { data: parsed.data }
 		}
@@ -490,6 +564,8 @@ export function apiRoutes(
 				data: {
 					...profileContext.store.getState(),
 					configuredProjects: config.projects.map(project => project.slug),
+					configuredKnowledgeProviders:
+						config.knowledge?.providers.map(provider => ({ id: provider.id, type: provider.type })) ?? [],
 				},
 			}),
 		)
@@ -499,7 +575,11 @@ export function apiRoutes(
 			if ('error' in input) return input.error
 			if (!input.data.name) return c.json({ error: 'Profile name is required' }, 400)
 			try {
-				const profile = profileContext.store.create(input.data.name, input.data.enabledProjects ?? [])
+				const profile = profileContext.store.create(
+					input.data.name,
+					input.data.enabledProjects ?? [],
+					input.data.knowledgeBindings ?? [],
+				)
 				return c.json({ data: { profile, state: profileContext.store.getState() } }, 201)
 			} catch (err) {
 				return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
@@ -1169,7 +1249,9 @@ export function apiRoutes(
 		let planArtifacts: Array<{ name: string; content: string }> = []
 		if (item.plannedAt && item.worktreePath && item.planDirName) {
 			try {
-				planArtifacts = new PlanWorkspace(item.worktreePath, item.planDirName).listArtifacts()
+				planArtifacts = new PlanWorkspace(item.worktreePath, item.planDirName)
+					.listArtifacts()
+					.filter(artifact => artifact.name !== 'context.md' && artifact.name !== 'README.md')
 			} catch (err) {
 				log.warn(
 					'api',
@@ -1204,7 +1286,68 @@ export function apiRoutes(
 				}
 			}
 		}
-		return c.json({ data: { ...(await dashboardItem(item)), sourceTask, planArtifacts, okenaWorkspace } })
+		const privileged = localControlAuthorized(c)
+		if (privileged && !controlProfileMatches(c, item)) {
+			return c.json({ error: 'Profile changed — reload and try again' }, 409)
+		}
+		return c.json({
+			data: {
+				...(await dashboardItem(item, privileged)),
+				sourceTask,
+				planArtifacts,
+				okenaWorkspace,
+			},
+		})
+	})
+
+	api.post('/items/:id/knowledge-deliveries/recover', c => {
+		if (!localControlAuthorized(c)) return c.json({ error: 'Unauthorized' }, 401)
+		const item = itemCommands.getItem(c.req.param('id'))
+		if (!item) return c.json({ error: 'Not found' }, 404)
+		if (!controlProfileMatches(c, item)) return c.json({ error: 'Profile changed — reload and try again' }, 409)
+		if (!profileContext?.knowledge) return c.json({ error: 'Knowledge delivery is not configured' }, 503)
+		if (!isItemAssigned(item) || !item.worktreePath || !item.planDirName || !item.knowledgeSnapshotId) {
+			return c.json({ error: 'Recoverable knowledge delivery is unavailable' }, 409)
+		}
+		const store = db.forProfile(item.profileId).knowledge
+		const snapshot = store.snapshotForItem(item.knowledgeSnapshotId, item.id)
+		const workspace = new PlanWorkspace(item.worktreePath, item.planDirName)
+		const candidates = workspace.readKnowledgeCandidates()
+		if (!snapshot?.provider || candidates.length === 0) {
+			return c.json({ error: 'Recoverable knowledge delivery is unavailable' }, 409)
+		}
+		try {
+			const entry = store.enqueueCandidateBatch({
+				itemId: item.id,
+				projectSlug: item.projectSlug,
+				snapshotId: snapshot.id,
+				binding: {
+					bindingId: snapshot.provider.bindingId,
+					providerId: snapshot.provider.providerId,
+					providerProjectId: snapshot.provider.providerProjectId,
+				},
+				candidates,
+			})
+			workspace.clearKnowledgeCandidates()
+			profileContext.knowledge.notifyCandidatesQueued()
+			return c.json({ data: { recovered: true, deliveryId: entry.id } })
+		} catch {
+			return c.json({ error: 'Knowledge candidates could not be durably recovered' }, 503)
+		}
+	})
+
+	api.post('/items/:id/knowledge-deliveries/:deliveryId/retry', c => {
+		if (!localControlAuthorized(c)) return c.json({ error: 'Unauthorized' }, 401)
+		const item = itemCommands.getItem(c.req.param('id'))
+		if (!item) return c.json({ error: 'Not found' }, 404)
+		if (!controlProfileMatches(c, item)) return c.json({ error: 'Profile changed — reload and try again' }, 409)
+		if (!profileContext?.knowledge) return c.json({ error: 'Knowledge delivery is not configured' }, 503)
+		const store = db.forProfile(item.profileId).knowledge
+		if (!store.retryBlockedCandidateBatch(c.req.param('deliveryId'), item.id)) {
+			return c.json({ error: 'Blocked knowledge delivery not found' }, 409)
+		}
+		profileContext.knowledge.notifyCandidatesQueued()
+		return c.json({ data: { retried: true } })
 	})
 
 	api.get('/items/:id/run-context', async c => {
@@ -1682,11 +1825,13 @@ export function apiRoutes(
 						? 409
 						: err.code === 'source_unavailable'
 							? 502
-							: err.code === 'cancelled'
+							: err.code === 'knowledge_unavailable'
 								? 503
-								: err.code === 'launch_failed' || err.code === 'finalization_failed'
-									? 500
-									: 400
+								: err.code === 'cancelled'
+									? 503
+									: err.code === 'launch_failed' || err.code === 'finalization_failed'
+										? 500
+										: 400
 			return c.json({ error: err.message, ...(err.sessionMayExist ? { sessionMayExist: true } : {}) }, status)
 		}
 	})

@@ -30,7 +30,7 @@ import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
 import type { PiAgentStatusIntegrationSnapshot, TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
-import type { HelmResult, ProfileActivationResult, ProfilesState } from './shared-helm'
+import type { HelmResult, ProfileActivationResult, ProfileKnowledgeBinding, ProfilesState } from './shared-helm'
 import { recordedShortcutInput } from './shortcut-recorder'
 import { type ShortcutAction, type ShortcutChord, electronAccelerator, matchingShortcutAction } from './shortcuts'
 import { isTabGroupColor } from './tab-group-colors'
@@ -45,7 +45,7 @@ const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://local
 // Single owner of daemon HTTP: one poller + command proxy, pushed to the
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
 const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken(), {
-	scheduledControlToken: readLocalControlToken,
+	localControlToken: readLocalControlToken,
 })
 // Main-owned only: its local-control token and resident capability never cross IPC.
 const scheduledResidency = new ElectronResidencyController({
@@ -146,7 +146,7 @@ const piAgentStatusIntegration = new PiAgentStatusIntegration()
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
 let authoritativeProfilesState: ProfilesState = {
-	version: 1,
+	version: 2,
 	generation: 0,
 	activeProfileId: sessionProfileId,
 	profiles: appProfiles.getState().profiles,
@@ -2246,7 +2246,12 @@ ipcMain.handle('profiles:create', async (_event, name: string, enabledProjects: 
 })
 ipcMain.handle(
 	'profiles:update',
-	async (_event, id: string, body: { name?: string; enabledProjects?: string[] }, profileToken: unknown) => {
+	async (
+		_event,
+		id: string,
+		body: { name?: string; enabledProjects?: string[]; knowledgeBindings?: ProfileKnowledgeBinding[] },
+		profileToken: unknown,
+	) => {
 		if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)
 		const result = await helmBridge.updateProfile(id, body)
 		if (staleProfileRenderer(profileToken)) return staleProfileRenderer(profileToken)

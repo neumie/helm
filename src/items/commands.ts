@@ -895,6 +895,14 @@ export class ItemCommands {
 		return this.store.update(id, { solveInputSnapshot: prompt })
 	}
 
+	recordKnowledgeSnapshot(id: string, snapshotId: string | null): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.status !== 'active' && item.status !== 'running') {
+			throw new Error('Knowledge evidence can only be associated with an active attempt')
+		}
+		return this.store.update(id, { knowledgeSnapshotId: snapshotId })
+	}
+
 	/**
 	 * Persist the AI-derived short display name (cosmetic; the dashboard shows
 	 * `displayName ?? title`). Routed through commands so Item writes stay in one

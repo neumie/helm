@@ -204,6 +204,7 @@ export const itemRecordSchema = z
 		errorPhase: z.string().nullable(),
 		resultSummary: z.string().nullable(),
 		solveInputSnapshot: z.string().nullable(),
+		knowledgeSnapshotId: z.string().min(1).nullable().optional(),
 		prUrl: z.string().nullable(),
 		runOutcome: runOutcomeSchema.nullable(),
 		deployState: deployStateSchema.nullable(),
@@ -240,6 +241,7 @@ export const itemRecordSchema = z
 			item.errorPhase ||
 			item.resultSummary ||
 			item.solveInputSnapshot ||
+			item.knowledgeSnapshotId ||
 			item.runOutcome
 		) {
 			ctx.addIssue({

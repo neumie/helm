@@ -1,7 +1,15 @@
 import { z } from 'zod'
 
 /** Pipeline phases an error can be tagged with. The single source of truth. */
-export const errorPhaseSchema = z.enum(['poll', 'worktree', 'solve', 'loop', 'action'])
+export const errorPhaseSchema = z.enum([
+	'poll',
+	'knowledge',
+	'knowledge_retryable',
+	'worktree',
+	'solve',
+	'loop',
+	'action',
+])
 export type ErrorPhase = z.infer<typeof errorPhaseSchema>
 
 /**

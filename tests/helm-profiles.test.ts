@@ -42,6 +42,17 @@ test('app profile cache migrates existing terminal registry and buffers into Wor
 		assert.equal(fs.existsSync(path.join(userData, 'buffers')), false)
 	}))
 
+test('app profile cache and directories stay owner-only and reject hard links', () =>
+	withDirs(userData => {
+		const store = new AppProfileStore(userData)
+		assert.equal(fs.statSync(store.statePath).mode & 0o777, 0o600)
+		assert.equal(fs.statSync(store.profilesDir).mode & 0o777, 0o700)
+		assert.equal(fs.statSync(store.profileDir('work')).mode & 0o777, 0o700)
+
+		fs.linkSync(store.statePath, path.join(userData, 'profile-cache-alias.json'))
+		assert.throws(() => new AppProfileStore(userData), /Unsafe app profile cache/)
+	}))
+
 test('app profile migration fails closed when legacy and Work terminal data collide', () =>
 	withDirs(userData => {
 		fs.writeFileSync(path.join(userData, 'sessions.json'), '{}')
@@ -60,7 +71,7 @@ test('app profile state follows daemon identity while profile data paths use opa
 	withDirs(userData => {
 		const store = new AppProfileStore(userData)
 		const state: ProfilesState = {
-			version: 1,
+			version: 2,
 			generation: 2,
 			activeProfileId: 'profile-0123456789ab',
 			profiles: [
@@ -70,6 +81,7 @@ test('app profile state follows daemon identity while profile data paths use opa
 					name: '../Personal',
 					createdAt: new Date().toISOString(),
 					enabledProjects: [],
+					knowledgeBindings: [],
 					archivedAt: null,
 				},
 			],
@@ -90,7 +102,7 @@ test('daemon-confirmed app profile identity survives a cache write failure in me
 		assert.throws(
 			() =>
 				store.applyDaemonState({
-					version: 1,
+					version: 2,
 					generation: 2,
 					activeProfileId: 'profile-0123456789ab',
 					profiles: [
@@ -100,6 +112,7 @@ test('daemon-confirmed app profile identity survives a cache write failure in me
 							name: 'Personal',
 							createdAt: new Date().toISOString(),
 							enabledProjects: [],
+							knowledgeBindings: [],
 							archivedAt: null,
 						},
 					],

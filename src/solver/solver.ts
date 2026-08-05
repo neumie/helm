@@ -30,6 +30,8 @@ export interface SolveParams {
 	taskId: string
 	taskTitle: string
 	solverConfig: HelmConfig['solver']
+	/** Emit candidate-sidecar instructions only for an admitted knowledge binding. */
+	knowledgeCandidatesEnabled?: boolean
 	/** Per-Item reasoning effort applied by both direct agent and loop execution. */
 	solverEffort?: SolverEffort
 	/**

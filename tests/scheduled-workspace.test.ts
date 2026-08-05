@@ -19,6 +19,7 @@ function profileRuntime(rootDir: string, enabledProjects: string[] = []): Profil
 			name: 'Work',
 			createdAt: '2026-01-01T00:00:00.000Z',
 			enabledProjects,
+			knowledgeBindings: [],
 			archivedAt: null,
 		},
 		generation: 1,

@@ -182,6 +182,64 @@ export interface RunObservation {
 	}
 }
 
+export type KnowledgeSource =
+	| {
+			role: 'master' | 'recent' | 'search'
+			path: string
+			title: string
+			heading: string | null
+			hash: string
+			sourceUpdatedAt: string
+			characters: number
+	  }
+	| {
+			sourceRef: string
+			role: string
+			label: string
+			heading: string | null
+			contentHash: string
+			sourceHash: string
+			characters: number
+			range: { start: number; end: number; unit: 'utf16-code-units' }
+	  }
+
+export interface KnowledgeDeliverySummary {
+	id: string
+	state: 'pending' | 'delivering' | 'delivered' | 'blocked'
+	providerId: string | null
+	candidateCount: number
+	attemptCount: number
+	lastErrorCode: string | null
+	lastErrorMessage: string | null
+	updatedAt: string
+	deliveredAt: string | null
+}
+
+export interface KnowledgeSnapshot {
+	id: string
+	profileId: string
+	itemId: string
+	projectSlug: string
+	purpose: 'planning' | 'solve'
+	sequence: number
+	query: string
+	characterBudget: number | null
+	context: string
+	manifest: KnowledgeSource[]
+	provider: {
+		bindingId: string
+		providerId: string
+		providerType: string
+		providerProjectId: string
+		briefRef: string
+		revision: string
+		generatedAt: string
+		contextHash: string
+		protocolVersion: number
+	} | null
+	createdAt: string
+}
+
 export interface DashboardItem {
 	id: string
 	/** Added in protocol 31; Work is the compatibility fallback during rollout. */
@@ -212,6 +270,9 @@ export interface DashboardItem {
 	planStatus: PlanStatus | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
+	knowledgeSnapshot?: KnowledgeSnapshot | null
+	knowledgeDeliveries?: KnowledgeDeliverySummary[]
+	knowledgeRecovery?: { candidateCount: number } | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
 	solverAgent: 'claude' | 'codex' | 'pi' | null
 	solverModel: string | null
@@ -325,16 +386,25 @@ export interface QueueStatus {
 	}
 }
 
+export interface ProfileKnowledgeBinding {
+	projectSlug: string
+	providerId: string
+	providerProjectId: string
+	characterBudget: number
+	allowSharedProject: boolean
+}
+
 export interface HelmProfile {
 	id: string
 	name: string
 	createdAt: string
 	enabledProjects: string[]
+	knowledgeBindings: ProfileKnowledgeBinding[]
 	archivedAt: string | null
 }
 
 export interface ProfilesState {
-	version: 1
+	version: 2
 	generation: number
 	activeProfileId: string
 	profiles: HelmProfile[]
@@ -342,6 +412,7 @@ export interface ProfilesState {
 
 export interface ProfilesDocument extends ProfilesState {
 	configuredProjects: string[]
+	configuredKnowledgeProviders: Array<{ id: string; type: 'hold' }>
 }
 
 export interface ProfileMutationResult {
@@ -376,7 +447,12 @@ export interface ModelOption {
 
 export interface AppConfig {
 	projectColors?: Record<string, string>
-	projects?: Array<{ slug: string; repoPath?: string; baseBranch?: string; color?: string }>
+	projects?: Array<{
+		slug: string
+		repoPath?: string
+		baseBranch?: string
+		color?: string
+	}>
 	solver?: {
 		type?: 'default' | 'okena'
 		agent?: 'claude' | 'codex' | 'pi'
@@ -608,6 +684,8 @@ export interface DaemonApi {
 	itemAction(id: string, action: DashboardActionId, body?: SolverAgentBody): Promise<HelmResult<DashboardItem>>
 	plan(id: string, body?: SolverAgentBody): Promise<HelmResult<PlanInfo>>
 	openOkena(id: string): Promise<HelmResult<OkenaOpenInfo>>
+	retryKnowledgeDelivery(itemId: string, deliveryId: string): Promise<HelmResult<{ retried: true }>>
+	recoverKnowledgeDelivery(itemId: string): Promise<HelmResult<{ recovered: true; deliveryId: string }>>
 	aiPass(id: string, pass: AiPass): Promise<HelmResult<DashboardItem>>
 	createItem(body: CreateItemInput): Promise<HelmResult<DashboardItem | DashboardItem[]>>
 	assignItem(id: string, body: AssignItemInput): Promise<HelmResult<DashboardItem>>
@@ -646,7 +724,10 @@ export interface ProfilesApi {
 	list(): Promise<HelmResult<ProfilesDocument>>
 	onChanged(listener: () => void): () => void
 	create(name: string, enabledProjects: string[]): Promise<HelmResult<ProfileMutationResult>>
-	update(id: string, body: { name?: string; enabledProjects?: string[] }): Promise<HelmResult<ProfileMutationResult>>
+	update(
+		id: string,
+		body: { name?: string; enabledProjects?: string[]; knowledgeBindings?: ProfileKnowledgeBinding[] },
+	): Promise<HelmResult<ProfileMutationResult>>
 	archive(id: string): Promise<HelmResult<ProfileMutationResult>>
 	restore(id: string): Promise<HelmResult<ProfileMutationResult>>
 	activate(id: string): Promise<HelmResult<ProfileActivationResult>>

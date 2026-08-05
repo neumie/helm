@@ -85,7 +85,7 @@ export class DefaultSolver implements Solver {
 		const solverPrompt = buildPrompt(
 			taskContext,
 			{ planDirName, worktreePath },
-			solverConfig,
+			{ ...solverConfig, knowledgeCandidates: params.knowledgeCandidatesEnabled === true },
 			mainMode ? { mode: 'main', currentBranch } : undefined,
 		)
 		params.onPromptSnapshot?.(solverPrompt)

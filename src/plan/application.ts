@@ -7,6 +7,8 @@ import { resolveItemWorkspace } from '../items/identity.js'
 import { ensureItemWorkspaceName } from '../items/naming.js'
 import type { EnsureItemNameDeps } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
+import type { KnowledgeIntegration } from '../knowledge/integration.js'
+import type { KnowledgeStore } from '../knowledge/store.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskProvider } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
@@ -23,6 +25,7 @@ export type PlanningErrorCode =
 	| 'unknown_project'
 	| 'missing_checkout'
 	| 'source_unavailable'
+	| 'knowledge_unavailable'
 	| 'invalid_spawner'
 	| 'planning_conflict'
 	| 'cancelled'
@@ -101,8 +104,10 @@ export class PlanningApplication {
 		private readonly defaultSpawner: Spawner,
 		private readonly createPlanningSpawner: (config: HelmConfig, name: SpawnerName) => Promise<Spawner>,
 		private readonly namingDeps?: EnsureItemNameDeps,
-		/** Captures a profile-bound persistence seam before Planning's first await. */
+		/** Captures profile-bound persistence seams before Planning's first await. */
 		private readonly commandsForProfile?: (profileId: string) => ItemCommands,
+		private readonly knowledge?: KnowledgeIntegration,
+		private readonly knowledgeStoreForProfile?: (profileId: string) => KnowledgeStore,
 	) {}
 
 	/** Synchronous first-mutation exclusion used by Start. */
@@ -124,6 +129,10 @@ export class PlanningApplication {
 		// All lifecycle reads/writes after this point belong to the Item's origin
 		// tenant, even if profile activation changes while source/naming awaits.
 		const commands = this.commandsForProfile?.(item.profileId) ?? this.commands
+		const knowledgeStore = this.knowledge ? this.knowledgeStoreForProfile?.(item.profileId) : undefined
+		if (this.knowledge && !knowledgeStore) {
+			throw new PlanningError('knowledge_unavailable', 'Project knowledge evidence store is not available')
+		}
 		const claim = `${item.profileId}:${item.id}`
 		if (item.status === 'running' || !['inbox', 'ready', 'active'].includes(item.status)) {
 			throw new PlanningError('not_plannable', 'Running Items cannot be planned')
@@ -134,6 +143,7 @@ export class PlanningApplication {
 		if (!isItemAssigned(item)) throw new PlanningError('not_plannable', 'Assign a project before planning this Item')
 		const projectConfig = this.config.projects.find(project => project.slug === item.projectSlug)
 		if (!projectConfig) throw new PlanningError('unknown_project', `Unknown project slug: ${item.projectSlug}`)
+		const admittedKnowledgeBinding = this.knowledge?.bindingFor(item.profileId, item.projectSlug) ?? null
 		const workspaceMode =
 			input.solverWorkspace ??
 			(item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined) ??
@@ -142,12 +152,26 @@ export class PlanningApplication {
 		if (workspaceMode === 'main' && !existsSync(projectConfig.repoPath)) {
 			throw new PlanningError('missing_checkout', `Project checkout does not exist: ${projectConfig.repoPath}`)
 		}
+		if (item.worktreePath && item.planDirName) {
+			const previousWorkspace = new PlanWorkspace(item.worktreePath, item.planDirName)
+			if (previousWorkspace.knowledgeCandidatesExist()) {
+				const candidates = previousWorkspace.readKnowledgeCandidates()
+				if (candidates.length > 0 && (item.knowledgeSnapshotId || admittedKnowledgeBinding)) {
+					throw new PlanningError(
+						'knowledge_unavailable',
+						'Recover pending knowledge candidates before starting another planning attempt',
+					)
+				}
+				previousWorkspace.clearKnowledgeCandidates()
+			}
+		}
 		if (this.claims.has(claim)) throw new PlanningError('planning_conflict', 'Planning is already preparing this Item')
 		this.claims.add(claim)
 		const previous = item
 		let began = false
 		try {
 			commands.beginPlanning(item.id)
+			commands.recordKnowledgeSnapshot(item.id, null)
 			began = true
 			const transitionFromIdentity = {
 				worktreePath: item.worktreePath,
@@ -200,6 +224,28 @@ export class PlanningApplication {
 				: expectedIdentity.worktreePath && sameFilesystemPath(expectedIdentity.worktreePath, projectConfig.repoPath)
 					? 'main-to-worktree'
 					: 'none'
+			let planningKnowledgeContext: string | null = null
+			if (this.knowledge && knowledgeStore) {
+				try {
+					const preparedKnowledge = await this.knowledge.prepareContext(knowledgeStore, {
+						profileId: item.profileId,
+						itemId: item.id,
+						projectSlug: named.projectSlug,
+						purpose: 'planning',
+						taskContext: canonicalContext,
+						binding: admittedKnowledgeBinding,
+						...(input.signal === undefined ? {} : { signal: input.signal }),
+					})
+					planningKnowledgeContext = preparedKnowledge.snapshot?.context ?? null
+					commands.recordKnowledgeSnapshot(item.id, preparedKnowledge.snapshot?.id ?? null)
+				} catch (error) {
+					if (isCancellation(error, input.signal)) throw error
+					throw new PlanningError(
+						'knowledge_unavailable',
+						`Project knowledge unavailable: ${error instanceof Error ? error.message : error}`,
+					)
+				}
+			}
 			const prepared = prepareItemExecutionContext(named, canonicalContext)
 			let spawner: Spawner
 			try {
@@ -228,6 +274,7 @@ export class PlanningApplication {
 					planDirName: identity.planDirName,
 					taskTitle: item.title,
 					canonicalContext,
+					knowledgeContext: planningKnowledgeContext,
 					onWorktreeReady: worktreePath => {
 						// From this boundary onward an adapter may have a workspace or terminal.
 						sessionMayExist = true

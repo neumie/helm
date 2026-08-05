@@ -27,6 +27,18 @@ test('bridge fence has no globally cancellable profile-switch API', () => {
 	assert.doesNotMatch(bridge, /pendingProfileId/)
 })
 
+test('privileged Item detail is fenced before and after daemon work during profile switching', () => {
+	const start = bridge.indexOf("'daemon:item'")
+	const end = bridge.indexOf("'daemon:itemAction'", start)
+	assert.ok(start >= 0 && end > start)
+	const handler = bridge.slice(start, end)
+	const request = handler.indexOf('controlRead<DashboardItem>')
+	const fences = [...handler.matchAll(/this\.profileFence !== null/g)].map(match => match.index)
+	assert.equal(fences.length, 2)
+	assert.ok(fences[0] < request)
+	assert.ok(fences[1] > request)
+})
+
 test('terminal, session, and buffer handlers gate mutable access during a profile fence', () => {
 	for (const channel of [
 		'pty:spawn',

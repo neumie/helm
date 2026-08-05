@@ -1,3 +1,4 @@
+import type { KnowledgeSnapshot } from '../knowledge/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverAgent } from '../solver/agent.js'
@@ -93,6 +94,8 @@ export interface DashboardItem {
 	planStatus: PlanStatus | null
 	resultSummary: string | null
 	solveInputSnapshot: string | null
+	/** Detail-only immutable provider evidence; omitted from cheap list rows. */
+	knowledgeSnapshot?: KnowledgeSnapshot | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
 	solverAgent: SolverAgent | null
 	solverModel: string | null
@@ -375,6 +378,11 @@ export function toDashboardItems(
 
 	return ordered.map(item => {
 		const siblings = item.groupId ? groups.get(item.groupId) : undefined
-		return toDashboardItem(item, runObservationFor(item), groupForItem(item, siblings))
+		return {
+			...toDashboardItem(item, runObservationFor(item), groupForItem(item, siblings)),
+			// Run input may contain privileged project knowledge. Lists never render
+			// it and must remain a cheap, non-evidence projection.
+			solveInputSnapshot: null,
+		}
 	})
 }

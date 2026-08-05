@@ -84,6 +84,8 @@ export class OkenaSpawner implements Spawner {
 
 		const workspace = new PlanWorkspace(ensured.worktreePath, params.planDirName)
 		workspace.writeContext(formatTaskContext(taskContext))
+		if (params.knowledgeContext) workspace.writeKnowledgeContext(params.knowledgeContext)
+		else workspace.clearKnowledgeContext()
 		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName, params.solverConfig.agent))
 
 		const agentLabel = agentLabelFromConfig(params.solverConfig)

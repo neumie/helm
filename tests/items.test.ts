@@ -2364,7 +2364,15 @@ test('AlmanacLoopRunner generates a missing loop prompt before launch', async ()
 	)
 	chmodSync(promptScript, 0o755)
 	const almanacPath = join(fakeBin, 'almanac')
-	writeFileSync(almanacPath, ['#!/bin/sh', 'echo "Run ID: loop-prompt-test"'].join('\n'), 'utf-8')
+	writeFileSync(
+		almanacPath,
+		[
+			'#!/bin/sh',
+			`grep -q "Exact Hold context" "docs/plans/${specName}/.helm-knowledge-context.md" || exit 9`,
+			'echo "Run ID: loop-prompt-test"',
+		].join('\n'),
+		'utf-8',
+	)
 	chmodSync(almanacPath, 0o755)
 
 	const oldPath = process.env.PATH
@@ -2387,14 +2395,39 @@ test('AlmanacLoopRunner generates a missing loop prompt before launch', async ()
 			branchName: 'helm/item/prepare-loop',
 			planDirName: specName,
 			outputLogPath,
+			knowledgeContext: 'Exact Hold context',
 			onRunId() {},
 		})
 		assert.equal(result.runId, 'loop-prompt-test')
 		assert.equal(existsSync(join(planDir, 'prompt.md')), true)
 		const prompt = readFileSync(join(planDir, 'prompt.md'), 'utf-8')
 		assert.match(prompt, /HELM GITHUB QUEUE ASSOCIATION/)
+		assert.match(prompt, /HELM EXTERNAL PROJECT KNOWLEDGE/)
 		assert.equal(prompt.includes(`docs/plans/${specName}/spec.md`), true)
+		assert.equal(existsSync(join(planDir, '.helm-knowledge-context.md')), false)
 		assert.match(readFileSync(outputLogPath, 'utf-8'), /Generated prompt/)
+
+		writeFileSync(almanacPath, ['#!/bin/sh', 'echo "Run ID: loop-without-knowledge"'].join('\n'), 'utf-8')
+		chmodSync(almanacPath, 0o755)
+		const withoutKnowledge = await new AlmanacLoopRunner().runLoop({
+			projectConfig: config.projects[0],
+			solverConfig: config.solver,
+			itemId: 'item-loop-prompt',
+			itemTitle: 'Prepare loop prompt',
+			payload: {
+				kind: 'loop',
+				prdPath: `docs/plans/${specName}/spec.md`,
+				mode: 'once',
+				provider: 'codex',
+			},
+			worktreePath,
+			branchName: 'helm/item/prepare-loop',
+			planDirName: specName,
+			outputLogPath,
+			onRunId() {},
+		})
+		assert.equal(withoutKnowledge.runId, 'loop-without-knowledge')
+		assert.doesNotMatch(readFileSync(join(planDir, 'prompt.md'), 'utf-8'), /HELM EXTERNAL PROJECT KNOWLEDGE/)
 	} finally {
 		process.env.PATH = oldPath
 		if (oldHome === undefined) Reflect.deleteProperty(process.env, 'ALMANAC_HOME')

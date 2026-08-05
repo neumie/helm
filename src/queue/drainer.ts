@@ -4,6 +4,7 @@ import { isItemAssigned } from '../items/assignment.js'
 import { ItemCommands, isRetryableItem } from '../items/commands.js'
 import { itemExecutionMode } from '../items/execution.js'
 import type { ItemRecord } from '../items/schema.js'
+import type { KnowledgeIntegration } from '../knowledge/integration.js'
 import type { TaskProvider } from '../providers/provider.js'
 import type { Solver } from '../solver/solver.js'
 import type { QueueStatus } from '../types.js'
@@ -47,7 +48,8 @@ function isStartableItem(item: ItemRecord): boolean {
 
 /** Transient failures worth auto-retrying (network/okena/worktree), vs real solve bugs. */
 function isTransientFailure(item: ItemRecord): boolean {
-	if (item.errorPhase === 'poll' || item.errorPhase === 'worktree') return true
+	if (item.errorPhase === 'poll' || item.errorPhase === 'knowledge_retryable' || item.errorPhase === 'worktree')
+		return true
 	const msg = (item.errorMessage ?? '').toLowerCase()
 	return /okena|not reachable|econnrefused|etimedout|fetch failed|terminal|network|socket hang/.test(msg)
 }
@@ -74,6 +76,7 @@ export class Drainer {
 		private loopRunner: LoopRunner = new AlmanacLoopRunner(),
 		private readonly profileIds?: () => string[],
 		private readonly activeProfileId?: () => string,
+		private readonly knowledge?: KnowledgeIntegration,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
 		// Automatic queue admission is opt-in: a missing state starts paused,
@@ -320,7 +323,9 @@ export class Drainer {
 		const runDb = this.db.forProfile(item.profileId)
 		this.activeSolveItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
 
-		processSolveItem(itemId, this.config, runDb, this.provider, this.solver, controller.signal).finally(() => {
+		processSolveItem(itemId, this.config, runDb, this.provider, this.solver, controller.signal, {
+			knowledge: this.knowledge,
+		}).finally(() => {
 			this.activeSolveItems.delete(itemId)
 			this.maybeScheduleRetry(itemId, runDb)
 			this.wake()
@@ -372,7 +377,10 @@ export class Drainer {
 		const runDb = this.db.forProfile(item.profileId)
 		this.activeLoopItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
 
-		processLoopItem(itemId, this.config, runDb, this.loopRunner, controller.signal).finally(() => {
+		processLoopItem(itemId, this.config, runDb, this.loopRunner, controller.signal, {
+			provider: this.provider,
+			...(this.knowledge ? { knowledge: this.knowledge } : {}),
+		}).finally(() => {
 			this.activeLoopItems.delete(itemId)
 			this.maybeScheduleRetry(itemId, runDb)
 			this.wake()

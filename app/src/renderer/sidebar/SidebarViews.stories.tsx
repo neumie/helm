@@ -19,7 +19,7 @@ import { DetailPage } from './DetailPage'
 import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemPage } from './NewItemPage'
-import { ProfilesPage } from './ProfilesPage'
+import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, type SettingsStore } from './SettingsPage'
 import { SidebarRoot } from './SidebarRoot'
@@ -117,6 +117,45 @@ const reviewItem = item({
 	resultSummary: 'Added explicit Open, Tab, and Close controls with protocol-owned activity state.',
 	solveInputSnapshot:
 		'Treat parked state as ownership. Opening a parked terminal must not restore it to the tab strip.',
+	knowledgeSnapshot: {
+		id: 'knowledge-story',
+		profileId: 'work',
+		itemId: 'review-story',
+		projectSlug: 'helm',
+		purpose: 'solve',
+		sequence: 1,
+		query: 'background terminal ownership',
+		characterBudget: null,
+		context:
+			'## Project knowledge\n\n### Master: Helm\n\n_Source: projects/helm/helm.md_\n\nBackground terminals retain process ownership when opened.',
+		manifest: [
+			{
+				role: 'master',
+				path: 'projects/helm/helm.md',
+				title: 'Helm',
+				heading: null,
+				hash: 'story-hash',
+				sourceUpdatedAt: NOW,
+				characters: 120,
+			},
+		],
+		provider: null,
+		createdAt: NOW,
+	},
+	knowledgeDeliveries: [
+		{
+			id: 'delivery-story',
+			state: 'blocked',
+			providerId: 'local-hold',
+			candidateCount: 2,
+			attemptCount: 3,
+			lastErrorCode: 'authorization',
+			lastErrorMessage: 'Knowledge provider authorization failed',
+			updatedAt: NOW,
+			deliveredAt: null,
+		},
+	],
+	knowledgeRecovery: { candidateCount: 1 },
 	deployState: {
 		merged: false,
 		mergedAt: null,
@@ -305,6 +344,7 @@ const snapshot: HelmSnapshot = {
 			name: 'Work',
 			createdAt: NOW,
 			enabledProjects: ['helm', 'client-care', 'almanac'],
+			knowledgeBindings: [],
 			archivedAt: null,
 		},
 		profileGeneration: 3,
@@ -331,17 +371,34 @@ const scheduledRunningSnapshot: HelmSnapshot = {
 }
 
 const profileDocument = {
-	version: 1 as const,
+	version: 2 as const,
 	generation: 3,
 	activeProfileId: 'work',
 	configuredProjects: ['helm', 'clientcare', 'personal'],
+	configuredKnowledgeProviders: [{ id: 'local-hold', type: 'hold' as const }],
 	profiles: [
-		{ id: 'work', name: 'Work', createdAt: NOW, enabledProjects: ['helm', 'clientcare'], archivedAt: null },
+		{
+			id: 'work',
+			name: 'Work',
+			createdAt: NOW,
+			enabledProjects: ['helm', 'clientcare'],
+			knowledgeBindings: [],
+			archivedAt: null,
+		},
 		{
 			id: 'profile-0123456789ab',
 			name: 'Personal',
 			createdAt: NOW,
 			enabledProjects: ['personal'],
+			knowledgeBindings: [
+				{
+					projectSlug: 'personal',
+					providerId: 'local-hold',
+					providerProjectId: 'prj_personal',
+					characterBudget: 20000,
+					allowSharedProject: false,
+				},
+			],
 			archivedAt: null,
 		},
 	],
@@ -490,6 +547,8 @@ function installBridge(
 				assignItem: async () => ({ data: detail }),
 				setStatus: async () => ({ data: detail }),
 				openOkena: async () => ({ error: 'Preview only' }),
+				retryKnowledgeDelivery: async () => ({ data: { retried: true } }),
+				recoverKnowledgeDelivery: async () => ({ data: { recovered: true, deliveryId: 'delivery-story' } }),
 				plan: async () => ({ error: 'Preview only' }),
 				sourceTask: async () => ({ data: detail }),
 				listScheduledRuns: async () => ({ data: structuredClone(scheduledRuns) }),
@@ -998,6 +1057,14 @@ export const Profiles: Story = {
 	render: () => (
 		<Frame>
 			<ProfilesPage onBack={noOp} onOpen={noOp} />
+		</Frame>
+	),
+}
+
+export const ProfileKnowledge: Story = {
+	render: () => (
+		<Frame>
+			<ProfileEditorPage profileId="profile-0123456789ab" onBack={noOp} />
 		</Frame>
 	),
 }

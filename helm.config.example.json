@@ -8,7 +8,7 @@
 	"projects": [
 		{
 			"slug": "my-project",
-			"repoPath": "/Users/you/code/my-project",
+			"repoPath": "/path/to/code/my-project",
 			"baseBranch": "main"
 		}
 	],
@@ -22,6 +22,16 @@
 	},
 	"spawner": {
 		"name": "default"
+	},
+	"knowledge": {
+		"providers": [
+			{
+				"id": "local-hold",
+				"type": "hold",
+				"socketPath": "/path/to/private-hold-state/hold.sock",
+				"capabilityFile": "/path/to/private-helm-state/hold.capability"
+			}
+		]
 	},
 	"server": {
 		"port": 7474

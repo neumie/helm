@@ -23,7 +23,7 @@ test('openItemInOkena focuses the live pane without writing terminal input', asy
 		isAvailable: async () => true,
 		getState: async () => ({
 			projects: [
-				{ id: 'parent-project', name: 'JVS', path: '/repo' },
+				{ id: 'parent-project', name: 'Sample project', path: '/repo' },
 				{
 					id: 'project-1',
 					name: 'fix/existing',
@@ -90,7 +90,7 @@ test('openItemInOkena waits for a registered worktree terminal to become visible
 	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-open-register-'))
 	const actions: Record<string, unknown>[] = []
 	let registered = false
-	const parent = { id: 'parent-project', name: 'JVS', path: '/repo' }
+	const parent = { id: 'parent-project', name: 'Sample project', path: '/repo' }
 	const child = {
 		id: 'project-2',
 		name: 'fix/register',
@@ -149,7 +149,7 @@ test('openItemInOkena waits for a registered worktree terminal to become visible
 test('Okena workspace preview distinguishes local, remote, and new branches', async () => {
 	const client = {
 		isAvailable: async () => true,
-		getState: async () => ({ projects: [{ id: 'parent-project', name: 'JVS', path: '/repo' }] }),
+		getState: async () => ({ projects: [{ id: 'parent-project', name: 'Sample project', path: '/repo' }] }),
 	} as unknown as OkenaClient
 	const config = configSchema.parse({
 		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },

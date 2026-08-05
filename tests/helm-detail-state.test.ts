@@ -60,16 +60,17 @@ const kinds = (sections: Array<{ kind: string }>) => sections.map(section => sec
 test('detail state stays focused and does not call cancellation an error', () => {
 	const cancelled = detailState({ ...base, status: 'cancelled', errorMessage: 'Cancelled by user' })
 	assert.equal(cancelled.attention, null)
-	assert.deepEqual(kinds(cancelled.sections), ['failure', 'outcome', 'activity', 'log', 'input', 'source'])
-	assert.deepEqual(kinds(detailState({ ...base, status: 'review', runOutcome: 'no_result' }).sections).slice(0, 2), [
+	assert.deepEqual(kinds(cancelled.sections), ['failure', 'outcome', 'knowledge', 'activity', 'log', 'input', 'source'])
+	assert.deepEqual(kinds(detailState({ ...base, status: 'review', runOutcome: 'no_result' }).sections).slice(0, 3), [
 		'outcome',
+		'knowledge',
 		'delivery',
 	])
 })
 
 test('run evidence is inline: review orders decision content before the log', () => {
 	const review = detailState({ ...base, status: 'review' })
-	assert.deepEqual(kinds(review.sections), ['outcome', 'delivery', 'activity', 'log', 'input', 'source'])
+	assert.deepEqual(kinds(review.sections), ['outcome', 'knowledge', 'delivery', 'activity', 'log', 'input', 'source'])
 })
 
 test('failed places the always-expanded log directly beneath the failure text', () => {
@@ -79,7 +80,7 @@ test('failed places the always-expanded log directly beneath the failure text', 
 
 test('human-owned Active Items keep the compact work sections', () => {
 	const active = detailState({ ...base, status: 'active', workMode: 'manual' })
-	assert.deepEqual(kinds(active.sections), ['activity', 'log', 'input', 'source'])
+	assert.deepEqual(kinds(active.sections), ['activity', 'log', 'input', 'knowledge', 'source'])
 })
 
 test('planned Active Items expose the executor choice', () => {
@@ -97,7 +98,7 @@ test('planned Active Items expose the executor choice', () => {
 			checkedAt: '2026-01-02T00:00:00Z',
 		},
 	})
-	assert.deepEqual(kinds(active.sections), ['setup', 'activity', 'log', 'input', 'source'])
+	assert.deepEqual(kinds(active.sections), ['setup', 'activity', 'log', 'input', 'knowledge', 'source'])
 })
 
 test('automatic Inbox Items keep approval content first without a redundant hero sentence', () => {
@@ -106,7 +107,7 @@ test('automatic Inbox Items keep approval content first without a redundant hero
 		status: 'inbox',
 		source: { provider: 'Contember', externalId: 'task-1' },
 	})
-	assert.deepEqual(kinds(inbox.sections), ['intent', 'setup', 'activity', 'log', 'input', 'source'])
+	assert.deepEqual(kinds(inbox.sections), ['intent', 'setup', 'activity', 'log', 'input', 'knowledge', 'source'])
 })
 
 test('run evidence stays reachable after a return to pre-run states', () => {

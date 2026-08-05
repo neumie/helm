@@ -9,6 +9,8 @@ import { ProfileStore } from '../src/profiles/store.js'
 import type { DaemonControl } from '../src/server/restart.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 
+const LOCAL_CONTROL_TOKEN = 'A'.repeat(43)
+
 const config: HelmConfig = {
 	provider: {
 		type: 'contember',
@@ -42,11 +44,28 @@ const config: HelmConfig = {
 		trackDeployments: false,
 		deployPollSeconds: 120,
 	},
+	scheduledRuns: { enabled: false, systemTargetsEnabled: false },
+	knowledge: {
+		providers: [
+			{
+				id: 'local-hold',
+				type: 'hold',
+				socketPath: '/private/hold/hold.sock',
+				capabilityFile: '/private/helm/hold.capability',
+				timeouts: { handshakeMs: 2_000, briefMs: 15_000, candidatesMs: 5_000 },
+			},
+		],
+	},
 }
 
 function withProfileApi(
 	activeRuns: number,
-	run: (ctx: { api: ReturnType<typeof apiRoutes>; store: ProfileStore; exits: () => number }) => Promise<void>,
+	run: (ctx: {
+		api: ReturnType<typeof apiRoutes>
+		profileRequest: (path: string, init?: RequestInit) => Promise<Response>
+		store: ProfileStore
+		exits: () => number
+	}) => Promise<void>,
 ) {
 	const root = mkdtempSync(join(tmpdir(), 'helm-profile-api-'))
 	const store = new ProfileStore(
@@ -92,33 +111,63 @@ function withProfileApi(
 		control,
 		undefined,
 		undefined,
-		{ store, runtime: () => store.activeRuntime() },
+		{ store, runtime: () => store.activeRuntime(), localControlToken: LOCAL_CONTROL_TOKEN },
 	)
-	return run({ api, store, exits: () => exitCount }).finally(() => {
+	const profileRequest = async (path: string, init: RequestInit = {}) =>
+		await api.request(path, {
+			...init,
+			headers: { authorization: `Bearer ${LOCAL_CONTROL_TOKEN}`, ...Object.fromEntries(new Headers(init.headers)) },
+		})
+	return run({ api, profileRequest, store, exits: () => exitCount }).finally(() => {
 		db.close()
 		rmSync(root, { recursive: true, force: true })
 	})
 }
 
 test('profile API exposes active identity, creates named profiles, and stores project choices', async () => {
-	await withProfileApi(0, async ({ api }) => {
+	await withProfileApi(0, async ({ api, profileRequest }) => {
 		const status = (await (await api.request('/status')).json()) as {
 			data: { profile: { id: string; name: string; enabledProjects: string[] }; profileGeneration: number }
 		}
 		assert.equal(status.data.profile.name, 'Work')
 		assert.deepEqual(status.data.profile.enabledProjects, ['personal', 'work'])
 		assert.equal(status.data.profileGeneration, 1)
+		assert.equal((await api.request('/profiles')).status, 401)
+		assert.equal(
+			(
+				await api.request('/profiles', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ name: 'Unauthorized', enabledProjects: [] }),
+				})
+			).status,
+			401,
+		)
+		const profiles = (await (await profileRequest('/profiles')).json()) as {
+			data: { configuredKnowledgeProviders: Array<{ id: string; type: string }> }
+		}
+		assert.deepEqual(profiles.data.configuredKnowledgeProviders, [{ id: 'local-hold', type: 'hold' }])
 
-		const createdRes = await api.request('/profiles', {
+		const binding = {
+			projectSlug: 'personal',
+			providerId: 'local-hold',
+			providerProjectId: 'hold-personal',
+			characterBudget: 20_000,
+			allowSharedProject: false,
+		}
+		const createdRes = await profileRequest('/profiles', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ name: 'Personal', enabledProjects: ['personal'] }),
+			body: JSON.stringify({ name: 'Personal', enabledProjects: ['personal'], knowledgeBindings: [binding] }),
 		})
 		assert.equal(createdRes.status, 201)
-		const created = (await createdRes.json()) as { data: { profile: { id: string; enabledProjects: string[] } } }
+		const created = (await createdRes.json()) as {
+			data: { profile: { id: string; enabledProjects: string[]; knowledgeBindings: unknown[] } }
+		}
 		assert.deepEqual(created.data.profile.enabledProjects, ['personal'])
+		assert.deepEqual(created.data.profile.knowledgeBindings, [binding])
 
-		const updatedRes = await api.request(`/profiles/${created.data.profile.id}`, {
+		const updatedRes = await profileRequest(`/profiles/${created.data.profile.id}`, {
 			method: 'PUT',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ name: 'Home', enabledProjects: [] }),
@@ -127,12 +176,29 @@ test('profile API exposes active identity, creates named profiles, and stores pr
 		const updated = (await updatedRes.json()) as { data: { profile: { name: string; enabledProjects: string[] } } }
 		assert.equal(updated.data.profile.name, 'Home')
 		assert.deepEqual(updated.data.profile.enabledProjects, [])
+
+		assert.equal(
+			(
+				await profileRequest('/profiles/work', {
+					method: 'PUT',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						knowledgeBindings: [{ ...binding, projectSlug: 'work', providerProjectId: 'hold-work' }],
+					}),
+				})
+			).status,
+			200,
+		)
+		const redactedStatus = (await (await api.request('/status')).json()) as {
+			data: { profile: { knowledgeBindings: unknown[] } }
+		}
+		assert.deepEqual(redactedStatus.data.profile.knowledgeBindings, [])
 	})
 })
 
 test('profile API rejects project slugs outside shared config', async () => {
-	await withProfileApi(0, async ({ api }) => {
-		const response = await api.request('/profiles', {
+	await withProfileApi(0, async ({ profileRequest }) => {
+		const response = await profileRequest('/profiles', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ name: 'Unknown', enabledProjects: ['missing'] }),
@@ -142,8 +208,8 @@ test('profile API rejects project slugs outside shared config', async () => {
 })
 
 test('updating the active profile applies immediately without restarting the daemon', async () => {
-	await withProfileApi(0, async ({ api, store, exits }) => {
-		const response = await api.request('/profiles/work', {
+	await withProfileApi(0, async ({ profileRequest, store, exits }) => {
+		const response = await profileRequest('/profiles/work', {
 			method: 'PUT',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ name: 'Primary', enabledProjects: ['work'] }),
@@ -155,9 +221,9 @@ test('updating the active profile applies immediately without restarting the dae
 })
 
 test('profile activation stays available while another profile has an active run', async () => {
-	await withProfileApi(1, async ({ api, store, exits }) => {
+	await withProfileApi(1, async ({ profileRequest, store, exits }) => {
 		const profile = store.create('Personal')
-		const res = await api.request(`/profiles/${profile.id}/activate`, { method: 'POST' })
+		const res = await profileRequest(`/profiles/${profile.id}/activate`, { method: 'POST' })
 		assert.equal(res.status, 200)
 		assert.equal(store.activeProfile().id, profile.id)
 		assert.equal(exits(), 0)
@@ -165,9 +231,9 @@ test('profile activation stays available while another profile has an active run
 })
 
 test('profile activation commits one generation without a daemon restart', async () => {
-	await withProfileApi(0, async ({ api, store, exits }) => {
+	await withProfileApi(0, async ({ profileRequest, store, exits }) => {
 		const profile = store.create('Personal')
-		const res = await api.request(`/profiles/${profile.id}/activate`, { method: 'POST' })
+		const res = await profileRequest(`/profiles/${profile.id}/activate`, { method: 'POST' })
 		assert.equal(res.status, 200)
 		const body = (await res.json()) as { data: { state: { activeProfileId: string; generation: number } } }
 		assert.equal(body.data.state.activeProfileId, profile.id)
@@ -178,15 +244,15 @@ test('profile activation commits one generation without a daemon restart', async
 })
 
 test('active profiles cannot be archived; archived profiles disappear from switching until restored', async () => {
-	await withProfileApi(0, async ({ api, store }) => {
-		const activeArchive = await api.request('/profiles/work/archive', { method: 'POST' })
+	await withProfileApi(0, async ({ profileRequest, store }) => {
+		const activeArchive = await profileRequest('/profiles/work/archive', { method: 'POST' })
 		assert.equal(activeArchive.status, 400)
 
 		const profile = store.create('Personal')
-		assert.equal((await api.request(`/profiles/${profile.id}/archive`, { method: 'POST' })).status, 200)
+		assert.equal((await profileRequest(`/profiles/${profile.id}/archive`, { method: 'POST' })).status, 200)
 		assert.ok(store.getState().profiles.find(candidate => candidate.id === profile.id)?.archivedAt)
-		assert.equal((await api.request(`/profiles/${profile.id}/activate`, { method: 'POST' })).status, 400)
-		assert.equal((await api.request(`/profiles/${profile.id}/restore`, { method: 'POST' })).status, 200)
+		assert.equal((await profileRequest(`/profiles/${profile.id}/activate`, { method: 'POST' })).status, 400)
+		assert.equal((await profileRequest(`/profiles/${profile.id}/restore`, { method: 'POST' })).status, 200)
 		assert.equal(store.getState().profiles.find(candidate => candidate.id === profile.id)?.archivedAt, null)
 	})
 })

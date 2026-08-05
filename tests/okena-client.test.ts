@@ -104,7 +104,9 @@ test('OkenaClient routes a repository to the profile that owns it instead of sta
 	const baseDir = join(root, 'config')
 	const defaultServer = createServer((_request, response) => {
 		response.writeHead(200, { 'Content-Type': 'application/json' })
-		response.end(JSON.stringify({ projects: [{ id: 'jvs', name: 'JVS', path: '/repo/crane-rental' }] }))
+		response.end(
+			JSON.stringify({ projects: [{ id: 'sample-project', name: 'Sample project', path: '/repo/sample-project' }] }),
+		)
 	})
 	const perfServer = createServer((_request, response) => {
 		response.writeHead(200, { 'Content-Type': 'application/json' })
@@ -117,7 +119,7 @@ test('OkenaClient routes a repository to the profile that owns it instead of sta
 	assert.ok(defaultAddress && typeof defaultAddress !== 'string')
 	assert.ok(perfAddress && typeof perfAddress !== 'string')
 	for (const [id, port, projects] of [
-		['default', defaultAddress.port, [{ path: '/repo/crane-rental' }]],
+		['default', defaultAddress.port, [{ path: '/repo/sample-project' }]],
 		['perf-test', perfAddress.port, [{ path: '/tmp/perf' }]],
 	] as const) {
 		const profileDir = join(baseDir, 'profiles', id)
@@ -136,8 +138,8 @@ test('OkenaClient routes a repository to the profile that owns it instead of sta
 	)
 
 	try {
-		const state = await new OkenaClient(baseDir).forProject('/repo/crane-rental').getState()
-		assert.equal(state.projects[0]?.name, 'JVS')
+		const state = await new OkenaClient(baseDir).forProject('/repo/sample-project').getState()
+		assert.equal(state.projects[0]?.name, 'Sample project')
 	} finally {
 		await close(defaultServer)
 		await close(perfServer)

@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { ItemStore } from '../items/store.js'
+import { KnowledgeStore } from '../knowledge/store.js'
 import { ScheduleStore } from '../scheduled-runs/store.js'
 import type { PollState } from '../types.js'
 import { MIGRATIONS } from './schema.js'
@@ -68,7 +69,10 @@ function cloneLegacyDatabase(sourcePath: string, scratchDirectory: string, index
 	const clonePath = join(scratchDirectory, `legacy-${index}.db`)
 	for (const suffix of ['', '-wal', '-shm']) {
 		const sourceFile = `${sourcePath}${suffix}`
-		if (existsSync(sourceFile)) copyFileSync(sourceFile, `${clonePath}${suffix}`)
+		if (existsSync(sourceFile)) {
+			copyFileSync(sourceFile, `${clonePath}${suffix}`)
+			chmodSync(`${clonePath}${suffix}`, 0o600)
+		}
 	}
 	return clonePath
 }
@@ -93,10 +97,13 @@ export function migrateProfileDatabasesToShared(
 	try {
 		removeTemporaryDatabase(temporaryPath)
 		rmSync(scratchDirectory, { recursive: true, force: true })
-		mkdirSync(scratchDirectory, { recursive: true })
+		mkdirSync(scratchDirectory, { recursive: true, mode: 0o700 })
+		chmodSync(scratchDirectory, 0o700)
 		target = new Database(temporaryPath)
+		chmodSync(temporaryPath, 0o600)
 		const migrationTarget = target
 		migrationTarget.pragma('journal_mode = WAL')
+		hardenSqliteFiles(temporaryPath)
 		migrationTarget.pragma('foreign_keys = ON')
 		migrateConnection(migrationTarget)
 		for (const [index, source] of sources.entries()) {
@@ -113,7 +120,9 @@ export function migrateProfileDatabasesToShared(
 				const importProfile = migrationTarget.transaction(() => {
 					const itemColumns = (migrationTarget.prepare(`PRAGMA ${alias}.table_info(items)`).all() as { name: string }[])
 						.map(column => column.name)
-						.filter(name => name !== 'profile_id')
+						// Legacy profile DBs do not import knowledge tables. Never retain a
+						// dangling attempt pointer into evidence that remains in the backup.
+						.filter(name => name !== 'profile_id' && name !== 'knowledge_snapshot_id')
 					const collision = migrationTarget
 						.prepare(`SELECT id FROM items WHERE id IN (SELECT id FROM ${alias}.items) LIMIT 1`)
 						.get() as { id: string } | undefined
@@ -171,6 +180,29 @@ export function migrateProfileDatabasesToShared(
 	}
 }
 
+function assertSafePrivateDatabaseFile(path: string): void {
+	if (!existsSync(path)) return
+	const stat = lstatSync(path)
+	const uid = process.getuid?.()
+	if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || uid === undefined || stat.uid !== uid) {
+		throw new Error('Helm database must be an owned, single-link regular file')
+	}
+	chmodSync(path, 0o600)
+}
+
+function hardenSqliteFiles(path: string): void {
+	for (const suffix of ['', '-wal', '-shm']) {
+		const file = `${path}${suffix}`
+		if (!existsSync(file)) continue
+		const stat = lstatSync(file)
+		const uid = process.getuid?.()
+		if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || uid === undefined || stat.uid !== uid) {
+			throw new Error('Helm SQLite state file is unsafe')
+		}
+		chmodSync(file, 0o600)
+	}
+}
+
 type ProfileSelector = string | (() => string)
 
 /** One SQLite connection with cheap profile-bound views over Item/poll state. */
@@ -178,6 +210,8 @@ export class DB {
 	private readonly db: Database.Database
 	private readonly ownsConnection: boolean
 	readonly items: ItemStore
+	/** Profile-bound immutable context evidence and Hold delivery outbox. */
+	readonly knowledge: KnowledgeStore
 	/** Profile-bound scheduled-run persistence; never use it as an Item store. */
 	readonly schedules: ScheduleStore
 
@@ -189,14 +223,18 @@ export class DB {
 	) {
 		const path = dbPath ?? resolve(process.cwd(), 'helm.db')
 		if (!dbPath && !connection) migrateLegacyDbFile(path)
+		if (!connection) assertSafePrivateDatabaseFile(path)
 		this.db = connection ?? new Database(path)
 		this.ownsConnection = connection === undefined
 		if (this.ownsConnection) {
+			chmodSync(path, 0o600)
 			this.db.pragma('journal_mode = WAL')
 			this.db.pragma('foreign_keys = ON')
 			migrateConnection(this.db)
+			hardenSqliteFiles(path)
 		}
 		this.items = new ItemStore(this.db, () => this.profileId)
+		this.knowledge = new KnowledgeStore(this.db, () => this.profileId)
 		this.schedules = new ScheduleStore(this.db, () => this.profileId)
 	}
 

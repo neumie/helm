@@ -8,8 +8,10 @@ export interface PlanningSessionParams {
 	branchName: string
 	planDirName: string
 	taskTitle: string
-	/** Canonical, unlocalized context; adapter prompt/context writers must not consume it. */
+	/** Canonical, unlocalized task context; private provider evidence is separate. */
 	canonicalContext: TaskContext
+	/** Exact immutable provider bytes, written only to a gitignored Helm sidecar. */
+	knowledgeContext?: string | null
 	/** Required readiness boundary; returns localized/materialized adapter context. */
 	onWorktreeReady(worktreePath: string): TaskContext
 	solverConfig: HelmConfig['solver']

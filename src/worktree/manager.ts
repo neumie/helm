@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { log } from '../util/logger.js'
 
@@ -162,14 +162,14 @@ async function createWorktreeLocked(
 
 /**
  * Add helm temp file patterns to the worktree's git exclude so they're invisible to git.
- * Uses $GIT_DIR/info/exclude which is per-worktree and never committed.
+ * Uses Git's resolved repository-local info/exclude path and never commits it.
  */
 export async function excludeHelmFiles(worktreePath: string): Promise<void> {
 	try {
-		const { stdout } = await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: worktreePath })
-		const gitDir = stdout.trim()
-		const excludePath = join(worktreePath, gitDir, 'info', 'exclude')
-		mkdirSync(join(worktreePath, gitDir, 'info'), { recursive: true })
+		const { stdout } = await execFileAsync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd: worktreePath })
+		const reportedPath = stdout.trim()
+		const excludePath = isAbsolute(reportedPath) ? reportedPath : resolve(worktreePath, reportedPath)
+		mkdirSync(dirname(excludePath), { recursive: true })
 		appendFileSync(excludePath, `\n# Helm temp files\n${HELM_EXCLUDE_PATTERNS.join('\n')}\n`)
 	} catch {
 		log.warn('worktree', 'Could not write git exclude patterns')

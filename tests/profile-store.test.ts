@@ -24,7 +24,7 @@ test('profile store keeps the shared database at root and moves Work filesystem 
 		mkdirSync(join(root, 'logs'), { recursive: true })
 		writeFileSync(join(root, 'logs', 'item-1.log'), 'run log')
 
-		const store = new ProfileStore(root, ['jvs', 'vault'])
+		const store = new ProfileStore(root, ['alpha', 'beta'])
 		const state = store.getState()
 		const runtime = store.activeRuntime()
 
@@ -35,7 +35,8 @@ test('profile store keeps the shared database at root and moves Work filesystem 
 				id: 'work',
 				name: 'Work',
 				createdAt: state.profiles[0]?.createdAt,
-				enabledProjects: ['jvs', 'vault'],
+				enabledProjects: ['alpha', 'beta'],
+				knowledgeBindings: [],
 				archivedAt: null,
 			},
 		])
@@ -53,11 +54,11 @@ test('profiles are unlimited named records with stable safe ids, project choices
 	withRoot(root => {
 		const store = new ProfileStore(root, ['work-project'])
 		const personal = store.create('Personal', [])
-		const client = store.create('Client A', ['jvs', 'jvs', 'vault'])
+		const client = store.create('Client A', ['alpha', 'alpha', 'beta'])
 
 		assert.match(personal.id, /^profile-[a-f0-9]{12}$/)
 		assert.notEqual(client.id, personal.id)
-		assert.deepEqual(client.enabledProjects, ['jvs', 'vault'])
+		assert.deepEqual(client.enabledProjects, ['alpha', 'beta'])
 		assert.throws(() => store.create(' personal '), /already exists/)
 		const pathLikeName = store.create('../escape')
 		assert.match(pathLikeName.id, /^profile-[a-f0-9]{12}$/)
@@ -75,6 +76,51 @@ test('profiles are unlimited named records with stable safe ids, project choices
 		const reloaded = new ProfileStore(root)
 		assert.equal(reloaded.activeProfile().id, personal.id)
 		assert.equal(reloaded.getState().profiles.length, 4)
+	}))
+
+test('profile knowledge mappings are explicit and cross-profile sharing requires acknowledgement', () =>
+	withRoot(root => {
+		const store = new ProfileStore(root, ['sample'])
+		const shared = {
+			projectSlug: 'sample',
+			providerId: 'local-hold',
+			providerProjectId: 'hold-project-shared',
+			characterBudget: 20_000,
+			allowSharedProject: false,
+		}
+		const first = store.create('First', ['sample'], [shared])
+		assert.throws(() => store.create('Second', ['sample'], [shared]), /requires explicit acknowledgement/)
+		store.update(first.id, {
+			knowledgeBindings: [{ ...shared, allowSharedProject: true }],
+		})
+		const second = store.create('Second', ['sample'], [{ ...shared, allowSharedProject: true }])
+		assert.equal(second.knowledgeBindings[0]?.providerProjectId, 'hold-project-shared')
+		assert.deepEqual(store.update(first.id, { enabledProjects: [] }).knowledgeBindings, [])
+	}))
+
+test('version-one profile registries migrate to empty knowledge bindings in memory', () =>
+	withRoot(root => {
+		writeFileSync(
+			join(root, 'profiles.json'),
+			JSON.stringify({
+				version: 1,
+				generation: 1,
+				activeProfileId: 'work',
+				profiles: [
+					{
+						id: 'work',
+						name: 'Work',
+						createdAt: '2030-01-01T00:00:00.000Z',
+						enabledProjects: ['sample'],
+						archivedAt: null,
+					},
+				],
+			}),
+			{ mode: 0o644 },
+		)
+		const store = new ProfileStore(root)
+		assert.equal(store.getState().version, 2)
+		assert.deepEqual(store.activeProfile().knowledgeBindings, [])
 	}))
 
 test('profile bootstrap leaves a legacy per-profile database for the shared importer', () =>

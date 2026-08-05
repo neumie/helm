@@ -1,7 +1,7 @@
 // State-led item decision surface. Run evidence (activity/log/input) and run
 // setup live inline (§3.20); only the long-form Task and Plan-document reading
 // surfaces stay on pushed pages.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DashboardAction, HelmSnapshot, ItemStatus, PlanInfo } from '../../shared-helm'
 import { showToast } from '../toast'
 import { AssignItemSheet } from './AssignItemSheet'
@@ -11,6 +11,7 @@ import {
 	FailureCard,
 	InputSection,
 	IntentCard,
+	KnowledgeEvidenceSection,
 	LogSection,
 	OutcomeCard,
 	ResourceRows,
@@ -48,6 +49,8 @@ interface Confirmation {
 	reason: string
 }
 
+const KNOWLEDGE_DELIVERY_REFRESH_MS = 5_000
+
 export function DetailPage(props: DetailPageProps) {
 	const { id, snapshot, draft, onDraftChange, active, onBack, onOpenPlan, onOpenTask } = props
 	const { item, phase, error, refetch, refetchQuietly } = useItemDetail(id, snapshot)
@@ -59,6 +62,23 @@ export function DetailPage(props: DetailPageProps) {
 	const [retryCommand, setRetryCommand] = useState<(() => void) | null>(null)
 	const [confirm, setConfirm] = useState<Confirmation | null>(null)
 	const [assignmentOpen, setAssignmentOpen] = useState(false)
+	const deliveryInFlight =
+		item?.knowledgeDeliveries?.some(delivery => delivery.state === 'pending' || delivery.state === 'delivering') ??
+		false
+	useEffect(() => {
+		if (!active || !deliveryInFlight) return
+		let alive = true
+		let timer: number
+		const refresh = async () => {
+			await refetchQuietly().catch(() => {})
+			if (alive) timer = window.setTimeout(() => void refresh(), KNOWLEDGE_DELIVERY_REFRESH_MS)
+		}
+		timer = window.setTimeout(() => void refresh(), KNOWLEDGE_DELIVERY_REFRESH_MS)
+		return () => {
+			alive = false
+			window.clearTimeout(timer)
+		}
+	}, [active, deliveryInFlight, refetchQuietly])
 
 	if (!item) return <MissingDetail phase={phase} error={error} onBack={onBack} onRetry={refetch} />
 	const assigned = item.projectSlug !== null && item.baseRef !== null
@@ -120,6 +140,10 @@ export function DetailPage(props: DetailPageProps) {
 			null,
 		)
 	const sourceTask = () => run('Create source task', () => window.helm.daemon.sourceTask(item.id))
+	const retryKnowledgeDelivery = (deliveryId: string) =>
+		run('Retry knowledge delivery', () => window.helm.daemon.retryKnowledgeDelivery(item.id, deliveryId))
+	const recoverKnowledgeDelivery = () =>
+		run('Recover knowledge delivery', () => window.helm.daemon.recoverKnowledgeDelivery(item.id))
 	const openOkena = () =>
 		run(
 			'Open in Okena',
@@ -260,6 +284,16 @@ export function DetailPage(props: DetailPageProps) {
 				)
 			case 'input':
 				return <InputSection key="input" item={item} />
+			case 'knowledge':
+				return (
+					<KnowledgeEvidenceSection
+						key="knowledge"
+						item={item}
+						onRetryDelivery={retryKnowledgeDelivery}
+						onRecoverDelivery={recoverKnowledgeDelivery}
+						disabled={disabled}
+					/>
+				)
 			case 'setup':
 				if (!assigned) return null
 				return (

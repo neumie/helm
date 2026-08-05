@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { chmodSync, existsSync, lstatSync, readFileSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
 import { solverAgentSchema } from './solver/agent.js'
 import { solverWorkspaceSchema } from './solver/workspace.js'
@@ -52,6 +52,54 @@ const scheduledRunsSchema = z
 		systemTargetsEnabled: z.boolean().default(false),
 	})
 	.default({})
+
+export const knowledgeProviderIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
+
+const absolutePrivateLocator = z
+	.string()
+	.min(1)
+	.max(1_000)
+	.refine(value => isAbsolute(value) && !value.includes('\0'), 'Knowledge provider paths must be absolute')
+
+export const holdKnowledgeProviderSchema = z
+	.object({
+		id: knowledgeProviderIdSchema,
+		type: z.literal('hold'),
+		socketPath: absolutePrivateLocator,
+		capabilityFile: absolutePrivateLocator,
+		timeouts: z
+			.object({
+				handshakeMs: z.number().int().min(100).max(30_000).default(2_000),
+				briefMs: z.number().int().min(100).max(120_000).default(15_000),
+				candidatesMs: z.number().int().min(100).max(120_000).default(5_000),
+			})
+			.default({}),
+	})
+	.strict()
+
+// Multiple configured provider instances and profile-owned bindings are real.
+// Hold is the first adapter type; extend this union only when another production
+// adapter exists rather than adding generic transport configuration.
+export const knowledgeProviderSchema = holdKnowledgeProviderSchema
+
+const knowledgeSchema = z
+	.object({
+		providers: z.array(knowledgeProviderSchema).min(1).max(20),
+	})
+	.strict()
+	.superRefine((knowledge, ctx) => {
+		const seen = new Set<string>()
+		for (const [index, provider] of knowledge.providers.entries()) {
+			if (seen.has(provider.id)) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ['providers', index, 'id'],
+					message: 'Knowledge provider ids must be unique',
+				})
+			}
+			seen.add(provider.id)
+		}
+	})
 
 export const configSchema = z
 	.object({
@@ -118,6 +166,7 @@ export const configSchema = z
 			})
 			.default({}),
 		scheduledRuns: scheduledRunsSchema,
+		knowledge: knowledgeSchema.optional(),
 	})
 	.superRefine((config, ctx) => {
 		if (config.scheduledRuns.enabled && !isLoopbackHost(config.server.host)) {
@@ -142,6 +191,8 @@ export function isLoopbackHost(host: string): boolean {
 
 export type HelmConfig = z.infer<typeof configSchema>
 export type ProjectConfig = z.infer<typeof projectSchema>
+export type KnowledgeProviderConfig = z.infer<typeof knowledgeProviderSchema>
+export type HoldKnowledgeProviderConfig = z.infer<typeof holdKnowledgeProviderSchema>
 
 /**
  * Resolve the config file path: explicit arg, then $HELM_CONFIG (preferred),
@@ -165,6 +216,12 @@ export function resolveConfigPath(configPath?: string): string {
 
 export function loadConfig(configPath?: string): { config: HelmConfig; configPath: string; raw: unknown } {
 	const path = resolveConfigPath(configPath)
+	const stat = lstatSync(path)
+	const uid = process.getuid?.()
+	if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || uid === undefined || stat.uid !== uid) {
+		throw new Error(`Helm config must be an owned, single-link regular file: ${path}`)
+	}
+	chmodSync(path, 0o600)
 	const raw = readFileSync(path, 'utf-8')
 	let json: unknown
 	try {

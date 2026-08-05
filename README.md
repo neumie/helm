@@ -32,6 +32,8 @@ There is no browser dashboard. The desktop app is the Helm UI.
 - Runs planned work through either a direct agent or an `almanac loop` queue.
 - Preserves the exact solve prompt, lifecycle events, logs, result, branch, PR,
   merge, and deployment evidence.
+- Preserves exact external project-knowledge evidence for each attempt and queues
+  agent-learned candidates for Hold, which owns review and canonical writes.
 - Supports unlimited named profiles while allowing runs in inactive profiles to
   finish safely.
 - Provides persistent desktop terminal sessions, background terminals, buffer
@@ -177,7 +179,7 @@ A minimal configuration:
   "projects": [
     {
       "slug": "my-project",
-      "repoPath": "/Users/you/code/my-project",
+      "repoPath": "/path/to/code/my-project",
       "baseBranch": "main"
     }
   ],
@@ -203,7 +205,8 @@ Important fields:
 | Field | Purpose |
 | --- | --- |
 | `provider` | The single live, re-pollable task source. The current built-in provider is Contember. |
-| `projects[]` | Allowed repositories: `slug`, `repoPath`, `baseBranch`, optional `worktreeDir` and UI `color`. |
+| `projects[]` | Allowed repositories: `slug`, `repoPath`, `baseBranch`, optional `worktreeDir`, and UI `color`. |
+| `knowledge.providers[]` | Optional external knowledge instances by safe ID and adapter type; Hold uses private Unix-socket and capability-file paths. Project bindings live with profiles. |
 | `polling.intervalSeconds` | Provider polling interval; minimum 5 seconds, default 60. |
 | `polling.since` | Optional ISO lower bound for provider discovery. |
 | `solver.type` | `default` for direct headless execution or `okena` for Okena execution. |
@@ -349,6 +352,66 @@ It uses optimistic revisions, survives retries and recovery, and cannot be
 edited while the Item is running. Reset fetches the latest source context before
 clearing the override.
 
+### Project knowledge
+
+Helm does not scan, index, curate, review, or write a Markdown knowledge library.
+Those responsibilities belong to an external provider. **Hold** is the first
+production adapter, but Helm's `KnowledgeIntegration` seam, profile bindings,
+evidence, and outbox remain provider-neutral.
+
+Configure one or more Hold instances in `helm.config.json` by safe provider ID,
+absolute private Unix-socket path, and an absolute private capability-file path.
+The capability value never belongs in Helm config:
+
+```json
+{
+  "knowledge": {
+    "providers": [{
+      "id": "local-hold",
+      "type": "hold",
+      "socketPath": "/path/to/private-hold-state/hold.sock",
+      "capabilityFile": "/path/to/private-helm-state/hold.capability"
+    }]
+  }
+}
+```
+
+Pair a dedicated Hold client with only `brief:prepare,candidates:submit` and the
+explicit opaque Hold project IDs. Store its raw token in the configured file
+beneath an owner-private directory with mode `0600`. Then use **Settings →
+Profiles → Project knowledge** to map each enabled Helm project to a provider and
+opaque provider project ID. No mapping means knowledge is disabled for that one
+profile/project. Sharing one provider project across profiles requires an
+explicit acknowledgement in every participating profile.
+
+A configured mapping is required context: Plan, direct solve, and solve-through-loop execution obtain one bounded brief,
+validate its hashes and UTF-16 manifest ranges, and persist the exact context,
+selection identity, revision, provider timestamp, safe manifest, and frozen
+provider target before launching an adapter. Unavailability or invalid evidence
+fails the knowledge phase; Helm never silently launches without configured
+context. Profile switching or later mapping edits cannot redirect stored evidence
+or already-queued delivery.
+
+Helm permanently owns only run evidence. Native Helm's main process uses the
+daemon-local control capability to show the immutable snapshot under collapsed
+**Knowledge used**. Lists omit run input; ordinary unauthenticated Item reads omit
+knowledge evidence and redact knowledge-backed run input. Planning keeps canonical task/source data in auto-generated
+`context.md` and writes exact provider bytes only to gitignored `.helm-knowledge-context.md`; both are fenced as untrusted reference data, and hidden files never enter plan previews or later prompt artifact feeds. Auto-generated `context.md` and `README.md` files do not cross the detail API.
+
+For an admitted mapping, an agent may return at most five typed learned candidates in the gitignored
+`.helm-knowledge-candidates.json` attempt sidecar. Helm reads it through a bounded no-follow descriptor and never reviews or applies
+them. It freezes their provider destination and stores them in a leased,
+idempotent delivery outbox. Event wakeups provide low latency; periodic
+all-profile sweeps recover missed events, crashes, ambiguous responses, and
+provider downtime. Delivery failure never changes a completed Item's lifecycle or
+run outcome. Permanent authorization, scope, protocol, or validation failures are
+`blocked`; after fixing the cause, operators can use **Retry delivery** in the
+Item's **Knowledge used** disclosure. If the initial SQLite enqueue itself failed,
+the private sidecar remains and the same disclosure offers **Recover delivery**;
+a new solve attempt is refused until those candidates are durably recovered. The
+frozen attempt destination and idempotency key remain unchanged. Hold alone owns
+candidate compilation, review, and canonical writes.
+
 ### Solve and dispatch
 
 A solve run proceeds through five phases:
@@ -402,13 +465,18 @@ Important behavior:
 - a dirty Run Context editor blocks switching rather than discarding edits.
 
 Switch profiles from the Work toolbar's **…** menu or the native Helm menu.
-Manage, archive, and restore profiles in **Settings → Profiles**.
+Manage, archive, and restore profiles in **Settings → Profiles**. Profile metadata
+and mutations use Electron main's local-control capability; the renderer never
+receives that bearer.
 
 ## Desktop terminals
 
 The right side of the Helm app is a real xterm.js terminal backed by `node-pty`.
 When `dtach` is available, sessions survive app quit or crash and reattach on the
-next launch.
+next launch. A full machine reboot necessarily ends their processes, but Helm
+recreates fresh shells under the same durable tab identities, preserving names,
+order, groups, background placement, and the last saved terminal buffer. Process
+state and per-process working directories cannot survive a reboot.
 
 Desktop terminal features include:
 
@@ -523,6 +591,7 @@ src/
   extensions/       optional Solver/Spawner integrations such as Okena
   github/           PR/deployment observation
   items/            Item schema, store, commands, context, contract, observation
+  knowledge/        external integration seam, immutable evidence, delivery outbox
   plan/             PlanWorkspace paths, artifacts, and readiness
   poller/           provider discovery into Inbox
   profiles/         profile runtime and active-profile state
@@ -556,8 +625,7 @@ Core boundaries:
 - `HelmBridge` owns desktop-to-daemon HTTP.
 - Profile-bound stores own every tenant-scoped database operation.
 
-See [`AGENTS.md`](AGENTS.md) and [`docs/adr/`](docs/adr/) for the detailed
-engineering contract.
+See `AGENTS.md` and [`docs/adr/`](docs/adr/) for the detailed engineering contract.
 
 ## Extending Helm
 

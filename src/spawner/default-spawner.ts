@@ -23,6 +23,8 @@ export class DefaultSpawner implements Spawner {
 		const taskContext = params.onWorktreeReady(worktreePath)
 		const workspace = new PlanWorkspace(worktreePath, params.planDirName)
 		workspace.writeContext(formatTaskContext(taskContext))
+		if (params.knowledgeContext) workspace.writeKnowledgeContext(params.knowledgeContext)
+		else workspace.clearKnowledgeContext()
 		workspace.writePlanningPrompt(buildPlanningPrompt(params.planDirName, params.solverConfig.agent))
 
 		return {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ProfilesDocument } from '../../shared-helm'
+import type { ProfileKnowledgeBinding, ProfilesDocument } from '../../shared-helm'
 import { showToast } from '../toast'
-import { ActionRow, Btn, Card, EmptyState, PushHeader, TextInput, Toggle } from './ui'
+import { ActionRow, Btn, Card, EmptyState, PushHeader, SelectInput, TextInput, Toggle } from './ui'
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error)
@@ -107,11 +107,13 @@ export function ProfileEditorPage({ profileId, onBack }: { profileId: string; on
 	)
 	const [name, setName] = useState('')
 	const [enabledProjects, setEnabledProjects] = useState<string[]>([])
+	const [knowledgeBindings, setKnowledgeBindings] = useState<ProfileKnowledgeBinding[]>([])
 	const [busy, setBusy] = useState(false)
 	useEffect(() => {
 		if (!profile) return
 		setName(profile.name)
 		setEnabledProjects(profile.enabledProjects)
+		setKnowledgeBindings(profile.knowledgeBindings)
 	}, [profile])
 
 	const mutate = async (operation: () => Promise<{ error?: string }>, success: string) => {
@@ -151,12 +153,44 @@ export function ProfileEditorPage({ profileId, onBack }: { profileId: string; on
 	}
 	const active = profile.id === document.activeProfileId
 	const archived = profile.archivedAt !== null
+	const sortedBindings = (bindings: ProfileKnowledgeBinding[]) =>
+		[...bindings].sort((left, right) => left.projectSlug.localeCompare(right.projectSlug))
 	const dirty =
 		name.trim() !== profile.name ||
-		JSON.stringify([...enabledProjects].sort()) !== JSON.stringify([...profile.enabledProjects].sort())
-	const toggleProject = (project: string, enabled: boolean) =>
+		JSON.stringify([...enabledProjects].sort()) !== JSON.stringify([...profile.enabledProjects].sort()) ||
+		JSON.stringify(sortedBindings(knowledgeBindings)) !== JSON.stringify(sortedBindings(profile.knowledgeBindings))
+	const validBindings = knowledgeBindings.every(
+		binding =>
+			binding.providerProjectId.trim().length > 0 &&
+			binding.characterBudget >= 100 &&
+			binding.characterBudget <= 200_000,
+	)
+	const toggleProject = (project: string, enabled: boolean) => {
 		setEnabledProjects(current =>
 			enabled ? [...new Set([...current, project])] : current.filter(candidate => candidate !== project),
+		)
+		if (!enabled) setKnowledgeBindings(current => current.filter(binding => binding.projectSlug !== project))
+	}
+	const setBindingProvider = (projectSlug: string, providerId: string) => {
+		setKnowledgeBindings(current => {
+			const withoutProject = current.filter(binding => binding.projectSlug !== projectSlug)
+			if (!providerId) return withoutProject
+			const existing = current.find(binding => binding.projectSlug === projectSlug)
+			return [
+				...withoutProject,
+				{
+					projectSlug,
+					providerId,
+					providerProjectId: existing?.providerProjectId ?? '',
+					characterBudget: existing?.characterBudget ?? 20_000,
+					allowSharedProject: existing?.allowSharedProject ?? false,
+				},
+			]
+		})
+	}
+	const updateBinding = (projectSlug: string, patch: Partial<ProfileKnowledgeBinding>) =>
+		setKnowledgeBindings(current =>
+			current.map(binding => (binding.projectSlug === projectSlug ? { ...binding, ...patch } : binding)),
 		)
 	return (
 		<div className="page-frame">
@@ -180,16 +214,78 @@ export function ProfileEditorPage({ profileId, onBack }: { profileId: string; on
 						</div>
 					))}
 				</Card>
+				<Card label="Project knowledge">
+					<p className="section-description">
+						Each enabled project may map explicitly to one external knowledge project. No mapping means disabled.
+					</p>
+					{enabledProjects.map(project => {
+						const binding = knowledgeBindings.find(candidate => candidate.projectSlug === project)
+						return (
+							<div className="settings-field" key={project}>
+								<label className="field-label" htmlFor={`knowledge-provider-${project}`}>
+									{project}
+								</label>
+								<SelectInput
+									id={`knowledge-provider-${project}`}
+									value={binding?.providerId ?? ''}
+									onChange={providerId => setBindingProvider(project, providerId)}
+									options={[
+										{ value: '', label: 'No knowledge provider' },
+										...document.configuredKnowledgeProviders.map(provider => ({
+											value: provider.id,
+											label: `${provider.id} (${provider.type})`,
+										})),
+									]}
+								/>
+								{binding && (
+									<>
+										<label className="field-label" htmlFor={`knowledge-project-${project}`}>
+											{project} provider project ID
+										</label>
+										<TextInput
+											id={`knowledge-project-${project}`}
+											value={binding.providerProjectId}
+											placeholder="Opaque provider project ID"
+											onChange={providerProjectId => updateBinding(project, { providerProjectId })}
+										/>
+										<input
+											className="input"
+											type="number"
+											min={100}
+											max={200000}
+											value={binding.characterBudget}
+											aria-label={`${project} knowledge character budget`}
+											onChange={event => updateBinding(project, { characterBudget: Number(event.target.value) })}
+										/>
+										<div className="profile-project-row">
+											<span>Allow this knowledge project in another profile</span>
+											<Toggle
+												label={`Allow ${project} knowledge sharing`}
+												value={binding.allowSharedProject}
+												onChange={allowSharedProject => updateBinding(project, { allowSharedProject })}
+											/>
+										</div>
+									</>
+								)}
+							</div>
+						)
+					})}
+				</Card>
 				<div className="profile-actions">
 					{!archived && (
 						<Btn
 							tone="primary"
 							block
 							busy={busy}
-							disabled={!dirty || !name.trim()}
+							disabled={!dirty || !name.trim() || !validBindings}
 							onClick={() =>
 								void mutate(
-									() => window.helm.profiles.update(profile.id, { name: name.trim(), enabledProjects }),
+									() =>
+										window.helm.profiles.update(profile.id, {
+											name: name.trim(),
+											enabledProjects,
+											knowledgeBindings,
+										}),
 									'Profile saved',
 								)
 							}

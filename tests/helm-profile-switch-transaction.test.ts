@@ -16,15 +16,18 @@ function deferred<T>(): Deferred<T> {
 }
 
 const work = (generation = 1): ProfilesState => ({
-	version: 1,
+	version: 2,
 	generation,
 	activeProfileId: 'work',
-	profiles: [{ id: 'work', name: 'Work', createdAt: '', enabledProjects: [], archivedAt: null }],
+	profiles: [{ id: 'work', name: 'Work', createdAt: '', enabledProjects: [], knowledgeBindings: [], archivedAt: null }],
 })
 const other = (id: string, generation = 2): ProfilesState => ({
 	...work(generation),
 	activeProfileId: id,
-	profiles: [work().profiles[0], { id, name: id, createdAt: '', enabledProjects: [], archivedAt: null }],
+	profiles: [
+		work().profiles[0],
+		{ id, name: id, createdAt: '', enabledProjects: [], knowledgeBindings: [], archivedAt: null },
+	],
 })
 
 function fixture() {

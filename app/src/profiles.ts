@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import type { HelmProfile, ProfilesState } from './shared-helm'
+import type { HelmProfile, ProfileKnowledgeBinding, ProfilesState } from './shared-helm'
 
 const APP_PROFILE_STATE_VERSION = 1 as const
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
@@ -15,6 +16,11 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error)
 }
 
+function ensurePrivateDirectory(path: string): void {
+	mkdirSync(path, { recursive: true, mode: 0o700 })
+	chmodSync(path, 0o700)
+}
+
 function defaultState(): AppProfileState {
 	return {
 		version: APP_PROFILE_STATE_VERSION,
@@ -25,6 +31,7 @@ function defaultState(): AppProfileState {
 				name: 'Work',
 				createdAt: '',
 				enabledProjects: [],
+				knowledgeBindings: [],
 				archivedAt: null,
 			},
 		],
@@ -42,16 +49,23 @@ function parseState(raw: unknown): AppProfileState {
 	) {
 		throw new Error('Invalid app profile cache')
 	}
-	const profiles = state.profiles.filter((profile): profile is HelmProfile => {
-		if (!profile || typeof profile !== 'object') return false
-		const candidate = profile as Record<string, unknown>
-		return (
-			typeof candidate.id === 'string' &&
-			PROFILE_ID_RE.test(candidate.id) &&
-			typeof candidate.name === 'string' &&
-			Array.isArray(candidate.enabledProjects)
+	const profiles = state.profiles
+		.filter(
+			(
+				profile,
+			): profile is Omit<HelmProfile, 'knowledgeBindings'> & { knowledgeBindings?: ProfileKnowledgeBinding[] } => {
+				if (!profile || typeof profile !== 'object') return false
+				const candidate = profile as Record<string, unknown>
+				return (
+					typeof candidate.id === 'string' &&
+					PROFILE_ID_RE.test(candidate.id) &&
+					typeof candidate.name === 'string' &&
+					Array.isArray(candidate.enabledProjects) &&
+					(candidate.knowledgeBindings === undefined || Array.isArray(candidate.knowledgeBindings))
+				)
+			},
 		)
-	})
+		.map(profile => ({ ...profile, knowledgeBindings: profile.knowledgeBindings ?? [] }))
 	if (!profiles.some(profile => profile.id === state.activeProfileId)) throw new Error('Active app profile is missing')
 	return { version: APP_PROFILE_STATE_VERSION, activeProfileId: state.activeProfileId, profiles }
 }
@@ -61,7 +75,7 @@ function moveIfPresent(source: string, destination: string): void {
 	if (existsSync(destination)) {
 		throw new Error(`Cannot migrate legacy profile data because both paths exist: ${source} and ${destination}`)
 	}
-	mkdirSync(dirname(destination), { recursive: true })
+	ensurePrivateDirectory(dirname(destination))
 	renameSync(source, destination)
 }
 
@@ -73,7 +87,7 @@ export class AppProfileStore {
 	constructor(private readonly userDataDir: string) {
 		this.profilesDir = join(userDataDir, 'profiles')
 		this.statePath = join(userDataDir, 'profile-cache.json')
-		mkdirSync(this.profilesDir, { recursive: true })
+		ensurePrivateDirectory(this.profilesDir)
 		this.migrateLegacyWorkState()
 		this.state = this.readState()
 		this.writeState()
@@ -110,13 +124,19 @@ export class AppProfileStore {
 		// even when the local cache write fails, so menus/routing cannot fall back
 		// to the previous profile after the daemon already committed activation.
 		this.state = candidate
-		mkdirSync(this.profileDir(), { recursive: true })
+		ensurePrivateDirectory(this.profileDir())
 		this.writeState()
 	}
 
 	private readState(): AppProfileState {
 		if (!existsSync(this.statePath)) return defaultState()
 		try {
+			const stat = lstatSync(this.statePath)
+			const uid = process.getuid?.()
+			if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (uid !== undefined && stat.uid !== uid)) {
+				throw new Error('Unsafe app profile cache')
+			}
+			chmodSync(this.statePath, 0o600)
 			return parseState(JSON.parse(readFileSync(this.statePath, 'utf8')))
 		} catch (err) {
 			throw new Error(`Could not load app profile cache ${this.statePath}: ${errorMessage(err)}`)
@@ -125,7 +145,7 @@ export class AppProfileStore {
 
 	private migrateLegacyWorkState(): void {
 		const workDir = this.profileDir('work')
-		mkdirSync(workDir, { recursive: true })
+		ensurePrivateDirectory(workDir)
 		const moves = [
 			[join(this.userDataDir, 'sessions.json'), join(workDir, 'sessions.json')],
 			[join(this.userDataDir, 'buffers'), join(workDir, 'buffers')],
@@ -141,11 +161,16 @@ export class AppProfileStore {
 	}
 
 	private writeState(): void {
-		mkdirSync(dirname(this.statePath), { recursive: true })
-		const temp = `${this.statePath}.${process.pid}.tmp`
+		ensurePrivateDirectory(dirname(this.statePath))
+		const temp = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`
 		try {
-			writeFileSync(temp, `${JSON.stringify(this.state, null, '\t')}\n`, { encoding: 'utf8', mode: 0o600 })
+			writeFileSync(temp, `${JSON.stringify(this.state, null, '\t')}\n`, {
+				encoding: 'utf8',
+				mode: 0o600,
+				flag: 'wx',
+			})
 			renameSync(temp, this.statePath)
+			chmodSync(this.statePath, 0o600)
 		} finally {
 			if (existsSync(temp)) rmSync(temp, { force: true })
 		}

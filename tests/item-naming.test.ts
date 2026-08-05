@@ -478,11 +478,11 @@ test('ensureItemWorkspaceName force throws on an unparseable model answer', () =
 
 // --- display naming -------------------------------------------------------
 
-const LONG_TITLE = '[Echo] Please remove the operative crane exchange from the catalog view'
+const LONG_TITLE = '[Echo] Please remove the legacy supplier selector from the catalog view'
 
 test('parseDisplayName strips quotes, a label echo, and a trailing period', () => {
 	assert.equal(parseDisplayName('Short title: "Unify invoice recipient logic."'), 'Unify invoice recipient logic')
-	assert.equal(parseDisplayName('`Remove crane exchange`'), 'Remove crane exchange')
+	assert.equal(parseDisplayName('`Remove supplier selector`'), 'Remove supplier selector')
 })
 
 test('parseDisplayName takes the last non-empty line past preamble', () => {
@@ -512,11 +512,11 @@ test('ensureItemDisplayName persists a short AI display name', () =>
 			commands,
 			item,
 			config,
-			deps: { runOneShot: async () => 'Remove operative crane exchange' },
+			deps: { runOneShot: async () => 'Remove legacy supplier selector' },
 		})
 
-		assert.equal(result.displayName, 'Remove operative crane exchange')
-		assert.equal(commands.getItem(item.id)?.displayName, 'Remove operative crane exchange')
+		assert.equal(result.displayName, 'Remove legacy supplier selector')
+		assert.equal(commands.getItem(item.id)?.displayName, 'Remove legacy supplier selector')
 	}))
 
 test('ensureItemDisplayName skips an already-short title (no model call)', () =>
@@ -721,5 +721,5 @@ test('ensureItemDisplayName threads a custom prompt and provider override', () =
 
 		assert.equal(seenAgent, 'codex') // per-feature provider override wins
 		assert.ok(seenPrompt.includes('CUSTOM-INSTRUCTIONS-HERE')) // custom instructions used
-		assert.ok(seenPrompt.includes('Please remove the operative')) // task data still injected by code
+		assert.ok(seenPrompt.includes('Please remove the legacy')) // task data still injected by code
 	}))

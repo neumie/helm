@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import helmBridgeModule from '../app/src/helm-bridge.ts'
+import type { HelmBridgeRequest } from '../app/src/helm-bridge.ts'
 type HelmBridgeModule = typeof import('../app/src/helm-bridge.ts')
-const { HelmBridge, scheduledProfileTokenMatches } = helmBridgeModule as HelmBridgeModule
+const { HelmBridge, profileIdFromProfileToken, scheduledProfileTokenMatches } = helmBridgeModule as HelmBridgeModule
+
+test('profile identity is derived only from a complete captured token', () => {
+	assert.equal(profileIdFromProfileToken('work:3'), 'work')
+	assert.equal(profileIdFromProfileToken('profile-aaaaaaaaaaaa:9'), 'profile-aaaaaaaaaaaa')
+	assert.equal(profileIdFromProfileToken('work'), null)
+	assert.equal(profileIdFromProfileToken('work:not-a-generation'), null)
+})
 
 test('scheduled renderer requests are bound to the captured profile token', () => {
 	assert.equal(scheduledProfileTokenMatches('work', 'work:3'), true)
@@ -30,12 +38,26 @@ function status(profileId = target, generation = 2): DaemonStatus {
 		queue: { paused: false, pending: 0, active: 0, maxConcurrency: 1, activeTasks: [] },
 		projects: [],
 		pollInterval: 60,
-		profile: { id: profileId, name: profileId, createdAt: '', enabledProjects: [], archivedAt: null },
+		profile: {
+			id: profileId,
+			name: profileId,
+			createdAt: '',
+			enabledProjects: [],
+			knowledgeBindings: [],
+			archivedAt: null,
+		},
 		profileGeneration: generation,
 	}
 }
 function profiles(profileId = target, generation = 2): ProfilesDocument {
-	return { version: 1, generation, activeProfileId: profileId, profiles: [], configuredProjects: [] }
+	return {
+		version: 2,
+		generation,
+		activeProfileId: profileId,
+		profiles: [],
+		configuredProjects: [],
+		configuredKnowledgeProviders: [],
+	}
 }
 
 function bridgeFixture() {
@@ -63,6 +85,7 @@ function bridgeFixture() {
 	}
 	const bridge = new HelmBridge('http://daemon.test', () => true, {
 		request,
+		localControlToken: async () => 'test-local-control',
 		windows: () => [
 			{
 				webContents: {
@@ -88,9 +111,7 @@ function bridgeFixture() {
 }
 
 async function spin(): Promise<void> {
-	await Promise.resolve()
-	await Promise.resolve()
-	await Promise.resolve()
+	for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }
 function coherent(f: ReturnType<typeof bridgeFixture>, profileId = target): void {
 	f.push('GET', '/status', { data: status(profileId) })
@@ -168,6 +189,35 @@ test('observed-profile adoption replaces readiness and never publishes the old t
 	f.timers.at(-1)?.()
 	await fence.ready
 	assert.equal(f.bridge.getSnapshot().status?.profile?.id, 'profile-cccccccccccc')
+})
+
+test('profile metadata transport authorizes and normalizes a legacy daemon document', async () => {
+	let observedHeaders: Record<string, string> | undefined
+	const legacy = {
+		...profiles(),
+		version: 1,
+		profiles: [{ ...status().profile, knowledgeBindings: undefined }],
+		configuredKnowledgeProviders: undefined,
+	}
+	const request: HelmBridgeRequest = async <T>(
+		_method: 'GET' | 'POST' | 'PUT',
+		_path: string,
+		_body?: unknown,
+		_timeout?: number,
+		headers?: Record<string, string>,
+	): Promise<HelmResult<T>> => {
+		observedHeaders = headers
+		return { data: legacy as unknown as T }
+	}
+	const bridge = new HelmBridge('http://daemon.test', () => true, {
+		localControlToken: async () => 'profile-control-token',
+		request,
+	})
+	const result = await bridge.listProfiles()
+	assert.equal(result.error, undefined)
+	assert.deepEqual(result.data?.configuredKnowledgeProviders, [])
+	assert.deepEqual(result.data?.profiles[0]?.knowledgeBindings, [])
+	assert.equal(observedHeaders?.Authorization, 'Bearer profile-control-token')
 })
 
 test('stop during protocol restart prevents a later config/publication continuation', async () => {

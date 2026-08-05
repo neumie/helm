@@ -1,17 +1,27 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
-const PROFILE_STATE_VERSION = 1 as const
+const PROFILE_STATE_VERSION = 2 as const
 const DEFAULT_PROFILE_ID = 'work'
 const MAX_PROFILE_NAME_LENGTH = 48
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
+const KNOWLEDGE_PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,63}$/
+
+export interface ProfileKnowledgeBinding {
+	projectSlug: string
+	providerId: string
+	providerProjectId: string
+	characterBudget: number
+	allowSharedProject: boolean
+}
 
 export interface HelmProfile {
 	id: string
 	name: string
 	createdAt: string
 	enabledProjects: string[]
+	knowledgeBindings: ProfileKnowledgeBinding[]
 	archivedAt: string | null
 }
 
@@ -49,7 +59,63 @@ function uniqueProjects(values: readonly string[]): string[] {
 	return [...new Set(values)].sort((a, b) => a.localeCompare(b))
 }
 
-function isProfile(value: unknown): value is HelmProfile {
+function normalizeKnowledgeBindings(
+	values: readonly ProfileKnowledgeBinding[],
+	enabledProjects: readonly string[],
+): ProfileKnowledgeBinding[] {
+	const enabled = new Set(enabledProjects)
+	const seenProjects = new Set<string>()
+	const normalized = values.map(value => {
+		if (!value || typeof value !== 'object') throw new Error('Invalid profile knowledge binding')
+		const projectSlug = value.projectSlug.trim()
+		const providerId = value.providerId.trim()
+		const providerProjectId = value.providerProjectId.trim()
+		const hasControl = [...providerProjectId].some(character => {
+			const point = character.codePointAt(0) ?? 0
+			return point <= 0x1f || point === 0x7f
+		})
+		if (!enabled.has(projectSlug)) throw new Error('Knowledge bindings require an enabled Helm project')
+		if (seenProjects.has(projectSlug)) throw new Error('A profile may bind each project only once')
+		if (!KNOWLEDGE_PROVIDER_ID_RE.test(providerId)) throw new Error('Knowledge binding provider id is invalid')
+		if (providerProjectId.length < 1 || providerProjectId.length > 200 || hasControl) {
+			throw new Error('Knowledge provider project id must contain 1-200 visible characters')
+		}
+		if (!Number.isInteger(value.characterBudget) || value.characterBudget < 100 || value.characterBudget > 200_000) {
+			throw new Error('Knowledge character budget must be an integer from 100 to 200000')
+		}
+		if (typeof value.allowSharedProject !== 'boolean') throw new Error('Knowledge sharing acknowledgement is invalid')
+		seenProjects.add(projectSlug)
+		return {
+			projectSlug,
+			providerId,
+			providerProjectId,
+			characterBudget: value.characterBudget,
+			allowSharedProject: value.allowSharedProject,
+		}
+	})
+	return normalized.sort((left, right) => left.projectSlug.localeCompare(right.projectSlug))
+}
+
+function validateSharedKnowledgeProjects(profiles: readonly HelmProfile[]): void {
+	const owners = new Map<string, Array<{ profileId: string; allowed: boolean }>>()
+	for (const profile of profiles) {
+		for (const binding of profile.knowledgeBindings) {
+			const key = `${binding.providerId}\0${binding.providerProjectId}`
+			const entries = owners.get(key) ?? []
+			entries.push({ profileId: profile.id, allowed: binding.allowSharedProject })
+			owners.set(key, entries)
+		}
+	}
+	for (const entries of owners.values()) {
+		if (new Set(entries.map(entry => entry.profileId)).size > 1 && entries.some(entry => !entry.allowed)) {
+			throw new Error('Sharing one provider project across profiles requires explicit acknowledgement in every profile')
+		}
+	}
+}
+
+function isProfile(value: unknown): value is Omit<HelmProfile, 'knowledgeBindings'> & {
+	knowledgeBindings?: unknown
+} {
 	if (!value || typeof value !== 'object') return false
 	const profile = value as Record<string, unknown>
 	return (
@@ -59,6 +125,7 @@ function isProfile(value: unknown): value is HelmProfile {
 		typeof profile.createdAt === 'string' &&
 		Array.isArray(profile.enabledProjects) &&
 		profile.enabledProjects.every(project => typeof project === 'string') &&
+		(profile.knowledgeBindings === undefined || Array.isArray(profile.knowledgeBindings)) &&
 		(profile.archivedAt === null || typeof profile.archivedAt === 'string')
 	)
 }
@@ -67,7 +134,7 @@ function parseState(raw: unknown): ProfilesState {
 	if (!raw || typeof raw !== 'object') throw new Error('Invalid profiles registry')
 	const state = raw as Record<string, unknown>
 	if (
-		state.version !== PROFILE_STATE_VERSION ||
+		(state.version !== 1 && state.version !== PROFILE_STATE_VERSION) ||
 		typeof state.generation !== 'number' ||
 		!Number.isInteger(state.generation) ||
 		state.generation < 1 ||
@@ -77,11 +144,23 @@ function parseState(raw: unknown): ProfilesState {
 	) {
 		throw new Error('Invalid profiles registry')
 	}
-	const profiles = state.profiles.map(profile => ({
-		...profile,
-		name: normalizedName(profile.name),
-		enabledProjects: uniqueProjects(profile.enabledProjects),
-	}))
+	const profiles: HelmProfile[] = state.profiles.map(profile => {
+		const enabledProjects = uniqueProjects(profile.enabledProjects)
+		return {
+			id: profile.id,
+			name: normalizedName(profile.name),
+			createdAt: profile.createdAt,
+			enabledProjects,
+			knowledgeBindings: normalizeKnowledgeBindings(
+				Array.isArray(profile.knowledgeBindings)
+					? (profile.knowledgeBindings as ProfileKnowledgeBinding[])
+					: [],
+				enabledProjects,
+			),
+			archivedAt: profile.archivedAt,
+		}
+	})
+	validateSharedKnowledgeProjects(profiles)
 	if (!profiles.some(profile => profile.id === state.activeProfileId && profile.archivedAt === null)) {
 		throw new Error('Profiles registry active profile is missing or archived')
 	}
@@ -145,14 +224,20 @@ export class ProfileStore {
 		}
 	}
 
-	create(nameInput: unknown, enabledProjects: readonly string[] = []): HelmProfile {
+	create(
+		nameInput: unknown,
+		enabledProjects: readonly string[] = [],
+		knowledgeBindings: readonly ProfileKnowledgeBinding[] = [],
+	): HelmProfile {
 		const name = normalizedName(nameInput)
 		this.assertUniqueName(name)
+		const projects = uniqueProjects(enabledProjects)
 		const profile: HelmProfile = {
 			id: `profile-${randomUUID().replaceAll('-', '').slice(0, 12)}`,
 			name,
 			createdAt: new Date().toISOString(),
-			enabledProjects: uniqueProjects(enabledProjects),
+			enabledProjects: projects,
+			knowledgeBindings: normalizeKnowledgeBindings(knowledgeBindings, projects),
 			archivedAt: null,
 		}
 		mkdirSync(this.profileDir(profile.id), { recursive: true })
@@ -162,7 +247,14 @@ export class ProfileStore {
 		})
 	}
 
-	update(id: string, input: { name?: unknown; enabledProjects?: readonly string[] }): HelmProfile {
+	update(
+		id: string,
+		input: {
+			name?: unknown
+			enabledProjects?: readonly string[]
+			knowledgeBindings?: readonly ProfileKnowledgeBinding[]
+		},
+	): HelmProfile {
 		if (input.name !== undefined) {
 			const name = normalizedName(input.name)
 			this.assertUniqueName(name, id)
@@ -170,8 +262,15 @@ export class ProfileStore {
 		this.requireProfile(id)
 		return this.commitMutation(() => {
 			const profile = this.requireProfile(id)
+			const enabledProjects =
+				input.enabledProjects === undefined ? profile.enabledProjects : uniqueProjects(input.enabledProjects)
+			const bindings =
+				input.knowledgeBindings === undefined
+					? profile.knowledgeBindings.filter(binding => enabledProjects.includes(binding.projectSlug))
+					: input.knowledgeBindings
 			if (input.name !== undefined) profile.name = normalizedName(input.name)
-			if (input.enabledProjects !== undefined) profile.enabledProjects = uniqueProjects(input.enabledProjects)
+			profile.enabledProjects = enabledProjects
+			profile.knowledgeBindings = normalizeKnowledgeBindings(bindings, enabledProjects)
 			return structuredClone(profile)
 		})
 	}
@@ -210,6 +309,12 @@ export class ProfileStore {
 	private loadOrInitialize(initialProjectSlugs: readonly string[]): ProfilesState {
 		if (existsSync(this.statePath)) {
 			try {
+				const stat = lstatSync(this.statePath)
+				const uid = process.getuid?.()
+				if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || uid === undefined || stat.uid !== uid) {
+					throw new Error('Profile registry must be an owned, single-link regular file')
+				}
+				chmodSync(this.statePath, 0o600)
 				return parseState(JSON.parse(readFileSync(this.statePath, 'utf8')))
 			} catch (err) {
 				throw new Error(
@@ -231,6 +336,7 @@ export class ProfileStore {
 					name: 'Work',
 					createdAt: new Date().toISOString(),
 					enabledProjects: uniqueProjects(initialProjectSlugs),
+					knowledgeBindings: [],
 					archivedAt: null,
 				},
 			],
@@ -282,6 +388,7 @@ export class ProfileStore {
 		const previous = this.getState()
 		try {
 			const result = mutate()
+			validateSharedKnowledgeProjects(this.state.profiles)
 			this.writeState()
 			return result
 		} catch (err) {

@@ -13,6 +13,10 @@ import { resolveItemWorkspace } from '../items/identity.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../items/naming.js'
 import type { EnsureItemDisplayNameDeps, EnsureItemNameDeps } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
+import type { ResolvedKnowledgeBinding } from '../knowledge/bindings.js'
+import type { KnowledgeIntegration } from '../knowledge/integration.js'
+import { KnowledgeProviderError } from '../knowledge/provider.js'
+import type { KnowledgeSnapshot } from '../knowledge/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
@@ -27,6 +31,32 @@ import type { LoopRunner } from './loop-runner.js'
 const logsDir = (profileId: string) => resolve(profileRuntimeRoot(profileId), 'logs')
 
 const execFileAsync = promisify(execFile)
+
+function knowledgeFailurePhase(error: unknown): ErrorPhase {
+	return error instanceof KnowledgeProviderError && (error.retryable || error.outcomeUnknown)
+		? 'knowledge_retryable'
+		: 'knowledge'
+}
+
+function beginItemKnowledgeAttempt(
+	commands: ItemCommands,
+	item: ItemRecord,
+	admittedBinding: ResolvedKnowledgeBinding | null,
+): void {
+	if (item.worktreePath && item.planDirName) {
+		const previousWorkspace = new PlanWorkspace(item.worktreePath, item.planDirName)
+		if (previousWorkspace.knowledgeCandidatesExist()) {
+			const candidates = previousWorkspace.readKnowledgeCandidates()
+			if (candidates.length > 0 && (item.knowledgeSnapshotId || admittedBinding)) {
+				throw phaseError('knowledge', 'Unrecovered knowledge candidates must be delivered before another run attempt')
+			}
+			// A sidecar without prior evidence or a current binding is not deliverable
+			// knowledge. Clear it rather than permanently blocking an ordinary Item.
+			previousWorkspace.clearKnowledgeCandidates()
+		}
+	}
+	commands.recordKnowledgeSnapshot(item.id, null)
+}
 
 async function ensureItemWorktree(
 	projectConfig: HelmConfig['projects'][number],
@@ -153,6 +183,7 @@ async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvide
 export interface ProcessSolveItemDeps {
 	displayName?: EnsureItemDisplayNameDeps
 	workspaceName?: EnsureItemNameDeps
+	knowledge?: KnowledgeIntegration
 }
 
 export async function processSolveItem(
@@ -175,12 +206,15 @@ export async function processSolveItem(
 
 	const item = commands.startItem(itemId)
 	requireItemAssignment(item)
+	const runDb = db.forProfile(item.profileId)
+	const admittedKnowledgeBinding = deps.knowledge?.bindingFor(item.profileId, item.projectSlug) ?? null
 
 	const logRoot = logsDir(item.profileId)
 	mkdirSync(logRoot, { recursive: true })
 	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
+		beginItemKnowledgeAttempt(commands, item, admittedKnowledgeBinding)
 		const selectedAgent = item.payload.kind === 'solve' ? item.payload.solverAgent : undefined
 		const selectedModel = item.payload.kind === 'solve' ? item.payload.solverModel : undefined
 		const selectedEffort = item.payload.kind === 'solve' ? item.payload.solverEffort : undefined
@@ -232,7 +266,33 @@ export async function processSolveItem(
 
 		requireItemAssignment(named)
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
-		const preparedContext = prepareItemExecutionContext(named, taskContext)
+		let executionContext = taskContext
+		let knowledgeSnapshot: KnowledgeSnapshot | null = null
+		let knowledgeBinding: ResolvedKnowledgeBinding | null = null
+		if (deps.knowledge) {
+			try {
+				const preparedKnowledge = await deps.knowledge.prepareContext(runDb.knowledge, {
+					profileId: item.profileId,
+					itemId,
+					projectSlug: named.projectSlug,
+					purpose: 'solve',
+					taskContext,
+					binding: admittedKnowledgeBinding,
+					...(signal === undefined ? {} : { signal }),
+				})
+				executionContext = preparedKnowledge.taskContext
+				knowledgeSnapshot = preparedKnowledge.snapshot
+				knowledgeBinding = preparedKnowledge.binding
+				commands.recordKnowledgeSnapshot(itemId, preparedKnowledge.snapshot?.id ?? null)
+			} catch (error) {
+				if (isCancellation(error, signal)) throw error
+				throw phaseError(
+					knowledgeFailurePhase(error),
+					`Project knowledge unavailable: ${error instanceof Error ? error.message : error}`,
+				)
+			}
+		}
+		const preparedContext = prepareItemExecutionContext(named, executionContext)
 		if (mainMode) commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName: null })
 		const solverConfig = {
 			...config.solver,
@@ -249,7 +309,7 @@ export async function processSolveItem(
 			// that detached continuation write Item state or throw asynchronously.
 			if (readinessSealed) {
 				log.warn('worker', `Ignoring late workspace readiness callback for ${itemId}`)
-				return taskContext
+				return executionContext
 			}
 			if (++readinessCalls !== 1)
 				throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
@@ -267,10 +327,11 @@ export async function processSolveItem(
 				projectConfig: { ...projectConfig, baseBranch: baseRef },
 				branchName,
 				planDirName,
-				canonicalContext: taskContext,
+				canonicalContext: executionContext,
 				taskId: item.id,
 				taskTitle: item.title,
 				solverConfig,
+				knowledgeCandidatesEnabled: knowledgeBinding !== null,
 				solverEffort: selectedEffort,
 				workspaceMode,
 				signal,
@@ -308,13 +369,36 @@ export async function processSolveItem(
 		if (!solverResult) {
 			throw phaseError('solve', `No solver-result.json at ${workspace.rel.result}`)
 		}
-
-		commands.completeSolveItem(itemId, {
-			worktreePath,
-			branchName: mainMode ? null : branchName,
-			planDirName,
-			resultSummary: solverResult.summary,
+		const knowledgeCandidates = workspace.readKnowledgeCandidates()
+		let candidatesQueued = false
+		runDb.items.transaction(() => {
+			commands.completeSolveItem(itemId, {
+				worktreePath,
+				branchName: mainMode ? null : branchName,
+				planDirName,
+				resultSummary: solverResult.summary,
+			})
+			if (knowledgeCandidates.length && knowledgeBinding && deps.knowledge) {
+				try {
+					deps.knowledge.enqueueCandidates(runDb.knowledge, {
+						itemId,
+						projectSlug: named.projectSlug,
+						snapshotId: knowledgeSnapshot?.id ?? null,
+						binding: knowledgeBinding,
+						candidates: knowledgeCandidates,
+					})
+					candidatesQueued = true
+				} catch {
+					// Candidate publication is post-run enrichment. It must never turn
+					// successfully solved work into a false failure. Keep the private
+					// sidecar for operator recovery when durable enqueue itself fails.
+					log.warn('worker', `Could not durably queue knowledge candidates for ${itemId}`)
+				}
+			}
 		})
+		if (knowledgeCandidates.length === 0 || !knowledgeBinding || candidatesQueued) {
+			workspace.clearKnowledgeCandidates()
+		}
 
 		log.info('worker', 'Solve Item complete - dispatching')
 		try {
@@ -343,12 +427,18 @@ export async function processSolveItem(
 	}
 }
 
+export interface ProcessLoopItemDeps {
+	knowledge?: KnowledgeIntegration
+	provider?: TaskProvider
+}
+
 export async function processLoopItem(
 	itemId: string,
 	config: HelmConfig,
 	db: DB,
 	loopRunner: LoopRunner = new AlmanacLoopRunner(),
 	signal?: AbortSignal,
+	deps: ProcessLoopItemDeps = {},
 ): Promise<void> {
 	const commands = new ItemCommands(db.items, config)
 	const item = commands.getItem(itemId)
@@ -377,11 +467,43 @@ export async function processLoopItem(
 	const mainMode = workspaceMode === 'main'
 
 	commands.startItem(itemId)
+	const runDb = db.forProfile(item.profileId)
+	const admittedKnowledgeBinding =
+		item.kind === 'solve' ? (deps.knowledge?.bindingFor(item.profileId, item.projectSlug) ?? null) : null
 	const logRoot = logsDir(item.profileId)
 	mkdirSync(logRoot, { recursive: true })
 	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
+		beginItemKnowledgeAttempt(commands, item, admittedKnowledgeBinding)
+		let loopKnowledgeContext: string | null = null
+		let knowledgeSnapshot: KnowledgeSnapshot | null = null
+		let knowledgeBinding: ResolvedKnowledgeBinding | null = null
+		if (item.kind === 'solve' && deps.knowledge) {
+			if (!deps.provider) throw phaseError('knowledge', 'Knowledge-enabled loop execution requires a task provider')
+			const taskContext = await buildSolveItemTaskContext(item, deps.provider)
+			try {
+				const preparedKnowledge = await deps.knowledge.prepareContext(runDb.knowledge, {
+					profileId: item.profileId,
+					itemId,
+					projectSlug: item.projectSlug,
+					purpose: 'solve',
+					taskContext,
+					binding: admittedKnowledgeBinding,
+					...(signal === undefined ? {} : { signal }),
+				})
+				commands.recordKnowledgeSnapshot(itemId, preparedKnowledge.snapshot?.id ?? null)
+				knowledgeSnapshot = preparedKnowledge.snapshot
+				knowledgeBinding = preparedKnowledge.binding
+				loopKnowledgeContext = preparedKnowledge.snapshot?.context ?? null
+			} catch (error) {
+				if (isCancellation(error, signal)) throw error
+				throw phaseError(
+					knowledgeFailurePhase(error),
+					`Project knowledge unavailable: ${error instanceof Error ? error.message : error}`,
+				)
+			}
+		}
 		const loopProvider = loopPayload.provider ?? config.solver.agent
 		if (loopProvider === 'pi') {
 			throw phaseError('loop', 'Pi is supported for direct agent runs, not Almanac loop execution.')
@@ -435,6 +557,7 @@ export async function processLoopItem(
 			branchName,
 			planDirName,
 			outputLogPath,
+			knowledgeContext: loopKnowledgeContext,
 			signal,
 			onRunId: runId => {
 				commands.recordAlmanacRunId(itemId, runId)
@@ -442,7 +565,29 @@ export async function processLoopItem(
 		})
 
 		if (result.runId) commands.recordAlmanacRunId(itemId, result.runId)
-		commands.completeLoopItem(itemId, { resultSummary: 'almanac loop run completed' })
+		const workspace = new PlanWorkspace(worktreePath, planDirName)
+		const knowledgeCandidates = workspace.readKnowledgeCandidates()
+		let candidatesQueued = false
+		runDb.items.transaction(() => {
+			commands.completeLoopItem(itemId, { resultSummary: 'almanac loop run completed' })
+			if (knowledgeCandidates.length && knowledgeBinding && deps.knowledge) {
+				try {
+					deps.knowledge.enqueueCandidates(runDb.knowledge, {
+						itemId,
+						projectSlug: item.projectSlug,
+						snapshotId: knowledgeSnapshot?.id ?? null,
+						binding: knowledgeBinding,
+						candidates: knowledgeCandidates,
+					})
+					candidatesQueued = true
+				} catch {
+					log.warn('worker', `Could not durably queue knowledge candidates for ${itemId}`)
+				}
+			}
+		})
+		if (knowledgeCandidates.length === 0 || !knowledgeBinding || candidatesQueued) {
+			workspace.clearKnowledgeCandidates()
+		}
 		log.success('worker', `loop execution complete: ${item.title}`)
 	} catch (err) {
 		const error = err as Error

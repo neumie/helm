@@ -576,4 +576,264 @@ COMMIT;
 PRAGMA foreign_keys = ON;
 `,
 	},
+	{
+		// Historical migration: Helm briefly hosted a local Markdown index and
+		// proposal review workflow alongside immutable run evidence. Migration 33
+		// removes the Hold-owned parts while preserving evidence snapshots.
+		version: 32,
+		sql: `
+CREATE TABLE knowledge_documents (
+  id                TEXT PRIMARY KEY,
+  profile_id        TEXT NOT NULL,
+  project_slug      TEXT NOT NULL,
+  relative_path     TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  content           TEXT NOT NULL,
+  frontmatter       TEXT NOT NULL,
+  content_hash      TEXT NOT NULL,
+  source_mtime_ms   INTEGER NOT NULL,
+  source_updated_at TEXT NOT NULL,
+  indexed_at        TEXT NOT NULL,
+  UNIQUE (profile_id, project_slug, relative_path)
+);
+CREATE INDEX idx_knowledge_documents_recent
+  ON knowledge_documents(profile_id, project_slug, source_updated_at DESC, relative_path);
+
+CREATE TABLE knowledge_chunks (
+  id            TEXT PRIMARY KEY,
+  profile_id    TEXT NOT NULL,
+  project_slug  TEXT NOT NULL,
+  document_id   TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+  ordinal       INTEGER NOT NULL,
+  title         TEXT NOT NULL,
+  heading       TEXT,
+  content       TEXT NOT NULL,
+  search_terms  TEXT NOT NULL,
+  character_count INTEGER NOT NULL,
+  UNIQUE (document_id, ordinal)
+);
+CREATE INDEX idx_knowledge_chunks_project
+  ON knowledge_chunks(profile_id, project_slug, document_id, ordinal);
+
+CREATE VIRTUAL TABLE knowledge_chunks_fts USING fts5(
+  chunk_id UNINDEXED,
+  title,
+  heading,
+  content,
+  search_terms,
+  tokenize = 'unicode61'
+);
+CREATE TRIGGER knowledge_chunks_fts_insert AFTER INSERT ON knowledge_chunks BEGIN
+  INSERT INTO knowledge_chunks_fts(chunk_id, title, heading, content, search_terms)
+  VALUES (new.id, new.title, COALESCE(new.heading, ''), new.content, new.search_terms);
+END;
+CREATE TRIGGER knowledge_chunks_fts_delete AFTER DELETE ON knowledge_chunks BEGIN
+  DELETE FROM knowledge_chunks_fts WHERE chunk_id = old.id;
+END;
+CREATE TRIGGER knowledge_chunks_fts_update AFTER UPDATE ON knowledge_chunks BEGIN
+  DELETE FROM knowledge_chunks_fts WHERE chunk_id = old.id;
+  INSERT INTO knowledge_chunks_fts(chunk_id, title, heading, content, search_terms)
+  VALUES (new.id, new.title, COALESCE(new.heading, ''), new.content, new.search_terms);
+END;
+
+CREATE TABLE item_knowledge_snapshots (
+  id            TEXT PRIMARY KEY,
+  profile_id    TEXT NOT NULL,
+  item_id       TEXT NOT NULL,
+  project_slug  TEXT NOT NULL,
+  purpose       TEXT NOT NULL CHECK (purpose IN ('planning', 'solve')),
+  sequence      INTEGER NOT NULL,
+  query         TEXT NOT NULL,
+  context       TEXT NOT NULL,
+  manifest      TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  UNIQUE (profile_id, item_id, purpose, sequence)
+);
+CREATE INDEX idx_item_knowledge_snapshots_item
+  ON item_knowledge_snapshots(profile_id, item_id, created_at DESC);
+
+CREATE TABLE knowledge_write_proposals (
+  id                    TEXT PRIMARY KEY,
+  profile_id            TEXT NOT NULL,
+  item_id               TEXT NOT NULL,
+  snapshot_id           TEXT NOT NULL REFERENCES item_knowledge_snapshots(id),
+  proposal_key          TEXT NOT NULL,
+  title                 TEXT NOT NULL,
+  content               TEXT NOT NULL,
+  writeback_relative_path TEXT NOT NULL,
+  state                 TEXT NOT NULL CHECK (state IN ('pending', 'applying', 'accepted', 'rejected', 'failed')),
+  revision              INTEGER NOT NULL DEFAULT 0,
+  error_message         TEXT,
+  created_at            TEXT NOT NULL,
+  resolved_at           TEXT,
+  UNIQUE (profile_id, proposal_key)
+);
+CREATE INDEX idx_knowledge_write_proposals_item
+  ON knowledge_write_proposals(profile_id, item_id, created_at DESC);
+`,
+	},
+	{
+		// Hold owns indexing, review, and canonical Markdown writes. Helm retains
+		// only exact run evidence plus a delivery-only outbox for learned facts.
+		// Keep this forward migration because migration 32 reached local databases
+		// before the feature was committed.
+		version: 33,
+		sql: `
+CREATE TABLE knowledge_candidate_outbox (
+  id              TEXT PRIMARY KEY,
+  profile_id      TEXT NOT NULL,
+  item_id         TEXT NOT NULL,
+  project_slug    TEXT NOT NULL,
+  snapshot_id     TEXT REFERENCES item_knowledge_snapshots(id),
+  idempotency_key TEXT NOT NULL,
+  candidates      TEXT NOT NULL,
+  state           TEXT NOT NULL CHECK (state IN ('pending', 'delivered')),
+  attempt_count   INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  last_error      TEXT,
+  receipt         TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  delivered_at    TEXT,
+  UNIQUE (profile_id, idempotency_key)
+);
+CREATE INDEX idx_knowledge_candidate_outbox_pending
+  ON knowledge_candidate_outbox(profile_id, state, next_attempt_at, created_at);
+CREATE INDEX idx_knowledge_candidate_outbox_item
+  ON knowledge_candidate_outbox(profile_id, item_id, created_at DESC);
+
+-- A protocol-41 daemon may finish a run after this source update but before its
+-- restart. Preserve every unresolved proposal as a delivery-only Hold batch.
+INSERT INTO knowledge_candidate_outbox (
+  id, profile_id, item_id, project_slug, snapshot_id, idempotency_key,
+  candidates, state, attempt_count, next_attempt_at, last_error,
+  receipt, created_at, updated_at, delivered_at
+)
+SELECT
+  'legacy-' || p.id,
+  p.profile_id,
+  p.item_id,
+  s.project_slug,
+  p.snapshot_id,
+  'legacy:' || p.proposal_key,
+  json_array(json_object('title', p.title, 'content', p.content)),
+  'pending',
+  0,
+  NULL,
+  CASE WHEN p.state = 'failed' THEN p.error_message ELSE NULL END,
+  NULL,
+  p.created_at,
+  p.created_at,
+  NULL
+FROM knowledge_write_proposals p
+JOIN item_knowledge_snapshots s
+  ON s.profile_id = p.profile_id AND s.id = p.snapshot_id
+WHERE p.state IN ('pending', 'applying', 'failed');
+
+DROP TRIGGER IF EXISTS knowledge_chunks_fts_insert;
+DROP TRIGGER IF EXISTS knowledge_chunks_fts_delete;
+DROP TRIGGER IF EXISTS knowledge_chunks_fts_update;
+DROP TABLE IF EXISTS knowledge_chunks_fts;
+DROP TABLE IF EXISTS knowledge_write_proposals;
+DROP TABLE IF EXISTS knowledge_chunks;
+DROP TABLE IF EXISTS knowledge_documents;
+`,
+	},
+	{
+		// Freeze provider identity and preserve exact external brief attestation.
+		// Historical rows remain readable but unresolved migration-33 deliveries
+		// are blocked until an operator explicitly adopts a destination.
+		version: 34,
+		sql: `
+ALTER TABLE item_knowledge_snapshots ADD COLUMN character_budget INTEGER;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN binding_id TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_id TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_type TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_project_id TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_brief_ref TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_revision TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_created_at TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN context_hash TEXT;
+ALTER TABLE item_knowledge_snapshots ADD COLUMN provider_protocol_version INTEGER;
+
+ALTER TABLE knowledge_candidate_outbox RENAME TO knowledge_candidate_outbox_v33;
+DROP INDEX IF EXISTS idx_knowledge_candidate_outbox_pending;
+DROP INDEX IF EXISTS idx_knowledge_candidate_outbox_item;
+
+CREATE TABLE knowledge_candidate_outbox (
+  id                  TEXT PRIMARY KEY,
+  profile_id          TEXT NOT NULL,
+  item_id             TEXT NOT NULL,
+  project_slug        TEXT NOT NULL,
+  snapshot_id         TEXT REFERENCES item_knowledge_snapshots(id),
+  binding_id          TEXT,
+  provider_id         TEXT,
+  provider_project_id TEXT,
+  idempotency_key     TEXT NOT NULL,
+  candidates          TEXT NOT NULL,
+  state               TEXT NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered', 'blocked')),
+  attempt_count       INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at     TEXT,
+  lease_owner         TEXT,
+  lease_expires_at    TEXT,
+  last_error_code     TEXT,
+  last_error          TEXT,
+  receipt             TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  delivered_at        TEXT,
+  UNIQUE (profile_id, idempotency_key)
+);
+CREATE INDEX idx_knowledge_candidate_outbox_pending
+  ON knowledge_candidate_outbox(profile_id, state, next_attempt_at, created_at);
+CREATE INDEX idx_knowledge_candidate_outbox_item
+  ON knowledge_candidate_outbox(profile_id, item_id, created_at DESC);
+
+INSERT INTO knowledge_candidate_outbox (
+  id, profile_id, item_id, project_slug, snapshot_id, binding_id,
+  provider_id, provider_project_id, idempotency_key, candidates, state,
+  attempt_count, next_attempt_at, lease_owner, lease_expires_at,
+  last_error_code, last_error, receipt, created_at, updated_at, delivered_at
+)
+SELECT
+  id,
+  profile_id,
+  item_id,
+  project_slug,
+  snapshot_id,
+  NULL,
+  NULL,
+  NULL,
+  idempotency_key,
+  candidates,
+  CASE WHEN state = 'delivered' THEN 'delivered' ELSE 'blocked' END,
+  attempt_count,
+  NULL,
+  NULL,
+  NULL,
+  CASE WHEN state = 'delivered' THEN NULL ELSE 'legacy-target-unbound' END,
+  CASE
+    WHEN state = 'delivered' THEN last_error
+    ELSE COALESCE(last_error, 'Legacy candidate delivery target requires explicit adoption')
+  END,
+  CASE WHEN receipt IS NULL THEN NULL ELSE json_object('legacyReceipt', receipt) END,
+  created_at,
+  updated_at,
+  delivered_at
+FROM knowledge_candidate_outbox_v33;
+
+DROP TABLE knowledge_candidate_outbox_v33;
+`,
+	},
+	{
+		// Bind detail evidence to the exact current planning/solve attempt. The
+		// snapshot table remains immutable; this nullable pointer is cleared when
+		// a new attempt starts and set only after exact evidence is persisted.
+		version: 35,
+		sql: `
+ALTER TABLE items ADD COLUMN knowledge_snapshot_id TEXT;
+CREATE INDEX idx_items_profile_knowledge_snapshot
+  ON items(profile_id, knowledge_snapshot_id);
+`,
+	},
 ]

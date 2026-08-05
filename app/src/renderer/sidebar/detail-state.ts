@@ -8,6 +8,7 @@ export type DetailSection =
 	| 'failure'
 	| 'log'
 	| 'input'
+	| 'knowledge'
 	| 'setup'
 	| 'source'
 	| 'delivery'
@@ -58,19 +59,19 @@ export function detailState(item: DashboardItem): {
 			// (manual status, Return to Queue) must not lose its history.
 			return {
 				attention,
-				sections: sections('intent', 'setup', 'activity', 'log', 'input', 'source'),
+				sections: sections('intent', 'setup', 'activity', 'log', 'input', 'knowledge', 'source'),
 			}
 		case 'ready':
 			return {
 				attention,
-				sections: sections('queue', 'setup', 'activity', 'log', 'input', 'source'),
+				sections: sections('queue', 'setup', 'activity', 'log', 'input', 'knowledge', 'source'),
 			}
 		case 'active':
 			return {
 				attention,
 				sections: item.planStatus
-					? sections('setup', 'activity', 'log', 'input', 'source')
-					: sections('activity', 'log', 'input', 'source'),
+					? sections('setup', 'activity', 'log', 'input', 'knowledge', 'source')
+					: sections('activity', 'log', 'input', 'knowledge', 'source'),
 			}
 		case 'running':
 			return {
@@ -80,25 +81,25 @@ export function detailState(item: DashboardItem): {
 		case 'review':
 			return {
 				attention,
-				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'source'),
+				sections: sections('outcome', 'knowledge', 'delivery', 'activity', 'log', 'input', 'source'),
 			}
 		case 'failed':
 			return {
 				attention,
 				// The always-expanded log is the diagnostic, directly beneath the failure text.
-				sections: sections('failure', 'log', 'activity', 'outcome', 'setup', 'input', 'source'),
+				sections: sections('failure', 'log', 'activity', 'outcome', 'knowledge', 'setup', 'input', 'source'),
 			}
 		case 'done':
 			return {
 				attention,
-				sections: sections('outcome', 'delivery', 'activity', 'log', 'input', 'source'),
+				sections: sections('outcome', 'knowledge', 'delivery', 'activity', 'log', 'input', 'source'),
 			}
 		case 'cancelled':
 			// Outcome/input stay reachable: a cancelled run may hold a partial
 			// result, a branch, and the solve input worth reviewing before retry.
 			return {
 				attention: null,
-				sections: sections('failure', 'outcome', 'activity', 'log', 'input', 'source'),
+				sections: sections('failure', 'outcome', 'knowledge', 'activity', 'log', 'input', 'source'),
 			}
 		default:
 			throw new Error(`Unsupported item status: ${item.status}`)

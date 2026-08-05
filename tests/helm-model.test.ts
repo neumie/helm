@@ -28,7 +28,7 @@ const {
 	statusTone,
 	statusWord,
 } = helmModelModule as HelmModelModule
-const { normalizeDashboardItem } = normalizeHelmModule as NormalizeHelmModule
+const { normalizeDashboardItem, normalizeProfilesDocument } = normalizeHelmModule as NormalizeHelmModule
 const { ITEM_STATUSES } = sharedHelmModule as SharedHelmModule
 
 type DashboardItem = import('../app/src/shared-helm.ts').DashboardItem
@@ -62,26 +62,26 @@ test('Okena workspace buttons state their effect without a separate caption', ()
 })
 
 test('project colors resolve from current and legacy dashboard config', () => {
-	assert.equal(colorForProject({ projects: [{ slug: 'jvs', color: '#2a94e5' }] }, 'jvs'), '#2a94e5')
-	assert.equal(colorForProject({ projectColors: { jvs: '#940fd2' } }, 'jvs'), '#940fd2')
-	assert.equal(colorForProject({ projects: [{ slug: 'jvs' }] }, 'jvs'), null)
-	assert.equal(colorForProject({ projects: [{ slug: 'jvs', color: '#2a94e5' }] }, null), null)
+	assert.equal(colorForProject({ projects: [{ slug: 'alpha', color: '#2a94e5' }] }, 'alpha'), '#2a94e5')
+	assert.equal(colorForProject({ projectColors: { alpha: '#940fd2' } }, 'alpha'), '#940fd2')
+	assert.equal(colorForProject({ projects: [{ slug: 'alpha' }] }, 'alpha'), null)
+	assert.equal(colorForProject({ projects: [{ slug: 'alpha', color: '#2a94e5' }] }, null), null)
 	assert.equal(projectLabel(null), 'Unassigned')
 })
 
 test('project grouping preserves nullable identity, first-seen project, and Item order', () => {
 	const grouped = groupItemsByProject([
-		{ id: 'j1', projectSlug: 'jvs' } as DashboardItem,
-		{ id: 'c1', projectSlug: 'crane' } as DashboardItem,
-		{ id: 'j2', projectSlug: 'jvs' } as DashboardItem,
+		{ id: 'j1', projectSlug: 'alpha' } as DashboardItem,
+		{ id: 'c1', projectSlug: 'beta' } as DashboardItem,
+		{ id: 'j2', projectSlug: 'alpha' } as DashboardItem,
 		{ id: 'named-unassigned', projectSlug: 'Unassigned' } as DashboardItem,
 		{ id: 'draft', projectSlug: null } as DashboardItem,
 	])
 	assert.deepEqual(
 		grouped.map(group => [group.projectSlug, group.items.map(item => item.id)]),
 		[
-			['jvs', ['j1', 'j2']],
-			['crane', ['c1']],
+			['alpha', ['j1', 'j2']],
+			['beta', ['c1']],
 			['Unassigned', ['named-unassigned']],
 			[null, ['draft']],
 		],
@@ -100,6 +100,27 @@ test('planned Item labels show completed ticket progress', () => {
 		},
 	} as DashboardItem
 	assert.equal(planStatusLabel(item), '3 of 5 tickets complete')
+})
+
+test('mixed-version profile documents gain safe empty knowledge fields', () => {
+	const normalized = normalizeProfilesDocument({
+		version: 1,
+		generation: 4,
+		activeProfileId: 'work',
+		profiles: [
+			{
+				id: 'work',
+				name: 'Work',
+				createdAt: '2026-01-01T00:00:00.000Z',
+				enabledProjects: ['helm'],
+				archivedAt: null,
+			},
+		],
+		configuredProjects: ['helm'],
+	} as never)
+	assert.equal(normalized.version, 2)
+	assert.deepEqual(normalized.profiles[0]?.knowledgeBindings, [])
+	assert.deepEqual(normalized.configuredKnowledgeProviders, [])
 })
 
 test('mixed-version legacy triage Items normalize into Inbox before rendering', () => {

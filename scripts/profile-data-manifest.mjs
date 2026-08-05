@@ -20,6 +20,7 @@ const MANIFEST_VERSION = 1
 const HASH_BUFFER_SIZE = 1024 * 1024
 const MAX_PROFILE_NAME_LENGTH = 48
 const PROFILE_ID_RE = /^(?:work|profile-[a-f0-9]{12})$/
+const KNOWLEDGE_PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,63}$/
 
 function usage() {
 	console.error('Usage: node scripts/profile-data-manifest.mjs <dataset-root>')
@@ -77,7 +78,7 @@ function readProfiles(root) {
 		fail(`could not read profiles.json: ${error instanceof Error ? error.message : String(error)}`)
 	}
 	if (!state || typeof state !== 'object' || Array.isArray(state)) fail('profiles.json must be an object')
-	if (state.version !== 1) fail('profiles.json has an unsupported version')
+	if (state.version !== 1 && state.version !== 2) fail('profiles.json has an unsupported version')
 	if (!Number.isInteger(state.generation) || state.generation < 1) fail('profiles.json has an invalid generation')
 	if (!Array.isArray(state.profiles)) fail('profiles.json has no profiles array')
 
@@ -96,10 +97,65 @@ function readProfiles(root) {
 			fail('profiles.json contains an invalid profile document')
 		}
 		normalizedProfileName(profile.name)
-		return profile
+		const knowledgeBindings = []
+		const hasKnowledgeBindings = profile.knowledgeBindings !== undefined
+		if ((state.version === 2 || hasKnowledgeBindings) && !Array.isArray(profile.knowledgeBindings)) {
+			fail('profiles.json contains an invalid profile document')
+		}
+		if (Array.isArray(profile.knowledgeBindings)) {
+			const boundProjects = new Set()
+			for (const binding of profile.knowledgeBindings) {
+				if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
+					fail('profiles.json contains an invalid profile document')
+				}
+				const projectSlug = typeof binding.projectSlug === 'string' ? binding.projectSlug.trim() : ''
+				const providerId = typeof binding.providerId === 'string' ? binding.providerId.trim() : ''
+				const providerProjectId = typeof binding.providerProjectId === 'string' ? binding.providerProjectId.trim() : ''
+				const hasControl = [...providerProjectId].some(character => {
+					const point = character.codePointAt(0) ?? 0
+					return point <= 0x1f || point === 0x7f
+				})
+				if (
+					!profile.enabledProjects.includes(projectSlug) ||
+					!KNOWLEDGE_PROVIDER_ID_RE.test(providerId) ||
+					providerProjectId.length < 1 ||
+					providerProjectId.length > 200 ||
+					hasControl ||
+					!Number.isInteger(binding.characterBudget) ||
+					binding.characterBudget < 100 ||
+					binding.characterBudget > 200_000 ||
+					typeof binding.allowSharedProject !== 'boolean' ||
+					boundProjects.has(projectSlug)
+				) {
+					fail('profiles.json contains an invalid profile document')
+				}
+				boundProjects.add(projectSlug)
+				knowledgeBindings.push({
+					projectSlug,
+					providerId,
+					providerProjectId,
+					allowSharedProject: binding.allowSharedProject,
+				})
+			}
+		}
+		return { ...profile, knowledgeBindings }
 	})
 	const profileIds = profiles.map(profile => profile.id)
 	if (new Set(profileIds).size !== profileIds.length) fail('profiles.json contains duplicate profile ids')
+	const knowledgeOwners = new Map()
+	for (const profile of profiles) {
+		for (const binding of profile.knowledgeBindings) {
+			const key = `${binding.providerId}\0${binding.providerProjectId}`
+			const owners = knowledgeOwners.get(key) ?? []
+			owners.push({ profileId: profile.id, allowed: binding.allowSharedProject })
+			knowledgeOwners.set(key, owners)
+		}
+	}
+	for (const owners of knowledgeOwners.values()) {
+		if (new Set(owners.map(owner => owner.profileId)).size > 1 && owners.some(owner => !owner.allowed)) {
+			fail('profiles.json knowledge sharing requires acknowledgement in every profile')
+		}
+	}
 	if (
 		typeof state.activeProfileId !== 'string' ||
 		!profiles.some(profile => profile.id === state.activeProfileId && profile.archivedAt === null)

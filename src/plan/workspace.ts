@@ -1,7 +1,63 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import {
+	constants,
+	closeSync,
+	existsSync,
+	fstatSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	readSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { type AgentKnowledgeCandidate, agentKnowledgeCandidatesSchema } from '../knowledge/schema.js'
 import { type SolverResult, solverResultSchema } from '../solver/result-schema.js'
 import { log } from '../util/logger.js'
+
+const KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES = 25_000
+
+function lstatIfPresent(path: string) {
+	try {
+		return lstatSync(path)
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+		throw error
+	}
+}
+
+function assertReplaceableRuntimeFile(path: string): void {
+	const stat = lstatIfPresent(path)
+	if (!stat) return
+	if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+		throw new Error(`Refusing unsafe Helm runtime file: ${path}`)
+	}
+}
+
+/** Replace an auto-written artifact without ever following the destination. */
+function writeRuntimeFile(path: string, content: string): void {
+	mkdirSync(dirname(path), { recursive: true })
+	assertReplaceableRuntimeFile(path)
+	const temporary = join(dirname(path), `.${basename(path)}.helm-${randomUUID()}.tmp`)
+	try {
+		writeFileSync(temporary, content, { encoding: 'utf-8', flag: 'wx', mode: 0o600 })
+		// Re-check after writing the private temp file. A same-user replacement can
+		// only be replaced by rename; its bytes are never followed or truncated.
+		assertReplaceableRuntimeFile(path)
+		renameSync(temporary, path)
+	} finally {
+		rmSync(temporary, { force: true })
+	}
+}
+
+function isPublicPlanMarkdown(name: string): boolean {
+	return name.endsWith('.md') && !name.startsWith('.')
+}
 
 /**
  * Relative-to-worktree paths (POSIX separators — safe to embed in prompts and
@@ -25,6 +81,8 @@ export function planPaths(planDirName: string) {
 		planningPrompt: `${dir}/.planning-prompt.txt`,
 		loopPrompt: `${dir}/prompt.md`,
 		result: `${dir}/solver-result.json`,
+		knowledgeCandidates: `${dir}/.helm-knowledge-candidates.json`,
+		knowledgeContext: `${dir}/.helm-knowledge-context.md`,
 		readme: `${dir}/README.md`,
 	}
 }
@@ -65,6 +123,12 @@ export class PlanWorkspace {
 	get resultPath(): string {
 		return join(this.worktreePath, this.rel.result)
 	}
+	get knowledgeCandidatesPath(): string {
+		return join(this.worktreePath, this.rel.knowledgeCandidates)
+	}
+	get knowledgeContextPath(): string {
+		return join(this.worktreePath, this.rel.knowledgeContext)
+	}
 	get readmePath(): string {
 		return join(this.worktreePath, this.rel.readme)
 	}
@@ -75,22 +139,42 @@ export class PlanWorkspace {
 
 	/** Write `context.md` (caller passes already-formatted markdown). */
 	writeContext(content: string): void {
-		this.ensureDir()
-		writeFileSync(this.contextPath, content, 'utf-8')
+		writeRuntimeFile(this.contextPath, content)
 	}
 	writePlanningPrompt(content: string): void {
-		this.ensureDir()
-		writeFileSync(this.planningPromptPath, content, 'utf-8')
+		writeRuntimeFile(this.planningPromptPath, content)
+	}
+	writeKnowledgeContext(content: string): void {
+		writeRuntimeFile(this.knowledgeContextPath, content)
+	}
+	clearKnowledgeContext(): void {
+		rmSync(this.knowledgeContextPath, { force: true })
 	}
 	appendLoopPromptOnce(marker: string, content: string): void {
 		if (!this.loopPromptExists()) throw new Error(`Loop prompt not found: ${this.loopPromptPath}`)
 		const current = readFileSync(this.loopPromptPath, 'utf-8')
 		if (current.includes(marker)) return
-		writeFileSync(this.loopPromptPath, `${current.trimEnd()}\n\n${content.trim()}\n`, 'utf-8')
+		writeRuntimeFile(this.loopPromptPath, `${current.trimEnd()}\n\n${content.trim()}\n`)
+	}
+	setLoopPromptBlock(startMarker: string, endMarker: string, content: string | null): void {
+		if (!this.loopPromptExists()) throw new Error(`Loop prompt not found: ${this.loopPromptPath}`)
+		const current = readFileSync(this.loopPromptPath, 'utf-8')
+		const start = current.indexOf(startMarker)
+		let withoutBlock = current
+		if (start !== -1) {
+			const end = current.indexOf(endMarker, start + startMarker.length)
+			// Development builds emitted this managed block without an end marker and
+			// always appended it last; treat that legacy shape as extending to EOF.
+			const after = end === -1 ? current.length : end + endMarker.length
+			withoutBlock = `${current.slice(0, start).trimEnd()}\n${current.slice(after).trimStart()}`.trimEnd()
+		}
+		const next = content
+			? `${withoutBlock.trimEnd()}\n\n${startMarker}\n${content.trim()}\n${endMarker}\n`
+			: `${withoutBlock.trimEnd()}\n`
+		writeRuntimeFile(this.loopPromptPath, next)
 	}
 	writeReadme(content: string): void {
-		this.ensureDir()
-		writeFileSync(this.readmePath, content, 'utf-8')
+		writeRuntimeFile(this.readmePath, content)
 	}
 
 	loopPromptExists(): boolean {
@@ -110,6 +194,12 @@ export class PlanWorkspace {
 	 */
 	clearResult(): void {
 		rmSync(this.resultPath, { force: true })
+		// Candidate evidence is attempt-local and must never replay from a reused
+		// worktree. Its `.helm-*` name keeps it out of git/PRs. Also clear the
+		// pre-Hold filename left by development builds.
+		rmSync(this.knowledgeCandidatesPath, { force: true })
+		this.clearKnowledgeContext()
+		rmSync(join(this.dir, '.helm-knowledge-proposals.json'), { force: true })
 	}
 
 	/** Read + validate `solver-result.json`. Null if absent or invalid. */
@@ -120,6 +210,48 @@ export class PlanWorkspace {
 			log.warn('plan-workspace', `Could not read ${this.resultPath}`, err)
 			return null
 		}
+	}
+
+	knowledgeCandidatesExist(): boolean {
+		return existsSync(this.knowledgeCandidatesPath)
+	}
+
+	/** Optional, gitignored candidate sidecar. Invalid content never fails solved work. */
+	readKnowledgeCandidates(): AgentKnowledgeCandidate[] {
+		if (!existsSync(this.knowledgeCandidatesPath)) return []
+		let descriptor: number | null = null
+		try {
+			descriptor = openSync(
+				this.knowledgeCandidatesPath,
+				constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+			)
+			const stat = fstatSync(descriptor)
+			if (!stat.isFile() || stat.nlink !== 1) throw new Error('Candidate sidecar must be a single-link regular file')
+			if (stat.size > KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES) {
+				throw new Error(`Candidate sidecar exceeds ${KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES} bytes`)
+			}
+			const bytes = Buffer.alloc(KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES + 1)
+			let length = 0
+			while (length < bytes.length) {
+				const count = readSync(descriptor, bytes, length, bytes.length - length, null)
+				if (count === 0) break
+				length += count
+			}
+			if (length > KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES) {
+				throw new Error(`Candidate sidecar exceeds ${KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES} bytes`)
+			}
+			return agentKnowledgeCandidatesSchema.parse(JSON.parse(bytes.subarray(0, length).toString('utf-8')))
+		} catch (err) {
+			log.warn('plan-workspace', `Could not read ${this.knowledgeCandidatesPath}`, err)
+			return []
+		} finally {
+			if (descriptor !== null) closeSync(descriptor)
+		}
+	}
+
+	/** Remove candidate bytes only after durable enqueue or deliberate unmapped discard. */
+	clearKnowledgeCandidates(): void {
+		rmSync(this.knowledgeCandidatesPath, { force: true })
 	}
 
 	/** Read the local spec + ticket queue without interpreting Item lifecycle. */
@@ -152,7 +284,7 @@ export class PlanWorkspace {
 	loopArtifactPath(): string {
 		const ignored = new Set(['README.md', 'context.md'])
 		const names = existsSync(this.dir)
-			? readdirSync(this.dir).filter(name => name.endsWith('.md') && !ignored.has(name))
+			? readdirSync(this.dir).filter(name => isPublicPlanMarkdown(name) && !ignored.has(name))
 			: []
 		const selected = names.includes('prd.md')
 			? 'prd.md'
@@ -172,8 +304,9 @@ export class PlanWorkspace {
 	}
 
 	/**
-	 * Each `*.md` artifact in the plan dir as `{ name, content }` (oldest-first by
-	 * mtime) for the dashboard plan preview. Empty if the dir is absent/empty.
+	 * Each non-hidden `*.md` artifact in the plan dir as `{ name, content }`
+	 * (oldest-first by mtime) for the dashboard plan preview. Private `.helm-*`
+	 * evidence never crosses this boundary. Empty if the dir is absent/empty.
 	 * Unlike `readArtifacts`, this keeps files separate (no `<plan_artifact>`
 	 * wrapping) so the UI can list/expand them individually.
 	 */
@@ -183,7 +316,7 @@ export class PlanWorkspace {
 		// detail response — this is a preview, not the full prompt feed (readArtifacts).
 		const MAX_PREVIEW_BYTES = 80_000
 		return readdirSync(this.dir)
-			.filter(name => name.endsWith('.md'))
+			.filter(isPublicPlanMarkdown)
 			.map(name => {
 				const fullPath = join(this.dir, name)
 				const raw = readFileSync(fullPath, 'utf-8')
@@ -196,14 +329,16 @@ export class PlanWorkspace {
 	}
 
 	/**
-	 * Concatenate every `*.md` artifact in the plan dir (oldest-first by mtime),
-	 * each wrapped in a `<plan_artifact>` block. Null if the dir is absent/empty.
+	 * Concatenate every non-hidden `*.md` artifact in the plan dir (oldest-first
+	 * by mtime), each wrapped in a `<plan_artifact>` block. Private `.helm-*`
+	 * evidence is injected only through its attempt snapshot, never as an artifact.
+	 * Null if the dir is absent/empty.
 	 */
 	readArtifacts(): string | null {
 		if (!existsSync(this.dir)) return null
 
 		const entries = readdirSync(this.dir)
-			.filter(name => name.endsWith('.md'))
+			.filter(isPublicPlanMarkdown)
 			.map(name => {
 				const fullPath = join(this.dir, name)
 				return { name, fullPath, mtime: statSync(fullPath).mtimeMs }

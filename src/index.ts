@@ -6,6 +6,10 @@ import { loadConfig } from './config.js'
 import { DB, migrateProfileDatabasesToShared } from './db/client.js'
 import { DeployWatcher } from './github/deploy-watcher.js'
 import { ItemEnricher } from './items/enricher.js'
+import { validateProfileKnowledgeConfiguration } from './knowledge/bindings.js'
+import { KnowledgeIntegration } from './knowledge/integration.js'
+import { KnowledgeOutboxDrainer } from './knowledge/outbox-drainer.js'
+import { createKnowledgeProviderRegistry } from './knowledge/registry.js'
 import { PlanStatusWatcher } from './plan/status-watcher.js'
 import { Poller } from './poller/poller.js'
 import { configureProfileRuntime } from './profiles/runtime.js'
@@ -33,6 +37,7 @@ async function main() {
 		process.cwd(),
 		config.projects.map(project => project.slug),
 	)
+	validateProfileKnowledgeConfiguration(config, profiles.getState())
 	const profileRuntime = profiles.activeRuntime()
 	migrateProfileDatabasesToShared(
 		profileRuntime.dbPath,
@@ -44,9 +49,19 @@ async function main() {
 	)
 	configureProfileRuntime(profileRuntime)
 	const db = new DB(profileRuntime.dbPath, () => profiles.activeProfile().id)
+	const registeredProfileIds = () => profiles.registeredProfileIds()
 	log.info('helm', `Active profile: ${profileRuntime.profile.name}`)
 	const provider = createProvider(config.provider)
 	log.info('helm', `Provider: ${provider.name}`)
+	let knowledgeDelivery: KnowledgeOutboxDrainer | undefined
+	const knowledge = config.knowledge
+		? new KnowledgeIntegration(
+				config,
+				profileId => profiles.runtimeFor(profileId).profile,
+				createKnowledgeProviderRegistry(config),
+				() => knowledgeDelivery?.wake(),
+			)
+		: undefined
 
 	const solver = await createSolver(config)
 	log.info(
@@ -64,6 +79,7 @@ async function main() {
 		undefined,
 		() => profiles.getState().profiles.map(profile => profile.id),
 		() => profiles.activeProfile().id,
+		knowledge,
 	)
 	// Direct Item start routes must stay closed until durable scheduled sessions
 	// have restored their shared solve-capacity reservations.
@@ -80,9 +96,9 @@ async function main() {
 		storeForProfile: profileId => db.forProfile(profileId).items,
 	})
 	const poller = new Poller(config, db, provider, enricher, () => profiles.activeRuntime())
-	const registeredProfileIds = () => profiles.registeredProfileIds()
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
+	if (knowledge) knowledgeDelivery = new KnowledgeOutboxDrainer(db, knowledge, registeredProfileIds)
 	// The only resident-admission lease is daemon-memory scoped. Scheduled recovery
 	// still starts before HTTP and queue admission, even while recurrence is disabled.
 	const residentLeases = new ResidentLeaseManager()
@@ -107,12 +123,14 @@ async function main() {
 			store: profiles,
 			runtime: () => profiles.activeRuntime(),
 			applyRuntime: configureProfileRuntime,
+			localControlToken,
 			scheduled: {
 				service: scheduledRuns,
 				controlToken: localControlToken,
 				residentLeases,
 				profileIds: () => profiles.registeredProfileIds(),
 			},
+			knowledge,
 		},
 		scheduledRuns,
 	)
@@ -137,6 +155,7 @@ async function main() {
 	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
 	planStatusWatcher.start()
+	knowledgeDelivery?.start()
 
 	// Graceful shutdown. Poller/Enricher/Drainer/HTTP do not yet expose a complete
 	// admission-and-drain contract, so SQLite deliberately remains open until
@@ -148,7 +167,12 @@ async function main() {
 			poller.stop()
 			enricher.stop()
 			queue.stop()
-			await Promise.allSettled([deployWatcher.stop(), planStatusWatcher.stop(), scheduledRuns.stop()])
+			await Promise.allSettled([
+				deployWatcher.stop(),
+				planStatusWatcher.stop(),
+				scheduledRuns.stop(),
+				knowledgeDelivery?.stop(),
+			])
 			process.exit(0)
 		})()
 		return shuttingDown

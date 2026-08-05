@@ -145,6 +145,8 @@ async function run() {
 	}
 	const capability = randomBytes(32).toString('hex')
 	writeFileSync(join(root, '.attestation-capability'), capability, { mode: 0o600 })
+	const localControlPath = join(root, '.local-api-token')
+	writeFileSync(localControlPath, `${randomBytes(32).toString('base64url')}\n`, { mode: 0o600 })
 	const finalEvidencePath = outputPath
 		? resolve(outputPath)
 		: join(tmpdir(), `helm-profile-switch-attestation-${process.pid}.json`)
@@ -174,6 +176,7 @@ async function run() {
 			XDG_DATA_HOME: xdgDataHome,
 			XDG_RUNTIME_DIR: xdgRuntimeDir,
 			HELM_URL: daemonState.baseUrl,
+			HELM_AUTH_FILE: localControlPath,
 			HELM_SOCKET_DIR: socketRoot,
 			HELM_CLOSE_GRACE_MS: '100',
 			HELM_TERMINAL_AGENT_STATUS: '0',

@@ -53,6 +53,11 @@ Queue Item is undecided. It must not be inferred from lifecycle status.
 as lifecycle truth; for example, a reconciled Item can be in `review` with an
 `errored` or `no_result` outcome.
 
+**Project knowledge** — bounded reference context supplied by an external knowledge
+system such as Hold. Helm never indexes or writes the canonical library. An Item
+knowledge snapshot is immutable attempt evidence, while agent-learned candidates
+live only in a delivery outbox until Hold receives them for review.
+
 **Planning and deployment axes** — `plannedAt` means an interactive planning
 session was prepared, not that a runnable spec or tickets exist. `planStatus` is
 a cached advisory readiness observation. `deployState` records GitHub-observed
@@ -113,6 +118,23 @@ Item context module. A saved Run Context is an operator-owned override for futur
 planning and solve attempts, distinct from live provider data, frozen captured
 context, manual payload, and immutable solve-input snapshots.
 
+**KnowledgeIntegration, providers, and KnowledgeStore** — `KnowledgeIntegration`
+is the deep provider-neutral context seam used by Planning and solve execution.
+Provider instances are configured centrally; profiles own explicit per-project
+bindings and sharing acknowledgement. Hold is the first production adapter and
+uses its versioned private Unix-socket protocol plus a separate capability file.
+A missing binding is deliberate opt-out; a configured binding fails closed when
+context is unavailable or invalid. Helm verifies and snapshots exact context,
+hashes, source ranges, selection/revision metadata, and the frozen provider target
+before injection. Profile-bound `KnowledgeStore` owns only immutable evidence and
+a leased idempotent delivery outbox. `KnowledgeOutboxDrainer` recovers through
+event wakeups plus periodic all-profile sweeps; publication failure never changes
+Item run truth. Item rows point to the exact snapshot for their current attempt,
+never merely the latest historical snapshot. A blocked frozen destination requires
+explicit operator retry after its cause is fixed; an initial enqueue failure retains
+the private sidecar for authenticated recovery and blocks a new solve until recovered. The external provider—not Helm—owns
+retrieval, review, and canonical writes.
+
 **Run observation and Dashboard Contract** — run observation normalizes events,
 logs, PR state, and loop state for a single Item. The server-owned Dashboard
 Contract supplies status, allowed actions, grouping, and display data; list routes
@@ -135,6 +157,12 @@ applicable. It remains a saga: external workspaces/sessions cannot be rolled bac
 with SQLite, so post-readiness failures truthfully report that a session may exist.
 The orchestrator does not merge Solver and Spawner or move persistence from
 `ItemCommands` or file ownership from `PlanWorkspace`.
+
+Planning, direct solve, and solve-through-loop context resolution may enrich the
+Run-Context-overlaid TaskContext through `KnowledgeIntegration`. The exact provider block and safe manifest are
+persisted before adapter consumption and never reconstructed later. Attempt-local
+learned candidates may be queued for Hold delivery, but Helm cannot review or apply
+them.
 
 Solve execution follows poll/context resolution, workspace plus solve, solver-owned
 timeline persistence, result-file parsing, and dispatch. Dispatch records a

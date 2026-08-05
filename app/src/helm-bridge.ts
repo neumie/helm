@@ -28,7 +28,13 @@ const electron = (() => {
 })()
 const BrowserWindow = (electron?.BrowserWindow ?? { getAllWindows: () => [] }) as typeof Electron.BrowserWindow
 const ipcMain = electron?.ipcMain as typeof Electron.ipcMain
-import { normalizeDashboardItemResult, normalizeDashboardItems } from './normalize-helm'
+import {
+	normalizeDashboardItemResult,
+	normalizeDashboardItems,
+	normalizeProfileActivationResult,
+	normalizeProfileMutationResult,
+	normalizeProfilesDocumentResult,
+} from './normalize-helm'
 import type { ProfileSwitchFence } from './profile-switch'
 import { EXPECTED_DAEMON_BUILD_ID, EXPECTED_DAEMON_PROTOCOL_VERSION } from './protocol-version'
 import { RunContextBridgeOperations } from './run-context-bridge'
@@ -43,6 +49,7 @@ import type {
 	HelmSnapshot,
 	ItemStatus,
 	ProfileActivationResult,
+	ProfileKnowledgeBinding,
 	ProfileMutationResult,
 	ProfilesDocument,
 	ProfilesState,
@@ -90,6 +97,13 @@ export type HelmBridgeRequest = <T>(
 /** Main-process-only resident lease transport; it is intentionally not registered as IPC. */
 export type ResidentLeaseOperation = 'issue' | 'heartbeat' | 'tick' | 'revoke'
 
+export function profileIdFromProfileToken(token: unknown): string | null {
+	if (typeof token !== 'string') return null
+	const separator = token.lastIndexOf(':')
+	if (separator <= 0 || !/^\d+$/.test(token.slice(separator + 1))) return null
+	return token.slice(0, separator)
+}
+
 /** Bind renderer-supplied schedule tenancy to the preload-captured profile token. */
 export function scheduledProfileTokenMatches(profileId: unknown, token: unknown): profileId is string {
 	return (
@@ -106,7 +120,9 @@ export interface HelmBridgeOptions {
 	}>
 	setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>
 	clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
-	/** Main-only local-control capability provider for scheduled definition/history IPC. */
+	/** Main-only local-control capability provider for privileged renderer requests. */
+	localControlToken?: () => Promise<string>
+	/** Compatibility alias for older constructors. */
 	scheduledControlToken?: () => Promise<string>
 }
 
@@ -198,7 +214,7 @@ export class HelmBridge {
 			// A fence owns every completion it started. A replaced epoch must not
 			// blank, publish, resolve, or schedule work for its successor.
 			if (fence && this.profileFence === fence) {
-				const profiles = reachable ? await this.request<ProfilesDocument>('GET', '/profiles') : { error: 'incoherent' }
+				const profiles = reachable ? await this.listProfiles() : { error: 'incoherent' }
 				if (!this.isCurrentFence(fence)) return
 				const coherentState =
 					profiles.data &&
@@ -343,6 +359,23 @@ export class HelmBridge {
 		}
 	}
 
+	private async controlRequest<T>(
+		method: 'GET' | 'POST' | 'PUT',
+		path: string,
+		body?: unknown,
+	): Promise<HelmResult<T>> {
+		const tokenProvider = this.options.localControlToken ?? this.options.scheduledControlToken
+		if (!tokenProvider) return { error: 'Local control is unavailable.', status: 503 }
+		try {
+			const controlToken = await tokenProvider()
+			return this.request<T>(method, path, body, REQUEST_TIMEOUT_MS, {
+				Authorization: `Bearer ${controlToken}`,
+			})
+		} catch {
+			return { error: 'Local control is unavailable.', status: 503 }
+		}
+	}
+
 	/**
 	 * Narrow main-only transport for the Electron resident-admission controller.
 	 * It deliberately has no IPC registration: local-control auth and resident
@@ -478,7 +511,7 @@ export class HelmBridge {
 		) {
 			return null
 		}
-		const profiles = await this.request<ProfilesDocument>('GET', '/profiles')
+		const profiles = await this.listProfiles()
 		if (!this.isCurrentFence(record) || profiles.error !== undefined || profiles.data === undefined) return null
 		if (profiles.data.activeProfileId !== statusProfileId) return null
 		if (status.data.profileGeneration !== undefined && status.data.profileGeneration !== profiles.data.generation)
@@ -486,31 +519,50 @@ export class HelmBridge {
 		return profiles.data
 	}
 
-	listProfiles(): Promise<HelmResult<ProfilesDocument>> {
-		return this.request<ProfilesDocument>('GET', '/profiles')
+	async listProfiles(): Promise<HelmResult<ProfilesDocument>> {
+		return normalizeProfilesDocumentResult(await this.controlRequest<ProfilesDocument>('GET', '/profiles'))
 	}
 
-	activateProfile(profileId: string): Promise<HelmResult<ProfileActivationResult>> {
-		return this.request<ProfileActivationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/activate`)
+	async activateProfile(profileId: string): Promise<HelmResult<ProfileActivationResult>> {
+		return normalizeProfileActivationResult(
+			await this.controlRequest<ProfileActivationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/activate`),
+		)
 	}
 
-	createProfile(name: string, enabledProjects: string[]): Promise<HelmResult<ProfileMutationResult>> {
-		return this.request<ProfileMutationResult>('POST', '/profiles', { name, enabledProjects })
+	async createProfile(name: string, enabledProjects: string[]): Promise<HelmResult<ProfileMutationResult>> {
+		return normalizeProfileMutationResult(
+			await this.controlRequest<ProfileMutationResult>('POST', '/profiles', { name, enabledProjects }),
+		)
 	}
 
 	updateProfile(
 		profileId: string,
-		body: { name?: string; enabledProjects?: string[] },
+		body: { name?: string; enabledProjects?: string[]; knowledgeBindings?: ProfileKnowledgeBinding[] },
 	): Promise<HelmResult<ProfileMutationResult>> {
-		return this.request<ProfileMutationResult>('PUT', `/profiles/${encodeURIComponent(profileId)}`, body)
+		const protocolVersion = this.snapshot.status?.protocolVersion
+		const compatibleBody =
+			protocolVersion !== undefined && protocolVersion !== EXPECTED_DAEMON_PROTOCOL_VERSION
+				? { name: body.name, enabledProjects: body.enabledProjects }
+				: body
+		return this.controlRequest<ProfileMutationResult>(
+			'PUT',
+			`/profiles/${encodeURIComponent(profileId)}`,
+			compatibleBody,
+		).then(normalizeProfileMutationResult)
 	}
 
 	archiveProfile(profileId: string): Promise<HelmResult<ProfileMutationResult>> {
-		return this.request<ProfileMutationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/archive`)
+		return this.controlRequest<ProfileMutationResult>(
+			'POST',
+			`/profiles/${encodeURIComponent(profileId)}/archive`,
+		).then(normalizeProfileMutationResult)
 	}
 
 	restoreProfile(profileId: string): Promise<HelmResult<ProfileMutationResult>> {
-		return this.request<ProfileMutationResult>('POST', `/profiles/${encodeURIComponent(profileId)}/restore`)
+		return this.controlRequest<ProfileMutationResult>(
+			'POST',
+			`/profiles/${encodeURIComponent(profileId)}/restore`,
+		).then(normalizeProfileMutationResult)
 	}
 
 	// --- IPC surface -------------------------------------------------------------
@@ -527,7 +579,15 @@ export class HelmBridge {
 		ipcMain.handle('daemon:item', async (_e, rawId: unknown, token: unknown) => {
 			if (stale(token)) return stale(token)
 			if (this.profileFence !== null) return { error: 'Profile is switching — try again shortly.' }
-			return normalizeDashboardItemResult(await this.request<DashboardItem>('GET', `/items/${id(rawId)}`))
+			const privileged = await controlRead<DashboardItem>(`/items/${id(rawId)}`, token)
+			const loaded =
+				'error' in privileged && privileged.status === 503
+					? await this.request<DashboardItem>('GET', `/items/${id(rawId)}`)
+					: privileged
+			const result = normalizeDashboardItemResult(loaded)
+			if (stale(token)) return stale(token)
+			if (this.profileFence !== null) return { error: 'Profile is switching — try again shortly.', status: 409 }
+			return result
 		})
 
 		ipcMain.handle(
@@ -557,6 +617,35 @@ export class HelmBridge {
 				`/items/${id(rawId)}/open-okena`,
 				undefined,
 				WORKSPACE_REQUEST_TIMEOUT_MS,
+			)
+			this.kick()
+			return result
+		})
+
+		ipcMain.handle(
+			'daemon:retryKnowledgeDelivery',
+			async (_e, rawItemId: unknown, rawDeliveryId: unknown, token: unknown) => {
+				if (stale(token)) return stale(token)
+				const result = await controlWrite<{ retried: true }>(
+					'POST',
+					`/items/${id(rawItemId)}/knowledge-deliveries/${id(rawDeliveryId)}/retry`,
+					{},
+					REQUEST_TIMEOUT_MS,
+					token,
+				)
+				this.kick()
+				return result
+			},
+		)
+
+		ipcMain.handle('daemon:recoverKnowledgeDelivery', async (_e, rawItemId: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
+			const result = await controlWrite<{ recovered: true; deliveryId: string }>(
+				'POST',
+				`/items/${id(rawItemId)}/knowledge-deliveries/recover`,
+				{},
+				REQUEST_TIMEOUT_MS,
+				token,
 			)
 			this.kick()
 			return result
@@ -656,44 +745,65 @@ export class HelmBridge {
 				return { error: 'Scheduled profile changed. Reload and try again.', status: 409 }
 			return null
 		}
-		const scheduledRead = async <T>(path: string): Promise<HelmResult<T>> => {
-			if (!this.options.scheduledControlToken) return { error: 'Scheduled control is unavailable.', status: 503 }
+		const controlTokenProvider = this.options.localControlToken ?? this.options.scheduledControlToken
+		const controlRead = async <T>(path: string, profileToken?: unknown): Promise<HelmResult<T>> => {
+			if (!controlTokenProvider) return { error: 'Local control is unavailable.', status: 503 }
+			const denied = profileToken === undefined ? null : stale(profileToken)
+			if (denied) return denied
 			try {
-				const controlToken = await this.options.scheduledControlToken()
-				return this.request<T>('GET', path, undefined, REQUEST_TIMEOUT_MS, {
+				const controlToken = await controlTokenProvider()
+				const staleAfterAuth = profileToken === undefined ? null : stale(profileToken)
+				if (staleAfterAuth) return staleAfterAuth
+				const profileId = profileIdFromProfileToken(profileToken)
+				const result = await this.request<T>('GET', path, undefined, REQUEST_TIMEOUT_MS, {
 					Authorization: `Bearer ${controlToken}`,
+					...(profileId ? { 'X-Helm-Profile-Id': profileId } : {}),
 				})
+				return (profileToken === undefined ? null : stale(profileToken)) ?? result
 			} catch {
-				return { error: 'Scheduled control is unavailable.', status: 503 }
+				return { error: 'Local control is unavailable.', status: 503 }
 			}
 		}
-		const scheduledWrite = async <T>(method: 'POST' | 'PUT', path: string, body: unknown): Promise<HelmResult<T>> => {
-			if (!this.options.scheduledControlToken) return { error: 'Scheduled control is unavailable.', status: 503 }
+		const controlWrite = async <T>(
+			method: 'POST' | 'PUT',
+			path: string,
+			body: unknown,
+			timeoutMs = REQUEST_TIMEOUT_MS,
+			profileToken?: unknown,
+		): Promise<HelmResult<T>> => {
+			if (!controlTokenProvider) return { error: 'Local control is unavailable.', status: 503 }
+			const denied = profileToken === undefined ? null : stale(profileToken)
+			if (denied) return denied
 			try {
-				const controlToken = await this.options.scheduledControlToken()
-				return this.request<T>(method, path, body, REQUEST_TIMEOUT_MS, {
+				const controlToken = await controlTokenProvider()
+				const staleAfterAuth = profileToken === undefined ? null : stale(profileToken)
+				if (staleAfterAuth) return staleAfterAuth
+				const profileId = profileIdFromProfileToken(profileToken)
+				const result = await this.request<T>(method, path, body, timeoutMs, {
 					Authorization: `Bearer ${controlToken}`,
+					...(profileId ? { 'X-Helm-Profile-Id': profileId } : {}),
 				})
+				return (profileToken === undefined ? null : stale(profileToken)) ?? result
 			} catch {
-				return { error: 'Scheduled control is unavailable.', status: 503 }
+				return { error: 'Local control is unavailable.', status: 503 }
 			}
 		}
 		ipcMain.handle('daemon:scheduled:list', async (_e, profileId: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await scheduledRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`)
+			const result = await controlRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`)
 			return stale(token) ?? result
 		})
 		ipcMain.handle('daemon:scheduled:active', async (_e, profileId: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await scheduledRead<ScheduledRun[]>(`/scheduled-runs/active?profileId=${id(profileId)}`)
+			const result = await controlRead<ScheduledRun[]>(`/scheduled-runs/active?profileId=${id(profileId)}`)
 			return stale(token) ?? result
 		})
 		ipcMain.handle('daemon:scheduled:create', async (_e, profileId: unknown, body: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await scheduledWrite<ScheduledSchedule>('POST', '/scheduled-runs', {
+			const result = await controlWrite<ScheduledSchedule>('POST', '/scheduled-runs', {
 				...(body as object),
 				profileId,
 			})
@@ -704,7 +814,7 @@ export class HelmBridge {
 			async (_e, profileId: unknown, rawId: unknown, body: unknown, token: unknown) => {
 				const denied = scheduledProfile(profileId, token)
 				if (denied) return denied
-				const result = await scheduledWrite<ScheduledSchedule>('PUT', `/scheduled-runs/${id(rawId)}`, {
+				const result = await controlWrite<ScheduledSchedule>('PUT', `/scheduled-runs/${id(rawId)}`, {
 					...(body as object),
 					profileId,
 				})
@@ -720,7 +830,7 @@ export class HelmBridge {
 					return { error: 'Unknown scheduled action.', status: 400 }
 				const path = action === 'run' ? `/scheduled-runs/${id(rawId)}/run` : `/scheduled-runs/${id(rawId)}/${action}`
 				const body = action === 'run' ? { profileId } : { profileId, revision }
-				const result = await scheduledWrite<ScheduledSchedule | ScheduledRun>('POST', path, body)
+				const result = await controlWrite<ScheduledSchedule | ScheduledRun>('POST', path, body)
 				return stale(token) ?? result
 			},
 		)
@@ -730,7 +840,7 @@ export class HelmBridge {
 				const denied = scheduledProfile(profileId, token)
 				if (denied) return denied
 				const safeLimit = typeof limit === 'number' && Number.isInteger(limit) ? Math.min(100, Math.max(1, limit)) : 20
-				const result = await scheduledRead<ScheduledRun[]>(
+				const result = await controlRead<ScheduledRun[]>(
 					`/scheduled-runs/${id(rawId)}/history?profileId=${id(profileId)}&limit=${safeLimit}`,
 				)
 				return stale(token) ?? result
@@ -743,7 +853,7 @@ export class HelmBridge {
 				if (denied) return denied
 				if (typeof runId !== 'string' || typeof revision !== 'number' || !Number.isInteger(revision))
 					return { error: 'Invalid scheduled run identity.', status: 400 }
-				const result = await scheduledWrite<ScheduledRun>('POST', `/scheduled-runs/runs/${id(runId)}/cancel`, {
+				const result = await controlWrite<ScheduledRun>('POST', `/scheduled-runs/runs/${id(runId)}/cancel`, {
 					profileId,
 				})
 				return stale(token) ?? result
