@@ -3030,7 +3030,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	interface TerminalOpts {
-		/** Restored/undone session to reattach; omitted = create a fresh session. */
+		/** Durable/undone identity to reattach, or recreate after reboot; omitted = new workspace. */
 		sessionId?: string
 		/** Persisted label shown until the shell emits a fresh OSC title. */
 		title?: string | null
@@ -3644,11 +3644,11 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		}
 	})
 
-	// Startup: reattach every dtach session that survived the previous run —
-	// non-parked sessions as strip tabs (saved titles restored), parked sessions
-	// headless into the background popover. Fresh single tab only when no strip
-	// tab survived. Zero tabs stays a valid state after that — closing restored
-	// tabs never respawns.
+	// Startup: restore every durable ordinary workspace. A live dtach master
+	// reattaches; after a machine reboot the same dtach -A call recreates only the
+	// missing shell while retaining tab identity, title, order, group, parked
+	// state, and snapshot. Fresh single tab only when no strip workspace exists.
+	// Zero tabs stays valid after bootstrap — explicit close never respawns.
 	let previewTimer: ReturnType<typeof setTimeout> | undefined
 	const ready = (async () => {
 		// No terminal accepts input until the persisted Option-as-Meta snapshot is

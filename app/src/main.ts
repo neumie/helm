@@ -1769,50 +1769,26 @@ ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: 
 	return undone
 })
 
-// Startup restore: live sessions from the socket dir (stale sockets GC'd),
-// labeled from the registry. The renderer reattaches one tab per entry.
+// Startup restore: live dtach masters reattach; ordinary registry workspaces
+// whose masters died in a machine reboot recreate a fresh shell under the same
+// identity. Explicit close removes the row, while unknown and run-owned
+// identities remain fail-closed in planSessionRestore().
 ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 	await terminalTransferRecovery
 	if (!sessionIpcGate.allows(profileToken)) return []
 	const support = getSessionSupport()
 	if (!support) return []
-	const { live, unknownIds } = await sessions.scanSessions()
-	// Registry loss must not make surviving dtach sessions permanently
-	// unnameable/unorderable: cosmetic writers correctly ignore unknown ids, so
-	// adopt every definitively-live socket before returning it to the renderer.
-	for (const session of live) support.registry.ensure(session.sessionId, session.createdAt)
-	// Retention = live ∪ unknown-probe: a probe timeout must not cost a live
-	// session its registry metadata (title/customName/parked) — that was a real
-	// loss path: prune-on-unknown left long-lived sessions restoring as "zsh".
-	const retainIds = new Set([...live.map(s => s.sessionId), ...unknownIds])
-	// Buffer-snapshot orphan sweep: keep snapshots for retained sessions plus
-	// parked registry entries; everything else — killed while the app was
-	// closed, dead-socket GC — is deleted with its session. Computed BEFORE
-	// prune(), which drops non-retained registry entries.
-	const keepSnapshots = new Set(retainIds)
-	for (const id of support.registry.ids()) {
-		if (support.registry.get(id)?.parked === true) keepSnapshots.add(id)
-	}
-	support.buffers.removeOrphans(keepSnapshots)
-	support.registry.prune(retainIds)
-	return live
-		.map(s => ({
-			sessionId: s.sessionId,
-			title: support.registry.get(s.sessionId)?.lastTitle ?? null,
-			// Manual rename pin — wins over lastTitle in the renderer, OSC-immune.
-			customName: support.registry.get(s.sessionId)?.customName ?? null,
-			// Parked sessions restore as parked (popover rows), never as strip tabs.
-			parked: support.registry.get(s.sessionId)?.parked === true,
-			groupId: support.registry.get(s.sessionId)?.groupId ?? null,
-			agentRunning: support.registry.get(s.sessionId)?.agentRunning === true,
-			agentAttention: support.registry.get(s.sessionId)?.agentAttention === true,
-			placementEligible: true,
-			// Registry createdAt (original spawn) beats socket birthtime for ordering.
-			createdAt: support.registry.get(s.sessionId)?.createdAt ?? s.createdAt,
-			order: support.registry.get(s.sessionId)?.order,
-		}))
-		.sort(sessions.compareSessionOrder)
-		.map(({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention, placementEligible }) => ({
+	const scan = await sessions.scanSessions()
+	// Profile switching closes IPC admission while this asynchronous probe is in
+	// flight. A late old-renderer request must not mutate or publish another
+	// profile's registry after the await.
+	if (!sessionIpcGate.allows(profileToken) || support !== getSessionSupport()) return []
+	const plan = sessions.planSessionRestore(support.registry, scan)
+	// Registry ownership is the durable workspace truth. Missing sockets after a
+	// reboot must not erase scrollback before dtach -A recreates their shell.
+	support.buffers.removeOrphans(plan.keepSnapshotIds)
+	return plan.sessions.map(
+		({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention, placementEligible }) => ({
 			sessionId,
 			title,
 			customName,
@@ -1821,7 +1797,8 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 			agentRunning,
 			agentAttention,
 			placementEligible,
-		}))
+		}),
+	)
 })
 
 const TAB_GROUP_ACTION_TYPES = new Set<sessions.TabGroupActionIntent['type']>([

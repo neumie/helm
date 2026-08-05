@@ -61,7 +61,7 @@ export interface TerminalTransferApi {
 	ack(event: TerminalTransferEvent, result: unknown): Promise<boolean>
 }
 
-/** A dtach session that survived the previous app run and can be reattached. */
+/** A durable ordinary terminal workspace: reattached when live, recreated with the same identity after reboot. */
 export interface RestoredSession {
 	sessionId: string
 	/** Last OSC title seen for the tab, or null (renderer falls back to "zsh"). */
@@ -162,7 +162,7 @@ export interface TabGroupsApi {
 }
 
 export interface PtyApi {
-	/** Pass a restored sessionId to reattach instead of creating a fresh session. */
+	/** Pass a durable sessionId to reattach its master or recreate its missing shell after reboot. */
 	spawn(cols: number, rows: number, sessionId?: string): Promise<PtySpawnResult>
 	write(id: number, data: string): void
 	resize(id: number, cols: number, rows: number): void
@@ -184,7 +184,7 @@ export interface ScheduledTerminalOpen extends RestoredSession {
 }
 
 export interface SessionsApi {
-	/** Live sessions from the previous run, oldest first. Empty when none/persistence off. */
+	/** Durable ordinary workspaces from the previous run, oldest first. */
 	list(): Promise<RestoredSession[]>
 	/**
 	 * Atomic, profile-token-fenced placement persistence used by TerminalPlacement.

@@ -3,9 +3,10 @@
 // Semantics ported from okena (contember/core/okena/crates/okena-terminal):
 // each tab's pty runs `dtach -A <socket> -E -r winch $SHELL -l`, so the pty
 // child is only the dtach attach CLIENT. The shell lives under a forked dtach
-// master parented to launchd, which survives app quit/crash. Killing the
-// client detaches (session lives on); killing the session SIGTERMs the
-// socket's holders and removes the socket file.
+// master parented to launchd, which survives app quit/crash but not a machine
+// reboot. The registry is the durable logical workspace: after reboot dtach
+// -A recreates a fresh shell under the same tab identity. Killing the client
+// detaches; explicitly killing the session also removes its registry row.
 //
 // This module deliberately imports nothing from electron so the session layer
 // can be exercised headlessly (see the integration test in the task notes) —
@@ -16,7 +17,12 @@ import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
-import type { TerminalPlacementCommitCommand, TerminalPlacementCommitResult, TerminalPlacementGroup } from './shared'
+import type {
+	RestoredSession,
+	TerminalPlacementCommitCommand,
+	TerminalPlacementCommitResult,
+	TerminalPlacementGroup,
+} from './shared'
 import { type TabGroupColor, defaultTabGroupColor, isTabGroupColor } from './tab-group-colors'
 
 // okena resolves tools through get_extended_path (session_backend.rs:751-793)
@@ -207,7 +213,7 @@ export interface LiveSession {
 }
 
 export interface SessionScan {
-	/** Sessions whose sockets probed live — restorable this launch. */
+	/** Sessions whose sockets probed live — their existing processes can reattach this launch. */
 	live: LiveSession[]
 	/**
 	 * Sockets that probed 'unknown' (EINVAL/timeout/transient): NOT restorable
@@ -771,7 +777,7 @@ export class SessionRegistry {
 		return this.#data[sessionId]
 	}
 
-	/** All known session ids (startup orphan sweeps read this before prune()). */
+	/** All known session ids; registry ownership drives startup restore and snapshot retention. */
 	ids(): string[] {
 		return Object.keys(this.#data)
 	}
@@ -1218,21 +1224,6 @@ export class SessionRegistry {
 		this.#scheduleSave()
 	}
 
-	/** Drop ordinary metadata for sessions whose sockets are gone (post-scan sync).
-	 * Run-owned scheduled sessions use a separate daemon namespace and are
-	 * retained until their exact completed-owner re-attestation says otherwise. */
-	prune(liveIds: ReadonlySet<string>): void {
-		let changed = false
-		for (const id of Object.keys(this.#data)) {
-			if (!liveIds.has(id) && this.#data[id]?.backing !== 'run-owned') {
-				delete this.#data[id]
-				changed = true
-			}
-		}
-		if (this.#removeEmptyGroups()) changed = true
-		if (changed) this.#scheduleSave()
-	}
-
 	/** Debounced: zsh emits OSC titles on every prompt; don't write JSON per keystroke. */
 	#scheduleSave(): void {
 		if (this.#saveTimer) return
@@ -1334,4 +1325,61 @@ export class SessionRegistry {
 			}
 		}
 	}
+}
+
+/** Internal ordering fields are stripped before this crosses preload IPC. */
+export interface PlannedRestoredSession extends RestoredSession {
+	createdAt: string
+	order?: number
+}
+
+export interface SessionRestorePlan {
+	sessions: PlannedRestoredSession[]
+	/** Registry ownership, not socket liveness, owns snapshot retention. */
+	keepSnapshotIds: ReadonlySet<string>
+}
+
+/**
+ * Build one fail-closed startup plan from durable layout plus observed sockets.
+ *
+ * Ordinary registry rows are logical workspaces: when their dtach socket is
+ * missing after a machine reboot, the renderer sends the same session id to
+ * the existing `dtach -A` spawn path, which creates a fresh shell without
+ * losing tab order, group membership, parked state, name, or saved scrollback.
+ * An explicit tab close removes the registry row first, so it is not planned.
+ *
+ * Unknown probes are never spawned because a live master may still own that
+ * identity. Run-owned scheduled terminals are likewise excluded: only their
+ * exact daemon/Electron re-attestation flow may attach them, and Helm must
+ * never create a replacement process for one.
+ */
+export function planSessionRestore(registry: SessionRegistry, scan: SessionScan): SessionRestorePlan {
+	for (const session of scan.live) registry.ensure(session.sessionId, session.createdAt)
+	const liveIds = new Set(scan.live.map(session => session.sessionId))
+	const unknownIds = new Set(scan.unknownIds)
+	const keepSnapshotIds = new Set([...registry.ids(), ...liveIds, ...unknownIds])
+	const planned = registry
+		.ids()
+		.flatMap(sessionId => {
+			const meta = registry.get(sessionId)
+			if (!meta || meta.backing === 'run-owned' || unknownIds.has(sessionId)) return []
+			const processSurvived = liveIds.has(sessionId)
+			return [
+				{
+					sessionId,
+					title: meta.lastTitle ?? null,
+					customName: meta.customName ?? null,
+					parked: meta.parked === true,
+					groupId: meta.groupId ?? null,
+					// A recreated shell cannot still own pre-reboot agent activity.
+					agentRunning: processSurvived && meta.agentRunning === true,
+					agentAttention: processSurvived && meta.agentAttention === true,
+					placementEligible: true,
+					createdAt: meta.createdAt,
+					...(meta.order === undefined ? {} : { order: meta.order }),
+				} satisfies PlannedRestoredSession,
+			]
+		})
+		.sort(compareSessionOrder)
+	return { sessions: planned, keepSnapshotIds }
 }

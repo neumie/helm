@@ -131,13 +131,13 @@ test('moving to a new group is non-empty and atomic, while delete non-destructiv
 	assert.deepEqual(registry.getGroups(), [group])
 })
 
-test('last global member removal and prune delete groups, but retained unknown metadata keeps them', () => {
+test('group definitions disappear only after their last member is explicitly removed', () => {
 	const { file, registry, group } = grouped()
 	registry.remove('aaaa1111')
 	assert.deepEqual(registry.getGroups(), [group])
-	registry.prune(new Set(['bbbb2222']))
-	assert.deepEqual(registry.getGroups(), [group], 'unknown-probe retained id remains a member')
-	registry.prune(new Set())
+	registry.remove('cccc3333')
+	assert.deepEqual(registry.getGroups(), [group], 'unrelated removal cannot drop a retained group member')
+	registry.remove('bbbb2222')
 	registry.flush()
 	assert.deepEqual(registry.getGroups(), [])
 	assert.equal(fs.readFileSync(file, 'utf8').includes('_tabGroups'), false)

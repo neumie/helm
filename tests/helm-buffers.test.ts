@@ -3,19 +3,20 @@
 // <userData>/buffers/<sessionId>.bin. Invariants under test: save/read
 // round-trip, atomic writes (tmp + rename, no sheared snapshot), the
 // main-process size backstop, session-id validation (ids feed file paths),
-// snapshot deletion, and the startup orphan sweep (snapshot without a live
-// session and without a parked registry entry → removed; crashed-write .tmp
-// leftovers → removed). CJS default-import pattern per the helm test convention.
+// snapshot deletion, and the startup orphan sweep (snapshot without any
+// durable registry/live/unknown owner → removed; crashed-write .tmp leftovers
+// → removed). CJS default-import pattern per the helm test convention.
 
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
-import buffersModule from '../app/src/buffers.ts'
+import * as buffersModule from '../app/src/buffers.ts'
 
 type BuffersModule = typeof import('../app/src/buffers.ts')
-const { BufferStore, MAX_SNAPSHOT_BYTES } = buffersModule as BuffersModule
+const buffers = ((buffersModule as { default?: BuffersModule }).default ?? buffersModule) as BuffersModule
+const { BufferStore, MAX_SNAPSHOT_BYTES } = buffers
 
 function withStore<T>(fn: (store: InstanceType<typeof BufferStore>, dir: string) => T): T {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-buffers-'))

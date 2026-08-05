@@ -46,7 +46,7 @@ test('restore clears the parked flag across a relaunch', () => {
 	assert.equal(second.get('cccc3333')?.parked ?? false, false)
 })
 
-test('setParked ignores unknown sessions and prune drops parked metadata with the session', () => {
+test('setParked ignores unknown sessions and explicit removal drops parked workspace metadata', () => {
 	const file = tempRegistryFile()
 	const registry = new SessionRegistry(file)
 	registry.setParked('missing1', true) // no throw, no entry created
@@ -54,7 +54,7 @@ test('setParked ignores unknown sessions and prune drops parked metadata with th
 
 	registry.add('dddd4444')
 	registry.setParked('dddd4444', true)
-	registry.prune(new Set()) // socket gone → session forgotten, parked flag with it
+	registry.remove('dddd4444')
 	registry.flush()
 	const reloaded = new SessionRegistry(file)
 	assert.equal(reloaded.get('dddd4444'), undefined)

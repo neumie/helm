@@ -126,11 +126,11 @@ export class BufferStore {
 	}
 
 	/**
-	 * Startup sweep: delete snapshots whose session no longer exists (killed
-	 * while the app wasn't running, GC'd dead socket). `keep` = live session
-	 * ids plus parked registry ids — a parked session whose socket probed
-	 * 'unknown' this launch keeps its snapshot for the next attempt. Also
-	 * collects `.tmp` leftovers from a crashed atomic write. Returns removed ids.
+	 * Startup sweep: delete snapshots with no durable registry/socket owner.
+	 * Missing sockets are NOT orphans: a machine reboot kills dtach masters but
+	 * ordinary registry rows recreate fresh shells under the same identity.
+	 * Callers therefore pass every registry-owned id plus live/unknown socket
+	 * identities. Also collects `.tmp` leftovers from a crashed atomic write.
 	 */
 	removeOrphans(keep: ReadonlySet<string>): string[] {
 		let names: string[]

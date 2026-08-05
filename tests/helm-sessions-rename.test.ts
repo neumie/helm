@@ -12,10 +12,11 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
-import sessionsModule from '../app/src/sessions.ts'
+import * as sessionsModule from '../app/src/sessions.ts'
 
 type SessionsModule = typeof import('../app/src/sessions.ts')
-const { SessionRegistry, scanSessions } = sessionsModule as SessionsModule
+const sessions = ((sessionsModule as { default?: SessionsModule }).default ?? sessionsModule) as SessionsModule
+const { SessionRegistry, planSessionRestore, scanSessions } = sessions
 
 function tempRegistryFile(): string {
 	return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'helm-rename-')), 'sessions.json')
@@ -63,7 +64,7 @@ test('pre-customName registry JSON loads unchanged (backward compat)', () => {
 	assert.equal(registry.get('cccc3333')?.parked, true)
 })
 
-test('setCustomName ignores unknown sessions; prune drops the pin with the session', () => {
+test('setCustomName ignores unknown sessions; explicit removal drops the pin with the workspace', () => {
 	const file = tempRegistryFile()
 	const registry = new SessionRegistry(file)
 	registry.setCustomName('missing1', 'ghost') // no throw, no entry created
@@ -71,14 +72,14 @@ test('setCustomName ignores unknown sessions; prune drops the pin with the sessi
 
 	registry.add('dddd4444')
 	registry.setCustomName('dddd4444', 'gone soon')
-	registry.prune(new Set())
+	registry.remove('dddd4444')
 	assert.equal(registry.get('dddd4444'), undefined)
 })
 
-test('scanSessions: unknown-probe sockets are retained, not restorable — prune keeps their metadata', async () => {
+test('scanSessions: unknown-probe sockets are retained but not restored this launch', async () => {
 	// Over-cap socket dir: node EINVALs the connect while dtach could still be
-	// serving the path — the probe reads 'unknown'. The scan must surface these
-	// as retained ids so sessions:list prunes with live ∪ unknown.
+	// serving the path — the probe reads 'unknown'. The restore planner must
+	// retain its durable metadata without spawning a competing process.
 	const longDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'helm-rename-')), 'x'.repeat(90))
 	fs.mkdirSync(longDir, { recursive: true })
 	fs.writeFileSync(path.join(longDir, 'eeee5555.sock'), '')
@@ -90,12 +91,13 @@ test('scanSessions: unknown-probe sockets are retained, not restorable — prune
 		assert.deepEqual(scan.unknownIds, ['eeee5555'])
 		assert.ok(fs.existsSync(path.join(longDir, 'eeee5555.sock')), 'unknown probe must never unlink')
 
-		// The sessions:list retention rule: live ∪ unknown keeps the metadata.
 		const registry = new SessionRegistry(tempRegistryFile())
 		registry.add('eeee5555')
 		registry.setTitle('eeee5555', 'buildbox')
 		registry.setCustomName('eeee5555', 'deploy watch')
-		registry.prune(new Set([...scan.live.map(s => s.sessionId), ...scan.unknownIds]))
+		const plan = planSessionRestore(registry, scan)
+		assert.deepEqual(plan.sessions, [])
+		assert.ok(plan.keepSnapshotIds.has('eeee5555'))
 		assert.equal(registry.get('eeee5555')?.lastTitle, 'buildbox')
 		assert.equal(registry.get('eeee5555')?.customName, 'deploy watch')
 	} finally {
