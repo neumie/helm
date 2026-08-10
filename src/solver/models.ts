@@ -15,6 +15,7 @@ export interface ModelOption {
 export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	claude: [
 		{ id: 'claude-fable-5', label: 'Fable 5' },
+		{ id: 'claude-opus-5', label: 'Opus 5' },
 		{ id: 'claude-opus-4-8', label: 'Opus 4.8' },
 		{ id: 'claude-sonnet-5', label: 'Sonnet 5' },
 		{ id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
@@ -29,6 +30,7 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	// Pi spans providers; qualified ids make the owning subscription explicit.
 	pi: [
 		{ id: 'anthropic/claude-fable-5', label: 'Anthropic · Fable 5' },
+		{ id: 'anthropic/claude-opus-5', label: 'Anthropic · Opus 5' },
 		{ id: 'anthropic/claude-opus-4-8', label: 'Anthropic · Opus 4.8' },
 		{ id: 'anthropic/claude-sonnet-5', label: 'Anthropic · Sonnet 5' },
 		{ id: 'anthropic/claude-haiku-4-5', label: 'Anthropic · Haiku 4.5' },
@@ -100,6 +102,12 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'- Keep your own context for architecture, tricky diagnosis, and reviewing what subagents return.',
 		'- Prefer one decisive, correct pass over cheap trial-and-error; verify with tools instead of re-deriving from memory.',
 	].join('\n'),
+	'claude-opus-5': [
+		'You are running as Opus 5 — a premium tier that is strongest on long-horizon, multi-file work. Take the whole task in one decisive pass:',
+		'- Delegate sparingly: a subagent (the Task tool) pays off only for genuinely independent, sizeable tracks — never for work you could finish in a handful of tool calls, and never to verify your own work.',
+		'- You already verify as you go; do not add a separate double-check pass on top of it.',
+		'- Deliver exactly the requested scope. If a better approach exists, say so in one line in the solver-result.json summary and keep going with the task as asked.',
+	].join('\n'),
 	'claude-opus-4-8': [
 		'You are running as Opus 4.8 — a strong premium tier. Delegate broad exploration and mechanical sweeps to subagents (the Task tool); do the design, tricky edits, and verification yourself.',
 	].join('\n'),
@@ -127,6 +135,8 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 const PI_MODEL_GUIDANCE: Record<string, string> = {
 	'anthropic/claude-fable-5':
 		'Pi is running Fable 5 — use this expensive tier for architecture and judgment, delegate only through extensions or tools that are actually available, and verify decisively.',
+	'anthropic/claude-opus-5':
+		'Pi is running Opus 5 — take the whole task in one decisive pass, verify as you go instead of adding a separate check pass, and deliver exactly the requested scope.',
 	'anthropic/claude-opus-4-8':
 		'Pi is running Opus 4.8 — keep broad exploration structured, do the tricky reasoning directly, and verify the complete change.',
 	'anthropic/claude-sonnet-5':
