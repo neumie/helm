@@ -67,6 +67,8 @@ export interface AttentionAttachDescriptor {
 	redraw: 'winch'
 }
 
+export type AttentionRestoreObservation = AttentionAttachDescriptor | { state: 'dead' }
+
 /**
  * Dedicated schedule-domain coordinator. It does not touch Items, Solver.solve,
  * or ordinary terminal sessions. Recurrence is admitted only by a valid resident
@@ -110,10 +112,10 @@ export class ScheduledRunService {
 	start(): Promise<void> {
 		if (this.startInFlight) return this.startInFlight
 		if (this.watchdog) return this.reconcile()
-		// A daemon restart has no surviving Electron owner or bearer authority.
-		// Do this synchronously before startup's first await opens reconciliation.
+		// Bearer authority is process-local, but a pre-restart reservation may
+		// already have exact durable Electron registry evidence. Preserve unknown
+		// reservations fail-closed until Electron recovers or explicitly rolls back.
 		this.adoptionGrants.clear()
-		this.rollbackReservedAdoptionsOnRestart()
 		this.startInFlight = this.startInternal().finally(() => {
 			this.startInFlight = null
 		})
@@ -262,6 +264,70 @@ export class ScheduledRunService {
 		).completeAttentionAdoption(runId, revision, identity, this.adoptionGrants, ownershipRegistered)
 	}
 
+	/** Reconcile exact durable Electron evidence after process-local grant loss. */
+	recoverAttentionAdoptionCompletion(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		ownershipRegistered: true,
+	): Promise<ScheduledRunRecord> {
+		return this.trackAdoption(
+			this.recoverAttentionAdoptionCompletionInternal(profileId, runId, revision, identity, ownershipRegistered),
+		)
+	}
+	private async recoverAttentionAdoptionCompletionInternal(
+		profileId: string,
+		runId: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		ownershipRegistered: true,
+	): Promise<ScheduledRunRecord> {
+		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
+		const runtime = this.captureProfile(profileId)
+		const runDb = this.db.forProfile(runtime.profile.id)
+		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
+		const run = runDb.schedules.requireRun(runId)
+		if (run.attentionAdoption?.state === 'completed')
+			return commands.recoverAttentionAdoptionCompletion(runId, revision, identity, ownershipRegistered)
+		this.assertReservedAdoption(run, revision, identity)
+		const binding = { profileId, runId, revision, ...identity }
+		if (this.adoptionGrants.wasIssued(binding) && !this.adoptionGrants.hasRedeemed(binding))
+			throw new Error('Scheduled attention adoption grant was not redeemed')
+		const persistedIdentity = parseIdentity(run.processFingerprint)
+		if (!persistedIdentity) throw new Error('Scheduled attention session cannot be attested')
+		const attestation = await this.supervisor.attestLiveSession(profileId, run.sessionId, persistedIdentity)
+		if ((attestation.state !== 'verified' && attestation.state !== 'dead') || this.stopped)
+			throw new Error('Scheduled attention session cannot be attested')
+		this.assertReservedAdoption(runDb.schedules.requireRun(runId), revision, identity)
+		return commands.recoverAttentionAdoptionCompletion(runId, revision, identity, ownershipRegistered)
+	}
+
+	/** Electron-owned explicit close of an already completed attention adoption. */
+	finalizeCompletedAttentionAdoption(
+		profileId: string,
+		runId: string,
+		reservationRevision: number,
+		identity: AttentionAdoptionIdentity,
+	): Promise<ScheduledRunRecord> {
+		return this.trackAdoption(
+			this.finalizeCompletedAttentionAdoptionInternal(profileId, runId, reservationRevision, identity),
+		)
+	}
+	private async finalizeCompletedAttentionAdoptionInternal(
+		profileId: string,
+		runId: string,
+		reservationRevision: number,
+		identity: AttentionAdoptionIdentity,
+	): Promise<ScheduledRunRecord> {
+		if (this.stopped) throw new Error('Scheduled attention finalization is unavailable')
+		const runtime = this.captureProfile(profileId)
+		const runDb = this.db.forProfile(runtime.profile.id)
+		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
+		const requested = commands.requestCompletedAttentionClose(runId, reservationRevision, identity)
+		return this.finishCancellation(profileId, runDb, commands, requested)
+	}
+
 	/**
 	 * Main-only restart restoration for an already completed Electron owner.
 	 * It accepts only the durable non-secret registry identity and performs the
@@ -272,7 +338,7 @@ export class ScheduledRunService {
 		runId: string,
 		revision: number,
 		identity: AttentionAdoptionIdentity,
-	): Promise<AttentionAttachDescriptor> {
+	): Promise<AttentionRestoreObservation> {
 		return this.trackAdoption(this.restoreCompletedAttentionDescriptorInternal(profileId, runId, revision, identity))
 	}
 	private async restoreCompletedAttentionDescriptorInternal(
@@ -280,7 +346,7 @@ export class ScheduledRunService {
 		runId: string,
 		revision: number,
 		identity: AttentionAdoptionIdentity,
-	): Promise<AttentionAttachDescriptor> {
+	): Promise<AttentionRestoreObservation> {
 		const runtime = this.captureProfile(profileId)
 		const runDb = this.db.forProfile(runtime.profile.id)
 		if (this.stopped) throw new Error('Scheduled attention adoption is unavailable')
@@ -298,8 +364,12 @@ export class ScheduledRunService {
 		const persistedIdentity = parseIdentity(run.processFingerprint)
 		if (!persistedIdentity) throw new Error('Scheduled attention session cannot be attested')
 		const attestation = await this.supervisor.attestLiveSession(profileId, run.sessionId, persistedIdentity)
-		if (attestation.state !== 'verified' || this.stopped)
+		if ((attestation.state !== 'verified' && attestation.state !== 'dead') || this.stopped)
 			throw new Error('Scheduled attention session cannot be attested')
+		const observation: AttentionRestoreObservation =
+			attestation.state === 'verified'
+				? { socketPath: attestation.socketPath, mode: 'attach-existing', redraw: 'winch' }
+				: { state: 'dead' }
 		const current = runDb.schedules.requireRun(runId)
 		if (
 			current.attentionAdoption?.state !== 'completed' ||
@@ -308,7 +378,7 @@ export class ScheduledRunService {
 			current.terminalResolvedAt === null
 		)
 			throw new Error('Scheduled attention adoption is unavailable')
-		return { socketPath: attestation.socketPath, mode: 'attach-existing', redraw: 'winch' }
+		return observation
 	}
 
 	rollbackAttentionAdoption(
@@ -374,7 +444,7 @@ export class ScheduledRunService {
 		})
 	}
 
-	/** Transaction-first reporter hook; API auth is intentionally Task 8. */
+	/** Transaction-first reporter hook; the route authenticates the run-scoped report capability. */
 	async report(
 		profileId: string,
 		runId: string,
@@ -394,19 +464,11 @@ export class ScheduledRunService {
 		return this.closeQuiet(profileId, commands, run)
 	}
 
-	async cancel(profileId: string, runId: string): Promise<ScheduledRunRecord> {
+	async cancel(profileId: string, runId: string, revision: number): Promise<ScheduledRunRecord> {
 		const runDb = this.db.forProfile(profileId)
 		const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
-		const requested = commands.requestCancel(runId, runDb.schedules.requireRun(runId).revision)
-		return this.runTerminalOperation(profileId, runId, async () => {
-			let run = requested
-			const result = await this.teardown(profileId, run)
-			if (result === 'quarantined')
-				return commands.markQuarantined(run.id, run.revision, 'Scheduled teardown ownership is unknown')
-			run = commands.markCancelled(run.id, runDb.schedules.requireRun(run.id).revision)
-			this.releaseReservation(run.id)
-			return run
-		})
+		const requested = commands.requestCancel(runId, revision)
+		return this.finishCancellation(profileId, runDb, commands, requested)
 	}
 
 	/** Recover durable runs on daemon start; never relaunch an existing session. */
@@ -621,7 +683,9 @@ export class ScheduledRunService {
 				{
 					...this.config.solver,
 					agent: run.definitionSnapshot.agent,
-					model: run.definitionSnapshot.model ?? this.config.solver.model,
+					model:
+						run.definitionSnapshot.model ??
+						(run.definitionSnapshot.agent === this.config.solver.agent ? this.config.solver.model : undefined),
 				},
 				run.definitionSnapshot.effort,
 			)
@@ -744,7 +808,9 @@ export class ScheduledRunService {
 				return
 			}
 			if (intent === 'cancel') {
-				await this.cancel(profileId, run.id)
+				if (run.attentionAdoption?.state === 'completed' && run.terminalResolvedAt !== null)
+					await this.finishCancellation(profileId, this.db.forProfile(profileId), commands, run)
+				else await this.cancel(profileId, run.id, run.revision)
 				return
 			}
 			if (intent === 'timeout') {
@@ -777,6 +843,28 @@ export class ScheduledRunService {
 			commands.markInterrupted(run.id, run.revision, 'Scheduled session was dead during reconciliation')
 		}
 		this.releaseReservation(run.id)
+	}
+
+	private finishCancellation(
+		profileId: string,
+		runDb: DB,
+		commands: ScheduleCommands,
+		requested: ScheduledRunRecord,
+	): Promise<ScheduledRunRecord> {
+		if (requested.state === 'cancelled') return Promise.resolve(requested)
+		return this.runTerminalOperation(profileId, requested.id, async () => {
+			let run = runDb.schedules.requireRun(requested.id)
+			if (run.state === 'cancelled') return run
+			const result = await this.teardown(profileId, run)
+			if (result === 'quarantined') {
+				if (run.state !== 'quarantined')
+					run = commands.markQuarantined(run.id, run.revision, 'Scheduled teardown ownership is unknown')
+				return run
+			}
+			run = commands.markCancelled(run.id, runDb.schedules.requireRun(run.id).revision)
+			this.releaseReservation(run.id)
+			return run
+		})
 	}
 
 	private async timeout(profileId: string, commands: ScheduleCommands, run: ScheduledRunRecord): Promise<void> {
@@ -835,18 +923,20 @@ export class ScheduledRunService {
 
 	private skip(runDb: DB, run: ScheduledRunRecord, state: 'skipped_overlap' | 'skipped_capacity'): ScheduledRunRecord {
 		this.releaseReservation(run.id)
-		return runDb.schedules.transitionRun(run.id, run.revision, state, { closedAt: this.now().toISOString() })
+		if (state === 'skipped_overlap') return run
+		return new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled).skipForCapacity(
+			run.id,
+			run.revision,
+		)
 	}
 	private disableAndSkip(
-		runDb: DB,
-		_commands: ScheduleCommands,
+		_runDb: DB,
+		commands: ScheduleCommands,
 		scheduleId: string,
 		run: ScheduledRunRecord,
 		state: 'skipped_profile_archived' | 'skipped_project_disabled',
 	): ScheduledRunRecord {
-		const schedule = runDb.schedules.require(scheduleId)
-		runDb.schedules.setEnabled(schedule.id, schedule.revision, false, state)
-		return runDb.schedules.transitionRun(run.id, run.revision, state, { closedAt: this.now().toISOString() })
+		return commands.disableAndSkipOccurrence(scheduleId, run.id, run.revision, state)
 	}
 	private trackAdoption<T>(operation: Promise<T>): Promise<T> {
 		this.adoptionInFlight.add(operation)
@@ -885,25 +975,12 @@ export class ScheduledRunService {
 			return
 		const identity = { adoptionId: run.attentionAdoption.adoptionId, adopter: run.attentionAdoption.adopter }
 		const binding = { profileId: run.profileId, runId: run.id, revision: run.revision, ...identity }
-		if (this.adoptionGrants.hasRedeemed(binding)) return
+		// Only this process can prove that an unredeemed capability expired. A
+		// grantless pre-restart reservation may already be backed by Electron's
+		// durable registry and must remain fail-closed for recovery.
+		if (!this.adoptionGrants.wasIssued(binding) || this.adoptionGrants.hasRedeemed(binding)) return
 		this.rollbackAdoption(commands, this.db.forProfile(run.profileId), run, identity, 'expired')
-		this.adoptionGrants.revoke({ profileId: run.profileId, runId: run.id, revision: run.revision, ...identity })
-	}
-	private rollbackReservedAdoptionsOnRestart(): void {
-		for (const runtime of this.deps.profiles()) {
-			const runDb = this.db.forProfile(runtime.profile.id)
-			const commands = new ScheduleCommands(runDb.schedules, this.config.scheduledRuns.systemTargetsEnabled)
-			let after: { createdAt: string; id: string } | null = null
-			for (;;) {
-				const page = runDb.schedules.listRecoverableRunsPage(after)
-				if (page.length === 0) break
-				for (const run of page) {
-					after = { createdAt: run.createdAt, id: run.id }
-					if (run.attentionAdoption?.state === 'reserved') commands.recoverAttentionAdoption(run.id)
-				}
-				if (page.length < 500) break
-			}
-		}
+		this.adoptionGrants.revoke(binding)
 	}
 	private captureProfile(profileId: string): ProfileRuntime {
 		const runtime = this.deps.profiles().find(candidate => candidate.profile.id === profileId)

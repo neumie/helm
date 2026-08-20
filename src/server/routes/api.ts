@@ -45,6 +45,7 @@ import {
 	toScheduledAttentionNotificationContract,
 	toScheduledRunContract,
 	toScheduledScheduleContract,
+	toScheduledScheduleEditorContract,
 } from '../../scheduled-runs/contract.js'
 import {
 	SCHEDULED_REPORT_SUMMARY_MAX_BYTES,
@@ -647,13 +648,7 @@ export function apiRoutes(
 		const profileIdSchema = z.string().min(1).max(100)
 		const revisionSchema = z.object({ revision: z.number().int().nonnegative() }).strict()
 		const createScheduleRequestSchema = scheduleCreateSchema.extend({ profileId: profileIdSchema }).strict()
-		// Update never returns an existing prompt. A missing/blank replacement
-		// preserves the profile-bound persisted prompt, then the complete merged
-		// definition is revalidated by the canonical strict update schema below.
-		const updateScheduleRequestSchema = scheduleUpdateSchema
-			.extend({ definition: scheduleUpdateSchema.shape.definition.innerType().partial({ prompt: true }) })
-			.extend({ profileId: profileIdSchema })
-			.strict()
+		const updateScheduleRequestSchema = scheduleUpdateSchema.extend({ profileId: profileIdSchema }).strict()
 		const profileRequestSchema = z.object({ profileId: profileIdSchema }).strict()
 		const notificationRequestSchema = z
 			.object({ profileId: profileIdSchema, revision: z.number().int().nonnegative() })
@@ -886,17 +881,59 @@ export function apiRoutes(
 				}
 			})
 		}
+		api.post('/scheduled-runs/runs/:runId/attention-adoption/recover-completion', scheduledBody, async c => {
+			c.header('Cache-Control', 'no-store')
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, completeAdoptionRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return adoptionUnavailable(c)
+			try {
+				const result = await scheduled.service.recoverAttentionAdoptionCompletion(
+					input.data.profileId,
+					c.req.param('runId'),
+					input.data.revision,
+					{ adoptionId: input.data.adoptionId, adopter: input.data.adopter },
+					input.data.ownershipRegistered,
+				)
+				return c.json({ data: toScheduledRunContract(result) })
+			} catch {
+				return adoptionUnavailable(c)
+			}
+		})
+		api.post('/scheduled-runs/runs/:runId/attention-adoption/finalize', scheduledBody, async c => {
+			c.header('Cache-Control', 'no-store')
+			const denied = requireControl(c)
+			if (denied) return denied
+			const input = await parseBody(c, adoptionRequestSchema)
+			if ('error' in input) return input.error
+			if (!registeredProfile(input.data.profileId)) return adoptionUnavailable(c)
+			try {
+				const result = await scheduled.service.finalizeCompletedAttentionAdoption(
+					input.data.profileId,
+					c.req.param('runId'),
+					input.data.revision,
+					{ adoptionId: input.data.adoptionId, adopter: input.data.adopter },
+				)
+				if (result.state === 'quarantined') return adoptionUnavailable(c)
+				return c.json({ data: toScheduledRunContract(result) })
+			} catch {
+				return adoptionUnavailable(c)
+			}
+		})
 		api.post('/scheduled-runs/runs/:runId/cancel', scheduledBody, async c => {
 			const denied = requireControl(c)
 			if (denied) return denied
-			const input = await parseBody(c, profileRequestSchema)
+			const input = await parseBody(c, notificationRequestSchema)
 			if ('error' in input) return input.error
 			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
 			if (!storeFor(input.data.profileId).getRun(c.req.param('runId')))
 				return c.json({ error: 'Scheduled run not found' }, 404)
 			try {
 				return c.json({
-					data: toScheduledRunContract(await scheduled.service.cancel(input.data.profileId, c.req.param('runId'))),
+					data: toScheduledRunContract(
+						await scheduled.service.cancel(input.data.profileId, c.req.param('runId'), input.data.revision),
+					),
 				})
 			} catch (error) {
 				return scheduledError(c, error, 409)
@@ -920,6 +957,17 @@ export function apiRoutes(
 				data: storeFor(target.profileId).listRuns(c.req.param('id'), parsedLimit.data).map(toScheduledRunContract),
 			})
 		})
+		api.get('/scheduled-runs/:id/editor', c => {
+			c.header('Cache-Control', 'no-store')
+			const denied = requireControl(c)
+			if (denied) return denied
+			const target = queryProfile(c)
+			if ('error' in target) return target.error
+			const schedule = storeFor(target.profileId).get(c.req.param('id'))
+			return schedule
+				? c.json({ data: toScheduledScheduleEditorContract(schedule) })
+				: c.json({ error: 'Scheduled definition not found' }, 404)
+		})
 		api.get('/scheduled-runs/:id', c => {
 			const denied = requireControl(c)
 			if (denied) return denied
@@ -937,15 +985,7 @@ export function apiRoutes(
 			if ('error' in input) return input.error
 			if (!registeredProfile(input.data.profileId)) return c.json({ error: 'Scheduled profile not found' }, 404)
 			try {
-				const { profileId, revision, definition: requestedDefinition, ...schedule } = input.data
-				const current = storeFor(profileId).require(c.req.param('id'))
-				const prompt = requestedDefinition.prompt?.trim() || current.definition.prompt
-				const merged = scheduleUpdateSchema.parse({
-					...schedule,
-					revision,
-					definition: { ...requestedDefinition, prompt },
-				})
-				const { revision: _validatedRevision, ...definition } = merged
+				const { profileId, revision, ...definition } = input.data
 				return c.json({
 					data: toScheduledScheduleContract(commandsFor(profileId).update(c.req.param('id'), revision, definition)),
 				})

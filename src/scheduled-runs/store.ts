@@ -258,7 +258,10 @@ export class ScheduleStore {
 		return (
 			this.db
 				.prepare(
-					`SELECT * FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined')${cursorClause} ORDER BY created_at ASC, id ASC LIMIT ?`,
+					`SELECT * FROM scheduled_runs WHERE profile_id = ?
+					   AND (state IN ('admitted','preparing','launching','running','reported_quiet','closing','cancel_requested','timeout_requested','quarantined')
+					        OR (state = 'needs_attention' AND terminal_resolved_at IS NULL))${cursorClause}
+					 ORDER BY created_at ASC, id ASC LIMIT ?`,
 				)
 				.all(...values) as Record<string, unknown>[]
 		).map(row => this.toRun(row))
@@ -286,7 +289,9 @@ export class ScheduleStore {
 			(
 				this.db
 					.prepare(
-						"SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined')",
+						`SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ?
+						   AND (state IN ('admitted','preparing','launching','running','reported_quiet','closing','cancel_requested','timeout_requested','quarantined')
+						        OR (state = 'needs_attention' AND terminal_resolved_at IS NULL))`,
 					)
 					.get(this.profileId) as { count: number }
 			).count,
@@ -295,7 +300,9 @@ export class ScheduleStore {
 	findActiveRun(scheduleId: string): ScheduledRunRecord | null {
 		const row = this.db
 			.prepare(
-				"SELECT * FROM scheduled_runs WHERE profile_id = ? AND schedule_id = ? AND state IN ('admitted','preparing','launching','running','reported_quiet','closing','needs_attention','cancel_requested','timeout_requested','quarantined') LIMIT 1",
+				`SELECT * FROM scheduled_runs WHERE profile_id = ? AND schedule_id = ?
+				   AND (state IN ('admitted','preparing','launching','running','reported_quiet','closing','cancel_requested','timeout_requested','quarantined')
+				        OR (state = 'needs_attention' AND terminal_resolved_at IS NULL)) LIMIT 1`,
 			)
 			.get(this.profileId, scheduleId) as Record<string, unknown> | undefined
 		return row ? this.toRun(row) : null
@@ -304,7 +311,9 @@ export class ScheduleStore {
 		return Number(
 			(
 				this.db
-					.prepare("SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state = 'needs_attention'")
+					.prepare(
+						"SELECT COUNT(*) AS count FROM scheduled_runs WHERE profile_id = ? AND state = 'needs_attention' AND terminal_resolved_at IS NULL",
+					)
 					.get(this.profileId) as { count: number }
 			).count,
 		)

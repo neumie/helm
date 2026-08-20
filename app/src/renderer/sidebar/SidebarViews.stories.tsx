@@ -37,6 +37,7 @@ type StoryWindow = Window & {
 	__restartDaemonCalls?: number
 	__failNextScheduledAction?: boolean
 	__activeScheduledState?: ScheduledRun['state']
+	__updatedScheduledBody?: ScheduledScheduleInput & { revision: number }
 	/** Scripted main-process recorder results for Terminal Settings browser tests. */
 	__shortcutRecordings?: ShortcutChord[]
 }
@@ -552,6 +553,9 @@ function installBridge(
 				plan: async () => ({ error: 'Preview only' }),
 				sourceTask: async () => ({ data: detail }),
 				listScheduledRuns: async () => ({ data: structuredClone(scheduledRuns) }),
+				loadScheduledRun: async () => ({
+					data: { ...structuredClone(scheduledRuns[0]), prompt: 'Review open pull requests and report blockers.' },
+				}),
 				activeScheduledRuns: async () => ({
 					data: [
 						{
@@ -586,26 +590,29 @@ function installBridge(
 					_profileId: string,
 					_id: string,
 					body: ScheduledScheduleInput & { revision: number },
-				) => ({
-					data: {
-						id: 'schedule-story',
-						profileId: 'work',
-						revision: body.revision + 1,
-						name: body.name,
-						enabled: body.enabled,
-						target: body.definition.target,
-						agent: body.definition.agent,
-						maximumRuntimeMinutes: body.definition.maximumRuntimeMinutes,
-						cron: body.cron,
-						cadenceKind: body.cadenceKind,
-						timezone: body.timezone,
-						nextRunAt: null,
-						disabledReason: null,
-						archivedAt: null,
-						createdAt: NOW,
-						updatedAt: NOW,
-					},
-				}),
+				) => {
+					;(window as StoryWindow).__updatedScheduledBody = structuredClone(body)
+					return {
+						data: {
+							id: 'schedule-story',
+							profileId: 'work',
+							revision: body.revision + 1,
+							name: body.name,
+							enabled: body.enabled,
+							target: body.definition.target,
+							agent: body.definition.agent,
+							maximumRuntimeMinutes: body.definition.maximumRuntimeMinutes,
+							cron: body.cron,
+							cadenceKind: body.cadenceKind,
+							timezone: body.timezone,
+							nextRunAt: null,
+							disabledReason: null,
+							archivedAt: null,
+							createdAt: NOW,
+							updatedAt: NOW,
+						},
+					}
+				},
 				scheduledRunAction: async (_profileId: string, _id: string, action: string) => {
 					const storyWindow = window as StoryWindow
 					if (storyWindow.__failNextScheduledAction) {

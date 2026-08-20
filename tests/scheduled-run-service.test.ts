@@ -9,6 +9,7 @@ import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import type { ProfileRuntime } from '../src/profiles/store.js'
 import type { Drainer } from '../src/queue/drainer.js'
+import { readInvocationDescriptor } from '../src/scheduled-runs/agent-host.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
 import type { DtachSupervisor } from '../src/scheduled-runs/dtach-supervisor.js'
 import type { ScheduledRunRecord } from '../src/scheduled-runs/schema.js'
@@ -133,6 +134,62 @@ test('runNow applies the same durable overlap policy without attempting workspac
 		const skipped = await service.runNow('work', schedule.id)
 		assert.equal(skipped.state, 'skipped_overlap')
 		assert.equal(drainer.reservations.size, 0)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('a schedule that changes agent does not inherit the daemon model from another provider', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules, true)
+		const schedule = commands.create({
+			...scheduleInput,
+			definition: {
+				...definition,
+				target: { kind: 'system', riskAcknowledgement: 'broad-host-access' },
+				agent: 'codex',
+			},
+		})
+		let descriptorPath = ''
+		const identity = {
+			pid: 123,
+			processGroupId: 123,
+			sessionId: 123,
+			startedAt: '2030-01-01T00:00:00.000Z',
+			executable: '/usr/bin/dtach',
+		}
+		const service = new ScheduledRunService(
+			{
+				...config,
+				scheduledRuns: { enabled: true, systemTargetsEnabled: true },
+				solver: { ...config.solver, agent: 'claude', model: 'claude-opus-default' },
+			} as HelmConfig,
+			db,
+			fakeDrainer() as unknown as Drainer,
+			{
+				profiles: () => [
+					{
+						profile: { id: 'work', archivedAt: null, enabledProjects: [] },
+						rootDir: root,
+					} as unknown as ProfileRuntime,
+				],
+				hasResidentLease: () => true,
+				reporterCommand: ['/usr/bin/true'],
+				supervisor: {
+					launch: async (input: Parameters<DtachSupervisor['launch']>[0]) => {
+						descriptorPath = input.hostArgs[2] ?? ''
+						await input.onSpawned(identity)
+						return identity
+					},
+				} as unknown as DtachSupervisor,
+			},
+		)
+		assert.equal((await service.runNow('work', schedule.id)).state, 'running')
+		const descriptor = readInvocationDescriptor(descriptorPath)
+		assert.equal(descriptor.invocation.command, 'codex')
+		assert.equal(descriptor.invocation.args.includes('claude-opus-default'), false)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
@@ -397,7 +454,7 @@ test('quiet report wins over a later cancel while teardown is pending', async ()
 		const quiet = service.report('work', running.id, 'quiet', 'done')
 		assert.equal(db.schedules.requireRun(running.id).state, 'closing')
 		assert.equal(teardownCalls, 1)
-		await assert.rejects(service.cancel('work', running.id), /conflicting terminal intent/)
+		await assert.rejects(service.cancel('work', running.id, running.revision), /conflicting terminal intent/)
 		teardown.resolve('closed')
 		assert.equal((await quiet).state, 'closed_quiet')
 		assert.equal(teardownCalls, 1)

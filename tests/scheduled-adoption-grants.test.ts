@@ -45,6 +45,9 @@ test('attention adoption grants are independent, exact-bound, singular, and burn
 	const expiringGrant = grants.issue(expiring)
 	now += ATTENTION_ADOPTION_GRANT_TTL_MS
 	assert.equal(grants.redeem(expiring, expiringGrant.capability), false)
+	assert.equal(grants.wasIssued(expiring), true, 'expired grants remain attributable to this process until revoked')
+	assert.throws(() => grants.issue(expiring), /already active/, 'expiry cannot mint replacement bearer authority')
 	grants.clear()
+	assert.equal(grants.wasIssued(expiring), false)
 	assert.equal(grants.hasRedeemed(second), false)
 })

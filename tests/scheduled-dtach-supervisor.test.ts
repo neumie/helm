@@ -50,6 +50,7 @@ function readyDeps(getSocket: () => string) {
 			group === master.processGroupId ? [master, host] : group === launcher.processGroupId ? [launcher] : [],
 		findSocketHolders: async () => [master],
 		findSocketDescriptorHolders: async () => [master],
+		resolveExecutable: async () => master.executable,
 	}
 }
 
@@ -193,6 +194,32 @@ test('teardown accepts later same-owned-group descendants and kills TERM-ignorin
 	assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'])
 })
 
+test('teardown accepts a final dead proof after a transient ownership transition', async () => {
+	const signals: NodeJS.Signals[] = []
+	const states: Array<'verified' | 'mismatch' | 'dead'> = ['verified', 'mismatch', 'dead']
+	let unlinks = 0
+	const supervisor = new DtachSupervisor({
+		inspectOwnership: async () => states.shift() ?? 'dead',
+		signalGroup: (_group, signal) => void signals.push(signal),
+		unlink: async () => {
+			unlinks += 1
+		},
+	})
+	assert.equal(
+		await supervisor.teardown(
+			'work',
+			scheduledSessionId('term-transition'),
+			{ ...master, socketHolder: master },
+			diagnostic,
+			0,
+			'/tmp',
+		),
+		'closed',
+	)
+	assert.deepEqual(signals, ['SIGTERM'])
+	assert.equal(unlinks, 1)
+})
+
 test('PID reuse, unknown state, and mismatched ownership quarantine without signal or unlink', async () => {
 	const signals: NodeJS.Signals[] = []
 	const identity = { ...master, socketHolder: master }
@@ -259,6 +286,7 @@ test('readiness timeout cleans up a still-owned bootstrap launcher', async () =>
 		const supervisor = new DtachSupervisor({
 			inspectProcess: async () => launcher,
 			probe: async () => 'dead',
+			resolveExecutable: async () => launcher.executable,
 			spawn: () => ({ pid: launcher.pid, once: () => undefined, unref: () => {} }),
 			signalGroup: (_group, signal) => void signals.push(signal),
 			sleep: async () => {},
@@ -417,6 +445,7 @@ test('launch races socket readiness with asynchronous spawn error', async () => 
 		const supervisor = new DtachSupervisor({
 			inspectProcess: async () => launcher,
 			probe: async () => 'dead',
+			resolveExecutable: async () => launcher.executable,
 			spawn: () => ({
 				pid: launcher.pid,
 				unref: () => {},

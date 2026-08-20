@@ -47,6 +47,8 @@ export interface TerminalWorkspaceFixture {
 	emitTabNext(): void
 	/** Browser-only control: exercises the production mount cleanup boundary. */
 	dispose(): void
+	/** Browser-only control: the next session close is refused before renderer disposal. */
+	refuseNextClose(): void
 	/** Browser-only control: the next durable placement completion waits for settlement. */
 	deferNextPlacement(): void
 	rejectDeferredPlacement(): void
@@ -163,6 +165,7 @@ export function createTerminalWorkspaceFixture(
 	let nextPty = 1
 	let deferredPlacement: { settle: (accepted: boolean) => void } | null = null
 	let deferNextPlacement = false
+	let refuseNextClose = false
 	const tabPreviousListeners = new Set<() => void>()
 	const tabNextListeners = new Set<() => void>()
 	const preferenceListeners = new Set<(snapshot: TerminalPreferencesSnapshot) => void>()
@@ -347,7 +350,11 @@ export function createTerminalWorkspaceFixture(
 			setTitle: () => {},
 			setCustomName: () => {},
 			setActivity: () => {},
-			closeWithGrace: async () => null,
+			closeWithGrace: async () => {
+				if (!refuseNextClose) return null
+				refuseNextClose = false
+				return false
+			},
 			undoClose: async () => false,
 		},
 		terminalTransfer: {
@@ -437,6 +444,9 @@ export function createTerminalWorkspaceFixture(
 			for (const listener of tabNextListeners) listener()
 		},
 		dispose() {},
+		refuseNextClose() {
+			refuseNextClose = true
+		},
 		deferNextPlacement() {
 			deferNextPlacement = true
 		},

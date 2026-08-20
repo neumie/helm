@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import { shouldOpenTerminalLink } from '../external-url'
 import type {
+	GraceClose,
 	HelmApi,
 	RestoredSession,
 	TabGroup,
@@ -1259,16 +1260,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		// Snapshot before releasing a synchronized redraw guard: saveSnapshot skips
 		// a pending replacement frame, preserving the previous complete snapshot.
 		if (tab.ptyId !== null) saveSnapshot(tab)
-		tab.outputGuard.abort()
-		tab.progressTracker.clear()
 		const { title, customName, groupId } = tab
 		const shown = customName ?? title
-		// Soft close (okena-style): main only DETACHES the pty client and arms a
-		// grace timer — the dtach session dies when it fires. The toast's Undo
-		// cancels the timer and reattaches the same session as a new tab.
-		if (tab.ptyId !== null) {
-			void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
-				if (!grace) return // non-persistent pty — already fully killed, nothing to undo
+		const commitClose = (grace: GraceClose | null) => {
+			tab.outputGuard.abort()
+			tab.progressTracker.clear()
+			if (grace) {
 				const toast = showToast({
 					message: `${shown} closed`,
 					ttlMs: grace.graceMs,
@@ -1284,14 +1281,31 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 						},
 					},
 				})
-			})
+			}
+			tab.term.dispose()
+			tab.holder.remove()
+			tab.tabButton.remove()
+			inventoryPlacement(tab, 'remove')
+			runtimeById.delete(tab.visualId)
+			syncEmptyState()
 		}
-		tab.term.dispose()
-		tab.holder.remove()
-		tab.tabButton.remove()
-		inventoryPlacement(tab, 'remove')
-		runtimeById.delete(tab.visualId)
-		syncEmptyState()
+		const refuseClose = () => {
+			if (tab.ptyId === null) {
+				commitClose(null)
+				return
+			}
+			tab.closed = false
+			showToast({ message: 'Terminal stayed open', detail: 'Helm could not save its close checkpoint.' })
+		}
+		if (tab.ptyId === null) {
+			commitClose(null)
+			return
+		}
+		// Do not remove the terminal surface until main has durably admitted close.
+		void helm.sessions
+			.closeWithGrace(tab.ptyId)
+			.then(result => (result === false ? refuseClose() : commitClose(result)))
+			.catch(refuseClose)
 	}
 
 	// ---------- background terminals (park / restore / kill + strip control) ----------
@@ -1328,13 +1342,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tab.closed = true
 		// Same snapshot-before-guard-release rule as closeTab.
 		if (tab.ptyId !== null) saveSnapshot(tab)
-		tab.outputGuard.abort()
-		tab.progressTracker.clear()
 		const { title, customName, groupId } = tab
 		const shown = customName ?? title
-		if (tab.ptyId !== null) {
-			void helm.sessions.closeWithGrace(tab.ptyId).then(grace => {
-				if (!grace) return
+		const commitClose = (grace: GraceClose | null) => {
+			tab.outputGuard.abort()
+			tab.progressTracker.clear()
+			if (grace) {
 				const toast = showToast({
 					message: `${shown} closed`,
 					ttlMs: grace.graceMs,
@@ -1349,15 +1362,31 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 						},
 					},
 				})
-			})
+			}
+			// Exited rows (ptyId null) just remove — the session is already gone.
+			tab.term.dispose()
+			tab.holder.remove()
+			inventoryPlacement(tab, 'remove')
+			runtimeById.delete(tab.visualId)
+			syncEmptyState()
+			updateBackgroundUi()
 		}
-		// Exited rows (ptyId null) just remove — the session is already gone.
-		tab.term.dispose()
-		tab.holder.remove()
-		inventoryPlacement(tab, 'remove')
-		runtimeById.delete(tab.visualId)
-		syncEmptyState()
-		updateBackgroundUi()
+		const refuseClose = () => {
+			if (tab.ptyId === null) {
+				commitClose(null)
+				return
+			}
+			tab.closed = false
+			showToast({ message: 'Terminal stayed open', detail: 'Helm could not save its close checkpoint.' })
+		}
+		if (tab.ptyId === null) {
+			commitClose(null)
+			return
+		}
+		void helm.sessions
+			.closeWithGrace(tab.ptyId)
+			.then(result => (result === false ? refuseClose() : commitClose(result)))
+			.catch(refuseClose)
 	}
 
 	let bgOpen = false

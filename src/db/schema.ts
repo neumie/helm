@@ -836,4 +836,16 @@ CREATE INDEX idx_items_profile_knowledge_snapshot
   ON items(profile_id, knowledge_snapshot_id);
 `,
 	},
+	{
+		// A completed attention adoption transfers terminal ownership to Electron.
+		// It no longer blocks recurrence; explicit Electron close still transitions
+		// the row through cancel_requested to a terminal lifecycle state.
+		version: 36,
+		sql: `
+DROP INDEX IF EXISTS idx_scheduled_runs_one_active;
+CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
+  WHERE state IN ('admitted', 'preparing', 'launching', 'running', 'reported_quiet', 'closing', 'cancel_requested', 'timeout_requested', 'quarantined')
+     OR (state = 'needs_attention' AND terminal_resolved_at IS NULL);
+`,
+	},
 ]

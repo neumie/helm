@@ -562,6 +562,16 @@ export function isScheduledSessionOwnership(value: unknown): value is ScheduledS
 	)
 }
 
+function sameScheduledOwnership(a: ScheduledSessionOwnership, b: ScheduledSessionOwnership): boolean {
+	return (
+		a.profileId === b.profileId &&
+		a.runId === b.runId &&
+		a.revision === b.revision &&
+		a.adoptionId === b.adoptionId &&
+		a.adopter === b.adopter
+	)
+}
+
 /** A persisted group can be disclosed independently in either terminal surface. */
 export type TabGroupSurface = 'strip' | 'background'
 
@@ -649,6 +659,8 @@ export interface SessionMeta {
 	backing?: SessionBacking
 	/** Required for run-owned scheduled sessions; intentionally non-secret. */
 	scheduledOwnership?: ScheduledSessionOwnership
+	/** Durable explicit-close checkpoint; startup retries finalization instead of reattaching. */
+	scheduledClosePending?: boolean
 	/** Protocol-observed activity retained for an inactive destination profile. */
 	agentRunning?: boolean
 	agentAttention?: boolean
@@ -723,6 +735,7 @@ export class SessionRegistry {
 					parked,
 					backing,
 					scheduledOwnership,
+					scheduledClosePending,
 					agentRunning,
 					agentAttention,
 					groupId,
@@ -750,6 +763,7 @@ export class SessionRegistry {
 									: {}),
 							}
 						: {}),
+					...(backing === 'run-owned' && scheduledClosePending === true ? { scheduledClosePending: true } : {}),
 					...(agentRunning === true ? { agentRunning: true } : {}),
 					...(agentAttention === true ? { agentAttention: true } : {}),
 					...(typeof groupId === 'string' && this.#groups[groupId] ? { groupId } : {}),
@@ -938,7 +952,10 @@ export class SessionRegistry {
 		const meta = this.#data[sessionId]
 		if (!meta || (meta.backing ?? 'ordinary') === backing) return
 		meta.backing = backing === 'run-owned' ? backing : undefined
-		if (backing === 'ordinary') meta.scheduledOwnership = undefined
+		if (backing === 'ordinary') {
+			meta.scheduledOwnership = undefined
+			meta.scheduledClosePending = undefined
+		}
 		this.#scheduleSave()
 	}
 
@@ -961,9 +978,26 @@ export class SessionRegistry {
 		return false
 	}
 
-	removeRunOwned(sessionId: string): boolean {
+	markRunOwnedClosePending(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
+		const existing = this.#data[sessionId]
+		if (
+			existing?.backing !== 'run-owned' ||
+			!existing.scheduledOwnership ||
+			!sameScheduledOwnership(existing.scheduledOwnership, ownership)
+		)
+			return false
+		if (existing.scheduledClosePending === true) return true
+		existing.scheduledClosePending = true
+		if (this.flushSync()) return true
+		existing.scheduledClosePending = undefined
+		return false
+	}
+
+	removeRunOwned(sessionId: string, ownership?: ScheduledSessionOwnership): boolean {
 		const existing = this.#data[sessionId]
 		if (existing?.backing !== 'run-owned') return true
+		if (ownership && (!existing.scheduledOwnership || !sameScheduledOwnership(existing.scheduledOwnership, ownership)))
+			return false
 		const previousGroups = structuredClone(this.#groups)
 		delete this.#data[sessionId]
 		this.#removeEmptyGroups()

@@ -216,7 +216,7 @@ function fixture() {
 	}
 }
 
-test('migrations 34-35 preserve exact evidence, block unfrozen candidates, and bind current attempts', () => {
+test('migrations 34-36 preserve exact evidence, block unfrozen candidates, and bind current attempts', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-knowledge-migration-'))
 	const dbPath = join(root, 'helm.db')
 	try {
@@ -262,7 +262,7 @@ test('migrations 34-35 preserve exact evidence, block unfrozen candidates, and b
 		const after = new Database(dbPath, { readonly: true })
 		assert.equal(
 			(after.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			35,
+			36,
 		)
 		const names = new Set(
 			(

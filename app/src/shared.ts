@@ -202,9 +202,10 @@ export interface SessionsApi {
 	setActivity(sessionId: string, activity: { agentRunning: boolean; agentAttention: boolean }): void
 	/**
 	 * Soft-close a tab: detaches the pty client now, kills the session only
-	 * after the grace period. Null when the pty had no session (already dead).
+	 * after the grace period. Null means already dead; false refuses close when
+	 * durable ownership cannot be checkpointed.
 	 */
-	closeWithGrace(ptyId: number): Promise<GraceClose | null>
+	closeWithGrace(ptyId: number): Promise<GraceClose | null | false>
 	/** Cancel a pending grace kill. True = session alive, reattach it. */
 	undoClose(sessionId: string): Promise<boolean>
 }

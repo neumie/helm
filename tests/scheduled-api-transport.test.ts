@@ -94,10 +94,9 @@ function withScheduledApi(
 			if (!run) throw new Error('test run missing')
 			return run
 		},
-		cancel: async (profileId: string, runId: string) => {
+		cancel: async (profileId: string, runId: string, revision: number) => {
 			const commands = new ScheduleCommands(db.forProfile(profileId).schedules)
-			const run = db.forProfile(profileId).schedules.requireRun(runId)
-			return commands.requestCancel(run.id, run.revision)
+			return commands.requestCancel(runId, revision)
 		},
 		report: async (profileId: string, runId: string, status: 'quiet' | 'needs_attention', summary: string) => {
 			reportCalls.push(`${profileId}:${runId}:${status}:${summary}`)
@@ -149,6 +148,19 @@ function withScheduledApi(
 				adoptionGrants,
 				ownershipRegistered,
 			),
+		recoverAttentionAdoptionCompletion: async (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+			ownershipRegistered: true,
+		) =>
+			new ScheduleCommands(db.forProfile(profileId).schedules).recoverAttentionAdoptionCompletion(
+				runId,
+				revision,
+				identity,
+				ownershipRegistered,
+			),
 		rollbackAttentionAdoption: (
 			profileId: string,
 			runId: string,
@@ -161,6 +173,16 @@ function withScheduledApi(
 				identity,
 				'client',
 			),
+		finalizeCompletedAttentionAdoption: async (
+			profileId: string,
+			runId: string,
+			revision: number,
+			identity: { adoptionId: string; adopter: string },
+		) => {
+			const commands = new ScheduleCommands(db.forProfile(profileId).schedules)
+			const requested = commands.requestCompletedAttentionClose(runId, revision, identity)
+			return commands.markCancelled(runId, requested.revision)
+		},
 	} as unknown as ScheduledRunService
 	const queue = { getStatus: () => ({ active: 0 }), wake() {} }
 	const api = apiRoutes(
@@ -236,7 +258,26 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 		})
 		assert.equal(disabled.status, 200)
 		const disabledSchedule = (await disabled.json()) as { data: { id: string; revision: number } }
-		const { prompt: _prompt, ...redactedDefinition } = scheduleInput.definition
+		assert.equal((await api.request(`/scheduled-runs/${schedule.data.id}/editor?profileId=${profileId}`)).status, 401)
+		const editor = await api.request(`/scheduled-runs/${schedule.data.id}/editor?profileId=${profileId}`, {
+			headers: requestHeaders(),
+		})
+		assert.equal(editor.status, 200)
+		assert.equal(editor.headers.get('cache-control'), 'no-store')
+		assert.equal(((await editor.json()) as { data: { prompt: string } }).data.prompt, scheduleInput.definition.prompt)
+		const { prompt: _prompt, ...promptlessDefinition } = scheduleInput.definition
+		const promptlessUpdate = await api.request(`/scheduled-runs/${schedule.data.id}`, {
+			method: 'PUT',
+			headers: requestHeaders(),
+			body: JSON.stringify({
+				profileId,
+				revision: disabledSchedule.data.revision,
+				...scheduleInput,
+				definition: promptlessDefinition,
+			}),
+		})
+		assert.equal(promptlessUpdate.status, 400)
+		const replacementPrompt = 'Review only the release workflow.'
 		const updated = await api.request(`/scheduled-runs/${schedule.data.id}`, {
 			method: 'PUT',
 			headers: requestHeaders(),
@@ -244,7 +285,7 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 				profileId,
 				revision: disabledSchedule.data.revision,
 				...scheduleInput,
-				definition: redactedDefinition,
+				definition: { ...scheduleInput.definition, prompt: replacementPrompt },
 				name: 'Updated review',
 				enabled: false,
 			}),
@@ -253,7 +294,7 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 		const updatedSchedule = (await updated.json()) as { data: { revision: number; name: string } }
 		assert.equal(updatedSchedule.data.name, 'Updated review')
 		const persistedDefinition = db.forProfile(profileId).schedules.require(schedule.data.id).definition
-		assert.equal(persistedDefinition.prompt, scheduleInput.definition.prompt)
+		assert.equal(persistedDefinition.prompt, replacementPrompt)
 		assert.equal(persistedDefinition.model, scheduleInput.definition.model)
 		assert.equal(persistedDefinition.effort, scheduleInput.definition.effort)
 		assert.equal(persistedDefinition.target.kind === 'project' && persistedDefinition.target.baseRef, 'release')
@@ -261,8 +302,11 @@ test('scheduled control routes authenticate, revision-guard CRUD, and reject dis
 			headers: requestHeaders(),
 		})
 		assert.equal(detail.status, 200)
+		assert.equal('prompt' in ((await detail.json()) as { data: Record<string, unknown> }).data, false)
 		const list = await api.request(`/scheduled-runs?profileId=${profileId}`, { headers: requestHeaders() })
-		assert.equal(((await list.json()) as { data: unknown[] }).data.length, 1)
+		const listed = (await list.json()) as { data: Array<Record<string, unknown>> }
+		assert.equal(listed.data.length, 1)
+		assert.equal('prompt' in listed.data[0], false)
 		const history = await api.request(`/scheduled-runs/${schedule.data.id}/history?profileId=${profileId}`, {
 			headers: requestHeaders(),
 		})
@@ -534,10 +578,17 @@ test('scheduled transport enforces strict bodies, UTF-8 report bounds, and unamb
 			body: JSON.stringify({ profileId: profileIds[0] }),
 		})
 		assert.equal(runNow.status, 200)
+		const current = db.forProfile(profileIds[0]).schedules.requireRun('work-only')
+		const staleCancel = await api.request('/scheduled-runs/runs/work-only/cancel', {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId: profileIds[0], revision: current.revision - 1 }),
+		})
+		assert.equal(staleCancel.status, 409)
 		const cancelled = await api.request('/scheduled-runs/runs/work-only/cancel', {
 			method: 'POST',
 			headers: requestHeaders(),
-			body: JSON.stringify({ profileId: profileIds[0] }),
+			body: JSON.stringify({ profileId: profileIds[0], revision: current.revision }),
 		})
 		assert.equal(cancelled.status, 200)
 		assert.equal(((await cancelled.json()) as { data: { state: string } }).data.state, 'cancel_requested')
@@ -726,6 +777,26 @@ test('attention adoption transport is control-authenticated, no-store, replay-sa
 		const completion = (await completed.json()) as { data: Record<string, unknown> }
 		for (const sensitive of ['socketPath', 'capability', 'processFingerprint', 'attentionAdoption'])
 			assert.equal(sensitive in completion.data, false)
+		const recovered = await api.request(`/scheduled-runs/runs/${run.id}/attention-adoption/recover-completion`, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({
+				profileId,
+				revision: reserved.data.revision,
+				...identity,
+				ownershipRegistered: true,
+			}),
+		})
+		assert.equal(recovered.status, 200)
+		assert.equal(recovered.headers.get('cache-control'), 'no-store')
+		const finalized = await api.request(`/scheduled-runs/runs/${run.id}/attention-adoption/finalize`, {
+			method: 'POST',
+			headers: requestHeaders(),
+			body: JSON.stringify({ profileId, revision: reserved.data.revision, ...identity }),
+		})
+		assert.equal(finalized.status, 200)
+		assert.equal(finalized.headers.get('cache-control'), 'no-store')
+		assert.equal(((await finalized.json()) as { data: { state: string } }).data.state, 'cancelled')
 	})
 })
 

@@ -59,6 +59,7 @@ import type {
 	RunContextSave,
 	ScheduledRun,
 	ScheduledSchedule,
+	ScheduledScheduleEditor,
 } from './shared-helm'
 
 const POLL_MS = 2500
@@ -791,34 +792,44 @@ export class HelmBridge {
 		ipcMain.handle('daemon:scheduled:list', async (_e, profileId: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await controlRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`)
-			return stale(token) ?? result
+			return controlRead<ScheduledSchedule[]>(`/scheduled-runs?profileId=${id(profileId)}`, token)
+		})
+		ipcMain.handle('daemon:scheduled:load', async (_e, profileId: unknown, rawId: unknown, token: unknown) => {
+			const denied = scheduledProfile(profileId, token)
+			if (denied) return denied
+			return controlRead<ScheduledScheduleEditor>(
+				`/scheduled-runs/${id(rawId)}/editor?profileId=${id(profileId)}`,
+				token,
+			)
 		})
 		ipcMain.handle('daemon:scheduled:active', async (_e, profileId: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await controlRead<ScheduledRun[]>(`/scheduled-runs/active?profileId=${id(profileId)}`)
-			return stale(token) ?? result
+			return controlRead<ScheduledRun[]>(`/scheduled-runs/active?profileId=${id(profileId)}`, token)
 		})
 		ipcMain.handle('daemon:scheduled:create', async (_e, profileId: unknown, body: unknown, token: unknown) => {
 			const denied = scheduledProfile(profileId, token)
 			if (denied) return denied
-			const result = await controlWrite<ScheduledSchedule>('POST', '/scheduled-runs', {
-				...(body as object),
-				profileId,
-			})
-			return stale(token) ?? result
+			return controlWrite<ScheduledSchedule>(
+				'POST',
+				'/scheduled-runs',
+				{ ...(body as object), profileId },
+				REQUEST_TIMEOUT_MS,
+				token,
+			)
 		})
 		ipcMain.handle(
 			'daemon:scheduled:update',
 			async (_e, profileId: unknown, rawId: unknown, body: unknown, token: unknown) => {
 				const denied = scheduledProfile(profileId, token)
 				if (denied) return denied
-				const result = await controlWrite<ScheduledSchedule>('PUT', `/scheduled-runs/${id(rawId)}`, {
-					...(body as object),
-					profileId,
-				})
-				return stale(token) ?? result
+				return controlWrite<ScheduledSchedule>(
+					'PUT',
+					`/scheduled-runs/${id(rawId)}`,
+					{ ...(body as object), profileId },
+					REQUEST_TIMEOUT_MS,
+					token,
+				)
 			},
 		)
 		ipcMain.handle(
@@ -830,8 +841,7 @@ export class HelmBridge {
 					return { error: 'Unknown scheduled action.', status: 400 }
 				const path = action === 'run' ? `/scheduled-runs/${id(rawId)}/run` : `/scheduled-runs/${id(rawId)}/${action}`
 				const body = action === 'run' ? { profileId } : { profileId, revision }
-				const result = await controlWrite<ScheduledSchedule | ScheduledRun>('POST', path, body)
-				return stale(token) ?? result
+				return controlWrite<ScheduledSchedule | ScheduledRun>('POST', path, body, REQUEST_TIMEOUT_MS, token)
 			},
 		)
 		ipcMain.handle(
@@ -840,10 +850,10 @@ export class HelmBridge {
 				const denied = scheduledProfile(profileId, token)
 				if (denied) return denied
 				const safeLimit = typeof limit === 'number' && Number.isInteger(limit) ? Math.min(100, Math.max(1, limit)) : 20
-				const result = await controlRead<ScheduledRun[]>(
+				return controlRead<ScheduledRun[]>(
 					`/scheduled-runs/${id(rawId)}/history?profileId=${id(profileId)}&limit=${safeLimit}`,
+					token,
 				)
-				return stale(token) ?? result
 			},
 		)
 		ipcMain.handle(
@@ -853,10 +863,13 @@ export class HelmBridge {
 				if (denied) return denied
 				if (typeof runId !== 'string' || typeof revision !== 'number' || !Number.isInteger(revision))
 					return { error: 'Invalid scheduled run identity.', status: 400 }
-				const result = await controlWrite<ScheduledRun>('POST', `/scheduled-runs/runs/${id(runId)}/cancel`, {
-					profileId,
-				})
-				return stale(token) ?? result
+				return controlWrite<ScheduledRun>(
+					'POST',
+					`/scheduled-runs/runs/${id(runId)}/cancel`,
+					{ profileId, revision },
+					REQUEST_TIMEOUT_MS,
+					token,
+				)
 			},
 		)
 	}

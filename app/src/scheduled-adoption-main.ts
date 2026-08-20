@@ -20,9 +20,12 @@ export interface ScheduledAdoptionDaemon {
 	reserve(input: ScheduledSessionOwnership): Promise<{ revision: number; capability: string }>
 	descriptor(input: ScheduledSessionOwnership & { capability: string }): Promise<ScheduledAttachDescriptor>
 	complete(input: ScheduledSessionOwnership): Promise<void>
+	/** Reconcile exact durable registry evidence after daemon-local grant loss. */
+	recoverCompletion(input: ScheduledSessionOwnership): Promise<void>
 	rollback(input: ScheduledSessionOwnership): Promise<void>
+	finalize(input: ScheduledSessionOwnership): Promise<void>
 	/** Re-attests a completed durable owner; this privileged response never crosses preload. */
-	restoreDescriptor(input: ScheduledSessionOwnership): Promise<ScheduledAttachDescriptor>
+	restoreDescriptor(input: ScheduledSessionOwnership): Promise<ScheduledAttachDescriptor | { state: 'dead' }>
 }
 
 export function scheduledDtachAttachArgs(socketPath: string): string[] {
@@ -41,8 +44,14 @@ export interface ScheduledAdoptionAttach {
 
 export interface ScheduledAdoptionRegistry {
 	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean
-	removeRunOwned(sessionId: string): boolean
-	listRunOwned(): Array<{ sessionId: string; ownership: ScheduledSessionOwnership; restored: RestoredSession }>
+	markRunOwnedClosePending(sessionId: string, ownership: ScheduledSessionOwnership): boolean
+	removeRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean
+	listRunOwned(): Array<{
+		sessionId: string
+		ownership: ScheduledSessionOwnership
+		closePending: boolean
+		restored: RestoredSession
+	}>
 }
 
 export interface ScheduledAdoptionRenderer {
@@ -78,9 +87,11 @@ export class ScheduledAttentionAdoptionCoordinator {
 		let registered = false
 		let ptyId: number | null = null
 		let sessionId: string | null = null
+		let effectiveOwnership = ownership
 		try {
 			const reservation = await this.options.daemon.reserve(ownership)
 			const reserved = { ...ownership, revision: reservation.revision }
+			effectiveOwnership = reserved
 			if (!this.current(reserved, input.profileToken)) return this.rollback(reserved, null, null, false)
 			const descriptor = await this.options.daemon.descriptor({ ...reserved, capability: reservation.capability })
 			if (!this.validDescriptor(descriptor) || !this.current(reserved, input.profileToken))
@@ -102,8 +113,28 @@ export class ScheduledAttentionAdoptionCoordinator {
 				return { status: 'ambiguous', sessionId, ptyId }
 			}
 		} catch {
-			return this.rollback(ownership, sessionId, ptyId, registered)
+			return this.rollback(effectiveOwnership, sessionId, ptyId, registered)
 		}
+	}
+
+	/** Durable explicit close; interrupted finalization is retried from registry evidence. */
+	async close(
+		sessionId: string,
+		ptyId: number,
+		ownership: ScheduledSessionOwnership,
+	): Promise<'closed' | 'pending' | 'rejected'> {
+		if (!this.options.registry.markRunOwnedClosePending(sessionId, ownership)) return 'rejected'
+		this.options.attach.detach(ptyId)
+		return this.finalizeClose(sessionId, ownership)
+	}
+
+	/** A self-exiting adopted client follows the same durable finalization path without another detach. */
+	async terminalExited(
+		sessionId: string,
+		ownership: ScheduledSessionOwnership,
+	): Promise<'closed' | 'pending' | 'rejected'> {
+		if (!this.options.registry.markRunOwnedClosePending(sessionId, ownership)) return 'rejected'
+		return this.finalizeClose(sessionId, ownership)
 	}
 
 	/** Reattach completed durable ownership after an Electron restart. */
@@ -111,8 +142,16 @@ export class ScheduledAttentionAdoptionCoordinator {
 		for (const entry of this.options.registry.listRunOwned()) {
 			const { ownership, sessionId, restored: safe } = entry
 			if (!this.current(ownership, profileToken)) return
+			if (entry.closePending) {
+				await this.finalizeClose(sessionId, ownership)
+				continue
+			}
 			try {
 				const descriptor = await this.options.daemon.restoreDescriptor(ownership)
+				if ('state' in descriptor) {
+					await this.terminalExited(sessionId, ownership)
+					continue
+				}
 				if (!this.validDescriptor(descriptor) || !this.current(ownership, profileToken)) continue
 				const { ptyId } = await this.options.attach.attach({ sessionId, ownership, descriptor })
 				if (!this.current(ownership, profileToken)) {
@@ -129,12 +168,25 @@ export class ScheduledAttentionAdoptionCoordinator {
 
 	/** Retry a retained post-complete ambiguity without reattaching or deleting evidence. */
 	async recoverAmbiguous(): Promise<void> {
-		for (const { ownership } of this.options.registry.listRunOwned()) {
+		for (const { ownership, sessionId, closePending } of this.options.registry.listRunOwned()) {
 			try {
-				await this.options.daemon.complete(ownership)
+				if (closePending) await this.finalizeClose(sessionId, ownership)
+				else await this.options.daemon.recoverCompletion(ownership)
 			} catch {
 				// The daemon may be down; exact durable evidence remains for next start.
 			}
+		}
+	}
+
+	private async finalizeClose(sessionId: string, ownership: ScheduledSessionOwnership): Promise<'closed' | 'pending'> {
+		try {
+			// The client may have closed while the original completion response was
+			// ambiguous. Reconcile exact durable ownership before teardown.
+			await this.options.daemon.recoverCompletion(ownership)
+			await this.options.daemon.finalize(ownership)
+			return this.options.registry.removeRunOwned(sessionId, ownership) ? 'closed' : 'pending'
+		} catch {
+			return 'pending'
 		}
 	}
 
@@ -168,7 +220,7 @@ export class ScheduledAttentionAdoptionCoordinator {
 		registered: boolean,
 	): Promise<ScheduledAdoptionResult> {
 		if (ptyId !== null) this.options.attach.detach(ptyId)
-		if (registered && sessionId !== null && !this.options.registry.removeRunOwned(sessionId)) {
+		if (registered && sessionId !== null && !this.options.registry.removeRunOwned(sessionId, ownership)) {
 			// The durable registry may still claim ownership. Keep the daemon
 			// reservation unresolved so startup can safely reconcile that evidence.
 			return { status: 'ambiguous', sessionId, ptyId }

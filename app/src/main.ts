@@ -399,6 +399,7 @@ interface SessionSupport {
 
 let sessionSupport: SessionSupport | null | undefined
 let scheduledAdoption: ScheduledAttentionAdoptionCoordinator | null = null
+let scheduledRestoreChain: Promise<void> = Promise.resolve()
 let scheduledAttentionNotifier: ScheduledAttentionNotifier | null = null
 let terminalTransferMain: TerminalTransferMainAdapter | null = null
 let terminalTransferRecovery: Promise<void> = Promise.resolve()
@@ -713,6 +714,19 @@ function captureScreenshot(win: BrowserWindow, outPath: string): void {
 	})
 }
 
+function restoreScheduledAdoptions(profileToken: string): void {
+	const coordinator = scheduledAdoption
+	if (!coordinator) return
+	// Every renderer generation queues behind completion recovery. A stale token
+	// simply causes that generation's restore to no-op before the next one runs.
+	scheduledRestoreChain = scheduledRestoreChain
+		.then(async () => {
+			await coordinator.recoverAmbiguous()
+			await coordinator.restore(profileToken)
+		})
+		.catch(error => console.warn('[helm] scheduled terminal restoration deferred:', error))
+}
+
 function createWindow(): BrowserWindow {
 	// Screenshot runs use fixed bounds (default or --window-size) for
 	// deterministic captures.
@@ -807,7 +821,7 @@ function createWindow(): BrowserWindow {
 	// A helm:// deep link may land before the renderer is up (cold start).
 	win.webContents.on('did-finish-load', () => {
 		flushPendingOpenItem(win, rendererProfileEpoch)
-		if (!profileSwitchAttestationMode) void scheduledAdoption?.restore(sessionProfileToken())
+		if (!profileSwitchAttestationMode) restoreScheduledAdoptions(sessionProfileToken())
 	})
 	// Native macOS three-finger swipe (System Settings "Swipe between pages"):
 	// swiping right = back, left = forward — same channel as the Go menu.
@@ -1430,7 +1444,10 @@ async function attachScheduledPty(input: {
 	proc.onExit(({ exitCode }) => {
 		const selfExit = ptys.has(ptyId)
 		ptys.delete(ptyId)
-		if (selfExit) sendToLiveRenderer(mainWindow?.webContents, 'pty:exit', ptyId, exitCode, token)
+		if (selfExit) {
+			if (entry.ready) void scheduledAdoption?.terminalExited(input.sessionId, input.ownership)
+			sendToLiveRenderer(mainWindow?.webContents, 'pty:exit', ptyId, exitCode, token)
+		}
 	})
 	return { ptyId }
 }
@@ -1448,15 +1465,24 @@ function detachScheduledPty(ptyId: number): void {
 
 const scheduledRegistryAdapter = {
 	registerRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
-		return getSessionSupport()?.registry.registerRunOwned(sessionId, ownership) ?? false
+		return transferStorageForProfile(ownership.profileId)?.registry.registerRunOwned(sessionId, ownership) ?? false
 	},
-	removeRunOwned(sessionId: string): boolean {
-		return getSessionSupport()?.registry.removeRunOwned(sessionId) ?? false
+	markRunOwnedClosePending(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
+		return (
+			transferStorageForProfile(ownership.profileId)?.registry.markRunOwnedClosePending(sessionId, ownership) ?? false
+		)
+	},
+	removeRunOwned(sessionId: string, ownership: ScheduledSessionOwnership): boolean {
+		const storage = transferStorageForProfile(ownership.profileId)
+		if (!storage?.registry.removeRunOwned(sessionId, ownership)) return false
+		storage.buffers.remove(sessionId)
+		return true
 	},
 	listRunOwned() {
 		return (getSessionSupport()?.registry.listRunOwned() ?? []).map(entry => ({
 			sessionId: entry.sessionId,
 			ownership: entry.ownership,
+			closePending: entry.meta.scheduledClosePending === true,
 			restored: {
 				sessionId: entry.sessionId,
 				title: entry.meta.lastTitle ?? null,
@@ -1754,17 +1780,23 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 // session is killed for real only when the timer fires. Returns the grace
 // window so the renderer can show an Undo toast, or null when the pty had no
 // session (non-persistent fallback → the client kill was the real kill).
-ipcMain.handle('session:close-with-grace', (_event, id: number, profileToken: unknown) => {
-	if (terminalTransferMain?.isBusy() || !sessionIpcGate.allows(profileToken)) return null
+ipcMain.handle('session:close-with-grace', async (_event, id: number, profileToken: unknown) => {
+	if (terminalTransferMain?.isBusy() || !sessionIpcGate.allows(profileToken)) return false
 	const entry = ptys.get(id)
-	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return null
+	if (!entry) return null
+	if (terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return false
+	if (entry.sessionId && entry.backing === 'run-owned') {
+		const ownership = getSessionSupport()?.registry.get(entry.sessionId)?.scheduledOwnership
+		if (!ownership || !scheduledAdoption) return false
+		return (await scheduledAdoption.close(entry.sessionId, id, ownership)) === 'rejected' ? false : null
+	}
 	ptys.delete(id)
 	try {
 		entry.proc.kill()
 	} catch {
 		// already exited
 	}
-	if (!entry.sessionId || entry.backing === 'run-owned') return null
+	if (!entry.sessionId) return null
 	graceCloseSupports.set(entry.sessionId, getSessionSupport())
 	graceCloser.schedule(entry.sessionId)
 	return { sessionId: entry.sessionId, graceMs: graceCloser.graceMs }
@@ -2355,6 +2387,15 @@ void app.whenReady().then(async () => {
 					)
 					if (!result.data) throw new Error('Scheduled attention adoption is unavailable')
 				},
+				recoverCompletion: async ownership => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/recover-completion`,
+						{ ...ownership, ownershipRegistered: true },
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention recovery is unavailable')
+				},
 				rollback: async ownership => {
 					const token = await readLocalControlToken()
 					await helmBridge.scheduledAttention(
@@ -2363,13 +2404,20 @@ void app.whenReady().then(async () => {
 						token,
 					)
 				},
+				finalize: async ownership => {
+					const token = await readLocalControlToken()
+					const result = await helmBridge.scheduledAttention(
+						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/finalize`,
+						ownership,
+						token,
+					)
+					if (!result.data) throw new Error('Scheduled attention finalization is unavailable')
+				},
 				restoreDescriptor: async ownership => {
 					const token = await readLocalControlToken()
-					const result = await helmBridge.scheduledAttention<{
-						socketPath: string
-						mode: 'attach-existing'
-						redraw: 'winch'
-					}>(
+					const result = await helmBridge.scheduledAttention<
+						{ socketPath: string; mode: 'attach-existing'; redraw: 'winch' } | { state: 'dead' }
+					>(
 						`/scheduled-runs/runs/${encodeURIComponent(ownership.runId)}/attention-adoption/completed-owner/attach-descriptor`,
 						ownership,
 						token,
@@ -2384,7 +2432,6 @@ void app.whenReady().then(async () => {
 			newSessionId: sessions.newSessionId,
 			isCurrent: (profileId, token) => profileId === sessionProfileId && acceptsSessionIpcToken(token),
 		})
-		void scheduledAdoption.recoverAmbiguous()
 	}
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
 	if (!profileSwitchAttestationMode) {

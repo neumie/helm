@@ -7,7 +7,7 @@ export interface ScheduledScheduleContract {
 	name: string
 	enabled: boolean
 	target: { kind: 'project'; projectSlug: string; baseRef?: string } | { kind: 'system' }
-	/** Definition facts needed for a lossless editor; prompt remains server-only. */
+	/** Definition facts shared by list and editor projections; only the editor projection adds the prompt. */
 	agent: ScheduleRecord['definition']['agent']
 	model?: string
 	effort?: ScheduleRecord['definition']['effort']
@@ -20,6 +20,11 @@ export interface ScheduledScheduleContract {
 	archivedAt: string | null
 	createdAt: string
 	updatedAt: string
+}
+
+/** Narrow no-store editor projection; ordinary schedule and run contracts remain prompt-free. */
+export interface ScheduledScheduleEditorContract extends ScheduledScheduleContract {
+	prompt: string
 }
 
 export interface ScheduledRunContract {
@@ -77,6 +82,10 @@ export function toScheduledScheduleContract(schedule: ScheduleRecord): Scheduled
 		createdAt: schedule.createdAt,
 		updatedAt: schedule.updatedAt,
 	}
+}
+
+export function toScheduledScheduleEditorContract(schedule: ScheduleRecord): ScheduledScheduleEditorContract {
+	return { ...toScheduledScheduleContract(schedule), prompt: schedule.definition.prompt }
 }
 
 export interface ScheduledAttentionNotificationContract {

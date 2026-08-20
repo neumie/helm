@@ -536,9 +536,9 @@ export interface DaemonRestartResult {
 	applied: boolean
 }
 
-// Scheduled-run contracts copied from src/scheduled-runs/contract.ts. They are
-// deliberately display-safe: prompts, capabilities, paths, PIDs, and adoption
-// identities never cross the daemon/main/renderer boundary.
+// Scheduled-run contracts copied from src/scheduled-runs/contract.ts. Ordinary
+// list/history projections stay display-safe; only the no-store editor contract
+// carries a prompt through the profile-fenced local-control bridge.
 export interface ScheduledSchedule {
 	id: string
 	profileId: string
@@ -558,6 +558,10 @@ export interface ScheduledSchedule {
 	archivedAt: string | null
 	createdAt: string
 	updatedAt: string
+}
+
+export interface ScheduledScheduleEditor extends ScheduledSchedule {
+	prompt: string
 }
 
 export type ScheduledRunState =
@@ -700,6 +704,7 @@ export interface DaemonApi {
 	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
 	poll(): Promise<HelmResult<{ message: string }>>
 	listScheduledRuns(profileId: string): Promise<HelmResult<ScheduledSchedule[]>>
+	loadScheduledRun(profileId: string, id: string): Promise<HelmResult<ScheduledScheduleEditor>>
 	activeScheduledRuns(profileId: string): Promise<HelmResult<ScheduledRun[]>>
 	createScheduledRun(profileId: string, body: ScheduledScheduleInput): Promise<HelmResult<ScheduledSchedule>>
 	updateScheduledRun(

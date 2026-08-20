@@ -5,6 +5,7 @@ import type {
 	ConfigSaveResult,
 	ScheduledRun,
 	ScheduledSchedule,
+	ScheduledScheduleEditor,
 	ScheduledScheduleInput,
 } from '../../shared-helm'
 import { showToast } from '../toast'
@@ -29,6 +30,18 @@ import {
 
 const HISTORY_LIMIT = 20
 const ACTIVE_REFRESH_MS = 5_000
+const HISTORY_REFRESH_STATES = new Set<ScheduledRun['state']>([
+	'admitted',
+	'preparing',
+	'launching',
+	'running',
+	'needs_attention',
+	'reported_quiet',
+	'closing',
+	'cancel_requested',
+	'timeout_requested',
+	'quarantined',
+])
 const CADENCE_PRESETS: Array<{ value: ScheduledScheduleInput['cadenceKind']; label: string; cron: string }> = [
 	{ value: 'hourly', label: 'Hourly', cron: '0 * * * *' },
 	{ value: 'daily', label: 'Daily', cron: '0 9 * * *' },
@@ -36,7 +49,7 @@ const CADENCE_PRESETS: Array<{ value: ScheduledScheduleInput['cadenceKind']; lab
 	{ value: 'cron', label: 'Custom', cron: '' },
 ]
 
-type EditorDraft = ScheduledScheduleInput & { promptReplacement: string }
+type EditorDraft = ScheduledScheduleInput
 
 interface SchedulingControl {
 	configured: boolean
@@ -56,12 +69,16 @@ function blankDraft(config: AppConfig | null): EditorDraft {
 		cron: '0 9 * * *',
 		cadenceKind: 'daily',
 		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-		definition: { prompt: '', target: { kind: 'project', projectSlug }, agent: 'claude', maximumRuntimeMinutes: 120 },
-		promptReplacement: '',
+		definition: {
+			prompt: '',
+			target: { kind: 'project', projectSlug },
+			agent: config?.solver?.agent ?? 'claude',
+			maximumRuntimeMinutes: 120,
+		},
 	}
 }
 
-function draftFrom(schedule: ScheduledSchedule): EditorDraft {
+function draftFrom(schedule: ScheduledSchedule, prompt: string): EditorDraft {
 	return {
 		name: schedule.name,
 		enabled: schedule.enabled,
@@ -69,7 +86,7 @@ function draftFrom(schedule: ScheduledSchedule): EditorDraft {
 		cadenceKind: schedule.cadenceKind,
 		timezone: schedule.timezone,
 		definition: {
-			prompt: '',
+			prompt,
 			target:
 				schedule.target.kind === 'project'
 					? { ...schedule.target }
@@ -79,7 +96,6 @@ function draftFrom(schedule: ScheduledSchedule): EditorDraft {
 			...(schedule.effort ? { effort: schedule.effort } : {}),
 			maximumRuntimeMinutes: schedule.maximumRuntimeMinutes,
 		},
-		promptReplacement: '',
 	}
 }
 
@@ -302,28 +318,36 @@ export function ScheduledRunEditorPage({
 	const [error, setError] = useState<string | null>(null)
 	const systemAllowed = config?.scheduledRuns?.systemTargetsEnabled === true
 	const projects = config?.projects?.map(project => project.slug) ?? []
-	const isEdit = Boolean(scheduleId)
+	const modelOptions = config?.modelCatalog?.[draft.definition.agent] ?? []
+	const selectedModel = draft.definition.model
+	const selectableModels =
+		selectedModel && !modelOptions.some(model => model.id === selectedModel)
+			? [{ id: selectedModel, label: selectedModel }, ...modelOptions]
+			: modelOptions
+	const effortOptions = [
+		{ value: '', label: 'Default' },
+		{ value: 'low', label: 'Low' },
+		{ value: 'medium', label: 'Medium' },
+		{ value: 'high', label: 'High' },
+		{ value: 'xhigh', label: 'Extra high' },
+		...(draft.definition.agent !== 'codex' ? [{ value: 'max', label: 'Max' }] : []),
+	]
 	useEffect(() => {
 		if (!scheduleId) return
 		let alive = true
 		void Promise.all([
-			window.helm.daemon.listScheduledRuns(profileId),
+			window.helm.daemon.loadScheduledRun(profileId, scheduleId),
 			window.helm.daemon.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT),
-		]).then(([definitions, runs]) => {
+		]).then(([definition, runs]) => {
 			if (!alive) return
-			if (definitions.error) {
-				setError(definitions.error)
+			if (definition.error || !definition.data) {
+				setError(definition.error ?? 'Scheduled definition not found.')
 				setLoading(false)
 				return
 			}
-			const found = definitions.data?.find(value => value.id === scheduleId) ?? null
-			if (!found) {
-				setError('Scheduled definition not found.')
-				setLoading(false)
-				return
-			}
+			const found: ScheduledScheduleEditor = definition.data
 			setSchedule(found)
-			setDraft(draftFrom(found))
+			setDraft(draftFrom(found, found.prompt))
 			setHistory(runs.data ?? [])
 			setError(runs.error ?? null)
 			setLoading(false)
@@ -332,11 +356,27 @@ export function ScheduledRunEditorPage({
 			alive = false
 		}
 	}, [profileId, scheduleId])
+	const historyHasActiveRun = history.some(run => HISTORY_REFRESH_STATES.has(run.state))
+	useEffect(() => {
+		if (!scheduleId || !historyHasActiveRun) return
+		let cancelled = false
+		let timer: ReturnType<typeof setTimeout> | null = null
+		const refresh = async () => {
+			const result = await window.helm.daemon.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT)
+			if (!cancelled && result.data) setHistory(result.data)
+			if (!cancelled) timer = setTimeout(refresh, ACTIVE_REFRESH_MS)
+		}
+		timer = setTimeout(refresh, ACTIVE_REFRESH_MS)
+		return () => {
+			cancelled = true
+			if (timer) clearTimeout(timer)
+		}
+	}, [historyHasActiveRun, profileId, scheduleId])
 	const validation = useMemo(() => {
 		if (!draft.name.trim()) return 'Enter a schedule name.'
 		if (!isFiveFieldCron(draft.cron)) return 'Cron must contain exactly five fields and cannot use aliases.'
 		if (!isIanaTimezone(draft.timezone)) return 'Enter an IANA timezone such as America/New_York or UTC.'
-		if (!isEdit && !draft.definition.prompt.trim()) return 'Enter a prompt for this schedule.'
+		if (!draft.definition.prompt.trim()) return 'Enter a prompt for this schedule.'
 		if (draft.definition.target.kind === 'project' && !draft.definition.target.projectSlug)
 			return 'Choose a project target.'
 		if (draft.definition.target.kind === 'system' && !systemAllowed)
@@ -349,14 +389,7 @@ export function ScheduledRunEditorPage({
 		)
 			return `Maximum runtime must be from 5 to ${maximumRuntime} minutes for this target.`
 		return null
-	}, [draft, isEdit, systemAllowed])
-	const body = (): ScheduledScheduleInput => {
-		const { promptReplacement, ...input } = draft
-		return {
-			...input,
-			definition: { ...input.definition, prompt: isEdit ? promptReplacement : input.definition.prompt },
-		}
-	}
+	}, [draft, systemAllowed])
 	const save = async () => {
 		if (validation) {
 			setError(validation)
@@ -365,12 +398,13 @@ export function ScheduledRunEditorPage({
 		setSaving(true)
 		setError(null)
 		try {
+			const submitted = draft
 			const result = schedule
 				? await window.helm.daemon.updateScheduledRun(profileId, schedule.id, {
-						...body(),
+						...submitted,
 						revision: schedule.revision,
 					})
-				: await window.helm.daemon.createScheduledRun(profileId, body())
+				: await window.helm.daemon.createScheduledRun(profileId, submitted)
 			if (result.error) {
 				setError(result.error)
 				return
@@ -385,7 +419,7 @@ export function ScheduledRunEditorPage({
 				return
 			}
 			setSchedule(result.data)
-			setDraft(draftFrom(result.data))
+			setDraft(draftFrom(result.data, submitted.definition.prompt))
 		} finally {
 			setSaving(false)
 		}
@@ -539,16 +573,66 @@ export function ScheduledRunEditorPage({
 							id="schedule-agent"
 							value={draft.definition.agent}
 							onChange={agent =>
-								setDraft(current => ({
-									...current,
-									definition: { ...current.definition, agent: agent as 'claude' | 'codex' | 'pi' },
-								}))
+								setDraft(current => {
+									const nextAgent = agent as 'claude' | 'codex' | 'pi'
+									const { model: _staleModel, effort, ...definition } = current.definition
+									return {
+										...current,
+										definition: {
+											...definition,
+											agent: nextAgent,
+											...(effort && !(nextAgent === 'codex' && effort === 'max') ? { effort } : {}),
+										},
+									}
+								})
 							}
 							options={[
 								{ value: 'claude', label: 'Claude Code' },
 								{ value: 'codex', label: 'Codex' },
 								{ value: 'pi', label: 'Pi' },
 							]}
+						/>
+					</div>
+					<div className="settings-field">
+						<FieldLabel htmlFor="schedule-model">Model</FieldLabel>
+						<SelectInput
+							id="schedule-model"
+							value={draft.definition.model ?? ''}
+							onChange={model =>
+								setDraft(current => {
+									const { model: _previousModel, ...definition } = current.definition
+									return {
+										...current,
+										definition: model ? { ...definition, model } : definition,
+									}
+								})
+							}
+							options={[
+								{ value: '', label: 'Default' },
+								...selectableModels.map(model => ({ value: model.id, label: model.label })),
+							]}
+						/>
+					</div>
+					<div className="settings-field">
+						<FieldLabel htmlFor="schedule-effort">Effort</FieldLabel>
+						<SelectInput
+							id="schedule-effort"
+							value={draft.definition.effort ?? ''}
+							onChange={effort =>
+								setDraft(current => {
+									const { effort: _previousEffort, ...definition } = current.definition
+									return {
+										...current,
+										definition: effort
+											? {
+													...definition,
+													effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+												}
+											: definition,
+									}
+								})
+							}
+							options={effortOptions}
 						/>
 					</div>
 					<div className="settings-field">
@@ -566,17 +650,16 @@ export function ScheduledRunEditorPage({
 						/>
 					</div>
 					<div className="settings-field">
-						<FieldLabel htmlFor="schedule-prompt">{isEdit ? 'Replace prompt' : 'Prompt'}</FieldLabel>
+						<FieldLabel htmlFor="schedule-prompt">Prompt</FieldLabel>
 						<TextArea
 							id="schedule-prompt"
-							value={isEdit ? draft.promptReplacement : draft.definition.prompt}
-							placeholder={isEdit ? 'Leave blank to keep the existing prompt' : 'Describe the work to run.'}
+							value={draft.definition.prompt}
+							placeholder="Describe the work to run."
 							onChange={prompt =>
-								setDraft(current =>
-									isEdit
-										? { ...current, promptReplacement: prompt }
-										: { ...current, definition: { ...current.definition, prompt } },
-								)
+								setDraft(current => ({
+									...current,
+									definition: { ...current.definition, prompt },
+								}))
 							}
 							rows={6}
 						/>

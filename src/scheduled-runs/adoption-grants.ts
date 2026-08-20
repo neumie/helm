@@ -42,8 +42,7 @@ export class AttentionAdoptionGrantManager {
 
 	issue(binding: AttentionAdoptionGrantBinding): AttentionAdoptionGrant {
 		const key = bindingKey(binding)
-		const current = this.matching(binding)
-		if (current) throw new Error('Attention adoption grant is already active')
+		if (this.grants.has(key)) throw new Error('Attention adoption grant is already active')
 		const capability = createScopedCapability()
 		const expiresAt = this.now() + this.ttlMs
 		this.grants.set(key, { ...binding, hash: hashScopedCapability(capability), expiresAt, redeemed: false })
@@ -63,6 +62,11 @@ export class AttentionAdoptionGrantManager {
 		return this.matching(binding) !== null
 	}
 
+	/** Distinguishes this process's expired grant from a pre-restart durable reservation. */
+	wasIssued(binding: AttentionAdoptionGrantBinding): boolean {
+		return this.grants.has(bindingKey(binding))
+	}
+
 	/** Completion remains permitted after bearer expiry once redemption succeeded. */
 	hasRedeemed(binding: AttentionAdoptionGrantBinding): boolean {
 		return this.matching(binding)?.redeemed === true
@@ -80,10 +84,7 @@ export class AttentionAdoptionGrantManager {
 		const key = bindingKey(binding)
 		const grant = this.grants.get(key)
 		if (!grant) return null
-		if (!grant.redeemed && grant.expiresAt <= this.now()) {
-			this.grants.delete(key)
-			return null
-		}
+		if (!grant.redeemed && grant.expiresAt <= this.now()) return null
 		return grant
 	}
 }

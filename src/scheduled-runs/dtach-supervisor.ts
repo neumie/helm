@@ -1,6 +1,7 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process'
-import { unlink } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { constants as fsConstants } from 'node:fs'
+import { access, realpath, unlink } from 'node:fs/promises'
+import { basename, delimiter, isAbsolute, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { appendScheduledDiagnostic } from './log.js'
 import {
@@ -56,6 +57,7 @@ export interface DtachSupervisorDeps {
 	findSocketHolders?: (socketPath: string) => Promise<ProcessFingerprint[] | null>
 	/** Current file-descriptor holders for the bound Unix socket, not argv claims. */
 	findSocketDescriptorHolders?: (socketPath: string) => Promise<ProcessFingerprint[] | null>
+	resolveExecutable?: (command: string, env: NodeJS.ProcessEnv) => Promise<string>
 	sleep?: (ms: number) => Promise<void>
 	unlink?: (path: string) => Promise<void>
 }
@@ -177,6 +179,26 @@ async function socketDescriptorHolders(socketPath: string): Promise<ProcessFinge
 	}
 }
 
+async function resolveExecutablePath(command: string, env: NodeJS.ProcessEnv): Promise<string> {
+	let candidates: string[]
+	if (isAbsolute(command)) candidates = [command]
+	else if (command.includes('/')) candidates = [resolve(command)]
+	else {
+		candidates = []
+		for (const directory of (env.PATH ?? '').split(delimiter))
+			if (directory) candidates.push(resolve(directory, command))
+	}
+	for (const candidate of candidates) {
+		try {
+			await access(candidate, fsConstants.X_OK)
+			return await realpath(candidate)
+		} catch {
+			// Continue through the captured PATH; never defer resolution to spawn.
+		}
+	}
+	throw new Error('Scheduled dtach executable could not be resolved')
+}
+
 async function socketHolders(socketPath: string): Promise<ProcessFingerprint[] | null> {
 	try {
 		// dtach retains its original socket pathname in argv. This works after
@@ -252,7 +274,8 @@ export class DtachSupervisor {
 			if (!sameFingerprint(persistedIdentity.socketHolder, currentHolder) || !sameFingerprint(master, currentHolder))
 				return { state: 'mismatch' }
 			const command = await inspectCommand(currentHolder.pid)
-			if (!this.isOwnedDtachMaster(currentHolder, command, socketPath)) return { state: 'mismatch' }
+			if (!this.isOwnedDtachMaster(currentHolder, command, socketPath, persistedIdentity.executable))
+				return { state: 'mismatch' }
 			const finalDescriptorHolders = await descriptorHoldersFor(socketPath)
 			if (!finalDescriptorHolders) return { state: 'unknown' }
 			if (!finalDescriptorHolders.some(candidate => sameFingerprint(currentHolder, candidate)))
@@ -266,6 +289,10 @@ export class DtachSupervisor {
 	async launch(input: LaunchDtachInput): Promise<ScheduledProcessIdentity> {
 		const socketPath = scheduledSocketPath(input.profileId, input.sessionId, input.socketRoot)
 		ensureScheduledSocketDir(input.profileId, input.socketRoot)
+		const expectedExecutable = await (this.deps.resolveExecutable ?? resolveExecutablePath)(
+			input.dtachBinary,
+			input.env,
+		)
 		const probe = this.deps.probe ?? probeScheduledSocket
 		const existing = await probe(socketPath)
 		if (existing === 'live') throw new Error('Scheduled session socket is already live')
@@ -277,7 +304,7 @@ export class DtachSupervisor {
 		}
 
 		const spawn = this.deps.spawn ?? nodeSpawn
-		const child = spawn(input.dtachBinary, ['-n', socketPath, input.hostCommand, ...input.hostArgs], {
+		const child = spawn(expectedExecutable, ['-n', socketPath, input.hostCommand, ...input.hostArgs], {
 			cwd: input.cwd,
 			env: input.env,
 			detached: true,
@@ -322,7 +349,7 @@ export class DtachSupervisor {
 			while (Date.now() < until) {
 				const state = await this.raceFailure(probe(socketPath), failure, () => spawnFailure)
 				if (state === 'live') {
-					const discoveredMaster = await this.captureReadyIdentity(socketPath)
+					const discoveredMaster = await this.captureReadyIdentity(socketPath, expectedExecutable)
 					// dtach can publish the socket a moment before lsof/ps has a stable
 					// daemon record; keep waiting within the bounded readiness window.
 					if (!discoveredMaster) {
@@ -348,7 +375,14 @@ export class DtachSupervisor {
 			throw spawnFailure ?? new Error('Scheduled dtach socket did not become ready')
 		} catch (error) {
 			settled = true
-			await this.cleanupLaunchFailure(socketPath, master, bootstrap, input.diagnosticPath, input.onQuarantined)
+			await this.cleanupLaunchFailure(
+				socketPath,
+				expectedExecutable,
+				master,
+				bootstrap,
+				input.diagnosticPath,
+				input.onQuarantined,
+			)
 			throw error
 		}
 	}
@@ -372,12 +406,15 @@ export class DtachSupervisor {
 		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs))
 			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
 		ownership = await inspect(socketPath, identity)
+		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
 		if (ownership !== 'verified') return this.quarantine(diagnosticPath, ownership)
 		signal(identity.processGroupId, 'SIGKILL')
 		appendScheduledDiagnostic(diagnosticPath, 'group_kill', { processGroupId: identity.processGroupId })
 		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs))
 			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		return this.quarantine(diagnosticPath, 'still_live_after_kill')
+		ownership = await inspect(socketPath, identity)
+		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
+		return this.quarantine(diagnosticPath, ownership === 'verified' ? 'still_live_after_kill' : ownership)
 	}
 
 	private async raceFailure<T>(
@@ -393,6 +430,7 @@ export class DtachSupervisor {
 
 	private async cleanupLaunchFailure(
 		socketPath: string,
+		expectedExecutable: string,
 		master: ScheduledProcessIdentity | undefined,
 		bootstrap: ProcessFingerprint | undefined,
 		diagnosticPath: string,
@@ -404,7 +442,7 @@ export class DtachSupervisor {
 				// A daemonized dtach master may outlive its launcher before the socket is
 				// observable. Rediscover from its exact derived socket argv and fresh OS
 				// fingerprint, never from socket liveness.
-				owned = (await this.captureReadyIdentity(socketPath)) ?? undefined
+				owned = (await this.captureReadyIdentity(socketPath, expectedExecutable)) ?? undefined
 			} catch {
 				// A failed observation is quarantined below; never guess ownership.
 			}
@@ -478,14 +516,19 @@ export class DtachSupervisor {
 		return false
 	}
 
-	private async captureReadyIdentity(socketPath: string): Promise<ScheduledProcessIdentity | null> {
+	private async captureReadyIdentity(
+		socketPath: string,
+		expectedExecutable: string,
+	): Promise<ScheduledProcessIdentity | null> {
 		const holders = await (this.deps.findSocketHolders ?? socketHolders)(socketPath)
 		if (!holders?.length) return null
 		const candidates = await Promise.all(
 			holders.map(async holder => {
 				const current = await (this.deps.inspectProcess ?? processFingerprint)(holder.pid)
 				const command = await (this.deps.inspectProcessCommand ?? processCommand)(holder.pid)
-				return current && sameFingerprint(holder, current) && this.isOwnedDtachMaster(current, command, socketPath)
+				return current &&
+					sameFingerprint(holder, current) &&
+					this.isOwnedDtachMaster(current, command, socketPath, expectedExecutable)
 					? current
 					: null
 			}),
@@ -493,17 +536,35 @@ export class DtachSupervisor {
 		const masters = candidates.filter((candidate): candidate is ProcessFingerprint => !!candidate)
 		if (masters.length !== 1) return null
 		const master = masters[0]
-		// The master PID/start/PGID/SID plus exact original socket command are the
-		// durable ownership anchor. Group enumeration is deferred to teardown.
-		return { ...master, socketHolder: master }
+		// Bind initial persistence to the process that actually holds the published
+		// Unix descriptor, not merely another same-name process claiming the path.
+		const descriptorHolders = await (this.deps.findSocketDescriptorHolders ?? socketDescriptorHolders)(socketPath)
+		if (!descriptorHolders?.some(candidate => sameFingerprint(master, candidate))) return null
+		const current = await (this.deps.inspectProcess ?? processFingerprint)(master.pid)
+		const command = await (this.deps.inspectProcessCommand ?? processCommand)(master.pid)
+		if (
+			!current ||
+			!sameFingerprint(master, current) ||
+			!this.isOwnedDtachMaster(current, command, socketPath, expectedExecutable)
+		)
+			return null
+		const finalDescriptorHolders = await (this.deps.findSocketDescriptorHolders ?? socketDescriptorHolders)(socketPath)
+		if (!finalDescriptorHolders?.some(candidate => sameFingerprint(current, candidate))) return null
+		return { ...current, socketHolder: current }
 	}
 
-	private isOwnedDtachMaster(candidate: ProcessFingerprint, command: string | null, socketPath: string): boolean {
+	private isOwnedDtachMaster(
+		candidate: ProcessFingerprint,
+		command: string | null,
+		socketPath: string,
+		expectedExecutable: string,
+	): boolean {
 		// `pgrep -f` is only candidate discovery. Exact derived namespace argv plus
 		// a fresh PID/start fingerprint is the ownership proof before signaling.
 		const escapedPath = socketPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 		return (
 			basename(candidate.executable) === 'dtach' &&
+			candidate.executable === expectedExecutable &&
 			!!command &&
 			new RegExp(`(?:^|\\s)-n\\s+${escapedPath}(?=\\s|$)`).test(command)
 		)

@@ -115,6 +115,31 @@ test('run-owned persistence failures restore complete in-memory ownership and gr
 	assert.equal(registry.getGroups()[0]?.id, group.id)
 })
 
+test('run-owned close checkpoints persist and require the exact adoption identity', () => {
+	const ownership = {
+		profileId: 'work',
+		runId: 'run-close',
+		revision: 4,
+		adoptionId: '11111111-1111-4111-8111-111111111111',
+		adopter: '22222222-2222-4222-8222-222222222222',
+	}
+	const file = tempRegistryFile()
+	const registry = new SessionRegistry(file)
+	assert.equal(registry.registerRunOwned('scheduled-close', ownership), true)
+	assert.equal(
+		registry.markRunOwnedClosePending('scheduled-close', {
+			...ownership,
+			adoptionId: '33333333-3333-4333-8333-333333333333',
+		}),
+		false,
+	)
+	assert.equal(registry.markRunOwnedClosePending('scheduled-close', ownership), true)
+	const restored = new SessionRegistry(file).listRunOwned()[0]
+	assert.equal(restored?.meta.scheduledClosePending, true)
+	assert.equal(registry.removeRunOwned('scheduled-close', { ...ownership, revision: 5 }), false)
+	assert.equal(registry.removeRunOwned('scheduled-close', ownership), true)
+})
+
 test('legacy sessions without explicit order fall back to creation time', () => {
 	const sessions = [{ createdAt: '2026-07-02T00:00:00.000Z' }, { createdAt: '2026-07-01T00:00:00.000Z' }]
 	assert.deepEqual([...sessions].sort(compareSessionOrder), [sessions[1], sessions[0]])

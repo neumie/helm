@@ -151,6 +151,16 @@ test('switching terminals never leaves focus inside the holder being hidden', as
 		.toEqual([])
 })
 
+test('a refused durable close keeps the terminal mounted', async ({ page }) => {
+	const tabs = page.getByRole('tab')
+	await expect(tabs).toHaveCount(2)
+	await page.evaluate(() => window.__helmWorkspaceFixture?.refuseNextClose())
+	await page.locator('.tab').first().locator('.tab-close').click()
+
+	await expect(page.getByText('Terminal stayed open', { exact: true })).toBeVisible()
+	await expect(tabs).toHaveCount(2)
+})
+
 test('Command-number terminal selection follows live configurable bindings', async ({ page }) => {
 	const tabs = page.getByRole('tab')
 	await expect(tabs).toHaveCount(2)
@@ -288,7 +298,8 @@ test('a Pi full-history redraw preserves a user-scrolled viewport', async ({ pag
 	const liveRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
 	const scrollbar = page.locator('.term-holder.active .term-scrollbar')
 	const history = Array.from({ length: 200 }, (_, index) => `history-${String(index).padStart(3, '0')}`)
-	const visibleRows = () => liveRows.locator(':scope > div').allTextContents()
+	const visibleRows = async () =>
+		(await liveRows.locator(':scope > div').allTextContents()).map(value => value.trimEnd())
 
 	await page.evaluate(lines => window.__helmWorkspaceFixture?.emitData('shell', lines.join('\r\n')), history)
 	await expect(liveRows).toContainText('history-199')

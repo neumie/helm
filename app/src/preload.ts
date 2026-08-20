@@ -172,7 +172,7 @@ const api: HelmApi = {
 		setActivity: (sessionId, activity) =>
 			ipcRenderer.send('session:set-activity', sessionId, activity, sessionProfileToken),
 		closeWithGrace: ptyId =>
-			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null>,
+			ipcRenderer.invoke('session:close-with-grace', ptyId, sessionProfileToken) as Promise<GraceClose | null | false>,
 		undoClose: sessionId =>
 			ipcRenderer.invoke('session:undo-close', sessionId, sessionProfileToken) as Promise<boolean>,
 	},
@@ -256,6 +256,7 @@ const api: HelmApi = {
 		pauseToggle: () => invokeHelm('daemon:pauseToggle'),
 		poll: () => invokeHelm('daemon:poll'),
 		listScheduledRuns: profileId => invokeHelm('daemon:scheduled:list', profileId),
+		loadScheduledRun: (profileId, id) => invokeHelm('daemon:scheduled:load', profileId, id),
 		activeScheduledRuns: profileId => invokeHelm('daemon:scheduled:active', profileId),
 		createScheduledRun: (profileId, body) => invokeHelm('daemon:scheduled:create', profileId, body),
 		updateScheduledRun: (profileId, id, body) => invokeHelm('daemon:scheduled:update', profileId, id, body),

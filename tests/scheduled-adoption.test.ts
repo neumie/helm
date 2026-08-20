@@ -255,20 +255,24 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			cwd: null,
 			worktreePath: null,
 			branchName: null,
-			runDir: null,
+			runDir: root,
 			socketDescriptor: null,
 		})
 		run = commands.report(run.id, run.revision, 'needs_attention', 'choose a target')
 		let attestations = 0
+		let attestationState: 'verified' | 'dead' = 'verified'
 		const supervisor = {
 			attestLiveSession: async () => {
 				attestations++
-				return {
-					state: 'verified' as const,
-					socketPath: '/tmp/helm-sched-test/work/sr.sock',
-					identity: JSON.parse(run.processFingerprint as string),
-				}
+				return attestationState === 'dead'
+					? ({ state: 'dead' } as const)
+					: {
+							state: 'verified' as const,
+							socketPath: '/tmp/helm-sched-test/work/sr.sock',
+							identity: JSON.parse(run.processFingerprint as string),
+						}
 			},
+			teardown: async () => 'closed' as const,
 		} as unknown as DtachSupervisor
 		let grantNow = Date.now()
 		const grants = new AttentionAdoptionGrantManager(30_000, () => grantNow)
@@ -293,6 +297,10 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			/already active/,
 		)
 		assert.equal(db.schedules.requireRun(run.id).attentionAdoption?.state, 'reserved')
+		await assert.rejects(
+			service.recoverAttentionAdoptionCompletion('work', run.id, reservation.run.revision, identity, true),
+			/not redeemed/,
+		)
 		const descriptor = await service.attachAttentionDescriptor(
 			'work',
 			run.id,
@@ -319,8 +327,19 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			),
 			/unavailable/,
 		)
-		const completed = service.completeAttentionAdoption('work', run.id, reservation.run.revision, identity, true)
+		const completed = await service.recoverAttentionAdoptionCompletion(
+			'work',
+			run.id,
+			reservation.run.revision,
+			identity,
+			true,
+		)
 		assert.equal(completed.attentionAdoption?.state, 'completed')
+		assert.equal(db.schedules.countRecoverableRuns(), 0)
+		assert.equal(db.schedules.countAttentionRuns(), 0)
+		assert.equal(db.schedules.findActiveRun(completed.scheduleId), null)
+		assert.equal(service.restartBlockingRunCount(), 0)
+		assert.throws(() => commands.requestCancel(completed.id, completed.revision), /Electron owns finalization/)
 		const laterRevision = commands.recordRuntime(completed.id, completed.revision, {
 			processFingerprint: completed.processFingerprint,
 			cwd: completed.cwd,
@@ -333,7 +352,25 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			await service.restoreCompletedAttentionDescriptor('work', laterRevision.id, reservation.run.revision, identity),
 			{ socketPath: '/tmp/helm-sched-test/work/sr.sock', mode: 'attach-existing', redraw: 'winch' },
 		)
-		assert.equal(attestations, 4)
+		attestationState = 'dead'
+		assert.deepEqual(
+			await service.restoreCompletedAttentionDescriptor('work', laterRevision.id, reservation.run.revision, identity),
+			{ state: 'dead' },
+		)
+		attestationState = 'verified'
+		assert.equal(attestations, 6)
+		const finalized = await service.finalizeCompletedAttentionAdoption(
+			'work',
+			laterRevision.id,
+			reservation.run.revision,
+			identity,
+		)
+		assert.equal(finalized.state, 'cancelled')
+		assert.equal(
+			(await service.finalizeCompletedAttentionAdoption('work', laterRevision.id, reservation.run.revision, identity))
+				.state,
+			'cancelled',
+		)
 
 		let duplicateRace = attentionRun(commands, 'duplicate-race')
 		duplicateRace = commands.recordRuntime(duplicateRace.id, duplicateRace.revision, {
@@ -422,7 +459,15 @@ test('service reserves only after attestation, burns grants on descriptor attach
 		)
 		assert.equal(db.schedules.requireRun(failed.id).attentionAdoption?.state, 'rolled_back')
 
-		const restart = attentionRun(commands, 'restart-service')
+		let restart = attentionRun(commands, 'restart-service')
+		restart = commands.recordRuntime(restart.id, restart.revision, {
+			processFingerprint: run.processFingerprint,
+			cwd: null,
+			worktreePath: null,
+			branchName: null,
+			runDir: root,
+			socketDescriptor: null,
+		})
 		const restartIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
 		const reservedForRestart = commands.reserveAttentionAdoption(restart.id, restart.revision, restartIdentity)
 		const restartService = new ScheduledRunService(
@@ -432,11 +477,29 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			{
 				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
 				hasResidentLease: () => true,
+				supervisor: {
+					attestLiveSession: async () => ({
+						state: 'verified' as const,
+						socketPath: '/tmp/existing',
+						identity: {},
+					}),
+				} as unknown as DtachSupervisor,
 			},
 		)
-		const starting = restartService.start()
-		assert.equal(db.schedules.requireRun(reservedForRestart.id).attentionAdoption?.state, 'rolled_back')
-		await starting
+		await restartService.start()
+		assert.equal(db.schedules.requireRun(reservedForRestart.id).attentionAdoption?.state, 'reserved')
+		assert.equal(
+			(
+				await restartService.recoverAttentionAdoptionCompletion(
+					'work',
+					reservedForRestart.id,
+					reservedForRestart.revision,
+					restartIdentity,
+					true,
+				)
+			).attentionAdoption?.state,
+			'completed',
+		)
 		await restartService.stop()
 
 		const expiring = attentionRun(commands, 'expiry-service')
@@ -453,7 +516,55 @@ test('service reserves only after attestation, burns grants on descriptor attach
 			},
 		)
 		await expiryService.reconcile()
-		assert.equal(db.schedules.requireRun(reservedForExpiry.id).attentionAdoption?.state, 'rolled_back')
+		assert.equal(
+			db.schedules.requireRun(reservedForExpiry.id).attentionAdoption?.state,
+			'reserved',
+			'grantless pre-restart evidence stays fail-closed for Electron recovery',
+		)
+
+		let issuedExpiry = attentionRun(commands, 'issued-expiry-service')
+		issuedExpiry = commands.recordRuntime(issuedExpiry.id, issuedExpiry.revision, {
+			processFingerprint: run.processFingerprint,
+			cwd: null,
+			worktreePath: null,
+			branchName: null,
+			runDir: root,
+			socketDescriptor: null,
+		})
+		let issuedGrantNow = Date.now()
+		let issuedServiceNow = new Date()
+		const issuedExpiryService = new ScheduledRunService(
+			{ scheduledRuns: { enabled: true, systemTargetsEnabled: false } } as never,
+			db,
+			{ reserveExternalSolve: () => true, releaseExternalSolve: () => true } as never,
+			{
+				profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as never],
+				hasResidentLease: () => true,
+				adoptionGrants: new AttentionAdoptionGrantManager(30_000, () => issuedGrantNow),
+				now: () => issuedServiceNow,
+				supervisor,
+			},
+		)
+		const issuedExpiryIdentity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const issuedReservation = await issuedExpiryService.reserveAttentionAdoption(
+			'work',
+			issuedExpiry.id,
+			issuedExpiry.revision,
+			issuedExpiryIdentity,
+		)
+		issuedGrantNow += 60_000
+		issuedServiceNow = new Date(Date.now() + 60_000)
+		await assert.rejects(
+			issuedExpiryService.reserveAttentionAdoption(
+				'work',
+				issuedReservation.run.id,
+				issuedReservation.run.revision,
+				issuedExpiryIdentity,
+			),
+			/already active/,
+		)
+		await issuedExpiryService.reconcile()
+		assert.equal(db.schedules.requireRun(issuedReservation.run.id).attentionAdoption?.state, 'rolled_back')
 
 		let stopping = attentionRun(commands, 'stop-service')
 		stopping = commands.recordRuntime(stopping.id, stopping.revision, {

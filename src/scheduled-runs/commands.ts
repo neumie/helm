@@ -162,12 +162,41 @@ export class ScheduleCommands {
 		const run = this.store.requireRun(id)
 		if (run.attentionAdoption?.state === 'reserved')
 			throw new Error('Scheduled run attention adoption is actively reserved')
+		if (run.attentionAdoption?.state === 'completed')
+			throw new Error('Electron owns finalization for this adopted scheduled terminal')
 		if (run.pendingTerminalIntent && run.pendingTerminalIntent !== 'cancel')
 			throw new Error('Scheduled run already has a conflicting terminal intent')
 		if (!CANCELLABLE_STATES.has(run.state)) throw new Error('Only an active scheduled run can be cancelled')
 		const claimed = this.claimTerminalIntent(id, revision, 'cancel')
 		if (claimed.state === 'cancel_requested' || claimed.state === 'quarantined') return claimed
 		return this.transition(claimed.id, claimed.revision, [claimed.state], 'cancel_requested')
+	}
+
+	/** Exact completed Electron ownership is required before closing an adopted terminal. */
+	requestCompletedAttentionClose(
+		id: string,
+		reservationRevision: number,
+		identity: AttentionAdoptionIdentity,
+	): ScheduledRunRecord {
+		const parsed = attentionAdoptionIdentitySchema.parse(identity)
+		return this.store.transaction(() => {
+			const run = this.store.requireRun(id)
+			if (
+				run.attentionAdoption?.state !== 'completed' ||
+				!sameAdoptionIdentity(run.attentionAdoption, parsed) ||
+				run.terminalResolvedAt === null ||
+				run.revision < reservationRevision + 1
+			)
+				throw new Error('Scheduled attention ownership does not match the completed adoption')
+			if (run.state === 'cancelled') return run
+			if (run.pendingTerminalIntent && run.pendingTerminalIntent !== 'cancel')
+				throw new Error('Scheduled run already has a conflicting terminal intent')
+			if (!['needs_attention', 'cancel_requested', 'quarantined'].includes(run.state))
+				throw new Error('Only an adopted attention terminal can be finalized')
+			const claimed = this.claimTerminalIntent(id, run.revision, 'cancel')
+			if (claimed.state === 'cancel_requested' || claimed.state === 'quarantined') return claimed
+			return this.transition(claimed.id, claimed.revision, ['needs_attention'], 'cancel_requested')
+		})
 	}
 	markCancelled(id: string, revision: number): ScheduledRunRecord {
 		return this.resolveTerminalIntent(id, revision, ['cancel_requested', 'quarantined'], 'cancelled', 'cancel')
@@ -259,6 +288,25 @@ export class ScheduleCommands {
 	closeQuiet(id: string, revision: number): ScheduledRunRecord {
 		return this.resolveTerminalIntent(id, revision, ['closing', 'quarantined'], 'closed_quiet', 'quiet')
 	}
+	/** Guarded terminal skip after an occurrence was claimed but could not consume capacity. */
+	skipForCapacity(id: string, revision: number): ScheduledRunRecord {
+		return this.transition(id, revision, ['admitted'], 'skipped_capacity', { closedAt: new Date().toISOString() })
+	}
+
+	/** Atomically disable an invalid definition and close its already-claimed occurrence. */
+	disableAndSkipOccurrence(
+		scheduleId: string,
+		runId: string,
+		runRevision: number,
+		state: 'skipped_profile_archived' | 'skipped_project_disabled',
+	): ScheduledRunRecord {
+		return this.store.transaction(() => {
+			const schedule = this.store.require(scheduleId)
+			this.store.setEnabled(schedule.id, schedule.revision, false, state)
+			return this.transition(runId, runRevision, ['admitted'], state, { closedAt: new Date().toISOString() })
+		})
+	}
+
 	/** Claim a bounded native-notification delivery lease for an unresolved attention run. */
 	claimAttentionNotification(id: string, revision: number, now = new Date()): ScheduledRunRecord {
 		const claimedAt = now.toISOString()
@@ -307,33 +355,67 @@ export class ScheduleCommands {
 		grants: AttentionAdoptionGrantManager,
 		ownershipRegistered: true,
 	): ScheduledRunRecord {
+		const parsed = this.requireCompletableAttentionAdoption(id, revision, identity, ownershipRegistered)
+		const run = this.store.requireRun(id)
+		if (run.attentionAdoption?.state === 'completed') return run
+		const grantBinding = { profileId: run.profileId, runId: run.id, revision, ...parsed }
+		if (!grants.hasRedeemed(grantBinding)) throw new Error('Scheduled run attention adoption grant was not redeemed')
+		const completed = this.persistCompletedAttentionAdoption(run, parsed)
+		grants.revoke(grantBinding)
+		return completed
+	}
+
+	/** Recover completion from exact durable Electron registry evidence after daemon restart. */
+	recoverAttentionAdoptionCompletion(
+		id: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		ownershipRegistered: true,
+	): ScheduledRunRecord {
+		const parsed = this.requireCompletableAttentionAdoption(id, revision, identity, ownershipRegistered)
+		const run = this.store.requireRun(id)
+		return run.attentionAdoption?.state === 'completed' ? run : this.persistCompletedAttentionAdoption(run, parsed)
+	}
+	private requireCompletableAttentionAdoption(
+		id: string,
+		revision: number,
+		identity: AttentionAdoptionIdentity,
+		ownershipRegistered: true,
+	): AttentionAdoptionIdentity {
 		if (ownershipRegistered !== true)
 			throw new Error('Electron scheduled-session ownership must be durably registered before completion')
 		const parsed = attentionAdoptionIdentitySchema.parse(identity)
 		const run = this.store.requireRun(id)
-		if (run.attentionAdoption?.state === 'completed' && sameAdoptionIdentity(run.attentionAdoption, parsed)) return run
+		if (run.attentionAdoption?.state === 'completed' && sameAdoptionIdentity(run.attentionAdoption, parsed))
+			return parsed
 		this.assertAttentionAdoptable(run)
 		if (run.attentionAdoption?.state !== 'reserved' || !sameAdoptionIdentity(run.attentionAdoption, parsed))
 			throw new Error('Scheduled run attention adoption reservation does not match')
 		if (run.revision !== revision) throw new ScheduleRevisionConflictError()
-		const grantBinding = { profileId: run.profileId, runId: run.id, revision, ...parsed }
-		if (!grants.hasRedeemed(grantBinding)) throw new Error('Scheduled run attention adoption grant was not redeemed')
+		return parsed
+	}
+
+	private persistCompletedAttentionAdoption(
+		run: ScheduledRunRecord,
+		identity: AttentionAdoptionIdentity,
+	): ScheduledRunRecord {
+		if (run.attentionAdoption?.state !== 'reserved')
+			throw new Error('Scheduled run attention adoption reservation does not match')
 		const completedAt = new Date().toISOString()
-		const completed = this.store.updateAttentionAdoption(
-			id,
-			revision,
+		return this.store.updateAttentionAdoption(
+			run.id,
+			run.revision,
 			{
 				state: 'completed',
-				...parsed,
+				...identity,
 				reservedAt: run.attentionAdoption.reservedAt,
 				expiresAt: run.attentionAdoption.expiresAt,
 				completedAt,
 			},
 			completedAt,
 		)
-		grants.revoke(grantBinding)
-		return completed
 	}
+
 	/** Rollback releases a reservation without resolving the daemon terminal. */
 	rollbackAttentionAdoption(
 		id: string,

@@ -150,3 +150,41 @@ test('a created schedule appears when the editor returns to definitions', async 
 	await expect(page.getByRole('heading', { name: 'Scheduled runs' })).toBeVisible()
 	await expect(page.getByRole('button', { name: /Weekly stewardship/ })).toBeVisible()
 })
+
+test('schedule editing loads and submits the complete current prompt', async ({ page }) => {
+	await page.goto('/iframe.html?id=views-sidebar--scheduled-run-history&viewMode=story')
+
+	const prompt = page.getByLabel('Prompt')
+	await expect(prompt).toHaveValue('Review open pull requests and report blockers.', { timeout: 15_000 })
+	await prompt.fill('Review open pull requests and report release blockers.')
+	await page.getByRole('button', { name: 'Save changes' }).click()
+
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(
+						window as typeof window & {
+							__updatedScheduledBody?: { definition?: { prompt?: string } }
+						}
+					).__updatedScheduledBody?.definition?.prompt,
+			),
+		)
+		.toBe('Review open pull requests and report release blockers.')
+})
+
+test('switching a schedule to Codex clears incompatible model and effort choices', async ({ page }) => {
+	await page.goto('/iframe.html?id=views-sidebar--scheduled-run-history&viewMode=story')
+
+	const agent = page.getByLabel('Agent')
+	const model = page.getByLabel('Model')
+	const effort = page.getByLabel('Effort')
+	await expect(agent).toHaveValue('claude', { timeout: 15_000 })
+	await model.selectOption('claude-sonnet-5')
+	await effort.selectOption('max')
+	await agent.selectOption('codex')
+
+	await expect(model).toHaveValue('')
+	await expect(effort).toHaveValue('')
+	await expect(effort.locator('option[value="max"]')).toHaveCount(0)
+})
