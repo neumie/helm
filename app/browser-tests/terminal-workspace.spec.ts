@@ -119,6 +119,38 @@ test('terminal shortcut remaps update live and disabled aliases stop writing', a
 		.toEqual(['\u007f'])
 })
 
+test('switching terminals never leaves focus inside the holder being hidden', async ({ page }) => {
+	const tabs = page.getByRole('tab')
+	await expect(tabs).toHaveCount(2)
+	await page.locator('.term-holder.active .xterm-helper-textarea').click()
+	await page.evaluate(() => {
+		const state = window as typeof window & { __helmHiddenTerminalFocusViolations?: string[] }
+		state.__helmHiddenTerminalFocusViolations = []
+		const terms = document.querySelector('#terms')
+		if (!terms) throw new Error('terminal holders unavailable')
+		new MutationObserver(() => {
+			const active = document.activeElement
+			if (!(active instanceof HTMLElement)) return
+			const holder = active.closest('.term-holder')
+			if (holder && !holder.classList.contains('active')) {
+				state.__helmHiddenTerminalFocusViolations?.push(active.className)
+			}
+		}).observe(terms, { attributes: true, attributeFilter: ['class'], subtree: true })
+	})
+
+	await page.keyboard.press('Meta+2')
+	await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as typeof window & { __helmHiddenTerminalFocusViolations?: string[] })
+						.__helmHiddenTerminalFocusViolations ?? [],
+			),
+		)
+		.toEqual([])
+})
+
 test('Command-number terminal selection follows live configurable bindings', async ({ page }) => {
 	const tabs = page.getByRole('tab')
 	await expect(tabs).toHaveCount(2)

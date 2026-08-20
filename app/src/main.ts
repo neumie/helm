@@ -19,6 +19,7 @@ import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
+import { RendererCrashRecovery, sendToLiveRenderer } from './renderer-lifecycle'
 import { RunContextWindows } from './run-context-window'
 import {
 	ScheduledAttentionAdoptionCoordinator,
@@ -666,6 +667,13 @@ function flushRendererBuffers(win: BrowserWindow, timeoutMs: number): Promise<vo
 let quitRequested = false
 /** Set only after guarded before-quit has stopped resident admission. */
 let residencyStoppedForQuit = false
+const rendererCrashRecovery = new RendererCrashRecovery({
+	isQuitting: () => quitRequested,
+	beforeReload: () => {
+		cancelShortcutRecorder()
+		killAllPtyClients()
+	},
+})
 
 // --- Screenshot harness ----------------------------------------------------------
 
@@ -755,6 +763,15 @@ function createWindow(): BrowserWindow {
 	win.webContents.setWindowOpenHandler(({ url }) => {
 		if (/^https?:/.test(url)) void shell.openExternal(url)
 		return { action: 'deny' }
+	})
+	win.webContents.on('render-process-gone', (_event, details) => {
+		if (screenshotPath || profileSwitchAttestationMode) return
+		const recovering = rendererCrashRecovery.recover(win.webContents, details)
+		console.error(
+			recovering
+				? `[helm] Renderer exited (${details.reason}, code ${details.exitCode}); detaching PTY clients and reloading.`
+				: `[helm] Renderer exited (${details.reason}, code ${details.exitCode}); automatic recovery is unavailable.`,
+		)
 	})
 	win.on('closed', () => {
 		cancelShortcutRecorder()
@@ -1408,16 +1425,12 @@ async function attachScheduledPty(input: {
 			entry.pendingOutput.push(data)
 			return
 		}
-		const win = mainWindow
-		if (win && !win.isDestroyed()) win.webContents.send('pty:data', ptyId, data, token)
+		sendToLiveRenderer(mainWindow?.webContents, 'pty:data', ptyId, data, token)
 	})
 	proc.onExit(({ exitCode }) => {
 		const selfExit = ptys.has(ptyId)
 		ptys.delete(ptyId)
-		if (selfExit) {
-			const win = mainWindow
-			if (win && !win.isDestroyed()) win.webContents.send('pty:exit', ptyId, exitCode, token)
-		}
+		if (selfExit) sendToLiveRenderer(mainWindow?.webContents, 'pty:exit', ptyId, exitCode, token)
 	})
 	return { ptyId }
 }
@@ -1511,10 +1524,8 @@ ipcMain.handle(
 			return false
 		}
 		entry.ready = true
-		const win = mainWindow
-		if (win && !win.isDestroyed())
-			for (const data of entry.pendingOutput.splice(0))
-				win.webContents.send('pty:data', validPtyId, data, entry.profileToken)
+		for (const data of entry.pendingOutput.splice(0))
+			sendToLiveRenderer(mainWindow?.webContents, 'pty:data', validPtyId, data, entry.profileToken)
 		ack.resolve(true)
 		return true
 	},
@@ -1665,7 +1676,7 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	})
 	const contents = event.sender
 	proc.onData(data => {
-		if (!contents.isDestroyed()) contents.send('pty:data', id, data, args.profileToken)
+		sendToLiveRenderer(contents, 'pty:data', id, data, args.profileToken)
 	})
 	proc.onExit(({ exitCode }) => {
 		// Only a pty still in the map exited ON ITS OWN (shell `exit`, external
@@ -1688,8 +1699,8 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 				}
 			})
 		}
-		if (!contents.isDestroyed() && !terminalTransferMain?.isSessionBusy(sessionId ?? ''))
-			contents.send('pty:exit', id, exitCode, args.profileToken)
+		if (!terminalTransferMain?.isSessionBusy(sessionId ?? ''))
+			sendToLiveRenderer(contents, 'pty:exit', id, exitCode, args.profileToken)
 	})
 	return { id, sessionId }
 })

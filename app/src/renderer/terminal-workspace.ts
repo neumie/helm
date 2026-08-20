@@ -1219,6 +1219,11 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		}
 		activeTab = tab
 		clearTabAgentAttention(tab)
+		// Reveal and focus the destination before hiding the current holder. Leaving
+		// xterm's focused textarea inside display:none until the next animation frame
+		// can invalidate Chromium's accessibility focus object and crash the renderer.
+		tab.holder.classList.add('active')
+		if (!document.activeElement?.classList.contains('tab-rename')) tab.term.focus()
 		for (const t of [...tabs, ...parked]) t.holder.classList.toggle('active', t === tab)
 		for (const t of tabs) {
 			t.tabButton.classList.toggle('active', t === tab)
@@ -1229,13 +1234,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		updateBackgroundUi()
 		// Fit after the holder becomes visible; hidden containers measure as 0x0.
 		requestAnimationFrame(() => {
-			if (disposed) return
-			fitActive()
-			// A double-click runs activate (click) before startRename (dblclick):
-			// this deferred focus would land on the just-opened rename input and
-			// blur-commit it within a frame. The editor owns focus while open.
-			if (document.activeElement?.classList.contains('tab-rename')) return
-			tab.term.focus()
+			if (!disposed) fitActive()
 		})
 	}
 
