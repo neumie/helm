@@ -21,6 +21,7 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 		{ id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
 	],
 	codex: [
+		{ id: 'gpt-6-astra', label: 'Astra' },
 		// GPT-5.6 family (GA 2026-07-09): Sol > Terra > Luna by capability/price.
 		{ id: 'gpt-5.6-sol', label: 'Sol' },
 		{ id: 'gpt-5.6-terra', label: 'Terra' },
@@ -34,6 +35,7 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 		{ id: 'anthropic/claude-opus-4-8', label: 'Anthropic · Opus 4.8' },
 		{ id: 'anthropic/claude-sonnet-5', label: 'Anthropic · Sonnet 5' },
 		{ id: 'anthropic/claude-haiku-4-5', label: 'Anthropic · Haiku 4.5' },
+		{ id: 'openai-codex/gpt-6-astra', label: 'OpenAI Codex · Astra' },
 		{ id: 'openai-codex/gpt-5.6-sol', label: 'OpenAI Codex · Sol' },
 		{ id: 'openai-codex/gpt-5.6-terra', label: 'OpenAI Codex · Terra' },
 		{ id: 'openai-codex/gpt-5.6-luna', label: 'OpenAI Codex · Luna' },
@@ -89,8 +91,8 @@ export function agentModelLabel(agent: SolverAgent): string {
 
 /**
  * Model-tier guidance injected into the solve prompt: how the agent should
- * SPEND the model it runs on. A premium tier (Fable) should orchestrate —
- * delegate grunt work to subagents and keep its own context for judgment; a
+ * SPEND the model it runs on. Premium tiers should orchestrate — delegate
+ * grunt work to subagents and keep their own context for judgment; a
  * budget tier should stay narrow and flag scope creep instead of thrashing.
  * Keyed by exact model id from {@link MODEL_CATALOG}; an unknown/unset model
  * (agent CLI default) gets no extra guidance.
@@ -116,6 +118,12 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 	'claude-haiku-4-5': [
 		'You are running as Haiku 4.5 — a fast, budget tier. Keep the change tightly scoped and mechanical.',
 		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the solver-result.json summary and stop.',
+	].join('\n'),
+	'gpt-6-astra': [
+		'You are running as GPT-6 Astra — a frontier tier for complex, multi-step work. Use its long-horizon judgment deliberately:',
+		'- Split genuinely independent exploration and implementation tracks across subagents; keep architecture and integration decisions in the main thread.',
+		'- Carry ambiguous or half-formed requirements through a coherent end-to-end implementation instead of stopping at analysis.',
+		'- Verify decisively with the strongest relevant checks; avoid redundant re-reads and commentary.',
 	].join('\n'),
 	'gpt-5.6-sol': [
 		'You are running as Sol (GPT-5.6) — the most capable and most EXPENSIVE tier. One decisive, deeply verified pass:',
@@ -143,6 +151,8 @@ const PI_MODEL_GUIDANCE: Record<string, string> = {
 		'Pi is running Sonnet 5 — work directly, stay scoped, and use available skills when they materially reduce risk.',
 	'anthropic/claude-haiku-4-5':
 		'Pi is running Haiku 4.5 — keep the change tightly scoped and stop with an honest summary if it becomes architectural or ambiguous.',
+	'openai-codex/gpt-6-astra':
+		'Pi is running GPT-6 Astra — use this frontier tier for complex, multi-step work, fan out only through subagent tools or extensions that are actually available, retain architecture and integration in the main context, and verify decisively.',
 	'openai-codex/gpt-5.6-sol': DEFAULT_MODEL_GUIDANCE['gpt-5.6-sol'],
 	'openai-codex/gpt-5.6-terra': DEFAULT_MODEL_GUIDANCE['gpt-5.6-terra'],
 	'openai-codex/gpt-5.6-luna': DEFAULT_MODEL_GUIDANCE['gpt-5.6-luna'],
