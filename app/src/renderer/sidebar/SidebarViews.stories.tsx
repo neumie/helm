@@ -21,7 +21,7 @@ import { ListPage } from './ListPage'
 import { NewItemPage } from './NewItemPage'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
-import { SettingsPage, type SettingsStore } from './SettingsPage'
+import { SettingsPage, SettingsSectionPage, type SettingsStore, useSettingsStore } from './SettingsPage'
 import { SidebarRoot } from './SidebarRoot'
 import { TerminalSettingsPage } from './TerminalSettingsPage'
 
@@ -803,11 +803,36 @@ const settingsStore: SettingsStore = {
 	doc: {
 		config: {
 			...(snapshot.config ?? {}),
+			solver: { ...snapshot.config?.solver, concurrency: 2, loopConcurrency: 1 },
 			scheduledRuns: { enabled: false, systemTargetsEnabled: false },
 		},
 		dashboard: snapshot.config ?? {},
 		edit: {
 			sections: [
+				{
+					id: 'run-limits',
+					title: 'Run limits',
+					description:
+						'Maximum simultaneous runs across all profiles. Agent runs include scheduled agents; loop runs include standalone loops and planned Items started with Start loop. Choose a positive whole-number limit or Unlimited for either lane. Unlimited removes Helm’s lane cap; machine resources and provider rate limits still apply. Terminal tabs and planning sessions do not count. Changes apply after a safe daemon restart; active runs are not interrupted. Use worktrees for parallel runs in the same project.',
+					controls: [
+						{
+							type: 'field',
+							path: ['solver', 'concurrency'],
+							label: 'Agent runs',
+							input: 'number',
+							required: true,
+							unlimited: { finiteDefault: 2 },
+						},
+						{
+							type: 'field',
+							path: ['solver', 'loopConcurrency'],
+							label: 'Loop runs',
+							input: 'number',
+							required: true,
+							unlimited: { finiteDefault: 1 },
+						},
+					],
+				},
 				{ id: 'projects', title: 'Projects', description: 'Repositories available to Helm.', controls: [] },
 				{ id: 'execution', title: 'Execution', description: 'Agent, model, and workspace defaults.', controls: [] },
 				{ id: 'scheduled-runs', title: 'Scheduled runs', description: 'Controls scheduled recurrence.', controls: [] },
@@ -815,7 +840,7 @@ const settingsStore: SettingsStore = {
 		},
 		secretRedaction: '••••••••',
 	},
-	draft: {},
+	draft: { ...snapshot.config, solver: { ...snapshot.config?.solver, concurrency: 2, loopConcurrency: 1 } },
 	dirty: false,
 	saving: false,
 	loadError: null,
@@ -974,6 +999,34 @@ export const Settings: Story = {
 			/>
 		</Frame>
 	),
+}
+
+function RunLimitsSettingsView() {
+	const store = useSettingsStore(true)
+	const [section, setSection] = useState<string | null>('run-limits')
+	return (
+		<Frame>
+			{section ? (
+				<SettingsSectionPage store={store} sectionId={section} onBack={() => setSection(null)} />
+			) : (
+				<SettingsPage
+					store={store}
+					onBack={noOp}
+					onOpenSection={setSection}
+					onOpenAppearance={noOp}
+					onOpenProfiles={noOp}
+					onOpenTerminal={noOp}
+					onOpenAgentIntegrations={noOp}
+					onOpenScheduledRuns={noOp}
+					activeProfileName="Work"
+				/>
+			)}
+		</Frame>
+	)
+}
+
+export const RunLimitsSettings: Story = {
+	render: () => <RunLimitsSettingsView />,
 }
 
 export const TerminalSettings: Story = {

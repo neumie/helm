@@ -32,6 +32,7 @@ const config: HelmConfig = {
 		workspace: 'worktree',
 		modelGuidance: {},
 		concurrency: 2,
+		loopConcurrency: 1,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },
@@ -159,6 +160,31 @@ test('config save while idle under launchd applies itself via a scheduled exit',
 		await sleep(20)
 		assert.equal(ctx.exitCount(), 1)
 	})
+})
+
+test('run limit settings persist through the API and defer apply while runs are active', async () => {
+	const budgets = [
+		{ concurrency: 25, loopConcurrency: 3 },
+		{ concurrency: null, loopConcurrency: 3 },
+		{ concurrency: 5, loopConcurrency: null },
+		{ concurrency: null, loopConcurrency: null },
+	]
+	for (const { active, limits } of [0, 1].flatMap(active => budgets.map(limits => ({ active, limits })))) {
+		await withApi({ active, managed: true }, async ctx => {
+			const res = await ctx.api.request('/config', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ...config, solver: { ...config.solver, ...limits } }),
+			})
+			assert.equal(res.status, 200)
+			assert.equal(((await res.json()) as SaveBody).data.applied, active === 0)
+			const saved = JSON.parse(readFileSync(ctx.configPath, 'utf-8')) as HelmConfig
+			assert.equal(saved.solver.concurrency, limits.concurrency)
+			assert.equal(saved.solver.loopConcurrency, limits.loopConcurrency)
+			await sleep(20)
+			assert.equal(ctx.exitCount(), active === 0 ? 1 : 0)
+		})
+	}
 })
 
 test('config save while runs are active defers with the run count and never exits', async () => {

@@ -251,7 +251,10 @@ export class Drainer {
 			paused: this.paused,
 			pending: solvePending + loopPending,
 			active: activeSolve + activeLoop,
-			maxConcurrency: this.solveCapacity() + this.loopCapacity(),
+			maxConcurrency:
+				this.config.solver.concurrency === null || this.config.solver.loopConcurrency === null
+					? null
+					: this.config.solver.concurrency + this.config.solver.loopConcurrency,
 			activeTasks: [
 				...Array.from(this.activeSolveItems.entries()).map(([taskId, info]) => ({
 					taskId,
@@ -268,12 +271,12 @@ export class Drainer {
 				solve: {
 					pending: solvePending,
 					active: activeSolve,
-					maxConcurrency: this.solveCapacity(),
+					maxConcurrency: this.config.solver.concurrency,
 				},
 				loop: {
 					pending: loopPending,
 					active: activeLoop,
-					maxConcurrency: this.loopCapacity(),
+					maxConcurrency: this.config.solver.loopConcurrency,
 				},
 			},
 		}
@@ -437,7 +440,7 @@ export class Drainer {
 			case 'startup_fenced':
 				return 'Daemon is restoring scheduled capacity — new runs are temporarily unavailable'
 			case 'capacity':
-				return 'The execution lane is at capacity — try again when a run finishes'
+				return 'The execution lane is at capacity — wait for a run to finish, or configure Settings → Run limits'
 			case 'not_found':
 				return 'Item not found'
 			case 'already_active':
@@ -491,10 +494,10 @@ export class Drainer {
 	}
 
 	private solveCapacity(): number {
-		return this.config.solver.concurrency
+		return this.config.solver.concurrency ?? Number.POSITIVE_INFINITY
 	}
 
 	private loopCapacity(): number {
-		return 1
+		return this.config.solver.loopConcurrency ?? Number.POSITIVE_INFINITY
 	}
 }

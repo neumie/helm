@@ -23,6 +23,7 @@ import {
 	EmptyState,
 	FieldLabel,
 	PushHeader,
+	Segmented,
 	SelectInput,
 	TextArea,
 	TextInput,
@@ -229,7 +230,7 @@ function SaveBar({ store }: { store: SettingsStore }) {
  *  later land in a trailing "Other" card instead of disappearing. */
 const SECTION_GROUPS: ReadonlyArray<{ label: string; ids: string[] }> = [
 	{ label: 'Daemon', ids: ['provider', 'projects', 'polling', 'server'] },
-	{ label: 'Execution', ids: ['solver', 'execution', 'spawner'] },
+	{ label: 'Execution', ids: ['run-limits', 'solver', 'execution', 'spawner'] },
 	{ label: 'AI', ids: ['ai-branch', 'ai-display', 'ai-model-guidance', 'ai-triage'] },
 	{ label: 'Automation', ids: ['scheduled-runs'] },
 	{ label: 'Integrations', ids: ['github'] },
@@ -339,6 +340,14 @@ function sectionSummary(section: ConfigEditSection, draft: Draft | null, section
 		case 'polling': {
 			const seconds = getAtPath(draft, ['polling', 'intervalSeconds'])
 			if (typeof seconds === 'number' && Number.isFinite(seconds)) return `${seconds}s`
+			break
+		}
+		case 'run-limits': {
+			const agents = getAtPath(draft, ['solver', 'concurrency'])
+			const loops = getAtPath(draft, ['solver', 'loopConcurrency'])
+			if ((agents === null || typeof agents === 'number') && (loops === null || typeof loops === 'number')) {
+				return `${agents === null ? 'Unlimited' : agents} agent${agents === 1 ? '' : 's'} · ${loops === null ? 'Unlimited' : loops} loop${loops === 1 ? '' : 's'}`
+			}
 			break
 		}
 		case 'solver': {
@@ -589,6 +598,38 @@ function FieldControl({
 			</>
 		)
 	}
+	if (field.input === 'number' && field.unlimited) {
+		const finiteDefault = field.unlimited.finiteDefault
+		return (
+			<>
+				<FieldLabel htmlFor={value === null ? undefined : id}>{field.label}</FieldLabel>
+				<div className="settings-limit-controls">
+					<Segmented
+						label={field.label}
+						options={[
+							{ value: 'limited', label: 'Limited' },
+							{ value: 'unlimited', label: 'Unlimited' },
+						]}
+						value={value === null ? 'unlimited' : 'limited'}
+						onChange={mode => {
+							if ((mode === 'unlimited') !== (value === null)) {
+								onChange(mode === 'unlimited' ? null : finiteDefault)
+							}
+						}}
+					/>
+					{value !== null && (
+						<TextInput
+							id={id}
+							type="number"
+							value={String(value ?? '')}
+							invalid={String(value ?? '').trim() === ''}
+							onChange={next => onChange(normalizeField(next, field))}
+						/>
+					)}
+				</div>
+			</>
+		)
+	}
 	const type = field.input === 'password' ? 'password' : field.input === 'number' ? 'number' : 'text'
 	const invalid = Boolean(field.required) && String(value ?? '').trim() === ''
 	return (
@@ -606,15 +647,16 @@ function FieldControl({
 	)
 }
 
-function normalizeField(value: string, field: ConfigEditField): unknown {
+function normalizeField(value: string, field: ConfigEditField): string | number | undefined {
 	if (field.input === 'number') return value.trim() === '' && !field.required ? undefined : Number(value)
 	return normalizeText(value, field)
 }
 
-function normalizeText(value: string, field: ConfigEditField): unknown {
+function normalizeText(value: string, field: ConfigEditField): string | undefined {
 	return value === '' && !field.required ? undefined : value
 }
 
+// pi-lens-ignore: no-unknown-returns
 function getAtPath(source: unknown, path: string[]): unknown {
 	let current = source
 	for (const segment of path) {

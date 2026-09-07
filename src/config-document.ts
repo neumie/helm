@@ -61,6 +61,8 @@ export interface ConfigEditField {
 	secret?: boolean
 	placeholder?: string
 	options?: ConfigFieldOption[]
+	/** Number fields may persist null; switching back restores this finite default. */
+	unlimited?: { finiteDefault: number }
 }
 
 export interface ConfigEditFieldControl extends ConfigEditField {
@@ -234,7 +236,6 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 						{ value: 'pi', label: 'Pi' },
 					],
 				},
-				{ type: 'field', path: ['solver', 'concurrency'], label: 'Concurrency', input: 'number' },
 				{
 					type: 'field',
 					path: ['solver', 'model'],
@@ -255,6 +256,30 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 					label: 'Max Budget ($)',
 					input: 'number',
 					placeholder: '(optional)',
+				},
+			],
+		},
+		{
+			id: 'run-limits',
+			title: 'Run limits',
+			description:
+				'Maximum simultaneous runs across all profiles. Agent runs include scheduled agents; loop runs include standalone loops and planned Items started with Start loop. Choose a positive whole-number limit or Unlimited for either lane. Unlimited removes Helm’s lane cap; machine resources and provider rate limits still apply. Terminal tabs and planning sessions do not count. Changes apply after a safe daemon restart; active runs are not interrupted. Use worktrees for parallel runs in the same project.',
+			controls: [
+				{
+					type: 'field',
+					path: ['solver', 'concurrency'],
+					label: 'Agent runs',
+					input: 'number',
+					required: true,
+					unlimited: { finiteDefault: 2 },
+				},
+				{
+					type: 'field',
+					path: ['solver', 'loopConcurrency'],
+					label: 'Loop runs',
+					input: 'number',
+					required: true,
+					unlimited: { finiteDefault: 1 },
 				},
 			],
 		},
@@ -448,6 +473,7 @@ export function buildConfigDocument(raw: unknown, fallback: HelmConfig): ConfigD
  * "(custom)" option instead of losing it.
  */
 function withCurrentSelectValues(edit: ConfigEditMetadata, config: HelmConfig): ConfigEditMetadata {
+	// pi-lens-ignore: no-unknown-returns
 	const valueAt = (path: string[]): unknown =>
 		path.reduce<unknown>(
 			(node, key) => (node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined),
@@ -552,6 +578,7 @@ function redactEditableConfig(config: HelmConfig): HelmConfig {
 	}
 }
 
+// pi-lens-ignore: no-unknown-returns
 function preserveRedactedSecrets(body: unknown, currentConfig: HelmConfig): unknown {
 	if (!isRecord(body)) return body
 	const next = structuredClone(body)
