@@ -83,6 +83,19 @@ from xterm/PTY/dtach runtime and from run ownership: changing placement never
 creates, kills, or transfers the underlying process; the runtime only applies the
 selected identity as focus/fit.
 
+## Remote conversations (development slice)
+
+**Helm Remote** — Helm's session-first browser workspace for authorized Pi conversations, separate from the Item dashboard and from native terminal placement. Its current implementation is an opt-in development slice; release evidence lives in `docs/remote/README.md`.
+
+**Pi session** — a conversation owned by Pi, not a Helm Item or its containing terminal. Remote observation and control do not transfer its conversation-writing ownership.
+_Avoid_: web-owned session, terminal takeover.
+
+**Remote enrollment** — explicit local permission to observe and command a particular live Pi owner in a declared scope. Enrollment neither creates nor resumes the conversation, and an unbound personal scope is not the desktop's active profile.
+
+**Owner incarnation** — one live conversation context admitted to Remote; changing that context invalidates the incarnation without necessarily changing the stable Pi session UUID. A new owner must not inherit an old owner's commands or draft.
+
+**Command receipt** — evidence of a command's progress at a specific admission or dispatch boundary, not proof of the agent's resulting work. In particular, dispatched is not accepted, queued, or completed.
+
 ## Core modules and ownership
 
 **ItemStore and ItemCommands** — all Item persistence and event queries go through

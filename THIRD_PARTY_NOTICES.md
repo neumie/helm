@@ -1,5 +1,21 @@
 # Third-party notices
 
+## Questionnaire fork
+
+`packages/helm-ask-user-question/` vendors the published source of
+`@juicesharp/rpiv-ask-user-question@2.9.0`, renamed privately to
+`@neumie/helm-ask-user-question@2.9.0-helm.1` for the opt-in Remote integration.
+
+- Upstream: <https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question>
+- Copyright (c) 2026 juicesharp
+- License: MIT; the full notice is retained at `packages/helm-ask-user-question/LICENSE`.
+- Provenance, original source hash and modifications: `packages/helm-ask-user-question/FORK.md`.
+- This is not a production package replacement or publication. Upstream source
+  formatting is retained; the new `remote-answers.ts` module follows Helm lint rules.
+
+HAPI was inspected as an architecture reference (AGPL-3.0). No HAPI source is
+incorporated into Helm Remote.
+
 ## Heroicons (16px solid)
 
 Helm vendors three native-size Heroicons for distinct concepts:

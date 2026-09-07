@@ -19,6 +19,20 @@
 			"recommended": true
 		}
 	},
+	"overrides": [
+		{
+			"include": ["packages/helm-ask-user-question/**"],
+			"formatter": { "enabled": false },
+			"organizeImports": { "enabled": false },
+			"linter": { "enabled": false }
+		},
+		{
+			"include": ["packages/helm-ask-user-question/remote-answers.ts"],
+			"formatter": { "enabled": true },
+			"organizeImports": { "enabled": true },
+			"linter": { "enabled": true }
+		}
+	],
 	"files": {
 		"ignore": [
 			"dist",
@@ -29,7 +43,8 @@
 			"profiles.json",
 			"profiles",
 			"storybook-static",
-			"app/test-results"
+			"app/test-results",
+			"app/remote-dist"
 		]
 	}
 }

@@ -1,0 +1,336 @@
+#remote-root {
+	width: 100%;
+}
+.remote-workspace {
+	width: 100%;
+	height: 100dvh;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: 320px minmax(0, 1fr);
+	background: var(--pane);
+	color: var(--text-0);
+	font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+	font-size: calc(13px * var(--ui-scale, 1));
+	overflow: hidden;
+}
+.remote-directory,
+.remote-conversation {
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.remote-directory {
+	border-right: 1px solid var(--hairline);
+}
+.remote-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 56px;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--hairline);
+	flex-shrink: 0;
+}
+.remote-header h1,
+.remote-header h2 {
+	font-size: calc(17px * var(--ui-scale, 1));
+	font-weight: 600;
+	margin: 0;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.remote-filters {
+	padding: 16px;
+	display: grid;
+	gap: 8px;
+}
+.remote-workspace label {
+	display: grid;
+	gap: 4px;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale, 1));
+}
+.remote-workspace input:not([type="radio"]):not([type="checkbox"]),
+.remote-workspace select,
+.remote-workspace textarea,
+.remote-login input {
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+	font-size: calc(13px * var(--ui-scale, 1));
+	color: var(--text-0);
+	background: var(--fill-subtle);
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-md, 6px);
+	padding: 8px 12px;
+	outline: none;
+}
+.remote-workspace input:focus,
+.remote-workspace select:focus,
+.remote-workspace textarea:focus,
+.remote-login input:focus {
+	border-color: var(--accent);
+}
+.remote-workspace button:focus-visible,
+.remote-transcript:focus-visible,
+.remote-workspace input[type="radio"]:focus-visible,
+.remote-workspace input[type="checkbox"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.remote-session-list {
+	flex: 1;
+	overflow: auto;
+	min-height: 0;
+}
+.remote-session-row {
+	appearance: none;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	width: 100%;
+	min-height: 64px;
+	padding: 12px 16px;
+	text-align: left;
+	color: var(--text-0);
+	display: grid;
+	gap: 4px;
+	cursor: pointer;
+}
+.remote-session-row strong {
+	font-size: calc(13px * var(--ui-scale, 1));
+	font-weight: 500;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.remote-session-row span {
+	color: var(--text-1);
+	font-size: calc(11px * var(--ui-scale, 1));
+}
+.remote-session-row:hover {
+	background: var(--fill-subtle);
+}
+.remote-session-row[aria-current="page"] {
+	background: var(--fill-raised);
+}
+.remote-note {
+	font-size: calc(11px * var(--ui-scale, 1));
+	color: var(--text-1);
+	line-height: 1.5;
+	margin: 8px 0;
+}
+.remote-directory > .remote-note,
+.remote-session-list > .remote-note {
+	padding: 0 16px;
+}
+.remote-meta {
+	font-size: calc(12px * var(--ui-scale, 1));
+	color: var(--text-1);
+	padding: 8px 16px;
+	overflow-wrap: anywhere;
+}
+.remote-notice {
+	display: block;
+	margin: 0;
+	padding: 8px 16px;
+	background: color-mix(in srgb, var(--warn) 15%, transparent);
+	color: var(--warn);
+	font-size: calc(12px * var(--ui-scale, 1));
+	line-height: 1.5;
+}
+.remote-transcript {
+	min-height: 0;
+	flex: 1;
+	overflow: auto;
+	scrollbar-gutter: stable;
+	overflow-anchor: none;
+	padding: 0 16px;
+}
+.remote-message {
+	max-width: 800px;
+	margin: 0 auto;
+	padding: 20px 0;
+	border-bottom: 1px solid var(--hairline);
+	user-select: text;
+	overflow-wrap: anywhere;
+}
+.remote-message h3 {
+	margin: 0 0 8px;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale, 1));
+	font-weight: 600;
+}
+.remote-message p {
+	white-space: pre-wrap;
+	line-height: 1.5;
+	margin: 0;
+}
+.remote-message pre,
+.remote-question pre {
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: calc(11px * var(--ui-scale, 1));
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 240px;
+	overflow: auto;
+	scrollbar-gutter: stable;
+	background: var(--well);
+	padding: 12px;
+	border-radius: var(--radius-lg, 8px);
+	user-select: text;
+}
+.remote-jump {
+	display: flex;
+	justify-content: center;
+	padding: 4px 16px;
+}
+.remote-composer {
+	flex-shrink: 0;
+	border-top: 1px solid var(--hairline);
+	padding: 12px 16px;
+	padding-bottom: max(12px, env(safe-area-inset-bottom));
+	display: grid;
+	gap: 8px;
+}
+.remote-composer textarea {
+	resize: vertical;
+	min-height: 64px;
+	max-height: 160px;
+}
+.remote-composer-actions {
+	display: flex;
+	gap: 8px;
+	align-items: end;
+}
+.remote-composer-actions > label {
+	flex: 1;
+	min-width: 0;
+}
+.remote-composer .remote-note {
+	margin: 0;
+}
+.remote-receipt {
+	font-size: calc(12px * var(--ui-scale, 1));
+	line-height: 1.5;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	color: var(--text-1);
+}
+.remote-empty {
+	flex: 1;
+	padding: 32px;
+	background: var(--pane);
+	color: var(--text-1);
+	font-size: calc(13px * var(--ui-scale, 1));
+}
+.remote-empty h1,
+.remote-empty h2 {
+	font-size: calc(17px * var(--ui-scale, 1));
+	font-weight: 600;
+}
+.remote-question {
+	max-width: 800px;
+	margin: 0 auto;
+	padding: 20px 0;
+}
+.remote-question fieldset {
+	min-width: 0;
+	border: 0;
+	padding: 12px 0;
+	margin: 0;
+}
+.remote-question legend {
+	font-size: calc(13px * var(--ui-scale, 1));
+	font-weight: 600;
+}
+.remote-question .remote-option {
+	display: flex;
+	align-items: start;
+	gap: 8px;
+	padding: 12px 0;
+	cursor: pointer;
+}
+.remote-option > span {
+	min-width: 0;
+	flex: 1;
+	display: grid;
+	gap: 4px;
+	overflow-wrap: anywhere;
+}
+.remote-option strong {
+	color: var(--text-0);
+	font-weight: 600;
+}
+.remote-option input {
+	accent-color: var(--accent);
+}
+.remote-login {
+	display: grid;
+	gap: 16px;
+	max-width: 480px;
+	padding: 32px;
+	margin: 0 auto;
+	color: var(--text-0);
+	background: var(--pane);
+}
+.remote-login h1 {
+	font-size: calc(17px * var(--ui-scale, 1));
+}
+.remote-login label {
+	display: grid;
+	gap: 8px;
+	font-size: calc(13px * var(--ui-scale, 1));
+}
+@media (max-width: 799px) {
+	.remote-workspace {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.remote-workspace[data-open="true"] .remote-directory,
+	.remote-workspace[data-open="false"] .remote-conversation,
+	.remote-unselected {
+		display: none;
+	}
+	.remote-header {
+		padding-top: max(8px, env(safe-area-inset-top));
+	}
+	.remote-workspace .btn,
+	.remote-login .btn,
+	.remote-empty .btn {
+		min-height: 44px;
+	}
+	.remote-workspace input:not([type="radio"]):not([type="checkbox"]),
+	.remote-workspace select,
+	.remote-workspace textarea,
+	.remote-login input {
+		font-size: 16px;
+		min-height: 44px;
+	}
+	.remote-composer-actions {
+		flex-wrap: wrap;
+	}
+	.remote-composer-actions > label {
+		flex-basis: 100%;
+	}
+	.remote-composer .remote-note {
+		display: none;
+	}
+	.remote-composer textarea {
+		resize: none;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.remote-workspace *,
+	.remote-workspace *::before,
+	.remote-workspace *::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}

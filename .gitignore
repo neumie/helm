@@ -1,4 +1,5 @@
-node_modules/
+node_modules
+# Includes local dependency symlinks used by isolated Remote proof worktrees.
 dist/
 *.db
 *.db-journal
@@ -23,3 +24,4 @@ src/build-id.generated.ts
 app/src/build-id.generated.ts
 /app/native/window-zoom-guard/build/
 /app/test-results/
+/app/remote-dist/

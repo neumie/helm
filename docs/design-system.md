@@ -458,6 +458,28 @@ A dedicated external Helm window for controlling the narrative planning and exec
 
 ---
 
+### 3.23 Helm Remote conversation workspace (development slice)
+
+`app/src/renderer/remote/RemoteWorkspace.tsx` is a browser surface of Helm, not a recreated Item dashboard. Its production components are exercised by **Views / Helm Remote** in Storybook and `app/browser-tests/remote-workspace.spec.ts`. This slice shows explicitly enrolled sessions and a bounded live conversation; full historical discovery/paging and real-phone acceptance remain open in `docs/remote/README.md`.
+
+| Metric | Value / owner |
+| --- | --- |
+| Desktop directory / readable conversation | 320px directory; flexible conversation with an 800px maximum reading column |
+| Responsive boundary | Below 800px, directory and conversation are exclusive destinations, with an explicit Sessions return action |
+| Header / session row | Minimum 56px / 64px; content stays on the 16px grid |
+| Mobile controls | Minimum 44px hit targets; **16px form text** is the deliberate web-only type exception preventing iOS focus zoom (do not apply it to native sidebar fields) |
+| Composer | Bottom-owned, 64–160px textarea; safe-area bottom inset. Dynamic viewport height (`100dvh`), never a fixed desktop window height |
+| Reading / evidence | Stable-gutter reading region; tool output/thinking use the shared §3.20 `Disclosure`, with 240px preview wells. Plain text only, no active HTML or automatic external images |
+| Visual language | Existing `--pane`/`--well`, text/fill/hairline/tone/radius tokens only; no new color, icon, outline-button, bordered-card, or terminal-mirroring vocabulary |
+
+The documented font/radius token names use their exact §2 fallback values in the browser stylesheet: the current native root exports color variables but does not define every structural custom property. Never let an undefined variable silently square fields or change code fonts. Session rows retain the square full-width hover/current stripes. The shared `Btn` owns all action chrome. One primary action: Send, or Submit answers while a supported question is open. Single/multi/custom choices use labeled radio/checkbox/text inputs; choosing a custom answer replaces the option selection. Selected option previews are literal bounded text in this initial slice. Unsupported custom TUI says to use the original terminal; it must not show a dead answer button.
+
+Browser state is keyed by host epoch + scope + generation + session UUID + incarnation. A replacement owner requires a new explicit selection and cannot inherit the old branch's draft. Within that identity, navigation retains drafts and a message-ID/offset reading anchor; streaming follows only at the bottom, with a quiet Jump to latest otherwise. A displaced anchor/live-window gap is explicit. Fractional font metrics may round a restored anchor by **at most one CSS pixel**. Scrollable reading regions deliberately accept keyboard focus. Focus moves to the chosen conversation heading and returns to its row on Back; reduced-motion remains global.
+
+Receipts distinguish Sending, host acknowledgement, dispatched, answered, rejected, disconnected and unknown. **Dispatched is not acceptance or queueing.** Unknown delivery blocks another action until a read-only status check resolves it, or the operator explicitly acknowledges checking the conversation; that acknowledgement does not retry anything. An answered questionnaire remains disabled until fresh observation closes/replaces it. Do not show optimistic success that grants an unrelated interrupt against newly resumed work.
+
+Remote's bounded-preview budgets are tested separately from the native §6 baselines: **<100ms** row-click through two animation frames, **<16ms p95 React render duration** for live-window updates, and **<8MiB retained JS-heap growth** after 12 long updates + 10 navigation cycles and forced GC. The fixture mounts only the last 40 messages of a notional large source; this measures that bounded projection, **not full-history performance or hardware keyboard/suspension**. Measured results and method are recorded in the Remote runbook; failures must not silently raise these thresholds.
+
 ## 4. Interaction rules
 
 - **Focus**: rings on `:focus-visible` only (never on mouse click). Ring = `2px solid var(--accent)`, offset 2. Text fields signal focus via accent border instead (§3.7). Every interactive element MUST have a visible focus state.
