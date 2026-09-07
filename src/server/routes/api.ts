@@ -467,7 +467,7 @@ export function apiRoutes(
 					: admission.reason === 'startup_fenced'
 						? 'Daemon is restoring scheduled capacity — new runs are temporarily unavailable'
 						: admission.reason === 'capacity'
-							? 'The execution lane is at capacity — try again when a run finishes'
+							? 'The execution lane is at capacity — wait for a run to finish, or configure Settings → Run limits'
 							: admission.reason === 'unassigned'
 								? 'Assign a project before starting this Item'
 								: admission.reason === 'already_active'

@@ -119,7 +119,11 @@ export const configSchema = z
 				// in a fresh git worktree; 'main' runs the agent directly in the project's
 				// canonical checkout (per-item payload.solverWorkspace overrides this).
 				workspace: solverWorkspaceSchema.default('worktree'),
-				concurrency: z.number().min(1).max(10).default(2),
+				// Daemon-global lane budgets, shared across profiles. Scheduled agents
+				// reserve the direct-solve lane; standalone/planned loops use their own.
+				// null explicitly means unlimited; omission preserves legacy defaults.
+				concurrency: z.number().int().positive().safe().nullable().default(2),
+				loopConcurrency: z.number().int().positive().safe().nullable().default(1),
 				model: z.string().optional(),
 				maxBudgetUsd: z.number().optional(),
 				// Okena solver: IDLE timeout — fail only after this long with no

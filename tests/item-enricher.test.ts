@@ -29,6 +29,7 @@ function makeConfig(over?: { branchNaming?: boolean; displayName?: boolean; tria
 			agent: 'claude',
 			workspace: 'worktree',
 			concurrency: 2,
+			loopConcurrency: 1,
 			timeoutMinutes: 30,
 			branchNaming: { enabled: over?.branchNaming ?? false },
 			displayName: { enabled: over?.displayName ?? true },

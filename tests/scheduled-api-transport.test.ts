@@ -47,6 +47,7 @@ const config: HelmConfig = {
 		agent: 'claude',
 		workspace: 'worktree',
 		concurrency: 2,
+		loopConcurrency: 1,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },

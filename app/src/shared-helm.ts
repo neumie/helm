@@ -378,11 +378,12 @@ export interface QueueStatus {
 	paused: boolean
 	pending: number
 	active: number
-	maxConcurrency: number
+	/** null means unlimited; the total is unlimited if either lane is. */
+	maxConcurrency: number | null
 	activeTasks: Array<{ taskId: string; title: string; startedAt: string }>
 	lanes?: {
-		solve: { pending: number; active: number; maxConcurrency: number }
-		loop: { pending: number; active: number; maxConcurrency: number }
+		solve: { pending: number; active: number; maxConcurrency: number | null }
+		loop: { pending: number; active: number; maxConcurrency: number | null }
 	}
 }
 
@@ -458,6 +459,8 @@ export interface AppConfig {
 		agent?: 'claude' | 'codex' | 'pi'
 		model?: string
 		workspace?: SolverWorkspace
+		concurrency?: number | null
+		loopConcurrency?: number | null
 	}
 	spawner?: { name?: string }
 	spawnerAdapters?: Array<{ name: string; available: boolean }>
@@ -485,6 +488,8 @@ export interface ConfigEditField {
 	secret?: boolean
 	placeholder?: string
 	options?: ConfigFieldOption[]
+	/** Number fields may persist null; switching back restores this finite default. */
+	unlimited?: { finiteDefault: number }
 }
 
 export interface ConfigEditFieldControl extends ConfigEditField {

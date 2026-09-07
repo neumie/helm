@@ -24,6 +24,7 @@ const config = {
 		agent: 'claude',
 		workspace: 'worktree',
 		concurrency: 1,
+		loopConcurrency: 1,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },

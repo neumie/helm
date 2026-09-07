@@ -201,7 +201,7 @@ test('stale-run recovery covers every profile in the shared database', () => {
 		})
 		db.setAppState('drainer_paused', 'true')
 		const drainer = new Drainer(
-			{ solver: { concurrency: 1 } } as never,
+			{ solver: { concurrency: 1, loopConcurrency: 1 } } as never,
 			db,
 			{} as never,
 			{} as never,

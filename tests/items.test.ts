@@ -109,6 +109,7 @@ const config: HelmConfig = {
 		agent: 'claude',
 		workspace: 'worktree',
 		concurrency: 2,
+		loopConcurrency: 1,
 		timeoutMinutes: 30,
 		branchNaming: { enabled: false },
 		displayName: { enabled: false },
@@ -2118,6 +2119,89 @@ test('Drainer lets an owning-profile run finish while admission switches profile
 		db.close()
 		rmSync(root, { recursive: true, force: true })
 		rmSync(worktreeRoot, { recursive: true, force: true })
+	}
+})
+
+test('Drainer applies finite and unlimited lane limits to direct and automatic starts independently', async () => {
+	const budgets = [
+		{ concurrency: 3, loopConcurrency: 2 },
+		{ concurrency: null, loopConcurrency: 2 },
+		{ concurrency: 3, loopConcurrency: null },
+		{ concurrency: null, loopConcurrency: null },
+	]
+	for (const { automatic, concurrency, loopConcurrency } of [false, true].flatMap(automatic =>
+		budgets.map(budget => ({ automatic, ...budget })),
+	)) {
+		await withTempDb(async db => {
+			const root = mkdtempSync(join(tmpdir(), 'helm-lane-limits-'))
+			const limitsConfig = { ...config, solver: { ...config.solver, concurrency, loopConcurrency } }
+			const commands = new ItemCommands(db.items, limitsConfig)
+			const admittedLoops = loopConcurrency ?? 12
+			const items = Array.from({ length: admittedLoops + 1 }, (_, index) => {
+				const item = commands.createLoopItem({ title: `Loop ${index}`, projectSlug: 'helm', prdPath: 'spec.md' })
+				const worktreePath = join(root, String(index))
+				mkdirSync(worktreePath)
+				recordPreparedPlan(commands, item.id, {
+					worktreePath,
+					branchName: `helm/loop-${index}`,
+					planDirName: `loop-${index}`,
+					spawner: 'default',
+				})
+				commands.setItemStatus(item.id, 'ready')
+				if (automatic) db.items.update(item.id, { workMode: 'agent' })
+				return item
+			})
+			let release: () => void = () => {}
+			const held = new Promise<void>(resolve => {
+				release = resolve
+			})
+			const loopRunner: LoopRunner = {
+				async runLoop() {
+					await held
+					return { runId: null, exitCode: 0 }
+				},
+			}
+			const drainer = new Drainer(limitsConfig, db, provider, new FakeSolveSolver(root), loopRunner)
+			try {
+				drainer.start()
+				for (let index = 0; index < (concurrency ?? 12); index++) {
+					assert.equal(drainer.reserveExternalSolve(`scheduled-${index}`), true)
+				}
+				assert.equal(drainer.reserveExternalSolve('scheduled-overflow'), concurrency === null)
+				const solve = commands.createSolveItem({ title: 'Agent admission', projectSlug: 'helm' })
+				assert.equal(drainer.canProcessOneItem(solve.id).ok, concurrency === null)
+				if (automatic) drainer.resume()
+				else {
+					for (const item of items.slice(0, admittedLoops)) assert.equal(drainer.processOneItem(item.id), true)
+				}
+				const status = drainer.getStatus()
+				assert.equal(status.lanes?.loop.maxConcurrency, loopConcurrency)
+				assert.equal(status.lanes?.loop.active, automatic && loopConcurrency === null ? items.length : admittedLoops)
+				assert.equal(status.lanes?.solve.maxConcurrency, concurrency)
+				assert.equal(
+					status.maxConcurrency,
+					concurrency === null || loopConcurrency === null ? null : concurrency + loopConcurrency,
+				)
+				assert.deepEqual(JSON.parse(JSON.stringify(status)), status, 'wire status must not leak Infinity')
+				const overflow = items[admittedLoops]
+				if (loopConcurrency !== null) {
+					assert.deepEqual(drainer.canProcessOneItem(overflow.id), { ok: false, reason: 'capacity' })
+					assert.equal(drainer.processOneItem(overflow.id), false)
+					assert.equal(db.items.get(overflow.id)?.status, 'ready')
+				} else if (!automatic) {
+					assert.equal(drainer.processOneItem(overflow.id), true)
+				}
+				release()
+				await waitFor(() => drainer.getStatus().lanes?.loop.active === 0, 'loops did not drain')
+				if (!automatic && loopConcurrency !== null) assert.equal(drainer.processOneItem(overflow.id), true)
+				await waitFor(() => items.every(item => db.items.get(item.id)?.status === 'done'), 'loops did not finish')
+			} finally {
+				drainer.stop()
+				release()
+				await waitFor(() => drainer.getStatus().lanes?.loop.active === 0, 'loop cleanup did not drain')
+				rmSync(root, { recursive: true, force: true })
+			}
+		})
 	}
 })
 

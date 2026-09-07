@@ -20,10 +20,11 @@ export interface QueueStatus {
 	paused: boolean
 	pending: number
 	active: number
-	maxConcurrency: number
+	/** null means unlimited; the total is unlimited if either lane is. */
+	maxConcurrency: number | null
 	activeTasks: Array<{ taskId: string; title: string; startedAt: string }>
 	lanes?: {
-		solve: { pending: number; active: number; maxConcurrency: number }
-		loop: { pending: number; active: number; maxConcurrency: number }
+		solve: { pending: number; active: number; maxConcurrency: number | null }
+		loop: { pending: number; active: number; maxConcurrency: number | null }
 	}
 }
