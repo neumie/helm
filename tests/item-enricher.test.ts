@@ -210,7 +210,7 @@ test('enricher precomputes a source Item branch before Start agent', () =>
 		const item = new ItemCommands(db.items, config).createSolveItem({
 			projectSlug: 'helm',
 			title: 'Fix delayed workspace visibility',
-			prompt: 'Open the Okena workspace without waiting on branch naming.',
+			prompt: 'Open the Okena workspace after prewarming branch naming.',
 			source: { provider: 'Email', externalId: 'email:prewarm-branch' },
 			capturedContext: { title: 'Fix delayed workspace visibility' },
 		})

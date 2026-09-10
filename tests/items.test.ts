@@ -50,8 +50,8 @@ import type { SolverResult as SolverResultFile } from '../src/types.js'
 import { phaseError, taskCancelled } from '../src/util/errors.js'
 import { createWorktree, withRepoLock } from '../src/worktree/manager.js'
 
-// apiRoutes enqueues both ingested and manually created Items for background AI
-// enrichment; tests that don't inspect that handoff can use a no-op stub.
+// apiRoutes enqueues newly-created Items for background AI enrichment; tests that
+// don't inspect that handoff can use a no-op stub.
 const fakeEnricher = { enqueue() {} }
 
 function recordPreparedPlan(
@@ -2967,36 +2967,169 @@ test('processSolveItem uses the selected agent and effort', async () => {
 	})
 })
 
-test('processSolveItem never blocks a source Item on AI naming', async () => {
+test('processSolveItem waits for source branch naming before creating a worktree', { timeout: 5_000 }, async () => {
 	await withTempDb(async db => {
-		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-hot-path-'))
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-wait-'))
 		const namingConfig: HelmConfig = {
 			...config,
-			solver: { ...config.solver, branchNaming: { enabled: true }, displayName: { enabled: true } },
+			solver: {
+				...config.solver,
+				branchNaming: { enabled: true },
+				displayName: { enabled: true },
+			},
+		}
+		const commands = new ItemCommands(db.items, namingConfig)
+		const sourceTitle = 'Open the Okena workspace for this source task quickly'
+		const item = commands.createSolveItem({
+			title: sourceTitle,
+			projectSlug: 'helm',
+			prompt: 'Use the source task context.',
+			source: { provider: 'Email', externalId: 'email:fast-start' },
+			capturedContext: { title: sourceTitle },
+		})
+		const solver = new FakeSolveSolver(worktreeRoot)
+		let displayNameCalls = 0
+		const rejectingDisplayName = async () => {
+			displayNameCalls++
+			throw new Error('source display naming must remain background-only')
+		}
+		let releaseNaming!: (value: string | null) => void
+		let namingStarted!: () => void
+		const namingGate = new Promise<string | null>(resolve => {
+			releaseNaming = resolve
+		})
+		const namingStartedGate = new Promise<void>(resolve => {
+			namingStarted = resolve
+		})
+
+		try {
+			const running = processSolveItem(item.id, namingConfig, db, provider, solver, undefined, {
+				displayName: { runOneShot: rejectingDisplayName },
+				workspaceName: {
+					runOneShot: async () => {
+						namingStarted()
+						return namingGate
+					},
+					branchExists: () => false,
+				},
+			})
+			await namingStartedGate
+			assert.equal(displayNameCalls, 0)
+			assert.equal(solver.calls.length, 0)
+			assert.equal(db.items.get(item.id)?.worktreePath, null)
+
+			releaseNaming('fix/open-in-okena')
+			await running
+
+			assert.equal(displayNameCalls, 0)
+			assert.equal(db.items.get(item.id)?.branchName, 'fix/open-in-okena')
+			assert.equal(solver.calls.length, 1)
+			assert.equal(solver.calls[0].branchName, 'fix/open-in-okena')
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('processSolveItem falls back to the deterministic source branch when naming fails', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-fallback-'))
+		const namingConfig: HelmConfig = {
+			...config,
+			solver: { ...config.solver, branchNaming: { enabled: true } },
 		}
 		const commands = new ItemCommands(db.items, namingConfig)
 		const item = commands.createSolveItem({
-			title: 'Open in Okena quickly',
+			title: 'Source naming fallback',
 			projectSlug: 'helm',
-			prompt: 'Do not wait for optional naming.',
-			source: { provider: 'Email', externalId: 'email:fast-start' },
-			capturedContext: { title: 'Open in Okena quickly' },
+			prompt: 'Continue when the naming helper is unavailable.',
+			source: { provider: 'Email', externalId: 'email:naming-fallback' },
+			capturedContext: { title: 'Source naming fallback' },
 		})
 		const solver = new FakeSolveSolver(worktreeRoot)
-		let namingCalls = 0
-		const unexpectedNaming = async () => {
-			namingCalls++
-			throw new Error('start-time source naming must not run')
-		}
 
 		try {
 			await processSolveItem(item.id, namingConfig, db, provider, solver, undefined, {
-				displayName: { runOneShot: unexpectedNaming },
-				workspaceName: { runOneShot: unexpectedNaming },
+				workspaceName: {
+					runOneShot: async () => {
+						throw new Error('naming unavailable')
+					},
+					branchExists: () => false,
+				},
 			})
 
-			assert.equal(namingCalls, 0)
+			assert.equal(solver.calls.length, 1)
 			assert.match(solver.calls[0].branchName, /^helm\/item\//)
+			assert.match(db.items.get(item.id)?.branchName ?? '', /^helm\/item\//)
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('processSolveItem skips source branch naming when disabled', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-disabled-'))
+		const disabledConfig: HelmConfig = { ...config, solver: { ...config.solver, branchNaming: { enabled: false } } }
+		const commands = new ItemCommands(db.items, disabledConfig)
+		const item = commands.createSolveItem({
+			title: 'Source naming disabled',
+			projectSlug: 'helm',
+			prompt: 'Use the deterministic branch.',
+			source: { provider: 'Email', externalId: 'email:naming-disabled' },
+			capturedContext: { title: 'Source naming disabled' },
+		})
+		const solver = new FakeSolveSolver(worktreeRoot)
+		let namingCalled = false
+
+		try {
+			await processSolveItem(item.id, disabledConfig, db, provider, solver, undefined, {
+				workspaceName: {
+					runOneShot: async () => {
+						namingCalled = true
+						return 'fix/must-not-run'
+					},
+					branchExists: () => false,
+				},
+			})
+
+			assert.equal(namingCalled, false)
+			assert.match(solver.calls[0].branchName, /^helm\/item\//)
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
+test('processSolveItem cancels before creating a worktree when source branch naming is cancelled', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-cancel-'))
+		const namingConfig: HelmConfig = {
+			...config,
+			solver: { ...config.solver, branchNaming: { enabled: true } },
+		}
+		const commands = new ItemCommands(db.items, namingConfig)
+		const item = commands.createSolveItem({
+			title: 'Source naming cancellation',
+			projectSlug: 'helm',
+			prompt: 'Stop before workspace creation.',
+			source: { provider: 'Email', externalId: 'email:naming-cancel' },
+			capturedContext: { title: 'Source naming cancellation' },
+		})
+		const solver = new FakeSolveSolver(worktreeRoot)
+
+		try {
+			await processSolveItem(item.id, namingConfig, db, provider, solver, undefined, {
+				workspaceName: {
+					runOneShot: async () => {
+						throw taskCancelled()
+					},
+					branchExists: () => false,
+				},
+			})
+
+			assert.equal(solver.calls.length, 0)
+			assert.equal(commands.getItem(item.id)?.status, 'cancelled')
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}
@@ -4755,6 +4888,12 @@ test('server creates source-backed Inbox Items from external ids', async () => {
 						}
 					: null,
 		}
+		const enqueued: string[] = []
+		const sourceEnricher = {
+			enqueue(items: Array<{ id: string }>) {
+				enqueued.push(...items.map(item => item.id))
+			},
+		}
 		const api = apiRoutes(
 			sourceConfig,
 			'helm.config.json',
@@ -4763,7 +4902,7 @@ test('server creates source-backed Inbox Items from external ids', async () => {
 			poller as never,
 			sourceProvider,
 			spawner as never,
-			fakeEnricher as never,
+			sourceEnricher as never,
 		)
 
 		const res = await api.request('/items/source', {
@@ -4787,6 +4926,15 @@ test('server creates source-backed Inbox Items from external ids', async () => {
 			['approve', 'reject'],
 		)
 		assert.equal(db.items.findBySourceExternalId('task-extension-create')?.id, body.data.id)
+		assert.deepEqual(enqueued, [body.data.id])
+
+		const duplicate = await api.request('/items/source', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ externalId: 'task-extension-create' }),
+		})
+		assert.equal(duplicate.status, 200)
+		assert.deepEqual(enqueued, [body.data.id])
 	})
 })
 

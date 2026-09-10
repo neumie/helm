@@ -1150,6 +1150,11 @@ export function apiRoutes(
 				url: config.provider.taskBaseUrl ? `${config.provider.taskBaseUrl}${parsed.data.externalId}` : undefined,
 			},
 		})
+		// Keep extension-created source Items on the same enrichment path as poll and
+		// ingest discovery. The worker still performs its own bounded, best-effort
+		// branch-name attempt when Start follows creation before this background pass
+		// settles.
+		enricher.enqueue([item])
 		return c.json({ data: await dashboardItem(item) }, 201)
 	})
 

@@ -36,10 +36,13 @@ const DEFAULT_RETRY_DELAYS_MS = [30_000, 120_000, 300_000]
  * Background per-item AI enricher. For each source Item—or source-less solve Item
  * still waiting in Queue—it runs the best-effort enrichments that are enabled and
  * missing: a short display name (from the title), a pre-solve intent assessment,
- * and an optional AI branch name (both from task context). Work stays off the
- * poll/start hot paths, with a small concurrency cap so a batch cannot fan out
- * dozens of model calls at once. Wired in `index.ts`; poll/API creation enqueues
- * new Items, and startup runs a one-time backfill over eligible rows.
+ * and an optional AI branch name (both from task context). Background enrichment
+ * stays off the poll hot path; solve-start owns a bounded branch-name fallback
+ * when prewarming has not settled. Work is kept behind a small concurrency cap so
+ * a batch cannot fan out dozens of model calls at once. Wired in `index.ts`; poll/API creation enqueues
+ * new Items, and startup runs a one-time backfill over eligible rows. Immediate
+ * solve starts still await their own bounded branch-name attempt when needed, so
+ * this background pass remains prewarming rather than an identity requirement.
  *
  * **Transient-failure auto-retry.** A one-shot model call can time out (SIGTERM)
  * when the machine is overloaded, leaving the Item unenriched. After each run, if

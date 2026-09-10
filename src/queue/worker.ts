@@ -243,26 +243,23 @@ export async function processSolveItem(
 		const mainMode = workspaceMode === 'main'
 		const freshest = commands.getItem(itemId) ?? displayNamed
 
-		// Source Items precompute AI branch names in ItemEnricher while they wait in
-		// Inbox/Queue. Never put that optional model call back on Start agent's hot
-		// path: if prewarming has not finished, use the deterministic branch now so
-		// the Okena workspace can appear immediately. Source-less manual Items have
-		// no background dwell, so they retain the start-time naming attempt.
+		// The background Enricher prewarms source and Queue Items, but an immediate
+		// Start can race that pass. Wait for one bounded, best-effort naming attempt
+		// here before resolving the workspace; a timeout/failure leaves `freshest`
+		// unchanged so the deterministic helm/item identity remains the fallback.
 		// Main-workspace runs skip naming entirely; the agent branches itself.
 		const named = mainMode
 			? { ...freshest, branchName: null }
-			: freshest.source
-				? freshest
-				: await ensureItemWorkspaceName({
-						commands,
-						item: freshest,
-						taskContext,
-						config,
-						repoPath: projectConfig.repoPath,
-						agent: selectedAgent ?? config.solver.agent,
-						signal,
-						deps: deps.workspaceName,
-					})
+			: await ensureItemWorkspaceName({
+					commands,
+					item: freshest,
+					taskContext,
+					config,
+					repoPath: projectConfig.repoPath,
+					agent: selectedAgent ?? config.solver.agent,
+					signal,
+					deps: deps.workspaceName,
+				})
 
 		requireItemAssignment(named)
 		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
