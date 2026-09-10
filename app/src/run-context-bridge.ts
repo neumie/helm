@@ -4,7 +4,12 @@ type RequestMethod = 'GET' | 'POST' | 'PUT'
 
 export interface RunContextBridgeDependencies {
 	acceptsProfileToken(token: unknown): boolean
-	request<T>(method: RequestMethod, path: string, body?: unknown): Promise<HelmResult<T>>
+	request<T>(
+		method: RequestMethod,
+		path: string,
+		body?: unknown,
+		headers?: Record<string, string>,
+	): Promise<HelmResult<T>>
 	kick(): void
 }
 
@@ -18,7 +23,14 @@ export class RunContextBridgeOperations {
 	async load(itemId: string, profileToken: unknown): Promise<HelmResult<RunContextLoad>> {
 		const before = this.stale<RunContextLoad>(profileToken)
 		if (before) return before
-		const result = await this.deps.request<RunContextLoad>('GET', `/items/${encodeURIComponent(itemId)}/run-context`)
+		const result = await this.deps.request<RunContextLoad>(
+			'GET',
+			`/items/${encodeURIComponent(itemId)}/run-context`,
+			undefined,
+			{
+				'X-Helm-Run-Context-Formats': '1,2',
+			},
+		)
 		return this.stale<RunContextLoad>(profileToken) ?? result
 	}
 
@@ -49,6 +61,7 @@ export class RunContextBridgeOperations {
 			{
 				revision,
 			},
+			{ 'X-Helm-Run-Context-Formats': '1,2' },
 		)
 		const after = this.stale<RunContextReset>(profileToken)
 		if (after) return after

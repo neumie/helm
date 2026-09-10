@@ -6651,6 +6651,10 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 				return {
 					title: 'Live task',
 					description,
+					descriptionBlocks: [
+						{ type: 'text', text: description },
+						{ type: 'image', url: 'https://example.test/source.png', name: 'source.png', contentType: 'image/png' },
+					],
 					comments: [{ author: 'Reporter', createdAt: '2026-07-20T10:00:00.000Z', body: 'Stale claim' }],
 					attachments: [{ name: 'evidence.txt', url: 'https://example.test/evidence.txt' }],
 				}
@@ -6675,6 +6679,18 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 			planningSpawner,
 			fakeEnricher as never,
 		)
+		const loop = commands.createLoopItem({
+			title: 'Loop does not accept Run Context revisions',
+			projectSlug: 'helm',
+			prdPath: 'docs/plans/loop/prd.md',
+		})
+		const loopRevisionRes = await api.request(`/items/${loop.id}/start`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ expectedRunContextRevision: 0 }),
+		})
+		assert.equal(loopRevisionRes.status, 400)
+		assert.equal(db.items.get(loop.id)?.status, 'ready')
 
 		try {
 			providerFails = true
@@ -6703,6 +6719,14 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 			})
 			assert.equal(saveRes.status, 200)
 			assert.equal(db.items.get(item.id)?.runContext?.markdown, 'Verified context only.')
+
+			const plainRichRes = await api.request(`/items/${item.id}/run-context/plain`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json', 'X-Helm-Run-Context-Formats': '1,2' },
+				body: JSON.stringify({ revision: 1, text: 'Must not flatten rich context' }),
+			})
+			assert.equal(plainRichRes.status, 409)
+			assert.equal(db.items.get(item.id)?.runContext?.version, 1)
 
 			const conflictRes = await api.request(`/items/${item.id}/run-context`, {
 				method: 'PUT',
@@ -6751,6 +6775,43 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 			assert.equal(reset.data.revision, 2)
 			assert.equal(db.items.get(item.id)?.runContext, null)
 			assert.equal(db.items.get(item.id)?.source?.externalId, 'task-1')
+
+			const v2Save = await api.request(`/items/${item.id}/run-context/plain`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json', 'X-Helm-Run-Context-Formats': '1,2' },
+				body: JSON.stringify({ revision: 2, text: 'Plain narrative' }),
+			})
+			assert.equal(v2Save.status, 200)
+			const v2Body = (await v2Save.json()) as {
+				data: { document: { version: number; images: unknown[] }; revision: number }
+			}
+			assert.equal(v2Body.data.document.version, 2)
+			assert.equal(v2Body.data.revision, 3)
+
+			providerFails = true
+			const legacyV2 = await api.request(`/items/${item.id}/run-context`)
+			assert.equal(legacyV2.status, 409)
+			const v2Retry = await api.request(`/items/${item.id}/run-context/plain`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json', 'X-Helm-Run-Context-Formats': '1,2' },
+				body: JSON.stringify({ revision: 3, text: 'Updated plain narrative' }),
+			})
+			assert.equal(v2Retry.status, 200)
+			const v2RetryBody = (await v2Retry.json()) as {
+				data: { document: { version: number; text: string; images: unknown[] } }
+			}
+			assert.equal(v2RetryBody.data.document.text, 'Updated plain narrative')
+			assert.deepEqual(v2RetryBody.data.document.images, v2Body.data.document.images)
+
+			const genericV2 = await api.request(`/items/${item.id}/run-context`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					revision: 4,
+					document: { version: 2, text: 'forbidden', images: [], updatedAt: new Date().toISOString() },
+				}),
+			})
+			assert.equal(genericV2.status, 400)
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}
@@ -6783,5 +6844,396 @@ test('processSolveItem hands the saved run-context narrative to the solver', asy
 		} finally {
 			rmSync(worktreeRoot, { recursive: true, force: true })
 		}
+	})
+})
+
+// Completion regressions use request barriers rather than timing guesses.
+function contextBarrier() {
+	let resolve!: () => void
+	const promise = new Promise<void>(done => {
+		resolve = done
+	})
+	return { promise, resolve }
+}
+const contextHeaders = { 'Content-Type': 'application/json', 'X-Helm-Run-Context-Formats': '1,2' }
+const contextImages = [
+	{ type: 'image' as const, url: 'https://example.test/first.png', name: 'First image', contentType: 'image/png' },
+	{ type: 'image' as const, url: 'https://example.test/second.jpg', name: 'Second image', contentType: 'image/jpeg' },
+]
+
+test('plain context API preserves exact ordered images, negotiates reads/reset, and refuses injection before source IO', async () => {
+	await withTempDb(async db => {
+		let calls = 0
+		let fail = false
+		const source = { title: 'Source', descriptionBlocks: contextImages }
+		const commands = new ItemCommands(db.items, config)
+		const item = commands.createSolveItem({
+			title: 'Source',
+			projectSlug: 'helm',
+			source: { provider: 'fake', externalId: 'context' },
+		})
+		const api = apiRoutes(
+			config,
+			'unused',
+			db,
+			queue as never,
+			poller as never,
+			{
+				...provider,
+				getTaskContext: async () => {
+					calls++
+					if (fail) throw new Error('offline')
+					return source
+				},
+			} as never,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		const write = (path: string, body: unknown, method = 'PUT', headers = contextHeaders) =>
+			api.request(`/items/${item.id}/${path}`, { method, headers, body: JSON.stringify(body) })
+		const unchanged = () => ({ row: db.items.get(item.id), events: db.items.getEvents(item.id) })
+		const initial = unchanged()
+		for (const body of [
+			{ revision: 0, text: 'x', images: contextImages },
+			{ revision: 0, text: 'x'.repeat(200_001) },
+		]) {
+			assert.equal((await write('run-context/plain', body)).status, 400)
+			assert.deepEqual(unchanged(), initial)
+		}
+		assert.equal(calls, 0)
+		const first = await write('run-context/plain', { revision: 0, text: 'First draft' })
+		assert.equal(first.status, 200)
+		assert.deepEqual((await first.json()).data.document.images, contextImages)
+		assert.equal(calls, 1)
+		const saved = unchanged()
+		for (const headers of [
+			{ 'Content-Type': 'application/json' },
+			{ ...contextHeaders, 'X-Helm-Run-Context-Formats': '1' },
+		]) {
+			assert.equal((await api.request(`/items/${item.id}/run-context`, { headers })).status, 409)
+			assert.equal(
+				(await write('run-context/reset', { revision: 1 }, 'POST', headers as typeof contextHeaders)).status,
+				409,
+			)
+			assert.deepEqual(unchanged(), saved)
+		}
+		assert.equal(calls, 1, 'legacy refusal must precede provider IO')
+		fail = true
+		const load = await api.request(`/items/${item.id}/run-context`, { headers: contextHeaders })
+		assert.equal(load.status, 200)
+		assert.deepEqual((await load.json()).data.document.images, contextImages)
+		assert.equal(calls, 2)
+		const second = await write('run-context/plain', { revision: 1, text: 'Second draft' })
+		assert.equal(second.status, 200)
+		assert.deepEqual((await second.json()).data.document.images, contextImages)
+		assert.equal(calls, 2, 'later v2 save must not fetch provider')
+		const secondSaved = unchanged()
+		assert.equal(
+			(await write('run-context', { revision: 2, document: { version: 2, text: 'injected', images: [] } })).status,
+			400,
+		)
+		assert.equal((await write('run-context/reset', { revision: 2 }, 'POST')).status, 502)
+		assert.deepEqual(unchanged(), secondSaved)
+		fail = false
+		const reset = await write('run-context/reset', { revision: 2 }, 'POST')
+		assert.equal(reset.status, 200)
+		assert.deepEqual((await reset.json()).data.source.descriptionBlocks, contextImages)
+		assert.equal(db.items.get(item.id)?.runContext, null)
+		commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Rich' }, 3)
+		const rich = unchanged()
+		const beforeRichCalls = calls
+		assert.equal((await write('run-context/plain', { revision: 4, text: 'flatten' })).status, 409)
+		assert.equal(calls, beforeRichCalls)
+		assert.deepEqual(unchanged(), rich)
+	})
+})
+
+for (const race of ['revision', 'running'] as const)
+	test(`plain context first-save rechecks ${race} after source await without writes`, async () => {
+		await withTempDb(async db => {
+			const entered = contextBarrier()
+			const release = contextBarrier()
+			const commands = new ItemCommands(db.items, config)
+			const item = commands.createSolveItem({
+				title: 'Race',
+				projectSlug: 'helm',
+				source: { provider: 'fake', externalId: 'race' },
+			})
+			const api = apiRoutes(
+				config,
+				'unused',
+				db,
+				queue as never,
+				poller as never,
+				{
+					...provider,
+					getTaskContext: async () => {
+						entered.resolve()
+						await release.promise
+						return { title: 'Race', descriptionBlocks: contextImages }
+					},
+				} as never,
+				spawner as never,
+				fakeEnricher as never,
+			)
+			const pending = api.request(`/items/${item.id}/run-context/plain`, {
+				method: 'PUT',
+				headers: contextHeaders,
+				body: JSON.stringify({ revision: 0, text: 'Late' }),
+			})
+			await entered.promise
+			if (race === 'revision') commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Winner' }, 0)
+			else commands.startItem(item.id)
+			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
+			release.resolve()
+			assert.equal((await pending).status, race === 'revision' ? 409 : 502)
+			assert.deepEqual({ row: db.items.get(item.id), events: db.items.getEvents(item.id) }, before)
+		})
+	})
+
+for (const admission of ['allowed', 'refused'] as const)
+	test(`Start revision mismatch preserves all selections and events after ${admission} preflight`, async () => {
+		await withTempDb(async db => {
+			const commands = new ItemCommands(db.items, config)
+			const item = commands.createSolveItem({ title: 'Guard', projectSlug: 'helm', prompt: 'Original' })
+			commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Current' }, 0)
+			let preflights = 0
+			let starts = 0
+			const api = apiRoutes(
+				config,
+				'unused',
+				db,
+				{
+					...queue,
+					canProcessOneItem: () => {
+						preflights++
+						return admission === 'allowed' ? { ok: true } : { ok: false, status: 409, error: 'No capacity' }
+					},
+					processOneItem: () => {
+						starts++
+						return true
+					},
+				} as never,
+				poller as never,
+				provider,
+				spawner as never,
+				fakeEnricher as never,
+			)
+			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
+			const response = await api.request(`/items/${item.id}/start`, {
+				method: 'POST',
+				headers: contextHeaders,
+				body: JSON.stringify({
+					expectedRunContextRevision: 0,
+					solverAgent: 'codex',
+					solverModel: 'custom-model',
+					solverEffort: 'high',
+					solverWorkspace: 'main',
+				}),
+			})
+			assert.equal(response.status, 409)
+			assert.equal(preflights, 1)
+			assert.equal(starts, 0)
+			assert.deepEqual({ row: db.items.get(item.id), events: db.items.getEvents(item.id) }, before)
+		})
+	})
+
+test('plain context request retains captured profile across first-save source await', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'hr-ctx-'))
+	let activeProfile = 'work'
+	const db = new DB(join(root, 'helm.db'), () => activeProfile)
+	const entered = contextBarrier()
+	const release = contextBarrier()
+	try {
+		const commands = new ItemCommands(db.forProfile('work').items, config)
+		const item = commands.createSolveItem({
+			title: 'Owned',
+			projectSlug: 'helm',
+			source: { provider: 'fake', externalId: 'owned' },
+		})
+		const other = db.forProfile('profile-aaaaaaaaaaaa')
+		const otherItem = new ItemCommands(other.items, config).createSolveItem({
+			title: 'Other',
+			projectSlug: 'helm',
+			prompt: 'Other',
+		})
+		const beforeOther = { row: other.items.get(otherItem.id), events: other.items.getEvents(otherItem.id) }
+		const api = apiRoutes(
+			config,
+			'unused',
+			db,
+			queue as never,
+			poller as never,
+			{
+				...provider,
+				getTaskContext: async () => {
+					entered.resolve()
+					await release.promise
+					return { title: 'Owned', descriptionBlocks: contextImages }
+				},
+			} as never,
+			spawner as never,
+			fakeEnricher as never,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{
+				store: { activeProfile: () => ({ id: activeProfile }) },
+			} as never,
+		)
+		const pending = api.request(`/items/${item.id}/run-context/plain`, {
+			method: 'PUT',
+			headers: contextHeaders,
+			body: JSON.stringify({ revision: 0, text: 'Owner text' }),
+		})
+		await entered.promise
+		activeProfile = 'profile-aaaaaaaaaaaa'
+		release.resolve()
+		assert.equal((await pending).status, 200)
+		assert.equal(db.forProfile('work').items.get(item.id)?.runContextRevision, 1)
+		assert.equal(other.items.get(item.id), null)
+		assert.deepEqual({ row: other.items.get(otherItem.id), events: other.items.getEvents(otherItem.id) }, beforeOther)
+	} finally {
+		release.resolve()
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+for (const images of [
+	[{ type: 'image', url: 42 }],
+	Array.from({ length: 2001 }, () => contextImages[0]),
+	[{ ...contextImages[0], name: 'x'.repeat(750_000) }],
+])
+	test(`plain context refuses invalid or oversized source images without dropping them (${JSON.stringify(images).length} bytes)`, async () => {
+		await withTempDb(async db => {
+			const commands = new ItemCommands(db.items, config)
+			const item = commands.createSolveItem({
+				title: 'Invalid images',
+				projectSlug: 'helm',
+				source: { provider: 'fake', externalId: 'invalid' },
+			})
+			const api = apiRoutes(
+				config,
+				'unused',
+				db,
+				queue as never,
+				poller as never,
+				{ ...provider, getTaskContext: async () => ({ title: 'Invalid images', descriptionBlocks: images }) } as never,
+				spawner as never,
+				fakeEnricher as never,
+			)
+			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
+			const response = await api.request(`/items/${item.id}/run-context/plain`, {
+				method: 'PUT',
+				headers: contextHeaders,
+				body: JSON.stringify({ revision: 0, text: 'No loss' }),
+			})
+			assert.equal(response.status, 502)
+			assert.deepEqual({ row: db.items.get(item.id), events: db.items.getEvents(item.id) }, before)
+		})
+	})
+
+for (const mode of ['agent', 'loop'] as const)
+	test(`planned ${mode} Start revision mismatch follows feasibility and lane preflight without execution writes`, async () => {
+		await withTempDb(async db => {
+			const root = mkdtempSync(join(tmpdir(), 'hr-plan-ctx-'))
+			try {
+				const commands = new ItemCommands(db.items, config)
+				const item = commands.createSolveItem({ title: 'Planned', projectSlug: 'helm', prompt: 'Original' })
+				recordPreparedPlan(commands, item.id, { worktreePath: root, branchName: 'test/plan', planDirName: 'plan' })
+				mkdirSync(join(root, 'docs/plans/plan'), { recursive: true })
+				writeFileSync(join(root, 'docs/plans/plan/prd.md'), '# Plan\nImplement it')
+				commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Current' }, 0)
+				const lanes: unknown[] = []
+				let starts = 0
+				const api = apiRoutes(
+					config,
+					'unused',
+					db,
+					{
+						...queue,
+						canProcessOneItem: (_id: string, lane: unknown) => {
+							lanes.push(lane)
+							return { ok: true }
+						},
+						processOneItem: () => {
+							starts++
+							return true
+						},
+					} as never,
+					poller as never,
+					provider,
+					spawner as never,
+					fakeEnricher as never,
+				)
+				const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
+				const response = await api.request(`/items/${item.id}/start`, {
+					method: 'POST',
+					headers: contextHeaders,
+					body: JSON.stringify({
+						expectedRunContextRevision: 0,
+						executionMode: mode,
+						solverAgent: 'codex',
+						solverModel: 'changed-model',
+						solverEffort: 'high',
+						solverWorkspace: 'worktree',
+					}),
+				})
+				assert.equal(response.status, 409)
+				assert.deepEqual(lanes, [mode === 'agent' ? 'solve' : 'loop'])
+				assert.equal(starts, 0)
+				assert.deepEqual({ row: db.items.get(item.id), events: db.items.getEvents(item.id) }, before)
+			} finally {
+				rmSync(root, { recursive: true, force: true })
+			}
+		})
+	})
+
+test('Start rejects non-solve and invalid revision fields without preflight or writes', async () => {
+	await withTempDb(async db => {
+		const commands = new ItemCommands(db.items, config)
+		const solve = commands.createSolveItem({ title: 'Solve', projectSlug: 'helm', prompt: 'Original' })
+		const loop = commands.createLoopItem({ title: 'Loop', projectSlug: 'helm', prdPath: 'plan.md' })
+		let preflights = 0
+		const api = apiRoutes(
+			config,
+			'unused',
+			db,
+			{
+				...queue,
+				canProcessOneItem: () => {
+					preflights++
+					return { ok: true }
+				},
+			} as never,
+			poller as never,
+			provider,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		for (const [item, revisions] of [
+			[solve, [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '0', null]],
+			[loop, [0]],
+		] as const) {
+			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
+			for (const expectedRunContextRevision of revisions) {
+				const response = await api.request(`/items/${item.id}/start`, {
+					method: 'POST',
+					headers: contextHeaders,
+					body: JSON.stringify({
+						expectedRunContextRevision,
+						solverAgent: 'codex',
+						solverModel: 'changed',
+						solverWorkspace: 'main',
+					}),
+				})
+				assert.equal(response.status, 400)
+				assert.deepEqual({ row: db.items.get(item.id), events: db.items.getEvents(item.id) }, before)
+			}
+		}
+		assert.equal(preflights, 0)
 	})
 })

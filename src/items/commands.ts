@@ -10,8 +10,8 @@ import type { ErrorPhase } from '../types.js'
 import { sameFilesystemPath } from '../util/path-identity.js'
 import { canAssignItem, requireItemAssignment } from './assignment.js'
 import { itemExecutionMode } from './execution.js'
-import { RunContextConflictError, parseRunContextDraft } from './run-context.js'
-import type { RunContextDraft } from './run-context.js'
+import { RunContextConflictError, parseRunContextDocument } from './run-context.js'
+import type { RunContextDocument, RunContextDraft } from './run-context.js'
 import { itemSourceSchema } from './schema.js'
 import type {
 	Assessment,
@@ -295,7 +295,7 @@ export class ItemCommands {
 	}
 
 	/** Persist or reset the editor-owned narrative without mutating source data. */
-	setRunContext(id: string, draft: RunContextDraft | null, expectedRevision: number): ItemRecord {
+	setRunContext(id: string, draft: RunContextDraft | RunContextDocument | null, expectedRevision: number): ItemRecord {
 		const item = this.requireItem(id)
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items have editable run context')
@@ -304,7 +304,15 @@ export class ItemCommands {
 		if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
 			throw new Error('Run context revision must be a non-negative integer')
 		}
-		const runContext = draft ? { ...parseRunContextDraft(draft), updatedAt: new Date().toISOString() } : null
+		const runContext = draft
+			? {
+					...parseRunContextDocument({
+						...draft,
+						updatedAt: 'updatedAt' in draft ? draft.updatedAt : new Date().toISOString(),
+					}),
+					updatedAt: new Date().toISOString(),
+				}
+			: null
 		const updated = this.store.updateRunContext(id, runContext, expectedRevision)
 		if (!updated) throw new RunContextConflictError()
 		return updated

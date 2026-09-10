@@ -15,6 +15,19 @@ export function createRemoteAssets(assetsDirectory: string) {
 		['/remote.js', { type: 'text/javascript; charset=utf-8', bytes: readFileSync(join(assetsDirectory, 'remote.js')) }],
 		['/remote.css', { type: 'text/css; charset=utf-8', bytes: readFileSync(join(assetsDirectory, 'remote.css')) }],
 	])
+	// Current HTML opts into one complete PWA asset set. Legacy isolated test shells
+	// remain supported, but a partially built installable shell fails startup.
+	if (assets.get('/')?.bytes.toString('utf8').includes('/manifest.webmanifest')) {
+		for (const [name, type] of [
+			['manifest.webmanifest', 'application/manifest+json; charset=utf-8'],
+			['remote-sw.js', 'text/javascript; charset=utf-8'],
+			['icon-180.png', 'image/png'],
+			['icon-192.png', 'image/png'],
+			['icon-512.png', 'image/png'],
+		]) {
+			if (name && type) assets.set(`/${name}`, { type, bytes: readFileSync(join(assetsDirectory, name)) })
+		}
+	}
 	return (request: Request): Response | null => {
 		let pathname: string
 		try {
@@ -30,7 +43,7 @@ export function createRemoteAssets(assetsDirectory: string) {
 				'Cache-Control': 'no-store',
 				'X-Content-Type-Options': 'nosniff',
 				'Content-Security-Policy':
-					"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+					"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 			},
 		})
 	}
@@ -119,6 +132,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 	console.log(
 		`Helm Remote development preview: ${running.origin}\nPrivate enrollment directory: ${running.root}\nNo agents were launched. No daemon API is exposed.`,
 	)
+	process.send?.({ type: 'helm-remote-ready' })
 	let stopping = false
 	const stop = () => {
 		if (!stopping) {

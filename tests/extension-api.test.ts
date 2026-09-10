@@ -277,3 +277,25 @@ test('extension API creates source-backed Items without a per-run solverAgent', 
 		}
 	}
 })
+
+test('captured extension transport pins origin and negotiates prompt reads across storage changes', async () => {
+	const { createApi } = extensionApiModule as typeof import('../extension/src/api.ts')
+	const calls: Array<{ path: string; init?: RequestInit }> = []
+	globalThis.fetch = async (input, init) => {
+		calls.push({ path: String(input), init })
+		return Response.json({ data: {} })
+	}
+	try {
+		const pinned = createApi('http://127.0.0.1:12345')
+		await pinned.createItemFromSource('source/with spaces')
+		await pinned.runContext('item-a')
+		await pinned.savePlainRunContext('item-a', 4, 'Narrative')
+		await pinned.itemAction('item-a', 'start', { expectedRunContextRevision: 5 })
+		assert.ok(calls.every(call => call.path.startsWith('http://127.0.0.1:12345/api/')))
+		assert.deepEqual(calls[1].init?.headers, { 'X-Helm-Run-Context-Formats': '1,2' })
+		assert.deepEqual(JSON.parse(String(calls[2].init?.body)), { revision: 4, text: 'Narrative' })
+		assert.deepEqual(JSON.parse(String(calls[3].init?.body)), { expectedRunContextRevision: 5 })
+	} finally {
+		globalThis.fetch = originalFetch
+	}
+})

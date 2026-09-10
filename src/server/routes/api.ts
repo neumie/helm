@@ -29,7 +29,13 @@ import type { ItemEnricher } from '../../items/enricher.js'
 import { resolveItemWorkspace } from '../../items/identity.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../../items/naming.js'
 import { observeItemRun } from '../../items/observation.js'
-import { RunContextConflictError, runContextDraftSchema } from '../../items/run-context.js'
+import {
+	MAX_RUN_CONTEXT_MARKDOWN_LENGTH,
+	RunContextConflictError,
+	plainRunContextFromSource,
+	runContextDocumentSchema,
+	runContextDraftSchema,
+} from '../../items/run-context.js'
 import { itemStatusSchema, solverEffortSchema } from '../../items/schema.js'
 import type { ItemRecord, SolverEffort } from '../../items/schema.js'
 import type { KnowledgeIntegration } from '../../knowledge/integration.js'
@@ -1395,10 +1401,30 @@ export function apiRoutes(
 		return c.json({ data: { retried: true } })
 	})
 
+	const runContextFormats = (c: Context): Set<number> => {
+		const raw = c.req.header('X-Helm-Run-Context-Formats')
+		if (raw === undefined) return new Set([1])
+		return new Set(
+			raw
+				.split(',')
+				.map(token => Number(token.trim()))
+				.filter(token => token === 1 || token === 2),
+		)
+	}
+	const invalidRunContextFormats = (c: Context) =>
+		c.req.header('X-Helm-Run-Context-Formats') !== undefined && runContextFormats(c).size === 0
+	const rejectLegacyRunContext = (c: Context, item: ItemRecord) =>
+		item.runContext?.version === 2 && !runContextFormats(c).has(2)
+			? c.json({ error: 'This Run Context requires a newer Helm. Finish active runs, then restart Helm.' }, 409)
+			: null
+
 	api.get('/items/:id/run-context', async c => {
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		if (item.kind !== 'solve') return c.json({ error: 'Only solve Items have editable run context' }, 400)
+		if (invalidRunContextFormats(c)) return c.json({ error: 'Invalid Run Context format negotiation' }, 400)
+		const legacyRejection = rejectLegacyRunContext(c, item)
+		if (legacyRejection) return legacyRejection
 		try {
 			const source = await resolveRunContextSource(item)
 			return c.json({
@@ -1455,6 +1481,41 @@ export function apiRoutes(
 		}
 	})
 
+	api.put('/items/:id/run-context/plain', bodyLimit({ maxSize: MAX_RUN_CONTEXT_BODY_BYTES }), async c => {
+		if (invalidRunContextFormats(c)) return c.json({ error: 'Invalid Run Context format negotiation' }, 400)
+		if (!runContextFormats(c).has(2)) return c.json({ error: 'Plain Run Context requires a newer Helm client' }, 409)
+		const parsed = z
+			.object({ revision: z.number().int().nonnegative(), text: z.string().max(MAX_RUN_CONTEXT_MARKDOWN_LENGTH) })
+			.strict()
+			.safeParse(await c.req.json().catch(() => null))
+		if (!parsed.success) return c.json({ error: 'Invalid plain run context', details: parsed.error.flatten() }, 400)
+		const item = itemCommands.getItem(c.req.param('id'))
+		if (!item) return c.json({ error: 'Not found' }, 404)
+		if (item.kind !== 'solve') return c.json({ error: 'Only solve Items have editable run context' }, 400)
+		if (item.runContextRevision !== parsed.data.revision)
+			return c.json({ error: 'Run context changed in another editor', revision: item.runContextRevision }, 409)
+		if (item.runContext?.version === 1)
+			return c.json(
+				{ error: 'This Item has a rich Run Context. Edit it in Helm.', revision: item.runContextRevision },
+				409,
+			)
+		let document: ReturnType<typeof plainRunContextFromSource>
+		try {
+			if (item.runContext?.version === 2) {
+				document = { ...item.runContext, text: parsed.data.text, updatedAt: new Date().toISOString() }
+			} else {
+				const source = await resolveRunContextSource(item)
+				document = plainRunContextFromSource(source, parsed.data.text)
+			}
+			const updated = itemCommands.setRunContext(item.id, document, parsed.data.revision)
+			return c.json({ data: { document: updated.runContext, revision: updated.runContextRevision } })
+		} catch (err) {
+			if (err instanceof RunContextConflictError)
+				return c.json({ error: err.message, revision: itemCommands.getItem(item.id)?.runContextRevision }, 409)
+			return c.json({ error: err instanceof Error ? err.message : String(err) }, 502)
+		}
+	})
+
 	api.post('/items/:id/run-context/reset', bodyLimit({ maxSize: 4 * 1024 }), async c => {
 		const parsed = z
 			.object({ revision: z.number().int().nonnegative() })
@@ -1464,6 +1525,9 @@ export function apiRoutes(
 		const item = itemCommands.getItem(c.req.param('id'))
 		if (!item) return c.json({ error: 'Not found' }, 404)
 		if (item.kind !== 'solve') return c.json({ error: 'Only solve Items have editable run context' }, 400)
+		if (invalidRunContextFormats(c)) return c.json({ error: 'Invalid Run Context format negotiation' }, 400)
+		const legacyRejection = rejectLegacyRunContext(c, item)
+		if (legacyRejection) return legacyRejection
 		if (item.runContextRevision !== parsed.data.revision) {
 			return c.json({ error: 'Run context changed in another editor' }, 409)
 		}
@@ -1672,6 +1736,16 @@ export function apiRoutes(
 		if (item.status !== 'ready' && item.status !== 'inbox' && !plannedActive)
 			return c.json({ error: 'Item is not ready to start' }, 400)
 		const requested = (body as { executionMode?: unknown }).executionMode
+		const expectedRunContextRevision = (body as { expectedRunContextRevision?: unknown }).expectedRunContextRevision
+		if (expectedRunContextRevision !== undefined && projectedSolvePayload === undefined)
+			return c.json({ error: 'expectedRunContextRevision is supported only for solve Items' }, 400)
+		if (
+			expectedRunContextRevision !== undefined &&
+			(typeof expectedRunContextRevision !== 'number' ||
+				!Number.isSafeInteger(expectedRunContextRevision) ||
+				expectedRunContextRevision < 0)
+		)
+			return c.json({ error: 'Invalid expectedRunContextRevision' }, 400)
 		let plannedLoop: { prdPath: string; iterations: number; provider: 'claude' | 'codex' } | undefined
 		if (plannedActive && projectedSolvePayload) {
 			if (requested !== 'agent' && requested !== 'loop')
@@ -1717,6 +1791,14 @@ export function apiRoutes(
 			const admission = queue.canProcessOneItem(item.id, requestedLane)
 			const rejected = admissionFailure(c, admission)
 			if (rejected) return rejected
+			if (
+				expectedRunContextRevision !== undefined &&
+				itemCommands.getItem(item.id)?.runContextRevision !== expectedRunContextRevision
+			)
+				return c.json(
+					{ error: 'Run Context changed before Start', revision: itemCommands.getItem(item.id)?.runContextRevision },
+					409,
+				)
 			recordSolveSelection(item, selection)
 			const selectedItem = itemCommands.getItem(item.id) ?? item
 			if (plannedActive && selectedItem.payload.kind === 'solve') {

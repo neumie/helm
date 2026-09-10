@@ -1,7 +1,5 @@
 import { createRoot, createSignal } from 'solid-js'
-import { render } from 'solid-js/web'
-import { Widget } from './Widget'
-import { WIDGET_STYLES } from './widget.styles'
+import { mountWidget } from './mount-widget'
 
 function extractTaskId(): string | null {
 	const params = new URLSearchParams(window.location.search)
@@ -19,14 +17,6 @@ function extractTaskId(): string | null {
 // Mount into shadow DOM
 const host = document.createElement('div')
 host.id = 'helm-widget-host'
-const shadow = host.attachShadow({ mode: 'closed' })
-
-const style = document.createElement('style')
-style.textContent = WIDGET_STYLES
-shadow.appendChild(style)
-
-const mountEl = document.createElement('div')
-shadow.appendChild(mountEl)
 document.body.appendChild(host)
 
 // Create reactive root and mount
@@ -61,5 +51,5 @@ createRoot(() => {
 
 	setInterval(update, 1000)
 
-	render(() => <Widget taskId={taskId} />, mountEl)
+	mountWidget(host, taskId)
 })

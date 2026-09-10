@@ -1,0 +1,11 @@
+{
+	"name": "@neumie/helm-remote",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "npm --prefix .. run build && node ../app/scripts/build-remote.mjs",
+		"start": "bun run build && node ../dist/remote/runtime.js",
+		"setup": "npm run build && node ../dist/remote/runtime.js setup",
+		"pair": "node ../dist/remote/runtime.js pair"
+	}
+}

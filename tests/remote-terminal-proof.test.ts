@@ -14,7 +14,7 @@ import {
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { getRequestListener } from '@hono/node-server'
@@ -31,8 +31,13 @@ test(
 	async t => {
 		const piCli = process.env.HELM_REMOTE_PROOF_PI
 		assert.ok(piCli)
+		assert.equal(
+			JSON.parse(readFileSync(join(dirname(dirname(piCli)), 'package.json'), 'utf8')).version,
+			'0.85.1',
+			'proof requires Pi 0.85.1',
+		)
 		const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
-		const root = realpathSync(mkdtempSync(join(tmpdir(), 'hr-')))
+		const root = realpathSync(mkdtempSync('/tmp/hr-m-'))
 		chmodSync(root, 0o700)
 		const driver = spawn(
 			'python3',
@@ -136,8 +141,12 @@ test(
 			)
 		}
 		// Only now install the bridge into the disposable auto-discovery directories.
+		// The manual driver started with questionnaire-only settings, so this is a real
+		// hot load rather than fixture reuse.
 		for (let index = 0; index < 2; index++) {
 			const slot = ['a', 'b'][index]
+			assert.equal(existsSync(join(root, slot, 'agent/extensions/remote.ts')), false)
+			assert.equal(existsSync(join(root, `bridge-selected-${slot}.json`)), false)
 			writeFileSync(
 				join(root, slot, 'agent/extensions/remote.ts'),
 				`export { default } from ${JSON.stringify(join(repo, 'packages/helm-remote-bridge/index.ts'))}\n`,

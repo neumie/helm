@@ -21,6 +21,7 @@ import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { type NewItemDraft, NewItemPage } from './NewItemPage'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
+import { RemoteSettingsPage } from './RemoteSettingsPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, SettingsSectionPage, useSettingsStore } from './SettingsPage'
 import { TerminalSettingsPage } from './TerminalSettingsPage'
@@ -168,6 +169,7 @@ export function SidebarRoot() {
 			route.kind === 'settings-section' ||
 			route.kind === 'terminal-settings' ||
 			route.kind === 'agent-integrations' ||
+			route.kind === 'remote-settings' ||
 			route.kind === 'scheduled-runs' ||
 			route.kind === 'scheduled-run-editor',
 	)
@@ -429,6 +431,7 @@ export function SidebarRoot() {
 						onOpenProfiles={() => push({ kind: 'profiles' })}
 						onOpenTerminal={() => push({ kind: 'terminal-settings' })}
 						onOpenAgentIntegrations={() => push({ kind: 'agent-integrations' })}
+						onOpenRemote={() => push({ kind: 'remote-settings' })}
 						onOpenScheduledRuns={() => push({ kind: 'scheduled-runs' })}
 						activeProfileName={snapshot?.status?.profile?.name ?? 'Work'}
 					/>
@@ -445,6 +448,8 @@ export function SidebarRoot() {
 				return <TerminalSettingsPage onBack={pop} />
 			case 'agent-integrations':
 				return <AgentIntegrationsPage onBack={pop} />
+			case 'remote-settings':
+				return <RemoteSettingsPage onBack={pop} active={isTop} />
 			case 'scheduled-runs':
 				return (
 					<ScheduledRunsPage

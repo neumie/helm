@@ -6,6 +6,7 @@ import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell 
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
+import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
@@ -19,6 +20,7 @@ import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
+import { RemotePairingController, requireRemotePairingSender } from './remote-pairing'
 import { RendererCrashRecovery, sendToLiveRenderer } from './renderer-lifecycle'
 import { RunContextWindows } from './run-context-window'
 import {
@@ -144,6 +146,9 @@ const terminalPreferences = new TerminalPreferencesStore(app.getPath('userData')
 // snapshot in memory; never stat/read/parse preferences on each terminal key.
 let currentTerminalPreferences = terminalPreferences.snapshot()
 const piAgentStatusIntegration = new PiAgentStatusIntegration()
+// Remote is global and independent of Item daemon availability. The controller
+// fixes its owner-private root itself; renderers cannot select paths or routes.
+const remotePairing = new RemotePairingController()
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
 let authoritativeProfilesState: ProfilesState = {
@@ -1648,6 +1653,24 @@ function requireCurrentAgentIntegrationsSender(event: IpcMainInvokeEvent, profil
 		throw new Error('Agent integrations are unavailable.')
 }
 
+/** Remote authority is global, but stale profile renderers/subframes still have
+ * no authority to read local credentials, open native dialogs, or mutate it. */
+function requireCurrentRemotePairingSender(event: IpcMainInvokeEvent, profileToken: unknown): BrowserWindow {
+	return requireRemotePairingSender(
+		event,
+		profileToken,
+		token => sessionIpcGate.require(token),
+		() => mainWindow,
+	)
+}
+
+function remotePairingError(error: unknown): string {
+	const message = error instanceof Error ? error.message : ''
+	return message === 'Enter a device name.' || message === 'Device names must be 1 to 80 characters.'
+		? message
+		: 'Helm Remote could not complete this operation. Retry from Remote settings.'
+}
+
 function publicAgentIntegrationSnapshot(
 	snapshot: Awaited<ReturnType<PiAgentStatusIntegration['status']>>,
 ): PiAgentStatusIntegrationSnapshot {
@@ -1659,6 +1682,88 @@ ipcMain.handle('agent-integrations:pi-status', async (event, profileToken: unkno
 	const result = await piAgentStatusIntegration.status()
 	requireCurrentAgentIntegrationsSender(event, profileToken)
 	return publicAgentIntegrationSnapshot(result)
+})
+
+ipcMain.handle('remote-pairing:status', async (event, profileToken: unknown) => {
+	const isCurrent = () => {
+		try {
+			requireCurrentRemotePairingSender(event, profileToken)
+			return true
+		} catch {
+			return false
+		}
+	}
+	requireCurrentRemotePairingSender(event, profileToken)
+	const snapshot = await remotePairing.status(isCurrent)
+	requireCurrentRemotePairingSender(event, profileToken)
+	return snapshot
+})
+
+ipcMain.handle('remote-pairing:pair', async (event, label: unknown, profileToken: unknown) => {
+	const isCurrent = () => {
+		try {
+			requireCurrentRemotePairingSender(event, profileToken)
+			return true
+		} catch {
+			return false
+		}
+	}
+	const win = requireCurrentRemotePairingSender(event, profileToken)
+	try {
+		const result = await remotePairing.pair(label, isCurrent, async () => {
+			requireCurrentRemotePairingSender(event, profileToken)
+			const response = await dialog.showMessageBox(win, {
+				type: 'warning',
+				buttons: ['Pair device', 'Cancel'],
+				defaultId: 1,
+				cancelId: 1,
+				noLink: true,
+				message: 'Pair this device with Helm Remote?',
+				detail:
+					'This grants this device personal access to read, prompt, interrupt, and answer questionnaires for current and future Pi conversations for 90 days, until revoked. This access is not scoped to the current Helm profile.',
+			})
+			requireCurrentRemotePairingSender(event, profileToken)
+			return response.response === 0
+		})
+		requireCurrentRemotePairingSender(event, profileToken)
+		return result
+	} catch (error) {
+		requireCurrentRemotePairingSender(event, profileToken)
+		return { kind: 'error' as const, message: remotePairingError(error) }
+	}
+})
+
+ipcMain.handle('remote-pairing:revoke', async (event, deviceId: unknown, profileToken: unknown) => {
+	const isCurrent = () => {
+		try {
+			requireCurrentRemotePairingSender(event, profileToken)
+			return true
+		} catch {
+			return false
+		}
+	}
+	const win = requireCurrentRemotePairingSender(event, profileToken)
+	try {
+		const result = await remotePairing.revoke(deviceId, isCurrent, async () => {
+			requireCurrentRemotePairingSender(event, profileToken)
+			const response = await dialog.showMessageBox(win, {
+				type: 'warning',
+				buttons: ['Revoke device', 'Cancel'],
+				defaultId: 1,
+				cancelId: 1,
+				noLink: true,
+				message: 'Revoke this Remote device?',
+				detail: 'The device will lose its personal Remote access immediately. This cannot be undone.',
+			})
+			requireCurrentRemotePairingSender(event, profileToken)
+			return response.response === 0
+		})
+		requireCurrentRemotePairingSender(event, profileToken)
+		return result
+	} catch (error) {
+		requireCurrentRemotePairingSender(event, profileToken)
+		return { kind: 'error' as const, message: remotePairingError(error) }
+	}
 })
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
@@ -1690,7 +1795,10 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		// cwd is main-owned. The renderer can select it only through the OS folder
 		// picker above and can never smuggle an arbitrary path into pty:spawn.
 		cwd: terminalPreferences.snapshot().effectiveCwd,
-		env: shellEnv(),
+		env: remoteTerminalEnvironment(
+			shellEnv(),
+			sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
+		),
 	})
 	ptys.set(id, {
 		proc,

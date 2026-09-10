@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import '../run-context/run-context-editor.css'
 import type { RunContextEditorApi } from '../../shared'
-import type { RunContextLoad } from '../../shared-helm'
+import type { RunContextDraft, RunContextLoad } from '../../shared-helm'
 import { type ShortcutChord, effectiveShortcuts } from '../../shortcuts'
 
 const RunContextEditor = lazy(async () => {
@@ -11,9 +11,24 @@ const RunContextEditor = lazy(async () => {
 })
 
 function EditorSurface({ loaded }: { loaded: RunContextLoad }) {
+	const [current, setCurrent] = useState(loaded)
+	useEffect(() => {
+		window.__reopenRunContext = () => {
+			const document = window.__runContextLastDocument
+			if (!document) throw new Error('Save through the editor before reopening')
+			setCurrent(previous => ({
+				...previous,
+				document: { ...structuredClone(document), updatedAt: '2026-09-10T10:00:00.000Z' },
+				revision: previous.revision + 1,
+			}))
+		}
+		return () => {
+			Reflect.deleteProperty(window, '__reopenRunContext')
+		}
+	}, [])
 	return (
 		<Suspense fallback={<div>Loading editor…</div>}>
-			<RunContextEditor loaded={loaded} onReload={() => {}} />
+			<RunContextEditor key={current.revision} loaded={current} onReload={setCurrent} />
 		</Suspense>
 	)
 }
@@ -45,6 +60,8 @@ const sourceFixture: RunContextLoad = {
 declare global {
 	interface Window {
 		__runContextSaveCalls?: number
+		__runContextLastDocument?: RunContextDraft
+		__reopenRunContext?: () => void
 		__emitRunContextSaveBindings?: (bindings: ShortcutChord[]) => void
 	}
 }
@@ -60,6 +77,7 @@ const mockApi: RunContextEditorApi = {
 	load: async () => ({ data: sourceFixture }),
 	save: async (revision, document) => {
 		window.__runContextSaveCalls = (window.__runContextSaveCalls ?? 0) + 1
+		window.__runContextLastDocument = document
 		return {
 			data: { document: { ...document, updatedAt: new Date().toISOString() }, revision: revision + 1 },
 		}
@@ -77,6 +95,7 @@ const meta: Meta = {
 	decorators: [
 		story => {
 			window.__runContextSaveCalls = 0
+			window.__runContextLastDocument = undefined
 			window.__emitRunContextSaveBindings = bindings => {
 				for (const listener of saveBindingListeners) listener(bindings.map(binding => ({ ...binding })))
 			}
@@ -91,6 +110,30 @@ type Story = StoryObj
 
 export const SourceContext: Story = {
 	render: () => <EditorSurface loaded={sourceFixture} />,
+}
+
+export const V2PlainContext: Story = {
+	render: () => (
+		<EditorSurface
+			loaded={{
+				...sourceFixture,
+				document: {
+					version: 2,
+					updatedAt: '2026-07-22T10:00:00.000Z',
+					text: 'Operator narrative with preserved source image.',
+					images: [
+						{
+							type: 'image',
+							url: 'https://example.test/source-image.png',
+							name: 'source-image.png',
+							contentType: 'image/png',
+						},
+					],
+				},
+				revision: 7,
+			}}
+		/>
+	),
 }
 
 export const Customized: Story = {
@@ -126,6 +169,18 @@ export const Customized: Story = {
 					],
 				},
 				revision: 3,
+			}}
+		/>
+	),
+}
+
+export const V2EmptyContext: Story = {
+	render: () => (
+		<EditorSurface
+			loaded={{
+				...sourceFixture,
+				document: { version: 2, text: '', images: [], updatedAt: '2026-09-10T10:00:00.000Z' },
+				revision: 1,
 			}}
 		/>
 	),

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, Ref } from 'react'
 import './button.css'
 
 export type ButtonTone = 'primary' | 'quiet' | 'danger' | 'ghost'
@@ -29,6 +29,10 @@ export function Btn({
 	ariaLabel,
 	ariaExpanded,
 	ariaControls,
+	ariaCurrent,
+	ariaDisabled,
+	type = 'button',
+	ref,
 }: {
 	tone?: ButtonTone
 	sm?: boolean
@@ -42,16 +46,31 @@ export function Btn({
 	ariaLabel?: string
 	ariaExpanded?: boolean
 	ariaControls?: string
+	ariaCurrent?: 'page'
+	/** Marks a retained destination unavailable without removing its focus target. */
+	ariaDisabled?: boolean
+	type?: 'button' | 'submit' | 'reset'
+	/** Destination for focus restoration after an async or disappearing action. */
+	ref?: Ref<HTMLButtonElement>
 }) {
 	return (
 		<button
-			type="button"
+			ref={ref}
+			type={type}
 			className={buttonClassName({ tone, sm, block, className })}
 			disabled={disabled || busy}
 			aria-label={ariaLabel}
 			aria-expanded={ariaExpanded}
 			aria-controls={ariaControls}
-			onClick={onClick}
+			aria-current={ariaCurrent}
+			aria-disabled={ariaDisabled}
+			onClick={event => {
+				if (ariaDisabled) {
+					event.preventDefault()
+					return
+				}
+				onClick?.()
+			}}
 		>
 			{children}
 			{busy ? '…' : null}

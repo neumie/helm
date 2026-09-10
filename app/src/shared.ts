@@ -274,6 +274,35 @@ export interface AgentIntegrationsApi {
 	piStatus(): Promise<PiAgentStatusIntegrationSnapshot>
 }
 
+export type RemotePairingDeviceState = 'active' | 'expired' | 'revoked'
+export interface RemotePairingDevice {
+	id: string
+	label: string
+	createdAt: number
+	expiresAt: number
+	revokedAt: number | null
+	state: RemotePairingDeviceState
+}
+export type RemotePairingSnapshot =
+	| { availability: 'available'; origin: string; devices: RemotePairingDevice[] }
+	| { availability: 'unavailable'; message: string }
+export interface RemotePairingPresentation {
+	code: string
+	qrDataUrl: string
+	expiresAt: number
+	origin: string
+}
+export type RemotePairingMutationResult =
+	| { kind: 'created'; presentation: RemotePairingPresentation }
+	| { kind: 'cancelled' | 'revoked' | 'not-found' | 'error'; message?: string }
+
+/** Main-owned Remote operator surface. It never exposes control paths or tokens. */
+export interface RemotePairingApi {
+	status(): Promise<RemotePairingSnapshot>
+	pair(label: string): Promise<RemotePairingMutationResult>
+	revoke(deviceId: string): Promise<RemotePairingMutationResult>
+}
+
 /** Narrow OS-browser handoff; main accepts only bounded HTTP(S) URLs. */
 export interface ExternalApi {
 	open(url: string): Promise<boolean>
@@ -394,6 +423,8 @@ export interface HelmApi {
 	terminalPreferences: TerminalPreferencesApi
 	/** Explicitly managed coding-agent integrations; never installed silently. */
 	agentIntegrations: AgentIntegrationsApi
+	/** Native Remote device pairing/revocation projection, never generic control access. */
+	remotePairing: RemotePairingApi
 	/** Open a safe web URL in the host's default browser. */
 	external: ExternalApi
 	/** Theme files + font-size accelerators (docs/design-system.md §2.8). */

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { chmodSync, linkSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { getRequestListener } from '@hono/node-server'
 import {
 	QUESTION_ANSWER,
 	QUESTION_CLOSED,
@@ -13,6 +15,7 @@ import {
 	openRemoteQuestion,
 	resolveRemoteAnswers,
 } from '../packages/helm-ask-user-question/remote-answers.js'
+import helmRemoteBridge from '../packages/helm-remote-bridge/index.js'
 import { createScopedCapability, hashScopedCapability } from '../src/auth/scoped-capability.js'
 import { RemoteAdmission } from '../src/remote/admission.js'
 import { RemoteHost } from '../src/remote/host.js'
@@ -108,14 +111,15 @@ test('Remote denies unauthenticated, wrong-Origin, wrong-Host and upgrade reques
 	}
 	const f = fixture()
 	assert.equal((await f.host.browser.request('/v1/sessions')).status, 401)
-	for (const patch of [
+	const invalidHeaders: Record<string, string>[] = [
 		{ Origin: 'https://evil.test' },
 		{ Origin: 'null' },
 		{ Origin: '' },
 		{ Host: 'evil.test' },
 		{ Upgrade: 'websocket' },
 		{ Authorization: 'Bearer incorrect' },
-	]) {
+	]
+	for (const patch of invalidHeaders) {
 		const response = await f.host.browser.request('/v1/sessions', { headers: { ...f.headers, ...patch } })
 		assert.ok([401, 403].includes(response.status))
 	}
@@ -142,6 +146,103 @@ test('enrollment scope and incarnation fence observation and mutations independe
 		assert.equal((await f.send({ ...f.command(), target })).status, 409)
 	assert.equal((await f.send({ ...f.command(), hostEpoch: randomUUID() })).status, 409)
 	assert.equal((await f.host.browser.request(`/v1/sessions/${randomUUID()}`, { headers: f.headers })).status, 404)
+})
+
+test('automatic grants bind UUID and expiry but cannot replace a live owner merely by matching its UUID', async () => {
+	let now = 1_000
+	const browserToken = createScopedCapability()
+	const capability = createScopedCapability()
+	const sessionId = randomUUID()
+	const enrollment = {
+		id: randomUUID(),
+		capabilityHash: hashScopedCapability(capability),
+		scopeId: null,
+		generation: 1,
+		sessionId,
+		expiresAt: 2_000,
+	}
+	const host = new RemoteHost({
+		origin,
+		browserCapabilityHash: hashScopedCapability(browserToken),
+		enrollments: [enrollment],
+		now: () => now,
+	})
+	const snapshot = (incarnation: string, id = sessionId): RemoteSnapshot => ({
+		target: { sessionId: id, incarnation, scopeId: null, generation: 1 },
+		revision: 1,
+		label: 'Terminal A',
+		workspace: 'helm',
+		model: null,
+		activity: 'idle',
+		capabilities: { prompt: true, interrupt: true, answer: false },
+		question: null,
+		messages: [],
+		historyTruncated: false,
+	})
+	const exchange = (grant: typeof enrollment, value: RemoteSnapshot) =>
+		host.local.request('/exchange', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${capability}`,
+				'X-Helm-Enrollment': grant.id,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ protocol: REMOTE_PROTOCOL, enrollmentId: grant.id, snapshot: value, receipts: [] }),
+		})
+	assert.equal((await exchange(enrollment, snapshot(randomUUID(), randomUUID()))).status, 403)
+	const first = snapshot(randomUUID())
+	assert.equal((await exchange(enrollment, first)).status, 200)
+	const replacementCapability = createScopedCapability()
+	const replacement = {
+		...enrollment,
+		id: randomUUID(),
+		capabilityHash: hashScopedCapability(replacementCapability),
+		expiresAt: 30_000,
+	}
+	host.issueEnrollment(replacement)
+	const second = snapshot(randomUUID())
+	const replace = () =>
+		host.local.request('/exchange', {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${replacementCapability}`,
+				'X-Helm-Enrollment': replacement.id,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				protocol: REMOTE_PROTOCOL,
+				enrollmentId: replacement.id,
+				snapshot: second,
+				receipts: [],
+			}),
+		})
+	assert.equal((await replace()).status, 409)
+	assert.equal((await exchange(enrollment, first)).status, 200)
+	now += 5_001
+	assert.equal((await replace()).status, 200)
+	assert.equal((await exchange(enrollment, first)).status, 401)
+	const expired = { ...replacement, id: randomUUID(), expiresAt: now + 1 }
+	host.issueEnrollment(expired)
+	now += 1
+	assert.equal(
+		(
+			await host.local.request('/exchange', {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${replacementCapability}`,
+					'X-Helm-Enrollment': expired.id,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					protocol: REMOTE_PROTOCOL,
+					enrollmentId: expired.id,
+					snapshot: snapshot(randomUUID()),
+					receipts: [],
+				}),
+			})
+		).status,
+		403,
+	)
 })
 
 test('ambiguous HTTP retry returns receipt and never duplicates queued command', async () => {
@@ -262,7 +363,7 @@ test('payload/schema/rate bounds fail closed; browser metadata omits private fie
 	assert.ok(!('messages' in summary))
 	assert.ok(!('question' in summary))
 	assert.ok(!('enrollment' in summary))
-	for (let count = 0; count < 240; count++) await f.host.browser.request('/v1/sessions', { headers: f.headers })
+	for (let count = 0; count < 300; count++) await f.host.browser.request('/v1/sessions', { headers: f.headers })
 	assert.equal((await f.host.browser.request('/v1/sessions', { headers: f.headers })).status, 429)
 })
 
@@ -342,6 +443,205 @@ const questions = {
 		},
 	],
 }
+
+test('bridge checks the guarded current owner before invocation and removes question listeners at lifecycle disposal', async t => {
+	const root = realpathSync(mkdtempSync('/tmp/hr-bridge-'))
+	chmodSync(root, 0o700)
+	const metadataHome = join(root, 'metadata-home')
+	const metadataBase =
+		process.platform === 'darwin'
+			? join(metadataHome, 'Library', 'Application Support', 'okena')
+			: join(metadataHome, '.config', 'okena')
+	const metadataProfile = join(metadataBase, 'profiles', 'right')
+	mkdirSync(metadataProfile, { recursive: true, mode: 0o700 })
+	writeFileSync(join(metadataBase, 'profiles.json'), JSON.stringify({ profiles: [{ id: 'right' }] }), { mode: 0o600 })
+	writeFileSync(
+		join(metadataProfile, 'workspace.json'),
+		JSON.stringify({
+			projects: [
+				{ id: 'jvs', name: 'JVS', path: '/private/jvs', layout: null, terminal_names: {} },
+				{
+					id: 'mobile',
+					name: 'feat/mobile',
+					path: '/private/mobile',
+					worktree_info: { parent_project_id: 'jvs' },
+					layout: { type: 'terminal', terminal_id: 'pane-a' },
+					terminal_names: {},
+				},
+			],
+			folders: [{ name: 'Contember', project_ids: ['jvs'] }],
+		}),
+		{ mode: 0o600 },
+	)
+	const inheritedSubagent = process.env.PI_SUBAGENT_CHILD
+	const inheritedHome = process.env.HOME
+	const inheritedOkenaId = process.env.OKENA_TERMINAL_ID
+	const inheritedHelmId = process.env.HELM_REMOTE_TERMINAL_ID
+	const inheritedHelmRegistry = process.env.HELM_REMOTE_TERMINAL_REGISTRY
+	const inheritedHelmStatus = process.env.HELM_TERMINAL_AGENT_STATUS
+	process.env.HOME = metadataHome
+	process.env.OKENA_TERMINAL_ID = 'pane-a'
+	for (const key of ['HELM_REMOTE_TERMINAL_ID', 'HELM_REMOTE_TERMINAL_REGISTRY', 'HELM_TERMINAL_AGENT_STATUS'])
+		Reflect.deleteProperty(process.env, key)
+	Reflect.deleteProperty(process.env, 'PI_SUBAGENT_CHILD')
+	const localToken = createScopedCapability()
+	const browserToken = createScopedCapability()
+	const enrollment = {
+		id: randomUUID(),
+		capabilityHash: hashScopedCapability(localToken),
+		scopeId: null,
+		generation: 1,
+	}
+	const host = new RemoteHost({
+		origin,
+		browserCapabilityHash: hashScopedCapability(browserToken),
+		enrollments: [enrollment],
+	})
+	const server = createServer(getRequestListener((request, env) => host.local.fetch(request, env)))
+	await new Promise<void>(resolvePromise => server.listen(join(root, 'host.sock'), resolvePromise))
+	const bus = new EventEmitter()
+	const eventHandlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>()
+	const commands = new Map<string, (args: string, ctx: unknown) => Promise<void>>()
+	let currentId = randomUUID()
+	const originalId = currentId
+	const sent: string[] = []
+	const notifications: string[] = []
+	const pi = {
+		events: {
+			on(channel: string, handler: (value: unknown) => void) {
+				bus.on(channel, handler)
+				return () => bus.off(channel, handler)
+			},
+			emit(channel: string, value: unknown) {
+				bus.emit(channel, value)
+			},
+		},
+		on(event: string, handler: (event: unknown, ctx: unknown) => void) {
+			const handlers = eventHandlers.get(event) ?? []
+			handlers.push(handler)
+			eventHandlers.set(event, handlers)
+		},
+		registerCommand(name: string, value: { handler: (args: string, ctx: unknown) => Promise<void> }) {
+			commands.set(name, value.handler)
+		},
+		getSessionName: () => 'divoka kremrole',
+		sendUserMessage: (text: string) => sent.push(text),
+	}
+	const context = {
+		mode: 'tui',
+		cwd: root,
+		model: undefined,
+		ui: {
+			notify(message: string) {
+				notifications.push(message)
+			},
+		},
+		get sessionManager() {
+			return {
+				getSessionId: () => currentId,
+				getLeafId: () => null,
+				getEntry: () => undefined,
+			}
+		},
+		isIdle: () => true,
+		abort() {},
+	}
+	writeFileSync(
+		join(root, 'enroll.json'),
+		JSON.stringify({
+			protocol: 1,
+			enrollmentId: enrollment.id,
+			capability: localToken,
+			scopeId: null,
+			generation: 1,
+			socketPath: join(root, 'host.sock'),
+		}),
+		{ mode: 0o600 },
+	)
+	helmRemoteBridge(pi as never)
+	t.after(async () => {
+		if (inheritedSubagent === undefined) Reflect.deleteProperty(process.env, 'PI_SUBAGENT_CHILD')
+		else process.env.PI_SUBAGENT_CHILD = inheritedSubagent
+		if (inheritedHome === undefined) Reflect.deleteProperty(process.env, 'HOME')
+		else process.env.HOME = inheritedHome
+		for (const [key, value] of [
+			['OKENA_TERMINAL_ID', inheritedOkenaId],
+			['HELM_REMOTE_TERMINAL_ID', inheritedHelmId],
+			['HELM_REMOTE_TERMINAL_REGISTRY', inheritedHelmRegistry],
+			['HELM_TERMINAL_AGENT_STATUS', inheritedHelmStatus],
+		] as const) {
+			if (value === undefined) Reflect.deleteProperty(process.env, key)
+			else process.env[key] = value
+		}
+		server.closeAllConnections()
+		await new Promise<void>(resolvePromise => server.close(() => resolvePromise()))
+		rmSync(root, { recursive: true, force: true })
+	})
+	await commands.get('helm-remote-connect')?.(join(root, 'enroll.json'), context)
+	assert.deepEqual(notifications, ['Remote enrollment started. The terminal remains in control.'])
+	const headers = {
+		Authorization: `Bearer ${browserToken}`,
+		Host: new URL(origin).host,
+		Origin: origin,
+		'Content-Type': 'application/json',
+	}
+	const waitFor = async (predicate: () => Promise<boolean>) => {
+		for (let attempt = 0; attempt < 30; attempt++) {
+			if (await predicate()) return
+			await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+		}
+		const response = await host.browser.request('/v1/sessions', { headers })
+		throw new Error(`bridge did not exchange: ${response.status} ${await response.text()}`)
+	}
+	await waitFor(async () => {
+		const response = await host.browser.request('/v1/sessions', { headers })
+		const value = (await response.json()) as {
+			sessions: Array<{ terminal?: { project?: string | null; worktree?: string | null } }>
+		}
+		return (
+			response.status === 200 &&
+			value.sessions[0]?.terminal?.project === 'JVS' &&
+			value.sessions[0]?.terminal?.worktree === 'feat/mobile'
+		)
+	})
+	const detail = await host.browser.request(`/v1/sessions/${originalId}`, { headers })
+	const detailValue = (await detail.json()) as { snapshot: RemoteSnapshot }
+	assert.equal(detailValue.snapshot.label, 'divoka kremrole')
+	assert.deepEqual(detailValue.snapshot.terminal, {
+		source: 'okena',
+		name: null,
+		project: 'JVS',
+		worktree: 'feat/mobile',
+		branch: null,
+		group: 'Contember',
+	})
+	const target = detailValue.snapshot.target
+	const command: RemoteCommand = {
+		protocol: REMOTE_PROTOCOL,
+		hostEpoch: host.epoch,
+		commandId: randomUUID(),
+		target,
+		operation: { kind: 'prompt', text: 'must not invoke', delivery: 'steer' },
+	}
+	assert.equal(
+		(await host.browser.request('/v1/commands', { method: 'POST', headers, body: JSON.stringify(command) })).status,
+		202,
+	)
+	currentId = randomUUID()
+	await waitFor(async () => {
+		const response = await host.browser.request(
+			`/v1/commands/${command.commandId}?${new URLSearchParams({ hostEpoch: host.epoch, sessionId: target.sessionId, incarnation: target.incarnation })}`,
+			{ headers },
+		)
+		return ((await response.json()) as { status?: string }).status === 'rejected'
+	})
+	assert.deepEqual(sent, [])
+	assert.equal(bus.listenerCount(QUESTION_OPEN), 1)
+	assert.equal(bus.listenerCount(QUESTION_CLOSED), 1)
+	eventHandlers.get('session_shutdown')?.[0]?.({}, context)
+	assert.equal(bus.listenerCount(QUESTION_OPEN), 0)
+	assert.equal(bus.listenerCount(QUESTION_CLOSED), 0)
+})
 
 test('fork resolves single/multi/custom against original labels and preserves selected preview', () => {
 	const result = resolveRemoteAnswers(questions, [{ option: 0 }, { options: [1, 0] }, { text: 'My answer' }])

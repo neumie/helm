@@ -1,5 +1,6 @@
 // Button primitive (§3.1): four tones, two sizes, disabled/busy, block; icon buttons.
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { useRef, useState } from 'react'
 import { Btn, GLYPH, IconBtn } from './ui'
 
 const meta: Meta = {
@@ -74,6 +75,46 @@ export const Busy: Story = {
 	),
 }
 
+function FocusReturnExample() {
+	const primary = useRef<HTMLButtonElement>(null)
+	return (
+		<div style={row}>
+			<Btn ref={primary} tone="primary">
+				Pair device
+			</Btn>
+			<Btn onClick={() => primary.current?.focus()}>Restore focus</Btn>
+		</div>
+	)
+}
+
+export const FocusReturn: Story = {
+	render: () => <FocusReturnExample />,
+}
+
+function FormExample() {
+	const [submitted, setSubmitted] = useState(0)
+	return (
+		<form
+			onSubmit={event => {
+				event.preventDefault()
+				setSubmitted(value => value + 1)
+			}}
+		>
+			<div style={row}>
+				<Btn type="submit" tone="primary">
+					Submit form
+				</Btn>
+				<Btn type="submit" ariaDisabled>
+					Unavailable action
+				</Btn>
+			</div>
+			<output>Submissions: {submitted}</output>
+		</form>
+	)
+}
+
+export const FormSubmission: Story = { render: () => <FormExample /> }
+
 export const Block: Story = {
 	render: () => (
 		<div style={{ width: 340 }}>
@@ -111,5 +152,17 @@ export const IconLedActions: Story = {
 			<Btn tone="quiet">{GLYPH.retry} Queue retry</Btn>
 			<Btn tone="quiet">{GLYPH.check} Set as done</Btn>
 		</div>
+	),
+}
+
+/** SPA destination semantics without a second button implementation. */
+export const CurrentDestination: Story = {
+	render: () => (
+		<nav aria-label="Example destinations" style={row}>
+			<Btn tone="ghost" ariaCurrent="page">
+				Conversations
+			</Btn>
+			<Btn tone="ghost">History</Btn>
+		</nav>
 	),
 }

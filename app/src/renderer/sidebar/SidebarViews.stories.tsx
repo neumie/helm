@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import qrcode from 'qrcode-generator'
 import { type ReactNode, useState } from 'react'
 import type {
+	HelmApi,
 	PiAgentStatusIntegrationSnapshot,
+	RemotePairingApi,
+	RemotePairingDevice,
+	RemotePairingMutationResult,
 	TerminalPreferencesSnapshot,
 	TerminalPreferencesUpdate,
 } from '../../shared'
@@ -20,6 +25,7 @@ import { PlanPage, TaskPage } from './DetailSubpages'
 import { ListPage } from './ListPage'
 import { NewItemPage } from './NewItemPage'
 import { ProfileEditorPage, ProfilesPage } from './ProfilesPage'
+import { RemoteSettingsPage } from './RemoteSettingsPage'
 import { ScheduledRunEditorPage, ScheduledRunsPage } from './ScheduledRunsPage'
 import { SettingsPage, SettingsSectionPage, type SettingsStore, useSettingsStore } from './SettingsPage'
 import { SidebarRoot } from './SidebarRoot'
@@ -28,6 +34,16 @@ import { TerminalSettingsPage } from './TerminalSettingsPage'
 const NOW = '2026-07-21T12:00:00.000Z'
 
 type StoryWindow = Window & {
+	helm?: HelmApi
+	__nativeRemote?: {
+		pairCalls: number
+		revokeCalls: number
+		statusCalls: number
+		deferPair: boolean
+		failRevoke: boolean
+		resolvePair?: () => void
+		addDevice: () => void
+	}
 	__createdItemBody?: unknown
 	__createItemCalls?: number
 	__deferCreateItem?: boolean
@@ -477,6 +493,7 @@ function installBridge(
 			agentIntegrations: {
 				piStatus: async () => piStatus,
 			},
+			remotePairing: remoteAvailableServices.remotePairing,
 			external: {
 				open: async (url: string) => {
 					const storyWindow = window as StoryWindow
@@ -994,6 +1011,7 @@ export const Settings: Story = {
 				onOpenProfiles={noOp}
 				onOpenTerminal={noOp}
 				onOpenAgentIntegrations={noOp}
+				onOpenRemote={noOp}
 				onOpenScheduledRuns={noOp}
 				activeProfileName="Work"
 			/>
@@ -1017,6 +1035,7 @@ function RunLimitsSettingsView() {
 					onOpenProfiles={noOp}
 					onOpenTerminal={noOp}
 					onOpenAgentIntegrations={noOp}
+					onOpenRemote={noOp}
 					onOpenScheduledRuns={noOp}
 					activeProfileName="Work"
 				/>
@@ -1027,6 +1046,195 @@ function RunLimitsSettingsView() {
 
 export const RunLimitsSettings: Story = {
 	render: () => <RunLimitsSettingsView />,
+}
+
+const fixtureQr = qrcode(0, 'M')
+fixtureQr.addData(`https://remote.example.test/#pair=${'f'.repeat(43)}`, 'Byte')
+fixtureQr.make()
+const QR_FIXTURE = fixtureQr.createDataURL(4, 16)
+const remoteDevices = [
+	{
+		id: 'e4a8c20a-b3ff-4d33-9d61-5e1fb8e89405',
+		label: 'Maya’s phone',
+		createdAt: Date.parse(NOW) - 86_400_000,
+		expiresAt: Date.parse(NOW) + 60 * 86_400_000,
+		revokedAt: null,
+		state: 'active' as const,
+	},
+	{
+		id: '37c8356e-71ad-48ed-b92a-8e21c856ca9f',
+		label: 'Old tablet',
+		createdAt: Date.parse(NOW) - 100 * 86_400_000,
+		expiresAt: Date.parse(NOW) - 10_000,
+		revokedAt: null,
+		state: 'expired' as const,
+	},
+	{
+		id: '6b06b27f-43cd-4a60-915d-8f2e1ba4d44d',
+		label: 'Lost phone',
+		createdAt: Date.parse(NOW) - 60 * 86_400_000,
+		expiresAt: Date.parse(NOW) + 30 * 86_400_000,
+		revokedAt: Date.parse(NOW) - 1_000,
+		state: 'revoked' as const,
+	},
+]
+const remoteAvailableServices: { remotePairing: RemotePairingApi; now: () => number } = {
+	now: () => Date.parse(NOW),
+	remotePairing: {
+		status: async () => ({ availability: 'available', origin: 'https://remote.example.test', devices: remoteDevices }),
+		pair: async () => ({
+			kind: 'created',
+			presentation: {
+				code: 'ABC-123',
+				qrDataUrl: QR_FIXTURE,
+				expiresAt: Date.parse(NOW) + 120_000,
+				origin: 'https://remote.example.test',
+			},
+		}),
+		revoke: async () => ({ kind: 'revoked' }),
+	},
+}
+const remoteUnavailableServices: { remotePairing: RemotePairingApi; now: () => number } = {
+	now: () => Date.parse(NOW),
+	remotePairing: {
+		status: async () => ({
+			availability: 'unavailable',
+			message: 'Helm Remote is unavailable. Retry when its local runtime is online.',
+		}),
+		pair: async () => ({ kind: 'error', message: 'Helm Remote could not complete this operation.' }),
+		revoke: async () => ({ kind: 'error', message: 'Helm Remote could not complete this operation.' }),
+	},
+}
+
+function interactiveRemoteApi(): RemotePairingApi {
+	const devices: RemotePairingDevice[] = structuredClone(remoteDevices)
+	const state: NonNullable<StoryWindow['__nativeRemote']> = {
+		pairCalls: 0,
+		revokeCalls: 0,
+		statusCalls: 0,
+		deferPair: false,
+		failRevoke: false,
+		addDevice: () => {
+			const first = devices[0]
+			if (!first) throw new Error('Missing fixture device')
+			devices.push({ ...first, id: '064d404f-f4d5-46db-b09e-334bbd19f219', label: 'New tablet' })
+		},
+	}
+	;(window as StoryWindow).__nativeRemote = state
+	return {
+		status: async () => {
+			state.statusCalls++
+			return { availability: 'available', origin: 'https://remote.example.test', devices: structuredClone(devices) }
+		},
+		pair: async () => {
+			state.pairCalls++
+			const result = (): RemotePairingMutationResult => ({
+				kind: 'created',
+				presentation: {
+					code: 'ABC-123',
+					qrDataUrl: QR_FIXTURE,
+					expiresAt: Date.now() + 120_000,
+					origin: 'https://remote.example.test',
+				},
+			})
+			if (state.deferPair)
+				return new Promise<RemotePairingMutationResult>(resolve => {
+					state.resolvePair = () => resolve(result())
+				})
+			return result()
+		},
+		revoke: async id => {
+			state.revokeCalls++
+			const device = devices.find(value => value.id === id)
+			if (!device) return { kind: 'not-found' }
+			device.state = 'revoked'
+			device.revokedAt = Date.now()
+			// The real host fences memory BEFORE saving; GET can say revoked even
+			// though the POST failed to make that state durable.
+			if (state.failRevoke) return { kind: 'error', message: 'Revocation was not saved. Access may still be active.' }
+			return { kind: 'revoked' }
+		},
+	}
+}
+
+/** Real push-stack navigation with fake main transport/confirmation only. */
+export const RemoteNavigation: Story = {
+	render: () => {
+		const bridge = (window as StoryWindow).helm
+		if (!bridge) throw new Error('Missing Storybook bridge')
+		bridge.remotePairing = interactiveRemoteApi()
+		return <SidebarRootFrame />
+	},
+}
+
+export const RemoteAvailable: Story = {
+	render: () => (
+		<Frame>
+			<RemoteSettingsPage onBack={noOp} active services={remoteAvailableServices} />
+		</Frame>
+	),
+}
+
+export const RemoteNoDevices: Story = {
+	render: () => (
+		<Frame>
+			<RemoteSettingsPage
+				onBack={noOp}
+				active
+				services={{
+					...remoteAvailableServices,
+					remotePairing: {
+						...remoteAvailableServices.remotePairing,
+						status: async () => ({ availability: 'available', origin: 'https://remote.example.test', devices: [] }),
+					},
+				}}
+			/>
+		</Frame>
+	),
+}
+
+export const RemotePairingCode: Story = {
+	render: () => (
+		<Frame>
+			<RemoteSettingsPage
+				onBack={noOp}
+				active
+				services={remoteAvailableServices}
+				initialPresentation={{
+					code: 'ABC-123',
+					qrDataUrl: QR_FIXTURE,
+					expiresAt: Date.parse(NOW) + 120_000,
+					origin: 'https://remote.example.test',
+				}}
+			/>
+		</Frame>
+	),
+}
+
+export const RemoteExpired: Story = {
+	render: () => (
+		<Frame>
+			<RemoteSettingsPage
+				onBack={noOp}
+				active
+				services={remoteAvailableServices}
+				initialPresentation={{
+					code: 'ABC-123',
+					qrDataUrl: QR_FIXTURE,
+					expiresAt: Date.parse(NOW) - 1,
+					origin: 'https://remote.example.test',
+				}}
+			/>
+		</Frame>
+	),
+}
+
+export const RemoteUnavailable: Story = {
+	render: () => (
+		<Frame>
+			<RemoteSettingsPage onBack={noOp} active services={remoteUnavailableServices} />
+		</Frame>
+	),
 }
 
 export const TerminalSettings: Story = {

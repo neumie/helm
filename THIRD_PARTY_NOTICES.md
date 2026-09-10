@@ -16,13 +16,30 @@
 HAPI was inspected as an architecture reference (AGPL-3.0). No HAPI source is
 incorporated into Helm Remote.
 
+## QR encoder and test decoder
+
+Helm Remote uses the pinned `qrcode-generator@1.4.4` package only to render the
+one-time local TTY pairing matrix. The focused test uses pinned `jsqr@1.4.0` to
+decode that rendered matrix independently; neither package receives pairing
+credentials outside the intentional local command/test.
+
+- QR encoder: <https://github.com/kazuhikoarase/qrcode-generator> — MIT
+- QR decoder: <https://github.com/cozmo/jsQR> — Apache-2.0
+
+## Markdown parser
+
+Remote uses exactly pinned `marked@18.0.11` (MIT, Christopher Jeffrey and contributors): <https://github.com/markedjs/marked>. The complete package license ships in its dependency distribution. Helm uses its lexer only, rendering an explicit React element allowlist instead of generated HTML; images never trigger network requests. The package manager's minimum-release-age policy remains enabled.
+
 ## Heroicons (16px solid)
 
-Helm vendors three native-size Heroicons for distinct concepts:
+Helm vendors native-size Heroicons for distinct concepts:
 
 - Terminal groups — **Folder**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/folder.svg>
 - Background terminals — **Arrow Down on Square Stack**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
 - Scheduled runs — **Calendar Days**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
+- Remote composer send — **Arrow Up**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteArrow.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
+- Remote latest-message navigation — **Arrow Down**, v2.2.0, same module: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
+- Remote PWA launcher — **Command Line**, v2.2.0, exact source `app/assets/remote/command-line.svg`; generated PNGs use Helm colors and mask-safe padding: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/command-line.svg>
 - Project: <https://heroicons.com>
 - Copyright © Tailwind Labs, Inc.
 - License: MIT

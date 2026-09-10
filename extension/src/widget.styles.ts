@@ -118,7 +118,7 @@ export const WIDGET_STYLES = `
 		bottom: 20px;
 		left: 20px;
 		z-index: 2147483647;
-		width: 332px;
+		width: min(332px, calc(100vw - 40px));
 		background: var(--vg-pane);
 		border: 1px solid var(--vg-hairline);
 		border-radius: var(--vg-radius-lg);
@@ -126,7 +126,7 @@ export const WIDGET_STYLES = `
 		font-family: var(--vg-font);
 		letter-spacing: -0.01em;
 		-webkit-font-smoothing: antialiased;
-		overflow: hidden;
+		overflow: visible;
 		animation: vg-rise 150ms ease-out;
 	}
 	@keyframes vg-rise {
@@ -190,7 +190,20 @@ export const WIDGET_STYLES = `
 		white-space: nowrap;
 	}
 
-	.vg-card__body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+	.vg-run-menu { font-size: 12px; color: var(--vg-text-1); }
+	.vg-run-menu summary { cursor: pointer; padding: 8px 0; }
+	.vg-run-menu label { white-space: nowrap; }
+	.vg-run-menu input { min-width: 0; width: 100%; box-sizing: border-box; background: var(--vg-chrome); color: var(--vg-text-0); border: 1px solid var(--vg-hairline-strong); border-radius: 6px; padding: 6px; }
+	.vg-more { position: relative; }
+	.vg-more [role="menu"] { position: absolute; right: 0; bottom: 100%; min-width: 140px; padding: 4px; z-index: 5; background: var(--vg-chrome); box-shadow: var(--vg-shadow-1); border-radius: 8px; }
+	.vg-more [role="menuitem"] { display: block; width: 100%; border: 0; padding: 8px; background: transparent; color: var(--vg-text-0); text-align: left; cursor: pointer; }
+	.vg-more [role="menuitem"]:hover { background: var(--vg-fill-subtle); }
+	.vg-run-context { margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--vg-hairline); }
+	.vg-run-context__header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--vg-text-2); font-size: 11px; }
+	.vg-run-context__text { white-space: pre-wrap; max-height: 112px; overflow: auto; color: var(--vg-text-0); font-size: 12px; line-height: 1.45; }
+	.vg-run-context textarea { width: 100%; min-height: 96px; resize: vertical; box-sizing: border-box; font: inherit; color: var(--vg-text-0); background: var(--vg-chrome); border: 1px solid var(--vg-hairline-strong); border-radius: 6px; padding: 8px; }
+	.vg-run-context__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+	.vg-card__body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100dvh - 180px); overflow: auto; }
 	.vg-text { font-size: 13px; line-height: 1.5; color: var(--vg-text-1); }
 	.vg-text--primary { color: var(--vg-text-0); }
 	.vg-text--oneline {
@@ -266,7 +279,9 @@ export const WIDGET_STYLES = `
 	   2px padding + 24px option + 2px padding = 28 exactly. */
 	.vg-agent__seg {
 		display: grid;
-		grid-template-columns: repeat(2, 72px);
+		grid-auto-flow: column;
+		grid-auto-columns: minmax(0, 1fr);
+		width: min(216px, calc(100% - 48px));
 		height: 28px;
 		padding: 2px;
 		background: var(--vg-fill-subtle);

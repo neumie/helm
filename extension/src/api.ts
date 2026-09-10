@@ -141,6 +141,9 @@ export interface DashboardItem {
 	runOutcome: RunOutcome | null
 	deployState: DeployState | null
 	sourceTask?: SourceTask | null
+	solverAgent?: SolverAgent | null
+	solverModel?: string | null
+	solverWorkspace?: SolverWorkspace | null
 	card: {
 		state: string
 		statusLabel: string
@@ -167,26 +170,6 @@ export async function getServerUrl(): Promise<string> {
 	return cachedServerUrl
 }
 
-async function fetchAPI<T>(path: string): Promise<T> {
-	const base = await getServerUrl()
-	const res = await fetch(`${base}/api${path}`)
-	if (!res.ok) throw new Error(`API error: ${res.status}`)
-	const json = await res.json()
-	return json.data
-}
-
-async function postAPI<T>(path: string, body?: unknown): Promise<T> {
-	const base = await getServerUrl()
-	const res = await fetch(`${base}/api${path}`, {
-		method: 'POST',
-		headers: body ? { 'Content-Type': 'application/json' } : {},
-		body: body ? JSON.stringify(body) : undefined,
-	})
-	const json = await res.json()
-	if (!res.ok) throw new Error(json.error ?? `API error: ${res.status}`)
-	return json.data
-}
-
 export interface PlanInfo {
 	worktreePath: string
 	branchName: string
@@ -200,6 +183,23 @@ export interface PlanInfo {
 export interface ModelOption {
 	id: string
 	label: string
+}
+
+export interface PlainRunContextDocument {
+	version: 2
+	text: string
+	images: Array<{ type: 'image'; url: string; name?: string; contentType?: string }>
+	updatedAt: string
+}
+
+export interface RunContextResponse {
+	item: { id: string; title: string; projectSlug: string | null; status: string }
+	source: SourceTask | null
+	document:
+		| PlainRunContextDocument
+		| { version: 1; blocks: Array<Record<string, unknown>>; markdown: string; updatedAt: string }
+		| null
+	revision: number
 }
 
 export interface SolveSelection {
@@ -217,6 +217,7 @@ export interface SolveSelection {
 	 * it alone. Mirrors `solverModel`'s null-for-default semantics.
 	 */
 	solverWorkspace?: SolverWorkspace | null
+	expectedRunContextRevision?: number
 }
 
 function selectionBody(selection?: SolveSelection): Record<string, unknown> | undefined {
@@ -226,32 +227,57 @@ function selectionBody(selection?: SolveSelection): Record<string, unknown> | un
 	if (selection.solverModel !== undefined) body.solverModel = selection.solverModel
 	if (selection.solverEffort !== undefined) body.solverEffort = selection.solverEffort
 	if (selection.solverWorkspace !== undefined) body.solverWorkspace = selection.solverWorkspace
+	if (selection.expectedRunContextRevision !== undefined)
+		body.expectedRunContextRevision = selection.expectedRunContextRevision
 	return Object.keys(body).length > 0 ? body : undefined
 }
 
-export const api = {
-	findItemBySource: (externalId: string) => fetchAPI<DashboardItem | null>(`/items/by-source/${externalId}`),
-
-	createItemFromSource: (externalId: string) => postAPI<DashboardItem>('/items/source', { externalId }),
-
-	itemAction: (id: string, action: DashboardActionId, selection?: SolveSelection) => {
-		const body = action === 'approve' || action === 'start' || action === 'retry' ? selectionBody(selection) : undefined
-		switch (action) {
-			case 'approve':
-			case 'reject':
-			case 'start':
-			case 'cancel':
-			case 'retry':
-			case 'reopen':
-				return postAPI<DashboardItem>(`/items/${id}/${action}`, body)
-		}
-	},
-	planItem: (id: string, selection?: SolveSelection) =>
-		postAPI<PlanInfo>(`/items/${id}/plan`, selectionBody(selection) ?? {}),
-	config: () =>
-		fetchAPI<{
-			projects: Array<{ slug: string }>
-			solver?: { agent?: SolverAgent; model?: string; type?: 'default' | 'okena' }
-			modelCatalog?: Record<SolverAgent, ModelOption[]>
-		}>('/config'),
+/** A widget operation captures one canonical origin for its entire lifetime. */
+export function createApi(origin?: string) {
+	async function request<T>(path: string, method = 'GET', body?: unknown, formats = false): Promise<T> {
+		const base = origin ?? new URL(await getServerUrl()).origin
+		const response = await fetch(`${base}/api${path}`, {
+			method,
+			headers: {
+				...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+				...(formats ? { 'X-Helm-Run-Context-Formats': '1,2' } : {}),
+			},
+			body: body === undefined ? undefined : JSON.stringify(body),
+			signal: AbortSignal.timeout(method === 'GET' ? 10_000 : 120_000),
+		})
+		const json = await response.json()
+		if (!response.ok) throw new Error(json.error ?? `API error: ${response.status}`)
+		return json.data
+	}
+	return {
+		status: () =>
+			request<{ protocolVersion?: number; profile?: { id: string }; profileGeneration?: number }>('/status'),
+		findItemBySource: (externalId: string) =>
+			request<DashboardItem | null>(`/items/by-source/${encodeURIComponent(externalId)}`),
+		createItemFromSource: (externalId: string) => request<DashboardItem>('/items/source', 'POST', { externalId }),
+		itemAction: (id: string, action: DashboardActionId, selection?: SolveSelection) =>
+			request<DashboardItem>(
+				`/items/${encodeURIComponent(id)}/${action}`,
+				'POST',
+				action === 'approve' || action === 'start' || action === 'retry' ? selectionBody(selection) : undefined,
+			),
+		planItem: (id: string, selection?: SolveSelection) =>
+			request<PlanInfo>(`/items/${encodeURIComponent(id)}/plan`, 'POST', selectionBody(selection) ?? {}),
+		runContext: (id: string) =>
+			request<RunContextResponse>(`/items/${encodeURIComponent(id)}/run-context`, 'GET', undefined, true),
+		savePlainRunContext: (id: string, revision: number, text: string) =>
+			request<{ document: PlainRunContextDocument; revision: number }>(
+				`/items/${encodeURIComponent(id)}/run-context/plain`,
+				'PUT',
+				{ revision, text },
+				true,
+			),
+		config: () =>
+			request<{
+				projects: Array<{ slug: string }>
+				solver?: { agent?: SolverAgent; model?: string; workspace?: SolverWorkspace; type?: 'default' | 'okena' }
+				modelCatalog?: Record<SolverAgent, ModelOption[]>
+			}>('/config'),
+	}
 }
+export const api = createApi()

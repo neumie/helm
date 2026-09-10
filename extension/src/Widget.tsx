@@ -6,11 +6,14 @@ import {
 	type DashboardLink,
 	type DashboardTone,
 	type ModelOption,
+	type PlainRunContextDocument,
 	type PlanInfo,
+	type RunContextResponse,
 	type SolveSelection,
 	type SolverAgent,
 	type SolverWorkspace,
-	api,
+	createApi,
+	getServerUrl,
 } from './api'
 import { getSync, setSync } from './storage'
 
@@ -69,212 +72,418 @@ export function extensionItemActions(actions: DashboardAction[]): DashboardActio
 export function Widget(props: { taskId: Accessor<string | null> }) {
 	const [item, setItem] = createSignal<DashboardItem | null>(null)
 	const [expanded, setExpanded] = createSignal(false)
-	// connError = connectivity/poll failures, cleared on a successful poll.
-	// actionError = explicit action (plan/solve/start/retry/...) failures, sticky
-	// until the user takes another action or dismisses. Splitting them keeps a
-	// real failure visible — a poll tick used to wipe it within 5s.
 	const [connError, setConnError] = createSignal<string | null>(null)
 	const [actionError, setActionError] = createSignal<string | null>(null)
 	const [projects, setProjects] = createSignal<string[]>([])
 	const [planInfo, setPlanInfo] = createSignal<PlanInfo | null>(null)
-	const [planPending, setPlanPending] = createSignal(false)
+	const [busy, setBusy] = createSignal(false)
+	const [uncertain, setUncertain] = createSignal(false)
+	const [supported, setSupported] = createSignal(false)
 	const [solverAgent, setSolverAgent] = createSignal<SolverAgent>('claude')
-	const [agentTouched, setAgentTouched] = createSignal(false)
-	// '' = no per-item override — the daemon's configured model. Persisted like
-	// the agent choice so the quick-switch survives popup/tab reloads.
-	const [solverModel, setSolverModel] = createSignal<string>('')
-	const [modelTouched, setModelTouched] = createSignal(false)
+	const [solverModel, setSolverModel] = createSignal('')
+	const [solverWorkspace, setSolverWorkspace] = createSignal<'' | SolverWorkspace>('')
 	const [modelCatalog, setModelCatalog] = createSignal<Record<SolverAgent, ModelOption[]>>({
 		claude: [],
 		codex: [],
 		pi: [],
 	})
 	const [favoriteModels, setFavoriteModels] = createSignal<string[]>([])
-	// '' = no per-item override (the daemon's configured workspace). Persisted like
-	// the agent/model picks so the quick-switch survives popup/tab reloads.
-	const [solverWorkspace, setSolverWorkspace] = createSignal<'' | SolverWorkspace>('')
-	const [workspaceTouched, setWorkspaceTouched] = createSignal(false)
+	const [defaultWorkspace, setDefaultWorkspace] = createSignal<SolverWorkspace>('worktree')
+	const [runText, setRunText] = createSignal('')
+	const [runSavedText, setRunSavedText] = createSignal('')
+	const [runRevision, setRunRevision] = createSignal<number | null>(null)
+	const [runLoading, setRunLoading] = createSignal(false)
+	const [runEditing, setRunEditing] = createSignal(false)
+	const [runRich, setRunRich] = createSignal(false)
+	const [runImages, setRunImages] = createSignal<PlainRunContextDocument['images']>([])
+	const [runError, setRunError] = createSignal<string | null>(null)
+	let touched = { agent: false, model: false, workspace: false }
+	let generation = 0
+	let readGeneration = 0
+	let operation = false
+	type Owner = {
+		origin: string
+		profile: string
+		profileGeneration: number
+		source: string
+		api: ReturnType<typeof createApi>
+		generation: number
+	}
+	let owner: Owner | null = null
+	let itemKey: string | null = null
+	let loadingKey: string | null = null
+	const dirty = () => runText() !== runSavedText()
+	const current = (captured: Owner, id?: string) =>
+		owner === captured && props.taskId() === captured.source && (!id || item()?.id === id)
+	const selection = (): SolveSelection => ({
+		solverAgent: solverAgent(),
+		solverModel: solverModel() || null,
+		solverWorkspace: solverWorkspace() || null,
+	})
 
-	// Load projects on mount
-	api
-		.config()
-		.then(c => {
-			setProjects(c.projects.map(p => p.slug))
-			if (c.modelCatalog) setModelCatalog(c.modelCatalog)
-			const configAgent = c.solver?.agent ?? 'claude'
-			getSync({ solverAgent: configAgent, solverModel: '', solverWorkspace: '', favoriteModels: [] as string[] })
-				.then(items => {
-					if (!agentTouched() && isSolverAgent(items.solverAgent)) setSolverAgent(items.solverAgent)
-					if (!modelTouched() && typeof items.solverModel === 'string') setSolverModel(items.solverModel)
-					if (!workspaceTouched() && isStoredWorkspace(items.solverWorkspace)) setSolverWorkspace(items.solverWorkspace)
-					if (Array.isArray(items.favoriteModels)) {
-						setFavoriteModels(items.favoriteModels.filter((m): m is string => typeof m === 'string'))
-					}
+	function resetDraft() {
+		readGeneration++
+		loadingKey = null
+		setRunText('')
+		setRunSavedText('')
+		setRunRevision(null)
+		setRunRich(false)
+		setRunImages([])
+		setRunEditing(false)
+		setRunLoading(false)
+		setRunError(null)
+	}
+	function seed(result: RunContextResponse) {
+		const document = result.document
+		const source = result.source
+		const description = source?.descriptionBlocks?.length
+			? source.descriptionBlocks
+					.filter(block => block.type === 'text')
+					.map(block => block.text)
+					.join('\n\n')
+			: (source?.description ?? '')
+		const text =
+			document?.version === 2
+				? document.text
+				: document?.version === 1
+					? document.markdown
+					: [
+							description,
+							...(source?.comments ?? []).map(comment => `${comment.author} · ${comment.createdAt}\n${comment.body}`),
+						]
+							.filter(Boolean)
+							.join('\n\n')
+		setRunText(text)
+		setRunSavedText(text)
+		setRunRevision(result.revision)
+		setRunRich(document?.version === 1)
+		setRunImages(
+			document?.version === 2
+				? document.images
+				: (source?.descriptionBlocks ?? []).filter(
+						(block): block is PlainRunContextDocument['images'][number] => block.type === 'image',
+					),
+		)
+		setRunError(null)
+	}
+	async function loadPrompt(captured: Owner, target: DashboardItem, force = false) {
+		if (!supported() || target.kind !== 'solve' || !current(captured, target.id) || dirty() || operation) return
+		const key = `${captured.origin}|${captured.profile}|${captured.profileGeneration}|${target.id}|${captured.source}`
+		if (loadingKey === key || (!force && runRevision() !== null)) return
+		loadingKey = key
+		const request = ++readGeneration
+		if (runRevision() === null) setRunLoading(true)
+		try {
+			const result = await captured.api.runContext(target.id)
+			if (!current(captured, target.id) || request !== readGeneration || dirty() || operation) return
+			seed(result)
+		} catch (error) {
+			if (current(captured, target.id) && request === readGeneration)
+				setRunError(error instanceof Error ? error.message : 'Cannot load prompt')
+		} finally {
+			if (request === readGeneration) {
+				loadingKey = null
+				setRunLoading(false)
+			}
+		}
+	}
+	function publish(captured: Owner, next: DashboardItem | null) {
+		if (!current(captured)) return
+		if (next && ((next.profileId ?? 'work') !== captured.profile || next.source?.externalId !== captured.source)) return
+		const key = next
+			? `${captured.origin}|${captured.profile}|${captured.profileGeneration}|${next.id}|${captured.source}`
+			: null
+		if (key !== itemKey) {
+			itemKey = key
+			resetDraft()
+			setPlanInfo(null)
+			if (next) {
+				if (!touched.agent && next.solverAgent) setSolverAgent(next.solverAgent)
+				if (!touched.model) setSolverModel(next.solverModel ?? '')
+				if (!touched.workspace) setSolverWorkspace(next.solverWorkspace ?? '')
+			}
+		}
+		setItem(next)
+	}
+	createEffect(() => {
+		const source = props.taskId()
+		const epoch = ++generation
+		owner = null
+		itemKey = null
+		resetDraft()
+		setItem(null)
+		setActionError(null)
+		setUncertain(false)
+		setSupported(false)
+		touched = { agent: false, model: false, workspace: false }
+		let stopped = false
+		let timer: ReturnType<typeof setTimeout> | undefined
+		async function lookup() {
+			if (!source || stopped) return
+			try {
+				const origin = new URL(await getServerUrl()).origin
+				const transport = createApi(origin)
+				const status = await transport.status()
+				if (stopped || epoch !== generation) return
+				const profile = status.profile?.id ?? 'work'
+				const profileGeneration = status.profileGeneration ?? 1
+				if (
+					!owner ||
+					owner.origin !== origin ||
+					owner.profile !== profile ||
+					owner.profileGeneration !== profileGeneration
+				) {
+					owner = { origin, profile, profileGeneration, source, api: transport, generation: epoch }
+					itemKey = null
+					resetDraft()
+					setItem(null)
+					setActionError(null)
+					setUncertain(false)
+					const captured = owner
+					void transport
+						.config()
+						.then(async config => {
+							const stored = await getSync({
+								solverAgent: config.solver?.agent ?? 'claude',
+								solverModel: '',
+								solverWorkspace: '',
+								favoriteModels: [] as string[],
+							})
+							if (!current(captured)) return
+							setProjects(config.projects.map(project => project.slug))
+							if (config.modelCatalog) setModelCatalog(config.modelCatalog)
+							setDefaultWorkspace(config.solver?.workspace ?? 'worktree')
+							if (!touched.agent && !item()?.solverAgent && isSolverAgent(stored.solverAgent))
+								setSolverAgent(stored.solverAgent)
+							if (!touched.model && !item()?.solverModel && typeof stored.solverModel === 'string')
+								setSolverModel(stored.solverModel)
+							if (!touched.workspace && !item()?.solverWorkspace && isStoredWorkspace(stored.solverWorkspace))
+								setSolverWorkspace(stored.solverWorkspace)
+							if (Array.isArray(stored.favoriteModels))
+								setFavoriteModels(stored.favoriteModels.filter((value): value is string => typeof value === 'string'))
+						})
+						.catch(error => current(captured) && setConnError(String(error)))
+				}
+				const captured = owner
+				setSupported((status.protocolVersion ?? 0) >= 49)
+				const next = await captured.api.findItemBySource(source)
+				if (!current(captured)) return
+				publish(captured, next)
+				setConnError(null)
+				if (next) void loadPrompt(captured, next, true)
+			} catch (error) {
+				if (!stopped) setConnError(error instanceof Error ? error.message : 'Connection failed')
+			} finally {
+				if (!stopped) timer = setTimeout(lookup, 5000)
+			}
+		}
+		void lookup()
+		onCleanup(() => {
+			stopped = true
+			if (owner?.generation === epoch) {
+				owner = null
+				readGeneration++
+			}
+			if (timer) clearTimeout(timer)
+		})
+	})
+
+	async function verifyOwner(captured: Owner, id?: string) {
+		if (!current(captured, id)) throw new Error('Task identity changed. No further action was sent.')
+		const origin = new URL(await getServerUrl()).origin
+		const status = await captured.api.status()
+		const latestOrigin = new URL(await getServerUrl()).origin
+		if (
+			!current(captured, id) ||
+			origin !== captured.origin ||
+			latestOrigin !== captured.origin ||
+			(status.profile?.id ?? 'work') !== captured.profile ||
+			(status.profileGeneration ?? 1) !== captured.profileGeneration
+		)
+			throw new Error('Daemon or profile changed. No further action was sent.')
+	}
+	async function mutate(action: DashboardActionId | 'edit' | 'save' | 'plan') {
+		if (operation || uncertain() || !owner) return
+		const captured = owner
+		let target = item()
+		if ((action === 'edit' || action === 'save') && (!supported() || runRich())) return
+		if (target && (action === 'edit' || action === 'save') && runRevision() === null) return
+		if (
+			target?.status === 'running' &&
+			(action === 'save' || action === 'edit' || action === 'start' || action === 'plan')
+		)
+			return
+		if (
+			action === 'start' &&
+			target?.kind === 'solve' &&
+			supported() &&
+			(runRevision() === null || runLoading() || runError())
+		)
+			return
+		operation = true
+		setBusy(true)
+		setActionError(null)
+		const choices = selection()
+		const text = runText()
+		let revision = runRevision()
+		let mayHaveMutated = false
+		try {
+			await verifyOwner(captured, target?.id)
+			if (!target) {
+				if (action !== 'start' && action !== 'edit' && action !== 'approve') return
+				mayHaveMutated = true
+				target = await captured.api.createItemFromSource(captured.source)
+				if (!current(captured) || (target.profileId ?? 'work') !== captured.profile) return
+				publish(captured, target)
+				await verifyOwner(captured, target.id)
+				if (supported()) {
+					const loaded = await captured.api.runContext(target.id)
+					await verifyOwner(captured, target.id)
+					seed(loaded)
+					revision = loaded.revision
+				}
+			}
+			if (!current(captured, target.id)) return
+			if (action === 'edit') {
+				setRunEditing(true)
+				return
+			}
+			if (action === 'save' || (action === 'start' && dirty())) {
+				if (revision === null || runRich()) return
+				mayHaveMutated = true
+				const saved = await captured.api.savePlainRunContext(target.id, revision, text)
+				if (!current(captured, target.id)) return
+				setRunSavedText(text)
+				setRunRevision(saved.revision)
+				setRunImages(saved.document.images)
+				setRunEditing(false)
+				revision = saved.revision
+				if (action === 'save') return
+				await verifyOwner(captured, target.id)
+			}
+			if (action === 'plan') {
+				mayHaveMutated = true
+				const info = await captured.api.planItem(target.id, choices)
+				if (current(captured, target.id)) setPlanInfo(info)
+			} else {
+				mayHaveMutated = true
+				const result = await captured.api.itemAction(target.id, action, {
+					...choices,
+					...(action === 'start' && supported() && target.kind === 'solve' && revision !== null
+						? { expectedRunContextRevision: revision }
+						: {}),
 				})
-				.catch(err => console.warn('[helm]', err))
-		})
-		.catch(err => {
-			console.warn('[helm]', err)
-			setConnError('Cannot connect to Helm')
-		})
-
-	// Profile-qualified deep link into helm (the native cockpit). The app can
-	// switch first when this task belongs to another profile, avoiding an Item-id
-	// lookup in the wrong isolated database.
+				if (current(captured, target.id)) publish(captured, result)
+			}
+		} catch (error) {
+			if (current(captured)) {
+				setActionError(
+					`${error instanceof Error ? error.message : 'Action failed'}${mayHaveMutated ? ' Check the outcome in Helm before another action; nothing is retried automatically.' : ''}`,
+				)
+				setUncertain(mayHaveMutated)
+			}
+		} finally {
+			operation = false
+			setBusy(false)
+			// A replacement owner may have arrived while the old mutation held
+			// admission. Its first read was deliberately deferred; admit that
+			// CURRENT owner's read now, never publish the outgoing result into it.
+			const latestOwner = owner
+			const latestItem = item()
+			if (latestOwner && latestItem && runRevision() === null) void loadPrompt(latestOwner, latestItem)
+		}
+	}
+	const modelOptions = () => {
+		const all = modelCatalog()[solverAgent()] ?? []
+		const favorites = all.filter(model => favoriteModels().includes(model.id))
+		const rest = all.filter(model => !favoriteModels().includes(model.id))
+		const custom =
+			solverModel() && !all.some(model => model.id === solverModel())
+				? [{ id: solverModel(), label: solverModel() }]
+				: []
+		return [...favorites, ...rest, ...custom]
+	}
+	const chooseSolverAgent = (agent: SolverAgent) => {
+		touched.agent = true
+		setSolverAgent(agent)
+		touched.model = true
+		setSolverModel('')
+		void setSync({ solverAgent: agent, solverModel: '' })
+	}
+	const chooseSolverModel = (model: string) => {
+		touched.model = true
+		setSolverModel(model)
+		void setSync({ solverModel: model })
+	}
+	const chooseSolverWorkspace = (workspace: SolverWorkspace) => {
+		touched.workspace = true
+		const next = solverWorkspace() === workspace ? '' : workspace
+		setSolverWorkspace(next)
+		void setSync({ solverWorkspace: next })
+	}
+	const view = (): View => {
+		const value = item()
+		return !props.taskId()
+			? { kind: 'none' }
+			: value
+				? { kind: 'item', item: value }
+				: connError()
+					? { kind: 'error' }
+					: { kind: 'untracked', solvable: projects().length > 0 }
+	}
 	const helmUrl = () => {
 		const i = item()
 		return i ? `helm://profile/${encodeURIComponent(i.profileId ?? 'work')}/item/${encodeURIComponent(i.id)}` : null
 	}
-
-	// Poll for the Item backing this source task
-	createEffect(() => {
-		const id = props.taskId()
-		if (!id) {
-			setItem(null)
-			setConnError(null)
-			setActionError(null)
-			setAgentTouched(false)
-			return
-		}
-
-		const sourceId = id
-		let active = true
-		setAgentTouched(false)
-
-		async function lookup() {
-			if (!active) return
-			try {
-				const contractItem = await api.findItemBySource(sourceId)
-				if (active) {
-					setItem(contractItem)
-					setConnError(null)
-				}
-			} catch (err) {
-				if (active) setConnError(err instanceof Error ? err.message : 'Connection failed')
-			}
-		}
-
-		lookup()
-		const interval = setInterval(lookup, 5000)
-		onCleanup(() => {
-			active = false
-			clearInterval(interval)
-		})
-	})
-
-	async function doAction(fn: () => Promise<unknown>) {
-		setActionError(null)
-		try {
-			await fn()
-			const id = props.taskId()
-			if (id) setItem(await api.findItemBySource(id))
-		} catch (err) {
-			setActionError(err instanceof Error ? err.message : 'Action failed')
-		}
-	}
-
-	async function solve() {
-		const id = props.taskId()
-		if (!id || projects().length === 0) return
-		await doAction(() => api.createItemFromSource(id))
-	}
-
-	// Favorite models for the current agent — quick-switch chips. An empty
-	// favorites list falls back to the whole catalog so the switch works before
-	// any favorites are picked in the extension popup.
-	const modelOptions = (): ModelOption[] => {
-		const all = modelCatalog()[solverAgent()] ?? []
-		const picked = all.filter(m => favoriteModels().includes(m.id))
-		return picked.length > 0 ? picked : all
-	}
-
-	// The model actually SENT must be a chip the user can see — a persisted pick
-	// that fell out of the rendered options (favorites changed, agent switched,
-	// catalog updated) degrades to Auto instead of silently riding along.
-	const effectiveModel = (): string => {
-		const m = solverModel()
-		return m && modelOptions().some(o => o.id === m) ? m : ''
-	}
-
-	const selection = (): SolveSelection => ({
-		solverAgent: solverAgent(),
-		// null = explicitly clear any stored per-item override ("Auto").
-		solverModel: effectiveModel() || null,
-		// null = follow the daemon default (no workspace override); a value pins it.
-		solverWorkspace: solverWorkspace() || null,
-	})
-
-	async function handlePlan() {
-		const i = item()
-		if (!i) return
-		setActionError(null)
-		setPlanPending(true)
-		try {
-			setPlanInfo(await api.planItem(i.id, selection()))
-		} catch (err) {
-			setActionError(err instanceof Error ? err.message : 'Plan failed')
-		} finally {
-			setPlanPending(false)
-		}
-	}
-
-	function chooseSolverAgent(agent: SolverAgent) {
-		setAgentTouched(true)
-		setSolverAgent(agent)
-		void setSync({ solverAgent: agent })
-		// A model id belongs to one agent's CLI — switching agents drops a
-		// now-foreign override back to the daemon default.
-		if (solverModel() && !(modelCatalog()[agent] ?? []).some(m => m.id === solverModel())) {
-			chooseSolverModel('')
-		}
-	}
-
-	function chooseSolverModel(model: string) {
-		setModelTouched(true)
-		setSolverModel(model)
-		void setSync({ solverModel: model })
-	}
-
-	function chooseSolverWorkspace(workspace: SolverWorkspace) {
-		setWorkspaceTouched(true)
-		// Two chips, tri-state: clicking the active chip toggles back to '' (the
-		// daemon default), the only way to reach "no override" without a 3rd chip.
-		const next: '' | SolverWorkspace = solverWorkspace() === workspace ? '' : workspace
-		setSolverWorkspace(next)
-		void setSync({ solverWorkspace: next })
-	}
-
-	const view = (): View => {
-		if (!props.taskId()) return { kind: 'none' }
-		const i = item()
-		if (i) return { kind: 'item', item: i }
-		if (connError()) return { kind: 'error' }
-		return { kind: 'untracked', solvable: projects().length > 0 }
-	}
-
 	return (
-		<Show when={expanded()} fallback={<Pill view={view} onExpand={() => setExpanded(true)} onSolve={solve} />}>
+		<Show
+			when={expanded()}
+			fallback={<Pill view={view} onExpand={() => setExpanded(true)} onSolve={() => setExpanded(true)} />}
+		>
 			<Card
 				view={view}
 				helmUrl={helmUrl}
 				planInfo={planInfo}
-				planPending={planPending}
+				planPending={busy}
 				solverAgent={solverAgent}
-				solverModel={effectiveModel}
+				solverModel={solverModel}
 				solverWorkspace={solverWorkspace}
 				modelOptions={modelOptions}
+				defaultWorkspace={defaultWorkspace}
 				actionError={actionError}
 				onSolverAgentChange={chooseSolverAgent}
 				onSolverModelChange={chooseSolverModel}
 				onSolverWorkspaceChange={chooseSolverWorkspace}
-				onDismissError={() => setActionError(null)}
-				onCollapse={() => setExpanded(false)}
-				onSolve={solve}
-				onItemAction={action => {
-					const i = item()
-					if (i) doAction(() => api.itemAction(i.id, action, selection()))
+				onDismissError={() => {
+					setActionError(null)
+					setUncertain(false)
 				}}
-				onPlan={handlePlan}
+				onCollapse={() => setExpanded(false)}
+				onSolve={() => void mutate('start')}
+				runText={runText}
+				canEditRun={() => runRevision() !== null}
+				runLoading={runLoading}
+				runSaving={busy}
+				runEditing={runEditing}
+				runRich={runRich}
+				runImages={runImages}
+				runError={runError}
+				supported={supported}
+				blocked={() => busy() || uncertain()}
+				startBlocked={() =>
+					busy() ||
+					uncertain() ||
+					(supported() && item()?.kind === 'solve' && (runRevision() === null || runLoading() || !!runError()))
+				}
+				onRetryRun={() => {
+					const value = item()
+					if (owner && value) void loadPrompt(owner, value, true)
+				}}
+				onRunTextChange={setRunText}
+				onEditRun={() => void mutate('edit')}
+				onSaveRun={() => void mutate('save')}
+				onItemAction={action => void mutate(action)}
+				onPlan={() => void mutate('plan')}
 			/>
 		</Show>
 	)
@@ -313,6 +522,90 @@ function Btn(props: {
 		<button type="button" class={`vg-btn vg-btn--${props.variant}`} on:click={props.onClick} disabled={props.disabled}>
 			{props.children}
 		</button>
+	)
+}
+
+function ActionMenu(props: {
+	disabled: boolean
+	actions: Array<{ label: string; disabled?: boolean; run: () => void }>
+}) {
+	const [open, setOpen] = createSignal(false)
+	let root!: HTMLDivElement
+	let trigger!: HTMLButtonElement
+	const close = () => {
+		setOpen(false)
+		trigger.focus()
+	}
+	createEffect(() => {
+		if (!open()) return
+		const shadow = root.getRootNode() as ShadowRoot
+		const inside = (event: Event) => {
+			if (event.target instanceof Node && !root.contains(event.target)) setOpen(false)
+		}
+		const outside = (event: Event) => {
+			if (event.target !== shadow.host) setOpen(false)
+		}
+		shadow.addEventListener('pointerdown', inside, true)
+		document.addEventListener('pointerdown', outside, true)
+		onCleanup(() => {
+			shadow.removeEventListener('pointerdown', inside, true)
+			document.removeEventListener('pointerdown', outside, true)
+		})
+	})
+	return (
+		<div
+			class="vg-more"
+			ref={root}
+			on:keydown={event => {
+				if (event.key === 'Escape') {
+					event.preventDefault()
+					close()
+				}
+				if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+					event.preventDefault()
+					setOpen(true)
+					const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+					const index = buttons.findIndex(
+						button => button === (root.getRootNode() as ShadowRoot | Document).activeElement,
+					)
+					buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus()
+				}
+			}}
+			on:focusout={event => {
+				if (!root.contains(event.relatedTarget as Node)) setOpen(false)
+			}}
+		>
+			<button
+				type="button"
+				class="vg-btn vg-btn--muted"
+				ref={trigger}
+				aria-haspopup="menu"
+				aria-expanded={open()}
+				disabled={props.disabled}
+				on:click={() => setOpen(!open())}
+			>
+				More
+			</button>
+			<Show when={open()}>
+				<div role="menu" aria-label="Task actions">
+					<For each={props.actions}>
+						{action => (
+							<button
+								type="button"
+								role="menuitem"
+								disabled={action.disabled || props.disabled}
+								on:click={() => {
+									close()
+									action.run()
+								}}
+							>
+								{action.label}
+							</button>
+						)}
+					</For>
+				</div>
+			</Show>
+		</div>
 	)
 }
 
@@ -434,6 +727,7 @@ function ModelSelect(props: {
 
 	function choose(id: string) {
 		props.onChange(id)
+		triggerEl?.focus()
 		close()
 	}
 
@@ -628,6 +922,7 @@ function Pill(props: { view: Accessor<View>; onExpand: () => void; onSolve: () =
 function Card(props: {
 	view: Accessor<View>
 	helmUrl: Accessor<string | null>
+	canEditRun: Accessor<boolean>
 	planInfo: Accessor<PlanInfo | null>
 	planPending: Accessor<boolean>
 	solverAgent: Accessor<SolverAgent>
@@ -643,8 +938,66 @@ function Card(props: {
 	onSolve: () => void
 	onItemAction: (action: DashboardActionId) => void
 	onPlan: () => void
+	runText: Accessor<string>
+	runLoading: Accessor<boolean>
+	runSaving: Accessor<boolean>
+	runEditing: Accessor<boolean>
+	onRunTextChange: (text: string) => void
+	onEditRun: () => void
+	onSaveRun: () => void
+	defaultWorkspace: Accessor<SolverWorkspace>
+	runRich: Accessor<boolean>
+	runImages: Accessor<PlainRunContextDocument['images']>
+	runError: Accessor<string | null>
+	supported: Accessor<boolean>
+	blocked: Accessor<boolean>
+	startBlocked: Accessor<boolean>
+	onRetryRun: () => void
 }) {
 	const v = props.view
+	const runSettings = () => (
+		<details
+			class="vg-run-menu"
+			on:keydown={event => {
+				if (event.key === 'Escape') {
+					event.currentTarget.open = false
+					event.currentTarget.querySelector('summary')?.focus()
+				}
+			}}
+		>
+			<summary>
+				Run with {agentLabel(props.solverAgent())} · {props.solverModel() || 'Default model'} ·{' '}
+				{props.solverWorkspace()
+					? workspaceLabel(props.solverWorkspace() as SolverWorkspace)
+					: `Default (${workspaceLabel(props.defaultWorkspace())})`}
+			</summary>
+			<AgentSelect
+				value={props.solverAgent}
+				onChange={props.onSolverAgentChange}
+				disabled={props.blocked() || (asItem(v()) && (asItem(v()) as DashboardItem).status === 'running')}
+			/>
+			<ModelSelect
+				value={props.solverModel}
+				options={props.modelOptions}
+				onChange={props.onSolverModelChange}
+				disabled={props.blocked() || (asItem(v()) && (asItem(v()) as DashboardItem).status === 'running')}
+			/>
+			<label class="vg-agent">
+				Custom model
+				<input
+					aria-label="Custom model"
+					value={props.solverModel()}
+					on:input={event => props.onSolverModelChange(event.currentTarget.value)}
+					disabled={props.blocked() || (asItem(v()) && (asItem(v()) as DashboardItem).status === 'running')}
+				/>
+			</label>
+			<WorkspaceSelect
+				value={props.solverWorkspace}
+				onChange={props.onSolverWorkspaceChange}
+				disabled={props.blocked() || (asItem(v()) && (asItem(v()) as DashboardItem).status === 'running')}
+			/>
+		</details>
+	)
 	return (
 		<div class="vg-card">
 			<Switch>
@@ -679,15 +1032,26 @@ function Card(props: {
 						</div>
 					</div>
 					<div class="vg-card__body">
-						<div class="vg-text vg-text--primary">This task isn’t tracked by Helm yet.</div>
+						<div class="vg-text vg-text--primary">
+							This task isn’t tracked by Helm yet. Edit prompt prepares an Inbox item without starting it.
+						</div>
+						{runSettings()}
 						<Show when={!(v() as { kind: 'untracked'; solvable: boolean }).solvable}>
 							<div class="vg-text">No projects are configured.</div>
 						</Show>
 					</div>
 					<Show when={(v() as { kind: 'untracked'; solvable: boolean }).solvable}>
 						<div class="vg-card__actions">
-							<Btn variant="primary" onClick={props.onSolve}>
-								Solve with Helm
+							<Show when={props.supported()}>
+								<Btn variant="muted" onClick={props.onEditRun} disabled={props.blocked()}>
+									Edit prompt
+								</Btn>
+							</Show>
+							<Btn variant="muted" onClick={() => props.onItemAction('approve')} disabled={props.blocked()}>
+								Queue
+							</Btn>
+							<Btn variant="primary" onClick={props.onSolve} disabled={props.blocked()}>
+								Start
 							</Btn>
 						</div>
 					</Show>
@@ -724,59 +1088,143 @@ function Card(props: {
 									<div class="vg-text vg-text--primary vg-text--oneline" title={item().title}>
 										{item().title}
 									</div>
+									<Show when={props.supported() && item().kind === 'solve'}>
+										<div class="vg-run-context">
+											<div class="vg-run-context__header">
+												<span>Prompt</span>
+												<Show
+													when={
+														props.canEditRun() &&
+														!props.runEditing() &&
+														!props.runLoading() &&
+														!props.runRich() &&
+														!isProcessing()
+													}
+												>
+													<button
+														type="button"
+														class="vg-link-open"
+														on:click={props.onEditRun}
+														disabled={props.blocked()}
+													>
+														Edit
+													</button>
+												</Show>
+											</div>
+											<Show when={props.runRich()}>
+												<div class="vg-text">Rich context is read-only here. Open Helm to edit it.</div>
+											</Show>
+											<Show when={isProcessing()}>
+												<div class="vg-text">Running — edit after this run finishes.</div>
+											</Show>
+											<Show when={props.runError()}>
+												<div class="vg-error">
+													{props.runError()}{' '}
+													<button
+														type="button"
+														class="vg-link-open"
+														on:click={props.onRetryRun}
+														disabled={props.blocked()}
+													>
+														Retry prompt load
+													</button>
+												</div>
+											</Show>
+											<Show when={!props.runLoading()} fallback={<div class="vg-text">Loading prompt…</div>}>
+												<Show
+													when={props.runEditing() && !props.runRich()}
+													fallback={<div class="vg-run-context__text">{props.runText() || 'No prompt override'}</div>}
+												>
+													<textarea
+														aria-label="Original task narrative"
+														maxlength={200000}
+														on:keydown={event => {
+															if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+																event.preventDefault()
+																if (!props.startBlocked()) props.onItemAction('start')
+															}
+														}}
+														value={props.runText()}
+														on:input={event => props.onRunTextChange(event.currentTarget.value)}
+														disabled={props.blocked() || isProcessing()}
+													/>
+													<div class="vg-run-context__actions">
+														<Btn
+															variant="muted"
+															onClick={() => props.onRunTextChange('')}
+															disabled={props.blocked() || isProcessing()}
+														>
+															Clear
+														</Btn>
+														<Btn
+															variant="primary"
+															onClick={props.onSaveRun}
+															disabled={props.blocked() || isProcessing()}
+														>
+															{props.runSaving() ? 'Saving…' : 'Save prompt'}
+														</Btn>
+													</div>
+												</Show>
+											</Show>
+										</div>
+										<Show when={props.runImages().length > 0}>
+											<div class="vg-text">
+												Protected source images:{' '}
+												{props
+													.runImages()
+													.map(image => image.name ?? 'Unnamed image')
+													.join(', ')}
+											</div>
+										</Show>
+									</Show>
 									<LinkLine label="Branch" link={item().links.branch} />
 									<LinkLine label="PR" link={item().links.pr} />
-									<AgentSelect
-										value={props.solverAgent}
-										onChange={props.onSolverAgentChange}
-										disabled={isProcessing()}
-									/>
-									<ModelSelect
-										value={props.solverModel}
-										options={props.modelOptions}
-										onChange={props.onSolverModelChange}
-										disabled={isProcessing()}
-									/>
-									<WorkspaceSelect
-										value={props.solverWorkspace}
-										onChange={props.onSolverWorkspaceChange}
-										disabled={isProcessing()}
-									/>
+									{runSettings()}
 									<For each={itemRunNotices(item())}>
 										{notice => <NoticeText kind={notice.kind} text={notice.text} />}
 									</For>
-									<Show when={props.actionError()}>
-										{msg => (
-											<div class="vg-error vg-error--dismissible">
-												<span>{msg()}</span>
-												<button type="button" class="vg-error__dismiss" on:click={props.onDismissError}>
-													&times;
-												</button>
-											</div>
-										)}
-									</Show>
 									<Show when={item().errorMessage}>{message => <div class="vg-error">{message()}</div>}</Show>
 								</div>
 
 								<div class="vg-card__actions">
-									<Btn variant="muted" onClick={props.onPlan} disabled={props.planPending() || isProcessing()}>
-										{props.planPending() ? 'Planning…' : props.planInfo() || item().plan ? 'Re-plan' : 'Plan'}
-									</Btn>
-									<Show when={item().allowedActions.length > 0}>
-										<For each={extensionItemActions(item().allowedActions)}>
-											{action => (
-												<Btn variant={action.tone} onClick={() => props.onItemAction(action.id)}>
-													{action.label}
-												</Btn>
-											)}
-										</For>
-									</Show>
+									<For each={extensionItemActions(item().allowedActions).filter(action => action.id !== 'reject')}>
+										{action => (
+											<Btn
+												variant={action.tone}
+												onClick={() => props.onItemAction(action.id)}
+												disabled={action.id === 'start' ? props.startBlocked() : props.blocked()}
+											>
+												{action.label}
+											</Btn>
+										)}
+									</For>
+									<ActionMenu
+										disabled={props.blocked()}
+										actions={[
+											{
+												label: props.planInfo() || item().plan ? 'Re-plan' : 'Plan',
+												disabled: isProcessing(),
+												run: props.onPlan,
+											},
+											...item()
+												.allowedActions.filter(action => action.id === 'reject')
+												.map(action => ({ label: action.label, run: () => props.onItemAction(action.id) })),
+										]}
+									/>
 								</div>
 							</>
 						)
 					}}
 				</Match>
 			</Switch>
+			<Show when={props.actionError()}>
+				<div class="vg-error">
+					{props.actionError()}
+					<button type="button" class="vg-link-open" on:click={props.onDismissError}>
+						I checked the outcome
+					</button>
+				</div>
+			</Show>
 		</div>
 	)
 }

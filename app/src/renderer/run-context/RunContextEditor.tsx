@@ -104,7 +104,17 @@ export function sourceToRunContextBlocks(source: SourceTask): PartialBlock[] {
 }
 
 function editorBlocks(blocks: Array<Record<string, unknown>>): PartialBlock[] {
+	// SAFETY: server validation guarantees these opaque blocks are BlockNote-compatible editor blocks.
 	return blocks.length > 0 ? (blocks as unknown as PartialBlock[]) : [{ type: 'paragraph', content: '' }]
+}
+
+function loadedDocumentBlocks(document: NonNullable<RunContextLoad['document']>): PartialBlock[] {
+	if (document.version === 1) return editorBlocks(document.blocks)
+	const blocks: PartialBlock[] = []
+	if (document.text.trim()) blocks.push(...paragraphs(document.text))
+	for (const image of document.images)
+		blocks.push({ type: 'image', props: { url: image.url, caption: image.name ?? '', name: image.name ?? '' } })
+	return blocks.length > 0 ? blocks : [{ type: 'paragraph', content: '' }]
 }
 
 function serializableBlocks(blocks: Block[]): Array<Record<string, unknown>> {
@@ -118,7 +128,7 @@ export interface RunContextEditorProps {
 
 export function RunContextEditor({ loaded, onReload }: RunContextEditorProps) {
 	const initialContent = useMemo(
-		() => (loaded.document ? editorBlocks(loaded.document.blocks) : sourceToRunContextBlocks(loaded.source)),
+		() => (loaded.document ? loadedDocumentBlocks(loaded.document) : sourceToRunContextBlocks(loaded.source)),
 		[loaded],
 	)
 	const editor = useCreateBlockNote({ initialContent })

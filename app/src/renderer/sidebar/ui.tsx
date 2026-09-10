@@ -719,6 +719,8 @@ export function TextInput({
 	type = 'text',
 	invalid,
 	className,
+	maxLength,
+	autoComplete,
 }: {
 	id?: string
 	value: string
@@ -727,6 +729,8 @@ export function TextInput({
 	type?: 'text' | 'password' | 'number'
 	invalid?: boolean
 	className?: string
+	maxLength?: number
+	autoComplete?: string
 }) {
 	return (
 		<input
@@ -735,6 +739,8 @@ export function TextInput({
 			type={type}
 			value={value}
 			placeholder={placeholder}
+			maxLength={maxLength}
+			autoComplete={autoComplete}
 			onChange={event => onChange(event.target.value)}
 		/>
 	)

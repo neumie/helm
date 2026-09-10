@@ -77,9 +77,14 @@ export interface RunContextDraft {
 	markdown: string
 }
 
-export interface RunContextDocument extends RunContextDraft {
+export interface RunContextPlainDocument {
+	version: 2
+	text: string
+	images: Array<{ type: 'image'; url: string; name?: string; contentType?: string }>
 	updatedAt: string
 }
+
+export type RunContextDocument = (RunContextDraft | RunContextPlainDocument) & { updatedAt: string }
 
 export interface RunContextLoad {
 	item: { id: string; title: string; projectSlug: string | null; status: ItemStatus }

@@ -264,6 +264,7 @@ export function SettingsPage({
 	onOpenProfiles,
 	onOpenTerminal,
 	onOpenAgentIntegrations,
+	onOpenRemote,
 	onOpenScheduledRuns,
 	activeProfileName,
 }: {
@@ -274,6 +275,7 @@ export function SettingsPage({
 	onOpenProfiles: () => void
 	onOpenTerminal: () => void
 	onOpenAgentIntegrations: () => void
+	onOpenRemote: () => void
 	onOpenScheduledRuns: () => void
 	activeProfileName: string
 }) {
@@ -294,6 +296,7 @@ export function SettingsPage({
 					/>
 					<ActionRow nav label="Terminal" value="Folder · Option · shortcuts" onClick={onOpenTerminal} />
 					<ActionRow nav label="Agent integrations" value="Pi status" onClick={onOpenAgentIntegrations} />
+					<ActionRow nav label="Remote" value="Device access" onClick={onOpenRemote} />
 					<ActionRow
 						nav
 						label="Scheduled runs"

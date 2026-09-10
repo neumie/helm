@@ -152,7 +152,7 @@ export class HelmBridge {
 		this.baseUrl = daemonUrl.replace(/\/$/, '')
 		this.runContext = new RunContextBridgeOperations({
 			acceptsProfileToken: token => this.acceptsProfileToken(token),
-			request: (method, path, body) => this.request(method, path, body),
+			request: (method, path, body, headers) => this.request(method, path, body, REQUEST_TIMEOUT_MS, headers),
 			kick: () => this.kick(),
 		})
 	}

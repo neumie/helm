@@ -109,13 +109,62 @@ export default function proofProvider(pi: ExtensionAPI) {
 			return stream
 		},
 	})
+	pi.registerCommand('remote-proof-tree', {
+		description: 'Disposable proof-only public tree navigation',
+		handler: async (_args, ctx) => {
+			const leaf = ctx.sessionManager.getLeafId()
+			const parent = leaf ? ctx.sessionManager.getEntry(leaf)?.parentId : null
+			const root = process.env.HELM_REMOTE_PROOF_ROOT
+			const record = (status: string, extra: Record<string, unknown> = {}) => {
+				if (root)
+					writeFileSync(
+						join(root, `tree-${process.env.HELM_REMOTE_PROOF_SLOT}.json`),
+						JSON.stringify({
+							pid: process.pid,
+							sessionId: ctx.sessionManager.getSessionId(),
+							leaf,
+							parent,
+							idle: ctx.isIdle(),
+							status,
+							...extra,
+						}),
+						{ mode: 0o600 },
+					)
+			}
+			record('entered')
+			if (!parent) return
+			try {
+				const result = await ctx.navigateTree(parent)
+				record('returned', {
+					cancelled: result.cancelled,
+					newLeaf: ctx.sessionManager.getLeafId(),
+					changed: ctx.sessionManager.getLeafId() !== leaf,
+				})
+			} catch (error) {
+				record('failed', { error: error instanceof Error ? error.message : 'unknown' })
+				throw error
+			}
+		},
+	})
 	pi.on('session_start', (event, ctx) => {
 		pi.setSessionName(`Proof terminal ${process.env.HELM_REMOTE_PROOF_SLOT}`)
 		const root = process.env.HELM_REMOTE_PROOF_ROOT
 		if (root)
 			writeFileSync(
 				join(root, `ready-${process.env.HELM_REMOTE_PROOF_SLOT}.json`),
-				JSON.stringify({ pid: process.pid, sessionId: ctx.sessionManager.getSessionId(), reason: event.reason }),
+				JSON.stringify({
+					pid: process.pid,
+					sessionId: ctx.sessionManager.getSessionId(),
+					reason: event.reason,
+					tools: pi
+						.getAllTools()
+						.filter(tool => tool.name === 'ask_user_question')
+						.map(({ name, sourceInfo }) => ({ name, sourceInfo })),
+					commands: pi
+						.getCommands()
+						.filter(command => command.name.startsWith('helm-remote-'))
+						.map(({ name, sourceInfo }) => ({ name, sourceInfo })),
+				}),
 				{ mode: 0o600 },
 			)
 	})

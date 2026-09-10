@@ -229,6 +229,11 @@ const api: HelmApi = {
 	agentIntegrations: {
 		piStatus: () => ipcRenderer.invoke('agent-integrations:pi-status', sessionProfileToken),
 	} satisfies AgentIntegrationsApi,
+	remotePairing: {
+		status: () => ipcRenderer.invoke('remote-pairing:status', sessionProfileToken),
+		pair: label => ipcRenderer.invoke('remote-pairing:pair', label, sessionProfileToken),
+		revoke: deviceId => ipcRenderer.invoke('remote-pairing:revoke', deviceId, sessionProfileToken),
+	},
 	external: {
 		open: url => ipcRenderer.invoke('external:open', url, sessionProfileToken) as Promise<boolean>,
 	},

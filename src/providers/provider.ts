@@ -12,14 +12,16 @@ export interface DiscoveredTask {
 
 /** One block of a rich task description, in document order, so inline images
  *  render between the surrounding text instead of all dumped at the end. */
+export const descriptionImageBlockSchema = z.object({
+	type: z.literal('image'),
+	url: z.string(),
+	name: z.string().optional(),
+	contentType: z.string().optional(),
+})
+
 export const descriptionBlockSchema = z.discriminatedUnion('type', [
 	z.object({ type: z.literal('text'), text: z.string(), heading: z.number().optional() }),
-	z.object({
-		type: z.literal('image'),
-		url: z.string(),
-		name: z.string().optional(),
-		contentType: z.string().optional(),
-	}),
+	descriptionImageBlockSchema,
 ])
 export type DescriptionBlock = z.infer<typeof descriptionBlockSchema>
 

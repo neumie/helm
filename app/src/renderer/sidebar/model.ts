@@ -25,6 +25,7 @@ export type Route =
 	| { kind: 'appearance' }
 	| { kind: 'terminal-settings' }
 	| { kind: 'agent-integrations' }
+	| { kind: 'remote-settings' }
 	| { kind: 'scheduled-runs' }
 	| { kind: 'scheduled-run-editor'; scheduleId?: string }
 
