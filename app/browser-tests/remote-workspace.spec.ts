@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { type Page, expect, test } from '@playwright/test'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
 
 declare global {
@@ -138,12 +138,12 @@ test('metadata-only source changes update the detail without changing the conver
 	})
 	await expect(page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' })).toBeVisible()
 	await page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' }).first().click()
-	await expect(page.locator('.remote-meta .remote-session-source')).toHaveText('Source: Okena')
+	await expect(page.locator('.remote-information-footer-source')).toHaveText('Okena')
 	await page.evaluate(() => {
 		window.__remoteFixture?.changeTerminalSource('helm')
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-source')).toHaveText('Source: Helm')
+	await expect(page.locator('.remote-information-footer-source')).toHaveText('Helm')
 	await expect(page.locator('.remote-message')).toHaveCount(40)
 })
 
@@ -208,14 +208,14 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		window.__remoteFixture?.setTerminalMetadata(true)
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-branch')).toBeVisible()
+	await expectCurrentBranch(page, true)
 	await expect.poll(tailGap).toBeLessThanOrEqual(1)
 
 	await page.evaluate(() => {
 		window.__remoteFixture?.setModel('expanded-model-'.repeat(10))
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-model')).toContainText('expanded-model-')
+	await expect(page.locator('.remote-information-footer-model')).toContainText('expanded-model-')
 	await expect.poll(tailGap).toBeLessThanOrEqual(1)
 
 	await page.evaluate(() => {
@@ -223,8 +223,8 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		window.__remoteFixture?.setModel('openai-codex/gpt-model')
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-branch')).toHaveCount(0)
-	await expect(page.locator('.remote-meta .remote-session-model')).toContainText('openai-codex/gpt-model')
+	await expectCurrentBranch(page, false)
+	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
 	await expect.poll(tailGap).toBeLessThanOrEqual(1)
 
 	await transcript.evaluate(node => {
@@ -256,8 +256,8 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		window.__remoteFixture?.setModel('expanded-model-'.repeat(10))
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-branch')).toBeVisible()
-	await expect(page.locator('.remote-meta .remote-session-model')).toContainText('expanded-model-')
+	await expectCurrentBranch(page, true)
+	await expect(page.locator('.remote-information-footer-model')).toContainText('expanded-model-')
 	await expectAnchor()
 
 	await page.evaluate(() => {
@@ -265,8 +265,8 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		window.__remoteFixture?.setModel('openai-codex/gpt-model')
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-meta .remote-session-branch')).toHaveCount(0)
-	await expect(page.locator('.remote-meta .remote-session-model')).toContainText('openai-codex/gpt-model')
+	await expectCurrentBranch(page, false)
+	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
 	await expectAnchor()
 })
 
@@ -398,6 +398,19 @@ test('keyboard submit is IME-safe and rapid activation sends once', async ({ pag
 	await expect.poll(() => page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(1)
 })
 
+test('successful send keeps command admission but unmounts the dispatched receipt', async ({ page }) => {
+	await page.goto(path)
+	await page.getByRole('button', { name: /Helm conversation/ }).click()
+	await page.getByLabel('Message', { exact: true }).fill('Send without a success caption')
+	await page.getByRole('button', { name: 'Send', exact: true }).click()
+	await expect.poll(() => page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(1)
+	await expect(page.locator('.remote-receipt')).toHaveCount(0)
+	await expect(
+		page.getByText('Dispatched to Pi. The conversation confirms what happened.', { exact: true }),
+	).toHaveCount(0)
+	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('')
+})
+
 test('lost command response is recovered by a read, never a duplicate send', async ({ page }) => {
 	await page.goto(path)
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
@@ -407,7 +420,8 @@ test('lost command response is recovered by a read, never a duplicate send', asy
 	await expect(page.getByText(/Delivery unknown/)).toBeVisible()
 	await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
 	await page.getByRole('button', { name: 'Check status', exact: true }).click()
-	await expect(page.getByText(/Dispatched to Pi/)).toBeVisible()
+	await expect(page.getByText(/Dispatched to Pi/)).toHaveCount(0)
+	await expect(page.locator('.remote-receipt')).toHaveCount(0)
 	expect(await page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(1)
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('')
 })
@@ -732,3 +746,12 @@ for (const width of [320, 390])
 		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
 		await expect(directory).toBeVisible()
 	})
+
+async function expectCurrentBranch(page: Page, present: boolean) {
+	await page.getByRole('button', { name: 'Conversation options', exact: true }).click()
+	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
+	const branch = page.locator('.remote-current-conversation dt').filter({ hasText: /^Branch$/ })
+	if (present) await expect(branch).toBeVisible()
+	else await expect(branch).toHaveCount(0)
+	await page.getByRole('button', { name: 'Back to conversation', exact: true }).click()
+}

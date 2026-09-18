@@ -72,6 +72,22 @@ explicit steer/follow-up choice and an interrupt request. Unsupported custom UI
 says to use the original terminal. No keys, shell commands, arbitrary paths or
 process operations are forwarded.
 
+### Extension information — browser checkpoint
+
+The separate negotiated information-v1 GET now drives the production browser's
+320px information rail (>=1200px) or explicit Info reading view below that width,
+plus a bounded compact footer. Semantic goal/todo/job/update/integration rows and
+safe footer values retain independent availability, coverage and omission truth.
+Full fleet remains unsupported/unfinished; unavailable LSP or old-class jobs do not
+hide available siblings. Reads are single-flight, memory-only and independently
+expire from monotonic request start plus host remaining TTL. See
+[information-v1.md](information-v1.md) for exact wire/UI bounds and proof seams.
+
+This checkpoint is isolated Node/HTTP/UDS and Storybook browser proof, **not**
+current-session delivery, installed-exporter proof, deployment, physical-phone
+certification or the original full Profiler acceptance. No native sampling,
+service changes, Pi reload or provider controls are introduced.
+
 ### Manual SOURCE LABEL repair
 
 An operator can repair the source label of an already-enrolled session without
@@ -484,13 +500,70 @@ No conversations, credentials, drafts or commands enter Cache Storage or offline
 
 `HELM_REMOTE_PROOF_BROWSER=1 node --import tsx --test tests/remote-pwa.test.ts` checks the built shell against an isolated host, Chromium manifest/installability diagnostics, worker activation, offline API failure, unavailable navigation and online recovery without cache entries. Generate the bundle with `node app/scripts/build-remote.mjs` first. This is not physical iPhone/Safari installation, software-keyboard, phone-suspension or Web Push certification. Browser tests in `remote-reading.spec.ts` reproduce the original literal Markdown/border-stack defects and check navigation/draft continuity. Icons are checked in; `node app/scripts/write-remote-icons.mjs` is an optional authoring tool requiring Chromium, not part of normal builds.
 
+## Current-conversation history (implementation; cumulative review pending)
+
+The browser now offers **Older**, **Newer** and **Jump to latest** for the selected live
+Pi owner's current branch. This is not historical-session resume, replay, or a session-file
+reader. Pi remains the sole writer. The bridge traverses only guarded, current-manager
+`getLeafId` / `getEntry` / `parentId`; appends and compaction retain the captured history
+head. Completed live/history messages use actual observed manager IDs and stored payloads.
+The provisional `current` row cannot become a canonical reading anchor.
+
+History-v1 is additive: `REMOTE_PROTOCOL=1` and daemon/app protocol49 stay unchanged.
+The bridge negotiates via `X-Helm-History: 1`; absent negotiation preserves legacy exchange
+shapes. Browser directory/detail contracts stay unchanged. `/v1/history/read` is a separate
+same-origin authenticated/no-store endpoint; old-host404 or absent bridge support becomes
+an explicit unsupported state without interrupting ordinary live controls. Results use the
+separately capped private UDS route, never command receipts or the live snapshot envelope.
+
+Per slice:128 entry attempts,40 records,64KiB record JSON,48KiB individual record,
+96KiB complete result,1KiB cursor and4KiB **complete** host descriptor. A view has a60s
+idle lease and fresh server-owned nonce; retired-view tokens never revive after reopen.
+Host admission remains8 global /1 per device /1 per target, with4s deadlines and no backlog.
+Reads never update owner freshness or admit a command. Invalid cursors/gap retries do not
+renew leases. Raw range coverage is independent of rendered/hidden record count.
+
+The browser keeps three page payloads, one sealed evicted reading bookmark, and the ordinary
+bounded live snapshot. Only one page (at most40 canonical records) mounts. Initial Older
+compares the oldest displayed canonical ID while traversing from an authenticated head;
+it does not assume sparse live rows form contiguous coverage. Uncached Newer uses bounded
+rewalk slices with examined-entry progress, Continue and Cancel; appends do not restart it.
+Cached navigation revalidates a sealed reread. Root, missing ancestry, clipping, private or
+unsupported content, activity-only pages and expiry remain distinct. Jump to latest cancels
+and fences pending results; current questionnaires, drafts, IME, activity preference and
+command authority remain independent. Owner/epoch/auth/navigation changes clear and fence
+history. A history401/403 hides selected evidence and refuses effects until fresh selection.
+
+Proof artifacts for this slice are external at `/tmp/helm-remote-history-20260910/`:
+`reader-pi/` records actual Pi0.85.1 in-memory manager/replacement-handler proof;
+`wire/` records authenticated HTTP/UDS, production bridge and mixed-peer tests;
+`ui/` records controller tests and production Storybook/browser checks. Browser tests intercept
+only fixture history HTTP and use the actual `RemoteHistoryReader` in the test process; they
+are not a replacement for the authenticated host suite or physical-device acceptance.
+History* stories use a separate display-only service and no daemon/Remote/session traffic.
+The original40-message/12-update/10-navigation performance workload and thresholds are
+unchanged: the earlier111.7ms opening result remains an **open parent-owned gate** until
+an independently authorized comparison. No deployment or installed TUI reload occurred.
+
+Future rollout requires operator approval: update host/browser first, then operator-controlled
+`/reload` in the desired existing Pi TUIs. Unsupported peers retain live operation. Do not
+restart Pi, delete runtime locks, install resources, or change protocols to force support.
+
+## Extension information (schema-only checkpoint)
+
+The independent footer/sidebar schemas and pure projections are documented in
+[information-v1.md](information-v1.md). They are **not wired to the bridge, host
+or browser**. Source admission, negotiated transport, authentication, replay and
+expiry proofs, UI and actual current-conversation display remain unfinished.
+No existing live/history/command response shape changes in this checkpoint.
+
 ## Next slices (not silently dropped from the vision)
 
 1. Live-unconnected discovery, provenance-attested subagents, and bounded historical
    detail pages without a JSONL writer or fabricated resume authority.
-2. Separate history pagination and retained bounded replay; slow-client/backpressure
-   and long-session memory tests beyond the current 40-message preview. Durable draft
-   recovery needs a deliberate privacy/storage policy.
+2. Retained bounded replay and physical-device/long-session acceptance beyond the
+   implemented current-branch page reader. Durable draft recovery needs a deliberate
+   privacy/storage policy.
 3. Explicit new/resume ownership, model/thinking selection, image input and optional
    profile-bound Item links. These must not be inferred from a PID or a JSONL file.
 4. Real phone installation/keyboard/suspension acceptance and Web Push. The installable

@@ -41,10 +41,10 @@ async function openAndSelectDelivery(
 	label: string,
 	mode: 'pointer' | 'touch',
 ) {
-	const trigger = page.getByRole('button', { name: 'Message delivery' })
+	const trigger = page.getByRole('button', { name: /Message delivery:/ })
 	if (mode === 'touch') await trigger.tap()
 	else await trigger.click()
-	const menu = page.getByRole('menu', { name: 'Message delivery' })
+	const menu = page.getByRole('menu', { name: /Message delivery:/ })
 	await expect(menu).toBeVisible()
 	await expect(menu).toHaveCSS('opacity', '1')
 	for (const entry of ['Steer at the next safe point', 'Follow up after current work'])
@@ -172,7 +172,7 @@ for (const width of [320, 390, 1280]) {
 		const okena = page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' })
 		const helm = page.locator('.remote-session-row').filter({ hasText: 'Source: Helm' })
 		const unavailable = page.locator('.remote-session-row').filter({ hasText: 'Source unavailable' })
-		await expect(okena).toContainText('Ready')
+		await expect(okena).toContainText('Main Pi idle')
 		await expect(okena).toContainText('Project: JVS')
 		await expect(okena).toContainText('Branch: docs/mobile-phase-0')
 		await expect(helm).toContainText('Needs you')
@@ -203,14 +203,22 @@ for (const viewport of [
 	{ width: 390, height: 844 },
 	{ width: 390, height: 420 },
 ]) {
-	test(`long detail identity wraps fully at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+	test(`long detail identity ellipsizes in its single header row and wraps fully in Info at ${viewport.width}x${viewport.height}`, async ({
+		page,
+	}) => {
 		await page.setViewportSize(viewport)
 		await loadReadability(page)
 		await page.locator('.remote-session-row').filter({ hasText: LONG_IDENTITY }).click()
 		const detail = page.getByRole('region', { name: 'Conversation' })
 		const heading = detail.getByRole('heading', { name: LONG_IDENTITY })
 		await expect(heading).toBeVisible()
-		const geometry = await heading.evaluate((node, suffix) => {
+		await expect(heading).toHaveCSS('white-space', 'nowrap')
+		await expect(heading).toHaveCSS('text-overflow', 'ellipsis')
+		expect(await detail.locator('.remote-header').evaluate(node => node.getBoundingClientRect().height)).toBe(44)
+		await openCurrentInfo(page)
+		const fullTitle = detail.locator('.remote-current-title')
+		await expect(fullTitle).toHaveText(LONG_IDENTITY)
+		const geometry = await fullTitle.evaluate((node, suffix) => {
 			const style = getComputedStyle(node)
 			const textNode = Array.from(node.childNodes).find(child => child.nodeType === Node.TEXT_NODE)
 			if (!textNode || !textNode.textContent) throw new Error('Detail heading has no text node')
@@ -235,11 +243,12 @@ for (const viewport of [
 					suffixBox.right <= box.right + 1,
 			}
 		}, 'suffix-z9')
-		expect(geometry.whiteSpace).toBe('normal')
+		expect(geometry.whiteSpace).toBe('pre-wrap')
 		expect(geometry.overflow).toBe('visible')
 		expect(geometry.textOverflow).toBe('clip')
 		expect(geometry.wraps).toBe(true)
 		expect(geometry.suffixVisible).toBe(true)
+		await closeCurrentInfo(page)
 		await expectFullyContained(
 			detail.getByRole('button', { name: 'Back to live conversations', exact: true }),
 			viewport,
@@ -261,11 +270,17 @@ for (const height of [420, 480, 560]) {
 		await page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' }).click()
 		const detail = page.getByRole('region', { name: 'Conversation' })
 		await expect(detail.getByRole('heading', { name: 'feat/mobile', exact: true })).toBeVisible()
-		await expect(detail.locator('.remote-session-source')).toHaveText('Source: Okena')
-		await expect(detail.locator('.remote-session-context')).toHaveText('Group: Contember · Project: JVS')
-		await expect(detail.locator('.remote-session-branch')).toHaveText('Branch: docs/mobile-phase-0')
-		await expect(detail.getByText('Model: openai-codex/gpt-model', { exact: true })).toBeVisible()
-		await expect(detail.locator('.remote-meta .chip')).toHaveText('Ready')
+		await expect(detail.locator('.remote-information-footer-source')).toHaveText('Okena')
+		await openCurrentInfo(page)
+		await expect(detail.locator('.remote-current-conversation dl')).toContainText('GroupContemberProjectJVS')
+		await expect(
+			detail
+				.locator('.remote-current-conversation dl > div')
+				.filter({ has: page.getByText('Branch', { exact: true }) }),
+		).toHaveText('Branchdocs/mobile-phase-0')
+		await expect(detail.locator('.remote-information-footer-model')).toHaveText('openai-codex/gpt-model')
+		await expect(detail.locator('.remote-current-conversation .chip')).toHaveText('Main Pi idle')
+		await closeCurrentInfo(page)
 		await expectFullyContained(detail.getByRole('button', { name: 'Back to live conversations', exact: true }), {
 			width: 390,
 			height,
@@ -312,18 +327,22 @@ test('metadata-rich Okena detail keeps full composer and metadata reachable for 
 	const surface = detail.locator('.remote-compose-surface')
 	const actions = detail.locator('.remote-composer-actions')
 	const send = detail.getByRole('button', { name: 'Send', exact: true })
-	const delivery = detail.getByRole('button', { name: 'Message delivery' })
-	const metadata = detail.locator('.remote-meta')
-	const source = detail.locator('.remote-session-source')
-	const context = detail.locator('.remote-session-context')
-	const branch = detail.locator('.remote-session-branch')
-	const model = detail.getByText('Model: openai-codex/gpt-model', { exact: true })
-	await expect(source).toHaveText('Source: Okena')
-	await expect(context).toHaveText('Group: Contember · Project: JVS')
-	await expect(branch).toHaveText('Branch: docs/mobile-phase-0')
-	await expect(model).toBeVisible()
-	await expect(detail.locator('.remote-meta .chip')).toHaveText('Ready')
+	const delivery = detail.getByRole('button', { name: /Message delivery:/ })
+	await openCurrentInfo(page)
+	const metadata = detail.locator('.remote-information-body')
+	const source = detail.locator('.remote-information-footer-source')
+	const context = detail.locator('.remote-current-conversation dl')
+	const branch = detail
+		.locator('.remote-current-conversation dl > div')
+		.filter({ has: page.getByText('Branch', { exact: true }) })
+	const model = detail.locator('.remote-information-footer-model')
+	await expect(source).toHaveText('Okena')
+	await expect(context).toContainText('GroupContemberProjectJVS')
+	await expect(branch).toHaveText('Branchdocs/mobile-phase-0')
+	await expect(model).toHaveText('openai-codex/gpt-model')
+	await expect(detail.locator('.remote-current-conversation .chip')).toHaveText('Main Pi idle')
 	await expectFullyContained(metadata, viewport)
+	await closeCurrentInfo(page)
 	await expectFullyContained(composer, viewport)
 	await expectFullyContained(message, viewport)
 	await expectFullyContained(actions, viewport)
@@ -345,7 +364,9 @@ test('metadata-rich Okena detail keeps full composer and metadata reachable for 
 	expect(textareaMetrics.height).toBeGreaterThan(initial)
 	expect(textareaMetrics.scrollHeight).toBeGreaterThan(textareaMetrics.clientHeight)
 	expect(textareaMetrics.overflowY).toBe('auto')
+	await openCurrentInfo(page)
 	await expectFullyContained(metadata, viewport)
+	await closeCurrentInfo(page)
 	await expectFullyContained(composer, viewport)
 	await expectFullyContained(surface, viewport)
 	await expectFullyContained(message, viewport)
@@ -354,18 +375,24 @@ test('metadata-rich Okena detail keeps full composer and metadata reachable for 
 	await expectFullyContained(delivery, viewport)
 	await expectFullyContained(detail.getByRole('button', { name: 'Back to live conversations', exact: true }), viewport)
 	await expectFullyContained(detail.getByRole('button', { name: 'Conversation options', exact: true }), viewport)
+	await openCurrentInfo(page)
 	await expect(metadata).toHaveAttribute('tabindex', '0')
 	await metadata.focus()
 	await metadata.press('End')
 	await expect(metadata).toBeFocused()
+	await closeCurrentInfo(page)
 	await expectFullyContained(model, viewport)
 	expect(
 		await detail.getByLabel('Conversation messages').evaluate(node => node.getBoundingClientRect().height),
 	).toBeGreaterThanOrEqual(96)
 
-	for (const target of [branch, model]) {
+	await openCurrentInfo(page)
+	for (const [target, owner] of [
+		[branch, metadata],
+		[model, detail.locator('.remote-information-footer')],
+	]) {
 		await target.scrollIntoViewIfNeeded()
-		const metadataBox = await metadata.boundingBox()
+		const metadataBox = await owner.boundingBox()
 		const targetBox = await target.boundingBox()
 		expect(metadataBox).not.toBeNull()
 		expect(targetBox).not.toBeNull()
@@ -375,6 +402,7 @@ test('metadata-rich Okena detail keeps full composer and metadata reachable for 
 		}
 	}
 
+	await closeCurrentInfo(page)
 	const reading = detail.locator('.remote-reading-area')
 	const readingBefore = await reading.boundingBox()
 	await detail.getByLabel('Conversation messages').evaluate(node => node.scrollTo(0, node.scrollHeight / 2))
@@ -394,13 +422,13 @@ test('compact native-rich long identity and source-unavailable details keep empt
 	await useLongNativeIdentity(page)
 
 	const verify = async (detail: Locator, source: string, caseName: string) => {
-		await expect(detail.locator('.remote-session-source')).toHaveText(source)
+		await expect(detail.locator('.remote-information-footer-source')).toHaveText(source)
 		const message = detail.getByLabel('Message', { exact: true })
 		const composer = detail.locator('.remote-composer')
 		const surface = detail.locator('.remote-compose-surface')
 		const actions = detail.locator('.remote-composer-actions')
 		const send = detail.getByRole('button', { name: 'Send', exact: true })
-		const delivery = detail.getByRole('button', { name: 'Message delivery' })
+		const delivery = detail.getByRole('button', { name: /Message delivery:/ })
 		const reading = detail.locator('.remote-reading-area')
 		await expectFullyContained(composer, viewport)
 		await expectFullyContained(surface, viewport)
@@ -436,9 +464,11 @@ test('compact native-rich long identity and source-unavailable details keep empt
 	await nativeRow.click()
 	const nativeDetail = page.getByRole('region', { name: 'Conversation' })
 	await expect(nativeDetail.getByRole('heading', { name: LONG_IDENTITY, exact: true })).toBeVisible()
-	await expect(nativeDetail.locator('.remote-session-context')).toContainText('Project: JVS')
-	await expect(nativeDetail.locator('.remote-session-branch')).toContainText('docs/mobile-phase-0')
-	await verify(nativeDetail, 'Source: Okena', 'combined-native-long')
+	await openCurrentInfo(page)
+	await expect(nativeDetail.locator('.remote-current-conversation dl')).toContainText('ProjectJVS')
+	await expect(nativeDetail.locator('.remote-current-conversation dl')).toContainText('Branchdocs/mobile-phase-0')
+	await closeCurrentInfo(page)
+	await verify(nativeDetail, 'Okena', 'combined-native-long')
 	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
 	const longRow = page.locator('.remote-session-row').filter({ hasText: 'Source unavailable' })
 	await longRow.click()
@@ -459,7 +489,8 @@ test.describe('compact touch input', () => {
 		await useLongNativeIdentity(page)
 		await page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' }).tap()
 		const detail = page.getByRole('region', { name: 'Conversation' })
-		const metadata = detail.locator('.remote-meta')
+		await openCurrentInfo(page)
+		const metadata = detail.locator('.remote-information-body')
 		const before = await metadata.evaluate(node => ({
 			scrollTop: node.scrollTop,
 			scrollHeight: node.scrollHeight,
@@ -471,16 +502,17 @@ test.describe('compact touch input', () => {
 		if (!metadataBox) return
 		await swipeTouch(page, metadataBox)
 		await expect.poll(() => metadata.evaluate(node => node.scrollTop)).toBeGreaterThan(0)
-		const model = detail.getByText('Model: openai-codex/gpt-model', { exact: true })
+		const model = detail.locator('.remote-information-footer-model')
 		await expectFullyContained(model, viewport)
+		await closeCurrentInfo(page)
 		await openAndSelectDelivery(page, viewport, 'Steer at the next safe point', 'touch')
-		await expect(detail.getByRole('button', { name: 'Message delivery' })).toHaveText(/During work/)
+		await expect(detail.getByRole('button', { name: 'Message delivery: During work', exact: true })).toHaveText('')
 
 		const message = detail.getByLabel('Message', { exact: true })
 		await message.fill(SIX_LINE_DRAFT)
 		await expect.poll(() => message.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(40)
 		await openAndSelectDelivery(page, viewport, 'Follow up after current work', 'touch')
-		await expect(detail.getByRole('button', { name: 'Message delivery' })).toHaveText(/Follow-up/)
+		await expect(detail.getByRole('button', { name: 'Message delivery: Follow-up', exact: true })).toHaveText('')
 		await expectFullyContained(detail.locator('.remote-composer'), viewport)
 		await expectFullyContained(detail.locator('.remote-composer-actions'), viewport)
 		await expectFullyContained(detail.getByRole('button', { name: 'Send', exact: true }), viewport)
@@ -525,17 +557,21 @@ test('detail uses the same source and status truth and exposes disconnected as a
 	const okena = page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' })
 	await okena.click()
 	const detail = page.getByRole('region', { name: 'Conversation' })
-	await expect(detail.locator('.remote-session-source')).toHaveText('Source: Okena')
-	await expect(detail.locator('.remote-session-branch')).toHaveText('Branch: docs/mobile-phase-0')
-	await expect(detail.locator('.remote-session-info-detail .chip')).toHaveText('Ready')
-	await expect(detail.getByText('Model: openai-codex/gpt-model', { exact: true })).toBeVisible()
-	await expect(detail.locator('.remote-session-info-detail .chip')).not.toHaveAttribute('role', 'button')
+	await expect(detail.locator('.remote-information-footer-source')).toHaveText('Okena')
+	await openCurrentInfo(page)
+	await expect(
+		detail.locator('.remote-current-conversation dl > div').filter({ has: page.getByText('Branch', { exact: true }) }),
+	).toHaveText('Branchdocs/mobile-phase-0')
+	await expect(detail.locator('.remote-current-conversation .chip')).toHaveText('Main Pi idle')
+	await expect(detail.locator('.remote-information-footer-model')).toHaveText('openai-codex/gpt-model')
+	await expect(detail.locator('.remote-current-conversation .chip')).not.toHaveAttribute('role', 'button')
 
 	await page.evaluate(() => {
 		window.__remoteFixture?.setOnline(false)
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(detail.locator('.remote-session-info-detail .chip')).toHaveText('Disconnected')
+	await expect(detail.locator('.remote-current-conversation .chip')).toHaveText('Disconnected')
+	await closeCurrentInfo(page)
 	await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
 	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
 	await expect(page.locator('.remote-session-row .chip')).toHaveCount(3)
@@ -551,11 +587,21 @@ test.describe('touch activation', () => {
 		const helm = page.locator('.remote-session-row').filter({ hasText: 'Source: Helm' })
 		await helm.tap()
 		const detail = page.getByRole('region', { name: 'Conversation' })
-		await expect(detail.locator('.remote-session-source')).toHaveText('Source: Helm')
-		await expect(detail.locator('.remote-session-info-detail .chip')).toHaveText('Needs you')
+		await expect(detail.locator('.remote-information-footer-source')).toHaveText('Helm')
+		await openCurrentInfo(page)
+		await expect(detail.locator('.remote-current-conversation .chip')).toHaveText('Needs you')
+		await closeCurrentInfo(page)
 		await expectFullyContained(page.getByRole('button', { name: 'Back to live conversations', exact: true }), {
 			width: 390,
 			height: 844,
 		})
 	})
 })
+
+async function openCurrentInfo(page: Page) {
+	await page.getByRole('button', { name: 'Conversation options', exact: true }).click()
+	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
+}
+async function closeCurrentInfo(page: Page) {
+	await page.getByRole('button', { name: 'Back to conversation', exact: true }).click()
+}

@@ -10,9 +10,17 @@ export function remoteSessionIdentity(hostEpoch: string, target: RemoteTarget): 
  * Directory filtering and history visibility happen in the renderer after this
  * boundary, so those local views never authorize draft retirement.
  */
-export function pruneAbsentRemoteDrafts<T>(drafts: Map<string, T>, directory: RemoteDirectory): void {
+export function pruneAbsentRemoteDrafts<T>(
+	drafts: Map<string, T>,
+	directory: RemoteDirectory,
+	dispose?: (draft: T) => void,
+): void {
 	const published = new Set(
 		directory.sessions.map(session => remoteSessionIdentity(directory.hostEpoch, session.target)),
 	)
-	for (const key of drafts.keys()) if (!published.has(key)) drafts.delete(key)
+	for (const [key, draft] of drafts) {
+		if (published.has(key)) continue
+		drafts.delete(key)
+		dispose?.(draft)
+	}
 }

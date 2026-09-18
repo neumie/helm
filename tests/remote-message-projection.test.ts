@@ -32,6 +32,28 @@ test('tool calls stay separate from assistant prose, including literal Tool: lin
 	assert.equal(projectRemoteMessage({ role: 'assistant', content: 'Tool: a real message' }, 'literal')?.toolCalls, '')
 })
 
+test('image evidence is bounded, role-specific, and survives caption clipping', () => {
+	const user = projectRemoteMessage(
+		{
+			role: 'user',
+			content: [
+				{ type: 'text', text: 'x'.repeat(8192) },
+				{ type: 'image', data: 'private' },
+				{ type: 'image', data: 'private' },
+			],
+		},
+		'user-images',
+	)
+	assert.equal(user?.text.length, 8192)
+	assert.ok(user?.text.endsWith('\n[2 images attached]'))
+	assert.equal(user?.truncated, true)
+	assert.equal(user?.text.includes('private'), false)
+	assert.equal(
+		projectRemoteMessage({ role: 'assistant', content: [{ type: 'image', data: 'private' }] }, 'assistant-image')?.text,
+		'[Image omitted]',
+	)
+})
+
 test('activity bursts retain ten readable messages within forty ordered previews, including streaming and reverse seed', () => {
 	const history = Array.from({ length: 110 }, (_, index) =>
 		projectRemoteMessage({ role: index < 10 ? 'assistant' : 'toolResult', content: `Message ${index}` }, String(index)),

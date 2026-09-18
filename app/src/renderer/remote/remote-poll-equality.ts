@@ -8,9 +8,17 @@ import type {
 	RemoteView,
 } from '../../../../src/remote/protocol.js'
 import { sameRemoteTarget } from '../../../../src/remote/protocol.js'
+import type { RemoteSubagentActivity } from '../../../../src/remote/subagent-activity-protocol.js'
 
 type RemoteMessage = RemoteSnapshot['messages'][number]
 type RemoteQuestion = NonNullable<RemoteSnapshot['question']>
+
+export function sameRemoteSubagentActivity(
+	a: RemoteSubagentActivity | undefined,
+	b: RemoteSubagentActivity | undefined,
+) {
+	return a?.availability === b?.availability && a?.coverage === b?.coverage && a?.active === b?.active
+}
 
 function sameCapabilities(
 	a: { prompt: boolean; interrupt: boolean; answer: boolean },
@@ -101,6 +109,8 @@ type RemoteSessionFields = Pick<
 	| 'activity'
 	| 'capabilities'
 	| 'historyTruncated'
+	| 'subagents'
+	| 'imageInput'
 > &
 	Partial<Pick<RemoteView, 'connected'>>
 
@@ -115,6 +125,9 @@ function sameRemoteSessionFields(a: RemoteSessionFields, b: RemoteSessionFields)
 		a.activity === b.activity &&
 		sameCapabilities(a.capabilities, b.capabilities) &&
 		a.historyTruncated === b.historyTruncated &&
+		a.imageInput?.version === b.imageInput?.version &&
+		a.imageInput?.available === b.imageInput?.available &&
+		sameRemoteSubagentActivity(a.subagents, b.subagents) &&
 		a.connected === b.connected
 	)
 }

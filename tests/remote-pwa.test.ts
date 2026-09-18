@@ -50,7 +50,7 @@ test('PWA assets have exact routes, restrictive headers and credential-free laun
 	assert.ok(html)
 	assert.match(
 		html.headers.get('content-security-policy') ?? '',
-		/worker-src 'self'; manifest-src 'self'; img-src 'self'/,
+		/worker-src 'self'; manifest-src 'self'; img-src 'self' blob:/,
 	)
 })
 

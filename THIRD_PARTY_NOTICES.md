@@ -40,6 +40,7 @@ Helm vendors native-size Heroicons for distinct concepts:
 - Remote composer send — **Arrow Up**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteArrow.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
 - Remote latest-message navigation — **Arrow Down**, v2.2.0, same module: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
 - Remote PWA launcher — **Command Line**, v2.2.0, exact source `app/assets/remote/command-line.svg`; generated PNGs use Helm colors and mask-safe padding: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/command-line.svg>
+- Remote session favorites — **Star**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteFavoriteStar.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/star.svg>
 - Project: <https://heroicons.com>
 - Copyright © Tailwind Labs, Inc.
 - License: MIT

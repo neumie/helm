@@ -7,6 +7,7 @@ import {
 	lstatSync,
 	mkdirSync,
 	openSync,
+	realpathSync,
 	renameSync,
 	unlinkSync,
 	writeFileSync,
@@ -25,9 +26,11 @@ import { RemoteAccess, type RemoteDeviceGrant } from './access.js'
 import { PiSessionCatalog } from './catalog.js'
 import { remoteControlRequest } from './control-client.js'
 import { createRemoteAssets } from './development.js'
+import { RemoteFavorites } from './favorites.js'
 import { RemoteHost } from './host.js'
 import { readOwnerPrivateFile } from './private-file.js'
 import { remoteRegistrationRequestSchema, remoteSourceConfirmationSchema } from './protocol.js'
+import { RemoteUsage } from './usage.js'
 
 const RUNTIME_PROTOCOL = 1
 const RUNTIME_BUILD = HELM_BUILD_ID
@@ -147,7 +150,14 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 		catalog = new PiSessionCatalog(config.piSessionRoots)
 		await catalog.refresh()
 		catalog.start()
-		const host = new RemoteHost({ origin: config.origin, access, catalog, now: options.now })
+		let favorites: RemoteFavorites | undefined
+		try {
+			favorites = new RemoteFavorites(join(realpathSync(root), 'favorites.json'))
+		} catch {
+			console.warn('Remote favorites unavailable; saved preferences were left untouched.')
+		}
+		const usage = new RemoteUsage({ now: options.now })
+		const host = new RemoteHost({ origin: config.origin, access, catalog, favorites, usage, now: options.now })
 		const assets = createRemoteAssets(options.assetsDirectory)
 		browser = createServer(
 			{ maxHeaderSize: 8192 },

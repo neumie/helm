@@ -21,6 +21,10 @@ export function trimRemoteMessages(messages: Message[]): boolean {
 	return dropped
 }
 
+function boundedText(value: string, limit: number): string {
+	return value.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '')
+}
+
 /** Bounded Pi message projection; tool calls are evidence, never conversation prose or executable requests. */
 export function projectRemoteMessage(value: unknown, id: string): RemoteSnapshot['messages'][number] | null {
 	if (!value || typeof value !== 'object') return null
@@ -29,28 +33,37 @@ export function projectRemoteMessage(value: unknown, id: string): RemoteSnapshot
 	let text = ''
 	let thinking = ''
 	let toolCalls = ''
+	let imageCount = 0
 	let truncated = false
 	if (typeof message.content === 'string') {
-		text = message.content.slice(0, 8192)
-		truncated = message.content.length > 8192
+		text = boundedText(message.content, 8192)
+		truncated = text.length !== message.content.length
 	} else if (Array.isArray(message.content)) {
 		truncated = message.content.length > 100
 		for (const block of message.content.slice(0, 100)) {
 			if (!block || typeof block !== 'object') continue
 			if (block.type === 'text' && typeof block.text === 'string') {
 				truncated ||= text.length + block.text.length > 8192
-				text = (text + block.text.slice(0, 8192)).slice(0, 8192)
+				text = boundedText(text + boundedText(block.text, 8192), 8192)
 			}
 			if (block.type === 'thinking' && typeof block.thinking === 'string') {
 				truncated ||= thinking.length + block.thinking.length > 8192
-				thinking = (thinking + block.thinking.slice(0, 8192)).slice(0, 8192)
+				thinking = boundedText(thinking + boundedText(block.thinking, 8192), 8192)
 			}
 			if (block.type === 'toolCall' && typeof block.name === 'string') {
-				const call = `${toolCalls ? '\n' : ''}${block.name.slice(0, 100)}`
+				const call = `${toolCalls ? '\n' : ''}${boundedText(block.name, 100)}`
 				truncated ||= toolCalls.length + call.length > 8192 || block.name.length > 100
-				toolCalls = (toolCalls + call).slice(0, 8192)
+				toolCalls = boundedText(toolCalls + call, 8192)
 			}
-			if (block.type === 'image') text = `${text}\n[Image not included in this proof]`.slice(0, 8192)
+			if (block.type === 'image') imageCount++
+		}
+		if (imageCount) {
+			const marker =
+				message.role === 'user' ? `[${imageCount} image${imageCount === 1 ? '' : 's'} attached]` : '[Image omitted]'
+			const separator = text ? '\n' : ''
+			const retained = boundedText(text, Math.max(0, 8192 - separator.length - marker.length))
+			truncated ||= retained.length !== text.length
+			text = `${retained}${separator}${marker}`
 		}
 	}
 	// Presence distinguishes structured evidence from legacy Tool: name text.

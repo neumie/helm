@@ -1,9 +1,10 @@
 import type { RemoteSnapshot, RemoteSummary } from '../../../../src/remote/protocol.js'
+import type { RemoteSubagentActivity } from '../../../../src/remote/subagent-activity-protocol.js'
 import type { DashboardTone } from '../../shared-helm.js'
 import { Chip } from '../sidebar/ui.js'
 
 export const ACTIVITY_LABEL: Record<RemoteSnapshot['activity'], string> = {
-	idle: 'Ready',
+	idle: 'Main Pi idle',
 	working: 'Working',
 	waiting: 'Needs you',
 	unknown: 'State unknown',
@@ -101,9 +102,17 @@ export function remoteSessionSearchText(session: RemoteSession): string {
 		.join(' ')
 }
 
-export function remoteSessionStatus(activity: RemoteSnapshot['activity'], connected: boolean): RemoteSessionStatus {
+export function remoteSessionStatus(
+	activity: RemoteSnapshot['activity'],
+	connected: boolean,
+	subagents?: RemoteSubagentActivity,
+): RemoteSessionStatus {
 	if (!connected) return { label: 'Disconnected', tone: 'gray' }
-	return { label: ACTIVITY_LABEL[activity], tone: ACTIVITY_TONE[activity] }
+	if (activity === 'waiting') return { label: 'Needs you', tone: 'amber' }
+	if (activity === 'working') return { label: 'Working', tone: 'blue' }
+	if (activity === 'unknown') return { label: 'State unknown', tone: 'gray' }
+	if (subagents?.availability === 'available' && subagents.active) return { label: 'Subagents active', tone: 'blue' }
+	return { label: 'Main Pi idle', tone: 'gray' }
 }
 
 export function RemoteStatusChip({ status }: { status: RemoteSessionStatus }) {

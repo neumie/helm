@@ -1,4 +1,10 @@
 import { z } from 'zod'
+import {
+	imageInputCapabilitiesSchema,
+	remoteImageReferenceSchema,
+	validImageReferenceSet,
+} from './image-input-protocol.js'
+import { remoteSubagentActivitySchema } from './subagent-activity-protocol.js'
 
 export const REMOTE_PROTOCOL = 1
 export const REMOTE_BODY_LIMIT = 256 * 1024
@@ -54,17 +60,25 @@ const selection = z.union([
 	z.object({ options: z.array(z.number().int().min(0).max(3)).max(4) }).strict(),
 	z.object({ text: z.string().min(1).max(4000) }).strict(),
 ])
-export const remoteOperationSchema = z.discriminatedUnion('kind', [
-	z
-		.object({
-			kind: z.literal('prompt'),
-			text: z.string().trim().min(1).max(16_384),
-			delivery: z.enum(['steer', 'followUp']),
-		})
-		.strict(),
-	z.object({ kind: z.literal('interrupt') }).strict(),
-	z.object({ kind: z.literal('answer'), requestId: id, answers: z.array(selection).min(1).max(4) }).strict(),
-])
+const remotePromptOperationSchema = z
+	.object({
+		kind: z.literal('prompt'),
+		text: z.string().trim().max(16_384),
+		delivery: z.enum(['steer', 'followUp']),
+		images: z.array(remoteImageReferenceSchema).max(4).optional(),
+	})
+	.strict()
+export const remoteOperationSchema = z
+	.union([
+		remotePromptOperationSchema,
+		z.object({ kind: z.literal('interrupt') }).strict(),
+		z.object({ kind: z.literal('answer'), requestId: id, answers: z.array(selection).min(1).max(4) }).strict(),
+	])
+	.superRefine((value, ctx) => {
+		if (value.kind !== 'prompt') return
+		if ((!value.text && !value.images) || (value.images !== undefined && !validImageReferenceSet(value.images)))
+			ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'prompt_requires_text_or_images' })
+	})
 export const remoteCommandSchema = z
 	.object({
 		protocol: z.literal(REMOTE_PROTOCOL),
@@ -75,6 +89,17 @@ export const remoteCommandSchema = z
 	})
 	.strict()
 export type RemoteCommand = z.infer<typeof remoteCommandSchema>
+export const remoteImageReadRequestSchema = z
+	.object({
+		protocol: z.literal(REMOTE_PROTOCOL),
+		hostEpoch: id,
+		target: remoteTargetSchema,
+		commandId: id,
+		image: remoteImageReferenceSchema,
+	})
+	.strict()
+export type RemoteImageReadRequest = z.infer<typeof remoteImageReadRequestSchema>
+
 export const remoteHostExchangeSchema = z
 	.object({
 		protocol: z.literal(REMOTE_PROTOCOL),
@@ -145,9 +170,11 @@ export const remoteSnapshotSchema = z
 		revision: z.number().int().nonnegative().safe(),
 		label: z.string().max(160),
 		workspace: z.string().max(160),
+		imageInput: imageInputCapabilitiesSchema.optional(),
 		terminal: remoteTerminalMetadataSchema.optional(),
 		model: z.string().max(160).nullable(),
 		activity: z.enum(['idle', 'working', 'waiting', 'unknown']),
+		subagents: remoteSubagentActivitySchema.optional(),
 		capabilities: z.object({ prompt: z.boolean(), interrupt: z.boolean(), answer: z.boolean() }).strict(),
 		question: remoteQuestionSchema.nullable(),
 		messages: z
@@ -168,7 +195,9 @@ export const remoteSnapshotSchema = z
 	})
 	.strict()
 export type RemoteSnapshot = z.infer<typeof remoteSnapshotSchema>
-export const remoteViewSchema = remoteSnapshotSchema.extend({ connected: z.boolean() }).strict()
+export const remoteViewSchema = remoteSnapshotSchema
+	.extend({ connected: z.boolean(), subagentsFreshForMs: z.number().int().positive().max(REMOTE_STALE_MS).optional() })
+	.strict()
 export type RemoteView = z.infer<typeof remoteViewSchema>
 export const remoteSummarySchema = remoteViewSchema.omit({ messages: true, question: true })
 export type RemoteSummary = z.infer<typeof remoteSummarySchema>

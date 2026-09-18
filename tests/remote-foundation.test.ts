@@ -97,6 +97,35 @@ function fixture() {
 	}
 }
 
+test('image commands are refused before admission while ordinary text still reaches exchange', async () => {
+	const f = fixture()
+	assert.equal((await f.exchange()).status, 200)
+	const image = {
+		handle: randomUUID(),
+		sha256: 'a'.repeat(64),
+		mimeType: 'image/jpeg' as const,
+		bytes: 100,
+		width: 1,
+		height: 1,
+	}
+	for (const text of ['', 'caption']) {
+		const command = f.command()
+		command.operation = { kind: 'prompt', text, delivery: 'followUp', images: [image] }
+		const response = await f.send(command)
+		assert.equal(response.status, 409)
+		assert.deepEqual(await response.json(), { error: 'image_input_unsupported' })
+	}
+	const empty = (await (await f.exchange()).json()) as { commands: unknown[] }
+	assert.deepEqual(empty.commands, [])
+	const text = f.command()
+	assert.equal((await f.send(text)).status, 202)
+	const delivered = (await (await f.exchange()).json()) as { commands: Array<{ command: RemoteCommand }> }
+	assert.deepEqual(
+		delivered.commands.map(item => item.command.commandId),
+		[text.commandId],
+	)
+})
+
 test('Remote denies unauthenticated, wrong-Origin, wrong-Host and upgrade requests', async () => {
 	for (const invalid of ['not-a-url', 'https://example.invalid/path', 'http://192.0.2.1']) {
 		assert.throws(

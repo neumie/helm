@@ -7,7 +7,9 @@ import type {
 	RemoteReceipt,
 	RemoteView,
 } from '../../../../src/remote/protocol.js'
-import { RemoteAccessError, type RemoteTransport } from './transport.js'
+import { type HistoryFixtureState, createHistoryFixture } from './history-fixture.js'
+import { informationFixture } from './information-fixture.js'
+import { RemoteAccessError, type RemoteTransport, createRemoteTransport } from './transport.js'
 
 export function createRemoteFixture() {
 	const hostEpoch = '10000000-0000-4000-8000-000000000000'
@@ -54,7 +56,13 @@ export function createRemoteFixture() {
 		if (revoked) throw new RemoteAccessError(401)
 		if (!online) throw new Error('offline')
 	}
+	let informationEnabled = false
 	const transport: RemoteTransport = {
+		async information(owner) {
+			assertOnline()
+			if (!informationEnabled) return { version: 1, ...owner, status: 'unavailable', freshForMs: 0, information: null }
+			return informationFixture(owner)
+		},
 		async access(): Promise<RemoteAccessDocument> {
 			assertOnline()
 			return { hostEpoch, device: { development: true } }
@@ -157,6 +165,27 @@ export function createRemoteFixture() {
 		},
 	}
 	return {
+		enableHistory(count = 440, http = false, state?: HistoryFixtureState, thinkingBoundary = false) {
+			// Stories use a display-only service; HTTP acceptance selects the production transport with fixture interception.
+			transport.history = http ? createRemoteTransport().history : createHistoryFixture(count, state)
+			first.messages = Array.from({ length: 40 }, (_, index) => ({
+				id: (count - 39 + index).toString(16).padStart(8, '0'),
+				role: 'user' as const,
+				text: `Repeated message ${count - 39 + index}`,
+				thinking: '',
+				truncated: false,
+			}))
+			const boundary = first.messages[0]
+			if (thinkingBoundary && boundary) {
+				first.messages[0] = {
+					...boundary,
+					role: 'assistant',
+					text: '',
+					thinking: 'Live boundary thinking',
+				}
+			}
+			first.revision++
+		},
 		showMarkdownExample(includeUnsafe = false) {
 			first.historyTruncated = false
 			first.messages = [
@@ -279,6 +308,36 @@ export function createRemoteFixture() {
 				: undefined
 			// Deliberately leave revision unchanged: source metadata is its own authority.
 		},
+		showThinkingMatrix() {
+			first.historyTruncated = false
+			first.messages = [
+				{ id: 'thinking-user', role: 'user', text: 'Inspect this.', thinking: '', truncated: false },
+				{
+					id: 'thinking-structured',
+					role: 'assistant',
+					text: 'Structured reply',
+					toolCalls: 'read',
+					thinking: '<b>literal</b>\n![not an image](https://example.com/x)',
+					truncated: false,
+				},
+				{
+					id: 'thinking-legacy',
+					role: 'assistant',
+					text: '\nTool: background_job',
+					thinking: 'Legacy reasoning survives.',
+					truncated: false,
+				},
+				{
+					id: 'thinking-prose',
+					role: 'assistant',
+					text: 'Ordinary prose with\nTool: not_a_tool\ninside it.',
+					thinking: '  padded\nlong reasoning '.repeat(32),
+					truncated: false,
+				},
+				{ id: 'thinking-tool', role: 'toolResult', text: 'Hidden tool output', thinking: '', truncated: false },
+			]
+			first.revision++
+		},
 		showChainedExample() {
 			first.historyTruncated = false
 			first.messages = [
@@ -318,6 +377,12 @@ export function createRemoteFixture() {
 		},
 		catalogCallCount() {
 			return catalogCalls
+		},
+		enableInformation() {
+			informationEnabled = true
+		},
+		useProductionInformationTransport() {
+			transport.information = createRemoteTransport().information
 		},
 		transport,
 		commands,
@@ -361,6 +426,10 @@ export function createRemoteFixture() {
 		},
 		setConnected(value: boolean) {
 			first.connected = value
+		},
+		setActivity(value: RemoteView['activity']) {
+			// Activity is an independent observed field, not a message revision or local send state.
+			first.activity = value
 		},
 		showTerminalDialog() {
 			first.question = null

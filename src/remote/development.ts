@@ -43,7 +43,7 @@ export function createRemoteAssets(assetsDirectory: string) {
 				'Cache-Control': 'no-store',
 				'X-Content-Type-Options': 'nosniff',
 				'Content-Security-Policy':
-					"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+					"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 			},
 		})
 	}

@@ -5,12 +5,18 @@ import { basename, join } from 'node:path'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { RemoteAdmission } from '../../src/remote/admission.js'
 import {
-	REMOTE_CONVERSATION_RESERVE,
-	evictRemoteMessage,
-	isRemoteConversationMessage,
-	projectRemoteMessage as projectMessage,
-	trimRemoteMessages,
-} from '../../src/remote/message-projection.js'
+	HISTORY_HEADER,
+	HISTORY_RESULT_BYTES,
+	type HistoryResult,
+	remoteHistoryExchangeSchema,
+} from '../../src/remote/history-protocol.js'
+import { RemoteHistoryReader } from '../../src/remote/history-reader.js'
+import { RemoteImageInputClient, type RemotePreparedImage } from '../../src/remote/image-input-client.js'
+import { IMAGE_INPUT_HEADER, IMAGE_INPUT_VERSION } from '../../src/remote/image-input-protocol.js'
+import { RemoteInformationClient } from '../../src/remote/information-client.js'
+import { INFORMATION_HEADER } from '../../src/remote/information-protocol.js'
+import { RemoteInformationPublisher } from '../../src/remote/information-transport.js'
+import { RemoteLiveMessageObservation } from '../../src/remote/live-messages.js'
 import {
 	type RemoteEnrollmentFile,
 	readRemoteEnrollment,
@@ -23,9 +29,10 @@ import {
 	type RemoteCommand,
 	type RemoteReceipt,
 	type RemoteSnapshot,
-	remoteHostExchangeSchema,
 	remoteQuestionSchema,
 } from '../../src/remote/protocol.js'
+import { RemoteSubagentActivityClient } from '../../src/remote/subagent-activity-client.js'
+import type { RemoteSubagentActivity } from '../../src/remote/subagent-activity-protocol.js'
 import { TerminalMetadataObserver, createTerminalMetadataReader } from '../../src/remote/terminal-metadata.js'
 import {
 	QUESTION_ANSWER,
@@ -54,6 +61,18 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 	let retryTimer: ReturnType<typeof setTimeout> | undefined
 	let current: ExtensionContext | undefined
 	let lifecycle = 0
+	let information: RemoteInformationClient | undefined
+	let activity: RemoteSubagentActivityClient | undefined
+	let informationLifecycle = 0
+	const clearInformation = () => {
+		informationLifecycle++
+		information?.dispose()
+		information = undefined
+	}
+	const clearActivity = () => {
+		activity?.dispose()
+		activity = undefined
+	}
 	let observedNavigations = 0
 	let observedNavigationKind: 'tree' | 'switch' | 'fork' | undefined
 	let registrationAttempt = 0
@@ -117,11 +136,16 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 		lifecycle === token
 	const install = (ctx: ExtensionContext, enrollment: RemoteEnrollmentFile, token: number): boolean => {
 		if (!live(ctx, token) || runtime) return false
+		const sessionId = ctx.sessionManager.getSessionId()
 		const next = connect(
 			pi,
 			ctx,
 			enrollment,
 			dialogs,
+			() => information?.read() ?? null,
+			() =>
+				activity?.read().activity ??
+				({ availability: 'unavailable', coverage: 'unavailable', active: null } as RemoteSubagentActivity),
 			(retryEnrollment: RemoteEnrollmentFile | undefined) => {
 				if (runtime !== next) return
 				runtime = undefined
@@ -142,6 +166,16 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 			},
 			() => runtime === next && live(ctx, token),
 		)
+		let accepted = false
+		try {
+			accepted = live(ctx, token) && ctx.sessionManager.getSessionId() === sessionId
+		} catch {
+			// A manager that became unavailable during setup cannot own this runtime.
+		}
+		if (!accepted) {
+			next.stop()
+			return false
+		}
 		runtime = next
 		availability = 'connected'
 		return true
@@ -194,20 +228,57 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 		if (ctx.mode !== 'tui' || process.env.PI_SUBAGENT_CHILD === '1' || disposed) return
 		const disabled = availability === 'disabled'
 		clearDialogs()
+		clearInformation()
+		clearActivity()
 		current = ctx
+		availability = disabled ? 'disabled' : 'eligible'
 		const token = ++lifecycle
 		observedNavigations = 0
 		observedNavigationKind = undefined
-		availability = disabled ? 'disabled' : 'eligible'
 		clearRetry()
 		clearRegistration()
 		clearRuntime()
 		registrationAttempt = 0
 		pendingEnrollment = undefined
+		const informationToken = informationLifecycle
+		const sessionId = ctx.sessionManager.getSessionId()
+		const nextInformation = new RemoteInformationClient(
+			pi.events,
+			sessionId,
+			sessionId =>
+				!disposed &&
+				informationToken === informationLifecycle &&
+				availability !== 'navigation-fenced' &&
+				ctx.sessionManager.getSessionId() === sessionId,
+		)
+		// Event-bus discovery invokes producer code synchronously. It may invalidate
+		// this lifecycle before construction returns; never restore that admission.
+		if (disposed || informationToken !== informationLifecycle) {
+			nextInformation.dispose()
+			return
+		}
+		information = nextInformation
+		const nextActivity = new RemoteSubagentActivityClient(
+			pi.events,
+			sessionId,
+			() =>
+				!disposed &&
+				informationToken === informationLifecycle &&
+				availability !== 'navigation-fenced' &&
+				current === ctx &&
+				ctx.sessionManager.getSessionId() === sessionId,
+		)
+		if (disposed || informationToken !== informationLifecycle) {
+			nextActivity.dispose()
+			return
+		}
+		activity = nextActivity
 		scheduleRegistration(ctx, token)
 	}
 	const fenceNavigation = (kind: 'tree' | 'switch' | 'fork') => {
 		if (disposed) return
+		clearInformation()
+		clearActivity()
 		clearDialogs()
 		observedNavigations++
 		observedNavigationKind = kind
@@ -284,6 +355,8 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 	pi.on('session_start', (_event, ctx) => beginLifecycle(ctx))
 	pi.on('session_shutdown', () => {
 		disposed = true
+		clearInformation()
+		clearActivity()
 		clearDialogs()
 		disconnect()
 		removeQuestionOpen()
@@ -299,7 +372,7 @@ export default function helmRemoteBridge(pi: ExtensionAPI) {
 	pi.on('message_end', event => runtime?.publish(event.message))
 	pi.on('agent_start', () => runtime?.changed())
 	pi.on('agent_settled', () => runtime?.changed())
-	pi.on('model_select', () => runtime?.changed())
+	pi.on('model_select', event => runtime?.modelChanged(event.model.input.includes('image')))
 	pi.on('ui_prompt_start', () => {
 		if (observeAllowed()) {
 			waiting = true
@@ -370,6 +443,8 @@ function connect(
 	ctx: ExtensionContext,
 	enrollment: RemoteEnrollmentFile,
 	dialogs: () => { question: RemoteSnapshot['question']; waiting: boolean },
+	readInformation: RemoteInformationClient['read'],
+	readActivity: () => RemoteSubagentActivity,
 	onLost?: (retryEnrollment?: RemoteEnrollmentFile) => void,
 	onConnected?: () => void,
 	dispatchAllowed?: () => boolean,
@@ -386,92 +461,124 @@ function connect(
 	const terminalMetadata = new TerminalMetadataObserver(createTerminalMetadataReader(), () => {
 		revision++
 	})
-	let historyTruncated = false
-	let messages: RemoteSnapshot['messages'] = []
-	let current: RemoteSnapshot['messages'][number] | null = null
 	let receipts: RemoteReceipt[] = []
 	let timer: ReturnType<typeof setTimeout> | undefined
 	let activeRequest: ReturnType<typeof request> | undefined
 	let lastEpoch: string | null = null
+	let featureSupported = false
+	let imageNegotiated = false
+	let modelCapable = ctx.model?.input.includes('image') ?? false
+	let modelLoss: symbol | undefined
+	let activityContent = ''
+	let activityRevision = 0
 	let exchangeObserved = false
-	let entry = ctx.sessionManager.getLeafId()
-	for (
-		let visits = 0;
-		entry &&
-		visits < 200 &&
-		(messages.length < 40 || messages.filter(isRemoteConversationMessage).length < REMOTE_CONVERSATION_RESERVE);
-		visits++
-	) {
-		const value = ctx.sessionManager.getEntry(entry)
-		if (!value) break
-		if (value.type === 'message') {
-			const projected = projectMessage(value.message, value.id)
-			if (projected) {
-				messages.unshift(projected)
-				historyTruncated = trimRemoteMessages(messages) || historyTruncated
-			}
+	let history: RemoteHistoryReader | undefined
+	let historySending = false
+	const historyAbort = new AbortController()
+	const currentManager = () => {
+		try {
+			return !disposed && dispatchAllowed?.() && ctx.sessionManager.getSessionId() === target.sessionId
+				? ctx.sessionManager
+				: null
+		} catch {
+			return null
 		}
-		entry = value.parentId
 	}
-	historyTruncated ||= entry !== null
-
+	const informationPublisher = new RemoteInformationPublisher(
+		enrollment,
+		target,
+		readInformation,
+		() => !!currentManager(),
+	)
+	const observation = new RemoteLiveMessageObservation(currentManager)
+	const recordReceipt = (receipt: RemoteReceipt) => {
+		const index = receipts.findIndex(item => item.commandId === receipt.commandId)
+		if (index >= 0) receipts[index] = receipt
+		else receipts.push(receipt)
+		receipts = receipts.slice(-32)
+	}
+	const imageClient = new RemoteImageInputClient(enrollment, target, admission, {
+		current: (hostEpoch, _generation, images) => {
+			if (disposed || lastEpoch !== hostEpoch || !currentManager()) return false
+			if (!images) return true
+			observeModel()
+			const { question, waiting } = dialogs()
+			return imageNegotiated && modelCapable && !modelLoss && !question && !waiting
+		},
+		invoke: (command, images) => invoke(command, images),
+		receipt: recordReceipt,
+	})
 	function publish(value: unknown, key?: string) {
-		if (disposed) return
-		const projected = projectMessage(value, key ?? randomUUID())
-		if (!projected) return
-		if (key) current = projected
-		else {
-			current = null
-			messages.push(projected)
-			historyTruncated = trimRemoteMessages(messages) || historyTruncated
+		if (!disposed) observation.publish(value, key !== undefined)
+	}
+	function observeModel(capable = ctx.model?.input.includes('image') ?? false): void {
+		if (modelCapable && !capable) {
+			modelLoss = Symbol()
+			imageClient.rotateSupport()
 		}
-		revision++
+		if (modelCapable !== capable) revision++
+		modelCapable = capable
 	}
 	function snapshot(): RemoteSnapshot {
-		const { question, waiting } = dialogs()
-		const visible = current ? [...messages, current] : [...messages]
-		historyTruncated = trimRemoteMessages(visible) || historyTruncated
-		// Bound wire bytes, including JSON escaping, BEFORE the transport sees them.
-		while (visible.length && Buffer.byteLength(JSON.stringify(visible)) > 160 * 1024) {
-			evictRemoteMessage(visible)
-			historyTruncated = true
+		observeModel()
+		const observed = observation.snapshot()
+		const sourceActivity = readActivity()
+		const nextActivityContent = JSON.stringify(featureSupported ? sourceActivity : null)
+		if (nextActivityContent !== activityContent) {
+			activityContent = nextActivityContent
+			activityRevision++
 		}
+		const { question, waiting } = dialogs()
 		return {
 			target,
-			revision,
+			revision: revision + observation.revision + activityRevision,
 			label: (pi.getSessionName() ?? 'Pi session').slice(0, 160),
 			workspace: basename(ctx.cwd).slice(0, 160),
 			...(terminalMetadata.value ? { terminal: terminalMetadata.value } : {}),
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}`.slice(0, 160) : null,
+			...(imageNegotiated
+				? { imageInput: { version: IMAGE_INPUT_VERSION, available: modelCapable && !modelLoss } }
+				: {}),
 			activity: question || waiting ? 'waiting' : ctx.isIdle() ? 'idle' : 'working',
+			...(featureSupported ? { subagents: sourceActivity } : {}),
 			capabilities: { prompt: !waiting && !question, interrupt: true, answer: question !== null },
 			question,
-			messages: visible,
-			historyTruncated,
+			...observed,
 		}
 	}
-	function invoke(command: RemoteCommand): RemoteReceipt['status'] {
-		const { question, waiting } = dialogs()
+	function invoke(
+		command: Readonly<RemoteCommand>,
+		preparedImages: readonly RemotePreparedImage[] = [],
+	): RemoteReceipt['status'] {
 		// This is intentionally immediately adjacent to the synchronous Pi call.
 		// Re-read Pi's guarded current manager here; no cached manager can survive a
 		// replacement or tree mutation and invoke the wrong owner.
-		try {
-			if (!dispatchAllowed?.() || ctx.sessionManager.getSessionId() !== target.sessionId) return 'rejected'
-		} catch {
-			return 'rejected'
-		}
+		if (!currentManager()) return 'rejected'
 		if (command.operation.kind === 'prompt') {
-			if (question || waiting) return 'rejected'
-			pi.sendUserMessage(command.operation.text, {
+			const imageCount = command.operation.images?.length ?? 0
+			if (imageCount) {
+				observeModel()
+				if (!modelCapable || modelLoss) return 'rejected'
+			}
+			const { question, waiting } = dialogs()
+			if (!currentManager() || question || waiting) return 'rejected'
+			if (imageCount !== preparedImages.length) return 'rejected'
+			const content = [
+				...(command.operation.text ? [{ type: 'text' as const, text: command.operation.text }] : []),
+				...preparedImages,
+			]
+			pi.sendUserMessage(preparedImages.length ? content : command.operation.text, {
 				deliverAs: command.operation.delivery,
 				expandPromptTemplates: false,
 			})
 			return 'dispatched' // Pi's public API returns void: NOT an acceptance receipt.
 		}
 		if (command.operation.kind === 'interrupt') {
+			imageClient.cancelUninvoked()
 			ctx.abort()
 			return 'dispatched'
 		}
+		const { question } = dialogs()
 		if (!question || question.requestId !== command.operation.requestId) return 'rejected'
 		let status: RemoteReceipt['status'] = 'unknown'
 		const remove = pi.events.on(QUESTION_RECEIPT, value => {
@@ -492,16 +599,30 @@ function connect(
 	async function tick() {
 		if (disposed) return
 		terminalMetadata.refresh()
-		const sent = receipts
+		// Freeze exactly the receipt object identities serialized by this request.
+		// Async image settlement may replace or append receipts while the response is
+		// outstanding; those newer objects must survive acknowledgement of this batch.
+		const sent = receipts.slice()
 		try {
+			const currentSnapshot = snapshot()
+			const unavailableWitness = currentSnapshot.imageInput?.available === false && modelLoss ? modelLoss : undefined
+			// Producer reads are synchronous but owner-controlled. A navigation or
+			// replacement can invalidate the observation during that read; do not send
+			// a snapshot or receipts captured from the outgoing owner.
+			if (!currentManager()) return
 			const body = JSON.stringify({
 				protocol: REMOTE_PROTOCOL,
 				enrollmentId: enrollment.enrollmentId,
-				snapshot: snapshot(),
+				snapshot: currentSnapshot,
 				receipts: sent,
 			})
 			if (Buffer.byteLength(body) > REMOTE_BODY_LIMIT) throw new Error('snapshot_limit')
-			const rawResponse = await new Promise<unknown>((resolve, reject) => {
+			const rawResponse = await new Promise<{
+				body: unknown
+				information: boolean
+				activity: boolean
+				image: boolean
+			}>((resolve, reject) => {
 				const req = request(
 					{
 						socketPath: enrollment.socketPath,
@@ -510,6 +631,10 @@ function connect(
 						headers: {
 							Authorization: `Bearer ${enrollment.capability}`,
 							'X-Helm-Enrollment': enrollment.enrollmentId,
+							[HISTORY_HEADER]: '1',
+							[INFORMATION_HEADER]: '1',
+							[IMAGE_INPUT_HEADER]: '1',
+							'X-Helm-Subagent-Activity': '1',
 							'Content-Type': 'application/json',
 							'Content-Length': Buffer.byteLength(body),
 						},
@@ -536,7 +661,12 @@ function connect(
 								return
 							}
 							try {
-								resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+								resolve({
+									body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+									information: res.headers[INFORMATION_HEADER.toLowerCase()] === '1',
+									activity: res.headers['x-helm-subagent-activity'] === '1',
+									image: res.headers[IMAGE_INPUT_HEADER.toLowerCase()] === '1',
+								})
 							} catch {
 								reject(new Error('invalid_response'))
 							}
@@ -549,13 +679,31 @@ function connect(
 				req.end(body)
 			})
 			if (disposed) return
-			const response = remoteHostExchangeSchema.parse(rawResponse)
+			const response = remoteHistoryExchangeSchema.parse(rawResponse.body)
 			// A changed host cannot silently inherit outstanding command authority.
 			if (lastEpoch && lastEpoch !== response.hostEpoch) {
 				lost()
 				return
 			}
 			lastEpoch = response.hostEpoch
+			imageNegotiated = rawResponse.image
+			imageClient.negotiate(lastEpoch, imageNegotiated)
+			if (unavailableWitness && modelLoss === unavailableWitness && imageNegotiated && currentManager())
+				modelLoss = undefined
+			featureSupported = rawResponse.activity
+			informationPublisher.negotiate(lastEpoch, rawResponse.information)
+			informationPublisher.publish()
+			if (response.historyRead && !historySending && currentManager()) {
+				history ??= new RemoteHistoryReader(target, lastEpoch, currentManager)
+				const result = history.execute(response.historyRead)
+				historySending = true
+				// Separate bounded result transport never delays the live exchange loop.
+				void postHistoryResult(enrollment, result, historyAbort.signal)
+					.catch(() => {})
+					.finally(() => {
+						historySending = false
+					})
+			}
 			if (!exchangeObserved) {
 				exchangeObserved = true
 				onConnected?.()
@@ -563,10 +711,11 @@ function connect(
 			receipts = receipts.filter(receipt => !sent.includes(receipt))
 			for (const { command, expiresAt } of response.commands) {
 				if (command.hostEpoch !== lastEpoch) continue
-				receipts.push(admission.dispatch(command, () => (Date.now() >= expiresAt ? 'rejected' : invoke(command))))
+				if (command.operation.kind === 'prompt') recordReceipt(imageClient.submit(command, expiresAt))
+				else recordReceipt(admission.dispatch(command, () => (Date.now() >= expiresAt ? 'rejected' : invoke(command))))
 			}
-			receipts = receipts.slice(-32)
 		} catch {
+			featureSupported = false
 			/* A lost host only detaches observation. Never abort Pi or retry its prompts. */
 		} finally {
 			activeRequest = undefined
@@ -583,20 +732,67 @@ function connect(
 	}
 	function stop() {
 		disposed = true
+		historyAbort.abort()
+		informationPublisher.dispose()
+		history?.dispose()
 		terminalMetadata.stop()
+		imageClient.dispose()
 		admission.dispose()
 		clearTimeout(timer)
 		activeRequest?.destroy()
-		messages = []
 		receipts = []
-		current = null
+		observation.dispose()
 	}
-	void tick()
+	queueMicrotask(() => void tick())
 	return {
 		stop,
 		publish,
 		changed: () => {
 			if (!disposed) revision++
 		},
+		modelChanged: (capable: boolean) => {
+			if (!disposed) observeModel(capable)
+		},
 	}
+}
+
+/** History uses the existing UDS but its own body/response caps and cancellation. */
+function postHistoryResult(
+	enrollment: RemoteEnrollmentFile,
+	result: HistoryResult,
+	signal: AbortSignal,
+): Promise<void> {
+	const body = JSON.stringify(result)
+	if (Buffer.byteLength(body) > HISTORY_RESULT_BYTES) return Promise.reject(new Error('history_result_limit'))
+	return new Promise((resolve, reject) => {
+		const req = request(
+			{
+				socketPath: enrollment.socketPath,
+				path: '/history-result',
+				method: 'POST',
+				signal,
+				headers: {
+					Authorization: `Bearer ${enrollment.capability}`,
+					'X-Helm-Enrollment': enrollment.enrollmentId,
+					'Content-Type': 'application/json',
+					'Content-Length': Buffer.byteLength(body),
+				},
+			},
+			res => {
+				let bytes = 0
+				res.on('data', (chunk: Buffer) => {
+					bytes += chunk.length
+					if (bytes > 4096) res.destroy(new Error('history_ack_limit'))
+				})
+				res.on('error', reject)
+				res.on('aborted', () => reject(new Error('history_ack_aborted')))
+				res.on('end', () =>
+					res.complete && res.statusCode === 200 ? resolve() : reject(new Error('history_ack_refused')),
+				)
+			},
+		)
+		req.on('error', reject)
+		req.setTimeout(2000, () => req.destroy(new Error('history_result_timeout')))
+		req.end(body)
+	})
 }

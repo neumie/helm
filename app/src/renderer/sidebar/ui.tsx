@@ -3,8 +3,8 @@
 // inputs/selects (§3.7), menus (§3.8), sheets (§3.9), push-nav header (§3.10),
 // banners (§3.12), empty states (§3.13), inline disclosure (§3.20).
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode, Ref } from 'react'
 import type { DashboardTone } from '../../shared-helm'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
@@ -128,6 +128,7 @@ export function MenuButton({
 	trigger,
 	triggerLabel,
 	triggerClass,
+	triggerRef: externalTriggerRef,
 	disabled,
 }: {
 	entries: MenuEntry[]
@@ -135,12 +136,14 @@ export function MenuButton({
 	trigger: ReactNode
 	triggerLabel: string
 	triggerClass?: string
+	triggerRef?: Ref<HTMLButtonElement>
 	disabled?: boolean
 }) {
 	const [open, setOpen] = useState(false)
 	const [activeIndex, setActiveIndex] = useState(-1)
 	const rootRef = useRef<HTMLDivElement>(null)
 	const triggerRef = useRef<HTMLButtonElement>(null)
+	useImperativeHandle(externalTriggerRef, () => triggerRef.current as HTMLButtonElement, [])
 	const menuId = useId()
 	const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
 
