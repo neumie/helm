@@ -18,6 +18,7 @@ import { RemoteDisclosure } from './RemoteDisclosure.js'
 import { RemoteFavoriteStar } from './RemoteFavoriteStar.js'
 import { InformationFooter, RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
 import { RemoteMarkdown } from './RemoteMarkdown.js'
+import { RemoteSessionMenu } from './RemoteSessionMenu.js'
 import { RemoteUsagePanel } from './RemoteUsagePanel.js'
 import { RemoteHistoryController } from './history-controller.js'
 import { ImageDraftResources, disposeImageBundle } from './image-draft.js'
@@ -51,6 +52,7 @@ import { RemoteAccessError, type RemoteTransport } from './transport.js'
 import { useRemoteUsage } from './usage-controller.js'
 import { useFavoriteFocus } from './use-favorite-focus.js'
 import { type RemoteFavoriteControls, useRemoteFavorites } from './use-favorites.js'
+import { useLongPress } from './use-long-press.js'
 import { useRemotePoll } from './use-poll.js'
 import './remote.css'
 
@@ -201,6 +203,10 @@ function Workspace({
 	const [query, setQuery] = useState('')
 	const [scope, setScope] = useState('all')
 	const [tab, setTab] = useState<'sessions' | 'usage'>('sessions')
+	const [rowMenu, setRowMenu] = useState<string | null>(null)
+	const rowMenuRef = useRef<string | null>(null)
+	rowMenuRef.current = rowMenu
+	const longPress = useLongPress(setRowMenu)
 	// Nothing is read from the providers while the session list is the visible destination.
 	const usage = useRemoteUsage(transport, tab === 'usage')
 	const drafts = useRef(new Map<string, Draft>())
@@ -231,6 +237,17 @@ function Workspace({
 	const publishedDirectory = useRef<RemoteDirectory | null>(null)
 	const directoryRef = useRef<HTMLElement>(null)
 	const rememberFavoriteFocus = useFavoriteFocus(favorites.pending)
+	// Closing returns to the row the menu belongs to, then hands that focus to the
+	// owner guard so pinning cannot drop it when the row moves to the top.
+	const closeRowMenu = useCallback(() => {
+		const key = rowMenuRef.current
+		setRowMenu(null)
+		const row = key
+			? (directoryRef.current?.querySelector<HTMLButtonElement>(`[data-session-key="${key}"]`) ?? null)
+			: null
+		row?.focus({ preventScroll: true })
+		rememberFavoriteFocus(row)
+	}, [rememberFavoriteFocus])
 	const directoryBody = useRef<HTMLDivElement>(null)
 	const directoryHeading = useRef<HTMLHeadingElement>(null)
 	const historyOwner = useRef(`remote-${crypto.randomUUID()}`).current
@@ -437,7 +454,7 @@ function Workspace({
 						)}
 						<nav className="remote-session-list" aria-label="Live sessions">
 							{visible.map(value => (
-								<div key={identity(value)} className="remote-session-entry">
+								<div key={identity(value)} className="remote-session-entry" {...longPress(identity(value))}>
 									<button
 										type="button"
 										className="remote-session-row"
@@ -461,26 +478,24 @@ function Workspace({
 											variant="row"
 										/>
 									</button>
-									{favoriteEntries.has(identity(value)) && (
-										<IconBtn
-											className="remote-favorite"
-											label={`${favoriteEntries.get(identity(value))?.favorite ? 'Unfavorite' : 'Favorite'} ${describeRemoteSession(value).title}`}
-											pressed={favoriteEntries.get(identity(value))?.favorite ?? false}
-											disabled={
-												!favorites.available ||
-												favorites.pending !== null ||
-												!favoriteEntries.get(identity(value))?.canEdit
-											}
-											onClick={() => {
-												const row = directoryRef.current?.querySelector(`[data-session-key="${identity(value)}"]`)
-												rememberFavoriteFocus(
-													row?.parentElement?.querySelector<HTMLButtonElement>('.remote-favorite') ?? null,
-												)
-												favorites.setFavorite(value.target, !favoriteEntries.get(identity(value))?.favorite)
-											}}
-										>
+									{favoriteEntries.get(identity(value))?.favorite && (
+										<span className="remote-session-pinned">
 											<RemoteFavoriteStar />
-										</IconBtn>
+											<span className="sr-only">Pinned to top</span>
+										</span>
+									)}
+									{rowMenu === identity(value) && favoriteEntries.has(identity(value)) && (
+										<RemoteSessionMenu
+											title={describeRemoteSession(value).title}
+											favorite={favoriteEntries.get(identity(value))?.favorite ?? false}
+											canEdit={favorites.available && (favoriteEntries.get(identity(value))?.canEdit ?? false)}
+											busy={favorites.pending !== null}
+											onClose={closeRowMenu}
+											onToggle={() => {
+												favorites.setFavorite(value.target, !favoriteEntries.get(identity(value))?.favorite)
+												closeRowMenu()
+											}}
+										/>
 									)}
 								</div>
 							))}

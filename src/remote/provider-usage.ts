@@ -124,12 +124,17 @@ export function parseCodexWindow(value: unknown, now: number): UsageWindow | nul
 	return window(claudeWindowLabel(seconds), used, resetsAt, seconds, now)
 }
 
+/**
+ * The live API nests its windows under `rate_limit` as `primary_window`/`secondary_window`;
+ * the on-disk events nest them under `rate_limits` as `primary`/`secondary`.
+ */
 export function parseCodexWindows(rateLimits: unknown, now: number): UsageWindow[] {
 	const record = readRecord(rateLimits)
 	if (!record) return []
-	return [parseCodexWindow(record.primary, now), parseCodexWindow(record.secondary, now)].filter(
-		(value): value is UsageWindow => value !== null,
-	)
+	return [
+		parseCodexWindow(record.primary ?? record.primary_window, now),
+		parseCodexWindow(record.secondary ?? record.secondary_window, now),
+	].filter((value): value is UsageWindow => value !== null)
 }
 
 export function readCodexPlan(rateLimits: unknown): string | null {

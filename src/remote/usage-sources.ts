@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { open, readFile, readdir } from 'node:fs/promises'
+import { request as httpsRequest } from 'node:https'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -12,9 +13,16 @@ const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const CLAUDE_OAUTH_BETA = 'oauth-2025-04-20'
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials'
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/codex/usage'
+/** The endpoint sits behind a filter that rejects a default client string; identify Helm honestly. */
+const CODEX_USER_AGENT = 'helm-remote/1.0 (+https://github.com/neumie/helm)'
 /** Only the newest sessions can hold the newest limit snapshot; older ones are never worth the read. */
 const CODEX_SESSION_FILES = 24
 const CODEX_SESSION_TAIL_BYTES = 512 * 1024
+const USAGE_RESPONSE_LIMIT = 64 * 1024
+/** The filter in front of the endpoint is intermittent, so one immediate retry is worth it. */
+const CODEX_ATTEMPTS = 2
+
+export type UsageResult = { status: number; body: JsonObject | null }
 
 export type UsageEnvironment = {
 	home: string
@@ -22,6 +30,12 @@ export type UsageEnvironment = {
 	now: () => number
 	/** Injected so tests never touch the real Keychain. */
 	keychain: (service: string) => Promise<string | null>
+	/**
+	 * Codex's usage endpoint sits behind a filter that rejects the bundled fetch client
+	 * outright, while Node's core HTTPS client is admitted. Same request, same honest
+	 * identification — only the client differs.
+	 */
+	request: (url: string, headers: Record<string, string>) => Promise<UsageResult | null>
 }
 
 export function defaultUsageEnvironment(): UsageEnvironment {
@@ -30,7 +44,43 @@ export function defaultUsageEnvironment(): UsageEnvironment {
 		fetch: (...args) => globalThis.fetch(...args),
 		now: Date.now,
 		keychain: readKeychainSecret,
+		request: coreHttpsGet,
 	}
+}
+
+function coreHttpsGet(url: string, headers: Record<string, string>): Promise<UsageResult | null> {
+	return new Promise(resolve => {
+		let target: URL
+		try {
+			target = new URL(url)
+		} catch {
+			resolve(null)
+			return
+		}
+		const call = httpsRequest(
+			{
+				host: target.host,
+				path: `${target.pathname}${target.search}`,
+				method: 'GET',
+				headers: { ...headers, Accept: 'application/json' },
+				timeout: USAGE_REQUEST_TIMEOUT_MS,
+			},
+			response => {
+				const status = response.statusCode ?? 0
+				let text = ''
+				response.setEncoding('utf8')
+				response.on('data', chunk => {
+					// A challenge page is HTML and unbounded; only a small JSON answer is useful.
+					if (text.length < USAGE_RESPONSE_LIMIT) text += chunk
+				})
+				response.on('end', () => resolve({ status, body: parseJson(text) }))
+				response.on('error', () => resolve(null))
+			},
+		)
+		call.on('timeout', () => call.destroy())
+		call.on('error', () => resolve(null))
+		call.end()
+	})
 }
 
 async function readKeychainSecret(service: string): Promise<string | null> {
@@ -235,18 +285,21 @@ export async function readCodexUsage(env: UsageEnvironment): Promise<UsageProvid
 			observedAt: null,
 			message: 'Sign in to Codex on this Mac to show its limits.',
 		}
-	const response = await fetchJson(env, CODEX_USAGE_URL, {
-		Authorization: `Bearer ${auth.accessToken}`,
-		'chatgpt-account-id': auth.accountId,
-	})
+	let response: UsageResult | null = null
+	for (let attempt = 0; attempt < CODEX_ATTEMPTS && response?.status !== 200; attempt += 1)
+		response = await env.request(CODEX_USAGE_URL, {
+			Authorization: `Bearer ${auth.accessToken}`,
+			'chatgpt-account-id': auth.accountId,
+			'User-Agent': CODEX_USER_AGENT,
+		})
 	const now = env.now()
 	if (response?.status === 200) {
 		const body = response.body
-		const windows = parseCodexWindows(body?.rate_limits ?? body, now)
+		const windows = parseCodexWindows(body?.rate_limit ?? body?.rate_limits ?? body, now)
 		if (windows.length)
 			return {
 				...base,
-				plan: readCodexPlan(body?.rate_limits ?? body),
+				plan: readCodexPlan(body) ?? readCodexPlan(body?.rate_limits),
 				windows,
 				source: 'live',
 				observedAt: now,

@@ -49,6 +49,9 @@ function environment(overrides: Partial<UsageEnvironment> = {}): UsageEnvironmen
 		}) as unknown as typeof globalThis.fetch,
 		now: () => NOW,
 		keychain: async () => null,
+		request: async () => {
+			throw new Error('request was not expected')
+		},
 		...overrides,
 	}
 }
@@ -200,17 +203,21 @@ test('Codex falls back to the newest on-disk snapshot without rotating the sign-
 	writeRollout(home, '2026/09/14', 'rollout-2026-09-14T09-00-00-a.jsonl', 40, '2026-09-14T09:00:10.000Z')
 	writeRollout(home, '2026/09/18', 'rollout-2026-09-18T15-16-28-b.jsonl', 91, '2026-09-18T13:16:37.497Z')
 	const before = new Set<string>()
+	let attempts = 0
 	const usage = await readCodexUsage(
 		environment({
 			home,
-			fetch: (async (url: string, init: RequestInit) => {
-				before.add(String((init.headers as Record<string, string>)['chatgpt-account-id']))
+			request: async (url, headers) => {
+				attempts += 1
+				before.add(`${headers['chatgpt-account-id']} ${headers['User-Agent']?.startsWith('helm-remote/')}`)
 				assert.match(url, /backend-api\/codex\/usage/)
-				return json({ error: 'forbidden' }, 403)
-			}) as unknown as typeof globalThis.fetch,
+				return { status: 403, body: null }
+			},
 		}),
 	)
-	assert.deepEqual([...before], ['acct'])
+	// The filter in front of the endpoint is intermittent, so a rejection is retried once.
+	assert.equal(attempts, 2)
+	assert.deepEqual([...before], ['acct true'])
 	assert.equal(usage.source, 'local')
 	assert.equal(usage.plan, 'pro')
 	assert.equal(usage.observedAt, Date.parse('2026-09-18T13:16:37.497Z'))
@@ -219,22 +226,32 @@ test('Codex falls back to the newest on-disk snapshot without rotating the sign-
 		[['Weekly', 91]],
 	)
 
+	// The live answer nests its windows differently from the on-disk events.
 	const live = await readCodexUsage(
 		environment({
 			home,
-			fetch: (async () =>
-				json({
-					rate_limits: {
-						primary: { used_percent: 12, limit_window_seconds: 18_000, reset_at: Math.round(NOW / 1000) + 60 },
-						plan_type: 'pro',
+			request: async () => ({
+				status: 200,
+				body: {
+					plan_type: 'pro',
+					rate_limit: {
+						limit_reached: true,
+						primary_window: {
+							used_percent: 100,
+							limit_window_seconds: 604_800,
+							reset_at: Math.round(NOW / 1000) + 600,
+						},
+						secondary_window: null,
 					},
-				})) as unknown as typeof globalThis.fetch,
+				},
+			}),
 		}),
 	)
 	assert.equal(live.source, 'live')
+	assert.equal(live.plan, 'pro')
 	assert.deepEqual(
 		live.windows.map(value => [value.label, value.usedPercent]),
-		[['5-hour', 12]],
+		[['Weekly', 100]],
 	)
 })
 

@@ -1160,6 +1160,8 @@
 
 /* Two fixed destinations at the bottom of the directory pane: the session list and provider usage. */
 .remote-tabs {
+	/* The compact directory orders its header and body explicitly; stay after both. */
+	order: 2;
 	flex: 0 0 auto;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -1251,4 +1253,59 @@
 .remote-usage-provider > .remote-note {
 	padding: 0;
 	margin: 0;
+}
+
+/* Pinned state is shown, not operated: the actions live behind a hold on the row. */
+.remote-session-entry {
+	position: relative;
+}
+.remote-session-pinned {
+	align-self: center;
+	flex: 0 0 auto;
+	margin-right: 12px;
+	display: inline-flex;
+	color: var(--accent);
+	pointer-events: none;
+}
+.remote-session-row {
+	-webkit-touch-callout: none;
+}
+.remote-row-menu {
+	position: absolute;
+	z-index: 2;
+	left: 12px;
+	right: 12px;
+	top: calc(100% - 8px);
+	padding: 4px;
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-md, 6px);
+	background: var(--pane);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+.remote-row-menu-item {
+	appearance: none;
+	border: 0;
+	border-radius: var(--radius-md, 6px);
+	background: transparent;
+	width: 100%;
+	min-height: 44px;
+	padding: 8px 12px;
+	text-align: left;
+	color: var(--text-0);
+	font-family: inherit;
+	font-size: calc(13px * var(--ui-scale, 1));
+	cursor: pointer;
+}
+.remote-row-menu-item:hover:not(:disabled) {
+	background: var(--fill-subtle);
+}
+.remote-row-menu-item:disabled {
+	color: var(--text-2);
+	cursor: default;
+}
+.remote-row-menu-note {
+	margin: 0;
+	padding: 4px 12px 8px;
+	color: var(--text-2);
+	font-size: calc(12px * var(--ui-scale, 1));
 }

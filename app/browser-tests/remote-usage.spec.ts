@@ -26,6 +26,9 @@ for (const [name, viewport] of [
 			const box = await target.boundingBox()
 			expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
 		}
+		// The bar belongs at the foot of the viewport, not stacked under the last row.
+		const bar = await tabs.boundingBox()
+		expect((bar?.y ?? 0) + (bar?.height ?? 0)).toBeGreaterThan(viewport.height - 48)
 
 		await usage.click()
 		await expect(usage).toHaveAttribute('aria-current', 'page')
