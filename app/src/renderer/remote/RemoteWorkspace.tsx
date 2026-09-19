@@ -1353,11 +1353,13 @@ function Conversation({
 								: []),
 							// Absent is not the same as none: a bridge from before model selection says
 							// nothing, and silence here is indistinguishable from a broken feature.
-							...(view && !view.models
+							...(view && !view.models?.length
 								? [
 										{
 											section: 'Model',
-											label: 'Reload this terminal to choose a model',
+											label: view.models
+												? 'No other models are configured for this conversation'
+												: 'Reload this terminal to choose a model',
 											disabled: true,
 											onSelect: () => {},
 										},

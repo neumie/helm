@@ -513,16 +513,21 @@ function connect(
 	function publish(value: unknown, key?: string) {
 		if (!disposed) observation.publish(value, key !== undefined)
 	}
-	/** Bounded so a provider with a long catalogue cannot inflate every snapshot. */
-	function selectableScopedModels(): typeof ctx.scopedModels {
-		return (ctx.scopedModels ?? []).slice(0, REMOTE_MAX_MODELS)
-	}
+	/**
+	 * Models Pi can actually reach: getAvailable() is the catalogue filtered by
+	 * configured auth, so a choice here is one setModel can honour. The session's own
+	 * scoped list is preferred when it has entries, because a scoped session should not
+	 * be offered models outside its scope; it is frequently empty, which is not the same
+	 * as offering nothing. Bounded so a long catalogue cannot inflate every snapshot.
+	 */
 	function selectableModels(): RemoteModel[] {
-		return selectableScopedModels().map(entry => ({
-			provider: entry.model.provider,
-			id: entry.model.id,
-			label: (entry.model.name || entry.model.id).slice(0, 96),
-			image: entry.model.input.includes('image'),
+		const scoped = (ctx.scopedModels ?? []).map(entry => entry.model)
+		const available = scoped.length ? scoped : (ctx.modelRegistry?.getAvailable() ?? [])
+		return available.slice(0, REMOTE_MAX_MODELS).map(model => ({
+			provider: model.provider,
+			id: model.id,
+			label: (model.name || model.id).slice(0, 96),
+			image: model.input.includes('image'),
 		}))
 	}
 	function observeModel(capable = ctx.model?.input.includes('image') ?? false): void {
@@ -551,7 +556,10 @@ function connect(
 			workspace: basename(ctx.cwd).slice(0, 160),
 			...(terminalMetadata.value ? { terminal: terminalMetadata.value } : {}),
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}`.slice(0, 160) : null,
-			...(models.length ? { models } : {}),
+			// Always present from this bridge, even when empty: an omitted list means "this
+			// bridge cannot offer models", and an empty one means "it offers none". Collapsing
+			// those made a reloaded bridge look exactly like one that never reloaded.
+			models,
 			...(imageNegotiated
 				? { imageInput: { version: IMAGE_INPUT_VERSION, available: modelCapable && !modelLoss } }
 				: {}),
@@ -598,15 +606,16 @@ function connect(
 			const selection = command.operation
 			// Only a model Pi itself offers is ever applied; the request names one, it does
 			// not supply one.
-			const scoped = selectableScopedModels().find(
-				entry => entry.model.provider === selection.provider && entry.model.id === selection.id,
+			const offered = selectableModels().some(
+				value => value.provider === selection.provider && value.id === selection.id,
 			)
+			const scoped = offered ? ctx.modelRegistry?.find(selection.provider, selection.id) : undefined
 			if (!scoped) return 'rejected'
 			// This call is asynchronous while invoke must stay synchronous, so the answer
 			// arrives as a corrected receipt: false means Pi holds no key for that model,
 			// which is a refusal the reader has to be told about.
 			void pi
-				.setModel(scoped.model)
+				.setModel(scoped)
 				.then(applied => {
 					if (disposed) return
 					if (!applied) recordReceipt({ commandId: command.commandId, status: 'rejected' })
