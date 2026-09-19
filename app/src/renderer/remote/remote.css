@@ -1167,7 +1167,11 @@
 	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	padding-bottom: env(safe-area-inset-bottom, 0px);
+	/*
+	 * Clear the home indicator without donating the whole inset to an empty strip:
+	 * a two-label bar with 34px of void under it reads as a layout mistake.
+	 */
+	padding-bottom: min(env(safe-area-inset-bottom, 0px), 16px);
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }

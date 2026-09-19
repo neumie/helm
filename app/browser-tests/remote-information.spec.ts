@@ -66,7 +66,7 @@ async function safeGeometry(page: Page, action: string) {
 	expect(geometry.top).toBe('36px')
 	// Exactly one element sits at the bottom edge and it owns the inset.
 	expect(geometry.bottom).toBe(geometry.barVisible ? '16px' : '24px')
-	if (geometry.barVisible) expect(geometry.barPaddingBottom).toBe('24px')
+	if (geometry.barVisible) expect(geometry.barPaddingBottom).toBe('16px')
 	expect(geometry.headerTop).toBe(0)
 	expect(geometry.controlsTop).toBeGreaterThanOrEqual(36)
 	for (const control of geometry.controls) {

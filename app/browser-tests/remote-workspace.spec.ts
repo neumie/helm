@@ -727,7 +727,8 @@ for (const width of [320, 390])
 			await page.addStyleTag({ content: css })
 		}
 		expect(await directory.evaluate(node => getComputedStyle(node).paddingTop)).toBe('36px')
-		expect(await page.locator('.remote-tabs').evaluate(node => getComputedStyle(node).paddingBottom)).toBe('24px')
+		// The bar clears the home indicator, capped so a two-label bar keeps no empty strip.
+		expect(await page.locator('.remote-tabs').evaluate(node => getComputedStyle(node).paddingBottom)).toBe('16px')
 		const search = await page.getByPlaceholder('Search live conversations').boundingBox()
 		if (!search) throw new Error('Missing search geometry')
 		expect(search.y).toBeGreaterThanOrEqual(36)
