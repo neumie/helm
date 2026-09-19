@@ -9,8 +9,18 @@ Status: implementation in progress after the verified development slice (`9c577e
   only Remote. Root `bun run start` launches both. Retain the daemon entry as
   `bun run start:daemon`; launchd's existing direct Node entry is unchanged.
 - Normal desktop exit does not stop Remote. The owning foreground start terminal
-  stays active; Ctrl+C stops its owned runtime(s). No new launchd job, detached
-  service installation, process discovery/kill, or Pi process ownership.
+  stays active; Ctrl+C stops its owned runtime(s). No process discovery/kill or Pi
+  process ownership.
+- The operator later approved a user-level launch agent, `com.helm.remote`, so
+  Remote survives a crash, a logout and a reboot instead of living only as long as
+  whoever started it. It runs `dist/remote/runtime.js` with `KeepAlive`, logging to
+  `~/Library/Logs/helm/remote.*.log`. Uninstall with `launchctl bootout
+  gui/$(id -u)/com.helm.remote` and remove the plist.
+- Supervision alone was not enough: a killed runtime left its lock and sockets
+  behind and every relaunch then failed. The runtime now reclaims those artifacts
+  on startup, but only once and only when both sockets refuse a connection and the
+  files are owner-owned `0600`. A live runtime always wins, and reclaimed artifacts
+  are preserved under `recovery-<stamp>-reclaimed/` rather than deleted.
 - Replace manual long-token copying with one-time QR / `XXX-XXX` pairing and
   durable per-device authentication when served over HTTPS.
 - Show all known Pi conversations from the operator's enabled session roots,

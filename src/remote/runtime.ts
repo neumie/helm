@@ -30,6 +30,7 @@ import { RemoteFavorites } from './favorites.js'
 import { RemoteHost } from './host.js'
 import { readOwnerPrivateFile } from './private-file.js'
 import { remoteRegistrationRequestSchema, remoteSourceConfirmationSchema } from './protocol.js'
+import { reclaimDeadRuntime } from './reclaim.js'
 import { RemoteUsage } from './usage.js'
 
 const RUNTIME_PROTOCOL = 1
@@ -68,6 +69,8 @@ export interface RemoteRuntimeOptions {
 	port?: number
 	piSessionRoots?: string[]
 	now?: () => number
+	/** Set only by the single reclaim retry, so a refusal can never become a loop. */
+	reclaimed?: boolean
 	/** Deterministic lifecycle seam for owned-file race tests; never a browser API. */
 	lifecycle?: {
 		afterDiscoveryPublished?: () => void | Promise<void>
@@ -122,8 +125,10 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 		if (ownsLock && lockIdentity) unlinkOwnedPrivateFile(lockPath, lockIdentity)
 		if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
 		const operatorToken = readOperatorToken(join(root, 'operator-token'))
-		const response = await controlRequest(join(root, 'control.sock'), operatorToken, '/status')
-		if (isCompatibleRuntimeStatus(response, config))
+		// A crashed runtime leaves nobody to answer, which is not the same as a live one
+		// refusing: the probe failing is evidence to act on, not a reason to give up.
+		const response = await controlRequest(join(root, 'control.sock'), operatorToken, '/status').catch(() => undefined)
+		if (response && isCompatibleRuntimeStatus(response, config))
 			return {
 				reused: true,
 				origin: response.config.origin,
@@ -131,6 +136,10 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 				root,
 				stop: async () => {},
 			}
+		// Reclaim once, and only what is provably nobody's, so a supervised restart after
+		// a crash is not blocked forever by the crashed instance's own leftovers.
+		if (!options.reclaimed && (await reclaimDeadRuntime(root)))
+			return await startRemoteRuntime({ ...options, reclaimed: true })
 		throw new Error('Remote runtime lock exists but no compatible authenticated host answered; refuse to replace it')
 	}
 
