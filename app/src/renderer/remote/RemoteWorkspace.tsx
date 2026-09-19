@@ -18,7 +18,6 @@ import { RemoteDisclosure } from './RemoteDisclosure.js'
 import { InformationFooter, RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
 import { RemoteMarkdown } from './RemoteMarkdown.js'
 import { RemoteSessionMenu } from './RemoteSessionMenu.js'
-import { RemoteSessionsIcon, RemoteUsageIcon } from './RemoteTabIcons.js'
 import { RemoteUsagePanel } from './RemoteUsagePanel.js'
 import { RemoteHistoryController } from './history-controller.js'
 import { ImageDraftResources, disposeImageBundle } from './image-draft.js'
@@ -591,7 +590,6 @@ function Workspace({
 						aria-current={tab === value ? 'page' : undefined}
 						onClick={() => setTab(value)}
 					>
-						{value === 'sessions' ? <RemoteSessionsIcon /> : <RemoteUsageIcon />}
 						{value === 'sessions' ? 'Sessions' : 'Usage'}
 					</button>
 				))}

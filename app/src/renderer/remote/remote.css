@@ -1174,12 +1174,11 @@
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	/*
-	 * The platform spends its whole 34pt indicator reserve here. Measured on device the
-	 * bar already ends at the viewport edge, so that reserve is the entire band under the
-	 * labels, and at this bar's size it reads as the bar sitting too high. Half of it
-	 * still clears the indicator comfortably.
+	 * Measured on device, the bar already ends at the viewport edge, so the platform's
+	 * 34pt indicator reserve is the entire band under the labels. A third of it clears
+	 * the indicator while keeping this bar close to the compact one it is modelled on.
 	 */
-	padding-bottom: max(8px, calc(env(safe-area-inset-bottom, 0px) - 18px));
+	padding-bottom: max(6px, calc(env(safe-area-inset-bottom, 0px) - 22px));
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }
@@ -1188,24 +1187,21 @@
 	border: 0;
 	background: transparent;
 	display: flex;
-	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 2px;
-	/* 49pt is the platform tab bar row; the whole row stays one target. */
-	min-height: 49px;
-	padding: 6px 12px 4px;
+	/*
+	 * A label on one line, not an icon stacked over one: the stack was what made this
+	 * bar read as twice the height it needs. 44px is the floor rather than the target,
+	 * because a shorter row would be a smaller tap target than anything else here.
+	 */
+	min-height: 44px;
+	padding: 4px 12px;
 	color: var(--text-2);
 	font-family: inherit;
-	font-size: calc(10px * var(--ui-scale, 1));
-	letter-spacing: 0.01em;
+	font-size: calc(12px * var(--ui-scale, 1));
+	line-height: 1.2;
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
-}
-.remote-tab svg {
-	width: 24px;
-	height: 24px;
-	display: block;
 }
 .remote-tab[aria-current="page"] {
 	color: var(--accent);
