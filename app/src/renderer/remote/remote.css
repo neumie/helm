@@ -7,12 +7,16 @@
 	min-height: 0;
 	display: grid;
 	grid-template-columns: 320px minmax(0, 1fr);
+	/* One content row, then the destination bar that outlives whatever fills it. */
+	grid-template-rows: minmax(0, 1fr) auto;
 	background: var(--pane);
 	color: var(--text-0);
 	font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
 	font-size: calc(13px * var(--ui-scale, 1));
 	/* Clip the pushed phone destination without creating a focus-scrollable root. */
 	overflow: clip;
+	/* The destination bar normally owns the bottom inset, so the composer clears 16px. */
+	--composer-floor: 16px;
 }
 .remote-directory,
 .remote-conversation,
@@ -24,7 +28,7 @@
 }
 .remote-directory {
 	padding-top: env(safe-area-inset-top, 0px);
-	padding-bottom: env(safe-area-inset-bottom, 0px);
+	/* The destination bar sits below every pane and owns the bottom inset. */
 	border-right: 1px solid var(--hairline);
 	overflow: hidden;
 }
@@ -480,7 +484,7 @@
 	flex-shrink: 0;
 	max-height: min(55dvh, calc(100dvh - 216px));
 	padding: 8px 16px 16px;
-	padding-bottom: max(16px, env(safe-area-inset-bottom));
+	padding-bottom: var(--composer-floor);
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
@@ -798,7 +802,7 @@
 			var(--information-footer-height) +
 			8px +
 			8px +
-			max(16px, env(safe-area-inset-bottom))
+			var(--composer-floor)
 		);
 		overflow: visible;
 	}
@@ -1126,7 +1130,6 @@
 	.remote-information-rail {
 		border-left: 1px solid var(--hairline);
 		padding-top: env(safe-area-inset-top, 0px);
-		padding-bottom: env(safe-area-inset-bottom, 0px);
 	}
 }
 
@@ -1160,11 +1163,11 @@
 
 /* Two fixed destinations at the bottom of the directory pane: the session list and provider usage. */
 .remote-tabs {
-	/* The compact directory orders its header and body explicitly; stay after both. */
-	order: 2;
-	flex: 0 0 auto;
+	grid-row: 2;
+	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
+	padding-bottom: env(safe-area-inset-bottom, 0px);
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }
@@ -1185,7 +1188,13 @@
 	box-shadow: inset 0 -2px 0 var(--accent);
 }
 .remote-usage {
+	grid-row: 1;
+	grid-column: 1 / -1;
+	min-height: 0;
+	padding-top: env(safe-area-inset-top, 0px);
 	padding-bottom: 8px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 .remote-usage-provider {
 	padding: 4px 16px 12px;
@@ -1259,16 +1268,13 @@
 .remote-session-entry {
 	position: relative;
 }
-.remote-session-pinned {
-	align-self: center;
-	flex: 0 0 auto;
-	margin-right: 12px;
-	display: inline-flex;
-	color: var(--accent);
-	pointer-events: none;
-}
+/* Holding a row is our gesture; iOS must not also offer selection, Look Up or Share. */
+.remote-session-entry,
 .remote-session-row {
 	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+	touch-action: manipulation;
 }
 .remote-row-menu {
 	position: absolute;
@@ -1308,4 +1314,19 @@
 	padding: 4px 12px 8px;
 	color: var(--text-2);
 	font-size: calc(12px * var(--ui-scale, 1));
+}
+
+/*
+ * Below this height the reading floor and the compose minimum cannot both survive a
+ * persistent bar, so an open conversation takes the space back. The bar returns as
+ * soon as the reader leaves the conversation, and every ordinary phone height keeps it.
+ */
+@media (max-height: 480px) {
+	.remote-workspace[data-open="true"][data-tab="sessions"] .remote-tabs {
+		display: none;
+	}
+	/* With no bar below it the composer reaches the edge and takes the inset back. */
+	.remote-workspace[data-open="true"][data-tab="sessions"] {
+		--composer-floor: max(16px, env(safe-area-inset-bottom));
+	}
 }

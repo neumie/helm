@@ -55,6 +55,29 @@ for (const [name, viewport] of [
 	})
 }
 
+test('the destination bar survives into a conversation and the composer sits on top of it', async ({ page }) => {
+	await page.setViewportSize(PHONE)
+	await page.goto('/iframe.html?id=views-helm-remote--usage&viewMode=story')
+	await page.getByRole('button', { name: /Helm conversation/ }).click()
+	await expect(page.locator('.remote-conversation')).toBeVisible()
+
+	const tabs = page.getByRole('navigation', { name: 'Remote sections' })
+	await expect(tabs).toBeVisible()
+	const bar = await tabs.boundingBox()
+	const composer = await page.locator('.remote-composer').boundingBox()
+	expect((bar?.y ?? 0) + (bar?.height ?? 0)).toBeGreaterThan(PHONE.height - 48)
+	// The bar is below the composer, never over it.
+	expect(composer?.y ?? 0).toBeLessThan(bar?.y ?? 0)
+	expect((composer?.y ?? 0) + (composer?.height ?? 0)).toBeLessThanOrEqual((bar?.y ?? 0) + 1)
+
+	// Usage stays reachable from inside the conversation.
+	await tabs.getByRole('button', { name: 'Usage', exact: true }).click()
+	await expect(page.getByRole('region', { name: 'Usage' })).toBeVisible()
+	await expect(page.locator('.remote-conversation')).toHaveCount(0)
+	await tabs.getByRole('button', { name: 'Sessions', exact: true }).click()
+	await expect(page.locator('.remote-conversation')).toBeVisible()
+})
+
 test('a spent window fills further than an untouched one and the pace mark tracks the window', async ({ page }) => {
 	await page.setViewportSize(PHONE)
 	await page.goto('/iframe.html?id=views-helm-remote--usage&viewMode=story')

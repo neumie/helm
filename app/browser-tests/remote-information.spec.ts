@@ -40,9 +40,14 @@ async function safeGeometry(page: Page, action: string) {
 		)
 		if (!button) throw new Error(`Missing ${name} action`)
 		const rect = button.getBoundingClientRect()
+		const bar = document.querySelector('.remote-tabs')
+		const barVisible = !!bar && getComputedStyle(bar).display !== 'none'
 		return {
 			top: getComputedStyle(header).paddingTop,
 			bottom: getComputedStyle(composer).paddingBottom,
+			barVisible,
+			barPaddingBottom: bar ? getComputedStyle(bar).paddingBottom : null,
+			barTop: barVisible && bar ? bar.getBoundingClientRect().top : innerHeight,
 			headerTop: header.getBoundingClientRect().top,
 			controls: [...header.querySelectorAll('button')].map(e => {
 				const r = e.getBoundingClientRect()
@@ -59,7 +64,9 @@ async function safeGeometry(page: Page, action: string) {
 		}
 	}, action)
 	expect(geometry.top).toBe('36px')
-	expect(geometry.bottom).toBe('24px')
+	// Exactly one element sits at the bottom edge and it owns the inset.
+	expect(geometry.bottom).toBe(geometry.barVisible ? '16px' : '24px')
+	if (geometry.barVisible) expect(geometry.barPaddingBottom).toBe('24px')
 	expect(geometry.headerTop).toBe(0)
 	expect(geometry.controlsTop).toBeGreaterThanOrEqual(36)
 	for (const control of geometry.controls) {
@@ -71,8 +78,10 @@ async function safeGeometry(page: Page, action: string) {
 	}
 	expect(geometry.actionHeight).toBeGreaterThanOrEqual(44)
 	expect(geometry.actionTop).toBeGreaterThanOrEqual(36)
-	expect(geometry.actionBottom).toBeLessThanOrEqual(geometry.viewportHeight - 24)
-	expect(geometry.footerBottom).toBe(geometry.viewportHeight)
+	expect(geometry.actionBottom).toBeLessThanOrEqual(
+		geometry.barVisible ? geometry.barTop : geometry.viewportHeight - 24,
+	)
+	expect(geometry.footerBottom).toBe(geometry.barTop)
 	expect(geometry.reading).toBeGreaterThanOrEqual(96)
 	await test
 		.info()

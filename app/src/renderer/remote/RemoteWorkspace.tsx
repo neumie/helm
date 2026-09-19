@@ -15,7 +15,6 @@ import { GLYPH, IconBtn, MenuButton } from '../sidebar/ui.js'
 import { HistoryNavigation, HistoryRangeNote } from './HistoryNavigation.js'
 import { RemoteArrow } from './RemoteArrow.js'
 import { RemoteDisclosure } from './RemoteDisclosure.js'
-import { RemoteFavoriteStar } from './RemoteFavoriteStar.js'
 import { InformationFooter, RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
 import { RemoteMarkdown } from './RemoteMarkdown.js'
 import { RemoteSessionMenu } from './RemoteSessionMenu.js'
@@ -206,6 +205,7 @@ function Workspace({
 	const [rowMenu, setRowMenu] = useState<string | null>(null)
 	const rowMenuRef = useRef<string | null>(null)
 	rowMenuRef.current = rowMenu
+	const restoreFocusKey = useRef<string | null>(null)
 	const longPress = useLongPress(setRowMenu)
 	// Nothing is read from the providers while the session list is the visible destination.
 	const usage = useRemoteUsage(transport, tab === 'usage')
@@ -247,7 +247,20 @@ function Workspace({
 			: null
 		row?.focus({ preventScroll: true })
 		rememberFavoriteFocus(row)
+		// Pinning moves the row into the other section, so the element that had focus is
+		// replaced rather than reordered; the key survives where the node does not.
+		restoreFocusKey.current = key
 	}, [rememberFavoriteFocus])
+	useLayoutEffect(() => {
+		if (favorites.pending !== null) return
+		const key = restoreFocusKey.current
+		restoreFocusKey.current = null
+		// Never take focus back from wherever the reader has since moved it.
+		if (!key || document.activeElement !== document.body) return
+		directoryRef.current?.querySelector<HTMLButtonElement>(`[data-session-key="${key}"]`)?.focus({
+			preventScroll: true,
+		})
+	}, [favorites.pending])
 	const directoryBody = useRef<HTMLDivElement>(null)
 	const directoryHeading = useRef<HTMLHeadingElement>(null)
 	const historyOwner = useRef(`remote-${crypto.randomUUID()}`).current
@@ -365,16 +378,13 @@ function Workspace({
 	const favoriteEntries = new Map(
 		favorites.entries.map(entry => [remoteSessionIdentity(directory.hostEpoch, entry.target), entry]),
 	)
-	const visible = directory.sessions
-		.filter(value => {
-			const matchesScope = scope === 'all' || scope === (value.target.scopeId ?? 'personal')
-			return matchesScope && remoteSessionSearchText(value).toLowerCase().includes(query.toLowerCase())
-		})
-		.sort(
-			(a, b) =>
-				Number(favoriteEntries.get(identity(b))?.favorite ?? false) -
-				Number(favoriteEntries.get(identity(a))?.favorite ?? false),
-		)
+	const visible = directory.sessions.filter(value => {
+		const matchesScope = scope === 'all' || scope === (value.target.scopeId ?? 'personal')
+		return matchesScope && remoteSessionSearchText(value).toLowerCase().includes(query.toLowerCase())
+	})
+	// Pinned conversations are a separate section, so the remaining list keeps its own order.
+	const pinned = visible.filter(value => favoriteEntries.get(identity(value))?.favorite === true)
+	const unpinned = visible.filter(value => favoriteEntries.get(identity(value))?.favorite !== true)
 	function select(value: RemoteSummary) {
 		const key = identity(value)
 		if (!drafts.current.has(key)) drafts.current.set(key, newDraft())
@@ -407,10 +417,10 @@ function Workspace({
 		)
 	}
 	return (
-		<main className="remote-workspace" data-open={!!session}>
-			<aside ref={directoryRef} className="remote-directory" aria-label="Session directory">
+		<main className="remote-workspace" data-open={!!session} data-tab={tab}>
+			<aside ref={directoryRef} className="remote-directory" aria-label="Session directory" hidden={tab !== 'sessions'}>
 				<div ref={directoryBody} className="remote-directory-body">
-					<div className="remote-filters" hidden={tab !== 'sessions'}>
+					<div className="remote-filters">
 						<label className="sr-only" htmlFor="remote-search">
 							Search live conversations
 						</label>
@@ -437,23 +447,69 @@ function Workspace({
 							</label>
 						)}
 					</div>
-					{tab === 'usage' && <RemoteUsagePanel state={usage} now={usage.response?.refreshedAt ?? Date.now()} />}
-					<div hidden={tab !== 'sessions'}>
+					<div>
 						{!available && (
 							<output className="remote-notice">
 								Disconnected — showing last known sessions. No commands will be sent.
 							</output>
 						)}
-						<h2 ref={directoryHeading} className="remote-section-heading" tabIndex={-1}>
-							Live sessions
-						</h2>
 						{favorites.error && (
 							<p className="remote-note">
 								<output>{favorites.error}</output>
 							</p>
 						)}
+						{pinned.length > 0 && (
+							<>
+								<h2 className="remote-section-heading">Pinned</h2>
+								<nav className="remote-session-list" aria-label="Pinned sessions">
+									{pinned.map(value => (
+										<div key={identity(value)} className="remote-session-entry" {...longPress(identity(value))}>
+											<button
+												type="button"
+												className="remote-session-row"
+												data-session-key={identity(value)}
+												aria-current={selected === identity(value) ? 'page' : undefined}
+												onClick={() => select(value)}
+											>
+												<RemoteSessionInfo
+													session={value}
+													status={remoteSessionStatus(
+														value.activity,
+														available && value.connected,
+														freshness.resolve(
+															directory.hostEpoch,
+															value.target,
+															value.revision,
+															available && value.connected,
+															value.subagents,
+														),
+													)}
+													variant="row"
+												/>
+											</button>
+											{rowMenu === identity(value) && favoriteEntries.has(identity(value)) && (
+												<RemoteSessionMenu
+													title={describeRemoteSession(value).title}
+													favorite={favoriteEntries.get(identity(value))?.favorite ?? false}
+													canEdit={favorites.available && (favoriteEntries.get(identity(value))?.canEdit ?? false)}
+													busy={favorites.pending !== null}
+													onClose={closeRowMenu}
+													onToggle={() => {
+														favorites.setFavorite(value.target, !favoriteEntries.get(identity(value))?.favorite)
+														closeRowMenu()
+													}}
+												/>
+											)}
+										</div>
+									))}
+								</nav>
+							</>
+						)}
+						<h2 ref={directoryHeading} className="remote-section-heading" tabIndex={-1}>
+							Live sessions
+						</h2>
 						<nav className="remote-session-list" aria-label="Live sessions">
-							{visible.map(value => (
+							{unpinned.map(value => (
 								<div key={identity(value)} className="remote-session-entry" {...longPress(identity(value))}>
 									<button
 										type="button"
@@ -478,12 +534,6 @@ function Workspace({
 											variant="row"
 										/>
 									</button>
-									{favoriteEntries.get(identity(value))?.favorite && (
-										<span className="remote-session-pinned">
-											<RemoteFavoriteStar />
-											<span className="sr-only">Pinned to top</span>
-										</span>
-									)}
 									{rowMenu === identity(value) && favoriteEntries.has(identity(value)) && (
 										<RemoteSessionMenu
 											title={describeRemoteSession(value).title}
@@ -508,39 +558,42 @@ function Workspace({
 						{announcement}
 					</p>
 				</div>
-				<nav className="remote-tabs" aria-label="Remote sections">
-					{(['sessions', 'usage'] as const).map(value => (
-						<button
-							key={value}
-							type="button"
-							className="remote-tab"
-							aria-current={tab === value ? 'page' : undefined}
-							onClick={() => setTab(value)}
-						>
-							{value === 'sessions' ? 'Sessions' : 'Usage'}
-						</button>
-					))}
-				</nav>
 			</aside>
-			{session && selectedDraft ? (
-				<Conversation
-					key={identity(session)}
-					transport={transport}
-					session={session}
-					hostEpoch={directory.hostEpoch}
-					available={available}
-					draft={selectedDraft}
-					notifySettlement={notifySettlement}
-					onBack={back}
-					informationBack={informationBack}
-					imageResources={imageResources}
-				/>
-			) : (
-				<section className="remote-empty remote-unselected">
-					<h2>Choose a session</h2>
-					<p>Read and control the same Pi conversation without restarting its terminal.</p>
-				</section>
-			)}
+			{tab === 'usage' && <RemoteUsagePanel state={usage} now={usage.response?.refreshedAt ?? Date.now()} />}
+			{tab === 'sessions' &&
+				(session && selectedDraft ? (
+					<Conversation
+						key={identity(session)}
+						transport={transport}
+						session={session}
+						hostEpoch={directory.hostEpoch}
+						available={available}
+						draft={selectedDraft}
+						notifySettlement={notifySettlement}
+						onBack={back}
+						informationBack={informationBack}
+						imageResources={imageResources}
+					/>
+				) : (
+					<section className="remote-empty remote-unselected">
+						<h2>Choose a session</h2>
+						<p>Read and control the same Pi conversation without restarting its terminal.</p>
+					</section>
+				))}
+			{/* A destination bar, not a pane control: it stays put while reading a conversation. */}
+			<nav className="remote-tabs" aria-label="Remote sections">
+				{(['sessions', 'usage'] as const).map(value => (
+					<button
+						key={value}
+						type="button"
+						className="remote-tab"
+						aria-current={tab === value ? 'page' : undefined}
+						onClick={() => setTab(value)}
+					>
+						{value === 'sessions' ? 'Sessions' : 'Usage'}
+					</button>
+				))}
+			</nav>
 		</main>
 	)
 }

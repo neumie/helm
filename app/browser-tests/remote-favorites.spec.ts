@@ -108,6 +108,8 @@ const titles = (page: Page) => page.locator('.remote-session-row .remote-session
 const rowFor = (page: Page, title: string) =>
 	page.locator('.remote-session-entry').filter({ has: page.locator('.remote-session-title', { hasText: title }) })
 const menuFor = (page: Page, title: string) => page.getByRole('menu', { name: `${title} actions`, exact: true })
+const sectionTitles = (page: Page, section: 'Pinned sessions' | 'Live sessions') =>
+	page.getByRole('navigation', { name: section, exact: true }).locator('.remote-session-title')
 
 /** The interaction the product ships: hold the row itself. */
 async function holdRow(page: Page, title: string) {
@@ -153,8 +155,9 @@ test('favorites pin stably, synchronize across browser clients, and keep selecti
 		await expect(menuFor(page, 'Charlie')).toHaveCount(0)
 		await expect(titles(page)).toHaveText(['Charlie', 'Alpha', 'Bravo'])
 		await expect(titles(second)).toHaveText(['Charlie', 'Alpha', 'Bravo'])
-		await expect(rowFor(page, 'Charlie').locator('.remote-session-pinned')).toBeVisible()
-		await expect(rowFor(page, 'Alpha').locator('.remote-session-pinned')).toHaveCount(0)
+		// Pinned conversations are their own section, not a decorated row in the same list.
+		await expect(sectionTitles(page, 'Pinned sessions')).toHaveText(['Charlie'])
+		await expect(sectionTitles(page, 'Live sessions')).toHaveText(['Alpha', 'Bravo'])
 		await expect(rowFor(page, 'Charlie').locator('.remote-session-row')).toBeFocused()
 
 		const bravo = await openRowMenu(page, 'Bravo')
@@ -162,7 +165,8 @@ test('favorites pin stably, synchronize across browser clients, and keep selecti
 		const bounds = await item.boundingBox()
 		expect(bounds?.height ?? 0).toBeGreaterThanOrEqual(44)
 		await page.keyboard.press('Enter')
-		await expect(titles(page)).toHaveText(['Bravo', 'Charlie', 'Alpha'])
+		await expect(sectionTitles(page, 'Pinned sessions')).toHaveText(['Bravo', 'Charlie'])
+		await expect(sectionTitles(page, 'Live sessions')).toHaveText(['Alpha'])
 		await expect(rowFor(page, 'Bravo').locator('.remote-session-row')).toBeFocused()
 
 		await page.getByRole('searchbox', { name: 'Search live conversations' }).fill('alpha')
@@ -221,7 +225,7 @@ test('failed favorite save is visible and not replayed or optimistically pinned'
 		await menu.getByRole('menuitem', { name: 'Pin to top' }).click()
 		await expect(page.getByRole('status')).toContainText('Could not confirm the favorite change')
 		await expect(titles(page)).toHaveText(['Alpha', 'Bravo', 'Charlie'])
-		await expect(rowFor(page, 'Charlie').locator('.remote-session-pinned')).toHaveCount(0)
+		await expect(page.getByRole('navigation', { name: 'Pinned sessions', exact: true })).toHaveCount(0)
 		const reopened = await openRowMenu(page, 'Charlie')
 		await expect(reopened.getByRole('menuitem', { name: 'Pin to top' })).toBeEnabled()
 		expect(f.posts()).toBe(1)

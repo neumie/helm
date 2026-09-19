@@ -702,25 +702,32 @@ for (const width of [320, 390])
 		const directory = page.locator('.remote-directory')
 		await expect(directory).toBeVisible()
 		if (method.startsWith('stylesheet')) {
+			// The directory owns the top inset; the destination bar below it owns the bottom.
 			const css = await page.evaluate(() => {
-				for (const sheet of Array.from(document.styleSheets)) {
-					for (const rule of Array.from(sheet.cssRules)) {
+				const wanted = new Map([
+					['.remote-directory', 'safe-area-inset-top'],
+					['.remote-tabs', 'safe-area-inset-bottom'],
+				])
+				const found: string[] = []
+				for (const sheet of Array.from(document.styleSheets))
+					for (const rule of Array.from(sheet.cssRules))
 						if (
 							rule instanceof CSSStyleRule &&
-							rule.selectorText === '.remote-directory' &&
-							rule.cssText.includes('safe-area-inset-top')
+							wanted.get(rule.selectorText) &&
+							rule.cssText.includes(wanted.get(rule.selectorText) as string)
 						)
-							return rule.cssText
-								.replace(/env\(safe-area-inset-top,\s*0px\)/g, '36px')
-								.replace(/env\(safe-area-inset-bottom,\s*0px\)/g, '24px')
-					}
-				}
-				throw new Error('Production directory must own both env insets')
+							found.push(
+								rule.cssText
+									.replace(/env\(safe-area-inset-top,\s*0px\)/g, '36px')
+									.replace(/env\(safe-area-inset-bottom,\s*0px\)/g, '24px'),
+							)
+				if (found.length !== wanted.size) throw new Error('Production must own both env insets')
+				return found.join('\n')
 			})
 			await page.addStyleTag({ content: css })
 		}
 		expect(await directory.evaluate(node => getComputedStyle(node).paddingTop)).toBe('36px')
-		expect(await directory.evaluate(node => getComputedStyle(node).paddingBottom)).toBe('24px')
+		expect(await page.locator('.remote-tabs').evaluate(node => getComputedStyle(node).paddingBottom)).toBe('24px')
 		const search = await page.getByPlaceholder('Search live conversations').boundingBox()
 		if (!search) throw new Error('Missing search geometry')
 		expect(search.y).toBeGreaterThanOrEqual(36)
