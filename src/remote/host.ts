@@ -477,6 +477,7 @@ export class RemoteHost {
 			const session = this.findSession(c.req.param('id'))
 			if (!session || !this.allowed(principal(c), session, 'read')) return c.json({ error: 'not_found' }, 404)
 			if (c.req.header(SUBAGENT_ACTIVITY_HEADER) === '1') c.header(SUBAGENT_ACTIVITY_HEADER, '1')
+			this.reportModelListing(session)
 			const snapshot = { ...this.projectSnapshot(principal(c), session), ...this.freshness(session) }
 			const activity = c.req.header(SUBAGENT_ACTIVITY_HEADER) === '1'
 			const image = c.req.header(IMAGE_INPUT_HEADER) === '1'
@@ -980,6 +981,23 @@ export class RemoteHost {
 	}
 	/** Last refusal reported, so a 2-second poll cannot flood the log with one fact. */
 	private imageRefusalLog = ''
+	/** Sessions already reported as offering no model list, so the poll cannot repeat it. */
+	private readonly modelListReported = new Set<string>()
+
+	/**
+	 * A conversation whose bridge predates model selection simply has no Model section,
+	 * which is indistinguishable at the device from one that is broken. Say which.
+	 */
+	private reportModelListing(session: Session): void {
+		const key = `${session.snapshot.target.sessionId}:${session.snapshot.models ? 'listed' : 'absent'}`
+		if (this.modelListReported.has(key)) return
+		this.modelListReported.add(key)
+		console.warn(
+			session.snapshot.models
+				? `Remote sees ${session.snapshot.models.length} selectable models for ${session.snapshot.model ?? 'unknown model'}`
+				: `Remote sees no model list for ${session.snapshot.model ?? 'unknown model'}; this conversation's bridge predates model selection`,
+		)
+	}
 	private imageAvailable(session: Session): boolean {
 		const conditions = {
 			negotiated: session.imageInput?.available === true,
@@ -1180,6 +1198,32 @@ export class RemoteHost {
 	}
 	private sessionForTarget(target: RemoteTarget): Session | undefined {
 		return [...this.sessions.values()].find(session => sameRemoteTarget(session.snapshot.target, target))
+	}
+	/**
+	 * Capabilities each bridge is advertising, for operator diagnosis. Deliberately no
+	 * message text, question or credential: enough to tell a broken feature apart from a
+	 * bridge too old to offer it.
+	 */
+	advertisedCapabilities(): Array<{
+		sessionId: string
+		label: string
+		model: string | null
+		models: string[] | null
+		imageInput: { present: boolean; available: boolean } | null
+		connected: boolean
+		activity: string
+	}> {
+		return [...this.sessions.values()].map(session => ({
+			sessionId: session.snapshot.target.sessionId,
+			label: session.snapshot.label,
+			model: session.snapshot.model,
+			models: session.snapshot.models?.map(value => `${value.provider}/${value.id}`) ?? null,
+			imageInput: session.imageInput
+				? { present: session.imageInput.present, available: session.imageInput.available }
+				: null,
+			connected: this.freshness(session).connected,
+			activity: session.snapshot.activity,
+		}))
 	}
 	private sourceCandidate(session: Session): RemoteSourceCandidate {
 		const nativeSource = session.snapshot.terminal?.source ?? null

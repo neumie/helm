@@ -66,7 +66,10 @@ test('a conversation whose bridge lists no models keeps a plain, unclickable mod
 	await expect(page.locator('.remote-conversation')).toBeVisible()
 
 	await page.getByRole('button', { name: 'Conversation options' }).click()
-	// No models listed means no model entries at all, not an empty section.
+	// No models listed means no choices, and a stated reason rather than silence.
 	await expect(page.getByRole('menu').getByRole('menuitemradio')).toHaveCount(0)
+	const reason = page.getByRole('menuitem', { name: 'Reload this terminal to choose a model' })
+	await expect(reason).toBeVisible()
+	await expect(reason).toBeDisabled()
 	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
 })

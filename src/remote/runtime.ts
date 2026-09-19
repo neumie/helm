@@ -361,6 +361,10 @@ function controlServer(input: {
 	// Operator repair only. This control-socket inventory intentionally excludes
 	// browser/session content and never accepts the bridge registration token.
 	app.get('/source-candidates', c => c.json(input.host.sourceCandidates()))
+	// What each bridge is actually advertising. Capabilities only: no messages, no
+	// question, no credentials — enough to tell "the feature is broken" apart from
+	// "this conversation's bridge is too old to offer it", without asking a person.
+	app.get('/capabilities', c => c.json({ sessions: input.host.advertisedCapabilities() }))
 	app.post('/source-candidates/confirm', async c => {
 		const parsed = remoteSourceConfirmationSchema.safeParse(await c.req.json().catch(() => null))
 		if (!parsed.success) return c.json({ error: 'invalid_source_confirmation' }, 400)

@@ -1351,8 +1351,18 @@ function Conversation({
 										},
 									]
 								: []),
-							// A bridge that never listed models contributes nothing here, which is not
-							// the same as listing none.
+							// Absent is not the same as none: a bridge from before model selection says
+							// nothing, and silence here is indistinguishable from a broken feature.
+							...(view && !view.models
+								? [
+										{
+											section: 'Model',
+											label: 'Reload this terminal to choose a model',
+											disabled: true,
+											onSelect: () => {},
+										},
+									]
+								: []),
 							...(view?.models ?? []).map(model => ({
 								section: 'Model',
 								label: model.label,
