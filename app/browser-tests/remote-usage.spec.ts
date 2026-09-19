@@ -21,10 +21,13 @@ for (const [name, viewport] of [
 		await expect(page.getByPlaceholder('Search live conversations')).toBeVisible()
 		await expect(page.getByRole('region', { name: 'Usage' })).toBeHidden()
 
-		// Both destinations must stay comfortably tappable, not just visible.
+		// 44px is not only the tap-target guideline here: below it a send starts moving
+		// the reading position, so this floor is load-bearing. Width is asserted too, so
+		// the target cannot quietly shrink in both directions at once.
 		for (const target of [sessions, usage]) {
 			const box = await target.boundingBox()
 			expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
+			expect(box?.width ?? 0).toBeGreaterThanOrEqual(viewport.width / 2 - 1)
 		}
 		// The bar belongs at the foot of the viewport, not stacked under the last row.
 		const bar = await tabs.boundingBox()

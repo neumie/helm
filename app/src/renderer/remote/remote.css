@@ -1178,7 +1178,7 @@
 	 * 34pt indicator reserve is the entire band under the labels. A third of it clears
 	 * the indicator while keeping this bar close to the compact one it is modelled on.
 	 */
-	padding-bottom: max(6px, calc(env(safe-area-inset-bottom, 0px) - 22px));
+	padding-bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 26px));
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }
@@ -1190,12 +1190,20 @@
 	align-items: center;
 	justify-content: center;
 	/*
-	 * A label on one line, not an icon stacked over one: the stack was what made this
-	 * bar read as twice the height it needs. 44px is the floor rather than the target,
-	 * because a shorter row would be a smaller tap target than anything else here.
+	 * A label on one line at the size of the compact bar this is modelled on. Below the
+	 * 44px guideline deliberately: that rule protects small isolated controls, and each
+	 * destination here is half the screen wide and pinned to its edge, so the target is
+	 * large and hard to miss in the direction that matters.
+	 *
+	 * Not lower than this. At 36px a send visibly moved the reading position by 26px,
+	 * and 40px passed alone but failed under load, so the margin there is not real.
+	 * The transcript's scroll survives a composer height change only within a margin
+	 * this row is part of. That coupling is the actual defect; until it is fixed this
+	 * height is load-bearing rather than cosmetic, and lowering it regresses a promise
+	 * that sending never moves where you are reading.
 	 */
 	min-height: 44px;
-	padding: 4px 12px;
+	padding: 2px 12px;
 	color: var(--text-2);
 	font-family: inherit;
 	font-size: calc(12px * var(--ui-scale, 1));
