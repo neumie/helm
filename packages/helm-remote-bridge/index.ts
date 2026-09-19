@@ -25,8 +25,10 @@ import {
 } from '../../src/remote/private-file.js'
 import {
 	REMOTE_BODY_LIMIT,
+	REMOTE_MAX_MODELS,
 	REMOTE_PROTOCOL,
 	type RemoteCommand,
+	type RemoteModel,
 	type RemoteReceipt,
 	type RemoteSnapshot,
 	remoteQuestionSchema,
@@ -511,6 +513,18 @@ function connect(
 	function publish(value: unknown, key?: string) {
 		if (!disposed) observation.publish(value, key !== undefined)
 	}
+	/** Bounded so a provider with a long catalogue cannot inflate every snapshot. */
+	function selectableScopedModels(): typeof ctx.scopedModels {
+		return (ctx.scopedModels ?? []).slice(0, REMOTE_MAX_MODELS)
+	}
+	function selectableModels(): RemoteModel[] {
+		return selectableScopedModels().map(entry => ({
+			provider: entry.model.provider,
+			id: entry.model.id,
+			label: (entry.model.name || entry.model.id).slice(0, 96),
+			image: entry.model.input.includes('image'),
+		}))
+	}
 	function observeModel(capable = ctx.model?.input.includes('image') ?? false): void {
 		if (modelCapable && !capable) {
 			modelLoss = Symbol()
@@ -521,6 +535,7 @@ function connect(
 	}
 	function snapshot(): RemoteSnapshot {
 		observeModel()
+		const models = selectableModels()
 		const observed = observation.snapshot()
 		const sourceActivity = readActivity()
 		const nextActivityContent = JSON.stringify(featureSupported ? sourceActivity : null)
@@ -536,6 +551,7 @@ function connect(
 			workspace: basename(ctx.cwd).slice(0, 160),
 			...(terminalMetadata.value ? { terminal: terminalMetadata.value } : {}),
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}`.slice(0, 160) : null,
+			...(models.length ? { models } : {}),
 			...(imageNegotiated
 				? { imageInput: { version: IMAGE_INPUT_VERSION, available: modelCapable && !modelLoss } }
 				: {}),
@@ -577,6 +593,31 @@ function connect(
 			imageClient.cancelUninvoked()
 			ctx.abort()
 			return 'dispatched'
+		}
+		if (command.operation.kind === 'model') {
+			const selection = command.operation
+			// Only a model Pi itself offers is ever applied; the request names one, it does
+			// not supply one.
+			const scoped = selectableScopedModels().find(
+				entry => entry.model.provider === selection.provider && entry.model.id === selection.id,
+			)
+			if (!scoped) return 'rejected'
+			// This call is asynchronous while invoke must stay synchronous, so the answer
+			// arrives as a corrected receipt: false means Pi holds no key for that model,
+			// which is a refusal the reader has to be told about.
+			void pi
+				.setModel(scoped.model)
+				.then(applied => {
+					if (disposed) return
+					if (!applied) recordReceipt({ commandId: command.commandId, status: 'rejected' })
+					// Image support belongs to the model, so observe the new one at once
+					// rather than waiting for the next poll to notice.
+					else observeModel()
+				})
+				.catch(() => {
+					if (!disposed) recordReceipt({ commandId: command.commandId, status: 'rejected' })
+				})
+			return 'dispatched' // Handed to Pi, which is not the same as accepted.
 		}
 		const { question } = dialogs()
 		if (!question || question.requestId !== command.operation.requestId) return 'rejected'

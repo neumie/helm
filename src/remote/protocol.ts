@@ -68,11 +68,29 @@ const remotePromptOperationSchema = z
 		images: z.array(remoteImageReferenceSchema).max(4).optional(),
 	})
 	.strict()
+export const REMOTE_MAX_MODELS = 32
+/**
+ * One selectable model. `image` travels with it because whether a conversation can take
+ * images is a property of its model, and the reader choosing one needs to know that
+ * before the choice rather than after a refused upload.
+ */
+export const remoteModelSchema = z
+	.object({
+		provider: z.string().min(1).max(64),
+		id: z.string().min(1).max(128),
+		label: z.string().min(1).max(96),
+		image: z.boolean(),
+	})
+	.strict()
+export type RemoteModel = z.infer<typeof remoteModelSchema>
 export const remoteOperationSchema = z
 	.union([
 		remotePromptOperationSchema,
 		z.object({ kind: z.literal('interrupt') }).strict(),
 		z.object({ kind: z.literal('answer'), requestId: id, answers: z.array(selection).min(1).max(4) }).strict(),
+		z
+			.object({ kind: z.literal('model'), provider: z.string().min(1).max(64), id: z.string().min(1).max(128) })
+			.strict(),
 	])
 	.superRefine((value, ctx) => {
 		if (value.kind !== 'prompt') return
@@ -173,6 +191,8 @@ export const remoteSnapshotSchema = z
 		imageInput: imageInputCapabilitiesSchema.optional(),
 		terminal: remoteTerminalMetadataSchema.optional(),
 		model: z.string().max(160).nullable(),
+		/** Absent from a bridge that predates model selection; never inferred from `model`. */
+		models: z.array(remoteModelSchema).max(REMOTE_MAX_MODELS).optional(),
 		activity: z.enum(['idle', 'working', 'waiting', 'unknown']),
 		subagents: remoteSubagentActivitySchema.optional(),
 		capabilities: z.object({ prompt: z.boolean(), interrupt: z.boolean(), answer: z.boolean() }).strict(),

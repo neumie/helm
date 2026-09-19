@@ -52,6 +52,15 @@ import { SUBAGENT_ACTIVITY_HEADER } from './subagent-activity-protocol.js'
 import { USAGE_HEADER } from './usage-protocol.js'
 import type { RemoteUsage } from './usage.js'
 
+/**
+ * Which grant a command needs. Choosing the model directs the conversation, so it
+ * carries the same authority as prompting rather than the weaker authority to stop one.
+ */
+function commandAuthority(kind: RemoteCommand['operation']['kind']): 'prompt' | 'interrupt' | 'answer' {
+	if (kind === 'answer') return 'answer'
+	return kind === 'interrupt' ? 'interrupt' : 'prompt'
+}
+
 export interface RemoteEnrollment {
 	id: string
 	capabilityHash: string
@@ -558,8 +567,9 @@ export class RemoteHost {
 			const session = this.findSession(command.target.sessionId)
 			if (!session || command.hostEpoch !== this.epoch || !sameRemoteTarget(command.target, session.snapshot.target))
 				return c.json({ error: 'stale_target' }, 409)
-			const operation =
-				command.operation.kind === 'answer' ? 'answer' : command.operation.kind === 'prompt' ? 'prompt' : 'interrupt'
+			// Choosing the model directs the conversation, so it needs the same authority as
+			// prompting rather than the weaker authority to stop it.
+			const operation = commandAuthority(command.operation.kind)
 			if (!this.allowed(current, session, operation)) return c.json({ error: 'forbidden' }, 403)
 			this.expireCommands(session)
 			const fingerprint = commandFingerprint(command)
@@ -573,7 +583,15 @@ export class RemoteHost {
 					return c.json({ error: 'image_input_unsupported' }, 409)
 			}
 			if (!this.freshness(session).connected) return c.json({ error: 'disconnected' }, 409)
-			if (!session.snapshot.capabilities[operation]) return c.json({ error: 'unsupported' }, 409)
+			// Model selection is offered by the bridge listing models, not by a capability
+			// flag, and a model nobody listed is never dispatched.
+			const selection = command.operation.kind === 'model' ? command.operation : undefined
+			if (
+				selection
+					? !session.snapshot.models?.some(value => value.provider === selection.provider && value.id === selection.id)
+					: !session.snapshot.capabilities[operation]
+			)
+				return c.json({ error: 'unsupported' }, 409)
 			if (session.commands.size >= 4096 || [...session.commands.values()].filter(entry => entry.pending).length >= 8)
 				return c.json({ error: 'admission_full' }, 429)
 			if (command.operation.kind === 'answer' && command.operation.requestId !== session.snapshot.question?.requestId)
@@ -1065,12 +1083,7 @@ export class RemoteHost {
 		if (!entry.pending) return false
 		if (!this.access || !entry.deviceId) return true
 		const principal = this.access.principal(entry.deviceId)
-		const operation =
-			entry.pending.operation.kind === 'answer'
-				? 'answer'
-				: entry.pending.operation.kind === 'prompt'
-					? 'prompt'
-					: 'interrupt'
+		const operation = commandAuthority(entry.pending.operation.kind)
 		if (
 			principal &&
 			principal.grantRevision === entry.grantRevision &&

@@ -1139,7 +1139,14 @@ function Conversation({
 		)
 			return
 		const signal = lifecycle.current?.signal
-		const authority = value.kind === 'answer' ? answerAdmission.current.allowed : !!view?.capabilities[value.kind]
+		// Choosing a model is offered by the bridge listing models, not by a capability
+		// flag, so it is admitted by that list rather than by capabilities.
+		const authority =
+			value.kind === 'answer'
+				? answerAdmission.current.allowed
+				: value.kind === 'model'
+					? !!view?.models?.some(model => model.provider === value.provider && model.id === value.id)
+					: !!view?.capabilities[value.kind]
 		// Synchronous admission also lets legitimate controls cancel an upload before any command POST.
 		if (!view || !connected || unresolved || !signal || signal.aborted || !authority) return
 		const command: RemoteCommand = {
@@ -1344,6 +1351,19 @@ function Conversation({
 										},
 									]
 								: []),
+							// A bridge that never listed models contributes nothing here, which is not
+							// the same as listing none.
+							...(view?.models ?? []).map(model => ({
+								section: 'Model',
+								label: model.label,
+								// Image support belongs to the model, so it is shown before the choice
+								// rather than discovered by a refused attachment.
+								meta: model.image ? 'Images' : undefined,
+								checked: view?.model === `${model.provider}/${model.id}`,
+								checkedRole: 'radio' as const,
+								disabled: !!operation && operation.status !== 'dispatched',
+								onSelect: () => void send({ kind: 'model', provider: model.provider, id: model.id }),
+							})),
 						]}
 					/>
 				</header>

@@ -24,6 +24,12 @@ export function createRemoteFixture() {
 		label: index === 0 ? 'Helm conversation' : 'Planning conversation',
 		workspace: index === 0 ? 'helm' : 'planning',
 		model: 'openai-codex/gpt-model',
+		// Two models with different image support, so the picker can be exercised and the
+		// image marker means something.
+		models: [
+			{ provider: 'openai-codex', id: 'gpt-model', label: 'GPT model', image: false },
+			{ provider: 'anthropic', id: 'claude-opus-5', label: 'Opus 5', image: true },
+		],
 		activity: 'idle',
 		connected: true,
 		capabilities: { prompt: true, interrupt: true, answer: false },
@@ -386,6 +392,8 @@ export function createRemoteFixture() {
 		},
 		transport,
 		commands,
+		/** Exposed so a test can model a bridge that omits a field rather than empties it. */
+		views,
 		addScopedSession() {
 			for (const session of views.slice(1))
 				session.target = { ...session.target, scopeId: '40000000-0000-4000-8000-000000000001' }
