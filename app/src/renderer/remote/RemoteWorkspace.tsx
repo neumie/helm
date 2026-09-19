@@ -1543,7 +1543,9 @@ function Conversation({
 							<div className="remote-image-previews" aria-label="Attached images">
 								{!imageInputAvailable && (
 									<output className="remote-image-unavailable">
-										Image input unavailable. Remove images or wait for support.
+										{!view?.imageInput
+											? 'Images need this conversation’s terminal to reload. Text still sends.'
+											: 'Image input unavailable. Remove images or wait for support.'}
 									</output>
 								)}
 								{attachedImages.map((image, index) => (
@@ -1614,7 +1616,12 @@ function Conversation({
 										}}
 									/>
 									<IconBtn
-										label="Add images"
+										// A disabled control with no reason is a dead end; say what would enable it.
+										label={
+											!imageInputAvailable && !view?.imageInput
+												? 'Add images — needs this conversation’s terminal to reload'
+												: 'Add images'
+										}
 										className="remote-add-images"
 										disabled={imageInputDisabled}
 										onClick={() => {

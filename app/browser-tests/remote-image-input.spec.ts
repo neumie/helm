@@ -56,7 +56,7 @@ async function imageFile(
 
 async function open(page: Page) {
 	await page.goto(path)
-	await expect(page.getByRole('button', { name: 'Add images', exact: true })).toBeEnabled()
+	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
 }
 
 async function useProduction(page: Page) {
@@ -119,7 +119,7 @@ test('Add images opens the system picker directly on every activation, without a
 	page,
 }) => {
 	await open(page)
-	const add = page.getByRole('button', { name: 'Add images', exact: true })
+	const add = page.getByRole('button', { name: /^Add images/ })
 	const touch = await page.evaluate(() => navigator.maxTouchPoints > 0)
 	for (let attempt = 0; attempt < 6; attempt++) {
 		const [picker] = await Promise.all([
@@ -135,7 +135,7 @@ test('Add images opens the system picker directly on every activation, without a
 
 test('Add images opens directly with Enter and Space and preserves its disabled gate', async ({ page }) => {
 	await open(page)
-	const add = page.getByRole('button', { name: 'Add images', exact: true })
+	const add = page.getByRole('button', { name: /^Add images/ })
 	await expect(add).toHaveCount(1)
 	await page.getByRole('textbox', { name: 'Message', exact: true }).focus()
 	await page.keyboard.press('Tab')
@@ -160,7 +160,7 @@ test('Add images prepares selected files directly and permits same-file reselect
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const [picker] = await Promise.all([
 			page.waitForEvent('filechooser'),
-			page.getByRole('button', { name: 'Add images', exact: true }).click(),
+			page.getByRole('button', { name: /^Add images/ }).click(),
 		])
 		await picker.setFiles(file)
 		await expect(page.locator('.remote-image-preview')).toHaveCount(1)
@@ -485,7 +485,7 @@ test('actual workspace root unmount revokes settled object URLs and remount star
 			}, objectUrl),
 		).toBe(false)
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.setWorkspaceMounted(true))
-	await expect(page.getByRole('button', { name: 'Add images', exact: true })).toBeEnabled()
+	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
 	await expect(page.locator('.remote-image-preview')).toHaveCount(0)
 })
 
@@ -544,11 +544,11 @@ test('production directory/detail image support requires response ACK', async ({
 	})
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.useProductionReads())
 	await expect.poll(() => directoryReads, { timeout: 10_000 }).toBeGreaterThan(0)
-	await expect(page.getByRole('button', { name: 'Add images', exact: true })).toBeEnabled()
+	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
 	acknowledged = false
 	const priorReads = directoryReads
 	await expect.poll(() => directoryReads, { timeout: 10_000 }).toBeGreaterThan(priorReads)
-	await expect(page.getByRole('button', { name: 'Add images', exact: true })).toBeDisabled({ timeout: 10_000 })
+	await expect(page.getByRole('button', { name: /^Add images/ })).toBeDisabled({ timeout: 10_000 })
 })
 
 for (const width of [320, 390]) {

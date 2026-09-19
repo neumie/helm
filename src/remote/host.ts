@@ -258,6 +258,9 @@ export class RemoteHost {
 		// The exact binary upload is authenticated here before the generic JSON limit.
 		// Every other /v1 route remains subject to the 24 KiB body limit below.
 		this.browser.post('/v1/sessions/:id/images', async c => {
+			// Arrival is logged before any check so a send that never lands is distinguishable
+			// from one the host refused.
+			console.warn(`Remote received an image upload: ${c.req.header('Content-Length') ?? 'no length'} bytes declared`)
 			const url = new URL(c.req.url)
 			const requiredQuery = ['hostEpoch', 'incarnation', 'scopeId', 'generation'] as const
 			if (
@@ -280,17 +283,25 @@ export class RemoteHost {
 				scopeId: c.req.query('scopeId'),
 				generation: c.req.query('generation'),
 			}
-			if (
-				!session ||
-				!target ||
-				query.hostEpoch !== this.epoch ||
-				query.incarnation !== target.incarnation ||
-				query.scopeId !== (target.scopeId ?? '') ||
-				query.generation !== String(target.generation) ||
-				!this.allowed(principalValue, session, 'prompt') ||
-				!this.imageAvailable(session)
-			)
+			if (!session || !target) {
+				console.warn('Remote refused an image upload: unknown session')
 				return c.json({ error: 'image_unavailable' }, 409)
+			}
+			// Named rather than bundled: at the device every refusal looks identical.
+			const refused = (
+				[
+					['host_epoch', query.hostEpoch === this.epoch],
+					['incarnation', query.incarnation === target.incarnation],
+					['scope', query.scopeId === (target.scopeId ?? '')],
+					['generation', query.generation === String(target.generation)],
+					['not_allowed', this.allowed(principalValue, session, 'prompt')],
+					['image_unavailable', this.imageAvailable(session)],
+				] as const
+			).find(([, met]) => !met)
+			if (refused) {
+				console.warn(`Remote refused an image upload: ${refused[0]}`)
+				return c.json({ error: 'image_unavailable' }, 409)
+			}
 			const binding = this.imageBinding(session, principalValue)
 			try {
 				const image = await this.imageBody.upload(c.req.raw, binding, principalValue?.deviceId)
@@ -299,6 +310,7 @@ export class RemoteHost {
 				return c.json({ protocol: IMAGE_INPUT_VERSION, hostEpoch: this.epoch, image }, 201)
 			} catch (error) {
 				const reason = error instanceof Error ? error.message : ''
+				console.warn(`Remote could not accept an image body: ${reason || 'unknown'}`)
 				const status =
 					reason === 'image_capacity'
 						? 429
@@ -946,14 +958,34 @@ export class RemoteHost {
 				.map(session => session.snapshot.target.sessionId),
 		)
 	}
+	/** Last refusal reported, so a 2-second poll cannot flood the log with one fact. */
+	private imageRefusalLog = ''
 	private imageAvailable(session: Session): boolean {
-		return (
-			session.imageInput?.available === true &&
-			this.freshness(session).connected &&
-			session.snapshot.activity !== 'waiting' &&
-			session.snapshot.capabilities.prompt &&
-			!session.snapshot.question
-		)
+		const conditions = {
+			negotiated: session.imageInput?.available === true,
+			connected: this.freshness(session).connected,
+			notWaiting: session.snapshot.activity !== 'waiting',
+			canPrompt: session.snapshot.capabilities.prompt,
+			noQuestion: !session.snapshot.question,
+		}
+		const available = Object.values(conditions).every(Boolean)
+		// A refused image is otherwise indistinguishable from the others at the device.
+		// The model is named because 'negotiated' has two very different causes: a model
+		// that cannot take images, and a model the bridge never managed to read.
+		if (!available && this.imageRefusalLog !== JSON.stringify([conditions, session.snapshot.model])) {
+			this.imageRefusalLog = JSON.stringify([conditions, session.snapshot.model])
+			console.warn(
+				`Remote refused images for model ${session.snapshot.model ?? 'unknown'} (image input ${
+					session.imageInput
+						? `present=${session.imageInput.present} available=${session.imageInput.available}`
+						: 'never advertised'
+				}): ${Object.entries(conditions)
+					.filter(([, met]) => !met)
+					.map(([name]) => name)
+					.join(', ')}`,
+			)
+		}
+		return available
 	}
 	private imageBinding(session: Session, principal: RemotePrincipal | undefined): ImageStoreBinding {
 		return {
