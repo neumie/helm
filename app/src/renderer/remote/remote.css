@@ -1173,7 +1173,13 @@
 	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	padding-bottom: env(safe-area-inset-bottom, 0px);
+	/*
+	 * The platform spends its whole 34pt indicator reserve here. Measured on device the
+	 * bar already ends at the viewport edge, so that reserve is the entire band under the
+	 * labels, and at this bar's size it reads as the bar sitting too high. Half of it
+	 * still clears the indicator comfortably.
+	 */
+	padding-bottom: max(8px, calc(env(safe-area-inset-bottom, 0px) - 18px));
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }
