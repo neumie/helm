@@ -73,3 +73,18 @@ test('a conversation whose bridge lists no models keeps a plain, unclickable mod
 	await expect(reason).toBeDisabled()
 	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
 })
+
+test('the conversation menu reads as one list: model first, named once, actions below', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 })
+	await openConversation(page)
+	await page.getByRole('button', { name: 'Conversation options' }).click()
+
+	const menu = page.getByRole('menu')
+	// A heading per entry would print "Model" once per model; it belongs to the group.
+	await expect(menu.locator('.menu-section-label')).toHaveText(['Model'])
+	// Identity first, then the options, the way a chat app orders this menu.
+	const items = menu.locator('.menu-item .menu-item-label')
+	await expect(items).toHaveText(['GPT model', 'Opus 5', 'Info', 'Show tool activity'])
+	// The options are divided from the models rather than continuing the same list.
+	await expect(menu.locator('.menu-separator')).toHaveCount(1)
+})

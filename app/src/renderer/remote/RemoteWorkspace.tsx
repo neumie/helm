@@ -1336,21 +1336,8 @@ function Conversation({
 						triggerLabel="Conversation options"
 						triggerRef={infoOpener}
 						entries={[
-							{ label: 'Info', onSelect: openInfo },
-							{ label: 'Show tool activity', checked: showActivity, checkedRole: 'checkbox', onSelect: toggleActivity },
-							...(historyPage
-								? [
-										{
-											label: 'Reread this range',
-											onSelect: () => {
-												rememberReading()
-												reader.reread()
-											},
-										},
-									]
-								: []),
-							// Absent is not the same as none: a bridge from before model selection says
-							// nothing, and silence here is indistinguishable from a broken feature.
+							// The model comes first and is named once, the way a chat app puts identity
+							// above options. A heading on every entry would repeat thirty times.
 							...(view && !view.models?.length
 								? [
 										{
@@ -1363,8 +1350,8 @@ function Conversation({
 										},
 									]
 								: []),
-							...(view?.models ?? []).map(model => ({
-								section: 'Model',
+							...(view?.models ?? []).map((model, index) => ({
+								...(index === 0 ? { section: 'Model' } : {}),
 								label: model.label,
 								// Image support belongs to the model, so it is shown before the choice
 								// rather than discovered by a refused attachment.
@@ -1374,6 +1361,19 @@ function Conversation({
 								disabled: !!operation && operation.status !== 'dispatched',
 								onSelect: () => void send({ kind: 'model', provider: model.provider, id: model.id }),
 							})),
+							{ label: 'Info', onSelect: openInfo, group: true },
+							{ label: 'Show tool activity', checked: showActivity, checkedRole: 'checkbox', onSelect: toggleActivity },
+							...(historyPage
+								? [
+										{
+											label: 'Reread this range',
+											onSelect: () => {
+												rememberReading()
+												reader.reread()
+											},
+										},
+									]
+								: []),
 						]}
 					/>
 				</header>
