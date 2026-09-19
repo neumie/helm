@@ -33,6 +33,7 @@ import {
 import {
 	IMAGE_INPUT_HEADER,
 	IMAGE_PROCESSED_MAX_BYTES,
+	IMAGE_UPLOAD_TIMEOUT_MS,
 	type ImageUploadEnvelope,
 	imageUploadEnvelopeSchema,
 } from '../../../../src/remote/image-input-protocol.js'
@@ -186,7 +187,9 @@ export function createRemoteTransport(developmentToken?: string): RemoteTranspor
 		uploadImage: async (owner, image, signal) => {
 			if (image.type !== 'image/jpeg' || image.size < 1 || image.size > IMAGE_PROCESSED_MAX_BYTES)
 				throw new Error('Invalid processed image')
-			const bounded = AbortSignal.any([signal, AbortSignal.timeout(6000)])
+			// A JSON poll and a megabyte-and-a-half photo cannot share a deadline: six
+			// seconds is generous for one and hopeless for the other on a phone connection.
+			const bounded = AbortSignal.any([signal, AbortSignal.timeout(IMAGE_UPLOAD_TIMEOUT_MS)])
 			const query = new URLSearchParams({
 				hostEpoch: owner.hostEpoch,
 				incarnation: owner.target.incarnation,

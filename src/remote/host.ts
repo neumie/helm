@@ -234,8 +234,10 @@ export class RemoteHost {
 			const origin = c.req.header('Origin')
 			if (origin !== undefined && origin !== this.options.origin) return c.json({ error: 'origin_denied' }, 403)
 			if (c.req.method === 'POST') {
+				// RFC 9562 defines versions 1-8 and Pi names its sessions with v7; a narrower
+				// pattern silently reclassifies a real upload as JSON and refuses it as CSRF.
 				const binaryUpload =
-					/^\/v1\/sessions\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/images$/i.test(
+					/^\/v1\/sessions\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/images$/i.test(
 						c.req.path,
 					)
 				if (
@@ -264,7 +266,7 @@ export class RemoteHost {
 			const url = new URL(c.req.url)
 			const requiredQuery = ['hostEpoch', 'incarnation', 'scopeId', 'generation'] as const
 			if (
-				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(c.req.param('id')) ||
+				!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(c.req.param('id')) ||
 				url.searchParams.size !== requiredQuery.length ||
 				requiredQuery.some(key => url.searchParams.getAll(key).length !== 1)
 			)

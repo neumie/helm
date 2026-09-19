@@ -1162,16 +1162,18 @@
 }
 
 /* Two fixed destinations at the bottom of the directory pane: the session list and provider usage. */
+/*
+ * A platform tab bar: the background runs to the very bottom edge through the home
+ * indicator, the tappable row keeps its own height above it, and the active
+ * destination is shown by tint rather than an underline that reads as the bar
+ * stopping short.
+ */
 .remote-tabs {
 	grid-row: 2;
 	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	/*
-	 * Clear the home indicator without donating the whole inset to an empty strip:
-	 * a two-label bar with 34px of void under it reads as a layout mistake.
-	 */
-	padding-bottom: min(env(safe-area-inset-bottom, 0px), 16px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
 	border-top: 1px solid var(--hairline);
 	background: var(--pane);
 }
@@ -1179,17 +1181,31 @@
 	appearance: none;
 	border: 0;
 	background: transparent;
-	min-height: 44px;
-	padding: 8px 12px;
-	color: var(--text-1);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	/* 49pt is the platform tab bar row; the whole row stays one target. */
+	min-height: 49px;
+	padding: 6px 12px 4px;
+	color: var(--text-2);
 	font-family: inherit;
-	font-size: calc(13px * var(--ui-scale, 1));
+	font-size: calc(10px * var(--ui-scale, 1));
+	letter-spacing: 0.01em;
 	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+}
+.remote-tab svg {
+	width: 24px;
+	height: 24px;
+	display: block;
 }
 .remote-tab[aria-current="page"] {
-	color: var(--text-0);
-	background: var(--fill-subtle);
-	box-shadow: inset 0 -2px 0 var(--accent);
+	color: var(--accent);
+}
+.remote-tab:active {
+	opacity: 0.6;
 }
 .remote-usage {
 	grid-row: 1;

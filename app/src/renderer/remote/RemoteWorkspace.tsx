@@ -18,6 +18,7 @@ import { RemoteDisclosure } from './RemoteDisclosure.js'
 import { InformationFooter, RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
 import { RemoteMarkdown } from './RemoteMarkdown.js'
 import { RemoteSessionMenu } from './RemoteSessionMenu.js'
+import { RemoteSessionsIcon, RemoteUsageIcon } from './RemoteTabIcons.js'
 import { RemoteUsagePanel } from './RemoteUsagePanel.js'
 import { RemoteHistoryController } from './history-controller.js'
 import { ImageDraftResources, disposeImageBundle } from './image-draft.js'
@@ -590,12 +591,25 @@ function Workspace({
 						aria-current={tab === value ? 'page' : undefined}
 						onClick={() => setTab(value)}
 					>
+						{value === 'sessions' ? <RemoteSessionsIcon /> : <RemoteUsageIcon />}
 						{value === 'sessions' ? 'Sessions' : 'Usage'}
 					</button>
 				))}
 			</nav>
 		</main>
 	)
+}
+
+/**
+ * Every image failure reads the same on a phone, and a phone is where this is used,
+ * so the cause has to travel with the sentence. Kept short: the compact composer has
+ * a tested height budget and this sits inside it.
+ */
+function describeUploadFailure(error: unknown): string {
+	if (error instanceof RemoteAccessError) return ` Host replied ${error.status}.`
+	if (!(error instanceof Error)) return ''
+	const detail = error.name && error.name !== 'Error' ? `${error.name}: ${error.message}` : error.message
+	return detail ? ` ${detail.slice(0, 60)}` : ''
 }
 
 function defaultQuestionAnswers(question: NonNullable<RemoteSnapshot['question']>): AnswerDraft {
@@ -1204,14 +1218,14 @@ function Conversation({
 			}
 			draft.transfer = undefined
 			await postCommand(command, signal)
-		} catch {
+		} catch (error) {
 			if (draft.transfer !== captured) return
 			draft.transfer = undefined
 			settlePrompt(draft, commandId, 'rejected')
 			if (!controller.signal.aborted)
 				draft.transferFailure = {
 					transferToken: captured.token,
-					message: 'Message was not sent. Image upload failed.',
+					message: `Message was not sent. Image upload failed.${describeUploadFailure(error)}`,
 				}
 			publishSettlement()
 		}

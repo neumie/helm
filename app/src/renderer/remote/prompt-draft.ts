@@ -10,7 +10,12 @@ export interface PromptRecovery {
 }
 export interface PromptTransferFailure {
 	transferToken: symbol
-	message: 'Message was not sent. Image upload failed.'
+	/**
+	 * The sentence stays mandatory — a reader must always be told the message was not
+	 * sent — but a short cause may follow it, because on a phone this line is the only
+	 * place the cause can appear.
+	 */
+	message: `Message was not sent. Image upload failed.${string}`
 }
 export interface PromptDraft {
 	text: string

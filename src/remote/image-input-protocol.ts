@@ -11,6 +11,11 @@ export const IMAGE_PROCESSED_MAX_SIDE = 2560
 export const IMAGE_PROCESSED_MAX_PIXELS = 4_000_000
 export const IMAGE_PROCESSED_MAX_BYTES = 1_572_864
 export const IMAGE_SUBMISSION_MAX_BYTES = IMAGE_PROCESSED_MAX_BYTES * IMAGE_MAX_COUNT
+/**
+ * A processed image is up to 1.5 MiB and is uploaded from a phone, often over a
+ * cellular link; it cannot share the short deadline that suits a JSON poll.
+ */
+export const IMAGE_UPLOAD_TIMEOUT_MS = 45_000
 export const IMAGE_OWNER_MAX_BYTES = 8 * 1024 * 1024
 export const IMAGE_PRINCIPAL_MAX_BYTES = 12 * 1024 * 1024
 export const IMAGE_HOST_MAX_BYTES = 64 * 1024 * 1024
