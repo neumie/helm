@@ -959,6 +959,7 @@
 }
 .remote-information h3 {
 	margin: 0 0 8px;
+	padding-left: 2px;
 	font-size: calc(12px * var(--ui-scale, 1));
 	font-weight: 600;
 	color: var(--text-1);
@@ -980,19 +981,42 @@
 	color: var(--text-1);
 	margin: 8px 0;
 }
+/*
+ * A grouped list rather than a column of stacked pairs: label and value share a line,
+ * the card gives the set an edge, and hairlines separate rows instead of whitespace
+ * that made this read as debug output.
+ */
 .remote-information-body dl {
 	margin: 0;
+	border: 1px solid var(--hairline);
+	border-radius: 10px;
+	background: var(--fill-subtle);
+	overflow: hidden;
 }
 .remote-information-body dl > div {
-	padding: 4px 0;
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 16px;
+	min-height: 40px;
+	padding: 10px 14px;
+}
+.remote-information-body dl > div + div {
+	border-top: 1px solid var(--hairline);
 }
 .remote-information-body dt {
+	flex: 0 0 auto;
 	font-size: calc(12px * var(--ui-scale, 1));
 	color: var(--text-2);
 }
 .remote-information-body dd {
 	margin: 0;
+	min-width: 0;
+	text-align: right;
 	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	/* Counts line up rather than jitter between rows. */
+	font-variant-numeric: tabular-nums;
 }
 .remote-information-body .remote-information-scope {
 	color: var(--text-2);
