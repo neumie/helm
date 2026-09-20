@@ -145,7 +145,7 @@ async function expectCurrentStatus(
 	assertion: 'toBeVisible' | 'toBeInViewport',
 ) {
 	if (width < 1200) {
-		await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 	}
 	const status = page.locator('.remote-current-conversation .chip').filter({ hasText: new RegExp(`^${text}$`) })

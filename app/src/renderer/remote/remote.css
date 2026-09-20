@@ -1170,7 +1170,8 @@
 /* One conversation content row; the directory retains its independent header layout. */
 .remote-chat > .remote-header {
 	display: grid;
-	grid-template-columns: 44px minmax(0, 1fr) 44px;
+	/* The third column held an icon; it now holds the model, which needs its own width. */
+	grid-template-columns: 44px minmax(0, 1fr) auto;
 	gap: 8px;
 	min-height: 44px;
 	padding-top: env(safe-area-inset-top, 0px);
@@ -1496,5 +1497,54 @@
 		border-radius: 14px;
 		border: 1px solid var(--hairline);
 		padding-bottom: 8px;
+	}
+}
+
+/* The model reads as the subject of the screen, the way a chat app titles it. */
+.remote-header-model {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	/* Inline so the button shrink-wraps its label instead of collapsing it to nothing. */
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-height: 44px;
+	/*
+	 * The model is the subject of the screen, so it keeps its width and the conversation
+	 * title ellipsizes instead. Truncating this to "G.." tells a reader nothing.
+	 */
+	flex: 0 0 auto;
+	min-width: 0;
+	padding: 0 8px;
+	margin-left: auto;
+	color: var(--text-1);
+	font-family: inherit;
+	font-size: calc(13px * var(--ui-scale, 1));
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+}
+.remote-header-model-name {
+	/* Sized by its text; the button's max-width is what limits the pair. */
+	flex: 0 0 auto;
+	/* A character cap, not a percentage: a percentage inside an auto grid track
+	   resolves against a track sized by this very content and collapses. */
+	max-width: 14ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.remote-header-model-chevron {
+	flex: 0 0 auto;
+	font-size: calc(11px * var(--ui-scale, 1));
+	line-height: 1;
+	opacity: 0.7;
+}
+.remote-header-model:active {
+	opacity: 0.6;
+}
+@media (hover: hover) {
+	.remote-header-model:hover {
+		color: var(--text-0);
 	}
 }

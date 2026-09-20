@@ -138,7 +138,7 @@ for (const newer of ['composer', 'question', 'info'] as const) {
 		await setup(page, 'long', newer === 'question')
 		await top(page)
 		if (newer === 'info') {
-			await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
+			await page.getByRole('button', { name: 'More', exact: true }).click()
 			await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 		}
 		const selector =
@@ -167,7 +167,7 @@ test('mobile Info makes the live entry inert to focus, keyboard and pointer; Bac
 	const entry = page.getByRole('button', { name: entryName })
 	const box = await entry.boundingBox()
 	if (!box) throw new Error('Missing live entry')
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
+	await page.getByRole('button', { name: 'More', exact: true }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 	await expect(page.getByLabel('Conversation messages')).toHaveAttribute('inert', '')
 	await entry.evaluate(e => e.focus())

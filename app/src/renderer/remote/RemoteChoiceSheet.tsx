@@ -4,7 +4,10 @@ export interface ChoiceOption {
 	id: string
 	label: string
 	meta?: string
-	checked: boolean
+	/** Absent for an action: only a choice or a toggle reports state. */
+	checked?: boolean
+	/** A switch rather than one of several alternatives. */
+	toggle?: boolean
 	disabled?: boolean
 }
 
@@ -27,6 +30,9 @@ export function RemoteChoiceSheet({
 	onChoose(id: string): void
 	onClose(): void
 }) {
+	// A sheet of actions is a menu; a sheet of alternatives is a radio group. Deciding
+	// by the entries keeps one surface without lying about its semantics.
+	const choosing = options.some(option => option.checked !== undefined && !option.toggle)
 	const surface = useRef<HTMLDivElement>(null)
 
 	useEffect(() => {
@@ -48,13 +54,13 @@ export function RemoteChoiceSheet({
 			<button type="button" className="remote-sheet-dismiss" aria-label={`Close ${title}`} onClick={onClose} />
 			<div className="remote-sheet" role="dialog" aria-modal="true" aria-label={title} ref={surface}>
 				<h2 className="remote-sheet-title">{title}</h2>
-				<div className="remote-sheet-options" role="radiogroup" aria-label={title}>
+				<div className="remote-sheet-options" role={choosing ? 'radiogroup' : 'menu'} aria-label={title}>
 					{options.map(option => (
 						<button
 							key={option.id}
 							type="button"
-							role="radio"
-							aria-checked={option.checked}
+							role={option.toggle ? 'menuitemcheckbox' : choosing ? 'radio' : 'menuitem'}
+							aria-checked={option.toggle || choosing ? option.checked === true : undefined}
 							className="remote-sheet-option"
 							disabled={option.disabled}
 							onClick={() => onChoose(option.id)}

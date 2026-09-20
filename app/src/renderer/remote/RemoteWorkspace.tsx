@@ -675,7 +675,7 @@ function Conversation({
 	const [infoFocusRequest, requestInfoFocus] = useState<symbol | null>(null)
 	// One decision at a time: the menu lists what can be changed, the sheet is where a
 	// long list is actually read.
-	const [sheet, setSheet] = useState<'model' | 'effort' | null>(null)
+	const [sheet, setSheet] = useState<'more' | 'model' | 'effort' | null>(null)
 	useLayoutEffect(() => {
 		if (infoFocusRequest && (document.activeElement === document.body || document.activeElement === infoOpener.current))
 			infoHeading.current?.focus({ preventScroll: true })
@@ -811,6 +811,7 @@ function Conversation({
 		() => remoteSessionStatus(statusActivity, statusConnected, freshSubagents),
 		[statusActivity, statusConnected, freshSubagents],
 	)
+	const modelName = view?.models?.find(model => `${model.provider}/${model.id}` === view.model)?.label ?? view?.model
 	const sessionPresentation = useMemo(() => describeRemoteSession(session), [session])
 	const currentConversation = useMemo(
 		() => ({
@@ -1338,6 +1339,21 @@ function Conversation({
 					<h2 ref={heading} tabIndex={-1} title={sessionPresentation.title}>
 						{sessionPresentation.title}
 					</h2>
+					{/*
+					 * The model sits in the header where a chat app puts it, so the thing most
+					 * often changed is one tap away and always legible without opening anything.
+					 */}
+					<button
+						type="button"
+						className="remote-header-model"
+						onClick={() => setSheet('model')}
+						aria-label={`Model: ${modelName ?? 'unavailable'}. Choose a different model`}
+					>
+						<span className="remote-header-model-name">{modelName ?? 'Model'}</span>
+						<span className="remote-header-model-chevron" aria-hidden="true">
+							⌄
+						</span>
+					</button>
 				</header>
 				{(!view ? false : !connected || gap) && (
 					<output className="remote-notice">
@@ -1607,7 +1623,7 @@ function Conversation({
 						)}
 						{sheet && (
 							<RemoteChoiceSheet
-								title={sheet === 'model' ? 'Model' : 'Effort'}
+								title={sheet === 'more' ? 'More' : sheet === 'model' ? 'Model' : 'Effort'}
 								empty={
 									sheet === 'model'
 										? view?.models
@@ -1616,27 +1632,68 @@ function Conversation({
 										: 'This conversation’s terminal does not report effort levels.'
 								}
 								options={
-									sheet === 'model'
-										? (view?.models ?? []).map(model => ({
-												id: `${model.provider}/${model.id}`,
-												label: model.label,
-												// Known before the choice rather than after a refused attachment.
-												meta: model.image ? 'Images' : undefined,
-												checked: view?.model === `${model.provider}/${model.id}`,
-												disabled: !!operation && operation.status !== 'dispatched',
-											}))
-										: (view?.thinking?.levels ?? []).map(level => ({
-												id: level,
-												label: level,
-												checked: view?.thinking?.level === level,
-												disabled: !!operation && operation.status !== 'dispatched',
-											}))
+									sheet === 'more'
+										? [
+												{
+													id: 'photo',
+													label: imageInputAvailable
+														? 'Upload photo'
+														: view?.imageInput
+															? 'Photos unavailable right now'
+															: 'Photos need this terminal to reload',
+													disabled: imageInputDisabled,
+												},
+												{ id: 'effort', label: 'Effort', meta: view?.thinking?.level },
+												{ id: 'activity', label: 'Show tool activity', toggle: true, checked: showActivity },
+												{ id: 'info', label: 'Info' },
+												...(historyPage ? [{ id: 'reread', label: 'Reread this range' }] : []),
+											]
+										: sheet === 'model'
+											? (view?.models ?? []).map(model => ({
+													id: `${model.provider}/${model.id}`,
+													label: model.label,
+													// Known before the choice rather than after a refused attachment.
+													meta: model.image ? 'Images' : undefined,
+													checked: view?.model === `${model.provider}/${model.id}`,
+													disabled: !!operation && operation.status !== 'dispatched',
+												}))
+											: (view?.thinking?.levels ?? []).map(level => ({
+													id: level,
+													label: level,
+													checked: view?.thinking?.level === level,
+													disabled: !!operation && operation.status !== 'dispatched',
+												}))
 								}
 								onClose={() => {
 									setSheet(null)
 									infoOpener.current?.focus({ preventScroll: true })
 								}}
 								onChoose={id => {
+									if (sheet === 'more') {
+										// Photos must open inside this activation, so no state change first.
+										if (id === 'photo') {
+											const input = imageInput.current
+											setSheet(null)
+											if (input && !input.disabled) {
+												if (typeof input.showPicker === 'function') input.showPicker()
+												else input.click()
+											}
+											return
+										}
+										if (id === 'effort') {
+											setSheet('effort')
+											return
+										}
+										setSheet(null)
+										infoOpener.current?.focus({ preventScroll: true })
+										if (id === 'activity') toggleActivity()
+										else if (id === 'info') openInfo()
+										else if (id === 'reread') {
+											rememberReading()
+											reader.reread()
+										}
+										return
+									}
 									setSheet(null)
 									infoOpener.current?.focus({ preventScroll: true })
 									if (sheet === 'effort') {
@@ -1662,57 +1719,16 @@ function Conversation({
 									void selectImages(files)
 								}}
 							/>
-							<MenuButton
-								align="start"
-								triggerClass="icon-btn remote-add-images"
-								trigger={GLYPH.plus}
-								triggerRef={infoOpener}
-								triggerLabel="Attachments, model and effort"
-								entries={[
-									{
-										label: imageInputAvailable
-											? 'Upload photo'
-											: view?.imageInput
-												? 'Photos unavailable right now'
-												: 'Photos need this terminal to reload',
-										disabled: imageInputDisabled,
-										// Still inside the activation gesture, so the picker opens without a second
-										// tap once this entry is chosen.
-										onSelect: () => {
-											const input = imageInput.current
-											if (!input || input.disabled) return
-											if (typeof input.showPicker === 'function') input.showPicker()
-											else input.click()
-										},
-									},
-									{
-										label: 'Model',
-										// The current choice belongs on the row that opens the list, so the menu
-										// answers "what is it now" without opening anything.
-										meta: view?.models?.find(model => `${model.provider}/${model.id}` === view.model)?.label,
-										onSelect: () => setSheet('model'),
-									},
-									{ label: 'Effort', meta: view?.thinking?.level, onSelect: () => setSheet('effort') },
-									{ label: 'Info', onSelect: openInfo, group: true },
-									{
-										label: 'Show tool activity',
-										checked: showActivity,
-										checkedRole: 'checkbox',
-										onSelect: toggleActivity,
-									},
-									...(historyPage
-										? [
-												{
-													label: 'Reread this range',
-													onSelect: () => {
-														rememberReading()
-														reader.reread()
-													},
-												},
-											]
-										: []),
-								]}
-							/>
+							<button
+								type="button"
+								ref={infoOpener}
+								className="icon-btn remote-add-images"
+								aria-label="More"
+								title="More"
+								onClick={() => setSheet('more')}
+							>
+								{GLYPH.plus}
+							</button>
 							{!question && (
 								<>
 									<MenuButton

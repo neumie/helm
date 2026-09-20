@@ -16,30 +16,36 @@ async function openConversation(page: import('@playwright/test').Page) {
 }
 
 async function openSheet(page: import('@playwright/test').Page, name: 'Model' | 'Effort') {
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
-	// The row carries its current value, so its accessible name is "Model GPT model".
-	await page.getByRole('menuitem', { name: new RegExp(`^${name}`) }).click()
+	// The model is a header control, the way a chat app titles the screen; effort is
+	// reached through More.
+	if (name === 'Model') await page.getByRole('button', { name: /^Model:/ }).click()
+	else {
+		await page.getByRole('button', { name: 'More', exact: true }).click()
+		await page.getByRole('menuitem', { name: /^Effort/ }).click()
+	}
 	return page.getByRole('dialog', { name, exact: true })
 }
 
-test('the menu names what can be changed, and each choice opens its own sheet', async ({ page }) => {
+test('More lists actions, and the model is titled in the header rather than buried', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
 
-	const menu = page.getByRole('menu')
-	// A short list of subjects, not the choices themselves.
-	await expect(menu.locator('.menu-item .menu-item-label')).toHaveText([
+	// The model is the subject of the screen, one tap from anywhere in the conversation.
+	await expect(page.getByRole('button', { name: /^Model: GPT model/ })).toBeVisible()
+
+	await page.getByRole('button', { name: 'More', exact: true }).click()
+	const sheet = page.getByRole('dialog', { name: 'More', exact: true })
+	await expect(sheet.locator('.remote-sheet-option-label')).toHaveText([
 		// This story's bridge advertises no image input, so the entry states that instead.
 		/photos/i,
-		'Model',
 		'Effort',
-		'Info',
 		'Show tool activity',
+		'Info',
 	])
-	// Each row answers "what is it now" without opening anything.
-	await expect(menu.locator('.menu-item-meta')).toHaveText(['GPT model', 'high'])
-	await expect(menu.getByRole('menuitemradio')).toHaveCount(0)
+	// Effort answers "what is it now" without opening anything.
+	await expect(sheet.locator('.remote-sheet-option-meta')).toHaveText(['high'])
+	// Actions, not alternatives: nothing here reports a selection.
+	await expect(sheet.getByRole('radio')).toHaveCount(0)
 })
 
 test('the model sheet lists every model, marks the current one and sends one command', async ({ page }) => {
@@ -91,7 +97,7 @@ test('the effort sheet offers only the levels this model publishes', async ({ pa
 test('a sheet dismisses by backdrop and by Escape, returning focus to the control that opened it', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
-	const plus = page.getByRole('button', { name: 'Attachments, model and effort' })
+	const plus = page.getByRole('button', { name: 'More', exact: true })
 
 	await openSheet(page, 'Model')
 	await page.locator('.remote-sheet-dismiss').click()
@@ -135,8 +141,8 @@ test('the composer menu survives a pending question, so Info never becomes unrea
 	await page.evaluate(() => window.__remoteFixture?.ask())
 	await expect(page.getByRole('button', { name: 'Submit answers', exact: true })).toBeVisible()
 
-	// The header menu is gone, so this control is the only route to Info and the model.
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
+	// Info is reached only through this control now, and the model stays in the header.
+	await expect(page.getByRole('button', { name: /^Model:/ })).toBeVisible()
+	await page.getByRole('button', { name: 'More', exact: true }).click()
 	await expect(page.getByRole('menuitem', { name: 'Info', exact: true })).toBeVisible()
-	await expect(page.getByRole('menuitem', { name: /^Model/ })).toBeVisible()
 })

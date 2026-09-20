@@ -168,7 +168,7 @@ for (const width of [320, 390, 1280, 1440])
 		if (width < 1200) {
 			await page.keyboard.press('Escape')
 			await expect(panel).toHaveCount(0)
-			await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeFocused()
+			await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused()
 			expect(Math.abs((await transcript.evaluate(element => element.scrollTop)) - anchor)).toBeLessThanOrEqual(1)
 		}
 	})
@@ -596,7 +596,7 @@ test('responsive information retains draft, IME safety and one panel', async ({ 
 	await expect(page.getByRole('complementary', { name: 'Conversation information' })).toHaveCount(0)
 	await openInfo(page)
 	await page.getByRole('button', { name: 'Back to conversation', exact: true }).click()
-	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeFocused()
+	await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused()
 	await expect(prompt).toHaveValue('Composition draft')
 })
 
@@ -688,7 +688,7 @@ for (const width of [320, 390])
 		await page.screenshot({ path: info.outputPath(`information-safe-area-${width}.png`) })
 		await page.goBack()
 		await expect(page.getByRole('complementary', { name: 'Conversation information' })).toHaveCount(0)
-		await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeFocused()
+		await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused()
 		await expect(prompt).toHaveValue('Safe-area draft')
 		expect(await reading.evaluate(e => e.scrollTop)).toBe(anchor)
 		expect(await page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
@@ -764,7 +764,7 @@ for (const width of [320, 390])
 		await page.screenshot({ path: info.outputPath(`information-covered-question-${width}.png`) })
 		await localBack.click()
 		expect(await page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
-		await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeFocused()
+		await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused()
 		await expect(page.locator('.remote-question legend').first()).toBeInViewport()
 		await fullyInsideReading(page, '.remote-question legend')
 		await fullyInsideReading(page, '.remote-question input')
@@ -872,7 +872,7 @@ for (const question of [false, true])
 	})
 
 async function openInfo(page: Page) {
-	await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
+	await page.getByRole('button', { name: 'More', exact: true }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 }
 
@@ -900,9 +900,10 @@ for (const width of [320, 390, 1280])
 			}, title)
 			await page.getByRole('button', { name: new RegExp(title) }).click()
 			const header = page.locator('.remote-chat > .remote-header')
-			// Back is the only header control now: attachments, model, effort and Info all
-			// live in the composer menu, so the header stays a single uncluttered row.
-			await expect(header.locator('button')).toHaveCount(1)
+			// Back and the model, the way a chat app titles the screen. Everything else
+			// lives behind More in the composer, so this stays a single uncluttered row.
+			await expect(header.locator('button')).toHaveCount(2)
+			await expect(header.getByRole('button', { name: /^Model:/ })).toBeVisible()
 			await expect(header.locator('h2')).toHaveCSS('white-space', 'nowrap')
 			await expect(header.locator('h2')).toHaveCSS('text-overflow', 'ellipsis')
 			expect(await header.evaluate(e => e.getBoundingClientRect().height)).toBe(44)
@@ -959,7 +960,7 @@ test('Info focus is explicit for rail and open view, never a resize side effect'
 	await expect(page.getByRole('complementary', { name: 'Conversation information' })).toHaveCount(0)
 	await openInfo(page)
 	await page.goBack()
-	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeFocused()
+	await expect(page.getByRole('button', { name: 'More', exact: true })).toBeFocused()
 	await expect(prompt).toHaveValue('No focus stealing')
 })
 

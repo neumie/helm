@@ -196,7 +196,7 @@ for (const includeTool of [false, true]) {
 		const before = await offset()
 		expect(Math.abs(before + 4)).toBeLessThanOrEqual(1)
 		const toggle = async () => {
-			await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
+			await page.getByRole('button', { name: 'More', exact: true }).click()
 			await page.getByRole('menuitemcheckbox', { name: 'Show tool activity', exact: true }).click()
 		}
 		await toggle()
@@ -282,7 +282,7 @@ for (const width of [1280, 390, 320]) {
 		})
 		f.append()
 		await page.evaluate(() => window.__remoteFixture?.append('A later live reply'))
-		await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
+		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: 'Reread this range' }).click()
 		await finish(page)
 		const offset = await pane

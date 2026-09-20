@@ -210,7 +210,7 @@ test('a plain tap still opens the conversation', async ({ page, baseURL }) => {
 	try {
 		await rowFor(page, 'Charlie').locator('.remote-session-row').click()
 		await expect(page.locator('.remote-conversation')).toHaveCount(1)
-		await expect(page.getByRole('menu')).toHaveCount(0)
+		await expect(page.getByRole('dialog')).toHaveCount(0)
 	} finally {
 		f.host.revoke()
 	}
