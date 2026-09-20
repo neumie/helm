@@ -15,104 +15,67 @@ async function openConversation(page: import('@playwright/test').Page) {
 	await expect(page.locator('.remote-conversation')).toBeVisible()
 }
 
-test('the footer model names the current model and offers the others', async ({ page }) => {
-	await page.setViewportSize({ width: 390, height: 844 })
-	await openConversation(page)
-
+async function openSheet(page: import('@playwright/test').Page, name: 'Model' | 'Effort') {
 	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
-	const menu = page.getByRole('menu')
-	await expect(menu.getByRole('menuitemradio')).toHaveText([/GPT model/, /Opus 5/, 'low', 'medium', 'high'])
-	// The current model is marked, so choosing is a change rather than a guess.
-	await expect(menu.getByRole('menuitemradio', { name: /GPT model/ })).toHaveAttribute('aria-checked', 'true')
-	await expect(menu.getByRole('menuitemradio', { name: /Opus 5/ })).toHaveAttribute('aria-checked', 'false')
-	// Image support travels with the choice, before any attachment is attempted.
-	await expect(menu.getByRole('menuitemradio', { name: /Opus 5/ })).toContainText('Images')
-})
+	// The row carries its current value, so its accessible name is "Model GPT model".
+	await page.getByRole('menuitem', { name: new RegExp(`^${name}`) }).click()
+	return page.getByRole('dialog', { name, exact: true })
+}
 
-test('choosing a model sends exactly one model command for that model', async ({ page }) => {
-	await page.setViewportSize({ width: 390, height: 844 })
-	await openConversation(page)
-
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
-	await page.getByRole('menuitemradio', { name: /Opus 5/ }).click()
-	await expect(page.getByRole('menu')).toHaveCount(0)
-
-	const sent = async () =>
-		await page.evaluate(() =>
-			(window.__remoteFixture?.commands ?? [])
-				.filter(command => command.operation.kind === 'model')
-				.map(command => command.operation),
-		)
-	await expect.poll(sent).toEqual([{ kind: 'model', provider: 'anthropic', id: 'claude-opus-5' }])
-})
-
-test('a conversation whose bridge lists no models keeps a plain, unclickable model line', async ({ page }) => {
-	await page.setViewportSize({ width: 390, height: 844 })
-	await page.goto(STORY)
-	// A bridge from before model selection omits the field; it does not send an empty one.
-	await page.waitForFunction(() => (window.__remoteFixture?.views.length ?? 0) > 0)
-	const stripped = await page.evaluate(() => {
-		const views = window.__remoteFixture?.views ?? []
-		for (const view of views) {
-			delete (view as { models?: unknown }).models
-			// Polling is revision-driven, so an edit nobody announces is correctly ignored.
-			view.revision += 1
-		}
-		return views.length
-	})
-	// Without this the loop can run over nothing and the test would assert its own no-op.
-	expect(stripped).toBeGreaterThan(0)
-	await page.getByRole('button', { name: /Helm conversation/ }).click()
-	await expect(page.locator('.remote-conversation')).toBeVisible()
-
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
-	// No models listed means no model choices, and a stated reason rather than silence.
-	// Effort is published separately, so its levels are unaffected.
-	await expect(page.getByRole('menu').getByRole('menuitemradio', { name: /model|Opus|GPT/i })).toHaveCount(0)
-	const reason = page.getByRole('menuitem', { name: 'Reload this terminal to choose a model' })
-	await expect(reason).toBeVisible()
-	await expect(reason).toBeDisabled()
-	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
-})
-
-test('the conversation menu reads as one list: model first, named once, actions below', async ({ page }) => {
+test('the menu names what can be changed, and each choice opens its own sheet', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
 	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
 
 	const menu = page.getByRole('menu')
-	// A heading per entry would print "Model" once per model; it belongs to the group.
-	await expect(menu.locator('.menu-section-label')).toHaveText(['Model', 'Effort'])
-	// Attach first, then identity, then effort, then the view options.
-	const items = menu.locator('.menu-item .menu-item-label')
-	await expect(items).toHaveText([
+	// A short list of subjects, not the choices themselves.
+	await expect(menu.locator('.menu-item .menu-item-label')).toHaveText([
 		// This story's bridge advertises no image input, so the entry states that instead.
 		/photos/i,
-		'GPT model',
-		'Opus 5',
-		'low',
-		'medium',
-		'high',
+		'Model',
+		'Effort',
 		'Info',
 		'Show tool activity',
 	])
-	// The options are divided from the models rather than continuing the same list.
-	await expect(menu.locator('.menu-separator')).toHaveCount(1)
+	// Each row answers "what is it now" without opening anything.
+	await expect(menu.locator('.menu-item-meta')).toHaveText(['GPT model', 'high'])
+	await expect(menu.getByRole('menuitemradio')).toHaveCount(0)
 })
 
-test('effort is chosen from the same menu and sends one thinking command', async ({ page }) => {
+test('the model sheet lists every model, marks the current one and sends one command', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
-	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
+	const sheet = await openSheet(page, 'Model')
 
-	const menu = page.getByRole('menu')
-	await expect(menu.locator('.menu-section-label')).toHaveText(['Model', 'Effort'])
-	// Only the levels this model publishes, not Pi's whole set.
-	const effort = menu.getByRole('menuitemradio', { name: /^(off|minimal|low|medium|high|xhigh|max)$/ })
-	await expect(effort).toHaveText(['low', 'medium', 'high'])
-	await expect(menu.getByRole('menuitemradio', { name: 'high', exact: true })).toHaveAttribute('aria-checked', 'true')
+	await expect(sheet.locator('.remote-sheet-option-label')).toHaveText(['GPT model', 'Opus 5'])
+	await expect(sheet.getByRole('radio', { name: /GPT model/ })).toHaveAttribute('aria-checked', 'true')
+	// Image support is known before the choice, not after a refused attachment.
+	await expect(sheet.getByRole('radio', { name: /Opus 5/ })).toContainText('Images')
 
-	await menu.getByRole('menuitemradio', { name: 'low', exact: true }).click()
+	await sheet.getByRole('radio', { name: /Opus 5/ }).click()
+	await expect(page.getByRole('dialog')).toHaveCount(0)
+	await expect
+		.poll(
+			async () =>
+				await page.evaluate(() =>
+					(window.__remoteFixture?.commands ?? [])
+						.filter(command => command.operation.kind === 'model')
+						.map(command => command.operation),
+				),
+		)
+		.toEqual([{ kind: 'model', provider: 'anthropic', id: 'claude-opus-5' }])
+})
+
+test('the effort sheet offers only the levels this model publishes', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 })
+	await openConversation(page)
+	const sheet = await openSheet(page, 'Effort')
+
+	// The tick is decoration inside the row, so assert the labels rather than the text.
+	await expect(sheet.locator('.remote-sheet-option-label')).toHaveText(['low', 'medium', 'high'])
+	await expect(sheet.getByRole('radio', { name: 'high', exact: true })).toHaveAttribute('aria-checked', 'true')
+
+	await sheet.getByRole('radio', { name: 'low', exact: true }).click()
 	await expect
 		.poll(
 			async () =>
@@ -125,6 +88,47 @@ test('effort is chosen from the same menu and sends one thinking command', async
 		.toEqual([{ kind: 'thinking', level: 'low' }])
 })
 
+test('a sheet dismisses by backdrop and by Escape, returning focus to the control that opened it', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 })
+	await openConversation(page)
+	const plus = page.getByRole('button', { name: 'Attachments, model and effort' })
+
+	await openSheet(page, 'Model')
+	await page.locator('.remote-sheet-dismiss').click()
+	await expect(page.getByRole('dialog')).toHaveCount(0)
+	await expect(plus).toBeFocused()
+
+	await openSheet(page, 'Effort')
+	await page.keyboard.press('Escape')
+	await expect(page.getByRole('dialog')).toHaveCount(0)
+	await expect(plus).toBeFocused()
+	// Dismissing is not choosing.
+	expect(await page.evaluate(() => (window.__remoteFixture?.commands ?? []).length)).toBe(0)
+})
+
+test('a conversation whose bridge lists no models says so in the sheet instead of showing an empty one', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 })
+	await page.goto(STORY)
+	await page.waitForFunction(() => (window.__remoteFixture?.views.length ?? 0) > 0)
+	const stripped = await page.evaluate(() => {
+		const views = window.__remoteFixture?.views ?? []
+		for (const view of views) {
+			delete (view as { models?: unknown }).models
+			view.revision += 1
+		}
+		return views.length
+	})
+	expect(stripped).toBeGreaterThan(0)
+	await page.getByRole('button', { name: /Helm conversation/ }).click()
+	await expect(page.locator('.remote-conversation')).toBeVisible()
+
+	const sheet = await openSheet(page, 'Model')
+	await expect(sheet.getByRole('radio')).toHaveCount(0)
+	await expect(sheet).toContainText('Reload this conversation’s terminal to choose a model.')
+})
+
 test('the composer menu survives a pending question, so Info never becomes unreachable', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
@@ -134,5 +138,5 @@ test('the composer menu survives a pending question, so Info never becomes unrea
 	// The header menu is gone, so this control is the only route to Info and the model.
 	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
 	await expect(page.getByRole('menuitem', { name: 'Info', exact: true })).toBeVisible()
-	await expect(page.getByRole('menuitemradio', { name: 'Opus 5' })).toBeVisible()
+	await expect(page.getByRole('menuitem', { name: /^Model/ })).toBeVisible()
 })

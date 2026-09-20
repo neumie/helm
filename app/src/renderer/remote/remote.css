@@ -1360,3 +1360,103 @@
 		--composer-floor: max(16px, env(safe-area-inset-bottom));
 	}
 }
+
+/*
+ * One decision on a surface big enough to read it. A bottom sheet on a phone, because
+ * that is where a thumb is, and a centred dialog once there is room for one.
+ */
+.remote-sheet-scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+}
+.remote-sheet-dismiss {
+	position: absolute;
+	inset: 0;
+	appearance: none;
+	border: 0;
+	padding: 0;
+	background: rgb(0 0 0 / 45%);
+	cursor: pointer;
+}
+.remote-sheet {
+	position: relative;
+	width: min(100%, 420px);
+	max-height: min(70dvh, 520px);
+	display: flex;
+	flex-direction: column;
+	padding: 8px 0 max(8px, env(safe-area-inset-bottom, 0px));
+	border-top: 1px solid var(--hairline);
+	border-radius: 14px 14px 0 0;
+	background: var(--chrome, var(--pane));
+	box-shadow: 0 -8px 32px rgb(0 0 0 / 40%);
+}
+.remote-sheet-title {
+	margin: 0;
+	padding: 8px 20px 12px;
+	font-size: calc(13px * var(--ui-scale, 1));
+	font-weight: 600;
+	color: var(--text-1);
+}
+.remote-sheet-options {
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.remote-sheet-option {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	width: 100%;
+	min-height: 48px;
+	padding: 10px 20px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	text-align: left;
+	color: var(--text-0);
+	font-family: inherit;
+	font-size: calc(15px * var(--ui-scale, 1));
+	cursor: pointer;
+}
+.remote-sheet-option:hover:not(:disabled) {
+	background: var(--fill-subtle);
+}
+.remote-sheet-option[aria-checked="true"] {
+	color: var(--accent);
+}
+.remote-sheet-option-mark {
+	margin-left: auto;
+}
+.remote-sheet-option:disabled {
+	color: var(--text-2);
+	cursor: default;
+}
+.remote-sheet-option-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.remote-sheet-option-meta {
+	margin-left: auto;
+	color: var(--text-2);
+	font-size: calc(12px * var(--ui-scale, 1));
+}
+.remote-sheet > .remote-note {
+	padding: 4px 20px 12px;
+	margin: 0;
+}
+@media (min-width: 800px) {
+	.remote-sheet-scrim {
+		align-items: center;
+	}
+	.remote-sheet {
+		border-radius: 14px;
+		border: 1px solid var(--hairline);
+		padding-bottom: 8px;
+	}
+}

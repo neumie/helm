@@ -115,7 +115,7 @@ async function previewBytes(page: Page) {
 		)
 }
 
-test('Add photos opens the system picker on every activation, and the menu closes behind it', async ({ page }) => {
+test('Upload photo opens the system picker on every activation, and the menu closes behind it', async ({ page }) => {
 	await open(page)
 	const plus = page.getByRole('button', { name: 'Attachments, model and effort', exact: true })
 	const touch = await page.evaluate(() => navigator.maxTouchPoints > 0)
@@ -124,7 +124,7 @@ test('Add photos opens the system picker on every activation, and the menu close
 		touch ? await plus.tap() : await plus.click()
 		const [picker] = await Promise.all([
 			page.waitForEvent('filechooser', { timeout: 5000 }),
-			page.getByRole('menuitem', { name: 'Add photos', exact: true }).click(),
+			page.getByRole('menuitem', { name: 'Upload photo', exact: true }).click(),
 		])
 		await expect(page.getByRole('menu')).toHaveCount(0)
 		await picker.setFiles([])
@@ -140,14 +140,15 @@ test('the composer menu is keyboard reachable and photos keep their unavailable 
 	await page.getByRole('textbox', { name: 'Message', exact: true }).focus()
 	await page.keyboard.press('Tab')
 	await expect(plus).toBeFocused()
-	for (const key of ['Enter', 'Space']) {
-		await plus.press(key)
-		await page.keyboard.press('ArrowDown')
-		const [picker] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')])
-		await picker.setFiles([])
-		// Dismissing returns to the control that opened it, not to the document.
-		await expect(plus).toBeFocused()
-	}
+
+	// Opening and moving by keyboard, then leaving without choosing.
+	await plus.press('Enter')
+	await page.keyboard.press('ArrowDown')
+	await expect(page.getByRole('menuitem', { name: 'Upload photo', exact: true })).toBeFocused()
+	await page.keyboard.press('Escape')
+	await expect(page.getByRole('menu')).toHaveCount(0)
+	await expect(plus).toBeFocused()
+
 	await page.keyboard.press('Tab')
 	await expect(page.getByRole('button', { name: /^Message delivery:/ })).toBeFocused()
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.setImageAvailable(false))
@@ -156,16 +157,14 @@ test('the composer menu is keyboard reachable and photos keep their unavailable 
 	await expect(page.locator('input[type=file]')).toBeDisabled()
 })
 
-test('Add images prepares selected files directly and permits same-file reselection after removal', async ({
-	page,
-}) => {
+test('Upload photo prepares selected files and permits same-file reselection after removal', async ({ page }) => {
 	await open(page)
 	const file = await imageFile(page, 'direct.png', 'image/png', '#228844', 40, 30)
 	for (let attempt = 0; attempt < 2; attempt++) {
 		await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
 		const [picker] = await Promise.all([
 			page.waitForEvent('filechooser'),
-			page.getByRole('menuitem', { name: 'Add photos', exact: true }).click(),
+			page.getByRole('menuitem', { name: 'Upload photo', exact: true }).click(),
 		])
 		await picker.setFiles(file)
 		await expect(page.locator('.remote-image-preview')).toHaveCount(1)
