@@ -27,10 +27,12 @@ import {
 	REMOTE_BODY_LIMIT,
 	REMOTE_MAX_MODELS,
 	REMOTE_PROTOCOL,
+	REMOTE_THINKING_LEVELS,
 	type RemoteCommand,
 	type RemoteModel,
 	type RemoteReceipt,
 	type RemoteSnapshot,
+	type RemoteThinking,
 	remoteQuestionSchema,
 } from '../../src/remote/protocol.js'
 import { RemoteSubagentActivityClient } from '../../src/remote/subagent-activity-client.js'
@@ -520,6 +522,17 @@ function connect(
 	 * be offered models outside its scope; it is frequently empty, which is not the same
 	 * as offering nothing. Bounded so a long catalogue cannot inflate every snapshot.
 	 */
+	/**
+	 * Effort levels this conversation can actually take. A model publishes a map with
+	 * unsupported levels marked null, so offering the whole list everywhere would offer
+	 * choices Pi would silently clamp.
+	 */
+	function selectableThinking(): RemoteThinking {
+		const map = ctx.model?.thinkingLevelMap
+		const levels = REMOTE_THINKING_LEVELS.filter(level => !map || map[level] !== null)
+		const current = pi.getThinkingLevel()
+		return { level: levels.includes(current) ? current : (levels[0] ?? 'off'), levels: [...levels] }
+	}
 	function selectableModels(): RemoteModel[] {
 		const scoped = (ctx.scopedModels ?? []).map(entry => entry.model)
 		const available = scoped.length ? scoped : (ctx.modelRegistry?.getAvailable() ?? [])
@@ -560,6 +573,7 @@ function connect(
 			// bridge cannot offer models", and an empty one means "it offers none". Collapsing
 			// those made a reloaded bridge look exactly like one that never reloaded.
 			models,
+			thinking: selectableThinking(),
 			...(imageNegotiated
 				? { imageInput: { version: IMAGE_INPUT_VERSION, available: modelCapable && !modelLoss } }
 				: {}),
@@ -600,6 +614,14 @@ function connect(
 		if (command.operation.kind === 'interrupt') {
 			imageClient.cancelUninvoked()
 			ctx.abort()
+			return 'dispatched'
+		}
+		if (command.operation.kind === 'thinking') {
+			const level = command.operation.level
+			// Only a level this model published; Pi clamps anything else silently.
+			if (!selectableThinking().levels.includes(level)) return 'rejected'
+			pi.setThinkingLevel(level)
+			revision++
 			return 'dispatched'
 		}
 		if (command.operation.kind === 'model') {

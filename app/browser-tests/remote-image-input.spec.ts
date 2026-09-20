@@ -56,7 +56,7 @@ async function imageFile(
 
 async function open(page: Page) {
 	await page.goto(path)
-	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
+	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeEnabled()
 }
 
 async function useProduction(page: Page) {
@@ -115,40 +115,44 @@ async function previewBytes(page: Page) {
 		)
 }
 
-test('Add images opens the system picker directly on every activation, without an intermediate menu', async ({
-	page,
-}) => {
+test('Add photos opens the system picker on every activation, and the menu closes behind it', async ({ page }) => {
 	await open(page)
-	const add = page.getByRole('button', { name: /^Add images/ })
+	const plus = page.getByRole('button', { name: 'Attachments, model and effort', exact: true })
 	const touch = await page.evaluate(() => navigator.maxTouchPoints > 0)
+	// Repeated because the original defect was the second activation silently failing.
 	for (let attempt = 0; attempt < 6; attempt++) {
+		touch ? await plus.tap() : await plus.click()
 		const [picker] = await Promise.all([
 			page.waitForEvent('filechooser', { timeout: 5000 }),
-			touch ? add.tap() : add.click(),
+			page.getByRole('menuitem', { name: 'Add photos', exact: true }).click(),
 		])
-		await expect(page.getByRole('menu', { name: 'Add images', exact: true })).toHaveCount(0)
+		await expect(page.getByRole('menu')).toHaveCount(0)
 		await picker.setFiles([])
 	}
 	await page.getByRole('button', { name: /^Message delivery:/ }).click()
 	await expect(page.getByRole('menu', { name: /^Message delivery:/ })).toBeVisible()
 })
 
-test('Add images opens directly with Enter and Space and preserves its disabled gate', async ({ page }) => {
+test('the composer menu is keyboard reachable and photos keep their unavailable gate', async ({ page }) => {
 	await open(page)
-	const add = page.getByRole('button', { name: /^Add images/ })
-	await expect(add).toHaveCount(1)
+	const plus = page.getByRole('button', { name: 'Attachments, model and effort', exact: true })
+	await expect(plus).toHaveCount(1)
 	await page.getByRole('textbox', { name: 'Message', exact: true }).focus()
 	await page.keyboard.press('Tab')
-	await expect(add).toBeFocused()
+	await expect(plus).toBeFocused()
 	for (const key of ['Enter', 'Space']) {
-		const [picker] = await Promise.all([page.waitForEvent('filechooser'), add.press(key)])
+		await plus.press(key)
+		await page.keyboard.press('ArrowDown')
+		const [picker] = await Promise.all([page.waitForEvent('filechooser'), page.keyboard.press('Enter')])
 		await picker.setFiles([])
-		await expect(add).toBeFocused()
+		// Dismissing returns to the control that opened it, not to the document.
+		await expect(plus).toBeFocused()
 	}
 	await page.keyboard.press('Tab')
 	await expect(page.getByRole('button', { name: /^Message delivery:/ })).toBeFocused()
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.setImageAvailable(false))
-	await expect(add).toBeDisabled()
+	await plus.click()
+	await expect(page.getByRole('menuitem', { name: /^Photos/ })).toBeDisabled()
 	await expect(page.locator('input[type=file]')).toBeDisabled()
 })
 
@@ -158,9 +162,10 @@ test('Add images prepares selected files directly and permits same-file reselect
 	await open(page)
 	const file = await imageFile(page, 'direct.png', 'image/png', '#228844', 40, 30)
 	for (let attempt = 0; attempt < 2; attempt++) {
+		await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
 		const [picker] = await Promise.all([
 			page.waitForEvent('filechooser'),
-			page.getByRole('button', { name: /^Add images/ }).click(),
+			page.getByRole('menuitem', { name: 'Add photos', exact: true }).click(),
 		])
 		await picker.setFiles(file)
 		await expect(page.locator('.remote-image-preview')).toHaveCount(1)
@@ -370,7 +375,7 @@ test('image-only draft remains discoverable through question and mobile Info whi
 	await expect(page.getByRole('button', { name: 'Edit draft', exact: true })).toBeVisible()
 	await page.getByRole('button', { name: 'Edit draft', exact: true }).click()
 	await expect(page.locator('.remote-image-preview')).toHaveCount(1)
-	await page.getByRole('button', { name: 'Conversation options' }).click()
+	await page.getByRole('button', { name: 'Attachments, model and effort' }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 	const composerActions = page.locator('.remote-composer-actions')
 	await expect(composerActions.getByRole('button', { name: 'Back to conversation', exact: true })).toBeVisible()
@@ -485,7 +490,7 @@ test('actual workspace root unmount revokes settled object URLs and remount star
 			}, objectUrl),
 		).toBe(false)
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.setWorkspaceMounted(true))
-	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
+	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeEnabled()
 	await expect(page.locator('.remote-image-preview')).toHaveCount(0)
 })
 
@@ -544,11 +549,13 @@ test('production directory/detail image support requires response ACK', async ({
 	})
 	await page.evaluate(() => (window.__remoteFixture as ImageInputFixtureControl | undefined)?.useProductionReads())
 	await expect.poll(() => directoryReads, { timeout: 10_000 }).toBeGreaterThan(0)
-	await expect(page.getByRole('button', { name: /^Add images/ })).toBeEnabled()
+	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeEnabled()
 	acknowledged = false
 	const priorReads = directoryReads
 	await expect.poll(() => directoryReads, { timeout: 10_000 }).toBeGreaterThan(priorReads)
-	await expect(page.getByRole('button', { name: /^Add images/ })).toBeDisabled({ timeout: 10_000 })
+	await expect(page.getByRole('button', { name: 'Attachments, model and effort', exact: true })).toBeEnabled({
+		timeout: 10_000,
+	})
 })
 
 for (const width of [320, 390]) {

@@ -69,6 +69,15 @@ const remotePromptOperationSchema = z
 	})
 	.strict()
 export const REMOTE_MAX_MODELS = 32
+/** Pi's thinking levels, in the order a reader should see them. */
+export const REMOTE_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+export const remoteThinkingLevelSchema = z.enum(REMOTE_THINKING_LEVELS)
+export type RemoteThinkingLevel = z.infer<typeof remoteThinkingLevelSchema>
+/** Absent from a bridge that predates effort selection; empty means the model supports none. */
+export const remoteThinkingSchema = z
+	.object({ level: remoteThinkingLevelSchema, levels: z.array(remoteThinkingLevelSchema).max(7) })
+	.strict()
+export type RemoteThinking = z.infer<typeof remoteThinkingSchema>
 /**
  * One selectable model. `image` travels with it because whether a conversation can take
  * images is a property of its model, and the reader choosing one needs to know that
@@ -91,6 +100,7 @@ export const remoteOperationSchema = z
 		z
 			.object({ kind: z.literal('model'), provider: z.string().min(1).max(64), id: z.string().min(1).max(128) })
 			.strict(),
+		z.object({ kind: z.literal('thinking'), level: remoteThinkingLevelSchema }).strict(),
 	])
 	.superRefine((value, ctx) => {
 		if (value.kind !== 'prompt') return
@@ -193,6 +203,7 @@ export const remoteSnapshotSchema = z
 		model: z.string().max(160).nullable(),
 		/** Absent from a bridge that predates model selection; never inferred from `model`. */
 		models: z.array(remoteModelSchema).max(REMOTE_MAX_MODELS).optional(),
+		thinking: remoteThinkingSchema.optional(),
 		activity: z.enum(['idle', 'working', 'waiting', 'unknown']),
 		subagents: remoteSubagentActivitySchema.optional(),
 		capabilities: z.object({ prompt: z.boolean(), interrupt: z.boolean(), answer: z.boolean() }).strict(),

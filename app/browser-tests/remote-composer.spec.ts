@@ -332,6 +332,6 @@ test('compact covered question keeps Interrupt beside local Back without an answ
 })
 
 async function openInfo(page: Page) {
-	await page.getByRole('button', { name: 'Conversation options', exact: true }).click()
+	await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 }

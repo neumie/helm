@@ -30,6 +30,8 @@ export function createRemoteFixture() {
 			{ provider: 'openai-codex', id: 'gpt-model', label: 'GPT model', image: false },
 			{ provider: 'anthropic', id: 'claude-opus-5', label: 'Opus 5', image: true },
 		],
+		// A model that publishes only some levels, so the effort list is not the full set.
+		thinking: { level: 'high' as const, levels: ['low', 'medium', 'high'] as const },
 		activity: 'idle',
 		connected: true,
 		capabilities: { prompt: true, interrupt: true, answer: false },

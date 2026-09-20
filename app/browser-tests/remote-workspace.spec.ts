@@ -756,7 +756,7 @@ for (const width of [320, 390])
 	})
 
 async function expectCurrentBranch(page: Page, present: boolean) {
-	await page.getByRole('button', { name: 'Conversation options', exact: true }).click()
+	await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 	const branch = page.locator('.remote-current-conversation dt').filter({ hasText: /^Branch$/ })
 	if (present) await expect(branch).toBeVisible()

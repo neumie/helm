@@ -58,6 +58,8 @@ import type { RemoteUsage } from './usage.js'
  */
 function commandAuthority(kind: RemoteCommand['operation']['kind']): 'prompt' | 'interrupt' | 'answer' {
 	if (kind === 'answer') return 'answer'
+	// Model and effort both direct what happens next, so they need prompting authority
+	// rather than the weaker authority to stop a conversation.
 	return kind === 'interrupt' ? 'interrupt' : 'prompt'
 }
 
@@ -1209,6 +1211,7 @@ export class RemoteHost {
 		label: string
 		model: string | null
 		models: string[] | null
+		thinking: { level: string; levels: string[] } | null
 		imageInput: { present: boolean; available: boolean } | null
 		connected: boolean
 		activity: string
@@ -1218,6 +1221,7 @@ export class RemoteHost {
 			label: session.snapshot.label,
 			model: session.snapshot.model,
 			models: session.snapshot.models?.map(value => `${value.provider}/${value.id}`) ?? null,
+			thinking: session.snapshot.thinking ?? null,
 			imageInput: session.imageInput
 				? { present: session.imageInput.present, available: session.imageInput.available }
 				: null,

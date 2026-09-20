@@ -254,7 +254,7 @@ for (const viewport of [
 			viewport,
 		)
 		await expectFullyContained(detail.getByRole('button', { name: 'Interrupt', exact: true }), viewport)
-		await expectFullyContained(detail.getByRole('button', { name: 'Conversation options', exact: true }), viewport)
+		await expectFullyContained(detail.getByRole('button', { name: 'Attachments, model and effort', exact: true }), viewport)
 		const composerBox = await detail.locator('.remote-composer').boundingBox()
 		expect(composerBox).not.toBeNull()
 		if (composerBox) expect(composerBox.y + composerBox.height).toBeLessThanOrEqual(viewport.height + 1)
@@ -285,7 +285,7 @@ for (const height of [420, 480, 560]) {
 			width: 390,
 			height,
 		})
-		await expectFullyContained(detail.getByRole('button', { name: 'Conversation options', exact: true }), {
+		await expectFullyContained(detail.getByRole('button', { name: 'Attachments, model and effort', exact: true }), {
 			width: 390,
 			height,
 		})
@@ -374,7 +374,7 @@ test('metadata-rich Okena detail keeps full composer and metadata reachable for 
 	await expectFullyContained(send, viewport)
 	await expectFullyContained(delivery, viewport)
 	await expectFullyContained(detail.getByRole('button', { name: 'Back to live conversations', exact: true }), viewport)
-	await expectFullyContained(detail.getByRole('button', { name: 'Conversation options', exact: true }), viewport)
+	await expectFullyContained(detail.getByRole('button', { name: 'Attachments, model and effort', exact: true }), viewport)
 	await openCurrentInfo(page)
 	await expect(metadata).toHaveAttribute('tabindex', '0')
 	await metadata.focus()
@@ -599,7 +599,7 @@ test.describe('touch activation', () => {
 })
 
 async function openCurrentInfo(page: Page) {
-	await page.getByRole('button', { name: 'Conversation options', exact: true }).click()
+	await page.getByRole('button', { name: 'Attachments, model and effort', exact: true }).click()
 	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
 }
 async function closeCurrentInfo(page: Page) {

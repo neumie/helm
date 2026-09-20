@@ -1137,14 +1137,16 @@ function Conversation({
 		)
 			return
 		const signal = lifecycle.current?.signal
-		// Choosing a model is offered by the bridge listing models, not by a capability
-		// flag, so it is admitted by that list rather than by capabilities.
+		// Model and effort are offered by what the bridge lists, not by a capability flag,
+		// so each is admitted by its own list rather than by capabilities.
 		const authority =
 			value.kind === 'answer'
 				? answerAdmission.current.allowed
 				: value.kind === 'model'
 					? !!view?.models?.some(model => model.provider === value.provider && model.id === value.id)
-					: !!view?.capabilities[value.kind]
+					: value.kind === 'thinking'
+						? !!view?.thinking?.levels.includes(value.level)
+						: !!view?.capabilities[value.kind]
 		// Synchronous admission also lets legitimate controls cancel an upload before any command POST.
 		if (!view || !connected || unresolved || !signal || signal.aborted || !authority) return
 		const command: RemoteCommand = {
@@ -1331,51 +1333,6 @@ function Conversation({
 					<h2 ref={heading} tabIndex={-1} title={sessionPresentation.title}>
 						{sessionPresentation.title}
 					</h2>
-					<MenuButton
-						trigger={GLYPH.ellipsis}
-						triggerLabel="Conversation options"
-						triggerRef={infoOpener}
-						entries={[
-							// The model comes first and is named once, the way a chat app puts identity
-							// above options. A heading on every entry would repeat thirty times.
-							...(view && !view.models?.length
-								? [
-										{
-											section: 'Model',
-											label: view.models
-												? 'No other models are configured for this conversation'
-												: 'Reload this terminal to choose a model',
-											disabled: true,
-											onSelect: () => {},
-										},
-									]
-								: []),
-							...(view?.models ?? []).map((model, index) => ({
-								...(index === 0 ? { section: 'Model' } : {}),
-								label: model.label,
-								// Image support belongs to the model, so it is shown before the choice
-								// rather than discovered by a refused attachment.
-								meta: model.image ? 'Images' : undefined,
-								checked: view?.model === `${model.provider}/${model.id}`,
-								checkedRole: 'radio' as const,
-								disabled: !!operation && operation.status !== 'dispatched',
-								onSelect: () => void send({ kind: 'model', provider: model.provider, id: model.id }),
-							})),
-							{ label: 'Info', onSelect: openInfo, group: true },
-							{ label: 'Show tool activity', checked: showActivity, checkedRole: 'checkbox', onSelect: toggleActivity },
-							...(historyPage
-								? [
-										{
-											label: 'Reread this range',
-											onSelect: () => {
-												rememberReading()
-												reader.reread()
-											},
-										},
-									]
-								: []),
-						]}
-					/>
 				</header>
 				{(!view ? false : !connected || gap) && (
 					<output className="remote-notice">
@@ -1444,8 +1401,8 @@ function Conversation({
 								record => record.kind === 'message' && isMessageVisible(record.message, showActivity),
 							) && (
 								<p className="remote-note">
-									No visible conversation messages in this range. Continue with Older or Newer, or show tool activity in
-									Conversation options.
+									No visible conversation messages in this range. Continue with Older or Newer, or show tool activity
+									from the composer menu.
 								</p>
 							)}
 						{view &&
@@ -1644,39 +1601,95 @@ function Conversation({
 							</label>
 						)}
 						<div className="remote-composer-actions">
-							{!question && (
-								<>
-									<input
-										ref={imageInput}
-										type="file"
-										hidden
-										accept="image/png,image/jpeg"
-										multiple
-										disabled={imageInputDisabled}
-										onChange={event => {
-											const files = Array.from(event.target.files ?? [])
-											event.target.value = ''
-											void selectImages(files)
-										}}
-									/>
-									<IconBtn
-										// A disabled control with no reason is a dead end; say what would enable it.
-										label={
-											!imageInputAvailable && !view?.imageInput
-												? 'Add images — needs this conversation’s terminal to reload'
-												: 'Add images'
-										}
-										className="remote-add-images"
-										disabled={imageInputDisabled}
-										onClick={() => {
+							<input
+								ref={imageInput}
+								type="file"
+								hidden
+								accept="image/png,image/jpeg"
+								multiple
+								disabled={imageInputDisabled}
+								onChange={event => {
+									const files = Array.from(event.target.files ?? [])
+									event.target.value = ''
+									void selectImages(files)
+								}}
+							/>
+							<MenuButton
+								align="start"
+								triggerClass="icon-btn remote-add-images"
+								trigger={GLYPH.plus}
+								triggerRef={infoOpener}
+								triggerLabel="Attachments, model and effort"
+								entries={[
+									{
+										label: imageInputAvailable
+											? 'Add photos'
+											: view?.imageInput
+												? 'Photos unavailable right now'
+												: 'Photos need this terminal to reload',
+										disabled: imageInputDisabled,
+										// Still inside the activation gesture, so the picker opens without a
+										// second tap once this entry is chosen.
+										onSelect: () => {
 											const input = imageInput.current
 											if (!input || input.disabled) return
 											if (typeof input.showPicker === 'function') input.showPicker()
 											else input.click()
-										}}
-									>
-										{GLYPH.plus}
-									</IconBtn>
+										},
+									},
+									...(view && !view.models?.length
+										? [
+												{
+													section: 'Model',
+													label: view.models
+														? 'No other models are configured'
+														: 'Reload this terminal to choose a model',
+													disabled: true,
+													onSelect: () => {},
+												},
+											]
+										: []),
+									...(view?.models ?? []).map((model, index) => ({
+										...(index === 0 ? { section: 'Model' } : {}),
+										label: model.label,
+										// Image support belongs to the model, so it is shown before the choice
+										// rather than discovered by a refused attachment.
+										meta: model.image ? 'Images' : undefined,
+										checked: view?.model === `${model.provider}/${model.id}`,
+										checkedRole: 'radio' as const,
+										disabled: !!operation && operation.status !== 'dispatched',
+										onSelect: () => void send({ kind: 'model', provider: model.provider, id: model.id }),
+									})),
+									...(view?.thinking?.levels ?? []).map((level, index) => ({
+										...(index === 0 ? { section: 'Effort' } : {}),
+										label: level,
+										checked: view?.thinking?.level === level,
+										checkedRole: 'radio' as const,
+										disabled: !!operation && operation.status !== 'dispatched',
+										onSelect: () => void send({ kind: 'thinking', level }),
+									})),
+									{ label: 'Info', onSelect: openInfo, group: true },
+									{
+										label: 'Show tool activity',
+										checked: showActivity,
+										checkedRole: 'checkbox',
+										onSelect: toggleActivity,
+									},
+									...(historyPage
+										? [
+												{
+													label: 'Reread this range',
+													onSelect: () => {
+														rememberReading()
+														reader.reread()
+													},
+												},
+											]
+										: []),
+								]}
+							/>
+							{!question && (
+								<>
 									<MenuButton
 										align="start"
 										triggerLabel={`Message delivery: ${draft.delivery === 'steer' ? 'During work' : 'Follow-up'}`}
