@@ -140,8 +140,10 @@
 	display: flex;
 	align-items: flex-start;
 }
-.remote-session-entry:hover {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.remote-session-entry:hover {
+		background: var(--fill-subtle);
+	}
 }
 .remote-session-entry:has(.remote-session-row[aria-current="page"]) {
 	background: var(--fill-raised);
@@ -237,8 +239,10 @@
 	/* The row's metadata rules must never restyle the shared noninteractive Chip. */
 	flex-shrink: 0;
 }
-.remote-session-row:hover {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.remote-session-row:hover {
+		background: var(--fill-subtle);
+	}
 }
 .remote-session-row[aria-current="page"] {
 	background: var(--fill-raised);
@@ -428,9 +432,11 @@
 	font-size: calc(12px * var(--ui-scale, 1));
 	font-weight: 500;
 }
-.remote-evidence > .btn:hover {
-	background: transparent;
-	color: var(--text-0);
+@media (hover: hover) {
+	.remote-evidence > .btn:hover {
+		background: transparent;
+		color: var(--text-0);
+	}
 }
 .remote-evidence pre {
 	margin-top: 0;
@@ -468,8 +474,10 @@
 	background: var(--chrome);
 	box-shadow: var(--shadow-1);
 }
-.remote-jump .remote-jump-button:hover {
-	background: var(--fill-raised);
+@media (hover: hover) {
+	.remote-jump .remote-jump-button:hover {
+		background: var(--fill-raised);
+	}
 }
 .remote-header h2 {
 	flex: 1;
@@ -593,9 +601,11 @@
 .remote-composer-actions .remote-interrupt {
 	margin-left: auto;
 }
-.remote-composer-actions .remote-interrupt:hover:not(:disabled) {
-	color: var(--danger);
-	background: var(--danger-soft);
+@media (hover: hover) {
+	.remote-composer-actions .remote-interrupt:hover:not(:disabled) {
+		color: var(--danger);
+		background: var(--danger-soft);
+	}
 }
 .remote-composer-actions .remote-send {
 	padding: 0;
@@ -1356,8 +1366,10 @@
 	font-size: calc(13px * var(--ui-scale, 1));
 	cursor: pointer;
 }
-.remote-row-menu-item:hover:not(:disabled) {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.remote-row-menu-item:hover:not(:disabled) {
+		background: var(--fill-subtle);
+	}
 }
 .remote-row-menu-item:disabled {
 	color: var(--text-2);
@@ -1446,8 +1458,10 @@
 	font-size: calc(15px * var(--ui-scale, 1));
 	cursor: pointer;
 }
-.remote-sheet-option:hover:not(:disabled) {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.remote-sheet-option:hover:not(:disabled) {
+		background: var(--fill-subtle);
+	}
 }
 .remote-sheet-option[aria-checked="true"] {
 	color: var(--accent);

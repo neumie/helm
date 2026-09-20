@@ -96,3 +96,47 @@ test('every destination is reachable from every other one at phone size', async 
 	await expect(page.locator('.remote-conversation')).toBeVisible()
 	await expect(page.getByRole('button', { name: 'Back to live conversations' })).toBeVisible()
 })
+
+test('no hover styling can stick to a touch device', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 })
+	await page.goto(STORY)
+	await expect(page.locator('.remote-session-row').first()).toBeVisible()
+
+	// A phone applies :hover to whatever was last touched and leaves it there, so a
+	// drag down the session list would light up the row the finger stopped over. Every
+	// hover rule must therefore sit behind a hover-capable guard.
+	const unguarded = await page.evaluate(() => {
+		const found: string[] = []
+		const walk = (rules: CSSRuleList, guarded: boolean) => {
+			for (const rule of Array.from(rules)) {
+				if (rule instanceof CSSMediaRule) {
+					walk(rule.cssRules, guarded || rule.conditionText.includes('hover: hover'))
+					continue
+				}
+				if (!(rule instanceof CSSStyleRule) || !rule.selectorText.includes(':hover') || guarded) continue
+				// Only rules that can actually reach something here: the bundle also carries
+				// desktop-only selectors that never render in Remote.
+				const reaches = rule.selectorText
+					.split(',')
+					.map(selector => selector.replace(/:hover/g, '').trim())
+					.some(selector => {
+						try {
+							return selector !== '' && document.querySelector(selector) !== null
+						} catch {
+							return false
+						}
+					})
+				if (reaches) found.push(rule.selectorText)
+			}
+		}
+		for (const sheet of Array.from(document.styleSheets)) {
+			try {
+				walk(sheet.cssRules, false)
+			} catch {
+				/* A cross-origin workbench sheet owns none of this. */
+			}
+		}
+		return found
+	})
+	expect(unguarded).toEqual([])
+})

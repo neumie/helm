@@ -52,8 +52,10 @@
 	border-radius: 999px;
 	background-clip: content-box;
 }
-:is(.sheet-body, .log-well, .plan-well)::-webkit-scrollbar-thumb:hover {
-	background-color: var(--thumb-hover);
+@media (hover: hover) {
+	:is(.sheet-body, .log-well, .plan-well)::-webkit-scrollbar-thumb:hover {
+		background-color: var(--thumb-hover);
+	}
 }
 
 .nav-page {
@@ -178,9 +180,11 @@
 	cursor: pointer;
 	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
-.icon-btn:hover {
-	background: var(--fill-subtle);
-	color: var(--text-0);
+@media (hover: hover) {
+	.icon-btn:hover {
+		background: var(--fill-subtle);
+		color: var(--text-0);
+	}
 }
 .icon-btn-glyph {
 	display: inline-flex;
@@ -249,9 +253,11 @@
 	user-select: none;
 	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
-.project-trigger:hover {
-	background: var(--fill-subtle);
-	color: var(--text-0);
+@media (hover: hover) {
+	.project-trigger:hover {
+		background: var(--fill-subtle);
+		color: var(--text-0);
+	}
 }
 /* Colored project slug (§3.3): 55% project / 45% --text-1 — identifies without
  * shouting. Unconfigured projects stay --text-2 (no mix). */
@@ -369,9 +375,11 @@
 	font-weight: 500;
 	color: var(--text-2);
 }
-.segmented-index .segment:hover:not(.segment-active),
-.segmented-index .segment:focus-visible:not(.segment-active) {
-	color: var(--text-0);
+@media (hover: hover) {
+	.segmented-index .segment:hover:not(.segment-active),
+	.segmented-index .segment:focus-visible:not(.segment-active) {
+		color: var(--text-0);
+	}
 }
 /* Active option: text weight + a 2px accent underline on the bottom hairline —
  * never accent-colored label text, never an option fill (§3.2). */
@@ -400,10 +408,12 @@
 	color: var(--text-2);
 	font-variant-numeric: tabular-nums;
 }
-.segmented-index .segment:hover:not(.segment-active) .segment-count,
-.segmented-index .segment:focus-visible:not(.segment-active) .segment-count,
-.segmented-index .segment-active .segment-count {
-	color: var(--text-1);
+@media (hover: hover) {
+	.segmented-index .segment:hover:not(.segment-active) .segment-count,
+	.segmented-index .segment:focus-visible:not(.segment-active) .segment-count,
+	.segmented-index .segment-active .segment-count {
+		color: var(--text-1);
+	}
 }
 
 /* ---------- list rows (§3.3) ---------- */
@@ -431,9 +441,11 @@
 .item-row-actions .icon-btn {
 	color: var(--text-2);
 }
-.item-row-actions .icon-btn:hover,
-.item-row-actions .icon-btn:focus-visible {
-	color: var(--text-0);
+@media (hover: hover) {
+	.item-row-actions .icon-btn:hover,
+	.item-row-actions .icon-btn:focus-visible {
+		color: var(--text-0);
+	}
 }
 
 /* Square, full-width state stripes (§3.3); content keeps the pane's 16px
@@ -457,8 +469,10 @@
 	cursor: pointer;
 	transition: background-color 140ms ease-out;
 }
-.item-row:hover {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.item-row:hover {
+		background: var(--fill-subtle);
+	}
 }
 .item-row:active {
 	background: var(--fill-raised);
@@ -720,9 +734,11 @@
 	font-size: calc(11px * var(--ui-scale));
 	font-variant-numeric: tabular-nums;
 }
-.menu-item:hover,
-.menu-item-active {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.menu-item:hover,
+	.menu-item-active {
+		background: var(--fill-subtle);
+	}
 }
 .menu-item:disabled {
 	color: var(--text-2);
@@ -732,9 +748,11 @@
 .menu-item-danger {
 	color: var(--danger);
 }
-.menu-item-danger:hover,
-.menu-item-danger.menu-item-active {
-	background: var(--danger-soft);
+@media (hover: hover) {
+	.menu-item-danger:hover,
+	.menu-item-danger.menu-item-active {
+		background: var(--danger-soft);
+	}
 }
 
 /* Trailing shortcut hint inside a menu item (§3.8): 11px mono, faint. */
@@ -955,9 +973,11 @@
 	opacity: 0;
 	transition: opacity 140ms ease-out;
 }
-.action-row:hover:not(:disabled)::after {
-	background: var(--fill-subtle);
-	opacity: 1;
+@media (hover: hover) {
+	.action-row:hover:not(:disabled)::after {
+		background: var(--fill-subtle);
+		opacity: 1;
+	}
 }
 .action-row:disabled {
 	opacity: 0.45;
@@ -1162,8 +1182,10 @@ button.banner {
 	user-select: none;
 	transition: color 140ms ease-out;
 }
-.clamp-text:hover .clamp-cue {
-	color: var(--text-1);
+@media (hover: hover) {
+	.clamp-text:hover .clamp-cue {
+		color: var(--text-1);
+	}
 }
 
 /* ---------- run section ---------- */
@@ -1240,8 +1262,10 @@ button.banner {
 	cursor: pointer;
 	transition: color 140ms ease-out;
 }
-.field-reset:hover {
-	color: var(--text-1);
+@media (hover: hover) {
+	.field-reset:hover {
+		color: var(--text-1);
+	}
 }
 
 /* One-line quiet caption under a run-setup control. */
@@ -1435,8 +1459,10 @@ button.banner {
 	cursor: pointer;
 	transition: background-color 140ms ease-out;
 }
-.attachment-row:hover {
-	background: var(--fill-subtle);
+@media (hover: hover) {
+	.attachment-row:hover {
+		background: var(--fill-subtle);
+	}
 }
 .attachment-name {
 	min-width: 0;
@@ -1528,8 +1554,10 @@ button.banner {
 .input::placeholder {
 	color: var(--text-2);
 }
-.input:hover {
-	border-color: var(--hairline-strong);
+@media (hover: hover) {
+	.input:hover {
+		border-color: var(--hairline-strong);
+	}
 }
 .input:focus {
 	border-color: var(--accent);
@@ -1582,8 +1610,10 @@ button.banner {
 	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
 }
-.input.new-item-title-input:hover {
-	border-color: var(--hairline-strong);
+@media (hover: hover) {
+	.input.new-item-title-input:hover {
+		border-color: var(--hairline-strong);
+	}
 }
 .input.new-item-title-input:focus {
 	border-color: var(--accent);
