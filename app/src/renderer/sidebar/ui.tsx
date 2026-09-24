@@ -25,6 +25,15 @@ const glyph = (d: string, size = 14) => (
 
 export const GLYPH = {
 	plus: glyph('M8 3v10M3 8h10'),
+	menu: (
+		<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+			<path
+				fillRule="evenodd"
+				d="M2 4.75A.75.75 0 0 1 2.75 4h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75Zm0 6.5a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z"
+				clipRule="evenodd"
+			/>
+		</svg>
+	),
 	back: glyph('M9.5 3.5 5 8l4.5 4.5'),
 	chevronRight: glyph('M6 3.5 10.5 8 6 12.5', 12),
 	chevronDown: glyph('M3.5 6 8 10.5 12.5 6', 12),

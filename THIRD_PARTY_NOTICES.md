@@ -38,6 +38,7 @@ Helm vendors native-size Heroicons for distinct concepts:
 - Background terminals — **Arrow Down on Square Stack**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
 - Scheduled runs — **Calendar Days**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
 - Remote composer send — **Arrow Up**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteArrow.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
+- Remote navigation drawer — **Bars 2**, v2.2.0, exact geometry in `app/src/renderer/sidebar/ui.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/bars-2.svg>
 - Remote latest-message navigation — **Arrow Down**, v2.2.0, same module: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
 - Remote PWA launcher — **Command Line**, v2.2.0, exact source `app/assets/remote/command-line.svg`; generated PNGs use Helm colors and mask-safe padding: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/command-line.svg>
 - Remote session favorites — **Star**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteFavoriteStar.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/star.svg>

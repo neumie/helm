@@ -3,6 +3,7 @@ import { type Page, type Route, expect, test } from '@playwright/test'
 import { inspectJpegForProcessed } from '../../src/remote/image-input-bytes.js'
 import type { RemoteCommand } from '../../src/remote/protocol.js'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
+import { openRemoteDestination } from './remote-navigation.js'
 
 interface ImageInputFixtureControl extends RemoteFixture {
 	useProductionTransport(): void
@@ -129,6 +130,7 @@ test('Upload photo opens the system picker on every activation, and the menu clo
 		await expect(page.getByRole('dialog')).toHaveCount(0)
 		await picker.setFiles([])
 	}
+	await page.getByRole('textbox', { name: 'Message', exact: true }).focus()
 	await page.getByRole('button', { name: /^Message delivery:/ }).click()
 	await expect(page.getByRole('menu', { name: /^Message delivery:/ })).toBeVisible()
 })
@@ -249,7 +251,7 @@ test('Send remains fenced while cancelled native preparation is still settling',
 	await page.getByRole('textbox', { name: 'Message', exact: true }).fill('must not send')
 	await page.getByRole('textbox', { name: 'Message', exact: true }).press('Control+Enter')
 	expect(await page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.evaluate(() => {
 		const owner = window as typeof window & {
 			__imageDecode?: { original: typeof createImageBitmap; release(): void }
@@ -454,13 +456,13 @@ test('same-owner Back and Forward retain the exact processed draft resource', as
 	expect(before).toHaveLength(1)
 	const objectUrl = await page.locator('.remote-image-preview img').getAttribute('src')
 	expect(objectUrl).toMatch(/^blob:/)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await expect(page.getByRole('button', { name: /Helm conversation/ })).toBeVisible()
 	await page.evaluate(() => history.forward())
 	await expect(page.locator('.remote-image-preview')).toHaveCount(1)
 	expect(await page.locator('.remote-image-preview img').getAttribute('src')).toBe(objectUrl)
 	expect(await previewBytes(page)).toEqual(before)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
 	await expect(page.locator('.remote-image-preview')).toHaveCount(1)
 	expect(await previewBytes(page)).toEqual(before)
@@ -585,6 +587,7 @@ for (const width of [320, 390]) {
 		const valid = await imageFile(page, 'compact.png', 'image/png', '#aa7722', 80, 42)
 		await page.locator('input[type=file][accept="image/png,image/jpeg"]').setInputFiles(valid)
 		await expect(page.locator('.remote-image-preview img')).toHaveCSS('width', '44px')
+		await page.getByRole('textbox', { name: 'Message', exact: true }).focus()
 		await page.getByRole('button', { name: /Message delivery:/ }).click()
 		const followUp = page.getByRole('menuitemradio', { name: 'Follow up after current work' })
 		await expect(followUp).toBeInViewport()
@@ -649,7 +652,8 @@ for (const width of [320, 390]) {
 			contentType: 'application/json',
 		})
 		expect(geometry.top).toBe('36px')
-		expect(geometry.bottom).toBe('24px')
+		// 24px native inset uses the low-bar floor: max(12px, 24px - 16px).
+		expect(geometry.bottom).toBe('12px')
 		expect(geometry.reading).toBeGreaterThanOrEqual(96)
 		expect(geometry.composer.bottom).toBe(420)
 		expect(geometry.composer.left).toBeGreaterThanOrEqual(0)
@@ -660,7 +664,7 @@ for (const width of [320, 390]) {
 			expect(control.width).toBe(44)
 			expect(control.height).toBe(44)
 			expect(control.top).toBeGreaterThanOrEqual(36)
-			expect(control.bottom).toBeLessThanOrEqual(396)
+			expect(control.bottom).toBeLessThanOrEqual(402)
 			expect(control.left).toBeGreaterThanOrEqual(0)
 			expect(control.right).toBeLessThanOrEqual(width)
 		}
@@ -734,13 +738,13 @@ for (const width of [320, 390]) {
 		expect(geometry.composer.bottom).toBe(420)
 		expect(geometry.composer.left).toBeGreaterThanOrEqual(0)
 		expect(geometry.composer.right).toBeLessThanOrEqual(width)
-		expect(geometry.bottomInset).toBe('24px')
+		expect(geometry.bottomInset).toBe('12px')
 		expect(geometry.reading).toBeGreaterThanOrEqual(96)
 		expect(geometry.editor).toBeGreaterThanOrEqual(40)
 		expect(geometry.preview).toBe(44)
 		for (const control of geometry.controls) {
 			expect(control.top, control.name ?? '').toBeGreaterThanOrEqual(36)
-			expect(control.bottom, control.name ?? '').toBeLessThanOrEqual(396)
+			expect(control.bottom, control.name ?? '').toBeLessThanOrEqual(402)
 			expect(control.left, control.name ?? '').toBeGreaterThanOrEqual(0)
 			expect(control.right, control.name ?? '').toBeLessThanOrEqual(width)
 			expect(control.height, control.name ?? '').toBeGreaterThanOrEqual(44)

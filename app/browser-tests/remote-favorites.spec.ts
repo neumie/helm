@@ -162,8 +162,7 @@ test('favorites pin stably, synchronize across browser clients, and keep selecti
 
 		const bravo = await openRowMenu(page, 'Bravo')
 		const item = bravo.getByRole('menuitem', { name: 'Pin to top' })
-		const bounds = await item.boundingBox()
-		expect(bounds?.height ?? 0).toBeGreaterThanOrEqual(44)
+		await expect.poll(async () => (await item.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
 		await page.keyboard.press('Enter')
 		await expect(sectionTitles(page, 'Pinned sessions')).toHaveText(['Bravo', 'Charlie'])
 		await expect(sectionTitles(page, 'Live sessions')).toHaveText(['Alpha'])

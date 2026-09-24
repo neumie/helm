@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
+import { openRemoteDestination } from './remote-navigation.js'
 
 declare global {
 	interface Window {
@@ -35,10 +36,10 @@ for (const width of [1280, 390]) {
 			.evaluate(node => node.getBoundingClientRect().top)
 		// Fractional text metrics + integer scrollTop can round by half a CSS pixel.
 		expect(Math.abs(afterTop - anchor.top)).toBeLessThanOrEqual(1)
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await page.getByRole('button', { name: /Planning conversation/ }).click()
 		await expect(page.getByLabel('Message', { exact: true })).toHaveValue('')
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await page.getByRole('button', { name: /Helm conversation/ }).click()
 		await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Keep my unsent draft')
 		await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible()
@@ -60,7 +61,7 @@ for (const width of [320, 390, 799, 800]) {
 		const selected = await Promise.all([
 			conversation.boundingBox(),
 			directory.boundingBox(),
-			page.getByRole('button', { name: 'Back to live conversations', exact: true }).boundingBox(),
+			page.getByRole('button', { name: 'Open navigation', exact: true }).boundingBox(),
 			page.getByLabel('Message', { exact: true }).boundingBox(),
 			page.getByLabel('Conversation messages').boundingBox(),
 		])
@@ -86,7 +87,7 @@ for (const width of [320, 390, 799, 800]) {
 			expect(directoryBox.width).toBe(320)
 		}
 		if (width === 320 || width === 390) await page.screenshot({ path: testInfo.outputPath(`responsive-${width}.png`) })
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await expect(directory).toBeVisible()
 		await expect(conversation).toBeHidden()
 		const directoryAfterBack = await directory.boundingBox()
@@ -138,12 +139,14 @@ test('metadata-only source changes update the detail without changing the conver
 	})
 	await expect(page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' })).toBeVisible()
 	await page.locator('.remote-session-row').filter({ hasText: 'Source: Okena' }).first().click()
-	await expect(page.locator('.remote-information-footer-source')).toHaveText('Okena')
+	await page.getByRole('button', { name: 'More', exact: true }).click()
+	await page.getByRole('menuitem', { name: 'Info', exact: true }).click()
+	await expect(page.locator('.remote-current-conversation dl')).toContainText('SourceOkena')
 	await page.evaluate(() => {
 		window.__remoteFixture?.changeTerminalSource('helm')
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-information-footer-source')).toHaveText('Helm')
+	await expect(page.locator('.remote-current-conversation dl')).toContainText('SourceHelm')
 	await expect(page.locator('.remote-message')).toHaveCount(40)
 })
 
@@ -215,7 +218,7 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		window.__remoteFixture?.setModel('expanded-model-'.repeat(10))
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
-	await expect(page.locator('.remote-information-footer-model')).toContainText('expanded-model-')
+	await expect(page.locator('.remote-chat > .remote-header button')).toHaveCount(1)
 	await expect.poll(tailGap).toBeLessThanOrEqual(1)
 
 	await page.evaluate(() => {
@@ -224,7 +227,7 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
 	await expectCurrentBranch(page, false)
-	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
+	await expect(page.locator('.remote-chat > .remote-header button')).toHaveCount(1)
 	await expect.poll(tailGap).toBeLessThanOrEqual(1)
 
 	await transcript.evaluate(node => {
@@ -257,7 +260,7 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
 	await expectCurrentBranch(page, true)
-	await expect(page.locator('.remote-information-footer-model')).toContainText('expanded-model-')
+	await expect(page.locator('.remote-chat > .remote-header button')).toHaveCount(1)
 	await expectAnchor()
 
 	await page.evaluate(() => {
@@ -266,7 +269,7 @@ test('metadata and model presentation changes preserve tail and anchored reading
 		document.dispatchEvent(new Event('visibilitychange'))
 	})
 	await expectCurrentBranch(page, false)
-	await expect(page.locator('.remote-information-footer-model')).toContainText('openai-codex/gpt-model')
+	await expect(page.locator('.remote-chat > .remote-header button')).toHaveCount(1)
 	await expectAnchor()
 })
 
@@ -300,7 +303,7 @@ test('real wheel scrolling stays anchored while streaming and immediate Back reo
 	const afterStream = await transcript.locator(`[data-message-id="${anchor.id}"]`).boundingBox()
 	if (!afterStream) throw new Error('Stream anchor disappeared')
 	expect(Math.abs(afterStream.y - anchor.top)).toBeLessThanOrEqual(1)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
 	const reopened = await transcript.locator(`[data-message-id="${anchor.id}"]`).boundingBox()
 	if (!reopened) throw new Error('Reopened anchor disappeared')
@@ -318,9 +321,9 @@ test('questions open at the first decision and retain answers only for the same 
 	await page.getByRole('radio', { name: /Keep the owner/ }).check()
 	await page.getByRole('checkbox', { name: /Desktop/ }).check()
 	await page.getByLabel('Custom answer: Custom').fill('Keep this answer while I browse')
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.getByRole('button', { name: /Planning conversation/ }).click()
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
 	await expect(page.getByRole('radio', { name: /Keep the owner/ })).toBeChecked()
 	await expect(page.getByRole('checkbox', { name: /Desktop/ })).toBeChecked()
@@ -471,7 +474,7 @@ test('reduced motion, keyboard focus, and a keyboard-height viewport remain usab
 		.getByLabel('Conversation messages')
 		.evaluate(node => node.getBoundingClientRect().height)
 	expect(transcriptHeight).toBeGreaterThan(80)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await expect(page.getByRole('button', { name: /Helm conversation/ })).toBeFocused()
 })
 
@@ -578,7 +581,7 @@ test('bounded live-window render and memory budgets', async ({ page }, testInfo)
 	}
 	const renderMs = await page.evaluate(() => window.__remoteRenderDurations ?? [])
 	for (let index = 0; index < 10; index++) {
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await page.getByRole('button', { name: /Helm conversation/ }).click()
 		await expect(page.locator('.remote-message')).toHaveCount(40)
 	}
@@ -702,11 +705,11 @@ for (const width of [320, 390])
 		const directory = page.locator('.remote-directory')
 		await expect(directory).toBeVisible()
 		if (method.startsWith('stylesheet')) {
-			// The directory owns the top inset; the destination bar below it owns the bottom.
+			// The directory and its one body scroller own the top and bottom insets.
 			const css = await page.evaluate(() => {
 				const wanted = new Map([
 					['.remote-directory', 'safe-area-inset-top'],
-					['.remote-tabs', 'safe-area-inset-bottom'],
+					['.remote-directory-body', 'safe-area-inset-bottom'],
 				])
 				const found: string[] = []
 				for (const sheet of Array.from(document.styleSheets))
@@ -727,8 +730,9 @@ for (const width of [320, 390])
 			await page.addStyleTag({ content: css })
 		}
 		expect(await directory.evaluate(node => getComputedStyle(node).paddingTop)).toBe('36px')
-		// The bar clears the home indicator, capped so a two-label bar keeps no empty strip.
-		expect(await page.locator('.remote-tabs').evaluate(node => getComputedStyle(node).paddingBottom)).toBe('4px')
+		expect(await page.locator('.remote-directory-body').evaluate(node => getComputedStyle(node).paddingBottom)).toBe(
+			'24px',
+		)
 		const search = await page.getByPlaceholder('Search live conversations').boundingBox()
 		if (!search) throw new Error('Missing search geometry')
 		expect(search.y).toBeGreaterThanOrEqual(36)
@@ -751,7 +755,7 @@ for (const width of [320, 390])
 		const conversation = await page.locator('.remote-conversation').boundingBox()
 		if (!conversation) throw new Error('Missing conversation geometry')
 		expect(conversation.width).toBe(width)
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await expect(directory).toBeVisible()
 	})
 

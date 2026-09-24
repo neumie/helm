@@ -30,6 +30,7 @@ function Harness({
 	readOnly = false,
 	scoped = false,
 	composerExample = false,
+	readingEdgeExample = false,
 	submitFeedbackExample = false,
 	compactHeaderExample = false,
 	markdownExample = false,
@@ -38,6 +39,7 @@ function Harness({
 	terminalMetadataExample = false,
 	rowDensityExample = false,
 	historyExample = false,
+	historyScrollExample = false,
 	imageInputExample = false,
 	favoritesExample = false,
 	favoritesWireExample = false,
@@ -53,6 +55,7 @@ function Harness({
 	readOnly?: boolean
 	scoped?: boolean
 	composerExample?: boolean
+	readingEdgeExample?: boolean
 	submitFeedbackExample?: boolean
 	compactHeaderExample?: boolean
 	markdownExample?: boolean
@@ -61,6 +64,7 @@ function Harness({
 	terminalMetadataExample?: boolean
 	rowDensityExample?: boolean
 	historyExample?: boolean
+	historyScrollExample?: boolean
 	imageInputExample?: boolean
 	favoritesExample?: boolean
 	favoritesWireExample?: boolean
@@ -92,7 +96,7 @@ function Harness({
 			}
 		}
 		if (informationExample) value.enableInformation()
-		if (historyExample || historyState) value.enableHistory(440, false, historyState)
+		if (historyExample || historyScrollExample || historyState) value.enableHistory(440, false, historyState)
 		if (composerExample) value.showComposerExample()
 		if (submitFeedbackExample) {
 			const send = value.transport.send.bind(value.transport)
@@ -152,7 +156,16 @@ function Harness({
 	}, [fixture])
 	useEffect(() => {
 		if (!workspaceMounted) return
-		if (!composerExample && !markdownExample && !chainedExample && !historyState && !working && !imageInputExample)
+		if (
+			!composerExample &&
+			!readingEdgeExample &&
+			!markdownExample &&
+			!chainedExample &&
+			!historyScrollExample &&
+			!historyState &&
+			!working &&
+			!imageInputExample
+		)
 			return
 		let frame = 0
 		let attempts = 0
@@ -174,7 +187,17 @@ function Harness({
 		}
 		frame = requestAnimationFrame(open)
 		return () => cancelAnimationFrame(frame)
-	}, [composerExample, markdownExample, chainedExample, historyState, working, imageInputExample, workspaceMounted])
+	}, [
+		composerExample,
+		readingEdgeExample,
+		markdownExample,
+		chainedExample,
+		historyScrollExample,
+		historyState,
+		working,
+		imageInputExample,
+		workspaceMounted,
+	])
 	return (
 		<Profiler
 			id="Remote workspace"
@@ -247,7 +270,7 @@ export const CompactHeader: Story = {
 		docs: {
 			description: {
 				story:
-					'A single 44px header plus the native top inset. Conversation options → Info exposes the full wrapped native title, current status and context even without exporters; the one-row footer preserves native model/source with unknown accounting.',
+					'Only a frosted 44px navigation circle floats over the transparent chat. The drawer shows the full conversation name and opens Model; composer More → Info exposes the title, honest source and unavailable accounting even without exporters.',
 			},
 		},
 	},
@@ -258,7 +281,7 @@ export const Information: Story = {
 		docs: {
 			description: {
 				story:
-					'Information shows the grouped footer with safe input-plus-output accounting, honest source and context meter. Info adds the input/output breakdown and context-window evidence without repeating model, effort, spent total or context percentage. The footer stays on one 20px row at every size; compact widths/heights tighten gaps and use accessible unavailable dashes while preserving all controls; projected assistant thinking is always visible literal text with terminal formatting normalized, while tool activity remains opt-in.',
+					'Info holds the honest source, safe input-plus-output reported total and context percentage alongside individual input/output and context-window evidence. There is no information footer above the input: the composer is transparent, only the writing capsule is filled. Projected assistant thinking remains literal visible text while tool activity stays opt-in.',
 			},
 		},
 	},
@@ -266,6 +289,17 @@ export const Information: Story = {
 export const InformationQuestion: Story = { args: { informationExample: true, question: true } }
 export const Working: Story = { args: { working: true } }
 export const WorkingWithHistory: Story = { args: { working: true, historyExample: true } }
+export const HistoryScroll: Story = {
+	args: { historyScrollExample: true },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Scroll upward in the conversation to load an older range once, then keep scrolling upward across bounded pages. The centered Earlier messages button remains a fallback for short/empty chats; no history read occurs just because the story mounted.',
+			},
+		},
+	},
+}
 export const HistoryReader: Story = { args: { historyExample: true } }
 export const HistoryProgress: Story = { args: { historyState: 'progress' } }
 export const HistoryExpired: Story = { args: { historyState: 'expired' } }
@@ -279,7 +313,18 @@ export const Composer: Story = {
 		docs: {
 			description: {
 				story:
-					'At 390×420, type six lines: the single-row editor grows, then scrolls while the reading floor, information footer and bottom actions remain contained.',
+					'At 390×420, the unfocused capsule is one compact row with More, the delivery-mode chooser, and Send. Change Steer/Follow-up directly there without opening the editor. Focus the editor, even while empty, to reveal a taller writing row above the same More, delivery and Send (plus Interrupt during observed work). Delivery uses a turn arrow for Steer during work and a down-to-tray arrow for Follow-up after current work; switching modes changes only this glyph and its existing label, not queue management. Type six lines to see the editor grow and scroll; blur it to return to one visible line without losing the draft. The frosted capsule remains the only styled bottom surface.',
+			},
+		},
+	},
+}
+export const ReadingEdge: Story = {
+	args: { readingEdgeExample: true },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Scroll this long live conversation: text passes behind the frosted navigation circle and its quiet inset glass rim, with no full-width header blur or bottom veil. The input capsule and floating Jump to latest pill share that light-catching edge; the transparent composer and scroll owner remain unchanged.',
 			},
 		},
 	},

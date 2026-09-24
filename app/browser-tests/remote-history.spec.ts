@@ -4,6 +4,7 @@ import type { HistoryEntry } from '../../src/remote/history-projection.js'
 import { historyRequestSchema } from '../../src/remote/history-protocol.js'
 import { RemoteHistoryReader } from '../../src/remote/history-reader.js'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
+import { openRemoteDestination } from './remote-navigation.js'
 declare global {
 	interface Window {
 		__remoteFixture?: RemoteFixture
@@ -298,7 +299,7 @@ for (const width of [1280, 390, 320]) {
 		await page.getByRole('button', { name: 'Jump to latest', exact: true }).click()
 		await expect(page.getByText('A later live reply', { exact: true })).toBeVisible()
 		await expect(input).toHaveValue('Unsent history draft')
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await page.goForward()
 		await expect(input).toHaveValue('Unsent history draft')
 	})

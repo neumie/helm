@@ -1,22 +1,59 @@
+:root.remote-page {
+	--remote-page: #0d0d0d;
+	/* Installed WebKit can report a shorter 100dvh than 100vh. Paint the
+	 * physical tail without extending the clipped conversation workspace. */
+	min-height: 100vh;
+	background: var(--remote-page);
+}
+body.remote-page,
+#remote-root {
+	background: var(--remote-page, #0d0d0d);
+}
+body.remote-page {
+	min-height: 100vh;
+}
 #remote-root {
 	width: 100%;
+	min-height: 100%;
+}
+
+/*
+ * The remote is a phone chat app, not the desktop cockpit, so it owns its own
+ * surface ladder: a near-black page, one step lighter for anything raised above it,
+ * and hairlines only where two surfaces actually meet. Scoped to the remote roots
+ * because these tokens are shared with the Electron renderer, which keeps its own.
+ */
+.remote-workspace,
+.remote-login,
+.remote-empty {
+	--pane: var(--remote-page, #0d0d0d);
+	--chrome: #1c1c1e;
+	--well: #1a1a1a;
+	--hairline: rgb(255 255 255 / 8%);
+	--hairline-strong: rgb(255 255 255 / 16%);
+	--fill-subtle: rgb(255 255 255 / 5.5%);
+	--fill-raised: rgb(255 255 255 / 11%);
+	/* The one grey that carries a user's own words back to them. */
+	--remote-bubble: #2f2f2f;
 }
 .remote-workspace {
 	width: 100%;
-	height: 100dvh;
+	/* Focused software keyboards can make WebKit's dvh disagree with the visible
+	 * keyboard edge. Only a measured keyboard viewport overrides this fallback. */
+	height: var(--remote-keyboard-height, 100dvh);
 	min-height: 0;
 	display: grid;
 	grid-template-columns: 320px minmax(0, 1fr);
-	/* One content row, then the destination bar that outlives whatever fills it. */
-	grid-template-rows: minmax(0, 1fr) auto;
+	grid-template-rows: minmax(0, 1fr);
 	background: var(--pane);
 	color: var(--text-0);
 	font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
 	font-size: calc(13px * var(--ui-scale, 1));
 	/* Clip the pushed phone destination without creating a focus-scrollable root. */
 	overflow: clip;
-	/* The destination bar normally owns the bottom inset, so the composer clears 16px. */
-	--composer-floor: 16px;
+	/* Let the capsule occupy the upper safe area like a native bottom bar. Its
+	 * internal 6px action inset still clears the home indicator. */
+	--composer-floor: max(12px, calc(env(safe-area-inset-bottom, 0px) - 16px));
 }
 .remote-directory,
 .remote-conversation,
@@ -28,13 +65,12 @@
 }
 .remote-directory {
 	padding-top: env(safe-area-inset-top, 0px);
-	/* The destination bar sits below every pane and owns the bottom inset. */
 	border-right: 1px solid var(--hairline);
 	overflow: hidden;
 }
 .remote-directory-body {
 	/* Leave the final full row above the safe edge despite fractional scroll rounding. */
-	padding-bottom: 8px;
+	padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
 	min-height: 0;
 	flex: 1;
 	overflow-y: auto;
@@ -67,6 +103,39 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.remote-navigation-header {
+	min-height: 56px;
+	padding: 6px 16px;
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+.remote-navigation-header h1,
+.remote-navigation-header h2 {
+	margin: 0;
+	font-size: calc(17px * var(--ui-scale, 1));
+	font-weight: 600;
+	color: var(--text-0);
+}
+.remote-navigation-trigger {
+	position: relative;
+	isolation: isolate;
+	width: 44px;
+	height: 44px;
+	border-radius: 999px;
+	color: var(--text-1);
+}
+.remote-navigation-trigger::before {
+	content: "";
+	position: absolute;
+	inset: 4px;
+	z-index: -1;
+	border-radius: inherit;
+	background: transparent;
+	transition: background-color 140ms ease-out;
 }
 .remote-filters {
 	padding: 12px 16px 8px;
@@ -108,8 +177,12 @@
 	font-size: calc(13px * var(--ui-scale, 1));
 	color: var(--text-0);
 	background: var(--fill-subtle);
-	border: 1px solid var(--hairline);
-	border-radius: var(--radius-md, 6px);
+	/*
+	 * A field is told by its fill, not by a drawn edge. The border stays in the box as
+	 * a transparent line so focus can colour it without moving anything a pixel.
+	 */
+	border: 1px solid transparent;
+	border-radius: 10px;
 	padding: 8px 12px;
 	outline: none;
 }
@@ -132,7 +205,7 @@
 }
 .remote-section-heading {
 	padding: 8px 16px 4px;
-	font-size: calc(12px * var(--ui-scale, 1));
+	font-size: calc(13px * var(--ui-scale, 1));
 	font-weight: 600;
 	color: var(--text-1);
 }
@@ -201,7 +274,8 @@
 }
 .remote-session-title {
 	min-width: 0;
-	font-size: calc(13px * var(--ui-scale, 1));
+	/* A row's name is body text; everything under it is secondary or a caption. */
+	font-size: calc(16px * var(--ui-scale, 1));
 	font-weight: 500;
 	overflow: hidden;
 	white-space: nowrap;
@@ -219,6 +293,7 @@
 }
 .remote-session-source {
 	color: var(--text-0);
+	font-size: calc(13px * var(--ui-scale, 1));
 }
 .remote-session-fact-label {
 	color: var(--text-2);
@@ -259,6 +334,22 @@
 }
 .remote-back {
 	min-height: 44px;
+	position: relative;
+	isolation: isolate;
+	color: var(--text-1);
+	border-radius: 999px;
+}
+.remote-back::before {
+	content: "";
+	position: absolute;
+	inset: 4px;
+	z-index: -1;
+	border-radius: inherit;
+	background: transparent;
+	transition: background-color 140ms ease-out;
+}
+.remote-back svg {
+	position: relative;
 }
 .remote-chat > .remote-header,
 .remote-chat > .remote-context,
@@ -286,12 +377,45 @@
 	font-size: calc(12px * var(--ui-scale, 1));
 	line-height: 1.5;
 }
+/* Keep the scroll owner behind the floating composer. Grid gives the reading
+ * area its 96px floor above the actual (content-sized) footer. */
+.remote-reading-stage {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(96px, 1fr) auto;
+}
 .remote-reading-area {
 	position: relative;
 	isolation: isolate;
+	grid-area: 1 / 1 / 3 / 2;
 	display: flex;
-	flex: 1;
-	min-height: 96px;
+	min-height: 0;
+}
+/* Information is a separate reading destination, not content behind the input. */
+.remote-reading-stage:has(.remote-information-view) .remote-reading-area {
+	grid-row: 1;
+}
+/* The canvas remains visible behind the solitary floating navigation control.
+ * Blank header space passes swipes to the transcript; History and notices stay
+ * beneath the control rather than sliding under it. */
+.remote-chat > .remote-header {
+	position: relative;
+	z-index: 4;
+	margin-bottom: calc(-44px - env(safe-area-inset-top, 0px));
+	pointer-events: none;
+	background: transparent;
+}
+.remote-chat > .remote-header > :is(.remote-back, .remote-navigation-trigger) {
+	pointer-events: auto;
+	background: color-mix(in srgb, var(--pane) 55%, transparent);
+	-webkit-backdrop-filter: blur(5px);
+	backdrop-filter: blur(5px);
+	box-shadow: inset 0 0 0 1px var(--hairline), inset 0 1px 0 var(--hairline-strong);
+}
+.remote-chat > .remote-header + :is(.remote-notice, .remote-history) {
+	margin-top: calc(44px + env(safe-area-inset-top, 0px));
 }
 .remote-transcript {
 	min-height: 0;
@@ -299,29 +423,61 @@
 	overflow: auto;
 	scrollbar-gutter: stable;
 	overflow-anchor: none;
-	padding: 0 16px;
+	/* The actual footer height is measured; 76px is the single-row fallback. */
+	padding: 24px 16px calc(28px + var(--remote-composer-overlap, 76px));
+}
+.remote-chat > .remote-header + .remote-reading-stage > .remote-reading-area > .remote-transcript {
+	padding-top: calc(68px + env(safe-area-inset-top, 0px));
+}
+.remote-chat > .remote-header + .remote-reading-stage > .remote-reading-area > .remote-information-view {
+	top: calc(44px + env(safe-area-inset-top, 0px));
 }
 .remote-message {
 	max-width: 800px;
 	margin: 0 auto;
-	padding: 16px 0;
+	padding: 10px 0;
 	border-bottom: 0;
 	user-select: text;
 	overflow-wrap: anywhere;
+	font-size: calc(16px * var(--ui-scale, 1));
+	line-height: 1.55;
 }
 .remote-message[data-continuation="true"] {
 	padding-top: 0;
 }
+/*
+ * A conversation reads as two voices: the assistant speaks plainly into the page,
+ * and your own words come back on your side in a bubble. The speaker headings stay
+ * in the accessibility tree — they still mark where a speaker changes — but a
+ * sighted reader gets that from the shape instead of a label above every turn.
+ */
 .remote-message-author {
-	margin: 0 0 8px;
-	color: var(--text-1);
-	font-size: calc(12px * var(--ui-scale, 1));
-	font-weight: 600;
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+.remote-message[data-role="user"] {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+}
+.remote-message[data-role="user"] .remote-user-text {
+	max-width: 76%;
+	padding: 8px 14px;
+	border-radius: 18px;
+	background: var(--remote-bubble);
+	text-align: left;
 }
 .remote-user-text,
 .remote-plain {
 	white-space: pre-wrap;
-	line-height: 1.6;
+	line-height: 1.55;
 	margin: 0;
 }
 .remote-thinking {
@@ -348,19 +504,20 @@
 }
 .remote-markdown p {
 	white-space: normal;
-	margin: 0 0 12px;
+	margin: 0 0 10px;
 }
 .remote-markdown h3,
 .remote-markdown h4,
 .remote-markdown h5,
 .remote-markdown h6 {
 	color: var(--text-0);
-	font-size: calc(15px * var(--ui-scale, 1));
+	/* Headings step above the 16px body rather than sitting under it. */
+	font-size: calc(17px * var(--ui-scale, 1));
 	font-weight: 600;
 	margin: 20px 0 8px;
 }
 .remote-markdown h3 {
-	font-size: calc(17px * var(--ui-scale, 1));
+	font-size: calc(20px * var(--ui-scale, 1));
 }
 .remote-markdown ul,
 .remote-markdown ol {
@@ -447,7 +604,8 @@
 .remote-message pre,
 .remote-question pre {
 	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
-	font-size: calc(11px * var(--ui-scale, 1));
+	/* Code is read, not glanced at: a caption size under 16px body was too small. */
+	font-size: calc(13px * var(--ui-scale, 1));
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 	max-height: 240px;
@@ -461,7 +619,7 @@
 .remote-jump {
 	position: absolute;
 	z-index: 2;
-	bottom: 12px;
+	bottom: calc(12px + var(--remote-composer-overlap, 76px));
 	inset-inline: 16px;
 	display: flex;
 	justify-content: center;
@@ -471,12 +629,14 @@
 	pointer-events: auto;
 	height: 44px;
 	border-radius: 999px;
-	background: var(--chrome);
-	box-shadow: var(--shadow-1);
+	background: color-mix(in srgb, var(--chrome) 68%, transparent);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
+	box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline), inset 0 1px 0 var(--hairline-strong);
 }
 @media (hover: hover) {
 	.remote-jump .remote-jump-button:hover {
-		background: var(--fill-raised);
+		background: color-mix(in srgb, var(--chrome) 80%, transparent);
 	}
 }
 .remote-header h2 {
@@ -485,11 +645,16 @@
 .remote-header .menu-root > .icon-btn {
 	width: 44px;
 	height: 44px;
+	border-radius: 999px;
 }
 .remote-composer {
+	grid-area: 2 / 1 / 3 / 2;
+	align-self: end;
 	position: relative;
 	z-index: 3;
 	flex-shrink: 0;
+	/* Blank footer space passes swipes to the transcript; controls intercept. */
+	pointer-events: none;
 	max-height: min(55dvh, calc(100dvh - 216px));
 	padding: 8px 16px 16px;
 	padding-bottom: var(--composer-floor);
@@ -497,10 +662,35 @@
 	flex-direction: column;
 	gap: 8px;
 }
+.remote-composer > * {
+	pointer-events: auto;
+}
+/*
+ * One mobile-chat capsule: compact at rest. Editor focus opens the writing row
+ * above its controls; focus moving within an engaged capsule retains that layout.
+ * Attachments and errors remain in the same bounded surface.
+ */
 .remote-compose-surface {
+	position: relative;
+	isolation: isolate;
 	flex-shrink: 0;
-	background: var(--fill-subtle);
-	border-radius: var(--radius-lg, 8px);
+	border-radius: 28px;
+	overflow: visible;
+}
+.remote-compose-surface::before {
+	/* Keep the blur off the ancestor: backdrop-filter on the capsule itself
+	 * turns the fixed More sheet into a capsule-relative overlay. */
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	border-radius: inherit;
+	background: color-mix(in srgb, var(--chrome) 68%, transparent);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
+	/* A quiet glass edge: one hairline around the capsule, a lighter catch at the top. */
+	box-shadow: inset 0 0 0 1px var(--hairline), inset 0 1px 0 var(--hairline-strong);
+	pointer-events: none;
 }
 .remote-compose-surface:focus-within {
 	box-shadow: inset 0 0 0 1px var(--hairline-strong);
@@ -533,6 +723,10 @@
 	height: 44px;
 	flex-shrink: 0;
 }
+.remote-composer-actions .remote-add-images {
+	/* Keep focus order Message → More while placing + at the capsule's leading edge. */
+	order: -1;
+}
 .remote-image-selection-error,
 .remote-image-preparing {
 	min-height: 64px;
@@ -564,17 +758,23 @@
 	font-size: calc(12px * var(--ui-scale, 1));
 	line-height: 1.5;
 }
+.remote-composer-actions .remote-prompt-field {
+	flex: 1 1 auto;
+	min-width: 0;
+	gap: 0;
+	overflow: hidden;
+}
 .remote-workspace .remote-compose-surface textarea {
 	display: block;
-	min-height: 40px;
+	min-height: 44px;
 	max-height: min(144px, 24dvh);
-	padding: 12px 16px 4px;
+	padding: 10px 6px;
 	resize: none;
 	border: 0;
 	border-radius: 0;
 	background: transparent;
 	box-shadow: none;
-	line-height: 1.5;
+	line-height: 1.45;
 	overflow-y: auto;
 }
 .remote-compose-surface textarea::placeholder {
@@ -586,9 +786,9 @@
 .remote-composer-actions {
 	display: flex;
 	gap: 8px;
-	align-items: center;
-	justify-content: space-between;
-	padding: 4px 8px 8px;
+	align-items: flex-end;
+	min-height: 56px;
+	padding: 6px;
 }
 .remote-composer-actions .remote-interrupt,
 .remote-composer-actions .remote-send,
@@ -597,9 +797,6 @@
 	width: 44px;
 	height: 44px;
 	flex-shrink: 0;
-}
-.remote-composer-actions .remote-interrupt {
-	margin-left: auto;
 }
 @media (hover: hover) {
 	.remote-composer-actions .remote-interrupt:hover:not(:disabled) {
@@ -611,20 +808,71 @@
 	padding: 0;
 	border-radius: 999px;
 }
-.remote-composer-actions:not(:has(.remote-interrupt)) .remote-send {
-	margin-left: auto;
+/*
+ * Send is white rather than the app accent: on this surface it is the one committed
+ * action, and the accent is already spoken for by the tab bar and links. With nothing
+ * to send the shared quiet tone leaves it a dim grey circle, which is the whole signal.
+ */
+.remote-composer-actions .remote-send.btn-primary {
+	background: #fff;
+	color: #0d0d0d;
+}
+@media (hover: hover) {
+	.remote-composer-actions .remote-send.btn-primary:hover:not(:disabled) {
+		background: rgb(255 255 255 / 88%);
+	}
 }
 .remote-composer-actions .remote-mode-trigger {
 	padding: 0;
 	color: var(--text-1);
 }
+/* Keep delivery visible beside the writing field in the compact row, so its
+ * current mode and the mode chooser remain accessible without editor focus. */
+.remote-workspace .remote-compose-surface:not(.remote-compose-open) textarea {
+	max-height: 44px;
+	overflow-y: hidden;
+}
+/* Only editor focus opens the capsule. Focus moving within it retains the open
+ * state, so tapping an action never shifts its target during the press. */
+.remote-compose-open .remote-composer-actions {
+	flex-wrap: wrap;
+}
+.remote-compose-open .remote-prompt-field {
+	order: -2;
+	flex: 0 0 100%;
+}
+.remote-workspace .remote-compose-open textarea {
+	padding: 8px 12px 2px;
+}
+.remote-compose-open .remote-send,
+.remote-compose-open .remote-information-back,
+.remote-compose-open .remote-composer-actions > .btn:last-child {
+	margin-left: auto;
+}
 .remote-composer-actions .menu-panel {
 	top: auto;
 	bottom: calc(100% + 12px);
-	width: min(288px, calc(100vw - 48px));
+	/* The expanded trigger sits after More; keep its menu inside 320px. */
+	width: min(240px, calc(100vw - 80px));
+	padding: 6px;
+	border-color: var(--hairline-strong);
+	border-radius: 18px;
+	box-shadow: 0 16px 44px rgb(0 0 0 / 48%);
+	transform-origin: bottom right;
+	animation: remote-popover-in 140ms ease-out both;
+}
+/* In the compact row the trigger is after the flexible field. Anchor to the
+ * right of that trigger instead of pushing its menu past the phone edge. */
+.remote-compose-surface:not(.remote-compose-open) .remote-composer-actions .menu-panel.menu-start {
+	left: auto;
+	right: -52px;
 }
 .remote-composer-actions .menu-item {
+	height: auto;
 	min-height: 44px;
+	padding: 0 12px;
+	border-radius: 12px;
+	font-size: calc(14px * var(--ui-scale, 1));
 }
 .remote-question-actions .remote-composer-actions {
 	justify-content: flex-end;
@@ -744,6 +992,12 @@
 	gap: 8px;
 	font-size: calc(13px * var(--ui-scale, 1));
 }
+@media (min-width: 800px) {
+	/* Split view already has the one true top-left trigger in the directory. */
+	.remote-chat > .remote-header > .remote-navigation-trigger {
+		display: none;
+	}
+}
 @media (max-width: 799px) {
 	.remote-directory > .remote-header {
 		order: 0;
@@ -794,23 +1048,22 @@
 @media (max-width: 799px) and (max-height: 560px) {
 	/* Compact reading absorbs spare space above the bounded composer, retaining its 96px floor. */
 	.remote-reading-area {
-		flex: 1 1 96px;
-		min-height: 96px;
+		min-height: 0;
 		max-height: none;
 	}
 
 	.remote-composer {
-		flex: 1 1 auto;
-		/* Reserve controls/footer/inset, not the full intrinsic height of a long draft. */
-		--compose-minimum: 96px;
+		/* The reading owner absorbs spare height; growing the composer would leave
+		 * empty space below its start-aligned capsule and lift it from the edge. */
+		flex: 0 1 auto;
+		/* Reserve the single capsule and its inset, not a removed metadata row. */
+		--compose-minimum: 56px;
 		--draft-minimum: 0px;
 		--receipt-minimum: 0px;
 		min-height: calc(
 			var(--compose-minimum) +
 			var(--draft-minimum) +
 			var(--receipt-minimum) +
-			var(--information-footer-height) +
-			8px +
 			8px +
 			var(--composer-floor)
 		);
@@ -841,7 +1094,7 @@
 		--receipt-minimum: 8px;
 	}
 	.remote-composer:has(.remote-image-previews, .remote-image-selection-error, .remote-image-preparing) {
-		--compose-minimum: 140px;
+		--compose-minimum: 108px;
 	}
 	.remote-image-previews {
 		height: 44px;
@@ -863,10 +1116,12 @@
 	}
 	.remote-compose-surface {
 		display: flex;
-		flex: 1 1 auto;
+		/* Never shrink below the editor plus 44px actions: the receipt above
+		 * owns bounded scrolling when both compete for compact height. */
+		flex: 0 0 auto;
 		flex-direction: column;
 		min-width: 0;
-		min-height: 96px;
+		min-height: 56px;
 		overflow: visible;
 	}
 	.remote-prompt-field {
@@ -874,18 +1129,22 @@
 		flex: 1 1 auto;
 		flex-direction: column;
 		min-width: 0;
-		min-height: 40px;
+		min-height: 44px;
 		gap: 0 !important;
 		overflow: hidden;
 	}
 	.remote-workspace .remote-compose-surface textarea {
 		flex: 0 1 auto;
-		min-height: 40px;
-		max-height: none;
+		min-height: 44px;
+		max-height: min(120px, 28dvh);
 		overflow-y: auto;
 	}
+	.remote-compose-open .remote-prompt-field,
+	.remote-workspace .remote-compose-open textarea {
+		max-height: 50px;
+	}
 	.remote-composer-actions {
-		flex: 0 0 56px;
+		flex: 0 1 auto;
 		min-height: 56px;
 	}
 	.remote-composer-actions .menu-panel.menu-start {
@@ -925,6 +1184,8 @@
 	max-width: 800px;
 	margin: 0 auto;
 	padding: 8px 0;
+	display: flex;
+	justify-content: center;
 }
 .remote-history-entry .btn {
 	min-height: 44px;
@@ -941,7 +1202,6 @@
 
 /* Information is an independent reading surface; the composing input stays mounted. */
 .remote-chat {
-	--information-footer-height: 20px;
 	container-type: inline-size;
 	container-name: remote-chat;
 	flex: 1;
@@ -998,8 +1258,8 @@
  */
 .remote-information-body dl {
 	margin: 0;
-	border: 1px solid var(--hairline);
-	border-radius: 10px;
+	/* The group is told by its own surface, not by a drawn card edge. */
+	border-radius: 12px;
 	background: var(--fill-subtle);
 	overflow: hidden;
 }
@@ -1008,8 +1268,8 @@
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 16px;
-	min-height: 40px;
-	padding: 10px 14px;
+	min-height: 44px;
+	padding: 11px 16px;
 }
 .remote-information-body dl > div + div {
 	border-top: 1px solid var(--hairline);
@@ -1032,125 +1292,11 @@
 	color: var(--text-2);
 	font-size: calc(11px * var(--ui-scale, 1));
 }
-.remote-composer {
-	--information-footer-height: 20px;
-}
-.remote-information-footer {
-	flex: 0 0 var(--information-footer-height);
-	height: var(--information-footer-height);
-	min-width: 0;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	color: var(--text-1);
-	font-size: calc(11px * var(--ui-scale, 1));
-	line-height: 20px;
-	font-variant-numeric: tabular-nums;
-}
-.remote-information-footer-metadata,
-.remote-information-footer-usage {
-	display: flex;
-	align-items: center;
-	min-width: 0;
-	white-space: nowrap;
-}
-.remote-information-footer-metadata {
-	gap: 8px;
-	flex: 1 1 auto;
-}
-.remote-information-footer-identity {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	min-width: 0;
-	flex: 0 1 auto;
-}
-.remote-information-footer-effort,
-.remote-information-footer-source {
-	flex: 0 0 auto;
-}
-.remote-information-footer-usage {
-	flex: 0 0 auto;
-	gap: 4px;
-	justify-content: flex-end;
-}
-.remote-information-footer-group {
-	min-width: 0;
-	white-space: nowrap;
-	overflow: visible;
-}
-.remote-information-footer-model {
-	flex: 0 1 auto;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.remote-information-footer-context {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-}
-.remote-context-meter {
-	--context-percent: 0;
-	width: 16px;
-	height: 16px;
-	flex: 0 0 16px;
-	border-radius: 50%;
-	background: conic-gradient(var(--accent) calc(var(--context-percent) * 1%), var(--hairline-strong) 0);
-	-webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-	mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-}
-.remote-context-meter-unknown {
-	background: var(--hairline-strong);
-}
-
-.remote-information-footer-compact-dash {
-	display: none;
-}
-@container remote-chat (width < 600px) {
-	.remote-information-footer {
-		gap: 4px;
-	}
-	.remote-information-footer-unavailable-value {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
-		border: 0;
-	}
-	.remote-information-footer-compact-dash {
-		display: inline;
-	}
-}
-
-@media (max-height: 560px) {
-	.remote-information-footer {
-		gap: 4px;
-	}
-	.remote-information-footer-unavailable-value {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
-		border: 0;
-	}
-	.remote-information-footer-compact-dash {
-		display: inline;
-	}
-}
-
 .remote-information-view {
 	position: absolute;
 	inset: 0;
 	z-index: 10;
+	animation: remote-reading-view-in 160ms ease-out both;
 }
 .remote-information-body:focus-visible {
 	outline: 2px solid var(--accent);
@@ -1164,26 +1310,23 @@
 	.remote-information-rail {
 		border-left: 1px solid var(--hairline);
 		padding-top: env(safe-area-inset-top, 0px);
+		animation: remote-rail-in 160ms ease-out both;
+	}
+	@keyframes remote-rail-in {
+		from {
+			transform: translateX(10px);
+			opacity: 0;
+		}
 	}
 }
 
-/* One conversation content row; the directory retains its independent header layout. */
+/* The conversation header has only a frosted circular navigation control. */
 .remote-chat > .remote-header {
-	display: grid;
-	/* The third column held an icon; it now holds the model, which needs its own width. */
-	grid-template-columns: 44px minmax(0, 1fr) auto;
-	gap: 8px;
 	min-height: 44px;
 	padding-top: env(safe-area-inset-top, 0px);
 	padding-bottom: 0;
 }
-.remote-chat > .remote-header > h2 {
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.remote-chat > .remote-header > .remote-back,
-.remote-chat > .remote-header > .menu-root > .icon-btn {
+.remote-chat > .remote-header > :is(.remote-back, .remote-navigation-trigger) {
 	width: 44px;
 	height: 44px;
 }
@@ -1196,70 +1339,134 @@
 	overflow-wrap: anywhere;
 }
 
-/* Two fixed destinations at the bottom of the directory pane: the session list and provider usage. */
-/*
- * A platform tab bar: the background runs to the very bottom edge through the home
- * indicator, the tappable row keeps its own height above it, and the active
- * destination is shown by tint rather than an underline that reads as the bar
- * stopping short.
- */
-.remote-tabs {
-	grid-row: 2;
-	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	/*
-	 * Measured on device, the bar already ends at the viewport edge, so the platform's
-	 * 34pt indicator reserve is the entire band under the labels. A third of it clears
-	 * the indicator while keeping this bar close to the compact one it is modelled on.
-	 */
-	padding-bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) - 26px));
-	border-top: 1px solid var(--hairline);
-	background: var(--pane);
+.remote-navigation-scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 70;
+	display: flex;
+	align-items: stretch;
+	justify-content: flex-start;
 }
-.remote-tab {
+.remote-navigation-dismiss {
+	position: absolute;
+	inset: 0;
 	appearance: none;
 	border: 0;
-	background: transparent;
+	padding: 0;
+	background: rgb(0 0 0 / 58%);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
+	cursor: pointer;
+	animation: remote-scrim-in 160ms ease-out both;
+}
+.remote-navigation-menu {
+	position: relative;
+	margin: 0;
+	border: 0;
+	color: var(--text-0);
+	width: min(84vw, 320px);
+	height: 100%;
+	box-sizing: border-box;
+	padding: env(safe-area-inset-top, 0px) 8px max(12px, env(safe-area-inset-bottom, 0px));
+	background: var(--chrome);
+	box-shadow: 20px 0 60px rgb(0 0 0 / 48%);
+	animation: remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes remote-scrim-in {
+	from {
+		opacity: 0;
+	}
+}
+@keyframes remote-navigation-in {
+	from {
+		transform: translateX(-100%);
+		opacity: 0.72;
+	}
+}
+@keyframes remote-reading-view-in {
+	from {
+		transform: translateX(12px);
+		opacity: 0;
+	}
+}
+@keyframes remote-popover-in {
+	from {
+		transform: translateY(6px) scale(0.98);
+		opacity: 0;
+	}
+}
+.remote-navigation-menu-header {
+	min-height: 56px;
+	padding: 0 8px;
 	display: flex;
 	align-items: center;
-	justify-content: center;
-	/*
-	 * A label on one line at the size of the compact bar this is modelled on. Below the
-	 * 44px guideline deliberately: that rule protects small isolated controls, and each
-	 * destination here is half the screen wide and pinned to its edge, so the target is
-	 * large and hard to miss in the direction that matters.
-	 *
-	 * Not lower than this. At 36px a send visibly moved the reading position by 26px,
-	 * and 40px passed alone but failed under load, so the margin there is not real.
-	 * The transcript's scroll survives a composer height change only within a margin
-	 * this row is part of. That coupling is the actual defect; until it is fixed this
-	 * height is load-bearing rather than cosmetic, and lowering it regresses a promise
-	 * that sending never moves where you are reading.
-	 */
-	min-height: 44px;
-	padding: 2px 12px;
-	color: var(--text-2);
+	justify-content: space-between;
+	gap: 8px;
+}
+.remote-navigation-menu-header h2 {
+	margin: 0;
+	font-size: calc(17px * var(--ui-scale, 1));
+	font-weight: 600;
+	color: var(--text-0);
+}
+.remote-navigation-menu-header .icon-btn {
+	width: 44px;
+	height: 44px;
+}
+.remote-navigation-conversation {
+	padding-top: 12px;
+}
+.remote-navigation-conversation-title {
+	margin: 0;
+	padding: 8px 16px;
+	font-size: calc(14px * var(--ui-scale, 1));
+	font-weight: 600;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.remote-navigation-conversation .remote-navigation-item {
+	width: 100%;
+}
+.remote-navigation-items {
+	display: grid;
+	gap: 4px;
+	padding-top: 8px;
+}
+.remote-navigation-item {
+	appearance: none;
+	border: 0;
+	border-radius: 12px;
+	background: transparent;
+	min-height: 48px;
+	padding: 0 16px;
+	color: var(--text-1);
 	font-family: inherit;
-	font-size: calc(12px * var(--ui-scale, 1));
-	line-height: 1.2;
+	font-size: calc(16px * var(--ui-scale, 1));
+	font-weight: 500;
+	text-align: left;
 	cursor: pointer;
-	-webkit-tap-highlight-color: transparent;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
-.remote-tab[aria-current="page"] {
-	color: var(--accent);
+.remote-navigation-item[aria-current="page"] {
+	background: var(--fill-raised);
+	color: var(--text-0);
 }
-.remote-tab:active {
-	opacity: 0.6;
+@media (hover: hover) {
+	.remote-navigation-item:hover {
+		background: var(--fill-subtle);
+	}
 }
 .remote-usage {
 	grid-row: 1;
 	grid-column: 1 / -1;
 	min-height: 0;
 	padding-top: env(safe-area-inset-top, 0px);
-	padding-bottom: 8px;
+	padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
 	overflow-y: auto;
 	overscroll-behavior: contain;
+	animation: remote-reading-view-in 160ms ease-out both;
 }
 .remote-usage-provider {
 	padding: 4px 16px 12px;
@@ -1333,6 +1540,10 @@
 .remote-session-entry {
 	position: relative;
 }
+/* Rows are separated by a hairline rather than by whitespace alone. */
+.remote-session-entry + .remote-session-entry {
+	border-top: 1px solid var(--hairline);
+}
 /* Holding a row is our gesture; iOS must not also offer selection, Look Up or Share. */
 .remote-session-entry,
 .remote-session-row {
@@ -1352,6 +1563,8 @@
 	border-radius: var(--radius-md, 6px);
 	background: var(--pane);
 	box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+	transform-origin: top center;
+	animation: remote-popover-in 140ms ease-out both;
 }
 .remote-row-menu-item {
 	appearance: none;
@@ -1384,21 +1597,6 @@
 }
 
 /*
- * Below this height the reading floor and the compose minimum cannot both survive a
- * persistent bar, so an open conversation takes the space back. The bar returns as
- * soon as the reader leaves the conversation, and every ordinary phone height keeps it.
- */
-@media (max-height: 480px) {
-	.remote-workspace[data-open="true"][data-tab="sessions"] .remote-tabs {
-		display: none;
-	}
-	/* With no bar below it the composer reaches the edge and takes the inset back. */
-	.remote-workspace[data-open="true"][data-tab="sessions"] {
-		--composer-floor: max(16px, env(safe-area-inset-bottom));
-	}
-}
-
-/*
  * One decision on a surface big enough to read it. A bottom sheet on a phone, because
  * that is where a thumb is, and a centred dialog once there is room for one.
  */
@@ -1416,27 +1614,51 @@
 	appearance: none;
 	border: 0;
 	padding: 0;
-	background: rgb(0 0 0 / 45%);
+	background: rgb(0 0 0 / 58%);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
 	cursor: pointer;
+	animation: remote-scrim-in 160ms ease-out both;
 }
 .remote-sheet {
 	position: relative;
-	width: min(100%, 420px);
+	width: min(calc(100% - 16px), 420px);
 	max-height: min(70dvh, 520px);
 	display: flex;
 	flex-direction: column;
-	padding: 8px 0 max(8px, env(safe-area-inset-bottom, 0px));
-	border-top: 1px solid var(--hairline);
-	border-radius: 14px 14px 0 0;
+	margin-bottom: 8px;
+	padding: 18px 0 max(12px, env(safe-area-inset-bottom, 0px));
+	border: 1px solid var(--hairline-strong);
+	border-radius: 24px;
 	background: var(--chrome, var(--pane));
-	box-shadow: 0 -8px 32px rgb(0 0 0 / 40%);
+	box-shadow: 0 20px 60px rgb(0 0 0 / 55%);
+	overflow: hidden;
+	transform-origin: bottom center;
+	animation: remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes remote-sheet-in {
+	from {
+		transform: translateY(18px) scale(0.985);
+		opacity: 0;
+	}
+}
+.remote-sheet::before {
+	content: "";
+	position: absolute;
+	top: 7px;
+	left: 50%;
+	width: 32px;
+	height: 4px;
+	border-radius: 999px;
+	background: var(--hairline-strong);
+	transform: translateX(-50%);
 }
 .remote-sheet-title {
 	margin: 0;
-	padding: 8px 20px 12px;
-	font-size: calc(13px * var(--ui-scale, 1));
+	padding: 10px 20px 12px;
+	font-size: calc(16px * var(--ui-scale, 1));
 	font-weight: 600;
-	color: var(--text-1);
+	color: var(--text-0);
 }
 .remote-sheet-options {
 	min-height: 0;
@@ -1448,16 +1670,17 @@
 	border: 0;
 	background: transparent;
 	width: 100%;
-	min-height: 48px;
-	padding: 10px 20px;
+	min-height: 52px;
+	padding: 12px 20px;
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	text-align: left;
 	color: var(--text-0);
 	font-family: inherit;
-	font-size: calc(15px * var(--ui-scale, 1));
+	font-size: calc(16px * var(--ui-scale, 1));
 	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 @media (hover: hover) {
 	.remote-sheet-option:hover:not(:disabled) {
@@ -1465,10 +1688,12 @@
 	}
 }
 .remote-sheet-option[aria-checked="true"] {
-	color: var(--accent);
+	color: var(--text-0);
 }
 .remote-sheet-option-mark {
 	margin-left: auto;
+	color: var(--accent);
+	font-size: calc(17px * var(--ui-scale, 1));
 }
 .remote-sheet-option:disabled {
 	color: var(--text-2);
@@ -1483,10 +1708,13 @@
 .remote-sheet-option-meta {
 	margin-left: auto;
 	color: var(--text-2);
-	font-size: calc(12px * var(--ui-scale, 1));
+	font-size: calc(13px * var(--ui-scale, 1));
+}
+.remote-sheet-option + .remote-sheet-option {
+	border-top: 1px solid var(--hairline);
 }
 .remote-sheet > .remote-note {
-	padding: 4px 20px 12px;
+	padding: 4px 16px 12px;
 	margin: 0;
 }
 @media (min-width: 800px) {
@@ -1494,57 +1722,23 @@
 		align-items: center;
 	}
 	.remote-sheet {
-		border-radius: 14px;
-		border: 1px solid var(--hairline);
-		padding-bottom: 8px;
+		margin-bottom: 0;
+		padding-bottom: 12px;
 	}
 }
 
-/* The model reads as the subject of the screen, the way a chat app titles it. */
-.remote-header-model {
-	appearance: none;
-	border: 0;
-	background: transparent;
-	/* Inline so the button shrink-wraps its label instead of collapsing it to nothing. */
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	min-height: 44px;
-	/*
-	 * The model is the subject of the screen, so it keeps its width and the conversation
-	 * title ellipsizes instead. Truncating this to "G.." tells a reader nothing.
-	 */
-	flex: 0 0 auto;
-	min-width: 0;
-	padding: 0 8px;
-	margin-left: auto;
-	color: var(--text-1);
-	font-family: inherit;
-	font-size: calc(13px * var(--ui-scale, 1));
-	cursor: pointer;
-	-webkit-tap-highlight-color: transparent;
-}
-.remote-header-model-name {
-	/* Sized by its text; the button's max-width is what limits the pair. */
-	flex: 0 0 auto;
-	/* A character cap, not a percentage: a percentage inside an auto grid track
-	   resolves against a track sized by this very content and collapses. */
-	max-width: 14ch;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.remote-header-model-chevron {
-	flex: 0 0 auto;
-	font-size: calc(11px * var(--ui-scale, 1));
-	line-height: 1;
-	opacity: 0.7;
-}
-.remote-header-model:active {
-	opacity: 0.6;
+/* The circular navigation control has a frosted resting surface; pointer
+ * interaction deepens its inset without leaving a sticky touch hover. */
+.remote-navigation-trigger:active::before,
+.remote-back:active::before {
+	background: var(--fill-raised);
 }
 @media (hover: hover) {
-	.remote-header-model:hover {
-		color: var(--text-0);
+	.remote-directory .remote-navigation-trigger:hover {
+		background: transparent;
+	}
+	.remote-navigation-trigger:hover::before,
+	.remote-back:hover::before {
+		background: var(--fill-subtle);
 	}
 }

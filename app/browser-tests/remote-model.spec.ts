@@ -16,22 +16,27 @@ async function openConversation(page: import('@playwright/test').Page) {
 }
 
 async function openSheet(page: import('@playwright/test').Page, name: 'Model' | 'Effort') {
-	// The model is a header control, the way a chat app titles the screen; effort is
-	// reached through More.
-	if (name === 'Model') await page.getByRole('button', { name: /^Model:/ }).click()
-	else {
+	// The top-left drawer owns the conversation name and model; effort stays in More.
+	if (name === 'Model') {
+		await page.locator('.remote-navigation-trigger:visible').click()
+		await page.getByRole('dialog', { name: 'Navigation' }).getByRole('button', { name: 'Model' }).click()
+	} else {
 		await page.getByRole('button', { name: 'More', exact: true }).click()
 		await page.getByRole('menuitem', { name: /^Effort/ }).click()
 	}
 	return page.getByRole('dialog', { name, exact: true })
 }
 
-test('More lists actions, and the model is titled in the header rather than buried', async ({ page }) => {
+test('More lists composer actions, while the navigation drawer owns conversation and model', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
 
-	// The model is the subject of the screen, one tap from anywhere in the conversation.
-	await expect(page.getByRole('button', { name: /^Model: GPT model/ })).toBeVisible()
+	await expect(page.locator('.remote-chat > .remote-header button')).toHaveCount(1)
+	await page.locator('.remote-navigation-trigger:visible').click()
+	const navigation = page.getByRole('dialog', { name: 'Navigation' })
+	await expect(navigation.locator('.remote-navigation-conversation-title')).toHaveText('Helm conversation')
+	await expect(navigation.getByRole('button', { name: 'Model' })).toBeVisible()
+	await navigation.getByRole('button', { name: 'Close navigation' }).click()
 
 	await page.getByRole('button', { name: 'More', exact: true }).click()
 	const sheet = page.getByRole('dialog', { name: 'More', exact: true })
@@ -54,6 +59,9 @@ test('the model sheet lists every model, marks the current one and sends one com
 	const sheet = await openSheet(page, 'Model')
 
 	await expect(sheet.locator('.remote-sheet-option-label')).toHaveText(['GPT model', 'Opus 5'])
+	await expect(sheet).toHaveCSS('animation-name', 'remote-sheet-in')
+	await expect(sheet).toHaveCSS('animation-duration', '0.18s')
+	await expect(page.locator('.remote-sheet-dismiss')).toHaveCSS('animation-name', 'remote-scrim-in')
 	await expect(sheet.getByRole('radio', { name: /GPT model/ })).toHaveAttribute('aria-checked', 'true')
 	// Image support is known before the choice, not after a refused attachment.
 	await expect(sheet.getByRole('radio', { name: /Opus 5/ })).toContainText('Images')
@@ -98,11 +106,12 @@ test('a sheet dismisses by backdrop and by Escape, returning focus to the contro
 	await page.setViewportSize({ width: 390, height: 844 })
 	await openConversation(page)
 	const plus = page.getByRole('button', { name: 'More', exact: true })
+	const navigation = page.locator('.remote-navigation-trigger:visible')
 
 	await openSheet(page, 'Model')
 	await page.locator('.remote-sheet-dismiss').click()
 	await expect(page.getByRole('dialog')).toHaveCount(0)
-	await expect(plus).toBeFocused()
+	await expect(navigation).toBeFocused()
 
 	await openSheet(page, 'Effort')
 	await page.keyboard.press('Escape')
@@ -110,6 +119,14 @@ test('a sheet dismisses by backdrop and by Escape, returning focus to the contro
 	await expect(plus).toBeFocused()
 	// Dismissing is not choosing.
 	expect(await page.evaluate(() => (window.__remoteFixture?.commands ?? []).length)).toBe(0)
+})
+
+test('reduced motion keeps the surfaces immediate', async ({ page }) => {
+	await page.emulateMedia({ reducedMotion: 'reduce' })
+	await page.setViewportSize({ width: 390, height: 844 })
+	await openConversation(page)
+	const sheet = await openSheet(page, 'Model')
+	await expect(sheet).toHaveCSS('animation-duration', '1e-05s')
 })
 
 test('a conversation whose bridge lists no models says so in the sheet instead of showing an empty one', async ({
@@ -121,7 +138,7 @@ test('a conversation whose bridge lists no models says so in the sheet instead o
 	const stripped = await page.evaluate(() => {
 		const views = window.__remoteFixture?.views ?? []
 		for (const view of views) {
-			delete (view as { models?: unknown }).models
+			;(view as { models?: unknown }).models = undefined
 			view.revision += 1
 		}
 		return views.length
@@ -141,8 +158,10 @@ test('the composer menu survives a pending question, so Info never becomes unrea
 	await page.evaluate(() => window.__remoteFixture?.ask())
 	await expect(page.getByRole('button', { name: 'Submit answers', exact: true })).toBeVisible()
 
-	// Info is reached only through this control now, and the model stays in the header.
-	await expect(page.getByRole('button', { name: /^Model:/ })).toBeVisible()
+	// Info stays in More even while an answer is pending; Model stays in the drawer.
+	await page.locator('.remote-navigation-trigger:visible').click()
+	await expect(page.getByRole('dialog', { name: 'Navigation' }).getByRole('button', { name: 'Model' })).toBeVisible()
+	await page.getByRole('dialog', { name: 'Navigation' }).getByRole('button', { name: 'Close navigation' }).click()
 	await page.getByRole('button', { name: 'More', exact: true }).click()
 	await expect(page.getByRole('menuitem', { name: 'Info', exact: true })).toBeVisible()
 })

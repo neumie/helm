@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
+import { openRemoteDestination } from './remote-navigation.js'
 
 declare global {
 	interface Window {
@@ -25,7 +26,7 @@ test('Forward never adopts a replacement owner and does not strand the next Back
 	await expect(page.getByRole('heading', { name: 'Choose a session' })).toBeVisible()
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('')
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await expect(page.getByRole('heading', { name: 'Choose a session' })).toBeVisible()
 	expect(await page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
 })
@@ -41,7 +42,7 @@ test('focusable unavailable shared buttons cannot submit forms', async ({ page }
 	await expect(page.getByText('Submissions: 1', { exact: true })).toBeVisible()
 })
 
-test('Forward restores the same live identity and repeated Back activation cannot leave the workspace', async ({
+test('Forward restores the same live identity and repeated Sessions activation cannot leave the workspace', async ({
 	page,
 }) => {
 	await page.goto(path)
@@ -51,10 +52,14 @@ test('Forward restores the same live identity and repeated Back activation canno
 	await expect(page.getByRole('heading', { name: 'Choose a session' })).toBeVisible()
 	await page.goForward()
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Retained through Forward')
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).evaluate(button => {
-		button.click()
-		button.click()
-	})
+	await page.getByRole('button', { name: 'Open navigation', exact: true }).click()
+	await page
+		.getByRole('dialog', { name: 'Navigation' })
+		.getByRole('button', { name: 'Sessions' })
+		.evaluate(button => {
+			button.click()
+			button.click()
+		})
 	await expect(page.getByRole('heading', { name: 'Choose a session' })).toBeVisible()
 	await expect(page).toHaveURL(/views-helm-remote--browser-harness/)
 })

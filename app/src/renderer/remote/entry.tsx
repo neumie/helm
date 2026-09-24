@@ -8,6 +8,10 @@ import { RemoteWorkspace } from './RemoteWorkspace.js'
 import { initializeRemotePwa } from './pwa.js'
 import { RemoteAccessError, type RemoteTransport, createRemoteTransport, pairRemote } from './transport.js'
 
+// Own the complete browser canvas, including iOS's exposed safe-area paint.
+document.documentElement.classList.add('remote-page')
+document.body.classList.add('remote-page')
+
 function isDevelopmentFixture(): boolean {
 	return window.location.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname)
 }

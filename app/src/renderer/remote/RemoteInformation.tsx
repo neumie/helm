@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import type { CSSProperties, Ref } from 'react'
+import type { Ref } from 'react'
 import type { InformationEnvelope } from '../../../../src/remote/information-protocol.js'
 import type { RemoteSubagentActivity } from '../../../../src/remote/subagent-activity-protocol.js'
 import { type InformationState, RemoteInformationController } from './information-controller.js'
@@ -74,96 +74,6 @@ function footerRows(
 		['Other statuses omitted', fields.omittedStatuses],
 	]
 }
-export const InformationFooter = memo(function InformationFooter({
-	state,
-	source,
-	modelFallback,
-}: {
-	state: InformationState
-	source: 'Okena' | 'Helm' | 'Source unavailable'
-	modelFallback?: string | null
-}) {
-	const fields = state.information?.footer.fields
-	const model = fields ? fields.model : modelFallback
-	const thinking = fields?.thinking ?? null
-	const spent = formatTokenCount(reportedTokensSpent(fields?.inputTokens ?? null, fields?.outputTokens ?? null))
-	const percent = fields?.contextPercent ?? null
-	const description = fields
-		? 'Conversation information'
-		: `Conversation information: ${availability(state.information?.footer.availability ?? state.status)}`
-	return (
-		<div className="remote-information-footer" aria-label={description} title={description}>
-			<div className="remote-information-footer-metadata">
-				<div className="remote-information-footer-identity">
-					<span
-						className="remote-information-footer-group remote-information-footer-model"
-						title={model ?? 'Model unavailable'}
-					>
-						{model ?? 'Model unavailable'}
-					</span>
-					<span
-						className="remote-information-footer-group remote-information-footer-effort"
-						aria-label={thinking === null ? 'Effort unavailable' : undefined}
-					>
-						<span className={thinking === null ? 'remote-information-footer-unavailable-value' : undefined}>
-							{thinking ?? 'Unavailable'}
-						</span>
-						{thinking === null && (
-							<span className="remote-information-footer-compact-dash" aria-hidden="true">
-								—
-							</span>
-						)}
-					</span>
-				</div>
-				<span className="remote-information-footer-group remote-information-footer-source">{source}</span>
-			</div>
-			<div className="remote-information-footer-usage">
-				<span
-					className="remote-information-footer-group remote-information-footer-spent"
-					aria-label={`Reported tokens spent: ${spent}`}
-				>
-					<span className={spent === 'Unavailable' ? 'remote-information-footer-unavailable-value' : undefined}>
-						{spent}
-					</span>
-					{spent === 'Unavailable' && (
-						<span className="remote-information-footer-compact-dash" aria-hidden="true">
-							—
-						</span>
-					)}
-				</span>
-				<span className="remote-information-footer-dot" aria-hidden="true">
-					·
-				</span>
-				<span
-					className="remote-information-footer-group remote-information-footer-context"
-					aria-label={percent === null ? 'Context used unavailable' : undefined}
-				>
-					<span
-						className={`remote-context-meter ${percent === null ? 'remote-context-meter-unknown' : ''}`}
-						{...(percent === null
-							? { 'aria-label': 'Context used unavailable' }
-							: {
-									role: 'meter',
-									'aria-label': 'Context used',
-									'aria-valuenow': percent,
-									'aria-valuemin': 0,
-									'aria-valuemax': 100,
-									style: { '--context-percent': percent } as CSSProperties,
-								})}
-					/>
-					<span className={percent === null ? 'remote-information-footer-unavailable-value' : undefined}>
-						{percent === null ? 'Unavailable' : `${Math.round(percent)}%`}
-					</span>
-					{percent === null && (
-						<span className="remote-information-footer-compact-dash" aria-hidden="true">
-							—
-						</span>
-					)}
-				</span>
-			</div>
-		</div>
-	)
-})
 export interface CurrentConversation {
 	presentation: RemoteSessionPresentation
 	status: RemoteSessionStatus
@@ -206,6 +116,10 @@ export const RemoteInformation = memo(function RemoteInformation({
 						may be omitted.
 					</p>
 					<dl>
+						<div>
+							<dt>Source</dt>
+							<dd>{current.presentation.source}</dd>
+						</div>
 						{current.presentation.facts.map(fact => (
 							<div key={fact.label}>
 								<dt>{fact.label}</dt>
@@ -234,6 +148,25 @@ export const RemoteInformation = memo(function RemoteInformation({
 							{information.footer.fields ? (
 								<>
 									<dl>
+										<div>
+											<dt>Reported tokens spent</dt>
+											<dd>
+												{formatTokenCount(
+													reportedTokensSpent(
+														information.footer.fields.inputTokens,
+														information.footer.fields.outputTokens,
+													),
+												)}
+											</dd>
+										</div>
+										<div>
+											<dt>Context used</dt>
+											<dd>
+												{information.footer.fields.contextPercent === null
+													? 'Unavailable'
+													: `${Math.round(information.footer.fields.contextPercent)}%`}
+											</dd>
+										</div>
 										{footerRows(information.footer.fields)
 											.filter(([label, value]) =>
 												label === 'Session name'

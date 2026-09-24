@@ -1,4 +1,5 @@
 import type { UsageProvider } from '../../../../src/remote/usage-protocol.js'
+import { RemoteNavigationTrigger } from './RemoteNavigationMenu.js'
 import { type RemoteUsageState, formatObservedAge, formatResetDistance } from './usage-controller.js'
 
 function planLabel(plan: string | null): string | null {
@@ -45,10 +46,21 @@ function UsageProviderCard({ provider, now }: { provider: UsageProvider; now: nu
 	)
 }
 
-export function RemoteUsagePanel({ state, now }: { state: RemoteUsageState; now: number }) {
+export function RemoteUsagePanel({
+	state,
+	now,
+	onOpenNavigation,
+}: {
+	state: RemoteUsageState
+	now: number
+	onOpenNavigation: () => void
+}) {
 	return (
 		<section className="remote-usage" aria-label="Usage">
-			<h2 className="remote-section-heading">Usage</h2>
+			<header className="remote-navigation-header">
+				<RemoteNavigationTrigger onOpen={onOpenNavigation} />
+				<h2>Usage</h2>
+			</header>
 			{!state.supported && <p className="remote-note">This host does not report provider usage.</p>}
 			{state.supported && state.loading && !state.response && <p className="remote-note">Reading limits…</p>}
 			{state.error && (

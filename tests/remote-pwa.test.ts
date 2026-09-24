@@ -25,9 +25,12 @@ test('PWA assets have exact routes, restrictive headers and credential-free laun
 		start_url: string
 		scope: string
 		display: string
+		background_color: string
+		theme_color: string
 		icons: Array<{ src: string; sizes: string }>
 	}
 	assert.deepEqual([manifest.id, manifest.start_url, manifest.scope, manifest.display], ['/', '/', '/', 'standalone'])
+	assert.deepEqual([manifest.background_color, manifest.theme_color], ['#0d0d0d', '#0d0d0d'])
 	assert.deepEqual(
 		manifest.icons.map(icon => icon.sizes),
 		['192x192', '512x512'],

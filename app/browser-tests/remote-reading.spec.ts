@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { RemoteFixture } from '../src/renderer/remote/remote-fixtures.js'
+import { openRemoteDestination } from './remote-navigation.js'
 declare global {
 	interface Window {
 		__remoteFixture?: RemoteFixture
@@ -149,7 +150,7 @@ test('Okena worktree metadata outranks a filesystem Pi label, is searchable, and
 	await page.evaluate(() => window.__remoteFixture?.showTerminalMetadataExample())
 	await expect(page.getByRole('heading', { name: 'feat/mobile', exact: true })).toBeVisible()
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Keep the same owner')
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	const row = page.getByRole('button', { name: /feat\/mobile/ })
 	await expect(row).toContainText('Group: Contember')
 	await expect(row).toContainText('Project: JVS')
@@ -172,11 +173,11 @@ test('live workspace omits root navigation while preserving drafts', async ({ pa
 	await expect(page.getByRole('navigation', { name: 'App navigation' })).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'App', exact: true })).toHaveCount(0)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await expect(page.getByRole('navigation', { name: 'Live sessions' })).toBeVisible()
 	await page.getByRole('button', { name: /Helm conversation/ }).click()
 	await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Keep this draft')
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await expect(page.getByRole('navigation', { name: 'Live sessions' })).toBeVisible()
 })
 

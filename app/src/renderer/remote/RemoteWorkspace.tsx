@@ -1,4 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type {
+	KeyboardEvent as ReactKeyboardEvent,
+	TouchEvent as ReactTouchEvent,
+	WheelEvent as ReactWheelEvent,
+} from 'react'
 import type { HistoryRecord } from '../../../../src/remote/history-protocol.js'
 import type { RemoteImageReference } from '../../../../src/remote/image-input-protocol.js'
 import type {
@@ -17,8 +22,9 @@ import { HistoryNavigation, HistoryRangeNote } from './HistoryNavigation.js'
 import { RemoteArrow } from './RemoteArrow.js'
 import { RemoteChoiceSheet } from './RemoteChoiceSheet.js'
 import { RemoteDisclosure } from './RemoteDisclosure.js'
-import { InformationFooter, RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
+import { RemoteInformation, useInformationRail, useRemoteInformation } from './RemoteInformation.js'
 import { RemoteMarkdown } from './RemoteMarkdown.js'
+import { type RemoteDestination, RemoteNavigationMenu, RemoteNavigationTrigger } from './RemoteNavigationMenu.js'
 import { RemoteSessionMenu } from './RemoteSessionMenu.js'
 import { RemoteUsagePanel } from './RemoteUsagePanel.js'
 import { RemoteHistoryController } from './history-controller.js'
@@ -203,7 +209,19 @@ function Workspace({
 	selectedRef.current = selected
 	const [query, setQuery] = useState('')
 	const [scope, setScope] = useState('all')
-	const [tab, setTab] = useState<'sessions' | 'usage'>('sessions')
+	const [tab, setTab] = useState<RemoteDestination>('sessions')
+	const [navigationOpen, setNavigationOpen] = useState(false)
+	const navigationOpener = useRef<HTMLElement | null>(null)
+	const conversationBack = useRef<(() => void) | null>(null)
+	const modelPicker = useRef<((owner: string, opener: HTMLElement | null) => void) | null>(null)
+	const openNavigation = useCallback(() => {
+		navigationOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+		setNavigationOpen(true)
+	}, [])
+	const closeNavigation = useCallback(() => {
+		setNavigationOpen(false)
+		requestAnimationFrame(() => navigationOpener.current?.focus({ preventScroll: true }))
+	}, [])
 	const [rowMenu, setRowMenu] = useState<string | null>(null)
 	const rowMenuRef = useRef<string | null>(null)
 	rowMenuRef.current = rowMenu
@@ -238,6 +256,71 @@ function Workspace({
 	}, [])
 	const publishedDirectory = useRef<RemoteDirectory | null>(null)
 	const directoryRef = useRef<HTMLElement>(null)
+	const workspaceRef = useRef<HTMLElement>(null)
+	useLayoutEffect(() => {
+		const workspace = workspaceRef.current
+		const viewport = window.visualViewport
+		if (!workspace || !viewport) return
+		let baseline = viewport.height
+		let width = viewport.width
+		let frame = 0
+		let settledFrame = 0
+		const update = () => {
+			if (Math.abs(viewport.width - width) > 1) {
+				width = viewport.width
+				baseline = viewport.height
+			}
+			const editor = document.activeElement
+			const composing =
+				editor instanceof HTMLElement && workspace.contains(editor) && !!editor.closest('.remote-composer')
+			if (!composing && viewport.height > baseline) baseline = viewport.height
+			const bottom = viewport.offsetTop + viewport.height
+			// Focus alone also covers hardware keyboards. Only a substantial visual
+			// viewport contraction admits a software-keyboard correction; include
+			// offsetTop when WebKit pans the visible viewport after focus.
+			if (
+				composing &&
+				baseline - viewport.height > 120 &&
+				viewport.scale <= 1.01 &&
+				Number.isFinite(bottom) &&
+				bottom >= 216 &&
+				bottom <= baseline
+			) {
+				workspace.style.setProperty('--remote-keyboard-height', `${bottom}px`)
+			} else {
+				workspace.style.removeProperty('--remote-keyboard-height')
+			}
+		}
+		const schedule = () => {
+			if (frame) cancelAnimationFrame(frame)
+			frame = requestAnimationFrame(() => {
+				frame = 0
+				update()
+				if (settledFrame) cancelAnimationFrame(settledFrame)
+				// WebKit 237851: installed apps may publish offsetTop after the
+				// resize event. Recheck once after the next paint without a timer.
+				settledFrame = requestAnimationFrame(() => {
+					settledFrame = 0
+					update()
+				})
+			})
+		}
+		viewport.addEventListener('resize', schedule)
+		viewport.addEventListener('scroll', schedule)
+		window.addEventListener('resize', schedule)
+		document.addEventListener('focusin', schedule)
+		document.addEventListener('focusout', schedule)
+		return () => {
+			viewport.removeEventListener('resize', schedule)
+			viewport.removeEventListener('scroll', schedule)
+			window.removeEventListener('resize', schedule)
+			document.removeEventListener('focusin', schedule)
+			document.removeEventListener('focusout', schedule)
+			cancelAnimationFrame(frame)
+			cancelAnimationFrame(settledFrame)
+			workspace.style.removeProperty('--remote-keyboard-height')
+		}
+	}, [])
 	const rememberFavoriteFocus = useFavoriteFocus(favorites.pending)
 	// Closing returns to the row the menu belongs to, then hands that focus to the
 	// owner guard so pinning cannot drop it when the row moves to the top.
@@ -418,9 +501,24 @@ function Workspace({
 			directoryRef.current?.querySelector<HTMLButtonElement>(`[data-session-key="${prior}"]`)?.focus(),
 		)
 	}
+	function chooseDestination(destination: RemoteDestination) {
+		setNavigationOpen(false)
+		if (destination === 'usage') {
+			setTab('usage')
+			return
+		}
+		setTab('sessions')
+		if (conversationBack.current) conversationBack.current()
+		else if (selectedRef.current) back()
+		else requestAnimationFrame(() => directoryHeading.current?.focus({ preventScroll: true }))
+	}
 	return (
-		<main className="remote-workspace" data-open={!!session} data-tab={tab}>
+		<main ref={workspaceRef} className="remote-workspace" data-open={!!session} data-tab={tab}>
 			<aside ref={directoryRef} className="remote-directory" aria-label="Session directory" hidden={tab !== 'sessions'}>
+				<header className="remote-navigation-header">
+					<RemoteNavigationTrigger onOpen={openNavigation} />
+					<h1>Sessions</h1>
+				</header>
 				<div ref={directoryBody} className="remote-directory-body">
 					<div className="remote-filters">
 						<label className="sr-only" htmlFor="remote-search">
@@ -561,7 +659,13 @@ function Workspace({
 					</p>
 				</div>
 			</aside>
-			{tab === 'usage' && <RemoteUsagePanel state={usage} now={usage.response?.refreshedAt ?? Date.now()} />}
+			{tab === 'usage' && (
+				<RemoteUsagePanel
+					state={usage}
+					now={usage.response?.refreshedAt ?? Date.now()}
+					onOpenNavigation={openNavigation}
+				/>
+			)}
 			{tab === 'sessions' &&
 				(session && selectedDraft ? (
 					<Conversation
@@ -573,7 +677,10 @@ function Workspace({
 						draft={selectedDraft}
 						notifySettlement={notifySettlement}
 						onBack={back}
+						onOpenNavigation={openNavigation}
+						navigationBack={conversationBack}
 						informationBack={informationBack}
+						modelPicker={modelPicker}
 						imageResources={imageResources}
 					/>
 				) : (
@@ -582,20 +689,25 @@ function Workspace({
 						<p>Read and control the same Pi conversation without restarting its terminal.</p>
 					</section>
 				))}
-			{/* A destination bar, not a pane control: it stays put while reading a conversation. */}
-			<nav className="remote-tabs" aria-label="Remote sections">
-				{(['sessions', 'usage'] as const).map(value => (
-					<button
-						key={value}
-						type="button"
-						className="remote-tab"
-						aria-current={tab === value ? 'page' : undefined}
-						onClick={() => setTab(value)}
-					>
-						{value === 'sessions' ? 'Sessions' : 'Usage'}
-					</button>
-				))}
-			</nav>
+			{navigationOpen && (
+				<RemoteNavigationMenu
+					current={tab}
+					onClose={closeNavigation}
+					onSelect={chooseDestination}
+					conversationTitle={
+						tab === 'sessions' && session && selectedDraft ? describeRemoteSession(session).title : undefined
+					}
+					onModel={
+						tab === 'sessions' && session && selectedDraft
+							? () => {
+									if (selectedRef.current !== identity(session) || !modelPicker.current) return
+									modelPicker.current(selectedRef.current, navigationOpener.current)
+									setNavigationOpen(false)
+								}
+							: undefined
+					}
+				/>
+			)}
 		</main>
 	)
 }
@@ -633,7 +745,10 @@ function Conversation({
 	draft,
 	notifySettlement,
 	onBack,
+	onOpenNavigation,
+	navigationBack,
 	informationBack,
+	modelPicker,
 	imageResources,
 }: {
 	transport: RemoteTransport
@@ -643,7 +758,10 @@ function Conversation({
 	draft: Draft
 	notifySettlement: (key: string, captured: Draft) => void
 	onBack: () => void
+	onOpenNavigation: () => void
+	navigationBack: { current: (() => void) | null }
 	informationBack: { current: (() => boolean) | null }
+	modelPicker: { current: ((owner: string, opener: HTMLElement | null) => void) | null }
 	imageResources: ImageDraftResources
 }) {
 	const [, redraw] = useState(0)
@@ -676,6 +794,24 @@ function Conversation({
 	// One decision at a time: the menu lists what can be changed, the sheet is where a
 	// long list is actually read.
 	const [sheet, setSheet] = useState<'more' | 'model' | 'effort' | null>(null)
+	const sheetFocus = useRef<HTMLElement | null>(null)
+	useLayoutEffect(() => {
+		const open = (owner: string, opener: HTMLElement | null) => {
+			if (owner !== ownerKey) return
+			sheetFocus.current = opener
+			infoCovering.current = false
+			setInfoOpen(false)
+			setSheet('model')
+		}
+		modelPicker.current = open
+		return () => {
+			if (modelPicker.current === open) modelPicker.current = null
+		}
+	}, [modelPicker, ownerKey])
+	function restoreSheetFocus() {
+		;(sheetFocus.current ?? infoOpener.current)?.focus({ preventScroll: true })
+		sheetFocus.current = null
+	}
 	useLayoutEffect(() => {
 		if (infoFocusRequest && (document.activeElement === document.body || document.activeElement === infoOpener.current))
 			infoHeading.current?.focus({ preventScroll: true })
@@ -707,16 +843,16 @@ function Conversation({
 		}
 	}, [informationBack, infoOpen, rail, closeInfo])
 	useEffect(() => {
-		if (!infoOpen || rail) return
+		if (!infoOpen) return
 		const onInfoEscape = (event: KeyboardEvent) => {
-			if (event.key !== 'Escape' || event.isComposing) return
+			if (event.key !== 'Escape' || event.isComposing || window.matchMedia('(min-width: 1200px)').matches) return
 			event.preventDefault()
 			event.stopImmediatePropagation()
 			closeInfo()
 		}
 		window.addEventListener('keydown', onInfoEscape, true)
 		return () => window.removeEventListener('keydown', onInfoEscape, true)
-	}, [infoOpen, rail, closeInfo])
+	}, [infoOpen, closeInfo])
 	const view =
 		historyState.issue === 'access-ended' || information.state.status === 'access-ended'
 			? undefined
@@ -735,13 +871,20 @@ function Conversation({
 	const [gap, setGap] = useState(false)
 	const [questionJump, setQuestionJump] = useState(false)
 	const [promptExpanded, setPromptExpanded] = useState(false)
+	const [composerExpanded, setComposerExpanded] = useState(false)
 	const draftToggleButton = useRef<HTMLButtonElement>(null)
 	const [showActivity, setShowActivity] = useState(false)
 	const historyEntry = useRef<HTMLButtonElement>(null)
 	const historyEntryFocus = useRef(false)
+	const upwardHistoryIntent = useRef(false)
+	const historyTouchY = useRef<number | null>(null)
+	const autoHistoryRange = useRef<string | null>(null)
+	const autoHistoryPending = useRef(false)
 	const [following, setFollowing] = useState(() => draft.reading.following)
 	const followingRef = useRef(following)
 	const scroll = useRef<HTMLDivElement>(null)
+	const readingStage = useRef<HTMLDivElement>(null)
+	const composer = useRef<HTMLElement>(null)
 	const prompt = useRef<HTMLTextAreaElement>(null)
 	const imageInput = useRef<HTMLInputElement>(null)
 	const composing = useRef(false)
@@ -798,9 +941,18 @@ function Conversation({
 		question: !!question,
 	}
 	useLayoutEffect(() => {
+		// Connection transitions must not carry a gesture into a newly available reader.
+		upwardHistoryIntent.current = false
+		if (!connected) {
+			autoHistoryRange.current = null
+			autoHistoryPending.current = false
+		}
 		reader.setAvailable(!!connected)
 		information.controller.setAvailable(!!connected)
 	}, [reader, connected, information.controller])
+	useLayoutEffect(() => {
+		if (historyState.issue) autoHistoryPending.current = false
+	}, [historyState.issue])
 	useEffect(() => () => reader.dispose(), [reader])
 	const statusActivity = view?.activity ?? session.activity
 	const statusConnected = !!(view && connected)
@@ -811,7 +963,6 @@ function Conversation({
 		() => remoteSessionStatus(statusActivity, statusConnected, freshSubagents),
 		[statusActivity, statusConnected, freshSubagents],
 	)
-	const modelName = view?.models?.find(model => `${model.provider}/${model.id}` === view.model)?.label ?? view?.model
 	const sessionPresentation = useMemo(() => describeRemoteSession(session), [session])
 	const currentConversation = useMemo(
 		() => ({
@@ -901,21 +1052,41 @@ function Conversation({
 		window.addEventListener('resize', resize)
 		return () => window.removeEventListener('resize', resize)
 	}, [draft.text, promptExpanded, !!question])
+	useLayoutEffect(() => {
+		const stage = readingStage.current
+		const footer = composer.current
+		if (!stage || !footer) return
+		const update = () => {
+			stage.style.setProperty('--remote-composer-overlap', `${Math.ceil(footer.getBoundingClientRect().height)}px`)
+		}
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(footer)
+		return () => observer.disconnect()
+	}, [])
 	// biome-ignore lint/correctness/useExhaustiveDependencies: composer text/mount changes alter the reading viewport after the preceding layout effect.
 	useLayoutEffect(() => {
 		const pane = scroll.current
 		if (!pane || !view) return
 		const range = historyPage?.reread ?? null
+		const automaticPage = !!range && range !== historyRange.current && autoHistoryPending.current
 		if (range !== historyRange.current) {
 			historyRange.current = range
 			setGap(false)
 			if (range) {
-				const saved = historyState.current?.anchor
-				const anchor = saved && pane.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(saved.id)}"]`)
-				pane.scrollTop = 0
-				if (anchor)
-					pane.scrollTop += anchor.getBoundingClientRect().top - pane.getBoundingClientRect().top - saved.offset
-				else if (saved) setGap(true)
+				if (automaticPage) {
+					// A scroll-triggered page replaces, rather than prepends to, the bounded 40-row view.
+					// Land at its newest edge so the reader can continue upward from the seam.
+					pane.scrollTop = pane.scrollHeight
+					autoHistoryPending.current = false
+				} else {
+					const saved = historyState.current?.anchor
+					const anchor = saved && pane.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(saved.id)}"]`)
+					pane.scrollTop = 0
+					if (anchor)
+						pane.scrollTop += anchor.getBoundingClientRect().top - pane.getBoundingClientRect().top - saved.offset
+					else if (saved) setGap(true)
+				}
 			}
 		}
 		const requestId = question?.requestId ?? null
@@ -926,6 +1097,7 @@ function Conversation({
 		if (newQuestion) observedQuestion.current = requestId
 		if (newQuestion && question) {
 			setPromptExpanded(false)
+			setComposerExpanded(false)
 			const node = questionRegion.current
 			const first = node?.querySelector<HTMLElement>('legend')
 			if (!historyState.browsing && draft.reading.following && node) {
@@ -944,7 +1116,8 @@ function Conversation({
 		if (historyState.browsing) {
 			const saved = historyState.current?.anchor
 			const node = saved && pane.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(saved.id)}"]`)
-			if (node) pane.scrollTop += node.getBoundingClientRect().top - pane.getBoundingClientRect().top - saved.offset
+			if (node && !automaticPage)
+				pane.scrollTop += node.getBoundingClientRect().top - pane.getBoundingClientRect().top - saved.offset
 			return
 		}
 		if (draft.reading.following) pane.scrollTop = pane.scrollHeight
@@ -1030,7 +1203,78 @@ function Conversation({
 		setGap(false)
 		reader.open(liveMessages?.find(message => message.id !== 'current' && isMessageVisible(message, showActivity))?.id)
 	}
+	function maybeLoadEarlier() {
+		const pane = scroll.current
+		if (!upwardHistoryIntent.current) return
+		if (
+			!pane ||
+			!view ||
+			!connected ||
+			infoCovering.current ||
+			historyState.phase !== 'idle' ||
+			(historyState.issue && historyState.issue !== 'disconnected') ||
+			(historyState.browsing && !historyPage?.older)
+		) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		if (pane.scrollTop > 24) return
+		const range = historyPage?.reread ?? 'live'
+		if (autoHistoryRange.current === range) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		upwardHistoryIntent.current = false
+		autoHistoryRange.current = range
+		autoHistoryPending.current = true
+		if (historyState.browsing) moveHistory('older')
+		else openHistory()
+	}
+	function innerScrollConsumesUp(target: EventTarget | null, pane: HTMLElement) {
+		for (let node = target instanceof HTMLElement ? target : null; node && node !== pane; node = node.parentElement)
+			if (node.scrollTop > 0 && node.scrollHeight > node.clientHeight + 1) return true
+		return false
+	}
+	function onHistoryWheel(event: ReactWheelEvent<HTMLDivElement>) {
+		const pane = event.currentTarget
+		const travel = -event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pane.clientHeight : 1)
+		if (!connected || travel <= 0 || pane.scrollTop > 24 + travel || innerScrollConsumesUp(event.target, pane)) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		upwardHistoryIntent.current = true
+		maybeLoadEarlier()
+	}
+	function onHistoryTouchMove(event: ReactTouchEvent<HTMLDivElement>) {
+		const touch = event.touches[0]
+		if (!connected || !touch || historyTouchY.current === null) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		if (touch.clientY - historyTouchY.current < -8) upwardHistoryIntent.current = false
+		if (touch.clientY - historyTouchY.current < 8) return
+		if (innerScrollConsumesUp(event.target, event.currentTarget)) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		upwardHistoryIntent.current = true
+		maybeLoadEarlier()
+	}
+	function onHistoryKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey) return
+		if (['ArrowDown', 'PageDown', 'End'].includes(event.key) || (event.key === ' ' && !event.shiftKey)) {
+			upwardHistoryIntent.current = false
+			return
+		}
+		if (!['ArrowUp', 'PageUp', 'Home'].includes(event.key) && !(event.key === ' ' && event.shiftKey)) return
+		if (!connected) return
+		upwardHistoryIntent.current = true
+		maybeLoadEarlier()
+	}
 	function latestHistory() {
+		upwardHistoryIntent.current = false
+		autoHistoryRange.current = null
+		autoHistoryPending.current = false
 		reader.latest()
 		if (question) observedQuestion.current = null
 		draft.reading = { following: true, top: 0 }
@@ -1308,6 +1552,12 @@ function Conversation({
 		cancelUnsubmittedTransfer()
 		onBack()
 	}
+	useLayoutEffect(() => {
+		navigationBack.current = leaveConversation
+		return () => {
+			navigationBack.current = null
+		}
+	})
 	function collapsePromptDraft() {
 		setPromptExpanded(false)
 		requestAnimationFrame(() => draftToggleButton.current?.focus())
@@ -1329,31 +1579,16 @@ function Conversation({
 		<section className="remote-conversation" aria-label="Conversation">
 			<div className="remote-chat">
 				<header className="remote-header">
-					<IconBtn
-						className="remote-back"
-						onClick={infoOpen && !rail ? closeInfo : leaveConversation}
-						label={infoOpen && !rail ? 'Back to conversation' : 'Back to live conversations'}
-					>
-						{GLYPH.back}
-					</IconBtn>
-					<h2 ref={heading} tabIndex={-1} title={sessionPresentation.title}>
+					{infoOpen && !rail ? (
+						<IconBtn className="remote-back" onClick={closeInfo} label="Back to conversation">
+							{GLYPH.back}
+						</IconBtn>
+					) : (
+						<RemoteNavigationTrigger onOpen={onOpenNavigation} />
+					)}
+					<h2 ref={heading} className="sr-only" tabIndex={-1}>
 						{sessionPresentation.title}
 					</h2>
-					{/*
-					 * The model sits in the header where a chat app puts it, so the thing most
-					 * often changed is one tap away and always legible without opening anything.
-					 */}
-					<button
-						type="button"
-						className="remote-header-model"
-						onClick={() => setSheet('model')}
-						aria-label={`Model: ${modelName ?? 'unavailable'}. Choose a different model`}
-					>
-						<span className="remote-header-model-name">{modelName ?? 'Model'}</span>
-						<span className="remote-header-model-chevron" aria-hidden="true">
-							⌄
-						</span>
-					</button>
 				</header>
 				{(!view ? false : !connected || gap) && (
 					<output className="remote-notice">
@@ -1374,368 +1609,422 @@ function Conversation({
 						move={moveHistory}
 					/>
 				)}
-				<div className="remote-reading-area">
-					{!rail && infoOpen && (
-						<RemoteInformation
-							state={information.state}
-							current={currentConversation}
-							headingRef={infoHeading}
-							mobile
-						/>
-					)}
-					<div
-						ref={scroll}
-						className="remote-transcript"
-						inert={infoOpen && !rail}
-						onScroll={rememberReading}
-						// biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need to scroll the reading region without focusing the composer.
-						tabIndex={0}
-						aria-label="Conversation messages"
-					>
-						{view &&
-							connected &&
-							(!historyState.issue || historyState.issue === 'disconnected') &&
-							!historyState.current &&
-							!historyState.browsing && (
-								<div className="remote-history-entry">
-									<Btn ref={historyEntry} tone="ghost" onClick={openHistory}>
-										Load earlier messages
-									</Btn>
-								</div>
-							)}
-						{!view && (
-							<p className="remote-note">
-								{historyState.issue === 'access-ended' || information.state.status === 'access-ended'
-									? 'Access ended. Earlier messages have been cleared.'
-									: 'Loading conversation…'}
-							</p>
+				<div className="remote-reading-stage" ref={readingStage}>
+					<div className="remote-reading-area">
+						{!rail && infoOpen && (
+							<RemoteInformation
+								state={information.state}
+								current={currentConversation}
+								headingRef={infoHeading}
+								mobile
+							/>
 						)}
-						<HistoryRangeNote state={historyState} />
-						{view &&
-							(historyPage ? (
-								<HistoryMessages records={historyPage.records} showActivity={showActivity} />
-							) : (
-								<Messages messages={messages ?? EMPTY_MESSAGES} showActivity={showActivity} />
-							))}
-						{historyPage &&
-							!historyPage.records.some(
-								record => record.kind === 'message' && isMessageVisible(record.message, showActivity),
-							) && (
+						<div
+							ref={scroll}
+							className="remote-transcript"
+							inert={infoOpen && !rail}
+							onScroll={() => {
+								rememberReading()
+								maybeLoadEarlier()
+								// Consume only the current browser gesture, never a later programmatic restore.
+								upwardHistoryIntent.current = false
+							}}
+							onWheel={onHistoryWheel}
+							onTouchStart={event => {
+								historyTouchY.current = event.touches[0]?.clientY ?? null
+								upwardHistoryIntent.current = false
+							}}
+							onTouchMove={onHistoryTouchMove}
+							onTouchEnd={() => {
+								historyTouchY.current = null
+								upwardHistoryIntent.current = false
+							}}
+							onTouchCancel={() => {
+								historyTouchY.current = null
+								upwardHistoryIntent.current = false
+							}}
+							onKeyDown={onHistoryKeyDown}
+							onKeyUp={() => {
+								upwardHistoryIntent.current = false
+							}}
+							onBlur={() => {
+								upwardHistoryIntent.current = false
+							}}
+							// biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need to scroll the reading region without focusing the composer.
+							tabIndex={0}
+							aria-label="Conversation messages"
+						>
+							{view &&
+								connected &&
+								(!historyState.issue || historyState.issue === 'disconnected') &&
+								!historyState.current &&
+								!historyState.browsing && (
+									<div className="remote-history-entry">
+										<Btn ref={historyEntry} tone="ghost" ariaLabel="Load earlier messages" onClick={openHistory}>
+											<RemoteArrow direction="up" /> Earlier messages
+										</Btn>
+									</div>
+								)}
+							{!view && (
 								<p className="remote-note">
-									No visible conversation messages in this range. Continue with Older or Newer, or show tool activity
-									from the composer menu.
+									{historyState.issue === 'access-ended' || information.state.status === 'access-ended'
+										? 'Access ended. Earlier messages have been cleared.'
+										: 'Loading conversation…'}
 								</p>
 							)}
-						{view &&
-							connected &&
-							(view.activity === 'working' ||
-								(view.activity === 'idle' && remoteActivityAvailable(freshSubagents) && freshSubagents.active)) &&
-							!historyState.browsing && (
-								<div className="remote-working">
-									<ActivityIndicator label={view.activity === 'working' ? 'Pi is working' : 'Subagents are active'} />
-									<span className="activity-indicator-label">
-										{view.activity === 'working' ? 'Working…' : 'Subagents active…'}
-									</span>
+							<HistoryRangeNote state={historyState} />
+							{view &&
+								(historyPage ? (
+									<HistoryMessages records={historyPage.records} showActivity={showActivity} />
+								) : (
+									<Messages messages={messages ?? EMPTY_MESSAGES} showActivity={showActivity} />
+								))}
+							{historyPage &&
+								!historyPage.records.some(
+									record => record.kind === 'message' && isMessageVisible(record.message, showActivity),
+								) && (
+									<p className="remote-note">
+										No visible conversation messages in this range. Continue with Older or Newer, or show tool activity
+										from the composer menu.
+									</p>
+								)}
+							{view &&
+								connected &&
+								(view.activity === 'working' ||
+									(view.activity === 'idle' && remoteActivityAvailable(freshSubagents) && freshSubagents.active)) &&
+								!historyState.browsing && (
+									<div className="remote-working">
+										<ActivityIndicator label={view.activity === 'working' ? 'Pi is working' : 'Subagents are active'} />
+										<span className="activity-indicator-label">
+											{view.activity === 'working' ? 'Working…' : 'Subagents active…'}
+										</span>
+									</div>
+								)}
+							{capabilityMessage && <p className="remote-capability-note">{capabilityMessage}</p>}
+							{question && (
+								<div ref={questionRegion} data-question-request={question.requestId} tabIndex={-1}>
+									<Question
+										key={question.requestId}
+										question={question}
+										answers={questionAnswers ?? defaultAnswers}
+										disabled={!connected || !view?.capabilities.answer || !!unresolved}
+										onAnswersChange={onQuestionAnswersChange}
+									/>
 								</div>
 							)}
-						{capabilityMessage && <p className="remote-capability-note">{capabilityMessage}</p>}
-						{question && (
-							<div ref={questionRegion} data-question-request={question.requestId} tabIndex={-1}>
-								<Question
-									key={question.requestId}
-									question={question}
-									answers={questionAnswers ?? defaultAnswers}
-									disabled={!connected || !view?.capabilities.answer || !!unresolved}
-									onAnswersChange={onQuestionAnswersChange}
-								/>
+							{terminalDialogNotice && (
+								<p className="remote-notice">
+									This dialog needs the original terminal. Remote does not support this custom UI.
+								</p>
+							)}
+						</div>
+						{(questionJump || (!question && (!following || historyState.browsing))) && (
+							<div className="remote-jump" inert={infoOpen && !rail}>
+								{questionJump && (
+									<Btn className="remote-jump-button" onClick={answerQuestion}>
+										<RemoteArrow direction="down" />
+										Answer question
+									</Btn>
+								)}
+								{!question && (!following || historyState.browsing) && (
+									<Btn className="remote-jump-button" onClick={latestHistory}>
+										<RemoteArrow direction="down" /> Jump to latest
+									</Btn>
+								)}
 							</div>
-						)}
-						{terminalDialogNotice && (
-							<p className="remote-notice">
-								This dialog needs the original terminal. Remote does not support this custom UI.
-							</p>
 						)}
 					</div>
-					{(questionJump || (!question && (!following || historyState.browsing))) && (
-						<div className="remote-jump" inert={infoOpen && !rail}>
-							{questionJump && (
-								<Btn className="remote-jump-button" onClick={answerQuestion}>
-									<RemoteArrow direction="down" />
-									Answer question
-								</Btn>
-							)}
-							{!question && (!following || historyState.browsing) && (
-								<Btn className="remote-jump-button" onClick={latestHistory}>
-									<RemoteArrow direction="down" /> Jump to latest
-								</Btn>
-							)}
-						</div>
-					)}
-				</div>
-				<footer className={`remote-composer${expandedImageQuestion ? ' remote-compact-image-question' : ''}`}>
-					<InformationFooter
-						state={information.state}
-						source={sessionPresentation.source}
-						modelFallback={detailModel}
-					/>
-					{((operation && operation.status !== 'dispatched') || transfer || recovery || draft.transferFailure) && (
-						<output className="remote-receipt">
-							{transfer && (
-								<span>
-									Uploading {draft.recovery?.images.length ?? 0}{' '}
-									{draft.recovery?.images.length === 1 ? 'image' : 'images'} before sending…
-								</span>
-							)}
-							{operation && operation.status !== 'dispatched' && <span>{RECEIPT_COPY[operation.status]}</span>}
-							{draft.transferFailure && <span>{draft.transferFailure.message}</span>}
-							{operation?.status === 'unknown' && (
-								<>
-									<Btn onClick={() => void check(operation.command)}>Check status</Btn>
-									<Btn
-										onClick={() => {
-											if (draft.operation?.command.commandId !== operation.command.commandId) return
-											settlePrompt(draft, operation.command.commandId, 'rejected')
-											draft.operation = undefined
-											refresh()
-										}}
-									>
-										I’ve checked the conversation
-									</Btn>
-								</>
-							)}
-							{recovery && (
-								<>
+					<footer
+						ref={composer}
+						className={`remote-composer${expandedImageQuestion ? ' remote-compact-image-question' : ''}`}
+						onBlurCapture={event => {
+							if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setComposerExpanded(false)
+						}}
+						onClickCapture={event => {
+							// Keep the pressed target in place until its click is admitted;
+							// collapse only if focus has actually left the editor.
+							if (
+								document.activeElement !== prompt.current &&
+								event.target instanceof Element &&
+								event.target.closest(
+									'.remote-send, .remote-interrupt, .remote-receipt button, .remote-draft-toggle button',
+								)
+							)
+								setComposerExpanded(false)
+						}}
+					>
+						{((operation && operation.status !== 'dispatched') || transfer || recovery || draft.transferFailure) && (
+							<output className="remote-receipt">
+								{transfer && (
 									<span>
-										Submitted{' '}
-										{recovery.images.length
-											? `bundle with ${recovery.images.length} ${recovery.images.length === 1 ? 'image' : 'images'}`
-											: 'message'}{' '}
-										saved locally. Choose which draft to keep before sending.
+										Uploading {draft.recovery?.images.length ?? 0}{' '}
+										{draft.recovery?.images.length === 1 ? 'image' : 'images'} before sending…
 									</span>
-									<Btn
-										onClick={() => {
-											if (choosePrompt(draft, recovery, true)) refresh()
-										}}
-									>
-										{promptHasContent(draft) ? 'Replace current draft' : 'Restore submitted message'}
-									</Btn>
-									<Btn
-										onClick={() => {
-											if (choosePrompt(draft, recovery, false)) refresh()
-										}}
-									>
-										{promptHasContent(draft) ? 'Keep current draft' : 'Discard submitted message'}
-									</Btn>
-								</>
-							)}
-						</output>
-					)}
-					{question && (promptHasContent(draft) || promptExpanded) ? (
-						<div className={`remote-draft-toggle${expandedImageQuestion ? ' remote-draft-toggle-image-expanded' : ''}`}>
-							<span>
-								{promptHasContent(draft)
-									? `Message draft saved locally${attachedImages.length ? ` with ${attachedImages.length} ${attachedImages.length === 1 ? 'image' : 'images'}` : ''}`
-									: 'Message draft'}
-							</span>
-							<Btn
-								ref={draftToggleButton}
-								ariaExpanded={promptExpanded}
-								onClick={() => (promptExpanded ? collapsePromptDraft() : setPromptExpanded(true))}
-							>
-								{promptExpanded ? 'Hide draft' : 'Edit draft'}
-							</Btn>
-						</div>
-					) : null}
-					<div className={!question || promptExpanded ? 'remote-compose-surface' : 'remote-question-actions'}>
-						{(!question || promptExpanded) && draft.failedSelection ? (
-							<div className="remote-image-selection-error" role="alert">
-								<span>{draft.failedSelection}</span>
-								<Btn
-									onClick={() => {
-										draft.failedSelection = undefined
-										refresh()
-									}}
-								>
-									Discard failed selection
-								</Btn>
-							</div>
-						) : (!question || promptExpanded) && preparingImages ? (
-							<output className="remote-image-preparing">Preparing images… Existing attachments are unchanged.</output>
-						) : (!question || promptExpanded) && attachedImages.length ? (
-							<div className="remote-image-previews" aria-label="Attached images">
-								{!imageInputAvailable && (
-									<output className="remote-image-unavailable">
-										{!view?.imageInput
-											? 'Images need this conversation’s terminal to reload. Text still sends.'
-											: 'Image input unavailable. Remove images or wait for support.'}
-									</output>
 								)}
-								{attachedImages.map((image, index) => (
-									<div className="remote-image-preview" key={image.localId}>
-										<img src={image.objectUrl} alt={`Attachment ${index + 1}`} />
-										<IconBtn
-											label={`Remove attached image ${index + 1}`}
+								{operation && operation.status !== 'dispatched' && <span>{RECEIPT_COPY[operation.status]}</span>}
+								{draft.transferFailure && <span>{draft.transferFailure.message}</span>}
+								{operation?.status === 'unknown' && (
+									<>
+										<Btn onClick={() => void check(operation.command)}>Check status</Btn>
+										<Btn
 											onClick={() => {
-												image.dispose()
-												editPromptImages(
-													draft,
-													attachedImages.filter(value => value !== image),
-												)
+												if (draft.operation?.command.commandId !== operation.command.commandId) return
+												settlePrompt(draft, operation.command.commandId, 'rejected')
+												draft.operation = undefined
 												refresh()
 											}}
 										>
-											{GLYPH.close}
-										</IconBtn>
-									</div>
-								))}
+											I’ve checked the conversation
+										</Btn>
+									</>
+								)}
+								{recovery && (
+									<>
+										<span>
+											Submitted{' '}
+											{recovery.images.length
+												? `bundle with ${recovery.images.length} ${recovery.images.length === 1 ? 'image' : 'images'}`
+												: 'message'}{' '}
+											saved locally. Choose which draft to keep before sending.
+										</span>
+										<Btn
+											onClick={() => {
+												if (choosePrompt(draft, recovery, true)) refresh()
+											}}
+										>
+											{promptHasContent(draft) ? 'Replace current draft' : 'Restore submitted message'}
+										</Btn>
+										<Btn
+											onClick={() => {
+												if (choosePrompt(draft, recovery, false)) refresh()
+											}}
+										>
+											{promptHasContent(draft) ? 'Keep current draft' : 'Discard submitted message'}
+										</Btn>
+									</>
+								)}
+							</output>
+						)}
+						{question && (promptHasContent(draft) || promptExpanded) ? (
+							<div
+								className={`remote-draft-toggle${expandedImageQuestion ? ' remote-draft-toggle-image-expanded' : ''}`}
+							>
+								<span>
+									{promptHasContent(draft)
+										? `Message draft saved locally${attachedImages.length ? ` with ${attachedImages.length} ${attachedImages.length === 1 ? 'image' : 'images'}` : ''}`
+										: 'Message draft'}
+								</span>
+								<Btn
+									ref={draftToggleButton}
+									ariaExpanded={promptExpanded}
+									onClick={() => (promptExpanded ? collapsePromptDraft() : setPromptExpanded(true))}
+								>
+									{promptExpanded ? 'Hide draft' : 'Edit draft'}
+								</Btn>
 							</div>
 						) : null}
-						{(!question || promptExpanded) && (
-							<label className="remote-prompt-field" htmlFor="remote-prompt">
-								<span className="sr-only">Message</span>
-								<textarea
-									ref={attachPrompt}
-									onCompositionStart={() => {
-										composing.current = true
+						<div
+							className={
+								!question || promptExpanded
+									? `remote-compose-surface${composerExpanded ? ' remote-compose-open' : ''}`
+									: 'remote-question-actions'
+							}
+						>
+							{(!question || promptExpanded) && draft.failedSelection ? (
+								<div className="remote-image-selection-error" role="alert">
+									<span>{draft.failedSelection}</span>
+									<Btn
+										onClick={() => {
+											draft.failedSelection = undefined
+											refresh()
+										}}
+									>
+										Discard failed selection
+									</Btn>
+								</div>
+							) : (!question || promptExpanded) && preparingImages ? (
+								<output className="remote-image-preparing">
+									Preparing images… Existing attachments are unchanged.
+								</output>
+							) : (!question || promptExpanded) && attachedImages.length ? (
+								<div className="remote-image-previews" aria-label="Attached images">
+									{!imageInputAvailable && (
+										<output className="remote-image-unavailable">
+											{!view?.imageInput
+												? 'Images need this conversation’s terminal to reload. Text still sends.'
+												: 'Image input unavailable. Remove images or wait for support.'}
+										</output>
+									)}
+									{attachedImages.map((image, index) => (
+										<div className="remote-image-preview" key={image.localId}>
+											<img src={image.objectUrl} alt={`Attachment ${index + 1}`} />
+											<IconBtn
+												label={`Remove attached image ${index + 1}`}
+												onClick={() => {
+													image.dispose()
+													editPromptImages(
+														draft,
+														attachedImages.filter(value => value !== image),
+													)
+													refresh()
+												}}
+											>
+												{GLYPH.close}
+											</IconBtn>
+										</div>
+									))}
+								</div>
+							) : null}
+							{sheet && (
+								<RemoteChoiceSheet
+									title={sheet === 'more' ? 'More' : sheet === 'model' ? 'Model' : 'Effort'}
+									empty={
+										sheet === 'model'
+											? view?.models
+												? 'No other models are configured for this conversation.'
+												: 'Reload this conversation’s terminal to choose a model.'
+											: 'This conversation’s terminal does not report effort levels.'
+									}
+									options={
+										sheet === 'more'
+											? [
+													{
+														id: 'photo',
+														label: imageInputAvailable
+															? 'Upload photo'
+															: view?.imageInput
+																? 'Photos unavailable right now'
+																: 'Photos need this terminal to reload',
+														disabled: imageInputDisabled,
+													},
+													{ id: 'effort', label: 'Effort', meta: view?.thinking?.level },
+													{ id: 'activity', label: 'Show tool activity', toggle: true, checked: showActivity },
+													{ id: 'info', label: 'Info' },
+													...(historyPage ? [{ id: 'reread', label: 'Reread this range' }] : []),
+												]
+											: sheet === 'model'
+												? (view?.models ?? []).map(model => ({
+														id: `${model.provider}/${model.id}`,
+														label: model.label,
+														// Known before the choice rather than after a refused attachment.
+														meta: model.image ? 'Images' : undefined,
+														checked: view?.model === `${model.provider}/${model.id}`,
+														disabled: !!operation && operation.status !== 'dispatched',
+													}))
+												: (view?.thinking?.levels ?? []).map(level => ({
+														id: level,
+														label: level,
+														checked: view?.thinking?.level === level,
+														disabled: !!operation && operation.status !== 'dispatched',
+													}))
+									}
+									onClose={() => {
+										setSheet(null)
+										restoreSheetFocus()
 									}}
-									onCompositionEnd={() => {
-										composing.current = false
-									}}
-									id="remote-prompt"
-									aria-label="Message"
-									rows={1}
-									maxLength={16384}
-									value={draft.text}
-									aria-keyshortcuts="Control+Enter Meta+Enter"
-									onChange={event => {
-										editPrompt(draft, event.target.value)
-										refresh()
-									}}
-									onKeyDown={event => {
-										if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) {
-											event.preventDefault()
-											sendPrompt()
-										}
-									}}
-									placeholder="Message Pi…"
-								/>
-							</label>
-						)}
-						{sheet && (
-							<RemoteChoiceSheet
-								title={sheet === 'more' ? 'More' : sheet === 'model' ? 'Model' : 'Effort'}
-								empty={
-									sheet === 'model'
-										? view?.models
-											? 'No other models are configured for this conversation.'
-											: 'Reload this conversation’s terminal to choose a model.'
-										: 'This conversation’s terminal does not report effort levels.'
-								}
-								options={
-									sheet === 'more'
-										? [
-												{
-													id: 'photo',
-													label: imageInputAvailable
-														? 'Upload photo'
-														: view?.imageInput
-															? 'Photos unavailable right now'
-															: 'Photos need this terminal to reload',
-													disabled: imageInputDisabled,
-												},
-												{ id: 'effort', label: 'Effort', meta: view?.thinking?.level },
-												{ id: 'activity', label: 'Show tool activity', toggle: true, checked: showActivity },
-												{ id: 'info', label: 'Info' },
-												...(historyPage ? [{ id: 'reread', label: 'Reread this range' }] : []),
-											]
-										: sheet === 'model'
-											? (view?.models ?? []).map(model => ({
-													id: `${model.provider}/${model.id}`,
-													label: model.label,
-													// Known before the choice rather than after a refused attachment.
-													meta: model.image ? 'Images' : undefined,
-													checked: view?.model === `${model.provider}/${model.id}`,
-													disabled: !!operation && operation.status !== 'dispatched',
-												}))
-											: (view?.thinking?.levels ?? []).map(level => ({
-													id: level,
-													label: level,
-													checked: view?.thinking?.level === level,
-													disabled: !!operation && operation.status !== 'dispatched',
-												}))
-								}
-								onClose={() => {
-									setSheet(null)
-									infoOpener.current?.focus({ preventScroll: true })
-								}}
-								onChoose={id => {
-									if (sheet === 'more') {
-										// Photos must open inside this activation, so no state change first.
-										if (id === 'photo') {
-											const input = imageInput.current
+									onChoose={id => {
+										if (sheet === 'more') {
+											// Photos must open inside this activation, so no state change first.
+											if (id === 'photo') {
+												const input = imageInput.current
+												setSheet(null)
+												if (input && !input.disabled) {
+													if (typeof input.showPicker === 'function') input.showPicker()
+													else input.click()
+												}
+												return
+											}
+											if (id === 'effort') {
+												setSheet('effort')
+												return
+											}
 											setSheet(null)
-											if (input && !input.disabled) {
-												if (typeof input.showPicker === 'function') input.showPicker()
-												else input.click()
+											restoreSheetFocus()
+											if (id === 'activity') toggleActivity()
+											else if (id === 'info') openInfo()
+											else if (id === 'reread') {
+												rememberReading()
+												reader.reread()
 											}
 											return
 										}
-										if (id === 'effort') {
-											setSheet('effort')
+										setSheet(null)
+										restoreSheetFocus()
+										if (sheet === 'effort') {
+											void send({ kind: 'thinking', level: id as RemoteThinkingLevel })
 											return
 										}
-										setSheet(null)
-										infoOpener.current?.focus({ preventScroll: true })
-										if (id === 'activity') toggleActivity()
-										else if (id === 'info') openInfo()
-										else if (id === 'reread') {
-											rememberReading()
-											reader.reread()
-										}
-										return
-									}
-									setSheet(null)
-									infoOpener.current?.focus({ preventScroll: true })
-									if (sheet === 'effort') {
-										void send({ kind: 'thinking', level: id as RemoteThinkingLevel })
-										return
-									}
-									const [provider, ...rest] = id.split('/')
-									if (provider) void send({ kind: 'model', provider, id: rest.join('/') })
-								}}
-							/>
-						)}
-						<div className="remote-composer-actions">
-							<input
-								ref={imageInput}
-								type="file"
-								hidden
-								accept="image/png,image/jpeg"
-								multiple
-								disabled={imageInputDisabled}
-								onChange={event => {
-									const files = Array.from(event.target.files ?? [])
-									event.target.value = ''
-									void selectImages(files)
-								}}
-							/>
-							<button
-								type="button"
-								ref={infoOpener}
-								className="icon-btn remote-add-images"
-								aria-label="More"
-								title="More"
-								onClick={() => setSheet('more')}
-							>
-								{GLYPH.plus}
-							</button>
-							{!question && (
-								<>
+										const [provider, ...rest] = id.split('/')
+										if (provider) void send({ kind: 'model', provider, id: rest.join('/') })
+									}}
+								/>
+							)}
+							<div className="remote-composer-actions">
+								<input
+									ref={imageInput}
+									type="file"
+									hidden
+									accept="image/png,image/jpeg"
+									multiple
+									disabled={imageInputDisabled}
+									onChange={event => {
+										const files = Array.from(event.target.files ?? [])
+										event.target.value = ''
+										void selectImages(files)
+									}}
+								/>
+								{(!question || promptExpanded) && (
+									<label className="remote-prompt-field" htmlFor="remote-prompt">
+										<span className="sr-only">Message</span>
+										<textarea
+											ref={attachPrompt}
+											onFocus={() => setComposerExpanded(true)}
+											onCompositionStart={() => {
+												composing.current = true
+											}}
+											onCompositionEnd={() => {
+												composing.current = false
+											}}
+											id="remote-prompt"
+											aria-label="Message"
+											rows={1}
+											maxLength={16384}
+											value={draft.text}
+											aria-keyshortcuts="Control+Enter Meta+Enter"
+											onChange={event => {
+												editPrompt(draft, event.target.value)
+												refresh()
+											}}
+											onKeyDown={event => {
+												if (
+													(event.metaKey || event.ctrlKey) &&
+													event.key === 'Enter' &&
+													!event.nativeEvent.isComposing
+												) {
+													event.preventDefault()
+													sendPrompt()
+												}
+											}}
+											placeholder="Message Pi…"
+										/>
+									</label>
+								)}
+								<button
+									type="button"
+									ref={infoOpener}
+									className="icon-btn remote-add-images"
+									aria-label="More"
+									title="More"
+									onClick={() => setSheet('more')}
+								>
+									{GLYPH.plus}
+								</button>
+								{!question && (
 									<MenuButton
 										align="start"
 										triggerLabel={`Message delivery: ${draft.delivery === 'steer' ? 'During work' : 'Follow-up'}`}
 										triggerClass="icon-btn remote-mode-trigger"
-										trigger={GLYPH.settings}
+										trigger={draft.delivery === 'steer' ? GLYPH.return : GLYPH.queue}
 										entries={[
 											{
 												label: 'Steer at the next safe point',
@@ -1755,69 +2044,69 @@ function Conversation({
 											},
 										]}
 									/>
-								</>
-							)}
-							{view && view.activity !== 'idle' && (
-								<IconBtn
-									label="Interrupt"
-									className="remote-interrupt"
-									disabled={!connected || !view.capabilities.interrupt || !!unresolved}
-									onClick={() => void send({ kind: 'interrupt' })}
-								>
-									{GLYPH.stop}
-								</IconBtn>
-							)}
-							{expandedImageQuestion && (
-								<IconBtn className="remote-compact-hide-draft" label="Hide draft" onClick={collapsePromptDraft}>
-									{GLYPH.chevronDown}
-								</IconBtn>
-							)}
-							{question && infoOpen && !rail ? (
-								<Btn className="remote-information-back" onClick={closeInfo}>
-									Back to conversation
-								</Btn>
-							) : question ? (
-								<Btn
-									tone="primary"
-									disabled={!connected || !view?.capabilities.answer || !!unresolved || !answersComplete}
-									onClick={() => {
-										if (questionAnswers && answersComplete)
-											void send({
-												kind: 'answer',
-												requestId: question.requestId,
-												answers: questionAnswers as Answer[],
-											})
-									}}
-								>
-									Submit answers
-								</Btn>
-							) : (
-								<Btn
-									className="remote-send"
-									ariaLabel="Send"
-									tone={promptHasContent(draft) ? 'primary' : 'quiet'}
-									disabled={
-										!connected ||
-										!view?.capabilities.prompt ||
-										!!unresolved ||
-										!!recovery ||
-										!!transfer ||
-										preparingImages ||
-										!!draft.failedSelection ||
-										(attachedImages.length > 0 && !imageInputAvailable) ||
-										!promptHasContent(draft)
-									}
-									onClick={sendPrompt}
-								>
-									<RemoteArrow direction="up" />
-								</Btn>
-							)}
+								)}
+								{view && view.activity !== 'idle' && (
+									<IconBtn
+										label="Interrupt"
+										className="remote-interrupt"
+										disabled={!connected || !view.capabilities.interrupt || !!unresolved}
+										onClick={() => void send({ kind: 'interrupt' })}
+									>
+										{GLYPH.stop}
+									</IconBtn>
+								)}
+								{expandedImageQuestion && (
+									<IconBtn className="remote-compact-hide-draft" label="Hide draft" onClick={collapsePromptDraft}>
+										{GLYPH.chevronDown}
+									</IconBtn>
+								)}
+								{question && infoOpen && !rail ? (
+									<Btn className="remote-information-back" onClick={closeInfo}>
+										Back to conversation
+									</Btn>
+								) : question ? (
+									<Btn
+										tone="primary"
+										disabled={!connected || !view?.capabilities.answer || !!unresolved || !answersComplete}
+										onClick={() => {
+											if (questionAnswers && answersComplete)
+												void send({
+													kind: 'answer',
+													requestId: question.requestId,
+													answers: questionAnswers as Answer[],
+												})
+										}}
+									>
+										Submit answers
+									</Btn>
+								) : (
+									<Btn
+										className="remote-send"
+										ariaLabel="Send"
+										tone={promptHasContent(draft) ? 'primary' : 'quiet'}
+										disabled={
+											!connected ||
+											!view?.capabilities.prompt ||
+											!!unresolved ||
+											!!recovery ||
+											!!transfer ||
+											preparingImages ||
+											!!draft.failedSelection ||
+											(attachedImages.length > 0 && !imageInputAvailable) ||
+											!promptHasContent(draft)
+										}
+										onClick={sendPrompt}
+									>
+										<RemoteArrow direction="up" />
+									</Btn>
+								)}
+							</div>
 						</div>
-					</div>
-					{operation?.command.operation.kind === 'interrupt' && (
-						<p className="remote-note">Interrupt requests an abort. Queued follow-ups may still run.</p>
-					)}
-				</footer>
+						{operation?.command.operation.kind === 'interrupt' && (
+							<p className="remote-note">Interrupt requests an abort. Queued follow-ups may still run.</p>
+						)}
+					</footer>
+				</div>
 			</div>
 			{rail && <RemoteInformation state={information.state} current={currentConversation} headingRef={infoHeading} />}
 		</section>
@@ -1899,6 +2188,7 @@ const Message = memo(function Message({
 		<article
 			className="remote-message"
 			data-message-id={message.id === 'current' ? undefined : message.id}
+			data-role={message.role}
 			data-continuation={!showAuthor || undefined}
 		>
 			{showAuthor && <h3 className="remote-message-author">{message.role === 'user' ? 'You' : 'Pi'}</h3>}

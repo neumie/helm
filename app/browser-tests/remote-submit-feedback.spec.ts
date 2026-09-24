@@ -1,5 +1,6 @@
 import { type Page, expect, test } from '@playwright/test'
 import type { RemoteCommand } from '../../src/remote/protocol.js'
+import { openRemoteDestination } from './remote-navigation.js'
 
 declare global {
 	interface Window {
@@ -71,6 +72,7 @@ test('held production send clears in two frames, captures trimmed delivery once 
 	page,
 }, info) => {
 	await setup(page)
+	await editor(page).focus()
 	await page.getByRole('button', { name: /Message delivery:/ }).click()
 	await page.getByRole('menuitemradio', { name: 'Follow up after current work' }).click()
 	const transcript = page.getByLabel('Conversation messages', { exact: true })
@@ -219,7 +221,7 @@ test('same-owner Back/Forward preserves recovery; full-owner replacement drops i
 	await send(page)
 	await editor(page).fill('Newer owner-local draft')
 	await finish(page, 0, 'unknown', true)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	await page.goForward()
 	await expect(editor(page)).toHaveValue('Newer owner-local draft')
 	await page.getByRole('button', { name: 'I’ve checked the conversation', exact: true }).click()
@@ -258,7 +260,7 @@ for (const acknowledge of [false, true])
 test('abort catch from old remount cannot replace a later status-settled operation', async ({ page }) => {
 	await setup(page)
 	await send(page)
-	await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+	await openRemoteDestination(page, 'Sessions')
 	// The original transport ignores abort deliberately. Reopening retains its unresolved operation.
 	await page.goForward()
 	await expect(page.locator('.remote-receipt')).toContainText('Sending…')
@@ -302,25 +304,41 @@ test('compact recovery remains in the bounded receipt well with full controls an
 		const header = document.querySelector('.remote-chat > .remote-header')
 		const composer = document.querySelector('.remote-composer')
 		if (!header || !composer) throw new Error('Missing layout owners')
+		const bounds = (selector: string) => {
+			const rect = document.querySelector(selector)?.getBoundingClientRect()
+			return rect ? { top: rect.top, bottom: rect.bottom, height: rect.height } : null
+		}
 		return {
 			top: getComputedStyle(header).paddingTop,
 			bottom: getComputedStyle(composer).paddingBottom,
 			reading: document.querySelector('.remote-reading-area')?.getBoundingClientRect().height,
-			footer: document.querySelector('.remote-information-footer')?.getBoundingClientRect().height,
+			composer: bounds('.remote-composer'),
+			receipt: bounds('.remote-receipt'),
+			surface: bounds('.remote-compose-surface'),
+			field: bounds('.remote-prompt-field'),
+			footer: document.querySelector('.remote-information-footer'),
 			controls: [...document.querySelectorAll('.remote-composer-actions button')].map(e => {
 				const b = e.getBoundingClientRect()
 				return { top: b.top, bottom: b.bottom, width: b.width, height: b.height }
 			}),
 		}
 	})
+	await info.attach('compact-recovery-geometry', {
+		body: JSON.stringify(geometry, null, 2),
+		contentType: 'application/json',
+	})
 	expect(geometry.top).toBe('36px')
-	expect(geometry.bottom).toBe('24px')
+	expect(geometry.bottom).toBe('12px')
 	expect(geometry.reading).toBeGreaterThanOrEqual(96)
-	expect(geometry.footer).toBe(20)
+	expect(geometry.footer).toBeNull()
+	// The capsule keeps its full editor/action height; the receipt scrolls instead.
+	expect(geometry.surface?.height).toBeGreaterThanOrEqual(100)
+	expect(geometry.receipt?.height).toBeLessThan(96)
 	for (const c of geometry.controls) {
 		expect(c.width).toBe(44)
 		expect(c.height).toBe(44)
-		expect(c.bottom).toBeLessThanOrEqual(396)
+		// The 12px capsule floor and 6px inner inset keep actions 18px above the visible bottom.
+		expect(c.bottom).toBeLessThanOrEqual(402)
 	}
 	await page.screenshot({ path: info.outputPath('recovery-320x420-safe-area.png') })
 	await page.getByRole('button', { name: 'Replace current draft', exact: true }).click()
@@ -332,7 +350,7 @@ for (const outcome of ['dispatched', 'rejected', 'catch'] as const)
 	test(`late ${outcome} from the old component publishes only to its retained same-owner draft`, async ({ page }) => {
 		await setup(page)
 		await send(page)
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await openRemoteDestination(page, 'Sessions')
 		await page.goForward()
 		await editor(page).fill('Newer reopened draft')
 		const result = await page.evaluate(async outcome => {
