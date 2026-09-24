@@ -15,6 +15,7 @@ export interface ModelOption {
 export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	claude: [
 		{ id: 'claude-fable-5', label: 'Fable 5' },
+		{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
 		{ id: 'claude-opus-5', label: 'Opus 5' },
 		{ id: 'claude-opus-4-8', label: 'Opus 4.8' },
 		{ id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -22,6 +23,7 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	],
 	codex: [
 		{ id: 'gpt-6-astra', label: 'Astra' },
+		{ id: 'gpt-6-sol', label: 'Sol (GPT-6)' },
 		// GPT-5.6 family (GA 2026-07-09): Sol > Terra > Luna by capability/price.
 		{ id: 'gpt-5.6-sol', label: 'Sol' },
 		{ id: 'gpt-5.6-terra', label: 'Terra' },
@@ -31,11 +33,13 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 	// Pi spans providers; qualified ids make the owning subscription explicit.
 	pi: [
 		{ id: 'anthropic/claude-fable-5', label: 'Anthropic · Fable 5' },
+		{ id: 'anthropic/claude-opus-5-5', label: 'Anthropic · Opus 5.5' },
 		{ id: 'anthropic/claude-opus-5', label: 'Anthropic · Opus 5' },
 		{ id: 'anthropic/claude-opus-4-8', label: 'Anthropic · Opus 4.8' },
 		{ id: 'anthropic/claude-sonnet-5', label: 'Anthropic · Sonnet 5' },
 		{ id: 'anthropic/claude-haiku-4-5', label: 'Anthropic · Haiku 4.5' },
 		{ id: 'openai-codex/gpt-6-astra', label: 'OpenAI Codex · Astra' },
+		{ id: 'openai-codex/gpt-6-sol', label: 'OpenAI Codex · Sol (GPT-6)' },
 		{ id: 'openai-codex/gpt-5.6-sol', label: 'OpenAI Codex · Sol' },
 		{ id: 'openai-codex/gpt-5.6-terra', label: 'OpenAI Codex · Terra' },
 		{ id: 'openai-codex/gpt-5.6-luna', label: 'OpenAI Codex · Luna' },
@@ -104,6 +108,10 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'- Keep your own context for architecture, tricky diagnosis, and reviewing what subagents return.',
 		'- Prefer one decisive, correct pass over cheap trial-and-error; verify with tools instead of re-deriving from memory.',
 	].join('\n'),
+	'claude-opus-5-5': [
+		'You are running as Opus 5.5 — a premium tier for complex work. Plan briefly, keep architectural decisions in the main thread, and verify the result with relevant checks.',
+		'Delegate only independent, substantial tracks when the available tooling supports it; do not add a review pipeline for routine changes.',
+	].join('\n'),
 	'claude-opus-5': [
 		'You are running as Opus 5 — a premium tier that is strongest on long-horizon, multi-file work. Take the whole task in one decisive pass:',
 		'- Delegate sparingly: a subagent (the Task tool) pays off only for genuinely independent, sizeable tracks — never for work you could finish in a handful of tool calls, and never to verify your own work.',
@@ -125,6 +133,10 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'- Carry ambiguous or half-formed requirements through a coherent end-to-end implementation instead of stopping at analysis.',
 		'- Verify decisively with the strongest relevant checks; avoid redundant re-reads and commentary.',
 	].join('\n'),
+	'gpt-6-sol': [
+		'You are running as GPT-6 Sol — a capable premium tier. Plan briefly, work directly unless independent tracks warrant delegation, and verify with the relevant checks.',
+		'Keep changes scoped and avoid redundant passes.',
+	].join('\n'),
 	'gpt-5.6-sol': [
 		'You are running as Sol (GPT-5.6) — the most capable and most EXPENSIVE tier. One decisive, deeply verified pass:',
 		'- Plan briefly, then execute without thrash; verify with tools instead of re-deriving from memory.',
@@ -143,6 +155,8 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 const PI_MODEL_GUIDANCE: Record<string, string> = {
 	'anthropic/claude-fable-5':
 		'Pi is running Fable 5 — use this expensive tier for architecture and judgment, delegate only through extensions or tools that are actually available, and verify decisively.',
+	'anthropic/claude-opus-5-5':
+		'Pi is running Opus 5.5 — keep architecture and integration in the main context, delegate only through available tools when independent tracks warrant it, and verify decisively.',
 	'anthropic/claude-opus-5':
 		'Pi is running Opus 5 — take the whole task in one decisive pass, verify as you go instead of adding a separate check pass, and deliver exactly the requested scope.',
 	'anthropic/claude-opus-4-8':
@@ -153,6 +167,7 @@ const PI_MODEL_GUIDANCE: Record<string, string> = {
 		'Pi is running Haiku 4.5 — keep the change tightly scoped and stop with an honest summary if it becomes architectural or ambiguous.',
 	'openai-codex/gpt-6-astra':
 		'Pi is running GPT-6 Astra — use this frontier tier for complex, multi-step work, fan out only through subagent tools or extensions that are actually available, retain architecture and integration in the main context, and verify decisively.',
+	'openai-codex/gpt-6-sol': DEFAULT_MODEL_GUIDANCE['gpt-6-sol'],
 	'openai-codex/gpt-5.6-sol': DEFAULT_MODEL_GUIDANCE['gpt-5.6-sol'],
 	'openai-codex/gpt-5.6-terra': DEFAULT_MODEL_GUIDANCE['gpt-5.6-terra'],
 	'openai-codex/gpt-5.6-luna': DEFAULT_MODEL_GUIDANCE['gpt-5.6-luna'],
