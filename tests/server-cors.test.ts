@@ -14,6 +14,30 @@ test('daemon CORS accepts only local app development and Chrome extension origin
 	assert.equal(daemonCorsOrigin(''), '')
 })
 
+test('extension prompt reads and saves can preflight the negotiated run-context header', async () => {
+	const app = new Hono()
+	app.use('/api/*', daemonCorsMiddleware)
+	for (const method of ['GET', 'PUT']) {
+		const response = await app.request('/api/items/item/run-context', {
+			method: 'OPTIONS',
+			headers: {
+				Origin: 'chrome-extension://abcdefghijklmnop',
+				'Access-Control-Request-Method': method,
+				'Access-Control-Request-Headers':
+					method === 'PUT' ? 'content-type,x-helm-run-context-formats' : 'x-helm-run-context-formats',
+			},
+		})
+		assert.equal(response.status, 204)
+		assert.equal(response.headers.get('access-control-allow-origin'), 'chrome-extension://abcdefghijklmnop')
+		const allowed = response.headers.get('access-control-allow-headers')?.toLowerCase().split(/,\s*/) ?? []
+		assert.ok(
+			allowed.includes('x-helm-run-context-formats'),
+			`${method} prompt preflight must allow format negotiation`,
+		)
+		if (method === 'PUT') assert.ok(allowed.includes('content-type'))
+	}
+})
+
 test('daemon CORS rejects hostile POSTs before a mutating route executes', async () => {
 	const app = new Hono()
 	let mutations = 0
