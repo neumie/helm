@@ -20,6 +20,11 @@ interface CreateWorktreeResponse {
 	path: string
 }
 
+interface RegisterWorktreeResponse {
+	project_id?: string
+	terminal_id?: string | null
+}
+
 export interface EnsuredOkenaWorktree {
 	worktreePath: string
 	wtProjectId: string
@@ -260,27 +265,18 @@ export class OkenaWorktreeManager {
 		existingWorktreePath: string | undefined,
 	): Promise<EnsuredOkenaWorktree> {
 		if (existingWorktreePath) {
-			const { state } = await this.findOkenaProject(repoPath)
-			const wtProject = state.projects.find(p => sameFilesystemPath(p.path, existingWorktreePath))
-			if (!wtProject) {
-				throw phaseError('worktree', `Okena project not found for worktree path: ${existingWorktreePath}`)
-			}
-			await excludeHelmFiles(existingWorktreePath)
-			return { worktreePath: existingWorktreePath, wtProjectId: wtProject.id, autoTerminalId: null }
+			return this.ensureExistingWorktreeProject(repoPath, branchName, existingWorktreePath)
 		}
 
 		const { state, okenaProject } = await this.findOkenaProject(repoPath)
 		log.info('okena', `Matched Okena project: ${okenaProject.name} (${okenaProject.id})`)
+		// An Okena label or cached git_status is not proof that its path is still
+		// this branch's live worktree. Git owns that association, including when
+		// planning saved no Item path before a rollback.
+		const registration = await worktreeRegistrationForBranch(repoPath, branchName)
+		if (registration?.exists) return this.ensureExistingWorktreeProject(repoPath, branchName, registration.path)
+
 		await this.ensureBaseBranchReady(repoPath, baseBranch)
-
-		const safeBranch = branchName.replace(/\//g, '-')
-		const existing = state.projects.find(p => p.name === branchName && p.path.includes(safeBranch))
-		if (existing) {
-			log.info('okena', `Reusing existing worktree project: ${existing.id}`)
-			await excludeHelmFiles(existing.path)
-			return { worktreePath: existing.path, wtProjectId: existing.id, autoTerminalId: null }
-		}
-
 		log.info('okena', `Creating worktree for branch: ${branchName}`)
 		let wt: CreateWorktreeResponse
 		try {
@@ -301,6 +297,56 @@ export class OkenaWorktreeManager {
 		log.success('okena', `Worktree at ${worktreePath}`)
 		await excludeHelmFiles(worktreePath)
 		return { worktreePath, wtProjectId, autoTerminalId: wt.terminal_id }
+	}
+
+	private async ensureExistingWorktreeProject(
+		repoPath: string,
+		branchName: string,
+		worktreePath: string,
+	): Promise<EnsuredOkenaWorktree> {
+		const { state, okenaProject } = await this.findOkenaProject(repoPath)
+		const wtProject = state.projects.find(
+			project =>
+				project.worktree_info?.parent_project_id === okenaProject.id && sameFilesystemPath(project.path, worktreePath),
+		)
+		if (wtProject) {
+			await excludeHelmFiles(worktreePath)
+			return { worktreePath, wtProjectId: wtProject.id, autoTerminalId: null }
+		}
+		const standalone = state.projects.find(project => sameFilesystemPath(project.path, worktreePath))
+		if (standalone) {
+			throw phaseError('worktree', `Okena tracks this worktree outside its parent project: ${worktreePath}`)
+		}
+
+		const registration = await worktreeRegistrationForBranch(repoPath, branchName)
+		if (!registration?.exists || !sameFilesystemPath(registration.path, worktreePath)) {
+			throw phaseError(
+				'worktree',
+				`Stored worktree path is no longer an active Git worktree for ${branchName}: ${worktreePath}. Preserve any planning files, then remove or rename the stale directory and retry.`,
+			)
+		}
+
+		let added: RegisterWorktreeResponse
+		try {
+			added = await this.client.action<RegisterWorktreeResponse>({
+				action: 'add_discovered_worktree',
+				parent_project_id: okenaProject.id,
+				worktree_path: worktreePath,
+				branch: branchName,
+			})
+		} catch (err) {
+			throw phaseError('worktree', `Okena worktree registration failed: ${err instanceof Error ? err.message : err}`)
+		}
+		if (!added.project_id) {
+			throw phaseError('worktree', 'Okena did not return the registered worktree project ID')
+		}
+		log.success('okena', `Registered existing worktree project: ${added.project_id}`)
+		await excludeHelmFiles(worktreePath)
+		return {
+			worktreePath,
+			wtProjectId: added.project_id,
+			autoTerminalId: added.terminal_id ?? null,
+		}
 	}
 
 	async findPlanTerminal(wtProjectId: string, itemId: string): Promise<string | null> {

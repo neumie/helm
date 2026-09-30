@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -318,14 +318,30 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 	assert.equal(await manager.findPlanTerminal('project-1', 'item-1'), null)
 })
 
-test('Okena Worktree manager resolves an existing worktree project through a symlink alias', async () => {
+test('Okena Worktree manager resolves an existing child worktree through a symlink alias', async () => {
 	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-worktree-alias-'))
+	const worktreePath = `${repoPath}-worktree`
 	const alias = `${repoPath}-alias`
 	execFileSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' })
-	symlinkSync(repoPath, alias)
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['worktree', 'add', '-b', 'feat/alias', worktreePath], { cwd: repoPath, stdio: 'ignore' })
+	symlinkSync(worktreePath, alias)
 	const client = {
 		getState: async () => ({
-			projects: [{ id: 'project-alias', name: 'Alias', path: repoPath, layout: null, terminal_names: {} }],
+			projects: [
+				{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null },
+				{
+					id: 'project-alias',
+					name: 'Alias',
+					path: worktreePath,
+					layout: null,
+					worktree_info: { parent_project_id: 'parent-project' },
+				},
+			],
 		}),
 	} as unknown as OkenaClient
 	try {
@@ -334,6 +350,252 @@ test('Okena Worktree manager resolves an existing worktree project through a sym
 		assert.equal(ensured.worktreePath, alias)
 	} finally {
 		rmSync(alias, { force: true })
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager registers an existing worktree missing from Okena', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-worktree-register-'))
+	const worktreePath = `${repoPath}-worktree`
+	execFileSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' })
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['worktree', 'add', '-b', 'feat/register', worktreePath], {
+		cwd: repoPath,
+		stdio: 'ignore',
+	})
+	const actions: Record<string, unknown>[] = []
+	const client = {
+		getState: async () => ({
+			projects: [{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null }],
+		}),
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return { project_id: 'registered-project', terminal_id: 'registered-terminal' }
+		},
+	} as unknown as OkenaClient
+
+	try {
+		const ensured = await new OkenaWorktreeManager(client).ensureWorktreeProject(
+			repoPath,
+			'main',
+			'feat/register',
+			worktreePath,
+		)
+		assert.deepEqual(ensured, {
+			worktreePath,
+			wtProjectId: 'registered-project',
+			autoTerminalId: 'registered-terminal',
+		})
+		assert.deepEqual(actions, [
+			{
+				action: 'add_discovered_worktree',
+				parent_project_id: 'parent-project',
+				worktree_path: worktreePath,
+				branch: 'feat/register',
+			},
+		])
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager recovers a live planning worktree when the Item path was rolled back', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-rollback-parent-'))
+	const worktreePath = `${repoPath}-worktree`
+	execFileSync('git', ['init', '-b', 'main'], { cwd: repoPath, stdio: 'ignore' })
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['worktree', 'add', '-b', 'feat/rollback', worktreePath], { cwd: repoPath, stdio: 'ignore' })
+	const actions: Record<string, unknown>[] = []
+	const client = {
+		getState: async () => ({
+			projects: [{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null }],
+		}),
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return { project_id: 'registered-project', terminal_id: null }
+		},
+	} as unknown as OkenaClient
+	try {
+		const ensured = await new OkenaWorktreeManager(client).ensureWorktreeProject(
+			repoPath,
+			'main',
+			'feat/rollback',
+			undefined,
+		)
+		assert.equal(realpathSync(ensured.worktreePath), realpathSync(worktreePath))
+		assert.equal(ensured.wtProjectId, 'registered-project')
+		assert.deepEqual(actions, [
+			{
+				action: 'add_discovered_worktree',
+				parent_project_id: 'parent-project',
+				worktree_path: ensured.worktreePath,
+				branch: 'feat/rollback',
+			},
+		])
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager refuses a standalone project at a stored child worktree path', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-standalone-parent-'))
+	const worktreePath = `${repoPath}-worktree`
+	execFileSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' })
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['worktree', 'add', '-b', 'feat/standalone', worktreePath], {
+		cwd: repoPath,
+		stdio: 'ignore',
+	})
+	const client = {
+		getState: async () => ({
+			projects: [
+				{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null },
+				{ id: 'standalone', name: 'Standalone', path: worktreePath, layout: null },
+			],
+		}),
+		action: async () => {
+			throw new Error('must not register the same path twice')
+		},
+	} as unknown as OkenaClient
+	try {
+		await assert.rejects(
+			new OkenaWorktreeManager(client).ensureWorktreeProject(repoPath, 'main', 'feat/standalone', worktreePath),
+			/outside its parent project/,
+		)
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager reuses an open child by its Git branch after planning rollback', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-retry-parent-'))
+	const worktreePath = `${repoPath}-worktree`
+	execFileSync('git', ['init', '-b', 'main'], { cwd: repoPath, stdio: 'ignore' })
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['worktree', 'add', '-b', 'feat/retry', worktreePath], {
+		cwd: repoPath,
+		stdio: 'ignore',
+	})
+	const client = {
+		getState: async () => ({
+			projects: [
+				{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null },
+				{
+					id: 'worktree-project',
+					name: 'feat-retry (feat/retry)',
+					path: worktreePath,
+					layout: null,
+					git_status: { branch: 'feat/retry' },
+					worktree_info: { parent_project_id: 'parent-project' },
+				},
+			],
+		}),
+		action: async () => {
+			throw new Error('must reuse the open worktree instead of creating another one')
+		},
+	} as unknown as OkenaClient
+
+	try {
+		const ensured = await new OkenaWorktreeManager(client).ensureWorktreeProject(
+			repoPath,
+			'main',
+			'feat/retry',
+			undefined,
+		)
+		assert.equal(realpathSync(ensured.worktreePath), realpathSync(worktreePath))
+		assert.equal(ensured.wtProjectId, 'worktree-project')
+		assert.equal(ensured.autoTerminalId, null)
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager does not reuse a stale Okena child with only a matching branch label', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-stale-child-'))
+	const stalePath = mkdtempSync(join(tmpdir(), 'helm-okena-stale-child-dir-'))
+	execFileSync('git', ['init', '-b', 'main'], { cwd: repoPath, stdio: 'ignore' })
+	execFileSync(
+		'git',
+		['-c', 'user.name=Helm Test', '-c', 'user.email=helm@example.test', 'commit', '--allow-empty', '-m', 'init'],
+		{ cwd: repoPath, stdio: 'ignore' },
+	)
+	execFileSync('git', ['branch', 'feat/stale-child'], { cwd: repoPath, stdio: 'ignore' })
+	const actions: Record<string, unknown>[] = []
+	const client = {
+		getState: async () => ({
+			projects: [
+				{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null },
+				{
+					id: 'stale-child',
+					name: 'feat/stale-child',
+					path: stalePath,
+					git_status: { branch: 'feat/stale-child' },
+					worktree_info: { parent_project_id: 'parent-project' },
+				},
+			],
+		}),
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			throw new Error('no live worktree was available for reuse')
+		},
+	} as unknown as OkenaClient
+
+	try {
+		await assert.rejects(
+			new OkenaWorktreeManager(client).ensureWorktreeProject(repoPath, 'main', 'feat/stale-child', undefined),
+			/Okena worktree creation failed/,
+		)
+		assert.ok(actions.some(action => action.action === 'create_worktree'))
+	} finally {
+		rmSync(stalePath, { recursive: true, force: true })
+		rmSync(repoPath, { recursive: true, force: true })
+	}
+})
+
+test('Okena Worktree manager refuses a stale directory that is no longer a Git worktree', async () => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-okena-stale-parent-'))
+	const stalePath = mkdtempSync(join(tmpdir(), 'helm-okena-stale-worktree-'))
+	execFileSync('git', ['init'], { cwd: repoPath, stdio: 'ignore' })
+	const actions: Record<string, unknown>[] = []
+	const client = {
+		getState: async () => ({
+			projects: [{ id: 'parent-project', name: 'Sample project', path: repoPath, layout: null }],
+		}),
+		action: async (payload: Record<string, unknown>) => {
+			actions.push(payload)
+			return {}
+		},
+	} as unknown as OkenaClient
+
+	try {
+		await assert.rejects(
+			new OkenaWorktreeManager(client).ensureWorktreeProject(repoPath, 'main', 'feat/stale', stalePath),
+			/no longer an active Git worktree.*Preserve any planning files/,
+		)
+		assert.deepEqual(actions, [])
+	} finally {
+		rmSync(stalePath, { recursive: true, force: true })
 		rmSync(repoPath, { recursive: true, force: true })
 	}
 })
