@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { configSchema } from '../src/config.js'
 import { scheduledAgentSchema } from '../src/scheduled-runs/schema.js'
+import { createAgentAdapter } from '../src/solver/agent-adapter.js'
 import { MODEL_CATALOG, defaultHelperModel } from '../src/solver/models.js'
 import { runOneShot } from '../src/solver/one-shot.js'
 
@@ -20,6 +21,10 @@ test('Pi is accepted by canonical config and scheduled-run schemas', () => {
 		solver: { agent: 'pi' },
 	})
 	assert.equal(config.solver.agent, 'pi')
+	assert.equal(config.solver.model, undefined)
+	const adapter = createAgentAdapter(config.solver)
+	assert.deepEqual(adapter.buildHeadlessInvocation().args, ['--mode', 'json', '--no-session', '--approve'])
+	assert.deepEqual(adapter.buildInteractiveInvocation().args, ['--no-session', '--approve'])
 	assert.equal(scheduledAgentSchema.parse('pi'), 'pi')
 	assert.equal(defaultHelperModel('pi'), 'anthropic/claude-haiku-4-5')
 	assert.ok(MODEL_CATALOG.pi.some(model => model.id === 'openai-codex/gpt-5.6-luna'))
