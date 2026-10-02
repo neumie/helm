@@ -11,7 +11,24 @@ export interface AgentInvocation {
 	label: string
 }
 
+export interface ReviewInvocationOptions {
+	conversationId: string
+	resume: boolean
+	discuss: boolean
+}
+
+export interface ReviewCapabilities {
+	transport: 'cli-jsonl'
+	continuation: 'resume-id' | 'exact-session-id'
+	readOnlyPolicy: 'tool-allowlist' | 'sandbox'
+	interactiveQuestions: false
+	interrupt: 'terminate-owned-cli'
+	providerAcknowledgement: false
+	minimumVersion: string | null
+}
+
 export interface AgentAdapter {
+	readonly reviewCapabilities: ReviewCapabilities
 	agent: SolverAgent
 	label: string
 	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation
@@ -19,6 +36,7 @@ export interface AgentAdapter {
 	buildInteractiveInvocation(effort?: SolverEffort): AgentInvocation
 	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string
 	parseTimeline(stdout: string): ClaudeEvent[]
+	buildReviewInvocation(options: ReviewInvocationOptions): AgentInvocation
 }
 
 export function createAgentAdapter(solverConfig: HelmConfig['solver']): AgentAdapter {
@@ -75,6 +93,15 @@ export function agentLabelFromConfig(solverConfig: HelmConfig['solver']): string
 }
 
 class ClaudeAgentAdapter implements AgentAdapter {
+	readonly reviewCapabilities: ReviewCapabilities = {
+		transport: 'cli-jsonl',
+		continuation: 'resume-id',
+		readOnlyPolicy: 'tool-allowlist',
+		interactiveQuestions: false,
+		interrupt: 'terminate-owned-cli',
+		providerAcknowledgement: false,
+		minimumVersion: null,
+	}
 	readonly agent = 'claude'
 	readonly label = solverAgentLabel(this.agent)
 
@@ -108,12 +135,39 @@ class ClaudeAgentAdapter implements AgentAdapter {
 		)
 	}
 
+	buildReviewInvocation({ conversationId, resume, discuss }: ReviewInvocationOptions): AgentInvocation {
+		const args = [
+			'-p',
+			'--output-format',
+			'stream-json',
+			'--verbose',
+			'--include-partial-messages',
+			'--permission-prompts',
+			'none',
+			resume ? '--resume' : '--session-id',
+			conversationId,
+		]
+		if (discuss) args.push('--tools', 'Read,Grep,Glob', '--permission-mode', 'dontAsk')
+		else args.push('--dangerously-skip-permissions')
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		return { command: 'claude', args, label: 'claude-review' }
+	}
+
 	parseTimeline(stdout: string): ClaudeEvent[] {
 		return parseClaudeOutput(stdout)
 	}
 }
 
 class CodexAgentAdapter implements AgentAdapter {
+	readonly reviewCapabilities: ReviewCapabilities = {
+		transport: 'cli-jsonl',
+		continuation: 'resume-id',
+		readOnlyPolicy: 'sandbox',
+		interactiveQuestions: false,
+		interrupt: 'terminate-owned-cli',
+		providerAcknowledgement: false,
+		minimumVersion: null,
+	}
 	readonly agent = 'codex'
 	readonly label = solverAgentLabel(this.agent)
 
@@ -148,12 +202,29 @@ class CodexAgentAdapter implements AgentAdapter {
 		)
 	}
 
+	buildReviewInvocation({ conversationId, resume, discuss }: ReviewInvocationOptions): AgentInvocation {
+		const args = ['exec', ...(discuss ? ['--sandbox', 'read-only'] : ['--dangerously-bypass-approvals-and-sandbox'])]
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		if (resume) args.push('resume', '--json', conversationId, '-')
+		else args.push('--json', '-')
+		return { command: 'codex', args, label: 'codex-review' }
+	}
+
 	parseTimeline(): ClaudeEvent[] {
 		return []
 	}
 }
 
 class PiAgentAdapter implements AgentAdapter {
+	readonly reviewCapabilities: ReviewCapabilities = {
+		transport: 'cli-jsonl',
+		continuation: 'exact-session-id',
+		readOnlyPolicy: 'tool-allowlist',
+		interactiveQuestions: false,
+		interrupt: 'terminate-owned-cli',
+		providerAcknowledgement: false,
+		minimumVersion: '0.99',
+	}
 	readonly agent = 'pi'
 	readonly label = solverAgentLabel(this.agent)
 
@@ -182,6 +253,15 @@ class PiAgentAdapter implements AgentAdapter {
 			promptPath,
 			worktreePath,
 		)
+	}
+
+	buildReviewInvocation({ conversationId, discuss }: ReviewInvocationOptions): AgentInvocation {
+		// Pi >=0.99 exposes exact create-or-open IDs. Older versions fail preflight,
+		// never substitute --continue or silently target a different conversation.
+		const args = ['--mode', 'json', '--session-id', conversationId, '--approve']
+		if (discuss) args.push('--tools', 'read,grep,find,ls', '--no-extensions')
+		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
+		return { command: 'pi', args, label: 'pi-review' }
 	}
 
 	// Pi emits JSONL, but Helm does not yet project those events into the legacy

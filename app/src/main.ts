@@ -6,10 +6,13 @@ import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell 
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
+import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
+import { createReviewControl } from './document-review/control'
+import { DocumentReviewWindows } from './document-review/window'
 import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
 import { guardNativeTabDoubleClick, installNativeWindowZoomGuard } from './native-window-zoom'
@@ -149,8 +152,45 @@ const piAgentStatusIntegration = new PiAgentStatusIntegration()
 // Remote is global and independent of Item daemon availability. The controller
 // fixes its owner-private root itself; renderers cannot select paths or routes.
 const remotePairing = new RemotePairingController()
+const documentReviewWindows = new DocumentReviewWindows({
+	distDir: __dirname,
+	profileToken: () => sessionProfileToken(),
+	allowsToken: token => acceptsSessionIpcToken(token) && !profileSwitchCoordinator?.isSwitching(),
+	profileId: () => sessionProfileId,
+	profileDir: id => appProfiles.profileDir(id),
+	registry: id => {
+		const storage = transferStorageForProfile(id)
+		if (!storage) throw new Error('Review profile storage is unavailable.')
+		return storage.registry
+	},
+	mainWindow: () => mainWindow,
+	planArtifact: (id, name) => {
+		const item = helmBridge.getSnapshot().items?.find(item => item.id === id)
+		if (!item?.plan || item.profileId !== sessionProfileId) return null
+		try {
+			return new PlanWorkspace(item.plan.worktreePath, item.plan.planDirName).reviewArtifactPath(name)
+		} catch {
+			return null
+		}
+	},
+	onAllClosed: () => {
+		if (pendingEditorQuit && !runContextWindows.hasDirtyWindows()) {
+			pendingEditorQuit = false
+			app.quit()
+		}
+	},
+})
 let sessionProfileId = appProfiles.activeProfileId()
 let sessionProfileGeneration = 0
+const documentReviewControl = createReviewControl({
+	windows: documentReviewWindows,
+	profileId: () => sessionProfileId,
+	profileToken: () => sessionProfileToken(),
+	allowsToken: token => acceptsSessionIpcToken(token) && !profileSwitchCoordinator?.isSwitching(),
+})
+let reviewControlStart: Promise<void> | null = null
+let reviewControlStopped = false
+let reviewControlStop: Promise<void> | null = null
 let authoritativeProfilesState: ProfilesState = {
 	version: 2,
 	generation: 0,
@@ -883,11 +923,12 @@ function createProfileSwitchCoordinator(): ProfileSwitchCoordinator {
 	return new ProfileSwitchCoordinator({
 		currentState: () => authoritativeProfilesState,
 		listProfiles: () => helmBridge.listProfiles(),
-		beginRunContextDrain: () => runContextWindows.beginProfileSwitchDrain(),
-		flushBuffers: () =>
-			mainWindow && !mainWindow.isDestroyed()
-				? flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
-				: Promise.resolve(),
+		beginRunContextDrain: () =>
+			documentReviewWindows.hasDirty() ? { ok: false } : runContextWindows.beginProfileSwitchDrain(),
+		flushBuffers: async () => {
+			await documentReviewWindows.closeForProfileSwitch()
+			if (mainWindow && !mainWindow.isDestroyed()) await flushRendererBuffers(mainWindow, BUFFER_FLUSH_TIMEOUT_MS)
+		},
 		beginFence: target => helmBridge.beginProfileSwitch(target),
 		advanceLocalGeneration: () => {
 			sessionProfileGeneration += 1
@@ -1323,6 +1364,17 @@ function buildMenu(): void {
 	}
 	const template: Electron.MenuItemConstructorOptions[] = [
 		...(process.platform === 'darwin' ? [macApplicationMenu(profileMenu())] : [profileMenu()]),
+		{
+			label: 'File',
+			submenu: [
+				{
+					label: 'Open Markdown file…',
+					click: () => {
+						void documentReviewWindows.chooseFileFromMenu()
+					},
+				},
+			],
+		},
 		{
 			label: 'Shell',
 			submenu: [
@@ -2365,6 +2417,7 @@ ipcMain.handle('themes:list', () => {
 
 helmBridge.registerIpc()
 runContextWindows.registerIpc()
+documentReviewWindows.registerIpc()
 
 function applyProfileMutation(result: Awaited<ReturnType<HelmBridge['createProfile']>>): void {
 	if (result.error !== undefined) return
@@ -2609,6 +2662,13 @@ void app.whenReady().then(async () => {
 	// never admit or poll real scheduled work as a side effect of their fixture.
 	if (!screenshotPath && !profileSwitchAttestationMode) void scheduledResidency.start()
 	createWindow()
+	if (!screenshotPath && !profileSwitchAttestationMode) {
+		reviewControlStart = documentReviewControl.start().catch(() => {
+			console.warn(
+				'[helm] document review CLI control unavailable; existing hosts and private state were left untouched',
+			)
+		})
+	}
 	// A click must fence against an actual current BrowserWindow/token.
 	if (!screenshotPath && !profileSwitchAttestationMode) scheduledAttentionNotifier?.start()
 	if (profileSwitchAttestationMode) {
@@ -2641,19 +2701,58 @@ app.on('window-all-closed', () => {
 // the pre-dtach behavior of killing the shells is gone by design. Buffer
 // snapshots are flushed by the window-close interception (the renderer still
 // holds every xterm buffer after the clients detach).
+let reviewQuitConfirmation: Promise<void> | null = null
 app.on('before-quit', event => {
+	if (documentReviewWindows.busy()) {
+		event.preventDefault()
+		if (!reviewQuitConfirmation) {
+			reviewQuitConfirmation = dialog
+				.showMessageBox({
+					type: 'warning',
+					message: 'A document review is still running',
+					detail:
+						'Keep Helm open, or disconnect review feedback before quitting. The original terminal agents keep running; outstanding outcomes may remain unknown.',
+					buttons: ['Keep reviewing', 'Disconnect reviews and quit'],
+					defaultId: 0,
+					cancelId: 0,
+				})
+				.then(async response => {
+					if (response.response === 1) {
+						await documentReviewWindows.stopOwned()
+						app.quit()
+					}
+				})
+				.finally(() => {
+					reviewQuitConfirmation = null
+				})
+		}
+		return
+	}
 	if (terminalTransferMain?.isBusy()) {
 		event.preventDefault()
 		void terminalTransferMain.whenIdle().then(() => app.quit())
 		return
 	}
-	if (runContextWindows.hasDirtyWindows()) {
+	if (runContextWindows.hasDirtyWindows() || documentReviewWindows.hasDirty()) {
 		// Keep the main window, bridge, and attached dtach clients alive until
 		// every dirty editor explicitly saves/discards. Keep editing cancels quit.
 		event.preventDefault()
 		pendingEditorQuit = true
 		quitRequested = false
 		runContextWindows.requestCloseAll()
+		documentReviewWindows.requestCloseAll()
+		return
+	}
+	if (!reviewControlStopped) {
+		event.preventDefault()
+		if (!reviewControlStop) {
+			reviewControlStop = Promise.resolve(reviewControlStart)
+				.then(() => documentReviewControl.stop())
+				.finally(() => {
+					reviewControlStopped = true
+					app.quit()
+				})
+		}
 		return
 	}
 	if (!residencyStoppedForQuit) {

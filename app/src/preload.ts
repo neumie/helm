@@ -285,6 +285,9 @@ const api: HelmApi = {
 	runContext: {
 		open: itemId => ipcRenderer.invoke('run-context:open', itemId) as Promise<void>,
 	},
+	documentReview: {
+		open: (itemId, name) => ipcRenderer.invoke('document-review:open', sessionProfileToken, itemId, name),
+	},
 	tabs: {
 		onNew: listener => subscribe('tab:new', listener),
 		onClose: listener => subscribe('tab:close', listener),

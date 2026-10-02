@@ -525,7 +525,34 @@ export class GraceCloser {
 
 // ---------- session registry (tab metadata that can't live in the socket) ----------
 
-export type SessionBacking = 'ordinary' | 'run-owned'
+export type SessionBacking = 'ordinary' | 'run-owned' | 'document-review'
+
+/** Colon deliberately keeps review IDs outside every terminal/socket ID grammar, including old Helm. */
+export const isReviewSessionId = (id: unknown): id is string =>
+	typeof id === 'string' && /^review:[a-f0-9-]{36}$/.test(id)
+export interface DocumentReviewSessionMeta {
+	provider: 'claude' | 'codex' | 'pi'
+	conversationId: string
+	workspace: string
+	uncertain: boolean
+	initialized?: boolean
+	unavailable?: boolean
+}
+function isDocumentReviewSession(value: unknown): value is DocumentReviewSessionMeta {
+	if (!value || typeof value !== 'object') return false
+	const v = value as Record<string, unknown>
+	return (
+		['claude', 'codex', 'pi'].includes(String(v.provider)) &&
+		typeof v.conversationId === 'string' &&
+		/^[a-zA-Z0-9_-]{1,100}$/.test(v.conversationId) &&
+		typeof v.workspace === 'string' &&
+		path.isAbsolute(v.workspace) &&
+		v.workspace.length <= 4096 &&
+		typeof v.uncertain === 'boolean' &&
+		(v.initialized === undefined || typeof v.initialized === 'boolean') &&
+		(v.unavailable === undefined || typeof v.unavailable === 'boolean')
+	)
+}
 
 /**
  * Non-secret durable identity for an Electron-owned scheduled dtach client.
@@ -657,6 +684,8 @@ export interface SessionMeta {
 	parked?: boolean
 	/** Omitted legacy entries are ordinary user terminals. Run-owned sessions are never transferable. */
 	backing?: SessionBacking
+	/** Main-only provider identity, never terminal restoration authority. */
+	reviewSession?: DocumentReviewSessionMeta
 	/** Required for run-owned scheduled sessions; intentionally non-secret. */
 	scheduledOwnership?: ScheduledSessionOwnership
 	/** Durable explicit-close checkpoint; startup retries finalization instead of reattaching. */
@@ -726,7 +755,13 @@ export class SessionRegistry {
 				}
 			}
 			for (const [id, meta] of Object.entries(raw)) {
-				if (!isValidSessionId(id) || typeof meta !== 'object' || meta === null || Array.isArray(meta)) continue
+				if (
+					(!isValidSessionId(id) && !isReviewSessionId(id)) ||
+					typeof meta !== 'object' ||
+					meta === null ||
+					Array.isArray(meta)
+				)
+					continue
 				const {
 					createdAt,
 					order,
@@ -734,6 +769,7 @@ export class SessionRegistry {
 					customName,
 					parked,
 					backing,
+					reviewSession,
 					scheduledOwnership,
 					scheduledClosePending,
 					agentRunning,
@@ -749,7 +785,14 @@ export class SessionRegistry {
 					!isScheduledSessionOwnership(scheduledOwnership)
 				)
 					continue
+				if (isReviewSessionId(id) && (backing !== 'document-review' || !isDocumentReviewSession(reviewSession)))
+					continue
+				if (backing === 'document-review' && (!isReviewSessionId(id) || !isDocumentReviewSession(reviewSession)))
+					continue
 				this.#data[id] = {
+					...(backing === 'document-review' && isDocumentReviewSession(reviewSession)
+						? { backing, reviewSession: { ...reviewSession } }
+						: {}),
 					createdAt: typeof createdAt === 'string' ? createdAt : new Date(0).toISOString(),
 					...(typeof order === 'number' && Number.isFinite(order) && order >= 0 ? { order } : {}),
 					...(typeof lastTitle === 'string' ? { lastTitle } : {}),
@@ -810,14 +853,20 @@ export class SessionRegistry {
 	/** Current retained members, or null when the definition no longer exists. */
 	groupMembers(groupId: string): string[] | null {
 		if (!this.#groups[groupId]) return null
-		return Object.entries(this.#data).flatMap(([sessionId, meta]) => (meta.groupId === groupId ? [sessionId] : []))
+		return Object.entries(this.#data).flatMap(([sessionId, meta]) =>
+			isValidSessionId(sessionId) && meta.backing !== 'document-review' && meta.groupId === groupId ? [sessionId] : [],
+		)
 	}
 
 	/** Creates a non-empty group and assigns all known unique members in one mutation. */
 	createGroup(name: string, sessionIds: readonly string[]): TabGroup | null {
 		const normalized = normalizedTabGroupName(name)
 		if (!normalized) return null
-		const members = [...new Set(sessionIds)].flatMap(sessionId => (this.#data[sessionId] ? [sessionId] : []))
+		const members = [...new Set(sessionIds)].flatMap(sessionId =>
+			isValidSessionId(sessionId) && this.#data[sessionId]?.backing !== 'document-review' && this.#data[sessionId]
+				? [sessionId]
+				: [],
+		)
 		if (members.length === 0) return null
 		let id: string
 		do {
@@ -872,6 +921,7 @@ export class SessionRegistry {
 
 	/** Assigns one retained session or clears it to Ungrouped. */
 	setSessionGroup(sessionId: string, groupId: string | null): boolean {
+		if (!isValidSessionId(sessionId)) return false
 		const meta = this.#data[sessionId]
 		if (!meta || (groupId !== null && !this.#groups[groupId])) return false
 		const next = groupId ?? undefined
@@ -945,6 +995,28 @@ export class SessionRegistry {
 		// undefined (not false) so JSON.stringify drops the key when unparked.
 		meta.parked = parked ? true : undefined
 		this.#scheduleSave()
+	}
+
+	/** Extend the existing profile registry; failure restores trusted memory. */
+	saveReviewSession(id: string, reviewSession: DocumentReviewSessionMeta): boolean {
+		if (!isReviewSessionId(id) || !isDocumentReviewSession(reviewSession)) return false
+		const old = this.#data[id]
+		if (!old && Object.values(this.#data).filter(meta => meta.backing === 'document-review').length >= 32) return false
+		if (old && old.backing !== 'document-review') return false
+		this.#data[id] = {
+			createdAt: old?.createdAt ?? new Date().toISOString(),
+			backing: 'document-review',
+			reviewSession: { ...reviewSession },
+		}
+		if (this.flushSync()) return true
+		if (old) this.#data[id] = old
+		else delete this.#data[id]
+		return false
+	}
+	listReviewSessions(): Array<{ id: string; meta: DocumentReviewSessionMeta }> {
+		return Object.entries(this.#data).flatMap(([id, value]) =>
+			value.backing === 'document-review' && value.reviewSession ? [{ id, meta: { ...value.reviewSession } }] : [],
+		)
 	}
 
 	/** Generic ownership classification; scheduled adoption uses registerRunOwned() for its exact identity. */
@@ -1396,7 +1468,7 @@ export function planSessionRestore(registry: SessionRegistry, scan: SessionScan)
 		.ids()
 		.flatMap(sessionId => {
 			const meta = registry.get(sessionId)
-			if (!meta || meta.backing === 'run-owned' || unknownIds.has(sessionId)) return []
+			if (!meta || (meta.backing ?? 'ordinary') !== 'ordinary' || unknownIds.has(sessionId)) return []
 			const processSurvived = liveIds.has(sessionId)
 			return [
 				{

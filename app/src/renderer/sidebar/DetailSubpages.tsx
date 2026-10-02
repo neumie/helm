@@ -1,6 +1,6 @@
 // The two pushed reading surfaces under detail: Plan documents and the Task
 // source (§3.19). Run evidence and run setup are inline on the detail page.
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { HelmSnapshot } from '../../shared-helm'
 import { useItemDetail } from './detail-data'
 import { absoluteUrl, openExternalUrl, relativeTime, useNow } from './model'
@@ -60,6 +60,24 @@ function TaskImage({
 }
 
 export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
+	const [reviewError, setReviewError] = useState<string | null>(null)
+	const [openingReview, setOpeningReview] = useState<string | null>(null)
+	const reviewAdmission = useRef(false)
+	const review = async (name: string) => {
+		if (reviewAdmission.current) return
+		reviewAdmission.current = true
+		setOpeningReview(name)
+		setReviewError(null)
+		try {
+			const result = await window.helm.documentReview.open(id, name)
+			if (result.error !== undefined) setReviewError(result.error)
+		} catch {
+			setReviewError('Document review could not open. Try Open Markdown file from the File menu.')
+		} finally {
+			reviewAdmission.current = false
+			setOpeningReview(null)
+		}
+	}
 	const { item, phase, error, refetch, hasDetail } = useItemDetail(id, snapshot)
 	const docs = (item?.planArtifacts ?? []).filter(doc => !['context.md', 'readme.md'].includes(doc.name.toLowerCase()))
 	return (
@@ -77,6 +95,11 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 				) : (
 					<>
 						{phase === 'stale-error' && <FetchAlert error={error} retry={refetch} />}
+						{reviewError && (
+							<div className="detail-fetch-alert" role="alert">
+								{reviewError}
+							</div>
+						)}
 						{item?.plan && (
 							<Card label="Workspace" flush>
 								<InfoRow label="Branch" value={item.plan.branchName} mono />
@@ -93,6 +116,17 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 								{docs.map((doc, index) => (
 									<details key={doc.name} className="plan-doc" open={docs.length === 1 || index === 0}>
 										<summary>{doc.name}</summary>
+										<Btn
+											sm
+											tone="ghost"
+											disabled={openingReview !== null || !item?.plan}
+											busy={openingReview === doc.name}
+											onClick={() => {
+												void review(doc.name)
+											}}
+										>
+											Review document
+										</Btn>
 										{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Read-only scroll well needs keyboard focus. */}
 										<section className="plan-well" tabIndex={0} aria-label={`${doc.name} contents`}>
 											{doc.content}

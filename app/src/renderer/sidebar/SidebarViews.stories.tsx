@@ -736,6 +736,12 @@ function installBridge(
 				activate: async () => ({ error: 'Preview only' }),
 			},
 			runContext: { open: async () => ({ data: undefined }) },
+			documentReview: {
+				open: async () => ({
+					error:
+						'Native document review opens in Helm. The Views/Document review stories demonstrate its production component.',
+				}),
+			},
 		},
 	})
 }
