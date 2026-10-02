@@ -1,19 +1,28 @@
 # Helm
 
-Helm is a local orchestration cockpit for software work. It turns provider tasks,
-operator requests, plans, and captured context into durable **Items**, then keeps
-the human checkpoint, agent execution, worktree, pull request, and deployment
-state connected.
+Helm is my local workspace for software work: persistent terminals, an agent work
+queue, planning, and document review in one macOS app. It connects tasks and
+captured context to agent execution, worktrees, pull requests, and deployment
+evidence, while keeping human ownership and review explicit.
 
-Helm consists of:
+It is also my personal testing ground. This repository contains the tools,
+integrations, UI ideas, and workflows I'm testing, trying, and using day to day.
+Some are established parts of my setup; others are experiments or incomplete
+foundations. Expect it to evolve with how I work, not as a stable, general-purpose
+product with every feature ready for everyone.
 
-- an API-only Node.js daemon that owns persistence and execution;
-- the **Helm desktop app**, which provides the Work sidebar and persistent
-  terminals;
-- an optional Chrome extension for acting on tasks from their source page; and
+The project includes:
+
+- the **Helm desktop app**, with a Work sidebar, persistent terminals, and native
+  Markdown document review;
+- an API-only Node.js daemon that owns Items, persistence, and execution;
+- optional **Helm Remote**, a separate browser/PWA surface for enrolled live Pi
+  conversations;
+- a Chrome extension for acting on tasks from their source page; and
 - a thin `helm` CLI for daemon control and scriptable Item creation.
 
-There is no browser dashboard. The desktop app is the Helm UI.
+The old browser Item dashboard is gone. The desktop app is the main Helm UI;
+Remote is a conversation surface, not a browser replacement for the Work sidebar.
 
 > [!IMPORTANT]
 > Helm is designed as a local operator tool. Its HTTP API can launch coding
@@ -23,11 +32,12 @@ There is no browser dashboard. The desktop app is the Helm UI.
 ## What Helm does
 
 - Polls a live task provider and files new work into **Inbox**.
-- Accepts manual solve requests, Almanac loops, emails, notes, and attachments.
+- Accepts manual solve requests, unassigned capture drafts, Almanac loops, emails,
+  notes, and attachments.
 - Uses a human approval checkpoint before automatic/source-backed work runs.
 - Keeps Queue ownership explicit: **Start agent** or **Work manually**.
 - Opens interactive planning sessions without conflating planning with solving.
-- Runs Claude Code or Codex in isolated worktrees or, when explicitly selected,
+- Runs Claude Code, Codex, or Pi in isolated worktrees or, when explicitly selected,
   the canonical checkout.
 - Runs planned work through either a direct agent or an `almanac loop` queue.
 - Preserves the exact solve prompt, lifecycle events, logs, result, branch, PR,
@@ -36,8 +46,14 @@ There is no browser dashboard. The desktop app is the Helm UI.
   agent-learned candidates for Hold, which owns review and canonical writes.
 - Supports unlimited named profiles while allowing runs in inactive profiles to
   finish safely.
-- Provides persistent desktop terminal sessions, background terminals, buffer
-  restoration, manual terminal naming, and protocol-owned agent activity state.
+- Provides persistent desktop terminal sessions, named tab groups, background
+  terminals, buffer restoration, manual naming, and protocol-owned agent activity.
+- Reviews real Markdown files beside a Claude Code, Codex, or Pi conversation,
+  with passage-level feedback, local comments, and watched source changes.
+- Supports opt-in scheduled agent runs, with native attention notifications and
+  explicit terminal takeover.
+- Offers paired-device access to enrolled Pi conversations through Remote,
+  including prompts, images, supported questions, and bounded conversation history.
 - Integrates with Okena as an optional visible execution and planning surface.
 
 ## System model
@@ -63,9 +79,10 @@ Provider / CLI / API / extension
 
 ### Items
 
-An Item is Helm's durable unit of work. It has a project, lifecycle status,
-execution ownership, optional source, stable workspace identity, and run
-evidence.
+An Item is Helm's durable unit of work. It has a lifecycle status, execution
+ownership, optional source, and run evidence. Assigned Items also have a project
+and stable workspace identity. A source-less solve can start as an **Unassigned**
+capture draft; it cannot run or plan until the operator finishes project setup.
 
 Two kinds exist:
 
@@ -102,7 +119,8 @@ agent ownership, while **Work manually** moves the Item to human-owned Active.
 - Git;
 - `gh`, authenticated for repositories where Helm creates or observes PRs;
 - at least one supported agent CLI—`claude`, `codex`, or `pi`—installed and authenticated;
-- `almanac`, including its CLI and agent plugin/commands;
+- `almanac` and its agent skills/commands for the workflows that use them
+  (Almanac loop execution supports Claude Code and Codex, not Pi);
 - `dtach` for persistent desktop terminal sessions; and
 - optionally, Okena with its remote server enabled.
 
@@ -153,8 +171,13 @@ Bun's install runs the Electron/native-module setup declared in
 `trustedDependencies`. The app build also rebuilds the root backend so the
 renderer and daemon protocol cannot drift silently.
 
-The app registers `helm://item/<id>` deep links. The legacy `vigil://` scheme is
-accepted for compatibility.
+The app registers `helm://item/<id>` and profile-qualified Item deep links. The
+legacy `vigil://` scheme is accepted for compatibility.
+
+`cd app && bun run start` opens only the desktop app. Root `bun run start` builds
+and launches the desktop plus the separate Remote runtime, or reuses a compatible
+authenticated Remote host. Read the [Remote onboarding guide](docs/remote/onboarding.md)
+before using that combined path; it does not configure HTTPS or enroll Pi for you.
 
 ## Configuration
 
@@ -212,7 +235,8 @@ Important fields:
 | `solver.type` | `default` for direct headless execution or `okena` for Okena execution. |
 | `solver.agent` | Default CLI: `claude`, `codex`, or `pi`. |
 | `solver.workspace` | Default execution location: `worktree` or `main`. |
-| `solver.concurrency` | Shared direct-solve capacity, from 1 to 10; default 2. |
+| `solver.concurrency` | Daemon-global direct-solve and scheduled-agent capacity: a positive safe integer or `null` for Unlimited; default 2. |
+| `solver.loopConcurrency` | Separate daemon-global loop capacity: a positive safe integer or `null` for Unlimited; default 1. |
 | `solver.model` | Optional default model passed to the selected agent CLI. Pi accepts provider-qualified IDs such as `anthropic/claude-sonnet-5` or `openai-codex/gpt-5.6-luna`. |
 | `solver.timeoutMinutes` | Direct-agent wall-clock timeout; Okena uses it as an idle timeout. |
 | `solver.branchNaming` | Optional AI-generated conventional branch names; disabled by default. |
@@ -224,6 +248,8 @@ Important fields:
 | `github.postComments` | Post provider comments for eligible source tasks; default true. |
 | `github.trackDeployments` | Observe merge and GitHub Deployment state; default true. |
 | `server.host` / `port` | Local API listener; defaults to `localhost:7474`. |
+| `scheduledRuns.enabled` | Opt into scheduled runs; default false, requires a loopback listener and an active desktop resident lease. |
+| `scheduledRuns.systemTargetsEnabled` | Separately opt into system-target schedules; default false. |
 
 To use Pi, install it globally (`npm install -g --ignore-scripts @earendil-works/pi-coding-agent`), run `pi` and `/login`, then choose **Pi** in Settings or an Item's Execution setup. Helm does not read Pi credentials; the daemon process uses Pi's own authentication under its HOME. Ensure `pi` is on the launchd daemon's PATH. Pi model choices are provider-qualified because one Pi installation can use several providers.
 
@@ -236,12 +262,16 @@ defer restart.
 
 Solve Items may override the daemon defaults for:
 
-- Agent — Claude Code or Codex;
+- Agent — Claude Code, Codex, or Pi;
 - Model;
 - Effort; and
 - Workspace — Worktree or Main.
 
-The same selection is honored by direct-agent and planned-loop execution.
+Direct-agent runs honor all four fields. Planned loops honor the same selection
+for Claude Code or Codex; Pi-selected loops are explicitly refused. Run limits
+live in **Settings → Execution → Run limits**, with separate Agent and Loop
+budgets and an explicit Unlimited option.
+
 Selecting Main gives the agent access to the canonical checkout. Helm does not
 reset, detach, or clean that checkout; the prompt tells the agent to preserve
 pre-existing work and create its own branch before editing.
@@ -293,6 +323,10 @@ curl -sS http://localhost:7474/api/items \
 
 Use `parallelism` to create a sibling group through Item Commands rather than
 issuing repeated create requests yourself.
+
+The native **New item** page also accepts a title, prompt, or both without a
+project. These drafts remain Unassigned in Queue until **Finish setup** assigns a
+configured project; they cannot accidentally launch in the first repository.
 
 ### Captured tasks and attachments
 
@@ -351,6 +385,42 @@ Run Context does not mutate:
 It uses optimistic revisions, survives retries and recovery, and cannot be
 edited while the Item is running. Reset fetches the latest source context before
 clearing the override.
+
+### Document review
+
+Open **File → Open Markdown file…**, or choose **Review document** on an Item's
+Plan document. The native review window renders the real repository Markdown
+beside your **already-running** Claude Code, Codex, or Pi conversation. The agent
+can open it itself with `helm review open spec.md --agent pi --wait --json`
+(use `claude` or `codex` for those callers).
+
+Select a passage to **Discuss** it or request a **Change**, keep local comments,
+use the outline for long documents, and inspect externally observed changes.
+The Markdown file stays the source of truth; Helm does not rewrite it for display.
+Rendered selections use their containing source block, while Source view permits
+exact ranges.
+
+Helm never starts or resumes another review agent. The universal CLI returns
+feedback through a waiting tool call in the original conversation; its full
+connect/open/wait/reply/status/list/receipt/disconnect surface preserves that
+session's context and permissions. The opt-in local Pi connector also provides
+native live follow-ups through `helm_review` and `/helm-review`. Without a
+listener, feedback stays not sent. Receipts do not guarantee an edit, and unknown
+outcomes are never automatically replayed. See
+[Document review](docs/document-review.md) for permissions, recovery, and limits.
+
+### Scheduled runs
+
+Open **Scheduled runs** from Work's More menu or Settings to create and edit
+profile-owned schedules, inspect run history and running occurrences, cancel
+eligible runs, or open a needs-attention terminal. Scheduling is off by default;
+the page offers the existing guarded enable/restart flow.
+
+The daemon admits due work only while the desktop supplies a valid resident
+lease; it is not a headless cron service. Native notifications can take you to
+the owning profile and adopt an existing scheduled terminal. Scheduled agents
+share the direct-agent capacity budget without becoming Items. System targets
+require a separate opt-in and are not a sandbox.
 
 ### Project knowledge
 
@@ -462,7 +532,8 @@ Important behavior:
 - inactive queued work waits for its profile to become active;
 - attachments, logs, terminal sessions, and terminal buffers remain
   profile-namespaced; and
-- a dirty Run Context editor blocks switching rather than discarding edits.
+- dirty Run Context and Document Review drafts protect profile switching rather
+  than silently discarding edits.
 
 Switch profiles from the Work toolbar's **…** menu or the native Helm menu.
 Manage, archive, and restore profiles in **Settings → Profiles**. Profile metadata
@@ -482,10 +553,11 @@ Desktop terminal features include:
 
 - persistent tabs and restored screen snapshots;
 - manual rename pins that are not overwritten by OSC titles;
-- custom pointer tab reordering;
+- custom pointer tab reordering and named, colored groups with independent strip
+  and Background collapse state;
 - **Background terminals**, which stay attached while leaving the tab strip;
 - Open versus Restore as separate operations;
-- a visible Background control that names the currently viewed parked terminal;
+- a Background control with a count and explicit Open, Restore, and Close actions;
 - grace-close with Undo;
 - protocol-owned agent activity and needs-attention indicators, with optional precise Pi lifecycle and tool-name tooltips;
 - standalone [`pi-agent-status`](https://github.com/neumie/pi-agent-status) package support with read-only detection and setup guidance in **Settings → Agent integrations**;
@@ -513,6 +585,29 @@ Every Item can also be opened in Okena. Helm focuses an existing pane, registers
 an existing worktree, or creates the required workspace according to a
 server-computed preview. Focus is control-plane only: Helm sends no input to a
 running terminal.
+
+## Helm Remote
+
+Remote is an optional, separate host and browser/PWA workspace for **existing
+Pi conversations**. Pi remains the conversation writer and process owner;
+Remote does not own terminals, launch agent sessions, or proxy the daemon on
+port `7474`.
+
+Its browser opens to live enrolled conversations. It supports text and image
+prompts, steer/follow-up delivery, interrupt requests, supported questionnaires,
+read-only current-conversation history, shared favorites, and available extension
+information. Other custom terminal UI stays in Pi. Drafts are memory-only, and
+uncertain commands are not replayed automatically.
+
+Pair devices through **Settings → Remote** after configuring the separate host
+and HTTPS origin. The browser can be installed where PWA support is available,
+but this is not offline conversation support. Remote remains opt-in and under
+active development; fixture or wire tests do not certify every installed Pi
+integration or physical phone.
+
+Read the [implementation record](docs/remote/README.md) and
+[onboarding guide](docs/remote/onboarding.md) for setup, ownership, security,
+and verification limits. Never expose the daemon to make Remote work.
 
 ## CLI
 
@@ -597,7 +692,8 @@ src/
   profiles/         profile runtime and active-profile state
   providers/        live TaskProvider implementations and registry
   queue/            Drainer, solve worker, loop runner
-  scheduled-runs/   disabled-by-default scheduling foundations
+  remote/           separate opt-in Pi conversation host and protocol
+  scheduled-runs/   opt-in schedules, admission, supervision, and adoption
   server/           Hono API and guarded daemon restart
   solver/           Solver seam, agent adapters, prompt/result handling
   spawner/          interactive planning seam
@@ -607,8 +703,16 @@ app/
   src/main.ts       Electron main process and restricted IPC adapters
   src/helm-bridge.ts
                     daemon polling and command proxy
-  src/sessions.ts   persistent dtach terminal registry
-  src/renderer/     xterm workspace and React Work sidebar
+  src/sessions.ts   persistent dtach terminal registry and legacy review metadata
+  src/document-review/
+                    native document grants, drafts, caller mailbox, and IPC
+  src/renderer/     xterm workspace, React Work sidebar, review and Remote views
+
+packages/
+  helm-remote-bridge/
+                    opt-in connection from an existing ordinary Pi TUI
+  helm-ask-user-question/
+                    private questionnaire fork with local/remote completion
 
 extension/
   src/              SolidJS task widget and daemon client
@@ -686,25 +790,29 @@ node build.mjs
 The root build does not build the desktop app or extension. Run the additional
 checks whenever those surfaces change.
 
-## Experimental foundations
+## Experiments and current limits
 
-The repository contains foundations for features that are **not yet available
-as complete operator workflows**:
+This is a working personal project, including the things I'm testing and trying,
+not a promise that every subsystem is complete or deployed. Implemented native
+features such as scheduled runs and tab groups sit alongside opt-in Remote work
+and deliberately incomplete foundations:
 
-- **Scheduled interactive agent runs** — persistence, recurrence, scoped
-  capabilities, workspace isolation, supervisor, and service foundations exist,
-  but the Electron resident lease, authenticated control/report routes,
-  notifications, adoption, and user interface are not complete. The current
-  daemon intentionally supplies no resident lease, so enabling
-  `scheduledRuns.enabled` does not admit occurrences.
-- **Moving live terminals between profiles** — fail-closed journal, recovery,
-  ownership attestation, and persistence foundations exist, but the complete
-  main/renderer transaction and user command are not exposed.
-- **Terminal tab groups** — profile-scoped group persistence exists, while the
-  complete renderer interaction is still under development.
+- **Moving live terminals between profiles** has journal, recovery, ownership,
+  and persistence foundations, but no complete production move command or
+  mutation IPC.
+- **Daemon restart ownership** remains unfinished. A surviving solver can outlive
+  the daemon; active-run restart guards must stay in place. Recovery must not
+  blindly launch a duplicate or replay dispatch effects.
+- **Remote** has explicit integration, deployment, and physical-device proof
+  boundaries. Unsupported custom UI remains terminal-only; complete extension
+  fleet reporting is unfinished.
+- **Document Review** connects existing agents through foreground CLI tools or
+  the optional native Pi connector; the universal CLI is not idle injection.
+  Original permission/question dialogs and interruption stay in the terminal.
+  Browser, private-wire, real-provider and native Electron proofs are separate.
 
-These boundaries are deliberate. Do not expose partial runtime controls or infer
-success from the presence of a config flag.
+Use the subsystem docs and tests to check a feature's actual scope. A config flag,
+prototype, or passing fixture is not evidence of a complete operator workflow.
 
 ## Troubleshooting
 

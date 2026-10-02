@@ -438,6 +438,10 @@ export interface HelmApi {
 	profiles: ProfilesApi
 	/** Opens/focuses the full-size external editor for one Item. */
 	runContext: RunContextWindowApi
+	/** Native, profile-fenced repository document review; no renderer path authority. */
+	documentReview: {
+		open(itemId?: string, artifactName?: string): Promise<import('./document-review/types').ReviewResult<boolean>>
+	}
 	/** Host OS, for platform-specific keybindings/layout ('darwin' on macOS). */
 	platform: NodeJS.Platform
 	/** Set only on `--ui-preview=…` screenshot runs; null in normal use. */

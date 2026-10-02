@@ -51,6 +51,23 @@ await build({
 	outdir: 'dist',
 })
 
+await build({
+	...common,
+	entryPoints: ['src/preload-document-review.ts'],
+	platform: 'node',
+	format: 'cjs',
+	outfile: 'dist/preload-document-review.cjs',
+	external: ['electron'],
+})
+await build({
+	...common,
+	entryPoints: ['src/renderer/document-review.tsx'],
+	platform: 'browser',
+	format: 'iife',
+	jsx: 'automatic',
+	outdir: 'dist',
+})
+cpSync('src/renderer/document-review.html', 'dist/document-review.html')
 cpSync('src/renderer/index.html', 'dist/index.html')
 cpSync('src/renderer/run-context-editor.html', 'dist/run-context-editor.html')
 console.log('helm built to dist/')
