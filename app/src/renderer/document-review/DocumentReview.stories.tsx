@@ -42,3 +42,31 @@ export const Changes: Story = { args: { scenario: 'changes' } }
 export const SaveFailure: Story = { args: { scenario: 'save-failure' } }
 export const NoConnectedAgent: Story = { args: { scenario: 'no-agent' } }
 export const ListenerPaused: Story = { args: { scenario: 'not-listening' } }
+
+export const PassageFeedback: Story = {
+	play: async ({ canvasElement }) => {
+		await new Promise<void>((resolve, reject) => {
+			const open = () => {
+				const button = canvasElement.querySelector<HTMLButtonElement>(
+					'[aria-label="Review passage Dispatch guarantees"]',
+				)
+				if (!button) return false
+				button.click()
+				return true
+			}
+			if (open()) return resolve()
+			const timer = setTimeout(() => {
+				observer.disconnect()
+				reject(new Error('Review fixture did not load'))
+			}, 10000)
+			const observer = new MutationObserver(() => {
+				if (open()) {
+					observer.disconnect()
+					clearTimeout(timer)
+					resolve()
+				}
+			})
+			observer.observe(canvasElement, { childList: true, subtree: true })
+		})
+	},
+}

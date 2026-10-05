@@ -13,7 +13,7 @@ import type {
 	ReviewState,
 } from '../../document-review/types'
 import { ActivityIndicator } from '../activity-indicator'
-import { Btn } from '../button'
+import { Btn, buttonClassName } from '../button'
 import { ReviewMarkdown } from './ReviewMarkdown'
 import { parseReviewMarkdown } from './markdown'
 import type { ReviewBlock } from './markdown'
@@ -226,7 +226,11 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			})
 		})
 		const media = window.matchMedia('(max-width: 900px)')
-		const update = () => setNarrow(media.matches)
+		const update = () => {
+			if (media.matches && document.activeElement?.closest('.review-companion')) setPane('conversation')
+			else if (media.matches && document.activeElement?.closest('.review-document-pane')) setPane('document')
+			setNarrow(media.matches)
+		}
 		update()
 		media.addEventListener('change', update)
 		return () => {
@@ -327,13 +331,14 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			})
 	}
 	function openPassage(next: ReviewPassage, nextIntent: ReviewIntent, id: string | null = null): void {
-		opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+		const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+		opener.current = focused?.closest('.review-selection-actions') ? reading.current : focused
 		setPassage(next)
 		setIntent(nextIntent)
 		setAnnotationId(id ?? reanchoring.current)
 		reanchoring.current = null
 		setCandidate(null)
-		setPane('document')
+		setPane('conversation')
 		requestAnimationFrame(() => {
 			if (mounted.current) input.current?.focus()
 		})
@@ -362,8 +367,9 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		setPassage(null)
 		setAnnotationId(null)
 		setCandidate(null)
+		if (narrow) setPane('document')
 		requestAnimationFrame(() => {
-			if (opener.current?.isConnected) opener.current.focus()
+			if (opener.current?.isConnected && opener.current.getClientRects().length) opener.current.focus()
 		})
 	}
 	async function switchSession(id: string | null): Promise<void> {
@@ -570,35 +576,29 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			{passage && (
 				<>
 					<div className="review-scope-heading">
-						<h3>{intent === 'discuss' ? 'Discuss this passage' : 'Change this passage'}</h3>
+						<h3>Passage feedback</h3>
 						<Btn tone="ghost" sm onClick={finishPassage}>
 							Back
 						</Btn>
 					</div>
-					<blockquote>
-						{passage.quote.slice(0, 600)}
-						{passage.quote.length > 600 ? '…' : ''}
-					</blockquote>
-					<p className="review-meta">
-						{passage.kind === 'block'
-							? 'Containing source block · not exact rendered offsets'
-							: 'Exact Markdown source selection'}{' '}
-						· {selected ? selected.name : 'Choose a conversation first'}
-					</p>
-					<div className="review-intents">
-						<Btn tone={intent === 'discuss' ? 'quiet' : 'ghost'} sm onClick={() => setIntent('discuss')}>
-							Discuss
-						</Btn>
-						<Btn tone={intent === 'change' ? 'quiet' : 'ghost'} sm onClick={() => setIntent('change')}>
-							Change
-						</Btn>
-					</div>
+					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Variable passage context must remain keyboard-scrollable without moving actions. */}
+					<section className="review-passage-context" tabIndex={0} aria-label="Passage context">
+						<blockquote>{passage.quote}</blockquote>
+						<details className="review-scope-details">
+							<summary>Selection details</summary>
+							<p className="review-meta">
+								{passage.kind === 'block'
+									? 'Containing source block · not exact rendered offsets'
+									: 'Exact Markdown source selection'}
+							</p>
+						</details>
+						{stale && (
+							<p role="alert" className="review-warning">
+								This selection is stale. Select the passage again; it will not be guessed.
+							</p>
+						)}
+					</section>
 				</>
-			)}
-			{stale && (
-				<p role="alert" className="review-warning">
-					This selection is stale. Select the passage again; it will not be guessed.
-				</p>
 			)}
 			<textarea
 				ref={input}
@@ -613,22 +613,22 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						event.preventDefault()
 						void send()
 					}
-					if (event.key === 'Escape' && passage) {
-						event.preventDefault()
-						finishPassage()
-					}
 				}}
 			/>
-			{!passage && (
-				<div className="review-intents">
-					<Btn tone={intent === 'discuss' ? 'quiet' : 'ghost'} sm onClick={() => setIntent('discuss')}>
-						Discuss
-					</Btn>
-					<Btn tone={intent === 'change' ? 'quiet' : 'ghost'} sm onClick={() => setIntent('change')}>
-						Change
-					</Btn>
-				</div>
-			)}
+			<fieldset className="review-intents" aria-label="Feedback intent">
+				{(['discuss', 'change'] as const).map(mode => (
+					<button
+						key={mode}
+						type="button"
+						className={buttonClassName({ tone: intent === mode ? 'quiet' : 'ghost', sm: true })}
+						aria-pressed={intent === mode}
+						onClick={() => setIntent(mode)}
+					>
+						{mode === 'discuss' ? 'Discuss' : 'Change'}
+					</button>
+				))}
+				{!passage && <span className="review-meta">Whole document</span>}
+			</fieldset>
 			<div className="review-compose-actions">
 				{passage && (
 					<Btn
@@ -642,7 +642,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				<span />
 				<Btn
 					tone="primary"
-					ariaLabel={intent === 'change' ? 'Request change' : passage ? 'Discuss passage' : 'Send message'}
+					ariaLabel={intent === 'change' ? 'Send change request' : passage ? 'Send passage discussion' : 'Send message'}
 					disabled={
 						busy ||
 						activeSession ||
@@ -660,7 +660,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						void send()
 					}}
 				>
-					{intent === 'discuss' ? 'Discuss' : 'Request change'}
+					Send
 				</Btn>
 			</div>
 		</div>
@@ -668,14 +668,20 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	return (
 		<main
 			className="document-review"
+			onKeyDown={event => {
+				if (event.key === 'Escape' && passage) {
+					event.preventDefault()
+					finishPassage()
+				}
+			}}
 			data-review-theme={draft.theme}
 			style={{ '--review-companion-width': `${draft.paneWidth}px` } as CSSProperties}
 		>
 			<header className="review-header">
 				<div className="review-identity">
 					<h1>{state.document.name}</h1>
-					<span title={state.document.relativePath}>
-						{state.document.relativePath} · Revision {state.document.revision.slice(0, 8)}
+					<span title={`${state.document.relativePath} · Revision ${state.document.revision}`}>
+						{state.document.relativePath}
 					</span>
 				</div>
 				<Btn
@@ -713,6 +719,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					{(['document', 'source', 'changes', 'comments'] as const).map(mode => (
 						<Btn
 							key={mode}
+							ariaCurrent={view === mode ? 'page' : undefined}
 							tone={view === mode ? 'quiet' : 'ghost'}
 							sm
 							onClick={() => {
@@ -733,10 +740,20 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				</div>
 				{narrow && (
 					<div className="review-pane-switch">
-						<Btn tone={pane === 'document' ? 'quiet' : 'ghost'} sm onClick={() => setPane('document')}>
+						<Btn
+							ariaCurrent={pane === 'document' ? 'page' : undefined}
+							tone={pane === 'document' ? 'quiet' : 'ghost'}
+							sm
+							onClick={() => setPane('document')}
+						>
 							Document
 						</Btn>
-						<Btn tone={pane === 'conversation' ? 'quiet' : 'ghost'} sm onClick={() => setPane('conversation')}>
+						<Btn
+							ariaCurrent={pane === 'conversation' ? 'page' : undefined}
+							tone={pane === 'conversation' ? 'quiet' : 'ghost'}
+							sm
+							onClick={() => setPane('conversation')}
+						>
 							Conversation
 						</Btn>
 					</div>
@@ -972,11 +989,6 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 							</Btn>
 						</fieldset>
 					)}
-					{passage && (
-						<aside className="review-passage-composer" aria-label="Anchored passage composer">
-							{composer}
-						</aside>
-					)}
 				</section>
 				{!narrow && (
 					<div
@@ -1009,7 +1021,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					hidden={narrow && pane !== 'conversation'}
 				>
 					<header className="review-conversation-header">
-						<h2>Conversation</h2>
+						<h2 className="review-visually-hidden">Conversation</h2>
 						<label>
 							<span className="review-meta">Connected agent</span>
 							<select
@@ -1029,14 +1041,16 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 							</select>
 						</label>
 						<p className="review-meta">
-							{selected?.listening
-								? 'Listening in the original session'
-								: selected?.busy
-									? 'Feedback is with the original session'
-									: 'No active listener'}
+							{selected?.state === 'disconnected'
+								? 'Disconnected'
+								: selected?.listening
+									? 'Listening in the original session'
+									: selected?.busy
+										? 'Feedback is with the original session'
+										: 'No active listener'}
 							{selected ? ` · ${providerNames[selected.provider]}` : ''}
 						</p>
-						{!selected?.listening && !selected?.busy && (
+						{selected && !selected.listening && !selected.busy && (
 							<p className="review-meta">
 								Ask your running agent to open this document with <code>helm review open</code> and listen with{' '}
 								<code>helm review wait</code>. Helm never starts another agent.
@@ -1081,61 +1095,54 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						)}
 					</div>
 					<div className="review-companion-bottom">
-						{receipt && (
-							// biome-ignore lint/a11y/useSemanticElements: A live receipt has structured block content; it is not a scalar form output.
-							<div className="review-receipt" role="status">
-								<strong>
-									{receipt.outcome === 'unknown'
-										? 'Outcome not confirmed'
-										: receipt.outcome === 'rejected'
-											? 'Not sent'
-											: receipt.outcome === 'pending'
-												? 'Sending feedback'
-												: 'Dispatched'}
-								</strong>
-								<p>{receipt.detail}</p>
-								{operation.current?.phase === 'uncertain' && !selected?.busy && !selected?.error && (
-									<Btn
-										sm
-										onClick={() => {
-											void acknowledge()
-										}}
-									>
-										I checked the outcome
-									</Btn>
+						{(receipt || recovery !== null) && (
+							// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner must support keyboard reading.
+							<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
+								{receipt && (
+									// biome-ignore lint/a11y/useSemanticElements: A live receipt has structured block content; it is not a scalar form output.
+									<div className="review-receipt" role="status">
+										<strong>
+											{receipt.outcome === 'unknown'
+												? 'Outcome not confirmed'
+												: receipt.outcome === 'rejected'
+													? 'Not sent'
+													: receipt.outcome === 'pending'
+														? 'Sending feedback'
+														: 'Dispatched'}
+										</strong>
+										<p>{receipt.detail}</p>
+										{operation.current?.phase === 'uncertain' && !selected?.busy && !selected?.error && (
+											<Btn
+												sm
+												onClick={() => {
+													void acknowledge()
+												}}
+											>
+												I checked the outcome
+											</Btn>
+										)}
+									</div>
 								)}
-							</div>
+								{recovery !== null && (
+									<div className="review-recovery">
+										<p>Your request text is retained locally. Restoring it does not resend it.</p>
+										<Btn
+											sm
+											onClick={() => {
+												changeDraft(value => ({ ...value, instruction: recovery }))
+												setRecovery(null)
+											}}
+										>
+											Restore request text
+										</Btn>
+										<Btn sm tone="ghost" onClick={() => setRecovery(null)}>
+											Discard text
+										</Btn>
+									</div>
+								)}
+							</section>
 						)}
-						{recovery !== null && (
-							<div className="review-recovery">
-								<p>Your request text is retained locally. Restoring it does not resend it.</p>
-								<Btn
-									sm
-									onClick={() => {
-										changeDraft(value => ({ ...value, instruction: recovery }))
-										setRecovery(null)
-									}}
-								>
-									Restore request text
-								</Btn>
-								<Btn sm tone="ghost" onClick={() => setRecovery(null)}>
-									Discard text
-								</Btn>
-							</div>
-						)}
-						{passage ? (
-							<div className="review-passage-handoff">
-								<p>A passage composer is open in the document.</p>
-								<Btn sm onClick={() => setPane('document')}>
-									Return to passage
-								</Btn>
-								<Btn sm tone="ghost" onClick={finishPassage}>
-									Whole-document chat
-								</Btn>
-							</div>
-						) : (
-							composer
-						)}
+						{composer}
 					</div>
 				</section>
 			</div>
@@ -1149,8 +1156,9 @@ function Conversation({ session }: { session: ReviewSession | null }) {
 			<div className="review-empty">
 				<h3>A conversation beside your document</h3>
 				<p>
-					Ask your running Claude Code, Codex, or Pi session to connect with helm review open. Passage feedback stays in
-					that original conversation, with its existing context. Helm does not create a new agent session.
+					Ask your running Claude Code, Codex, or Pi session to connect with helm review open and listen with helm
+					review wait. Passage feedback stays in that original conversation, with its existing context. Helm does not
+					create a new agent session.
 				</p>
 			</div>
 		)

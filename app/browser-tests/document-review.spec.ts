@@ -86,7 +86,7 @@ test('selection preserves source block, chosen owner, and same-task double-submi
 	expect(request?.passage?.source).toContain('**rendered quote**')
 	expect(request?.passage?.quote).toContain('rendered quote')
 	expect(request?.passage?.kind).toBe('block')
-	await expect(page.getByRole('button', { name: 'Discuss passage', exact: true })).toBeDisabled()
+	await expect(page.getByRole('button', { name: 'Send passage discussion', exact: true })).toBeDisabled()
 	await proof(page, 'settle')
 	await expect(input).toHaveValue('')
 	await page.getByRole('button', { name: 'Back', exact: true }).click()
@@ -114,7 +114,7 @@ test('keyboard block affordance, Escape focus restoration, and explicit change i
 		.getByRole('button', { name: 'Change', exact: true })
 		.click()
 	await input.fill('Clarify this paragraph without changing its meaning.')
-	await page.getByRole('button', { name: 'Request change', exact: true }).click()
+	await page.getByRole('button', { name: 'Send change request', exact: true }).click()
 	await expect.poll(() => page.evaluate(() => window.__helmDocumentReviewProof?.requests[0]?.intent)).toBe('change')
 })
 
@@ -164,8 +164,8 @@ test('external edit keeps focus/draft, fences stale selection, and exposes chang
 	await proof(page, 'edit')
 	await expect(input).toHaveValue('Keep my in-progress note.')
 	await expect(input).toBeFocused()
-	await expect(page.getByRole('button', { name: 'Request change', exact: true })).toBeDisabled()
-	await expect(page.locator('.review-passage-composer')).toContainText('This selection is stale.')
+	await expect(page.getByRole('button', { name: 'Send change request', exact: true })).toBeDisabled()
+	await expect(page.locator('.review-writing-surface')).toContainText('This selection is stale.')
 	await page.getByRole('button', { name: 'Back', exact: true }).click()
 	await page.getByRole('button', { name: 'Changes', exact: true }).click()
 	await expect(page.getByRole('heading', { name: 'What changed', exact: true })).toBeVisible()
@@ -300,4 +300,265 @@ test('missing file preserves readable bytes and blocks sends until explicit succ
 	await page.screenshot({ path: `${evidence}/wide-dark-missing-file.png` })
 	await page.getByRole('button', { name: 'Retry read', exact: true }).click()
 	await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+})
+
+test('one companion editor preserves scope, draft, focus and reading anchor across resize', async ({ page }) => {
+	await page.setViewportSize({ width: 800, height: 620 })
+	await open(page)
+	const review = page.getByRole('button', { name: 'Review passage Dispatch guarantees', exact: true })
+	await review.focus()
+	const scroll = await page.locator('.review-reading').evaluate(element => element.scrollTop)
+	await page.keyboard.press('Enter')
+	const input = page.getByRole('textbox', { name: 'Passage instruction' })
+	await expect(input).toBeFocused()
+	await expect(page.locator('textarea')).toHaveCount(1)
+	await expect(page.locator('.review-companion .review-writing-surface')).toHaveCount(1)
+	await expect(page.getByRole('button', { name: 'Discuss', exact: true })).toHaveAttribute('aria-pressed', 'true')
+	await page.getByRole('button', { name: 'Change', exact: true }).click()
+	await expect(page.getByRole('button', { name: 'Change', exact: true })).toHaveAttribute('aria-pressed', 'true')
+	await input.fill('Keep this scope and draft across layouts.')
+	await page.getByRole('button', { name: 'Document', exact: true }).click()
+	await expect(page.locator('.review-block[data-selected="true"]')).toHaveCount(1)
+	await page.getByRole('button', { name: 'Conversation', exact: true }).click()
+	await expect(input).toHaveValue('Keep this scope and draft across layouts.')
+	await input.focus()
+	await page.setViewportSize({ width: 1280, height: 900 })
+	await expect(input).toBeFocused()
+	await expect(input).toHaveValue('Keep this scope and draft across layouts.')
+	await page.setViewportSize({ width: 640, height: 520 })
+	await expect(input).toBeFocused()
+	await page.keyboard.press('Escape')
+	await expect(review).toBeFocused()
+	expect(await page.locator('.review-reading').evaluate(element => element.scrollTop)).toBe(scroll)
+	await review.click()
+	await page.getByRole('button', { name: 'Back', exact: true }).click()
+	await expect(review).toBeFocused()
+})
+
+for (const story of ['reading', 'light'])
+	test(`${story}: passage at exact sizes and bounded long quote/draft/receipt`, async ({ page }) => {
+		for (const [width, height] of [
+			[1280, 900],
+			[800, 620],
+			[640, 520],
+		] as const) {
+			await page.setViewportSize({ width, height })
+			await open(page, story)
+			await selectPassage(page)
+			await page
+				.getByRole('group', { name: 'Selected passage actions' })
+				.getByRole('button', { name: 'Discuss', exact: true })
+				.click()
+			const input = page.getByRole('textbox', { name: 'Passage instruction' })
+			await expect(input).toBeFocused()
+			await input.fill('Explain this guarantee precisely, keeping the original conversation and source block.')
+			await expect(page.locator('textarea')).toHaveCount(1)
+			const bounds = await page.getByRole('button', { name: 'Send passage discussion', exact: true }).boundingBox()
+			expect(bounds && bounds.y + bounds.height <= height).toBe(true)
+			await page.screenshot({ path: `${evidence}/${story}-${width}x${height}-passage.png` })
+		}
+		await page.getByRole('button', { name: 'Back', exact: true }).click()
+		await page.evaluate(() =>
+			window.__helmDocumentReviewProof?.edit('Preserve the original session and exact source block. '.repeat(100)),
+		)
+		await page.getByRole('button', { name: 'Document', exact: true }).click()
+		await page.locator('.review-block-action button').last().click()
+		const input = page.getByRole('textbox', { name: 'Passage instruction' })
+		await input.fill('A request with an uncertain receipt.')
+		await page.getByRole('button', { name: 'Send passage discussion', exact: true }).click()
+		await proof(page, 'settle', true)
+		await expect(page.getByText('Outcome not confirmed', { exact: true })).toBeVisible()
+		await input.fill('A long unsent local draft.\n'.repeat(100))
+		await expect(page.getByRole('button', { name: 'Send passage discussion', exact: true })).toHaveText('Send')
+		await expect(page.locator('.review-receipt')).toBeVisible()
+		const bounds = await page.getByRole('button', { name: 'Send passage discussion', exact: true }).boundingBox()
+		expect(bounds && bounds.y + bounds.height <= 520).toBe(true)
+		await page.screenshot({ path: `${evidence}/${story}-640x520-long-passage-draft-receipt.png` })
+	})
+
+test('paused/disconnected listeners retain passage drafts and local comments without sends', async ({ page }) => {
+	await page.setViewportSize({ width: 800, height: 620 })
+	await open(page, 'listener-paused')
+	await selectPassage(page)
+	await page
+		.getByRole('group', { name: 'Selected passage actions' })
+		.getByRole('button', { name: 'Discuss', exact: true })
+		.click()
+	const input = page.getByRole('textbox', { name: 'Passage instruction' })
+	await input.fill('Local comment while the listener is paused.')
+	await expect(page.getByRole('button', { name: 'Send passage discussion', exact: true })).toBeDisabled()
+	await expect(page.getByRole('button', { name: 'Keep comment', exact: true })).toBeEnabled()
+	await page.evaluate(() => window.__helmDocumentReviewProof?.disconnect())
+	await expect(input).toHaveValue('Local comment while the listener is paused.')
+	await expect(page.getByRole('button', { name: 'Send passage discussion', exact: true })).toBeDisabled()
+	await page.getByRole('button', { name: 'Keep comment', exact: true }).click()
+	await expect(page.locator('.review-comment')).toContainText('Local comment while the listener is paused.')
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
+})
+
+test('dispatch settlement preserves a newer draft and the selected passage', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 })
+	await open(page)
+	await page.getByRole('button', { name: 'Review passage Dispatch guarantees', exact: true }).click()
+	const input = page.getByRole('textbox', { name: 'Passage instruction' })
+	await input.fill('The admitted request.')
+	await page.getByRole('button', { name: 'Send passage discussion', exact: true }).click()
+	await input.fill('A newer unsent draft.')
+	await proof(page, 'settle')
+	await expect(input).toHaveValue('A newer unsent draft.')
+	await expect(page.locator('.review-block[data-selected="true"]')).toHaveCount(1)
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
+})
+
+async function compactBounds(page: Page) {
+	return page.evaluate(() => {
+		const bounds = (selector: string) => {
+			const element = document.querySelector<HTMLElement>(selector)
+			if (!element) throw new Error(`Missing ${selector}`)
+			const r = element.getBoundingClientRect()
+			let fullyInside = r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth
+			for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+				const css = getComputedStyle(parent)
+				const p = parent.getBoundingClientRect()
+				if (css.overflowY !== 'visible') fullyInside &&= r.top >= p.top && r.bottom <= p.bottom
+				if (css.overflowX !== 'visible') fullyInside &&= r.left >= p.left && r.right <= p.right
+			}
+			return {
+				selector,
+				top: r.top,
+				bottom: r.bottom,
+				height: r.height,
+				fullyInside,
+				overflowY: getComputedStyle(element).overflowY,
+				clientHeight: element.clientHeight,
+				scrollHeight: element.scrollHeight,
+			}
+		}
+		return {
+			controls: [
+				'.review-scope-heading',
+				'.review-writing-surface textarea',
+				'.review-intents',
+				'.review-compose-actions',
+				'.review-compose-actions .btn-primary',
+			].map(bounds),
+			receipt: bounds('.review-feedback-status'),
+			chat: bounds('.review-chat'),
+			context: bounds('.review-passage-context'),
+			bottom: bounds('.review-companion-bottom'),
+		}
+	})
+}
+
+for (const story of ['reading', 'light'])
+	test(`${story}: compact expanded passage details and stale warning protect full controls and scrollable recovery`, async ({
+		page,
+	}, testInfo) => {
+		await page.setViewportSize({ width: 640, height: 520 })
+		await open(page, story)
+		await page.evaluate(() =>
+			window.__helmDocumentReviewProof?.edit('Preserve the original session and exact source block. '.repeat(100)),
+		)
+		await page.locator('.review-block-action button').last().click()
+		const input = page.getByRole('textbox', { name: 'Passage instruction' })
+		await input.fill('An uncertain request.')
+		const send = page.getByRole('button', { name: 'Send passage discussion', exact: true })
+		await send.click()
+		await expect(page.getByText('Dispatched', { exact: true })).toBeVisible()
+		await proof(page, 'settle', true)
+		await expect(page.getByText('Outcome not confirmed', { exact: true })).toBeVisible()
+		await input.fill('Long retained local draft.\n'.repeat(100))
+		await expect(send).toHaveText('Send')
+		const context = page.getByRole('region', { name: 'Passage context' })
+		await context.locator('summary').click()
+		for (const state of ['expanded-details-unknown', 'expanded-details-stale-unknown']) {
+			if (state.includes('stale')) {
+				await proof(page, 'edit')
+				await expect(context.getByRole('alert')).toContainText('This selection is stale.')
+				await expect(send).toBeDisabled()
+			}
+			const measured = await compactBounds(page)
+			for (const control of measured.controls) expect(control.fullyInside, JSON.stringify(control)).toBe(true)
+			expect(measured.controls[1]?.height).toBeGreaterThanOrEqual(40)
+			expect(measured.receipt.height).toBeGreaterThanOrEqual(32)
+			expect(measured.chat.height).toBeGreaterThanOrEqual(96)
+			expect(measured.receipt.fullyInside).toBe(true)
+			expect(measured.chat.fullyInside).toBe(true)
+			expect(measured.context.overflowY).toBe('auto')
+			expect(measured.context.scrollHeight).toBeGreaterThan(measured.context.clientHeight)
+			await testInfo.attach(`${story}-${state}-computed-bounds`, {
+				body: JSON.stringify(measured, null, 2),
+				contentType: 'application/json',
+			})
+			await context.locator('summary').focus()
+			await expect(context.locator('summary')).toBeInViewport()
+			await context.focus()
+			await page.keyboard.press('End')
+			await expect
+				.poll(() =>
+					context.evaluate(element => Math.abs(element.scrollTop - (element.scrollHeight - element.clientHeight))),
+				)
+				.toBeLessThanOrEqual(1)
+			if (state.includes('stale')) await expect(context.getByRole('alert')).toBeInViewport()
+			else await expect(context.locator('.review-scope-details p')).toBeInViewport()
+			const recovery = page.getByRole('region', { name: 'Delivery and recovery' })
+			await recovery.focus()
+			await page.keyboard.press('Home')
+			await expect.poll(() => recovery.evaluate(element => element.scrollTop)).toBe(0)
+			await page.screenshot({ path: `${evidence}/${story}-640x520-${state}.png` })
+			await page.keyboard.press('End')
+			await expect
+				.poll(() =>
+					recovery.evaluate(element => Math.abs(element.scrollTop - (element.scrollHeight - element.clientHeight))),
+				)
+				.toBeLessThanOrEqual(1)
+			await expect(recovery.getByRole('button', { name: 'Discard text', exact: true })).toBeInViewport()
+			await expect(input).toHaveValue('Long retained local draft.\n'.repeat(100))
+		}
+		expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
+	})
+
+test('wide-start passage remembers Conversation and narrowing preserves focused editor without resize focus calls', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 900 })
+	await open(page)
+	const review = page.getByRole('button', { name: 'Review passage Dispatch guarantees', exact: true })
+	await review.focus()
+	await page.keyboard.press('Enter')
+	const input = page.getByRole('textbox', { name: 'Passage instruction' })
+	await input.fill('Wide-start draft and passage.')
+	await input.evaluate(element => {
+		const original = element.focus.bind(element)
+		Object.assign(window, { __reviewResizeFocusCalls: 0 })
+		Object.defineProperty(element, 'focus', {
+			configurable: true,
+			value: (options?: FocusOptions) => {
+				Object.assign(window, { __reviewResizeFocusCalls: Reflect.get(window, '__reviewResizeFocusCalls') + 1 })
+				original(options)
+			},
+		})
+	})
+	await page.setViewportSize({ width: 640, height: 520 })
+	await expect(input).toBeVisible()
+	await expect(input).toBeFocused()
+	await expect(input).toHaveValue('Wide-start draft and passage.')
+	expect(await page.evaluate(() => Reflect.get(window, '__reviewResizeFocusCalls'))).toBe(0)
+	await page.screenshot({ path: `${evidence}/reading-wide-to-640x520-focused-passage.png` })
+	await page.getByRole('button', { name: 'Document', exact: true }).click()
+	await page.setViewportSize({ width: 1280, height: 900 })
+	await page.setViewportSize({ width: 640, height: 520 })
+	await expect(page.getByLabel('Document reading area', { exact: true })).toBeVisible()
+	await expect(input).not.toBeVisible()
+	await page.setViewportSize({ width: 1280, height: 900 })
+	await input.focus()
+	const calls = await page.evaluate(() => Reflect.get(window, '__reviewResizeFocusCalls'))
+	await page.setViewportSize({ width: 640, height: 520 })
+	await expect(input).toBeFocused()
+	await expect(input).toBeVisible()
+	expect(await page.evaluate(() => Reflect.get(window, '__reviewResizeFocusCalls'))).toBe(calls)
+	await expect(input).toHaveValue('Wide-start draft and passage.')
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
+	await page.keyboard.press('Escape')
+	await expect(review).toBeFocused()
 })
