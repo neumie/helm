@@ -379,15 +379,18 @@
 	display: flex;
 	flex-direction: column;
 	flex: 0 1 auto;
-	min-height: 172px;
-	max-height: 60%;
+	--review-writing-minimum: 144px;
+	--review-bottom-padding: 28px;
+	--review-feedback-minimum: 0px;
+	min-height: calc(var(--review-writing-minimum) + var(--review-bottom-padding) + var(--review-feedback-minimum));
+	max-height: 72%;
 	overflow: hidden;
 }
 .review-companion-bottom > .review-writing-surface {
 	display: flex;
 	flex-direction: column;
 	flex: 0 1 auto;
-	min-height: 144px;
+	min-height: var(--review-writing-minimum);
 }
 .review-companion-bottom .review-writing-surface textarea {
 	flex: 0 1 auto;
@@ -396,7 +399,7 @@
 }
 .review-companion-bottom .review-intents,
 .review-companion-bottom .review-compose-actions,
-.review-companion-bottom .review-passage-handoff {
+.review-companion-bottom .review-scope-heading {
 	flex-shrink: 0;
 }
 .review-companion-bottom > .review-receipt,
@@ -473,23 +476,6 @@
 	line-height: 1.5;
 	color: var(--text-1);
 	white-space: pre-wrap;
-}
-.review-passage-composer {
-	position: absolute;
-	bottom: 16px;
-	right: 20px;
-	left: 20px;
-	max-width: 520px;
-	max-height: calc(100% - 120px);
-	overflow: auto;
-	margin-inline: auto;
-	background: var(--chrome);
-	border-radius: 8px;
-	box-shadow: var(--shadow-2);
-	z-index: 2;
-}
-.review-document-pane:has(.review-passage-composer) .review-reading {
-	padding-bottom: 360px;
 }
 .review-selection-actions {
 	margin: 0;
@@ -572,7 +558,7 @@
 }
 .review-receipt,
 .review-recovery,
-.review-passage-handoff {
+.review-scope-heading {
 	font-size: calc(12px * var(--ui-scale));
 	line-height: 1.5;
 	margin-bottom: 12px;
@@ -628,11 +614,6 @@
 	.review-header {
 		padding-left: 90px;
 	}
-	.review-passage-composer {
-		bottom: 12px;
-		right: 16px;
-		left: 16px;
-	}
 	.review-conversation-header,
 	.review-chat {
 		padding-inline: 24px;
@@ -649,4 +630,109 @@
 		transition: none !important;
 		scroll-behavior: auto !important;
 	}
+}
+
+/* One stable editor: passage context belongs to the companion, never over the document. */
+.review-visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
+.review-conversation-header {
+	padding-top: 8px;
+	max-height: 32%;
+}
+.review-conversation-header label {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+}
+.review-conversation-header label > span {
+	flex-shrink: 0;
+}
+.review-conversation-header > .review-meta {
+	margin-block: 4px;
+}
+.review-companion-bottom:has(.review-scope-heading) {
+	/* Padding + heading + context floor + editor floor + intent rhythm + actions. */
+	--review-writing-minimum: calc(24px + 32px + 40px + 40px + 40px + 32px);
+}
+.review-companion-bottom > .review-writing-surface {
+	flex: 0 1 auto;
+}
+.review-scope-heading,
+.review-intents,
+.review-compose-actions {
+	flex-shrink: 0;
+}
+.review-scope-heading {
+	margin-bottom: 0;
+}
+.review-passage-context {
+	flex: 0 1 auto;
+	min-height: 40px;
+	max-height: 160px;
+	overflow: auto;
+	scrollbar-gutter: stable;
+}
+.review-writing-surface blockquote {
+	max-height: none;
+	overflow: visible;
+	margin-block: 8px;
+	overflow-wrap: anywhere;
+}
+.review-scope-details summary {
+	padding-bottom: 4px;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	cursor: pointer;
+}
+.review-intents {
+	align-items: center;
+	margin-block: 8px;
+}
+.review-intents .review-meta {
+	margin: 0 0 0 auto;
+}
+@media (max-height: 620px) {
+	.review-companion-bottom {
+		padding-top: 8px;
+		--review-bottom-padding: 24px;
+	}
+	.review-writing-surface blockquote {
+		margin-block: 4px;
+	}
+	.review-writing-surface textarea {
+		height: 40px;
+		min-height: 40px;
+	}
+	.review-conversation-header {
+		flex: 0 1 auto;
+		min-height: 44px;
+	}
+}
+
+fieldset.review-intents {
+	border: 0;
+	padding: 0;
+	min-inline-size: 0;
+}
+
+.review-feedback-status {
+	flex: 0 1 auto;
+	min-height: 32px;
+	max-height: 96px;
+	overflow: auto;
+	scrollbar-gutter: stable;
+	margin-bottom: 8px;
+}
+.review-feedback-status .review-receipt,
+.review-feedback-status .review-recovery {
+	margin-bottom: 8px;
+}
+.review-companion-bottom:has(.review-feedback-status) {
+	max-height: 80%;
+	--review-feedback-minimum: 40px;
 }

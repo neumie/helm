@@ -60,7 +60,8 @@ You can also open **File → Open Markdown file…** or **Plan documents → Rev
 
 - Select text for Discuss/Change, or focus a block’s quiet Review button and press Enter. Rendered selection uses its complete containing source block; Source view permits exact Markdown ranges.
 - Discuss asks the original agent not to edit. It does not impose a new tool allowlist or sandbox. Change permits the original session’s ordinary tools. Permissions and questions remain in that agent’s original terminal; they are not answered in the review window.
-- Cmd/Ctrl+Enter submits once. Back/Escape restores the opener. Whole-document messages use the same explicitly chosen connected owner.
+- Whole-document and passage feedback share one companion editor. Passage review remembers Conversation in either layout; switching destinations or resizing preserves the unsent scope and draft. Narrowing retains the focused destination without calling focus. The full quote, expanded details and any stale warning scroll independently of Back, editor and actions. Discuss/Change show the selected intent; Send is distinct from local Keep/Save comment. Selection details explains source mapping.
+- Cmd/Ctrl+Enter submits once. Back/Escape exits passage scope, returns to Document on narrow windows, and restores the visible opener (or the reading owner after transient selection actions). Whole-document messages use the same explicitly chosen connected owner.
 - Keep comment saves locally, without delivery. Resolve/Delete/Re-anchor are explicit; source revisions never silently relocate comments.
 - File edits preserve unsent drafts, fence stale selections, and expose Changes against the last observed revision—not full edit history. Helm never writes Markdown.
 - Resize the conversation companion with pointer or arrow keys. Narrow windows push Document/Conversation destinations. The scoped Light/Dark reading preference does not change Helm’s app-wide appearance.
