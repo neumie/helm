@@ -12,6 +12,7 @@ import type {
 	TerminalPreferencesSnapshot,
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
+import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
 export interface TerminalWorkspaceFixtureOptions {
@@ -21,6 +22,8 @@ export interface TerminalWorkspaceFixtureOptions {
 	openBackground?: boolean
 	/** Exposed only by the dedicated browser harness for bridge-effect assertions. */
 	expose?: boolean
+	/** Opt-in task-sidebar layout proof; default terminal workloads stay unchanged. */
+	sidebarVisibility?: boolean
 }
 
 export interface TerminalWorkspaceFixture {
@@ -29,6 +32,8 @@ export interface TerminalWorkspaceFixture {
 		placement: TerminalPlacementCommitCommand[]
 		/** PTY writes, including exact terminal shortcut bytes. */
 		writes: Array<{ id: number; data: string }>
+		/** Only the opt-in sidebar fixture records spawn calls. */
+		spawns: Array<{ sessionId: string | null }>
 	}
 	/** Pushes a stateful preference snapshot through the production subscription. */
 	emitPreferences(snapshot: TerminalPreferencesSnapshot): void
@@ -67,7 +72,7 @@ function shellNode<K extends keyof HTMLElementTagNameMap>(
 }
 
 /** Builds only the static production shell; mountTerminalWorkspace renders terminal UI. */
-function buildShell(root: HTMLElement): void {
+function buildShell(root: HTMLElement, sidebarVisibility = false): void {
 	root.replaceChildren()
 	const header = shellNode('header', 'topbar')
 	const chrome = shellNode('div', undefined, 'topbar-left')
@@ -124,6 +129,17 @@ function buildShell(root: HTMLElement): void {
 	header.append(chrome, strip)
 	const content = shellNode('div', 'content')
 	content.append(shellNode('aside', 'left'), shellNode('div', 'divider'))
+	if (sidebarVisibility) {
+		const left = content.querySelector<HTMLElement>('#left')
+		if (!left) throw new Error('Missing fixture task sidebar')
+		left.setAttribute('aria-label', 'Tasks')
+		const title = shellNode('h2')
+		title.textContent = 'Tasks'
+		const note = shellNode('input')
+		note.setAttribute('aria-label', 'Task sidebar note')
+		note.value = 'Retained task draft'
+		left.append(title, note)
+	}
 	const right = shellNode('main', 'right')
 	right.append(shellNode('div', 'terms'))
 	const empty = shellNode('div', 'no-terms')
@@ -158,7 +174,7 @@ export function createTerminalWorkspaceFixture(
 	const sessions = (options.sessions ?? fixtureSessions()).map(copySession)
 	const groups = (options.groups ?? fixtureGroups()).map(group => ({ ...group }))
 	let authoritativeOrder = sessions.map(session => session.sessionId)
-	const calls: TerminalWorkspaceFixture['calls'] = { placement: [], writes: [] }
+	const calls: TerminalWorkspaceFixture['calls'] = { placement: [], writes: [], spawns: [] }
 	const ptyBySession = new Map<string, number>()
 	const ptyExitListeners = new Set<(id: number, exitCode: number) => void>()
 	const ptyDataListeners = new Set<(id: number, data: string) => void>()
@@ -299,6 +315,7 @@ export function createTerminalWorkspaceFixture(
 
 	const pty: PtyApi = {
 		spawn: async (_cols, _rows, sessionId) => {
+			if (options.sidebarVisibility) calls.spawns.push({ sessionId: sessionId ?? null })
 			const id = nextPty++
 			const bound = sessionId ?? `fresh-${id}`
 			ptyBySession.set(bound, id)
@@ -467,16 +484,23 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 	useEffect(() => {
 		const root = rootRef.current
 		if (!root) return
-		buildShell(root)
+		buildShell(root, options.sidebarVisibility)
 		const fixture = createTerminalWorkspaceFixture(options)
 		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({ root, helm: fixture.helm })
-		fixture.dispose = () => workspace.dispose()
+		const sidebarLayout = options.sidebarVisibility
+			? mountSidebarLayout({ root, fitActive: () => workspace.fitActive() })
+			: null
+		fixture.dispose = () => {
+			sidebarLayout?.dispose()
+			workspace.dispose()
+		}
 		if (options.expose)
 			(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = fixture
 		void workspace.ready.then(() => {
 			if (options.openBackground) (root.querySelector('#bg-toggle') as HTMLButtonElement | null)?.click()
 		})
 		return () => {
+			sidebarLayout?.dispose()
 			workspace.dispose()
 			if (options.expose)
 				(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = undefined

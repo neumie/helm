@@ -38,6 +38,168 @@ test.beforeEach(async ({ page }) => {
 	await expect(page.getByRole('dialog', { name: 'Background terminals' })).toBeVisible()
 })
 
+test('task sidebar hides and restores mounted state and saved width without terminal effects', async ({ page }) => {
+	await page.evaluate(() => {
+		localStorage.setItem('helm.leftWidth', '380')
+		localStorage.removeItem('helm.sidebarHidden')
+	})
+	await page.goto('/iframe.html?id=views-terminal-workspace--sidebar-visibility&viewMode=story')
+	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
+	const tasks = page.getByRole('complementary', { name: 'Tasks', exact: true })
+	const note = page.getByRole('textbox', { name: 'Task sidebar note', exact: true })
+	await expect(tasks).toBeVisible()
+	await note.fill('Keep task view mounted')
+	await note.evaluate(element => Reflect.set(window, '__sidebarOriginalNote', element))
+	const initial = await page.evaluate(async () => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('Missing sidebar fixture')
+		return {
+			sessions: await fixture.helm.sessions.list(),
+			spawns: fixture.calls.spawns.length,
+			calls: structuredClone(fixture.calls),
+		}
+	})
+	const hide = page.getByRole('button', { name: 'Hide task sidebar', exact: true })
+	await expect(hide).toBeVisible()
+	await expect(hide).toHaveAttribute('aria-expanded', 'true')
+	expect((await tasks.boundingBox())?.width).toBe(380)
+	await hide.focus()
+	await page.keyboard.press('Enter')
+	const show = page.getByRole('button', { name: 'Show task sidebar', exact: true })
+	await expect(show).toBeVisible()
+	await expect(show).toBeFocused()
+	await expect(show).toHaveAttribute('aria-expanded', 'false')
+	await expect(page.locator('#left')).toBeHidden()
+	await expect(page.locator('#divider')).toBeHidden()
+	expect(
+		await page.locator('#left input').evaluate(element => Reflect.get(window, '__sidebarOriginalNote') === element),
+	).toBe(true)
+	expect(await page.locator('#left input').inputValue()).toBe('Keep task view mounted')
+	await expect.poll(async () => (await page.locator('#right').boundingBox())?.width).toBe(page.viewportSize()?.width)
+	await show.focus()
+	await page.keyboard.press('Space')
+	await expect(hide).toBeVisible()
+	await expect(note).toHaveValue('Keep task view mounted')
+	expect((await tasks.boundingBox())?.width).toBe(380)
+	const after = await page.evaluate(async () => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('Missing sidebar fixture')
+		return {
+			sessions: await fixture.helm.sessions.list(),
+			spawns: fixture.calls.spawns.length,
+			calls: structuredClone(fixture.calls),
+		}
+	})
+	expect(after).toEqual(initial)
+	await hide.click()
+	await page.reload()
+	await expect(show).toBeVisible()
+	await expect(page.locator('#left')).toBeHidden()
+	await show.click()
+	await expect(tasks).toBeVisible()
+	expect((await tasks.boundingBox())?.width).toBe(380)
+	await page.evaluate(() => localStorage.removeItem('helm.sidebarHidden'))
+})
+
+test('task sidebar keeps preferred width through compact fits and isolates control focus and native drag', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await page.evaluate(() => {
+		localStorage.removeItem('helm.leftWidth')
+		localStorage.removeItem('helm.sidebarHidden')
+	})
+	await page.goto('/iframe.html?id=views-terminal-workspace--sidebar-visibility&viewMode=story')
+	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
+	const left = page.locator('#left')
+	expect((await left.boundingBox())?.width).toBe(340)
+	const hide = page.getByRole('button', { name: 'Hide task sidebar', exact: true })
+	const chrome = await hide.evaluate(element => ({
+		left: element.getBoundingClientRect().left,
+		control: getComputedStyle(element).getPropertyValue('-webkit-app-region'),
+		parent: getComputedStyle(element.parentElement as HTMLElement).getPropertyValue('-webkit-app-region'),
+		whitespace: getComputedStyle(document.querySelector('.topbar-left-drag-space') as HTMLElement).getPropertyValue(
+			'-webkit-app-region',
+		),
+		ancestorHidden: element.closest('[aria-hidden="true"]') !== null,
+	}))
+	expect(chrome).toEqual({ left: 84, control: 'no-drag', parent: 'no-drag', whitespace: 'drag', ancestorHidden: false })
+	const divider = await page.locator('#divider').boundingBox()
+	if (!divider) throw new Error('Missing visible task divider')
+	// Existing 9px grab area extends 4px left of the 1px hairline.
+	const grab = { x: divider.x - 2, y: divider.y + 40 }
+	expect(await page.evaluate(point => document.elementFromPoint(point.x, point.y)?.id, grab)).toBe('divider')
+	await page.mouse.move(grab.x, grab.y)
+	await page.mouse.down()
+	await page.mouse.move(410, divider.y + 40)
+	await page.mouse.up()
+	await expect.poll(async () => (await left.boundingBox())?.width).toBe(410)
+	expect(await page.evaluate(() => localStorage.getItem('helm.leftWidth'))).toBe('410')
+	await expect(page.locator('body')).not.toHaveClass(/dragging/)
+	const initial = await page.evaluate(() => structuredClone(window.__helmWorkspaceFixture?.calls))
+	await page.setViewportSize({ width: 640, height: 520 })
+	await expect.poll(async () => (await left.boundingBox())?.width).toBe(384)
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.focus()
+	// Public button activation without pointer focus must not steal newer terminal focus.
+	await hide.evaluate(element => (element as HTMLButtonElement).click())
+	await expect(input).toBeFocused()
+	await expect(left).toBeHidden()
+	const show = page.getByRole('button', { name: 'Show task sidebar', exact: true })
+	await expect(show).toBeVisible()
+	await expect.poll(async () => (await page.locator('#right').boundingBox())?.width).toBe(640)
+	await expect
+		.poll(async () => {
+			const screen = await page.locator('.term-holder.active .xterm-screen').boundingBox()
+			const right = await page.locator('#right').boundingBox()
+			return !!screen && !!right && screen.width > 500 && screen.x + screen.width <= right.x + right.width
+		})
+		.toBe(true)
+	await show.focus()
+	await page.keyboard.press('Enter')
+	await expect.poll(async () => (await left.boundingBox())?.width).toBe(384)
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await expect.poll(async () => (await left.boundingBox())?.width).toBe(410)
+	await page.getByRole('textbox', { name: 'Task sidebar note' }).focus()
+	await hide.evaluate(element => (element as HTMLButtonElement).click())
+	await expect(show).toBeFocused()
+	expect(await page.locator('#left').evaluate(element => (element as HTMLElement).inert)).toBe(true)
+	expect(await page.evaluate(() => structuredClone(window.__helmWorkspaceFixture?.calls))).toEqual(initial)
+	await page.evaluate(() => {
+		localStorage.removeItem('helm.leftWidth')
+		localStorage.removeItem('helm.sidebarHidden')
+	})
+})
+
+test('task sidebar works when layout preference reads and writes are unavailable', async ({ page }) => {
+	await page.addInitScript(() => {
+		const read = Storage.prototype.getItem
+		const write = Storage.prototype.setItem
+		Storage.prototype.getItem = function (key: string) {
+			if (key === 'helm.leftWidth' || key === 'helm.sidebarHidden')
+				throw new DOMException('Storage unavailable', 'SecurityError')
+			return read.call(this, key)
+		}
+		Storage.prototype.setItem = function (key: string, value: string) {
+			if (key === 'helm.leftWidth' || key === 'helm.sidebarHidden')
+				throw new DOMException('Storage unavailable', 'SecurityError')
+			return write.call(this, key, value)
+		}
+	})
+	await page.goto('/iframe.html?id=views-terminal-workspace--sidebar-visibility&viewMode=story')
+	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
+	const hide = page.getByRole('button', { name: 'Hide task sidebar', exact: true })
+	await expect(hide).toBeVisible()
+	expect((await page.locator('#left').boundingBox())?.width).toBe(340)
+	const initial = await page.evaluate(() => structuredClone(window.__helmWorkspaceFixture?.calls))
+	await hide.click()
+	await expect(page.locator('#left')).toBeHidden()
+	await page.getByRole('button', { name: 'Show task sidebar', exact: true }).click()
+	await expect(page.getByRole('textbox', { name: 'Task sidebar note' })).toHaveValue('Retained task draft')
+	expect((await page.locator('#left').boundingBox())?.width).toBe(340)
+	expect(await page.evaluate(() => structuredClone(window.__helmWorkspaceFixture?.calls))).toEqual(initial)
+})
+
 test('terminal shortcut remaps update live and disabled aliases stop writing', async ({ page }) => {
 	const input = page.locator('.term-holder.active .xterm-helper-textarea')
 	await input.click()

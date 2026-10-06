@@ -704,17 +704,17 @@ test('Agent Adapter selects command shape, labels, interactive commands, and tim
 	assert.equal(pi.label, 'Pi')
 	assert.deepEqual(pi.buildHeadlessInvocation('max'), {
 		command: 'pi',
-		args: ['--mode', 'json', '--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'],
+		args: ['--mode', 'json', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'],
 		label: 'pi-invoker',
 	})
 	assert.deepEqual(pi.buildInteractiveInvocation('high'), {
 		command: 'pi',
-		args: ['--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'high'],
+		args: ['--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'high'],
 		label: 'pi-interactive',
 	})
 	assert.equal(
 		pi.buildInteractiveCommand('docs/plans/demo/.planning-prompt.txt', '/tmp/work tree', 'max'),
-		"cd '/tmp/work tree' && 'pi' '--no-session' '--approve' '--thinking' 'max' '--model' 'openai-codex/gpt-5.6-luna' \"$(cat 'docs/plans/demo/.planning-prompt.txt')\"",
+		"cd '/tmp/work tree' && 'pi' '--approve' '--thinking' 'max' '--model' 'openai-codex/gpt-5.6-luna' \"$(cat 'docs/plans/demo/.planning-prompt.txt')\"",
 	)
 	assert.deepEqual(pi.parseTimeline('pi jsonl'), [])
 })

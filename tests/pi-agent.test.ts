@@ -9,7 +9,7 @@ import { createAgentAdapter } from '../src/solver/agent-adapter.js'
 import { MODEL_CATALOG, defaultHelperModel } from '../src/solver/models.js'
 import { runOneShot } from '../src/solver/one-shot.js'
 
-test('Pi is accepted by canonical config and scheduled-run schemas', () => {
+test('Pi canonical config and scheduled-run schemas keep default session persistence', () => {
 	const config = configSchema.parse({
 		provider: {
 			type: 'contember',
@@ -23,8 +23,8 @@ test('Pi is accepted by canonical config and scheduled-run schemas', () => {
 	assert.equal(config.solver.agent, 'pi')
 	assert.equal(config.solver.model, undefined)
 	const adapter = createAgentAdapter(config.solver)
-	assert.deepEqual(adapter.buildHeadlessInvocation().args, ['--mode', 'json', '--no-session', '--approve'])
-	assert.deepEqual(adapter.buildInteractiveInvocation().args, ['--no-session', '--approve'])
+	assert.deepEqual(adapter.buildHeadlessInvocation().args, ['--mode', 'json', '--approve'])
+	assert.deepEqual(adapter.buildInteractiveInvocation().args, ['--approve'])
 	assert.equal(scheduledAgentSchema.parse('pi'), 'pi')
 	assert.equal(defaultHelperModel('pi'), 'anthropic/claude-haiku-4-5')
 	assert.ok(MODEL_CATALOG.pi.some(model => model.id === 'openai-codex/gpt-5.6-luna'))
@@ -57,7 +57,6 @@ test('Pi helper one-shot disables tools, project trust, and resource discovery',
 		)
 		assert.deepEqual(readFileSync(argsPath, 'utf8').trim().split('\n'), [
 			'-p',
-			'--no-session',
 			'--no-approve',
 			'--no-tools',
 			'--no-extensions',

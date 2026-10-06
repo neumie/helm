@@ -233,14 +233,14 @@ class PiAgentAdapter implements AgentAdapter {
 	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation {
 		// Pi's JSON mode is itself non-interactive (not merely an output flag): it
 		// consumes the piped stdin prompt, emits JSONL, and exits. Runtime-attested.
-		const args = ['--mode', 'json', '--no-session', '--approve']
+		const args = ['--mode', 'json', '--approve']
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--thinking', effort)
 		return { command: 'pi', args, label: 'pi-invoker' }
 	}
 
 	buildInteractiveInvocation(effort?: SolverEffort): AgentInvocation {
-		const args = ['--no-session', '--approve']
+		const args = ['--approve']
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--thinking', effort)
 		return { command: 'pi', args, label: 'pi-interactive' }
@@ -248,7 +248,7 @@ class PiAgentAdapter implements AgentAdapter {
 
 	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
 		return buildInteractiveCommand(
-			['pi', '--no-session', '--approve', ...(effort ? ['--thinking', effort] : [])],
+			['pi', '--approve', ...(effort ? ['--thinking', effort] : [])],
 			this.solverConfig,
 			promptPath,
 			worktreePath,

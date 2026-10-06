@@ -12,10 +12,9 @@
   <body>
     <div id="app">
       <header id="topbar">
-        <!-- Deliberately empty: traffic-light inset + drag region only. No
-				     branding, no connection dot — daemon state lives in the sidebar
-				     (waiting card when unreachable; silence when connected). -->
-        <div class="topbar-left" aria-hidden="true"></div>
+        <!-- Traffic-light reserve + persistent task toggle; only isolated
+             whitespace becomes native-draggable. Daemon state stays in Tasks. -->
+        <div class="topbar-left"></div>
         <div id="tab-strip-region" class="topbar-right">
           <div class="tab-strip-controls">
             <div id="tabs"></div>

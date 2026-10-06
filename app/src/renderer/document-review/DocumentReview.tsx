@@ -2,7 +2,7 @@ import { useAnnotationState } from '@fabrika/annotations'
 import type { Annotation } from '@fabrika/annotations'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, Dispatch, SetStateAction } from 'react'
-import { locateReviewPassage } from '../../document-review/request'
+import { locateReviewPassage, validatePassage } from '../../document-review/request'
 import type {
 	ReviewApi,
 	ReviewDraft,
@@ -14,9 +14,9 @@ import type {
 } from '../../document-review/types'
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
+import { GLYPH, MenuButton } from '../sidebar/ui'
 import { ReviewMarkdown } from './ReviewMarkdown'
 import { parseReviewMarkdown } from './markdown'
-import type { ReviewBlock } from './markdown'
 import './document-review.css'
 
 const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi' }
@@ -30,8 +30,11 @@ interface Operation {
 }
 interface Candidate {
 	passage: ReviewPassage
+	range: Range | null
 	top: number
 	left: number
+	binding: string
+	returnTo: HTMLElement | null
 }
 
 function ChangeReview({ before, after }: { before: string; after: string }) {
@@ -76,12 +79,44 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	const [passage, setPassage] = useState<ReviewPassage | null>(null)
 	const [intent, setIntent] = useState<ReviewIntent>('discuss')
 	const [annotationId, setAnnotationId] = useState<string | null>(null)
+	const commentSave = useRef<object | null>(null)
+	const [commentSaving, setCommentSaving] = useState(false)
+	const lifecycle = useRef(0)
+	const [commentNotice, setCommentNotice] = useState<{
+		api: ReviewApi
+		generation: number
+		binding: string
+		passage: ReviewPassage
+		intent: ReviewIntent
+		id: string
+		token: number
+		status: 'saving' | 'saved' | 'failed'
+	} | null>(null)
 	const reanchoring = useRef<string | null>(null)
 	const blockedOwner = useRef(false)
 	const [ownerBlocked, setOwnerBlocked] = useState(false)
 	const [view, setView] = useState<'document' | 'source' | 'changes' | 'comments'>('document')
 	const [pane, setPane] = useState<'document' | 'conversation'>('document')
 	const [outline, setOutline] = useState(false)
+	const [contentsOverlay, setContentsOverlay] = useState(true)
+	const [currentHeading, setCurrentHeading] = useState<string | null>(null)
+	const currentHeadingRef = useRef<string | null>(null)
+	const contentsTrigger = useRef<HTMLButtonElement>(null)
+	const contentsClose = useRef<HTMLButtonElement>(null)
+	const contentsNav = useRef<HTMLElement>(null)
+	const contentsRequest = useRef<{
+		id: string | null
+		focus: 'reading' | 'trigger' | 'close' | null
+		expected: Element | null
+		binding: string
+		api: ReviewApi
+		generation: number
+	} | null>(null)
+	const [documentDetails, setDocumentDetails] = useState(false)
+	const companion = useRef<HTMLElement>(null)
+	const intentTrigger = useRef<HTMLButtonElement>(null)
+	const documentOptions = useRef<HTMLButtonElement>(null)
+	const backToReading = useRef<HTMLButtonElement>(null)
 	const [narrow, setNarrow] = useState(false)
 	const mounted = useRef(false)
 	const hydrated = useRef(false)
@@ -95,15 +130,58 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	const saveActive = useRef<Promise<boolean> | null>(null)
 	const readSequence = useRef(0)
 	const reading = useRef<HTMLDivElement>(null)
+	const textSelectionScope = useRef<ReviewPassage | null>(null)
+	const selectionPaint = useRef<{
+		passage: ReviewPassage
+		range: Range
+		text: string
+		binding: string
+		api: ReviewApi
+		generation: number
+		start: Node
+		startOffset: number
+		end: Node
+		endOffset: number
+	} | null>(null)
+	const paintedHighlight = useRef<Highlight | null>(null)
 	const source = useRef<HTMLPreElement>(null)
 	const documentPane = useRef<HTMLElement>(null)
 	const input = useRef<HTMLTextAreaElement>(null)
+	const focusRequest = useRef<{
+		target: 'editor' | 'reading'
+		expected: Element | null
+		binding: string
+		api: ReviewApi
+	} | null>(null)
+	const pointerSelection = useRef<{
+		id: number
+		binding: string
+		api: ReviewApi
+		anchor: Node | null
+		anchorOffset: number
+		focus: Node | null
+		focusOffset: number
+	} | null>(null)
 	const opener = useRef<HTMLElement | null>(null)
 	const anchor = useRef<{ source: string; offset: number } | null>(null)
 	const model = useMemo(() => parseReviewMarkdown(state?.document.text ?? ''), [state?.document.text])
+	const headings = useMemo(
+		() => model.blocks.filter(block => block.heading !== null && block.heading.trim() !== ''),
+		[model],
+	)
+	const activeHeading = headings.some(block => block.id === currentHeading) ? currentHeading : (headings[0]?.id ?? null)
 	const selected = state?.sessions.find(session => session.id === draft?.sessionId) ?? null
 	const activeSession = selected?.busy === true
 	const stale = !!passage && passage.revision !== state?.document.revision
+	const selectionBinding = JSON.stringify([
+		state?.document.id,
+		state?.document.revision,
+		draft?.sessionId,
+		selected?.owner,
+		ownerBlocked,
+	])
+	const currentBinding = useRef(selectionBinding)
+	currentBinding.current = selectionBinding
 
 	const refresh = useCallback(async () => {
 		const sequence = ++readSequence.current
@@ -215,6 +293,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	)
 
 	useEffect(() => {
+		lifecycle.current++
 		mounted.current = true
 		void refresh()
 		const unsubscribe = api.onChanged(() => {
@@ -233,14 +312,80 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		}
 		update()
 		media.addEventListener('change', update)
+		const clearPointer = () => {
+			pointerSelection.current = null
+		}
+		document.addEventListener('pointerdown', clearPointer, true)
+		document.addEventListener('pointerup', clearPointer)
+		document.addEventListener('pointercancel', clearPointer)
+		window.addEventListener('blur', clearPointer)
 		return () => {
+			lifecycle.current++
 			mounted.current = false
+			focusRequest.current = null
+			contentsRequest.current = null
+			pointerSelection.current = null
 			readSequence.current++
 			unsubscribe()
 			close()
 			media.removeEventListener('change', update)
+			document.removeEventListener('pointerdown', clearPointer, true)
+			document.removeEventListener('pointerup', clearPointer)
+			document.removeEventListener('pointercancel', clearPointer)
+			window.removeEventListener('blur', clearPointer)
 		}
 	}, [api, refresh, persist])
+	useLayoutEffect(() => {
+		if (!state?.document.id) return
+		const element = documentPane.current
+		if (!element) return
+		const measure = () => {
+			const width = element.getBoundingClientRect().width
+			// A 240px rail leaves at least 480px prose plus the existing reading gutters.
+			if (width > 0) setContentsOverlay(width < 792)
+		}
+		measure()
+		const observer = new ResizeObserver(measure)
+		observer.observe(element)
+		return () => observer.disconnect()
+	}, [state?.document.id])
+	useEffect(() => {
+		if (!outline) return
+		const outside = (event: PointerEvent) => {
+			if (
+				!contentsOverlay ||
+				contentsNav.current?.contains(event.target as Node) ||
+				contentsTrigger.current?.contains(event.target as Node)
+			)
+				return
+			contentsRequest.current = null
+			setOutline(false)
+		}
+		const onContentsEscape = (event: KeyboardEvent) => {
+			if (
+				event.key !== 'Escape' ||
+				!(contentsNav.current?.contains(document.activeElement) || document.activeElement === contentsTrigger.current)
+			)
+				return
+			event.preventDefault()
+			event.stopPropagation()
+			contentsRequest.current = {
+				id: null,
+				focus: 'trigger',
+				expected: document.activeElement,
+				binding: selectionBinding,
+				api,
+				generation: lifecycle.current,
+			}
+			setOutline(false)
+		}
+		document.addEventListener('pointerdown', outside, true)
+		document.addEventListener('keydown', onContentsEscape, true)
+		return () => {
+			document.removeEventListener('pointerdown', outside, true)
+			document.removeEventListener('keydown', onContentsEscape, true)
+		}
+	}, [outline, contentsOverlay, selectionBinding, api])
 	useEffect(() => {
 		if (!draft || savedToken.current === editToken.current) return
 		const timer = setTimeout(() => {
@@ -248,6 +393,72 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		}, 300)
 		return () => clearTimeout(timer)
 	}, [draft, persist])
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Identity changes intentionally invalidate candidate and pointer ownership before the next gesture.
+	useLayoutEffect(() => {
+		setCandidate(null)
+		pointerSelection.current = null
+		contentsRequest.current = null
+	}, [selectionBinding, api])
+	// Focus belongs to the triggering commit, never a delayed animation-frame callback.
+	useLayoutEffect(() => {
+		const request = focusRequest.current
+		focusRequest.current = null
+		if (!request || !mounted.current || request.api !== api || request.binding !== currentBinding.current) return
+		const focused = document.activeElement
+		if (focused !== request.expected && !(focused === document.body && !request.expected?.getClientRects().length))
+			return
+		const target =
+			request.target === 'editor'
+				? input.current
+				: opener.current?.isConnected && opener.current.getClientRects().length
+					? opener.current
+					: reading.current
+		if (target?.isConnected && target.getClientRects().length) target.focus()
+	})
+	// Display-only DOM selection. Never derive source offsets or search repeated prose for its location.
+	useLayoutEffect(() => {
+		const previous = paintedHighlight.current
+		if (previous && CSS.highlights?.get('helm-review-selection') === previous)
+			CSS.highlights.delete('helm-review-selection')
+		paintedHighlight.current = null
+		const paint = selectionPaint.current
+		if (
+			!paint ||
+			!CSS.highlights ||
+			typeof Highlight === 'undefined' ||
+			paint.passage !== passage ||
+			paint.api !== api ||
+			paint.generation !== lifecycle.current ||
+			paint.binding !== selectionBinding ||
+			!paint.start.isConnected ||
+			!paint.end.isConnected ||
+			!reading.current?.contains(paint.start) ||
+			!reading.current.contains(paint.end) ||
+			paint.range.startContainer !== paint.start ||
+			paint.range.endContainer !== paint.end ||
+			paint.range.startOffset !== paint.startOffset ||
+			paint.range.endOffset !== paint.endOffset ||
+			paint.range.collapsed ||
+			paint.range.toString() !== paint.text
+		) {
+			selectionPaint.current = null
+			return
+		}
+		const highlight = new Highlight(paint.range)
+		CSS.highlights.set('helm-review-selection', highlight)
+		paintedHighlight.current = highlight
+	})
+	// biome-ignore lint/correctness/useExhaustiveDependencies: API replacement retires this instance's DOM-range ownership before the next commit.
+	useLayoutEffect(() => {
+		return () => {
+			const highlight = paintedHighlight.current
+			if (highlight && CSS.highlights?.get('helm-review-selection') === highlight)
+				CSS.highlights.delete('helm-review-selection')
+			paintedHighlight.current = null
+			selectionPaint.current = null
+		}
+	}, [api])
 
 	// Stable canonical source-block anchor; never guess from repeated text or restore an unrelated offset.
 	useLayoutEffect(() => {
@@ -260,6 +471,45 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		if (target)
 			owner.scrollTop += target.getBoundingClientRect().top - owner.getBoundingClientRect().top - previous.offset
 	}, [state?.document.text, model, view])
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Re-observe canonical reading position only when rendered source/view/destination changes, not each draft edit.
+	useLayoutEffect(() => {
+		scrollReading()
+	}, [model, view, pane])
+	// Commit-owned navigation: no unfenced RAF, source guessing or late focus.
+	useLayoutEffect(() => {
+		const request = contentsRequest.current
+		contentsRequest.current = null
+		if (
+			!request ||
+			!mounted.current ||
+			request.api !== api ||
+			request.binding !== currentBinding.current ||
+			request.generation !== lifecycle.current
+		)
+			return
+		const focused = document.activeElement
+		if (focused !== request.expected && !(focused === document.body && !request.expected?.getClientRects().length))
+			return
+		if (request.id) {
+			const owner = reading.current
+			if (!owner?.getClientRects().length || view !== 'document' || !headings.some(block => block.id === request.id))
+				return
+			owner
+				.querySelector<HTMLElement>(`#${CSS.escape(request.id)}`)
+				?.scrollIntoView({ block: 'start', behavior: 'instant' })
+			currentHeadingRef.current = request.id
+			setCurrentHeading(request.id)
+		}
+		const target =
+			request.focus === 'reading'
+				? reading.current
+				: request.focus === 'trigger'
+					? contentsTrigger.current
+					: request.focus === 'close'
+						? contentsClose.current
+						: null
+		if (target?.isConnected && target.getClientRects().length) target.focus()
+	})
 
 	const setAnnotations: Dispatch<SetStateAction<Annotation[]>> = update =>
 		changeDraft(value => {
@@ -282,15 +532,24 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		isReadOnly: busy,
 	})
 
-	function captureSelection(): void {
+	function captureSelection(pointer = false): void {
 		const selection = window.getSelection()
-		if (!selection || selection.isCollapsed || !selection.rangeCount || !reading.current || !state) return
+		setCandidate(null)
+		if (
+			!selection ||
+			selection.isCollapsed ||
+			!selection.rangeCount ||
+			!reading.current ||
+			!state ||
+			(view !== 'document' && view !== 'source')
+		)
+			return
 		const range = selection.getRangeAt(0)
 		if (!reading.current.contains(range.startContainer) || !reading.current.contains(range.endContainer)) return
 		const quote = selection.toString()
 		if (!quote.trim()) return
 		let next: ReviewPassage | null = null
-		if (view === 'source' && source.current?.contains(range.commonAncestorContainer)) {
+		if (source.current?.contains(range.commonAncestorContainer)) {
 			const prefix = range.cloneRange()
 			prefix.selectNodeContents(source.current)
 			prefix.setEnd(range.startContainer, range.startOffset)
@@ -317,60 +576,110 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					quote,
 				)
 		}
+		try {
+			if (next) validatePassage(state.document.text, state.document.revision, next)
+		} catch {
+			next = null
+		}
 		if (!next) {
 			setError('Select a smaller passage, up to 8,000 source characters. Source offers exact Markdown selection.')
 			return
 		}
 		const rect = range.getBoundingClientRect()
 		const parent = documentPane.current?.getBoundingClientRect()
+		if (pointer && !annotationId && !reanchoring.current && !selectionLocked()) {
+			openPassage(next, intent, null, reading.current, false, range.cloneRange())
+			return
+		}
 		if (parent)
 			setCandidate({
 				passage: next,
+				range: range.cloneRange(),
 				top: Math.max(12, Math.min(parent.height - 56, rect.bottom - parent.top + 8)),
 				left: Math.max(16, Math.min(parent.width - 190, rect.left - parent.left)),
+				binding: selectionBinding,
+				returnTo: reading.current,
 			})
 	}
-	function openPassage(next: ReviewPassage, nextIntent: ReviewIntent, id: string | null = null): void {
+	function selectionLocked(): boolean {
+		return !!(
+			operation.current ||
+			control.current ||
+			commentSave.current ||
+			busy ||
+			selected?.busy ||
+			blockedOwner.current ||
+			state?.document.error
+		)
+	}
+	function openPassage(
+		next: ReviewPassage,
+		nextIntent: ReviewIntent,
+		id: string | null = null,
+		returnTo?: HTMLElement | null,
+		editSaved = false,
+		visualRange: Range | null = null,
+	): boolean {
+		if (!state || selectionLocked()) return false
+		const saved = editSaved ? latest.current.draft?.annotations.find(annotation => annotation.id === id) : null
+		// Only explicit editing of this exact saved annotation may display its old locator.
+		// Stale scope stays visible; Send and Save remain fenced until explicit re-anchor.
+		const savedStale =
+			saved?.passage === next && saved.intent === nextIntent && next.revision !== state.document.revision
+		if (!savedStale) {
+			try {
+				validatePassage(state.document.text, state.document.revision, next)
+			} catch {
+				return false
+			}
+		}
 		const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null
-		opener.current = focused?.closest('.review-selection-actions') ? reading.current : focused
+		opener.current = returnTo ?? (focused?.closest('.review-selection-actions') ? reading.current : focused)
+		focusRequest.current = { target: 'editor', expected: focused, binding: selectionBinding, api }
+		textSelectionScope.current = visualRange ? next : null
+		selectionPaint.current = visualRange
+			? {
+					passage: next,
+					range: visualRange,
+					text: visualRange.toString(),
+					binding: selectionBinding,
+					api,
+					generation: lifecycle.current,
+					start: visualRange.startContainer,
+					startOffset: visualRange.startOffset,
+					end: visualRange.endContainer,
+					endOffset: visualRange.endOffset,
+				}
+			: null
 		setPassage(next)
 		setIntent(nextIntent)
 		setAnnotationId(id ?? reanchoring.current)
 		reanchoring.current = null
 		setCandidate(null)
 		setPane('conversation')
-		requestAnimationFrame(() => {
-			if (mounted.current) input.current?.focus()
-		})
+		return true
 	}
-	function openBlock(block: ReviewBlock): void {
-		if (!state) return
-		const raw = state.document.text.slice(block.start, block.end)
-		if (raw.length > 8000) {
-			setError('This block is larger than the passage limit. Select a smaller portion in Source.')
-			return
-		}
-		openPassage(
-			{
-				revision: state.document.revision,
-				start: block.start,
-				end: block.end,
-				source: raw,
-				quote: block.heading ?? raw.trim().slice(0, 400),
-				kind: 'block',
-			},
-			'discuss',
-		)
+	function useSelection(): void {
+		if (!candidate || candidate.binding !== selectionBinding || selectionLocked()) return
+		const reanchor = reanchoring.current ? draft?.annotations.find(a => a.id === reanchoring.current) : null
+		openPassage(candidate.passage, reanchor?.intent ?? intent, annotationId, candidate.returnTo, false, candidate.range)
 	}
 	function finishPassage(): void {
+		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		reanchoring.current = null
 		setPassage(null)
 		setAnnotationId(null)
 		setCandidate(null)
 		if (narrow) setPane('document')
-		requestAnimationFrame(() => {
-			if (opener.current?.isConnected && opener.current.getClientRects().length) opener.current.focus()
-		})
+	}
+	function returnToDocument(): void {
+		if (view === 'comments') {
+			setView('document')
+			opener.current = reading.current
+		}
+		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
+		setCandidate(null)
+		setPane('document')
 	}
 	async function switchSession(id: string | null): Promise<void> {
 		if (control.current || operation.current) return
@@ -503,39 +812,139 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			if (mounted.current) setBusy(false)
 		}
 	}
-	function saveComment(): void {
-		if (!passage || !draft?.instruction.trim() || (!annotationId && draft.annotations.length >= 64)) return
-		if (annotationId) {
-			annotationState.updateAnnotation(annotationId, draft.instruction)
-			changeDraft(value => ({
-				...value,
-				annotations: value.annotations.map(annotation =>
-					annotation.id === annotationId ? { ...annotation, passage, intent } : annotation,
-				),
-			}))
-		} else
-			changeDraft(value => ({
-				...value,
-				annotations: [
-					...value.annotations,
-					{ id: crypto.randomUUID(), passage, note: value.instruction, intent, resolved: false },
-				],
-			}))
-		finishPassage()
-		setView('comments')
+	async function saveComment(): Promise<void> {
+		const current = latest.current.draft
+		if (
+			commentSave.current ||
+			selectionLocked() ||
+			stale ||
+			!passage ||
+			!current?.instruction.trim() ||
+			(annotationId && !current.annotations.some(annotation => annotation.id === annotationId)) ||
+			(!annotationId && current.annotations.length >= 64)
+		)
+			return
+		const flight = {}
+		commentSave.current = flight
+		setCommentSaving(true)
+		const id = annotationId ?? crypto.randomUUID()
+		const generation = lifecycle.current
+		changeDraft(value => ({
+			...value,
+			annotations: annotationId
+				? value.annotations.map(annotation =>
+						annotation.id === id ? { ...annotation, passage, intent, note: value.instruction } : annotation,
+					)
+				: [...value.annotations, { id, passage, note: value.instruction, intent, resolved: false }],
+		}))
+		setAnnotationId(id)
+		const notice = {
+			api,
+			generation,
+			binding: selectionBinding,
+			passage,
+			intent,
+			id,
+			token: editToken.current,
+			status: 'saving' as const,
+		}
+		setCommentNotice(notice)
+		try {
+			const ok = await persist()
+			if (
+				mounted.current &&
+				generation === lifecycle.current &&
+				notice.binding === currentBinding.current &&
+				notice.token === editToken.current
+			)
+				setCommentNotice({ ...notice, status: ok && savedToken.current >= notice.token ? 'saved' : 'failed' })
+		} finally {
+			if (commentSave.current === flight) {
+				commentSave.current = null
+				if (mounted.current) setCommentSaving(false)
+			}
+		}
+	}
+	function clearPassage(): void {
+		if (selectionLocked() || commentSave.current) return
+		reanchoring.current = null
+		setPassage(null)
+		setAnnotationId(null)
+		setCandidate(null)
+		setCommentNotice(null)
 	}
 	function scrollReading(): void {
-		if (!reading.current || !state || view !== 'document') return
+		if (!reading.current?.getClientRects().length || !state || view !== 'document') return
 		setCandidate(null)
 		const top = reading.current.getBoundingClientRect().top
 		const visible = [...reading.current.querySelectorAll<HTMLElement>('[data-source-start]')].find(
 			node => node.getBoundingClientRect().bottom > top + 8,
 		)
-		if (visible)
+		if (visible) {
 			anchor.current = {
 				source: state.document.text.slice(Number(visible.dataset.sourceStart), Number(visible.dataset.sourceEnd)),
 				offset: visible.getBoundingClientRect().top - top,
 			}
+			let headingIndex = 0
+			for (const [index, heading] of headings.entries()) {
+				if (heading.start > Number(visible.dataset.sourceStart)) break
+				headingIndex = index
+			}
+			let next = headings[headingIndex]?.id ?? null
+			const following = headings[headingIndex + 1]
+			const followingNode = following
+				? reading.current.querySelector<HTMLElement>(`#${CSS.escape(following.id)}`)
+				: null
+			// A section jump leaves the previous paragraph's sliver above the heading.
+			// Keep the canonical anchor intact; inspect only the next heading at its scroll inset.
+			if (followingNode) {
+				const inset =
+					Number.parseFloat(getComputedStyle(reading.current).scrollPaddingTop) +
+					Number.parseFloat(getComputedStyle(followingNode).scrollMarginTop)
+				if (followingNode.getBoundingClientRect().top <= top + inset + 1) next = following?.id ?? next
+			}
+			if (currentHeadingRef.current !== next || currentHeading !== next) {
+				currentHeadingRef.current = next
+				setCurrentHeading(next)
+			}
+		}
+	}
+	function closeContents(): void {
+		const focused = document.activeElement
+		contentsRequest.current = {
+			id: null,
+			focus: contentsNav.current?.contains(focused) || focused === contentsTrigger.current ? 'trigger' : null,
+			expected: focused,
+			binding: selectionBinding,
+			api,
+			generation: lifecycle.current,
+		}
+		setOutline(false)
+	}
+	function navigateHeading(id: string): void {
+		if (!mounted.current || selectionBinding !== currentBinding.current || !headings.some(block => block.id === id))
+			return
+		const expected = document.activeElement
+		const request = {
+			id,
+			focus: contentsOverlay ? ('reading' as const) : null,
+			expected,
+			binding: selectionBinding,
+			api,
+			generation: lifecycle.current,
+		}
+		const owner = reading.current
+		if (view === 'document' && owner?.getClientRects().length) {
+			// Already-rendered navigation settles now, including an already-current section.
+			owner.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.scrollIntoView({ block: 'start', behavior: 'instant' })
+			currentHeadingRef.current = id
+			setCurrentHeading(id)
+			contentsRequest.current = contentsOverlay ? { ...request, id: null } : null
+		} else contentsRequest.current = request
+		setView('document')
+		setPane('document')
+		setCandidate(null)
+		if (contentsOverlay) setOutline(false)
 	}
 	function resize(event: React.PointerEvent<HTMLDivElement>): void {
 		if (!draft) return
@@ -571,41 +980,48 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				)}
 			</main>
 		)
+	const showConversationChooser = state.sessions.length > 1 || ownerBlocked || (!selected && state.sessions.length > 0)
+	const localNotice =
+		commentNotice &&
+		commentNotice.api === api &&
+		commentNotice.generation === lifecycle.current &&
+		commentNotice.binding === selectionBinding &&
+		commentNotice.passage === passage &&
+		commentNotice.intent === intent &&
+		commentNotice.id === annotationId &&
+		commentNotice.token === editToken.current
+			? {
+					...commentNotice,
+					status: savedToken.current >= commentNotice.token ? ('saved' as const) : commentNotice.status,
+				}
+			: null
+	const blockedReason = !draft.instruction.trim()
+		? null
+		: stale
+			? 'This selection is stale. Select the passage again; it will not be guessed.'
+			: state.document.error
+				? 'Document unavailable. Retry opening it before sending.'
+				: ownerBlocked
+					? 'Choose a conversation again before sending.'
+					: operation.current?.phase === 'uncertain'
+						? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
+						: operation.current || busy || activeSession
+							? 'Wait for the current request to settle before sending.'
+							: !selected
+								? 'Connect an existing conversation before sending.'
+								: selected.error
+									? 'Check the conversation outcome before sending.'
+									: !selected.listening
+										? 'Feedback paused. Keep this draft until the conversation is listening.'
+										: null
 	const composer = (
 		<div className="review-writing-surface">
-			{passage && (
-				<>
-					<div className="review-scope-heading">
-						<h3>Passage feedback</h3>
-						<Btn tone="ghost" sm onClick={finishPassage}>
-							Back
-						</Btn>
-					</div>
-					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Variable passage context must remain keyboard-scrollable without moving actions. */}
-					<section className="review-passage-context" tabIndex={0} aria-label="Passage context">
-						<blockquote>{passage.quote}</blockquote>
-						<details className="review-scope-details">
-							<summary>Selection details</summary>
-							<p className="review-meta">
-								{passage.kind === 'block'
-									? 'Containing source block · not exact rendered offsets'
-									: 'Exact Markdown source selection'}
-							</p>
-						</details>
-						{stale && (
-							<p role="alert" className="review-warning">
-								This selection is stale. Select the passage again; it will not be guessed.
-							</p>
-						)}
-					</section>
-				</>
-			)}
 			<textarea
 				ref={input}
 				rows={3}
 				maxLength={8000}
 				aria-label={passage ? 'Passage instruction' : 'Whole-document message'}
-				placeholder={passage ? 'What would you like to refine?' : 'Discuss the document or ask for a change…'}
+				placeholder={passage ? 'Write about this passage…' : 'Ask about this document…'}
 				value={draft.instruction}
 				onChange={event => annotationState.setGeneralNote(event.currentTarget.value)}
 				onKeyDown={event => {
@@ -615,33 +1031,87 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					}
 				}}
 			/>
-			<fieldset className="review-intents" aria-label="Feedback intent">
-				{(['discuss', 'change'] as const).map(mode => (
-					<button
-						key={mode}
-						type="button"
-						className={buttonClassName({ tone: intent === mode ? 'quiet' : 'ghost', sm: true })}
-						aria-pressed={intent === mode}
-						onClick={() => setIntent(mode)}
-					>
-						{mode === 'discuss' ? 'Discuss' : 'Change'}
-					</button>
-				))}
-				{!passage && <span className="review-meta">Whole document</span>}
-			</fieldset>
+			{(stale || blockedReason || localNotice) && (
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: Compact composer guidance keeps its own bounded keyboard scroll region.
+				<div className="review-compose-status" tabIndex={0} aria-label="Writing status">
+					{(stale || blockedReason) && (
+						<p role={stale ? 'alert' : undefined}>
+							{blockedReason ?? 'This selection is stale. Select the passage again; it will not be guessed.'}
+						</p>
+					)}
+					{localNotice && (
+						<output>
+							{localNotice.status === 'saved'
+								? 'Saved locally · not sent'
+								: localNotice.status === 'saving'
+									? 'Saving local comment…'
+									: 'Comment not saved. Retry save.'}
+						</output>
+					)}
+				</div>
+			)}
 			<div className="review-compose-actions">
-				{passage && (
-					<Btn
-						sm
-						disabled={busy || stale || !draft.instruction.trim() || (!annotationId && draft.annotations.length >= 64)}
-						onClick={saveComment}
-					>
-						{annotationId ? 'Save comment' : 'Keep comment'}
-					</Btn>
-				)}
-				<span />
+				<div className="review-compose-more">
+					<MenuButton
+						trigger={GLYPH.ellipsis}
+						triggerLabel="Writing options"
+						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
+						align="start"
+						entries={[
+							...(passage
+								? [
+										{
+											label: annotationId ? 'Save comment changes' : 'Save local comment',
+											section: 'Local only · not sent',
+											disabled:
+												selectionLocked() ||
+												commentSaving ||
+												stale ||
+												!draft.instruction.trim() ||
+												(annotationId
+													? !draft.annotations.some(annotation => annotation.id === annotationId)
+													: draft.annotations.length >= 64),
+											onSelect: () => {
+												void saveComment()
+											},
+										},
+										{ label: 'Return to document', onSelect: returnToDocument },
+										{
+											label: 'Clear passage',
+											group: true,
+											meta: 'Whole document',
+											disabled: selectionLocked() || commentSaving,
+											onSelect: clearPassage,
+										},
+									]
+								: [{ label: 'Return to document', onSelect: returnToDocument }]),
+						]}
+					/>
+				</div>
+				<fieldset className="review-intents" aria-label="Feedback intent">
+					<MenuButton
+						trigger={
+							<>
+								{intent === 'discuss' ? 'Ask' : 'Request change'}
+								{GLYPH.chevronDown}
+							</>
+						}
+						triggerLabel={`Feedback intent: ${intent === 'discuss' ? 'Ask' : 'Request change'}`}
+						triggerRef={intentTrigger}
+						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
+						disabled={busy || !!operation.current || !!control.current}
+						align="start"
+						entries={(['discuss', 'change'] as const).map(mode => ({
+							label: mode === 'discuss' ? 'Ask' : 'Request change',
+							meta: mode === 'discuss' ? 'No edits requested' : 'Edits requested',
+							checked: intent === mode,
+							onSelect: () => setIntent(mode),
+						}))}
+					/>
+				</fieldset>
 				<Btn
-					tone="primary"
+					tone={draft.instruction.trim() ? 'primary' : 'quiet'}
+					sm
 					ariaLabel={intent === 'change' ? 'Send change request' : passage ? 'Send passage discussion' : 'Send message'}
 					disabled={
 						busy ||
@@ -671,94 +1141,156 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			onKeyDown={event => {
 				if (event.key === 'Escape' && passage) {
 					event.preventDefault()
-					finishPassage()
+					returnToDocument()
 				}
 			}}
 			data-review-theme={draft.theme}
+			data-text-selection={passage !== null && textSelectionScope.current === passage}
 			style={{ '--review-companion-width': `${draft.paneWidth}px` } as CSSProperties}
 		>
 			<header className="review-header">
 				<div className="review-identity">
 					<h1>{state.document.name}</h1>
-					<span title={`${state.document.relativePath} · Revision ${state.document.revision}`}>
-						{state.document.relativePath}
-					</span>
 				</div>
-				<Btn
-					tone="ghost"
-					sm
-					onClick={() => changeDraft(value => ({ ...value, theme: value.theme === 'dark' ? 'light' : 'dark' }))}
-				>
-					{draft.theme === 'dark' ? 'Light' : 'Dark'}
-				</Btn>
-				<Btn
-					tone="ghost"
-					sm
-					onClick={() => {
-						void persist().then(ok => {
-							if (ok) api.close()
-						})
-					}}
-				>
-					Close
-				</Btn>
-			</header>
-			<div className="review-toolbar">
-				<div className="review-document-tools">
+				<div className="review-header-controls">
 					<Btn
+						ref={contentsTrigger}
 						tone="ghost"
 						sm
+						ariaLabel="Contents"
 						ariaExpanded={outline}
+						ariaControls="review-contents"
 						onClick={() => {
-							setOutline(!outline)
-							setPane('document')
+							if (outline) closeContents()
+							else {
+								contentsRequest.current = {
+									id: null,
+									focus: 'close',
+									expected: document.activeElement,
+									binding: selectionBinding,
+									api,
+									generation: lifecycle.current,
+								}
+								setOutline(true)
+								setPane('document')
+							}
 						}}
 					>
-						Outline
+						{GLYPH.menu}
+						<span>Contents</span>
 					</Btn>
-					{(['document', 'source', 'changes', 'comments'] as const).map(mode => (
+					<MenuButton
+						trigger={GLYPH.ellipsis}
+						triggerLabel="Document options"
+						triggerRef={documentOptions}
+						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
+						align="end"
+						entries={[
+							...(['document', 'source', 'changes', 'comments'] as const).map((mode, index) => ({
+								label:
+									mode === 'document'
+										? 'Read'
+										: mode === 'source'
+											? 'Source'
+											: mode === 'changes'
+												? 'Changes'
+												: 'Comments',
+								section: index === 0 ? 'Document' : undefined,
+								checked: view === mode,
+								meta: mode === 'comments' && draft.annotations.length ? draft.annotations.length : undefined,
+								onSelect: () => {
+									setView(mode)
+									setPane('document')
+									setCandidate(null)
+								},
+							})),
+							{
+								label: 'Document details',
+								section: 'Details and appearance',
+								checked: documentDetails,
+								checkedRole: 'checkbox',
+								onSelect: () => setDocumentDetails(!documentDetails),
+							},
+							{
+								label: draft.theme === 'dark' ? 'Light reading surface' : 'Dark reading surface',
+								onSelect: () => changeDraft(value => ({ ...value, theme: value.theme === 'dark' ? 'light' : 'dark' })),
+							},
+						]}
+					/>
+				</div>
+			</header>
+			{(narrow || view !== 'document') && (
+				<div className="review-toolbar">
+					<div className="review-document-tools">
+						{view !== 'document' && (
+							<>
+								<span className="review-active-view">
+									{view === 'source' ? 'Source' : view === 'changes' ? 'Changes' : 'Comments'}
+								</span>
+								<Btn
+									ref={backToReading}
+									tone="ghost"
+									sm
+									onClick={() => {
+										if (document.activeElement === backToReading.current) documentOptions.current?.focus()
+										setView('document')
+										setPane('document')
+										setCandidate(null)
+									}}
+								>
+									Back to reading
+								</Btn>
+							</>
+						)}
+					</div>
+					{narrow && (
+						<div className="review-pane-switch">
+							<Btn
+								ariaCurrent={pane === 'document' ? 'page' : undefined}
+								tone={pane === 'document' ? 'quiet' : 'ghost'}
+								sm
+								onClick={() => setPane('document')}
+							>
+								Document
+							</Btn>
+							<Btn
+								ariaCurrent={pane === 'conversation' ? 'page' : undefined}
+								tone={pane === 'conversation' ? 'quiet' : 'ghost'}
+								sm
+								onClick={() => setPane('conversation')}
+							>
+								Conversation
+							</Btn>
+						</div>
+					)}
+				</div>
+			)}
+			{documentDetails && (
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded document metadata must support keyboard scrolling.
+				<section className="review-document-details" aria-label="Document details" tabIndex={0}>
+					<div>
+						<h2>Document details</h2>
 						<Btn
-							key={mode}
-							ariaCurrent={view === mode ? 'page' : undefined}
-							tone={view === mode ? 'quiet' : 'ghost'}
+							tone="ghost"
 							sm
 							onClick={() => {
-								setView(mode)
-								setPane('document')
-								setCandidate(null)
+								setDocumentDetails(false)
+								documentOptions.current?.focus()
 							}}
 						>
-							{mode === 'document'
-								? 'Read'
-								: mode === 'source'
-									? 'Source'
-									: mode === 'changes'
-										? 'Changes'
-										: `Comments${draft.annotations.length ? ` · ${draft.annotations.length}` : ''}`}
-						</Btn>
-					))}
-				</div>
-				{narrow && (
-					<div className="review-pane-switch">
-						<Btn
-							ariaCurrent={pane === 'document' ? 'page' : undefined}
-							tone={pane === 'document' ? 'quiet' : 'ghost'}
-							sm
-							onClick={() => setPane('document')}
-						>
-							Document
-						</Btn>
-						<Btn
-							ariaCurrent={pane === 'conversation' ? 'page' : undefined}
-							tone={pane === 'conversation' ? 'quiet' : 'ghost'}
-							sm
-							onClick={() => setPane('conversation')}
-						>
-							Conversation
+							Hide details
 						</Btn>
 					</div>
-				)}
-			</div>
+					<p>{state.document.relativePath}</p>
+					<p>
+						Revision <code>{state.document.revision}</code>
+					</p>
+					<p className="review-permission-note">
+						Discuss requests no edits, but is not a new sandbox. Your agent keeps its permissions; handle approvals and
+						Stop in its terminal. Feedback is delivered only while it is listening.
+					</p>
+				</section>
+			)}
 			{(error || saveError) && (
 				<div className="review-banner" role="alert">
 					<span>{saveError ?? error}</span>
@@ -787,31 +1319,39 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				<section
 					ref={documentPane}
 					className="review-document-pane"
+					data-contents-overlay={contentsOverlay}
 					aria-label="Repository document"
 					hidden={narrow && pane !== 'document'}
 				>
 					{outline && (
-						<nav className="review-outline" aria-label="Section outline">
-							{model.blocks
-								.filter(block => block.heading)
-								.map(block => (
-									<button
-										key={block.id}
-										type="button"
-										style={{ paddingInlineStart: `${12 + (block.depth - 1) * 12}px` }}
-										onClick={() => {
-											setView('document')
-											requestAnimationFrame(() =>
-												reading.current
-													?.querySelector(`#${block.id}`)
-													?.scrollIntoView({ block: 'start', behavior: 'instant' }),
-											)
-											if (narrow) setOutline(false)
-										}}
-									>
-										{block.heading}
-									</button>
-								))}
+						<nav ref={contentsNav} id="review-contents" className="review-contents" aria-label="Contents">
+							<div className="review-contents-header">
+								<h2>Contents</h2>
+								<Btn ref={contentsClose} tone="ghost" sm ariaLabel="Close contents" onClick={closeContents}>
+									{GLYPH.close}
+								</Btn>
+							</div>
+							<div className="review-contents-list">
+								{headings.length ? (
+									headings.map(block => (
+										<button
+											key={block.id}
+											type="button"
+											className={buttonClassName({ tone: 'ghost', sm: true, className: 'review-contents-link' })}
+											title={block.heading ?? ''}
+											aria-label={block.heading ?? ''}
+											data-level={block.depth}
+											aria-current={view === 'document' && activeHeading === block.id ? 'location' : undefined}
+											style={{ paddingInlineStart: `${12 + Math.min(4, block.depth - 1) * 8}px` }}
+											onClick={() => navigateHeading(block.id)}
+										>
+											<span>{block.heading}</span>
+										</button>
+									))
+								) : (
+									<p className="review-contents-empty">No headings in this document.</p>
+								)}
+							</div>
 						</nav>
 					)}
 					<div className="review-reading-stage">
@@ -843,14 +1383,55 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 							tabIndex={0}
 							aria-label="Document reading area"
 							onScroll={scrollReading}
-							onPointerUp={event => {
-								if (!(event.target as Element).closest('button')) captureSelection()
+							onPointerDown={event => {
+								pointerSelection.current = null
+								if (
+									!event.isTrusted ||
+									!event.isPrimary ||
+									event.button !== 0 ||
+									(event.target as Element).closest('button')
+								)
+									return
+								const selection = window.getSelection()
+								pointerSelection.current = {
+									id: event.pointerId,
+									binding: selectionBinding,
+									api,
+									anchor: selection?.anchorNode ?? null,
+									anchorOffset: selection?.anchorOffset ?? 0,
+									focus: selection?.focusNode ?? null,
+									focusOffset: selection?.focusOffset ?? 0,
+								}
 							}}
-							onKeyUp={captureSelection}
+							onPointerCancel={() => {
+								pointerSelection.current = null
+							}}
+							onPointerUp={event => {
+								const started = pointerSelection.current
+								pointerSelection.current = null
+								const selection = window.getSelection()
+								if (
+									!event.isTrusted ||
+									!started ||
+									started.id !== event.pointerId ||
+									started.binding !== selectionBinding ||
+									started.api !== api
+								)
+									return
+								if (
+									selection?.anchorNode === started.anchor &&
+									selection.anchorOffset === started.anchorOffset &&
+									selection.focusNode === started.focus &&
+									selection.focusOffset === started.focusOffset
+								)
+									return
+								captureSelection(true)
+							}}
+							onKeyUp={() => captureSelection()}
 							onKeyDown={event => {
 								if (event.altKey && event.key === 'Enter' && candidate) {
 									event.preventDefault()
-									openPassage(candidate.passage, 'discuss')
+									useSelection()
 								}
 							}}
 						>
@@ -861,10 +1442,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 									{!draft.annotations.length && (
 										<div className="review-empty">
 											<h3>Leave a thought in the margin</h3>
-											<p>
-												Select a passage, choose Discuss or Change, then Keep comment. Nothing is sent until you request
-												it.
-											</p>
+											<p>Select a passage, write your thought, then choose Save local comment under Writing options.</p>
 										</div>
 									)}
 									{draft.annotations.map(annotation => (
@@ -880,8 +1458,9 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 													<Btn
 														sm
 														tone="ghost"
-														disabled={busy}
+														disabled={selectionLocked()}
 														onClick={() => {
+															if (selectionLocked()) return
 															reanchoring.current = annotation.id
 															setAnnotationId(annotation.id)
 															setPassage(null)
@@ -897,10 +1476,10 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 												<Btn
 													sm
 													tone="ghost"
-													disabled={busy}
+													disabled={selectionLocked()}
 													onClick={() => {
-														changeDraft(value => ({ ...value, instruction: annotation.note }))
-														openPassage(annotation.passage, annotation.intent, annotation.id)
+														if (openPassage(annotation.passage, annotation.intent, annotation.id, undefined, true))
+															changeDraft(value => ({ ...value, instruction: annotation.note }))
 													}}
 												>
 													Edit / send feedback
@@ -967,25 +1546,21 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 								<article className="review-prose">
 									<ReviewMarkdown
 										blocks={model.blocks}
-										onBlock={openBlock}
 										selectedStart={passage?.revision === state.document.revision ? passage.start : null}
 									/>
 								</article>
 							)}
 						</div>
 					</div>
-					{candidate && !passage && (
+					{candidate && candidate.binding === selectionBinding && (
 						<fieldset
 							className="review-selection-actions"
-							aria-label="Selected passage actions"
+							aria-label="Pending selection"
 							style={{ top: candidate.top, left: candidate.left }}
 							onPointerDown={event => event.preventDefault()}
 						>
-							<Btn sm onClick={() => openPassage(candidate.passage, 'discuss')}>
-								Discuss
-							</Btn>
-							<Btn sm onClick={() => openPassage(candidate.passage, 'change')}>
-								Change
+							<Btn sm tone="ghost" disabled={selectionLocked()} onClick={useSelection}>
+								Use selection
 							</Btn>
 						</fieldset>
 					)}
@@ -1016,14 +1591,38 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					/>
 				)}
 				<section
+					ref={companion}
 					className="review-companion"
 					aria-label="Review conversation"
 					hidden={narrow && pane !== 'conversation'}
 				>
 					<header className="review-conversation-header">
-						<h2 className="review-visually-hidden">Conversation</h2>
-						<label>
-							<span className="review-meta">Connected agent</span>
+						<div className="review-conversation-title">
+							<h2 title={selected?.name}>
+								{showConversationChooser ? 'Conversation' : (selected?.name ?? 'Conversation')}
+							</h2>
+							<output className="review-meta">
+								{selected ? `${providerNames[selected.provider]} · ` : ''}
+								{!selected
+									? 'Not connected'
+									: selected.state === 'disconnected'
+										? 'Disconnected'
+										: selected.state === 'error' || selected.error || ownerBlocked
+											? 'Needs attention'
+											: selected.state === 'working'
+												? 'Working'
+												: selected.state === 'waiting'
+													? 'Waiting'
+													: selected.state === 'starting'
+														? 'Starting'
+														: selected.busy
+															? 'Busy'
+															: selected.listening
+																? 'Ready'
+																: 'Feedback paused'}
+							</output>
+						</div>
+						{showConversationChooser && (
 							<select
 								aria-label="Choose review conversation"
 								value={draft.sessionId ?? ''}
@@ -1035,38 +1634,11 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 								<option value="">Choose a conversation</option>
 								{state.sessions.map(session => (
 									<option key={session.id} value={session.id}>
-										{session.name} · {session.id.slice(-6)}
+										{session.name}
 									</option>
 								))}
 							</select>
-						</label>
-						<p className="review-meta">
-							{selected?.state === 'disconnected'
-								? 'Disconnected'
-								: selected?.listening
-									? 'Listening in the original session'
-									: selected?.busy
-										? 'Feedback is with the original session'
-										: 'No active listener'}
-							{selected ? ` · ${providerNames[selected.provider]}` : ''}
-						</p>
-						{selected && !selected.listening && !selected.busy && (
-							<p className="review-meta">
-								Ask your running agent to open this document with <code>helm review open</code> and listen with{' '}
-								<code>helm review wait</code>. Helm never starts another agent.
-							</p>
 						)}
-						<details className="review-provider-details">
-							<summary>Capabilities and permissions</summary>
-							<p className="review-meta review-permission-note">
-								Your agent keeps its original context, tools, permissions, and terminal UI. Discuss requests no edits;
-								it is not a new sandbox. Interrupt the agent in its original terminal. Only feedback and explicitly
-								reported replies appear here.
-								{selected?.capabilities.transport === 'in-process'
-									? ' The native connector dispatches into the running session.'
-									: ' The CLI returns feedback to a waiting tool call in the existing conversation; it cannot inject into an idle session.'}
-							</p>
-						</details>
 					</header>
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Conversation scroll owner needs keyboard access without focusing message text. */}
 					<div className="review-chat" tabIndex={0} aria-label="Conversation messages">
@@ -1151,17 +1723,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 }
 
 function Conversation({ session }: { session: ReviewSession | null }) {
-	if (!session)
-		return (
-			<div className="review-empty">
-				<h3>A conversation beside your document</h3>
-				<p>
-					Ask your running Claude Code, Codex, or Pi session to connect with helm review open and listen with helm
-					review wait. Passage feedback stays in that original conversation, with its existing context. Helm does not
-					create a new agent session.
-				</p>
-			</div>
-		)
+	if (!session) return null
 	return (
 		<>
 			{session.historyTruncated && (
@@ -1181,12 +1743,6 @@ function Conversation({ session }: { session: ReviewSession | null }) {
 					<div>{message.text}</div>
 				</article>
 			))}
-			{!session.messages.length && (
-				<div className="review-empty">
-					<h3>Ready to refine</h3>
-					<p>Read, select a passage, and ask a focused question—or begin with the document as a whole.</p>
-				</div>
-			)}
 		</>
 	)
 }

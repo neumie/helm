@@ -1,7 +1,6 @@
 import type { MarkedToken, Token, Tokens } from 'marked'
 import { Fragment, createElement, memo } from 'react'
 import type { ReactNode } from 'react'
-import { Btn } from '../button'
 import type { ReviewBlock } from './markdown'
 
 function decode(value: string): string {
@@ -17,9 +16,8 @@ function decode(value: string): string {
 /** Separate document renderer: no chat truncation, parser HTML or automatic image fetching. */
 export const ReviewMarkdown = memo(function ReviewMarkdown({
 	blocks,
-	onBlock,
 	selectedStart,
-}: { blocks: ReviewBlock[]; onBlock(block: ReviewBlock): void; selectedStart: number | null }) {
+}: { blocks: ReviewBlock[]; selectedStart: number | null }) {
 	let remaining = 30000
 	let limited = false
 	const render = (tokens: Token[], depth = 0): ReactNode => {
@@ -157,18 +155,6 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 			}
 		>
 			<div className="review-block-text">{render([block.token])}</div>
-			{block.token.type !== 'space' && block.token.type !== 'def' && (
-				<div className="review-block-action">
-					<Btn
-						tone="ghost"
-						sm
-						ariaLabel={`Review passage ${block.heading ?? `at source offset ${block.start}`}`}
-						onClick={() => onBlock(block)}
-					>
-						Review
-					</Btn>
-				</div>
-			)}
 		</div>
 	))
 	return (
