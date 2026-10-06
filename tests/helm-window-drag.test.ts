@@ -22,13 +22,17 @@ test('macOS window avoids hiddenInset native double-click hit-testing', () => {
 	assert.match(main, /process\.platform === 'darwin'\s*\? \{ maximizable: false, fullscreenable: false \}\s*:\s*\{\}/)
 })
 
-test('terminal header isolates native dragging to trailing whitespace only', () => {
+test('terminal header isolates native dragging to separate whitespace only', () => {
 	assert.match(
 		normalizedHtml,
 		/<div id="tab-strip-region" class="topbar-right">[\s\S]*?<div class="tab-strip-controls">[\s\S]*?<div id="tabs"[\s\S]*?<button id="new-tab"[\s\S]*?<\/div>[\s\S]*?<div id="topbar-drag-space" class="topbar-drag-space" aria-hidden="true"\s*><\/div>[\s\S]*?<div id="bg-root">/,
 	)
 	assert.match(rule('#topbar'), /-webkit-app-region:\s*no-drag;/)
-	assert.match(rule('.topbar-left'), /-webkit-app-region:\s*drag;/)
+	assert.match(rule('.topbar-left'), /-webkit-app-region:\s*no-drag;/)
+	assert.match(rule('.topbar-left'), /padding-left:\s*84px;/)
+	assert.match(rule('.topbar-left-drag-space'), /-webkit-app-region:\s*drag;/)
+	assert.match(rule('.sidebar-toggle'), /-webkit-app-region:\s*no-drag;/)
+	assert.doesNotMatch(normalizedHtml, /class="topbar-left" aria-hidden="true"/)
 	assert.match(rule('.topbar-right'), /-webkit-app-region:\s*no-drag;/)
 	assert.match(rule('.tab-strip-controls'), /-webkit-app-region:\s*no-drag;/)
 	assert.match(rule('.topbar-drag-space'), /-webkit-app-region:\s*drag;/)

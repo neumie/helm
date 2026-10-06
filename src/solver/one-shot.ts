@@ -93,7 +93,6 @@ function buildOneShotInvocation(agent: SolverAgent, model: string): { command: s
 			command: 'pi',
 			args: [
 				'-p',
-				'--no-session',
 				'--no-approve',
 				'--no-tools',
 				'--no-extensions',

@@ -124,7 +124,7 @@ button:focus-visible,
 /* Columns mirror #content so the tab strip sits exactly over the terminal pane. */
 #topbar {
 	display: grid;
-	grid-template-columns: var(--left-width) 1px 1fr;
+	grid-template-columns: var(--sidebar-header-width, var(--left-width)) var(--sidebar-divider-width, 1px) minmax(0, 1fr);
 	background: var(--chrome);
 	border-bottom: 1px solid var(--hairline);
 	/* Never make the whole titlebar native-draggable: overlapping drag/no-drag
@@ -133,14 +133,26 @@ button:focus-visible,
 	-webkit-app-region: no-drag;
 }
 
-/* Deliberately empty surface: traffic-light inset + drag region only (no
- * branding, no connection dot — daemon state is the sidebar's job). The 84px
- * inset keeps the strip column from sliding under the traffic lights. */
+/* Persistent task control stays beyond traffic lights, outside all drag zones. */
 .topbar-left {
 	grid-column: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	min-width: 0;
-	padding-left: 84px; /* traffic-light inset (hiddenInset titlebar) */
+	padding-left: 84px;
+	-webkit-app-region: no-drag;
+}
+
+.topbar-left-drag-space {
+	align-self: stretch;
+	flex: 1;
+	min-width: 0;
 	-webkit-app-region: drag;
+}
+
+.sidebar-toggle {
+	-webkit-app-region: no-drag;
 }
 
 .topbar-right {
@@ -940,11 +952,12 @@ body.group-dragging .tab-group-toggle {
 
 #content {
 	display: grid;
-	grid-template-columns: var(--left-width) 1px 1fr;
+	grid-template-columns: var(--sidebar-column-width, var(--left-width)) var(--sidebar-divider-width, 1px) minmax(0, 1fr);
 	min-height: 0;
 }
 
 #left {
+	grid-column: 1;
 	position: relative;
 	min-width: 0;
 	background: var(--pane);
@@ -955,6 +968,7 @@ body.group-dragging .tab-group-toggle {
 /* ---------- divider ---------- */
 
 #divider {
+	grid-column: 2;
 	position: relative;
 	background: var(--hairline);
 	transition: background-color 120ms ease-out;
@@ -984,6 +998,7 @@ body.dragging {
 /* ---------- terminal well ---------- */
 
 #right {
+	grid-column: 3;
 	position: relative; /* anchors the #no-terms overlay */
 	min-width: 0;
 	min-height: 0;

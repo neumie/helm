@@ -71,7 +71,7 @@ test('scheduled structured invocation appends hostile prompt exactly once for ev
 	}
 	assert.deepEqual(claude.args, ['--dangerously-skip-permissions', '--effort', 'high'])
 	assert.equal(codex.args.at(-1), 'gpt-5')
-	assert.deepEqual(pi.args, ['--no-session', '--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'])
+	assert.deepEqual(pi.args, ['--approve', '--model', 'openai-codex/gpt-5.6-luna', '--thinking', 'max'])
 })
 
 test('scheduled artifacts are exclusive no-follow private files and leave symlink targets unchanged', () => {

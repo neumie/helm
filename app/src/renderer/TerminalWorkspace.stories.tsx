@@ -48,3 +48,7 @@ export const CollapsedTabGroup: Story = {
 
 /** Stable interaction fixture for Chromium; it exposes only fake-bridge call records. */
 export const BrowserHarness: Story = { args: { options: { openBackground: true, expose: true } } }
+
+/** Opt-in task-sidebar proof; no daemon/task backend and no default workload changes. */
+/** Shared production width/visibility seam; task DOM and terminal identities stay mounted. */
+export const SidebarVisibility: Story = { args: { options: { sidebarVisibility: true, expose: true } } }

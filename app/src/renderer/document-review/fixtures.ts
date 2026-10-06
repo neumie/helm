@@ -7,6 +7,26 @@ export const reviewFixtureText = `# Collaborative specification\n\nRead the actu
 	(_, i) =>
 		`### Requirement ${i + 1}\n\nThis is complete repository Markdown for a substantial specification. Preserve the operator’s exact conversation, the document revision, and the selected source block. Unicode 🐝 and **ordinary formatting** remain readable.\n\n`,
 ).join('')}## Final acceptance\n\nFinal acceptance sentinel: nothing truncated.\n`
+const editorialText = `# A calmer workspace
+
+A document should be easy to read before it asks you to configure anything. This proposal brings the important decisions closer to the text and keeps the supporting information within reach.
+
+## Start with the document
+
+Leave room for the reader to follow an idea across several paragraphs. The conversation sits alongside the document, ready for a question, a second opinion, or a precise change request.
+
+A useful review does not need to interrupt the reading rhythm. Select a passage when a detail deserves attention, or ask about the document as a whole from the same writing surface.
+
+## Keep the next step clear
+
+Discuss asks the original agent to respond without requesting edits. Change asks it to work on the actual file. Both keep the existing conversation and its permissions; Helm does not create a replacement session.
+
+The file remains the source of truth. If it changes while you are reading, an old selection is marked stale rather than silently moved. Your unsent thoughts stay in the editor.
+
+## Make room for refinement
+
+Supporting details are available when needed, not repeated above every conversation. Comments can stay local until you choose to send them, and a delivery receipt never stands in for evidence of a finished edit.
+`
 export type ReviewFixtureScenario =
 	| 'normal'
 	| 'light'
@@ -19,6 +39,8 @@ export type ReviewFixtureScenario =
 	| 'save-failure'
 	| 'no-agent'
 	| 'not-listening'
+	| 'editorial'
+	| 'editorial-light'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
 	const listeners = new Set<() => void>()
 	const requests: ReviewRequest[] = []
@@ -56,9 +78,15 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 				: null,
 		historyTruncated: false,
 	}
+	const editorial = scenario === 'editorial' || scenario === 'editorial-light'
+	if (editorial) {
+		session.provider = 'pi'
+		session.name = 'Workspace reading and conversation — an intentionally long original Pi session name'
+		session.messages = []
+	}
 	const draft = defaultReviewDraft()
 	draft.sessionId = scenario === 'no-agent' ? null : session.id
-	draft.theme = scenario === 'light' ? 'light' : 'dark'
+	draft.theme = scenario === 'light' || scenario === 'editorial-light' ? 'light' : 'dark'
 	if (scenario === 'comments' || scenario === 'stale')
 		draft.annotations = [
 			{
@@ -81,7 +109,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			id: '33333333-3333-4333-8333-333333333333',
 			name: 'spec.md',
 			relativePath: 'docs/plans/review/spec.md',
-			text: reviewFixtureText,
+			text: editorial ? editorialText : reviewFixtureText,
 			revision: revision(1),
 			previous: scenario === 'changes' ? reviewFixtureText.replace('A **rendered quote**', 'A rendered quote') : null,
 			error:
