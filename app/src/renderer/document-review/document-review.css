@@ -302,6 +302,7 @@
 }
 .review-contents-header {
 	display: flex;
+	flex-shrink: 0;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
@@ -363,14 +364,14 @@
 	line-height: 1.5;
 	color: var(--text-1);
 }
-.review-document-pane[data-contents-overlay="true"] > .review-contents {
-	position: absolute;
-	inset: 0 auto 0 0;
-	z-index: 4;
-	width: min(240px, calc(100% - 24px));
-	max-width: 240px;
-	flex-basis: auto;
-	box-shadow: var(--shadow-2);
+.review-document-pane[data-contents-stacked="true"] {
+	flex-direction: column;
+}
+.review-document-pane[data-contents-stacked="true"] > .review-contents {
+	width: 100%;
+	flex: 0 1 auto;
+	max-height: min(240px, 40%);
+	border-bottom: 1px solid var(--hairline);
 }
 .review-divider {
 	position: relative;

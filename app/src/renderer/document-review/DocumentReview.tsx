@@ -98,7 +98,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	const [view, setView] = useState<'document' | 'source' | 'changes' | 'comments'>('document')
 	const [pane, setPane] = useState<'document' | 'conversation'>('document')
 	const [outline, setOutline] = useState(false)
-	const [contentsOverlay, setContentsOverlay] = useState(true)
+	const [contentsStacked, setContentsStacked] = useState(true)
 	const [currentHeading, setCurrentHeading] = useState<string | null>(null)
 	const currentHeadingRef = useRef<string | null>(null)
 	const contentsTrigger = useRef<HTMLButtonElement>(null)
@@ -342,7 +342,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		const measure = () => {
 			const width = element.getBoundingClientRect().width
 			// A 240px rail leaves at least 480px prose plus the existing reading gutters.
-			if (width > 0) setContentsOverlay(width < 792)
+			if (width > 0) setContentsStacked(width < 792)
 		}
 		measure()
 		const observer = new ResizeObserver(measure)
@@ -351,16 +351,6 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	}, [state?.document.id])
 	useEffect(() => {
 		if (!outline) return
-		const outside = (event: PointerEvent) => {
-			if (
-				!contentsOverlay ||
-				contentsNav.current?.contains(event.target as Node) ||
-				contentsTrigger.current?.contains(event.target as Node)
-			)
-				return
-			contentsRequest.current = null
-			setOutline(false)
-		}
 		const onContentsEscape = (event: KeyboardEvent) => {
 			if (
 				event.key !== 'Escape' ||
@@ -379,13 +369,11 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			}
 			setOutline(false)
 		}
-		document.addEventListener('pointerdown', outside, true)
 		document.addEventListener('keydown', onContentsEscape, true)
 		return () => {
-			document.removeEventListener('pointerdown', outside, true)
 			document.removeEventListener('keydown', onContentsEscape, true)
 		}
-	}, [outline, contentsOverlay, selectionBinding, api])
+	}, [outline, selectionBinding, api])
 	useEffect(() => {
 		if (!draft || savedToken.current === editToken.current) return
 		const timer = setTimeout(() => {
@@ -927,7 +915,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		const expected = document.activeElement
 		const request = {
 			id,
-			focus: contentsOverlay ? ('reading' as const) : null,
+			focus: contentsStacked ? ('reading' as const) : null,
 			expected,
 			binding: selectionBinding,
 			api,
@@ -939,12 +927,12 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			owner.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.scrollIntoView({ block: 'start', behavior: 'instant' })
 			currentHeadingRef.current = id
 			setCurrentHeading(id)
-			contentsRequest.current = contentsOverlay ? { ...request, id: null } : null
+			contentsRequest.current = contentsStacked ? { ...request, id: null } : null
 		} else contentsRequest.current = request
 		setView('document')
 		setPane('document')
 		setCandidate(null)
-		if (contentsOverlay) setOutline(false)
+		if (contentsStacked) setOutline(false)
 	}
 	function resize(event: React.PointerEvent<HTMLDivElement>): void {
 		if (!draft) return
@@ -1319,7 +1307,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				<section
 					ref={documentPane}
 					className="review-document-pane"
-					data-contents-overlay={contentsOverlay}
+					data-contents-stacked={contentsStacked}
 					aria-label="Repository document"
 					hidden={narrow && pane !== 'document'}
 				>

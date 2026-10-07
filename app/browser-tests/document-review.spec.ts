@@ -347,7 +347,7 @@ test('header Contents and document dots provide bounded heading navigation witho
 })
 
 for (const story of ['reading', 'light'])
-	test(`${story}: Contents overlays a constrained document pane and preserves newer editor focus`, async ({ page }) => {
+	test(`${story}: Contents pushes constrained reading content and preserves newer editor focus`, async ({ page }) => {
 		await page.setViewportSize({ width: 1197, height: 807 })
 		await open(page, story)
 		const editor = page.getByRole('textbox', { name: 'Whole-document message' })
@@ -356,13 +356,26 @@ for (const story of ['reading', 'light'])
 		await divider.focus()
 		await page.keyboard.press('End')
 		await expect(divider).toHaveAttribute('aria-valuenow', '640')
-		await expect(page.locator('.review-document-pane')).toHaveAttribute('data-contents-overlay', 'true')
+		await expect(page.locator('.review-document-pane')).toHaveAttribute('data-contents-stacked', 'true')
 		const before = await page.locator('.review-reading').boundingBox()
 		await page.getByRole('button', { name: 'Contents', exact: true }).click()
 		const navigation = page.getByRole('navigation', { name: 'Contents', exact: true })
 		await expect(navigation).toBeVisible()
-		expect((await navigation.boundingBox())?.width).toBe(240)
-		expect((await page.locator('.review-reading').boundingBox())?.width).toBe(before?.width)
+		const assertFlow = async () => {
+			const nav = await navigation.boundingBox()
+			const reading = await page.locator('.review-reading').boundingBox()
+			const pane = await page.locator('.review-document-pane').boundingBox()
+			if (!nav || !reading || !pane) throw new Error('Missing Contents/reading bounds')
+			expect(nav.x).toBeGreaterThanOrEqual(pane.x)
+			expect(nav.x + nav.width).toBeLessThanOrEqual(pane.x + pane.width + 1)
+			expect(reading.y).toBeGreaterThanOrEqual(nav.y + nav.height - 1)
+			expect(reading.height).toBeGreaterThanOrEqual(96)
+			expect(['absolute', 'fixed']).not.toContain(
+				await navigation.evaluate(element => getComputedStyle(element).position),
+			)
+		}
+		await assertFlow()
+		expect((await page.locator('.review-reading').boundingBox())?.height).toBeLessThan(before?.height ?? 0)
 		const regions = await page
 			.locator('.review-header-controls, .review-header-controls .btn, .review-header-controls .menu-root')
 			.evaluateAll(elements =>
@@ -370,11 +383,16 @@ for (const story of ['reading', 'light'])
 			)
 		for (const region of regions) expect(region).toBe('no-drag')
 		await editor.click()
-		await expect(navigation).toHaveCount(0)
+		await expect(navigation).toBeVisible()
 		await expect(editor).toBeFocused()
 		await expect(editor).toHaveValue('Retain this thought while browsing Contents.')
 		await expect(page.getByRole('textbox', { name: 'Passage instruction' })).toHaveCount(0)
 		expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
+		await page.setViewportSize({ width: 640, height: 520 })
+		await page.getByRole('button', { name: 'Document', exact: true }).click()
+		await expect(navigation).toBeVisible()
+		await assertFlow()
+		await page.screenshot({ path: `${evidence}/${story}-contents-pushes-compact.png` })
 	})
 
 test('Contents handles empty and duplicate headings and Source navigation without late focus or scope changes', async ({

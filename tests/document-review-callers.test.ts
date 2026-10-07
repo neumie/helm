@@ -33,6 +33,56 @@ async function until(condition: () => boolean) {
 	}
 }
 
+test('registered review callers remain connected while feedback listening pauses', async () => {
+	const f = await callerFixture()
+	try {
+		const a = await f.connect('pi')
+		const status = () => callReview(a.authority, { action: 'status' }, sessionSchema)
+		assert.equal((await status()).state, 'idle')
+		assert.equal((await status()).listening, false)
+		assert.throws(() => f.sessions.reserve(a.id, a.owner, f.workspace), /not listening/)
+		assert.equal(await callReview(a.authority, { action: 'next', timeoutMs: 10 }, feedbackSchema.nullable()), null)
+		assert.equal((await status()).state, 'idle')
+		assert.equal((await status()).listening, false)
+		const cancelled = new AbortController()
+		const cancelledWait = callReview(
+			a.authority,
+			{ action: 'next', timeoutMs: 2000 },
+			feedbackSchema.nullable(),
+			cancelled.signal,
+		)
+		await until(() => f.sessions.list(f.workspace)[0]?.listening === true)
+		cancelled.abort()
+		await assert.rejects(cancelledWait, /cancel|uncertain/i)
+		await until(() => !f.sessions.list(f.workspace)[0]?.listening)
+		assert.equal((await status()).state, 'idle')
+		const wait = callReview(a.authority, { action: 'next', timeoutMs: 2000 }, feedbackSchema.nullable())
+		await until(() => f.sessions.list(f.workspace)[0]?.listening === true)
+		const sent = await f.send(a)
+		await wait
+		await callReview(a.authority, { action: 'ack', requestId: sent.feedback.request.id }, z.literal(true))
+		await callReview(
+			a.authority,
+			{
+				action: 'reply',
+				requestId: sent.feedback.request.id,
+				sequence: 0,
+				state: 'complete',
+				text: 'Same connected caller.',
+			},
+			z.literal(true),
+		)
+		assert.equal((await status()).state, 'idle')
+		assert.equal((await status()).listening, false)
+		assert.throws(() => f.sessions.reserve(a.id, a.owner, f.workspace), /not listening/)
+		await callReview(a.authority, { action: 'disconnect' }, z.literal(true))
+		assert.equal(f.sessions.list(f.workspace)[0]?.state, 'disconnected')
+		assert.throws(() => f.sessions.get(a.id, a.owner), /unavailable/)
+	} finally {
+		await f.close()
+	}
+})
+
 test('real private wire: only the exact listening caller receives feedback and reports replies', async () => {
 	const f = await callerFixture()
 	try {
@@ -210,7 +260,8 @@ test('private discovery rejects links, insecure state, foreign authority, single
 })
 
 test('actual helm review CLI opens, blocks in the original tool call, reports, inspects, and disconnects', async () => {
-	const f = await callerFixture()
+	// Real subprocess startup is not the short-deadline seam tested above.
+	const f = await callerFixture(30000)
 	const cli = resolve('src/cli/helm.ts')
 	const tsx = import.meta.resolve('tsx')
 	const command = (...args: string[]) =>
