@@ -23,6 +23,7 @@ import { reloadOrCreateProfileWindow } from './profile-window-load'
 import { AppProfileStore } from './profiles'
 import { parseHelmDestination } from './protocol'
 import type { HelmItemDestination } from './protocol'
+import { encodePtyInput } from './pty-input'
 import { RemotePairingController, requireRemotePairingSender } from './remote-pairing'
 import { RendererCrashRecovery, sendToLiveRenderer } from './renderer-lifecycle'
 import { RunContextWindows } from './run-context-window'
@@ -1891,11 +1892,12 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	return { id, sessionId }
 })
 
-ipcMain.on('pty:write', (_event, id: number, data: string, profileToken: unknown) => {
+ipcMain.on('pty:write', (_event, id: number, data: unknown, profileToken: unknown, binary: unknown = false) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
 	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
-	entry.proc.write(data)
+	const input = encodePtyInput(data, binary)
+	if (input !== null) entry.proc.write(input)
 })
 
 ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profileToken: unknown) => {

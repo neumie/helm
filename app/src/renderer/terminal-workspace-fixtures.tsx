@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import '@xterm/xterm/css/xterm.css'
 import type {
 	BuffersApi,
 	PtyApi,
@@ -31,7 +32,7 @@ export interface TerminalWorkspaceFixture {
 	calls: {
 		placement: TerminalPlacementCommitCommand[]
 		/** PTY writes, including exact terminal shortcut bytes. */
-		writes: Array<{ id: number; data: string }>
+		writes: Array<{ id: number; data: string; binary?: boolean }>
 		/** Only the opt-in sidebar fixture records spawn calls. */
 		spawns: Array<{ sessionId: string | null }>
 	}
@@ -333,8 +334,8 @@ export function createTerminalWorkspaceFixture(
 			}
 			return { id, sessionId: bound }
 		},
-		write: (id, data) => {
-			calls.writes.push({ id, data })
+		write: (id, data, binary) => {
+			calls.writes.push(binary ? { id, data, binary: true } : { id, data })
 			for (const listener of ptyDataListeners) listener(id, data)
 		},
 		resize: () => {},

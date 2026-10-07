@@ -164,7 +164,8 @@ export interface TabGroupsApi {
 export interface PtyApi {
 	/** Pass a durable sessionId to reattach its master or recreate its missing shell after reboot. */
 	spawn(cols: number, rows: number, sessionId?: string): Promise<PtySpawnResult>
-	write(id: number, data: string): void
+	/** Binary strings preserve xterm's exact eight-bit packets; text stays UTF-8. */
+	write(id: number, data: string, binary?: boolean): void
 	resize(id: number, cols: number, rows: number): void
 	/** Kills the pty AND its dtach session for real (explicit tab close). */
 	kill(id: number): void

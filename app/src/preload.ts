@@ -103,7 +103,7 @@ const api: HelmApi = {
 				sessionId,
 				profileToken: sessionProfileToken,
 			}) as Promise<PtySpawnResult>,
-		write: (id, data) => ipcRenderer.send('pty:write', id, data, sessionProfileToken),
+		write: (id, data, binary) => ipcRenderer.send('pty:write', id, data, sessionProfileToken, binary),
 		resize: (id, cols, rows) => ipcRenderer.send('pty:resize', id, cols, rows, sessionProfileToken),
 		kill: id => ipcRenderer.send('pty:kill', id, sessionProfileToken),
 		onData: listener =>

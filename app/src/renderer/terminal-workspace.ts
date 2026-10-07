@@ -47,6 +47,7 @@ import {
 	createTerminalProgressTracker,
 	shouldMarkTerminalCompletion,
 } from './terminal-progress'
+import { TerminalSnapshotModesAddon } from './terminal-snapshot-modes'
 import { showToast } from './toast'
 
 export type TerminalWorkspaceHelm = Pick<
@@ -174,6 +175,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		fit: FitAddon
 		/** Buffer serializer for snapshot saves (restore-before-attach, app/src/buffers.ts). */
 		serialize: SerializeAddon
+		snapshotModes: TerminalSnapshotModesAddon
 		holder: HTMLDivElement
 		tabButton: HTMLDivElement
 		/** The tab's label span — renderTabLabel owns its text/tooltip. */
@@ -990,9 +992,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		for (const scrollback of SNAPSHOT_SCROLLBACK_LADDER) {
 			let output: string
 			try {
-				// Alt-screen content is excluded: a live TUI repaints itself on the
-				// reattach WINCH; replaying its stale frame first would only flash.
-				output = tab.serialize.serialize({ scrollback, excludeAltBuffer: true })
+				// A surviving fullscreen TUI may send no output on same-size WINCH,
+				// then repaint only changed rows. Preserve its cells and buffer mode;
+				// an empty alternate buffer cannot be repaired by differential output.
+				output = tab.serialize.serialize({ scrollback }) + tab.snapshotModes.serialize()
 			} catch {
 				return null
 			}
@@ -3094,6 +3097,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		term.loadAddon(fit)
 		const serialize = new SerializeAddon()
 		term.loadAddon(serialize)
+		const snapshotModes = new TerminalSnapshotModesAddon()
+		term.loadAddon(snapshotModes)
 		// The addon's default handler opens about:blank before assigning the URL;
 		// Helm denies that transient Electron window. Use the restricted main-process
 		// browser handoff directly, gated behind the explicit macOS Command-click.
@@ -3187,6 +3192,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			term,
 			fit,
 			serialize,
+			snapshotModes,
 			holder,
 			tabButton,
 			labelEl: label,
@@ -3359,6 +3365,11 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (tab.customName !== null && spawned.sessionId) helm.sessions.setCustomName(spawned.sessionId, tab.customName)
 		term.onData(data => {
 			if (!tab.transferring) helm.pty.write(spawned.id, data)
+		})
+		// DEFAULT/X10 mouse reports use onBinary, not onData. Old snapshots and
+		// ordinary legacy TUIs need this path too; do not guess their mouse mode.
+		term.onBinary(data => {
+			if (!tab.transferring) helm.pty.write(spawned.id, data, true)
 		})
 		term.onResize(({ cols, rows }) => helm.pty.resize(spawned.id, cols, rows))
 		// spawn → mount → fit → resize pty: re-fit now that layout settled, then

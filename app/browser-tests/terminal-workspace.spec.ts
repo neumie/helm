@@ -38,6 +38,210 @@ test.beforeEach(async ({ page }) => {
 	await expect(page.getByRole('dialog', { name: 'Background terminals' })).toBeVisible()
 })
 
+test('legacy mouse wheel input reaches the PTY without guessing a missing SGR mode', async ({ page }) => {
+	await page.setViewportSize({ width: 1800, height: 800 })
+	await page.locator('#bg-toggle').click()
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('Missing terminal fixture')
+		fixture.helm.pty.write = (id, data, binary?: boolean) => {
+			fixture.calls.writes.push(Object.assign({ id, data }, { binary }))
+		}
+		// Old snapshots retained tracking but omitted SGR encoding and alt mode.
+		fixture.emitData('shell', '\x1b[?1003hlegacy mouse ready')
+	})
+	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('legacy mouse ready')
+	const screen = await page.locator('.term-holder.active .xterm-screen').boundingBox()
+	if (!screen) throw new Error('Missing terminal screen')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.mouse.move(screen.x + screen.width - 30, screen.y + 30)
+	await page.mouse.wheel(0, -160)
+	const wheels = (button: number) =>
+		page.evaluate(
+			button =>
+				window.__helmWorkspaceFixture?.calls.writes.filter(
+					write => write.data.startsWith('\x1b[M') && write.data.charCodeAt(3) === button,
+				),
+			button,
+		)
+	await expect.poll(() => wheels(96)).not.toEqual([])
+	const up = (await wheels(96))?.[0]
+	expect(up?.data).toHaveLength(6)
+	expect(up?.data.charCodeAt(4)).toBeGreaterThan(127)
+	expect(Reflect.get(up ?? {}, 'binary')).toBe(true)
+	await page.mouse.wheel(0, 160)
+	await expect.poll(() => wheels(97)).not.toEqual([])
+	expect(Reflect.get((await wheels(97))?.[0] ?? {}, 'binary')).toBe(true)
+	await page.locator('.term-holder.active .xterm-helper-textarea').focus()
+	await page.keyboard.press('PageUp')
+	const keyboard = await page.evaluate(() =>
+		window.__helmWorkspaceFixture?.calls.writes.find(write => write.data === '\x1b[5~'),
+	)
+	expect(keyboard).toBeDefined()
+	expect(Reflect.get(keyboard ?? {}, 'binary')).not.toBe(true)
+})
+
+test('reattaching fullscreen preserves tool rows and SGR input without requiring a full redraw', async ({ page }) => {
+	await page.locator('#bg-toggle').click()
+	await page.evaluate(() => {
+		const fixture = window.__helmWorkspaceFixture
+		if (!fixture) throw new Error('Missing terminal fixture')
+		Reflect.set(window, '__fullscreenSnapshot', null)
+		fixture.helm.buffers.save = (id, snapshot) => {
+			if (id === 'shell') Reflect.set(window, '__fullscreenSnapshot', snapshot)
+		}
+		fixture.helm.pty.write = (id, data) => fixture.calls.writes.push({ id, data })
+		fixture.emitData('shell', 'normal shell history\r\n')
+		// Real fullscreen startup. Deliberately split the encoding marker.
+		fixture.emitData('shell', '\x1b[?1049h\x1b[?7l\x1b[?1003h\x1b[?10')
+		fixture.emitData(
+			'shell',
+			'06h\x1b[2J\x1b[H\x1b[48;2;32;55;40mread /fixture/retained-header.ts\x1b[0m\x1b[2;1Hsecond unchanged tool row',
+		)
+	})
+	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('read /fixture/retained-header.ts')
+	const toolBackground = await page
+		.locator('.term-holder.active .xterm-rows > div')
+		.first()
+		.locator('span')
+		.first()
+		.evaluate(element => getComputedStyle(element).backgroundColor)
+	expect(toolBackground).toBe('rgb(32, 55, 40)')
+	await page.locator('#tabs .tab').first().click({ button: 'right' })
+	await page.getByRole('menuitem', { name: /Move to background/ }).click()
+	await expect.poll(() => page.evaluate(() => Reflect.get(window, '__fullscreenSnapshot'))).not.toBeNull()
+	const snapshot = await page.evaluate(() => String(Reflect.get(window, '__fullscreenSnapshot')))
+	expect(snapshot).toContain('retained-header.ts')
+	expect(snapshot).toContain('\x1b[?1049h')
+	expect(snapshot).toContain('\x1b[?1006h')
+	// Reuse only the production shell and bridge; no private xterm state or live PTY.
+	await page.evaluate(
+		async ({ snapshot, fixturePath, workspacePath }) => {
+			const old = window.__helmWorkspaceFixture
+			const root = document.querySelector('#topbar')?.parentElement
+			if (!old || !root) throw new Error('Missing terminal mount')
+			old.dispose()
+			root.querySelector('#tabs')?.replaceChildren()
+			root.querySelector('#terms')?.replaceChildren()
+			const { createTerminalWorkspaceFixture } = await import(fixturePath)
+			const { mountTerminalWorkspace } = await import(workspacePath)
+			const fixture: TerminalWorkspaceFixture = createTerminalWorkspaceFixture({
+				sessions: [
+					{
+						sessionId: 'shell',
+						title: 'zsh',
+						customName: null,
+						parked: false,
+						groupId: null,
+						agentRunning: false,
+						agentAttention: false,
+						placementEligible: true,
+					},
+				],
+				groups: [],
+			})
+			fixture.helm.buffers.read = async () => snapshot
+			fixture.helm.pty.write = (id, data) => fixture.calls.writes.push({ id, data })
+			const workspace = mountTerminalWorkspace({ root, helm: fixture.helm })
+			fixture.dispose = () => workspace.dispose()
+			window.__helmWorkspaceFixture = fixture
+			await workspace.ready
+			// A same-size WINCH can produce NO Pi output. Only dtach's attach clear.
+			fixture.emitData('shell', '\x1b[H\x1b[J')
+		},
+		{
+			snapshot,
+			fixturePath: '/src/renderer/terminal-workspace-fixtures.tsx',
+			workspacePath: '/src/renderer/terminal-workspace.ts',
+		},
+	)
+	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('read /fixture/retained-header.ts')
+	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('second unchanged tool row')
+	expect(
+		await page
+			.locator('.term-holder.active .xterm-rows > div')
+			.first()
+			.locator('span')
+			.first()
+			.evaluate(element => getComputedStyle(element).backgroundColor),
+	).toBe(toolBackground)
+	// Differential app output replaces only one row; the other remains intact.
+	await page.evaluate(() =>
+		window.__helmWorkspaceFixture?.emitData('shell', '\x1b[?2026h\x1b[2;1H\x1b[2Kchanged tool row\x1b[?2026l'),
+	)
+	const currentRows = page.locator('.term-holder.active .xterm-screen:not(.term-frame-freeze) .xterm-rows')
+	await expect(currentRows).toContainText('changed tool row')
+	await expect(currentRows).toContainText('read /fixture/retained-header.ts')
+	await expect(page.locator('.term-holder.active .term-frame-freeze')).toHaveCount(0)
+	await expect(page.locator('.term-holder.active .term-scrollbar')).toBeHidden()
+	const screen = await page.locator('.term-holder.active .xterm-screen').boundingBox()
+	if (!screen) throw new Error('Missing terminal screen')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.mouse.move(screen.x + 30, screen.y + 30)
+	await page.mouse.wheel(0, -160)
+	await expect
+		.poll(() =>
+			page.evaluate(() =>
+				window.__helmWorkspaceFixture?.calls.writes
+					.map(write => write.data)
+					.filter(data => data.startsWith('\x1b['))
+					.map(data => data.slice(1))
+					.join(''),
+			),
+		)
+		.toMatch(/\[<64;\d+;\d+M/)
+	await page.mouse.wheel(0, 160)
+	await expect
+		.poll(() =>
+			page.evaluate(() =>
+				window.__helmWorkspaceFixture?.calls.writes
+					.map(write => write.data)
+					.filter(data => data.startsWith('\x1b['))
+					.map(data => data.slice(1))
+					.join(''),
+			),
+		)
+		.toMatch(/\[<65;\d+;\d+M/)
+	await page.locator('.term-holder.active .xterm-helper-textarea').focus()
+	await page.keyboard.press('PageUp')
+	await page.keyboard.press('PageDown')
+	const writes = await page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data))
+	expect(writes).toContain('\x1b[5~')
+	expect(writes).toContain('\x1b[6~')
+	await page.evaluate(() =>
+		window.__helmWorkspaceFixture?.emitData('shell', '\x1b[?1003l\x1b[?1006l\x1b[?7h\x1b[?1049l'),
+	)
+	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('normal shell history')
+	await expect(page.locator('.term-holder.active .xterm-rows')).not.toContainText('retained-header.ts')
+})
+
+for (const { name, modes, encoding } of [
+	{ name: 'SGR pixels wins ordered DECSET', modes: '\x1b[?1003;1006;1016h', encoding: 1016 },
+	{ name: 'DECRST clears encoding', modes: '\x1b[?1003;1006h\x1b[?1006l', encoding: null },
+	{ name: 'RIS clears encoding', modes: '\x1b[?1003;1006h\x1bc', encoding: null },
+]) {
+	test(`snapshot observes real xterm mode parsing: ${name}`, async ({ page }) => {
+		await page.locator('#bg-toggle').click()
+		await page.evaluate(modes => {
+			const fixture = window.__helmWorkspaceFixture
+			if (!fixture) throw new Error('Missing terminal fixture')
+			Reflect.set(window, '__encodingSnapshot', null)
+			fixture.helm.buffers.save = (id, snapshot) => {
+				if (id === 'shell') Reflect.set(window, '__encodingSnapshot', snapshot)
+			}
+			fixture.emitData('shell', `${modes}encoding parsed`)
+		}, modes)
+		await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('encoding parsed')
+		await page.locator('#tabs .tab').first().click({ button: 'right' })
+		await page.getByRole('menuitem', { name: /Move to background/ }).click()
+		await expect.poll(() => page.evaluate(() => Reflect.get(window, '__encodingSnapshot'))).not.toBeNull()
+		const snapshot = await page.evaluate(() => String(Reflect.get(window, '__encodingSnapshot')))
+		expect(snapshot.includes('\x1b[?1006h')).toBe(encoding === 1006)
+		expect(snapshot.includes('\x1b[?1016h')).toBe(encoding === 1016)
+		expect(snapshot).not.toContain('\x1b[?1049h')
+	})
+}
+
 test('task sidebar hides and restores mounted state and saved width without terminal effects', async ({ page }) => {
 	await page.evaluate(() => {
 		localStorage.setItem('helm.leftWidth', '380')
@@ -202,7 +406,8 @@ test('task sidebar works when layout preference reads and writes are unavailable
 
 test('terminal shortcut remaps update live and disabled aliases stop writing', async ({ page }) => {
 	const input = page.locator('.term-holder.active .xterm-helper-textarea')
-	await input.click()
+	// Native xterm CSS deliberately hides its helper; focus, never click it.
+	await input.focus()
 	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
 	await page.keyboard.press('Control+z')
 	await expect
@@ -284,7 +489,7 @@ test('terminal shortcut remaps update live and disabled aliases stop writing', a
 test('switching terminals never leaves focus inside the holder being hidden', async ({ page }) => {
 	const tabs = page.getByRole('tab')
 	await expect(tabs).toHaveCount(2)
-	await page.locator('.term-holder.active .xterm-helper-textarea').click()
+	await page.locator('.term-holder.active .xterm-helper-textarea').focus()
 	await page.evaluate(() => {
 		const state = window as typeof window & { __helmHiddenTerminalFocusViolations?: string[] }
 		state.__helmHiddenTerminalFocusViolations = []
