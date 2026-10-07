@@ -58,7 +58,7 @@ export class ReviewSessions {
 				providerAcknowledgement: false,
 				minimumVersion: transport === 'in-process' ? '0.99.1' : null,
 			},
-			state: 'disconnected',
+			state: 'idle',
 			listening: false,
 			busy: false,
 			needsAcknowledgement: false,
@@ -165,7 +165,7 @@ export class ReviewSessions {
 				clearTimeout(timer)
 				signal.removeEventListener('abort', aborted)
 				if (owner.waiter === waiter) owner.waiter = null
-				if (!owner.pending) owner.snapshot.state = 'disconnected'
+				if (!owner.pending) owner.snapshot.state = owner.retired ? 'disconnected' : 'idle'
 				this.changed()
 				if (cancelled) reject(new Error('Listening was cancelled.'))
 				else resolve(value)
@@ -228,7 +228,7 @@ export class ReviewSessions {
 		}
 		pending.sequence = sequence
 		pending.lastReport = report
-		owner.snapshot.state = state === 'working' ? 'working' : state === 'error' ? 'error' : 'disconnected'
+		owner.snapshot.state = state === 'working' ? 'working' : state === 'error' ? 'error' : 'idle'
 		if (text) {
 			const messageId = `${requestId}:assistant`
 			const message = owner.snapshot.messages.find(value => value.id === messageId)

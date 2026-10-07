@@ -59,7 +59,7 @@ export const ContentsNavigation: Story = {
 		docs: {
 			description: {
 				story:
-					'Filename, compact Contents and document-options dots share one header. Contents is a bounded hierarchical rail when prose has room, otherwise an explicitly dismissible overlay. Section navigation never changes passage scope or sends feedback.',
+					'Filename, compact Contents and document-options dots share one header. Contents reserves a side rail when prose has room, otherwise a bounded section above reading. It never covers the document. Section navigation never changes passage scope or sends feedback.',
 			},
 		},
 	},
