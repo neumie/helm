@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { ArchiveSettlement } from './canvas-persistence'
 import type { ReviewFeedback, ReviewProvider, ReviewReceipt, ReviewSession } from './types'
 
 interface Waiter {
@@ -10,6 +11,7 @@ interface Pending {
 	confirmed: boolean
 	sequence: number
 	lastReport: string | null
+	archive?: { id: string; settle(value: ArchiveSettlement): void }
 	timer: ReturnType<typeof setTimeout>
 }
 export interface ReviewOwner {
@@ -104,7 +106,13 @@ export class ReviewSessions {
 		if (prior.fingerprint !== fingerprint) throw new Error('This feedback ID already belongs to a different request.')
 		return { ...prior.receipt }
 	}
-	dispatch(owner: ReviewOwner, id: string, fingerprint: string, feedback: ReviewFeedback): ReviewReceipt {
+	dispatch(
+		owner: ReviewOwner,
+		id: string,
+		fingerprint: string,
+		feedback: ReviewFeedback,
+		archive?: { id: string; settle(value: ArchiveSettlement): void },
+	): ReviewReceipt {
 		if (owner.retired || !owner.admitting || owner.pending || !owner.waiter)
 			throw new Error('The listener disconnected before delivery. Your feedback was not sent.')
 		if (this.receipts.size >= 256)
@@ -126,13 +134,27 @@ export class ReviewSessions {
 		owner.admitting = false
 		owner.snapshot.state = 'waiting'
 		owner.snapshot.error = null
-		owner.snapshot.messages.push({ id: `${id}:user`, role: 'user', text: feedback.request.instruction })
+		owner.snapshot.messages.push({
+			id: `${id}:user`,
+			role: 'user',
+			...(archive ? { archiveThreadId: archive.id } : {}),
+			text: feedback.request.instruction,
+			...(feedback.request.passage
+				? {
+						passageContext: {
+							documentId: feedback.request.documentId,
+							passage: structuredClone(feedback.request.passage),
+						},
+					}
+				: {}),
+		})
 		owner.pending = {
 			feedback: structuredClone(feedback),
 			claimed: false,
 			confirmed: false,
 			sequence: -1,
 			lastReport: null,
+			archive,
 			timer: setTimeout(
 				() =>
 					this.uncertain(
@@ -233,9 +255,16 @@ export class ReviewSessions {
 			const messageId = `${requestId}:assistant`
 			const message = owner.snapshot.messages.find(value => value.id === messageId)
 			if (message) message.text = text
-			else owner.snapshot.messages.push({ id: messageId, role: 'assistant', text })
+			else
+				owner.snapshot.messages.push({
+					id: messageId,
+					role: 'assistant',
+					text,
+					...(pending.archive ? { archiveThreadId: pending.archive.id } : {}),
+				})
 		}
 		if (state !== 'working') {
+			pending.archive?.settle({ state, reply: text })
 			clearTimeout(pending.timer)
 			if (entry) entry.settled = report
 			owner.pending = null
@@ -292,6 +321,7 @@ export class ReviewSessions {
 		const pending = owner.pending
 		if (!pending) return
 		clearTimeout(pending.timer)
+		pending.archive?.settle({ state: 'unknown', detail: message })
 		const entry = this.receipts.get(pending.feedback.request.id)
 		if (entry) entry.receipt = { id: entry.receipt.id, outcome: 'unknown', detail: message }
 		owner.pending = null
@@ -301,10 +331,12 @@ export class ReviewSessions {
 		this.changed()
 	}
 	private bound(owner: ReviewOwner): void {
-		let units = owner.snapshot.messages.reduce((sum, value) => sum + value.text.length, 0)
+		// Include source associations and JSON escaping in the existing payload budget.
+		const bytes = (message: ReviewSession['messages'][number]) => Buffer.byteLength(JSON.stringify(message))
+		let units = owner.snapshot.messages.reduce((sum, value) => sum + bytes(value), 0)
 		while (owner.snapshot.messages.length > 80 || units > 160000) {
 			const removed = owner.snapshot.messages.shift()
-			units -= removed?.text.length ?? 0
+			units -= removed ? bytes(removed) : 0
 			owner.snapshot.historyTruncated = true
 		}
 	}

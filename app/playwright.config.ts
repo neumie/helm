@@ -10,7 +10,7 @@ export default defineConfig({
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 	webServer: {
-		command: 'bunx storybook dev --ci -p 6010',
+		command: 'node scripts/build-document-canvas.mjs && bunx storybook dev --ci -p 6010',
 		url: 'http://127.0.0.1:6010',
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,

@@ -3,6 +3,8 @@ import { constants, watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, dirname, relative, sep } from 'node:path'
+import { parseReviewArtifact } from './canvas-artifact'
+import { compileReviewCanvas } from './canvas-compiler'
 import { REVIEW_DOCUMENT_BYTES } from './types'
 import type { ReviewDocument } from './types'
 
@@ -12,17 +14,23 @@ export async function readReviewFile(root: string, file: string): Promise<string
 		(await realpath(root)) !== root ||
 		(await realpath(dirname(file))) !== dirname(file) ||
 		!file.startsWith(`${root}${sep}`) ||
-		!/\.md$/i.test(file) ||
+		!/\.(md|jsx|tsx)$/i.test(file) ||
 		/(?:^|[/\\])\.[^/\\]+/.test(relative(root, file))
 	)
-		throw new Error('Choose a visible Markdown file inside the approved repository.')
+		throw new Error('Choose a visible Markdown or JSX file inside the approved repository.')
 	const parent = await lstat(dirname(file))
 	if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error('The document folder is unavailable.')
 	const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
 	try {
 		const before = await fd.stat()
-		if (!before.isFile() || before.nlink !== 1 || before.size > REVIEW_DOCUMENT_BYTES)
-			throw new Error('Review supports regular Markdown files up to 512 KiB; linked files are not supported.')
+		if (
+			!before.isFile() ||
+			before.nlink !== 1 ||
+			before.size > REVIEW_DOCUMENT_BYTES ||
+			(process.getuid && before.uid !== process.getuid()) ||
+			before.mode & 0o022
+		)
+			throw new Error('Review supports regular document files up to 512 KiB; linked files are not supported.')
 		const bytes = Buffer.alloc(REVIEW_DOCUMENT_BYTES + 1)
 		let used = 0
 		while (used < bytes.length) {
@@ -112,14 +120,26 @@ export class ReviewDocumentObservation {
 	}
 	private async read(): Promise<void> {
 		try {
-			const text = await readReviewFile(this.root, this.file)
+			const raw = await readReviewFile(this.root, this.file)
 			if (this.disposed) return
+			const format = /\.md$/i.test(this.file) ? 'markdown' : 'jsx'
+			const { body: text, archive } = parseReviewArtifact(raw, format)
 			const revision = reviewRevision(text)
-			if (revision === this.snapshot.revision && !this.snapshot.error) return
+			if (
+				revision === this.snapshot.revision &&
+				archive.revision === this.snapshot.archive?.revision &&
+				!this.snapshot.error
+			)
+				return
 			this.snapshot = {
 				...this.snapshot,
 				text,
 				revision,
+				format,
+				archive,
+				...(format === 'jsx'
+					? { canvas: revision === this.snapshot.revision ? this.snapshot.canvas : compileReviewCanvas(text) }
+					: {}),
 				previous:
 					this.snapshot.revision && revision !== this.snapshot.revision ? this.snapshot.text : this.snapshot.previous,
 				error: null,

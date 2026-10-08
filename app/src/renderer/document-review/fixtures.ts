@@ -1,3 +1,4 @@
+import { locateReviewPassage } from '../../document-review/request'
 import type { ReviewApi, ReviewDraft, ReviewRequest, ReviewSession, ReviewState } from '../../document-review/types'
 import { defaultReviewDraft } from '../../document-review/types'
 
@@ -27,6 +28,15 @@ The file remains the source of truth. If it changes while you are reading, an ol
 
 Supporting details are available when needed, not repeated above every conversation. Comments can stay local until you choose to send them, and a delivery receipt never stands in for evidence of a finished edit.
 `
+const passageListText = `# Uživatelské scénáře
+
+1. Jako provozák označím firmu jako poskytovatele jeřábníků a přidám její jednotlivé jeřábníky.
+2. Jako provozák zaeviduji také jeřábníka OSVČ, bez vymýšlení jiné firmy.
+3. Jako provozák u jeřábníka uvedu **jméno**, telefon, nepovinný e-mail a národnost.
+4. Jako provozák přiřadím poskytovatele i konkrétní jeřábníky, přičemž na jednom projektu jich může působit více.
+5. Jako provozák při střídání ukončím staré přiřazení a přiřadím nového jeřábníka k projektu i kontaktu.
+6. Jako zadavatel servisu v Adminu nebo Scanu vyberu příslušného jeřábníka jako osobu, která závadu nahlásila, nebo založím dosud neevidovaný kontakt.
+`
 export type ReviewFixtureScenario =
 	| 'normal'
 	| 'light'
@@ -41,6 +51,10 @@ export type ReviewFixtureScenario =
 	| 'not-listening'
 	| 'editorial'
 	| 'editorial-light'
+	| 'passage-threads'
+	| 'passage-threads-light'
+	| 'passage-list'
+	| 'passage-list-light'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
 	const listeners = new Set<() => void>()
 	const requests: ReviewRequest[] = []
@@ -86,7 +100,9 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 	}
 	const draft = defaultReviewDraft()
 	draft.sessionId = scenario === 'no-agent' ? null : session.id
-	draft.theme = scenario === 'light' || scenario === 'editorial-light' ? 'light' : 'dark'
+	draft.theme = ['light', 'editorial-light', 'passage-threads-light', 'passage-list-light'].includes(scenario)
+		? 'light'
+		: 'dark'
 	if (scenario === 'comments' || scenario === 'stale')
 		draft.annotations = [
 			{
@@ -109,7 +125,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			id: '33333333-3333-4333-8333-333333333333',
 			name: 'spec.md',
 			relativePath: 'docs/plans/review/spec.md',
-			text: editorial ? editorialText : reviewFixtureText,
+			text: scenario.startsWith('passage-list') ? passageListText : editorial ? editorialText : reviewFixtureText,
 			revision: revision(1),
 			previous: scenario === 'changes' ? reviewFixtureText.replace('A **rendered quote**', 'A rendered quote') : null,
 			error:
@@ -117,6 +133,61 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 		},
 		sessions: scenario === 'no-agent' ? [] : [session],
 		draft,
+	}
+	if (scenario.startsWith('passage-threads')) {
+		for (const [index, phrase, question, answer] of [
+			[
+				0,
+				'The selected owner must remain exact.',
+				'Why do we retain the exact owner?',
+				'It keeps feedback in the original conversation.',
+			],
+			[
+				1,
+				'Read the actual document,',
+				'What does reading-first mean?',
+				'The document stays primary while the conversation supports it.',
+			],
+		] as const) {
+			const start = state.document.text.indexOf(phrase)
+			const end = state.document.text.indexOf('\n\n', start)
+			const passage = locateReviewPassage(state.document.text, state.document.revision, start, end, phrase)
+			if (!passage) throw new Error('Fixture passage is unavailable')
+			const id = `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`
+			session.messages.push(
+				{ id: `${id}:user`, role: 'user', text: question, passageContext: { documentId: state.document.id, passage } },
+				{ id: `${id}:assistant`, role: 'assistant', text: answer },
+			)
+		}
+	}
+	if (scenario.startsWith('passage-list')) {
+		const start = state.document.text.indexOf('1. ')
+		for (const [index, phrase, question] of [
+			[
+				0,
+				'Jako provozák u jeřábníka uvedu jméno, telefon, nepovinný e-mail a národnost.',
+				'Národnost? Proč národnost?',
+			],
+			[1, 'Jako provozák při střídání ukončím staré přiřazení', 'Jak probíhá střídání?'],
+		] as const) {
+			const passage = locateReviewPassage(
+				state.document.text,
+				state.document.revision,
+				start,
+				state.document.text.length,
+				phrase,
+			)
+			if (!passage) throw new Error('Fixture list passage is unavailable')
+			const id = `55555555-5555-4555-8555-${String(index).padStart(12, '0')}`
+			session.messages.push(
+				{ id: `${id}:user`, role: 'user', text: question, passageContext: { documentId: state.document.id, passage } },
+				{
+					id: `${id}:assistant`,
+					role: 'assistant',
+					text: index ? 'Ukončí se původní přiřazení a vytvoří nové.' : 'Národnost není pro tento scénář nutná.',
+				},
+			)
+		}
 	}
 	const scoped = new Map<string, ReviewDraft>()
 	const receipts = new Map<string, { id: string; outcome: 'dispatched' | 'unknown'; detail: string }>()
@@ -150,7 +221,14 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			owner.busy = true
 			owner.listening = false
 			owner.state = 'working'
-			owner.messages.push({ id: request.id, role: 'user', text: request.instruction })
+			owner.messages.push({
+				id: `${request.id}:user`,
+				role: 'user',
+				text: request.instruction,
+				...(request.passage
+					? { passageContext: { documentId: request.documentId, passage: structuredClone(request.passage) } }
+					: {}),
+			})
 			const captured = generation
 			const receipt = {
 				id: request.id,
@@ -242,7 +320,13 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 					owner.error = unknown ? 'Provider completion is unknown. Inspect the document.' : null
 					if (!unknown)
 						owner.messages.push({
-							id: crypto.randomUUID(),
+							id: `${
+								requests
+									.slice()
+									.reverse()
+									.find(request => request.sessionId === owner.id && request.owner === owner.owner)?.id ??
+								crypto.randomUUID()
+							}:assistant`,
 							role: 'assistant',
 							text: 'This is a fixture reply to the chosen request.',
 						})

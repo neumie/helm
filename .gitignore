@@ -25,3 +25,5 @@ app/src/build-id.generated.ts
 /app/native/window-zoom-guard/build/
 /app/test-results/
 /app/remote-dist/
+
+/app/src/renderer/document-review/canvas-runtime.generated.ts

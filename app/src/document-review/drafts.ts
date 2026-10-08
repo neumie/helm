@@ -24,16 +24,22 @@ const passageSchema = z
 		source: z.string().max(8000),
 		quote: z.string().max(8000),
 		kind: z.enum(['exact', 'block']),
+		canvasId: z.string().min(1).max(80).optional(),
 	})
 	.strict()
 export const reviewDraftSchema = z
 	.object({
+		archiveRevision: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.nullable()
+			.optional(),
 		instruction: z.string().max(8000),
 		annotations: z
 			.array(
 				z
 					.object({
-						id: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
+						id: z.string().min(1).max(160),
 						passage: passageSchema,
 						note: z.string().max(8000),
 						intent: z.enum(['discuss', 'change']),
@@ -41,7 +47,7 @@ export const reviewDraftSchema = z
 					})
 					.strict(),
 			)
-			.max(64),
+			.max(256),
 		sessionId: z
 			.string()
 			.regex(/^review:[a-f0-9-]{36}$/)

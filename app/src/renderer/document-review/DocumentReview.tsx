@@ -1,8 +1,6 @@
-import { useAnnotationState } from '@fabrika/annotations'
-import type { Annotation } from '@fabrika/annotations'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, Dispatch, SetStateAction } from 'react'
-import { locateReviewPassage, validatePassage } from '../../document-review/request'
+import type { CSSProperties } from 'react'
+import { locateReviewPassage } from '../../document-review/request'
 import type {
 	ReviewApi,
 	ReviewDraft,
@@ -14,9 +12,17 @@ import type {
 } from '../../document-review/types'
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
-import { GLYPH, MenuButton } from '../sidebar/ui'
+import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
+import { DocumentCanvas } from './DocumentCanvas'
+import type { DocumentCanvasHandle } from './DocumentCanvas'
 import { ReviewMarkdown } from './ReviewMarkdown'
+import { SavedAnnotationHighlights } from './SavedAnnotationHighlights'
+import { annotationSaveDraft, captureAnnotationSave, removeReviewAnnotation } from './annotations'
+import { captureArchiveRecovery, currentArchiveRecovery } from './archive-recovery'
+import type { ArchiveRecoveryTarget, ArchiveReviewApi, ArchiveReviewState } from './archive-recovery'
 import { parseReviewMarkdown } from './markdown'
+import { archiveThreadStatus, projectPassageThreads } from './passage-threads'
+import { validateDocumentPassage } from './passage-validation'
 import './document-review.css'
 
 const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi' }
@@ -27,6 +33,17 @@ interface Operation {
 	owner: string
 	revision: string
 	phase: 'sending' | 'running' | 'uncertain'
+}
+interface AnnotationWrite {
+	value: string | null
+	payload: ReviewDraft | null
+	token: number
+	documentId: string
+	revision: string
+	binding: string
+	api: ReviewApi
+	generation: number
+	failed: boolean
 }
 interface Candidate {
 	passage: ReviewPassage
@@ -67,8 +84,11 @@ function ChangeReview({ before, after }: { before: string; after: string }) {
 	)
 }
 
-export function DocumentReview({ api }: { api: ReviewApi }) {
-	const [state, setState] = useState<ReviewState | null>(null)
+export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
+	const [state, setState] = useState<ArchiveReviewState | null>(null)
+	const archiveFlight = useRef<object | null>(null)
+	const [archiveSaving, setArchiveSaving] = useState(false)
+	const [discardReply, setDiscardReply] = useState<ArchiveRecoveryTarget | null>(null)
 	const [draft, setDraft] = useState<ReviewDraft | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const [saveError, setSaveError] = useState<string | null>(null)
@@ -79,6 +99,9 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	const [passage, setPassage] = useState<ReviewPassage | null>(null)
 	const [intent, setIntent] = useState<ReviewIntent>('discuss')
 	const [annotationId, setAnnotationId] = useState<string | null>(null)
+	const annotationWrite = useRef<AnnotationWrite | null>(null)
+	const canvasHandle = useRef<DocumentCanvasHandle | null>(null)
+	const [canvasReady, setCanvasReady] = useState(false)
 	const commentSave = useRef<object | null>(null)
 	const [commentSaving, setCommentSaving] = useState(false)
 	const lifecycle = useRef(0)
@@ -164,7 +187,15 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	} | null>(null)
 	const opener = useRef<HTMLElement | null>(null)
 	const anchor = useRef<{ source: string; offset: number } | null>(null)
-	const model = useMemo(() => parseReviewMarkdown(state?.document.text ?? ''), [state?.document.text])
+	const canvasMode = state?.document.format === 'jsx'
+	const model = useMemo(
+		() => (canvasMode ? { blocks: [], limited: false, error: null } : parseReviewMarkdown(state?.document.text ?? '')),
+		[canvasMode, state?.document.text],
+	)
+	const displayBlocks = useMemo(
+		() => (canvasMode ? (state?.document.canvas?.blocks ?? []) : model.blocks),
+		[canvasMode, state?.document.canvas, model.blocks],
+	)
 	const headings = useMemo(
 		() => model.blocks.filter(block => block.heading !== null && block.heading.trim() !== ''),
 		[model],
@@ -180,13 +211,26 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		selected?.owner,
 		ownerBlocked,
 	])
+	const passageThreads = useMemo(
+		() =>
+			state?.document.error || (narrow && pane !== 'document')
+				? new Map()
+				: projectPassageThreads(
+						state?.document ?? null,
+						ownerBlocked || state?.document.error || (narrow && pane !== 'document') ? null : selected,
+						displayBlocks,
+						draft?.annotations ?? [],
+					),
+		[state?.document, ownerBlocked, selected, displayBlocks, draft?.annotations, narrow, pane],
+	)
 	const currentBinding = useRef(selectionBinding)
 	currentBinding.current = selectionBinding
 
 	const refresh = useCallback(async () => {
 		const sequence = ++readSequence.current
+		const generation = lifecycle.current
 		const result = await api.load()
-		if (!mounted.current || sequence !== readSequence.current) return
+		if (!mounted.current || generation !== lifecycle.current || sequence !== readSequence.current) return
 		if (result.error !== undefined) {
 			setError(result.error)
 			return
@@ -212,6 +256,20 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				: null,
 		)
 		setState(result.data)
+		if (
+			hydrated.current &&
+			latest.current.draft &&
+			!annotationWrite.current &&
+			!commentSave.current &&
+			!saveActive.current &&
+			editToken.current === savedToken.current
+		) {
+			// Native owns journal-vs-private legacy projection; an empty parser archive is not migration.
+			const next = { ...latest.current.draft, annotations: result.data.draft.annotations }
+			latest.current = { state: result.data, draft: next }
+			setDraft(next)
+			if (savedDraft.current) savedDraft.current = { ...savedDraft.current, annotations: next.annotations }
+		}
 		if (
 			!hydrated.current ||
 			(!latest.current.draft?.sessionId &&
@@ -245,45 +303,76 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		}
 	}, [api])
 
-	const persist = useCallback(async (): Promise<boolean> => {
-		if (saveActive.current) {
-			await saveActive.current
-			if (savedToken.current === editToken.current) return true
-		}
-		const value = latest.current.draft
-		if (!value || savedToken.current === editToken.current) return true
-		const token = editToken.current
-		const promise = api
-			.save(value)
-			.then(result => {
-				if (!mounted.current) return result.error === undefined
-				if (result.error !== undefined) {
-					setSaveError(result.error)
+	const persist = useCallback(
+		async (retryAnnotation = false): Promise<boolean> => {
+			if (saveActive.current) {
+				await saveActive.current
+				if (savedToken.current === editToken.current && !annotationWrite.current) return true
+			}
+			const currentDraft = latest.current.draft
+			const write = annotationWrite.current
+			if (!currentDraft || (savedToken.current === editToken.current && !write)) return true
+			if (write) {
+				if (write.failed && !retryAnnotation) return false
+				if (
+					write.api !== api ||
+					write.generation !== lifecycle.current ||
+					write.binding !== currentBinding.current ||
+					write.documentId !== latest.current.state?.document.id ||
+					write.revision !== latest.current.state.document.revision
+				) {
+					setSaveError(
+						'This unsaved comment belongs to an earlier document or conversation. Discard it deliberately; nothing was moved.',
+					)
 					return false
 				}
-				savedToken.current = token
-				savedDraft.current = structuredClone(value)
-				if (token === editToken.current) {
-					api.dirty(false)
-					setSaveError(null)
+				if (!write.payload) {
+					write.payload = captureAnnotationSave(currentDraft, write.value)
+					write.token = editToken.current
 				}
-				return true
-			})
-			.catch(() => {
-				if (mounted.current) setSaveError('Drafts could not be saved. Keep this window open and retry.')
-				return false
-			})
-		saveActive.current = promise
-		const ok = await promise
-		if (saveActive.current === promise) saveActive.current = null
-		return ok
-	}, [api])
+			}
+			const value = write?.payload ?? annotationSaveDraft(currentDraft)
+			const token = write?.token ?? editToken.current
+			const generation = lifecycle.current
+			const promise = api
+				.save(value)
+				.then(result => {
+					if (!mounted.current || generation !== lifecycle.current) return false
+					if (result.error !== undefined) {
+						if (write) write.failed = true
+						setSaveError(result.error)
+						return false
+					}
+					savedToken.current = token
+					if (annotationWrite.current === write) annotationWrite.current = null
+					if (write) setSaveError(null)
+					savedDraft.current = structuredClone(value)
+					if (token === editToken.current) {
+						api.dirty(false)
+						setSaveError(null)
+					}
+					if (write) void refresh()
+					return true
+				})
+				.catch(() => {
+					if (write) write.failed = true
+					if (mounted.current && generation === lifecycle.current)
+						setSaveError('Drafts could not be saved. Keep this window open and retry.')
+					return false
+				})
+			saveActive.current = promise
+			const ok = await promise
+			if (saveActive.current === promise) saveActive.current = null
+			return ok
+		},
+		[api, refresh],
+	)
 
 	const changeDraft = useCallback(
 		(update: (value: ReviewDraft) => ReviewDraft) => {
 			const value = latest.current.draft
 			if (!value) return
-			const next = update(value)
+			const next = annotationSaveDraft(update(value))
 			latest.current = { ...latest.current, draft: next }
 			editToken.current++
 			api.dirty(true)
@@ -295,6 +384,9 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 	useEffect(() => {
 		lifecycle.current++
 		mounted.current = true
+		archiveFlight.current = null
+		setArchiveSaving(false)
+		setDiscardReply(null)
 		void refresh()
 		const unsubscribe = api.onChanged(() => {
 			void refresh()
@@ -388,6 +480,9 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		pointerSelection.current = null
 		contentsRequest.current = null
 	}, [selectionBinding, api])
+	useLayoutEffect(() => {
+		if (discardReply && !currentArchiveRecovery(discardReply, state, api, lifecycle.current)) setDiscardReply(null)
+	}, [discardReply, state, api])
 	// Focus belongs to the triggering commit, never a delayed animation-frame callback.
 	useLayoutEffect(() => {
 		const request = focusRequest.current
@@ -499,27 +594,30 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		if (target?.isConnected && target.getClientRects().length) target.focus()
 	})
 
-	const setAnnotations: Dispatch<SetStateAction<Annotation[]>> = update =>
-		changeDraft(value => {
-			const current = value.annotations.map(a => ({ id: a.id, snippet: a.passage.quote, note: a.note, createdAt: '' }))
-			const next = typeof update === 'function' ? update(current) : update
-			return {
-				...value,
-				annotations: next.flatMap(a => {
-					const old = value.annotations.find(old => old.id === a.id)
-					return old ? [{ ...old, note: a.note }] : []
-				}),
-			}
-		})
-	const annotationState = useAnnotationState({
-		annotations:
-			draft?.annotations.map(a => ({ id: a.id, snippet: a.passage.quote, note: a.note, createdAt: '' })) ?? [],
-		setAnnotations,
-		generalNote: draft?.instruction ?? '',
-		setGeneralNote: instruction => changeDraft(value => ({ ...value, instruction })),
-		isReadOnly: busy,
-	})
+	function captureAnnotationWrite(): boolean {
+		if (!state || annotationWrite.current?.failed) return false
+		annotationWrite.current = annotationWrite.current ?? {
+			value: state.document.archive?.revision ?? null,
+			payload: null,
+			token: 0,
+			documentId: state.document.id,
+			revision: state.document.revision,
+			binding: selectionBinding,
+			api,
+			generation: lifecycle.current,
+			failed: false,
+		}
+		return true
+	}
+	function changeAnnotations(update: (value: ReviewDraft) => ReviewDraft): void {
+		if (selectionLocked() || commentSave.current || !captureAnnotationWrite()) return
+		changeDraft(update)
+	}
 
+	function validateCurrentPassage(value: ReviewPassage): void {
+		if (!state) throw new Error('Document unavailable')
+		validateDocumentPassage(state.document, value)
+	}
 	function captureSelection(pointer = false): void {
 		const selection = window.getSelection()
 		setCandidate(null)
@@ -534,6 +632,13 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			return
 		const range = selection.getRangeAt(0)
 		if (!reading.current.contains(range.startContainer) || !reading.current.contains(range.endContainer)) return
+		const endpointElement = (node: Node) =>
+			node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement
+		if (
+			endpointElement(range.startContainer)?.closest('.review-passage-comments') ||
+			endpointElement(range.endContainer)?.closest('.review-passage-comments')
+		)
+			return
 		const quote = selection.toString()
 		if (!quote.trim()) return
 		let next: ReviewPassage | null = null
@@ -555,7 +660,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			const element = (node: Node) => (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)
 			const first = element(range.startContainer)?.closest<HTMLElement>('[data-source-start]')
 			const last = element(range.endContainer)?.closest<HTMLElement>('[data-source-end]')
-			if (first && last)
+			if (first && last && (!canvasMode || (first === last && first.dataset.canvasId)))
 				next = locateReviewPassage(
 					state.document.text,
 					state.document.revision,
@@ -564,13 +669,20 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					quote,
 				)
 		}
+		if (next && canvasMode && view === 'document') {
+			const element = endpointElement(range.startContainer)?.closest<HTMLElement>('[data-canvas-id]')
+			const block = state.document.canvas?.blocks.find(
+				block => block.id === element?.dataset.canvasId && block.start === next?.start && block.end === next?.end,
+			)
+			next = block ? { ...next, canvasId: block.id } : null
+		}
 		try {
-			if (next) validatePassage(state.document.text, state.document.revision, next)
+			if (next) validateCurrentPassage(next)
 		} catch {
 			next = null
 		}
 		if (!next) {
-			setError('Select a smaller passage, up to 8,000 source characters. Source offers exact Markdown selection.')
+			setError('Select one source block, up to 8,000 characters. Source offers exact selection.')
 			return
 		}
 		const rect = range.getBoundingClientRect()
@@ -594,6 +706,8 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			operation.current ||
 			control.current ||
 			commentSave.current ||
+			(annotationWrite.current && saveActive.current) ||
+			annotationWrite.current?.failed ||
 			busy ||
 			selected?.busy ||
 			blockedOwner.current ||
@@ -616,7 +730,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			saved?.passage === next && saved.intent === nextIntent && next.revision !== state.document.revision
 		if (!savedStale) {
 			try {
-				validatePassage(state.document.text, state.document.revision, next)
+				validateCurrentPassage(next)
 			} catch {
 				return false
 			}
@@ -669,6 +783,50 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		setCandidate(null)
 		setPane('document')
 	}
+	async function recoverArchive(target: ArchiveRecoveryTarget, discard = false): Promise<void> {
+		if (
+			archiveFlight.current ||
+			!mounted.current ||
+			!currentArchiveRecovery(target, latest.current.state, api, lifecycle.current) ||
+			(discard && (!target.id || !api.discardArchive))
+		)
+			return
+		const flight = {}
+		archiveFlight.current = flight
+		setArchiveSaving(true)
+		try {
+			const result =
+				discard && target.id && api.discardArchive ? await api.discardArchive(target.id) : await api.retryDocument()
+			if (
+				!mounted.current ||
+				archiveFlight.current !== flight ||
+				target.api !== api ||
+				target.generation !== lifecycle.current
+			)
+				return
+			if (
+				currentArchiveRecovery(target, latest.current.state, api, lifecycle.current) &&
+				(result.error || result.data !== true)
+			)
+				setError(result.error ?? 'Review save recovery was not confirmed. Keep the reply and retry.')
+			if (
+				result.data === true &&
+				latest.current.state?.document.id === target.documentId &&
+				latest.current.state.document.revision === target.revision
+			) {
+				setDiscardReply(null)
+				void refresh()
+			}
+		} catch {
+			if (mounted.current && currentArchiveRecovery(target, latest.current.state, api, lifecycle.current))
+				setError('Review save recovery was not confirmed. Keep the reply and check this window before trying again.')
+		} finally {
+			if (archiveFlight.current === flight) {
+				archiveFlight.current = null
+				if (mounted.current && target.generation === lifecycle.current) setArchiveSaving(false)
+			}
+		}
+	}
 	async function switchSession(id: string | null): Promise<void> {
 		if (control.current || operation.current) return
 		control.current = true
@@ -703,7 +861,14 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		if (saveActive.current || control.current || busy || !savedDraft.current) return
 		const previous = savedDraft.current
 		if (previous.sessionId !== latest.current.draft?.sessionId) return
+		if (
+			annotationWrite.current &&
+			!window.confirm('Discard unsaved local comment changes? This does not change the document or send feedback.')
+		)
+			return
+		annotationWrite.current = null
 		const restored = structuredClone(previous)
+		if (state?.document.archive) restored.annotations = structuredClone(state.document.archive.annotations)
 		latest.current = { ...latest.current, draft: restored }
 		editToken.current++
 		savedToken.current = editToken.current
@@ -718,6 +883,8 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			blockedOwner.current ||
 			operation.current ||
 			control.current ||
+			commentSave.current ||
+			annotationWrite.current ||
 			!state ||
 			!draft ||
 			!selected ||
@@ -729,6 +896,8 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			!draft.instruction.trim()
 		)
 			return
+		const fields = canvasMode ? canvasHandle.current?.read(state.document.id, state.document.revision, api) : undefined
+		if (canvasMode && !fields) return
 		const pending: Operation = {
 			id: crypto.randomUUID(),
 			text: draft.instruction,
@@ -755,6 +924,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				intent,
 				instruction: pending.text,
 				passage: scope,
+				...(canvasMode ? { canvasFields: fields ?? [] } : {}),
 			})
 			if (!mounted.current || operation.current !== pending) return
 			if (result.error !== undefined) {
@@ -809,9 +979,10 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 			!passage ||
 			!current?.instruction.trim() ||
 			(annotationId && !current.annotations.some(annotation => annotation.id === annotationId)) ||
-			(!annotationId && current.annotations.length >= 64)
+			(!annotationId && current.annotations.length >= 256)
 		)
 			return
+		if (!captureAnnotationWrite()) return
 		const flight = {}
 		commentSave.current = flight
 		setCommentSaving(true)
@@ -987,21 +1158,23 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		? null
 		: stale
 			? 'This selection is stale. Select the passage again; it will not be guessed.'
-			: state.document.error
-				? 'Document unavailable. Retry opening it before sending.'
-				: ownerBlocked
-					? 'Choose a conversation again before sending.'
-					: operation.current?.phase === 'uncertain'
-						? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
-						: operation.current || busy || activeSession
-							? 'Wait for the current request to settle before sending.'
-							: !selected
-								? 'Connect an existing conversation before sending.'
-								: selected.error
-									? 'Check the conversation outcome before sending.'
-									: !selected.listening
-										? 'Feedback paused. Keep this draft until the conversation is listening.'
-										: null
+			: canvasMode && !canvasReady
+				? 'Wait for the document canvas to settle, or read Source.'
+				: state.document.error
+					? 'Document unavailable. Retry opening it before sending.'
+					: ownerBlocked
+						? 'Choose a conversation again before sending.'
+						: operation.current?.phase === 'uncertain'
+							? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
+							: operation.current || busy || activeSession
+								? 'Wait for the current request to settle before sending.'
+								: !selected
+									? 'Connect an existing conversation before sending.'
+									: selected.error
+										? 'Check the conversation outcome before sending.'
+										: !selected.listening
+											? 'Feedback paused. Keep this draft until the conversation is listening.'
+											: null
 	const composer = (
 		<div className="review-writing-surface">
 			<textarea
@@ -1011,7 +1184,10 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				aria-label={passage ? 'Passage instruction' : 'Whole-document message'}
 				placeholder={passage ? 'Write about this passage…' : 'Ask about this document…'}
 				value={draft.instruction}
-				onChange={event => annotationState.setGeneralNote(event.currentTarget.value)}
+				onChange={event => {
+					const instruction = event.currentTarget.value
+					changeDraft(value => ({ ...value, instruction }))
+				}}
 				onKeyDown={event => {
 					if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
 						event.preventDefault()
@@ -1058,7 +1234,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 												!draft.instruction.trim() ||
 												(annotationId
 													? !draft.annotations.some(annotation => annotation.id === annotationId)
-													: draft.annotations.length >= 64),
+													: draft.annotations.length >= 256),
 											onSelect: () => {
 												void saveComment()
 											},
@@ -1111,6 +1287,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						!!selected.error ||
 						stale ||
 						!!state.document.error ||
+						(canvasMode && !canvasReady) ||
 						!draft.instruction.trim()
 					}
 					busy={busy && operation.current?.phase === 'sending'}
@@ -1127,6 +1304,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 		<main
 			className="document-review"
 			onKeyDown={event => {
+				if (event.key === 'Escape' && event.currentTarget.querySelector('.review-passage-bubble:popover-open')) return
 				if (event.key === 'Escape' && passage) {
 					event.preventDefault()
 					returnToDocument()
@@ -1279,6 +1457,34 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					</p>
 				</section>
 			)}
+			{state.archiveError && (
+				<div className="review-banner" role="alert">
+					<span>{state.archiveError} Nothing will be resent.</span>
+					<Btn
+						sm
+						disabled={archiveSaving}
+						onClick={() => {
+							const target = captureArchiveRecovery(latest.current.state, api, lifecycle.current)
+							if (target) void recoverArchive(target)
+						}}
+					>
+						Retry review save
+					</Btn>
+					{state.archiveFailureId && api.discardArchive && (
+						<Btn
+							sm
+							tone="ghost"
+							disabled={archiveSaving}
+							onClick={() => {
+								const target = captureArchiveRecovery(latest.current.state, api, lifecycle.current)
+								if (target?.id && !archiveFlight.current) setDiscardReply(target)
+							}}
+						>
+							Discard unsaved reply
+						</Btn>
+					)}
+				</div>
+			)}
 			{(error || saveError) && (
 				<div className="review-banner" role="alert">
 					<span>{saveError ?? error}</span>
@@ -1287,10 +1493,10 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 							<Btn
 								sm
 								onClick={() => {
-									void persist()
+									void persist(annotationWrite.current?.failed === true)
 								}}
 							>
-								Retry save
+								{annotationWrite.current ? 'Retry comment save' : 'Retry save'}
 							</Btn>
 							<Btn sm tone="ghost" disabled={busy} onClick={discardUnsaved}>
 								Discard unsaved changes
@@ -1302,6 +1508,17 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						</Btn>
 					)}
 				</div>
+			)}
+			{discardReply && currentArchiveRecovery(discardReply, state, api, lifecycle.current) && (
+				<DiscardReplyConfirmation
+					busy={archiveSaving}
+					onKeep={() => {
+						if (!archiveFlight.current) setDiscardReply(null)
+					}}
+					onDiscard={() => {
+						void recoverArchive(discardReply, true)
+					}}
+				/>
 			)}
 			<div className="review-split">
 				<section
@@ -1343,9 +1560,20 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						</nav>
 					)}
 					<div className="review-reading-stage">
+						{[...passageThreads.values()].some(threads => threads.length > 80) && (
+							<p className="review-meta">
+								Some saved passage markers exceed this view’s display limit. Read Comments or saved review history; no
+								saved content was removed.
+							</p>
+						)}
 						{state.document.error && (
 							<div className="review-banner" role="alert">
-								<span>{state.document.error} The last readable revision remains visible.</span>
+								<span>
+									{state.document.error}{' '}
+									{state.document.text
+										? 'The last readable revision remains visible.'
+										: 'Document source is unavailable.'}
+								</span>
 								<Btn
 									sm
 									onClick={() => {
@@ -1377,7 +1605,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 									!event.isTrusted ||
 									!event.isPrimary ||
 									event.button !== 0 ||
-									(event.target as Element).closest('button')
+									(event.target as Element).closest('button, .review-passage-comments')
 								)
 									return
 								const selection = window.getSelection()
@@ -1426,7 +1654,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 							{view === 'comments' ? (
 								<section className="review-comments">
 									<h2>Your comments</h2>
-									<p>Saved in this profile for this document and chosen conversation. Resolution is always explicit.</p>
+									<p>Saved review comments. Explicit saves travel with the document; resolution is always explicit.</p>
 									{!draft.annotations.length && (
 										<div className="review-empty">
 											<h3>Leave a thought in the margin</h3>
@@ -1477,7 +1705,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 													tone="ghost"
 													disabled={busy}
 													onClick={() =>
-														changeDraft(value => ({
+														changeAnnotations(value => ({
 															...value,
 															annotations: value.annotations.map(a =>
 																a.id === annotation.id ? { ...a, resolved: !a.resolved } : a,
@@ -1491,7 +1719,12 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 													sm
 													tone="ghost"
 													disabled={busy}
-													onClick={() => annotationState.removeAnnotation(annotation.id)}
+													onClick={() =>
+														changeAnnotations(value => ({
+															...value,
+															annotations: removeReviewAnnotation(value.annotations, annotation.id),
+														}))
+													}
 												>
 													Delete
 												</Btn>
@@ -1499,7 +1732,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 													<Btn
 														sm
 														onClick={() =>
-															changeDraft(value => ({
+															changeAnnotations(value => ({
 																...value,
 																annotations: value.annotations.map(a =>
 																	a.id === annotation.id ? { ...a, passage: candidate.passage } : a,
@@ -1523,21 +1756,47 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 										<p>Edits from your agent or editor will appear here after the file changes.</p>
 									</div>
 								)
-							) : view === 'source' || model.error ? (
+							) : view === 'source' || (!canvasMode && model.error) ? (
 								<>
 									<p className="review-meta">{model.error ?? 'Exact source, never rewritten by Helm.'}</p>
 									<pre ref={source} className="review-full-source">
 										{state.document.text}
 									</pre>
 								</>
-							) : (
+							) : canvasMode ? null : (
 								<article className="review-prose">
 									<ReviewMarkdown
 										blocks={model.blocks}
 										selectedStart={passage?.revision === state.document.revision ? passage.start : null}
+										passageThreads={passageThreads.size ? passageThreads : undefined}
+										commentBinding={selectionBinding}
+										api={api}
+										providerName={selected ? providerNames[selected.provider] : ''}
 									/>
 								</article>
 							)}
+							{canvasMode && (
+								<div hidden={view !== 'document'}>
+									<DocumentCanvas
+										document={state.document}
+										api={api}
+										handle={canvasHandle}
+										onReady={setCanvasReady}
+										threads={
+											view === 'document' && !(narrow && pane !== 'document') && passageThreads.size
+												? passageThreads
+												: undefined
+										}
+										binding={selectionBinding}
+									/>
+								</div>
+							)}
+							<SavedAnnotationHighlights
+								document={state.document}
+								annotations={draft.annotations}
+								reading={reading}
+								visible={view === 'document' && !(narrow && pane !== 'document')}
+							/>
 						</div>
 					</div>
 					{candidate && candidate.binding === selectionBinding && (
@@ -1630,6 +1889,7 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 					</header>
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Conversation scroll owner needs keyboard access without focusing message text. */}
 					<div className="review-chat" tabIndex={0} aria-label="Conversation messages">
+						<ArchivedConversation document={state.document} session={selected} />
 						<Conversation session={selected} />
 						{selected?.state === 'working' && (
 							<output className="review-working">
@@ -1655,21 +1915,13 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 						)}
 					</div>
 					<div className="review-companion-bottom">
-						{(receipt || recovery !== null) && (
+						{((receipt && ['unknown', 'rejected'].includes(receipt.outcome)) || recovery !== null) && (
 							// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner must support keyboard reading.
 							<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
-								{receipt && (
+								{receipt && ['unknown', 'rejected'].includes(receipt.outcome) && (
 									// biome-ignore lint/a11y/useSemanticElements: A live receipt has structured block content; it is not a scalar form output.
 									<div className="review-receipt" role="status">
-										<strong>
-											{receipt.outcome === 'unknown'
-												? 'Outcome not confirmed'
-												: receipt.outcome === 'rejected'
-													? 'Not sent'
-													: receipt.outcome === 'pending'
-														? 'Sending feedback'
-														: 'Dispatched'}
-										</strong>
+										<strong>{receipt.outcome === 'unknown' ? 'Outcome not confirmed' : 'Not sent'}</strong>
 										<p>{receipt.detail}</p>
 										{operation.current?.phase === 'uncertain' && !selected?.busy && !selected?.error && (
 											<Btn
@@ -1707,6 +1959,85 @@ export function DocumentReview({ api }: { api: ReviewApi }) {
 				</section>
 			</div>
 		</main>
+	)
+}
+
+function DiscardReplyConfirmation({
+	busy,
+	onKeep,
+	onDiscard,
+}: { busy: boolean; onKeep: () => void; onDiscard: () => void }) {
+	const keep = useRef<HTMLButtonElement>(null)
+	useEffect(() => {
+		const dialog = keep.current?.closest('dialog')
+		if (dialog?.contains(document.activeElement) && document.activeElement?.closest('.sheet-head'))
+			keep.current?.focus()
+	}, [])
+	return (
+		<Sheet
+			title="Discard unsaved reply?"
+			onClose={onKeep}
+			footer={
+				<>
+					<Btn ref={keep} disabled={busy} onClick={onKeep}>
+						Keep unsaved reply
+					</Btn>
+					<Btn tone="danger" disabled={busy} onClick={onDiscard}>
+						Discard unsaved reply
+					</Btn>
+				</>
+			}
+		>
+			<p>
+				The document will not retain this unsaved reply. Your original conversation is unchanged, and your local draft
+				is kept. Nothing is resent or acknowledged.
+			</p>
+			<p>Keep the reply to retry saving it instead.</p>
+		</Sheet>
+	)
+}
+
+function ArchivedConversation({
+	document,
+	session,
+}: { document: ReviewState['document']; session: ReviewSession | null }) {
+	const live = new Set(session?.messages.map(message => message.archiveThreadId).filter(Boolean) ?? [])
+	const threads = document.archive?.threads.filter(thread => !live.has(thread.id)) ?? []
+	if (!threads.length) return null
+	return (
+		<section className="review-archive" aria-label="Saved review history">
+			<h2>Saved review history</h2>
+			<p className="review-meta">Read-only history · never replayed</p>
+			{threads.map(thread => (
+				<section key={thread.id} aria-label="Saved review thread">
+					<p className="review-meta">
+						{thread.name} · {providerNames[thread.provider]} · {archiveThreadStatus(thread.state)}
+						{thread.passage && thread.passage.revision !== document.revision ? ' · Passage changed; not relocated' : ''}
+					</p>
+					<article className="review-message review-message-user">
+						<h3>You</h3>
+						<div>{thread.instruction}</div>
+					</article>
+					{thread.fields.length > 0 && (
+						<details>
+							<summary>Public document fields</summary>
+							{thread.fields.map(field => (
+								<p key={field.id}>
+									{field.id}: {String(field.value)}
+								</p>
+							))}
+						</details>
+					)}
+					{thread.reply && (
+						<article className="review-message review-message-assistant">
+							<h3>{thread.name}</h3>
+							<div>{thread.reply}</div>
+						</article>
+					)}
+					{thread.detail && <p className="review-meta">{thread.detail}</p>}
+				</section>
+			))}
+		</section>
 	)
 }
 

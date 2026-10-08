@@ -1,5 +1,8 @@
 import { cpSync } from 'node:fs'
 import { build } from 'esbuild'
+import { buildDocumentCanvas } from './scripts/build-document-canvas.mjs'
+
+await buildDocumentCanvas()
 
 const common = { bundle: true, sourcemap: 'inline', logLevel: 'warning' }
 

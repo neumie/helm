@@ -1,7 +1,10 @@
 import type { MarkedToken, Token, Tokens } from 'marked'
 import { Fragment, createElement, memo } from 'react'
 import type { ReactNode } from 'react'
+import type { ReviewApi } from '../../document-review/types'
+import { PassageComments } from './PassageComments'
 import type { ReviewBlock } from './markdown'
+import type { PassageThread } from './passage-threads'
 
 function decode(value: string): string {
 	return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (raw, entity: string) => {
@@ -17,7 +20,18 @@ function decode(value: string): string {
 export const ReviewMarkdown = memo(function ReviewMarkdown({
 	blocks,
 	selectedStart,
-}: { blocks: ReviewBlock[]; selectedStart: number | null }) {
+	passageThreads,
+	commentBinding,
+	api,
+	providerName,
+}: {
+	blocks: ReviewBlock[]
+	selectedStart: number | null
+	passageThreads?: Map<string, PassageThread[]>
+	commentBinding?: string
+	api?: ReviewApi
+	providerName?: string
+}) {
 	let remaining = 30000
 	let limited = false
 	const render = (tokens: Token[], depth = 0): ReactNode => {
@@ -155,6 +169,14 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 			}
 		>
 			<div className="review-block-text">{render([block.token])}</div>
+			{passageThreads?.has(block.id) && (
+				<PassageComments
+					key={`${commentBinding}:${block.id}`}
+					threads={passageThreads.get(block.id) ?? []}
+					api={api}
+					providerName={providerName ?? ''}
+				/>
+			)}
 		</div>
 	))
 	return (

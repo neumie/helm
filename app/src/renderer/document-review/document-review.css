@@ -1,5 +1,6 @@
 .document-review {
 	--review-reading-size: 15px;
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	height: 100dvh;
@@ -252,8 +253,70 @@
 .document-review:not([data-text-selection="true"]) .review-block[data-selected="true"] > .review-block-text {
 	background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
-.document-review ::highlight(helm-review-selection) {
+.document-review ::highlight(helm-review-selection),
+.document-review ::highlight(helm-review-comment-passage) {
 	background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.review-passage-comments {
+	position: absolute;
+	top: 0;
+	right: -32px;
+	width: 28px;
+}
+.review-passage-comment-anchor {
+	position: absolute;
+	left: 0;
+}
+.review-passage-comment-trigger.btn {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+}
+.review-passage-bubble {
+	position: fixed;
+	inset: auto;
+	margin: 0;
+	padding: 0;
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	background: var(--chrome);
+	color: var(--text-0);
+	box-shadow: var(--shadow-1);
+	font-family: var(--font-ui);
+	font-size: calc(13px * var(--ui-scale));
+	line-height: 1.5;
+	overflow: hidden;
+}
+.review-passage-bubble:popover-open {
+	display: flex;
+	flex-direction: column;
+}
+.review-passage-bubble-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 8px 12px;
+	flex-shrink: 0;
+}
+.review-passage-bubble-header h2 {
+	margin: 0;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.5;
+	font-weight: 600;
+}
+.review-passage-bubble-messages {
+	overflow: auto;
+	scrollbar-gutter: stable;
+	padding: 0 12px 12px;
+	min-height: 0;
+}
+.review-passage-bubble-messages .review-message h3 {
+	margin: 0 0 4px;
+	font-size: calc(12px * var(--ui-scale));
+}
+.review-passage-bubble-messages section + section {
+	margin-top: 20px;
 }
 .review-table {
 	overflow: auto;
@@ -866,4 +929,94 @@ fieldset.review-intents {
 .review-companion-bottom:has(.review-feedback-status) {
 	max-height: 80%;
 	--review-feedback-minimum: 40px;
+}
+
+.review-canvas {
+	max-width: 680px;
+	margin: 0 auto;
+	font-size: calc(15px * var(--ui-scale));
+	line-height: 1.7;
+	user-select: text;
+	overflow-wrap: anywhere;
+}
+.review-canvas h1 {
+	font-size: calc(28px * var(--ui-scale));
+	line-height: 1.25;
+}
+.review-canvas h2 {
+	font-size: calc(21px * var(--ui-scale));
+	line-height: 1.35;
+}
+.review-canvas h3,
+.review-canvas h4,
+.review-canvas h5,
+.review-canvas h6 {
+	font-size: calc(17px * var(--ui-scale));
+	line-height: 1.4;
+}
+.review-canvas p {
+	margin: 12px 0;
+}
+.review-canvas label {
+	display: block;
+	margin-top: 12px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+.review-canvas input,
+.review-canvas textarea,
+.review-canvas select {
+	max-width: 100%;
+	box-sizing: border-box;
+	min-height: 28px;
+	padding: 4px 8px;
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-md, 6px);
+	background: var(--fill-subtle);
+	color: var(--text-0);
+	font: inherit;
+	font-size: calc(12px * var(--ui-scale));
+}
+.review-canvas textarea {
+	min-height: 64px;
+}
+.review-canvas input:focus,
+.review-canvas textarea:focus,
+.review-canvas select:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+.review-canvas button {
+	margin: 8px 0;
+}
+.document-review .sheet {
+	border-radius: var(--radius-lg, 8px);
+}
+.review-canvas-local-control {
+	display: grid;
+	gap: 4px;
+}
+.review-canvas-local-control > small {
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+}
+.review-archive > h2 {
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 600;
+	color: var(--text-1);
+}
+.review-archive > section {
+	margin: 16px 0 24px;
+}
+.review-archive summary {
+	cursor: pointer;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+.review-archive summary:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+.document-review ::highlight(helm-review-saved-annotations) {
+	background-color: color-mix(in srgb, var(--accent) 15%, transparent);
 }

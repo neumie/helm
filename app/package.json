@@ -6,15 +6,15 @@
 	"description": "Orchestrator cockpit for the helm daemon: native sidebar + real terminal",
 	"main": "dist/main.cjs",
 	"scripts": {
-		"build": "npm --prefix .. run build && node scripts/rebuild-native-window-zoom-guard.mjs && tsc --noEmit && node build.mjs",
+		"build": "npm --prefix .. run build && node scripts/rebuild-native-window-zoom-guard.mjs && node scripts/build-document-canvas.mjs && tsc --noEmit && node build.mjs",
 		"start": "bun run build && bun run brand-electron && electron .",
 		"rebuild": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force",
 		"rebuild-native-window-zoom": "node scripts/rebuild-native-window-zoom-guard.mjs --force",
 		"brand-electron": "node scripts/brand-macos-electron.mjs",
 		"attest:profile-switch": "node scripts/profile-switch-attestation.mjs --require-electron --require-dtach",
 		"postinstall": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force && node scripts/brand-macos-electron.mjs",
-		"storybook": "storybook dev -p 6006",
-		"storybook:build": "storybook build",
+		"storybook": "node scripts/build-document-canvas.mjs && storybook dev -p 6006",
+		"storybook:build": "node scripts/build-document-canvas.mjs && storybook build",
 		"playwright:install": "playwright install chromium",
 		"test:browser": "playwright test",
 		"test:browser:headed": "playwright test --headed"
@@ -23,7 +23,6 @@
 		"@blocknote/ariakit": "0.51.4",
 		"@blocknote/core": "0.51.4",
 		"@blocknote/react": "0.51.4",
-		"@fabrika/annotations": "0.2.0",
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-serialize": "^0.14.0",
 		"@xterm/addon-web-links": "^0.12.0",
@@ -31,7 +30,8 @@
 		"marked": "18.0.11",
 		"node-pty": "^1.1.0",
 		"react": "^19.2.7",
-		"react-dom": "^19.2.7"
+		"react-dom": "^19.2.7",
+		"react-reconciler": "0.33.0"
 	},
 	"devDependencies": {
 		"@electron/rebuild": "^4.1.0",
@@ -40,6 +40,7 @@
 		"@types/node": "^24.0.0",
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
+		"@types/react-reconciler": "0.32.3",
 		"electron": "^43.0.0",
 		"esbuild": "^0.28.1",
 		"storybook": "^10.5.0",

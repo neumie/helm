@@ -1369,7 +1369,7 @@ function buildMenu(): void {
 			label: 'File',
 			submenu: [
 				{
-					label: 'Open Markdown file…',
+					label: 'Open document…',
 					click: () => {
 						void documentReviewWindows.chooseFileFromMenu()
 					},
@@ -2704,6 +2704,8 @@ app.on('window-all-closed', () => {
 // snapshots are flushed by the window-close interception (the renderer still
 // holds every xterm buffer after the clients detach).
 let reviewQuitConfirmation: Promise<void> | null = null
+let reviewArchiveDrainedForQuit = false
+let reviewArchiveQuitDrain: Promise<void> | null = null
 app.on('before-quit', event => {
 	if (documentReviewWindows.busy()) {
 		event.preventDefault()
@@ -2720,8 +2722,18 @@ app.on('before-quit', event => {
 				})
 				.then(async response => {
 					if (response.response === 1) {
-						await documentReviewWindows.stopOwned()
-						app.quit()
+						try {
+							await documentReviewWindows.stopOwned()
+							reviewArchiveDrainedForQuit = true
+							app.quit()
+						} catch {
+							await dialog.showMessageBox({
+								type: 'warning',
+								message: 'Review content needs saving',
+								detail:
+									'Helm stayed open. Reopen the document and retry or explicitly discard its unsaved reply before quitting. The original conversation was not changed.',
+							})
+						}
 					}
 				})
 				.finally(() => {
@@ -2743,6 +2755,37 @@ app.on('before-quit', event => {
 		quitRequested = false
 		runContextWindows.requestCloseAll()
 		documentReviewWindows.requestCloseAll()
+		void documentReviewWindows.showArchiveRecovery().catch(async () => {
+			await dialog.showMessageBox({
+				type: 'warning',
+				message: 'Review recovery unavailable',
+				detail:
+					'Finish the local draft or close another review window, then retry quitting to open unsaved reply recovery.',
+			})
+		})
+		return
+	}
+	if (!reviewArchiveDrainedForQuit) {
+		event.preventDefault()
+		if (!reviewArchiveQuitDrain) {
+			reviewArchiveQuitDrain = documentReviewWindows
+				.stopOwned()
+				.then(() => {
+					reviewArchiveDrainedForQuit = true
+					app.quit()
+				})
+				.catch(async () => {
+					await dialog.showMessageBox({
+						type: 'warning',
+						message: 'Review content needs saving',
+						detail:
+							'Helm stayed open. Reopen the document and retry or explicitly discard its unsaved reply before quitting. The original conversation was not changed.',
+					})
+				})
+				.finally(() => {
+					reviewArchiveQuitDrain = null
+				})
+		}
 		return
 	}
 	if (!reviewControlStopped) {
