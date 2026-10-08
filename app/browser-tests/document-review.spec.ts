@@ -95,11 +95,269 @@ async function paintedText(page: Page) {
 	})
 }
 
+async function selectionPaint(page: Page) {
+	return page.evaluate(() => {
+		const highlight = CSS.highlights?.get('helm-review-selection')
+		return highlight ? [...highlight].map(range => range.toString()) : []
+	})
+}
+async function savedAnnotationPaint(page: Page) {
+	return page.evaluate(() => {
+		const highlight = CSS.highlights?.get('helm-review-saved-annotations')
+		return highlight ? [...highlight].map(range => range.toString()) : []
+	})
+}
+
+async function commentPaint(page: Page) {
+	return page.evaluate(() => {
+		const highlight = CSS.highlights?.get('helm-review-comment-passage')
+		return highlight ? [...highlight].map(range => range.toString()) : []
+	})
+}
+
+for (const story of ['passage-list', 'passage-list-light'])
+	for (const viewport of [
+		{ width: 1197, height: 807 },
+		{ width: 640, height: 520 },
+	])
+		test(`${story}: comment anchors to the actual list passage and highlights it at ${viewport.width}x${viewport.height}`, async ({
+			page,
+		}) => {
+			await page.setViewportSize(viewport)
+			await open(page, story)
+			const list = page.locator('.review-block-text ol')
+			const markers = page.getByRole('button', { name: 'Show passage conversation', exact: true })
+			await expect(markers).toHaveCount(2)
+			const expected = 'Jako provozák u jeřábníka uvedu jméno, telefon, nepovinný e-mail a národnost.'
+			const item = list.locator('li').nth(2)
+			await item.scrollIntoViewIfNeeded()
+			const before = await list.boundingBox()
+			const assertAligned = async () => {
+				await expect
+					.poll(async () => {
+						const rect = await item.evaluate(element => {
+							const range = document.createRange()
+							range.selectNodeContents(element)
+							const rect = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0).at(-1)
+							if (!rect) throw new Error('Missing selected list line')
+							return rect.toJSON()
+						})
+						const button = await markers.first().boundingBox()
+						if (!button) throw new Error('Missing passage marker')
+						return Math.abs(button.y + button.height / 2 - rect.y - rect.height / 2)
+					})
+					.toBeLessThan(4)
+			}
+			await assertAligned()
+			await markers.first().click()
+			const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
+			await expect(bubble).toContainText('Národnost? Proč národnost?')
+			await expect(bubble).not.toContainText(expected)
+			await expect(bubble.locator('blockquote')).toHaveCount(0)
+			await expect.poll(() => commentPaint(page)).toEqual([expected])
+			expect(await list.boundingBox()).toEqual(before)
+			const panel = await bubble.boundingBox()
+			const button = await markers.first().boundingBox()
+			if (!panel || !button) throw new Error('Missing passage bubble')
+			const gap =
+				panel.y >= button.y + button.height ? panel.y - button.y - button.height : button.y - panel.y - panel.height
+			expect(Math.abs(gap - 8)).toBeLessThan(2)
+			await page.screenshot({ path: `${evidence}/${story}-${viewport.width}x${viewport.height}-highlight.png` })
+			await page.keyboard.press('Escape')
+			await expect.poll(() => commentPaint(page)).toEqual([])
+			await expect(markers.first()).toBeFocused()
+			await page.setViewportSize({ width: viewport.width === 640 ? 720 : 1117, height: viewport.height })
+			await item.scrollIntoViewIfNeeded()
+			await assertAligned()
+			expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
+		})
+
+test('comment highlight is independent of an existing passage draft and only the open bubble owns paint', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page, 'passage-list')
+	const first = page.locator('.review-block-text li').first()
+	const firstQuote = await first.innerText()
+	await pointerExcerpt(page, first, firstQuote)
+	const editor = page.getByRole('textbox', { name: 'Passage instruction' })
+	await editor.fill('Keep this draft and scope')
+	const selectionBefore = await page.evaluate(() =>
+		[...(CSS.highlights.get('helm-review-selection') ?? [])].map(range => range.toString()),
+	)
+	const markers = page.getByRole('button', { name: 'Show passage conversation', exact: true })
+	await markers.first().click()
+	await expect
+		.poll(() => commentPaint(page))
+		.toEqual(['Jako provozák u jeřábníka uvedu jméno, telefon, nepovinný e-mail a národnost.'])
+	await expect(editor).toHaveValue('Keep this draft and scope')
+	expect(
+		await page.evaluate(() => [...(CSS.highlights.get('helm-review-selection') ?? [])].map(range => range.toString())),
+	).toEqual(selectionBefore)
+	// Auto-popover replacement must not let the prior toggle clear the newer highlight.
+	await markers.nth(1).focus()
+	await page.keyboard.press('Enter')
+	await expect.poll(() => commentPaint(page)).toEqual(['Jako provozák při střídání ukončím staré přiřazení'])
+	await expect(page.getByRole('dialog', { name: 'Passage conversation' })).toContainText('Jak probíhá střídání?')
+	await page.evaluate(() => window.__helmDocumentReviewProof?.replaceApi())
+	await expect.poll(() => commentPaint(page)).toEqual([])
+	await markers.first().click()
+	await expect.poll(() => commentPaint(page)).not.toEqual([])
+	await page.evaluate(() => window.__helmDocumentReviewProof?.edit())
+	await expect.poll(() => commentPaint(page)).toEqual([])
+	await expect(markers).toHaveCount(0)
+	await expect(editor).toHaveValue('Keep this draft and scope')
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
+})
+
+test('display passage ranges reject ambiguous text and budgets while preserving formatting, breaks and Unicode', async ({
+	page,
+}) => {
+	await open(page)
+	const result = await page.evaluate(async url => {
+		const { locatePassageDisplayRanges } = await import(url)
+		const root = document.createElement('div')
+		root.style.position = 'fixed'
+		root.style.top = '-10000px'
+		document.body.append(root)
+		try {
+			root.innerHTML = '<p>First <strong>line.</strong><br>Second line. 🌿</p>'
+			const formatted = locatePassageDisplayRanges(root, ['First line.\nSecond line. 🌿', 'Second line. 🌿']).map(
+				(range: Range | null) => range?.toString() ?? null,
+			)
+			root.textContent = 'Same text. Same text. Unicode 🐝 and [a-z]*; two  spaces.'
+			const exact = locatePassageDisplayRanges(root, [
+				'Same text.',
+				'Missing',
+				'Unicode 🐝 and [a-z]*',
+				'two  spaces.',
+				'two spaces.',
+			]).map((range: Range | null) => range?.toString() ?? null)
+			root.textContent = 'x'.repeat(512 * 1024 + 1)
+			const bounded = locatePassageDisplayRanges(root, ['x']).map((range: Range | null) => range?.toString() ?? null)
+			return { formatted, exact, bounded }
+		} finally {
+			root.remove()
+		}
+	}, '/src/renderer/document-review/passage-anchor.ts')
+	expect(result).toEqual({
+		formatted: ['First line.Second line. 🌿', 'Second line. 🌿'],
+		exact: [null, null, 'Unicode 🐝 and [a-z]*', 'two  spaces.', null],
+		bounded: [null],
+	})
+})
+
+for (const story of ['passage-conversations', 'passage-conversations-light'])
+	for (const viewport of [
+		{ width: 1197, height: 807 },
+		{ width: 640, height: 520 },
+	])
+		test(`${story}: passage bubble stays bounded and read-only at ${viewport.width}x${viewport.height}`, async ({
+			page,
+		}) => {
+			await page.setViewportSize(viewport)
+			await open(page, story)
+			const block = page.locator('.review-block').filter({ hasText: 'The selected owner must remain exact.' }).first()
+			const marker = block.getByRole('button', { name: 'Show passage conversation', exact: true })
+			await marker.scrollIntoViewIfNeeded()
+			const before = await block.locator('.review-block-text').boundingBox()
+			await marker.focus()
+			await page.keyboard.press('Enter')
+			const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
+			await expect(bubble).toBeVisible()
+			await expect(bubble).toContainText('Why do we retain the exact owner?')
+			await expect(bubble).toContainText('It keeps feedback in the original conversation.')
+			await expect(bubble).not.toContainText('What does reading-first mean?')
+			await expect(bubble).not.toContainText('Let’s refine the dispatch contract.')
+			await expect(bubble.getByRole('textbox')).toHaveCount(0)
+			await expect(bubble.locator('blockquote')).toHaveCount(0)
+			await expect.poll(() => commentPaint(page)).toEqual(['The selected owner must remain exact.'])
+			await expect(bubble).toHaveCSS('border-radius', '8px')
+			await page.keyboard.press('Tab')
+			await expect(page.getByRole('button', { name: 'Close passage conversation' })).toBeFocused()
+			await page.keyboard.press('Tab')
+			await expect(bubble.getByRole('region', { name: 'Passage messages' })).toBeFocused()
+			expect(await block.locator('.review-block-text').boundingBox()).toEqual(before)
+			const bounds = await bubble.boundingBox()
+			const reading = await page.locator('.review-reading').boundingBox()
+			if (!bounds || !reading) throw new Error('Missing bubble bounds')
+			expect(bounds.x).toBeGreaterThanOrEqual(reading.x)
+			expect(bounds.x + bounds.width).toBeLessThanOrEqual(reading.x + reading.width)
+			expect(bounds.y).toBeGreaterThanOrEqual(reading.y)
+			expect(bounds.y + bounds.height).toBeLessThanOrEqual(reading.y + reading.height)
+			await page.screenshot({ path: `${evidence}/${story}-${viewport.width}x${viewport.height}-bubble.png` })
+			await page.keyboard.press('Escape')
+			await expect(bubble).toHaveCount(0)
+			await expect.poll(() => commentPaint(page)).toEqual([])
+			await expect(marker).toBeFocused()
+			await marker.click()
+			await page.getByRole('button', { name: 'Close passage conversation' }).click()
+			await expect(marker).toBeFocused()
+			await marker.click()
+			if (viewport.width > 900) {
+				const editor = page.getByRole('textbox', { name: 'Whole-document message' })
+				await editor.click()
+				await expect(editor).toBeFocused()
+			} else await page.getByRole('button', { name: 'Contents', exact: true }).click()
+			await expect(bubble).toHaveCount(0)
+			expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
+		})
+
+test('sending a passage question adds its bubble and live reply without normal delivery notices', async ({ page }) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page)
+	await expect(page.getByRole('button', { name: 'Show passage conversation' })).toHaveCount(0)
+	await pointerSelect(page)
+	const editor = page.getByRole('textbox', { name: 'Passage instruction' })
+	await editor.fill('Why this specific passage?')
+	await page.getByRole('button', { name: 'Send passage discussion' }).click()
+	await expect(page.getByRole('region', { name: 'Delivery and recovery' })).toHaveCount(0)
+	await expect(page.getByText('Dispatched', { exact: true })).toHaveCount(0)
+	const marker = page.getByRole('button', { name: 'Show passage conversation', exact: true })
+	await marker.click()
+	const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
+	await expect(bubble).toContainText('Why this specific passage?')
+	await expect(bubble).not.toContainText('The source locator should identify')
+	await page.evaluate(() => window.__helmDocumentReviewProof?.settle())
+	await expect(bubble).toContainText('This is a fixture reply to the chosen request.')
+	await expect(page.locator('.review-chat')).toContainText('Why this specific passage?')
+	await expect(page.locator('.review-chat')).toContainText('This is a fixture reply to the chosen request.')
+	await expect(editor).toHaveValue('')
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(1)
+	// Bubble text selection is copy-only, never a new passage/editor action.
+	await pointerExcerpt(page, bubble.locator('.review-message-user div'), 'Why this specific passage?')
+	await expect(editor).toHaveValue('')
+	await expect(editor).not.toBeFocused()
+	await page.evaluate(() => window.__helmDocumentReviewProof?.edit())
+	await expect(bubble).toHaveCount(0)
+	await expect(marker).toHaveCount(0)
+	await expect(page.locator('.review-chat')).toContainText('Why this specific passage?')
+})
+
+test('owner and API replacement retire an open passage bubble without reopening or sending', async ({ page }) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page, 'passage-conversations')
+	const marker = page.getByRole('button', { name: 'Show passage conversation' }).first()
+	await marker.click()
+	const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
+	await expect(bubble).toBeVisible()
+	await page.evaluate(() => window.__helmDocumentReviewProof?.replaceApi())
+	await expect(bubble).toHaveCount(0)
+	await marker.click()
+	await expect(bubble).toBeVisible()
+	await page.evaluate(() => window.__helmDocumentReviewProof?.replaceOwner())
+	await expect(bubble).toHaveCount(0)
+	await expect(page.getByRole('button', { name: 'Show passage conversation' })).toHaveCount(0)
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
+})
+
 test('writing-first pointer selection receives first keyboard character with no intent gate', async ({ page }) => {
 	await page.setViewportSize({ width: 1197, height: 807 })
 	await open(page)
 	const editor = page.locator('textarea')
-	await editor.evaluate(element => Object.assign(window, { __reviewOriginalEditor: element }))
+	await editor.evaluate(element => {
+		Object.assign(window, { __reviewOriginalEditor: element })
+	})
 	await pointerSelect(page)
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().saved)).toBe(0)
@@ -121,7 +379,9 @@ test('routine pointer re-selection updates typed passage immediately without Use
 	)
 	expect(annotations).toEqual([])
 	const editor = page.locator('textarea')
-	await editor.evaluate(element => Object.assign(window, { __reviewOriginalEditor: element }))
+	await editor.evaluate(element => {
+		Object.assign(window, { __reviewOriginalEditor: element })
+	})
 	const first = 'The selected owner must remain exact.'
 	await pointerExcerpt(page, page.locator('.review-block-text p').filter({ hasText: first }).first(), first)
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
@@ -727,11 +987,14 @@ test('local save stays in writing and repeat save updates same comment', async (
 	await chooseIntent(page, 'change')
 	const editor = page.getByRole('textbox', { name: 'Passage instruction' })
 	await editor.fill('First local thought')
-	await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
+	await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
+	await expect.poll(() => savedAnnotationPaint(page)).toEqual([])
 	await (await commentAction(page)).click()
 	await expect(page.getByText('Saved locally · not sent', { exact: true })).toBeVisible()
 	await expect(editor).toHaveValue('First local thought')
-	await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
+	await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
+	await expect.poll(() => savedAnnotationPaint(page)).toEqual([selectedParagraphQuote])
+	await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote, selectedParagraphQuote])
 	const firstSaved = await page.evaluate(
 		async () => (await window.__helmDocumentReviewProof?.api.load())?.data?.draft.annotations[0],
 	)
@@ -765,7 +1028,10 @@ test('failed local save never claims saved and retry preserves one comment', asy
 		Reflect.set(window, '__restoreCommentSave', () => {
 			api.save = original
 		})
-		api.save = async () => ({ error: 'Fixture local comment save refused.' })
+		api.save = async value => {
+			Reflect.set(window, '__failedCommentPayload', structuredClone(value))
+			return { error: 'Fixture local comment save refused.' }
+		}
 	})
 	await (await commentAction(page)).click()
 	await expect(page.getByText('Comment not saved. Retry save.', { exact: true })).toBeVisible()
@@ -777,12 +1043,16 @@ test('failed local save never claims saved and retry preserves one comment', asy
 		if (!api) throw new Error('Missing fixture')
 		const original = api.save
 		api.save = async value => {
+			Reflect.set(window, '__retryCommentPayload', structuredClone(value))
 			await new Promise<void>(resolve => Reflect.set(window, '__releaseRetrySave', resolve))
 			api.save = original
 			return original(value)
 		}
 	})
-	await page.getByRole('button', { name: 'Retry save', exact: true }).click()
+	await page.getByRole('button', { name: 'Retry comment save', exact: true }).click()
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, '__retryCommentPayload')))
+		.toEqual(await page.evaluate(() => Reflect.get(window, '__failedCommentPayload')))
 	await expect(page.getByText('Saved locally · not sent', { exact: true })).toHaveCount(0)
 	await page.evaluate(() => (Reflect.get(window, '__releaseRetrySave') as () => void)())
 	await expect(page.getByText('Saved locally · not sent', { exact: true })).toBeVisible()
@@ -857,6 +1127,11 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 			if (!api) throw new Error('Missing fixture')
 			const original = api.save
 			api.save = async value => {
+				// Preference autosave is not admission of the explicit annotation effect.
+				if (!Object.hasOwn(value, 'archiveRevision')) return original(value)
+				const admitted = Reflect.get(window, '__admittedCommentSaves') ?? []
+				admitted.push(structuredClone(value))
+				Reflect.set(window, '__admittedCommentSaves', admitted)
 				await new Promise<void>(resolve => Reflect.set(window, '__releaseCommentSave', resolve))
 				api.save = original
 				return original(value)
@@ -868,15 +1143,34 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 			element.click()
 		})
 		await expect(page.getByText('Saving local comment…', { exact: true })).toBeVisible()
+		await expect.poll(() => page.evaluate(() => Reflect.get(window, '__admittedCommentSaves')?.length ?? 0)).toBe(1)
+		const admitted = await page.evaluate(async () => ({
+			payload: Reflect.get(window, '__admittedCommentSaves')[0],
+			state: (await window.__helmDocumentReviewProof?.api.load())?.data,
+		}))
+		expect(admitted.payload.archiveRevision).toBeNull()
+		expect(admitted.payload.instruction).toBe('Original saved comment')
+		expect(admitted.payload.annotations).toHaveLength(1)
+		const annotation = admitted.payload.annotations[0]
+		expect(annotation.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+		expect(annotation).toMatchObject({ note: 'Original saved comment', intent: 'discuss', resolved: false })
+		expect(annotation.passage).toMatchObject({
+			quote: selectedParagraphQuote,
+			revision: admitted.state?.document.revision,
+			kind: 'block',
+		})
+		expect(annotation.passage.source).toBe(
+			admitted.state?.document.text.slice(annotation.passage.start, annotation.passage.end),
+		)
 		await expect(await commentAction(page, true)).toBeDisabled()
 		await expect(page.getByRole('menuitem', { name: /^Clear passage(?: |$)/ })).toBeDisabled()
 		await page.keyboard.press('Escape')
 		if (interruption === 'none') {
-			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
 			const next = 'Read the actual document, refine a passage'
 			await pointerExcerpt(page, page.locator('.review-block-text p').filter({ hasText: next }).first(), next)
 			await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeDisabled()
-			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
 			await expect(editor).toHaveValue('Original saved comment')
 		}
 		if (interruption === 'newer edit') await editor.fill('A newer unsaved thought')
@@ -890,7 +1184,9 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 			.toBe(1)
 		if (interruption === 'none') {
 			await expect(page.getByText('Saved locally · not sent', { exact: true })).toBeVisible()
-			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => savedAnnotationPaint(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote, selectedParagraphQuote])
 		} else {
 			await expect(page.getByText('Saved locally · not sent', { exact: true })).toHaveCount(0)
 			await expect(editor).toHaveValue(
@@ -901,6 +1197,72 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 		await expect(page.locator('.review-comment')).toHaveCount(1)
 		if (interruption === 'none')
 			await expect(page.locator('.review-comment blockquote')).toHaveText(selectedParagraphQuote)
+		expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
+	})
+
+for (const interruption of ['owner replacement', 'API replacement'])
+	test(`queued local comment behind held preference refuses ${interruption} without dispatch`, async ({ page }) => {
+		await open(page)
+		await pointerSelect(page)
+		const editor = page.getByRole('textbox', { name: 'Passage instruction' })
+		await page.evaluate(() => {
+			const api = window.__helmDocumentReviewProof?.api
+			if (!api) throw new Error('Missing fixture')
+			const original = api.save
+			const calls: unknown[] = []
+			Reflect.set(window, '__queuedCommentSaveCalls', calls)
+			api.save = async value => {
+				calls.push(structuredClone(value))
+				if (Object.hasOwn(value, 'archiveRevision')) return original(value)
+				Reflect.set(window, '__heldPreferencePayload', structuredClone(value))
+				await new Promise<void>(resolve => Reflect.set(window, '__releasePreferenceSave', resolve))
+				const result = await original(value)
+				Reflect.set(window, '__preferenceSaveSettled', result)
+				return result
+			}
+		})
+		await editor.fill('Queued unsent comment')
+		await expect
+			.poll(() => page.evaluate(() => Reflect.get(window, '__heldPreferencePayload')))
+			.toMatchObject({ instruction: 'Queued unsent comment', annotations: [] })
+		expect(
+			await page.evaluate(() => Object.hasOwn(Reflect.get(window, '__heldPreferencePayload'), 'archiveRevision')),
+		).toBe(false)
+		const action = await commentAction(page)
+		await action.evaluate(element => {
+			if (!(element instanceof HTMLElement)) throw new Error('Missing native comment menu action')
+			element.click()
+			element.click()
+		})
+		await expect(page.getByText('Saving local comment…', { exact: true })).toBeVisible()
+		expect(await page.evaluate(() => Reflect.get(window, '__queuedCommentSaveCalls').length)).toBe(1)
+		await expect(await commentAction(page, true)).toBeDisabled()
+		await page.keyboard.press('Escape')
+		if (interruption === 'owner replacement') await proof(page, 'replaceOwner')
+		else await page.evaluate(() => window.__helmDocumentReviewProof?.replaceApi())
+		await page.evaluate(() => (Reflect.get(window, '__releasePreferenceSave') as () => void)())
+		await expect.poll(() => page.evaluate(() => Reflect.get(window, '__preferenceSaveSettled'))).toEqual({ data: true })
+		await expect(page.getByRole('alert')).toContainText(
+			'This unsaved comment belongs to an earlier document or conversation. Discard it deliberately; nothing was moved.',
+		)
+		await expect(page.getByText('Saved locally · not sent', { exact: true })).toHaveCount(0)
+		await expect(editor).toHaveValue('Queued unsent comment')
+		expect(
+			await page.evaluate(async () => (await window.__helmDocumentReviewProof?.api.load())?.data?.draft.annotations),
+		).toEqual([])
+		await documentView(page, 'Comments')
+		await expect(page.locator('.review-comment')).toHaveCount(1)
+		await expect(page.locator('.review-comment')).toContainText('Queued unsent comment')
+		await expect(page.locator('.review-comment blockquote')).toHaveText(selectedParagraphQuote)
+		expect(
+			await page.evaluate(() =>
+				Reflect.get(window, '__queuedCommentSaveCalls').every(
+					(value: { annotations: unknown[]; archiveRevision?: string | null }) =>
+						value.annotations.length === 0 && !Object.hasOwn(value, 'archiveRevision'),
+				),
+			),
+		).toBe(true)
+		expect(await page.evaluate(() => Reflect.get(window, '__queuedCommentSaveCalls').length)).toBe(1)
 		expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
 	})
 
@@ -1307,7 +1669,9 @@ test('ordinary clicks, programmatic selection and invalid oversized source never
 		window.getSelection()?.setBaseAndExtent(node, 0, node, 8001)
 	})
 	await reading.dispatchEvent('keyup', { key: 'Shift' })
-	await expect(page.getByRole('alert')).toContainText('Select a smaller passage')
+	await expect(page.getByRole('alert')).toContainText(
+		'Select one source block, up to 8,000 characters. Source offers exact selection.',
+	)
 	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toBeVisible()
 	await expect(reading).toBeFocused()
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
@@ -1431,19 +1795,41 @@ test('comments edit, resolve, orphan, explicitly re-anchor, and delete without p
 	await page.getByRole('textbox', { name: 'Passage instruction' }).fill('A saved annotation note.')
 	await saveLocalComment(page)
 	await expect(page.locator('.review-comment')).toContainText('A saved annotation note.')
+	const original = await page.evaluate(
+		async () => (await window.__helmDocumentReviewProof?.api.load())?.data?.draft.annotations[0],
+	)
 	await page.getByRole('button', { name: 'Edit / send feedback', exact: true }).click()
 	await page.getByRole('textbox', { name: 'Passage instruction' }).fill('Edited annotation note.')
 	await saveLocalComment(page, true)
 	await page.getByRole('button', { name: 'Resolve', exact: true }).click()
 	await expect(page.locator('.review-comment-meta')).toContainText('Resolved')
+	await expect
+		.poll(() =>
+			page.evaluate(async () => {
+				const saved = (await window.__helmDocumentReviewProof?.api.load())?.data?.draft.annotations[0]
+				return saved ? { id: saved.id, intent: saved.intent, resolved: saved.resolved } : null
+			}),
+		)
+		.toEqual({ id: original?.id, intent: original?.intent, resolved: true })
+	await expect(page.getByRole('button', { name: 'Reopen', exact: true })).toBeEnabled()
+	await expect(page.getByText('Saving local comment…', { exact: true })).toHaveCount(0)
 	await proof(page, 'edit')
 	await expect(page.locator('.review-comment-meta')).toContainText('Anchor changed')
 	await page.getByRole('button', { name: 'Re-anchor', exact: true }).click()
 	await expect(page.getByText('Choose a current passage to re-anchor your comment.', { exact: false })).toBeVisible()
 	await selectPassage(page)
+	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeEnabled()
+	await page.getByRole('button', { name: 'Use selection', exact: true }).click()
 	await chooseIntent(page, 'discuss')
 	await saveLocalComment(page, true)
 	await expect(page.locator('.review-comment-meta')).toContainText('Current source')
+	const reanchored = await page.evaluate(async () => (await window.__helmDocumentReviewProof?.api.load())?.data)
+	expect(reanchored?.draft.annotations[0]?.id).toBe(original?.id)
+	expect(reanchored?.draft.annotations[0]?.intent).toBe(original?.intent)
+	expect(reanchored?.draft.annotations[0]?.resolved).toBe(true)
+	expect(reanchored?.draft.annotations[0]?.passage.quote).toBe(selectedParagraphQuote)
+	expect(reanchored?.draft.annotations[0]?.passage.revision).toBe(reanchored?.document.revision)
+	expect(reanchored?.draft.annotations[0]?.passage.revision).not.toBe(original?.passage.revision)
 	await page.screenshot({ path: `${evidence}/wide-dark-comment-lifecycle.png` })
 	await page.getByRole('button', { name: 'Delete', exact: true }).click()
 	await expect(page.locator('.review-comment')).toHaveCount(0)
@@ -2131,7 +2517,8 @@ for (const story of ['reading', 'light'])
 		await input.fill('An uncertain request.')
 		const send = page.getByRole('button', { name: 'Send passage discussion', exact: true })
 		await send.click()
-		await expect(page.getByText('Dispatched', { exact: true })).toBeVisible()
+		await expect(page.getByText('Dispatched', { exact: true })).toHaveCount(0)
+		await expect(page.getByRole('region', { name: 'Delivery and recovery' })).toHaveCount(0)
 		await proof(page, 'settle', true)
 		await expect(page.getByText('Outcome not confirmed', { exact: true })).toBeVisible()
 		await input.fill('Long retained local draft.\n'.repeat(100))

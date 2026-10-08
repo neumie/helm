@@ -9,12 +9,12 @@ import type { ReviewFeedback, ReviewProvider } from '../document-review/types.js
 
 export const REVIEW_HELP = `Usage: helm review <command> [options]
 
-Use Helm's Markdown UI from an ALREADY RUNNING Claude Code, Codex, or Pi session.
+Use Helm's document UI from an ALREADY RUNNING Claude Code, Codex, or Pi session.
 Helm never launches or resumes an agent. Run these commands as that agent's tools.
 
 Commands:
   connect    Enroll a caller; prints its private connection-file handle
-  open FILE  Open Markdown in the desktop; optionally connect and wait
+  open FILE  Open Markdown or JSX in the desktop; optionally connect and wait
   wait       Listen until one feedback request arrives (alias: next)
   reply ID   Report an answer/completion for the received feedback UUID
   status     Inspect a connection, or desktop availability without --connection
@@ -176,7 +176,7 @@ export async function runReviewCli(args: string[]): Promise<void> {
 	try {
 		let opened: z.infer<typeof openedSchema> | undefined
 		if (action === 'open') {
-			if (!argument) throw new Error('open requires a Markdown file.')
+			if (!argument) throw new Error('open requires a Markdown or JSX file.')
 			opened = await callReview(authority, { action: 'open', file: resolve(argument) }, openedSchema, controller.signal)
 			if (!options.has('--wait')) {
 				await output({ connection: connectionFile, ...opened })

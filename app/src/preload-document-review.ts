@@ -21,6 +21,7 @@ const api: ReviewApi = {
 	save: draft => invoke('document-review:save', draft),
 	receipt: id => invoke('document-review:receipt', id),
 	retryDocument: () => invoke('document-review:retry'),
+	discardArchive: failureId => invoke('document-review:discard-archive', failureId),
 	dirty: value => ipcRenderer.send('document-review:dirty', token, value),
 	onCloseRequested: listener => subscribe('document-review:close-requested', listener),
 	onChanged: listener => subscribe('document-review:changed', listener),

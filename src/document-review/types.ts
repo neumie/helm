@@ -1,3 +1,6 @@
+import type { CanvasFieldValue, CanvasReviewArchive, ReviewCanvasCompilation } from './canvas-types.js'
+export type * from './canvas-types.js'
+
 /** Review is a surface of an already-running caller, never an agent launcher. */
 export type ReviewProvider = 'claude' | 'codex' | 'pi'
 export type ReviewIntent = 'discuss' | 'change'
@@ -17,6 +20,8 @@ export interface ReviewPassage {
 	source: string
 	quote: string
 	kind: 'exact' | 'block'
+	/** Display locator for a compiler-attested JSX block; never an invented text offset. */
+	canvasId?: string
 }
 export interface ReviewDocument {
 	id: string
@@ -26,6 +31,9 @@ export interface ReviewDocument {
 	text: string
 	previous: string | null
 	error: string | null
+	format?: 'markdown' | 'jsx'
+	canvas?: ReviewCanvasCompilation
+	archive?: CanvasReviewArchive
 }
 export interface ReviewAnnotation {
 	id: string
@@ -40,11 +48,17 @@ export interface ReviewDraft {
 	sessionId: string | null
 	paneWidth: number
 	theme: 'dark' | 'light'
+	/** Optimistic metadata fence, not a persisted caller binding. */
+	archiveRevision?: string | null
 }
 export interface ReviewMessage {
 	id: string
 	role: 'user' | 'assistant' | 'activity'
 	text: string
+	/** Display-only source association on an admitted passage question. Never command authority. */
+	passageContext?: { documentId: string; passage: ReviewPassage }
+	/** Display-only link to an embedded thread; never caller or command authority. */
+	archiveThreadId?: string
 }
 export interface ReviewSession {
 	id: string
@@ -70,6 +84,8 @@ export interface ReviewRequest {
 	intent: ReviewIntent
 	instruction: string
 	passage: ReviewPassage | null
+	/** Explicit, bounded public document fields; JSX only. Never password/file inputs. */
+	canvasFields?: CanvasFieldValue[]
 }
 export interface ReviewReceipt {
 	id: string
@@ -80,6 +96,9 @@ export interface ReviewState {
 	document: ReviewDocument
 	sessions: ReviewSession[]
 	draft: ReviewDraft
+	/** Saving review content failed; retryDocument retries persistence, never dispatch. */
+	archiveError?: string | null
+	archiveFailureId?: string | null
 }
 export type ReviewResult<T> = { data: T; error?: never } | { error: string; data?: never }
 export interface ReviewApi {
@@ -91,6 +110,7 @@ export interface ReviewApi {
 	acknowledge(sessionId: string, owner: string): Promise<ReviewResult<boolean>>
 	receipt(id: string): Promise<ReviewResult<ReviewReceipt | null>>
 	retryDocument(): Promise<ReviewResult<boolean>>
+	discardArchive?(failureId: string): Promise<ReviewResult<boolean>>
 	dirty(value: boolean): void
 	onCloseRequested(listener: () => void): () => void
 	onChanged(listener: () => void): () => void

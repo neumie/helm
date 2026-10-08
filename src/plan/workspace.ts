@@ -111,11 +111,11 @@ export class PlanWorkspace {
 	get dir(): string {
 		return join(this.worktreePath, this.rel.dir)
 	}
-	/** Native review may open only public user-authored plan Markdown. */
+	/** Native review may open only public user-authored plan documents. */
 	reviewArtifactPath(name: string): string {
 		if (
 			name.length > 200 ||
-			!/^[a-zA-Z0-9][a-zA-Z0-9._ -]*\.md$/i.test(name) ||
+			!/^[a-zA-Z0-9][a-zA-Z0-9._ -]*\.(md|jsx|tsx)$/i.test(name) ||
 			['context.md', 'readme.md'].includes(name.toLowerCase())
 		)
 			throw new Error('Not a public plan document')

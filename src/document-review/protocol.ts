@@ -96,8 +96,13 @@ export const sessionSchema = z
 				z
 					.object({
 						id: z.string().max(160),
+						archiveThreadId: uuid.optional(),
 						role: z.enum(['user', 'assistant', 'activity']),
 						text: z.string().max(64000),
+						passageContext: z
+							.object({ documentId: uuid, passage: reviewRequestSchema.shape.passage.unwrap() })
+							.strict()
+							.optional(),
 					})
 					.strict(),
 			)

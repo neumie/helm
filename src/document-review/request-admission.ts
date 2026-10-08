@@ -10,6 +10,7 @@ const passage = z
 		source: z.string().max(REVIEW_PASSAGE_UNITS),
 		quote: z.string().max(REVIEW_PASSAGE_UNITS),
 		kind: z.enum(['exact', 'block']),
+		canvasId: z.string().min(1).max(80).optional(),
 	})
 	.strict()
 export const reviewRequestSchema = z
@@ -29,6 +30,15 @@ export const reviewRequestSchema = z
 			.max(REVIEW_INSTRUCTION_UNITS)
 			.refine(value => value.trim().length > 0),
 		passage: passage.nullable(),
+		canvasFields: z
+			.array(z.object({ id: z.string().min(1).max(80), value: z.union([z.string().max(4000), z.boolean()]) }).strict())
+			.max(16)
+			.refine(
+				fields =>
+					new Set(fields.map(field => field.id)).size === fields.length &&
+					fields.reduce((n, field) => n + (typeof field.value === 'string' ? field.value.length : 0), 0) <= 16384,
+			)
+			.optional(),
 	})
 	.strict()
 export function parseReviewRequest(value: unknown): ReviewRequest {
