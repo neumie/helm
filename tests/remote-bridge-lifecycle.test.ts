@@ -173,6 +173,7 @@ async function bridgeHarness(input: {
 			commands.set(name, command.handler)
 		},
 		getSessionName: () => 'Lifecycle Pi',
+		getThinkingLevel: () => 'off',
 		sendUserMessage(content: unknown, options: unknown) {
 			effects++
 			sentMessages.push({ content, options })
