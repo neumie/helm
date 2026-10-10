@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useEffect, useMemo, useState } from 'react'
+import { StrictMode, useEffect, useMemo, useState } from 'react'
 import type { ReviewApi } from '../../document-review/types'
 import './document-review.css'
 import '../styles.css'
@@ -69,6 +69,43 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 export const Reading: Story = {}
+export const NativeEntryLifecycle: Story = {
+	render: () => (
+		<StrictMode>
+			<ReviewFixture scenario="not-listening" />
+		</StrictMode>
+	),
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Exercises the desktop entry’s StrictMode lifecycle with a paused display caller. Effect-owned popover cleanup must not dismiss passage writing; real Close/Escape/outside dismissal still preserves the draft. The built-entry browser gate separately loads the actual compiled renderer and native CSP with fixture preload IO, not Electron or live-caller certification.',
+			},
+		},
+	},
+}
+export const CliEditing: Story = {
+	args: { scenario: 'cli' },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'helm edit FILE opens and listens without provider flags. An unspecified caller displays Agent honestly; no provider identity is inferred. This is a display fixture, not CLI or installed-agent delivery certification.',
+			},
+		},
+	},
+}
+export const MultipleConnectedAgents: Story = {
+	args: { scenario: 'multiple-callers' },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'The conversation that opened this document owns its feedback. Other connected callers never add a picker or change that binding. This is a display fixture, not native caller admission certification.',
+			},
+		},
+	},
+}
 export const LegacyProjectedNotes: Story = { render: () => <LegacyProjectionFixture /> }
 export const InteractiveCanvas: Story = { render: () => <CanvasReviewFixture scenario="interactive" /> }
 export const InteractiveCanvasLight: Story = { render: () => <CanvasReviewFixture scenario="light" /> }
@@ -113,7 +150,7 @@ export const WritingFirst: Story = {
 		docs: {
 			description: {
 				story:
-					'Drag a passage and type immediately in the existing companion editor. Re-selecting updates the passage while preserving your words and intent. The document highlight supplies context; the exact quote stays attached internally. Ask is the initial default; choose Request change from its checked menu. Writing options opens beside its dots trigger; local comment save stays secondary. Return to document preserves the passage draft. Saved comment associations and re-anchor require explicit acceptance; active operations block scope changes. Keyboard selection stays in the document until Alt+Enter. No per-block controls interrupt prose.',
+					'Drag a passage to open and focus its anchored editable chat bubble. The companion always discusses the whole document. Re-selecting preserves passage writing without copying the whole-document draft. The document highlight supplies context; the exact quote stays attached internally. Ask is the initial default; choose Request change from its checked menu. Writing options opens beside its dots trigger; local comment save stays secondary. Return to document preserves the passage draft. Saved comment associations and re-anchor require explicit acceptance; active operations block scope changes. Keyboard selection stays in the document until Alt+Enter. No per-block controls interrupt prose.',
 			},
 		},
 	},
@@ -124,12 +161,24 @@ export const PassageConversations: Story = {
 		docs: {
 			description: {
 				story:
-					'Admitted passage questions have a margin comment icon. Its read-only bubble highlights the actual passage in the document and shows only its questions and replies, without repeating the quote; the main conversation remains intact. Revisions and owner changes retire the bubble without relocating it.',
+					'Admitted passage questions have a margin comment icon. Its bubble opens passage writing and shows only its questions and replies, without repeating the quote. Whole-document messages stay in the companion; busy callers can draft locally while Send and local Save remain disabled. Revisions and owner changes retire the bubble without relocating it.',
 			},
 		},
 	},
 }
 export const PassageConversationsLight: Story = { args: { scenario: 'passage-threads-light' } }
+export const PassageLongReply: Story = {
+	args: { scenario: 'passage-threads-long' },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Open a margin comment to read a long reply in the responsive 560px passage bubble. Its height grows up to 640px, leaving the writing row visible while replies scroll independently. Empty writing stays compact; resizing never changes scope, drafts or focus. Display-only fixture, not native delivery proof.',
+			},
+		},
+	},
+}
+export const PassageLongReplyLight: Story = { args: { scenario: 'passage-threads-long-light' } }
 export const PassageList: Story = {
 	args: { scenario: 'passage-list' },
 	parameters: {
@@ -168,7 +217,7 @@ export const PassageFeedback: Story = {
 		docs: {
 			description: {
 				story:
-					'Select text to open passage writing. Pointer selection focuses the same editor; keyboard selection stays extendable until Alt+Enter. No per-block Review control or automatic fixture admission.',
+					'Select text to open passage writing. Pointer selection opens and focuses passage writing in a nonmodal bubble, not the companion. Its draft survives dismissal; whole-document writing remains separate. Keyboard selection stays extendable until Alt+Enter. No per-block Review control or automatic fixture admission.',
 			},
 		},
 	},

@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path'
 import { after, test } from 'node:test'
 import { promisify } from 'node:util'
 import persistenceModule from '../app/src/document-review/canvas-persistence'
+import type { createReviewControl as NativeControlFactory } from '../app/src/document-review/control'
 import draftModule from '../app/src/document-review/drafts'
 import requestModule from '../app/src/document-review/request'
 import admissionModule from '../app/src/document-review/request-admission'
@@ -289,6 +290,7 @@ interface FixtureBundlePlugin {
 }
 interface NativeFixtureModule {
 	DocumentReviewWindows: typeof ReviewWindowsType
+	createReviewControl: typeof NativeControlFactory
 	parseReviewArtifact(raw: string, format: 'markdown' | 'jsx'): { body: string; archive: CanvasReviewArchive }
 	appendReviewArtifact(
 		root: string,
@@ -373,7 +375,7 @@ async function loadNativeFixture() {
 	await esbuild.build({
 		stdin: {
 			contents:
-				"export { DocumentReviewWindows } from './window'; export { appendReviewArtifact, parseReviewArtifact } from './canvas-artifact';",
+				"export { DocumentReviewWindows } from './window'; export { createReviewControl } from './control'; export { appendReviewArtifact, parseReviewArtifact } from './canvas-artifact';",
 			resolveDir: nativeDir,
 			sourcefile: 'native-correction-fixture.ts',
 			loader: 'ts',
@@ -534,6 +536,159 @@ async function archiveSettled(f: Awaited<ReturnType<typeof nativeFixture>>, stat
 	}
 	throw new Error(`Expected archived ${state}`)
 }
+
+test('the actual native control route releases a real helm edit CLI when its window closes', async () => {
+	const f = await nativeFixture()
+	const host = f.module.createReviewControl(
+		{
+			windows: f.manager,
+			profileId: () => 'profile',
+			profileToken: () => 'current',
+			allowsToken: token => token === 'current',
+		},
+		join(f.root, '.helm', 'document-review'),
+	)
+	let child: ReturnType<typeof runFile> | null = null
+	try {
+		f.window().close()
+		await host.start()
+		child = runFile(
+			process.execPath,
+			['--import', import.meta.resolve('tsx'), resolve('src/cli/helm.ts'), 'edit', f.file],
+			{
+				cwd: f.root,
+				env: { ...process.env, HOME: f.root },
+				timeout: 30000,
+				maxBuffer: 1000000,
+			},
+		)
+		void child.catch(() => {})
+		const deadline = Date.now() + 25000
+		while (!f.sessions.list(f.root).some(session => session.provider === 'cli' && session.listening)) {
+			if (Date.now() > deadline) throw new Error('Native CLI listener did not start')
+			await new Promise(resolve => setTimeout(resolve, 10))
+		}
+		const win = f.useLatestWindow()
+		const snapshot = await f.snapshot()
+		assert.equal(win.close(), true)
+		const result = JSON.parse((await child).stdout)
+		assert.equal(result.closed, true)
+		assert.equal(result.documentId, snapshot.document.id)
+		assert.equal(result.feedback, null)
+		assert.equal(result.timedOut, false)
+		assert.deepEqual(result.commands, {})
+		const caller = f.sessions.list(f.root).find(session => session.provider === 'cli')
+		assert.equal(caller?.state, 'idle')
+		assert.equal(caller?.listening, false)
+		assert.deepEqual(caller?.messages, [])
+	} finally {
+		child?.child.kill('SIGTERM')
+		if (child) await Promise.allSettled([child])
+		await host.stop()
+		await f.close()
+	}
+})
+
+test('window-bound listening ends only on actual native close; a cancelled close leaves it listening', async () => {
+	const f = await nativeFixture()
+	try {
+		const state = await f.snapshot()
+		const foreign = f.manager.connectCaller('cli', f.root, 'Another caller', 'tool-return')
+		await assert.rejects(
+			f.manager.nextForCallerDocument(
+				'profile',
+				foreign.id,
+				foreign.owner,
+				state.document.id,
+				10000,
+				new AbortController().signal,
+			),
+			/owner or lifecycle changed/,
+		)
+		const waiting = f.manager.nextForCallerDocument(
+			'profile',
+			f.session.id,
+			f.session.owner,
+			state.document.id,
+			10000,
+			new AbortController().signal,
+		)
+		const win = f.window()
+		const dirty = (value: boolean) =>
+			ipcEvents.emit(
+				'document-review:dirty',
+				{ sender: win.webContents, senderFrame: win.webContents.mainFrame },
+				'current',
+				value,
+			)
+		dirty(true)
+		assert.equal(win.close(), false)
+		assert.equal(f.sessions.list(f.root)[0]?.listening, true)
+		dirty(false)
+		assert.equal(win.close(), true)
+		assert.deepEqual(await waiting, { closed: true, documentId: state.document.id })
+		assert.equal(f.sessions.list(f.root)[0]?.listening, false)
+		assert.equal(f.sessions.list(f.root)[0]?.state, 'idle')
+		await f.reopen()
+		await f.invoke('select', f.session.id)
+		const replacement = await f.snapshot()
+		assert.notEqual(replacement.document.id, state.document.id)
+		assert.deepEqual(
+			await f.manager.nextForCallerDocument(
+				'profile',
+				f.session.id,
+				f.session.owner,
+				state.document.id,
+				10000,
+				new AbortController().signal,
+			),
+			{ closed: true, documentId: state.document.id },
+		)
+		assert.equal(f.sessions.list(f.root)[0]?.listening, false)
+	} finally {
+		await f.close()
+	}
+})
+
+test('closing another window never releases the original window listener or routes its feedback', async () => {
+	const f = await nativeFixture()
+	try {
+		const state = await f.snapshot()
+		const originalWindow = f.window()
+		const waiting = f.manager.nextForCallerDocument(
+			'profile',
+			f.session.id,
+			f.session.owner,
+			state.document.id,
+			10000,
+			new AbortController().signal,
+		)
+		const another = join(f.root, 'another.md')
+		await writeFile(another, '# Another document\n', { mode: 0o600 })
+		await f.manager.openForCaller(another, 'current', 'profile', f.session.id, f.session.owner)
+		const anotherWindow = f.useLatestWindow()
+		const second = await f.snapshot()
+		const result = await f.invoke('send', {
+			id: randomUUID(),
+			documentId: second.document.id,
+			revision: second.document.revision,
+			sessionId: f.session.id,
+			owner: f.session.owner,
+			intent: 'discuss',
+			instruction: 'Wrong document',
+			passage: null,
+		})
+		assert.match(result.error ?? '', /different document/)
+		assert.equal(f.sessions.admittedCount(), 0)
+		assert.equal(anotherWindow.close(), true)
+		assert.equal(f.sessions.list(f.root)[0]?.listening, true)
+		assert.equal(originalWindow.close(), true)
+		assert.deepEqual(await waiting, { closed: true, documentId: state.document.id })
+		assert.deepEqual(f.sessions.list(f.root)[0]?.messages, [])
+	} finally {
+		await f.close()
+	}
+})
 
 test(
 	'native correction: real JSX edits preserve journal and settle after renderer reload/clean close',

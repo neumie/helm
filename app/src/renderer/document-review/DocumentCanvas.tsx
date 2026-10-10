@@ -3,6 +3,7 @@ import type { MutableRefObject, ReactNode } from 'react'
 import type { CanvasDisplayEvent, CanvasFieldValue, ReviewApi, ReviewDocument } from '../../document-review/types'
 import { buttonClassName } from '../button'
 import { PassageComments } from './PassageComments'
+import type { OpenPassageThread } from './PassageComments'
 import {
 	CanvasFrameGate,
 	canvasSourceBlock,
@@ -26,10 +27,19 @@ export interface DocumentCanvasProps {
 	onReady: (ready: boolean) => void
 	threads?: Map<string, PassageThread[]>
 	binding: string
+	onOpenThread?: OpenPassageThread
 }
 
 /** Only inert validated React elements enter the privileged renderer. Source executes only in Worker. */
-export function DocumentCanvas({ document: doc, api, handle, onReady, threads, binding }: DocumentCanvasProps) {
+export function DocumentCanvas({
+	document: doc,
+	api,
+	handle,
+	onReady,
+	threads,
+	binding,
+	onOpenThread,
+}: DocumentCanvasProps) {
 	const root = useRef<HTMLDivElement>(null)
 	const [frame, setFrame] = useState<ValidatedCanvasFrame | null>(null)
 	const [error, setError] = useState<string | null>(null)
@@ -249,16 +259,19 @@ export function DocumentCanvas({ document: doc, api, handle, onReady, threads, b
 		) : (
 			content
 		)
-		if (block && threads?.has(block.id))
+		if (block)
 			return (
 				<div key={node.id} className="review-block">
 					<div className="review-block-text">{element}</div>
-					<PassageComments
-						key={`${binding}:${node.id}`}
-						threads={threads.get(block.id) ?? []}
-						api={api}
-						providerName="Original conversation"
-					/>
+					{threads?.has(block.id) && (
+						<PassageComments
+							key={`${binding}:${node.id}`}
+							threads={threads.get(block.id) ?? []}
+							api={api}
+							providerName="Original conversation"
+							onOpenThread={onOpenThread}
+						/>
+					)}
 				</div>
 			)
 		return element

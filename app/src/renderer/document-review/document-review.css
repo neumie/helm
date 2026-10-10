@@ -291,6 +291,53 @@
 	display: flex;
 	flex-direction: column;
 }
+.review-passage-editor {
+	overflow: visible;
+}
+.review-passage-editor > .review-passage-bubble-messages {
+	flex: 1 1 auto;
+	min-height: 96px;
+}
+.review-passage-editor > .review-passage-bubble-messages:empty {
+	display: none;
+}
+.review-passage-editor > .review-passage-bubble-messages {
+	overscroll-behavior: contain;
+	padding-inline: 16px;
+}
+.review-passage-editor .review-message div {
+	font-size: calc(15px * var(--ui-scale));
+}
+.review-passage-editor .review-message:last-child {
+	margin-bottom: 0;
+}
+.review-passage-writing {
+	padding: 0 12px 12px;
+	display: flex;
+	flex-direction: column;
+	flex: 0 1 auto;
+	min-height: 140px;
+}
+.review-passage-writing > .review-writing-surface {
+	display: flex;
+	flex-direction: column;
+	min-height: 128px;
+	flex: 0 1 auto;
+}
+.review-passage-writing textarea {
+	flex: 0 1 auto;
+	min-height: 64px;
+	resize: none;
+}
+.review-passage-writing:has(.review-compose-status) {
+	min-height: 172px;
+}
+.review-passage-writing:has(.review-feedback-status) {
+	min-height: 180px;
+}
+.review-passage-writing:has(.review-feedback-status):has(.review-compose-status) {
+	min-height: 212px;
+}
 .review-passage-bubble-header {
 	display: flex;
 	align-items: center;
@@ -517,9 +564,6 @@
 }
 .review-document-details p {
 	margin: 4px 0;
-}
-.review-conversation-header > select {
-	margin-top: 8px;
 }
 .document-review select {
 	font-family: inherit;

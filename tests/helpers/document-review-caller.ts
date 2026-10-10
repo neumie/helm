@@ -28,6 +28,7 @@ export async function callerFixture(deadline = 2000) {
 	let opens = 0
 	const sessions = new ReviewSessions(() => {}, deadline, Math.min(deadline, 10000))
 	const documentId = randomUUID()
+	let documentOpen = false
 	const backend: ReviewControlBackend = {
 		status: () => ({ available: current }),
 		current: binding => {
@@ -48,6 +49,7 @@ export async function callerFixture(deadline = 2000) {
 				case 'open': {
 					const text = await readReviewFile(workspace, command.file)
 					opens++
+					documentOpen = true
 					return { documentId, revision: reviewRevision(text), relativePath: 'spec.md' }
 				}
 				case 'list':
@@ -59,6 +61,11 @@ export async function callerFixture(deadline = 2000) {
 				case 'status':
 					return sessions.list(workspace).find(value => value.id === binding.id)
 				case 'next':
+					if (command.documentId) {
+						if (!documentOpen || command.documentId !== documentId)
+							return { closed: true, documentId: command.documentId }
+						return sessions.next(binding.id, binding.owner, command.timeoutMs, signal, command.documentId)
+					}
 					return sessions.next(binding.id, binding.owner, command.timeoutMs, signal)
 				case 'ack':
 					sessions.confirm(binding.id, binding.owner, command.requestId)
@@ -112,7 +119,7 @@ export async function callerFixture(deadline = 2000) {
 			prompt: reviewPrompt(request, text, 'spec.md'),
 			relativePath: 'spec.md',
 		}
-		const owner = sessions.reserve(binding.id, binding.owner, workspace)
+		const owner = sessions.reserve(binding.id, binding.owner, workspace, documentId)
 		return { feedback, receipt: sessions.dispatch(owner, request.id, request.id, feedback) }
 	}
 	return {
@@ -125,6 +132,10 @@ export async function callerFixture(deadline = 2000) {
 		connect,
 		send,
 		opens: () => opens,
+		closeDocument: () => {
+			documentOpen = false
+			sessions.closeDocument(documentId)
+		},
 		fence: () => {
 			current = false
 			sessions.stopOwned()

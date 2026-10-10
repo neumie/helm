@@ -17,7 +17,14 @@ import { reviewPrompt } from './request'
 import { parseReviewRequest } from './request-admission'
 import { ReviewSessions } from './sessions'
 import { defaultReviewDraft } from './types'
-import type { CanvasReviewEntry, CanvasReviewThread, ReviewProvider, ReviewResult, ReviewState } from './types'
+import type {
+	CanvasReviewEntry,
+	CanvasReviewThread,
+	ReviewProvider,
+	ReviewReadResult,
+	ReviewResult,
+	ReviewState,
+} from './types'
 
 const runFile = promisify(execFile)
 interface WindowState {
@@ -368,7 +375,12 @@ export class DocumentReviewWindows {
 					if ([...this.sessions.values()].reduce((n, sessions) => n + sessions.admittedCount(), 0) >= 8)
 						throw new Error('Eight review turns are already in progress. Wait for a turn to settle.')
 					if (state.archive.error()) throw new Error(state.archive.error() as string)
-					const owner = state.sessions.reserve(request.sessionId, request.owner, state.observation.root)
+					const owner = state.sessions.reserve(
+						request.sessionId,
+						request.owner,
+						state.observation.root,
+						request.documentId,
+					)
 					try {
 						await state.observation.refresh()
 						this.require(event, token)
@@ -521,6 +533,26 @@ export class DocumentReviewWindows {
 	callerSessions(profileId: string): ReviewSessions {
 		return this.sessionsFor(profileId)
 	}
+	/** Exact window identity, never a file/name lookup or replacement-window fallback. */
+	nextForCallerDocument(
+		profileId: string,
+		sessionId: string,
+		owner: string,
+		documentId: string,
+		timeoutMs: number,
+		signal: AbortSignal,
+	): Promise<ReviewReadResult> {
+		const sessions = this.sessionsFor(profileId)
+		sessions.get(sessionId, owner)
+		if (signal.aborted) return Promise.reject(new Error('Listening was cancelled.'))
+		const window = [...this.windows.values()].find(
+			state => state.profileId === profileId && state.observation.id === documentId,
+		)
+		if (!window) return Promise.resolve({ closed: true, documentId })
+		if (window.selectedSession !== sessionId || !this.current(window))
+			return Promise.reject(new Error('The document window owner or lifecycle changed. Nothing was rerouted.'))
+		return sessions.next(sessionId, owner, timeoutMs, signal, documentId)
+	}
 	private sessionsFor(profileId: string): ReviewSessions {
 		let sessions = this.sessions.get(profileId)
 		if (!sessions) {
@@ -593,7 +625,7 @@ export class DocumentReviewWindows {
 				if (sessionId && state.selectedSession !== sessionId) {
 					if (state.selectedSession || state.dirty || state.active.size || state.sessions.isBusy())
 						throw new Error(
-							'This document already has a review owner or unsaved work. Choose the new connected agent explicitly in that window, or close it before opening again; nothing was rerouted.',
+							'This document already has a review owner or unsaved work. Close that window before opening it from another agent; nothing was rerouted.',
 						)
 					state.selectedSession = sessionId
 					this.publish(state.profileId)
@@ -702,6 +734,7 @@ export class DocumentReviewWindows {
 		})
 		win.on('closed', () => {
 			this.windows.delete(senderId)
+			sessions.closeDocument(observation.id)
 			void observation.dispose()
 			const context = this.archives.get(this.archiveKey(profileId, root, file))
 			if (context) this.pruneArchive(context)

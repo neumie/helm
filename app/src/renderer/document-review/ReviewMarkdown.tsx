@@ -3,6 +3,7 @@ import { Fragment, createElement, memo } from 'react'
 import type { ReactNode } from 'react'
 import type { ReviewApi } from '../../document-review/types'
 import { PassageComments } from './PassageComments'
+import type { OpenPassageThread } from './PassageComments'
 import type { ReviewBlock } from './markdown'
 import type { PassageThread } from './passage-threads'
 
@@ -24,6 +25,7 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 	commentBinding,
 	api,
 	providerName,
+	onOpenThread,
 }: {
 	blocks: ReviewBlock[]
 	selectedStart: number | null
@@ -31,6 +33,7 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 	commentBinding?: string
 	api?: ReviewApi
 	providerName?: string
+	onOpenThread?: OpenPassageThread
 }) {
 	let remaining = 30000
 	let limited = false
@@ -175,6 +178,7 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 					threads={passageThreads.get(block.id) ?? []}
 					api={api}
 					providerName={providerName ?? ''}
+					onOpenThread={onOpenThread}
 				/>
 			)}
 		</div>
