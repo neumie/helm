@@ -57,6 +57,31 @@ test('plain source and portable journals preserve BOM, CRLF, CR and no-final-new
 			assert.deepEqual(parseReviewArtifact(raw, format), second)
 		}, extension)
 })
+test('unspecified CLI caller evidence round-trips without inventing a provider or changing journal markers', async () =>
+	fixture(async (root, file) => {
+		const body = '# Specification\n\nKeep the source intact.\n'
+		await writeFile(file, body)
+		const start: CanvasReviewThread = { ...thread(), provider: 'cli', name: 'Document conversation' }
+		await appendReviewArtifact(root, file, [{ version: 1, type: 'thread', thread: start }], {
+			expectedSourceRevision: hash(body),
+			current: () => true,
+		})
+		await appendReviewArtifact(
+			root,
+			file,
+			[{ version: 1, type: 'settle', id: start.id, state: 'complete', reply: 'Refined.' }],
+			{
+				expectedSourceRevision: hash(body),
+				current: () => true,
+			},
+		)
+		const raw = await readFile(file, 'utf8')
+		assert.match(raw, /helm-review:v1/)
+		const parsed = parseReviewArtifact(raw, 'markdown')
+		assert.equal(parsed.body, body)
+		assert.deepEqual(parsed.archive.threads, [{ ...start, state: 'complete', reply: 'Refined.', detail: undefined }])
+	}))
+
 test('marker examples elsewhere remain source; malformed trailing records fail closed', () => {
 	for (const body of [
 		'prose <!-- helm-review:v1 example -->',

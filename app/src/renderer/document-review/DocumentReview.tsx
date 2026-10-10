@@ -15,17 +15,26 @@ import { Btn, buttonClassName } from '../button'
 import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
 import { DocumentCanvas } from './DocumentCanvas'
 import type { DocumentCanvasHandle } from './DocumentCanvas'
+import { PassageChat } from './PassageChat'
+import type { PassageChatAnchor } from './PassageChat'
+import { PassageMessages } from './PassageComments'
 import { ReviewMarkdown } from './ReviewMarkdown'
 import { SavedAnnotationHighlights } from './SavedAnnotationHighlights'
 import { annotationSaveDraft, captureAnnotationSave, removeReviewAnnotation } from './annotations'
 import { captureArchiveRecovery, currentArchiveRecovery } from './archive-recovery'
 import type { ArchiveRecoveryTarget, ArchiveReviewApi, ArchiveReviewState } from './archive-recovery'
 import { parseReviewMarkdown } from './markdown'
-import { archiveThreadStatus, projectPassageThreads } from './passage-threads'
+import type { PassageThread } from './passage-threads'
+import {
+	archiveThreadStatus,
+	documentConversationMessages,
+	projectPassageThreads,
+	samePassage,
+} from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
 import './document-review.css'
 
-const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi' }
+const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', cli: 'Agent' }
 interface Operation {
 	id: string
 	text: string
@@ -33,6 +42,16 @@ interface Operation {
 	owner: string
 	revision: string
 	phase: 'sending' | 'running' | 'uncertain'
+	passage: ReviewPassage | null
+	api: ReviewApi
+	generation: number
+}
+interface PassageBubbleCommit {
+	id: number
+	api: ReviewApi
+	binding: string
+	generation: number
+	anchor: PassageChatAnchor
 }
 interface AnnotationWrite {
 	value: string | null
@@ -96,7 +115,18 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const [receipt, setReceipt] = useState<ReviewReceipt | null>(null)
 	const [recovery, setRecovery] = useState<string | null>(null)
 	const [candidate, setCandidate] = useState<Candidate | null>(null)
-	const [passage, setPassage] = useState<ReviewPassage | null>(null)
+	const [passage, setPassageState] = useState<ReviewPassage | null>(null)
+	const currentPassage = useRef(passage)
+	currentPassage.current = passage
+	const [passageText, setPassageText] = useState('')
+	const passageEditor = useRef({ text: '', token: 0 })
+	const [bubble, setBubble] = useState<PassageBubbleCommit | null>(null)
+	const bubbleCommit = useRef<PassageBubbleCommit | null>(null)
+	const bubbleSequence = useRef(0)
+	const currentApi = useRef(api)
+	currentApi.current = api
+	const [feedbackPassage, setFeedbackPassage] = useState<ReviewPassage | null>(null)
+	const [wholeIntent, setWholeIntent] = useState<ReviewIntent>('discuss')
 	const [intent, setIntent] = useState<ReviewIntent>('discuss')
 	const [annotationId, setAnnotationId] = useState<string | null>(null)
 	const annotationWrite = useRef<AnnotationWrite | null>(null)
@@ -111,6 +141,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		binding: string
 		passage: ReviewPassage
 		intent: ReviewIntent
+		text: string
 		id: string
 		token: number
 		status: 'saving' | 'saved' | 'failed'
@@ -252,7 +283,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		}
 		setError(
 			blockedOwner.current
-				? 'The conversation owner changed. Choose a conversation explicitly before continuing.'
+				? 'The conversation owner changed. Close this window and reopen the document from the original agent.'
 				: null,
 		)
 		setState(result.data)
@@ -283,7 +314,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			setDraft(result.data.draft)
 		}
 		const pending = operation.current
-		if (pending) {
+		if (pending && pending.api === api && pending.generation === lifecycle.current) {
 			const receiptResult = await api.receipt(pending.id)
 			if (!mounted.current || operation.current !== pending || sequence !== readSequence.current) return
 			if (receiptResult.data) setReceipt(receiptResult.data)
@@ -387,11 +418,35 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		archiveFlight.current = null
 		setArchiveSaving(false)
 		setDiscardReply(null)
+		const pending = operation.current
+		if (pending && (pending.api !== api || pending.generation !== lifecycle.current)) {
+			pending.phase = 'uncertain'
+			setBusy(false)
+			setRecovery(pending.text)
+			setReceipt({
+				id: pending.id,
+				outcome: 'unknown',
+				detail:
+					'The window connection changed before settlement. Check the original conversation; nothing is replayed.',
+			})
+		}
 		void refresh()
 		const unsubscribe = api.onChanged(() => {
 			void refresh()
 		})
 		const close = api.onCloseRequested(() => {
+			const text = passageEditor.current.text
+			const saved = latest.current.draft?.annotations.some(
+				annotation => annotation.note === text && samePassage(annotation.passage, currentPassage.current),
+			)
+			if (
+				text.trim() &&
+				!saved &&
+				!window.confirm(
+					'Discard the unsent passage draft and close? Saved comments and your whole-document draft are kept.',
+				)
+			)
+				return
 			void persist().then(ok => {
 				if (ok && savedToken.current === editToken.current) api.close()
 			})
@@ -489,7 +544,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		focusRequest.current = null
 		if (!request || !mounted.current || request.api !== api || request.binding !== currentBinding.current) return
 		const focused = document.activeElement
-		if (focused !== request.expected && !(focused === document.body && !request.expected?.getClientRects().length))
+		if (
+			focused !== request.expected &&
+			!(focused === document.body && !request.expected?.getClientRects().length) &&
+			!(request.target === 'editor' && focused?.closest('.review-passage-editor'))
+		)
 			return
 		const target =
 			request.target === 'editor'
@@ -687,7 +746,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		}
 		const rect = range.getBoundingClientRect()
 		const parent = documentPane.current?.getBoundingClientRect()
-		if (pointer && !annotationId && !reanchoring.current && !selectionLocked()) {
+		if (pointer && !annotationId && !reanchoring.current && !selectionLocked(true)) {
 			openPassage(next, intent, null, reading.current, false, range.cloneRange())
 			return
 		}
@@ -701,7 +760,9 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				returnTo: reading.current,
 			})
 	}
-	function selectionLocked(): boolean {
+	// A caller working elsewhere blocks effects, not opening a local draft. Our
+	// own pending/unknown commands, control and save flights still fence scope.
+	function selectionLocked(allowBusyCallerDraft = false): boolean {
 		return !!(
 			operation.current ||
 			control.current ||
@@ -709,7 +770,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			(annotationWrite.current && saveActive.current) ||
 			annotationWrite.current?.failed ||
 			busy ||
-			selected?.busy ||
+			(!allowBusyCallerDraft && selected?.busy) ||
 			blockedOwner.current ||
 			state?.document.error
 		)
@@ -722,7 +783,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		editSaved = false,
 		visualRange: Range | null = null,
 	): boolean {
-		if (!state || selectionLocked()) return false
+		if (
+			!mounted.current ||
+			api !== currentApi.current ||
+			selectionBinding !== currentBinding.current ||
+			!state ||
+			selectionLocked(true)
+		)
+			return false
 		const saved = editSaved ? latest.current.draft?.annotations.find(annotation => annotation.id === id) : null
 		// Only explicit editing of this exact saved annotation may display its old locator.
 		// Stale scope stays visible; Send and Save remain fenced until explicit re-anchor.
@@ -758,15 +826,70 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		setAnnotationId(id ?? reanchoring.current)
 		reanchoring.current = null
 		setCandidate(null)
-		setPane('conversation')
+		const commit: PassageBubbleCommit = {
+			id: ++bubbleSequence.current,
+			api,
+			binding: selectionBinding,
+			generation: lifecycle.current,
+			anchor: { range: visualRange, text: visualRange?.toString() ?? '', opener: opener.current },
+		}
+		bubbleCommit.current = commit
+		setBubble(commit)
+		setPane('document')
+		return true
+	}
+	function setPassage(value: ReviewPassage | null): void {
+		currentPassage.current = value
+		setPassageState(value)
+	}
+	function writePassage(text: string): void {
+		passageEditor.current = { text, token: passageEditor.current.token + 1 }
+		setPassageText(text)
+	}
+	function currentBubble(commit: PassageBubbleCommit | null): boolean {
+		if (
+			!commit ||
+			bubbleCommit.current !== commit ||
+			commit.api !== currentApi.current ||
+			commit.binding !== currentBinding.current ||
+			commit.generation !== lifecycle.current
+		)
+			return false
+		const range = commit.anchor.range
+		return (
+			!range ||
+			(range.startContainer.isConnected &&
+				range.endContainer.isConnected &&
+				!!reading.current?.contains(range.startContainer) &&
+				reading.current.contains(range.endContainer) &&
+				!range.collapsed &&
+				range.toString() === commit.anchor.text)
+		)
+	}
+	function dismissPassage(commit: PassageBubbleCommit, restoreFocus: boolean): void {
+		if (bubbleCommit.current !== commit) return
+		bubbleCommit.current = null
+		setBubble(null)
+		if (restoreFocus) {
+			focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
+		}
+	}
+	function openThread(thread: PassageThread, range: Range, trigger: HTMLElement | null): boolean {
+		const id = thread.id.startsWith('annotation:') ? thread.id.slice(11) : null
+		const annotation = id ? draft?.annotations.find(value => value.id === id) : null
+		if (!openPassage(thread.passage, annotation?.intent ?? 'discuss', id, trigger, !!annotation, range.cloneRange()))
+			return false
+		if (annotation) writePassage(annotation.note)
 		return true
 	}
 	function useSelection(): void {
-		if (!candidate || candidate.binding !== selectionBinding || selectionLocked()) return
+		if (!candidate || candidate.binding !== selectionBinding || selectionLocked(true)) return
 		const reanchor = reanchoring.current ? draft?.annotations.find(a => a.id === reanchoring.current) : null
 		openPassage(candidate.passage, reanchor?.intent ?? intent, annotationId, candidate.returnTo, false, candidate.range)
 	}
 	function finishPassage(): void {
+		bubbleCommit.current = null
+		setBubble(null)
 		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		reanchoring.current = null
 		setPassage(null)
@@ -775,6 +898,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		if (narrow) setPane('document')
 	}
 	function returnToDocument(): void {
+		bubbleCommit.current = null
+		setBubble(null)
 		if (view === 'comments') {
 			setView('document')
 			opener.current = reading.current
@@ -827,36 +952,6 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			}
 		}
 	}
-	async function switchSession(id: string | null): Promise<void> {
-		if (control.current || operation.current) return
-		control.current = true
-		setBusy(true)
-		try {
-			if (!(await persist())) return
-			const result = await api.selectSession(id)
-			if (!mounted.current) return
-			if (result.error !== undefined) {
-				setError(result.error)
-				return
-			}
-			editToken.current++
-			savedToken.current = editToken.current
-			savedDraft.current = structuredClone(result.data)
-			setDraft(result.data)
-			latest.current = { ...latest.current, draft: result.data }
-			api.dirty(false)
-			setReceipt(null)
-			setRecovery(null)
-			blockedOwner.current = false
-			setOwnerBlocked(false)
-			reanchoring.current = null
-			setPassage(null)
-			setAnnotationId(null)
-		} finally {
-			control.current = false
-			if (mounted.current) setBusy(false)
-		}
-	}
 	function discardUnsaved(): void {
 		if (saveActive.current || control.current || busy || !savedDraft.current) return
 		const previous = savedDraft.current
@@ -877,7 +972,22 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		setSaveError(null)
 		finishPassage()
 	}
-	async function send(): Promise<void> {
+	async function send(scoped: boolean): Promise<void> {
+		const scope = scoped ? currentPassage.current : null
+		const text = scoped ? passageEditor.current.text : (latest.current.draft?.instruction ?? '')
+		if (
+			api !== currentApi.current ||
+			selectionBinding !== currentBinding.current ||
+			(scoped && (!scope || scope !== passage || !currentBubble(bubble)))
+		)
+			return
+		if (scope) {
+			try {
+				validateCurrentPassage(scope)
+			} catch {
+				return
+			}
+		}
 		// Mutable admission, not a render-captured busy boolean: two same-task shortcuts cannot send twice.
 		if (
 			blockedOwner.current ||
@@ -891,16 +1001,19 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			!selected.listening ||
 			selected.busy ||
 			selected.error ||
-			stale ||
+			(scoped && stale) ||
 			state.document.error ||
-			!draft.instruction.trim()
+			!text.trim()
 		)
 			return
 		const fields = canvasMode ? canvasHandle.current?.read(state.document.id, state.document.revision, api) : undefined
 		if (canvasMode && !fields) return
 		const pending: Operation = {
 			id: crypto.randomUUID(),
-			text: draft.instruction,
+			text,
+			passage: scope,
+			api,
+			generation: lifecycle.current,
 			sessionId: selected.id,
 			owner: selected.owner,
 			revision: state.document.revision,
@@ -911,9 +1024,10 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		setError(null)
 		setReceipt(null)
 		setRecovery(null)
-		const scope = passage
-		changeDraft(value => ({ ...value, instruction: '' }))
-		const cleared = editToken.current
+		setFeedbackPassage(scope)
+		if (scoped) writePassage('')
+		else changeDraft(value => ({ ...value, instruction: '' }))
+		const cleared = scoped ? passageEditor.current.token : editToken.current
 		try {
 			const result = await api.send({
 				id: pending.id,
@@ -921,17 +1035,26 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				revision: pending.revision,
 				sessionId: pending.sessionId,
 				owner: pending.owner,
-				intent,
+				intent: scoped ? intent : wholeIntent,
 				instruction: pending.text,
 				passage: scope,
 				...(canvasMode ? { canvasFields: fields ?? [] } : {}),
 			})
-			if (!mounted.current || operation.current !== pending) return
+			if (
+				!mounted.current ||
+				operation.current !== pending ||
+				pending.api !== currentApi.current ||
+				pending.generation !== lifecycle.current
+			)
+				return
 			if (result.error !== undefined) {
 				operation.current = null
 				setBusy(false)
 				setError(result.error)
-				if (editToken.current === cleared) changeDraft(value => ({ ...value, instruction: pending.text }))
+				if (scoped && passageEditor.current.token === cleared && currentPassage.current === scope)
+					writePassage(pending.text)
+				else if (!scoped && editToken.current === cleared)
+					changeDraft(value => ({ ...value, instruction: pending.text }))
 				else setRecovery(pending.text)
 			} else {
 				pending.phase = 'running'
@@ -939,7 +1062,13 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				await refresh()
 			}
 		} catch {
-			if (!mounted.current || operation.current !== pending) return
+			if (
+				!mounted.current ||
+				operation.current !== pending ||
+				pending.api !== currentApi.current ||
+				pending.generation !== lifecycle.current
+			)
+				return
 			pending.phase = 'uncertain'
 			setBusy(false)
 			setRecovery(pending.text)
@@ -972,12 +1101,21 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	async function saveComment(): Promise<void> {
 		const current = latest.current.draft
+		const note = passageEditor.current.text
+		if (
+			api !== currentApi.current ||
+			selectionBinding !== currentBinding.current ||
+			currentPassage.current !== passage ||
+			!currentBubble(bubble)
+		)
+			return
 		if (
 			commentSave.current ||
 			selectionLocked() ||
 			stale ||
 			!passage ||
-			!current?.instruction.trim() ||
+			!current ||
+			!note.trim() ||
 			(annotationId && !current.annotations.some(annotation => annotation.id === annotationId)) ||
 			(!annotationId && current.annotations.length >= 256)
 		)
@@ -992,9 +1130,9 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			...value,
 			annotations: annotationId
 				? value.annotations.map(annotation =>
-						annotation.id === id ? { ...annotation, passage, intent, note: value.instruction } : annotation,
+						annotation.id === id ? { ...annotation, passage, intent, note } : annotation,
 					)
-				: [...value.annotations, { id, passage, note: value.instruction, intent, resolved: false }],
+				: [...value.annotations, { id, passage, note, intent, resolved: false }],
 		}))
 		setAnnotationId(id)
 		const notice = {
@@ -1003,6 +1141,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			binding: selectionBinding,
 			passage,
 			intent,
+			text: note,
 			id,
 			token: editToken.current,
 			status: 'saving' as const,
@@ -1026,6 +1165,9 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	function clearPassage(): void {
 		if (selectionLocked() || commentSave.current) return
+		bubbleCommit.current = null
+		setBubble(null)
+		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		reanchoring.current = null
 		setPassage(null)
 		setAnnotationId(null)
@@ -1139,14 +1281,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				)}
 			</main>
 		)
-	const showConversationChooser = state.sessions.length > 1 || ownerBlocked || (!selected && state.sessions.length > 0)
-	const localNotice =
+	const savedNotice =
 		commentNotice &&
 		commentNotice.api === api &&
 		commentNotice.generation === lifecycle.current &&
 		commentNotice.binding === selectionBinding &&
 		commentNotice.passage === passage &&
 		commentNotice.intent === intent &&
+		commentNotice.text === passageText &&
 		commentNotice.id === annotationId &&
 		commentNotice.token === editToken.current
 			? {
@@ -1154,158 +1296,232 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					status: savedToken.current >= commentNotice.token ? ('saved' as const) : commentNotice.status,
 				}
 			: null
-	const blockedReason = !draft.instruction.trim()
-		? null
-		: stale
-			? 'This selection is stale. Select the passage again; it will not be guessed.'
-			: canvasMode && !canvasReady
-				? 'Wait for the document canvas to settle, or read Source.'
-				: state.document.error
-					? 'Document unavailable. Retry opening it before sending.'
-					: ownerBlocked
-						? 'Choose a conversation again before sending.'
-						: operation.current?.phase === 'uncertain'
-							? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
-							: operation.current || busy || activeSession
-								? 'Wait for the current request to settle before sending.'
-								: !selected
-									? 'Connect an existing conversation before sending.'
-									: selected.error
-										? 'Check the conversation outcome before sending.'
-										: !selected.listening
-											? 'Feedback paused. Keep this draft until the conversation is listening.'
-											: null
-	const composer = (
-		<div className="review-writing-surface">
-			<textarea
-				ref={input}
-				rows={3}
-				maxLength={8000}
-				aria-label={passage ? 'Passage instruction' : 'Whole-document message'}
-				placeholder={passage ? 'Write about this passage…' : 'Ask about this document…'}
-				value={draft.instruction}
-				onChange={event => {
-					const instruction = event.currentTarget.value
-					changeDraft(value => ({ ...value, instruction }))
-				}}
-				onKeyDown={event => {
-					if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-						event.preventDefault()
-						void send()
-					}
-				}}
-			/>
-			{(stale || blockedReason || localNotice) && (
-				// biome-ignore lint/a11y/noNoninteractiveTabindex: Compact composer guidance keeps its own bounded keyboard scroll region.
-				<div className="review-compose-status" tabIndex={0} aria-label="Writing status">
-					{(stale || blockedReason) && (
-						<p role={stale ? 'alert' : undefined}>
-							{blockedReason ?? 'This selection is stale. Select the passage again; it will not be guessed.'}
-						</p>
-					)}
-					{localNotice && (
-						<output>
-							{localNotice.status === 'saved'
-								? 'Saved locally · not sent'
-								: localNotice.status === 'saving'
-									? 'Saving local comment…'
-									: 'Comment not saved. Retry save.'}
-						</output>
+	const visibleBubble =
+		bubble &&
+		bubble.api === api &&
+		bubble.binding === selectionBinding &&
+		bubble.generation === lifecycle.current &&
+		bubbleCommit.current === bubble &&
+		pane === 'document' &&
+		passage
+			? bubble
+			: null
+	const activeThreads: PassageThread[] = [...passageThreads.values()]
+		.flat()
+		.filter(thread => samePassage(thread.passage, passage))
+	const feedback = ((receipt && ['unknown', 'rejected'].includes(receipt.outcome)) || recovery !== null) && (
+		// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner supports keyboard reading.
+		<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
+			{receipt && ['unknown', 'rejected'].includes(receipt.outcome) && (
+				// biome-ignore lint/a11y/useSemanticElements: Structured live delivery status is not a scalar form output.
+				<div className="review-receipt" role="status">
+					<strong>{receipt.outcome === 'unknown' ? 'Outcome not confirmed' : 'Not sent'}</strong>
+					<p>{receipt.detail}</p>
+					{operation.current?.phase === 'uncertain' && !selected?.busy && !selected?.error && (
+						<Btn
+							sm
+							onClick={() => {
+								void acknowledge()
+							}}
+						>
+							I checked the outcome
+						</Btn>
 					)}
 				</div>
 			)}
-			<div className="review-compose-actions">
-				<div className="review-compose-more">
-					<MenuButton
-						trigger={GLYPH.ellipsis}
-						triggerLabel="Writing options"
-						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
-						align="start"
-						entries={[
-							...(passage
-								? [
-										{
-											label: annotationId ? 'Save comment changes' : 'Save local comment',
-											section: 'Local only · not sent',
-											disabled:
-												selectionLocked() ||
-												commentSaving ||
-												stale ||
-												!draft.instruction.trim() ||
-												(annotationId
-													? !draft.annotations.some(annotation => annotation.id === annotationId)
-													: draft.annotations.length >= 256),
-											onSelect: () => {
-												void saveComment()
-											},
-										},
-										{ label: 'Return to document', onSelect: returnToDocument },
-										{
-											label: 'Clear passage',
-											group: true,
-											meta: 'Whole document',
-											disabled: selectionLocked() || commentSaving,
-											onSelect: clearPassage,
-										},
-									]
-								: [{ label: 'Return to document', onSelect: returnToDocument }]),
-						]}
-					/>
+			{recovery !== null && (
+				<div className="review-recovery">
+					<p>
+						Your {feedbackPassage ? 'passage request' : 'request'} text is retained locally. Restoring it does not
+						resend it.
+					</p>
+					<Btn
+						sm
+						onClick={() => {
+							if (feedbackPassage) writePassage(recovery)
+							else changeDraft(value => ({ ...value, instruction: recovery }))
+							setRecovery(null)
+						}}
+					>
+						Restore request text
+					</Btn>
+					<Btn sm tone="ghost" onClick={() => setRecovery(null)}>
+						Discard text
+					</Btn>
 				</div>
-				<fieldset className="review-intents" aria-label="Feedback intent">
-					<MenuButton
-						trigger={
-							<>
-								{intent === 'discuss' ? 'Ask' : 'Request change'}
-								{GLYPH.chevronDown}
-							</>
-						}
-						triggerLabel={`Feedback intent: ${intent === 'discuss' ? 'Ask' : 'Request change'}`}
-						triggerRef={intentTrigger}
-						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
-						disabled={busy || !!operation.current || !!control.current}
-						align="start"
-						entries={(['discuss', 'change'] as const).map(mode => ({
-							label: mode === 'discuss' ? 'Ask' : 'Request change',
-							meta: mode === 'discuss' ? 'No edits requested' : 'Edits requested',
-							checked: intent === mode,
-							onSelect: () => setIntent(mode),
-						}))}
-					/>
-				</fieldset>
-				<Btn
-					tone={draft.instruction.trim() ? 'primary' : 'quiet'}
-					sm
-					ariaLabel={intent === 'change' ? 'Send change request' : passage ? 'Send passage discussion' : 'Send message'}
-					disabled={
-						busy ||
-						activeSession ||
-						ownerBlocked ||
-						!!operation.current ||
-						!selected ||
-						!selected.listening ||
-						!!selected.error ||
-						stale ||
-						!!state.document.error ||
-						(canvasMode && !canvasReady) ||
-						!draft.instruction.trim()
-					}
-					busy={busy && operation.current?.phase === 'sending'}
-					onClick={() => {
-						void send()
-					}}
-				>
-					Send
-				</Btn>
-			</div>
-		</div>
+			)}
+		</section>
 	)
+	const reviewState = state
+	const storedDraft = draft
+	const passageIntent = intent
+	function composer(passage: ReviewPassage | null) {
+		const state = reviewState
+		const draft = storedDraft
+		const intent = passage ? passageIntent : wholeIntent
+		const stale = !!passage && passage.revision !== state.document.revision
+		const text = passage ? passageText : draft.instruction
+		const localNotice = passage ? savedNotice : null
+		const blockedReason = !text.trim()
+			? null
+			: stale
+				? 'This selection is stale. Select the passage again; it will not be guessed.'
+				: canvasMode && !canvasReady
+					? 'Wait for the document canvas to settle, or read Source.'
+					: state.document.error
+						? 'Document unavailable. Retry opening it before sending.'
+						: ownerBlocked
+							? 'Reopen this document from the original agent before sending.'
+							: operation.current?.phase === 'uncertain'
+								? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
+								: operation.current || busy || activeSession
+									? 'Wait for the current request to settle before sending.'
+									: !selected
+										? 'Open this document from your agent to send feedback.'
+										: selected.error
+											? 'Check the conversation outcome before sending.'
+											: !selected.listening
+												? 'Feedback paused. Keep this draft until the conversation is listening.'
+												: null
+		return (
+			<div className="review-writing-surface">
+				<textarea
+					ref={passage ? input : undefined}
+					rows={passage ? 2 : 3}
+					maxLength={8000}
+					aria-label={passage ? 'Passage instruction' : 'Whole-document message'}
+					placeholder={passage ? 'Write about this passage…' : 'Ask about this document…'}
+					value={text}
+					onChange={event => {
+						const instruction = event.currentTarget.value
+						if (api !== currentApi.current || selectionBinding !== currentBinding.current) return
+						if (passage) {
+							if (currentBubble(bubble)) writePassage(instruction)
+						} else changeDraft(value => ({ ...value, instruction }))
+					}}
+					onKeyDown={event => {
+						if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+							event.preventDefault()
+							void send(!!passage)
+						}
+					}}
+				/>
+				{(stale || blockedReason || localNotice) && (
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: Compact composer guidance keeps its own bounded keyboard scroll region.
+					<div className="review-compose-status" tabIndex={0} aria-label="Writing status">
+						{(stale || blockedReason) && (
+							<p role={stale ? 'alert' : undefined}>
+								{blockedReason ?? 'This selection is stale. Select the passage again; it will not be guessed.'}
+							</p>
+						)}
+						{localNotice && (
+							<output>
+								{localNotice.status === 'saved'
+									? 'Saved locally · not sent'
+									: localNotice.status === 'saving'
+										? 'Saving local comment…'
+										: 'Comment not saved. Retry save.'}
+							</output>
+						)}
+					</div>
+				)}
+				<div className="review-compose-actions">
+					<div className="review-compose-more">
+						<MenuButton
+							trigger={GLYPH.ellipsis}
+							triggerLabel={passage ? 'Writing options' : 'Document writing options'}
+							triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
+							align="start"
+							entries={[
+								...(passage
+									? [
+											{
+												label: annotationId ? 'Save comment changes' : 'Save local comment',
+												section: 'Local only · not sent',
+												disabled:
+													selectionLocked() ||
+													commentSaving ||
+													stale ||
+													!text.trim() ||
+													(annotationId
+														? !draft.annotations.some(annotation => annotation.id === annotationId)
+														: draft.annotations.length >= 256),
+												onSelect: () => {
+													void saveComment()
+												},
+											},
+											{ label: 'Return to document', onSelect: returnToDocument },
+											{
+												label: 'Clear passage',
+												group: true,
+												meta: 'Whole document',
+												disabled: selectionLocked() || commentSaving,
+												onSelect: clearPassage,
+											},
+										]
+									: [{ label: 'Return to document', onSelect: returnToDocument }]),
+							]}
+						/>
+					</div>
+					<fieldset className="review-intents" aria-label="Feedback intent">
+						<MenuButton
+							trigger={
+								<>
+									{intent === 'discuss' ? 'Ask' : 'Request change'}
+									{GLYPH.chevronDown}
+								</>
+							}
+							triggerLabel={`${passage ? 'Passage intent' : 'Feedback intent'}: ${intent === 'discuss' ? 'Ask' : 'Request change'}`}
+							triggerRef={passage ? undefined : intentTrigger}
+							triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
+							disabled={busy || !!operation.current || !!control.current}
+							align="start"
+							entries={(['discuss', 'change'] as const).map(mode => ({
+								label: mode === 'discuss' ? 'Ask' : 'Request change',
+								meta: mode === 'discuss' ? 'No edits requested' : 'Edits requested',
+								checked: intent === mode,
+								onSelect: () => (passage ? setIntent(mode) : setWholeIntent(mode)),
+							}))}
+						/>
+					</fieldset>
+					<Btn
+						tone={text.trim() ? 'primary' : 'quiet'}
+						sm
+						ariaLabel={
+							intent === 'change' ? 'Send change request' : passage ? 'Send passage discussion' : 'Send message'
+						}
+						disabled={
+							busy ||
+							activeSession ||
+							ownerBlocked ||
+							!!operation.current ||
+							!selected ||
+							!selected.listening ||
+							!!selected.error ||
+							stale ||
+							!!state.document.error ||
+							(canvasMode && !canvasReady) ||
+							!!commentSave.current ||
+							!!annotationWrite.current ||
+							!text.trim()
+						}
+						busy={busy && operation.current?.phase === 'sending'}
+						onClick={() => {
+							void send(!!passage)
+						}}
+					>
+						Send
+					</Btn>
+				</div>
+			</div>
+		)
+	}
 	return (
 		<main
 			className="document-review"
 			onKeyDown={event => {
 				if (event.key === 'Escape' && event.currentTarget.querySelector('.review-passage-bubble:popover-open')) return
-				if (event.key === 'Escape' && passage) {
+				if (event.key === 'Escape' && bubbleCommit.current) {
 					event.preventDefault()
 					returnToDocument()
 				}
@@ -1655,6 +1871,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								<section className="review-comments">
 									<h2>Your comments</h2>
 									<p>Saved review comments. Explicit saves travel with the document; resolution is always explicit.</p>
+									<ArchivedConversation document={state.document} session={selected} passages />
 									{!draft.annotations.length && (
 										<div className="review-empty">
 											<h3>Leave a thought in the margin</h3>
@@ -1681,7 +1898,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 															setAnnotationId(annotation.id)
 															setPassage(null)
 															setCandidate(null)
-															changeDraft(value => ({ ...value, instruction: annotation.note }))
+															writePassage(annotation.note)
 															setView('document')
 															setPane('document')
 														}}
@@ -1695,7 +1912,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 													disabled={selectionLocked()}
 													onClick={() => {
 														if (openPassage(annotation.passage, annotation.intent, annotation.id, undefined, true))
-															changeDraft(value => ({ ...value, instruction: annotation.note }))
+															writePassage(annotation.note)
 													}}
 												>
 													Edit / send feedback
@@ -1772,6 +1989,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 										commentBinding={selectionBinding}
 										api={api}
 										providerName={selected ? providerNames[selected.provider] : ''}
+										onOpenThread={openThread}
 									/>
 								</article>
 							)}
@@ -1788,6 +2006,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 												: undefined
 										}
 										binding={selectionBinding}
+										onOpenThread={openThread}
 									/>
 								</div>
 							)}
@@ -1799,6 +2018,37 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							/>
 						</div>
 					</div>
+					{visibleBubble && passage && (
+						<PassageChat
+							key={visibleBubble.id}
+							anchor={visibleBubble.anchor}
+							owner={documentPane.current}
+							onClose={restore => dismissPassage(visibleBubble, restore)}
+						>
+							{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Passage history owns bounded keyboard scrolling. */}
+							<section className="review-passage-bubble-messages" aria-label="Passage messages" tabIndex={0}>
+								{selected?.historyTruncated && (
+									<p className="review-meta">
+										Earlier messages are outside this bounded view; no replies were relocated.
+									</p>
+								)}
+								<PassageMessages
+									threads={activeThreads}
+									providerName={selected ? providerNames[selected.provider] : ''}
+								/>
+								{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
+									<output className="review-working">
+										<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
+										Working…
+									</output>
+								)}
+							</section>
+							<div className="review-passage-writing">
+								{feedbackPassage && feedback}
+								{composer(passage)}
+							</div>
+						</PassageChat>
+					)}
 					{candidate && candidate.binding === selectionBinding && (
 						<fieldset
 							className="review-selection-actions"
@@ -1806,7 +2056,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							style={{ top: candidate.top, left: candidate.left }}
 							onPointerDown={event => event.preventDefault()}
 						>
-							<Btn sm tone="ghost" disabled={selectionLocked()} onClick={useSelection}>
+							<Btn sm tone="ghost" disabled={selectionLocked(true)} onClick={useSelection}>
 								Use selection
 							</Btn>
 						</fieldset>
@@ -1845,9 +2095,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				>
 					<header className="review-conversation-header">
 						<div className="review-conversation-title">
-							<h2 title={selected?.name}>
-								{showConversationChooser ? 'Conversation' : (selected?.name ?? 'Conversation')}
-							</h2>
+							<h2 title={selected?.name}>{selected?.name ?? 'Conversation'}</h2>
 							<output className="review-meta">
 								{selected ? `${providerNames[selected.provider]} · ` : ''}
 								{!selected
@@ -1869,29 +2117,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 																: 'Feedback paused'}
 							</output>
 						</div>
-						{showConversationChooser && (
-							<select
-								aria-label="Choose review conversation"
-								value={draft.sessionId ?? ''}
-								disabled={busy || !!operation.current}
-								onChange={event => {
-									void switchSession(event.currentTarget.value || null)
-								}}
-							>
-								<option value="">Choose a conversation</option>
-								{state.sessions.map(session => (
-									<option key={session.id} value={session.id}>
-										{session.name}
-									</option>
-								))}
-							</select>
-						)}
 					</header>
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Conversation scroll owner needs keyboard access without focusing message text. */}
 					<div className="review-chat" tabIndex={0} aria-label="Conversation messages">
 						<ArchivedConversation document={state.document} session={selected} />
-						<Conversation session={selected} />
-						{selected?.state === 'working' && (
+						<Conversation document={state.document} session={selected} />
+						{selected?.state === 'working' && !operation.current?.passage && (
 							<output className="review-working">
 								<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
 								Working…
@@ -1915,46 +2146,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						)}
 					</div>
 					<div className="review-companion-bottom">
-						{((receipt && ['unknown', 'rejected'].includes(receipt.outcome)) || recovery !== null) && (
-							// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner must support keyboard reading.
-							<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
-								{receipt && ['unknown', 'rejected'].includes(receipt.outcome) && (
-									// biome-ignore lint/a11y/useSemanticElements: A live receipt has structured block content; it is not a scalar form output.
-									<div className="review-receipt" role="status">
-										<strong>{receipt.outcome === 'unknown' ? 'Outcome not confirmed' : 'Not sent'}</strong>
-										<p>{receipt.detail}</p>
-										{operation.current?.phase === 'uncertain' && !selected?.busy && !selected?.error && (
-											<Btn
-												sm
-												onClick={() => {
-													void acknowledge()
-												}}
-											>
-												I checked the outcome
-											</Btn>
-										)}
-									</div>
-								)}
-								{recovery !== null && (
-									<div className="review-recovery">
-										<p>Your request text is retained locally. Restoring it does not resend it.</p>
-										<Btn
-											sm
-											onClick={() => {
-												changeDraft(value => ({ ...value, instruction: recovery }))
-												setRecovery(null)
-											}}
-										>
-											Restore request text
-										</Btn>
-										<Btn sm tone="ghost" onClick={() => setRecovery(null)}>
-											Discard text
-										</Btn>
-									</div>
-								)}
-							</section>
-						)}
-						{composer}
+						{(!visibleBubble || !feedbackPassage) && feedback}
+						{composer(null)}
 					</div>
 				</section>
 			</div>
@@ -2000,13 +2193,22 @@ function DiscardReplyConfirmation({
 function ArchivedConversation({
 	document,
 	session,
-}: { document: ReviewState['document']; session: ReviewSession | null }) {
-	const live = new Set(session?.messages.map(message => message.archiveThreadId).filter(Boolean) ?? [])
-	const threads = document.archive?.threads.filter(thread => !live.has(thread.id)) ?? []
+	passages = false,
+}: { document: ReviewState['document']; session: ReviewSession | null; passages?: boolean }) {
+	const live = new Set(
+		session?.messages
+			.filter(message => message.role === 'user')
+			.map(message => message.archiveThreadId)
+			.filter(Boolean) ?? [],
+	)
+	const threads =
+		document.archive?.threads.filter(
+			thread => Boolean(thread.passage) === passages && (passages || !live.has(thread.id)),
+		) ?? []
 	if (!threads.length) return null
 	return (
-		<section className="review-archive" aria-label="Saved review history">
-			<h2>Saved review history</h2>
+		<section className="review-archive" aria-label={passages ? 'Saved passage conversations' : 'Saved review history'}>
+			<h2>{passages ? 'Saved passage conversations' : 'Saved review history'}</h2>
 			<p className="review-meta">Read-only history · never replayed</p>
 			{threads.map(thread => (
 				<section key={thread.id} aria-label="Saved review thread">
@@ -2041,8 +2243,19 @@ function ArchivedConversation({
 	)
 }
 
-function Conversation({ session }: { session: ReviewSession | null }) {
+function Conversation({ session, document }: { session: ReviewSession | null; document: ReviewState['document'] }) {
 	if (!session) return null
+	const messages = documentConversationMessages(session, document)
+	const questions = new Set(session.messages.filter(message => message.role === 'user').map(message => message.id))
+	const unscoped = session.messages.some(message => {
+		const suffix = message.role === 'assistant' ? ':assistant' : message.role === 'activity' ? ':error' : null
+		return (
+			!!suffix &&
+			message.id.endsWith(suffix) &&
+			!questions.has(`${message.id.slice(0, -suffix.length)}:user`) &&
+			!message.archiveThreadId
+		)
+	})
 	return (
 		<>
 			{session.historyTruncated && (
@@ -2050,7 +2263,12 @@ function Conversation({ session }: { session: ReviewSession | null }) {
 					Earlier messages remain in the provider’s conversation but are outside this bounded view.
 				</p>
 			)}
-			{session.messages.map(message => (
+			{unscoped && (
+				<p className="review-meta">
+					Some replies no longer have their question in this bounded view; they are not assigned to another scope.
+				</p>
+			)}
+			{messages.map(message => (
 				<article className={`review-message review-message-${message.role}`} key={message.id}>
 					<h3>
 						{message.role === 'user'

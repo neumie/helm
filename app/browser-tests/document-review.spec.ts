@@ -1616,30 +1616,25 @@ test('pending and unknown commands fence Use selection without changing scope or
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
 })
 
-test('session control admission protects scope until explicit selection after settlement', async ({ page }) => {
-	await open(page)
-	const next = await page.evaluate(() => {
+test('other connected callers do not change passage scope or add a conversation picker', async ({ page }) => {
+	await open(page, 'multiple-connected-agents')
+	await page.evaluate(() => {
 		const fixture = window.__helmDocumentReviewProof
 		if (!fixture) throw new Error('Missing fixture')
-		const id = fixture.connect('codex')
-		const select = fixture.api.selectSession
-		fixture.api.selectSession = async selected => {
-			await new Promise<void>(resolve => Reflect.set(window, '__reviewReleaseSelection', resolve))
-			return select(selected)
+		fixture.api.selectSession = async () => {
+			throw new Error('The renderer must not select a caller')
 		}
-		return id
 	})
-	await page.getByRole('combobox', { name: 'Choose review conversation' }).selectOption(next)
 	await pointerSelect(page)
-	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeDisabled()
-	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toBeVisible()
-	await page.evaluate(() => {
-		const release = Reflect.get(window, '__reviewReleaseSelection') as (() => void) | undefined
-		release?.()
-	})
-	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveValue(next)
-	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toHaveCount(0)
-	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
+	const editor = page.getByRole('textbox', { name: 'Passage instruction' })
+	await expect(editor).toBeFocused()
+	await editor.fill('Keep this with the opener.')
+	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveCount(0)
+	await page.getByRole('button', { name: 'Send passage discussion', exact: true }).click()
+	await expect.poll(() => page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
+	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests[0]?.sessionId)).toBe(
+		'review:11111111-1111-4111-8111-111111111111',
+	)
 })
 
 test('ordinary clicks, programmatic selection and invalid oversized source never open writing', async ({ page }) => {
@@ -1878,9 +1873,12 @@ test('replacement owner fences late send results and cannot silently receive ano
 	await page.getByRole('button', { name: 'Send message', exact: true }).click()
 	await proof(page, 'replaceOwner')
 	await expect(
-		page.getByText('The conversation owner changed. Choose a conversation explicitly before continuing.', {
-			exact: true,
-		}),
+		page.getByText(
+			'The conversation owner changed. Close this window and reopen the document from the original agent.',
+			{
+				exact: true,
+			},
+		),
 	).toBeVisible()
 	await page.getByRole('textbox', { name: 'Whole-document message' }).fill('Never route to a replacement implicitly.')
 	await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
@@ -1917,31 +1915,23 @@ for (const story of ['reading', 'light'])
 		}
 	})
 
-test('external callers enroll explicitly and choosing them restores scoped unsent drafts', async ({ page }) => {
+test('external callers cannot redirect the opener’s unsent draft or feedback', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 })
 	await open(page)
 	const input = page.getByRole('textbox', { name: 'Whole-document message' })
 	await input.fill('Draft for the original conversation.')
-	await expect(page.getByRole('button', { name: 'New conversation', exact: true })).toHaveCount(0)
 	const connected = await page.evaluate(() => window.__helmDocumentReviewProof?.connect('codex'))
 	expect(connected).toBeTruthy()
-	await page.getByRole('combobox', { name: 'Choose review conversation' }).selectOption(connected as string)
-	await expect(input).toHaveValue('')
-	await input.fill('Draft for Codex.')
-	await page
-		.getByRole('combobox', { name: 'Choose review conversation' })
-		.selectOption('review:11111111-1111-4111-8111-111111111111')
+	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveCount(0)
+	await expect(page.locator('.review-conversation-header h2')).toHaveText('Claude Code · specification')
 	await expect(input).toHaveValue('Draft for the original conversation.')
-	const codex = await page
-		.getByRole('combobox', { name: 'Choose review conversation' })
-		.locator('option')
-		.evaluateAll(options => options.find(option => option.textContent?.includes('codex'))?.getAttribute('value'))
-	expect(codex).toBeTruthy()
-	await page.getByRole('combobox', { name: 'Choose review conversation' }).selectOption(codex as string)
-	await expect(input).toHaveValue('Draft for Codex.')
 	await page.getByRole('button', { name: 'Send message', exact: true }).click()
-	await expect.poll(() => page.evaluate(() => window.__helmDocumentReviewProof?.requests[0]?.sessionId)).toBe(codex)
-	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
+	await expect.poll(() => page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(1)
+	const request = await page.evaluate(() => window.__helmDocumentReviewProof?.requests[0])
+	expect(request?.sessionId).toBe('review:11111111-1111-4111-8111-111111111111')
+	expect(request?.owner).toBe('22222222-2222-4222-8222-222222222222')
+	expect(request?.instruction).toBe('Draft for the original conversation.')
+	expect(request?.sessionId).not.toBe(connected)
 })
 
 test('absent/paused callers keep drafts not sent and no UI action launches an agent', async ({ page }) => {
@@ -1952,12 +1942,13 @@ test('absent/paused callers keep drafts not sent and no UI action launches an ag
 		await input.fill('Keep this feedback in the current review.')
 		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 		await expect(page.getByRole('button', { name: 'New conversation', exact: true })).toHaveCount(0)
-		const id = await page.evaluate(() => window.__helmDocumentReviewProof?.connect('pi'))
-		await page.getByRole('combobox', { name: 'Choose review conversation' }).selectOption(id as string)
-		await input.fill('Feedback for the explicitly connected Pi.')
+		await page.evaluate(() => window.__helmDocumentReviewProof?.connect('pi'))
+		await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveCount(0)
+		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
+		await input.press('Meta+Enter')
 		await page.evaluate(() => window.__helmDocumentReviewProof?.disconnect())
 		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
-		await expect(input).toHaveValue('Feedback for the explicitly connected Pi.')
+		await expect(input).toHaveValue('Keep this feedback in the current review.')
 		expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
 	}
 })
@@ -2175,12 +2166,12 @@ test('paused feedback is not a disconnected conversation and header exposes no t
 	await page.screenshot({ path: `${evidence}/paused-clean-conversation.png` })
 	await page.evaluate(() => window.__helmDocumentReviewProof?.replaceOwner())
 	await expect(header).toContainText('Needs attention')
-	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toBeVisible()
+	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
 })
 
-test('document details and conditional conversation chooser preserve keyboard access and drafts', async ({ page }) => {
+test('document details preserve keyboard access and drafts without conversation selection', async ({ page }) => {
 	await page.setViewportSize({ width: 1197, height: 807 })
 	await open(page, 'editorial')
 	const input = page.getByRole('textbox', { name: 'Whole-document message' })
@@ -2216,12 +2207,15 @@ test('document details and conditional conversation chooser preserve keyboard ac
 		'intentionally long original Pi session name',
 	)
 	await page.evaluate(() => window.__helmDocumentReviewProof?.connect('codex'))
-	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toBeVisible()
+	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toHaveCount(0)
+	await expect(page.locator('.review-conversation-header h2')).toContainText(
+		'intentionally long original Pi session name',
+	)
 	await expect(page.locator('.review-conversation-header')).not.toContainText('Caller:')
 	await expect(page.locator('.review-conversation-header')).not.toContainText('Owner:')
 	await expect(page.locator('.review-conversation-header')).not.toContainText('helm review')
-	await page.getByRole('combobox', { name: 'Choose review conversation' }).focus()
-	await expect(page.getByRole('combobox', { name: 'Choose review conversation' })).toBeFocused()
+	await input.focus()
+	await expect(input).toBeFocused()
 	await expect(input).toHaveValue('Keep my unsent thought while browsing.')
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
 })

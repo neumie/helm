@@ -3,6 +3,9 @@ import type { ReviewApi } from '../../document-review/types'
 import { Btn } from '../button'
 import { GLYPH } from '../sidebar/ui'
 import { locatePassageDisplayRanges } from './passage-anchor'
+import { samePassage } from './passage-threads'
+
+export type OpenPassageThread = (thread: PassageThread, range: Range, trigger: HTMLElement | null) => boolean
 import type { PassageThread } from './passage-threads'
 
 interface PassageAnchor {
@@ -41,10 +44,12 @@ export function PassageComments({
 	threads,
 	api,
 	providerName,
+	onOpenThread,
 }: {
 	threads: PassageThread[]
 	api?: ReviewApi
 	providerName: string
+	onOpenThread?: OpenPassageThread
 }) {
 	const root = useRef<HTMLDivElement>(null)
 	const [anchors, setAnchors] = useState<PassageAnchor[]>([])
@@ -97,23 +102,59 @@ export function PassageComments({
 					threads={threads.filter(thread => anchor.ids.includes(thread.id))}
 					api={api}
 					providerName={providerName}
+					onOpenThread={onOpenThread}
 				/>
 			))}
 		</div>
 	)
 }
 
-/** Nonmodal read-only popover; its separate highlight never changes selection, scope or drafts. */
+export function PassageMessages({ threads, providerName }: { threads: PassageThread[]; providerName: string }) {
+	return (
+		<>
+			{threads.map(thread => (
+				<section key={thread.id} aria-label="Passage question">
+					{thread.messages.map(message => (
+						<article className={`review-message review-message-${message.role}`} key={message.id}>
+							<h3>
+								{message.role === 'user'
+									? 'You'
+									: message.role === 'assistant'
+										? (thread.providerName ?? providerName)
+										: 'Activity'}
+							</h3>
+							<div>{message.text}</div>
+						</article>
+					))}
+					{!!thread.fields?.length && (
+						<details>
+							<summary>Public document fields</summary>
+							{thread.fields.map(field => (
+								<p key={field.id}>
+									{field.id}: {String(field.value)}
+								</p>
+							))}
+						</details>
+					)}
+				</section>
+			))}
+		</>
+	)
+}
+
+/** Busy/unavailable callers retain read-only inspection, without changing writing admission. */
 function PassageCommentBubble({
 	anchor,
 	threads,
 	api,
 	providerName,
+	onOpenThread,
 }: {
 	anchor: PassageAnchor
 	threads: PassageThread[]
 	api?: ReviewApi
 	providerName: string
+	onOpenThread?: OpenPassageThread
 }) {
 	const id = useId()
 	const trigger = useRef<HTMLButtonElement>(null)
@@ -208,6 +249,15 @@ function PassageCommentBubble({
 				ariaExpanded={open}
 				ariaControls={id}
 				onClick={() => {
+					const thread = threads[0]
+					const range = anchor.ranges[0]
+					if (
+						thread &&
+						range &&
+						threads.every(value => samePassage(value.passage, thread.passage)) &&
+						onOpenThread?.(thread, range, trigger.current)
+					)
+						return
 					const panel = bubble.current
 					if (!panel) return
 					if (panel.matches(':popover-open')) {
@@ -259,22 +309,24 @@ function PassageCommentBubble({
 				</header>
 				{/* biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded message scroll owner must support keyboard reading. */}
 				<section className="review-passage-bubble-messages" aria-label="Passage messages" tabIndex={0}>
-					{threads.map(thread => (
-						<section key={thread.id} aria-label="Passage question">
-							{thread.messages.map(message => (
-								<article className={`review-message review-message-${message.role}`} key={message.id}>
-									<h3>
-										{message.role === 'user'
-											? 'You'
-											: message.role === 'assistant'
-												? (thread.providerName ?? providerName)
-												: 'Activity'}
-									</h3>
-									<div>{message.text}</div>
-								</article>
-							))}
-						</section>
-					))}
+					<PassageMessages threads={threads} providerName={providerName} />
+					{onOpenThread &&
+						threads.map((thread, index) => (
+							<Btn
+								key={thread.id}
+								tone="ghost"
+								sm
+								onClick={() => {
+									const range = anchor.ranges[index]
+									if (range && onOpenThread(thread, range, trigger.current)) {
+										bubble.current?.hidePopover()
+										clearPaint()
+									}
+								}}
+							>
+								Reply to question {index + 1}
+							</Btn>
+						))}
 				</section>
 			</dialog>
 		</div>

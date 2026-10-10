@@ -3,6 +3,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
+import { runEditCli } from './edit.js'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
 import { runReviewCli } from './review.js'
 
@@ -15,7 +16,8 @@ Commands:
   logs     Tail daemon logs (--err for stderr)
   add      Create queued Item(s)
   ingest   File a self-contained task (email, note, …) into a project
-  review   Connect a running agent to Helm's Markdown review UI
+  edit     Iterate on a document with your running agent (helm edit FILE)
+  review   Legacy advanced document-connection commands
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
@@ -326,12 +328,13 @@ switch (command) {
 			process.exit(1)
 		})
 		break
+	case 'edit':
 	case 'review':
-		runReviewCli(process.argv.slice(3)).catch(error => {
+		;(command === 'edit' ? runEditCli : runReviewCli)(process.argv.slice(3)).catch(error => {
 			console.error(
 				error instanceof Error && !/ZodError|ENOENT|EACCES/.test(error.message)
 					? error.message.slice(0, 400)
-					: 'Review unavailable. Run helm review help; an updated Helm desktop must be running.',
+					: `Document editing unavailable. Run helm ${command} help; an updated Helm desktop must be running.`,
 			)
 			process.exitCode = 1
 		})

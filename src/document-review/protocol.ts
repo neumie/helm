@@ -35,7 +35,7 @@ export const commandSchema = z.discriminatedUnion('action', [
 		.object({
 			action: z.literal('connect'),
 			workspace: path,
-			provider: z.enum(['claude', 'codex', 'pi']),
+			provider: z.enum(['claude', 'codex', 'pi', 'cli']),
 			label,
 			transport: z.enum(['tool-return', 'in-process']),
 		})
@@ -43,7 +43,9 @@ export const commandSchema = z.discriminatedUnion('action', [
 	z.object({ action: z.literal('open'), file: path }).strict(),
 	z.object({ action: z.literal('list') }).strict(),
 	z.object({ action: z.literal('status') }).strict(),
-	z.object({ action: z.literal('next'), timeoutMs: z.number().int().min(1).max(60000) }).strict(),
+	z
+		.object({ action: z.literal('next'), timeoutMs: z.number().int().min(1).max(60000), documentId: uuid.optional() })
+		.strict(),
 	z.object({ action: z.literal('ack'), requestId: uuid }).strict(),
 	z
 		.object({
@@ -65,6 +67,8 @@ export type ReviewEnvelope = z.infer<typeof envelopeSchema>
 export const feedbackSchema = z
 	.object({ request: reviewRequestSchema, prompt: z.string().max(24000), relativePath: path })
 	.strict()
+export const windowClosedSchema = z.object({ closed: z.literal(true), documentId: uuid }).strict()
+export const reviewReadSchema = z.union([feedbackSchema, windowClosedSchema, z.null()])
 export const connectedSchema = z.object({ connection: path, id: reviewId, owner: uuid }).strict()
 export const openedSchema = z.object({ documentId: uuid, revision: token, relativePath: path }).strict()
 export const receiptSchema = z
@@ -74,7 +78,7 @@ export const sessionSchema = z
 	.object({
 		id: reviewId,
 		owner: uuid,
-		provider: z.enum(['claude', 'codex', 'pi']),
+		provider: z.enum(['claude', 'codex', 'pi', 'cli']),
 		name: label,
 		capabilities: z
 			.object({

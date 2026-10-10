@@ -3,11 +3,19 @@ import { open, realpath } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { callReview, connectReview, loadReviewConnection, reviewHostStatus } from '../document-review/client.js'
-import { feedbackSchema, openedSchema, receiptSchema, sessionSchema } from '../document-review/protocol.js'
+import {
+	feedbackSchema,
+	openedSchema,
+	receiptSchema,
+	reviewReadSchema,
+	sessionSchema,
+} from '../document-review/protocol.js'
 import type { ReviewCommand } from '../document-review/protocol.js'
 import type { ReviewFeedback, ReviewProvider } from '../document-review/types.js'
 
 export const REVIEW_HELP = `Usage: helm review <command> [options]
+
+Legacy low-level interface. Prefer: helm edit path/to/spec.md
 
 Use Helm's document UI from an ALREADY RUNNING Claude Code, Codex, or Pi session.
 Helm never launches or resumes an agent. Run these commands as that agent's tools.
@@ -25,7 +33,7 @@ Commands:
 
 Options:
   --connection FILE  Private handle returned by connect/open (not a token)
-  --agent NAME       claude | codex | pi; required when making a connection
+  --agent NAME       claude | codex | pi | cli; required when making a connection
   --workspace DIR    Repository or subdirectory (default: current directory)
   --label TEXT       Display-only caller label, at most 80 characters
   --wait             open also listens for feedback before returning
@@ -70,7 +78,9 @@ function parse(args: string[]) {
 			options.add(arg)
 		} else if (names.has(arg)) {
 			const value = args[++index]
-			if (!value || value.startsWith('--') || values.has(arg)) throw new Error(`Expected one value for ${arg}`)
+			// Reply text is literal data: even an empty answer or "--help" is not an option.
+			if (value === undefined || (arg !== '--text' && (!value || value.startsWith('--'))) || values.has(arg))
+				throw new Error(`Expected one value for ${arg}`)
 			values.set(arg, value)
 		} else if (arg.startsWith('-')) throw new Error(`Unknown review option: ${arg}`)
 		else positional.push(arg)
@@ -120,8 +130,13 @@ async function output(value: unknown): Promise<void> {
 		process.stdout.write(`${JSON.stringify(value)}\n`, error => (error ? reject(error) : resolve())),
 	)
 }
-export async function runReviewCli(args: string[]): Promise<void> {
+export async function runReviewCli(
+	args: string[],
+	writeOutput: (value: unknown) => Promise<void> = output,
+	workflow: { listenAfterReply?: boolean; windowBound?: boolean; documentId?: string } = {},
+): Promise<void> {
 	const { values, options, positional } = parse(args)
+	if (workflow.documentId !== undefined) z.string().uuid().parse(workflow.documentId)
 	const action = positional[0] ?? 'help'
 	if (options.has('--help') || options.has('-h') || action === 'help') {
 		process.stdout.write(REVIEW_HELP)
@@ -147,11 +162,11 @@ export async function runReviewCli(args: string[]): Promise<void> {
 		throw new Error('connect creates a fresh caller; use the existing handle with open/wait instead.')
 	let connectionFile = values.get('--connection')
 	if (action === 'status' && !connectionFile) {
-		await output(await reviewHostStatus())
+		await writeOutput(await reviewHostStatus())
 		return
 	}
 	if (action === 'connect' || (action === 'open' && !connectionFile)) {
-		const provider = z.enum(['claude', 'codex', 'pi']).parse(values.get('--agent')) as ReviewProvider
+		const provider = z.enum(['claude', 'codex', 'pi', 'cli']).parse(values.get('--agent')) as ReviewProvider
 		const connected = await connectReview({
 			action: 'connect',
 			provider,
@@ -161,7 +176,7 @@ export async function runReviewCli(args: string[]): Promise<void> {
 		})
 		connectionFile = connected.connection
 		if (action === 'connect') {
-			await output(connected)
+			await writeOutput(connected)
 			return
 		}
 		// A lost/open failure never loses the private handle needed for explicit cleanup.
@@ -175,26 +190,35 @@ export async function runReviewCli(args: string[]): Promise<void> {
 	process.once('SIGTERM', cancelled)
 	try {
 		let opened: z.infer<typeof openedSchema> | undefined
-		if (action === 'open') {
-			if (!argument) throw new Error('open requires a Markdown or JSX file.')
-			opened = await callReview(authority, { action: 'open', file: resolve(argument) }, openedSchema, controller.signal)
-			if (!options.has('--wait')) {
-				await output({ connection: connectionFile, ...opened })
-				return
-			}
-		}
-		if (action === 'wait' || action === 'next' || (action === 'open' && options.has('--wait'))) {
+		// Open, report, reads and confirmation share one captured full owner and cancellation scope.
+		const listen = async () => {
 			const deadline = Date.now() + seconds * 1000
+			const documentId = workflow.documentId ?? (workflow.windowBound ? opened?.documentId : undefined)
 			let feedback: ReviewFeedback | null = null
-			while (Date.now() < deadline && !controller.signal.aborted && !feedback) {
-				feedback = await callReview(
+			let closed = false
+			while (Date.now() < deadline && !controller.signal.aborted && !feedback && !closed) {
+				const value = await callReview(
 					authority,
-					{ action: 'next', timeoutMs: Math.max(1, Math.min(60000, deadline - Date.now())) },
-					feedbackSchema.nullable(),
+					{
+						action: 'next',
+						timeoutMs: Math.max(1, Math.min(60000, deadline - Date.now())),
+						...(documentId ? { documentId } : {}),
+					},
+					documentId ? reviewReadSchema : feedbackSchema.nullable(),
 					controller.signal,
 				)
+				if (value && 'closed' in value) {
+					if (value.documentId !== documentId) throw new Error('The listening result belongs to another window.')
+					closed = true
+				} else feedback = value
 			}
-			await output({ connection: connectionFile, ...opened, feedback, timedOut: feedback === null })
+			await writeOutput({
+				connection: connectionFile,
+				...opened,
+				...(documentId ? { documentId, closed } : {}),
+				feedback,
+				timedOut: feedback === null && !closed,
+			})
 			if (feedback)
 				await callReview(
 					authority,
@@ -202,6 +226,17 @@ export async function runReviewCli(args: string[]): Promise<void> {
 					z.literal(true),
 					controller.signal,
 				)
+		}
+		if (action === 'open') {
+			if (!argument) throw new Error('open requires a Markdown or JSX file.')
+			opened = await callReview(authority, { action: 'open', file: resolve(argument) }, openedSchema, controller.signal)
+			if (!options.has('--wait')) {
+				await writeOutput({ connection: connectionFile, ...opened })
+				return
+			}
+		}
+		if (action === 'wait' || action === 'next' || (action === 'open' && options.has('--wait'))) {
+			await listen()
 			return
 		}
 		if (action === 'reply') {
@@ -227,11 +262,15 @@ export async function runReviewCli(args: string[]): Promise<void> {
 				state: z.enum(['working', 'complete', 'error']).parse(values.get('--state') ?? 'complete'),
 				text,
 			}
-			await output(await callReview(authority, command, z.literal(true), controller.signal))
+			if (workflow.listenAfterReply && command.state === 'working')
+				throw new Error('Complete the reply before listening for another message.')
+			const reported = await callReview(authority, command, z.literal(true), controller.signal)
+			if (workflow.listenAfterReply) await listen()
+			else await writeOutput(reported)
 			return
 		}
 		if (action === 'receipt') {
-			await output(
+			await writeOutput(
 				await callReview(
 					authority,
 					{ action: 'receipt', requestId: z.string().uuid().parse(argument) },
@@ -242,15 +281,17 @@ export async function runReviewCli(args: string[]): Promise<void> {
 			return
 		}
 		if (action === 'status') {
-			await output(await callReview(authority, { action: 'status' }, sessionSchema, controller.signal))
+			await writeOutput(await callReview(authority, { action: 'status' }, sessionSchema, controller.signal))
 			return
 		}
 		if (action === 'list') {
-			await output(await callReview(authority, { action: 'list' }, z.array(sessionSchema).max(32), controller.signal))
+			await writeOutput(
+				await callReview(authority, { action: 'list' }, z.array(sessionSchema).max(32), controller.signal),
+			)
 			return
 		}
 		if (action === 'disconnect')
-			await output(await callReview(authority, { action: 'disconnect' }, z.literal(true), controller.signal))
+			await writeOutput(await callReview(authority, { action: 'disconnect' }, z.literal(true), controller.signal))
 	} finally {
 		process.removeListener('SIGINT', cancelled)
 		process.removeListener('SIGTERM', cancelled)

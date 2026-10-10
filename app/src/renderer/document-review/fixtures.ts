@@ -51,8 +51,12 @@ export type ReviewFixtureScenario =
 	| 'not-listening'
 	| 'editorial'
 	| 'editorial-light'
+	| 'cli'
+	| 'multiple-callers'
 	| 'passage-threads'
 	| 'passage-threads-light'
+	| 'passage-threads-long'
+	| 'passage-threads-long-light'
 	| 'passage-list'
 	| 'passage-list-light'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
@@ -92,15 +96,24 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 				: null,
 		historyTruncated: false,
 	}
-	const editorial = scenario === 'editorial' || scenario === 'editorial-light'
+	const editorial = scenario === 'editorial' || scenario === 'editorial-light' || scenario === 'cli'
 	if (editorial) {
-		session.provider = 'pi'
-		session.name = 'Workspace reading and conversation — an intentionally long original Pi session name'
+		session.provider = scenario === 'cli' ? 'cli' : 'pi'
+		session.name =
+			scenario === 'cli'
+				? 'Document conversation'
+				: 'Workspace reading and conversation — an intentionally long original Pi session name'
 		session.messages = []
 	}
 	const draft = defaultReviewDraft()
 	draft.sessionId = scenario === 'no-agent' ? null : session.id
-	draft.theme = ['light', 'editorial-light', 'passage-threads-light', 'passage-list-light'].includes(scenario)
+	draft.theme = [
+		'light',
+		'editorial-light',
+		'passage-threads-light',
+		'passage-threads-long-light',
+		'passage-list-light',
+	].includes(scenario)
 		? 'light'
 		: 'dark'
 	if (scenario === 'comments' || scenario === 'stale')
@@ -134,6 +147,15 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 		sessions: scenario === 'no-agent' ? [] : [session],
 		draft,
 	}
+	if (scenario === 'multiple-callers')
+		state.sessions.push({
+			...structuredClone(session),
+			id: 'review:66666666-6666-4666-8666-666666666666',
+			owner: '77777777-7777-4777-8777-777777777777',
+			provider: 'codex',
+			name: 'Codex · another document',
+			messages: [],
+		})
 	if (scenario.startsWith('passage-threads')) {
 		for (const [index, phrase, question, answer] of [
 			[
@@ -156,7 +178,17 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			const id = `44444444-4444-4444-8444-${String(index).padStart(12, '0')}`
 			session.messages.push(
 				{ id: `${id}:user`, role: 'user', text: question, passageContext: { documentId: state.document.id, passage } },
-				{ id: `${id}:assistant`, role: 'assistant', text: answer },
+				{
+					id: `${id}:assistant`,
+					role: 'assistant',
+					text: scenario.startsWith('passage-threads-long')
+						? `${answer}\n\n${Array.from(
+								{ length: 8 },
+								(_, index) =>
+									`${index + 1}. Keep the original conversation, the selected source and the document revision together. A longer explanation should remain comfortable to read while the writing controls stay within reach.`,
+							).join('\n\n')}`
+						: answer,
+				},
 			)
 		}
 	}

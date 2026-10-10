@@ -81,7 +81,16 @@ export function createReviewControl(
 						historyTruncated: snapshot.historyTruncated || snapshot.messages.length > 0,
 					}))
 				case 'next':
-					return caller.next(binding.id, binding.owner, command.timeoutMs, signal)
+					return command.documentId
+						? deps.windows.nextForCallerDocument(
+								binding.profileId,
+								binding.id,
+								binding.owner,
+								command.documentId,
+								command.timeoutMs,
+								signal,
+							)
+						: caller.next(binding.id, binding.owner, command.timeoutMs, signal)
 				case 'ack':
 					caller.confirm(binding.id, binding.owner, command.requestId)
 					return true

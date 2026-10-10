@@ -2,7 +2,8 @@ import type { CanvasFieldValue, CanvasReviewArchive, ReviewCanvasCompilation } f
 export type * from './canvas-types.js'
 
 /** Review is a surface of an already-running caller, never an agent launcher. */
-export type ReviewProvider = 'claude' | 'codex' | 'pi'
+/** cli is an honestly unspecified caller, not an inferred provider or a different authority. */
+export type ReviewProvider = 'claude' | 'codex' | 'pi' | 'cli'
 export type ReviewIntent = 'discuss' | 'change'
 export interface ReviewCapabilities {
 	transport: 'tool-return' | 'in-process'
@@ -121,6 +122,12 @@ export interface ReviewFeedback {
 	prompt: string
 	relativePath: string
 }
+/** A window-bound read can finish normally when its exact window closes. */
+export interface ReviewWindowClosed {
+	closed: true
+	documentId: string
+}
+export type ReviewReadResult = ReviewFeedback | ReviewWindowClosed | null
 export const REVIEW_DOCUMENT_BYTES = 512 * 1024
 export const REVIEW_PROMPT_UNITS = 24000
 export const REVIEW_INSTRUCTION_UNITS = 8000

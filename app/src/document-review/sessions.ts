@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { ArchiveSettlement } from './canvas-persistence'
-import type { ReviewFeedback, ReviewProvider, ReviewReceipt, ReviewSession } from './types'
+import type { ReviewFeedback, ReviewProvider, ReviewReadResult, ReviewReceipt, ReviewSession } from './types'
 
 interface Waiter {
-	finish(value: ReviewFeedback | null): void
+	documentId?: string
+	finish(value: ReviewReadResult): void
 }
 interface Pending {
 	feedback: ReviewFeedback
@@ -87,13 +88,15 @@ export class ReviewSessions {
 			throw new Error('Connection is unavailable. Reconnect from the original agent; nothing was rerouted.')
 		return owner
 	}
-	reserve(id: string, ownerId: string, workspace: string): ReviewOwner {
+	reserve(id: string, ownerId: string, workspace: string, documentId?: string): ReviewOwner {
 		const owner = this.get(id, ownerId)
 		if (owner.workspace !== workspace) throw new Error('This connection belongs to another workspace.')
 		if (owner.admitting || owner.pending) throw new Error('Wait for the current feedback to settle.')
 		if (owner.snapshot.needsAcknowledgement) throw new Error('Check the uncertain feedback before sending again.')
 		if (!owner.waiter)
 			throw new Error('The agent is not listening. Ask it to run helm review wait; your feedback was not sent.')
+		if (owner.waiter.documentId && owner.waiter.documentId !== documentId)
+			throw new Error('The agent is listening to a different document. Your feedback was not sent.')
 		owner.admitting = true
 		return owner
 	}
@@ -122,7 +125,8 @@ export class ReviewSessions {
 		if (
 			feedback.request.id !== id ||
 			feedback.request.owner !== owner.snapshot.owner ||
-			feedback.request.sessionId !== owner.snapshot.id
+			feedback.request.sessionId !== owner.snapshot.id ||
+			(owner.waiter.documentId !== undefined && owner.waiter.documentId !== feedback.request.documentId)
 		)
 			throw new Error('Feedback no longer belongs to this connection.')
 		const receipt: ReviewReceipt = {
@@ -174,14 +178,35 @@ export class ReviewSessions {
 		this.changed()
 		return { ...receipt }
 	}
-	next(id: string, ownerId: string, timeoutMs: number, signal: AbortSignal): Promise<ReviewFeedback | null> {
+	/** End only the idle read for this exact window; keep caller/reply authority alive. */
+	closeDocument(documentId: string): void {
+		for (const owner of this.owners.values()) {
+			const waiter = owner.waiter
+			if (waiter?.documentId === documentId) waiter.finish({ closed: true, documentId })
+		}
+	}
+	next(id: string, ownerId: string, timeoutMs: number, signal: AbortSignal): Promise<ReviewFeedback | null>
+	next(
+		id: string,
+		ownerId: string,
+		timeoutMs: number,
+		signal: AbortSignal,
+		documentId: string,
+	): Promise<ReviewReadResult>
+	next(
+		id: string,
+		ownerId: string,
+		timeoutMs: number,
+		signal: AbortSignal,
+		documentId?: string,
+	): Promise<ReviewReadResult> {
 		const owner = this.get(id, ownerId)
 		if (signal.aborted) return Promise.reject(new Error('Listening was cancelled.'))
 		if (owner.waiter || owner.pending || owner.admitting || owner.snapshot.needsAcknowledgement)
 			return Promise.reject(new Error('This connection already has a listener or unresolved feedback.'))
 		return new Promise((resolve, reject) => {
 			let done = false
-			const finish = (value: ReviewFeedback | null, cancelled = false) => {
+			const finish = (value: ReviewReadResult, cancelled = false) => {
 				if (done) return
 				done = true
 				clearTimeout(timer)
@@ -192,7 +217,7 @@ export class ReviewSessions {
 				if (cancelled) reject(new Error('Listening was cancelled.'))
 				else resolve(value)
 			}
-			const waiter: Waiter = { finish: value => finish(value) }
+			const waiter: Waiter = { documentId, finish: value => finish(value) }
 			const aborted = () => finish(null, true)
 			const timer = setTimeout(() => finish(null), timeoutMs)
 			owner.waiter = waiter

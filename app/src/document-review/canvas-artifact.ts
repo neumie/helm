@@ -64,7 +64,7 @@ const thread = z
 		intent,
 		passage: passage.nullable(),
 		fields,
-		provider: z.enum(['claude', 'codex', 'pi']),
+		provider: z.enum(['claude', 'codex', 'pi', 'cli']),
 		name: z.string().min(1).max(160),
 		state: z.enum(['unconfirmed', 'complete', 'error', 'unknown', 'rejected']),
 		reply: z.string().max(64000).optional(),

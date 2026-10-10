@@ -9,7 +9,7 @@ import { sessionSchema } from '../src/document-review/protocol.ts'
 import type { ReviewDocument, ReviewFeedback, ReviewMessage, ReviewSession } from '../src/document-review/types.ts'
 
 const { ReviewSessions } = sessionsModule
-const { projectPassageThreads } = projectionModule
+const { projectPassageThreads, samePassage, documentConversationMessages } = projectionModule
 const { locateReviewPassage } = requestModule
 const revision = 'a'.repeat(64)
 const text = 'First paragraph.\n\nSecond paragraph.\n'
@@ -99,6 +99,66 @@ test('passage bubbles project only exact request replies in the current document
 		projectPassageThreads(document, session(messages.filter(value => value.role !== 'user')), blocks).size,
 		0,
 	)
+})
+
+test('whole-document chat excludes passage requests, matched replies and orphan request replies', () => {
+	const source = context()
+	const owner = session([
+		{ id: 'whole:user', role: 'user', text: 'Entire document' },
+		{ id: 'whole:assistant', role: 'assistant', text: 'Whole reply' },
+		{ id: 'passage:user', role: 'user', text: 'Only this selection', passageContext: source },
+		{ id: 'passage:assistant', role: 'assistant', text: 'Passage reply' },
+		{ id: 'passage:error', role: 'activity', text: 'Passage outcome' },
+		{ id: 'lost:assistant', role: 'assistant', text: 'No question remains' },
+		{ id: 'original-context', role: 'assistant', text: 'Existing caller context' },
+	])
+	assert.deepEqual(
+		documentConversationMessages(owner, document).map(value => value.text),
+		['Entire document', 'Whole reply', 'Existing caller context'],
+	)
+	assert.ok(samePassage(source.passage, { ...source.passage }))
+	for (const changed of [
+		{ ...source.passage, start: 1 },
+		{ ...source.passage, revision: 'b'.repeat(64) },
+		{ ...source.passage, source: 'Other block' },
+		{ ...source.passage, canvasId: 'other' },
+		{ ...source.passage, kind: 'exact' as const },
+	])
+		assert.equal(samePassage(source.passage, changed), false)
+})
+
+test('loss of a live question preserves its saved passage thread instead of hiding the archive', () => {
+	const passage = context().passage
+	const archived: ReviewDocument = {
+		...document,
+		archive: {
+			version: 1,
+			revision,
+			annotations: [],
+			threads: [
+				{
+					id: 'saved',
+					passage,
+					fields: [],
+					instruction: 'Saved question',
+					reply: 'Saved reply',
+					intent: 'discuss',
+					provider: 'pi',
+					name: 'Original conversation',
+					state: 'complete',
+				},
+			],
+		},
+	}
+	const owner = session([{ id: 'lost:assistant', role: 'assistant', text: 'Saved reply', archiveThreadId: 'saved' }])
+	const threads = projectPassageThreads(archived, owner, blocks).get('first')
+	assert.equal(threads?.length, 1)
+	assert.deepEqual(threads?.[0]?.passage, passage)
+	assert.deepEqual(
+		threads?.[0]?.messages.slice(0, 2).map(value => value.text),
+		['Saved question', 'Saved reply'],
+	)
+	assert.deepEqual(documentConversationMessages(owner, archived), [])
 })
 
 test('admitted questions retain detached source context and exact streaming reply identities within the mailbox bound', async () => {

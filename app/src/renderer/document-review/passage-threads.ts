@@ -1,4 +1,5 @@
 import type {
+	CanvasFieldValue,
 	ReviewAnnotation,
 	ReviewDocument,
 	ReviewMessage,
@@ -11,6 +12,8 @@ import { validateDocumentPassage } from './passage-validation'
 export interface PassageThread {
 	id: string
 	quote: string
+	passage: ReviewPassage
+	fields?: CanvasFieldValue[]
 	messages: ReviewMessage[]
 	providerName?: string
 }
@@ -30,7 +33,12 @@ export function projectPassageThreads(
 				? block.id === passage.canvasId && block.start === passage.start && block.end === passage.end
 				: passage.start >= block.start && passage.start < block.end,
 		)
-	const liveArchives = new Set(session?.messages.map(message => message.archiveThreadId).filter(Boolean) ?? [])
+	const liveArchives = new Set(
+		session?.messages
+			.filter(message => message.role === 'user')
+			.map(message => message.archiveThreadId)
+			.filter(Boolean) ?? [],
+	)
 	for (const thread of document.archive?.threads ?? []) {
 		if (!thread.passage || liveArchives.has(thread.id)) continue
 		try {
@@ -44,6 +52,8 @@ export function projectPassageThreads(
 		group.push({
 			id: `archive:${thread.id}`,
 			quote: thread.passage.quote,
+			passage: thread.passage,
+			fields: thread.fields,
 			providerName: thread.name,
 			messages: [
 				{ id: `${thread.id}:user`, role: 'user', text: thread.instruction },
@@ -70,6 +80,7 @@ export function projectPassageThreads(
 		group.push({
 			id: `annotation:${annotation.id}`,
 			quote: annotation.passage.quote,
+			passage: annotation.passage,
 			messages: [
 				{ id: annotation.id, role: 'user', text: annotation.note },
 				{ id: `${annotation.id}:local`, role: 'activity', text: 'Local comment · not sent' },
@@ -94,10 +105,44 @@ export function projectPassageThreads(
 			value => value.id === message.id || value.id === `${requestId}:assistant` || value.id === `${requestId}:error`,
 		)
 		const group = result.get(block.id) ?? []
-		group.push({ id: message.id, quote: context.passage.quote, messages })
+		group.push({ id: message.id, quote: context.passage.quote, passage: context.passage, messages })
 		result.set(block.id, group)
 	}
 	return result
+}
+
+/** Scope is the complete locator, never quote equality or message proximity. */
+export function samePassage(a: ReviewPassage | null, b: ReviewPassage | null): boolean {
+	return (
+		a === b ||
+		(!!a &&
+			!!b &&
+			a.revision === b.revision &&
+			a.start === b.start &&
+			a.end === b.end &&
+			a.kind === b.kind &&
+			a.canvasId === b.canvasId &&
+			a.source === b.source &&
+			a.quote === b.quote)
+	)
+}
+
+/** Request-associated passage replies never migrate into whole-document chat. */
+export function documentConversationMessages(session: ReviewSession, document: ReviewDocument): ReviewMessage[] {
+	const passageArchives = new Set(
+		document.archive?.threads.filter(thread => thread.passage).map(thread => thread.id) ?? [],
+	)
+	const users = new Map(
+		session.messages.filter(message => message.role === 'user').map(message => [message.id, message]),
+	)
+	return session.messages.filter(message => {
+		if (message.passageContext || (message.archiveThreadId && passageArchives.has(message.archiveThreadId)))
+			return false
+		const suffix = message.role === 'assistant' ? ':assistant' : message.role === 'activity' ? ':error' : null
+		if (!suffix || !message.id.endsWith(suffix)) return true
+		const question = users.get(`${message.id.slice(0, -suffix.length)}:user`)
+		return !!question && !question.passageContext
+	})
 }
 
 export function archiveThreadStatus(state: string): string {
