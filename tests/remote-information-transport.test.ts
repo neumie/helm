@@ -479,6 +479,7 @@ test('production bridge owns one source client across manual reconnect and fence
 		on: (event: string, fn: (e: unknown, c: unknown) => void) => handlers.set(event, fn),
 		registerCommand: (name: string, command: { handler: (s: string, c: unknown) => Promise<void> }) =>
 			commands.set(name, command.handler),
+		getThinkingLevel: () => 'off',
 		getSessionName: () => 'Fixture',
 		sendUserMessage: () => assert.fail('No command effects'),
 		events: {

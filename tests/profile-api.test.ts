@@ -92,28 +92,24 @@ function withProfileApi(
 		isQuiescing: () => false,
 		profileChanged: () => undefined,
 	}
-	const api = apiRoutes(
+	const api = apiRoutes({
 		config,
 		configPath,
 		db,
-		queue as never,
-		{ pollOnce: async () => undefined, profileChanged: () => undefined } as never,
-		{
+		queue: queue as never,
+		poller: { pollOnce: async () => undefined, profileChanged: () => undefined } as never,
+		provider: {
 			name: 'fake',
 			pollNewTasks: async () => [],
 			getTaskContext: async () => null,
 			resolveTaskSummary: async () => null,
 			postComment: async () => undefined,
 		} as never,
-		{ name: 'fake', startPlanningSession: async () => ({}) } as never,
-		{ enqueue() {}, backfill() {} } as never,
-		undefined,
-		undefined,
-		control,
-		undefined,
-		undefined,
-		{ store, runtime: () => store.activeRuntime(), localControlToken: LOCAL_CONTROL_TOKEN },
-	)
+		spawner: { name: 'fake', startPlanningSession: async () => ({}) } as never,
+		enricher: { enqueue() {}, backfill() {} } as never,
+		daemonControl: control,
+		profileContext: { store, runtime: () => store.activeRuntime(), localControlToken: LOCAL_CONTROL_TOKEN },
+	})
 	const profileRequest = async (path: string, init: RequestInit = {}) =>
 		await api.request(path, {
 			...init,

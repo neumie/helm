@@ -521,12 +521,25 @@ test('bridge checks the guarded current owner before invocation and removes ques
 		scopeId: null,
 		generation: 1,
 	}
+	let now = Date.now()
+	let observedReplacement = false
 	const host = new RemoteHost({
 		origin,
 		browserCapabilityHash: hashScopedCapability(browserToken),
 		enrollments: [enrollment],
+		now: () => now,
 	})
-	const server = createServer(getRequestListener((request, env) => host.local.fetch(request, env)))
+	const server = createServer(
+		getRequestListener(async (request, env) => {
+			const response = await host.local.fetch(request, env)
+			if (new URL(request.url).pathname === '/exchange' && response.status === 200) {
+				const body = (await response.clone().json()) as { commands: unknown[] }
+				// Replace after delivery is committed but before Pi receives the response.
+				if (body.commands.length) currentId = randomUUID()
+			}
+			return response
+		}),
+	)
 	await new Promise<void>(resolvePromise => server.listen(join(root, 'host.sock'), resolvePromise))
 	const bus = new EventEmitter()
 	const eventHandlers = new Map<string, Array<(event: unknown, ctx: unknown) => void>>()
@@ -553,6 +566,7 @@ test('bridge checks the guarded current owner before invocation and removes ques
 		registerCommand(name: string, value: { handler: (args: string, ctx: unknown) => Promise<void> }) {
 			commands.set(name, value.handler)
 		},
+		getThinkingLevel: () => 'off',
 		getSessionName: () => 'divoka kremrole',
 		sendUserMessage: (text: string) => sent.push(text),
 	}
@@ -567,7 +581,10 @@ test('bridge checks the guarded current owner before invocation and removes ques
 		},
 		get sessionManager() {
 			return {
-				getSessionId: () => currentId,
+				getSessionId: () => {
+					if (currentId !== originalId) observedReplacement = true
+					return currentId
+				},
 				getLeafId: () => null,
 				getEntry: () => undefined,
 			}
@@ -656,13 +673,17 @@ test('bridge checks the guarded current owner before invocation and removes ques
 		(await host.browser.request('/v1/commands', { method: 'POST', headers, body: JSON.stringify(command) })).status,
 		202,
 	)
-	currentId = randomUUID()
+	await waitFor(async () => observedReplacement)
+	assert.deepEqual(sent, [])
+	// The retired bridge cannot acknowledge its refusal: delivered without ACK
+	// remains unknown at the host deadline, never a fabricated rejection.
+	now += 11_000
 	await waitFor(async () => {
 		const response = await host.browser.request(
 			`/v1/commands/${command.commandId}?${new URLSearchParams({ hostEpoch: host.epoch, sessionId: target.sessionId, incarnation: target.incarnation })}`,
 			{ headers },
 		)
-		return ((await response.json()) as { status?: string }).status === 'rejected'
+		return ((await response.json()) as { status?: string }).status === 'unknown'
 	})
 	assert.deepEqual(sent, [])
 	assert.equal(bus.listenerCount(QUESTION_OPEN), 1)

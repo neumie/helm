@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -210,7 +210,10 @@ test('project workspaces reject a repository replaced while git creates the isol
 				definition: definition({ kind: 'project', projectSlug: 'project' }),
 				config: config([{ slug: 'project', repoPath: repo, baseBranch: 'main' }]),
 			}),
-			/Scheduled project repository was replaced while preparing scheduled workspace/,
+			/Scheduled project repository was replaced while preparing scheduled workspace|Stored path is not an active Git worktree/,
 		)
+		assert.equal(await readFile(join(replacement, 'README.md'), 'utf8'), 'scheduled workspace fixture\n')
+		assert.equal((await stat(join(replacement, '.git'))).isDirectory(), true)
+		assert.equal((await stat(repo)).isDirectory(), true)
 	})
 })

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const MAX_KNOWLEDGE_CONTEXT_CHARACTERS = 200_000
+export const MAX_KNOWLEDGE_QUERY_UTF16_UNITS = 4_000
 const MAX_KNOWLEDGE_CONTEXT_UTF16_UNITS = 400_000
 export const MAX_KNOWLEDGE_MANIFEST_SOURCES = 500
 
@@ -98,7 +99,7 @@ export const knowledgeSnapshotSchema = z
 		projectSlug: z.string().min(1).max(256),
 		purpose: knowledgePurposeSchema,
 		sequence: z.number().int().positive(),
-		query: z.string().max(4_000),
+		query: z.string().max(MAX_KNOWLEDGE_QUERY_UTF16_UNITS),
 		characterBudget: z.number().int().min(100).max(MAX_KNOWLEDGE_CONTEXT_CHARACTERS).nullable(),
 		context: z.string().min(1).max(MAX_KNOWLEDGE_CONTEXT_UTF16_UNITS),
 		manifest: z.array(knowledgeSourceSchema).max(MAX_KNOWLEDGE_MANIFEST_SOURCES),

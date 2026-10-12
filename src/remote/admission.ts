@@ -29,6 +29,7 @@ type TicketState = {
 }
 
 type LedgerEntry = {
+	modelCorrectionDeadline?: number
 	fingerprint: string
 	receipt: RemoteReceipt
 }
@@ -173,7 +174,26 @@ export class RemoteAdmission {
 		return copyReceipt(state.receipt)
 	}
 
-	dispatch(command: RemoteCommand, invoke: () => RemoteReceipt['status']): RemoteReceipt {
+	/** Refusal evidence only; never removes the reserved dedup entry or retries an effect. */
+	correctModelRefusal(command: RemoteCommand): RemoteReceipt | null {
+		const entry = this.commands.get(command.commandId)
+		if (
+			this.closed ||
+			command.operation.kind !== 'model' ||
+			!sameRemoteTarget(this.target, command.target) ||
+			!entry ||
+			entry.fingerprint !== commandFingerprint(command) ||
+			entry.receipt.status !== 'dispatched' ||
+			entry.modelCorrectionDeadline === undefined ||
+			this.now() >= entry.modelCorrectionDeadline
+		)
+			return null
+		entry.modelCorrectionDeadline = undefined
+		entry.receipt.status = 'rejected'
+		return copyReceipt(entry.receipt)
+	}
+
+	dispatch(command: RemoteCommand, invoke: () => RemoteReceipt['status'], expiresAt?: number): RemoteReceipt {
 		const rejected: RemoteReceipt = { commandId: command.commandId, status: 'rejected' }
 		if (this.closed || !sameRemoteTarget(this.target, command.target)) return rejected
 		this.reapExpired()
@@ -182,7 +202,18 @@ export class RemoteAdmission {
 		if (prior) return prior.fingerprint === fingerprint ? copyReceipt(prior.receipt) : rejected
 		if (this.commands.size >= this.limit) return rejected
 		const receipt: RemoteReceipt = { commandId: command.commandId, status: 'unknown' }
-		this.commands.set(command.commandId, { fingerprint, receipt })
+		this.commands.set(command.commandId, {
+			fingerprint,
+			receipt,
+			modelCorrectionDeadline:
+				command.operation.kind === 'model' &&
+				expiresAt !== undefined &&
+				Number.isFinite(expiresAt) &&
+				expiresAt > this.now() &&
+				expiresAt <= this.now() + 10_000
+					? expiresAt
+					: undefined,
+		})
 		try {
 			receipt.status = invoke()
 		} catch {

@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-const evidence = process.env.HELM_DOCUMENT_CANVAS_EVIDENCE ?? '/tmp/helm-document-canvas-browser'
 async function open(page: Page, story: string, canvas = false) {
 	await page.goto(`/iframe.html?id=views-document-review--${story}&viewMode=story`)
 	await expect(page.getByRole('heading', { name: canvas ? 'proposal.jsx' : 'proposal.md', exact: true })).toBeVisible({
@@ -87,25 +86,27 @@ for (const size of [
 		await expect(editor).toBeVisible()
 		await editor.fill('A compact reading question.')
 		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
-		for (const label of ['Writing options', 'Feedback intent: Ask', 'Send message']) {
+		for (const label of ['Document writing options', 'Feedback intent: Ask', 'Send message']) {
 			const box = await page.getByRole('button', { name: label, exact: true }).boundingBox()
 			expect(box).not.toBeNull()
 			expect(box?.x).toBeGreaterThanOrEqual(0)
 			expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(size.width)
 			expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(size.height)
 		}
-		await page.screenshot({ path: `${evidence}/canvas-light-${size.width}x${size.height}.png` })
+		await page.screenshot({ path: test.info().outputPath(`canvas-light-${size.width}x${size.height}.png`) })
 	})
 }
 
 test('saved replies, passage paint and bubbles remain readable without any caller or replay', async ({ page }) => {
 	await page.setViewportSize({ width: 1180, height: 800 })
 	await open(page, 'saved-review-history')
-	const history = page.getByRole('region', { name: 'Saved review history' })
+	await view(page, 'Comments')
+	const history = page.getByRole('region', { name: 'Saved passage conversations' })
 	await expect(history).toBeVisible()
 	await expect(
 		history.getByText('The prose stays primary; the companion supports a precise question.', { exact: true }),
 	).toBeVisible()
+	await page.getByRole('button', { name: 'Back to reading', exact: true }).click()
 	await expect(page.getByRole('button', { name: 'Show passage conversation' })).toBeVisible()
 	await expect.poll(() => page.evaluate(() => CSS.highlights.get('helm-review-saved-annotations')?.size ?? 0)).toBe(1)
 	await expect
@@ -132,7 +133,7 @@ test('saved replies, passage paint and bubbles remain readable without any calle
 	await page.getByRole('textbox', { name: 'Whole-document message' }).fill('Retain my unsent thought.')
 	await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 	expect(await page.evaluate(() => window.__helmCanvasReviewProof?.stats().sends)).toBe(0)
-	await page.screenshot({ path: `${evidence}/saved-history-1180x800.png` })
+	await page.screenshot({ path: test.info().outputPath('saved-history-1180x800.png') })
 })
 
 for (const [story, text] of [
@@ -147,8 +148,11 @@ for (const [story, text] of [
 			await expect(page.getByRole('button', { name: 'Show passage conversation' })).toHaveCount(0)
 			expect(await page.evaluate(() => CSS.highlights.get('helm-review-saved-annotations')?.size ?? 0)).toBe(0)
 		}
+		await view(page, 'Comments')
+		await expect(
+			page.getByRole('region', { name: 'Saved passage conversations' }).getByText(new RegExp(text)),
+		).toBeVisible()
 		await conversation(page)
-		await expect(page.getByRole('region', { name: 'Saved review history' }).getByText(new RegExp(text))).toBeVisible()
 		await page.getByRole('textbox', { name: 'Whole-document message' }).fill('No replay.')
 		await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 		expect(await page.evaluate(() => window.__helmCanvasReviewProof?.stats().sends)).toBe(0)
@@ -217,11 +221,20 @@ test('final reply discard confirms default keep, preserves original conversation
 	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toHaveValue(
 		'Keep this unrelated local draft.',
 	)
-	await expect(
-		page.getByText('This reply remains in the original conversation even if its document save is discarded.', {
-			exact: true,
-		}),
-	).toBeVisible()
+	// This legacy fixture reply has no full passage locator. It remains in the original
+	// mailbox, never reclassified as whole-document chat or paired by quote alone.
+	const messages = await page.evaluate(
+		async () => (await window.__helmCanvasReviewProof?.api.load())?.data?.sessions[0]?.messages,
+	)
+	expect(
+		messages?.some(
+			message =>
+				message.text === 'This reply remains in the original conversation even if its document save is discarded.',
+		),
+	).toBe(true)
+	await expect(page.locator('.review-companion')).not.toContainText(
+		'This reply remains in the original conversation even if its document save is discarded.',
+	)
 })
 
 test('review persistence retry is explicit and does not redispatch feedback', async ({ page }) => {

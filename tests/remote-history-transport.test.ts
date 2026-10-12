@@ -633,6 +633,7 @@ test('real authenticated host and production bridge compose read-only history ov
 		registerCommand(name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) {
 			commands.set(name, command.handler)
 		},
+		getThinkingLevel: () => 'off',
 		getSessionName: () => 'Fixture bridge',
 		sendUserMessage() {
 			effects++

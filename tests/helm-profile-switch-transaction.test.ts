@@ -40,22 +40,29 @@ function fixture() {
 	let gateActivation = false
 	let namespaceFailures = 0
 	let reloadFailures = 0
+	let fenceFailures = 0
+	let generationFailures = 0
+	let drainCount = 0
 	const events: string[] = []
 	let latestFence: { ready: Deferred<void>; target: string; cancelled: boolean } | null = null
 	const timers: Array<() => void> = []
 	const coordinator = new ProfileSwitchCoordinator({
 		currentState: () => state,
 		listProfiles: async () => ({ data: state }),
-		beginRunContextDrain: () => ({
-			ok: true as const,
-			drained: Promise.resolve(),
-			release: () => events.push('release'),
-		}),
+		beginRunContextDrain: () => {
+			drainCount++
+			return {
+				ok: true as const,
+				drained: Promise.resolve(),
+				release: () => events.push('release'),
+			}
+		},
 		flushBuffers: async () => {
 			events.push('flush')
 		},
 		beginFence: target => {
 			events.push(`fence:${target}`)
+			if (fenceFailures-- > 0) throw new Error('fence unavailable')
 			const ready = deferred<void>()
 			const record = { ready, target, cancelled: false }
 			latestFence = record
@@ -75,7 +82,10 @@ function fixture() {
 				observeCoherently: async () => observation,
 			} satisfies ProfileSwitchFence
 		},
-		advanceLocalGeneration: () => events.push('advance'),
+		advanceLocalGeneration: () => {
+			if (generationFailures-- > 0) throw new Error('generation unavailable')
+			events.push('advance')
+		},
 		restorePrecommitGeneration: () => events.push('restore'),
 		activateDaemon: async () => {
 			events.push('activate')
@@ -111,6 +121,15 @@ function fixture() {
 	return {
 		coordinator,
 		events,
+		get drainCount() {
+			return drainCount
+		},
+		set fenceFailures(value: number) {
+			fenceFailures = value
+		},
+		set generationFailures(value: number) {
+			generationFailures = value
+		},
 		get fence() {
 			if (!latestFence) throw new Error('missing fence')
 			return latestFence
@@ -326,4 +345,150 @@ test('same unknown target coalesces and an explicit target supersedes without st
 	const result = await second
 	assert.equal(result.error, undefined)
 	assert.ok(!f.events.includes('restore'))
+})
+
+for (const activationFails of [false, true]) {
+	test(`unknown switch superseded by cached Work completes forward (activation error: ${activationFails})`, async () => {
+		const f = fixture()
+		f.activation = { error: 'first response lost' }
+		const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+		await spin()
+		const oldFence = f.fence
+		const staleTimers = [...f.timers]
+		assert.ok(f.events.includes('close-ipc'))
+
+		f.observation = work()
+		f.activation = activationFails ? { error: 'successor response lost' } : { data: { state: work(), applied: true } }
+		const second = f.coordinator.switchTo('work', 'work-item')
+		assert.match((await first).error ?? '', /superseded/)
+		assert.equal(f.coordinator.pendingOperation(), second)
+		await spin()
+		await spin()
+		assert.notEqual(f.fence, oldFence)
+		assert.equal(f.drainCount, 1)
+		assert.equal(f.events.filter(event => event === 'flush').length, 1)
+		assert.equal(f.events.filter(event => event === 'release').length, 0)
+		assert.ok(f.events.includes('namespace:work'))
+		assert.ok(f.events.includes('reload'))
+		assert.equal(f.coordinator.isSwitching(), true)
+		assert.ok(!f.events.includes('complete-fence'))
+
+		oldFence.ready.resolve()
+		for (const timer of staleTimers) timer()
+		await spin()
+		assert.equal(f.coordinator.pendingOperation(), second)
+		f.fence.ready.resolve()
+		assert.equal((await second).error, undefined)
+		assert.ok(!f.events.includes('restore'))
+		assert.ok(!f.events.includes('cancel'))
+		assert.deepEqual(f.events.slice(-4), ['menu', 'item:work-item', 'complete-fence', 'release'])
+		assert.equal(f.events.filter(event => event === 'release').length, 1)
+		assert.equal(f.coordinator.pendingOperation(), null)
+	})
+}
+
+test('inherited exact-old activation failure reconciles forward instead of restoring an advanced token', async () => {
+	const f = fixture()
+	f.activation = { error: 'response lost' }
+	const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	f.observation = work()
+	const second = f.coordinator.switchTo('profile-bbbbbbbbbbbb', 'b-item')
+	assert.match((await first).error ?? '', /superseded/)
+	await spin()
+	f.fence.ready.resolve()
+	assert.match((await second).error ?? '', /resolved to work/)
+	assert.ok(f.events.includes('namespace:work'))
+	assert.ok(f.events.includes('reload'))
+	assert.ok(f.events.includes('complete-fence'))
+	assert.ok(!f.events.includes('restore'))
+	assert.ok(!f.events.includes('item:b-item'))
+})
+
+test('cached Work successor adopts a coherently observed third identity without target Item delivery', async () => {
+	const f = fixture()
+	const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	f.observation = other('profile-cccccccccccc', 3)
+	f.activation = { error: 'response lost' }
+	const second = f.coordinator.switchTo('work', 'work-item')
+	assert.match((await first).error ?? '', /superseded/)
+	await spin()
+	f.fence.ready.resolve()
+	assert.match((await second).error ?? '', /resolved to profile-cccccccccccc/)
+	assert.ok(f.events.includes('namespace:profile-cccccccccccc'))
+	assert.ok(f.events.includes('complete-fence'))
+	assert.ok(!f.events.includes('restore'))
+	assert.ok(!f.events.includes('item:work-item'))
+})
+
+test('successor fresh-fence failure retains uncertainty and its lease until retry commits forward', async () => {
+	const f = fixture()
+	const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	f.fenceFailures = 1
+	const second = f.coordinator.switchTo('work')
+	assert.match((await first).error ?? '', /superseded/)
+	await spin()
+	assert.equal(f.coordinator.pendingOperation(), second)
+	assert.equal(f.events.filter(event => event === 'activate').length, 1)
+	assert.ok(!f.events.includes('release'))
+	assert.ok(!f.events.includes('open-ipc'))
+	assert.ok(!f.events.includes('cancel'))
+	assert.equal(f.drainCount, 1)
+	f.observation = work()
+	const retry = f.timers.at(-2)
+	assert.ok(retry)
+	retry()
+	await spin()
+	f.fence.ready.resolve()
+	assert.equal((await second).error, undefined)
+	assert.equal(f.events.filter(event => event === 'activate').length, 2)
+	assert.equal(f.events.filter(event => event === 'flush').length, 1)
+	assert.equal(f.events.filter(event => event === 'release').length, 1)
+	assert.ok(f.events.includes('complete-fence'))
+})
+
+test('rejected competitors never own the admitted operation promise', async () => {
+	const f = fixture()
+	f.gateActivation = true
+	const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	assert.equal(f.coordinator.pendingOperation(), first)
+	const rejected = await f.coordinator.switchTo('work')
+	assert.match(rejected.error ?? '', /already in progress/)
+	assert.equal(f.coordinator.pendingOperation(), first)
+	await spin()
+	f.resolveActivation({ error: 'timeout' })
+	await spin()
+	assert.equal(f.coordinator.pendingOperation(), first)
+	f.coordinator.stop()
+	assert.equal((await first).error, 'Helm is shutting down.')
+	assert.equal(f.coordinator.pendingOperation(), null)
+})
+
+test('successor local token failure invalidates its partial fence and retries without another drain', async () => {
+	const f = fixture()
+	const first = f.coordinator.switchTo('profile-aaaaaaaaaaaa')
+	await spin()
+	f.generationFailures = 1
+	const second = f.coordinator.switchTo('work')
+	assert.match((await first).error ?? '', /superseded/)
+	await spin()
+	const partialFence = f.fence
+	assert.equal(f.events.filter(event => event === 'invalidate').length, 2)
+	assert.equal(f.events.filter(event => event === 'activate').length, 1)
+	assert.ok(!f.events.includes('release'))
+	assert.ok(!f.events.includes('open-ipc'))
+	assert.equal(f.coordinator.pendingOperation(), second)
+	f.observation = work()
+	const retry = f.timers.at(-2)
+	assert.ok(retry)
+	retry()
+	await spin()
+	assert.notEqual(f.fence, partialFence)
+	f.fence.ready.resolve()
+	assert.equal((await second).error, undefined)
+	assert.equal(f.drainCount, 1)
+	assert.equal(f.events.filter(event => event === 'advance').length, 2)
+	assert.equal(f.events.filter(event => event === 'release').length, 1)
 })

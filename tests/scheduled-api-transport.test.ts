@@ -186,32 +186,27 @@ function withScheduledApi(
 		},
 	} as unknown as ScheduledRunService
 	const queue = { getStatus: () => ({ active: 0 }), wake() {} }
-	const api = apiRoutes(
+	const api = apiRoutes({
 		config,
 		configPath,
 		db,
-		queue as never,
-		{ pollOnce: async () => undefined } as never,
-		{
+		queue: queue as never,
+		poller: { pollOnce: async () => undefined } as never,
+		provider: {
 			name: 'fake',
 			pollNewTasks: async () => [],
 			getTaskContext: async () => null,
 			resolveTaskSummary: async () => null,
 			postComment: async () => null,
 		} as never,
-		{ name: 'fake', startPlanningSession: async () => ({}) } as never,
-		{ enqueue() {}, backfill() {} } as never,
-		undefined,
-		undefined,
-		undefined,
-		undefined,
-		undefined,
-		{
+		spawner: { name: 'fake', startPlanningSession: async () => ({}) } as never,
+		enricher: { enqueue() {}, backfill() {} } as never,
+		profileContext: {
 			store,
 			runtime: () => store.activeRuntime(),
 			scheduled: { service, controlToken, residentLeases: leases, profileIds: () => store.registeredProfileIds() },
 		},
-	)
+	})
 	return run({ api, db, store, leaseClock, reportCalls }).finally(() => {
 		db.close()
 		rmSync(root, { recursive: true, force: true })

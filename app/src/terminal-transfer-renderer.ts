@@ -37,6 +37,7 @@ export interface TerminalTransferRendererControllerDeps {
 	/** Persist the source xterm buffer and acknowledge that persistence completed. */
 	saveSnapshot(
 		sessionId: string,
+		transactionId: string,
 	): boolean | TerminalTransferSnapshotAcknowledgement | Promise<boolean | TerminalTransferSnapshotAcknowledgement>
 	/** Return null when the source tab/session is no longer renderer-owned. */
 	metadata(
@@ -125,7 +126,7 @@ export class TerminalTransferRendererController {
 
 		let acknowledgement: boolean | TerminalTransferSnapshotAcknowledgement
 		try {
-			acknowledgement = await this.#deps.saveSnapshot(request.sessionId)
+			acknowledgement = await this.#deps.saveSnapshot(request.sessionId, request.transactionId)
 		} catch {
 			return this.#rejectAfterFreeze(placeholder, 'snapshot-failed')
 		}
@@ -152,7 +153,7 @@ export class TerminalTransferRendererController {
 		if (!this.#hasCurrentToken(request.profileToken)) return { status: 'rejected', reason: 'stale-profile-token' }
 		let acknowledgement: boolean | TerminalTransferSnapshotAcknowledgement
 		try {
-			acknowledgement = await this.#deps.saveSnapshot(request.sessionId)
+			acknowledgement = await this.#deps.saveSnapshot(request.sessionId, request.transactionId)
 		} catch {
 			return { status: 'rejected', reason: 'snapshot-failed' }
 		}

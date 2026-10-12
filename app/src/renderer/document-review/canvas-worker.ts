@@ -8,6 +8,8 @@ import type {
 	ReviewCanvasCompilation,
 } from '../../../../src/document-review/canvas-types.js'
 
+import { canvasInputTypes, canvasTags, isCanvasScalarProp, isCanvasStyle } from './canvas-vocabulary'
+
 type TextItem = { text: string }
 type Child = Item | TextItem
 type Item = { tag: string; props: Record<string, unknown>; children: Child[] }
@@ -24,22 +26,6 @@ type CanvasRuntime = Readonly<{
 		element: React.ReactElement<Record<string, unknown>>,
 	): React.ReactElement<Record<string, unknown>>
 }>
-const tags = new Set(
-	'div span p h1 h2 h3 h4 h5 h6 section article main header footer ul ol li blockquote pre code strong em b i br hr label button input textarea select option optgroup table thead tbody tr th td details summary'.split(
-		' ',
-	),
-)
-const propsAllowed = new Set(
-	'id title role aria-label aria-describedby aria-expanded aria-checked aria-live type value checked disabled readOnly required placeholder name min max step rows cols multiple selected htmlFor open colSpan rowSpan'.split(
-		' ',
-	),
-)
-const stylesAllowed = new Set(
-	'color backgroundColor fontSize fontWeight fontStyle textAlign whiteSpace display flexDirection gap padding margin borderRadius width maxWidth minWidth height maxHeight lineHeight'.split(
-		' ',
-	),
-)
-
 /** Runs only inside the trusted dedicated Worker bundle, before document evaluation. */
 export function startReviewCanvas(
 	factory: (
@@ -60,7 +46,6 @@ export function startReviewCanvas(
 	const entries = Object.entries
 	const isArray = Array.isArray
 	const safeInteger = Number.isSafeInteger
-	const finite = Number.isFinite
 	const send = scope.postMessage.bind(scope)
 	const listen = scope.addEventListener.bind(scope)
 	const stringify = JSON.stringify.bind(JSON)
@@ -185,23 +170,14 @@ export function startReviewCanvas(
 				const itemTag = item.tag
 				const itemProps = item.props
 				const children = copyChildren(item.children)
-				if (!tags.has(itemTag)) throw new Error('tag')
+				if (!canvasTags.has(itemTag)) throw new Error('tag')
 				const props: CanvasDisplayNode['props'] = {}
 				for (const [key, value] of entries(itemProps)) {
-					if (propsAllowed.has(key) && ['string', 'number', 'boolean'].includes(typeof value)) {
-						if (typeof value === 'string' && value.length > 4000) throw new Error('bounds')
-						if (typeof value === 'number' && !finite(value)) continue
-						props[key] = value as string | number | boolean
-					}
+					if (isCanvasScalarProp(key, value)) props[key] = value
 					if (key === 'style' && value && typeof value === 'object') {
 						const style: Record<string, string | number> = {}
-						for (const [name, v] of entries(value))
-							if (
-								stylesAllowed.has(name) &&
-								((typeof v === 'number' && finite(v)) ||
-									(typeof v === 'string' && v.length <= 160 && !/[\\;{}]|url\s*\(|expression|@import/i.test(v)))
-							)
-								style[name] = v
+						for (const [name, v] of entries(value)) if (isCanvasStyle(name, v)) style[name] = v
+						if (Object.keys(style).length > 40) throw new Error('bounds')
 						props.style = style
 					}
 				}
@@ -260,11 +236,7 @@ export function startReviewCanvas(
 									: ''
 								: String(value)
 				}
-				if (
-					itemTag === 'input' &&
-					!['text', 'number', 'checkbox', 'radio', 'email'].includes(String(props.type ?? 'text'))
-				)
-					throw new Error('field')
+				if (itemTag === 'input' && !canvasInputTypes.has(String(props.type ?? 'text'))) throw new Error('field')
 				let identity = identities.get(item)
 				if (!identity) {
 					identity = { id: `node-${++serial}` }

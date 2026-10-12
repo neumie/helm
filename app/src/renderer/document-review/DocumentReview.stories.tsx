@@ -222,3 +222,15 @@ export const PassageFeedback: Story = {
 		},
 	},
 }
+
+export const EmptyPreferencesRecovery: Story = {
+	args: { scenario: 'empty-preferences' },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Document options → Document details exposes explicit empty-preference cleanup when supported. This display fixture returns a count only; saved text, comments and the current editor remain unchanged.',
+			},
+		},
+	},
+}

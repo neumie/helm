@@ -38,6 +38,7 @@ async function bridgeHarness(input: {
 	historyResult?: (response: ServerResponse, result: HistoryResult) => void
 	imageInput?: (response: ServerResponse, value: Record<string, unknown>) => void
 	sendUserMessage?: () => void
+	applyModel?: () => Promise<boolean>
 	holdRegistration?: boolean
 	model?: { provider: string; id: string; input: Array<'text' | 'image'> }
 }) {
@@ -71,6 +72,7 @@ async function bridgeHarness(input: {
 	const historyResults: HistoryResult[] = []
 	let selectedModel = input.model
 	const context = {
+		modelRegistry: { getAvailable: () => (input.model ? [input.model] : []), find: () => input.model },
 		mode: 'tui',
 		cwd: root,
 		get model() {
@@ -172,6 +174,7 @@ async function bridgeHarness(input: {
 		registerCommand(name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) {
 			commands.set(name, command.handler)
 		},
+		setModel: () => input.applyModel?.() ?? Promise.resolve(true),
 		getSessionName: () => 'Lifecycle Pi',
 		getThinkingLevel: () => 'off',
 		sendUserMessage(content: unknown, options: unknown) {
@@ -1162,3 +1165,70 @@ test('production bridge rejects oversized/truncated ACKs and retries after resul
 			assert.equal(harness.registrationRequests, 1)
 		})
 })
+
+for (const outcome of ['false', 'reject', 'true', 'retired'] as const) {
+	test(`actual bridge delayed model result ${outcome} retains dedup and lifecycle fences`, async t => {
+		const hostEpoch = randomUUID()
+		const commandId = randomUUID()
+		let settle!: (value: boolean) => void
+		let reject!: () => void
+		const result = new Promise<boolean>((resolve, fail) => {
+			settle = resolve
+			reject = () => fail(new Error('refused'))
+		})
+		let calls = 0
+		const harness = await bridgeHarness({
+			model: { provider: 'fixture', id: 'model', input: ['text'] },
+			applyModel: () => {
+				calls++
+				return result
+			},
+			exchange(response, count, snapshot) {
+				json(response, 200, {
+					protocol: 1,
+					hostEpoch,
+					commands:
+						count >= 2
+							? [
+									{
+										command: {
+											protocol: 1,
+											hostEpoch,
+											commandId,
+											target: snapshot.target,
+											operation: { kind: 'model', provider: 'fixture', id: 'model' },
+										},
+										expiresAt: Date.now() + 10_000,
+									},
+								]
+							: [],
+				})
+			},
+		})
+		t.after(() => harness.dispose())
+		harness.emit('session_start')
+		const statuses = () =>
+			(harness.receivedReceipts as Array<{ commandId: string; status: string }>)
+				.filter(value => value.commandId === commandId)
+				.map(value => value.status)
+		await harness.until(() => statuses().includes('dispatched'), 'initial model dispatch receipt')
+		if (outcome === 'retired') harness.emit('session_before_switch')
+		if (outcome === 'reject') reject()
+		else settle(outcome === 'true')
+		if (outcome === 'false' || outcome === 'reject') {
+			await harness.until(
+				() => statuses().filter(status => status === 'rejected').length >= 2,
+				'corrected receipt and duplicate refusal',
+			)
+		} else if (outcome === 'true') {
+			const count = harness.exchanges.length
+			await harness.until(() => harness.exchanges.length >= count + 2, 'successful model duplicate')
+			assert.equal(statuses().includes('rejected'), false)
+		} else {
+			await Promise.resolve()
+			await Promise.resolve()
+			assert.equal(statuses().includes('rejected'), false)
+		}
+		assert.equal(calls, 1)
+	})
+}

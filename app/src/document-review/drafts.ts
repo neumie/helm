@@ -121,10 +121,35 @@ export class ReviewDraftStore {
 	}
 	save(key: string, raw: unknown): void {
 		const draft = reviewDraftSchema.parse(raw)
-		const candidate = { ...this.document, [key]: draft }
+		this.persist({ ...this.document, [key]: draft })
+	}
+	/** Explicitly discard one private scope; never changes the source-file journal. */
+	discard(key: string): boolean {
+		if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid review draft key')
+		if (!Object.hasOwn(this.document, key)) return false
+		const candidate = { ...this.document }
+		delete candidate[key]
+		this.persist(candidate)
+		return true
+	}
+	/** Explicit preference reclamation only; whitespace drafts and all notes survive. */
+	discardEmptyPreferences(): number {
+		const candidate = { ...this.document }
+		let removed = 0
+		for (const [key, draft] of Object.entries(candidate)) {
+			if (draft.instruction !== '' || draft.annotations.length !== 0) continue
+			delete candidate[key]
+			removed++
+		}
+		if (removed > 0) this.persist(candidate)
+		return removed
+	}
+	private persist(candidate: Record<string, ReviewDraft>): void {
+		if (Object.keys(candidate).length > 256)
+			throw new Error('Saved review drafts reached their 256-entry limit. No saved drafts were removed.')
 		const bytes = JSON.stringify(candidate)
-		if (Object.keys(candidate).length > 256 || Buffer.byteLength(bytes) > MAX_BYTES)
-			throw new Error('Saved review drafts reached their 1 MiB limit. Delete unused comments before saving more.')
+		if (Buffer.byteLength(bytes) > MAX_BYTES)
+			throw new Error('Saved review drafts reached their 1 MiB limit. No saved drafts were removed.')
 		mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 })
 		const parent = lstatSync(dirname(this.file))
 		if (

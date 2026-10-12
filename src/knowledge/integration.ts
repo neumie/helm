@@ -9,6 +9,7 @@ import {
 	type KnowledgeCandidateOutboxEntry,
 	type KnowledgeSnapshot,
 	MAX_KNOWLEDGE_CONTEXT_CHARACTERS,
+	MAX_KNOWLEDGE_QUERY_UTF16_UNITS,
 	providerKnowledgeBriefSchema,
 } from './schema.js'
 import { type KnowledgeStore, frozenBinding } from './store.js'
@@ -146,7 +147,7 @@ function knowledgeQuery(taskContext: TaskContext): string {
 		...(taskContext.comments?.map(comment => comment.body) ?? []),
 		...Object.values(taskContext.metadata ?? {}),
 	].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-	return truncateCodePoints(values.join('\n'), 4_000)
+	return truncateUtf16(values.join('\n'), MAX_KNOWLEDGE_QUERY_UTF16_UNITS)
 }
 
 function verifyBrief(brief: ReturnType<typeof providerKnowledgeBriefSchema.parse>, characterBudget: number): void {
@@ -189,8 +190,12 @@ function sha256(value: string): string {
 	return createHash('sha256').update(value).digest('hex')
 }
 
-function truncateCodePoints(value: string, maximum: number): string {
-	return [...value].slice(0, maximum).join('')
+function truncateUtf16(value: string, maximum: number): string {
+	if (value.length <= maximum) return value
+	const last = value.charCodeAt(maximum - 1)
+	const next = value.charCodeAt(maximum)
+	const splitsPair = last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff
+	return value.slice(0, splitsPair ? maximum - 1 : maximum)
 }
 
 function codePointLength(value: string): number {

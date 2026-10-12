@@ -48,9 +48,34 @@ export interface DashboardForkContext {
 
 export interface DashboardPlan {
 	worktreePath: string
-	branchName: string
+	branchName: string | null
 	planDirName: string
 	readmePath: string
+}
+
+export interface PlanArtifact {
+	name: string
+	content: string
+}
+
+export interface OkenaWorkspacePreview {
+	state: 'open' | 'main' | 'register' | 'local' | 'remote' | 'create' | 'standalone' | 'unavailable'
+	label: string
+	detail: string
+	branchName: string
+	worktreePath?: string
+}
+
+export interface KnowledgeDeliverySummary {
+	id: string
+	state: 'pending' | 'delivering' | 'delivered' | 'blocked'
+	providerId: string | null
+	candidateCount: number
+	attemptCount: number
+	lastErrorCode: string | null
+	lastErrorMessage: string | null
+	updatedAt: string
+	deliveredAt: string | null
 }
 
 export interface DashboardItem {
@@ -96,6 +121,11 @@ export interface DashboardItem {
 	solveInputSnapshot: string | null
 	/** Detail-only immutable provider evidence; omitted from cheap list rows. */
 	knowledgeSnapshot?: KnowledgeSnapshot | null
+	knowledgeDeliveries?: KnowledgeDeliverySummary[]
+	knowledgeRecovery?: { candidateCount: number } | null
+	/** Detail-only, explicit projection authority; cheap lists perform no artifact/extension IO. */
+	planArtifacts?: PlanArtifact[]
+	okenaWorkspace?: OkenaWorkspacePreview | null
 	/** Stored per-item solve selections (`null` = follow daemon defaults). Solve only. */
 	solverAgent: SolverAgent | null
 	solverModel: string | null
@@ -242,7 +272,7 @@ function forkContextForItem(item: ItemRecord): DashboardForkContext | null {
 }
 
 function planForItem(item: ItemRecord): DashboardPlan | null {
-	if (!item.worktreePath || !item.branchName || !item.planDirName) return null
+	if (!item.worktreePath || !item.planDirName) return null
 	const workspace = new PlanWorkspace(item.worktreePath, item.planDirName)
 	return {
 		worktreePath: item.worktreePath,

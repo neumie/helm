@@ -428,6 +428,18 @@ export class ItemStore {
 		return row.count
 	}
 
+	/** Admission truth must not depend on the bounded, oldest-first display history. */
+	latestPlanningOutcome(itemId: string): 'plan_prepared' | 'planning_failed' | null {
+		const row = this.db
+			.prepare(
+				`SELECT event_type FROM item_events
+				 WHERE profile_id = ? AND item_id = ? AND event_type IN ('plan_prepared', 'planning_failed')
+				 ORDER BY created_at DESC, id DESC LIMIT 1`,
+			)
+			.get(this.profileId, itemId) as { event_type: 'plan_prepared' | 'planning_failed' } | undefined
+		return row?.event_type ?? null
+	}
+
 	getEvents(itemId: string, limit = 100): ItemEvent[] {
 		const rows = this.db
 			.prepare('SELECT * FROM item_events WHERE profile_id = ? AND item_id = ? ORDER BY created_at ASC, id ASC LIMIT ?')

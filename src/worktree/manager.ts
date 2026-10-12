@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import type { SolverWorkspace } from '../solver/workspace.js'
+import { phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
+import { sameFilesystemPath } from '../util/path-identity.js'
 
 // All git operations here are async on purpose: several of them hit the network
 // (fetch, ls-remote, push) or check out a full tree (worktree add), and the
@@ -58,13 +61,13 @@ export async function worktreeRegistrationForBranch(
 	branchName: string,
 ): Promise<BranchWorktreeRegistration | null> {
 	try {
-		const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], {
+		const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain', '-z'], {
 			cwd: repoPath,
 			timeout: 10_000,
 		})
 		const branchRef = `branch refs/heads/${branchName}`
-		for (const block of stdout.split(/\n\s*\n/)) {
-			const lines = block.split('\n')
+		for (const block of stdout.split('\0\0')) {
+			const lines = block.split('\0')
 			if (!lines.includes(branchRef)) continue
 			const path = lines.find(line => line.startsWith('worktree '))?.slice('worktree '.length)
 			if (path) return { path, exists: existsSync(path) }
@@ -79,6 +82,43 @@ export async function worktreeRegistrationForBranch(
 export async function worktreePathForBranch(repoPath: string, branchName: string): Promise<string | null> {
 	const registration = await worktreeRegistrationForBranch(repoPath, branchName)
 	return registration?.exists ? registration.path : null
+}
+
+/** Read-only execution/planning fence; Main never inherits a linked-worktree path. */
+export async function assertWorkspaceReuse(
+	repoPath: string,
+	branchName: string,
+	worktreePath: string,
+	mode: SolverWorkspace = 'worktree',
+): Promise<void> {
+	const guidance = 'Preserve planning files, then re-plan in the selected workspace mode before retrying.'
+	const canonical = sameFilesystemPath(repoPath, worktreePath)
+	if (mode === 'main') {
+		if (!canonical || !existsSync(repoPath))
+			throw phaseError('worktree', `Main execution requires the canonical project checkout. ${guidance}`)
+		return
+	}
+	if (canonical)
+		throw phaseError('worktree', `Worktree execution cannot reuse the canonical project checkout. ${guidance}`)
+	try {
+		const registration = await worktreeRegistrationForBranch(repoPath, branchName)
+		if (!registration?.exists || !sameFilesystemPath(registration.path, worktreePath))
+			throw new Error('Missing exact branch registration')
+		const gitPath = async (cwd: string, arg: string) => {
+			const { stdout } = await execFileAsync('git', ['rev-parse', arg], { cwd, timeout: 10_000 })
+			return realpathSync.native(resolve(cwd, stdout.trim()))
+		}
+		const root = await gitPath(worktreePath, '--show-toplevel')
+		if (root !== realpathSync.native(worktreePath)) throw new Error('Not a worktree root')
+		if ((await gitPath(repoPath, '--git-common-dir')) !== (await gitPath(worktreePath, '--git-common-dir')))
+			throw new Error('Different repository')
+		if ((await getCurrentBranch(worktreePath)) !== branchName) throw new Error('Different branch')
+	} catch {
+		throw phaseError(
+			'worktree',
+			`Stored path is not an active Git worktree for the exact project and branch ${branchName}: ${worktreePath}. ${guidance}`,
+		)
+	}
 }
 
 export type RemoteBranchStatus = 'exists' | 'absent' | 'unavailable'
@@ -134,27 +174,42 @@ async function createWorktreeLocked(
 	branchName: string,
 	worktreeBaseDir?: string,
 ): Promise<string> {
-	const startPoint = await resolveWorktreeStartPoint(repoPath, baseBranch)
+	const registration = await worktreeRegistrationForBranch(repoPath, branchName)
+	if (registration?.exists) {
+		await assertWorkspaceReuse(repoPath, branchName, registration.path)
+		return registration.path
+	}
+
+	if (registration) {
+		throw phaseError(
+			'worktree',
+			`Git retains a missing worktree registration for ${branchName}: ${registration.path}. Preserve the branch and any files, resolve the stale registration explicitly with Git, then retry.`,
+		)
+	}
 
 	const worktreeDir = worktreeBaseDir ?? join(dirname(repoPath), `${basename(repoPath)}-worktrees`)
-	if (!existsSync(worktreeDir)) {
-		mkdirSync(worktreeDir, { recursive: true })
-	}
-
 	const worktreePath = join(worktreeDir, branchName.replace(/\//g, '-'))
-
-	if (existsSync(worktreePath)) {
-		log.warn('worktree', `Worktree path already exists: ${worktreePath}, removing first`)
-		try {
-			await execFileAsync('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: repoPath })
-		} catch {
-			// May not be a worktree, just a directory
-		}
+	// lstat also catches dangling symlinks. Never remove an unexpected occupant.
+	try {
+		lstatSync(worktreePath)
+		throw phaseError(
+			'worktree',
+			`Worktree destination is occupied: ${worktreePath}. Preserve its files and re-plan or choose another worktree directory before retrying.`,
+		)
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
 	}
-
-	await execFileAsync('git', ['worktree', 'add', '-B', branchName, worktreePath, startPoint], {
-		cwd: repoPath,
-	})
+	const retainedBranch = await localBranchExists(repoPath, branchName)
+	const startPoint = retainedBranch ? undefined : await resolveWorktreeStartPoint(repoPath, baseBranch)
+	mkdirSync(worktreeDir, { recursive: true })
+	await execFileAsync(
+		'git',
+		retainedBranch
+			? ['worktree', 'add', worktreePath, branchName]
+			: ['worktree', 'add', '-b', branchName, worktreePath, startPoint as string],
+		{ cwd: repoPath },
+	)
+	await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 
 	log.success('worktree', `Created worktree at ${worktreePath} (branch: ${branchName})`)
 	return worktreePath

@@ -74,6 +74,7 @@ export interface RemoteEnrollment {
 	expiresAt?: number
 }
 interface CommandEntry {
+	modelCorrection?: boolean
 	fingerprint: string
 	receipt: RemoteReceipt
 	pending?: RemoteCommand
@@ -84,6 +85,7 @@ interface CommandEntry {
 	imageBinding?: ImageStoreBinding
 }
 interface Session {
+	modelListReported?: Set<'listed' | 'absent'>
 	enrollment: RemoteEnrollment
 	snapshot: RemoteSnapshot
 	seenAt: number
@@ -192,6 +194,7 @@ export class RemoteHost {
 	/** Revocation invalidates the whole ephemeral development host only. */
 	revoke(): void {
 		this.revoked = true
+		this.options.usage?.dispose()
 		this.historyReads.cancel(() => true)
 		this.revokeAccess?.()
 		this.imageBody.dispose()
@@ -610,6 +613,7 @@ export class RemoteHost {
 				fingerprint,
 				receipt,
 				pending: command,
+				modelCorrection: command.operation.kind === 'model',
 				expiresAt: commandExpiresAt,
 				delivered: false,
 				deviceId: owner?.deviceId,
@@ -627,7 +631,18 @@ export class RemoteHost {
 		this.browser.get('/v1/usage', async c => {
 			const usage = this.options.usage
 			if (!usage || c.req.header(USAGE_HEADER) !== '1') return c.json({ error: 'unsupported' }, 404)
+			const admitted = this.browserPrincipals.get(c.req.raw)
+			const epoch = this.epoch
 			const read = await usage.providers()
+			const current = this.browserAuthorization(c.req.raw)
+			if (
+				this.revoked ||
+				this.epoch !== epoch ||
+				!current ||
+				current.principal?.deviceId !== admitted?.deviceId ||
+				current.principal?.grantRevision !== admitted?.grantRevision
+			)
+				return c.json({ error: 'unauthorized' }, 401)
 			c.header(USAGE_HEADER, '1')
 			return c.json({ hostEpoch: this.epoch, refreshedAt: read.refreshedAt, providers: read.providers })
 		})
@@ -930,7 +945,22 @@ export class RemoteHost {
 				this.historyReads.cancel(request => sameRemoteTarget(request.target, snapshot.target), 'unsupported')
 			for (const receipt of receipts) {
 				const entry = session.commands.get(receipt.commandId)
-				if (entry && (entry.pending || entry.receipt.status === 'unknown') && receipt.status !== 'pending') {
+				const principal = entry?.deviceId ? this.access?.principal(entry.deviceId) : undefined
+				const correction =
+					entry?.modelCorrection &&
+					entry.receipt.status === 'dispatched' &&
+					receipt.status === 'rejected' &&
+					this.now() < entry.expiresAt &&
+					(!this.access ||
+						(!!principal &&
+							principal.grantRevision === entry.grantRevision &&
+							this.allowed(principal, session, 'prompt')))
+				if (
+					entry &&
+					(entry.pending || entry.receipt.status === 'unknown' || correction) &&
+					receipt.status !== 'pending'
+				) {
+					if (correction || receipt.status !== 'dispatched') entry.modelCorrection = false
 					this.retireEntryImages(session, entry)
 					entry.receipt = receipt
 					entry.pending = undefined
@@ -983,17 +1013,16 @@ export class RemoteHost {
 	}
 	/** Last refusal reported, so a 2-second poll cannot flood the log with one fact. */
 	private imageRefusalLog = ''
-	/** Sessions already reported as offering no model list, so the poll cannot repeat it. */
-	private readonly modelListReported = new Set<string>()
 
 	/**
 	 * A conversation whose bridge predates model selection simply has no Model section,
 	 * which is indistinguishable at the device from one that is broken. Say which.
 	 */
 	private reportModelListing(session: Session): void {
-		const key = `${session.snapshot.target.sessionId}:${session.snapshot.models ? 'listed' : 'absent'}`
-		if (this.modelListReported.has(key)) return
-		this.modelListReported.add(key)
+		const key = session.snapshot.models ? 'listed' : 'absent'
+		session.modelListReported ??= new Set()
+		if (session.modelListReported.has(key)) return
+		session.modelListReported.add(key)
 		console.warn(
 			session.snapshot.models
 				? `Remote sees ${session.snapshot.models.length} selectable models for ${session.snapshot.model ?? 'unknown model'}`

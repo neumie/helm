@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
-import { createWorktree, excludeHelmFiles, getCurrentBranch } from '../worktree/manager.js'
+import { assertWorkspaceReuse, createWorktree, excludeHelmFiles, getCurrentBranch } from '../worktree/manager.js'
 import { createAgentAdapter } from './agent-adapter.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeAgent } from './invoker.js'
@@ -20,7 +20,8 @@ export class DefaultSolver implements Solver {
 		if (signal?.aborted) {
 			throw taskCancelled()
 		}
-		if (existingWorktreePath && existsSync(existingWorktreePath)) {
+		if (existingWorktreePath) {
+			await assertWorkspaceReuse(projectConfig.repoPath, branchName, existingWorktreePath)
 			log.info('solver', `Reusing existing worktree: ${existingWorktreePath}`)
 			await excludeHelmFiles(existingWorktreePath)
 			return existingWorktreePath

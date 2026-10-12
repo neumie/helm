@@ -201,18 +201,20 @@ test('Okena remote branch preparation fetches and creates a local tracking branc
 	])
 })
 
-test('Okena branch preparation prunes a stale linked-worktree registration', async () => {
+test('Okena branch preparation preserves and refuses a stale linked-worktree registration', async () => {
 	const commands: string[][] = []
-	const prepared = await prepareExistingOkenaBranch('/repo', 'feat/stale', {
-		localBranchExists: async () => true,
-		inspectRemoteBranch: async () => 'absent',
-		worktreeRegistrationForBranch: async () => ({ path: '/missing/worktree', exists: false }),
-		execGit: async args => {
-			commands.push(args)
-		},
-	})
-	assert.equal(prepared, true)
-	assert.deepEqual(commands, [['worktree', 'prune']])
+	await assert.rejects(
+		prepareExistingOkenaBranch('/repo', 'feat/stale', {
+			localBranchExists: async () => true,
+			inspectRemoteBranch: async () => 'absent',
+			worktreeRegistrationForBranch: async () => ({ path: '/missing/worktree', exists: false }),
+			execGit: async args => {
+				commands.push(args)
+			},
+		}),
+		/missing worktree registration.*Preserve/,
+	)
+	assert.deepEqual(commands, [])
 })
 
 test('Okena worktree creation reuses an existing branch without a noisy create attempt', async () => {
@@ -591,7 +593,7 @@ test('Okena Worktree manager refuses a stale directory that is no longer a Git w
 	try {
 		await assert.rejects(
 			new OkenaWorktreeManager(client).ensureWorktreeProject(repoPath, 'main', 'feat/stale', stalePath),
-			/no longer an active Git worktree.*Preserve any planning files/,
+			/not an active Git worktree.*Preserve planning files/,
 		)
 		assert.deepEqual(actions, [])
 	} finally {

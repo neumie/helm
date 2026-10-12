@@ -350,10 +350,15 @@ export class HelmBridge {
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: AbortSignal.timeout(timeoutMs),
 			})
-			const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
+			const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string; sessionMayExist?: unknown }
 			// Daemon envelope passed through verbatim; a non-ok status without an
 			// `error` body still needs a message for the UI.
-			if (!res.ok) return { error: json.error ?? `API error: ${res.status}`, status: res.status }
+			if (!res.ok)
+				return {
+					error: json.error ?? `API error: ${res.status}`,
+					status: res.status,
+					...(json.sessionMayExist === true ? { sessionMayExist: true as const } : {}),
+				}
 			return { data: json.data as T }
 		} catch (err) {
 			return { error: errorMessage(err) }

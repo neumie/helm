@@ -52,6 +52,7 @@ interface Operation {
 	fence: ProfileSwitchFence | null
 	phase: OperationPhase
 	generationAdvanced: boolean
+	inheritedUncertainty: boolean
 	drainRelease: (() => void) | null
 	deferred: Deferred<HelmResult<ProfileActivationResult>>
 	probeTimer: ReturnType<typeof setTimeout> | null
@@ -98,6 +99,11 @@ export class ProfileSwitchCoordinator {
 		return !this.stopped && this.operation !== null
 	}
 
+	/** The admitted operation, never a rejected competing request. */
+	pendingOperation(): Promise<HelmResult<ProfileActivationResult>> | null {
+		return this.operation?.deferred.promise ?? null
+	}
+
 	stop(): void {
 		if (this.stopped) return
 		this.stopped = true
@@ -136,7 +142,8 @@ export class ProfileSwitchCoordinator {
 			fence: null,
 			phase: 'precommit',
 			generationAdvanced: false,
-			drainRelease: null,
+			inheritedUncertainty: current !== null,
+			drainRelease: current?.drainRelease ?? null,
 			deferred: deferred(),
 			probeTimer: null,
 			diagnosticTimer: null,
@@ -145,8 +152,11 @@ export class ProfileSwitchCoordinator {
 			forwardRetryTimer: null,
 			activation: null,
 		}
+		// An unknown predecessor has already drained and flushed. Transfer its
+		// lease without reopening editor admission or treating its cache as truth.
+		if (current) current.drainRelease = null
 		this.operation = operation
-		if (profileId === state.activeProfileId) void this.reconcileCachedNoop(operation)
+		if (!operation.inheritedUncertainty && profileId === state.activeProfileId) void this.reconcileCachedNoop(operation)
 		else void this.run(operation)
 		return operation.deferred.promise
 	}
@@ -175,19 +185,25 @@ export class ProfileSwitchCoordinator {
 
 	private async run(operation: Operation): Promise<void> {
 		try {
-			const drain = this.deps.beginRunContextDrain()
-			if (!drain.ok) {
-				this.finish(operation, { error: 'Save or discard the open Run Context draft before switching profiles.' })
-				return
+			if (!operation.inheritedUncertainty) {
+				const drain = this.deps.beginRunContextDrain()
+				if (!drain.ok) {
+					this.finish(operation, { error: 'Save or discard the open Run Context draft before switching profiles.' })
+					return
+				}
+				operation.drainRelease = drain.release
+				await drain.drained
+				if (!this.isCurrent(operation)) return
+				await this.deps.flushBuffers()
+				if (!this.isCurrent(operation)) return
 			}
-			operation.drainRelease = drain.release
-			await drain.drained
-			if (!this.isCurrent(operation)) return
-			await this.deps.flushBuffers()
-			if (!this.isCurrent(operation)) return
+			// Inherited uncertainty cannot roll back even if fresh-fence setup fails.
+			if (operation.inheritedUncertainty) operation.phase = 'activating'
 			operation.fence = this.deps.beginFence(operation.targetId)
-			this.deps.advanceLocalGeneration()
-			operation.generationAdvanced = true
+			if (!operation.generationAdvanced) {
+				this.deps.advanceLocalGeneration()
+				operation.generationAdvanced = true
+			}
 			operation.phase = 'activating'
 			const activated = await this.deps.activateDaemon(operation.targetId)
 			if (!this.isCurrent(operation)) return
@@ -206,6 +222,12 @@ export class ProfileSwitchCoordinator {
 				this.finish(operation, errorResult(error))
 				return
 			}
+			// Setup did not reach activation if local token advance failed. A
+			// successor must retry fresh setup, not publish through that partial fence.
+			if (operation.inheritedUncertainty && !operation.generationAdvanced) {
+				operation.fence?.invalidateIfCurrent()
+				operation.fence = null
+			}
 			operation.activation ??= errorResult(error)
 			this.enterUnknown(operation, operation.activation.error)
 		}
@@ -221,7 +243,11 @@ export class ProfileSwitchCoordinator {
 			await this.commitForward(operation, observed, { data: { state: observed, applied: true } })
 			return
 		}
-		if (activation.error !== undefined && sameIdentity(observed, operation.expected)) {
+		if (
+			!operation.inheritedUncertainty &&
+			activation.error !== undefined &&
+			sameIdentity(observed, operation.expected)
+		) {
 			// Rollback is legal only for this original operation after an explicit,
 			// coherent observation of precisely the old daemon document.
 			if (operation.generationAdvanced) this.deps.restorePrecommitGeneration()
@@ -263,7 +289,13 @@ export class ProfileSwitchCoordinator {
 	}
 
 	private async probeUnknown(operation: Operation): Promise<void> {
-		if (!this.isCurrent(operation) || operation.phase !== 'activation-unknown' || !operation.fence) return
+		if (!this.isCurrent(operation) || operation.phase !== 'activation-unknown') return
+		if (!operation.fence) {
+			// Fresh-fence construction failed before any successor activation.
+			// Retain the inherited lease and retry that unadmitted setup only.
+			await this.run(operation)
+			return
+		}
 		try {
 			const observed = await operation.fence.observeCoherently()
 			if (!this.isCurrent(operation)) return
@@ -376,7 +408,6 @@ export class ProfileSwitchCoordinator {
 		operation.superseded = true
 		operation.fence?.invalidateIfCurrent()
 		this.clearOperationTimers(operation)
-		operation.drainRelease?.()
 		operation.deferred.resolve({
 			error: `Profile switch to ${operation.targetId} was superseded by an explicit activation.`,
 		})

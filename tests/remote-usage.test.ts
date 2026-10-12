@@ -383,3 +383,56 @@ test('usage is served to any admitted device, stays hidden without the feature h
 		401,
 	)
 })
+
+for (const boundary of ['device-revoked', 'expired', 'host-revoked'] as const) {
+	test(`usage disclosure refuses ${boundary} while provider read is pending`, async t => {
+		let now = NOW
+		let release!: () => void
+		let started!: () => void
+		const reading = new Promise<void>(resolve => {
+			started = resolve
+		})
+		const held = new Promise<void>(resolve => {
+			release = resolve
+		})
+		const access = new RemoteAccess(join(scratch(t), 'devices.json'), () => now)
+		const usage = new RemoteUsage({
+			now: () => now,
+			read: async () => {
+				started()
+				await held
+				return [
+					{
+						id: 'claude',
+						name: 'Claude Code',
+						plan: 'private-plan',
+						windows: [],
+						source: 'live',
+						observedAt: now,
+						message: null,
+					},
+				]
+			},
+		})
+		const host = new RemoteHost({ origin: 'https://remote.example', access, usage, now: () => now })
+		t.after(() => host.revoke())
+		const pairing = access.createPairing('fixture', {
+			personalCurrentAndFuture: true,
+			scopeIds: [],
+			operations: { read: true, prompt: false, interrupt: false, answer: false },
+		})
+		const device = access.redeem({ qrCapability: pairing.qrCapability })
+		assert.ok(device)
+		const pending = host.browser.request('/v1/usage', {
+			headers: { Host: 'remote.example', Cookie: `__Host-helm-remote=${device.credential}`, [USAGE_HEADER]: '1' },
+		})
+		await reading
+		if (boundary === 'device-revoked') access.revoke(device.principal.deviceId)
+		if (boundary === 'expired') now += 91 * 24 * 60 * 60 * 1000
+		if (boundary === 'host-revoked') host.revoke()
+		release()
+		const response = await pending
+		assert.equal(response.status, 401)
+		assert.deepEqual(await response.json(), { error: 'unauthorized' })
+	})
+}

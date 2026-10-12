@@ -59,7 +59,6 @@ const scheduledResidency = new ElectronResidencyController({
 	request: helmBridge.scheduledResidentLease.bind(helmBridge),
 })
 let profileSwitchCoordinator: ProfileSwitchCoordinator | null = null
-let activeProfileSwitch: Promise<HelmResult<ProfileActivationResult>> | null = null
 let pendingEditorQuit = false
 const runContextWindows = new RunContextWindows(helmBridge, __dirname, {
 	onAllClosed: () => {
@@ -283,10 +282,12 @@ function flushPendingOpenItem(win: BrowserWindow, loadEpoch: number | null = ren
 async function routeDestination(destination: HelmItemDestination): Promise<void> {
 	// A completion may itself be superseded. Loop until the authoritative
 	// coordinator has no admitted operation before considering a deep-link switch.
-	while (activeProfileSwitch) {
-		const pending = activeProfileSwitch
+	for (
+		let pending = profileSwitchCoordinator?.pendingOperation();
+		pending;
+		pending = profileSwitchCoordinator?.pendingOperation()
+	) {
 		await pending
-		if (activeProfileSwitch === pending) await Promise.resolve()
 	}
 	if (destination.profileId && destination.profileId !== appProfiles.activeProfileId()) {
 		const result = await activateProfile(destination.profileId, destination.itemId)
@@ -453,6 +454,7 @@ const pendingTerminalTransferEvents = new Map<
 	string,
 	{
 		sender: Electron.WebContents
+		event: TerminalTransferEvent
 		resolve: (value: unknown) => void
 		reject: (error: Error) => void
 		timer: NodeJS.Timeout
@@ -469,7 +471,7 @@ function dispatchTerminalTransferEvent(sender: Electron.WebContents, event: Term
 			pendingTerminalTransferEvents.delete(event.transactionId)
 			reject(new Error('terminal transfer renderer acknowledgement timed out'))
 		}, 5_000)
-		pendingTerminalTransferEvents.set(event.transactionId, { sender, resolve, reject, timer })
+		pendingTerminalTransferEvents.set(event.transactionId, { sender, event, resolve, reject, timer })
 		sender.send('terminal-transfer:event', event)
 	})
 }
@@ -500,6 +502,21 @@ async function detachPtyForTransfer(sessionId: string): Promise<boolean> {
 		})
 	}
 	return false
+}
+
+function ordinarySessionAllowed(sessionId?: string, profileId = sessionProfileId): boolean {
+	if (!terminalTransferMain) return false
+	const exclusion = terminalTransferMain.quarantinedSessions()
+	return (
+		!exclusion.unavailable &&
+		(!sessionId ||
+			!exclusion.identities.some(identity => identity.profileId === profileId && identity.sessionId === sessionId))
+	)
+}
+
+function ordinaryGroupAllowed(groupId: string): boolean {
+	const members = getSessionSupport()?.registry.groupMembers(groupId)
+	return !!members && ordinarySessionAllowed() && members.every(id => ordinarySessionAllowed(id))
 }
 
 function getSessionSupport(): SessionSupport | null {
@@ -572,12 +589,16 @@ function transferStorageForProfile(profileId: string): TerminalTransferProfileSt
 // session dies only when it fires (okena soft_close.rs semantics; 5s default
 // from okena settings.rs:494). Undo cancels the timer and the tab reattaches.
 const graceCloseSupports = new Map<string, SessionSupport | null>()
-const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), sessionId => {
+const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined, sessionId => {
+	if (!ordinarySessionAllowed(sessionId)) return null
 	const support = graceCloseSupports.get(sessionId) ?? null
 	graceCloseSupports.delete(sessionId)
-	support?.registry.remove(sessionId)
-	// The session is truly dead now — its buffer snapshot dies with it.
-	support?.buffers.remove(sessionId)
+	// Capture storage before the asynchronous kill. Namespace/crash cleanup may
+	// clear the map, but cannot discard this admitted finalizer's ownership.
+	return () => {
+		support?.registry.remove(sessionId)
+		support?.buffers.remove(sessionId)
+	}
 })
 
 /**
@@ -965,12 +986,7 @@ function createProfileSwitchCoordinator(): ProfileSwitchCoordinator {
 function activateProfile(profileId: string, openItemId?: string): Promise<HelmResult<ProfileActivationResult>> {
 	if (terminalTransferMain?.isBusy()) return Promise.resolve({ error: 'A terminal transfer is in progress.' })
 	if (!profileSwitchCoordinator) return Promise.resolve({ error: 'Helm is still starting.' })
-	const request = profileSwitchCoordinator.switchTo(profileId, openItemId)
-	activeProfileSwitch = request
-	void request.finally(() => {
-		if (activeProfileSwitch === request) activeProfileSwitch = null
-	})
-	return request
+	return profileSwitchCoordinator.switchTo(profileId, openItemId)
 }
 
 interface ProfileSwitchAttestationEvidence {
@@ -1821,9 +1837,12 @@ ipcMain.handle('remote-pairing:revoke', async (event, deviceId: unknown, profile
 
 ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 	sessionIpcGate.require(args.profileToken)
+	if (!ordinarySessionAllowed(sessions.isValidSessionId(args.sessionId) ? args.sessionId : undefined))
+		throw new Error('Terminal transfer recovery is unresolved.')
 	const id = nextPtyId++
 	const shell = defaultShell()
 	const support = getSessionSupport()
+	const owningProfile = sessionProfileId
 
 	// With dtach: the pty child is the dtach CLIENT (`dtach -A <sock> -E -r winch
 	// <shell> -l`). `-A` makes one spawn path serve both fresh tabs (creates the
@@ -1879,8 +1898,9 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		ptys.delete(id)
 		if (selfExit && sessionId && support && selfEntry?.backing !== 'run-owned') {
 			const sid = sessionId
+			if (!ordinarySessionAllowed(sid, owningProfile)) return
 			void sessions.reapSessionIfDead(sid).then(dead => {
-				if (dead) {
+				if (dead && ordinarySessionAllowed(sid, owningProfile)) {
 					support.registry.remove(sid)
 					support.buffers.remove(sid)
 				}
@@ -1895,7 +1915,12 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 ipcMain.on('pty:write', (_event, id: number, data: unknown, profileToken: unknown, binary: unknown = false) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
-	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
+	if (
+		!entry ||
+		!ordinarySessionAllowed(entry.sessionId ?? undefined) ||
+		terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')
+	)
+		return
 	const input = encodePtyInput(data, binary)
 	if (input !== null) entry.proc.write(input)
 })
@@ -1903,7 +1928,14 @@ ipcMain.on('pty:write', (_event, id: number, data: unknown, profileToken: unknow
 ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
-	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '') || !(cols > 0) || !(rows > 0)) return
+	if (
+		!entry ||
+		!ordinarySessionAllowed(entry.sessionId ?? undefined) ||
+		terminalTransferMain?.isSessionBusy(entry.sessionId ?? '') ||
+		!(cols > 0) ||
+		!(rows > 0)
+	)
+		return
 	try {
 		entry.proc.resize(Math.floor(cols), Math.floor(rows))
 	} catch {
@@ -1918,7 +1950,12 @@ ipcMain.on('pty:resize', (_event, id: number, cols: number, rows: number, profil
 ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const entry = ptys.get(id)
-	if (!entry || terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return
+	if (
+		!entry ||
+		!ordinarySessionAllowed(entry.sessionId ?? undefined) ||
+		terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')
+	)
+		return
 	ptys.delete(id)
 	if (entry.sessionId && entry.backing !== 'run-owned') {
 		const sid = entry.sessionId
@@ -1946,7 +1983,11 @@ ipcMain.handle('session:close-with-grace', async (_event, id: number, profileTok
 	if (terminalTransferMain?.isBusy() || !sessionIpcGate.allows(profileToken)) return false
 	const entry = ptys.get(id)
 	if (!entry) return null
-	if (terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')) return false
+	if (
+		!ordinarySessionAllowed(entry.sessionId ?? undefined) ||
+		terminalTransferMain?.isSessionBusy(entry.sessionId ?? '')
+	)
+		return false
 	if (entry.sessionId && entry.backing === 'run-owned') {
 		const ownership = getSessionSupport()?.registry.get(entry.sessionId)?.scheduledOwnership
 		if (!ownership || !scheduledAdoption) return false
@@ -1968,7 +2009,12 @@ ipcMain.handle('session:close-with-grace', async (_event, id: number, profileTok
 // renderer may reattach it as a new tab. False = timer already fired (or
 // nothing pending) — nothing to restore.
 ipcMain.handle('session:undo-close', (_event, sessionId: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId)) return false
+	if (
+		!sessionIpcGate.allows(profileToken) ||
+		!sessions.isValidSessionId(sessionId) ||
+		!ordinarySessionAllowed(sessionId)
+	)
+		return false
 	const undone = graceCloser.undo(sessionId)
 	if (undone) graceCloseSupports.delete(sessionId)
 	return undone
@@ -1983,15 +2029,23 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return []
 	const support = getSessionSupport()
 	if (!support) return []
-	const scan = await sessions.scanSessions()
+	const owningProfile = sessionProfileId
+	const allowsSession = (id: string) => sessionIpcGate.allows(profileToken) && ordinarySessionAllowed(id, owningProfile)
+	if (!ordinarySessionAllowed(undefined, owningProfile)) return []
+	const scan = await sessions.scanSessions(allowsSession)
 	// Profile switching closes IPC admission while this asynchronous probe is in
 	// flight. A late old-renderer request must not mutate or publish another
 	// profile's registry after the await.
 	if (!sessionIpcGate.allows(profileToken) || support !== getSessionSupport()) return []
-	const plan = sessions.planSessionRestore(support.registry, scan)
+	const plan = sessions.planSessionRestore(support.registry, scan, allowsSession)
 	// Registry ownership is the durable workspace truth. Missing sockets after a
 	// reboot must not erase scrollback before dtach -A recreates their shell.
-	support.buffers.removeOrphans(plan.keepSnapshotIds)
+	const keepSnapshotIds = new Set(plan.keepSnapshotIds)
+	for (const identity of terminalTransferMain?.quarantinedSessions().identities ?? []) {
+		if (identity.profileId === owningProfile) keepSnapshotIds.add(identity.sessionId)
+	}
+	if (!ordinarySessionAllowed(undefined, owningProfile)) return []
+	support.buffers.removeOrphans(keepSnapshotIds)
 	return plan.sessions.map(
 		({ sessionId, title, customName, parked, groupId, agentRunning, agentAttention, placementEligible }) => ({
 			sessionId,
@@ -2112,7 +2166,10 @@ ipcMain.handle('tab-groups:list', (_event, profileToken: unknown) =>
 ipcMain.handle('sessions:placement:commit', (_event, value: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, null, () => {
 		const command = parseTerminalPlacementCommit(value)
-		if (!command) return null
+		if (!command || !ordinarySessionAllowed()) return null
+		if (command.type === 'set-collapsed') {
+			if (!ordinaryGroupAllowed(command.groupId)) return null
+		} else if (![...command.strip, ...command.background].every(id => ordinarySessionAllowed(id))) return null
 		return getSessionSupport()?.registry.commitPlacement(command) ?? null
 	}),
 )
@@ -2123,7 +2180,9 @@ ipcMain.handle('tab-groups:create', (_event, name: unknown, sessionIds: unknown,
 			typeof name !== 'string' ||
 			!Array.isArray(sessionIds) ||
 			sessionIds.length > 100 ||
-			!sessionIds.every(sessions.isValidSessionId)
+			!sessionIds.every(sessions.isValidSessionId) ||
+			!ordinarySessionAllowed() ||
+			!sessionIds.every(id => ordinarySessionAllowed(id))
 		)
 			return null
 		return getSessionSupport()?.registry.createGroup(name, sessionIds) ?? null
@@ -2132,27 +2191,33 @@ ipcMain.handle('tab-groups:create', (_event, name: unknown, sessionIds: unknown,
 
 ipcMain.handle('tab-groups:rename', (_event, groupId: unknown, name: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, null, () => {
-		if (!sessions.isValidTabGroupId(groupId) || typeof name !== 'string') return null
+		if (!sessions.isValidTabGroupId(groupId) || typeof name !== 'string' || !ordinaryGroupAllowed(groupId)) return null
 		return getSessionSupport()?.registry.renameGroup(groupId, name) ?? null
 	}),
 )
 
 ipcMain.handle('tab-groups:set-color', (_event, groupId: unknown, color: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, null, () => {
-		if (!sessions.isValidTabGroupId(groupId) || !isTabGroupColor(color)) return null
+		if (!sessions.isValidTabGroupId(groupId) || !isTabGroupColor(color) || !ordinaryGroupAllowed(groupId)) return null
 		return getSessionSupport()?.registry.setGroupColor(groupId, color) ?? null
 	}),
 )
 
 ipcMain.handle('tab-groups:delete', (_event, groupId: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, false, () =>
-		sessions.isValidTabGroupId(groupId) ? (getSessionSupport()?.registry.deleteGroup(groupId) ?? false) : false,
+		sessions.isValidTabGroupId(groupId) && ordinaryGroupAllowed(groupId)
+			? (getSessionSupport()?.registry.deleteGroup(groupId) ?? false)
+			: false,
 	),
 )
 
 ipcMain.handle('tab-groups:set-membership', (_event, sessionId: unknown, groupId: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, false, () => {
-		if (!sessions.isValidSessionId(sessionId) || (groupId !== null && !sessions.isValidTabGroupId(groupId)))
+		if (
+			!sessions.isValidSessionId(sessionId) ||
+			!ordinarySessionAllowed(sessionId) ||
+			(groupId !== null && (!sessions.isValidTabGroupId(groupId) || !ordinaryGroupAllowed(groupId)))
+		)
 			return false
 		return getSessionSupport()?.registry.setSessionGroup(sessionId, groupId) ?? false
 	}),
@@ -2164,6 +2229,7 @@ ipcMain.handle(
 		sessionIpcGate.handle(profileToken, false, () => {
 			if (
 				!sessions.isValidTabGroupId(groupId) ||
+				!ordinaryGroupAllowed(groupId) ||
 				(surface !== 'strip' && surface !== 'background') ||
 				typeof collapsed !== 'boolean'
 			)
@@ -2174,7 +2240,8 @@ ipcMain.handle(
 
 ipcMain.handle('tab-groups:move', (_event, groupId: unknown, parked: unknown, profileToken: unknown) =>
 	sessionIpcGate.handle(profileToken, null, () => {
-		if (!sessions.isValidTabGroupId(groupId) || typeof parked !== 'boolean') return null
+		if (!sessions.isValidTabGroupId(groupId) || typeof parked !== 'boolean' || !ordinaryGroupAllowed(groupId))
+			return null
 		return getSessionSupport()?.registry.moveGroup(groupId, parked) ?? null
 	}),
 )
@@ -2186,13 +2253,16 @@ ipcMain.handle('tab-groups:intent', (_event, value: unknown, profileToken: unkno
 		const registry = getSessionSupport()?.registry
 		if (!registry) return null
 		if (intent.type === 'move') {
-			return registry.get(intent.sessionId) &&
+			return ordinarySessionAllowed(intent.sessionId) &&
+				registry.get(intent.sessionId) &&
 				(intent.groupId === null || registry.getGroups().some(group => group.id === intent.groupId))
 				? { intent, memberIds: [] }
 				: null
 		}
 		const memberIds = registry.groupMembers(intent.groupId)
-		return memberIds ? { intent, memberIds } : null
+		return memberIds && ordinarySessionAllowed() && memberIds.every(id => ordinarySessionAllowed(id))
+			? { intent, memberIds }
+			: null
 	}),
 )
 
@@ -2200,6 +2270,7 @@ ipcMain.on('session:set-activity', (_event, sessionId: unknown, activity: unknow
 	if (
 		!sessionIpcGate.allows(profileToken) ||
 		!sessions.isValidSessionId(sessionId) ||
+		!ordinarySessionAllowed(sessionId) ||
 		!activity ||
 		typeof activity !== 'object'
 	)
@@ -2213,7 +2284,13 @@ ipcMain.on('session:set-activity', (_event, sessionId: unknown, activity: unknow
 })
 
 ipcMain.on('session:title', (_event, sessionId: unknown, title: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof title !== 'string') return
+	if (
+		!sessionIpcGate.allows(profileToken) ||
+		!sessions.isValidSessionId(sessionId) ||
+		!ordinarySessionAllowed(sessionId) ||
+		typeof title !== 'string'
+	)
+		return
 	getSessionSupport()?.registry.setTitle(sessionId, title)
 })
 
@@ -2222,6 +2299,7 @@ ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown
 	if (
 		!sessionIpcGate.allows(profileToken) ||
 		!sessions.isValidSessionId(sessionId) ||
+		!ordinarySessionAllowed(sessionId) ||
 		(name !== null && typeof name !== 'string')
 	)
 		return
@@ -2236,23 +2314,46 @@ ipcMain.on('session:set-custom-name', (_event, sessionId: unknown, name: unknown
 ipcMain.on('buffer:save', (_event, sessionId: unknown, data: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return
 	const support = getSessionSupport()
-	if (!support || !sessions.isValidSessionId(sessionId) || typeof data !== 'string') return
+	if (
+		!support ||
+		!sessions.isValidSessionId(sessionId) ||
+		!ordinarySessionAllowed(sessionId) ||
+		typeof data !== 'string'
+	)
+		return
 	support.buffers.save(sessionId, data)
 })
 
 ipcMain.handle('buffer:read', (_event, sessionId: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken)) return null
 	const support = getSessionSupport()
-	if (!support || !sessions.isValidSessionId(sessionId)) return null
+	if (!support || !sessions.isValidSessionId(sessionId) || !ordinarySessionAllowed(sessionId)) return null
 	return support.buffers.read(sessionId)
 })
 
-ipcMain.handle('buffer:save-and-ack', (_event, sessionId: unknown, data: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || !sessions.isValidSessionId(sessionId) || typeof data !== 'string')
-		return false
-	const support = getSessionSupport()
-	return support?.buffers.save(sessionId, data) ?? false
-})
+ipcMain.handle(
+	'buffer:save-and-ack',
+	(event, sessionId: unknown, data: unknown, profileToken: unknown, transactionId: unknown) => {
+		if (
+			!terminalTransferIpcGate.allows(event.sender, profileToken) ||
+			!sessions.isValidSessionId(sessionId) ||
+			typeof data !== 'string' ||
+			typeof transactionId !== 'string'
+		)
+			return false
+		const pending = pendingTerminalTransferEvents.get(transactionId)
+		if (
+			!pending ||
+			pending.sender !== event.sender ||
+			pending.event.sessionId !== sessionId ||
+			pending.event.profileToken !== profileToken ||
+			(pending.event.type !== 'prepare' && pending.event.type !== 'checkpoint')
+		)
+			return false
+		const support = getSessionSupport()
+		return support?.buffers.save(sessionId, data) ?? false
+	},
+)
 
 ipcMain.on('config:get', event => {
 	event.returnValue = { daemonUrl, sessionProfileToken: sessionProfileToken() }

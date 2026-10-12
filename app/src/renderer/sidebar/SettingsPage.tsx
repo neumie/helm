@@ -4,7 +4,7 @@
 // daemon owns which fields exist and how secrets redact). Draft state lives in
 // a store owned by SidebarRoot so edits survive section navigation.
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type {
 	ConfigDocument,
 	ConfigEditField,
@@ -53,6 +53,16 @@ export interface SettingsStore {
 
 /** Owned by SidebarRoot while any settings route is on the stack. */
 export function useSettingsStore(active: boolean): SettingsStore {
+	const api = window.helm.daemon
+	const rendered = useRef({ active, api })
+	rendered.current = { active, api }
+	const owner = useRef<object | null>(null)
+	const flight = useRef<object | null>(null)
+	const restartFlight = useRef<object | null>(null)
+	const restartNotice = useRef(0)
+	const revision = useRef(0)
+	const baseline = useRef<Draft | null>(null)
+	const draftRef = useRef<Draft | null>(null)
 	const [doc, setDoc] = useState<ConfigDocument | null>(null)
 	const [draft, setDraft] = useState<Draft | null>(null)
 	const [dirty, setDirty] = useState(false)
@@ -62,8 +72,16 @@ export function useSettingsStore(active: boolean): SettingsStore {
 	const [restarting, setRestarting] = useState(false)
 
 	useEffect(() => {
+		const identity = {}
+		owner.current = identity
+		flight.current = null
+		restartFlight.current = null
+		setSaving(false)
+		setRestarting(false)
 		if (!active) {
 			// Fully popped: drop the draft so the next open loads fresh config.
+			baseline.current = null
+			draftRef.current = null
 			setDoc(null)
 			setDraft(null)
 			setDirty(false)
@@ -72,115 +90,161 @@ export function useSettingsStore(active: boolean): SettingsStore {
 			return
 		}
 		let alive = true
-		void window.helm.daemon.config().then(result => {
-			if (!alive) return
+		setDoc(null)
+		setDraft(null)
+		draftRef.current = null
+		void api.config().then(result => {
+			if (!alive || !rendered.current.active || window.helm.daemon !== api) return
 			if (result.error !== undefined) setLoadError(result.error)
 			else {
 				setDoc(result.data)
-				setDraft(result.data.config as Draft)
+				baseline.current = result.data.config as Draft
+				draftRef.current = baseline.current
+				setDraft(baseline.current)
+				setDirty(false)
 			}
 		})
 		return () => {
 			alive = false
+			if (owner.current === identity) owner.current = null
 		}
-	}, [active])
+	}, [active, api])
 
-	const update = useCallback((path: string[], value: unknown) => {
-		setDirty(true)
-		setDraft(prev => {
-			if (!prev) return prev
-			const next = structuredClone(prev)
-			setAtPath(next, path, value)
-			return next
-		})
+	const editDraft = useCallback((edit: (next: Draft) => void) => {
+		if (!draftRef.current) return
+		const next = structuredClone(draftRef.current)
+		edit(next)
+		revision.current += 1
+		draftRef.current = next
+		setDraft(next)
+		setDirty(JSON.stringify(next) !== JSON.stringify(baseline.current))
 	}, [])
+	const update = useCallback(
+		(path: string[], value: unknown) => {
+			editDraft(next => setAtPath(next, path, value))
+		},
+		[editDraft],
+	)
+	const addListItem = useCallback(
+		(control: ConfigEditListControl) => {
+			editDraft(next => {
+				const list = getAtPath(next, control.path)
+				if (Array.isArray(list)) list.push(structuredClone(control.defaultItem))
+				else setAtPath(next, control.path, [structuredClone(control.defaultItem)])
+			})
+		},
+		[editDraft],
+	)
+	const removeListItem = useCallback(
+		(control: ConfigEditListControl, index: number) => {
+			editDraft(next => {
+				const list = getAtPath(next, control.path)
+				if (Array.isArray(list)) list.splice(index, 1)
+			})
+		},
+		[editDraft],
+	)
 
-	const addListItem = useCallback((control: ConfigEditListControl) => {
-		setDirty(true)
-		setDraft(prev => {
-			if (!prev) return prev
-			const next = structuredClone(prev)
-			const list = getAtPath(next, control.path)
-			if (Array.isArray(list)) list.push(structuredClone(control.defaultItem))
-			else setAtPath(next, control.path, [structuredClone(control.defaultItem)])
-			return next
-		})
-	}, [])
-
-	const removeListItem = useCallback((control: ConfigEditListControl, index: number) => {
-		setDirty(true)
-		setDraft(prev => {
-			if (!prev) return prev
-			const next = structuredClone(prev)
-			const list = getAtPath(next, control.path)
-			if (Array.isArray(list)) list.splice(index, 1)
-			return next
-		})
-	}, [])
-
-	const persistDraft = useCallback(async (nextDraft: Draft): Promise<ConfigSaveResult | null> => {
-		setSaving(true)
-		try {
-			const result = await window.helm.daemon.updateConfig(nextDraft)
-			if (result.error !== undefined) {
-				showToast({ message: 'Save failed', detail: result.error, ttlMs: 6000 })
+	const persistDraft = useCallback(
+		async (nextDraft: Draft): Promise<ConfigSaveResult | null> => {
+			if (!active || !rendered.current.active || !owner.current || flight.current || window.helm.daemon !== api)
 				return null
+			const identity = owner.current
+			const operation = {}
+			const submittedRevision = revision.current
+			const submitted = structuredClone(nextDraft)
+			flight.current = operation
+			const current = () =>
+				rendered.current.active &&
+				rendered.current.api === api &&
+				owner.current === identity &&
+				window.helm.daemon === api &&
+				flight.current === operation
+			setSaving(true)
+			try {
+				const result = await api.updateConfig(submitted)
+				if (!current()) return null
+				if (result.error !== undefined) {
+					showToast({ message: 'Save failed', detail: result.error, ttlMs: 6000 })
+					return null
+				}
+				baseline.current = submitted
+				restartNotice.current += 1
+				setDirty(
+					revision.current !== submittedRevision && JSON.stringify(draftRef.current) !== JSON.stringify(submitted),
+				)
+				if (result.data.applied) {
+					// The daemon restarts itself to load the change (~2s blip the
+					// bridge rides out on last-known data) — the save IS applied.
+					setPendingRestart(null)
+					showToast({ message: 'Settings applied' })
+				} else {
+					// Saved to disk but the daemon still runs the old config —
+					// keep a persistent notice with the way out (§3.12).
+					setPendingRestart(result.data.message)
+				}
+				return result.data
+			} catch (error) {
+				if (current())
+					showToast({
+						message: 'Save failed',
+						detail: error instanceof Error ? error.message : String(error),
+						ttlMs: 6000,
+					})
+				return null
+			} finally {
+				if (current()) {
+					flight.current = null
+					setSaving(false)
+				}
 			}
-			setDirty(false)
-			if (result.data.applied) {
-				// The daemon restarts itself to load the change (~2s blip the
-				// bridge rides out on last-known data) — the save IS applied.
-				setPendingRestart(null)
-				showToast({ message: 'Settings applied' })
-			} else {
-				// Saved to disk but the daemon still runs the old config —
-				// keep a persistent notice with the way out (§3.12).
-				setPendingRestart(result.data.message)
-			}
-			return result.data
-		} finally {
-			setSaving(false)
-		}
-	}, [])
+		},
+		[active, api],
+	)
 
 	const updateAndSave = useCallback(
 		async (path: string[], value: unknown): Promise<ConfigSaveResult | null> => {
-			if (!draft) return null
-			const previous = draft
-			const wasDirty = dirty
-			const next = structuredClone(draft)
-			setAtPath(next, path, value)
-			setDraft(next)
-			setDirty(true)
-			const result = await persistDraft(next)
-			if (!result) {
-				setDraft(previous)
-				setDirty(wasDirty)
-			}
-			return result
+			if (!draftRef.current || flight.current) return null
+			update(path, value)
+			return persistDraft(draftRef.current)
 		},
-		[dirty, draft, persistDraft],
+		[update, persistDraft],
 	)
 
 	const save = useCallback(async () => {
-		if (draft) await persistDraft(draft)
-	}, [draft, persistDraft])
+		if (draftRef.current) await persistDraft(draftRef.current)
+	}, [persistDraft])
 
 	const restartNow = useCallback(async (): Promise<boolean> => {
+		if (!rendered.current.active || !owner.current || restartFlight.current || window.helm.daemon !== api) return false
+		const identity = owner.current
+		const operation = {}
+		const notice = restartNotice.current
+		restartFlight.current = operation
+		const current = () =>
+			rendered.current.active &&
+			rendered.current.api === api &&
+			owner.current === identity &&
+			window.helm.daemon === api &&
+			restartFlight.current === operation
 		setRestarting(true)
 		try {
-			const result = await window.helm.daemon.restartDaemon()
+			const result = await api.restartDaemon()
+			if (!current()) return false
 			if (result.error !== undefined) {
 				showToast({ message: 'Restart failed', detail: result.error, ttlMs: 6000 })
 				return false
 			}
-			setPendingRestart(null)
+			if (restartNotice.current === notice) setPendingRestart(null)
 			showToast({ message: 'Daemon restarting', detail: 'Settings apply in a few seconds.' })
 			return true
 		} finally {
-			setRestarting(false)
+			if (current()) {
+				restartFlight.current = null
+				setRestarting(false)
+			}
 		}
-	}, [])
+	}, [api])
 
 	return {
 		doc,

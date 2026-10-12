@@ -64,7 +64,7 @@ export interface DashboardForkContext {
 
 export interface DashboardPlan {
 	worktreePath: string
-	branchName: string
+	branchName: string | null
 	planDirName: string
 	readmePath: string
 }
@@ -172,7 +172,7 @@ export async function getServerUrl(): Promise<string> {
 
 export interface PlanInfo {
 	worktreePath: string
-	branchName: string
+	branchName: string | null
 	planDirName: string
 	readmePath: string
 	spawner: string
@@ -246,7 +246,10 @@ export function createApi(origin?: string) {
 			signal: AbortSignal.timeout(method === 'GET' ? 10_000 : 120_000),
 		})
 		const json = await response.json()
-		if (!response.ok) throw new Error(json.error ?? `API error: ${response.status}`)
+		if (!response.ok)
+			throw new Error(
+				`${json.error ?? `API error: ${response.status}`}${json.sessionMayExist === true ? ' A planning session may already exist; check your terminal before retrying.' : ''}`,
+			)
 		return json.data
 	}
 	return {

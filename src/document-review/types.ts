@@ -111,6 +111,8 @@ export interface ReviewApi {
 	acknowledge(sessionId: string, owner: string): Promise<ReviewResult<boolean>>
 	receipt(id: string): Promise<ReviewResult<ReviewReceipt | null>>
 	retryDocument(): Promise<ReviewResult<boolean>>
+	/** Explicitly reclaim exactly empty private preferences; never source comments or caller authority. */
+	clearEmptyPreferences?(): Promise<ReviewResult<{ removed: number }>>
 	discardArchive?(failureId: string): Promise<ReviewResult<boolean>>
 	dirty(value: boolean): void
 	onCloseRequested(listener: () => void): () => void

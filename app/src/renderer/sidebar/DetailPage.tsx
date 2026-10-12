@@ -91,7 +91,7 @@ export function DetailPage(props: DetailPageProps) {
 	const disabled = busy !== null
 	const run = async (
 		label: string,
-		call: () => Promise<{ error?: string }>,
+		call: () => Promise<{ error?: string; sessionMayExist?: true }>,
 		after?: () => void,
 		successMessage: string | null = `${label} complete`,
 	) => {
@@ -103,8 +103,14 @@ export function DetailPage(props: DetailPageProps) {
 		try {
 			const result = await call()
 			if (result.error !== undefined) {
-				setCommandError(result.error)
-				setRetryCommand(() => () => void run(label, call, after, successMessage))
+				setCommandError(
+					result.sessionMayExist === true
+						? `${result.error} A planning session may already exist; check your terminal before retrying.`
+						: result.error,
+				)
+				setRetryCommand(
+					result.sessionMayExist === true ? null : () => () => void run(label, call, after, successMessage),
+				)
 				return
 			}
 			if (successMessage) showToast({ message: successMessage })

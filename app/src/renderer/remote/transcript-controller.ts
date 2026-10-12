@@ -6,6 +6,7 @@ import {
 	type LiveTranscript,
 	RemoteTranscriptModel,
 	type TranscriptSnapshot,
+	type TranscriptTicket,
 	type TranscriptViewport,
 } from './transcript-model.js'
 import { RemoteAccessError, RemoteHistoryError, type RemoteTransport } from './transport.js'
@@ -28,6 +29,7 @@ export class RemoteTranscriptController {
 	private generation = 0
 	private abort: AbortController | null = null
 	private continuation: string | null = null
+	private ticket: TranscriptTicket | null = null
 	private request: HistoryRequest | null = null
 	private admitted = false
 	private enabled = false
@@ -113,6 +115,8 @@ export class RemoteTranscriptController {
 		this.abort?.abort()
 		this.abort = null
 		this.continuation = null
+		if (this.ticket) this.model.settle(this.ticket, true)
+		this.ticket = null
 		this.model.setStatus('idle', 'cancelled')
 		this.publish()
 	}
@@ -140,6 +144,9 @@ export class RemoteTranscriptController {
 	}
 	private read(action: HistoryRequest['action'], exactRetry: boolean) {
 		this.cancel()
+		const ticket = this.model.beginExpansion()
+		if (!ticket) return
+		this.ticket = ticket
 		const localGeneration = this.generation
 		const abort = new AbortController()
 		this.abort = abort
@@ -150,9 +157,14 @@ export class RemoteTranscriptController {
 		this.request = request
 		this.model.setStatus('loading')
 		this.publish()
-		this.scheduler(() => void this.perform(request, abort, localGeneration))
+		this.scheduler(() => void this.perform(request, abort, localGeneration, ticket))
 	}
-	private async perform(request: HistoryRequest, abort: AbortController, localGeneration: number) {
+	private async perform(
+		request: HistoryRequest,
+		abort: AbortController,
+		localGeneration: number,
+		ticket: TranscriptTicket,
+	) {
 		try {
 			if (!this.transport.history) throw new RemoteHistoryError(404, 'unsupported')
 			const result = await historyAdmission(this.transport).read(request, abort.signal, () => {
@@ -169,7 +181,9 @@ export class RemoteTranscriptController {
 				throw new Error('history_identity')
 			this.continuation = result.continuation
 			if (result.state === 'page' && result.page) {
-				this.model.prepend(result.page)
+				const admission = this.model.admitPrefix(ticket, result.page)
+				if (admission.status !== 'accepted' && admission.status !== 'unchanged') throw new Error('history_admission')
+				if (this.ticket === ticket) this.ticket = null
 				this.autoFailures = 0
 				this.model.setStatus('idle')
 			} else if (result.state === 'progress' && result.continuation) this.model.setStatus('progress')

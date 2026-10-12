@@ -1,5 +1,6 @@
 import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { TaskContext } from '../providers/provider.js'
+import type { SolverWorkspace } from '../solver/workspace.js'
 
 export interface PlanningSessionParams {
 	projectConfig: ProjectConfig
@@ -17,6 +18,8 @@ export interface PlanningSessionParams {
 	solverConfig: HelmConfig['solver']
 	/** If set, reuse this worktree instead of creating a new one. */
 	existingWorktreePath?: string
+	/** Captured planning mode; omission is isolated Worktree, never inferred from a path. */
+	workspaceMode?: SolverWorkspace
 	/** Explicit Re-plan: replace an existing interactive planning agent instead of reusing it. */
 	replaceExistingSession?: boolean
 	signal?: AbortSignal

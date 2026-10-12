@@ -193,24 +193,26 @@ export class ItemCommands {
 		}
 
 		const groupId = count > 1 ? randomUUID() : null
-		return Array.from({ length: count }, () =>
-			this.store.create({
-				...(parsed.data.id ? { id: parsed.data.id } : {}),
-				kind: 'solve',
-				status: initialStatus(parsed.data.source),
-				projectSlug: parsed.data.projectSlug,
-				title: parsed.data.title,
-				source: parsed.data.source ?? null,
-				capturedContext: parsed.data.capturedContext ?? null,
-				baseRef,
-				spawner: parsed.data.spawner ?? null,
-				groupId,
-				payload: {
+		return this.store.transaction(() =>
+			Array.from({ length: count }, () =>
+				this.store.create({
+					...(parsed.data.id ? { id: parsed.data.id } : {}),
 					kind: 'solve',
-					...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
-					...(parsed.data.solverAgent ? { solverAgent: parsed.data.solverAgent } : {}),
-				},
-			}),
+					status: initialStatus(parsed.data.source),
+					projectSlug: parsed.data.projectSlug,
+					title: parsed.data.title,
+					source: parsed.data.source ?? null,
+					capturedContext: parsed.data.capturedContext ?? null,
+					baseRef,
+					spawner: parsed.data.spawner ?? null,
+					groupId,
+					payload: {
+						kind: 'solve',
+						...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}),
+						...(parsed.data.solverAgent ? { solverAgent: parsed.data.solverAgent } : {}),
+					},
+				}),
+			),
 		)
 	}
 
@@ -333,14 +335,16 @@ export class ItemCommands {
 		if (item.source?.provider === source.provider) {
 			throw new Error(`Item is already linked to a ${source.provider} task`)
 		}
-		const updated = this.store.updateSource(id, source)
-		this.store.insertEvent(id, 'source_task_created', {
-			provider: source.provider,
-			externalId: source.externalId,
-			url: source.url ?? null,
-			previousExternalId: item.source?.externalId ?? null,
+		return this.store.transaction(() => {
+			const updated = this.store.updateSource(id, source)
+			this.store.insertEvent(id, 'source_task_created', {
+				provider: source.provider,
+				externalId: source.externalId,
+				url: source.url ?? null,
+				previousExternalId: item.source?.externalId ?? null,
+			})
+			return updated
 		})
-		return updated
 	}
 
 	createLoopItem(input: CreateLoopItemInput): ItemRecord {
@@ -368,18 +372,20 @@ export class ItemCommands {
 
 		const count = parsed.data.parallelism ?? 1
 		const groupId = count > 1 ? randomUUID() : null
-		return Array.from({ length: count }, () =>
-			this.store.create({
-				kind: 'loop',
-				status: initialStatus(undefined),
-				projectSlug: parsed.data.projectSlug,
-				title: parsed.data.title,
-				source: null,
-				baseRef,
-				spawner: parsed.data.spawner ?? null,
-				groupId,
-				payload,
-			}),
+		return this.store.transaction(() =>
+			Array.from({ length: count }, () =>
+				this.store.create({
+					kind: 'loop',
+					status: initialStatus(undefined),
+					projectSlug: parsed.data.projectSlug,
+					title: parsed.data.title,
+					source: null,
+					baseRef,
+					spawner: parsed.data.spawner ?? null,
+					groupId,
+					payload,
+				}),
+			),
 		)
 	}
 
@@ -388,15 +394,17 @@ export class ItemCommands {
 		if (item.status !== 'inbox') throw new Error('Only Inbox Items can be approved')
 
 		const now = new Date().toISOString()
-		const approved = this.store.update(id, {
-			status: 'ready',
-			queuedAt: now,
-			completedAt: null,
-			errorMessage: null,
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const approved = this.store.update(id, {
+				status: 'ready',
+				queuedAt: now,
+				completedAt: null,
+				errorMessage: null,
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'item_approved', { from: item.status, to: approved.status })
+			return approved
 		})
-		this.store.insertEvent(id, 'item_approved', { from: item.status, to: approved.status })
-		return approved
 	}
 
 	rejectItem(id: string): ItemRecord {
@@ -404,14 +412,16 @@ export class ItemCommands {
 		if (item.status !== 'inbox') throw new Error('Only Inbox Items can be rejected')
 
 		const now = new Date().toISOString()
-		const rejected = this.store.update(id, {
-			status: 'cancelled',
-			completedAt: now,
-			errorMessage: null,
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const rejected = this.store.update(id, {
+				status: 'cancelled',
+				completedAt: now,
+				errorMessage: null,
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'item_rejected', { from: item.status, to: rejected.status })
+			return rejected
 		})
-		this.store.insertEvent(id, 'item_rejected', { from: item.status, to: rejected.status })
-		return rejected
 	}
 
 	startItem(id: string): ItemRecord {
@@ -422,16 +432,18 @@ export class ItemCommands {
 			throw new Error('Only ready, Inbox, or active planned Items can be started')
 		}
 
-		const started = this.store.update(id, {
-			status: 'running',
-			workMode: 'agent',
-			startedAt: new Date().toISOString(),
-			completedAt: null,
-			errorMessage: null,
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const started = this.store.update(id, {
+				status: 'running',
+				workMode: 'agent',
+				startedAt: new Date().toISOString(),
+				completedAt: null,
+				errorMessage: null,
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'item_started', { from: item.status, to: started.status })
+			return started
 		})
-		this.store.insertEvent(id, 'item_started', { from: item.status, to: started.status })
-		return started
 	}
 
 	retryItem(id: string): ItemRecord {
@@ -441,30 +453,11 @@ export class ItemCommands {
 			throw new Error('Only failed, cancelled, done, or review Items can be retried')
 		}
 
-		const retried = this.store.update(id, {
-			status: 'ready',
-			workMode: 'agent',
-			queuedAt: new Date().toISOString(),
-			startedAt: null,
-			completedAt: null,
-			almanacRunId: null,
-			errorMessage: null,
-			errorPhase: null,
-			resultSummary: null,
-			solveInputSnapshot: null,
-			prUrl: null,
-			runOutcome: null,
-		})
-		this.store.insertEvent(id, 'item_retried', { from: item.status, to: retried.status })
-		return retried
-	}
-
-	recoverStaleProcessingItems(): ItemRecord[] {
-		const stale = ITEM_KINDS.flatMap(kind => this.store.listProcessingByKind(kind))
-		return stale.map(item => {
-			const recovered = this.store.update(item.id, {
+		return this.store.transaction(() => {
+			const retried = this.store.update(id, {
 				status: 'ready',
-				queuedAt: item.queuedAt ?? new Date().toISOString(),
+				workMode: 'agent',
+				queuedAt: new Date().toISOString(),
 				startedAt: null,
 				completedAt: null,
 				almanacRunId: null,
@@ -475,11 +468,43 @@ export class ItemCommands {
 				prUrl: null,
 				runOutcome: null,
 			})
-			this.store.insertEvent(item.id, 'item_recovered', {
-				from: item.status,
-				to: recovered.status,
-				reason: 'stale_processing',
-			})
+			this.store.insertEvent(id, 'item_retried', { from: item.status, to: retried.status })
+			return retried
+		})
+	}
+
+	recoverStaleProcessingItems(): ItemRecord[] {
+		return this.store.transaction(() => {
+			const recovered: ItemRecord[] = []
+			for (const kind of ITEM_KINDS) {
+				// Each transition removes its row from this bounded query;
+				// offsets would skip rows as the running set shrinks.
+				for (;;) {
+					const page = this.store.listProcessingByKind(kind, 50)
+					if (page.length === 0) break
+					for (const item of page) {
+						const updated = this.store.update(item.id, {
+							status: 'ready',
+							queuedAt: item.queuedAt ?? new Date().toISOString(),
+							startedAt: null,
+							completedAt: null,
+							almanacRunId: null,
+							errorMessage: null,
+							errorPhase: null,
+							resultSummary: null,
+							solveInputSnapshot: null,
+							prUrl: null,
+							runOutcome: null,
+						})
+						this.store.insertEvent(item.id, 'item_recovered', {
+							from: item.status,
+							to: updated.status,
+							reason: 'stale_processing',
+						})
+						recovered.push(updated)
+					}
+				}
+			}
 			return recovered
 		})
 	}
@@ -490,14 +515,16 @@ export class ItemCommands {
 			throw new Error('Only ready or Inbox Items can be cancelled before execution')
 		}
 
-		const cancelled = this.store.update(id, {
-			status: 'cancelled',
-			completedAt: new Date().toISOString(),
-			errorMessage: 'Cancelled by user',
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const cancelled = this.store.update(id, {
+				status: 'cancelled',
+				completedAt: new Date().toISOString(),
+				errorMessage: 'Cancelled by user',
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'item_cancelled', { from: item.status, to: cancelled.status })
+			return cancelled
 		})
-		this.store.insertEvent(id, 'item_cancelled', { from: item.status, to: cancelled.status })
-		return cancelled
 	}
 
 	cancelProcessingItem(id: string, message: string, phase: ErrorPhase): ItemRecord {
@@ -506,15 +533,17 @@ export class ItemCommands {
 			throw new Error('Only running Items can be cancelled during execution')
 		}
 
-		const cancelled = this.store.update(id, {
-			status: 'cancelled',
-			completedAt: new Date().toISOString(),
-			errorMessage: message,
-			errorPhase: phase,
-			runOutcome: 'cancelled',
+		return this.store.transaction(() => {
+			const cancelled = this.store.update(id, {
+				status: 'cancelled',
+				completedAt: new Date().toISOString(),
+				errorMessage: message,
+				errorPhase: phase,
+				runOutcome: 'cancelled',
+			})
+			this.store.insertEvent(id, 'item_cancelled', { from: item.status, to: cancelled.status, phase })
+			return cancelled
 		})
-		this.store.insertEvent(id, 'item_cancelled', { from: item.status, to: cancelled.status, phase })
-		return cancelled
 	}
 
 	failItem(id: string, message: string, phase: ErrorPhase): ItemRecord {
@@ -523,15 +552,17 @@ export class ItemCommands {
 			throw new Error('Only running Items can fail during execution')
 		}
 
-		const failed = this.store.update(id, {
-			status: 'failed',
-			completedAt: new Date().toISOString(),
-			errorMessage: message,
-			errorPhase: phase,
-			runOutcome: runOutcomeForFailure(message),
+		return this.store.transaction(() => {
+			const failed = this.store.update(id, {
+				status: 'failed',
+				completedAt: new Date().toISOString(),
+				errorMessage: message,
+				errorPhase: phase,
+				runOutcome: runOutcomeForFailure(message),
+			})
+			this.store.insertEvent(id, 'item_failed', { from: item.status, to: failed.status, phase, error: message })
+			return failed
 		})
-		this.store.insertEvent(id, 'item_failed', { from: item.status, to: failed.status, phase, error: message })
-		return failed
 	}
 
 	/**
@@ -546,22 +577,24 @@ export class ItemCommands {
 		if (item.kind !== 'solve') throw new Error('Only solve Items can be reconciled to review')
 		if (item.status !== 'running') throw new Error('Only running solve Items can be reconciled')
 
-		const reconciled = this.store.update(id, {
-			status: 'review',
-			completedAt: new Date().toISOString(),
-			errorMessage: fields.message,
-			errorPhase: fields.phase,
-			runOutcome: runOutcomeForFailure(fields.message),
-			...(fields.prUrl ? { prUrl: fields.prUrl } : {}),
+		return this.store.transaction(() => {
+			const reconciled = this.store.update(id, {
+				status: 'review',
+				completedAt: new Date().toISOString(),
+				errorMessage: fields.message,
+				errorPhase: fields.phase,
+				runOutcome: runOutcomeForFailure(fields.message),
+				...(fields.prUrl ? { prUrl: fields.prUrl } : {}),
+			})
+			this.store.insertEvent(id, 'item_reconciled', {
+				from: item.status,
+				to: reconciled.status,
+				phase: fields.phase,
+				error: fields.message,
+				reason: 'shippable_work_present',
+			})
+			return reconciled
 		})
-		this.store.insertEvent(id, 'item_reconciled', {
-			from: item.status,
-			to: reconciled.status,
-			phase: fields.phase,
-			error: fields.message,
-			reason: 'shippable_work_present',
-		})
-		return reconciled
 	}
 
 	/**
@@ -578,14 +611,16 @@ export class ItemCommands {
 			throw new Error('Only failed Items can be reopened to review')
 		}
 
-		const reopened = this.store.update(id, {
-			status: 'review',
-			completedAt: new Date().toISOString(),
-			errorMessage: null,
-			errorPhase: null,
+		return this.store.transaction(() => {
+			const reopened = this.store.update(id, {
+				status: 'review',
+				completedAt: new Date().toISOString(),
+				errorMessage: null,
+				errorPhase: null,
+			})
+			this.store.insertEvent(id, 'item_reopened', { from: item.status, to: reopened.status })
+			return reopened
 		})
-		this.store.insertEvent(id, 'item_reopened', { from: item.status, to: reopened.status })
-		return reopened
 	}
 
 	completeSolveItem(
@@ -603,19 +638,21 @@ export class ItemCommands {
 		if (item.kind !== 'solve') throw new Error('Only solve Items can complete through Solver')
 		if (item.status !== 'running') throw new Error('Only running solve Items can complete through Solver')
 
-		const completed = this.store.update(id, {
-			status: 'review',
-			worktreePath: fields.worktreePath,
-			branchName: fields.branchName,
-			planDirName: fields.planDirName,
-			resultSummary: fields.resultSummary,
-			completedAt: new Date().toISOString(),
-			errorMessage: null,
-			errorPhase: null,
-			runOutcome: 'ok',
+		return this.store.transaction(() => {
+			const completed = this.store.update(id, {
+				status: 'review',
+				worktreePath: fields.worktreePath,
+				branchName: fields.branchName,
+				planDirName: fields.planDirName,
+				resultSummary: fields.resultSummary,
+				completedAt: new Date().toISOString(),
+				errorMessage: null,
+				errorPhase: null,
+				runOutcome: 'ok',
+			})
+			this.store.insertEvent(id, 'solve_completed', { summary: fields.resultSummary })
+			return completed
 		})
-		this.store.insertEvent(id, 'solve_completed', { summary: fields.resultSummary })
-		return completed
 	}
 
 	recordAlmanacRunId(id: string, runId: string): ItemRecord {
@@ -624,9 +661,11 @@ export class ItemCommands {
 		if (item.status !== 'running') throw new Error('Only running loop Items can record AlmanacRunId')
 		if (item.almanacRunId === runId) return item
 
-		const updated = this.store.update(id, { almanacRunId: runId })
-		this.store.insertEvent(id, 'almanac_run_started', { runId })
-		return updated
+		return this.store.transaction(() => {
+			const updated = this.store.update(id, { almanacRunId: runId })
+			this.store.insertEvent(id, 'almanac_run_started', { runId })
+			return updated
+		})
 	}
 
 	completeLoopItem(id: string, fields: { resultSummary: string }): ItemRecord {
@@ -634,18 +673,20 @@ export class ItemCommands {
 		if (itemExecutionMode(item) !== 'loop') throw new Error('Only loop executions can complete through almanac')
 		if (item.status !== 'running') throw new Error('Only running loop executions can complete through almanac')
 
-		const completed = this.store.update(id, {
-			// A source-task solve keeps its review handoff even when Almanac executed it;
-			// standalone Loop Items remain terminal when their loop completes.
-			status: item.kind === 'solve' ? 'review' : 'done',
-			completedAt: new Date().toISOString(),
-			resultSummary: fields.resultSummary,
-			errorMessage: null,
-			errorPhase: null,
-			runOutcome: 'ok',
+		return this.store.transaction(() => {
+			const completed = this.store.update(id, {
+				// A source-task solve keeps its review handoff even when Almanac executed it;
+				// standalone Loop Items remain terminal when their loop completes.
+				status: item.kind === 'solve' ? 'review' : 'done',
+				completedAt: new Date().toISOString(),
+				resultSummary: fields.resultSummary,
+				errorMessage: null,
+				errorPhase: null,
+				runOutcome: 'ok',
+			})
+			this.store.insertEvent(id, 'loop_completed', { summary: fields.resultSummary })
+			return completed
 		})
-		this.store.insertEvent(id, 'loop_completed', { summary: fields.resultSummary })
-		return completed
 	}
 
 	recordDispatchPr(id: string, fields: { prUrl: string; shippedByAgent?: boolean }): ItemRecord {
@@ -653,13 +694,15 @@ export class ItemCommands {
 		if (item.kind !== 'solve') throw new Error('Only solve Items can record PR dispatch')
 		if (item.status !== 'review') throw new Error('Only review solve Items can record PR dispatch')
 
-		const updated = this.store.update(id, { prUrl: fields.prUrl })
-		this.store.insertEvent(id, 'pr_created', {
-			url: fields.prUrl,
-			draft: false,
-			shippedByAgent: fields.shippedByAgent === true,
+		return this.store.transaction(() => {
+			const updated = this.store.update(id, { prUrl: fields.prUrl })
+			this.store.insertEvent(id, 'pr_created', {
+				url: fields.prUrl,
+				draft: false,
+				shippedByAgent: fields.shippedByAgent === true,
+			})
+			return updated
 		})
-		return updated
 	}
 
 	recordDispatchComment(id: string, commentId: string): void {
@@ -957,18 +1000,20 @@ export class ItemCommands {
 			JSON.stringify(prev.deployments) === JSON.stringify(next.deployments)
 		if (unchanged) return item
 
-		const updated = this.store.updateDeployState(id, next)
+		return this.store.transaction(() => {
+			const updated = this.store.updateDeployState(id, next)
 
-		if (next.merged && !prev?.merged) {
-			this.store.insertEvent(id, 'deploy_merged', { sha: next.mergeSha, at: next.mergedAt })
-		}
-		const before = successfulEnvironments(prev)
-		for (const d of next.deployments) {
-			if (d.state === 'success' && !before.has(d.environment)) {
-				this.store.insertEvent(id, 'deploy_succeeded', { environment: d.environment, url: d.url })
+			if (next.merged && !prev?.merged) {
+				this.store.insertEvent(id, 'deploy_merged', { sha: next.mergeSha, at: next.mergedAt })
 			}
-		}
-		return updated
+			const before = successfulEnvironments(prev)
+			for (const d of next.deployments) {
+				if (d.state === 'success' && !before.has(d.environment)) {
+					this.store.insertEvent(id, 'deploy_succeeded', { environment: d.environment, url: d.url })
+				}
+			}
+			return updated
+		})
 	}
 
 	/**
@@ -1006,17 +1051,19 @@ export class ItemCommands {
 			workMode = null
 			startedAt = null
 		}
-		const updated = this.store.update(id, {
-			status,
-			workMode,
-			queuedAt: status === 'ready' ? now : item.queuedAt,
-			startedAt,
-			completedAt: COMPLETED_AT_STATUSES.has(status) ? now : null,
-			errorMessage: status === 'failed' ? item.errorMessage : null,
-			errorPhase: status === 'failed' ? item.errorPhase : null,
+		return this.store.transaction(() => {
+			const updated = this.store.update(id, {
+				status,
+				workMode,
+				queuedAt: status === 'ready' ? now : item.queuedAt,
+				startedAt,
+				completedAt: COMPLETED_AT_STATUSES.has(status) ? now : null,
+				errorMessage: status === 'failed' ? item.errorMessage : null,
+				errorPhase: status === 'failed' ? item.errorPhase : null,
+			})
+			this.store.insertEvent(id, 'item_status_set', { from: item.status, to: status, workMode })
+			return updated
 		})
-		this.store.insertEvent(id, 'item_status_set', { from: item.status, to: status, workMode })
-		return updated
 	}
 
 	markItemMerged(id: string): ItemRecord {
@@ -1024,9 +1071,11 @@ export class ItemCommands {
 		if (item.kind !== 'solve') throw new Error('Only solve Items can be completed via merge')
 		if (item.status !== 'review') return item
 
-		const completed = this.store.update(id, { status: 'done', completedAt: new Date().toISOString() })
-		this.store.insertEvent(id, 'item_merged', { from: item.status, to: completed.status })
-		return completed
+		return this.store.transaction(() => {
+			const completed = this.store.update(id, { status: 'done', completedAt: new Date().toISOString() })
+			this.store.insertEvent(id, 'item_merged', { from: item.status, to: completed.status })
+			return completed
+		})
 	}
 
 	recordEvent(id: string, eventType: string, payload?: unknown): void {
@@ -1057,13 +1106,7 @@ export class ItemCommands {
 		// A fresh failed Plan restores its original unplanned lifecycle; only an
 		// already-prepared Item can otherwise start against a provisional pointer.
 		if (item.plannedAt === null) return false
-		const events = this.store.getEvents(id)
-		for (let index = events.length - 1; index >= 0; index--) {
-			const event = events[index]
-			if (event.eventType === 'plan_prepared') return false
-			if (event.eventType === 'planning_failed') return true
-		}
-		return false
+		return this.store.latestPlanningOutcome(id) === 'planning_failed'
 	}
 
 	getItemBySourceExternalId(externalId: string): ItemRecord | null {

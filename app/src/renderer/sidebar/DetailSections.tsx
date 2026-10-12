@@ -278,7 +278,7 @@ export function SetupSection({
 						label="Solver agent"
 						commit
 						value={selection.agent}
-						onChange={agent => onDraftChange(selectAgent(draft, agent, config, selection.model))}
+						onChange={agent => onDraftChange(selectAgent(draft, agent, config, selection.model, selection.effort))}
 						options={[
 							{ value: 'claude', label: 'Claude' },
 							{ value: 'codex', label: 'Codex' },

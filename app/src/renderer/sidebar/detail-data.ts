@@ -5,17 +5,86 @@ import type { DashboardItem, HelmResult, HelmSnapshot } from '../../shared-helm'
 
 export type DetailPhase = 'loading' | 'fresh' | 'stale-error' | 'not-found'
 
-const detailRequests = new Map<string, { key: string; promise: Promise<HelmResult<DashboardItem>> }>()
+/** One renderer-wide LRU; pending reads and mounted consumers are never evicted. */
+export function createItemDetailCache() {
+	const settled = new Map<string, { key: string; promise: Promise<HelmResult<DashboardItem>> }>()
+	const pending = new Map<string, Promise<HelmResult<DashboardItem>>>()
+	const latest = new Map<string, object>()
+	const subscribers = new Map<string, number>()
+	const prune = () => {
+		let inactive = [...settled.keys()].filter(id => !subscribers.has(id)).length
+		for (const id of settled.keys()) {
+			if (inactive <= 32) break
+			if (!subscribers.has(id)) {
+				settled.delete(id)
+				inactive -= 1
+			}
+		}
+	}
+	return {
+		subscribe(id: string) {
+			subscribers.set(id, (subscribers.get(id) ?? 0) + 1)
+			let released = false
+			return () => {
+				if (released) return
+				released = true
+				const count = (subscribers.get(id) ?? 1) - 1
+				if (count) subscribers.set(id, count)
+				else subscribers.delete(id)
+				prune()
+			}
+		},
+		fetch(id: string, key: string, read: () => Promise<HelmResult<DashboardItem>>, force = false) {
+			const requestKey = JSON.stringify([id, key])
+			const inflight = pending.get(requestKey)
+			if (inflight) return inflight
+			const cached = settled.get(id)
+			if (!force && cached?.key === key) {
+				settled.delete(id)
+				settled.set(id, cached)
+				return cached.promise
+			}
+			const token = {}
+			latest.set(id, token)
+			const promise = Promise.resolve().then(read)
+			pending.set(requestKey, promise)
+			const finish = (success: boolean) => {
+				pending.delete(requestKey)
+				if (latest.get(id) !== token) return
+				latest.delete(id)
+				settled.delete(id)
+				if (success) settled.set(id, { key, promise })
+				prune()
+			}
+			void promise.then(
+				result => finish(result.error === undefined),
+				() => finish(false),
+			)
+			return promise
+		},
+	}
+}
 
-export function fetchItemDetail(id: string, key: string, force = false): Promise<HelmResult<DashboardItem>> {
-	const cached = detailRequests.get(id)
-	if (!force && cached?.key === key) return cached.promise
-	const promise = window.helm.daemon.item(id)
-	detailRequests.set(id, { key, promise })
-	void promise.then(result => {
-		if (result.error !== undefined && detailRequests.get(id)?.promise === promise) detailRequests.delete(id)
-	})
-	return promise
+const detailRequests = createItemDetailCache()
+const transports = new WeakMap<object, number>()
+let nextTransport = 0
+function detailIdentity(api: object, scope: string, id: string) {
+	let transport = transports.get(api)
+	if (transport === undefined) {
+		transport = ++nextTransport
+		transports.set(api, transport)
+	}
+	return JSON.stringify([transport, scope, id])
+}
+
+export function fetchItemDetail(
+	id: string,
+	key: string,
+	force = false,
+	api = window.helm.daemon,
+	scope = '',
+): Promise<HelmResult<DashboardItem>> {
+	return detailRequests.fetch(detailIdentity(api, scope, id), key, () => api.item(id), force)
 }
 
 /** Pure transition used by tests and to keep 404 distinct from transport failures. */
@@ -27,13 +96,19 @@ export function detailPhaseFor(result: HelmResult<DashboardItem>, hasItem: boole
 
 /** Fetch the full Item on open and after its cheap list row changes. */
 export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
+	const api = window.helm.daemon
+	const scope = JSON.stringify([snapshot?.status?.profile?.id, snapshot?.status?.profileGeneration])
+	const identity = detailIdentity(api, scope, id)
+	const currentIdentity = useRef(identity)
+	currentIdentity.current = identity
+	const [detailOwner, setDetailOwner] = useState(identity)
 	const row = useMemo(() => snapshot?.items?.find(item => item.id === id) ?? null, [snapshot?.items, id])
 	const [detail, setDetail] = useState<DashboardItem | null>(null)
 	const [phase, setPhase] = useState<DetailPhase>('loading')
 	const [error, setError] = useState<string | null>(null)
 	const generation = useRef(0)
 	const hasItem = useRef(Boolean(detail || row))
-	hasItem.current = Boolean(detail || row)
+	hasItem.current = Boolean((detailOwner === identity ? detail : null) || row)
 	// Identical-payload guard (mirrors HelmBridge.publish): a live-tail tick that
 	// returns byte-identical detail must not re-render the 20KB log well.
 	const lastComparable = useRef<string | null>(null)
@@ -60,11 +135,18 @@ export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
 
 	const request = useCallback(
 		(force: boolean, quiet = false) => {
+			if (currentIdentity.current !== identity || window.helm.daemon !== api) return Promise.resolve()
 			const current = ++generation.current
 			if (!quiet) setPhase('loading')
-			return fetchItemDetail(id, rowUpdatedAt, force).then(result => apply(result, current, quiet))
+			const publish = (result: HelmResult<DashboardItem>) => {
+				if (currentIdentity.current !== identity || window.helm.daemon !== api) return
+				apply(result, current, quiet)
+			}
+			return fetchItemDetail(id, rowUpdatedAt, force, api, scope).then(publish, error => {
+				publish({ error: error instanceof Error ? error.message : String(error) })
+			})
 		},
-		[id, rowUpdatedAt, apply],
+		[id, identity, api, scope, rowUpdatedAt, apply],
 	)
 	const requestRef = useRef(request)
 	requestRef.current = request
@@ -81,12 +163,25 @@ export function useItemDetail(id: string, snapshot: HelmSnapshot | null) {
 	}, [])
 
 	useEffect(() => {
+		setDetail(null)
+		setDetailOwner(identity)
+		setError(null)
+		lastComparable.current = null
+		const unsubscribe = detailRequests.subscribe(identity)
+		return () => {
+			generation.current += 1
+			unsubscribe()
+		}
+	}, [identity])
+
+	useEffect(() => {
 		void request(false)
 		return () => {
 			generation.current += 1
 		}
 	}, [request])
 
-	const item = detail ?? row
-	return { item, phase, error, refetch, refetchQuietly, fresh: phase === 'fresh', hasDetail: detail !== null }
+	const ownedDetail = detailOwner === identity ? detail : null
+	const item = ownedDetail ?? row
+	return { item, phase, error, refetch, refetchQuietly, fresh: phase === 'fresh', hasDetail: ownedDetail !== null }
 }

@@ -4,9 +4,19 @@ import { agentLabelFromConfig, buildInteractiveAgentCommand } from '../../solver
 import { buildPlanningPrompt } from '../../solver/prompt-builder.js'
 import type { PlanningSessionParams, PlanningSessionResult, Spawner } from '../../spawner/spawner.js'
 import { formatTaskContext } from '../../task-context.js'
+import { taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { OkenaClient, okenaClientForProject } from './client.js'
 import { OkenaWorktreeManager } from './worktree.js'
+
+interface CancelledPlanningWorkspace extends Error {
+	sessionMayExist: true
+}
+
+/** Workspace preparation may already have created Okena's automatic terminal. */
+function cancelledPlanningWorkspace(): CancelledPlanningWorkspace {
+	return Object.assign(taskCancelled(), { sessionMayExist: true as const })
+}
 
 export class OkenaSpawner implements Spawner {
 	readonly name = 'okena'
@@ -20,18 +30,27 @@ export class OkenaSpawner implements Spawner {
 	}
 
 	async startPlanningSession(params: PlanningSessionParams): Promise<PlanningSessionResult> {
+		const { signal, workspaceMode } = params
+		if (signal?.aborted) throw taskCancelled()
 		const client = okenaClientForProject(this.client, params.projectConfig.repoPath)
 		const worktrees = client === this.client ? this.worktrees : new OkenaWorktreeManager(client)
-		const ensured = await worktrees.ensureWorktreeProject(
-			params.projectConfig.repoPath,
-			params.projectConfig.baseBranch,
-			params.branchName,
-			params.existingWorktreePath,
-		)
+		const ensured =
+			workspaceMode === 'main'
+				? await worktrees.ensureMainRepoProject(params.projectConfig.repoPath)
+				: await worktrees.ensureWorktreeProject(
+						params.projectConfig.repoPath,
+						params.projectConfig.baseBranch,
+						params.branchName,
+						params.existingWorktreePath,
+					)
+
+		if (signal?.aborted) throw cancelledPlanningWorkspace()
 
 		// Materialize captured attachments before inspecting or mutating terminals.
 		const taskContext = params.onWorktreeReady(ensured.worktreePath)
+		if (signal?.aborted) throw taskCancelled()
 		const reusedTerminal = await worktrees.findPlanTerminal(ensured.wtProjectId, params.itemId)
+		if (signal?.aborted) throw taskCancelled()
 		log.info('okena', 'Resolving planning terminal', {
 			projectId: ensured.wtProjectId,
 			worktreePath: ensured.worktreePath,
@@ -51,11 +70,13 @@ export class OkenaSpawner implements Spawner {
 			} catch (err) {
 				throw new Error(`Failed to stop existing planning session: ${err instanceof Error ? err.message : err}`)
 			}
+			if (signal?.aborted) throw taskCancelled()
 			terminalId = await worktrees.createTerminal(ensured.wtProjectId)
 			replacedTerminal = true
 		} else {
 			terminalId = reusedTerminal ?? ensured.autoTerminalId ?? (await worktrees.createTerminal(ensured.wtProjectId))
 		}
+		if (signal?.aborted) throw taskCancelled()
 		if (!terminalId) {
 			throw new Error(
 				`Failed to obtain a planning terminal for Okena project ${ensured.wtProjectId} at ${ensured.worktreePath}`,
@@ -82,6 +103,7 @@ export class OkenaSpawner implements Spawner {
 			// Non-critical
 		}
 
+		if (signal?.aborted) throw taskCancelled()
 		const workspace = new PlanWorkspace(ensured.worktreePath, params.planDirName)
 		workspace.writeContext(formatTaskContext(taskContext))
 		if (params.knowledgeContext) workspace.writeKnowledgeContext(params.knowledgeContext)
@@ -103,8 +125,9 @@ export class OkenaSpawner implements Spawner {
 			)
 			log.info('okena', `Starting planning session in terminal ${terminalId}`)
 			try {
-				await client.runCommand(terminalId, command, { freshTerminal: true })
+				await client.runCommand(terminalId, command, { freshTerminal: true, signal })
 			} catch (err) {
+				if (signal?.aborted) throw taskCancelled()
 				throw new Error(`Failed to start planning session: ${err instanceof Error ? err.message : err}`)
 			}
 		}

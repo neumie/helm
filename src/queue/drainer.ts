@@ -59,7 +59,7 @@ export class Drainer {
 	/** Daemon-owned non-Item agents (scheduled runs) share the solve budget. */
 	private externalSolveReservations = new Set<string>()
 	private activeLoopItems = new Map<string, ActiveRun>()
-	private retryTimers = new Set<ReturnType<typeof setTimeout>>()
+	private retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 	private running = false
 	private quiescing = false
 	/** Held during daemon startup until durable scheduled runs occupy solve capacity. */
@@ -221,12 +221,14 @@ export class Drainer {
 	retryItem(itemId: string): ItemRecord {
 		const admission = this.retryAdmission(itemId)
 		if (!admission.ok) throw new Error(this.admissionMessage(admission.reason))
+		this.clearItemRetryTimer(itemId)
 		const item = this.itemCommands.retryItem(itemId)
 		this.wake()
 		return item
 	}
 
 	cancelItem(itemId: string): boolean {
+		this.clearItemRetryTimer(itemId)
 		const active = this.activeSolveItems.get(itemId)
 		if (active) {
 			active.controller.abort()
@@ -303,15 +305,16 @@ export class Drainer {
 		if (profileIds.length === 0) {
 			// Fixed/dynamic test DBs without a registry retain the original behavior.
 			if (this.recoveredProfiles.has('current')) return 0
+			const recovered = this.itemCommands.recoverStaleProcessingItems().length
 			this.recoveredProfiles.add('current')
-			return this.itemCommands.recoverStaleProcessingItems().length
+			return recovered
 		}
 		let recovered = 0
 		for (const profileId of profileIds) {
 			if (this.recoveredProfiles.has(profileId)) continue
-			this.recoveredProfiles.add(profileId)
 			const commands = new ItemCommands(this.db.forProfile(profileId).items, this.config)
 			recovered += commands.recoverStaleProcessingItems().length
+			this.recoveredProfiles.add(profileId)
 		}
 		return recovered
 	}
@@ -322,6 +325,7 @@ export class Drainer {
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item) return false // Defensive only: processAdmission just read it synchronously.
 
+		this.clearItemRetryTimer(itemId)
 		const controller = new AbortController()
 		const runDb = this.db.forProfile(item.profileId)
 		this.activeSolveItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
@@ -343,9 +347,10 @@ export class Drainer {
 	 * starts. Real solve failures and cancellations are left alone.
 	 */
 	private maybeScheduleRetry(itemId: string, itemDb: DB): void {
-		if (!this.running) return
+		this.clearItemRetryTimer(itemId)
+		if (!this.running || this.quiescing || this.startupAdmissionFenced) return
 		const item = itemDb.items.get(itemId)
-		if (!item || item.status !== 'failed' || !isTransientFailure(item)) return
+		if (!item || item.status !== 'failed' || !isItemAssigned(item) || !isTransientFailure(item)) return
 
 		const attempts = itemDb.items.countEvents(itemId, 'item_started')
 		if (attempts >= MAX_ATTEMPTS) {
@@ -353,21 +358,44 @@ export class Drainer {
 			return
 		}
 
+		// Event counts are durable, monotonic attempt/lifecycle evidence, even when
+		// multiple transitions share one millisecond. Cosmetic updates do not matter.
+		const failureCount = itemDb.items.countEvents(itemId, 'item_failed')
+		const retryCount = itemDb.items.countEvents(itemId, 'item_retried')
+		const statusCount = itemDb.items.countEvents(itemId, 'item_status_set')
 		const backoff = RETRY_BACKOFF_MS * attempts
 		log.warn(
 			'drainer',
 			`Item ${itemId} failed transiently (${item.errorPhase}); auto-retry ${attempts + 1}/${MAX_ATTEMPTS} in ${Math.round(backoff / 1000)}s`,
 		)
 		const timer = setTimeout(() => {
-			this.retryTimers.delete(timer)
+			if (this.retryTimers.get(itemId) !== timer) return
+			this.retryTimers.delete(itemId)
 			try {
+				const current = itemDb.items.get(itemId)
+				if (
+					!this.running ||
+					this.quiescing ||
+					this.startupAdmissionFenced ||
+					this.activeSolveItems.has(itemId) ||
+					this.activeLoopItems.has(itemId) ||
+					!current ||
+					current.status !== 'failed' ||
+					!isItemAssigned(current) ||
+					!isTransientFailure(current) ||
+					itemDb.items.countEvents(itemId, 'item_started') !== attempts ||
+					itemDb.items.countEvents(itemId, 'item_failed') !== failureCount ||
+					itemDb.items.countEvents(itemId, 'item_retried') !== retryCount ||
+					itemDb.items.countEvents(itemId, 'item_status_set') !== statusCount
+				)
+					return
 				new ItemCommands(itemDb.items, this.config).retryItem(itemId)
 				this.wake()
 			} catch (err) {
 				log.warn('drainer', `Auto-retry of ${itemId} failed: ${err instanceof Error ? err.message : err}`)
 			}
 		}, backoff)
-		this.retryTimers.add(timer)
+		this.retryTimers.set(itemId, timer)
 	}
 
 	private startLoopItem(itemId: string, profileId?: string): boolean {
@@ -376,6 +404,7 @@ export class Drainer {
 		const item = (profileId ? this.db.forProfile(profileId) : this.admissionDb()).items.get(itemId)
 		if (!item) return false // Defensive only: processAdmission just read it synchronously.
 
+		this.clearItemRetryTimer(itemId)
 		const controller = new AbortController()
 		const runDb = this.db.forProfile(item.profileId)
 		this.activeLoopItems.set(itemId, { title: item.title, startedAt: new Date().toISOString(), controller })
@@ -480,8 +509,14 @@ export class Drainer {
 		return new ItemCommands(this.admissionDb().items, this.config)
 	}
 
+	private clearItemRetryTimer(itemId: string): void {
+		const timer = this.retryTimers.get(itemId)
+		if (timer !== undefined) clearTimeout(timer)
+		this.retryTimers.delete(itemId)
+	}
+
 	private clearRetryTimers(): void {
-		for (const timer of this.retryTimers) clearTimeout(timer)
+		for (const timer of this.retryTimers.values()) clearTimeout(timer)
 		this.retryTimers.clear()
 	}
 

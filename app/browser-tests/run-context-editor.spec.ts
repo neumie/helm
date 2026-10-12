@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
 
-const evidence = '/tmp/helm-interface-redesign-20260910/finish'
 const imageUrl = 'https://example.test/source-image.png'
 const narrative = 'Operator narrative with preserved source image.'
 
@@ -42,13 +41,13 @@ test('v2 Run Context preserves text and images through real v1 Save and reopen',
 			}),
 		}),
 	])
-	await page.screenshot({ path: `${evidence}/native-v1-saved.png`, fullPage: true })
+	await page.screenshot({ path: test.info().outputPath('native-v1-saved.png'), fullPage: true })
 	await page.evaluate(() => window.__reopenRunContext?.())
 	await expect(page.getByText('Saved custom context')).toBeVisible()
 	await expect(page.locator('[contenteditable="true"]').first()).toContainText(narrative)
 	await expect(page.locator('[contenteditable="true"]').first()).toContainText('Edited')
 	await expect(page.locator(`img[src="${imageUrl}"]`)).toBeVisible()
-	await page.screenshot({ path: `${evidence}/native-v1-reopened.png`, fullPage: true })
+	await page.screenshot({ path: test.info().outputPath('native-v1-reopened.png'), fullPage: true })
 	// Reserialize the reopened real BlockNote document, not a fabricated Markdown projection.
 	await page.locator('[contenteditable="true"]').first().click()
 	await page.keyboard.press('ControlOrMeta+Home')

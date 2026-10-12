@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { UsageProvider } from '../../../../src/remote/usage-protocol.js'
 import { RemoteNavigationTrigger } from './RemoteNavigationMenu.js'
 import { type RemoteUsageState, formatObservedAge, formatResetDistance } from './usage-controller.js'
@@ -48,13 +49,22 @@ function UsageProviderCard({ provider, now }: { provider: UsageProvider; now: nu
 
 export function RemoteUsagePanel({
 	state,
-	now,
 	onOpenNavigation,
 }: {
 	state: RemoteUsageState
-	now: number
 	onOpenNavigation: () => void
 }) {
+	// Relative labels advance independently of the host's cached observation timestamp.
+	const [now, setNow] = useState(() => Date.now())
+	useEffect(() => {
+		const update = () => setNow(Date.now())
+		const timer = window.setInterval(update, 60_000)
+		document.addEventListener('visibilitychange', update)
+		return () => {
+			window.clearInterval(timer)
+			document.removeEventListener('visibilitychange', update)
+		}
+	}, [])
 	return (
 		<section className="remote-usage" aria-label="Usage">
 			<header className="remote-navigation-header">
@@ -65,7 +75,10 @@ export function RemoteUsagePanel({
 			{state.supported && state.loading && !state.response && <p className="remote-note">Reading limits…</p>}
 			{state.error && (
 				<p className="remote-note">
-					<output>{state.error}</output>
+					<output>
+						{state.error}
+						{state.response ? ' Showing last known limits.' : ''}
+					</output>
 				</p>
 			)}
 			{state.response?.providers.map(provider => (

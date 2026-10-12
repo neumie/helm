@@ -65,9 +65,10 @@ activate a native profile. Personal/unbound is a real scope. Opaque scope IDs in
 the proof are not a claim that production profile-registry authorization is wired.
 
 The browser opens directly to live conversations with one compact search field; the workspace has no separate History/App destinations or explanatory masthead. Browser installation remains available through the browser's native install/Add to Home Screen controls, and pairing remains in Helm's native Settings → Remote. The browser shows conversation text, incremental assistant output and supported
-questionnaires. Consecutive same-speaker messages share one author label. Thinking,
-tool results and whole tool-call activity messages are absent by default; opt in
-through **Conversation options → Show activity**, then expand an individual preview. It supports prompts with an
+questionnaires. Consecutive same-speaker messages share one author label. Already-projected assistant thinking is always visible as literal selectable text,
+not a disclosure. Tool results and whole tool-call activity messages stay unmounted
+until **Composer More → Show tool activity** is enabled; opted-in tool results use
+the transcript-local disclosure. It supports prompts with an
 explicit steer/follow-up choice and an interrupt request. Unsupported custom UI
 says to use the original terminal. No keys, shell commands, arbitrary paths or
 process operations are forwarded.
@@ -75,9 +76,11 @@ process operations are forwarded.
 ### Extension information — browser checkpoint
 
 The separate negotiated information-v1 GET now drives the production browser's
-320px information rail (>=1200px) or explicit Info reading view below that width,
-plus a bounded compact footer. Semantic goal/todo/job/update/integration rows and
-safe footer values retain independent availability, coverage and omission truth.
+320px information rail (>=1200px) or explicit Info reading view below that width.
+There is no information footer. Current conversation/source/status and safe reported
+input+output total/context percentage appear in Info. Supplementary
+workspace/trust and individual counts retain independent availability, coverage
+and omission truth.
 Full fleet remains unsupported/unfinished; unavailable LSP or old-class jobs do not
 hide available siblings. Reads are single-flight, memory-only and independently
 expire from monotonic request start plus host remaining TTL. See

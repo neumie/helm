@@ -1,5 +1,5 @@
-// Cross-profile terminal transfer foundation (main process only; intentionally
-// not wired to IPC yet). This module owns durable claim records and pure crash
+// Cross-profile terminal transfer foundation (main process only).
+// This module owns durable claim records and pure crash
 // recovery decisions, never terminal/process operations themselves.
 
 import * as crypto from 'node:crypto'
@@ -102,7 +102,6 @@ export class TerminalTransferJournalStore {
 
 	complete(journal: TerminalTransferJournal): void {
 		const completed = { ...journal, state: 'completed' as const }
-		completed.master = { ...journal.master, currentSocketPath: expectedMasterSocketPath(completed) }
 		this.#write(completed)
 		fs.unlinkSync(this.#file)
 	}
@@ -149,9 +148,10 @@ function expectedMasterSocketPath(journal: TerminalTransferJournal): string {
 			return journal.sourceSocket
 		case 'socket-moved':
 		case 'registries-committed':
+			return journal.destinationSocket
 		case 'completed':
 		case 'rollback-needed':
-			return journal.destinationSocket
+			return journal.master.currentSocketPath
 	}
 }
 
@@ -171,6 +171,7 @@ export function attestTerminalTransferMaster(
 		identity.pid > 0 &&
 		identity.processStartFingerprint.length > 0 &&
 		identity.originalSocketPath === journal.sourceSocket &&
+		(identity.currentSocketPath === journal.sourceSocket || identity.currentSocketPath === journal.destinationSocket) &&
 		identity.currentSocketPath === expectedMasterSocketPath(journal)
 	if (!journalIdentityIsCoherent) return 'mismatch'
 	if (evidence.state === 'dead') return 'dead'

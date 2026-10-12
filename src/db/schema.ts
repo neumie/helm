@@ -1,4 +1,11 @@
-export const MIGRATIONS = [
+interface Migration {
+	version: number
+	sql: string
+	/** Parent-table rebuilds require FK enforcement disabled outside the transaction. */
+	disableForeignKeys?: boolean
+}
+
+export const MIGRATIONS: Migration[] = [
 	{
 		version: 1,
 		sql: `
@@ -506,9 +513,8 @@ ALTER TABLE scheduled_runs ADD COLUMN attention_adoption TEXT;
 		// SQLite cannot drop NOT NULL in place, so rebuild the parent table while
 		// preserving item_events' stable FK target and every existing index.
 		version: 31,
+		disableForeignKeys: true,
 		sql: `
-PRAGMA foreign_keys = OFF;
-BEGIN;
 CREATE TABLE items_v31 (
   id                         TEXT PRIMARY KEY,
   kind                       TEXT NOT NULL,
@@ -572,8 +578,6 @@ CREATE INDEX idx_items_group ON items(group_id);
 CREATE INDEX idx_items_profile_status_updated ON items(profile_id, status, updated_at DESC);
 CREATE INDEX idx_items_profile_queue ON items(profile_id, status, work_mode, queued_at, created_at);
 CREATE INDEX idx_items_profile_group ON items(profile_id, group_id, created_at);
-COMMIT;
-PRAGMA foreign_keys = ON;
 `,
 	},
 	{

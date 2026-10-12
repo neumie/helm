@@ -15,6 +15,7 @@ import {
 	createApi,
 	getServerUrl,
 } from './api'
+import { externalHttpUrl } from './external-url'
 import { getSync, setSync } from './storage'
 
 type Tone = DashboardTone
@@ -52,11 +53,10 @@ export function itemRunNotices(item: DashboardItem): ItemRunNotice[] {
 }
 
 /**
- * Extension action list. From the in-page widget, the server's two-step "approve
- * (→ ready, wait for the drainer)" is pointless — the operator is looking at the
- * task and wants it solved now — so `approve` becomes `start`, which runs the
- * Item immediately (bypasses the queue + pause). `reject` and everything else
- * pass through untouched.
+ * Inbox ownership remains explicit: approve becomes quiet Queue plus primary
+ * Start. Queue preserves undecided ownership; Start admits an immediate run
+ * through the daemon's direct-start gate, even while automatic pulling is paused.
+ * Reject and the other server-owned actions pass through unchanged.
  */
 export function extensionItemActions(actions: DashboardAction[]): DashboardAction[] {
 	return actions.flatMap(action =>
@@ -1235,7 +1235,7 @@ function LinkLine(props: { label: string; link: DashboardLink | null }) {
 			{link => (
 				<div class="vg-link-line">
 					<span>{props.label}</span>
-					<Show when={link().url} fallback={<span class="vg-link-line__value">{link().label}</span>}>
+					<Show when={externalHttpUrl(link().url)} fallback={<span class="vg-link-line__value">{link().label}</span>}>
 						{url => (
 							<button
 								type="button"

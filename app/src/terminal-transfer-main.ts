@@ -1,8 +1,7 @@
 // Main-process adapter for the journaled terminal-transfer coordinator.
 //
-// This is intentionally not an IPC surface. A renderer must explicitly
-// register an in-process capability before a move can begin; until that future
-// hand-off exists, every request fails closed without detaching a client.
+// Production IPC supplies an authenticated, controller-backed capability.
+// Durable quarantine is independent of that capability and the transient busy bit.
 
 import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
@@ -39,10 +38,10 @@ export interface TerminalTransferProfileRuntime {
 }
 
 /**
- * Future renderer/main integration contract. The renderer owns its xterm
+ * Renderer/main integration contract. The renderer owns its xterm
  * snapshot and attach-client state, while this adapter owns all durable paths.
  * These methods are deliberately supplied by an in-process registration, not
- * an IPC handler: there is no startable transfer endpoint today.
+ * an unvalidated renderer callback.
  */
 export interface TerminalTransferRendererCapability {
 	profileToken: string
@@ -103,6 +102,8 @@ export class TerminalTransferMainAdapter {
 	readonly #capabilities = new Map<string, TerminalTransferRendererCapability>()
 	readonly #coordinator: TerminalTransferCoordinator
 	#activeRequest: TerminalTransferMoveRequest | null = null
+	#quarantine: Array<{ profileId: string; sessionId: string }> = []
+	#journalUnavailable = false
 	#busy = false
 	#idleWaiters: Array<() => void> = []
 
@@ -114,8 +115,9 @@ export class TerminalTransferMainAdapter {
 		this.#renameSocket =
 			deps.renameSocket ?? (async (source, destination) => sessions.renameSocketEntry(source, destination))
 		this.#probeSocket = deps.probeSocket ?? sessions.probeSocket
-		this.#detachAttachClient = async sessionId => deps.detachAttachClient?.(sessionId) === true
-		this.#attachSourceClient = async sessionId => deps.attachSourceClient?.(sessionId) === true
+		this.#detachAttachClient = async sessionId => (await deps.detachAttachClient?.(sessionId)) === true
+		this.#attachSourceClient = async sessionId => (await deps.attachSourceClient?.(sessionId)) === true
+		this.#refreshQuarantine()
 		this.#coordinator = new TerminalTransferCoordinator({
 			journal: this.#journal,
 			runExclusive: async operation => operation(),
@@ -125,6 +127,45 @@ export class TerminalTransferMainAdapter {
 			observeRecovery: journal => this.#observeRecovery(journal),
 			cleanupDeadSockets: async journal => this.#cleanupDeadSockets(journal),
 		})
+	}
+
+	/** At most the two namespace identities of the single durable claim. */
+	quarantinedSessions(): { unavailable: boolean; identities: readonly { profileId: string; sessionId: string }[] } {
+		this.#refreshQuarantine()
+		return { unavailable: this.#journalUnavailable, identities: this.#quarantine.map(identity => ({ ...identity })) }
+	}
+
+	isSessionQuarantined(profileId: string, sessionId: string): boolean {
+		const exclusion = this.quarantinedSessions()
+		return (
+			exclusion.unavailable ||
+			exclusion.identities.some(identity => identity.profileId === profileId && identity.sessionId === sessionId)
+		)
+	}
+
+	#refreshQuarantine(): void {
+		try {
+			const journal = this.#journal.load()
+			// Disappearance alone is not recovery evidence.
+			if (!journal) return
+			const identities = [journal.sourceProfileId, journal.destinationProfileId].map(profileId => ({
+				profileId,
+				sessionId: journal.sessionId,
+			}))
+			if (
+				this.#quarantine.some(
+					old =>
+						!identities.some(identity => identity.profileId === old.profileId && identity.sessionId === old.sessionId),
+				)
+			) {
+				this.#journalUnavailable = true
+				return
+			}
+			this.#quarantine = identities
+		} catch {
+			// Unknown journal identity must fence every ordinary admission.
+			this.#journalUnavailable = true
+		}
 	}
 
 	isBusy(): boolean {
@@ -142,7 +183,12 @@ export class TerminalTransferMainAdapter {
 	/** Registration rejects stale profile tokens and replaces only its own session capability. */
 	registerRendererCapability(capability: TerminalTransferRendererCapability): boolean {
 		const current = this.#runtime.currentProfile()
-		if (capability.profileToken !== current.token || !sessions.isValidSessionId(capability.sessionId)) return false
+		if (
+			capability.profileToken !== current.token ||
+			!sessions.isValidSessionId(capability.sessionId) ||
+			this.isSessionQuarantined(current.profileId, capability.sessionId)
+		)
+			return false
 		this.#capabilities.set(capability.sessionId, capability)
 		return true
 	}
@@ -154,11 +200,12 @@ export class TerminalTransferMainAdapter {
 	/**
 	 * Non-mutating capability/list-target check for the restricted IPC surface.
 	 * It intentionally does not capture a master or register a renderer
-	 * capability: those checks must be repeated by move() after a future
-	 * controller-backed snapshot/detach/attach hand-off is available.
+	 * capability: move() repeats them through its authenticated
+	 * controller-backed snapshot/detach/attach hand-off.
 	 */
 	preflight(request: TerminalTransferPreflightRequest): TerminalTransferPreflight {
-		if (this.#busy) return { status: 'unavailable', reason: 'busy' }
+		if (this.#busy || this.isSessionQuarantined(request.sourceProfileId, request.sessionId))
+			return { status: 'unavailable', reason: 'busy' }
 		const current = this.#runtime.currentProfile()
 		if (request.sourceProfileId !== current.profileId || request.profileToken !== current.token)
 			return { status: 'unavailable', reason: 'stale-profile' }
@@ -181,6 +228,11 @@ export class TerminalTransferMainAdapter {
 
 	async move(request: TerminalTransferMoveRequest): Promise<TerminalTransferResult> {
 		if (this.#busy) return { status: 'busy' }
+		if (
+			this.isSessionQuarantined(request.sourceProfileId, request.sessionId) ||
+			this.isSessionQuarantined(request.destinationProfileId, request.sessionId)
+		)
+			return { status: 'rejected', reason: 'admission-unavailable' }
 		const current = this.#runtime.currentProfile()
 		const capability = this.#capabilities.get(request.sessionId)
 		// Moves are source-active only. A detached/parked destination needs a
@@ -235,7 +287,13 @@ export class TerminalTransferMainAdapter {
 	/** Run before the first sessions:list request; uncertain recovery stays journaled and fenced. */
 	async recoverStartup(): Promise<TerminalTransferRecoveryResult> {
 		if (this.#busy) return { status: 'busy' }
-		return this.#runBusy(() => this.#coordinator.recoverStartup())
+		return this.#runBusy(async () => {
+			this.#refreshQuarantine()
+			const result = await this.#coordinator.recoverStartup()
+			if (result.status === 'recovered' && result.action === 'remove-completed-journal' && !this.#journalUnavailable)
+				this.#quarantine = []
+			return result
+		})
 	}
 
 	async #runBusy<T>(operation: () => Promise<T>): Promise<T> {
@@ -243,6 +301,7 @@ export class TerminalTransferMainAdapter {
 		try {
 			return await operation()
 		} finally {
+			this.#refreshQuarantine()
 			this.#busy = false
 			const waiters = this.#idleWaiters.splice(0)
 			for (const resolve of waiters) resolve()
@@ -269,11 +328,7 @@ export class TerminalTransferMainAdapter {
 			const acknowledgement = await capability.dispatch(event(type))
 			if (!isPrepareAcknowledgement(acknowledgement))
 				return { snapshotFlushed: false, activity: { agentRunning: false, agentAttention: false } }
-			const metadata = (
-				acknowledgement as unknown as {
-					prepared: { metadata: { agentRunning: boolean; agentAttention: boolean } }
-				}
-			).prepared.metadata
+			const metadata = acknowledgement.prepared.metadata
 			return {
 				snapshotFlushed: true,
 				activity: { agentRunning: metadata.agentRunning, agentAttention: metadata.agentAttention },
@@ -296,10 +351,12 @@ export class TerminalTransferMainAdapter {
 			attachSourceClient: async () => {
 				if (!(await this.#attachSourceClient(sessionId))) throw new Error('source attach client could not be restored')
 			},
-			release: () => {
+			release: ({ quarantined }) => {
 				if (released) return
 				released = true
 				this.#capabilities.delete(sessionId)
+				if (!quarantined && !this.#journalUnavailable) this.#quarantine = []
+				else this.#refreshQuarantine()
 			},
 		}
 	}
@@ -372,7 +429,7 @@ function isCompletionAcknowledgement(value: unknown, status: 'committed' | 'roll
 
 function isPrepareAcknowledgement(
 	value: unknown,
-): value is { snapshotFlushed: boolean; activity: { agentRunning: boolean; agentAttention: boolean } } {
+): value is { status: 'prepared'; prepared: { metadata: { agentRunning: boolean; agentAttention: boolean } } } {
 	if (!value || typeof value !== 'object') return false
 	const candidate = value as Record<string, unknown>
 	// Renderer controller returns { status, prepared: { metadata } }; retain this

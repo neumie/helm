@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProfileKnowledgeBinding, ProfilesDocument } from '../../shared-helm'
 import { showToast } from '../toast'
 import { ActionRow, Btn, Card, EmptyState, PushHeader, SelectInput, TextInput, Toggle } from './ui'
@@ -8,22 +8,36 @@ function errorMessage(error: unknown): string {
 }
 
 function useProfiles() {
+	const api = window.helm.profiles
+	const lifetime = useRef<object | null>(null)
+	const request = useRef(0)
+	const [documentOwner, setDocumentOwner] = useState(api)
 	const [document, setDocument] = useState<ProfilesDocument | null>(null)
 	const [error, setError] = useState<string | null>(null)
 	const load = useCallback(async () => {
-		const result = await window.helm.profiles.list()
+		const owner = lifetime.current
+		const sequence = ++request.current
+		const result = await api.list()
+		if (!owner || lifetime.current !== owner || window.helm.profiles !== api || sequence !== request.current)
+			return null
 		if (result.error !== undefined) {
 			setError(result.error)
 			return null
 		}
+		setDocumentOwner(api)
 		setDocument(result.data)
 		setError(null)
 		return result.data
-	}, [])
+	}, [api])
 	useEffect(() => {
+		const owner = {}
+		lifetime.current = owner
 		void load()
+		return () => {
+			if (lifetime.current === owner) lifetime.current = null
+		}
 	}, [load])
-	return { document, error, load }
+	return { document: documentOwner === api ? document : null, error, load }
 }
 
 export function ProfilesPage({ onBack, onOpen }: { onBack: () => void; onOpen: (profileId: string) => void }) {
@@ -99,7 +113,15 @@ export function ProfilesPage({ onBack, onOpen }: { onBack: () => void; onOpen: (
 	)
 }
 
-export function ProfileEditorPage({ profileId, onBack }: { profileId: string; onBack: () => void }) {
+export function ProfileEditorPage(props: { profileId: string; onBack: () => void }) {
+	return <ProfileEditor key={props.profileId} {...props} />
+}
+
+function ProfileEditor({ profileId, onBack }: { profileId: string; onBack: () => void }) {
+	const api = window.helm.profiles
+	const lifetime = useRef<object | null>(null)
+	const flight = useRef<object | null>(null)
+	const initialized = useRef<typeof api | null>(null)
 	const { document, error, load } = useProfiles()
 	const profile = useMemo(
 		() => document?.profiles.find(candidate => candidate.id === profileId) ?? null,
@@ -110,28 +132,48 @@ export function ProfileEditorPage({ profileId, onBack }: { profileId: string; on
 	const [knowledgeBindings, setKnowledgeBindings] = useState<ProfileKnowledgeBinding[]>([])
 	const [busy, setBusy] = useState(false)
 	useEffect(() => {
-		if (!profile) return
+		const owner = { api }
+		lifetime.current = owner
+		flight.current = null
+		setBusy(false)
+		return () => {
+			if (lifetime.current === owner) lifetime.current = null
+		}
+	}, [api])
+	useEffect(() => {
+		if (!profile || initialized.current === api) return
+		initialized.current = api
 		setName(profile.name)
 		setEnabledProjects(profile.enabledProjects)
 		setKnowledgeBindings(profile.knowledgeBindings)
-	}, [profile])
+	}, [profile, api])
 
 	const mutate = async (operation: () => Promise<{ error?: string }>, success: string) => {
+		if (!lifetime.current || flight.current || window.helm.profiles !== api) return false
+		const owner = lifetime.current
+		const admitted = {}
+		flight.current = admitted
+		const current = () => lifetime.current === owner && window.helm.profiles === api && flight.current === admitted
 		setBusy(true)
 		try {
 			const result = await operation()
+			if (!current()) return false
 			if (result.error !== undefined) {
 				showToast({ message: result.error })
 				return false
 			}
 			showToast({ message: success })
 			await load()
-			return true
+			return current()
 		} catch (err) {
+			if (!current()) return false
 			showToast({ message: errorMessage(err) })
 			return false
 		} finally {
-			setBusy(false)
+			if (current()) {
+				flight.current = null
+				setBusy(false)
+			}
 		}
 	}
 

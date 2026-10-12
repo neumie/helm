@@ -466,6 +466,9 @@ export function createRemoteFixture() {
 			first.capabilities.answer = false
 			first.revision++
 		},
+		useProductionCommandTransport() {
+			transport.send = createRemoteTransport().send
+		},
 		replaceOwner() {
 			first.target = { ...first.target, incarnation: crypto.randomUUID() }
 			first.revision++

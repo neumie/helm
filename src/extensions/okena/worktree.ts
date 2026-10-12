@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import type { SolverWorkspace } from '../../solver/workspace.js'
 import { phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { sameFilesystemPath } from '../../util/path-identity.js'
 import {
+	assertWorkspaceReuse,
 	excludeHelmFiles,
 	inspectRemoteBranch,
 	localBranchExists,
@@ -94,7 +96,10 @@ export async function prepareExistingOkenaBranch(
 		return withRepoLock(repoPath, async () => {
 			const registration = await deps.worktreeRegistrationForBranch(repoPath, branchName)
 			if (registration && !registration.exists) {
-				await deps.execGit(['worktree', 'prune'], { cwd: repoPath, timeout: 10_000 })
+				throw phaseError(
+					'worktree',
+					`Git retains a missing worktree registration for ${branchName}: ${registration.path}. Preserve the branch and any files, resolve the stale registration explicitly with Git, then retry.`,
+				)
 			}
 			return true
 		})
@@ -263,7 +268,12 @@ export class OkenaWorktreeManager {
 		baseBranch: string,
 		branchName: string,
 		existingWorktreePath: string | undefined,
+		mode: SolverWorkspace = 'worktree',
 	): Promise<EnsuredOkenaWorktree> {
+		if (mode === 'main') {
+			await assertWorkspaceReuse(repoPath, branchName, existingWorktreePath ?? repoPath, mode)
+			return this.ensureMainRepoProject(repoPath)
+		}
 		if (existingWorktreePath) {
 			return this.ensureExistingWorktreeProject(repoPath, branchName, existingWorktreePath)
 		}
@@ -275,6 +285,11 @@ export class OkenaWorktreeManager {
 		// planning saved no Item path before a rollback.
 		const registration = await worktreeRegistrationForBranch(repoPath, branchName)
 		if (registration?.exists) return this.ensureExistingWorktreeProject(repoPath, branchName, registration.path)
+		if (registration)
+			throw phaseError(
+				'worktree',
+				`Git retains a missing worktree registration for ${branchName}: ${registration.path}. Resolve the stale registration explicitly with Git before retrying.`,
+			)
 
 		await this.ensureBaseBranchReady(repoPath, baseBranch)
 		log.info('okena', `Creating worktree for branch: ${branchName}`)
@@ -288,6 +303,7 @@ export class OkenaWorktreeManager {
 		}
 
 		const worktreePath = wt.path
+		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		const wtProjectId =
 			wt.project_id ??
 			state.projects.find(p => p.path === worktreePath)?.id ??
@@ -304,6 +320,7 @@ export class OkenaWorktreeManager {
 		branchName: string,
 		worktreePath: string,
 	): Promise<EnsuredOkenaWorktree> {
+		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		const { state, okenaProject } = await this.findOkenaProject(repoPath)
 		const wtProject = state.projects.find(
 			project =>

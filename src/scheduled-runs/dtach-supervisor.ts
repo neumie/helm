@@ -67,6 +67,13 @@ export interface LaunchQuarantine {
 	reason: string
 	/** Present only when command + OS fingerprint rediscovery verified a candidate. */
 	identity?: ScheduledProcessIdentity
+	/** Bootstrap-only evidence never authorizes adoption or master recovery. */
+	launchCleanup?: {
+		phase: 'launch-cleanup'
+		bootstrap: ProcessFingerprint | null
+		executable: string
+		master?: ScheduledProcessIdentity
+	}
 }
 
 export interface LaunchDtachInput {
@@ -337,7 +344,9 @@ export class DtachSupervisor {
 			// successfully daemonizing before ps can observe it.
 			const inspectedBootstrap = await (this.deps.inspectProcess ?? processFingerprint)(child.pid)
 			bootstrap =
-				inspectedBootstrap?.pid === child.pid && inspectedBootstrap.processGroupId === child.pid
+				inspectedBootstrap?.pid === child.pid &&
+				inspectedBootstrap.processGroupId === child.pid &&
+				inspectedBootstrap.executable === expectedExecutable
 					? inspectedBootstrap
 					: undefined
 			child.unref?.()
@@ -396,25 +405,7 @@ export class DtachSupervisor {
 		socketRoot?: string,
 	): Promise<TeardownResult> {
 		const socketPath = scheduledSocketPath(profileId, sessionId, socketRoot)
-		const inspect = this.deps.inspectOwnership ?? ((path, candidate) => this.inspectOwnership(path, candidate))
-		let ownership = await inspect(socketPath, identity)
-		if (ownership === 'unknown' || ownership === 'mismatch') return this.quarantine(diagnosticPath, ownership)
-		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'already_dead')
-		const signal = this.deps.signalGroup ?? ((group, sig) => process.kill(-group, sig))
-		signal(identity.processGroupId, 'SIGTERM')
-		appendScheduledDiagnostic(diagnosticPath, 'group_term', { processGroupId: identity.processGroupId })
-		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs))
-			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		ownership = await inspect(socketPath, identity)
-		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		if (ownership !== 'verified') return this.quarantine(diagnosticPath, ownership)
-		signal(identity.processGroupId, 'SIGKILL')
-		appendScheduledDiagnostic(diagnosticPath, 'group_kill', { processGroupId: identity.processGroupId })
-		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs))
-			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		ownership = await inspect(socketPath, identity)
-		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		return this.quarantine(diagnosticPath, ownership === 'verified' ? 'still_live_after_kill' : ownership)
+		return this.teardownByPath(socketPath, identity, diagnosticPath, deadlineMs)
 	}
 
 	private async raceFailure<T>(
@@ -448,25 +439,30 @@ export class DtachSupervisor {
 			}
 		}
 		if (owned) {
-			const result = await this.teardownByPath(socketPath, owned, diagnosticPath)
+			const result = await this.teardownByPath(socketPath, owned, diagnosticPath).catch(() =>
+				this.quarantine(diagnosticPath, 'master_teardown_failed'),
+			)
 			appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup', { result })
 			if (result !== 'quarantined') return
 			await this.reportLaunchQuarantine(onQuarantined, diagnosticPath, 'master_teardown_unverified', owned)
 			return
 		}
-		const currentBootstrap = bootstrap ? await (this.deps.inspectProcess ?? processFingerprint)(bootstrap.pid) : null
-		if (bootstrap && sameFingerprint(bootstrap, currentBootstrap ?? undefined)) {
+		if (bootstrap) {
 			try {
-				;(this.deps.signalGroup ?? ((group, sig) => process.kill(-group, sig)))(bootstrap.processGroupId, 'SIGTERM')
-				appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_bootstrap_term', {
-					processGroupId: bootstrap.processGroupId,
-				})
-				return
+				// Observe TERM/KILL settlement through the same bounded policy, but a
+				// dead launcher cannot prove an unattested daemonized master is gone.
+				await this.teardownByPath(socketPath, bootstrap, diagnosticPath, 5_000, false)
 			} catch {
-				// Fall through to a durable quarantine handoff.
+				// Signal/observation failure still requires durable quarantine.
 			}
 		}
-		await this.reportLaunchQuarantine(onQuarantined, diagnosticPath, 'master_identity_unavailable')
+		const reason = 'master_identity_unavailable'
+		appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_quarantined', { reason })
+		await onQuarantined?.({
+			state: 'quarantined',
+			reason,
+			launchCleanup: { phase: 'launch-cleanup', bootstrap: bootstrap ?? null, executable: expectedExecutable },
+		})
 	}
 
 	private async reportLaunchQuarantine(
@@ -476,28 +472,47 @@ export class DtachSupervisor {
 		identity?: ScheduledProcessIdentity,
 	): Promise<void> {
 		appendScheduledDiagnostic(diagnosticPath, 'launch_cleanup_quarantined', { reason, pid: identity?.pid ?? null })
-		await onQuarantined?.({ state: 'quarantined', reason, identity })
+		await onQuarantined?.({
+			state: 'quarantined',
+			reason,
+			identity,
+			launchCleanup: identity
+				? {
+						phase: 'launch-cleanup',
+						bootstrap: null,
+						executable: identity.executable,
+						master: identity,
+					}
+				: undefined,
+		})
 	}
 
 	private async teardownByPath(
 		socketPath: string,
 		identity: ScheduledProcessIdentity,
 		diagnosticPath: string,
+		deadlineMs = 5_000,
+		removeSocket = true,
 	): Promise<TeardownResult> {
+		const finish = (result: 'closed' | 'already_dead') =>
+			removeSocket ? this.removeProvenDeadSocket(socketPath, diagnosticPath, result) : result
 		const inspect = this.deps.inspectOwnership ?? ((path, candidate) => this.inspectOwnership(path, candidate))
 		let ownership = await inspect(socketPath, identity)
 		if (ownership === 'unknown' || ownership === 'mismatch') return this.quarantine(diagnosticPath, ownership)
-		if (ownership === 'dead') return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'already_dead')
+		if (ownership === 'dead') return finish('already_dead')
 		const signal = this.deps.signalGroup ?? ((group, sig) => process.kill(-group, sig))
 		signal(identity.processGroupId, 'SIGTERM')
-		if (await this.waitForDeath(inspect, socketPath, identity, 5_000))
-			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
+		appendScheduledDiagnostic(diagnosticPath, 'group_term', { processGroupId: identity.processGroupId })
+		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs)) return finish('closed')
 		ownership = await inspect(socketPath, identity)
+		if (ownership === 'dead') return finish('closed')
 		if (ownership !== 'verified') return this.quarantine(diagnosticPath, ownership)
 		signal(identity.processGroupId, 'SIGKILL')
-		if (await this.waitForDeath(inspect, socketPath, identity, 5_000))
-			return this.removeProvenDeadSocket(socketPath, diagnosticPath, 'closed')
-		return this.quarantine(diagnosticPath, 'still_live_after_kill')
+		appendScheduledDiagnostic(diagnosticPath, 'group_kill', { processGroupId: identity.processGroupId })
+		if (await this.waitForDeath(inspect, socketPath, identity, deadlineMs)) return finish('closed')
+		ownership = await inspect(socketPath, identity)
+		if (ownership === 'dead') return finish('closed')
+		return this.quarantine(diagnosticPath, ownership === 'verified' ? 'still_live_after_kill' : ownership)
 	}
 
 	private async waitForDeath(
