@@ -55,6 +55,7 @@ import {
 } from './remote-session-presentation.js'
 import { RemoteSubagentFreshnessController, remoteActivityAvailable } from './subagent-freshness.js'
 import { normalizeThinkingText } from './thinking-text.js'
+import { hasMeaningfulThinking, isLegacyWholeToolActivity, isMessageVisible } from './transcript-presentation.js'
 import { RemoteAccessError, type RemoteTransport } from './transport.js'
 import { useRemoteUsage } from './usage-controller.js'
 import { useFavoriteFocus } from './use-favorite-focus.js'
@@ -63,7 +64,7 @@ import { useLongPress } from './use-long-press.js'
 import { useRemotePoll } from './use-poll.js'
 import './remote.css'
 
-type Operation = { command: RemoteCommand; status: RemoteReceipt['status'] | 'sending' }
+type Operation = { command: RemoteCommand; status: RemoteReceipt['status'] | 'sending'; message?: string }
 function operationBlocksAdmission(operation: Operation | undefined, questionRequestId?: string): boolean {
 	if (!operation) return false
 	if (operation.status === 'sending' || operation.status === 'pending' || operation.status === 'unknown') return true
@@ -659,13 +660,7 @@ function Workspace({
 					</p>
 				</div>
 			</aside>
-			{tab === 'usage' && (
-				<RemoteUsagePanel
-					state={usage}
-					now={usage.response?.refreshedAt ?? Date.now()}
-					onOpenNavigation={openNavigation}
-				/>
-			)}
+			{tab === 'usage' && <RemoteUsagePanel state={usage} onOpenNavigation={openNavigation} />}
 			{tab === 'sessions' &&
 				(session && selectedDraft ? (
 					<Conversation
@@ -809,8 +804,8 @@ function Conversation({
 		}
 	}, [modelPicker, ownerKey])
 	function restoreSheetFocus() {
-		;(sheetFocus.current ?? infoOpener.current)?.focus({ preventScroll: true })
-		sheetFocus.current = null
+		const opener = sheetFocus.current ?? infoOpener.current
+		if (opener?.isConnected) opener.focus({ preventScroll: true })
 	}
 	useLayoutEffect(() => {
 		if (infoFocusRequest && (document.activeElement === document.body || document.activeElement === infoOpener.current))
@@ -856,7 +851,9 @@ function Conversation({
 	const view =
 		historyState.issue === 'access-ended' || information.state.status === 'access-ended'
 			? undefined
-			: detail.value?.snapshot
+			: detail.value?.hostEpoch === hostEpoch && sameRemoteTarget(detail.value.snapshot.target, session.target)
+				? detail.value.snapshot
+				: undefined
 	const question = useStableQuestion(view?.question)
 	const liveMessages = useStableMessages(view?.messages)
 	const historyPage = historyState.current?.page
@@ -1363,7 +1360,14 @@ function Conversation({
 			// Once POST begins, an abort or transport failure is ambiguous and stays in the existing status flow.
 			const rejected =
 				error instanceof RemoteAccessError && [400, 401, 403, 404, 409, 413, 415, 429].includes(error.status)
-			draft.operation = { command, status: rejected ? 'rejected' : 'unknown' }
+			draft.operation = {
+				command,
+				status: rejected ? 'rejected' : 'unknown',
+				message:
+					error instanceof RemoteAccessError && error.status === 413
+						? 'Message was not sent. Shorten the message before sending again.'
+						: undefined,
+			}
 			if (rejected) settlePrompt(draft, command.commandId, 'rejected')
 			publishSettlement()
 		}
@@ -1761,7 +1765,9 @@ function Conversation({
 										{draft.recovery?.images.length === 1 ? 'image' : 'images'} before sending…
 									</span>
 								)}
-								{operation && operation.status !== 'dispatched' && <span>{RECEIPT_COPY[operation.status]}</span>}
+								{operation && operation.status !== 'dispatched' && (
+									<span>{operation.message ?? RECEIPT_COPY[operation.status]}</span>
+								)}
 								{draft.transferFailure && <span>{draft.transferFailure.message}</span>}
 								{operation?.status === 'unknown' && (
 									<>
@@ -1918,9 +1924,9 @@ function Conversation({
 														disabled: !!operation && operation.status !== 'dispatched',
 													}))
 									}
+									onRestoreFocus={restoreSheetFocus}
 									onClose={() => {
 										setSheet(null)
-										restoreSheetFocus()
 									}}
 									onChoose={id => {
 										if (sheet === 'more') {
@@ -1939,7 +1945,6 @@ function Conversation({
 												return
 											}
 											setSheet(null)
-											restoreSheetFocus()
 											if (id === 'activity') toggleActivity()
 											else if (id === 'info') openInfo()
 											else if (id === 'reread') {
@@ -1949,7 +1954,6 @@ function Conversation({
 											return
 										}
 										setSheet(null)
-										restoreSheetFocus()
 										if (sheet === 'effort') {
 											void send({ kind: 'thinking', level: id as RemoteThinkingLevel })
 											return
@@ -2015,7 +2019,10 @@ function Conversation({
 									className="icon-btn remote-add-images"
 									aria-label="More"
 									title="More"
-									onClick={() => setSheet('more')}
+									onClick={() => {
+										sheetFocus.current = infoOpener.current
+										setSheet('more')
+									}}
 								>
 									{GLYPH.plus}
 								</button>
@@ -2111,38 +2118,6 @@ function Conversation({
 			{rail && <RemoteInformation state={information.state} current={currentConversation} headingRef={infoHeading} />}
 		</section>
 	)
-}
-
-function isLegacyWholeToolActivity(message: TranscriptMessage) {
-	if (message.role !== 'assistant' || message.toolCalls !== undefined) return false
-	if (message.text.trim() && !message.text.startsWith('\nTool: ')) return false
-	// Older bridges flatten tool calls into reserved `Tool: name` lines.
-	// Hide only whole activity messages, never strip matching lines from prose/code.
-	return message.text.split('\n').every(line => !line.trim() || /^Tool: [^\n]{1,100}$/.test(line))
-}
-
-function isActivityOnly(message: TranscriptMessage) {
-	return (
-		message.role === 'toolResult' ||
-		(message.role === 'assistant' &&
-			(message.toolCalls !== undefined ? !message.text.trim() : isLegacyWholeToolActivity(message)))
-	)
-}
-
-function hasMeaningfulThinking(message: TranscriptMessage) {
-	return message.role === 'assistant' && !!message.thinking && !!normalizeThinkingText(message.thinking).trim()
-}
-
-function isMessageVisible(message: TranscriptMessage, showActivity: boolean) {
-	if (
-		message.role === 'assistant' &&
-		message.thinking &&
-		!hasMeaningfulThinking(message) &&
-		!message.text.trim() &&
-		!message.toolCalls
-	)
-		return false
-	return showActivity || hasMeaningfulThinking(message) || !isActivityOnly(message)
 }
 
 const Messages = memo(function Messages({

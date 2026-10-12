@@ -1,5 +1,5 @@
-import { USAGE_CACHE_MS, USAGE_RETRY_MS, type UsageProvider } from './usage-protocol.js'
-import { defaultUsageEnvironment, readProviderUsage } from './usage-sources.js'
+import { USAGE_CACHE_MS, USAGE_REQUEST_TIMEOUT_MS, USAGE_RETRY_MS, type UsageProvider } from './usage-protocol.js'
+import { defaultUsageEnvironment, readProviderUsage, withUsageDeadline } from './usage-sources.js'
 
 /**
  * Plan limits move slowly and every paired device polls the same host, so a device
@@ -7,7 +7,9 @@ import { defaultUsageEnvironment, readProviderUsage } from './usage-sources.js'
  * by every viewer, and concurrent asks join the single in-flight read.
  */
 export class RemoteUsage {
-	private readonly read: () => Promise<UsageProvider[]>
+	private readonly read: (signal: AbortSignal) => Promise<UsageProvider[]>
+	private readonly timeoutMs: number
+	private readonly lifetimeController = new AbortController()
 	private readonly now: () => number
 	private readonly ttlMs: number
 	private readonly retryMs: number
@@ -16,7 +18,8 @@ export class RemoteUsage {
 
 	constructor(
 		options: {
-			read?: () => Promise<UsageProvider[]>
+			read?: (signal: AbortSignal) => Promise<UsageProvider[]>
+			timeoutMs?: number
 			now?: () => number
 			ttlMs?: number
 			retryMs?: number
@@ -24,9 +27,15 @@ export class RemoteUsage {
 	) {
 		const environment = defaultUsageEnvironment()
 		this.now = options.now ?? Date.now
-		this.read = options.read ?? (() => readProviderUsage({ ...environment, now: this.now }))
+		this.read = options.read ?? (signal => readProviderUsage({ ...environment, now: this.now, signal }))
+		this.timeoutMs = options.timeoutMs ?? USAGE_REQUEST_TIMEOUT_MS
 		this.ttlMs = options.ttlMs ?? USAGE_CACHE_MS
 		this.retryMs = options.retryMs ?? USAGE_RETRY_MS
+	}
+
+	dispose(): void {
+		this.lifetimeController.abort()
+		this.cached = null
 	}
 
 	/** A read with nothing to show is retried sooner than a healthy one, but never per request. */
@@ -35,12 +44,13 @@ export class RemoteUsage {
 	}
 
 	async providers(): Promise<{ providers: UsageProvider[]; refreshedAt: number }> {
+		if (this.lifetimeController.signal.aborted) return { providers: [], refreshedAt: this.now() }
 		const cached = this.cached
 		if (cached && this.now() - cached.refreshedAt < this.lifetime(cached.providers)) return cached
 		if (!this.inFlight)
-			this.inFlight = this.read()
+			this.inFlight = withUsageDeadline(this.read, this.lifetimeController.signal, this.timeoutMs)
 				.then(providers => {
-					this.cached = { providers, refreshedAt: this.now() }
+					if (!this.lifetimeController.signal.aborted) this.cached = { providers, refreshedAt: this.now() }
 					return providers
 				})
 				.finally(() => {

@@ -664,7 +664,7 @@ test(
 		await expect(row).toBeVisible()
 		await row.click()
 		await expect(page.getByLabel('Message', { exact: true })).toBeVisible()
-		await page.getByRole('button', { name: 'Back to live conversations', exact: true }).click()
+		await page.goBack()
 		await expect(row).toBeVisible()
 		await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
 		assert.ok(requests.includes('/v1/sessions'), 'proof must actually read the production directory')
@@ -673,7 +673,10 @@ test(
 			false,
 			'live workspace must not request catalog/history',
 		)
-		await page.screenshot({ path: '/tmp/helm-interface-redesign-20260910/finish/remote-production-live-only.png' })
+		const evidenceRoot = mkdtempSync('/tmp/helm-maintenance-catalog-')
+		const evidencePath = join(evidenceRoot, 'remote-production-live-only.png')
+		await page.screenshot({ path: evidencePath })
+		t.diagnostic(`Live-only browser evidence: ${evidencePath}`)
 	},
 )
 

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -18,13 +18,14 @@ import {
 import { verifyLocalControlToken } from '../../auth/local-control.js'
 import { type ResidentLeaseManager, verifyScopedCapability } from '../../auth/scoped-capability.js'
 import { buildConfigDocument, parseConfigUpdate, parseConfigWithFallback } from '../../config-document.js'
-import type { HelmConfig } from '../../config.js'
+import { type HelmConfig, readConfigFile, writeConfigFile } from '../../config.js'
 import type { DB } from '../../db/client.js'
 import { ensureItemAssessment } from '../../items/assess.js'
 import { UNTITLED_ITEM_TITLE, isItemAssigned, requireItemAssignment } from '../../items/assignment.js'
 import { ItemCommands } from '../../items/commands.js'
 import { buildItemTaskContext, resolveItemSourceContext } from '../../items/context.js'
 import { canCreateSourceTask, toDashboardItemWithSiblings, toDashboardItems } from '../../items/contract.js'
+import type { OkenaWorkspacePreview } from '../../items/contract.js'
 import type { ItemEnricher } from '../../items/enricher.js'
 import { resolveItemWorkspace } from '../../items/identity.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../../items/naming.js'
@@ -33,7 +34,6 @@ import {
 	MAX_RUN_CONTEXT_MARKDOWN_LENGTH,
 	RunContextConflictError,
 	plainRunContextFromSource,
-	runContextDocumentSchema,
 	runContextDraftSchema,
 } from '../../items/run-context.js'
 import { itemStatusSchema, solverEffortSchema } from '../../items/schema.js'
@@ -167,14 +167,6 @@ interface OkenaOpenResult {
 	activated: boolean
 }
 
-interface OkenaWorkspacePreview {
-	state: 'open' | 'main' | 'register' | 'local' | 'remote' | 'create' | 'standalone' | 'unavailable'
-	label: string
-	detail: string
-	branchName: string
-	worktreePath?: string
-}
-
 type OkenaWorkspaceParams = {
 	projectConfig: HelmConfig['projects'][number]
 	workspaceMode: SolverWorkspace
@@ -203,30 +195,43 @@ const defaultInspectItemOkenaWorkspace: InspectItemOkenaWorkspace = async params
 	return extension.inspectItemOkenaWorkspace(params)
 }
 
-export function apiRoutes(
-	config: HelmConfig,
-	configPath: string,
-	db: DB,
-	queue: Drainer,
-	poller: Poller,
-	provider: TaskProvider,
-	spawner: Spawner,
-	enricher: ItemEnricher,
-	createPlanningSpawner: (config: HelmConfig, name: SpawnerName) => Promise<Spawner> = createSpawner,
-	// Injected only by tests so the manual AI-pass route can run without a real
-	// model; production leaves it undefined and the passes use the real one-shot.
-	aiOneShot?: (opts: OneShotOptions) => Promise<string | null>,
-	// Injected only by tests so config-save/restart routes can prove the exit
-	// path without killing the test runner; production uses the launchd control.
-	daemonControl: DaemonControl = defaultDaemonControl,
-	// Keeps the optional Okena extension dynamically loaded and route-testable.
-	openItemInOkena: OpenItemInOkena = defaultOpenItemInOkena,
-	inspectItemOkenaWorkspace: InspectItemOkenaWorkspace = defaultInspectItemOkenaWorkspace,
-	profileContext?: ProfileContext,
-	// Scheduled runs have durable processes outside the Drainer. This is a
-	// read-only guard only; scheduled routes/admission remain out of this API.
-	scheduledRestartBlocker?: { restartBlockingRunCount(): number },
-) {
+export interface ApiRouteDependencies {
+	config: HelmConfig
+	configPath: string
+	db: DB
+	queue: Drainer
+	poller: Poller
+	provider: TaskProvider
+	spawner: Spawner
+	enricher: ItemEnricher
+	createPlanningSpawner?: (config: HelmConfig, name: SpawnerName) => Promise<Spawner>
+	/** Test-only completion seam; production uses the real one-shot. */
+	aiOneShot?: (opts: OneShotOptions) => Promise<string | null>
+	daemonControl?: DaemonControl
+	openItemInOkena?: OpenItemInOkena
+	inspectItemOkenaWorkspace?: InspectItemOkenaWorkspace
+	profileContext?: ProfileContext
+	/** Read-only restart guard; scheduled admission remains service-owned. */
+	scheduledRestartBlocker?: { restartBlockingRunCount(): number }
+}
+
+export function apiRoutes({
+	config,
+	configPath,
+	db,
+	queue,
+	poller,
+	provider,
+	spawner,
+	enricher,
+	createPlanningSpawner = createSpawner,
+	aiOneShot,
+	daemonControl = defaultDaemonControl,
+	openItemInOkena = defaultOpenItemInOkena,
+	inspectItemOkenaWorkspace = defaultInspectItemOkenaWorkspace,
+	profileContext,
+	scheduledRestartBlocker,
+}: ApiRouteDependencies) {
 	const api = new Hono()
 	if (profileContext) {
 		api.use('*', (_c, next) => db.runInProfile(profileContext.store.activeProfile().id, next))
@@ -2061,7 +2066,7 @@ export function apiRoutes(
 	// Config Document owns dashboard-safe shape and settings metadata.
 	api.get('/config', c => {
 		try {
-			const raw = JSON.parse(readFileSync(configPath, 'utf-8'))
+			const raw = JSON.parse(readConfigFile(configPath))
 			return c.json({ data: buildConfigDocument(raw, config).dashboard })
 		} catch {
 			return c.json({ data: buildConfigDocument(config, config).dashboard })
@@ -2071,7 +2076,7 @@ export function apiRoutes(
 	// Full Config Document (for settings page)
 	api.get('/config/full', c => {
 		try {
-			const raw = JSON.parse(readFileSync(configPath, 'utf-8'))
+			const raw = JSON.parse(readConfigFile(configPath))
 			return c.json({ data: buildConfigDocument(raw, config) })
 		} catch (err) {
 			return c.json({ error: 'Failed to read config file' }, 500)
@@ -2092,7 +2097,7 @@ export function apiRoutes(
 		const body = await c.req.json()
 		const currentConfig = (() => {
 			try {
-				const raw = JSON.parse(readFileSync(configPath, 'utf-8'))
+				const raw = JSON.parse(readConfigFile(configPath))
 				return parseConfigWithFallback(raw, config)
 			} catch {
 				return config
@@ -2103,7 +2108,7 @@ export function apiRoutes(
 			return c.json({ error: 'Validation failed', details: result.error.flatten() }, 400)
 		}
 		try {
-			writeFileSync(configPath, JSON.stringify(result.data, null, '\t'), 'utf-8')
+			writeConfigFile(configPath, JSON.stringify(result.data, null, '\t'))
 		} catch (err) {
 			return c.json({ error: `Failed to write config: ${err instanceof Error ? err.message : err}` }, 500)
 		}

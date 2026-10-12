@@ -3,7 +3,7 @@ import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -74,6 +74,27 @@ function withTempDb(fn: (db: DB) => Promise<void> | void) {
 
 function git(cwd: string, args: string[]): string {
 	return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+}
+
+function gitWorkspaceConfig(t: TestContext): HelmConfig {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-item-fixture-repo-'))
+	t.after(() => rmSync(repoPath, { recursive: true, force: true }))
+	git(repoPath, ['init', '-b', 'main'])
+	git(repoPath, [
+		'-c',
+		'user.name=Helm Test',
+		'-c',
+		'user.email=helm@example.test',
+		'commit',
+		'--allow-empty',
+		'-m',
+		'fixture',
+	])
+	return { ...config, projects: [{ ...config.projects[0], repoPath }] }
+}
+
+function gitFixtureWorktree(config: HelmConfig, path: string, branch: string): void {
+	git(config.projects[0].repoPath, ['worktree', 'add', '-b', branch, path, 'main'])
 }
 
 function parseJsonObject(value: string, source: string): Record<string, unknown> {
@@ -736,16 +757,16 @@ test('config routes use Config Document and preserve redacted secrets while reje
 			),
 			'utf-8',
 		)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
 			configPath,
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const safeRes = await api.request('/config')
 		assert.equal(safeRes.status, 200)
@@ -836,16 +857,16 @@ test('CLI add posts to the running daemon (headless) and creates queued Item kin
 	const app = new Hono()
 	app.route(
 		'/api',
-		apiRoutes(
+		apiRoutes({
 			config,
-			join(dir, 'helm.config.json'),
+			configPath: join(dir, 'helm.config.json'),
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		),
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		}),
 	)
 	// port 0 → OS-assigned; execFile (async) keeps the event loop free so this
 	// in-process server can answer the subprocess's request (execFileSync would deadlock).
@@ -1384,16 +1405,16 @@ test('ItemCommands only records execution workspace identity for processing Item
 
 test('server creates queued loop Items with PRD path and almanac flags', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items', {
 			method: 'POST',
@@ -1436,16 +1457,16 @@ test('server creates queued loop Items with PRD path and almanac flags', async (
 test('server creates prompt-only drafts and requires one-way project assignment before work', async () => {
 	await withTempDb(async db => {
 		const enqueued: string[] = []
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			{ enqueue: (items: Array<{ id: string }>) => enqueued.push(...items.map(item => item.id)) } as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: { enqueue: (items: Array<{ id: string }>) => enqueued.push(...items.map(item => item.id)) } as never,
+		})
 
 		const createdResponse = await api.request('/items', {
 			method: 'POST',
@@ -1566,16 +1587,16 @@ test('server creates prompt-only drafts and requires one-way project assignment 
 
 test('server creates title-only drafts without synthesizing a prompt', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const response = await api.request('/items', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -1596,16 +1617,16 @@ test('server creates title-only drafts without synthesizing a prompt', async () 
 
 test('server rejects unassigned drafts with neither a title nor a prompt', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		for (const body of [{ kind: 'solve' }, { kind: 'solve', title: '   ', prompt: '   ' }]) {
 			const response = await api.request('/items', {
 				method: 'POST',
@@ -1627,16 +1648,16 @@ test('server creates parallel solve Items through dashboard contract and enqueue
 				enqueued.push(...items.map(item => item.id))
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			recordingEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: recordingEnricher as never,
+		})
 
 		const res = await api.request('/items', {
 			method: 'POST',
@@ -1692,16 +1713,16 @@ test('server sends manually created plan-intent Items straight to Queue', async 
 			},
 			processOneItem: () => true,
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			trackingQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: trackingQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items', {
 			method: 'POST',
@@ -1743,16 +1764,16 @@ test('server Item list expands grouped siblings across pagination windows', asyn
 			prompt: 'Keep siblings together even when the page is small.',
 			parallelism: 2,
 		})
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items?limit=1')
 
@@ -1792,16 +1813,16 @@ test('server dashboard list keeps old actionable Items beyond the archive window
 				payload: { kind: 'solve', prompt: 'Already archived.' },
 			})
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items')
 
@@ -1829,16 +1850,16 @@ test('server creates a new Item forked from an existing Item branch', async () =
 			planDirName: 'base-attempt',
 			spawner: 'default',
 		})
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items', {
 			method: 'POST',
@@ -1934,16 +1955,16 @@ test('createWorktree can fork from a local Item branch BaseRef', async () => {
 
 test('server creates parallel loop Items with shared GroupId', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const loopRes = await api.request('/items', {
 			method: 'POST',
@@ -2122,7 +2143,7 @@ test('Drainer lets an owning-profile run finish while admission switches profile
 	}
 })
 
-test('Drainer applies finite and unlimited lane limits to direct and automatic starts independently', async () => {
+test('Drainer applies finite and unlimited lane limits to direct and automatic starts independently', async t => {
 	const budgets = [
 		{ concurrency: 3, loopConcurrency: 2 },
 		{ concurrency: null, loopConcurrency: 2 },
@@ -2134,13 +2155,14 @@ test('Drainer applies finite and unlimited lane limits to direct and automatic s
 	)) {
 		await withTempDb(async db => {
 			const root = mkdtempSync(join(tmpdir(), 'helm-lane-limits-'))
+			const config = gitWorkspaceConfig(t)
 			const limitsConfig = { ...config, solver: { ...config.solver, concurrency, loopConcurrency } }
 			const commands = new ItemCommands(db.items, limitsConfig)
 			const admittedLoops = loopConcurrency ?? 12
 			const items = Array.from({ length: admittedLoops + 1 }, (_, index) => {
 				const item = commands.createLoopItem({ title: `Loop ${index}`, projectSlug: 'helm', prdPath: 'spec.md' })
 				const worktreePath = join(root, String(index))
-				mkdirSync(worktreePath)
+				gitFixtureWorktree(config, worktreePath, `helm/loop-${index}`)
 				recordPreparedPlan(commands, item.id, {
 					worktreePath,
 					branchName: `helm/loop-${index}`,
@@ -2205,9 +2227,11 @@ test('Drainer applies finite and unlimited lane limits to direct and automatic s
 	}
 })
 
-test('Drainer runs queued loop Items through the loop lane and captures AlmanacRunId', async () => {
+test('Drainer runs queued loop Items through the loop lane and captures AlmanacRunId', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-loop-worktree-'))
+		gitFixtureWorktree(config, worktreePath, 'helm/item/loop')
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createLoopItem({
 			title: 'Run implementation loop',
@@ -2252,9 +2276,11 @@ test('Drainer runs queued loop Items through the loop lane and captures AlmanacR
 	})
 })
 
-test('planned solve Items can run Almanac on the same Item and worktree', async () => {
+test('planned solve Items can run Almanac on the same Item and worktree', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-planned-solve-loop-'))
+		gitFixtureWorktree(config, worktreePath, 'helm/item/prepared-plan')
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Execute prepared plan',
@@ -2301,13 +2327,14 @@ test('planned solve Items can run Almanac on the same Item and worktree', async 
 	})
 })
 
-test('Drainer runs loop Items oldest-first', async () => {
+test('Drainer runs loop Items oldest-first', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-loop-order-'))
 		const newerWorktree = join(worktreeRoot, 'newer')
 		const olderWorktree = join(worktreeRoot, 'older')
-		mkdirSync(newerWorktree, { recursive: true })
-		mkdirSync(olderWorktree, { recursive: true })
+		gitFixtureWorktree(config, newerWorktree, 'helm/item/newer-loop')
+		gitFixtureWorktree(config, olderWorktree, 'helm/item/older-loop')
 		const commands = new ItemCommands(db.items, config)
 		const newerLoop = commands.createLoopItem({
 			title: 'Newer loop',
@@ -2522,9 +2549,11 @@ test('AlmanacLoopRunner generates a missing loop prompt before launch', async ()
 	}
 })
 
-test('processLoopItem uses the current planned-Item selection instead of stale first-run options', async () => {
+test('processLoopItem uses the current planned-Item selection instead of stale first-run options', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-loop-current-selection-'))
+		gitFixtureWorktree(config, worktreePath, 'helm/item/current-loop-selection')
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createSolveItem({
 			title: 'Retry planned loop with another model',
@@ -2610,9 +2639,11 @@ test('processLoopItem runs a loop in Main when the plan was prepared there', asy
 	})
 })
 
-test('processLoopItem records loop runner failures through ItemCommands', async () => {
+test('processLoopItem records loop runner failures through ItemCommands', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-loop-fail-worktree-'))
+		gitFixtureWorktree(config, worktreePath, 'helm/item/fail-loop')
 		const commands = new ItemCommands(db.items, config)
 		const item = commands.createLoopItem({
 			title: 'Fail loop',
@@ -2699,7 +2730,8 @@ test('Drainer routes solve Item pause, retry, cancel, start, and resume through 
 	})
 })
 
-test('Drainer direct starts enforce lane capacity and scheduled reservations', async () => {
+test('Drainer direct starts enforce lane capacity and scheduled reservations', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-direct-capacity-'))
 		const singleSolveConfig = { ...config, solver: { ...config.solver, concurrency: 1 } }
@@ -2726,7 +2758,7 @@ test('Drainer direct starts enforce lane capacity and scheduled reservations', a
 			[firstLoop, firstLoopWorktree, 'direct-first'],
 			[secondLoop, secondLoopWorktree, 'direct-second'],
 		] as const) {
-			mkdirSync(worktreePath, { recursive: true })
+			gitFixtureWorktree(config, worktreePath, `helm/item/${planDirName}`)
 			recordPreparedPlan(commands, item.id, {
 				worktreePath,
 				branchName: `helm/item/${planDirName}`,
@@ -2843,10 +2875,12 @@ test('Drainer refuses to manually start Items outside Queue or Inbox', async () 
 	})
 })
 
-test('Drainer recovers stale processing Items before scheduling lanes', async () => {
+test('Drainer recovers stale processing Items before scheduling lanes', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-stale-items-'))
 		const loopWorktree = mkdtempSync(join(tmpdir(), 'helm-stale-loop-'))
+		gitFixtureWorktree(config, loopWorktree, 'helm/item/recover-stale-loop')
 		const commands = new ItemCommands(db.items, config)
 		const solveItem = commands.createSolveItem({
 			title: 'Recover stale solve',
@@ -2904,7 +2938,8 @@ test('Drainer recovers stale processing Items before scheduling lanes', async ()
 	})
 })
 
-test('solve Items display the immutable prompt snapshot captured before invocation', async () => {
+test('solve Items display the immutable prompt snapshot captured before invocation', async t => {
+	const config = gitWorkspaceConfig(t)
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-snapshot-worktrees-'))
 		const commands = new ItemCommands(db.items, config)
@@ -2915,7 +2950,7 @@ test('solve Items display the immutable prompt snapshot captured before invocati
 		})
 		const planDirName = 'snapshot-plan'
 		const worktreePath = join(worktreeRoot, 'planned-worktree')
-		mkdirSync(worktreePath, { recursive: true })
+		gitFixtureWorktree(config, worktreePath, 'helm/item/snapshot-solve')
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
 		workspace.writeReadme('BEFORE snapshot artifact')
 		recordPreparedPlan(commands, item.id, {
@@ -3498,19 +3533,17 @@ test('server opens every Item in Okena and persists a newly-created workspace wi
 		})
 		const worktreePath = mkdtempSync(join(tmpdir(), 'helm-open-okena-route-'))
 		const openerCalls: Record<string, unknown>[] = []
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-			createSpawner,
-			undefined,
-			undefined,
-			async params => {
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			createPlanningSpawner: createSpawner,
+			openItemInOkena: async params => {
 				openerCalls.push(params)
 				return {
 					worktreePath,
@@ -3522,13 +3555,13 @@ test('server opens every Item in Okena and persists a newly-created workspace wi
 					activated: true,
 				}
 			},
-			async params => ({
+			inspectItemOkenaWorkspace: async params => ({
 				state: 'create',
 				label: 'Create branch & workspace',
 				detail: params.branchName,
 				branchName: params.branchName,
 			}),
-		)
+		})
 
 		try {
 			const detailResponse = await api.request(`/items/${item.id}`)
@@ -3572,22 +3605,20 @@ test('Okena detail preview uses the configured main workspace default', async ()
 		const commands = new ItemCommands(db.items, mainConfig)
 		const item = commands.createSolveItem({ title: 'Main preview', projectSlug: 'helm', prompt: 'Inspect.' })
 		let inspectedWorkspace: string | undefined
-		const api = apiRoutes(
-			mainConfig,
-			'helm.config.json',
+		const api = apiRoutes({
+			config: mainConfig,
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-			createSpawner,
-			undefined,
-			undefined,
-			async () => {
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			createPlanningSpawner: createSpawner,
+			openItemInOkena: async () => {
 				throw new Error('not called')
 			},
-			async params => {
+			inspectItemOkenaWorkspace: async params => {
 				inspectedWorkspace = params.workspaceMode
 				return {
 					state: 'main',
@@ -3597,7 +3628,7 @@ test('Okena detail preview uses the configured main workspace default', async ()
 					worktreePath: mainConfig.projects[0].repoPath,
 				}
 			},
-		)
+		})
 
 		const response = await api.request(`/items/${item.id}`)
 		assert.equal(response.status, 200)
@@ -3649,23 +3680,21 @@ test('server refuses to race Okena workspace creation before a running Item reco
 		const item = commands.createSolveItem({ title: 'Running without path', projectSlug: 'helm', prompt: 'Wait.' })
 		commands.startItem(item.id)
 		let called = false
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-			createSpawner,
-			undefined,
-			undefined,
-			async () => {
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			createPlanningSpawner: createSpawner,
+			openItemInOkena: async () => {
 				called = true
 				throw new Error('should not run')
 			},
-		)
+		})
 
 		const response = await api.request(`/items/${item.id}/open-okena`, { method: 'POST' })
 		assert.equal(response.status, 409)
@@ -3690,16 +3719,16 @@ test('server returns unknown and empty Run Observation fields when sources are m
 			planDirName: 'missing-observation',
 		})
 		commands.recordAlmanacRunId(item.id, runId)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request(`/items/${item.id}`)
 
@@ -3952,16 +3981,16 @@ test('ItemStore rejects invalid lifecycle updates without corrupting the row', a
 
 test('server exposes created Items through the dashboard contract', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const createRes = await api.request('/items', {
 			method: 'POST',
@@ -4014,16 +4043,16 @@ test('server exposes created Items through the dashboard contract', async () => 
 
 test('server rejects Item creation with an unavailable Spawner adapter', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items', {
 			method: 'POST',
@@ -4058,16 +4087,16 @@ test('server plans Items through Spawner and records reusable Item workspace ide
 			baseRef: 'release/plan',
 		})
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const firstRes = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
@@ -4148,16 +4177,16 @@ test('server plans source-backed solve Items with provider task context', async 
 			},
 		}
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			sourceProvider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: sourceProvider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
@@ -4195,16 +4224,16 @@ test('server rejects planning for processing Items before mutating workspace ide
 		})
 		commands.startItem(item.id)
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
@@ -4239,20 +4268,20 @@ test('server plans Items with the per-Item selected Spawner', async () => {
 		})
 		const defaultSpawner = new FakePlanningSpawner(worktreeRoot, 'default')
 		const selectedSpawner = new FakePlanningSpawner(worktreeRoot, 'okena')
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			defaultSpawner,
-			fakeEnricher as never,
-			async (_config, name) => {
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: defaultSpawner,
+			enricher: fakeEnricher as never,
+			createPlanningSpawner: async (_config, name) => {
 				assert.equal(name, 'okena')
 				return selectedSpawner
 			},
-		)
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/plan`, { method: 'POST' })
@@ -4362,16 +4391,16 @@ test('server planning route accepts loop Items through the Spawner seam', async 
 			payload: { kind: 'loop', prdPath: 'docs/plans/afk-rework/prd.md' },
 		})
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const loopRes = await api.request(`/items/${loop.id}/plan`, { method: 'POST' })
@@ -4768,16 +4797,16 @@ test('server single Item reads include sibling group dashboard metadata', async 
 			prompt: 'Keep group metadata on detail reads.',
 			parallelism: 2,
 		})
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request(`/items/${siblings[1].id}`)
 
@@ -4795,16 +4824,16 @@ test('server single Item reads include sibling group dashboard metadata', async 
 
 test('server can find an Item dashboard contract by Source external id', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		db.items.create({
 			kind: 'solve',
 			status: 'ready',
@@ -4894,16 +4923,16 @@ test('server creates source-backed Inbox Items from external ids', async () => {
 				enqueued.push(...items.map(item => item.id))
 			},
 		}
-		const api = apiRoutes(
-			sourceConfig,
-			'helm.config.json',
+		const api = apiRoutes({
+			config: sourceConfig,
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			sourceProvider,
-			spawner as never,
-			sourceEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: sourceProvider,
+			spawner: spawner as never,
+			enricher: sourceEnricher as never,
+		})
 
 		const res = await api.request('/items/source', {
 			method: 'POST',
@@ -4951,16 +4980,16 @@ test('server rejects solverAgent on source Item creation', async () => {
 						}
 					: null,
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			sourceProvider,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: sourceProvider,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const res = await api.request('/items/source', {
 			method: 'POST',
@@ -5024,16 +5053,16 @@ test('ItemCommands approve and reject Inbox Items with lifecycle events', async 
 
 test('server approves and rejects Items through dashboard contract routes', async () => {
 	await withTempDb(async db => {
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const approveTarget = db.items.create({
 			kind: 'solve',
 			status: 'inbox',
@@ -5105,16 +5134,16 @@ test('server start and cancel Item action routes return dashboard contract', asy
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		const startRes = await api.request(`/items/${startTarget.id}/start`, { method: 'POST' })
 		const cancelRes = await api.request(`/items/${cancelTarget.id}/cancel`, { method: 'POST' })
@@ -5163,16 +5192,16 @@ test('server starts a planned solve as a loop using its existing plan artifact',
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/start`, {
@@ -5225,16 +5254,16 @@ test('server starts a planned loop in Main when planning was prepared there', as
 				return true
 			},
 		}
-		const api = apiRoutes(
-			mainConfig,
-			'helm.config.json',
+		const api = apiRoutes({
+			config: mainConfig,
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/start`, {
@@ -5273,16 +5302,16 @@ test('planned loop requires re-planning before switching a Worktree plan to Main
 			planDirName,
 			spawner: 'default',
 		})
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/start`, {
@@ -5328,16 +5357,16 @@ test('planned loop uses the detected queue size and per-Item agent/model overrid
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/start`, {
@@ -5395,16 +5424,16 @@ test('planned Start persists projected solver overrides and clears explicit null
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		try {
 			const setItem = makePlanned('set overrides')
 			const set = await api.request(`/items/${setItem.id}/start`, {
@@ -5467,16 +5496,16 @@ test('planned Start feasibility and planning conflicts leave selection, lifecycl
 				planDirName: 'wrong-main',
 				spawner: 'default',
 			})
-			const api = apiRoutes(
+			const api = apiRoutes({
 				config,
-				'helm.config.json',
+				configPath: 'helm.config.json',
 				db,
-				queueThatMustNotStart as never,
-				poller as never,
-				provider as never,
-				spawner as never,
-				fakeEnricher as never,
-			)
+				queue: queueThatMustNotStart as never,
+				poller: poller as never,
+				provider: provider as never,
+				spawner: spawner as never,
+				enricher: fakeEnricher as never,
+			})
 			const beforeFeasibility = JSON.stringify(commands.getItem(feasibility.id))
 			const beforeFeasibilityEvents = JSON.stringify(db.items.getEvents(feasibility.id))
 			const rejected = await api.request(`/items/${feasibility.id}/start`, {
@@ -5520,16 +5549,16 @@ test('planned Start feasibility and planning conflicts leave selection, lifecycl
 						}
 					}),
 			}
-			const conflictApi = apiRoutes(
+			const conflictApi = apiRoutes({
 				config,
-				'helm.config.json',
+				configPath: 'helm.config.json',
 				db,
-				queueThatMustNotStart as never,
-				poller as never,
-				provider as never,
-				blockingSpawner,
-				fakeEnricher as never,
-			)
+				queue: queueThatMustNotStart as never,
+				poller: poller as never,
+				provider: provider as never,
+				spawner: blockingSpawner,
+				enricher: fakeEnricher as never,
+			})
 			const plan = conflictApi.request(`/items/${blocked.id}/plan`, { method: 'POST' })
 			await new Promise(resolve => setImmediate(resolve))
 			const beforeConflict = JSON.stringify(commands.getItem(blocked.id))
@@ -5585,16 +5614,16 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 				return commands.retryItem(id)
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const postSelection = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -5684,16 +5713,16 @@ test('server Item work-start routes persist selected solve agent before queue ha
 				assert.equal(solvePayload(db, approveTarget.id).solverAgent, 'codex')
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const postCodex = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -5873,18 +5902,17 @@ test('PlanWorkspace.listArtifacts truncates a pathologically large plan file for
 // injected one-shot (no real model) and returns the updated item. apiRoutes takes
 // the injected one-shot as its trailing arg (9th = default planning spawner).
 function aiApi(db: DB, oneShot: () => Promise<string | null>) {
-	return apiRoutes(
+	return apiRoutes({
 		config,
-		'helm.config.json',
+		configPath: 'helm.config.json',
 		db,
-		queue as never,
-		poller as never,
-		provider as never,
-		spawner as never,
-		fakeEnricher as never,
-		undefined,
-		oneShot,
-	)
+		queue: queue as never,
+		poller: poller as never,
+		provider: provider as never,
+		spawner: spawner as never,
+		enricher: fakeEnricher as never,
+		aiOneShot: oneShot,
+	})
 }
 
 test('POST /items/:id/ai/display-name force-runs the pass and returns the updated item', () =>
@@ -6058,16 +6086,16 @@ test('Item action routes set, reject, and clear the per-item solver model', () =
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const post = (body: unknown) => ({
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -6186,16 +6214,16 @@ test('Item action routes set, reject, and clear the per-item solver workspace', 
 				return true
 			},
 		}
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			routeQueue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			queue: routeQueue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const post = (body: unknown) => ({
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -6471,18 +6499,17 @@ test('planning a main-workspace Item reuses the repo checkout and skips branch n
 			return 'feat/model-named-branch'
 		}
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
-			namingConfig,
-			'helm.config.json',
+		const api = apiRoutes({
+			config: namingConfig,
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			planningSpawner,
-			fakeEnricher as never,
-			undefined,
-			aiStub,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+			aiOneShot: aiStub,
+		})
 
 		try {
 			// Main-workspace planning: no AI naming, the spawner receives the canonical
@@ -6539,16 +6566,16 @@ test('Re-plan in Worktree mode discards a legacy canonical-checkout plan path', 
 			spawner: 'fake',
 		})
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
-			planningConfig,
-			'helm.config.json',
+		const api = apiRoutes({
+			config: planningConfig,
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 
 		try {
 			const res = await api.request(`/items/${item.id}/plan`, {
@@ -6575,21 +6602,20 @@ test('manual branch-name AI pass refuses main-workspace Items', () =>
 		commands.setSolveItemWorkspace(item.id, 'main')
 
 		let modelCalled = false
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			provider as never,
-			spawner as never,
-			fakeEnricher as never,
-			undefined,
-			async () => {
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			aiOneShot: async () => {
 				modelCalled = true
 				return 'feat/should-not-happen'
 			},
-		)
+		})
 
 		const res = await api.request(`/items/${item.id}/ai/branch-name`, { method: 'POST' })
 		assert.equal(res.status, 400)
@@ -6669,16 +6695,16 @@ test('run-context API seeds live source, saves one document, plans with it, and 
 		})
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-run-context-plan-'))
 		const planningSpawner = new FakePlanningSpawner(worktreeRoot)
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'helm.config.json',
+			configPath: 'helm.config.json',
 			db,
-			queue as never,
-			poller as never,
-			contextProvider as never,
-			planningSpawner,
-			fakeEnricher as never,
-		)
+			queue: queue as never,
+			poller: poller as never,
+			provider: contextProvider as never,
+			spawner: planningSpawner,
+			enricher: fakeEnricher as never,
+		})
 		const loop = commands.createLoopItem({
 			title: 'Loop does not accept Run Context revisions',
 			projectSlug: 'helm',
@@ -6872,13 +6898,13 @@ test('plain context API preserves exact ordered images, negotiates reads/reset, 
 			projectSlug: 'helm',
 			source: { provider: 'fake', externalId: 'context' },
 		})
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'unused',
+			configPath: 'unused',
 			db,
-			queue as never,
-			poller as never,
-			{
+			queue: queue as never,
+			poller: poller as never,
+			provider: {
 				...provider,
 				getTaskContext: async () => {
 					calls++
@@ -6886,9 +6912,9 @@ test('plain context API preserves exact ordered images, negotiates reads/reset, 
 					return source
 				},
 			} as never,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		const write = (path: string, body: unknown, method = 'PUT', headers = contextHeaders) =>
 			api.request(`/items/${item.id}/${path}`, { method, headers, body: JSON.stringify(body) })
 		const unchanged = () => ({ row: db.items.get(item.id), events: db.items.getEvents(item.id) })
@@ -6959,13 +6985,13 @@ for (const race of ['revision', 'running'] as const)
 				projectSlug: 'helm',
 				source: { provider: 'fake', externalId: 'race' },
 			})
-			const api = apiRoutes(
+			const api = apiRoutes({
 				config,
-				'unused',
+				configPath: 'unused',
 				db,
-				queue as never,
-				poller as never,
-				{
+				queue: queue as never,
+				poller: poller as never,
+				provider: {
 					...provider,
 					getTaskContext: async () => {
 						entered.resolve()
@@ -6973,9 +6999,9 @@ for (const race of ['revision', 'running'] as const)
 						return { title: 'Race', descriptionBlocks: contextImages }
 					},
 				} as never,
-				spawner as never,
-				fakeEnricher as never,
-			)
+				spawner: spawner as never,
+				enricher: fakeEnricher as never,
+			})
 			const pending = api.request(`/items/${item.id}/run-context/plain`, {
 				method: 'PUT',
 				headers: contextHeaders,
@@ -6999,11 +7025,11 @@ for (const admission of ['allowed', 'refused'] as const)
 			commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Current' }, 0)
 			let preflights = 0
 			let starts = 0
-			const api = apiRoutes(
+			const api = apiRoutes({
 				config,
-				'unused',
+				configPath: 'unused',
 				db,
-				{
+				queue: {
 					...queue,
 					canProcessOneItem: () => {
 						preflights++
@@ -7014,11 +7040,11 @@ for (const admission of ['allowed', 'refused'] as const)
 						return true
 					},
 				} as never,
-				poller as never,
+				poller: poller as never,
 				provider,
-				spawner as never,
-				fakeEnricher as never,
-			)
+				spawner: spawner as never,
+				enricher: fakeEnricher as never,
+			})
 			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
 			const response = await api.request(`/items/${item.id}/start`, {
 				method: 'POST',
@@ -7058,13 +7084,13 @@ test('plain context request retains captured profile across first-save source aw
 			prompt: 'Other',
 		})
 		const beforeOther = { row: other.items.get(otherItem.id), events: other.items.getEvents(otherItem.id) }
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'unused',
+			configPath: 'unused',
 			db,
-			queue as never,
-			poller as never,
-			{
+			queue: queue as never,
+			poller: poller as never,
+			provider: {
 				...provider,
 				getTaskContext: async () => {
 					entered.resolve()
@@ -7072,17 +7098,12 @@ test('plain context request retains captured profile across first-save source aw
 					return { title: 'Owned', descriptionBlocks: contextImages }
 				},
 			} as never,
-			spawner as never,
-			fakeEnricher as never,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			{
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			profileContext: {
 				store: { activeProfile: () => ({ id: activeProfile }) },
 			} as never,
-		)
+		})
 		const pending = api.request(`/items/${item.id}/run-context/plain`, {
 			method: 'PUT',
 			headers: contextHeaders,
@@ -7115,16 +7136,19 @@ for (const images of [
 				projectSlug: 'helm',
 				source: { provider: 'fake', externalId: 'invalid' },
 			})
-			const api = apiRoutes(
+			const api = apiRoutes({
 				config,
-				'unused',
+				configPath: 'unused',
 				db,
-				queue as never,
-				poller as never,
-				{ ...provider, getTaskContext: async () => ({ title: 'Invalid images', descriptionBlocks: images }) } as never,
-				spawner as never,
-				fakeEnricher as never,
-			)
+				queue: queue as never,
+				poller: poller as never,
+				provider: {
+					...provider,
+					getTaskContext: async () => ({ title: 'Invalid images', descriptionBlocks: images }),
+				} as never,
+				spawner: spawner as never,
+				enricher: fakeEnricher as never,
+			})
 			const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
 			const response = await api.request(`/items/${item.id}/run-context/plain`, {
 				method: 'PUT',
@@ -7149,11 +7173,11 @@ for (const mode of ['agent', 'loop'] as const)
 				commands.setRunContext(item.id, { version: 1, blocks: [], markdown: 'Current' }, 0)
 				const lanes: unknown[] = []
 				let starts = 0
-				const api = apiRoutes(
+				const api = apiRoutes({
 					config,
-					'unused',
+					configPath: 'unused',
 					db,
-					{
+					queue: {
 						...queue,
 						canProcessOneItem: (_id: string, lane: unknown) => {
 							lanes.push(lane)
@@ -7164,11 +7188,11 @@ for (const mode of ['agent', 'loop'] as const)
 							return true
 						},
 					} as never,
-					poller as never,
+					poller: poller as never,
 					provider,
-					spawner as never,
-					fakeEnricher as never,
-				)
+					spawner: spawner as never,
+					enricher: fakeEnricher as never,
+				})
 				const before = { row: db.items.get(item.id), events: db.items.getEvents(item.id) }
 				const response = await api.request(`/items/${item.id}/start`, {
 					method: 'POST',
@@ -7198,22 +7222,22 @@ test('Start rejects non-solve and invalid revision fields without preflight or w
 		const solve = commands.createSolveItem({ title: 'Solve', projectSlug: 'helm', prompt: 'Original' })
 		const loop = commands.createLoopItem({ title: 'Loop', projectSlug: 'helm', prdPath: 'plan.md' })
 		let preflights = 0
-		const api = apiRoutes(
+		const api = apiRoutes({
 			config,
-			'unused',
+			configPath: 'unused',
 			db,
-			{
+			queue: {
 				...queue,
 				canProcessOneItem: () => {
 					preflights++
 					return { ok: true }
 				},
 			} as never,
-			poller as never,
+			poller: poller as never,
 			provider,
-			spawner as never,
-			fakeEnricher as never,
-		)
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+		})
 		for (const [item, revisions] of [
 			[solve, [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '0', null]],
 			[loop, [0]],

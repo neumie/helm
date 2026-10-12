@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process'
 import {
 	chmodSync,
 	existsSync,
+	lstatSync,
 	mkdtempSync,
+	readFileSync,
 	readdirSync,
 	realpathSync,
 	rmSync,
@@ -76,23 +78,25 @@ test('a refused socket is dead, an answered one is not, and neither guess is mad
 	assert.equal(await socketAnswered(join(root, 'never-existed.sock')), false)
 })
 
-test('a crashed runtime is reclaimed once, preserved as evidence, and lets the restart through', async t => {
+test('crashed artifacts remain unavailable without verifiable dead-owner identity', async t => {
 	const root = scratch(t)
 	await leaveCrashedArtifacts(root)
-	for (const name of RUNTIME_ARTIFACTS) assert.equal(existsSync(join(root, name)), true)
-
-	assert.equal(await reclaimDeadRuntime(root, () => new Date('2026-09-19T11:00:00Z')), true)
-	for (const name of RUNTIME_ARTIFACTS) assert.equal(existsSync(join(root, name)), false, `${name} still blocks start`)
-	// Nothing is destroyed: a lock that turns out to matter stays recoverable.
-	const preserved = readdirSync(root).filter(name => name.endsWith('-reclaimed'))
-	assert.deepEqual(preserved, ['recovery-2026-09-19T11-00-00-000Z-reclaimed'])
-	assert.deepEqual(readdirSync(join(root, preserved[0] as string)).sort(), [
-		'control.sock',
-		'host.sock',
-		'runtime.lock',
-	])
-	// A second pass has nothing left to claim, so a refusal cannot become a loop.
 	assert.equal(await reclaimDeadRuntime(root), false)
+	for (const name of RUNTIME_ARTIFACTS) assert.equal(existsSync(join(root, name)), true)
+	assert.equal(
+		readdirSync(root).some(name => name.endsWith('-reclaimed')),
+		false,
+	)
+})
+
+test('a starting owner with a published lock and no listeners is never displaced', async t => {
+	const root = scratch(t)
+	writeFileSync(join(root, 'runtime.lock'), '{"instanceId":"starting"}', { mode: 0o600 })
+	const identity = lstatSync(join(root, 'runtime.lock'))
+	assert.equal(await reclaimDeadRuntime(root), false)
+	assert.equal(lstatSync(join(root, 'runtime.lock')).ino, identity.ino)
+	assert.equal(readFileSync(join(root, 'runtime.lock'), 'utf8'), '{"instanceId":"starting"}')
+	assert.deepEqual(readdirSync(root), ['runtime.lock'])
 })
 
 test('a live runtime always wins, however stale its lock looks', async t => {

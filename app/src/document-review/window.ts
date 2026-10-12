@@ -285,6 +285,17 @@ export class DocumentReviewWindows {
 				true,
 			),
 		)
+		ipcMain.handle('document-review:clear-empty-preferences', (event, token: unknown) =>
+			this.run(
+				event,
+				token,
+				state => {
+					this.requireWritable(state)
+					return { removed: state.drafts.discardEmptyPreferences() }
+				},
+				true,
+			),
+		)
 		ipcMain.handle('document-review:save', (event, token: unknown, raw: unknown) =>
 			this.run(
 				event,
@@ -685,7 +696,6 @@ export class DocumentReviewWindows {
 				sandbox: true,
 			},
 		})
-		const base = drafts.load(drafts.key(root, file, null))
 		const senderId = win.webContents.id
 		const state: WindowState = {
 			recoveryContext,
@@ -698,9 +708,8 @@ export class DocumentReviewWindows {
 			archive: recoveryContext?.archive ?? this.archiveFor(profileId, root, file, token).archive,
 			noteSave: false,
 			sessions,
-			selectedSession: recoveryContext
-				? null
-				: (sessionId ?? (sessions.list(root).some(value => value.id === base.sessionId) ? base.sessionId : null)),
+			// Persisted preferences are not an authenticated opening caller.
+			selectedSession: recoveryContext ? null : (sessionId ?? null),
 			dirty: false,
 			allowClose: false,
 			fileFlights: new Set(),

@@ -10,30 +10,36 @@ import type {
 
 // -- GraphQL queries/mutations --
 
-const LIST_NEW_TASKS = `
-query ListNewTasks($projectSlug: String!, $createdAfter: DateTime!, $statuses: [TaskStatus!]!) {
+function listNewTasksQuery(continuation: boolean): string {
+	return `
+query ListNewTasks($projectSlug: String!, $createdAfter: DateTime!, $createdThrough: DateTime!, $statuses: [TaskStatus!]!${continuation ? ', $afterId: UUID!' : ''}) {
   listTask(
     filter: {
       project: { slug: { eq: $projectSlug } }
-      createdAt: { gte: $createdAfter }
+      and: [
+        { createdAt: { lte: $createdThrough } }
+        ${
+					continuation
+						? `{ or: [
+          { createdAt: { gt: $createdAfter } }
+          { and: [{ createdAt: { eq: $createdAfter } }, { id: { gt: $afterId } }] }
+        ] }`
+						: '{ createdAt: { gte: $createdAfter } }'
+				}
+      ]
       archivedAt: { isNull: true }
       status: { in: $statuses }
     }
-    orderBy: [{ createdAt: asc }]
+    orderBy: [{ createdAt: asc }, { id: asc }]
     limit: 50
   ) {
     id
     title
-    status
-    priority
     createdAt
-    dueDate
-    timeEstimate
-    module { name }
-    project { id slug name repositoryUrl aiMode }
   }
 }
 `
+}
 
 const GET_TASK_SUMMARY = `
 query GetTaskSummary($taskId: UUID!) {
@@ -128,18 +134,42 @@ export class ContemberProvider implements TaskProvider {
 	}
 
 	async pollNewTasks(projectSlug: string, since: string): Promise<DiscoveredTask[]> {
-		const data = await this.query<{ listTask: RawTask[] }>(LIST_NEW_TASKS, {
-			projectSlug,
-			createdAfter: since,
-			statuses: this.statuses,
-		})
+		// Preserve the legacy bounded-array API; Poller uses the paged capability.
+		for await (const page of this.pollNewTaskPages(projectSlug, since)) return page
+		return []
+	}
 
-		return data.listTask.map(t => ({
-			externalId: t.id,
-			title: t.title,
-			createdAt: t.createdAt,
-			projectSlug,
-		}))
+	async *pollNewTaskPages(projectSlug: string, since: string, signal?: AbortSignal): AsyncIterable<DiscoveredTask[]> {
+		const createdThrough = new Date().toISOString()
+		let createdAfter = since
+		let afterId: string | undefined
+		while (true) {
+			signal?.throwIfAborted()
+			const data = await this.query<{ listTask: RawTask[] }>(
+				listNewTasksQuery(afterId !== undefined),
+				{
+					projectSlug,
+					createdAfter,
+					createdThrough,
+					statuses: this.statuses,
+					...(afterId === undefined ? {} : { afterId }),
+				},
+				signal,
+			)
+			signal?.throwIfAborted()
+			const last = data.listTask.at(-1)
+			if (!last) return
+			if (
+				afterId !== undefined &&
+				(last.createdAt < createdAfter || (last.createdAt === createdAfter && last.id <= afterId))
+			) {
+				throw new Error('Contember task page did not advance')
+			}
+			yield data.listTask.map(t => ({ externalId: t.id, title: t.title, createdAt: t.createdAt }))
+			if (data.listTask.length < 50) return
+			createdAfter = last.createdAt
+			afterId = last.id
+		}
 	}
 
 	async resolveTaskSummary(externalId: string): Promise<TaskSummary | null> {
@@ -280,10 +310,11 @@ export class ContemberProvider implements TaskProvider {
 
 	// -- Internal GraphQL --
 
-	private async query<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+	private async query<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
 		log.info('contember', `GraphQL → ${this.url}`, variables)
 		const res = await fetch(this.url, {
 			method: 'POST',
+			signal,
 			headers: {
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${this.token}`,
@@ -313,8 +344,6 @@ export class ContemberProvider implements TaskProvider {
 interface RawTask {
 	id: string
 	title: string
-	status: string
-	priority: string | null
 	createdAt: string
 }
 

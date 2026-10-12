@@ -20,11 +20,12 @@ import type { KnowledgeSnapshot } from '../knowledge/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 import type { TaskContext, TaskProvider } from '../providers/provider.js'
+import { assertAgentBudget } from '../solver/agent-adapter.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { sameFilesystemPath } from '../util/path-identity.js'
-import { createWorktree, excludeHelmFiles } from '../worktree/manager.js'
+import { assertWorkspaceReuse, createWorktree, excludeHelmFiles } from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
 
@@ -64,7 +65,8 @@ async function ensureItemWorktree(
 	branchName: string,
 	existingWorktreePath: string | undefined,
 ): Promise<string> {
-	if (existingWorktreePath && existsSync(existingWorktreePath)) {
+	if (existingWorktreePath) {
+		await assertWorkspaceReuse(projectConfig.repoPath, branchName, existingWorktreePath)
 		log.info('worker', `Reusing existing worktree: ${existingWorktreePath}`)
 		await excludeHelmFiles(existingWorktreePath)
 		return existingWorktreePath
@@ -109,11 +111,21 @@ async function detectShippableWork(
 	let prUrl: string | null = null
 	if (branchName) {
 		try {
-			const { stdout } = await execFileAsync('gh', ['pr', 'view', branchName, '--json', 'url', '-q', '.url'], {
+			const { stdout } = await execFileAsync('gh', ['pr', 'view', branchName, '--json', 'url,state'], {
+				cwd: worktreePath,
 				timeout: 10_000,
 			})
-			const trimmed = stdout.trim()
-			if (trimmed) prUrl = trimmed
+			const pr: unknown = JSON.parse(stdout)
+			if (
+				pr !== null &&
+				typeof pr === 'object' &&
+				'state' in pr &&
+				(pr.state === 'OPEN' || pr.state === 'MERGED') &&
+				'url' in pr &&
+				typeof pr.url === 'string' &&
+				pr.url.trim().length > 0
+			)
+				prUrl = pr.url.trim()
 		} catch {
 			// No PR (or gh unavailable) — committed work alone is enough to reconcile.
 		}
@@ -219,6 +231,10 @@ export async function processSolveItem(
 		const selectedModel = item.payload.kind === 'solve' ? item.payload.solverModel : undefined
 		const selectedEffort = item.payload.kind === 'solve' ? item.payload.solverEffort : undefined
 		const selectedWorkspace = item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined
+		assertAgentBudget(
+			{ ...config.solver, agent: selectedAgent ?? config.solver.agent },
+			config.solver.type === 'default' ? 'headless' : 'interactive',
+		)
 
 		// Source Items precompute cosmetic display names in ItemEnricher. Never put
 		// that optional model call on Start agent's hot path; an in-flight result can
@@ -290,6 +306,9 @@ export async function processSolveItem(
 			}
 		}
 		const preparedContext = prepareItemExecutionContext(named, executionContext)
+		if (!mainMode && existingWorktreePath) {
+			await assertWorkspaceReuse(projectConfig.repoPath, branchName, existingWorktreePath, workspaceMode)
+		}
 		if (mainMode) commands.recordExecutionWorkspaceIdentity(itemId, { planDirName, branchName: null })
 		const solverConfig = {
 			...config.solver,
@@ -472,6 +491,7 @@ export async function processLoopItem(
 	const outputLogPath = resolve(logRoot, `${itemId}.log`)
 
 	try {
+		assertAgentBudget(config.solver, 'loop')
 		beginItemKnowledgeAttempt(commands, item, admittedKnowledgeBinding)
 		let loopKnowledgeContext: string | null = null
 		let knowledgeSnapshot: KnowledgeSnapshot | null = null
@@ -529,7 +549,7 @@ export async function processLoopItem(
 			? projectConfig.repoPath
 			: await ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
 		if (mainMode) {
-			if (!existsSync(worktreePath)) throw phaseError('worktree', `Project checkout does not exist: ${worktreePath}`)
+			await assertWorkspaceReuse(projectConfig.repoPath, branchName, worktreePath, workspaceMode)
 			await excludeHelmFiles(worktreePath)
 		}
 		commands.recordExecutionWorkspaceIdentity(

@@ -8,6 +8,8 @@
 	"scripts": {
 		"build": "npm --prefix .. run build && node scripts/rebuild-native-window-zoom-guard.mjs && node scripts/build-document-canvas.mjs && tsc --noEmit && node build.mjs",
 		"start": "bun run build && bun run brand-electron && electron .",
+		"typecheck": "node scripts/build-document-canvas.mjs && tsc --noEmit",
+		"typecheck:storybook": "node scripts/build-document-canvas.mjs && tsc --noEmit -p .storybook/tsconfig.json",
 		"rebuild": "electron-rebuild -f -w node-pty && node scripts/rebuild-native-window-zoom-guard.mjs --force",
 		"rebuild-native-window-zoom": "node scripts/rebuild-native-window-zoom-guard.mjs --force",
 		"brand-electron": "node scripts/brand-macos-electron.mjs",

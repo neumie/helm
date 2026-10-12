@@ -744,3 +744,239 @@ test('startup tick durably disables a persisted due system schedule after system
 		rmSync(root, { recursive: true, force: true })
 	}
 })
+
+test('dead adopted close reconciles only its durable cancel intent, retaining adoption identity', async () => {
+	const root = mkdtempSync('/tmp/hsa-')
+	const previous = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = join(root, 'sockets')
+	const db = new DB(join(root, 'helm.db'), 'work')
+	let service: ScheduledRunService | undefined
+	try {
+		const commands = new ScheduleCommands(db.schedules)
+		let run = createRecoverableRun(db, commands, 'Adopted close crash', 'running')
+		run = commands.report(run.id, run.revision, 'needs_attention', 'Choose a target')
+		const identity = { adoptionId: randomUUID(), adopter: randomUUID() }
+		const reserved = commands.reserveAttentionAdoption(run.id, run.revision, identity)
+		assert.throws(() => commands.requestCancel(reserved.id, reserved.revision), /actively reserved/)
+		run = commands.recoverAttentionAdoptionCompletion(run.id, reserved.revision, identity, true)
+		assert.throws(() => commands.requestCancel(run.id, run.revision), /Electron owns finalization/)
+		assert.throws(
+			() =>
+				commands.requestCompletedAttentionClose(run.id, reserved.revision, {
+					...identity,
+					adopter: randomUUID(),
+				}),
+			/does not match/,
+		)
+		run = commands.requestCompletedAttentionClose(run.id, reserved.revision, identity)
+		run = commands.markQuarantined(run.id, run.revision, 'close interrupted')
+		const drainer = fakeDrainer()
+		drainer.reserveExternalSolve(run.id)
+		service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+		})
+		await service.start()
+		const resolved = db.schedules.requireRun(run.id)
+		assert.equal(resolved.state, 'cancelled')
+		assert.equal(resolved.pendingTerminalIntent, null)
+		assert.deepEqual(resolved.attentionAdoption, run.attentionAdoption)
+		assert.equal(drainer.reservations.size, 0)
+		assert.equal(service.restartBlockingRunCount(), 0)
+	} finally {
+		await service?.stop()
+		db.close()
+		if (previous === undefined) Reflect.deleteProperty(process.env, 'HELM_SCHEDULED_SOCKET_DIR')
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previous
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('restart retains uncertain bootstrap cleanup despite absent socket and never adopts or signals it', async () => {
+	const root = mkdtempSync('/tmp/hsb-')
+	const previous = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = join(root, 'sockets')
+	let db = new DB(join(root, 'helm.db'), 'work')
+	let service: ScheduledRunService | undefined
+	try {
+		const commands = new ScheduleCommands(db.schedules)
+		let run = createRecoverableRun(db, commands, 'Unattested master', 'running', {
+			processFingerprint: JSON.stringify({
+				phase: 'launch-cleanup',
+				executable: '/usr/bin/dtach',
+				bootstrap: {
+					pid: 422,
+					processGroupId: 422,
+					sessionId: 422,
+					startedAt: 'Mon Jan  1 00:00:00 2030',
+					executable: '/usr/bin/dtach',
+				},
+			}),
+		})
+		run = commands.markQuarantined(run.id, run.revision, 'Launch cleanup: master_identity_unavailable')
+		db.close()
+		db = new DB(join(root, 'helm.db'), 'work')
+		const drainer = fakeDrainer()
+		service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+			supervisor: {
+				teardown: async () => assert.fail('unattested bootstrap must not authorize signalling'),
+				attestLiveSession: async () => assert.fail('bootstrap must not authorize adoption'),
+				launch: async () => assert.fail('must not relaunch'),
+			} as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+		await service.start()
+		await service.reconcile()
+		assert.equal(db.schedules.requireRun(run.id).state, 'quarantined')
+		assert.equal(drainer.reservations.has(run.id), true)
+		assert.equal(drainer.releaseCalls, 0)
+		assert.equal(service.restartBlockingRunCount(), 1)
+	} finally {
+		await service?.stop()
+		db.close()
+		if (previous === undefined) Reflect.deleteProperty(process.env, 'HELM_SCHEDULED_SOCKET_DIR')
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previous
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('restart launch cleanup requires exact master teardown despite dead socket, retaining cancel intent', async () => {
+	const root = mkdtempSync('/tmp/hsm-')
+	const previous = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = join(root, 'sockets')
+	const db = new DB(join(root, 'helm.db'), 'work')
+	let service: ScheduledRunService | undefined
+	try {
+		const commands = new ScheduleCommands(db.schedules)
+		const fingerprint = {
+			pid: 523,
+			processGroupId: 523,
+			sessionId: 523,
+			startedAt: 'Mon Jan  1 00:00:01 2030',
+			executable: '/usr/bin/dtach',
+		}
+		const master = { ...fingerprint, socketHolder: fingerprint }
+		let run = createRecoverableRun(db, commands, 'Verified master cleanup', 'running', {
+			runDir: root,
+			processFingerprint: JSON.stringify({
+				phase: 'launch-cleanup',
+				bootstrap: null,
+				executable: master.executable,
+				master,
+			}),
+		})
+		run = commands.requestCancel(run.id, run.revision)
+		run = commands.markQuarantined(run.id, run.revision, 'Launch cleanup: master_teardown_unverified')
+		const drainer = fakeDrainer()
+		let result: 'quarantined' | 'already_dead' = 'quarantined'
+		let observations = 0
+		service = new ScheduledRunService(config, db, drainer as unknown as Drainer, {
+			profiles: () => [{ profile: { id: 'work', archivedAt: null }, rootDir: root } as unknown as ProfileRuntime],
+			hasResidentLease: () => false,
+			supervisor: {
+				teardown: async (profileId: string, sessionId: string, identity: unknown) => {
+					assert.equal(profileId, 'work')
+					assert.equal(sessionId, run.sessionId)
+					assert.deepEqual(identity, master)
+					observations++
+					return result
+				},
+			} as unknown as ScheduledRunServiceDeps['supervisor'],
+		})
+		await service.start()
+		assert.equal(db.schedules.requireRun(run.id).state, 'quarantined')
+		assert.equal(drainer.reservations.has(run.id), true)
+		assert.equal(drainer.releaseCalls, 0)
+		result = 'already_dead'
+		await service.reconcile()
+		assert.equal(observations, 2)
+		assert.equal(db.schedules.requireRun(run.id).state, 'cancelled')
+		assert.equal(db.schedules.requireRun(run.id).pendingTerminalIntent, null)
+		assert.equal(drainer.reservations.size, 0)
+		assert.equal(service.restartBlockingRunCount(), 0)
+	} finally {
+		await service?.stop()
+		db.close()
+		if (previous === undefined) Reflect.deleteProperty(process.env, 'HELM_SCHEDULED_SOCKET_DIR')
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previous
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('held launch cleanup hands off private quarantine without releasing capacity', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-scheduled-service-'))
+	const socketRoot = mkdtempSync('/tmp/helm-scheduled-sockets-')
+	const previousSocketRoot = process.env.HELM_SCHEDULED_SOCKET_DIR
+	process.env.HELM_SCHEDULED_SOCKET_DIR = socketRoot
+	try {
+		const db = new DB(join(root, 'helm.db'), 'work')
+		const commands = new ScheduleCommands(db.schedules, true)
+		const schedule = commands.create({
+			...scheduleInput,
+			definition: {
+				...definition,
+				target: { kind: 'system', riskAcknowledgement: 'broad-host-access' },
+			},
+		})
+		const launchStarted = deferred<void>()
+		const finishLaunch = deferred<void>()
+		const identity = {
+			pid: 123,
+			processGroupId: 123,
+			sessionId: 123,
+			startedAt: '2030-01-01T00:00:00.000Z',
+			executable: '/usr/bin/dtach',
+		}
+		const drainer = fakeDrainer()
+		const service = new ScheduledRunService(
+			{
+				...config,
+				scheduledRuns: { enabled: true, systemTargetsEnabled: true },
+			} as HelmConfig,
+			db,
+			drainer as unknown as Drainer,
+			{
+				profiles: () => [
+					{
+						profile: { id: 'work', archivedAt: null, enabledProjects: [] },
+						rootDir: root,
+					} as unknown as ProfileRuntime,
+				],
+				hasResidentLease: () => true,
+				reporterCommand: ['/usr/bin/true'],
+				supervisor: {
+					launch: async (input: Parameters<DtachSupervisor['launch']>[0]) => {
+						launchStarted.resolve()
+						await finishLaunch.promise
+						await input.onQuarantined?.({
+							state: 'quarantined',
+							reason: 'master_identity_unavailable',
+							launchCleanup: { phase: 'launch-cleanup', bootstrap: identity, executable: identity.executable },
+						})
+						throw new Error('launch failed')
+					},
+				} as unknown as DtachSupervisor,
+			},
+		)
+
+		const admission = assert.rejects(service.runNow('work', schedule.id), /launch failed/)
+		await launchStarted.promise
+		await service.reconcile()
+		finishLaunch.resolve()
+
+		await admission
+		await service.reconcile()
+		const run = db.schedules.findActiveRun(schedule.id)
+		assert.equal(run?.state, 'quarantined')
+		assert.equal(JSON.parse(run?.processFingerprint ?? 'null')?.phase, 'launch-cleanup')
+		assert.equal(drainer.reservations.size, 1)
+		assert.equal(drainer.releaseCalls, 0)
+		await service.stop()
+	} finally {
+		if (previousSocketRoot === undefined) Reflect.deleteProperty(process.env, 'HELM_SCHEDULED_SOCKET_DIR')
+		else process.env.HELM_SCHEDULED_SOCKET_DIR = previousSocketRoot
+		rmSync(socketRoot, { recursive: true, force: true })
+		rmSync(root, { recursive: true, force: true })
+	}
+})

@@ -11,6 +11,7 @@ import type { KnowledgeIntegration } from '../knowledge/integration.js'
 import type { KnowledgeStore } from '../knowledge/store.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskProvider } from '../providers/provider.js'
+import { assertAgentBudget } from '../solver/agent-adapter.js'
 import type { SolverAgent } from '../solver/agent.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 import type { SpawnerName } from '../spawner/registry.js'
@@ -143,6 +144,11 @@ export class PlanningApplication {
 		if (!isItemAssigned(item)) throw new PlanningError('not_plannable', 'Assign a project before planning this Item')
 		const projectConfig = this.config.projects.find(project => project.slug === item.projectSlug)
 		if (!projectConfig) throw new PlanningError('unknown_project', `Unknown project slug: ${item.projectSlug}`)
+		try {
+			assertAgentBudget({ ...this.config.solver, agent: input.solverAgent ?? this.config.solver.agent }, 'interactive')
+		} catch (error) {
+			throw new PlanningError('not_plannable', error instanceof Error ? error.message : String(error))
+		}
 		const admittedKnowledgeBinding = this.knowledge?.bindingFor(item.profileId, item.projectSlug) ?? null
 		const workspaceMode =
 			input.solverWorkspace ??
@@ -268,6 +274,7 @@ export class PlanningApplication {
 			let session: PlanningSessionResult
 			try {
 				session = await spawner.startPlanningSession({
+					workspaceMode,
 					projectConfig: { ...projectConfig, baseBranch: identity.baseRef },
 					itemId: item.id,
 					branchName: identity.branchName,
@@ -310,6 +317,10 @@ export class PlanningApplication {
 					signal: input.signal,
 				})
 			} catch (err) {
+				// An adapter may prepare a workspace/automatic terminal before readiness.
+				// Accept only its literal own evidence, never invoke a getter/readiness to mark it.
+				sessionMayExist ||=
+					err instanceof Error && Object.getOwnPropertyDescriptor(err, 'sessionMayExist')?.value === true
 				// Cancellation remains the primary truth even if an adapter observes it
 				// after creating a session; the caller still gets the honest hint.
 				if (isCancellation(err, input.signal)) throw new PlanningError('cancelled', 'Request aborted', sessionMayExist)

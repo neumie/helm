@@ -1,4 +1,4 @@
-import { constants as fsConstants } from 'node:fs'
+import { type Stats, constants as fsConstants } from 'node:fs'
 import { type FileHandle, lstat, open, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import { KnowledgeProviderError } from './provider.js'
@@ -12,10 +12,10 @@ export interface HoldCapability {
 
 export async function readPrivateHoldCapability(path: string): Promise<HoldCapability> {
 	const absolute = requireAbsolute(path, 'capability')
-	await assertPrivateAncestorChain(dirname(absolute), 'capability')
+	const checkParents = await assertPrivateAncestorChain(dirname(absolute), 'capability')
 	let handle: FileHandle
 	try {
-		handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW)
+		handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)
 	} catch {
 		throw new KnowledgeProviderError('configuration', 'Knowledge provider credential is unavailable', false)
 	}
@@ -25,7 +25,25 @@ export async function readPrivateHoldCapability(path: string): Promise<HoldCapab
 		if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || (stat.mode & 0o077) !== 0 || stat.size > 256) {
 			throw new KnowledgeProviderError('configuration', 'Knowledge provider credential file is unsafe', false)
 		}
-		const token = (await handle.readFile({ encoding: 'utf8' })).trim()
+		const bytes = Buffer.alloc(257)
+		let length = 0
+		while (length < bytes.length) {
+			const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length)
+			if (bytesRead === 0) break
+			length += bytesRead
+		}
+		const after = await handle.stat()
+		const current = await lstat(absolute)
+		await checkParents()
+		if (length > 256 || !sameCredential(stat, after) || !sameCredential(stat, current)) {
+			throw new KnowledgeProviderError('configuration', 'Knowledge provider credential changed or is oversized', false)
+		}
+		let token: string
+		try {
+			token = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length)).trim()
+		} catch {
+			throw new KnowledgeProviderError('configuration', 'Knowledge provider credential is invalid', false)
+		}
 		const match = HOLD_CAPABILITY_PATTERN.exec(token)
 		if (!match || Buffer.from(match[2], 'base64url').byteLength !== 32) {
 			throw new KnowledgeProviderError('configuration', 'Knowledge provider credential is invalid', false)
@@ -53,7 +71,8 @@ function requireAbsolute(path: string, label: string): string {
 	return resolve(path)
 }
 
-async function assertPrivateAncestorChain(path: string, label: string): Promise<void> {
+async function assertPrivateAncestorChain(path: string, label: string): Promise<() => Promise<void>> {
+	const entries: Array<{ path: string; stat: Stats; canonical: string }> = []
 	const root = parse(path).root
 	const segments = relative(root, path).split(sep).filter(Boolean)
 	let cursor = root
@@ -63,6 +82,7 @@ async function assertPrivateAncestorChain(path: string, label: string): Promise<
 		if (!stat) {
 			throw new KnowledgeProviderError('configuration', `Knowledge provider ${label} parent is unsafe`, false)
 		}
+		entries.push({ path: cursor, stat, canonical: await realpath(cursor) })
 		if (stat.isSymbolicLink()) {
 			if (await isTrustedDarwinSystemAlias(cursor, stat.uid)) continue
 			throw new KnowledgeProviderError('configuration', `Knowledge provider ${label} parent is unsafe`, false)
@@ -82,6 +102,19 @@ async function assertPrivateAncestorChain(path: string, label: string): Promise<
 	if (immediate.uid !== currentUid() || (immediate.mode & 0o077) !== 0) {
 		throw new KnowledgeProviderError('configuration', `Knowledge provider ${label} parent must be owner-private`, false)
 	}
+	return async () => {
+		for (const entry of entries) {
+			const now = await lstat(entry.path)
+			if (
+				now.dev !== entry.stat.dev ||
+				now.ino !== entry.stat.ino ||
+				now.mode !== entry.stat.mode ||
+				now.uid !== entry.stat.uid ||
+				(await realpath(entry.path)) !== entry.canonical
+			)
+				throw new KnowledgeProviderError('configuration', `Knowledge provider ${label} parent changed`, false)
+		}
+	}
 }
 
 async function isTrustedDarwinSystemAlias(path: string, uid: number): Promise<boolean> {
@@ -96,4 +129,17 @@ function currentUid(): number {
 	if (uid === undefined)
 		throw new KnowledgeProviderError('configuration', 'Knowledge provider ownership checks are unsupported', false)
 	return uid
+}
+
+function sameCredential(a: Stats, b: Stats): boolean {
+	return (
+		a.dev === b.dev &&
+		a.ino === b.ino &&
+		a.size === b.size &&
+		a.mtimeMs === b.mtimeMs &&
+		a.ctimeMs === b.ctimeMs &&
+		a.mode === b.mode &&
+		a.nlink === b.nlink &&
+		a.uid === b.uid
+	)
 }

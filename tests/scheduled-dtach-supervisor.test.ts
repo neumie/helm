@@ -278,37 +278,64 @@ test('onSpawned failure cleans up the discovered master instead of returning an 
 	}
 })
 
-test('readiness timeout cleans up a still-owned bootstrap launcher', async () => {
+test('readiness timeout waits for bootstrap death but still quarantines uncertain daemonization', async () => {
 	const root = mkdtempSync('/tmp/hst-')
-	const sessionId = scheduledSessionId('timeout')
 	const signals: NodeJS.Signals[] = []
+	const quarantines: unknown[] = []
+	let releaseObservation!: () => void
+	let observed!: () => void
+	const held = new Promise<void>(resolve => {
+		releaseObservation = resolve
+	})
+	const entered = new Promise<void>(resolve => {
+		observed = resolve
+	})
+	let inspections = 0
 	try {
 		const supervisor = new DtachSupervisor({
 			inspectProcess: async () => launcher,
+			findSocketHolders: async () => [],
 			probe: async () => 'dead',
 			resolveExecutable: async () => launcher.executable,
-			spawn: () => ({ pid: launcher.pid, once: () => undefined, unref: () => {} }),
+			spawn: () => ({ pid: launcher.pid, once: () => undefined }),
+			inspectOwnership: async () => {
+				if (++inspections === 1) return 'verified'
+				observed()
+				await held
+				return 'dead'
+			},
 			signalGroup: (_group, signal) => void signals.push(signal),
-			sleep: async () => {},
+			unlink: async () => {},
 		})
-		await assert.rejects(
-			supervisor.launch({
-				profileId: 'work',
-				sessionId,
-				socketRoot: root,
-				dtachBinary: 'dtach',
-				hostCommand: 'node',
-				hostArgs: [],
-				cwd: root,
-				env: {},
-				diagnosticPath: diagnostic,
-				onSpawned: () => {},
-				readinessTimeoutMs: 0,
-			}),
-			/did not become ready/,
-		)
+		const launching = supervisor.launch({
+			profileId: 'work',
+			sessionId: scheduledSessionId('timeout'),
+			socketRoot: root,
+			dtachBinary: 'dtach',
+			hostCommand: 'node',
+			hostArgs: [],
+			cwd: root,
+			env: {},
+			diagnosticPath: diagnostic,
+			onSpawned: () => {},
+			readinessTimeoutMs: 0,
+			onQuarantined: value => void quarantines.push(value),
+		})
+		const rejected = assert.rejects(launching, /did not become ready/)
+		await entered
 		assert.deepEqual(signals, ['SIGTERM'])
+		assert.deepEqual(quarantines, [])
+		releaseObservation()
+		await rejected
+		assert.deepEqual(quarantines, [
+			{
+				state: 'quarantined',
+				reason: 'master_identity_unavailable',
+				launchCleanup: { phase: 'launch-cleanup', bootstrap: launcher, executable: launcher.executable },
+			},
+		])
 	} finally {
+		releaseObservation?.()
 		rmSync(root, { recursive: true, force: true })
 	}
 })
@@ -390,7 +417,17 @@ test('unknown cleanup probe quarantines a rediscovered master through the typed 
 		)
 		assert.deepEqual(signals, [])
 		assert.deepEqual(quarantines, [
-			{ state: 'quarantined', reason: 'master_teardown_unverified', identity: { ...master, socketHolder: master } },
+			{
+				state: 'quarantined',
+				reason: 'master_teardown_unverified',
+				identity: { ...master, socketHolder: master },
+				launchCleanup: {
+					phase: 'launch-cleanup',
+					bootstrap: null,
+					executable: master.executable,
+					master: { ...master, socketHolder: master },
+				},
+			},
 		])
 	} finally {
 		rmSync(root, { recursive: true, force: true })
@@ -431,7 +468,17 @@ test('mismatched rediscovered master is quarantined without signaling its proces
 		)
 		assert.deepEqual(signals, [])
 		assert.deepEqual(quarantines, [
-			{ state: 'quarantined', reason: 'master_teardown_unverified', identity: { ...master, socketHolder: master } },
+			{
+				state: 'quarantined',
+				reason: 'master_teardown_unverified',
+				identity: { ...master, socketHolder: master },
+				launchCleanup: {
+					phase: 'launch-cleanup',
+					bootstrap: null,
+					executable: master.executable,
+					master: { ...master, socketHolder: master },
+				},
+			},
 		])
 	} finally {
 		rmSync(root, { recursive: true, force: true })
@@ -444,6 +491,8 @@ test('launch races socket readiness with asynchronous spawn error', async () => 
 		let errorListener: ((error: unknown) => void) | undefined
 		const supervisor = new DtachSupervisor({
 			inspectProcess: async () => launcher,
+			findSocketHolders: async () => [],
+			inspectOwnership: async () => 'unknown',
 			probe: async () => 'dead',
 			resolveExecutable: async () => launcher.executable,
 			spawn: () => ({
@@ -561,3 +610,53 @@ test('derived launch namespace cannot be redirected by a profile symlink', async
 		rmSync(outside, { recursive: true, force: true })
 	}
 })
+
+for (const after of ['term', 'kill', 'mismatch'] as const) {
+	test(`failed-launch master cleanup honors final ${after} observation`, async t => {
+		const root = mkdtempSync('/tmp/hsm-')
+		t.after(() => rmSync(root, { recursive: true, force: true }))
+		const sessionId = scheduledSessionId(`cleanup-${after}`)
+		const socket = scheduledSocketPath('work', sessionId, root)
+		const signals: NodeJS.Signals[] = []
+		const quarantines: unknown[] = []
+		const states: Array<'verified' | 'mismatch' | 'dead'> =
+			after === 'term'
+				? ['verified', 'mismatch', 'dead']
+				: after === 'kill'
+					? ['verified', 'verified', 'verified', 'mismatch', 'dead']
+					: ['mismatch']
+		// Advance only the bounded teardown waits, without a real five-second delay.
+		let now = Date.now()
+		t.mock.method(Date, 'now', () => now)
+		const supervisor = new DtachSupervisor({
+			...readyDeps(() => socket),
+			probe: async () => 'dead',
+			spawn: () => ({ pid: launcher.pid, once: () => undefined }),
+			inspectOwnership: async () => states.shift() ?? 'mismatch',
+			signalGroup: (_group, signal) => void signals.push(signal),
+			sleep: async () => {
+				now += 5_001
+			},
+			unlink: async () => {},
+		})
+		await assert.rejects(
+			supervisor.launch({
+				profileId: 'work',
+				sessionId,
+				socketRoot: root,
+				dtachBinary: 'dtach',
+				hostCommand: 'node',
+				hostArgs: [],
+				cwd: root,
+				env: {},
+				diagnosticPath: diagnostic,
+				onSpawned: () => {},
+				readinessTimeoutMs: 0,
+				onQuarantined: value => void quarantines.push(value),
+			}),
+			/did not become ready/,
+		)
+		assert.deepEqual(signals, after === 'term' ? ['SIGTERM'] : after === 'kill' ? ['SIGTERM', 'SIGKILL'] : [])
+		assert.equal(quarantines.length, after === 'mismatch' ? 1 : 0)
+	})
+}

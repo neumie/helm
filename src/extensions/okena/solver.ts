@@ -47,12 +47,15 @@ export class OkenaSolver implements Solver {
 					branchName,
 					existingWorktreePath,
 				)
+		if (signal?.aborted) throw taskCancelled()
 		const worktreePath = ensured.worktreePath
 		// Readiness must complete before terminal lookup/creation or any prompt work.
 		const taskContext = params.onWorktreeReady(worktreePath)
 		// Solve always runs in its own fresh terminal — never the user's planning
 		// terminal. Use the auto-created terminal only for a brand-new worktree.
+		if (signal?.aborted) throw taskCancelled()
 		const terminalId = ensured.autoTerminalId ?? (await worktrees.createTerminal(ensured.wtProjectId))
+		if (signal?.aborted) throw taskCancelled()
 		if (!terminalId) {
 			throw phaseError('worktree', 'Failed to create terminal for solve')
 		}
@@ -68,6 +71,8 @@ export class OkenaSolver implements Solver {
 			// Non-critical
 		}
 
+		if (signal?.aborted) throw taskCancelled()
+
 		// Build the prompt now so the task-context builder sees any
 		// docs/plans/<planDirName>/ artifacts present in the worktree.
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
@@ -78,6 +83,7 @@ export class OkenaSolver implements Solver {
 		const promptFile = join(worktreePath, '.helm-prompt.txt')
 		// Main mode swaps the prompt's branch rules: the agent must branch itself.
 		const currentBranch = mainMode ? await getCurrentBranch(worktreePath) : null
+		if (signal?.aborted) throw taskCancelled()
 		const solverPrompt = buildPrompt(
 			taskContext,
 			{ planDirName, worktreePath },
@@ -85,6 +91,7 @@ export class OkenaSolver implements Solver {
 			mainMode ? { mode: 'main', currentBranch } : undefined,
 		)
 		params.onPromptSnapshot?.(solverPrompt)
+		if (signal?.aborted) throw taskCancelled()
 		writeFileSync(promptFile, solverPrompt, 'utf-8')
 
 		const command = buildInteractiveAgentCommand(solverConfig, '.helm-prompt.txt', worktreePath, params.solverEffort)
@@ -93,8 +100,9 @@ export class OkenaSolver implements Solver {
 		try {
 			// Solve always uses a fresh/auto terminal — let it settle and clear the
 			// prompt line so leftover input can't merge into the command.
-			await client.runCommand(terminalId, command, { freshTerminal: true })
+			await client.runCommand(terminalId, command, { freshTerminal: true, signal })
 		} catch (err) {
+			if (signal?.aborted) throw taskCancelled()
 			throw phaseError('solve', `Failed to run command in Okena terminal: ${err instanceof Error ? err.message : err}`)
 		}
 

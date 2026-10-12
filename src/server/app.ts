@@ -64,7 +64,7 @@ export function createApp(
 
 	app.route(
 		'/api',
-		apiRoutes(
+		apiRoutes({
 			config,
 			configPath,
 			db,
@@ -73,14 +73,9 @@ export function createApp(
 			provider,
 			spawner,
 			enricher,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
-			undefined,
 			profileContext,
 			scheduledRestartBlocker,
-		),
+		}),
 	)
 
 	// Any unmatched /api/* request returns JSON, never HTML — a stale/mismatched

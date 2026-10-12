@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { after, test } from 'node:test'
@@ -1207,3 +1207,167 @@ test(
 		}
 	},
 )
+
+for (const retired of [false, true]) {
+	test(
+		`native read-only reopen ignores saved ${retired ? 'retired' : 'connected'} caller preference`,
+		{ skip: !compositionAvailable },
+		async () => {
+			const f = await nativeFixture()
+			try {
+				const initial = await f.snapshot()
+				assert.equal(initial.draft.sessionId, f.session.id)
+				const { archiveRevision: _archiveRevision, ...privateDraft } = initial.draft
+				assert.equal((await f.invoke('save', { ...privateDraft, paneWidth: 420 })).data, true)
+				assert.equal(f.window().close(), true)
+				if (retired) f.sessions.disconnect(f.session.id, f.session.owner)
+				await f.reopen()
+				const unbound = await f.snapshot()
+				assert.equal(unbound.draft.sessionId, null)
+				assert.equal(unbound.draft.paneWidth, 420)
+				// A persisted pointer must not authorize sending to the old caller.
+				const request = {
+					...makeRequest(),
+					documentId: unbound.document.id,
+					revision: unbound.document.revision,
+					sessionId: f.session.id,
+					owner: f.session.owner,
+					passage: null,
+				}
+				assert.ok((await f.invoke('send', request)).error)
+				const replacement = f.manager.connectCaller('pi', f.root, 'Explicit replacement', 'in-process')
+				await f.manager.openForCaller(f.file, 'current', 'profile', replacement.id, replacement.owner)
+				assert.equal((await f.snapshot()).draft.sessionId, replacement.id)
+				// Native focus/reuse preserves an already legitimate binding.
+				await f.reopen()
+				assert.equal((await f.snapshot()).draft.sessionId, replacement.id)
+				assert.equal(f.window().close(), true)
+				await f.manager.openForCaller(f.file, 'current', 'profile', replacement.id, replacement.owner)
+				f.useLatestWindow()
+				assert.equal((await f.snapshot()).draft.sessionId, replacement.id)
+			} finally {
+				await f.close()
+			}
+		},
+	)
+}
+
+test(
+	'native empty-preference cleanup authenticates current frame/token and returns only a count',
+	{ skip: !compositionAvailable },
+	async () => {
+		const f = await nativeFixture()
+		try {
+			const { archiveRevision: _archiveRevision, ...draft } = (await f.snapshot()).draft
+			assert.equal((await f.invoke('save', { ...draft, instruction: 'Retain caller text' })).data, true)
+			const privateFile = join(f.root, '.private', 'document-review-drafts.json')
+			const original = await readFile(privateFile)
+			const source = await readFile(f.file)
+			const callers = f.sessions.list(f.root)
+			const handler = handlers.get('document-review:clear-empty-preferences')
+			assert.ok(handler)
+			const contents = f.window().webContents
+			for (const [event, token] of [
+				[{ sender: contents, senderFrame: contents.mainFrame }, 'stale'],
+				[{ sender: contents, senderFrame: {} }, 'current'],
+				[{ sender: { ...contents }, senderFrame: contents.mainFrame }, 'current'],
+			] as const) {
+				assert.ok(((await handler(event, token)) as ReviewResult<{ removed: number }>).error)
+				assert.deepEqual(await readFile(privateFile), original)
+			}
+			// The already-captured frame is invalidated before the admitted microtask runs.
+			const pending = f.invoke('clear-empty-preferences')
+			f.window().reloadFrame()
+			assert.ok((await pending).error)
+			assert.deepEqual(await readFile(privateFile), original)
+			f.setRendererAdmission(false)
+			assert.ok((await f.invoke('clear-empty-preferences')).error)
+			f.setRendererAdmission(true)
+			assert.deepEqual(await f.invoke('clear-empty-preferences'), { data: { removed: 1 } })
+			assert.deepEqual(await f.invoke('clear-empty-preferences'), { data: { removed: 0 } })
+			assert.equal((await f.snapshot()).draft.instruction, 'Retain caller text')
+			assert.deepEqual(await readFile(f.file), source)
+			assert.deepEqual(f.sessions.list(f.root), callers)
+		} finally {
+			await f.close()
+		}
+	},
+)
+
+for (const boundary of ['dispose', 'admission'] as const) {
+	test(
+		`native empty-preference cleanup refuses ${boundary} before mutation`,
+		{ skip: !compositionAvailable },
+		async () => {
+			const f = await nativeFixture()
+			try {
+				const { archiveRevision: _archiveRevision, ...draft } = (await f.snapshot()).draft
+				assert.equal((await f.invoke('save', draft)).data, true)
+				const privateFile = join(f.root, '.private', 'document-review-drafts.json')
+				const original = await readFile(privateFile)
+				const pending = f.invoke('clear-empty-preferences')
+				const draining = boundary === 'admission' ? f.manager.stopOwned() : null
+				if (boundary === 'dispose') f.window().destroy()
+				assert.ok((await pending).error)
+				await draining
+				assert.deepEqual(await readFile(privateFile), original)
+			} finally {
+				await f.close()
+			}
+		},
+	)
+}
+
+test(
+	'native empty-preference cleanup reports persistence failure without losing scopes',
+	{ skip: !compositionAvailable },
+	async () => {
+		const f = await nativeFixture()
+		try {
+			const { archiveRevision: _archiveRevision, ...draft } = (await f.snapshot()).draft
+			assert.equal((await f.invoke('save', { ...draft, paneWidth: 420 })).data, true)
+			const folder = join(f.root, '.private')
+			const privateFile = join(folder, 'document-review-drafts.json')
+			const original = await readFile(privateFile)
+			await chmod(folder, 0o755)
+			const result = await f.invoke('clear-empty-preferences')
+			assert.ok(result.error)
+			assert.equal(result.data, undefined)
+			assert.deepEqual(await readFile(privateFile), original)
+			assert.equal((await f.snapshot()).draft.paneWidth, 420)
+			await chmod(folder, 0o700)
+			assert.deepEqual(await f.invoke('clear-empty-preferences'), { data: { removed: 2 } })
+		} finally {
+			await f.close()
+		}
+	},
+)
+
+for (const failing of [false, true]) {
+	test(
+		`native empty-preference cleanup rechecks identity before returning ${failing ? 'failure' : 'success'}`,
+		{ skip: !compositionAvailable },
+		async () => {
+			const f = await nativeFixture()
+			try {
+				const { archiveRevision: _archiveRevision, ...draft } = (await f.snapshot()).draft
+				assert.equal((await f.invoke('save', draft)).data, true)
+				const folder = join(f.root, '.private')
+				const privateFile = join(folder, 'document-review-drafts.json')
+				const original = await readFile(privateFile)
+				if (failing) await chmod(folder, 0o755)
+				const pending = f.invoke('clear-empty-preferences')
+				// The synchronous effect runs first; retire access before run() publishes its reply.
+				await Promise.resolve()
+				f.setRendererAdmission(false)
+				assert.deepEqual(await pending, { error: 'This review is no longer current. Reopen it in the active profile.' })
+				if (failing) assert.deepEqual(await readFile(privateFile), original)
+				else assert.deepEqual(JSON.parse(await readFile(privateFile, 'utf8')), {})
+				f.setRendererAdmission(true)
+				if (failing) await chmod(folder, 0o700)
+			} finally {
+				await f.close()
+			}
+		},
+	)
+}

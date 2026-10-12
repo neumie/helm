@@ -98,7 +98,7 @@ test('closed-shadow dirty Start saves once with returned revision and frozen sel
 	expect(calls[0].body).toEqual({ revision: 2, text: 'Edited operator narrative' })
 	expect(calls[1].body.expectedRunContextRevision).toBe(3)
 	expect(new Set(calls.map(call => call.origin)).size).toBe(1)
-	await page.screenshot({ path: '/tmp/helm-interface-redesign-20260910/finish/widget-running.png' })
+	await page.screenshot({ path: test.info().outputPath('widget-running.png') })
 })
 
 test('late Save cannot publish or Start after source identity changes', async ({ page }) => {
@@ -249,7 +249,7 @@ test('narrow three-agent controls, custom model, More keyboard and IME admission
 	expect(await page.evaluate(() => window.extensionWorkbench.calls.filter(call => call.method !== 'GET').length)).toBe(
 		0,
 	)
-	await page.screenshot({ path: '/tmp/helm-interface-redesign-20260910/finish/widget-narrow.png' })
+	await page.screenshot({ path: test.info().outputPath('widget-narrow.png') })
 })
 
 for (const boundary of ['origin', 'profile'] as const)

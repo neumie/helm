@@ -64,7 +64,13 @@ test('terminal, session, and buffer handlers gate mutable access during a profil
 		)
 	}
 	assert.match(main, /profileSwitchCoordinator\?\.stop\(\)/)
-	assert.match(main, /while \(activeProfileSwitch\)/)
+	const routeDestination = main.slice(
+		main.indexOf('async function routeDestination'),
+		main.indexOf('function enqueueDestination'),
+	)
+	assert.match(routeDestination, /await pending/)
+	assert.equal([...routeDestination.matchAll(/profileSwitchCoordinator\?\.pendingOperation\(\)/g)].length, 2)
+	assert.doesNotMatch(main, /activeProfileSwitch/)
 })
 
 test('run-context preload remains restricted to its editor capability', () => {

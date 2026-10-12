@@ -137,32 +137,90 @@ function visionMediaType(url: string, contentType: string | null): string | null
 	return null
 }
 
+interface AssessmentImageDownloadDeps {
+	fetch?: typeof fetch
+	isSafePublicHttpUrl?: typeof isSafePublicHttpUrl
+}
+
+function discardImageBody(body: ReadableStream<Uint8Array> | null): void {
+	// Disposal must not extend the absolute deadline if a source stalls cancellation.
+	void body?.cancel().catch(() => {})
+}
+
+async function awaitImageOperation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+	let onAbort = () => {}
+	const aborted = new Promise<never>((_, reject) => {
+		onAbort = () => reject(signal.reason)
+		signal.addEventListener('abort', onAbort, { once: true })
+		if (signal.aborted) onAbort()
+	})
+	try {
+		return await Promise.race([operation, aborted])
+	} finally {
+		signal.removeEventListener('abort', onAbort)
+	}
+}
+
 /**
  * Fetch an image from an ATTACKER-INFLUENCED task URL. SSRF-guarded: the host
  * must resolve to a public address (`isSafePublicHttpUrl`), redirects are
  * followed MANUALLY so each hop is re-validated (a redirect can aim back at an
  * internal address), and the response must be a small image. Any failure → null.
  */
-async function fetchOneImage(url: string, signal?: AbortSignal): Promise<OneShotImage | null> {
+async function fetchOneImage(
+	url: string,
+	signal: AbortSignal | undefined,
+	deps: AssessmentImageDownloadDeps,
+): Promise<OneShotImage | null> {
 	const timeout = AbortSignal.timeout(IMAGE_FETCH_TIMEOUT_MS)
 	const fetchSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+	const download = deps.fetch ?? fetch
+	const safeUrl = deps.isSafePublicHttpUrl ?? isSafePublicHttpUrl
 	let current = url
 	try {
 		for (let hop = 0; hop <= MAX_IMAGE_REDIRECTS; hop++) {
-			if (!(await isSafePublicHttpUrl(current))) return null
-			const res = await fetch(current, { signal: fetchSignal, redirect: 'manual' })
-			if (res.status >= 300 && res.status < 400) {
-				const loc = res.headers.get('location')
-				if (!loc) return null
-				current = new URL(loc, current).href // re-validated at the top of the next hop
-				continue
+			fetchSignal.throwIfAborted()
+			if (!(await awaitImageOperation(safeUrl(current), fetchSignal))) return null
+			fetchSignal.throwIfAborted()
+			const response = download(current, { signal: fetchSignal, redirect: 'manual' }).then(res => {
+				// A dependency may settle after cancellation; it still owns a body to dispose.
+				if (fetchSignal.aborted) discardImageBody(res.body)
+				return res
+			})
+			const res = await awaitImageOperation(response, fetchSignal)
+			try {
+				fetchSignal.throwIfAborted()
+				if (res.status >= 300 && res.status < 400) {
+					const loc = res.headers.get('location')
+					if (!loc) return null
+					current = new URL(loc, current).href // re-validated at the top of the next hop
+					continue
+				}
+				if (!res.ok) return null
+				const mediaType = visionMediaType(current, res.headers.get('content-type'))
+				if (!mediaType || !res.body) return null
+				if (Number(res.headers.get('content-length')) > MAX_IMAGE_BYTES) return null
+				const reader = res.body.getReader()
+				try {
+					// One fixed backing store per admitted image, not a retained chunk list.
+					const buf = Buffer.allocUnsafe(MAX_IMAGE_BYTES)
+					let length = 0
+					while (true) {
+						const { done, value } = await awaitImageOperation(reader.read(), fetchSignal)
+						fetchSignal.throwIfAborted()
+						if (done) break
+						if (value.byteLength > MAX_IMAGE_BYTES - length) return null
+						buf.set(value, length)
+						length += value.byteLength
+					}
+					return length === 0 ? null : { data: buf.toString('base64', 0, length), mediaType }
+				} finally {
+					void reader.cancel().catch(() => {})
+					reader.releaseLock()
+				}
+			} finally {
+				if (!res.body?.locked) discardImageBody(res.body)
 			}
-			if (!res.ok) return null
-			const mediaType = visionMediaType(current, res.headers.get('content-type'))
-			if (!mediaType) return null
-			const buf = Buffer.from(await res.arrayBuffer())
-			if (buf.length === 0 || buf.length > MAX_IMAGE_BYTES) return null
-			return { data: buf.toString('base64'), mediaType }
 		}
 		return null // too many redirects
 	} catch {
@@ -177,16 +235,20 @@ async function fetchOneImage(url: string, signal?: AbortSignal): Promise<OneShot
  * Fully best-effort: any failure yields fewer/no images and triage degrades to
  * text-only.
  */
-async function fetchAssessmentImages(ctx: TaskContext, signal?: AbortSignal): Promise<OneShotImage[]> {
+export async function fetchAssessmentImages(
+	ctx: TaskContext,
+	signal?: AbortSignal,
+	deps: AssessmentImageDownloadDeps = {},
+): Promise<OneShotImage[]> {
 	const urls: string[] = []
 	const add = (url: string | undefined) => {
-		if (url && /^https?:\/\//i.test(url) && !urls.includes(url)) urls.push(url)
+		if (urls.length < MAX_ASSESSMENT_IMAGES && url && /^https?:\/\//i.test(url) && !urls.includes(url)) urls.push(url)
 	}
 	for (const a of ctx.attachments ?? []) add(a.url)
 	for (const b of ctx.descriptionBlocks ?? []) if (b.type === 'image') add(b.url)
 	const picked = urls.slice(0, MAX_ASSESSMENT_IMAGES)
 	if (picked.length === 0) return []
-	const fetched = await Promise.all(picked.map(u => fetchOneImage(u, signal)))
+	const fetched = await Promise.all(picked.map(u => fetchOneImage(u, signal, deps)))
 	return fetched.filter((x): x is OneShotImage => x !== null)
 }
 

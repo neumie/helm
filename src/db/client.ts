@@ -37,12 +37,25 @@ function currentVersion(db: Database.Database): number {
 	}
 }
 
-function migrateConnection(db: Database.Database): void {
+/** SQL changes and their version marker share one commit, including table rebuilds. */
+export function migrateConnection(db: Database.Database): void {
+	if (db.inTransaction) throw new Error('Schema migrations require an idle SQLite connection')
 	const version = currentVersion(db)
 	for (const migration of MIGRATIONS) {
 		if (migration.version <= version) continue
-		db.exec(migration.sql)
-		db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(migration.version)
+		const foreignKeys = db.pragma('foreign_keys', { simple: true }) as number
+		try {
+			if (migration.disableForeignKeys) db.pragma('foreign_keys = OFF')
+			db.transaction(() => {
+				db.exec(migration.sql)
+				if (migration.disableForeignKeys && (db.pragma('foreign_key_check') as unknown[]).length > 0) {
+					throw new Error(`Migration ${migration.version} foreign-key validation failed`)
+				}
+				db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)').run(migration.version)
+			})()
+		} finally {
+			if (migration.disableForeignKeys) db.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`)
+		}
 	}
 }
 

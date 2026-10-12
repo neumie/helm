@@ -6,6 +6,9 @@ import type {
 	ReviewCanvasCompilation,
 } from '../../document-review/types'
 
+import { canvasInputTypes, canvasTags, isCanvasScalarProp, isCanvasStyle } from './canvas-vocabulary'
+export { canvasTags } from './canvas-vocabulary'
+
 export function canvasSourceBlock(
 	compilation: ReviewCanvasCompilation | undefined,
 	id: string,
@@ -51,33 +54,6 @@ export function validateCanvasValues(value: unknown): string[] {
 	})
 }
 
-export const canvasTags = new Set(
-	'div span p h1 h2 h3 h4 h5 h6 section article header footer main aside nav ul ol li strong em b i small code pre blockquote br hr table thead tbody tr th td button label input textarea select option fieldset legend output'.split(
-		' ',
-	),
-)
-const textProps = new Set([
-	'id',
-	'title',
-	'aria-label',
-	'aria-describedby',
-	'aria-labelledby',
-	'role',
-	'htmlFor',
-	'name',
-	'placeholder',
-	'value',
-	'defaultValue',
-	'type',
-])
-const booleanProps = new Set(['disabled', 'checked', 'defaultChecked', 'multiple', 'readOnly', 'selected'])
-const numberProps = new Set(['rows', 'cols', 'min', 'max', 'step', 'maxLength', 'start', 'colSpan', 'rowSpan'])
-const styles = new Set(
-	'color backgroundColor fontSize fontWeight fontStyle textAlign textDecoration lineHeight whiteSpace display gap padding paddingTop paddingBottom paddingLeft paddingRight margin marginTop marginBottom marginLeft marginRight borderRadius borderWidth borderStyle borderColor width maxWidth minWidth height maxHeight minHeight flex flexDirection flexWrap alignItems justifyContent gridTemplateColumns'.split(
-		' ',
-	),
-)
-const inputTypes = new Set(['text', 'number', 'checkbox', 'radio', 'email'])
 function record(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -133,17 +109,7 @@ export function validateCanvasFrame(
 				if (!record(prop) || Object.keys(prop).length > 40) fail()
 				const safe: Record<string, string | number> = {}
 				for (const [name, css] of Object.entries(prop)) {
-					if (
-						!styles.has(name) ||
-						!(
-							(typeof css === 'number' && Number.isFinite(css) && Math.abs(css) <= 10000) ||
-							(typeof css === 'string' &&
-								css.length <= 120 &&
-								/^[\w\s.,%#()+\-]*$/.test(css) &&
-								!/url|expression|image|var\s*\(/i.test(css))
-						)
-					)
-						fail()
+					if (!isCanvasStyle(name, css)) fail()
 					safe[name] = css as string | number
 				}
 				props.style = safe
@@ -155,19 +121,10 @@ export function validateCanvasFrame(
 			) {
 				props[key] = validateCanvasValues(prop)
 				text += (props[key] as string[]).reduce((sum, item) => sum + item.length, 0)
-			} else if (['value', 'defaultValue'].includes(key) && typeof prop === 'number' && Number.isFinite(prop))
+			} else if (isCanvasScalarProp(key, prop)) {
+				if (typeof prop === 'string') text += prop.length
 				props[key] = prop
-			else if (textProps.has(key) && typeof prop === 'string' && prop.length <= 4000) {
-				text += prop.length
-				props[key] = prop
-			} else if (booleanProps.has(key) && typeof prop === 'boolean') props[key] = prop
-			else if (
-				numberProps.has(key) &&
-				((typeof prop === 'number' && Number.isFinite(prop)) ||
-					(typeof prop === 'string' && /^-?\d+(\.\d+)?$/.test(prop)))
-			)
-				props[key] = prop
-			else fail()
+			} else fail()
 		}
 		if (text > 64000 || Object.keys(props).length > 40) fail()
 		let provenance: string | undefined
@@ -183,7 +140,7 @@ export function validateCanvasFrame(
 			provenance = value.sourceId
 		}
 		if (props.id) sourceIds.set(String(props.id), (sourceIds.get(String(props.id)) ?? 0) + 1)
-		if (value.tag === 'input' && !inputTypes.has(String(props.type ?? 'text'))) fail()
+		if (value.tag === 'input' && !canvasInputTypes.has(String(props.type ?? 'text'))) fail()
 		if (value.tag === 'button') props.type = 'button'
 		if (
 			['input', 'textarea', 'select'].includes(value.tag) &&

@@ -98,25 +98,21 @@ function withApi(
 		},
 		restartDelayMs: 0,
 	}
-	const api = apiRoutes(
+	const api = apiRoutes({
 		config,
 		configPath,
 		db,
-		queueWithActive(opts.active) as never,
-		poller as never,
-		provider as never,
-		spawner as never,
-		fakeEnricher as never,
-		undefined,
-		undefined,
-		control,
-		undefined,
-		undefined,
-		undefined,
-		opts.scheduledBlocking === undefined
-			? undefined
-			: { restartBlockingRunCount: () => opts.scheduledBlocking as number },
-	)
+		queue: queueWithActive(opts.active) as never,
+		poller: poller as never,
+		provider: provider as never,
+		spawner: spawner as never,
+		enricher: fakeEnricher as never,
+		daemonControl: control,
+		scheduledRestartBlocker:
+			opts.scheduledBlocking === undefined
+				? undefined
+				: { restartBlockingRunCount: () => opts.scheduledBlocking as number },
+	})
 	return fn({ api, configPath, exitCount: () => exits }).finally(() => {
 		db.close()
 		rmSync(dir, { recursive: true, force: true })

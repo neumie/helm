@@ -222,7 +222,7 @@ export interface BuffersApi {
 	/** Persist a serialized snapshot (fire-and-forget; main validates + caps). */
 	save(sessionId: string, data: string): void
 	/** Transfer-only acknowledged snapshot write. */
-	saveAndAck(sessionId: string, data: string): Promise<boolean>
+	saveAndAck(sessionId: string, data: string, transactionId: string): Promise<boolean>
 	/** Main asks the renderer to serialize + save every session-backed tab NOW
 	 *  (quit/window-close path, before the pty clients detach). */
 	onFlush(listener: () => void): () => void

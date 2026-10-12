@@ -74,6 +74,7 @@ export function selectAgent(
 	agent: SolverAgent,
 	config: AppConfig | null,
 	effectiveModel: string | null = null,
+	effectiveEffort: SolverEffort | null = null,
 ): RunSelectionDraft {
 	const catalog = config?.modelCatalog?.[agent] ?? []
 	const model = draft.model !== undefined ? draft.model : effectiveModel
@@ -81,7 +82,9 @@ export function selectAgent(
 		...draft,
 		agent,
 		...(model && !catalog.some(option => option.id === model) ? { model: null } : {}),
-		...(agent === 'codex' && draft.effort === 'max' ? { effort: null } : {}),
+		...(agent === 'codex' && (draft.effort !== undefined ? draft.effort : effectiveEffort) === 'max'
+			? { effort: null }
+			: {}),
 	}
 }
 

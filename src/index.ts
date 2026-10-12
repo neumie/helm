@@ -157,17 +157,18 @@ async function main() {
 	planStatusWatcher.start()
 	knowledgeDelivery?.start()
 
-	// Graceful shutdown. Poller/Enricher/Drainer/HTTP do not yet expose a complete
+	// Graceful shutdown. Enricher/Drainer/HTTP do not yet expose a complete
 	// admission-and-drain contract, so SQLite deliberately remains open until
 	// process termination rather than being closed after only observer drains.
 	let shuttingDown: Promise<void> | null = null
 	const shutdown = () => {
 		shuttingDown ??= (async () => {
 			log.info('helm', 'Shutting down...')
-			poller.stop()
+			const pollingStopped = poller.stop()
 			enricher.stop()
 			queue.stop()
 			await Promise.allSettled([
+				pollingStopped,
 				deployWatcher.stop(),
 				planStatusWatcher.stop(),
 				scheduledRuns.stop(),

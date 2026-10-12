@@ -633,20 +633,25 @@ function connect(
 			)
 			const scoped = offered ? ctx.modelRegistry?.find(selection.provider, selection.id) : undefined
 			if (!scoped) return 'rejected'
+			const refused = () => {
+				if (disposed || lastEpoch !== command.hostEpoch || !currentManager()) return
+				const receipt = admission.correctModelRefusal(command)
+				if (receipt) recordReceipt(receipt)
+			}
 			// This call is asynchronous while invoke must stay synchronous, so the answer
 			// arrives as a corrected receipt: false means Pi holds no key for that model,
 			// which is a refusal the reader has to be told about.
 			void pi
 				.setModel(scoped)
 				.then(applied => {
-					if (disposed) return
-					if (!applied) recordReceipt({ commandId: command.commandId, status: 'rejected' })
+					if (disposed || lastEpoch !== command.hostEpoch || !currentManager()) return
+					if (!applied) refused()
 					// Image support belongs to the model, so observe the new one at once
 					// rather than waiting for the next poll to notice.
 					else observeModel()
 				})
 				.catch(() => {
-					if (!disposed) recordReceipt({ commandId: command.commandId, status: 'rejected' })
+					refused()
 				})
 			return 'dispatched' // Handed to Pi, which is not the same as accepted.
 		}
@@ -784,7 +789,10 @@ function connect(
 			for (const { command, expiresAt } of response.commands) {
 				if (command.hostEpoch !== lastEpoch) continue
 				if (command.operation.kind === 'prompt') recordReceipt(imageClient.submit(command, expiresAt))
-				else recordReceipt(admission.dispatch(command, () => (Date.now() >= expiresAt ? 'rejected' : invoke(command))))
+				else
+					recordReceipt(
+						admission.dispatch(command, () => (Date.now() >= expiresAt ? 'rejected' : invoke(command)), expiresAt),
+					)
 			}
 		} catch {
 			featureSupported = false

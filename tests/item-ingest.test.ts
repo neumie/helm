@@ -87,7 +87,16 @@ const PNG_1x1 = Buffer.from(
 test('POST /items/ingest creates an Inbox source solve Item with frozen captured context + served attachment', () =>
 	withTempDb(async db => {
 		const { enricher, enqueued } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 
 		const createdIds: string[] = []
 		try {
@@ -155,7 +164,16 @@ test('POST /items/ingest creates an Inbox source solve Item with frozen captured
 test('ingested attachments are served with XSS-safe headers (declared content-type ignored)', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 		const createdIds: string[] = []
 		try {
 			const res = await api.request('/items/ingest', {
@@ -195,7 +213,16 @@ test('ingested attachments are served with XSS-safe headers (declared content-ty
 test('POST /items/ingest is idempotent by source.externalId', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 		const payload = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -222,7 +249,16 @@ test('POST /items/ingest is idempotent by source.externalId', () =>
 test('POST /items/ingest rejects an unconfigured project', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 		const res = await api.request('/items/ingest', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -244,7 +280,16 @@ test('isOpenableAttachment allows documents/media but refuses executables/script
 test('open-attachment route guards: 404 unknown item, 400 non-openable type, 404 missing file (no native open)', () =>
 	withTempDb(async db => {
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 		const post = (path: string) => api.request(path, { method: 'POST' })
 
 		// Unknown item → 404 (never reaches the opener).
@@ -308,7 +353,16 @@ test('source-task route promotes a captured Item into a provider task and links 
 			},
 		} as never
 		const { enricher } = makeRecordingEnricher()
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, creatingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: creatingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 
 		const res = await api.request(`/items/${item.id}/source-task`, { method: 'POST' })
 		assert.equal(res.status, 200)
@@ -349,7 +403,16 @@ test('source-task route refuses non-captured Items and providers without createT
 		})
 		const { enricher } = makeRecordingEnricher()
 		// explodingProvider has no createTask
-		const api = apiRoutes(config, 'helm.config.json', db, queue, poller, explodingProvider, spawner, enricher as never)
+		const api = apiRoutes({
+			config,
+			configPath: 'helm.config.json',
+			db,
+			queue,
+			poller,
+			provider: explodingProvider,
+			spawner,
+			enricher: enricher as never,
+		})
 
 		const nonCaptured = await api.request(`/items/${plain.id}/source-task`, { method: 'POST' })
 		assert.equal(nonCaptured.status, 400)

@@ -1,9 +1,12 @@
-import { chmodSync, existsSync, lstatSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { z } from 'zod'
+import { readConfigFile } from './config-file.js'
 import { solverAgentSchema } from './solver/agent.js'
 import { solverWorkspaceSchema } from './solver/workspace.js'
 import { spawnerNameSchema } from './spawner/name.js'
+
+export { readConfigFile, writeConfigFile } from './config-file.js'
 
 const contemberProviderSchema = z.object({
 	type: z.literal('contember'),
@@ -125,7 +128,7 @@ export const configSchema = z
 				concurrency: z.number().int().positive().safe().nullable().default(2),
 				loopConcurrency: z.number().int().positive().safe().nullable().default(1),
 				model: z.string().optional(),
-				maxBudgetUsd: z.number().optional(),
+				maxBudgetUsd: z.number().finite().positive().optional(),
 				// Okena solver: IDLE timeout — fail only after this long with no
 				// terminal-screen activity (long ACTIVE runs are legitimate; a 6h hard cap
 				// in the okena solver backstops). Default solver: wall-clock cap on the
@@ -220,13 +223,7 @@ export function resolveConfigPath(configPath?: string): string {
 
 export function loadConfig(configPath?: string): { config: HelmConfig; configPath: string; raw: unknown } {
 	const path = resolveConfigPath(configPath)
-	const stat = lstatSync(path)
-	const uid = process.getuid?.()
-	if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || uid === undefined || stat.uid !== uid) {
-		throw new Error(`Helm config must be an owned, single-link regular file: ${path}`)
-	}
-	chmodSync(path, 0o600)
-	const raw = readFileSync(path, 'utf-8')
+	const raw = readConfigFile(path)
 	let json: unknown
 	try {
 		json = JSON.parse(raw)

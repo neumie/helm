@@ -11,7 +11,11 @@ const id = (n: number) => n.toString(16).padStart(8, '0')
 async function tick() {
 	await new Promise(resolve => setImmediate(resolve))
 }
-function setup() {
+function setup(hold = false) {
+	let release: () => void = () => {}
+	const held = new Promise<void>(resolve => {
+		release = resolve
+	})
 	const entries = new Map<string, HistoryEntry>()
 	for (let n = 1; n <= 240; n++)
 		entries.set(id(n), {
@@ -34,7 +38,14 @@ function setup() {
 				rejectNext = false
 				throw new Error('temporary')
 			}
-			return backend.execute({ requestId: randomUUID(), principalKey: 'test', expiresAt: Date.now() + 4000, request })
+			const result = backend.execute({
+				requestId: randomUUID(),
+				principalKey: 'test',
+				expiresAt: Date.now() + 4000,
+				request,
+			})
+			if (hold) await held
+			return result
 		},
 		access: async () => {
 			throw new Error('unused')
@@ -61,6 +72,7 @@ function setup() {
 		controller,
 		backend,
 		calls,
+		release,
 		fail: () => {
 			rejectNext = true
 		},
@@ -105,6 +117,43 @@ test('equal live snapshots do not read, retry is exact, and late cancellation is
 		f.backend.dispose()
 	}
 })
+test('continued history admits its page through the captured model ticket', async () => {
+	const f = setup()
+	try {
+		f.controller.loadEarlier(id(100))
+		await tick()
+		assert.equal(f.controller.getSnapshot().phase, 'progress')
+		assert.equal(f.controller.getSnapshot().chunks.length, 0)
+		f.controller.continue()
+		await tick()
+		assert.equal(f.calls[1]?.action.kind, 'continue')
+		assert.equal(f.controller.getSnapshot().chunks.length, 1)
+	} finally {
+		f.controller.dispose()
+		f.backend.dispose()
+	}
+})
+for (const retirement of ['cancel', 'owner', 'dispose'] as const) {
+	test(`late history page cannot publish after ${retirement}`, async () => {
+		const f = setup(true)
+		try {
+			f.controller.loadEarlier(id(201))
+			await tick()
+			assert.equal(f.calls.length, 1)
+			if (retirement === 'cancel') f.controller.cancel()
+			else if (retirement === 'owner')
+				f.controller.setIdentity({ target: { ...target, incarnation: randomUUID() }, hostEpoch: randomUUID() })
+			else f.controller.dispose()
+			f.release()
+			await tick()
+			assert.equal(f.controller.getSnapshot().chunks.length, 0)
+		} finally {
+			f.release()
+			f.controller.dispose()
+			f.backend.dispose()
+		}
+	})
+}
 test('owner replacement clears all payload and viewport never admits history', async () => {
 	const f = setup()
 	try {

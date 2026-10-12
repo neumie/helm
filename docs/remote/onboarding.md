@@ -16,11 +16,12 @@ Status: implementation in progress after the verified development slice (`9c577e
   whoever started it. It runs `dist/remote/runtime.js` with `KeepAlive`, logging to
   `~/Library/Logs/helm/remote.*.log`. Uninstall with `launchctl bootout
   gui/$(id -u)/com.helm.remote` and remove the plist.
-- Supervision alone was not enough: a killed runtime left its lock and sockets
-  behind and every relaunch then failed. The runtime now reclaims those artifacts
-  on startup, but only once and only when both sockets refuse a connection and the
-  files are owner-owned `0600`. A live runtime always wins, and reclaimed artifacts
-  are preserved under `recovery-<stamp>-reclaimed/` rather than deleted.
+- Singleton recovery is fail-closed: refused/absent sockets and private file modes
+  do not prove the lock owner is dead (it may still be starting). Startup reuses a
+  compatible authenticated host or refuses without moving/deleting its artifacts.
+  Do not delete a lock or start another copy merely because sockets refuse or the
+  build differs. Inspect authenticated control status and obtain operator approval
+  for owned-host recovery; Pi, Electron, the daemon and Tailscale remain untouched.
 - Replace manual long-token copying with one-time QR / `XXX-XXX` pairing and
   durable per-device authentication when served over HTTPS.
 - Show all known Pi conversations from the operator's enabled session roots,

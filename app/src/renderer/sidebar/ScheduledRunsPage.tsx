@@ -304,14 +304,36 @@ export function ScheduledRunsPage({
 	)
 }
 
-export function ScheduledRunEditorPage({
+export function ScheduledRunEditorPage(props: {
+	profileId: string
+	scheduleId?: string
+	config: AppConfig | null
+	onBack: () => void
+}) {
+	return <ScheduledRunEditor key={JSON.stringify([props.profileId, props.scheduleId])} {...props} />
+}
+
+function ScheduledRunEditor({
 	profileId,
 	scheduleId,
 	config,
 	onBack,
 }: { profileId: string; scheduleId?: string; config: AppConfig | null; onBack: () => void }) {
+	const api = window.helm.daemon
+	const lifetime = useRef<object | null>(null)
+	const flight = useRef<object | null>(null)
+	const draftRevision = useRef(0)
 	const [schedule, setSchedule] = useState<ScheduledSchedule | null>(null)
-	const [draft, setDraft] = useState<EditorDraft>(() => blankDraft(config))
+	const [draft, setDraftState] = useState<EditorDraft>(() => blankDraft(config))
+	const draftRef = useRef(draft)
+	const currentConfig = useRef(config)
+	currentConfig.current = config
+	const setDraft = useCallback((value: EditorDraft | ((current: EditorDraft) => EditorDraft)) => {
+		const next = typeof value === 'function' ? value(draftRef.current) : value
+		draftRevision.current += 1
+		draftRef.current = next
+		setDraftState(next)
+	}, [])
 	const [history, setHistory] = useState<ScheduledRun[]>([])
 	const [loading, setLoading] = useState(Boolean(scheduleId))
 	const [saving, setSaving] = useState(false)
@@ -333,13 +355,27 @@ export function ScheduledRunEditorPage({
 		...(draft.definition.agent !== 'codex' ? [{ value: 'max', label: 'Max' }] : []),
 	]
 	useEffect(() => {
+		const owner = { api }
+		lifetime.current = owner
+		flight.current = null
+		setSaving(false)
+		setSchedule(null)
+		setHistory([])
+		setError(null)
+		if (!scheduleId) setDraft(blankDraft(currentConfig.current))
+		return () => {
+			if (lifetime.current === owner) lifetime.current = null
+		}
+	}, [api, scheduleId, setDraft])
+	useEffect(() => {
 		if (!scheduleId) return
 		let alive = true
+		setLoading(true)
 		void Promise.all([
-			window.helm.daemon.loadScheduledRun(profileId, scheduleId),
-			window.helm.daemon.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT),
+			api.loadScheduledRun(profileId, scheduleId),
+			api.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT),
 		]).then(([definition, runs]) => {
-			if (!alive) return
+			if (!alive || window.helm.daemon !== api) return
 			if (definition.error || !definition.data) {
 				setError(definition.error ?? 'Scheduled definition not found.')
 				setLoading(false)
@@ -355,14 +391,15 @@ export function ScheduledRunEditorPage({
 		return () => {
 			alive = false
 		}
-	}, [profileId, scheduleId])
+	}, [profileId, scheduleId, api, setDraft])
 	const historyHasActiveRun = history.some(run => HISTORY_REFRESH_STATES.has(run.state))
 	useEffect(() => {
 		if (!scheduleId || !historyHasActiveRun) return
 		let cancelled = false
 		let timer: ReturnType<typeof setTimeout> | null = null
 		const refresh = async () => {
-			const result = await window.helm.daemon.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT)
+			const result = await api.scheduledRunHistory(profileId, scheduleId, HISTORY_LIMIT)
+			if (window.helm.daemon !== api) return
 			if (!cancelled && result.data) setHistory(result.data)
 			if (!cancelled) timer = setTimeout(refresh, ACTIVE_REFRESH_MS)
 		}
@@ -371,7 +408,7 @@ export function ScheduledRunEditorPage({
 			cancelled = true
 			if (timer) clearTimeout(timer)
 		}
-	}, [historyHasActiveRun, profileId, scheduleId])
+	}, [historyHasActiveRun, profileId, scheduleId, api])
 	const validation = useMemo(() => {
 		if (!draft.name.trim()) return 'Enter a schedule name.'
 		if (!isFiveFieldCron(draft.cron)) return 'Cron must contain exactly five fields and cannot use aliases.'
@@ -391,20 +428,27 @@ export function ScheduledRunEditorPage({
 		return null
 	}, [draft, systemAllowed])
 	const save = async () => {
+		if (!lifetime.current || flight.current || window.helm.daemon !== api) return
 		if (validation) {
 			setError(validation)
 			return
 		}
+		const owner = lifetime.current
+		const operation = {}
+		const revision = draftRevision.current
+		const submitted = structuredClone(draftRef.current)
+		flight.current = operation
+		const current = () => lifetime.current === owner && window.helm.daemon === api && flight.current === operation
 		setSaving(true)
 		setError(null)
 		try {
-			const submitted = draft
 			const result = schedule
-				? await window.helm.daemon.updateScheduledRun(profileId, schedule.id, {
+				? await api.updateScheduledRun(profileId, schedule.id, {
 						...submitted,
 						revision: schedule.revision,
 					})
-				: await window.helm.daemon.createScheduledRun(profileId, submitted)
+				: await api.createScheduledRun(profileId, submitted)
+			if (!current()) return
 			if (result.error) {
 				setError(result.error)
 				return
@@ -414,47 +458,65 @@ export function ScheduledRunEditorPage({
 				setError('The daemon returned no scheduled definition.')
 				return
 			}
-			if (!schedule) {
+			const unchanged = draftRevision.current === revision
+			setSchedule(result.data)
+			if (!schedule && unchanged) {
 				onBack()
 				return
 			}
-			setSchedule(result.data)
-			setDraft(draftFrom(result.data, submitted.definition.prompt))
+			if (unchanged) setDraft(draftFrom(result.data, submitted.definition.prompt))
+		} catch (error) {
+			if (current()) setError(error instanceof Error ? error.message : String(error))
 		} finally {
-			setSaving(false)
+			if (current()) {
+				flight.current = null
+				setSaving(false)
+			}
 		}
 	}
 	const action = async (actionName: 'enable' | 'disable' | 'archive' | 'run') => {
-		if (!schedule) return
+		if (!schedule || !lifetime.current || flight.current || window.helm.daemon !== api) return
+		const owner = lifetime.current
+		const operation = {}
+		const revision = draftRevision.current
+		flight.current = operation
+		const current = () => lifetime.current === owner && window.helm.daemon === api && flight.current === operation
 		setError(null)
-		const result = await window.helm.daemon.scheduledRunAction(profileId, schedule.id, actionName, schedule.revision)
-		if (result.error) {
-			setError(result.error)
-			return
-		}
-		if (actionName === 'run') {
-			if (!result.data || !('state' in result.data)) {
-				setError('The daemon returned no scheduled occurrence.')
+		try {
+			const result = await api.scheduledRunAction(profileId, schedule.id, actionName, schedule.revision)
+			if (!current()) return
+			if (result.error) {
+				setError(result.error)
 				return
 			}
-			const run = result.data as ScheduledRun
-			setHistory(current => [run, ...current])
-			if (run.state.startsWith('skipped_')) {
-				showToast({
-					message: 'Run not started',
-					detail:
-						run.state === 'skipped_overlap'
-							? 'Another occurrence is already active.'
-							: `Result: ${scheduledRunStateLabel(run.state)}.`,
-				})
-			} else showToast({ message: 'Scheduled run started' })
-			return
+			if (actionName === 'run') {
+				if (!result.data || !('state' in result.data)) {
+					setError('The daemon returned no scheduled occurrence.')
+					return
+				}
+				const run = result.data as ScheduledRun
+				setHistory(current => [run, ...current])
+				if (run.state.startsWith('skipped_')) {
+					showToast({
+						message: 'Run not started',
+						detail:
+							run.state === 'skipped_overlap'
+								? 'Another occurrence is already active.'
+								: `Result: ${scheduledRunStateLabel(run.state)}.`,
+					})
+				} else showToast({ message: 'Scheduled run started' })
+				return
+			}
+			const updated = result.data as ScheduledSchedule
+			setSchedule(updated)
+			if (draftRevision.current === revision) setDraft(current => ({ ...current, enabled: updated.enabled }))
+			showToast({ message: actionName === 'archive' ? 'Scheduled run archived' : `Scheduled run ${actionName}d` })
+			if (actionName === 'archive') onBack()
+		} catch (error) {
+			if (current()) setError(error instanceof Error ? error.message : String(error))
+		} finally {
+			if (current()) flight.current = null
 		}
-		const updated = result.data as ScheduledSchedule
-		setSchedule(updated)
-		setDraft(current => ({ ...current, enabled: updated.enabled }))
-		showToast({ message: actionName === 'archive' ? 'Scheduled run archived' : `Scheduled run ${actionName}d` })
-		if (actionName === 'archive') onBack()
 	}
 	const openTerminal = async (run: ScheduledRun) => {
 		setError(null)

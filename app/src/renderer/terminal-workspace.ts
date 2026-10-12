@@ -791,6 +791,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	function cellHeightOf(term: Terminal): number {
+		// SAFETY: pinned xterm 6 provides the same private render-service shape used by FitAddon; public Terminal types omit it.
 		return (term as unknown as CoreRenderAccess)._core._renderService.dimensions.css.cell.height
 	}
 
@@ -835,7 +836,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (tab.term.cols !== cols || tab.term.rows !== rows) {
 			// Mirror FitAddon.fit(): clear the renderer before resizing, else the
 			// DOM renderer can leave artifacts of the old grid.
-			;(tab.term as unknown as CoreRenderAccess)._core._renderService.clear()
+			// SAFETY: this is FitAddon.fit's pinned xterm 6 render-service clear seam; Terminal's public type omits it.
+			const renderAccess = tab.term as unknown as CoreRenderAccess
+			renderAccess._core._renderService.clear()
 			tab.term.resize(cols, rows)
 		}
 		scheduleScrollbarSync(tab)
@@ -1055,7 +1058,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			tab.term.options.disableStdin = true
 			closeTabMenu()
 		},
-		async saveSnapshot(sessionId) {
+		async saveSnapshot(sessionId, transactionId) {
 			const tab = transferredTab(sessionId)
 			if (!tab || !tab.sessionId) return { snapshotFlushed: false }
 			await waitForTerminalWrites(tab)
@@ -1063,7 +1066,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			const snapshot = serializeSnapshot(tab)
 			if (!snapshot) return { snapshotFlushed: false }
 			tab.dirty = false
-			return { snapshotFlushed: await helm.buffers.saveAndAck(sessionId, snapshot) }
+			return { snapshotFlushed: await helm.buffers.saveAndAck(sessionId, snapshot, transactionId) }
 		},
 		metadata(sessionId) {
 			const tab = transferredTab(sessionId)
@@ -3713,6 +3716,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 					title: session.title,
 					customName: session.customName,
 					groupId: session.groupId,
+					agentRunning: session.agentRunning,
+					agentAttention: session.agentAttention,
 					placementEligible: session.placementEligible,
 				}).catch(() => {})
 			}
@@ -3725,6 +3730,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				title: session.title,
 				customName: session.customName,
 				groupId: session.groupId,
+				agentRunning: session.agentRunning,
+				agentAttention: session.agentAttention,
 				parked: true,
 				placementEligible: session.placementEligible,
 			}).catch(() => {})

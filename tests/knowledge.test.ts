@@ -677,7 +677,16 @@ test('solve-through-loop retrieves and associates exact configured knowledge bef
 			projectSlug: 'sample-project',
 			prompt: 'Implement the prepared plan.',
 		})
+		execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: env.root })
+		writeFileSync(join(env.root, 'fixture.txt'), 'knowledge fixture\n')
+		execFileSync('git', ['add', 'fixture.txt'], { cwd: env.root })
+		execFileSync(
+			'git',
+			['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture'],
+			{ cwd: env.root },
+		)
 		const worktreePath = join(env.root, 'loop-worktree')
+		execFileSync('git', ['worktree', 'add', '-q', '-b', 'helm/item/knowledge-loop', worktreePath], { cwd: env.root })
 		const workspace = new PlanWorkspace(worktreePath, 'knowledge-loop-plan')
 		workspace.ensureDir()
 		writeFileSync(join(workspace.dir, 'spec.md'), '# Knowledge loop plan\n')

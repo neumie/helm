@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import { taskCancelled } from '../../util/errors.js'
 
 interface CliConfig {
 	token: string
@@ -194,16 +196,24 @@ export class OkenaClient {
 	 * `freshTerminal` for a REUSED terminal that may have a running agent — ctrl_c
 	 * would abort it.
 	 */
-	async runCommand(terminalId: string, command: string, opts?: { freshTerminal?: boolean }): Promise<void> {
+	async runCommand(
+		terminalId: string,
+		command: string,
+		opts?: { freshTerminal?: boolean; signal?: AbortSignal },
+	): Promise<void> {
+		const signal = opts?.signal
+		if (signal?.aborted) throw taskCancelled()
 		if (opts?.freshTerminal) {
-			await delay(FRESH_TERMINAL_SETTLE_MS)
+			await delay(FRESH_TERMINAL_SETTLE_MS, undefined, { signal })
+			if (signal?.aborted) throw taskCancelled()
 			try {
 				await this.action({ action: 'send_special_key', terminal_id: terminalId, key: 'ctrl_c' })
-				await delay(200)
+				await delay(200, undefined, { signal })
 			} catch {
 				// best-effort line clear
 			}
 		}
+		if (signal?.aborted) throw taskCancelled()
 		await this.action({ action: 'run_command', terminal_id: terminalId, command })
 	}
 
@@ -290,7 +300,3 @@ function requestEndpoint(endpoint: OkenaEndpoint, path: string, init: RequestIni
 // command. okena has no readiness API, so this is a fixed best-effort guard
 // (paired with the ctrl_c line-clear); not worth a config knob.
 const FRESH_TERMINAL_SETTLE_MS = 1500
-
-function delay(ms: number): Promise<void> {
-	return new Promise(resolve => setTimeout(resolve, ms))
-}

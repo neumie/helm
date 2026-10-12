@@ -201,8 +201,14 @@ const api: HelmApi = {
 	buffers: {
 		read: sessionId => ipcRenderer.invoke('buffer:read', sessionId, sessionProfileToken) as Promise<string | null>,
 		save: (sessionId, data) => ipcRenderer.send('buffer:save', sessionId, data, sessionProfileToken),
-		saveAndAck: (sessionId, data) =>
-			ipcRenderer.invoke('buffer:save-and-ack', sessionId, data, sessionProfileToken) as Promise<boolean>,
+		saveAndAck: (sessionId, data, transactionId) =>
+			ipcRenderer.invoke(
+				'buffer:save-and-ack',
+				sessionId,
+				data,
+				sessionProfileToken,
+				transactionId,
+			) as Promise<boolean>,
 		onFlush: listener =>
 			subscribe<[string]>('buffers:flush', profileToken => {
 				if (profileToken === sessionProfileToken) listener()

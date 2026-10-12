@@ -125,8 +125,8 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 		if (ownsLock && lockIdentity) unlinkOwnedPrivateFile(lockPath, lockIdentity)
 		if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
 		const operatorToken = readOperatorToken(join(root, 'operator-token'))
-		// A crashed runtime leaves nobody to answer, which is not the same as a live one
-		// refusing: the probe failing is evidence to act on, not a reason to give up.
+		// Only an authenticated compatible response establishes reusable ownership.
+		// Missing listeners may belong to an owner still initializing.
 		const response = await controlRequest(join(root, 'control.sock'), operatorToken, '/status').catch(() => undefined)
 		if (response && isCompatibleRuntimeStatus(response, config))
 			return {
@@ -136,8 +136,7 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 				root,
 				stop: async () => {},
 			}
-		// Reclaim once, and only what is provably nobody's, so a supervised restart after
-		// a crash is not blocked forever by the crashed instance's own leftovers.
+		// The reclaim seam refuses legacy locks without positive dead-owner evidence.
 		if (!options.reclaimed && (await reclaimDeadRuntime(root)))
 			return await startRemoteRuntime({ ...options, reclaimed: true })
 		throw new Error('Remote runtime lock exists but no compatible authenticated host answered; refuse to replace it')

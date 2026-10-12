@@ -716,6 +716,15 @@ export class ScheduledRunService {
 				onQuarantined: quarantine => {
 					if (quarantine.identity)
 						run = commands.recordRuntime(run.id, run.revision, runtimeFields(run, quarantine.identity))
+					if (quarantine.launchCleanup)
+						run = commands.recordRuntime(run.id, run.revision, {
+							cwd: run.cwd,
+							worktreePath: run.worktreePath,
+							branchName: run.branchName,
+							runDir: run.runDir,
+							socketDescriptor: run.socketDescriptor,
+							processFingerprint: JSON.stringify(quarantine.launchCleanup),
+						})
 					if (!commands.isTerminal(run))
 						run = commands.markQuarantined(run.id, run.revision, `Launch cleanup: ${quarantine.reason}`)
 				},
@@ -783,12 +792,27 @@ export class ScheduledRunService {
 		// A workspace or dtach launch owned by this process has not necessarily
 		// published its socket yet. Only a future process may recover that row.
 		if (this.admissionInFlight.has(initial.id)) return
+		// Launch cleanup requires exact process proof, never socket death alone.
+		// A bootstrap-only record cannot prove an unattested daemon is gone.
+		const launchCleanup = isLaunchCleanupFingerprint(initial.processFingerprint)
+		if (launchCleanup) {
+			this.restoreReservation(initial)
+			const master = parseIdentity(JSON.stringify(JSON.parse(initial.processFingerprint as string).master ?? null))
+			if (!master || !initial.runDir) return
+			const result = await this.supervisor.teardown(
+				profileId,
+				initial.sessionId,
+				master,
+				diagnosticPathFor(initial.runDir),
+			)
+			if (result === 'quarantined') return
+		}
 		this.rollbackExpiredAdoption(commands, initial)
 		// Migration 29 deliberately leaves existing rows nullable. Preserve the
 		// exact request encoded by legacy lifecycle state before an unknown probe
 		// can replace that state with the generic quarantine state.
 		let run = commands.materializeTerminalIntent(initial.id, initial.revision)
-		const socket = await probeScheduledSocket(scheduledSocketPath(profileId, run.sessionId))
+		const socket = launchCleanup ? 'dead' : await probeScheduledSocket(scheduledSocketPath(profileId, run.sessionId))
 		if (run.state === 'needs_attention') {
 			this.releaseReservation(run.id)
 			return
@@ -832,7 +856,9 @@ export class ScheduledRunService {
 			run = commands.beginClose(run.id, run.revision)
 			commands.closeQuiet(run.id, run.revision)
 		} else if (intent === 'cancel') {
-			run = commands.requestCancel(run.id, run.revision)
+			if (run.attentionAdoption?.state === 'completed' && run.terminalResolvedAt !== null) {
+				if (run.pendingTerminalIntent !== 'cancel') throw new Error('Adopted close intent is unavailable')
+			} else run = commands.requestCancel(run.id, run.revision)
 			commands.markCancelled(run.id, run.revision)
 		} else if (intent === 'timeout') {
 			run = commands.requestTimeout(run.id, run.revision)
@@ -1011,11 +1037,19 @@ function runtimeFields(run: ScheduledRunRecord, identity: ScheduledProcessIdenti
 		socketDescriptor: run.socketDescriptor,
 	}
 }
+function isLaunchCleanupFingerprint(value: string | null): boolean {
+	if (!value) return false
+	try {
+		return JSON.parse(value)?.phase === 'launch-cleanup'
+	} catch {
+		return false
+	}
+}
 function parseIdentity(value: string | null): ScheduledProcessIdentity | null {
-	if (!value) return null
+	if (!value || isLaunchCleanupFingerprint(value)) return null
 	try {
 		const parsed = JSON.parse(value) as ScheduledProcessIdentity
-		return parsed.pid > 0 && parsed.processGroupId > 0 && parsed.sessionId > 0 ? parsed : null
+		return parsed?.pid > 0 && parsed.processGroupId > 0 && parsed.sessionId > 0 ? parsed : null
 	} catch {
 		return null
 	}

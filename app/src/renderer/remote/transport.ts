@@ -315,7 +315,7 @@ export function createRemoteTransport(developmentToken?: string): RemoteTranspor
 		},
 		send: async (command, signal) => {
 			const body = JSON.stringify(command)
-			if (new TextEncoder().encode(body).byteLength > 24 * 1024) throw new Error('Command too large')
+			if (new TextEncoder().encode(body).byteLength > 24 * 1024) throw new RemoteAccessError(413)
 			const image = command.operation.kind === 'prompt' && !!command.operation.images?.length
 			return remoteReceiptSchema.parse(
 				(await request('/v1/commands', signal, command, image ? { [IMAGE_INPUT_HEADER]: '1' } : {})).value,

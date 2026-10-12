@@ -39,7 +39,18 @@ export interface AgentAdapter {
 	buildReviewInvocation(options: ReviewInvocationOptions): AgentInvocation
 }
 
+export function assertAgentBudget(solverConfig: HelmConfig['solver'], mode: 'headless' | 'interactive' | 'loop'): void {
+	const budget = solverConfig.maxBudgetUsd
+	if (budget === undefined) return
+	if (!Number.isFinite(budget) || budget <= 0) throw new Error('Max budget must be a positive finite dollar amount.')
+	if (resolveSolverAgent(solverConfig) !== 'claude' || mode !== 'headless')
+		throw new Error(
+			'Max budget is supported only by default Claude print-mode runs. Clear it in Settings → Execution before using an interactive agent or loop.',
+		)
+}
+
 export function createAgentAdapter(solverConfig: HelmConfig['solver']): AgentAdapter {
+	assertAgentBudget(solverConfig, 'headless')
 	switch (resolveSolverAgent(solverConfig)) {
 		case 'claude':
 			return new ClaudeAgentAdapter(solverConfig)
@@ -112,14 +123,15 @@ class ClaudeAgentAdapter implements AgentAdapter {
 		if (this.solverConfig.model) {
 			args.push('--model', this.solverConfig.model)
 		}
-		if (this.solverConfig.maxBudgetUsd) {
-			args.push('--max-turns', '100')
+		if (this.solverConfig.maxBudgetUsd !== undefined) {
+			args.push('--max-budget-usd', String(this.solverConfig.maxBudgetUsd))
 		}
 		if (effort) args.push('--effort', effort)
 		return { command: 'claude', args, label: 'claude-invoker' }
 	}
 
 	buildInteractiveInvocation(effort?: SolverEffort): AgentInvocation {
+		assertAgentBudget(this.solverConfig, 'interactive')
 		const args = ['--dangerously-skip-permissions']
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--effort', effort)
@@ -149,6 +161,8 @@ class ClaudeAgentAdapter implements AgentAdapter {
 		]
 		if (discuss) args.push('--tools', 'Read,Grep,Glob', '--permission-mode', 'dontAsk')
 		else args.push('--dangerously-skip-permissions')
+		if (this.solverConfig.maxBudgetUsd !== undefined)
+			args.push('--max-budget-usd', String(this.solverConfig.maxBudgetUsd))
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		return { command: 'claude', args, label: 'claude-review' }
 	}
@@ -277,6 +291,7 @@ function buildInteractiveCommand(
 	promptPath: string,
 	worktreePath: string,
 ): string {
+	assertAgentBudget(solverConfig, 'interactive')
 	const args = [...baseArgs]
 	if (solverConfig.model) {
 		args.push('--model', solverConfig.model)

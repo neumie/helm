@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import type { HelmConfig, ProjectConfig } from '../config.js'
 import type { ItemPayload } from '../items/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
+import { assertAgentBudget } from '../solver/agent-adapter.js'
 import { knowledgeCandidateInstructions } from '../solver/prompt-builder.js'
 import { isCancellation, phaseError, taskCancelled } from '../util/errors.js'
 
@@ -130,6 +131,7 @@ ${knowledgeCandidateInstructions(workspace.planDirName)}`
 export class AlmanacLoopRunner implements LoopRunner {
 	async runLoop(params: LoopRunParams): Promise<LoopRunResult> {
 		if (params.signal?.aborted) throw taskCancelled()
+		assertAgentBudget(params.solverConfig, 'loop')
 
 		const loopKind = params.payload.kind
 		const args = almanacArgs(params.payload, params.solverConfig)

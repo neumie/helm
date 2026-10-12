@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -29,7 +29,10 @@ const SESSION = 'term-1234'
 const SOURCE = 'work'
 const DESTINATION = 'profile-123456789abc'
 
-function fixture(captureGate?: Promise<void>) {
+function fixture(
+	captureGate?: Promise<void>,
+	callbacks: { detach?: () => Promise<boolean>; attach?: () => Promise<boolean> } = {},
+) {
 	const root = mkdtempSync(join(tmpdir(), 'helm-transfer-main-'))
 	const sourceDir = join(root, SOURCE)
 	const destinationDir = join(root, DESTINATION)
@@ -47,46 +50,49 @@ function fixture(captureGate?: Promise<void>) {
 	let profile = SOURCE
 	let token = 'work:0'
 	const journal = new TerminalTransferJournalStore(join(root, 'journal.json'), true)
-	const adapter = new TerminalTransferMainAdapter({
-		userDataDir: root,
-		journal,
-		runtime: {
-			storageForProfile(id) {
-				const storage = id === SOURCE ? source : id === DESTINATION ? destination : null
-				return storage
-					? {
-							...storage,
-							registryPath: storage.registry.filePath,
-							bufferDir: join(root, id, 'buffers'),
-						}
-					: null
+	const createAdapter = () =>
+		new TerminalTransferMainAdapter({
+			userDataDir: root,
+			journal,
+			runtime: {
+				storageForProfile(id) {
+					const storage = id === SOURCE ? source : id === DESTINATION ? destination : null
+					return storage
+						? {
+								...storage,
+								registryPath: storage.registry.filePath,
+								bufferDir: join(root, id, 'buffers'),
+							}
+						: null
+				},
+				currentProfile: () => ({ profileId: profile, token }),
 			},
-			currentProfile: () => ({ profileId: profile, token }),
-		},
-		detachAttachClient() {
-			calls.push('detach-client')
-			return true
-		},
-		attachSourceClient() {
-			return false
-		},
-		async captureMaster(socket) {
-			calls.push(`capture:${socket}`)
-			await captureGate
-			return { pid: 44, processStartFingerprint: 'start-44' }
-		},
-		async attestMaster(socket) {
-			calls.push(`attest:${socket}`)
-			return 'verified'
-		},
-		async renameSocket(sourceSocket, destinationSocket) {
-			calls.push(`rename:${sourceSocket}:${destinationSocket}`)
-		},
-		async probeSocket(socket) {
-			return socket.includes(`/profiles/${DESTINATION}/`) ? 'live' : 'dead'
-		},
-	})
+			detachAttachClient() {
+				calls.push('detach-client')
+				return callbacks.detach?.() ?? true
+			},
+			attachSourceClient() {
+				return callbacks.attach?.() ?? false
+			},
+			async captureMaster(socket) {
+				calls.push(`capture:${socket}`)
+				await captureGate
+				return { pid: 44, processStartFingerprint: 'start-44' }
+			},
+			async attestMaster(socket) {
+				calls.push(`attest:${socket}`)
+				return 'verified'
+			},
+			async renameSocket(sourceSocket, destinationSocket) {
+				calls.push(`rename:${sourceSocket}:${destinationSocket}`)
+			},
+			async probeSocket(socket) {
+				return socket.includes(`/profiles/${DESTINATION}/`) ? 'live' : 'dead'
+			},
+		})
+	const adapter = createAdapter()
 	return {
+		createAdapter,
 		root,
 		source,
 		destination,
@@ -311,6 +317,18 @@ test('a rejected renderer commit quarantines durable destination ownership inste
 		assert.equal(result.status, 'quarantined')
 		assert.equal(value.journal.load()?.state, 'rollback-needed')
 		assert.equal(value.destination.registry.get(SESSION)?.parked, true)
+		const retained = value.journal.load()
+		assert.ok(retained)
+		assert.equal(retained.master.currentSocketPath, retained.destinationSocket)
+		const restarted = value.createAdapter()
+		assert.equal(restarted.isSessionQuarantined(SOURCE, SESSION), true)
+		assert.equal(restarted.isSessionQuarantined(DESTINATION, SESSION), true)
+		assert.equal((await restarted.recoverStartup()).status, 'quarantined')
+		// Only a completed marker plus verified final single-owner placement clears the fence.
+		value.journal.update(retained, 'completed')
+		assert.deepEqual(await restarted.recoverStartup(), { status: 'recovered', action: 'remove-completed-journal' })
+		assert.equal(restarted.isSessionQuarantined(SOURCE, SESSION), false)
+		assert.equal(restarted.isSessionQuarantined(DESTINATION, SESSION), false)
 	} finally {
 		rmSync(value.root, { recursive: true, force: true })
 	}
@@ -353,6 +371,115 @@ test('startup recovery observes a durable claim but leaves repairable ownership 
 			value.calls.some(call => /kill|signal/i.test(call)),
 			false,
 		)
+	} finally {
+		rmSync(value.root, { recursive: true, force: true })
+	}
+})
+
+function register(value: ReturnType<typeof fixture>, events: string[]): void {
+	assert.equal(
+		value.adapter.registerRendererCapability({
+			profileToken: 'work:0',
+			sessionId: SESSION,
+			async dispatch(event) {
+				events.push(event.type)
+				return event.type === 'prepare' || event.type === 'checkpoint'
+					? { status: 'prepared', prepared: { metadata: { agentRunning: false, agentAttention: false } } }
+					: { status: event.type === 'rollback' ? 'rolled-back' : 'committed' }
+			},
+		}),
+		true,
+	)
+}
+const moveRequest = {
+	sourceProfileId: SOURCE,
+	destinationProfileId: DESTINATION,
+	sessionId: SESSION,
+	profileToken: 'work:0',
+}
+
+for (const outcome of ['true', 'false', 'reject'] as const) {
+	test(`async detach ${outcome} settles before checkpoint and retains source quarantine on failure`, async () => {
+		let resolve!: (value: boolean) => void
+		let reject!: (error: Error) => void
+		const gate = new Promise<boolean>((yes, no) => {
+			resolve = yes
+			reject = no
+		})
+		const value = fixture(undefined, { detach: () => gate })
+		const events: string[] = []
+		try {
+			register(value, events)
+			const pending = value.adapter.move(moveRequest)
+			await new Promise(done => setImmediate(done))
+			assert.deepEqual(events, ['prepare'])
+			assert.equal(value.adapter.isBusy(), true)
+			if (outcome === 'reject') reject(new Error('detach failed'))
+			else resolve(outcome === 'true')
+			assert.equal((await pending).status, outcome === 'true' ? 'moved' : 'quarantined')
+			assert.equal(events.includes('checkpoint'), outcome === 'true')
+			if (outcome !== 'true') {
+				const journal = value.journal.load()
+				assert.equal(journal?.master.currentSocketPath, journal?.sourceSocket)
+				assert.equal(value.adapter.isBusy(), false)
+				const restarted = value.createAdapter()
+				for (const adapter of [value.adapter, restarted]) {
+					assert.equal(adapter.isSessionQuarantined(SOURCE, SESSION), true)
+					assert.equal(adapter.isSessionQuarantined(DESTINATION, SESSION), true)
+					assert.equal(adapter.isSessionQuarantined(SOURCE, 'term-other'), false)
+					assert.equal((await adapter.recoverStartup()).status, 'quarantined')
+					assert.equal((await adapter.move(moveRequest)).status, 'rejected')
+				}
+				unlinkSync(value.journal.filePath)
+				assert.equal(restarted.isSessionQuarantined(SOURCE, SESSION), true, 'external deletion is not recovery')
+			} else assert.equal(value.adapter.isSessionQuarantined(SOURCE, SESSION), false)
+		} finally {
+			rmSync(value.root, { recursive: true, force: true })
+		}
+	})
+
+	test(`async source attach ${outcome} settles before rollback acknowledgement`, async () => {
+		let resolve!: (value: boolean) => void
+		let reject!: (error: Error) => void
+		const gate = new Promise<boolean>((yes, no) => {
+			resolve = yes
+			reject = no
+		})
+		const value = fixture(undefined, { detach: async () => true, attach: () => gate })
+		const events: string[] = []
+		try {
+			value.source.buffers.save(SESSION, 'source')
+			value.destination.buffers.save(SESSION, 'collision')
+			register(value, events)
+			const pending = value.adapter.move(moveRequest)
+			await new Promise(done => setImmediate(done))
+			assert.deepEqual(events, ['prepare', 'checkpoint'])
+			assert.equal(value.calls.filter(call => call.startsWith('rename:')).length, 2)
+			if (outcome === 'reject') reject(new Error('attach failed'))
+			else resolve(outcome === 'true')
+			assert.equal((await pending).status, 'quarantined')
+			assert.equal(events.includes('rollback'), outcome === 'true')
+			assert.equal(value.adapter.isSessionQuarantined(SOURCE, SESSION), outcome !== 'true')
+			if (outcome !== 'true') {
+				const journal = value.journal.load()
+				assert.equal(journal?.master.currentSocketPath, journal?.sourceSocket)
+			} else assert.equal(value.journal.load(), null)
+		} finally {
+			rmSync(value.root, { recursive: true, force: true })
+		}
+	})
+}
+
+test('unreadable journal fences all session identities without deleting evidence', () => {
+	const value = fixture()
+	try {
+		writeFileSync(value.journal.filePath, '{invalid')
+		const restarted = value.createAdapter()
+		assert.equal(restarted.quarantinedSessions().unavailable, true)
+		assert.equal(restarted.isSessionQuarantined(SOURCE, SESSION), true)
+		assert.equal(restarted.isSessionQuarantined(DESTINATION, 'term-other'), true)
+		unlinkSync(value.journal.filePath)
+		assert.equal(restarted.isSessionQuarantined(SOURCE, SESSION), true)
 	} finally {
 		rmSync(value.root, { recursive: true, force: true })
 	}

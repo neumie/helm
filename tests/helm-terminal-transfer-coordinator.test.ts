@@ -185,6 +185,7 @@ test('quarantines without detaching when prepare acknowledgement does not confir
 		assert.equal(result.status, 'quarantined')
 		assert.deepEqual(value.calls, ['prepare', 'release:true'])
 		assert.equal(value.journal.load()?.state, 'rollback-needed')
+		assert.equal(value.journal.load()?.master.currentSocketPath, value.request.sourceSocket)
 	} finally {
 		dispose(value)
 	}
@@ -207,6 +208,7 @@ test('quarantines before rename when the stable post-detach snapshot is not ackn
 		assert.equal(result.status, 'quarantined')
 		assert.deepEqual(value.calls, ['prepare', 'detach', 'checkpoint', 'release:true'])
 		assert.equal(value.journal.load()?.state, 'rollback-needed')
+		assert.equal(value.journal.load()?.master.currentSocketPath, value.request.sourceSocket)
 	} finally {
 		dispose(value)
 	}
@@ -227,6 +229,7 @@ test('quarantines before rename when the captured master cannot be attested', as
 			false,
 		)
 		assert.equal(value.journal.load()?.state, 'rollback-needed')
+		assert.equal(value.journal.load()?.master.currentSocketPath, value.request.sourceSocket)
 	} finally {
 		dispose(value)
 	}
@@ -323,6 +326,77 @@ test('busy interlock refuses a concurrent move while the global exclusive transa
 		releaseFirst()
 		const firstResult = await first
 		assert.equal(firstResult.status, 'moved')
+	} finally {
+		dispose(value)
+	}
+})
+
+for (const boundary of ['after-forward', 'reverse-failed', 'after-reverse'] as const) {
+	test(`quarantine retains last confirmed socket placement: ${boundary}`, async () => {
+		const value = fixture()
+		try {
+			if (boundary === 'after-forward') {
+				value.deps.attestMaster = async journal =>
+					journal.master.currentSocketPath === journal.destinationSocket
+						? { state: 'unknown' }
+						: { state: 'present', ...journal.master }
+			} else {
+				value.request.destinationBuffers.save(SESSION_ID, 'collision')
+				if (boundary === 'reverse-failed')
+					value.deps.renameSocket = async source => {
+						if (source === value.request.destinationSocket) throw new Error('reverse failed')
+					}
+				else
+					value.admission.attachSourceClient = async () => {
+						throw new Error('attach failed')
+					}
+			}
+			assert.equal((await new TerminalTransferCoordinator(value.deps).move(value.request)).status, 'quarantined')
+			assert.equal(
+				value.journal.load()?.master.currentSocketPath,
+				boundary === 'after-reverse' ? value.request.sourceSocket : value.request.destinationSocket,
+			)
+		} finally {
+			dispose(value)
+		}
+	})
+}
+
+test('journal publication failure after rename retains the confirmed effect in quarantine', async () => {
+	const value = fixture()
+	try {
+		const update = value.journal.update.bind(value.journal)
+		value.journal.update = (journal, state) => {
+			if (state === 'socket-moved') throw new Error('injected journal publication failure')
+			return update(journal, state)
+		}
+		assert.equal((await new TerminalTransferCoordinator(value.deps).move(value.request)).status, 'quarantined')
+		assert.equal(value.journal.load()?.master.currentSocketPath, value.request.destinationSocket)
+	} finally {
+		dispose(value)
+	}
+})
+
+test('reverse boundary survives repeated journal failures without reverting to the destination claim', async () => {
+	const value = fixture()
+	try {
+		value.request.destinationBuffers.save(SESSION_ID, 'collision')
+		const update = value.journal.update.bind(value.journal)
+		let failures = 0
+		value.journal.update = (journal, state) => {
+			if (
+				journal.master.currentSocketPath === journal.sourceSocket &&
+				value.calls.includes('rename:backward') &&
+				failures < 2
+			) {
+				failures++
+				throw new Error('injected reverse publication failure')
+			}
+			return update(journal, state)
+		}
+		assert.equal((await new TerminalTransferCoordinator(value.deps).move(value.request)).status, 'quarantined')
+		assert.equal(failures, 2)
+		assert.equal(value.journal.load()?.master.currentSocketPath, value.request.sourceSocket)
 	} finally {
 		dispose(value)
 	}

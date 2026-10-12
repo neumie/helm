@@ -2,7 +2,7 @@
 //
 // The transfer foundation owns durable records and recovery *decisions*. This
 // coordinator owns the ordered side effects around them, behind narrow
-// injected adapters so it remains deliberately unexposed to IPC/UI code.
+// injected adapters supplied by the authenticated main-process IPC integration.
 
 import type { BufferMoveResult, BufferStore } from './buffers'
 import type { SessionMeta, SessionRegistry } from './sessions'
@@ -144,6 +144,7 @@ export class TerminalTransferCoordinator {
 		const admission = await this.#deps.beginAdmission(request.sessionId)
 		if (!admission) return this.#quarantine(journal, 'terminal admission is unavailable')
 		let fenced = true
+		let current = journal
 		let movedSocket = false
 		let movedBuffer = false
 		try {
@@ -151,7 +152,7 @@ export class TerminalTransferCoordinator {
 			if (!prepared.snapshotFlushed || !sameActivity(prepared.activity, sourceMeta)) {
 				return this.#quarantine(journal, 'snapshot/activity prepare acknowledgement is incomplete', admission)
 			}
-			let current = this.#deps.journal.update(journal, 'snapshot-flushed')
+			current = this.#deps.journal.update(journal, 'snapshot-flushed')
 			await admission.detachAttachClient()
 			current = this.#deps.journal.update(current, 'client-detached')
 			const checkpoint = await admission.checkpoint()
@@ -164,6 +165,7 @@ export class TerminalTransferCoordinator {
 			}
 			await this.#deps.renameSocket(current.sourceSocket, current.destinationSocket)
 			movedSocket = true
+			current = { ...current, master: { ...current.master, currentSocketPath: current.destinationSocket } }
 			current = this.#deps.journal.update(current, 'socket-moved')
 			if (attestTerminalTransferMaster(current, await this.#deps.attestMaster(current)) !== 'verified') {
 				return this.#quarantine(current, 'master attestation failed after socket rename', admission)
@@ -179,6 +181,9 @@ export class TerminalTransferCoordinator {
 					movedSocket,
 					movedBuffer,
 					`buffer move ${bufferResult}`,
+					boundary => {
+						current = boundary
+					},
 				)
 			}
 			const registryResult = request.sourceRegistry.transferTo(request.destinationRegistry, request.sessionId)
@@ -190,6 +195,9 @@ export class TerminalTransferCoordinator {
 					movedSocket,
 					movedBuffer,
 					`registry move ${registryResult.status}`,
+					boundary => {
+						current = boundary
+					},
 				)
 			}
 			current = this.#deps.journal.update(current, 'registries-committed')
@@ -202,8 +210,7 @@ export class TerminalTransferCoordinator {
 			return { status: 'moved', journal: current }
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error)
-			const active = this.#deps.journal.load() ?? journal
-			return this.#quarantine(active, `transfer effect failed: ${message}`, admission)
+			return this.#quarantine(current, `transfer effect failed: ${message}`, admission)
 		} finally {
 			if (fenced) this.#releaseAdmission(admission, true)
 		}
@@ -216,8 +223,9 @@ export class TerminalTransferCoordinator {
 		movedSocket: boolean,
 		movedBuffer: boolean,
 		reason: string,
+		recordBoundary: (journal: TerminalTransferJournal) => void,
 	): Promise<TerminalTransferResult> {
-		const rollback = this.#deps.journal.update(journal, 'rollback-needed')
+		let rollback = this.#deps.journal.update(journal, 'rollback-needed')
 		if (
 			!movedSocket ||
 			attestTerminalTransferMaster(rollback, await this.#deps.attestMaster(rollback)) !== 'verified'
@@ -226,7 +234,10 @@ export class TerminalTransferCoordinator {
 		}
 		try {
 			await this.#deps.renameSocket(rollback.destinationSocket, rollback.sourceSocket)
+			rollback = { ...rollback, master: { ...rollback.master, currentSocketPath: rollback.sourceSocket } }
+			recordBoundary(rollback)
 			const restored = this.#deps.journal.update(rollback, 'client-detached')
+			rollback = restored
 			if (attestTerminalTransferMaster(restored, await this.#deps.attestMaster(restored)) !== 'verified') {
 				return this.#quarantine(restored, `${reason}; source ownership is not verified after rollback`, admission)
 			}
@@ -269,8 +280,8 @@ export class TerminalTransferCoordinator {
 		reason: string,
 		admission?: TerminalTransferAdmission,
 	): TerminalTransferResult {
-		const quarantined =
-			journal.state === 'rollback-needed' ? journal : this.#deps.journal.update(journal, 'rollback-needed')
+		// Even an existing rollback marker may carry a newer confirmed reverse-rename boundary.
+		const quarantined = this.#deps.journal.update(journal, 'rollback-needed')
 		if (admission) this.#releaseAdmission(admission, true)
 		return { status: 'quarantined', journal: quarantined, reason }
 	}

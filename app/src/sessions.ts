@@ -235,7 +235,7 @@ export interface SessionScan {
  * restore path (workspace persistence keeps terminal ids and reattaches via
  * `dtach -A`; persistence.rs:157-172).
  */
-export async function scanSessions(): Promise<SessionScan> {
+export async function scanSessions(allowsSession: (sessionId: string) => boolean = () => true): Promise<SessionScan> {
 	let names: string[]
 	try {
 		names = fs.readdirSync(socketDir()).filter(n => n.endsWith('.sock'))
@@ -247,9 +247,10 @@ export async function scanSessions(): Promise<SessionScan> {
 	await Promise.all(
 		names.map(async name => {
 			const sessionId = name.slice(0, -'.sock'.length)
-			if (!isValidSessionId(sessionId)) return
+			if (!isValidSessionId(sessionId) || !allowsSession(sessionId)) return
 			const sock = path.join(socketDir(), name)
 			const probe = await probeSocket(sock)
+			if (!allowsSession(sessionId)) return
 			if (probe === 'live') {
 				let createdAt = new Date(0).toISOString()
 				try {
@@ -484,10 +485,16 @@ export class GraceCloser {
 	readonly graceMs: number
 	readonly #onKilled: ((sessionId: string) => void) | undefined
 	readonly #pending = new Map<string, NodeJS.Timeout>()
+	readonly #captureFinalizer?: (sessionId: string) => (() => void) | null
 
-	constructor(graceMs: number, onKilled?: (sessionId: string) => void) {
+	constructor(
+		graceMs: number,
+		onKilled?: (sessionId: string) => void,
+		captureFinalizer?: (sessionId: string) => (() => void) | null,
+	) {
 		this.graceMs = graceMs
 		this.#onKilled = onKilled
+		this.#captureFinalizer = captureFinalizer
 	}
 
 	/** Arm (or re-arm) the delayed kill for a detached session. */
@@ -495,7 +502,12 @@ export class GraceCloser {
 		this.undo(sessionId)
 		const timer = setTimeout(() => {
 			this.#pending.delete(sessionId)
-			void killSession(sessionId).then(() => this.#onKilled?.(sessionId))
+			const finalize = this.#captureFinalizer?.(sessionId)
+			if (this.#captureFinalizer && !finalize) return
+			void killSession(sessionId).then(() => {
+				finalize?.()
+				this.#onKilled?.(sessionId)
+			})
 		}, this.graceMs)
 		this.#pending.set(sessionId, timer)
 	}
@@ -1459,8 +1471,13 @@ export interface SessionRestorePlan {
  * exact daemon/Electron re-attestation flow may attach them, and Helm must
  * never create a replacement process for one.
  */
-export function planSessionRestore(registry: SessionRegistry, scan: SessionScan): SessionRestorePlan {
-	for (const session of scan.live) registry.ensure(session.sessionId, session.createdAt)
+export function planSessionRestore(
+	registry: SessionRegistry,
+	scan: SessionScan,
+	allowsSession: (sessionId: string) => boolean = () => true,
+): SessionRestorePlan {
+	for (const session of scan.live)
+		if (allowsSession(session.sessionId)) registry.ensure(session.sessionId, session.createdAt)
 	const liveIds = new Set(scan.live.map(session => session.sessionId))
 	const unknownIds = new Set(scan.unknownIds)
 	const keepSnapshotIds = new Set([...registry.ids(), ...liveIds, ...unknownIds])
@@ -1468,7 +1485,13 @@ export function planSessionRestore(registry: SessionRegistry, scan: SessionScan)
 		.ids()
 		.flatMap(sessionId => {
 			const meta = registry.get(sessionId)
-			if (!meta || (meta.backing ?? 'ordinary') !== 'ordinary' || unknownIds.has(sessionId)) return []
+			if (
+				!meta ||
+				!allowsSession(sessionId) ||
+				(meta.backing ?? 'ordinary') !== 'ordinary' ||
+				unknownIds.has(sessionId)
+			)
+				return []
 			const processSurvived = liveIds.has(sessionId)
 			return [
 				{

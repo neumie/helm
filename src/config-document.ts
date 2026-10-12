@@ -253,9 +253,9 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 				{
 					type: 'field',
 					path: ['solver', 'maxBudgetUsd'],
-					label: 'Max Budget ($)',
+					label: 'Max budget ($)',
 					input: 'number',
-					placeholder: '(optional)',
+					placeholder: 'Claude print-mode only (optional)',
 				},
 			],
 		},

@@ -167,6 +167,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		generation: number
 	} | null>(null)
 	const [documentDetails, setDocumentDetails] = useState(false)
+	const [preferencesNotice, setPreferencesNotice] = useState<{
+		api: ReviewApi
+		generation: number
+		binding: string
+		text: string
+	} | null>(null)
 	const companion = useRef<HTMLElement>(null)
 	const intentTrigger = useRef<HTMLButtonElement>(null)
 	const documentOptions = useRef<HTMLButtonElement>(null)
@@ -177,7 +183,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const latest = useRef({ state, draft })
 	latest.current = { state, draft }
 	const operation = useRef<Operation | null>(null)
-	const control = useRef(false)
+	const control = useRef<object | null>(null)
 	const editToken = useRef(0)
 	const savedToken = useRef(0)
 	const savedDraft = useRef<ReviewDraft | null>(null)
@@ -257,11 +263,39 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const currentBinding = useRef(selectionBinding)
 	currentBinding.current = selectionBinding
 
+	const passageDirty = useCallback(() => {
+		const text = passageEditor.current.text
+		return (
+			!!text.trim() &&
+			!savedDraft.current?.annotations.some(
+				annotation => annotation.note === text && samePassage(annotation.passage, currentPassage.current),
+			)
+		)
+	}, [])
+	const publishDirty = useCallback(() => {
+		if (mounted.current && currentApi.current === api)
+			api.dirty(editToken.current !== savedToken.current || passageDirty())
+	}, [api, passageDirty])
+	// Scope changes and successful local comment saves can also change passage protection.
+	useLayoutEffect(() => {
+		publishDirty()
+	})
+
 	const refresh = useCallback(async () => {
+		// An old closure must not acquire the new lifecycle's read sequence or call its old API.
+		if (!mounted.current || currentApi.current !== api) return
 		const sequence = ++readSequence.current
 		const generation = lifecycle.current
+		const binding = currentBinding.current
 		const result = await api.load()
-		if (!mounted.current || generation !== lifecycle.current || sequence !== readSequence.current) return
+		if (
+			!mounted.current ||
+			currentApi.current !== api ||
+			generation !== lifecycle.current ||
+			binding !== currentBinding.current ||
+			sequence !== readSequence.current
+		)
+			return
 		if (result.error !== undefined) {
 			setError(result.error)
 			return
@@ -379,7 +413,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					if (write) setSaveError(null)
 					savedDraft.current = structuredClone(value)
 					if (token === editToken.current) {
-						api.dirty(false)
+						publishDirty()
 						setSaveError(null)
 					}
 					if (write) void refresh()
@@ -396,7 +430,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			if (saveActive.current === promise) saveActive.current = null
 			return ok
 		},
-		[api, refresh],
+		[api, refresh, publishDirty],
 	)
 
 	const changeDraft = useCallback(
@@ -416,6 +450,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		lifecycle.current++
 		mounted.current = true
 		archiveFlight.current = null
+		if (control.current) {
+			control.current = null
+			setBusy(false)
+		}
+		publishDirty()
 		setArchiveSaving(false)
 		setDiscardReply(null)
 		const pending = operation.current
@@ -435,20 +474,35 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			void refresh()
 		})
 		const close = api.onCloseRequested(() => {
-			const text = passageEditor.current.text
-			const saved = latest.current.draft?.annotations.some(
-				annotation => annotation.note === text && samePassage(annotation.passage, currentPassage.current),
-			)
+			if (!mounted.current || currentApi.current !== api) return
+			const generation = lifecycle.current
+			const binding = currentBinding.current
+			const editor = passageEditor.current
+			const scope = currentPassage.current
 			if (
-				text.trim() &&
-				!saved &&
+				passageDirty() &&
 				!window.confirm(
 					'Discard the unsent passage draft and close? Saved comments and your whole-document draft are kept.',
 				)
 			)
 				return
 			void persist().then(ok => {
-				if (ok && savedToken.current === editToken.current) api.close()
+				if (
+					!ok ||
+					!mounted.current ||
+					currentApi.current !== api ||
+					generation !== lifecycle.current ||
+					binding !== currentBinding.current ||
+					savedToken.current !== editToken.current ||
+					passageEditor.current !== editor ||
+					currentPassage.current !== scope
+				)
+					return
+				// Only this explicitly confirmed slot is discarded; newer typing cancels close.
+				passageEditor.current = { text: '', token: editor.token + 1 }
+				setPassageText('')
+				publishDirty()
+				api.close()
 			})
 		})
 		const media = window.matchMedia('(max-width: 900px)')
@@ -481,7 +535,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			document.removeEventListener('pointercancel', clearPointer)
 			window.removeEventListener('blur', clearPointer)
 		}
-	}, [api, refresh, persist])
+	}, [api, refresh, persist, passageDirty, publishDirty])
 	useLayoutEffect(() => {
 		if (!state?.document.id) return
 		const element = documentPane.current
@@ -841,10 +895,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	function setPassage(value: ReviewPassage | null): void {
 		currentPassage.current = value
 		setPassageState(value)
+		publishDirty()
 	}
 	function writePassage(text: string): void {
 		passageEditor.current = { text, token: passageEditor.current.token + 1 }
 		setPassageText(text)
+		publishDirty()
 	}
 	function currentBubble(commit: PassageBubbleCommit | null): boolean {
 		if (
@@ -967,7 +1023,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		latest.current = { ...latest.current, draft: restored }
 		editToken.current++
 		savedToken.current = editToken.current
-		api.dirty(false)
+		publishDirty()
 		setDraft(restored)
 		setSaveError(null)
 		finishPassage()
@@ -1082,21 +1138,98 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	async function acknowledge(): Promise<void> {
 		const pending = operation.current
-		if (!selected || selected.busy || control.current || blockedOwner.current) return
-		control.current = true
+		if (
+			!selected ||
+			selected.busy ||
+			control.current ||
+			blockedOwner.current ||
+			api !== currentApi.current ||
+			selectionBinding !== currentBinding.current
+		)
+			return
+		const flight = {}
+		const generation = lifecycle.current
+		const binding = currentBinding.current
+		control.current = flight
+		const current = () =>
+			mounted.current &&
+			currentApi.current === api &&
+			lifecycle.current === generation &&
+			currentBinding.current === binding &&
+			control.current === flight &&
+			operation.current === pending &&
+			!blockedOwner.current
 		setBusy(true)
 		try {
 			const result = await api.acknowledge(selected.id, selected.owner)
-			if (!mounted.current) return
+			if (!current()) return
 			if (result.error !== undefined) setError(result.error)
 			else {
 				if (!pending || operation.current === pending) operation.current = null
 				setReceipt(null)
 				await refresh()
 			}
+		} catch {
+			if (current())
+				setError('Acknowledgement could not be confirmed. Check the original conversation before trying again.')
 		} finally {
-			control.current = false
-			if (mounted.current) setBusy(false)
+			if (control.current === flight) {
+				control.current = null
+				if (mounted.current && currentApi.current === api && lifecycle.current === generation) setBusy(false)
+			}
+		}
+	}
+	async function clearEmptyPreferences(): Promise<void> {
+		const clear = api.clearEmptyPreferences
+		if (!clear || !mounted.current || api !== currentApi.current || selectionBinding !== currentBinding.current) return
+		const generation = lifecycle.current
+		const binding = currentBinding.current
+		const notice = (text: string) => setPreferencesNotice({ api, generation, binding, text })
+		if (
+			control.current ||
+			operation.current ||
+			busy ||
+			selected?.busy ||
+			selected?.error ||
+			selected?.needsAcknowledgement ||
+			blockedOwner.current ||
+			latest.current.state?.document.error ||
+			latest.current.state?.archiveError ||
+			saveError ||
+			saveActive.current ||
+			commentSave.current ||
+			annotationWrite.current ||
+			archiveFlight.current
+		) {
+			notice('Finish the current save or feedback recovery before clearing empty preferences.')
+			return
+		}
+		const flight = {}
+		control.current = flight
+		const current = () =>
+			mounted.current &&
+			currentApi.current === api &&
+			lifecycle.current === generation &&
+			currentBinding.current === binding &&
+			control.current === flight &&
+			!blockedOwner.current
+		setBusy(true)
+		notice('Clearing empty saved preferences…')
+		try {
+			const result = await clear()
+			if (!current()) return
+			if (result.error !== undefined) notice(result.error)
+			else
+				notice(
+					`Cleared ${result.data.removed} empty saved preference ${result.data.removed === 1 ? 'entry' : 'entries'}. Saved text and comments are kept.`,
+				)
+		} catch {
+			if (current()) notice('Empty preferences cleanup could not be confirmed. Nothing will be retried automatically.')
+		} finally {
+			if (control.current === flight) {
+				control.current = null
+				if (mounted.current && currentApi.current === api && lifecycle.current === generation) setBusy(false)
+			}
 		}
 	}
 	async function saveComment(): Promise<void> {
@@ -1667,6 +1800,40 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					<p>
 						Revision <code>{state.document.revision}</code>
 					</p>
+					{api.clearEmptyPreferences && (
+						<>
+							<Btn
+								tone="quiet"
+								sm
+								disabled={
+									busy ||
+									activeSession ||
+									ownerBlocked ||
+									!!operation.current ||
+									!!control.current ||
+									commentSaving ||
+									!!annotationWrite.current ||
+									archiveSaving ||
+									!!state.archiveError ||
+									!!saveError ||
+									!!selected?.error ||
+									!!selected?.needsAcknowledgement ||
+									!!state.document.error
+								}
+								onClick={() => {
+									void clearEmptyPreferences()
+								}}
+							>
+								Clear empty saved preferences
+							</Btn>
+							<p>Saved text and comments are kept.</p>
+							{preferencesNotice?.api === api &&
+								preferencesNotice.generation === lifecycle.current &&
+								preferencesNotice.binding === selectionBinding && (
+									<output className="review-feedback-status">{preferencesNotice.text}</output>
+								)}
+						</>
+					)}
 					<p className="review-permission-note">
 						Discuss requests no edits, but is not a new sandbox. Your agent keeps its permissions; handle approvals and
 						Stop in its terminal. Feedback is delivered only while it is listening.

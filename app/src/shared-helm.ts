@@ -1,9 +1,8 @@
 // Helm daemon wire types + the HelmBridge IPC surface.
 //
-// The contract types below are COPIED from web/src/api.ts (the web dashboard is
-// scheduled for deletion — helm must not import from it). They mirror the
-// server-owned contract in src/items/contract.ts; when the daemon contract
-// changes, update this copy in the same slice.
+// The contract types below mirror src/items/contract.ts and the daemon's
+// narrow response contracts. Update these copies in the same slice; the
+// compatibility typecheck protects both directions of the shared DTOs.
 
 export type DashboardTone = 'gray' | 'blue' | 'green' | 'amber' | 'red'
 export type DashboardActionTone = 'primary' | 'muted' | 'danger'
@@ -129,7 +128,7 @@ export interface DashboardForkContext {
 
 export interface DashboardPlan {
 	worktreePath: string
-	branchName: string
+	branchName: string | null
 	planDirName: string
 	readmePath: string
 }
@@ -351,7 +350,7 @@ export interface AssignItemInput {
 
 export interface PlanInfo {
 	worktreePath: string
-	branchName: string
+	branchName: string | null
 	planDirName: string
 	readmePath: string
 	spawner: string
@@ -653,7 +652,7 @@ export interface ScheduledScheduleInput {
  */
 export type HelmResult<T> =
 	| { data: T; error?: undefined; status?: undefined }
-	| { data?: undefined; error: string; status?: number }
+	| { data?: undefined; error: string; status?: number; sessionMayExist?: true }
 
 /**
  * Full state pushed over `daemon:snapshot`. `status`/`items`/`config` are null

@@ -388,3 +388,29 @@ test('journal cleanup requires proven final destination ownership', () => {
 		'quarantine',
 	)
 })
+
+test('rollback-needed attestation retains either confirmed namespace but refuses any other socket', () => {
+	const record = journal()
+	for (const currentSocketPath of [record.sourceSocket, record.destinationSocket]) {
+		const quarantined = {
+			...record,
+			state: 'rollback-needed' as const,
+			master: { ...record.master, currentSocketPath },
+		}
+		assert.equal(attestTerminalTransferMaster(quarantined, { state: 'present', ...quarantined.master }), 'verified')
+		assert.equal(
+			attestTerminalTransferMaster(quarantined, {
+				state: 'present',
+				...quarantined.master,
+				currentSocketPath: currentSocketPath === record.sourceSocket ? record.destinationSocket : record.sourceSocket,
+			}),
+			'mismatch',
+		)
+	}
+	const invalid = {
+		...record,
+		state: 'rollback-needed' as const,
+		master: { ...record.master, currentSocketPath: '/tmp/foreign.sock' },
+	}
+	assert.equal(attestTerminalTransferMaster(invalid, { state: 'present', ...invalid.master }), 'mismatch')
+})

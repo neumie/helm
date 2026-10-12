@@ -1,5 +1,12 @@
 import { locateReviewPassage } from '../../document-review/request'
-import type { ReviewApi, ReviewDraft, ReviewRequest, ReviewSession, ReviewState } from '../../document-review/types'
+import type {
+	ReviewApi,
+	ReviewDraft,
+	ReviewRequest,
+	ReviewResult,
+	ReviewSession,
+	ReviewState,
+} from '../../document-review/types'
 import { defaultReviewDraft } from '../../document-review/types'
 
 const revision = (n: number) => n.toString(16).padStart(64, '0')
@@ -39,6 +46,7 @@ const passageListText = `# Uživatelské scénáře
 `
 export type ReviewFixtureScenario =
 	| 'normal'
+	| 'empty-preferences'
 	| 'light'
 	| 'working'
 	| 'missing'
@@ -61,6 +69,10 @@ export type ReviewFixtureScenario =
 	| 'passage-list-light'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
 	const listeners = new Set<() => void>()
+	const closeListeners = new Set<() => void>()
+	let dirty = false
+	let closes = 0
+	let clearedPreferences = 0
 	const requests: ReviewRequest[] = []
 	let saved = 0
 	let sends = 0
@@ -227,7 +239,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 	const publish = () => {
 		for (const listener of listeners) listener()
 	}
-	const api: ReviewApi = {
+	const api: ReviewApi & { clearEmptyPreferences?: () => Promise<ReviewResult<{ removed: number }>> } = {
 		load: async () => ({ data: structuredClone(state) }),
 		selectSession: async id => {
 			scoped.set(state.draft.sessionId ?? '', structuredClone(state.draft))
@@ -298,14 +310,28 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			publish()
 			return { data: true }
 		},
-		dirty: () => {},
-		onCloseRequested: () => () => {},
-		close: () => {},
+		dirty: value => {
+			dirty = value
+		},
+		onCloseRequested: listener => {
+			closeListeners.add(listener)
+			return () => {
+				closeListeners.delete(listener)
+			}
+		},
+		close: () => {
+			if (!dirty) closes++
+		},
 		onChanged: listener => {
 			listeners.add(listener)
 			return () => listeners.delete(listener)
 		},
 	}
+	if (scenario === 'empty-preferences')
+		api.clearEmptyPreferences = async () => {
+			clearedPreferences++
+			return { data: { removed: 3 } }
+		}
 	return {
 		api,
 		requests,
@@ -335,7 +361,12 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			}
 			publish()
 		},
-		stats: () => ({ saved, sends, listeners: listeners.size }),
+		stats: () => ({ saved, sends, listeners: listeners.size, dirty, closes, clearedPreferences }),
+		/** Native close projection only; actual Electron quit/profile guards remain a separate proof. */
+		requestClose: () => {
+			if (dirty) for (const listener of closeListeners) listener()
+			else closes++
+		},
 		edit: (text = `${state.document.text}\nExternal edit sentinel.\n`) => {
 			state.document.previous = state.document.text
 			state.document.text = text
@@ -374,6 +405,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 		dispose: () => {
 			generation++
 			listeners.clear()
+			closeListeners.clear()
 		},
 	}
 }
