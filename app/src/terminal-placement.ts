@@ -408,7 +408,8 @@ export class TerminalPlacement {
 					memberIds: group.memberIds.filter(id => id !== event.id),
 				}))
 				.filter(group => group.memberIds.length > 0)
-			if (this.#state.selectedId === event.id) this.#state.selectedId = this.#fallbackSelection()
+			// Closing the open terminal must not reveal another one.
+			if (this.#state.selectedId === event.id) this.#state.selectedId = null
 			if (this.#drag) {
 				this.#drag.ids = this.#drag.ids.filter(id => id !== event.id)
 				if (this.#drag.projection) this.#drag.projection = this.#projectionFor(this.#drag, this.#drag.projection.target)
@@ -805,7 +806,7 @@ export class TerminalPlacement {
 		}
 		const known = new Set(inventory)
 		const selectedId =
-			candidate.selectedId && known.has(candidate.selectedId) ? candidate.selectedId : this.#fallbackSelection(strip)
+			candidate.selectedId !== null && known.has(candidate.selectedId) ? candidate.selectedId : null
 		const merged = {
 			inventory,
 			strip,
@@ -922,8 +923,7 @@ export class TerminalPlacement {
 		}))
 		state.strip = this.#contiguousGroups(state.strip, state.groups)
 		state.background = this.#contiguousGroups(state.background, state.groups)
-		if (state.selectedId !== null && !inventory.includes(state.selectedId))
-			state.selectedId = this.#fallbackSelection(state.strip)
+		if (state.selectedId !== null && !inventory.includes(state.selectedId)) state.selectedId = null
 	}
 
 	#contiguousGroups(order: readonly TerminalId[], groups: readonly PlacementGroup[]): TerminalId[] {
@@ -943,10 +943,6 @@ export class TerminalPlacement {
 			if (group) result.push(...order.filter(candidate => group.memberIds.includes(candidate)))
 		}
 		return result
-	}
-
-	#fallbackSelection(strip = this.#state.strip): TerminalId | null {
-		return strip[0] ?? null
 	}
 
 	#drainQueuedDurabilityFlush(): void {

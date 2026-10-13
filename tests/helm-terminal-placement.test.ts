@@ -481,15 +481,17 @@ test('one user transaction is admitted while versioned inventory events continue
 	await completion
 })
 
-test('inventory ownership/remove rules retain one identity and deterministic selection fallback', async () => {
+test('inventory ownership/remove keeps one identity and closing the selection opens nothing', async () => {
 	const value = placement(new InMemorySessionPlacementPort({ profileId, generation }))
 	await value.execute({ type: 'select', id: id('a') })
 	value.inventory({ type: 'ownership', profileId, generation, version: 11, id: id('a'), surface: 'background' })
 	assert.deepEqual(value.snapshot().strip, [id('c'), id('d')])
 	assert.deepEqual(value.snapshot().background, [id('b'), id('a')])
-	value.inventory({ type: 'remove', profileId, generation, version: 12, id: id('a') })
-	assert.equal(value.snapshot().selectedId, id('c'))
-	assert.deepEqual([...value.snapshot().strip, ...value.snapshot().background], [id('c'), id('d'), id('b')])
+	value.inventory({ type: 'remove', profileId, generation, version: 12, id: id('d') })
+	assert.equal(value.snapshot().selectedId, id('a'))
+	value.inventory({ type: 'remove', profileId, generation, version: 13, id: id('a') })
+	assert.equal(value.snapshot().selectedId, null)
+	assert.deepEqual([...value.snapshot().strip, ...value.snapshot().background], [id('c'), id('b')])
 })
 
 test('stale drag commits/cancels are typed rejections and an accepted commit is one-shot', async () => {

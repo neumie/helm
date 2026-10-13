@@ -19,6 +19,7 @@ import { ProductionSessionPlacementPort } from '../terminal-placement-production
 import { TerminalTransferRendererController } from '../terminal-transfer-renderer'
 import { type ActivityIndicatorVariant, createActivityIndicator, setActivityIndicatorState } from './activity-indicator'
 import { appearance as productionAppearance } from './appearance'
+import { createButton } from './button'
 import { createIconButton } from './icon-button'
 import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
 import {
@@ -208,12 +209,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const binding = (terminalPreferences?.shortcuts ?? effectiveShortcuts())[action][0]
 		return binding ? shortcutDisplay(binding, helm.platform) : null
 	}
+	let refreshEmptyCopy = (): void => {}
 	const refreshTerminalShortcutHints = () => {
 		const closeHint = shortcutHint('closeFocused')
 		for (const tab of [...tabs, ...parked]) {
 			tab.closeButton.title = closeHint ? `Close (${closeHint})` : 'Close'
 			tab.closeButton.setAttribute('aria-label', closeHint ? `Close terminal (${closeHint})` : 'Close terminal')
 		}
+		refreshEmptyCopy()
 	}
 	const applyTerminalPreferences = (snapshot: TerminalPreferencesSnapshot) => {
 		// IPC notifications and the bootstrap read may race. Never let an older
@@ -341,7 +344,11 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (selected) activate(selected)
 		else {
 			activeTab = null
-			for (const tab of [...tabs, ...parked]) tab.holder.classList.remove('active')
+			for (const tab of [...tabs, ...parked]) {
+				tab.holder.classList.remove('active')
+				tab.tabButton.classList.remove('active')
+				tab.tabButton.setAttribute('aria-selected', 'false')
+			}
 			renderTabGroups()
 			syncEmptyState()
 			updateBackgroundUi()
@@ -3056,12 +3063,73 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		)
 	}
 
-	// Zero terminals is a valid state — show a quiet hint instead of respawning
-	// (closing the last tab used to auto-open a new one; deliberate removal).
-	function syncEmptyState(): void {
-		const empty = document.getElementById('no-terms')
-		if (empty) empty.hidden = tabs.length > 0 || activeTab !== null
+	// Closing the open terminal clears the pane. Do not select or spawn a replacement.
+	const emptyState = root instanceof Document ? root.getElementById('no-terms') : root.querySelector('#no-terms')
+	const emptyTitle = emptyState?.querySelector('.no-terms-title') ?? null
+	const emptyDetail = emptyState?.querySelector('.no-terms-detail') ?? null
+	const emptyActionSlot = emptyState?.querySelector('.no-terms-action') ?? null
+	const emptyAction =
+		emptyActionSlot instanceof HTMLElement
+			? createButton({
+					label: 'New terminal',
+					tone: 'primary',
+					onClick: () => {
+						if (tabsReady) void createTerminal()
+					},
+				})
+			: null
+	emptyActionSlot?.replaceChildren(...(emptyAction ? [emptyAction] : []))
+	function emptyDirection(): 'tabs' | 'background' | 'none' {
+		if (tabs.length > 0) return 'tabs'
+		if (parked.length > 0) return 'background'
+		return 'none'
 	}
+	function writeEmptyDetail(detail: Element, hint: string | null, direction: 'tabs' | 'background' | 'none'): void {
+		detail.replaceChildren()
+		if (direction === 'tabs') detail.append('Choose a tab')
+		else if (direction === 'background') detail.append('Open a background terminal')
+		if (direction !== 'none') {
+			if (!hint) {
+				detail.append('.')
+				return
+			}
+			detail.append(', or press ')
+			const kbd = document.createElement('kbd')
+			kbd.textContent = hint
+			detail.append(kbd, '.')
+			return
+		}
+		if (!hint) {
+			detail.append('Start a new terminal.')
+			return
+		}
+		detail.append('Press ')
+		const kbd = document.createElement('kbd')
+		kbd.textContent = hint
+		detail.append(kbd, ' to start one.')
+	}
+	function focusEmptyAction(): void {
+		if (!emptyAction) return
+		const active = document.activeElement
+		if (active === emptyAction) return
+		const lost =
+			!(active instanceof HTMLElement) ||
+			!active.isConnected ||
+			active === document.body ||
+			active.closest('.term-holder, .tab, #no-terms') !== null
+		if (lost) emptyAction.focus()
+	}
+	function syncEmptyState(): void {
+		if (!(emptyState instanceof HTMLElement)) return
+		const showing = activeTab === null
+		const wasHidden = emptyState.hidden
+		if (emptyTitle) emptyTitle.textContent = emptyDirection() === 'none' ? 'No terminals open' : 'No terminal open'
+		if (emptyDetail) writeEmptyDetail(emptyDetail, shortcutHint('newTerminal'), emptyDirection())
+		if (emptyAction) emptyAction.disabled = !tabsReady
+		emptyState.hidden = !showing
+		if (showing && wasHidden) focusEmptyAction()
+	}
+	refreshEmptyCopy = syncEmptyState
 
 	interface TerminalOpts {
 		/** Durable/undone identity to reattach, or recreate after reboot; omitted = new workspace. */
@@ -3739,6 +3807,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		hydratePlacement()
 		if (tabs[0]) await placement.execute({ type: 'select', id: placementId(tabs[0]) })
 		tabsReady = true
+		syncEmptyState()
 		resolveTabsReady()
 		// --term-cmd (screenshot harness): type a command into the first tab's
 		// shell. The pty input buffer holds it until the shell is ready to read.

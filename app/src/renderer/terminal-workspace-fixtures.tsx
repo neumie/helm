@@ -147,8 +147,10 @@ function buildShell(root: HTMLElement, sidebarVisibility = false): void {
 	empty.hidden = true
 	const emptyCard = shellNode('div', undefined, 'no-terms-card')
 	const emptyTitle = shellNode('div', undefined, 'no-terms-title')
-	emptyTitle.textContent = 'No terminals open'
-	emptyCard.append(emptyTitle)
+	emptyTitle.textContent = 'No terminal open'
+	const emptyDetail = shellNode('div', undefined, 'no-terms-detail')
+	emptyDetail.textContent = 'Press ⌘T to start one.'
+	emptyCard.append(emptyTitle, emptyDetail, shellNode('div', undefined, 'no-terms-action'))
 	empty.append(emptyCard)
 	right.append(empty)
 	content.append(right)

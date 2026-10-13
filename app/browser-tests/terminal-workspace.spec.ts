@@ -518,6 +518,28 @@ test('switching terminals never leaves focus inside the holder being hidden', as
 		.toEqual([])
 })
 
+test('closing the open terminal shows an empty action instead of opening another', async ({ page }) => {
+	const tabs = page.getByRole('tab')
+	await expect(tabs).toHaveCount(2)
+	await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+	await tabs.first().locator('.tab-close').click()
+
+	await expect(tabs).toHaveCount(1)
+	await expect(tabs).toHaveAttribute('aria-selected', 'false')
+	const empty = page.locator('#no-terms')
+	await expect(empty).toBeVisible()
+	await expect(empty).toContainText('No terminal open')
+	await expect(empty).toContainText('Choose a tab')
+	const action = empty.getByRole('button', { name: 'New terminal' })
+	await expect(action).toBeVisible()
+	await expect(action).toBeFocused()
+
+	await action.click()
+	await expect(tabs).toHaveCount(2)
+	await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+	await expect(empty).toBeHidden()
+})
+
 test('a refused durable close keeps the terminal mounted', async ({ page }) => {
 	const tabs = page.getByRole('tab')
 	await expect(tabs).toHaveCount(2)

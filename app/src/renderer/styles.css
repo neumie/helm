@@ -1230,33 +1230,41 @@ body.dragging {
 	}
 }
 
-/* Zero-terminals hint — mirrors the daemon-waiting card's quiet register. */
+/* No open terminal — centered state plus one action. Closing must not reveal another. */
 #no-terms {
 	position: absolute;
 	inset: 0;
+	z-index: 2;
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	pointer-events: none;
 }
 #no-terms[hidden] {
 	display: none;
 }
 .no-terms-card {
+	max-width: 280px;
 	text-align: center;
+	pointer-events: auto;
 }
 .no-terms-title {
-	font-size: 13px;
+	font-size: calc(13px * var(--ui-scale));
 	font-weight: 600;
 	color: var(--text-1);
 }
 .no-terms-detail {
 	margin-top: 6px;
-	font-size: 12px;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.5;
 	color: var(--text-2);
+}
+.no-terms-action {
+	margin-top: 16px;
 }
 .no-terms-detail kbd {
 	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: 11px;
+	font-size: calc(11px * var(--ui-scale));
 	padding: 1px 5px;
 	border: 1px solid var(--fill-raised);
 	border-radius: 4px;
