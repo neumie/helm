@@ -42,6 +42,9 @@ test('Pi integration IPC is read-only, profile-tokened, and reauthenticates afte
 test('precise Pi reporting is enabled only through the ordinary shell environment', () => {
 	const shellEnvironment = between(main, 'function shellEnv()', 'const scheduledOpenAcks')
 	assert.match(shellEnvironment, /HELM_TERMINAL_AGENT_STATUS = '1'/)
+	assert.match(shellEnvironment, /TERM_SESSION_ID/)
+	assert.match(shellEnvironment, /TERM_PROGRAM = 'Helm'/)
+	assert.match(shellEnvironment, /SHELL_SESSIONS_DISABLE = '1'/)
 	const scheduledAttach = between(main, 'async function attachScheduledPty', 'function detachScheduledPty')
 	assert.doesNotMatch(scheduledAttach, /HELM_TERMINAL_AGENT_STATUS/)
 })

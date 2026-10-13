@@ -3149,9 +3149,41 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		attachedPty?: { id: number; sessionId: string }
 	}
 
+	const earlyPtyOutput = new Map<number, string>()
+	const EARLY_PTY_OUTPUT_MAX = 64_000
+
+	function rememberEarlyPtyOutput(id: number, data: string): void {
+		const next = (earlyPtyOutput.get(id) ?? '') + data
+		earlyPtyOutput.set(id, next.length > EARLY_PTY_OUTPUT_MAX ? next.slice(-EARLY_PTY_OUTPUT_MAX) : next)
+	}
+
+	function takeEarlyPtyOutput(id: number): string {
+		const data = earlyPtyOutput.get(id) ?? ''
+		earlyPtyOutput.delete(id)
+		return data
+	}
+
+	function deliverPtyOutput(tab: Tab, data: string): void {
+		tab.progressTracker.feed(data)
+		tab.agentStateTracker.feed(data)
+		let output = data
+		if (tab.attachClearPending && tab.sessionId !== null) {
+			output = filterAttachClear(tab, data)
+			if (output === '') return
+		}
+		tab.outputGuard.write(output, (chunk, onParsed) => tab.term.write(chunk, onParsed))
+		tab.dirty = true
+	}
+
 	async function createTerminal(opts?: TerminalOpts): Promise<void> {
 		if (disposed) return
 		const startParked = opts?.parked === true
+		// Start a fresh shell before xterm construction so login startup overlaps
+		// the pane setup. Restores still wait for the snapshot write below.
+		const earlySpawn =
+			opts?.attachedPty || opts?.sessionId
+				? null
+				: helm.pty.spawn(120, 40).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))))
 		const term = new Terminal({
 			cursorBlink: true,
 			scrollback: 10000,
@@ -3416,15 +3448,23 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		// Spawn with the best-known size, but treat it as provisional: layout can
 		// settle during the await (activate()'s rAF fit, fonts, first paint), and
 		// any term.resize in that window is LOST — onResize is attached only below.
-		const spawnCols = term.cols
-		const spawnRows = term.rows
-		const spawned = opts?.attachedPty ?? (await helm.pty.spawn(spawnCols, spawnRows, opts?.sessionId))
+		const spawnCols = earlySpawn ? 120 : term.cols
+		const spawnRows = earlySpawn ? 40 : term.rows
+		let spawned: { id: number; sessionId: string | null; prelude?: string }
+		if (opts?.attachedPty) spawned = opts.attachedPty
+		else if (earlySpawn) {
+			const result = await earlySpawn
+			if (result instanceof Error) throw result
+			spawned = result
+		} else spawned = await helm.pty.spawn(spawnCols, spawnRows, opts?.sessionId)
 		if (tab.closed) {
 			helm.pty.kill(spawned.id)
 			return
 		}
+		const startupOutput = `${spawned.prelude ?? ''}${takeEarlyPtyOutput(spawned.id)}`
 		tab.ptyId = spawned.id
 		tab.sessionId = spawned.sessionId
+		if (startupOutput) deliverPtyOutput(tab, startupOutput)
 		// Fresh visual IDs gain a durable binding only after spawn; flush the
 		// canonical placement now without replacing its local unbound ordering.
 		if (placementHydrated) void placement.flushDurability()
@@ -3457,18 +3497,13 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	const unsubscribePtyData = helm.pty.onData((id, data) => {
 		if (disposed) return
 		const tab = findByPty(id)
-		if (!tab) return
-		tab.progressTracker.feed(data)
-		tab.agentStateTracker.feed(data)
-		// Session-backed spawns: swallow dtach's one-time attach clear so it can't
-		// wipe the restored snapshot (non-dtach fallback ptys emit no such prefix).
-		let output = data
-		if (tab.attachClearPending && tab.sessionId !== null) {
-			output = filterAttachClear(tab, data)
-			if (output === '') return
+		// Spawn resolves after the shell can already have printed. Keep that output
+		// until the tab is bound instead of dropping the prompt.
+		if (!tab) {
+			rememberEarlyPtyOutput(id, data)
+			return
 		}
-		tab.outputGuard.write(output, (data, onParsed) => tab.term.write(data, onParsed))
-		tab.dirty = true // snapshot autosave picks this tab up on the next tick
+		deliverPtyOutput(tab, data)
 	})
 
 	const unsubscribePtyExit = helm.pty.onExit((id, exitCode) => {

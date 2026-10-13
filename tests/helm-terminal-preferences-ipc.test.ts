@@ -70,7 +70,7 @@ test('menus display cached effective bindings but physical-code dispatcher owns 
 
 test('main resolves the persisted preference for ordinary spawns while scheduled adoption stays on HOME', () => {
 	const ordinarySpawn = between(main, "ipcMain.handle('pty:spawn'", "ipcMain.on('pty:write'")
-	assert.match(ordinarySpawn, /cwd: terminalPreferences\.snapshot\(\)\.effectiveCwd/)
+	assert.match(ordinarySpawn, /terminalPreferences\.snapshot\(\)\.effectiveCwd/)
 
 	const scheduledSpawn = between(main, 'async function attachScheduledPty', 'function detachScheduledPty')
 	assert.match(scheduledSpawn, /cwd: os\.homedir\(\)/)

@@ -42,6 +42,7 @@ import { recordedShortcutInput } from './shortcut-recorder'
 import { type ShortcutAction, type ShortcutChord, electronAccelerator, matchingShortcutAction } from './shortcuts'
 import { isTabGroupColor } from './tab-group-colors'
 import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './terminal-preferences'
+import { type WarmProcess, TerminalWarmPool } from './terminal-warm'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { THEME_PRESETS } from './theme-presets'
@@ -611,9 +612,63 @@ const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined,
  * Also drops pending grace-kill timers WITHOUT firing them: quit means detach
  * everything, so a session mid-grace survives and restores on next launch.
  */
+function wrapWarmProcess(proc: pty.IPty): WarmProcess {
+	return {
+		resize: (cols, rows) => proc.resize(cols, rows),
+		kill: () => proc.kill(),
+		onData: listener => {
+			const disposable = proc.onData(listener)
+			return () => disposable.dispose()
+		},
+		onExit: listener => {
+			const disposable = proc.onExit(({ exitCode }) => listener(exitCode))
+			return () => disposable.dispose()
+		},
+	}
+}
+
+const WARM_READY_MS = 150
+const WARM_RETRY_MS = 5_000
+
+const warmPtyBySession = new Map<string, pty.IPty>()
+const warmTerminals = new TerminalWarmPool({
+	enabled: () => !profileSwitchAttestationMode && getSessionSupport() !== null,
+	cwd: () => terminalPreferences.snapshot().effectiveCwd,
+	profileToken: () => sessionProfileToken(),
+	spawn: (cwd, profileToken) => {
+		const support = getSessionSupport()
+		if (!support || profileToken !== sessionProfileToken()) throw new Error('Terminal warmup is unavailable.')
+		const sessionId = sessions.newSessionId()
+		const proc = pty.spawn(support.dtach, sessions.buildSessionArgs(sessionId, defaultShell()), {
+			name: 'xterm-256color',
+			cols: 120,
+			rows: 40,
+			cwd,
+			env: remoteTerminalEnvironment(shellEnv(), { sessionId, registryFile: support.registry.filePath }),
+		})
+		warmPtyBySession.set(sessionId, proc)
+		return { sessionId, proc: wrapWarmProcess(proc) }
+	},
+	killSession: sessionId => {
+		warmPtyBySession.delete(sessionId)
+		void sessions.killSession(sessionId)
+	},
+	scheduleReady: callback => {
+		const timer = setTimeout(callback, WARM_READY_MS)
+		timer.unref()
+		return { cancel: () => clearTimeout(timer) }
+	},
+	scheduleRetry: callback => {
+		const timer = setTimeout(callback, WARM_RETRY_MS)
+		timer.unref()
+		return { cancel: () => clearTimeout(timer) }
+	},
+})
+
 function killAllPtyClients(): void {
 	graceCloser.cancelAll()
 	graceCloseSupports.clear()
+	warmTerminals.discard()
 	// Clear the map BEFORE killing: the pty onExit handler treats "still in the
 	// map" as exited-on-its-own and reaps the session — a detach-kill must never
 	// be reapable (see the onExit comment).
@@ -888,7 +943,10 @@ function createWindow(): BrowserWindow {
 	// A helm:// deep link may land before the renderer is up (cold start).
 	win.webContents.on('did-finish-load', () => {
 		flushPendingOpenItem(win, rendererProfileEpoch)
-		if (!profileSwitchAttestationMode) restoreScheduledAdoptions(sessionProfileToken())
+		if (!profileSwitchAttestationMode) {
+			restoreScheduledAdoptions(sessionProfileToken())
+			warmTerminals.ensure()
+		}
 	})
 	// Native macOS three-finger swipe (System Settings "Swipe between pages"):
 	// swiping right = back, left = forward — same channel as the Go menu.
@@ -1435,15 +1493,31 @@ interface SpawnArgs {
 // Helm is usually launched via `bun run start` / `npm start`, and those
 // launchers inject npm_config_*/npm_lifecycle_*/BUN_* vars into our process.
 // Passing them into the interactive shell breaks tooling in the user's rc
-// files (nvm hard-errors on npm_config_prefix). Spawn shells with a scrubbed
-// environment instead.
+// files (nvm hard-errors on npm_config_prefix). Inherited terminal-session
+// identity is the same class of leak: it makes Helm shells restore a parent
+// Terminal.app session. Spawn shells with a scrubbed environment instead.
 function shellEnv(): Record<string, string> {
 	const env: Record<string, string> = {}
 	for (const [key, value] of Object.entries(process.env)) {
 		if (value === undefined) continue
 		if (key.startsWith('npm_') || key.startsWith('BUN_') || key === 'NODE_ENV' || key === 'INIT_CWD') continue
+		// Inherited terminal-session identity makes every new shell restore and save
+		// the parent Terminal.app/iTerm session. That is slow and wrong for Helm.
+		if (
+			key === 'TERM_SESSION_ID' ||
+			key === 'TERM_PROGRAM_VERSION' ||
+			key === 'ITERM_SESSION_ID' ||
+			key === 'WEZTERM_PANE' ||
+			key === 'WT_SESSION' ||
+			key === 'KONSOLE_DBUS_SESSION' ||
+			key === 'VSCODE_INJECTION' ||
+			key === 'VSCODE_SHELL_INTEGRATION'
+		)
+			continue
 		env[key] = value
 	}
+	env.TERM_PROGRAM = 'Helm'
+	env.SHELL_SESSIONS_DISABLE = '1'
 	// Non-secret capability hint: the explicitly installed global Pi extension
 	// stays inert everywhere except an ordinary Helm terminal shell.
 	env.HELM_TERMINAL_AGENT_STATUS = '1'
@@ -1706,6 +1780,8 @@ ipcMain.handle('terminal-preferences:choose', async (event, profileToken: unknow
 	if (result.canceled || !result.filePaths[0]) return null
 	const snapshot = terminalPreferences.setDefaultCwd(result.filePaths[0])
 	publishTerminalPreferences(snapshot)
+	warmTerminals.discard()
+	warmTerminals.ensure()
 	return snapshot
 })
 
@@ -1713,6 +1789,8 @@ ipcMain.handle('terminal-preferences:reset', (event, profileToken: unknown) => {
 	requireCurrentTerminalPreferencesSender(event, profileToken)
 	const snapshot = terminalPreferences.resetDefaultCwd()
 	publishTerminalPreferences(snapshot)
+	warmTerminals.discard()
+	warmTerminals.ensure()
 	return snapshot
 })
 
@@ -1835,43 +1913,16 @@ ipcMain.handle('remote-pairing:revoke', async (event, deviceId: unknown, profile
 	}
 })
 
-ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
-	sessionIpcGate.require(args.profileToken)
-	if (!ordinarySessionAllowed(sessions.isValidSessionId(args.sessionId) ? args.sessionId : undefined))
-		throw new Error('Terminal transfer recovery is unresolved.')
+function publishOrdinaryPty(
+	event: IpcMainInvokeEvent,
+	args: SpawnArgs,
+	proc: pty.IPty,
+	sessionId: string | null,
+	owningProfile: string,
+	support: SessionSupport | null,
+	prelude?: string,
+): { id: number; sessionId: string | null; prelude?: string } {
 	const id = nextPtyId++
-	const shell = defaultShell()
-	const support = getSessionSupport()
-	const owningProfile = sessionProfileId
-
-	// With dtach: the pty child is the dtach CLIENT (`dtach -A <sock> -E -r winch
-	// <shell> -l`). `-A` makes one spawn path serve both fresh tabs (creates the
-	// session) and restored tabs (attaches to the surviving socket); `-r winch`
-	// makes dtach SIGWINCH the program on attach so vim/less repaint after a
-	// reattach. See src/sessions.ts for the okena citations.
-	let file = shell
-	let argv = process.platform === 'win32' ? [] : ['-l']
-	let sessionId: string | null = null
-	if (support) {
-		const restoring = sessions.isValidSessionId(args.sessionId)
-		sessionId = restoring ? (args.sessionId as string) : sessions.newSessionId()
-		file = support.dtach
-		argv = sessions.buildSessionArgs(sessionId, shell)
-		if (!restoring) support.registry.add(sessionId)
-	}
-
-	const proc = pty.spawn(file, argv, {
-		name: 'xterm-256color',
-		cols: Math.max(2, Math.floor(args.cols) || 80),
-		rows: Math.max(2, Math.floor(args.rows) || 24),
-		// cwd is main-owned. The renderer can select it only through the OS folder
-		// picker above and can never smuggle an arbitrary path into pty:spawn.
-		cwd: terminalPreferences.snapshot().effectiveCwd,
-		env: remoteTerminalEnvironment(
-			shellEnv(),
-			sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
-		),
-	})
 	ptys.set(id, {
 		proc,
 		sessionId,
@@ -1909,7 +1960,82 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		if (!terminalTransferMain?.isSessionBusy(sessionId ?? ''))
 			sendToLiveRenderer(contents, 'pty:exit', id, exitCode, args.profileToken)
 	})
-	return { id, sessionId }
+	return prelude ? { id, sessionId, prelude } : { id, sessionId }
+}
+
+ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
+	sessionIpcGate.require(args.profileToken)
+	if (!ordinarySessionAllowed(sessions.isValidSessionId(args.sessionId) ? args.sessionId : undefined))
+		throw new Error('Terminal transfer recovery is unresolved.')
+	const shell = defaultShell()
+	const support = getSessionSupport()
+	const owningProfile = sessionProfileId
+	const cols = Math.max(2, Math.floor(args.cols) || 80)
+	const rows = Math.max(2, Math.floor(args.rows) || 24)
+	const cwd = terminalPreferences.snapshot().effectiveCwd
+	const restoring = sessions.isValidSessionId(args.sessionId)
+	if (!restoring && support) {
+		const claimed = warmTerminals.claim(args.profileToken, cwd)
+		if (claimed) {
+			const proc = warmPtyBySession.get(claimed.sessionId)
+			warmPtyBySession.delete(claimed.sessionId)
+			if (!proc) {
+				try {
+					claimed.proc.kill()
+				} catch {
+					// already exited
+				}
+				void sessions.killSession(claimed.sessionId)
+			} else {
+				support.registry.add(claimed.sessionId)
+				const published = publishOrdinaryPty(
+					event,
+					args,
+					proc,
+					claimed.sessionId,
+					owningProfile,
+					support,
+					claimed.prelude,
+				)
+				try {
+					proc.resize(cols, rows)
+				} catch {
+					// The prestarted shell can exit between claim and resize.
+				}
+				return published
+			}
+		}
+	}
+
+	// With dtach: the pty child is the dtach CLIENT (`dtach -A <sock> -E -r winch
+	// <shell> -l`). `-A` makes one spawn path serve both fresh tabs (creates the
+	// session) and restored tabs (attaches to the surviving socket); `-r winch`
+	// makes dtach SIGWINCH the program on attach so vim/less repaint after a
+	// reattach. See src/sessions.ts for the okena citations.
+	let file = shell
+	let argv = process.platform === 'win32' ? [] : ['-l']
+	let sessionId: string | null = null
+	if (support) {
+		sessionId = restoring ? (args.sessionId as string) : sessions.newSessionId()
+		file = support.dtach
+		argv = sessions.buildSessionArgs(sessionId, shell)
+		if (!restoring) support.registry.add(sessionId)
+	}
+
+	const proc = pty.spawn(file, argv, {
+		name: 'xterm-256color',
+		cols,
+		rows,
+		// cwd is main-owned. The renderer can select it only through the OS folder
+		// picker above and can never smuggle an arbitrary path into pty:spawn.
+		cwd,
+		env: remoteTerminalEnvironment(
+			shellEnv(),
+			sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
+		),
+	})
+	if (!restoring) warmTerminals.ensure()
+	return publishOrdinaryPty(event, args, proc, sessionId, owningProfile, support)
 })
 
 ipcMain.on('pty:write', (_event, id: number, data: unknown, profileToken: unknown, binary: unknown = false) => {

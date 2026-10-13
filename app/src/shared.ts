@@ -37,6 +37,8 @@ export interface PtySpawnResult {
 	id: number
 	/** dtach session backing this pty; null when persistence is unavailable. */
 	sessionId: string | null
+	/** Output already produced by a prestarted shell, replayed before live data. */
+	prelude?: string
 }
 
 /** Read-only eligibility for a controller-backed cross-profile terminal transfer. */
