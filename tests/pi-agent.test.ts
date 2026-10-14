@@ -28,6 +28,7 @@ test('Pi canonical config and scheduled-run schemas keep default session persist
 	assert.equal(scheduledAgentSchema.parse('pi'), 'pi')
 	assert.equal(defaultHelperModel('pi'), 'anthropic/claude-haiku-4-5')
 	assert.ok(MODEL_CATALOG.pi.some(model => model.id === 'openai-codex/gpt-5.6-luna'))
+	assert.ok(MODEL_CATALOG.pi.some(model => model.id === 'xai/grok-4.7'))
 })
 
 test('Pi helper one-shot disables tools, project trust, and resource discovery', async () => {

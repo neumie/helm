@@ -124,6 +124,10 @@ test('provider-qualified Pi catalog models own the Pi helper invocation', () => 
 		agent: 'pi',
 		model: 'openai-codex/gpt-5.6-luna',
 	})
+	assert.deepEqual(resolveHelperInvocation('claude', 'codex', 'xai/grok-4.7'), {
+		agent: 'pi',
+		model: 'xai/grok-4.7',
+	})
 })
 
 test('ensureItemWorkspaceName persists and returns a derived branch and plan dir', () =>

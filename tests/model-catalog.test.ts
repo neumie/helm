@@ -56,4 +56,31 @@ test('GPT-6 Sol and Opus 5.5 are available through the shared catalog and own th
 	assert.equal(dashboard.solver.model, 'openai-codex/gpt-6-sol')
 	assert.ok(dashboard.modelCatalog.pi.some(model => model.id === 'openai-codex/gpt-6-sol'))
 	assert.ok(dashboard.modelCatalog.pi.some(model => model.id === 'anthropic/claude-opus-5-5'))
+	assert.ok(dashboard.modelCatalog.pi.some(model => model.id === 'xai/grok-4.7'))
+})
+
+test('Pi lists OpenAI Codex and xAI models together', () => {
+	const ids = MODEL_CATALOG.pi.map(model => model.id)
+	assert.deepEqual(
+		ids.filter(id => id.startsWith('openai-codex/')),
+		[
+			'openai-codex/gpt-6-astra',
+			'openai-codex/gpt-6-sol',
+			'openai-codex/gpt-5.6-sol',
+			'openai-codex/gpt-5.6-terra',
+			'openai-codex/gpt-5.6-luna',
+			'openai-codex/gpt-5.5',
+		],
+	)
+	assert.deepEqual(
+		ids.filter(id => id.startsWith('xai/')),
+		['xai/grok-4.7', 'xai/grok-4.6', 'xai/grok-4.5', 'xai/grok-4.3'],
+	)
+	assert.equal(MODEL_CATALOG.pi.find(model => model.id === 'xai/grok-4.7')?.label, 'xAI · Grok 4.7')
+	assert.deepEqual(resolveHelperInvocation('claude', 'claude', 'xai/grok-4.7'), {
+		agent: 'pi',
+		model: 'xai/grok-4.7',
+	})
+	assert.match(modelGuidance('xai/grok-4.7') ?? '', /Pi is running Grok 4.7/)
+	assert.match(modelGuidance('openai-codex/gpt-6-astra') ?? '', /Pi is running GPT-6 Astra/)
 })

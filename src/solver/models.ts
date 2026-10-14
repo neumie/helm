@@ -30,7 +30,8 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 		{ id: 'gpt-5.6-luna', label: 'Luna' },
 		{ id: 'gpt-5.5', label: 'GPT-5.5' },
 	],
-	// Pi spans providers; qualified ids make the owning subscription explicit.
+	// Pi spans providers. List each family; do not drop one when another is added.
+	// Order is by provider, then that provider's own ladder — not a cross-provider ranking.
 	pi: [
 		{ id: 'anthropic/claude-fable-5', label: 'Anthropic · Fable 5' },
 		{ id: 'anthropic/claude-opus-5-5', label: 'Anthropic · Opus 5.5' },
@@ -44,6 +45,10 @@ export const MODEL_CATALOG: Record<SolverAgent, ModelOption[]> = {
 		{ id: 'openai-codex/gpt-5.6-terra', label: 'OpenAI Codex · Terra' },
 		{ id: 'openai-codex/gpt-5.6-luna', label: 'OpenAI Codex · Luna' },
 		{ id: 'openai-codex/gpt-5.5', label: 'OpenAI Codex · GPT-5.5' },
+		{ id: 'xai/grok-4.7', label: 'xAI · Grok 4.7' },
+		{ id: 'xai/grok-4.6', label: 'xAI · Grok 4.6' },
+		{ id: 'xai/grok-4.5', label: 'xAI · Grok 4.5' },
+		{ id: 'xai/grok-4.3', label: 'xAI · Grok 4.3' },
 	],
 }
 
@@ -172,6 +177,13 @@ const PI_MODEL_GUIDANCE: Record<string, string> = {
 	'openai-codex/gpt-5.6-terra': DEFAULT_MODEL_GUIDANCE['gpt-5.6-terra'],
 	'openai-codex/gpt-5.6-luna': DEFAULT_MODEL_GUIDANCE['gpt-5.6-luna'],
 	'openai-codex/gpt-5.5': DEFAULT_MODEL_GUIDANCE['gpt-5.5'],
+	'xai/grok-4.7':
+		'Pi is running Grok 4.7 — a frontier coding tier. Keep architecture and integration in the main context, delegate only through tools that are actually available, and verify decisively.',
+	'xai/grok-4.6':
+		'Pi is running Grok 4.6 — a strong coding tier. Work directly, keep the change scoped, and verify with the relevant checks.',
+	'xai/grok-4.5': 'Pi is running Grok 4.5 — a capable coding tier. Work directly and verify before finishing.',
+	'xai/grok-4.3':
+		'Pi is running Grok 4.3 — a cheaper long-context tier. Keep the change scoped and stop with an honest summary if it becomes architectural or ambiguous.',
 }
 
 /**

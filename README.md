@@ -237,7 +237,7 @@ Important fields:
 | `solver.workspace` | Default execution location: `worktree` or `main`. |
 | `solver.concurrency` | Daemon-global direct-solve and scheduled-agent capacity: a positive safe integer or `null` for Unlimited; default 2. |
 | `solver.loopConcurrency` | Separate daemon-global loop capacity: a positive safe integer or `null` for Unlimited; default 1. |
-| `solver.model` | Optional default model passed to the selected agent CLI. Pi accepts provider-qualified IDs such as `anthropic/claude-sonnet-5` or `openai-codex/gpt-5.6-luna`. |
+| `solver.model` | Optional default model passed to the selected agent CLI. Pi accepts provider-qualified IDs such as `anthropic/claude-sonnet-5`, `openai-codex/gpt-5.6-luna`, or `xai/grok-4.7`. |
 | `solver.timeoutMinutes` | Direct-agent wall-clock timeout; Okena uses it as an idle timeout. |
 | `solver.branchNaming` | Optional AI-generated conventional branch names; disabled by default. |
 | `solver.displayName` | Short AI-generated Item labels; enabled by default. |
