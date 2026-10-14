@@ -2964,3 +2964,54 @@ test('maintenance: unsupported and unresolved feedback never admit empty prefere
 	await expect(page.getByRole('button', { name: 'Clear empty saved preferences', exact: true })).toBeDisabled()
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().clearedPreferences)).toBe(0)
 })
+
+test('conversation sticks to the newest message unless the reader has scrolled away', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 })
+	await open(page)
+	const chat = page.locator('.review-chat')
+	const input = page.getByRole('textbox', { name: 'Whole-document message' })
+	const send = page.locator('.review-companion').getByRole('button', { name: 'Send message', exact: true })
+	const tailDistance = () =>
+		chat.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)
+	const resting = await chat.evaluate(element => {
+		const messages = [...element.querySelectorAll('.review-message')]
+		const first = messages[0]?.getBoundingClientRect()
+		const last = messages.at(-1)?.getBoundingClientRect()
+		const box = element.getBoundingClientRect()
+		if (!first || !last) throw new Error('Missing opening conversation')
+		return { above: first.top - box.top, below: box.bottom - last.bottom }
+	})
+	expect(resting.above).toBeGreaterThan(resting.below)
+	expect(resting.below).toBeLessThanOrEqual(48)
+	for (const marker of ['Tail one', 'Tail two', 'Tail three']) {
+		await input.fill(`${marker}\n${'Keep the newest edit visible.\n'.repeat(6)}`)
+		await send.click()
+		await expect(chat).toContainText(marker)
+		await proof(page, 'settle')
+		await expect(chat).toContainText('This is a fixture reply to the chosen request.')
+		await expect.poll(tailDistance).toBeLessThanOrEqual(1)
+	}
+	await expect(chat.getByText('Tail three', { exact: false }).last()).toBeInViewport()
+	await chat.evaluate(element => {
+		element.scrollTop = 0
+		element.dispatchEvent(new Event('scroll'))
+	})
+	await expect.poll(tailDistance).toBeGreaterThan(24)
+	const held = await chat.evaluate(element => element.scrollTop)
+	await input.fill('Do not yank this earlier reading')
+	await send.click()
+	await expect(chat).toContainText('Do not yank this earlier reading')
+	expect(await chat.evaluate(element => element.scrollTop)).toBe(held)
+	await proof(page, 'settle')
+	expect(await chat.evaluate(element => element.scrollTop)).toBe(held)
+	await chat.evaluate(element => {
+		element.scrollTop = element.scrollHeight
+		element.dispatchEvent(new Event('scroll'))
+	})
+	await expect.poll(tailDistance).toBeLessThanOrEqual(1)
+	await input.fill('Followed tail marker')
+	await send.click()
+	await expect(chat).toContainText('Followed tail marker')
+	await expect.poll(tailDistance).toBeLessThanOrEqual(1)
+	await expect(chat.getByText('Followed tail marker', { exact: true })).toBeInViewport()
+})

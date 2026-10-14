@@ -298,7 +298,7 @@
 	flex: 1 1 auto;
 	min-height: 96px;
 }
-.review-passage-editor > .review-passage-bubble-messages:empty {
+.review-passage-editor > .review-passage-bubble-messages:not(:has(.review-chat-log > *)) {
 	display: none;
 }
 .review-passage-editor > .review-passage-bubble-messages {
@@ -353,6 +353,8 @@
 	font-weight: 600;
 }
 .review-passage-bubble-messages {
+	display: flex;
+	flex-direction: column;
 	overflow: auto;
 	scrollbar-gutter: stable;
 	padding: 0 12px 12px;
@@ -589,10 +591,17 @@
 .review-chat {
 	flex: 1;
 	min-height: 96px;
+	display: flex;
+	flex-direction: column;
 	overflow: auto;
 	scrollbar-gutter: stable;
 	padding: 16px 20px;
 	overscroll-behavior: contain;
+}
+.review-chat-log {
+	margin-top: auto;
+	flex: 0 0 auto;
+	min-width: 0;
 }
 .review-message {
 	margin: 0 0 24px;

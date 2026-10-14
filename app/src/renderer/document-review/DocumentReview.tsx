@@ -35,6 +35,51 @@ import { validateDocumentPassage } from './passage-validation'
 import './document-review.css'
 
 const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', cli: 'Agent' }
+const CHAT_TAIL_SLACK_PX = 24
+
+/** Keep a normal chronological chat on its newest message unless the reader has moved away. */
+function usePinnedChatTail<T extends HTMLElement>(identity: string) {
+	const ref = useRef<T>(null)
+	const following = useRef(true)
+	useLayoutEffect(() => {
+		following.current = true
+		const node = ref.current
+		if (!node) return
+		const distance = () => node.scrollHeight - node.clientHeight - node.scrollTop
+		let pinning = false
+		const pin = () => {
+			if (!following.current || ref.current !== node || distance() <= 1) return
+			pinning = true
+			node.scrollTop = node.scrollHeight
+			pinning = false
+			following.current = true
+		}
+		const onScroll = () => {
+			if (!pinning) following.current = distance() <= CHAT_TAIL_SLACK_PX
+		}
+		node.addEventListener('scroll', onScroll, { passive: true })
+		let frame = 0
+		const observer = new ResizeObserver(() => {
+			cancelAnimationFrame(frame)
+			frame = requestAnimationFrame(pin)
+		})
+		observer.observe(node)
+		const log = node.querySelector('.review-chat-log')
+		if (log) observer.observe(log)
+		pin()
+		return () => {
+			node.removeEventListener('scroll', onScroll)
+			observer.disconnect()
+			cancelAnimationFrame(frame)
+		}
+	}, [identity])
+	useLayoutEffect(() => {
+		const node = ref.current
+		if (!node || !following.current) return
+		if (node.scrollHeight - node.clientHeight - node.scrollTop > 1) node.scrollTop = node.scrollHeight
+	})
+	return ref
+}
 interface Operation {
 	id: string
 	text: string
@@ -239,6 +284,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	)
 	const activeHeading = headings.some(block => block.id === currentHeading) ? currentHeading : (headings[0]?.id ?? null)
 	const selected = state?.sessions.find(session => session.id === draft?.sessionId) ?? null
+	const conversationChat = usePinnedChatTail<HTMLDivElement>(`${selected?.id ?? ''}:${selected?.owner ?? ''}`)
+	const passageChat = usePinnedChatTail<HTMLElement>(bubble ? String(bubble.id) : '')
 	const activeSession = selected?.busy === true
 	const stale = !!passage && passage.revision !== state?.document.revision
 	const selectionBinding = JSON.stringify([
@@ -2193,22 +2240,32 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							onClose={restore => dismissPassage(visibleBubble, restore)}
 						>
 							{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Passage history owns bounded keyboard scrolling. */}
-							<section className="review-passage-bubble-messages" aria-label="Passage messages" tabIndex={0}>
-								{selected?.historyTruncated && (
-									<p className="review-meta">
-										Earlier messages are outside this bounded view; no replies were relocated.
-									</p>
-								)}
-								<PassageMessages
-									threads={activeThreads}
-									providerName={selected ? providerNames[selected.provider] : ''}
-								/>
-								{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
-									<output className="review-working">
-										<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
-										Working…
-									</output>
-								)}
+							<section
+								ref={passageChat}
+								className="review-passage-bubble-messages"
+								aria-label="Passage messages"
+								tabIndex={0}
+							>
+								<div className="review-chat-log">
+									{selected?.historyTruncated && (
+										<p className="review-meta">
+											Earlier messages are outside this bounded view; no replies were relocated.
+										</p>
+									)}
+									<PassageMessages
+										threads={activeThreads}
+										providerName={selected ? providerNames[selected.provider] : ''}
+									/>
+									{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
+										<output className="review-working">
+											<ActivityIndicator
+												variant="progress"
+												label={`${providerNames[selected.provider]} is working`}
+											/>
+											Working…
+										</output>
+									)}
+								</div>
 							</section>
 							<div className="review-passage-writing">
 								{feedbackPassage && feedback}
@@ -2286,31 +2343,33 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						</div>
 					</header>
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Conversation scroll owner needs keyboard access without focusing message text. */}
-					<div className="review-chat" tabIndex={0} aria-label="Conversation messages">
-						<ArchivedConversation document={state.document} session={selected} />
-						<Conversation document={state.document} session={selected} />
-						{selected?.state === 'working' && !operation.current?.passage && (
-							<output className="review-working">
-								<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
-								Working…
-							</output>
-						)}
-						{selected?.state === 'waiting' && <output>Waiting for the connected agent’s reply…</output>}
-						{selected?.error && (
-							<div className="review-warning" role="alert">
-								<p>{selected.error}</p>
-								{!selected.busy && !ownerBlocked && selected.needsAcknowledgement && (
-									<Btn
-										sm
-										onClick={() => {
-											void acknowledge()
-										}}
-									>
-										I checked the outcome
-									</Btn>
-								)}
-							</div>
-						)}
+					<div ref={conversationChat} className="review-chat" tabIndex={0} aria-label="Conversation messages">
+						<div className="review-chat-log">
+							<ArchivedConversation document={state.document} session={selected} />
+							<Conversation document={state.document} session={selected} />
+							{selected?.state === 'working' && !operation.current?.passage && (
+								<output className="review-working">
+									<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
+									Working…
+								</output>
+							)}
+							{selected?.state === 'waiting' && <output>Waiting for the connected agent’s reply…</output>}
+							{selected?.error && (
+								<div className="review-warning" role="alert">
+									<p>{selected.error}</p>
+									{!selected.busy && !ownerBlocked && selected.needsAcknowledgement && (
+										<Btn
+											sm
+											onClick={() => {
+												void acknowledge()
+											}}
+										>
+											I checked the outcome
+										</Btn>
+									)}
+								</div>
+							)}
+						</div>
 					</div>
 					<div className="review-companion-bottom">
 						{(!visibleBubble || !feedbackPassage) && feedback}
