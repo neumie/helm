@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { LiveReviewCaller } from '../../src/document-review/live-caller.js'
+import { reviewFollowUpContent } from '../../src/document-review/screenshot-files.js'
 
 /** An opt-in surface of the existing Pi runtime. No factory-time IO or automatic enrollment. */
 export default function helmDocumentReview(pi: ExtensionAPI) {
@@ -74,7 +75,10 @@ export default function helmDocumentReview(pi: ExtensionAPI) {
 					failedTurn = false
 					completedText = ''
 					previewText = ''
-					pi.sendUserMessage(feedback.prompt, { deliverAs: 'followUp', expandPromptTemplates: false })
+					pi.sendUserMessage(reviewFollowUpContent(feedback.prompt), {
+						deliverAs: 'followUp',
+						expandPromptTemplates: false,
+					})
 				},
 				unavailable: () => {
 					if (current()) {

@@ -104,7 +104,9 @@ export interface ReviewState {
 export type ReviewResult<T> = { data: T; error?: never } | { error: string; data?: never }
 export interface ReviewApi {
 	load(): Promise<ReviewResult<ReviewState>>
-	send(request: ReviewRequest): Promise<ReviewResult<ReviewReceipt>>
+	send(
+		request: ReviewRequest & { screenshots?: { mediaType: 'image/png' | 'image/jpeg'; dataBase64: string }[] },
+	): Promise<ReviewResult<ReviewReceipt>>
 	interrupt(sessionId: string, owner: string): Promise<ReviewResult<boolean>>
 	save(draft: ReviewDraft): Promise<ReviewResult<boolean>>
 	selectSession(id: string | null): Promise<ReviewResult<ReviewDraft>>

@@ -150,7 +150,7 @@ export const WritingFirst: Story = {
 		docs: {
 			description: {
 				story:
-					'Drag a passage to open and focus its anchored editable chat bubble. The companion always discusses the whole document. Re-selecting preserves passage writing without copying the whole-document draft. The document highlight supplies context; the exact quote stays attached internally. Ask is the initial default; choose Request change from its checked menu. Writing options opens beside its dots trigger; local comment save stays secondary. Return to document preserves the passage draft. Saved comment associations and re-anchor require explicit acceptance; active operations block scope changes. Keyboard selection stays in the document until Alt+Enter. No per-block controls interrupt prose.',
+					'Drag a passage to open and focus its anchored editable chat bubble. Paste or drop a PNG/JPEG screenshot into either composer; it stays local until send and is not saved in the document. The companion always discusses the whole document. Re-selecting preserves passage writing without copying the whole-document draft. The document highlight supplies context; the exact quote stays attached internally. Ask is the initial default; choose Request change from its checked menu. Writing options opens beside its dots trigger; local comment save stays secondary. Return to document preserves the passage draft. Saved comment associations and re-anchor require explicit acceptance; active operations block scope changes. Keyboard selection stays in the document until Alt+Enter. No per-block controls interrupt prose.',
 			},
 		},
 	},

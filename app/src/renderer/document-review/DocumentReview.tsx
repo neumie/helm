@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ClipboardEvent, DragEvent } from 'react'
 import { locateReviewPassage } from '../../document-review/request'
+import {
+	REVIEW_SCREENSHOT_BYTES,
+	REVIEW_SCREENSHOT_INSTRUCTION,
+	REVIEW_SCREENSHOT_LIMIT,
+	inspectScreenshot,
+} from '../../document-review/screenshot-format'
 import type {
 	ReviewApi,
 	ReviewDraft,
@@ -20,6 +26,8 @@ import type { PassageChatAnchor } from './PassageChat'
 import { PassageMessages } from './PassageComments'
 import { ReviewMarkdown } from './ReviewMarkdown'
 import { SavedAnnotationHighlights } from './SavedAnnotationHighlights'
+import { ScreenshotStrip, screenshotBase64 } from './ScreenshotStrip'
+import type { ReviewShot } from './ScreenshotStrip'
 import { annotationSaveDraft, captureAnnotationSave, removeReviewAnnotation } from './annotations'
 import { captureArchiveRecovery, currentArchiveRecovery } from './archive-recovery'
 import type { ArchiveRecoveryTarget, ArchiveReviewApi, ArchiveReviewState } from './archive-recovery'
@@ -165,6 +173,15 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	currentPassage.current = passage
 	const [passageText, setPassageText] = useState('')
 	const passageEditor = useRef({ text: '', token: 0 })
+	const shots = useRef<{ whole: ReviewShot[]; passage: ReviewShot[]; wholeToken: number; passageToken: number }>({
+		whole: [],
+		passage: [],
+		wholeToken: 0,
+		passageToken: 0,
+	})
+	const sentShots = useRef(new Map<string, ReviewShot[]>())
+	const [shotVersion, setShotVersion] = useState(0)
+	const [shotError, setShotError] = useState<string | null>(null)
 	const [bubble, setBubble] = useState<PassageBubbleCommit | null>(null)
 	const bubbleCommit = useRef<PassageBubbleCommit | null>(null)
 	const bubbleSequence = useRef(0)
@@ -321,7 +338,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}, [])
 	const publishDirty = useCallback(() => {
 		if (mounted.current && currentApi.current === api)
-			api.dirty(editToken.current !== savedToken.current || passageDirty())
+			api.dirty(
+				editToken.current !== savedToken.current ||
+					passageDirty() ||
+					shots.current.whole.length > 0 ||
+					shots.current.passage.length > 0,
+			)
 	}, [api, passageDirty])
 	// Scope changes and successful local comment saves can also change passage protection.
 	useLayoutEffect(() => {
@@ -526,10 +548,13 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			const binding = currentBinding.current
 			const editor = passageEditor.current
 			const scope = currentPassage.current
+			const unsentShots = shots.current.whole.length + shots.current.passage.length
 			if (
-				passageDirty() &&
+				(passageDirty() || unsentShots > 0) &&
 				!window.confirm(
-					'Discard the unsent passage draft and close? Saved comments and your whole-document draft are kept.',
+					unsentShots > 0
+						? 'Discard unsent screenshots and close? They are not saved in the document. Saved comments and your whole-document text stay.'
+						: 'Discard the unsent passage draft and close? Saved comments and your whole-document draft are kept.',
 				)
 			)
 				return
@@ -568,6 +593,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		document.addEventListener('pointercancel', clearPointer)
 		window.addEventListener('blur', clearPointer)
 		return () => {
+			const held = [...shots.current.whole, ...shots.current.passage]
+			for (const list of sentShots.current.values()) held.push(...list)
+			for (const shot of held) URL.revokeObjectURL(shot.url)
+			shots.current.whole = []
+			shots.current.passage = []
+			sentShots.current.clear()
 			lifecycle.current++
 			mounted.current = false
 			focusRequest.current = null
@@ -1106,11 +1137,26 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			selected.error ||
 			(scoped && stale) ||
 			state.document.error ||
-			!text.trim()
+			(!text.trim() && shots.current[scoped ? 'passage' : 'whole'].length === 0)
 		)
 			return
 		const fields = canvasMode ? canvasHandle.current?.read(state.document.id, state.document.revision, api) : undefined
 		if (canvasMode && !fields) return
+		const scopeKey = scoped ? 'passage' : 'whole'
+		const tokenKey = scoped ? 'passageToken' : 'wholeToken'
+		const captured = shots.current[scopeKey].slice()
+		const shotToken = ++shots.current[tokenKey]
+		shots.current[scopeKey] = []
+		setShotVersion(version => version + 1)
+		const restoreShots = () => {
+			if (!mounted.current || shots.current[tokenKey] !== shotToken) {
+				for (const shot of captured) URL.revokeObjectURL(shot.url)
+				return
+			}
+			shots.current[scopeKey] = captured
+			setShotVersion(version => version + 1)
+			publishDirty()
+		}
 		const pending: Operation = {
 			id: crypto.randomUUID(),
 			text,
@@ -1128,6 +1174,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		setReceipt(null)
 		setRecovery(null)
 		setFeedbackPassage(scope)
+		setShotError(null)
 		if (scoped) writePassage('')
 		else changeDraft(value => ({ ...value, instruction: '' }))
 		const cleared = scoped ? passageEditor.current.token : editToken.current
@@ -1139,8 +1186,16 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				sessionId: pending.sessionId,
 				owner: pending.owner,
 				intent: scoped ? intent : wholeIntent,
-				instruction: pending.text,
+				instruction: text.trim() || REVIEW_SCREENSHOT_INSTRUCTION,
 				passage: scope,
+				...(captured.length > 0
+					? {
+							screenshots: captured.map(shot => ({
+								mediaType: shot.mediaType,
+								dataBase64: screenshotBase64(shot.bytes),
+							})),
+						}
+					: {}),
 				...(canvasMode ? { canvasFields: fields ?? [] } : {}),
 			})
 			if (
@@ -1148,18 +1203,22 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				operation.current !== pending ||
 				pending.api !== currentApi.current ||
 				pending.generation !== lifecycle.current
-			)
+			) {
+				restoreShots()
 				return
+			}
 			if (result.error !== undefined) {
 				operation.current = null
 				setBusy(false)
 				setError(result.error)
+				restoreShots()
 				if (scoped && passageEditor.current.token === cleared && currentPassage.current === scope)
 					writePassage(pending.text)
 				else if (!scoped && editToken.current === cleared)
 					changeDraft(value => ({ ...value, instruction: pending.text }))
 				else setRecovery(pending.text)
 			} else {
+				sentShots.current.set(`${pending.id}:user`, captured)
 				pending.phase = 'running'
 				setReceipt(result.data)
 				await refresh()
@@ -1170,8 +1229,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				operation.current !== pending ||
 				pending.api !== currentApi.current ||
 				pending.generation !== lifecycle.current
-			)
+			) {
+				restoreShots()
 				return
+			}
+			sentShots.current.set(`${pending.id}:user`, captured)
 			pending.phase = 'uncertain'
 			setBusy(false)
 			setRecovery(pending.text)
@@ -1535,6 +1597,82 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const reviewState = state
 	const storedDraft = draft
 	const passageIntent = intent
+	async function addShotFiles(scope: 'whole' | 'passage', files: File[]) {
+		if (api !== currentApi.current || selectionBinding !== currentBinding.current || files.length === 0) return
+		const room = REVIEW_SCREENSHOT_LIMIT - shots.current[scope].length
+		if (room <= 0) {
+			setShotError('Four screenshots is the maximum.')
+			return
+		}
+		const next: ReviewShot[] = []
+		let skipped = files.length > room
+		for (const file of files.slice(0, room)) {
+			if (file.size < 8 || file.size > REVIEW_SCREENSHOT_BYTES) {
+				skipped = true
+				continue
+			}
+			const bytes = new Uint8Array(await file.arrayBuffer())
+			if (api !== currentApi.current || selectionBinding !== currentBinding.current) return
+			try {
+				const mediaType = inspectScreenshot(bytes)
+				next.push({
+					id: crypto.randomUUID(),
+					url: URL.createObjectURL(new Blob([bytes], { type: mediaType })),
+					mediaType,
+					bytes,
+				})
+			} catch {
+				skipped = true
+			}
+		}
+		if (api !== currentApi.current || selectionBinding !== currentBinding.current) {
+			for (const shot of next) URL.revokeObjectURL(shot.url)
+			return
+		}
+		if (next.length === 0) {
+			setShotError('Paste a PNG or JPEG screenshot of at most 4 MB.')
+			return
+		}
+		const accepted = next.slice(0, Math.max(0, REVIEW_SCREENSHOT_LIMIT - shots.current[scope].length))
+		for (const shot of next.slice(accepted.length)) URL.revokeObjectURL(shot.url)
+		if (accepted.length === 0) {
+			setShotError('Four screenshots is the maximum.')
+			return
+		}
+		shots.current[scope] = [...shots.current[scope], ...accepted]
+		shots.current[scope === 'whole' ? 'wholeToken' : 'passageToken']++
+		setShotError(skipped ? 'Some screenshots were skipped. Use PNG or JPEG, at most four and 4 MB each.' : null)
+		setShotVersion(version => version + 1)
+		publishDirty()
+	}
+	function pasteShots(scope: 'whole' | 'passage', event: ClipboardEvent<HTMLElement>) {
+		const files: File[] = []
+		for (const item of event.clipboardData.items) {
+			if (item.kind !== 'file' || (item.type !== 'image/png' && item.type !== 'image/jpeg')) continue
+			const file = item.getAsFile()
+			if (file) files.push(file)
+		}
+		if (files.length === 0) return
+		event.preventDefault()
+		event.stopPropagation()
+		void addShotFiles(scope, files)
+	}
+	function dropShots(scope: 'whole' | 'passage', event: DragEvent<HTMLElement>) {
+		const files = [...event.dataTransfer.files].filter(file => file.type === 'image/png' || file.type === 'image/jpeg')
+		if (files.length === 0) return
+		event.preventDefault()
+		void addShotFiles(scope, files)
+	}
+	function removeShot(scope: 'whole' | 'passage', id: string) {
+		const current = shots.current[scope]
+		const shot = current.find(item => item.id === id)
+		if (!shot || api !== currentApi.current) return
+		URL.revokeObjectURL(shot.url)
+		shots.current[scope] = current.filter(item => item.id !== id)
+		shots.current[scope === 'whole' ? 'wholeToken' : 'passageToken']++
+		setShotVersion(version => version + 1)
+		publishDirty()
+	}
 	function composer(passage: ReviewPassage | null) {
 		const state = reviewState
 		const draft = storedDraft
@@ -1542,7 +1680,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		const stale = !!passage && passage.revision !== state.document.revision
 		const text = passage ? passageText : draft.instruction
 		const localNotice = passage ? savedNotice : null
-		const blockedReason = !text.trim()
+		const scope = passage ? 'passage' : 'whole'
+		const localShots = shots.current[scope]
+		void shotVersion
+		const canSend = !!text.trim() || localShots.length > 0
+		const blockedReason = !canSend
 			? null
 			: stale
 				? 'This selection is stale. Select the passage again; it will not be guessed.'
@@ -1564,13 +1706,26 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 												? 'Feedback paused. Keep this draft until the conversation is listening.'
 												: null
 		return (
-			<div className="review-writing-surface">
+			<div
+				className="review-writing-surface"
+				onPaste={event => pasteShots(scope, event)}
+				onDragOver={event => {
+					if ([...event.dataTransfer.items].some(item => item.type === 'image/png' || item.type === 'image/jpeg'))
+						event.preventDefault()
+				}}
+				onDrop={event => dropShots(scope, event)}
+			>
+				<ScreenshotStrip shots={localShots} onRemove={id => removeShot(scope, id)} />
 				<textarea
 					ref={passage ? input : undefined}
 					rows={passage ? 2 : 3}
 					maxLength={8000}
 					aria-label={passage ? 'Passage instruction' : 'Whole-document message'}
-					placeholder={passage ? 'Write about this passage…' : 'Ask about this document…'}
+					placeholder={
+						passage
+							? 'Write about this passage, or paste a screenshot…'
+							: 'Ask about this document, or paste a screenshot…'
+					}
 					value={text}
 					onChange={event => {
 						const instruction = event.currentTarget.value
@@ -1586,7 +1741,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						}
 					}}
 				/>
-				{(stale || blockedReason || localNotice) && (
+				{(stale || blockedReason || localNotice || shotError) && (
 					// biome-ignore lint/a11y/noNoninteractiveTabindex: Compact composer guidance keeps its own bounded keyboard scroll region.
 					<div className="review-compose-status" tabIndex={0} aria-label="Writing status">
 						{(stale || blockedReason) && (
@@ -1594,6 +1749,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								{blockedReason ?? 'This selection is stale. Select the passage again; it will not be guessed.'}
 							</p>
 						)}
+						{shotError && <p role="alert">{shotError}</p>}
 						{localNotice && (
 							<output>
 								{localNotice.status === 'saved'
@@ -1665,7 +1821,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						/>
 					</fieldset>
 					<Btn
-						tone={text.trim() ? 'primary' : 'quiet'}
+						tone={canSend ? 'primary' : 'quiet'}
 						sm
 						ariaLabel={
 							intent === 'change' ? 'Send change request' : passage ? 'Send passage discussion' : 'Send message'
@@ -1683,7 +1839,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							(canvasMode && !canvasReady) ||
 							!!commentSave.current ||
 							!!annotationWrite.current ||
-							!text.trim()
+							!canSend
 						}
 						busy={busy && operation.current?.phase === 'sending'}
 						onClick={() => {
@@ -2255,13 +2411,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 									<PassageMessages
 										threads={activeThreads}
 										providerName={selected ? providerNames[selected.provider] : ''}
+										screenshots={sentShots.current}
 									/>
 									{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
 										<output className="review-working">
-											<ActivityIndicator
-												variant="progress"
-												label={`${providerNames[selected.provider]} is working`}
-											/>
+											<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
 											Working…
 										</output>
 									)}
@@ -2346,7 +2500,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					<div ref={conversationChat} className="review-chat" tabIndex={0} aria-label="Conversation messages">
 						<div className="review-chat-log">
 							<ArchivedConversation document={state.document} session={selected} />
-							<Conversation document={state.document} session={selected} />
+							<Conversation document={state.document} session={selected} screenshots={sentShots.current} />
 							{selected?.state === 'working' && !operation.current?.passage && (
 								<output className="review-working">
 									<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
@@ -2469,7 +2623,15 @@ function ArchivedConversation({
 	)
 }
 
-function Conversation({ session, document }: { session: ReviewSession | null; document: ReviewState['document'] }) {
+function Conversation({
+	session,
+	document,
+	screenshots,
+}: {
+	session: ReviewSession | null
+	document: ReviewState['document']
+	screenshots: ReadonlyMap<string, readonly ReviewShot[]>
+}) {
 	if (!session) return null
 	const messages = documentConversationMessages(session, document)
 	const questions = new Set(session.messages.filter(message => message.role === 'user').map(message => message.id))
@@ -2503,6 +2665,7 @@ function Conversation({ session, document }: { session: ReviewSession | null; do
 								? providerNames[session.provider]
 								: 'Activity'}
 					</h3>
+					<ScreenshotStrip shots={screenshots.get(message.id) ?? []} />
 					<div>{message.text}</div>
 				</article>
 			))}

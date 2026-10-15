@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import type { ReviewApi } from '../../document-review/types'
 import { Btn } from '../button'
 import { GLYPH } from '../sidebar/ui'
+import { ScreenshotStrip } from './ScreenshotStrip'
+import type { ReviewShot } from './ScreenshotStrip'
 import { locatePassageDisplayRanges } from './passage-anchor'
 import { samePassage } from './passage-threads'
 
@@ -109,7 +111,15 @@ export function PassageComments({
 	)
 }
 
-export function PassageMessages({ threads, providerName }: { threads: PassageThread[]; providerName: string }) {
+export function PassageMessages({
+	threads,
+	providerName,
+	screenshots,
+}: {
+	threads: PassageThread[]
+	providerName: string
+	screenshots?: ReadonlyMap<string, readonly ReviewShot[]>
+}) {
 	return (
 		<>
 			{threads.map(thread => (
@@ -123,6 +133,7 @@ export function PassageMessages({ threads, providerName }: { threads: PassageThr
 										? (thread.providerName ?? providerName)
 										: 'Activity'}
 							</h3>
+							<ScreenshotStrip shots={screenshots?.get(message.id) ?? []} />
 							<div>{message.text}</div>
 						</article>
 					))}

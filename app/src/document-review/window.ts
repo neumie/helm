@@ -5,6 +5,13 @@ import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import { decodeScreenshots, discardScreenshots, stageScreenshots } from '../../../src/document-review/screenshot-files'
+import {
+	REVIEW_SCREENSHOT_DIRECTORY,
+	appendScreenshotPrompt,
+	splitScreenshotPayload,
+} from '../../../src/document-review/screenshot-format'
+import type { StagedScreenshot } from '../../../src/document-review/screenshot-format'
 import { parseExternalHttpUrl } from '../external-url'
 import { sendToLiveRenderer } from '../renderer-lifecycle'
 import type { SessionRegistry } from '../sessions'
@@ -377,10 +384,14 @@ export class DocumentReviewWindows {
 				token,
 				async state => {
 					this.requireWritable(state)
-					const request = parseReviewRequest(raw)
+					const split = splitScreenshotPayload(raw)
+					const request = parseReviewRequest(split.request)
+					const decoded = decodeScreenshots(split.screenshots)
 					if (request.documentId !== state.observation.id || request.sessionId !== state.selectedSession)
 						throw new Error('This request no longer belongs to the chosen document and conversation.')
-					const fingerprint = createHash('sha256').update(JSON.stringify(request)).digest('hex')
+					const fingerprintHash = createHash('sha256').update(JSON.stringify(request))
+					for (const shot of decoded) fingerprintHash.update(shot.bytes)
+					const fingerprint = fingerprintHash.digest('hex')
 					const prior = state.sessions.prior(request.id, fingerprint)
 					if (prior) return prior
 					if ([...this.sessions.values()].reduce((n, sessions) => n + sessions.admittedCount(), 0) >= 8)
@@ -432,6 +443,7 @@ export class DocumentReviewWindows {
 							},
 							(start, entry) => this.appendHistoricalSettlement(context, start, entry),
 						)
+						let staged: StagedScreenshot[] = []
 						try {
 							await state.observation.refresh()
 							this.require(event, token)
@@ -443,18 +455,41 @@ export class DocumentReviewWindows {
 								owner.retired
 							)
 								throw new Error('The document or conversation changed before dispatch. Nothing was sent.')
+							if (decoded.length > 0) {
+								const profile = await realpath(this.deps.profileDir(state.profileId))
+								this.require(event, token)
+								this.requireAdmission()
+								if (
+									state.selectedSession !== request.sessionId ||
+									state.observation.current().revision !== request.revision ||
+									owner.retired
+								)
+									throw new Error('The document or conversation changed before dispatch. Nothing was sent.')
+								staged = await stageScreenshots(join(profile, REVIEW_SCREENSHOT_DIRECTORY), decoded)
+								this.require(event, token)
+								this.requireAdmission()
+								if (
+									state.selectedSession !== request.sessionId ||
+									state.observation.current().revision !== request.revision ||
+									owner.retired
+								)
+									throw new Error('The document or conversation changed before dispatch. Nothing was sent.')
+							}
+							const delivered = appendScreenshotPrompt(prompt, staged)
 							return state.sessions.dispatch(
 								owner,
 								request.id,
 								fingerprint,
-								{ request, prompt, relativePath: document.relativePath },
+								{ request, prompt: delivered, relativePath: document.relativePath },
 								archive,
 							)
 						} catch (error) {
-							archive.settle({
-								state: 'rejected',
-								detail: 'The document or original listener changed before dispatch. Nothing was sent.',
-							})
+							await discardScreenshots(staged)
+							const detail =
+								error instanceof Error && error.message.includes('Nothing was sent.')
+									? error.message
+									: 'The document or original listener changed before dispatch. Nothing was sent.'
+							archive.settle({ state: 'rejected', detail })
 							throw error
 						}
 					} finally {
