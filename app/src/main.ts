@@ -140,6 +140,12 @@ if (userDataDirArg) {
 	app.setPath('userData', path.resolve(userDataDirArg))
 } else if (process.argv.includes('--user-data-dir-tmp')) {
 	app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'helm-')))
+} else if (!app.isPackaged && !screenshotPath && !profileSwitchAttestationMode) {
+	// Unpackaged electron . keeps Chromium's Electron userData even after setName.
+	// That directory has no session registry, so startup invents an empty shell.
+	const helmData = path.join(app.getPath('appData'), APP_NAME)
+	fs.mkdirSync(helmData, { recursive: true })
+	app.setPath('userData', helmData)
 }
 
 const appProfiles = new AppProfileStore(app.getPath('userData'))
@@ -609,8 +615,8 @@ const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined,
  * 1130-1140: "On drop, just detach - don't kill sessions"). For non-persistent
  * ptys this is the old kill-everything, unchanged.
  *
- * Also drops pending grace-kill timers WITHOUT firing them: quit means detach
- * everything, so a session mid-grace survives and restores on next launch.
+ * An explicit close still in its undo window is finished on quit, not cancelled.
+ * Open tabs only detach, so their masters restore next launch.
  */
 function wrapWarmProcess(proc: pty.IPty): WarmProcess {
 	return {
@@ -639,6 +645,7 @@ const warmTerminals = new TerminalWarmPool({
 		const support = getSessionSupport()
 		if (!support || profileToken !== sessionProfileToken()) throw new Error('Terminal warmup is unavailable.')
 		const sessionId = sessions.newSessionId()
+		warmTerminals.reserveUnclaimed(sessionId)
 		const proc = pty.spawn(support.dtach, sessions.buildSessionArgs(sessionId, defaultShell()), {
 			name: 'xterm-256color',
 			cols: 120,
@@ -666,7 +673,7 @@ const warmTerminals = new TerminalWarmPool({
 })
 
 function killAllPtyClients(): void {
-	graceCloser.cancelAll()
+	graceCloser.finalizeAll()
 	graceCloseSupports.clear()
 	warmTerminals.discard()
 	// Clear the map BEFORE killing: the pty onExit handler treats "still in the
@@ -2158,7 +2165,20 @@ ipcMain.handle('sessions:list', async (_event, profileToken: unknown) => {
 	const owningProfile = sessionProfileId
 	const allowsSession = (id: string) => sessionIpcGate.allows(profileToken) && ordinarySessionAllowed(id, owningProfile)
 	if (!ordinarySessionAllowed(undefined, owningProfile)) return []
-	const scan = await sessions.scanSessions(allowsSession)
+	// The warm pool's unclaimed dtach master is live but not a workspace. Adopting
+	// it here turned every launch into an extra empty zsh tab.
+	const warmIds = new Set(warmTerminals.unclaimedSessionIds())
+	const scan = await sessions.scanSessions(id => allowsSession(id) && !warmIds.has(id))
+	warmIds.clear()
+	for (const id of warmTerminals.unclaimedSessionIds()) warmIds.add(id)
+	scan.live = scan.live.filter(session => !warmIds.has(session.sessionId))
+	scan.unknownIds = scan.unknownIds.filter(id => !warmIds.has(id))
+	// A live socket with no registry row and no snapshot is not a workspace. Adopting
+	// it restored the previous launch's prestarted shell as an empty zsh tab.
+	const known = new Set(support.registry.ids())
+	scan.live = scan.live.filter(
+		session => known.has(session.sessionId) || support.buffers.read(session.sessionId) !== null,
+	)
 	// Profile switching closes IPC admission while this asynchronous probe is in
 	// flight. A late old-renderer request must not mutate or publish another
 	// profile's registry after the await.

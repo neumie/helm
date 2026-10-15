@@ -27,7 +27,7 @@ type PlannedSession = {
 }
 type RestorePlan = { sessions: PlannedSession[]; keepSnapshotIds: ReadonlySet<string> }
 const sessions = ((sessionsModule as { default?: SessionsModule }).default ?? sessionsModule) as SessionsModule
-const { SessionRegistry } = sessions
+const { SessionRegistry, GraceCloser } = sessions
 const { planSessionRestore } = sessions as SessionsModule & {
 	planSessionRestore(
 		registry: InstanceType<typeof SessionRegistry>,
@@ -122,4 +122,16 @@ test('explicit close removes a missing workspace and its final group before rest
 	assert.deepEqual(plan.sessions, [])
 	assert.deepEqual([...plan.keepSnapshotIds], [])
 	assert.deepEqual(registry.getGroups(), [])
+})
+
+test('quit finishes a pending close instead of restoring it', () => {
+	const closed: string[] = []
+	const closer = new GraceCloser(60_000, undefined, sessionId => {
+		closed.push(sessionId)
+		return () => closed.push(`removed:${sessionId}`)
+	})
+	closer.schedule('emptyzsh')
+	closer.finalizeAll()
+	assert.equal(closer.has('emptyzsh'), false)
+	assert.deepEqual(closed, ['emptyzsh', 'removed:emptyzsh'])
 })

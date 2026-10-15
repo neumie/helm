@@ -100,6 +100,17 @@ function pool() {
 	}
 }
 
+test('a prestarted shell stays unclaimed until New terminal takes it', () => {
+	const harness = pool()
+	harness.value.ensure()
+	assert.deepEqual(harness.value.unclaimedSessionIds(), ['s1'])
+	harness.procs[0]?.emit('prompt')
+	harness.ready[0]?.()
+	const claimed = harness.value.claim('work:1', '/work')
+	assert.equal(claimed?.sessionId, 's1')
+	assert.deepEqual(harness.value.unclaimedSessionIds(), ['s2'])
+})
+
 test('a prestarted shell is claimable only after startup output goes quiet', () => {
 	const harness = pool()
 	harness.value.ensure()

@@ -478,8 +478,9 @@ export function closeGraceMs(): number {
  * real session kill is scheduled after the grace period, so a toast can offer
  * Undo (okena's soft_close.rs — `begin` arms the timer :157-170, the timer
  * fires `finalize_soft_close` which does the actual teardown :162-168, and
- * `undo_soft_close` cancels it). Quit during grace cancels the timers WITHOUT
- * killing — the sessions stay detached and restore on next launch.
+ * `undo_soft_close` cancels it). Quit finishes a pending close instead of
+ * cancelling it: the undo toast is gone, and restoring that tab made an
+ * explicitly closed shell come back as an empty zsh.
  */
 export class GraceCloser {
 	readonly graceMs: number
@@ -526,11 +527,18 @@ export class GraceCloser {
 	}
 
 	/**
-	 * Quit path: drop every pending kill without firing it. A session in grace
-	 * becomes a normal detached session and restores on next launch.
+	 * Quit path: an explicit close must not return on the next launch. Registry
+	 * removal runs now; the socket kill follows so a leftover master cannot be
+	 * adopted as a new terminal.
 	 */
-	cancelAll(): void {
-		for (const timer of this.#pending.values()) clearTimeout(timer)
+	finalizeAll(): void {
+		for (const [sessionId, timer] of this.#pending) {
+			clearTimeout(timer)
+			const finalize = this.#captureFinalizer?.(sessionId)
+			if (this.#captureFinalizer && !finalize) continue
+			finalize?.()
+			void killSession(sessionId).then(() => this.#onKilled?.(sessionId))
+		}
 		this.#pending.clear()
 	}
 }

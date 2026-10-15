@@ -56,6 +56,8 @@ interface WarmEntry {
 export class TerminalWarmPool {
 	#current: WarmEntry | null = null
 	#retry: Cancellable | null = null
+	/** Spawned by this pool and not yet claimed. Startup restore must not adopt these. */
+	readonly #unclaimed = new Set<string>()
 	readonly #options: TerminalWarmPoolOptions
 
 	constructor(options: TerminalWarmPoolOptions) {
@@ -95,7 +97,18 @@ export class TerminalWarmPool {
 			if (this.#current === entry) this.#current = null
 			if (!entry.discarded) this.#scheduleRetry()
 		})
+		this.#unclaimed.add(entry.sessionId)
 		this.#current = entry
+	}
+
+	/** Hide this id before its socket exists, so a concurrent restore cannot adopt it. */
+	reserveUnclaimed(sessionId: string): void {
+		this.#unclaimed.add(sessionId)
+	}
+
+	/** Live warm shells are not user terminals until New terminal claims one. */
+	unclaimedSessionIds(): readonly string[] {
+		return [...this.#unclaimed]
 	}
 
 	claim(profileToken: string, cwd: string): WarmClaim | null {
@@ -111,6 +124,7 @@ export class TerminalWarmPool {
 		}
 		if (!entry.ready) return null
 		this.#current = null
+		this.#unclaimed.delete(entry.sessionId)
 		this.#stop(entry)
 		this.ensure()
 		return { sessionId: entry.sessionId, proc: entry.proc, prelude: entry.buffer }
