@@ -49,6 +49,7 @@ import {
 	shouldMarkTerminalCompletion,
 } from './terminal-progress'
 import { TerminalSnapshotModesAddon } from './terminal-snapshot-modes'
+import { alternateViewportIsBlank } from './terminal-viewport'
 import { showToast } from './toast'
 
 export type TerminalWorkspaceHelm = Pick<
@@ -195,6 +196,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		 *  chunk of a session-backed spawn is filtered once (see filterAttachClear). */
 		attachClearPending: boolean
 		attachClearHeld: string
+		/** One observed size change was already offered for a blank restored fullscreen. */
+		fullscreenRedrawOffered: boolean
+		/** The temporary narrower size is still in effect until the redraw has cells. */
+		fullscreenRedrawPending: boolean
 	}
 
 	// FitAddon measures getComputedStyle(term.element.parentElement).width, which
@@ -792,14 +797,75 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		_core: {
 			_renderService: {
 				dimensions: { css: { cell: { height: number } } }
+				/** xterm pauses this while a holder is display:none. Reveal must clear it. */
+				_isPaused: boolean
 				clear(): void
 			}
 		}
 	}
 
+	const revealRedraw = new WeakSet<Tab>()
+
 	function cellHeightOf(term: Terminal): number {
 		// SAFETY: pinned xterm 6 provides the same private render-service shape used by FitAddon; public Terminal types omit it.
 		return (term as unknown as CoreRenderAccess)._core._renderService.dimensions.css.cell.height
+	}
+
+	/** Inactive holders are display:none. Same-size fit does not resize, so a
+	 *  fullscreen canvas stays blank until the app redraws the whole screen. */
+	function paintVisibleTerminal(tab: Tab): void {
+		if (tab.closed || disposed || !tab.holder.classList.contains('active')) return
+		if (tab.holder.clientWidth === 0 || tab.holder.clientHeight === 0) return
+		// SAFETY: pinned xterm 6 pauses rendering from a private IntersectionObserver.
+		// display:none does not always resume it, so a hidden Pi redraw stays black.
+		const render = (tab.term as unknown as CoreRenderAccess)._core._renderService
+		render._isPaused = false
+		render.clear()
+		tab.term.refresh(0, Math.max(0, tab.term.rows - 1))
+	}
+
+	/** Pi full-redraws only when it observes a size change. Do not undo that
+	 *  change on a timer: the undo is a second clear, and it lands after the redraw. */
+	function offerFullscreenRedraw(tab: Tab): void {
+		const shownAgain = revealRedraw.delete(tab)
+		if (tab.fullscreenRedrawPending || !tab.restored || tab.ptyId === null || tab.closed) return
+		if (!tab.holder.classList.contains('active')) return
+		const buffer = tab.term.buffer.active
+		if (!alternateViewportIsBlank(buffer, tab.term.rows, tab.term.cols)) {
+			if (buffer.type === 'alternate') tab.fullscreenRedrawOffered = true
+			return
+		}
+		// A redraw requested while this holder was about to be hidden can land in a
+		// paused renderer. Ask again when the terminal is actually shown.
+		if (tab.fullscreenRedrawOffered && !shownAgain) return
+		const cols = tab.term.cols
+		const rows = tab.term.rows
+		if (cols <= 2) return
+		tab.fullscreenRedrawOffered = true
+		tab.fullscreenRedrawPending = true
+		helm.pty.resize(tab.ptyId, cols - 1, rows)
+	}
+
+	const fullscreenRestoreWaiting = new WeakSet<Tab>()
+
+	function finishFullscreenRedraw(tab: Tab): void {
+		if (!tab.fullscreenRedrawPending || fullscreenRestoreWaiting.has(tab)) return
+		if (tab.ptyId === null || tab.closed || tab.frameOutputPending) return
+		const buffer = tab.term.buffer.active
+		if (alternateViewportIsBlank(buffer, tab.term.rows, tab.term.cols)) return
+		const ptyId = tab.ptyId
+		const cols = tab.term.cols
+		const rows = tab.term.rows
+		fullscreenRestoreWaiting.add(tab)
+		const painted = tab.term.onRender(() => {
+			painted.dispose()
+			fullscreenRestoreWaiting.delete(tab)
+			if (tab.frameOutputPending) return
+			if (tab.closed || tab.ptyId !== ptyId || !tab.fullscreenRedrawPending) return
+			tab.fullscreenRedrawPending = false
+			helm.pty.resize(ptyId, cols, rows)
+		})
+		tab.term.refresh(0, Math.max(0, rows - 1))
 	}
 
 	function fitTab(tab: Tab): void {
@@ -848,6 +914,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			renderAccess._core._renderService.clear()
 			tab.term.resize(cols, rows)
 		}
+		paintVisibleTerminal(tab)
+		offerFullscreenRedraw(tab)
 		scheduleScrollbarSync(tab)
 	}
 
@@ -877,13 +945,16 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	 * pushes its winsize to the session master → remote app relearns and relayouts.
 	 */
 	function syncPtySize(tab: Tab, spawnCols: number, spawnRows: number, nudge: boolean): void {
-		if (tab.ptyId === null) return
+		if (tab.ptyId === null || tab.fullscreenRedrawPending) return
 		const { cols, rows } = tab.term
 		if (cols !== spawnCols || rows !== spawnRows) {
 			// Fitted size drifted while the spawn was in flight (onResize was not
 			// attached yet, so the update was lost) — replay it.
 			helm.pty.resize(tab.ptyId, cols, rows)
-		} else if (nudge && cols > 2) {
+		} else if (nudge && cols > 2 && !tab.fullscreenRedrawPending) {
+			// A restored fullscreen app must not get this pair. It is either coalesced,
+			// so Pi never redraws, or it is a second clear that lands on a black screen.
+			if (tab.term.buffer.active.type === 'alternate') return
 			helm.pty.resize(tab.ptyId, cols - 1, rows)
 			helm.pty.resize(tab.ptyId, cols, rows)
 		}
@@ -1021,6 +1092,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (tab.frameOutputPending) return
 		tab.dirty = false
 		if (!tab.sessionId) return
+		// A cleared fullscreen buffer must not replace a complete screen. Pi will
+		// not redraw that empty snapshot on a same-size reattach.
+		const active = tab.term.buffer.active
+		if (alternateViewportIsBlank(active, tab.term.rows, tab.term.cols)) return
 		const snapshot = serializeSnapshot(tab)
 		// Empty serialize (nothing ever painted) must not clobber a good snapshot.
 		if (snapshot) helm.buffers.save(tab.sessionId, snapshot)
@@ -1160,6 +1235,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const buffer = tab.term.buffer.active
 		tab.frameViewportAnchor = buffer.type === 'normal' && buffer.viewportY < buffer.baseY ? buffer.viewportY : null
 		tab.frameOutputPending = true
+		// A blank clone is not a last complete frame. Covering the incoming redraw
+		// with it is what leaves a reopened fullscreen terminal black.
+		if (alternateViewportIsBlank(buffer, tab.term.rows, tab.term.cols)) return
 		if (tab.frameFreeze) return
 		const screen = tab.holder.querySelector('.xterm-screen')
 		if (!(screen instanceof HTMLElement) || !screen.parentElement) return
@@ -1195,6 +1273,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		tab.frameFreeze?.remove()
 		tab.frameFreeze = null
 		scheduleScrollbarSync(tab)
+		finishFullscreenRedraw(tab)
 		// Resize only after the replacement frame is actually visible. term.resize
 		// then emits the PTY resize/WINCH, prompting Pi to render the new geometry.
 		if (tab.fitDeferredForOutput && !disposed && !tab.closed && tab === activeTab) fitTab(tab)
@@ -1246,6 +1325,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		renderTabGroups()
 		syncEmptyState()
 		updateBackgroundUi()
+		revealRedraw.add(tab)
 		// Fit after the holder becomes visible; hidden containers measure as 0x0.
 		requestAnimationFrame(() => {
 			if (!disposed) fitActive()
@@ -3171,7 +3251,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			output = filterAttachClear(tab, data)
 			if (output === '') return
 		}
-		tab.outputGuard.write(output, (chunk, onParsed) => tab.term.write(chunk, onParsed))
+		tab.outputGuard.write(output, (chunk, onParsed) =>
+			tab.term.write(chunk, () => {
+				onParsed?.()
+				finishFullscreenRedraw(tab)
+			}),
+		)
 		tab.dirty = true
 	}
 
@@ -3306,6 +3391,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			scrollSyncPending: false,
 			attachClearPending: true,
 			attachClearHeld: '',
+			fullscreenRedrawOffered: false,
+			fullscreenRedrawPending: false,
 		}
 		attachScrollbarInput(tab)
 		const terminalShortcut = (event: KeyboardEvent) =>
@@ -3431,13 +3518,17 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (opts?.sessionId) {
 			try {
 				const snapshot = await helm.buffers.read(opts.sessionId)
-				if (snapshot && !tab.closed) {
-					tab.term.write(snapshot, () => {
-						if (tab.closed) return
-						// Belt-and-braces first-paint guard: force the restored frame
-						// onto the screen even if the session never emits another byte.
-						tab.term.refresh(0, tab.term.rows - 1)
-						scheduleScrollbarSync(tab)
+						if (snapshot && !tab.closed) {
+					await new Promise<void>(resolve => {
+						tab.term.write(snapshot, () => {
+							if (!tab.closed) {
+								// Belt-and-braces first-paint guard: force the restored frame
+								// onto the screen even if the session never emits another byte.
+								tab.term.refresh(0, tab.term.rows - 1)
+								scheduleScrollbarSync(tab)
+							}
+							resolve()
+						})
 					})
 				}
 			} catch {
