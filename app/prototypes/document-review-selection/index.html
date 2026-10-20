@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Prototype · helm edit selection</title>
+  <style>
+    :root {
+      --pane: #faf9f6;
+      --chrome: #f1f0ed;
+      --well: #ebeae6;
+      --text: #24272c;
+      --muted: #60646c;
+      --accent: #176ac2;
+      --hairline: rgba(0, 0, 0, 0.07);
+      --hairline-strong: rgba(0, 0, 0, 0.16);
+      --shadow: 0 12px 32px rgba(36, 39, 44, 0.12);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #e7e4de; color: var(--text); }
+    .window {
+      width: min(760px, calc(100vw - 360px));
+      margin: 32px auto 120px;
+      background: var(--pane);
+      border: 1px solid var(--hairline-strong);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+    .doc-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      height: 48px;
+      padding: 0 20px 0 90px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .doc-head strong { font-size: 17px; font-weight: 600; }
+    .doc-head span { color: var(--muted); font-size: 12px; }
+    .reading {
+      position: relative;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 36px 40px 72px;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    .reading h1 { margin: 0 0 18px; font-size: 28px; line-height: 1.25; font-weight: 600; }
+    .reading h2 { margin: 28px 0 8px; font-size: 21px; line-height: 1.35; font-weight: 600; }
+    .reading p { margin: 0 0 14px; }
+    .reading code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      background: var(--well);
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .figure { margin: 8px 0 18px; }
+    .figure img, .figure svg { display: block; width: 100%; height: 168px; border-radius: 8px; background: var(--well); }
+    .chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      height: 168px;
+      padding: 16px 16px 28px;
+      background: var(--well);
+      border-radius: 8px;
+    }
+    .chart i {
+      flex: 1;
+      display: block;
+      background: #176ac2;
+      border-radius: 4px 4px 0 0;
+      position: relative;
+    }
+    .chart i::after {
+      content: attr(data-name);
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 6px);
+      text-align: center;
+      font-size: 11px;
+      font-style: normal;
+      color: var(--muted);
+    }
+    .card {
+      display: grid;
+      grid-template-columns: 1.4fr repeat(4, 1fr);
+      gap: 8px 12px;
+      padding: 12px;
+      background: var(--chrome);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .card b { display: block; color: var(--muted); font-size: 11px; font-weight: 600; }
+    figcaption { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .bubble {
+      position: fixed;
+      width: 280px;
+      background: var(--chrome);
+      border: 1px solid var(--hairline-strong);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      z-index: 4;
+    }
+    .bubble[hidden] { display: none; }
+    .bubble header {
+      display: flex;
+      align-items: center;
+      height: 36px;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--hairline);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .bubble textarea {
+      display: block;
+      width: 100%;
+      min-height: 64px;
+      border: 0;
+      resize: none;
+      padding: 12px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+    .bubble .row { display: flex; justify-content: flex-end; padding: 0 12px 12px; }
+    button { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; }
+    button.primary { background: var(--accent); color: white; }
+    .state {
+      position: fixed;
+      left: 16px;
+      bottom: 72px;
+      max-width: 280px;
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--chrome);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    .switcher {
+      position: fixed;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: #24272c;
+      color: #faf9f6;
+      border-radius: 999px;
+      box-shadow: var(--shadow);
+      z-index: 5;
+    }
+    .switcher button { width: 32px; height: 32px; color: #faf9f6; border-radius: 999px; }
+    .switcher button:hover { background: rgba(255,255,255,0.08); }
+    .switcher .label { min-width: 320px; text-align: center; }
+    .reading::selection { background: transparent; color: inherit; }
+    ::highlight(proto-invert) { color: #faf9f6; background-color: #24272c; }
+    ::highlight(proto-ink) { color: #176ac2; background-color: transparent; }
+    .switcher small { display: block; color: #b7b8bc; font-size: 11px; }
+    .note { max-width: 760px; margin: 16px auto 0; color: var(--muted); font-size: 13px; padding: 0 24px; }
+  </style>
+</head>
+<body>
+  <p class="note">Throwaway prototype. The word ketamine starts selected, so a one-word pick is visible. Drag a longer passage, or click the screenshot, chart, or card. Arrows switch marks taken from open readers. The system highlighter stays hidden.</p>
+  <div class="window">
+    <div class="doc-head">
+      <strong>lead-therapist.md</strong>
+      <span>Light reading</span>
+    </div>
+    <article class="reading" id="reading">
+      <h1>Dashboard for the lead therapist</h1>
+      <p>The lead therapist needs a first dashboard of the therapists on their team. Each row shows the therapist’s name and, for the chosen period, how many processes are planned, occupied, archived, blocked, and still open.</p>
+      <h2>What K1 means</h2>
+      <p id="seed">K1 is the date of the first ketamine session. For every other product, use the date of the first session in that process. Do not ask which project this belongs to.</p>
+      <p>Remaining to fill is planned minus occupied, archived, and blocked. A blocked process is one with an unconfirmed absence or holiday conflict. Archive reasons stay out of the summary table; the row opens a detail where those reasons are counted.</p>
+      <p>The period filter uses <code>K1</code> inside the selected year. Switching therapist or period should not reload the whole workspace.</p>
+      <h2>What the page renders</h2>
+      <figure class="figure" data-figure="Screenshot">
+        <img alt="Team dashboard screenshot" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 168'%3E%3Crect width='640' height='168' fill='%23ebeae6'/%3E%3Crect x='24' y='20' width='180' height='128' rx='8' fill='%23faf9f6'/%3E%3Crect x='40' y='36' width='96' height='10' rx='2' fill='%2324272c'/%3E%3Crect x='40' y='58' width='120' height='8' rx='2' fill='%2360646c'/%3E%3Crect x='40' y='76' width='88' height='8' rx='2' fill='%2360646c'/%3E%3Crect x='220' y='20' width='396' height='128' rx='8' fill='%23faf9f6'/%3E%3Crect x='240' y='92' width='36' height='36' fill='%23176ac2'/%3E%3Crect x='288' y='68' width='36' height='60' fill='%23176ac2'/%3E%3Crect x='336' y='48' width='36' height='80' fill='%238a5a0a'/%3E%3Crect x='384' y='76' width='36' height='52' fill='%23176ac2'/%3E%3Crect x='432' y='60' width='36' height='68' fill='%23176ac2'/%3E%3C/svg%3E">
+        <figcaption>Screenshot of the team dashboard</figcaption>
+      </figure>
+      <figure class="figure" data-figure="Chart">
+        <div class="chart" role="img" aria-label="Planned processes by therapist">
+          <i data-name="Novák" style="height:72%"></i>
+          <i data-name="Král" style="height:46%"></i>
+          <i data-name="Beneš" style="height:88%"></i>
+          <i data-name="Svoboda" style="height:34%"></i>
+          <i data-name="Dvořák" style="height:60%"></i>
+        </div>
+        <figcaption>Chart · planned processes</figcaption>
+      </figure>
+      <figure class="figure" data-figure="Rendered card">
+        <div class="card" role="img" aria-label="Rendered therapist card">
+          <div><b>Therapist</b>Novák</div>
+          <div><b>Planned</b>18</div>
+          <div><b>Occupied</b>11</div>
+          <div><b>Archived</b>2</div>
+          <div><b>Open</b>5</div>
+        </div>
+        <figcaption>Rendered from the TSX card</figcaption>
+      </figure>
+    </article>
+  </div>
+  <div class="bubble" id="bubble" hidden>
+    <header>Passage</header>
+    <textarea id="draft" placeholder="Ask about this passage"></textarea>
+    <div class="row"><button type="button" class="primary">Send</button></div>
+  </div>
+  <div class="state" id="state">No selection</div>
+  <div class="switcher">
+    <button type="button" id="prev" aria-label="Previous variant">←</button>
+    <div class="label"><strong id="variant-name">Loading</strong><small id="variant-blurb"></small></div>
+    <button type="button" id="next" aria-label="Next variant">→</button>
+  </div>
+  <script>
+    const reading = document.querySelector('#reading')
+    const bubble = document.querySelector('#bubble')
+    const draft = document.querySelector('#draft')
+    const state = document.querySelector('#state')
+    const variants = []
+    const dragStyle = document.createElement('style')
+    document.head.appendChild(dragStyle)
+    let index = 0
+    let accepted = null
+    let dragging = false
+    let selectedFigure = null
+
+    function highlightApi() {
+      return typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function'
+    }
+    function overlay(host, rect, id, style) {
+      const node = document.createElement('div')
+      node.dataset.variant = id
+      node.setAttribute('aria-hidden', 'true')
+      node.style.position = 'absolute'
+      node.style.pointerEvents = 'none'
+      node.style.boxSizing = 'border-box'
+      Object.assign(node.style, style)
+      host.appendChild(node)
+    }
+    function removeNodes(host, id) {
+      host.querySelectorAll(`[data-variant="${id}"]`).forEach((node) => node.remove())
+    }
+
+    function visibleRects(rects) {
+      return rects.filter((rect) => rect.width > 1 && rect.height > 1)
+    }
+    function underlines(host, id, rects, color, thickness) {
+      for (const rect of visibleRects(rects)) {
+        overlay(host, rect, id, {
+          left: rect.left + 'px',
+          top: (rect.top + rect.height - thickness) + 'px',
+          width: rect.width + 'px',
+          height: thickness + 'px',
+          background: color,
+        })
+      }
+    }
+    function fills(host, id, rects, background) {
+      for (const rect of visibleRects(rects)) {
+        overlay(host, rect, id, {
+          left: rect.left + 'px',
+          top: rect.top + 'px',
+          width: rect.width + 'px',
+          height: rect.height + 'px',
+          background,
+        })
+      }
+    }
+    function strikes(host, id, rects, color) {
+      for (const rect of visibleRects(rects)) {
+        overlay(host, rect, id, {
+          left: rect.left + 'px',
+          top: (rect.top + rect.height * 0.55) + 'px',
+          width: rect.width + 'px',
+          height: '1.5px',
+          background: color,
+        })
+      }
+    }
+    function squiggles(host, id, rects, color) {
+      for (const rect of visibleRects(rects)) {
+        const height = 4
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        svg.dataset.variant = id
+        svg.setAttribute('aria-hidden', 'true')
+        svg.style.position = 'absolute'
+        svg.style.pointerEvents = 'none'
+        svg.style.left = rect.left + 'px'
+        svg.style.top = (rect.top + rect.height - height) + 'px'
+        svg.style.width = rect.width + 'px'
+        svg.style.height = height + 'px'
+        svg.setAttribute('viewBox', '0 0 ' + rect.width + ' ' + height)
+        svg.setAttribute('preserveAspectRatio', 'none')
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+        const mid = 2
+        const step = 5
+        let d = 'M 0 ' + mid
+        for (let x = 0; x < rect.width; x += step) {
+          const next = Math.min(rect.width, x + step)
+          const y = (Math.round(x / step) % 2 === 0) ? mid - 1.3 : mid + 1.3
+          d += ' Q ' + ((x + next) / 2) + ' ' + y + ' ' + next + ' ' + mid
+        }
+        path.setAttribute('d', d)
+        path.setAttribute('fill', 'none')
+        path.setAttribute('stroke', color)
+        path.setAttribute('stroke-width', '1.25')
+        path.setAttribute('stroke-linecap', 'round')
+        svg.appendChild(path)
+        host.appendChild(svg)
+      }
+    }
+    function sideline(host, id, rects, color) {
+      const bands = visibleRects(rects)
+      if (!bands.length) return
+      const top = Math.min(...bands.map((rect) => rect.top))
+      const bottom = Math.max(...bands.map((rect) => rect.top + rect.height))
+      overlay(host, bands[0], id, {
+        left: '28px',
+        top: top + 'px',
+        width: '3px',
+        height: (bottom - top) + 'px',
+        background: color,
+      })
+    }
+    globalThis.registerSelectionVariant = (variant) => variants.push(variant)
+    function mark(id, name, blurb, paint) {
+      registerSelectionVariant({
+        id, name, blurb, dragCss: '',
+        install() {},
+        paint(detail) { this.clear(detail.host); paint(detail) },
+        clear(host) { removeNodes(host, id) },
+      })
+    }
+
+    mark('koreader-underline', 'KOReader underline', 'A line only under the words. No wash, and no system selection underneath.', (detail) => {
+      underlines(detail.host, 'koreader-underline', detail.rects, '#24272c', 2)
+    })
+    mark('koreader-lighten', 'KOReader lighten', 'Pale wash on the exact words, about a fifth. A one-word pick does not fill the line.', (detail) => {
+      fills(detail.host, 'koreader-lighten', detail.rects, 'rgba(255, 214, 64, 0.28)')
+    })
+    mark('koreader-strike', 'KOReader strike', 'A line through the selected words only.', (detail) => {
+      strikes(detail.host, 'koreader-strike', detail.rects, '#24272c')
+    })
+    registerSelectionVariant({
+      id: 'koreader-invert',
+      name: 'KOReader invert',
+      blurb: 'The words flip to light on dark. Nothing else in the line changes.',
+      dragCss: '',
+      install() {},
+      paint(detail) {
+        this.clear(detail.host)
+        if (detail.range && highlightApi()) {
+          CSS.highlights.set('proto-invert', new Highlight(detail.range))
+          return
+        }
+        for (const rect of visibleRects(detail.rects)) {
+          overlay(detail.host, rect, 'koreader-invert', {
+            left: rect.left + 'px', top: rect.top + 'px', width: rect.width + 'px', height: rect.height + 'px',
+            background: 'white', mixBlendMode: 'difference',
+          })
+        }
+      },
+      clear(host) {
+        if (highlightApi()) CSS.highlights.delete('proto-invert')
+        removeNodes(host, 'koreader-invert')
+      },
+    })
+    mark('koreader-sideline', 'KOReader sideline', 'Only a bar in the margin for the lines. It cannot show that one word is selected.', (detail) => {
+      sideline(detail.host, 'koreader-sideline', detail.rects, '#24272c')
+    })
+    mark('foliate-squiggle', 'Foliate squiggle', 'A wave under the real word boxes. Foliate draws this as SVG because a CSS highlight cannot.', (detail) => {
+      squiggles(detail.host, 'foliate-squiggle', detail.rects, '#c23b17')
+    })
+    mark('zotero-wash', 'Zotero wash', 'Marker color at half strength, clipped to the words. Underline is a different tool, not this plus a line.', (detail) => {
+      fills(detail.host, 'zotero-wash', detail.rects, 'rgba(255, 212, 0, 0.5)')
+    })
+    mark('zotero-underline', 'Zotero underline', 'Color under the words and nowhere else. Zotero does not also paint a gray wash.', (detail) => {
+      underlines(detail.host, 'zotero-underline', detail.rects, '#c2410c', 2)
+    })
+    mark('pdfjs-boxes', 'PDF.js boxes', 'One blue box per text fragment, the way the PDF.js text layer paints selection.', (detail) => {
+      fills(detail.host, 'pdfjs-boxes', detail.rects, 'rgba(0, 100, 255, 0.25)')
+    })
+    mark('recogito', 'Recogito', 'Their blue, rgb(0, 128, 255). Quiet at 18% while dragging, 45% once the passage is open.', (detail) => {
+      const opacity = detail.reason === 'drag' ? 0.18 : 0.45
+      fills(detail.host, 'recogito', detail.rects, 'rgba(0, 128, 255, ' + opacity + ')')
+    })
+    mark('hypothesis', 'Hypothesis', 'A yellow span on the saved words. The browser selection is gone once their mark is up.', (detail) => {
+      fills(detail.host, 'hypothesis', detail.rects, 'rgba(255, 236, 84, 0.55)')
+    })
+    mark('margin-line', 'Margin line', 'A hairline under the words, no fill. Margin keeps saved marks as underlines.', (detail) => {
+      underlines(detail.host, 'margin-line', detail.rects, '#176ac2', 1)
+    })
+    registerSelectionVariant({
+      id: 'obsidian-ink',
+      name: 'Obsidian ink',
+      blurb: 'The words change color. No background, so it is not another highlighter.',
+      dragCss: '',
+      install() {},
+      paint(detail) {
+        this.clear(detail.host)
+        if (detail.range && highlightApi()) CSS.highlights.set('proto-ink', new Highlight(detail.range))
+        else underlines(detail.host, 'obsidian-ink', detail.rects, '#176ac2', 2)
+      },
+      clear(host) {
+        if (highlightApi()) CSS.highlights.delete('proto-ink')
+        removeNodes(host, 'obsidian-ink')
+      },
+    })
+
+    function current() { return variants[index] }
+    function rectsFor(range) {
+      const origin = reading.getBoundingClientRect()
+      return [...range.getClientRects()].map((rect) => ({
+        top: rect.top - origin.top + reading.scrollTop,
+        left: rect.left - origin.left,
+        width: rect.width,
+        height: rect.height,
+      }))
+    }
+    function selectionRange() {
+      const selection = getSelection()
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null
+      if (!reading.contains(selection.anchorNode)) return null
+      return selection.getRangeAt(0)
+    }
+    function placeBubble(range) {
+      const rects = [...range.getClientRects()]
+      const last = rects[rects.length - 1]
+      if (!last) { bubble.hidden = true; return }
+      const doc = reading.getBoundingClientRect()
+      bubble.hidden = false
+      bubble.style.left = Math.min(window.innerWidth - 296, doc.right + 16) + 'px'
+      bubble.style.top = Math.max(16, Math.min(last.top, window.innerHeight - 160)) + 'px'
+    }
+    function clearMarks() {
+      for (const variant of variants) variant.clear(reading)
+      reading.querySelectorAll('[data-figure-selected]').forEach((node) => node.removeAttribute('data-figure-selected'))
+    }
+    function paintFigure(figure, reason) {
+      clearMarks()
+      selectedFigure = figure
+      figure.setAttribute('data-figure-selected', 'true')
+      current().paint({ range: null, rects: figureRects(figure), host: reading, reason })
+      const label = figure.dataset.figure || 'Figure'
+      accepted = { reason, text: label, figure: true }
+      const box = figure.getBoundingClientRect()
+      bubble.hidden = false
+      bubble.style.left = Math.min(window.innerWidth - 296, reading.getBoundingClientRect().right + 16) + 'px'
+      bubble.style.top = Math.max(16, Math.min(box.top, window.innerHeight - 160)) + 'px'
+      state.textContent = reason + ' · ' + label + ' · passage open'
+    }
+    function figureRects(figure) {
+      const origin = reading.getBoundingClientRect()
+      const rect = figure.getBoundingClientRect()
+      return [{ top: rect.top - origin.top + reading.scrollTop, left: rect.left - origin.left, width: rect.width, height: rect.height }]
+    }
+    function paint(reason) {
+      const range = selectionRange()
+      clearMarks()
+      selectedFigure = null
+      if (!range) {
+        bubble.hidden = true
+        accepted = null
+        state.textContent = 'No selection'
+        return
+      }
+      current().paint({ range, rects: rectsFor(range), host: reading, reason })
+      accepted = { reason, text: range.toString() }
+      if (reason === 'drag') bubble.hidden = true
+      else placeBubble(range)
+      state.textContent = reason + ' · ' + accepted.text.length + ' characters · ' + (bubble.hidden ? 'mark only' : 'passage open')
+    }
+    function show(next) {
+      index = (next + variants.length) % variants.length
+      const variant = current()
+      document.querySelector('#variant-name').textContent = (index + 1) + ' · ' + variant.name
+      document.querySelector('#variant-blurb').textContent = variant.blurb
+      dragStyle.textContent = variant.dragCss
+      const params = new URLSearchParams(location.search)
+      params.set('variant', variant.id)
+      history.replaceState(null, '', '?' + params.toString())
+      if (selectedFigure) paintFigure(selectedFigure, accepted ? accepted.reason : 'Pointer')
+      else if (selectionRange()) paint(accepted ? accepted.reason : 'Pointer')
+    }
+    document.querySelector('#prev').onclick = () => show(index - 1)
+    document.querySelector('#next').onclick = () => show(index + 1)
+    document.addEventListener('keydown', (event) => {
+      if (event.target === draft) return
+      if (event.key === 'ArrowLeft') { event.preventDefault(); show(index - 1) }
+      if (event.key === 'ArrowRight') { event.preventDefault(); show(index + 1) }
+      if (event.key === 'Escape') {
+        getSelection()?.removeAllRanges()
+        paint('drag')
+        state.textContent = 'No selection'
+      }
+    })
+    reading.addEventListener('pointerdown', () => { dragging = true })
+    reading.addEventListener('pointerup', (event) => {
+      dragging = false
+      const figure = event.target.closest('.figure')
+      if (figure && reading.contains(figure)) {
+        getSelection()?.removeAllRanges()
+        paintFigure(figure, 'Pointer')
+        return
+      }
+      paint('Pointer')
+    })
+    document.addEventListener('selectionchange', () => {
+      if (selectedFigure) return
+      if (dragging) {
+        if (selectionRange()) paint('drag')
+        return
+      }
+      if (accepted && !accepted.figure) paint(accepted.reason)
+    })
+    for (const variant of variants) variant.install(reading)
+    const requested = new URLSearchParams(location.search).get('variant') || 'koreader-underline'
+    const start = Math.max(0, variants.findIndex((variant) => variant.id === requested))
+    show(start)
+    const node = document.querySelector('#seed').firstChild
+    const word = 'ketamine'
+    const at = node.textContent.indexOf(word)
+    const range = document.createRange()
+    range.setStart(node, at)
+    range.setEnd(node, at + word.length)
+    const selection = getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    paint('Pointer')
+  </script>
+</body>
+</html>
