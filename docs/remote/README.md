@@ -389,21 +389,22 @@ loopback development continues to use ephemeral in-memory bearer auth.
 
 The runtime's owner-private `~/.helm/remote/` directory carries its singleton lock,
 operator control capability and hashed device ledger. A second start reuses only an
-authenticated compatible control socket; an unknown/stale lock is refused rather than
-stolen. Ctrl+C stops only the runtime it owns. A normal Electron exit does not stop it.
+authenticated compatible control socket. Ctrl+C stops only the runtime it owns. A
+normal Electron exit does not stop it.
 
-**A healthy older build also refuses reuse.** Root `bun run start` rebuilds first;
-compatibility requires the exact build fingerprint, not only the protocol. Even a
-documentation edit changes the dirty-checkout fingerprint. The generic “runtime lock
-exists but no compatible authenticated host answered” error can therefore mean a
-healthy, authenticated older host—not a stale lock. Do not delete the lock. Either
-launch only the desktop with `cd app && bun run start`, or explicitly approve a
-Remote-only update: finish edits/builds, gracefully stop the owned Remote process,
-verify its listener and owned lock were released, then start
-`node dist/remote/runtime.js` from the root. Never discover-and-kill arbitrary Pi,
-Electron or daemon processes. Browser connections briefly drop and the host epoch
-changes; persisted device credentials survive, but pending commands are not replayed.
-No Tailscale or global Pi settings change is needed.
+**A healthy older build is replaced only by the operator CLI.** Root `bun run start`
+rebuilds first; compatibility requires the exact build fingerprint, not only the
+protocol. Even a documentation edit changes the dirty-checkout fingerprint. The CLI
+(`node dist/remote/runtime.js`, including the launchd job and root `bun run start`)
+SIGTERMs a host only when that runtime is the sole holder of `control.sock`, then
+waits. It unlinks only `runtime.lock`, `control.sock` and `host.sock` when no other
+runtime process exists, nothing holds those paths, and the sockets do not answer.
+An unknown holder, a failed inspection, a symlink, or a non-private file still
+refuses. Do not delete the lock from a shell. Library startup stays fail-closed.
+Never discover-and-kill arbitrary Pi, Electron or daemon processes. Browser
+connections briefly drop and the host epoch changes; persisted device credentials
+survive, but pending commands are not replayed. No Tailscale or global Pi settings
+change is needed.
 
 The catalog scans only the setup-configured (or explicit test-override) Pi roots with
 one asynchronous filesystem chain, no-follow regular-file checks, bounded attempt/byte

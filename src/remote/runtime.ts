@@ -30,6 +30,7 @@ import { RemoteFavorites } from './favorites.js'
 import { RemoteHost } from './host.js'
 import { readOwnerPrivateFile } from './private-file.js'
 import { remoteRegistrationRequestSchema, remoteSourceConfirmationSchema } from './protocol.js'
+import { hostOwnedStartInspection, recoverOwnedRuntime, type OwnedHostStatus } from './owned-start.js'
 import { reclaimDeadRuntime } from './reclaim.js'
 import { RemoteUsage } from './usage.js'
 
@@ -71,6 +72,12 @@ export interface RemoteRuntimeOptions {
 	now?: () => number
 	/** Set only by the single reclaim retry, so a refusal can never become a loop. */
 	reclaimed?: boolean
+	/**
+	 * Operator CLI only. A library caller must not replace a live host or delete a lock.
+	 * One recovered retry cannot loop.
+	 */
+	recoverOwned?: boolean
+	ownedRecovered?: boolean
 	/** Deterministic lifecycle seam for owned-file race tests; never a browser API. */
 	lifecycle?: {
 		afterDiscoveryPublished?: () => void | Promise<void>
@@ -136,6 +143,28 @@ export async function startRemoteRuntime(options: RemoteRuntimeOptions): Promise
 				root,
 				stop: async () => {},
 			}
+		// Operator start may replace a verified owned runtime or a proven-abandoned lock.
+		// Library callers stay fail-closed: a missing listener is not owner death.
+		if (options.recoverOwned && !options.ownedRecovered) {
+			const outcome = await recoverOwnedRuntime({
+				root,
+				inspect: hostOwnedStartInspection(fileURLToPath(import.meta.url)),
+				status: () => classifyOwnedStatus(root, operatorToken, config),
+			})
+			if (outcome === 'ready') {
+				const again = await controlRequest(join(root, 'control.sock'), operatorToken, '/status').catch(() => undefined)
+				if (again && isCompatibleRuntimeStatus(again, config))
+					return {
+						reused: true,
+						origin: again.config.origin,
+						port: again.listeningPort,
+						root,
+						stop: async () => {},
+					}
+			} else {
+				return await startRemoteRuntime({ ...options, ownedRecovered: true })
+			}
+		}
 		// The reclaim seam refuses legacy locks without positive dead-owner evidence.
 		if (!options.reclaimed && (await reclaimDeadRuntime(root)))
 			return await startRemoteRuntime({ ...options, reclaimed: true })
@@ -581,6 +610,20 @@ function listeningPort(server: ReturnType<typeof createServer> | undefined): num
 	const address = server?.address()
 	return typeof address === 'object' && address ? address.port : undefined
 }
+async function classifyOwnedStatus(
+	root: string,
+	token: string,
+	expected: RuntimeConfiguration,
+): Promise<OwnedHostStatus> {
+	try {
+		const response = await remoteControlRequest(join(root, 'control.sock'), token, '/status')
+		if (response.status !== 200) return 'refused'
+		return isCompatibleRuntimeStatus(response.body, expected) ? 'compatible' : 'incompatible'
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code
+		return code === 'ECONNREFUSED' || code === 'ENOENT' ? 'absent' : 'refused'
+	}
+}
 function isCompatibleRuntimeStatus(value: unknown, expected: RuntimeConfiguration): value is RuntimeStatus {
 	if (!value || typeof value !== 'object') return false
 	const status = value as Partial<RuntimeStatus>
@@ -685,6 +728,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 				origin,
 				assetsDirectory: assets,
 				piSessionRoots: configuredRoots ? configuredRoots.split(',').filter(Boolean) : setup?.piSessionRoots,
+				recoverOwned: true,
 			})
 			if (runtime.reused) console.log('Helm Remote is already running with a compatible authenticated runtime.')
 			else

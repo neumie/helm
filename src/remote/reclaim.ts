@@ -28,7 +28,7 @@ export function socketAnswered(path: string): Promise<boolean> {
 /**
  * Legacy locks contain no verifiable process owner. Absent listeners cannot
  * distinguish a crashed runtime from one still starting, so preserve every artifact.
- * Recovery needs a separately approved dead-owner protocol, not socket guesses.
+ * Operator start recovery lives in owned-start.ts and is not this function.
  */
 export async function reclaimDeadRuntime(_root: string, _now: () => Date = () => new Date()): Promise<boolean> {
 	return false
