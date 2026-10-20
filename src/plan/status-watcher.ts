@@ -95,6 +95,7 @@ interface PlanCandidate {
 export class PlanStatusWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
+	private watching = false
 	/** stop closes timer and manual poll admission before aborting current work. */
 	private admissionOpen = true
 	private currentTick: Promise<void> | null = null
@@ -127,13 +128,28 @@ export class PlanStatusWatcher {
 		this.running = true
 		this.admissionOpen = true
 		this.stopDrain = null
-		log.info('plan-status', `Starting plan status watcher (interval: ${Math.round(this.intervalMs / 1000)}s)`)
+		log.info(
+			'plan-status',
+			`Plan status watcher armed (interval: ${Math.round(this.intervalMs / 1000)}s); waiting until the task sidebar is visible`,
+		)
+	}
+
+	setWatching(watching: boolean): void {
+		this.watching = watching
+		if (!this.running) return
+		if (!watching) {
+			if (this.timer) clearTimeout(this.timer)
+			this.timer = null
+			return
+		}
+		if (this.currentTick || this.timer) return
 		void this.tick()
 	}
 
 	stop(): Promise<void> {
 		if (this.stopDrain) return this.stopDrain
 		this.running = false
+		this.watching = false
 		this.admissionOpen = false
 		if (this.timer) clearTimeout(this.timer)
 		this.timer = null
@@ -323,14 +339,17 @@ export class PlanStatusWatcher {
 	}
 
 	private async tick(): Promise<void> {
-		if (!this.running) return
+		if (!this.running || !this.watching) return
 		try {
 			await this.pollOnce()
 		} catch (err) {
 			log.error('plan-status', 'Plan status watcher failed', err)
 		}
-		if (this.running) {
-			this.timer = setTimeout(() => void this.tick(), this.intervalMs)
+		if (this.running && this.watching) {
+			this.timer = setTimeout(() => {
+				this.timer = null
+				void this.tick()
+			}, this.intervalMs)
 			this.timer.unref?.()
 		}
 	}

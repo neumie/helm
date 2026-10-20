@@ -150,8 +150,22 @@ function schedulingEnabledInDraft(draft: Record<string, unknown> | null): boolea
 	)
 }
 
+function sidebarIsVisible(): boolean {
+	return document.documentElement.dataset.sidebarHidden !== 'true'
+}
+
 export function SidebarRoot() {
 	const snapshot = useHelmSnapshot()
+	const [sidebarVisible, setSidebarVisible] = useState(sidebarIsVisible)
+	useEffect(() => {
+		const onVisibility = (event: Event) => {
+			const hidden = (event as CustomEvent<{ hidden?: boolean }>).detail?.hidden === true
+			setSidebarVisible(!hidden)
+		}
+		window.addEventListener('helm-sidebar-visibility', onVisibility)
+		setSidebarVisible(sidebarIsVisible())
+		return () => window.removeEventListener('helm-sidebar-visibility', onVisibility)
+	}, [])
 	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
 	const [selectedId, setSelectedId] = useState<string | null>(null)
 	const [newItemDraft, setNewItemDraft] = useState<NewItemDraft>({ title: '', prompt: '' })
@@ -412,6 +426,7 @@ export function SidebarRoot() {
 						draft={runDrafts[route.id] ?? {}}
 						onDraftChange={draft => setRunDrafts(current => ({ ...current, [route.id]: draft }))}
 						active={isTop}
+						visible={sidebarVisible}
 						onBack={pop}
 						onOpenPlan={id => push({ kind: 'plan', id })}
 						onOpenTask={id => push({ kind: 'task', id })}

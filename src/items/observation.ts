@@ -242,20 +242,33 @@ function readLog(item: ItemRecord, opts: RunObservationOptions): RunObservationL
 	}
 }
 
+const PR_STATUS_TTL_MS = 60_000
+const prStatusCache = new Map<string, { at: number; status: PrStatus }>()
+
 async function defaultReadPrStatus(url: string): Promise<PrStatus> {
+	const cached = prStatusCache.get(url)
+	if (cached && Date.now() - cached.at < PR_STATUS_TTL_MS) return cached.status
+	let status: PrStatus
 	try {
 		const { stdout: raw } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'state,merged,url'], {
 			timeout: 10_000,
 		})
 		const parsed = JSON.parse(raw) as { state?: unknown; merged?: unknown; url?: unknown }
-		return {
+		status = {
 			url: typeof parsed.url === 'string' ? parsed.url : url,
 			state: typeof parsed.state === 'string' ? parsed.state : 'unknown',
 			merged: typeof parsed.merged === 'boolean' ? parsed.merged : null,
 		}
 	} catch {
-		return { url, state: 'unknown', merged: null }
+		status = { url, state: 'unknown', merged: null }
 	}
+	prStatusCache.set(url, { at: Date.now(), status })
+	while (prStatusCache.size > 64) {
+		const oldest = prStatusCache.keys().next().value
+		if (oldest === undefined) break
+		prStatusCache.delete(oldest)
+	}
+	return status
 }
 
 async function readPr(item: ItemRecord, opts: RunObservationOptions): Promise<RunObservationPr> {

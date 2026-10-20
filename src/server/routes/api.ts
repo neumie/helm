@@ -23,7 +23,7 @@ import type { DB } from '../../db/client.js'
 import { ensureItemAssessment } from '../../items/assess.js'
 import { UNTITLED_ITEM_TITLE, isItemAssigned, requireItemAssignment } from '../../items/assignment.js'
 import { ItemCommands } from '../../items/commands.js'
-import { buildItemTaskContext, resolveItemSourceContext } from '../../items/context.js'
+import { buildItemTaskContext, createDetailSourceTaskReader, resolveItemSourceContext } from '../../items/context.js'
 import { canCreateSourceTask, toDashboardItemWithSiblings, toDashboardItems } from '../../items/contract.js'
 import type { OkenaWorkspacePreview } from '../../items/contract.js'
 import type { ItemEnricher } from '../../items/enricher.js'
@@ -213,6 +213,8 @@ export interface ApiRouteDependencies {
 	profileContext?: ProfileContext
 	/** Read-only restart guard; scheduled admission remains service-owned. */
 	scheduledRestartBlocker?: { restartBlockingRunCount(): number }
+	/** Deploy and plan observation. The poller has its own watch flag. */
+	setObservationWatching?: (watching: boolean) => void
 }
 
 export function apiRoutes({
@@ -231,12 +233,14 @@ export function apiRoutes({
 	inspectItemOkenaWorkspace = defaultInspectItemOkenaWorkspace,
 	profileContext,
 	scheduledRestartBlocker,
+	setObservationWatching,
 }: ApiRouteDependencies) {
 	const api = new Hono()
 	if (profileContext) {
 		api.use('*', (_c, next) => db.runInProfile(profileContext.store.activeProfile().id, next))
 	}
 	const itemCommands = new ItemCommands(db.items, config)
+	const readDetailSourceTask = createDetailSourceTaskReader(provider)
 	const currentProfileRuntime = () => {
 		const runtime = profileContext?.runtime
 		return typeof runtime === 'function' ? runtime() : runtime
@@ -304,14 +308,40 @@ export function apiRoutes({
 			...(includeKnowledge ? { knowledgeSnapshot, knowledgeDeliveries, knowledgeRecovery } : {}),
 		}
 	}
-	const resolveRunContextSource = async (item: ItemRecord): Promise<TaskContext> => {
+	const runContextSource = async (item: ItemRecord, live: boolean): Promise<TaskContext> => {
 		if (item.kind !== 'solve' || item.payload.kind !== 'solve') {
 			throw new Error('Only solve Items have editable run context')
 		}
 		const expectsSource = item.capturedContext !== null || item.source !== null
-		const source = expectsSource ? await resolveItemSourceContext(item, provider) : null
+		const source = expectsSource
+			? await (live ? resolveItemSourceContext(item, provider) : readDetailSourceTask(item))
+			: null
 		if (expectsSource && !source) throw new Error('Item source not found in source system')
 		return buildItemTaskContext(item, source)
+	}
+	const resolveRunContextSource = (item: ItemRecord) => runContextSource(item, true)
+	const cachedRunContextSource = (item: ItemRecord) => runContextSource(item, false)
+	const okenaPreviewCache = new Map<string, { at: number; value: OkenaWorkspacePreview | null }>()
+	const readOkenaPreview = async (
+		key: string,
+		load: () => Promise<OkenaWorkspacePreview>,
+	): Promise<OkenaWorkspacePreview | null> => {
+		const hit = okenaPreviewCache.get(key)
+		if (hit && Date.now() - hit.at < 60_000) return hit.value
+		try {
+			const value = await load()
+			okenaPreviewCache.set(key, { at: Date.now(), value })
+			return value
+		} catch (err) {
+			okenaPreviewCache.set(key, { at: Date.now(), value: null })
+			throw err
+		} finally {
+			while (okenaPreviewCache.size > 64) {
+				const oldest = okenaPreviewCache.keys().next().value
+				if (oldest === undefined) break
+				okenaPreviewCache.delete(oldest)
+			}
+		}
 	}
 	const expandGroupedItems = (items: ItemRecord[]) => {
 		const expanded: ItemRecord[] = []
@@ -1295,7 +1325,7 @@ export function apiRoutes({
 		// a provider failure degrades to no task body, never a 500.
 		let sourceTask: TaskContext | null = null
 		try {
-			sourceTask = await resolveItemSourceContext(item, provider)
+			sourceTask = await readDetailSourceTask(item)
 		} catch (err) {
 			log.warn('api', `Failed to load source task for Item ${item.id}: ${err instanceof Error ? err.message : err}`)
 		}
@@ -1326,14 +1356,24 @@ export function apiRoutes({
 			if (projectConfig) {
 				const identity = resolveItemWorkspace(item)
 				const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+				const previewKey = [
+					item.profileId,
+					item.id,
+					workspaceMode,
+					identity.baseRef,
+					identity.branchName ?? '',
+					identity.existingWorktreePath ?? '',
+				].join('\0')
 				try {
-					okenaWorkspace = await inspectItemOkenaWorkspace({
-						projectConfig,
-						workspaceMode,
-						baseRef: identity.baseRef,
-						branchName: identity.branchName,
-						existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
-					})
+					okenaWorkspace = await readOkenaPreview(previewKey, () =>
+						inspectItemOkenaWorkspace({
+							projectConfig,
+							workspaceMode,
+							baseRef: identity.baseRef,
+							branchName: identity.branchName,
+							existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
+						}),
+					)
 				} catch (err) {
 					log.warn(
 						'api',
@@ -1431,7 +1471,7 @@ export function apiRoutes({
 		const legacyRejection = rejectLegacyRunContext(c, item)
 		if (legacyRejection) return legacyRejection
 		try {
-			const source = await resolveRunContextSource(item)
+			const source = await cachedRunContextSource(item)
 			return c.json({
 				data: {
 					item: { id: item.id, title: item.title, projectSlug: item.projectSlug, status: item.status },
@@ -2180,10 +2220,18 @@ export function apiRoutes({
 		return c.json({ data: { paused: false } })
 	})
 
-	// Force poll
+	// Force poll. One explicit pass does not keep the interval alive while nobody is looking.
 	api.post('/poll/trigger', async c => {
 		await poller.pollOnce()
 		return c.json({ data: { message: 'Poll triggered' } })
+	})
+
+	api.post('/poll/watch', async c => {
+		const body = await c.req.json().catch(() => null)
+		const watching = typeof body === 'object' && body !== null && (body as { watching?: unknown }).watching === true
+		poller.setWatching(watching)
+		setObservationWatching?.(watching)
+		return c.json({ data: { watching } })
 	})
 
 	return api

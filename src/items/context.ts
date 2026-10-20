@@ -22,6 +22,64 @@ export async function resolveItemSourceContext(item: ItemRecord, provider: TaskP
 	return null
 }
 
+/** Detail display only. A running Item's log tail refetches the whole detail every few seconds. */
+export const DETAIL_SOURCE_TASK_TTL_MS = 60_000
+const DETAIL_SOURCE_TASK_CACHE_LIMIT = 64
+
+/**
+ * Live source-task reads for the detail page. Execution, planning, and manual AI
+ * passes must keep calling `resolveItemSourceContext` so they see the current task.
+ * A failed read is remembered too: an outage must not retry the provider on every tick.
+ */
+export function createDetailSourceTaskReader(
+	provider: TaskProvider,
+	options?: { ttlMs?: number; now?: () => number; limit?: number },
+) {
+	const ttlMs = options?.ttlMs ?? DETAIL_SOURCE_TASK_TTL_MS
+	const now = options?.now ?? Date.now
+	const limit = options?.limit ?? DETAIL_SOURCE_TASK_CACHE_LIMIT
+	const cache = new Map<string, { at: number; value: TaskContext | null }>()
+	const inflight = new Map<string, Promise<TaskContext | null>>()
+
+	const remember = (key: string, at: number, value: TaskContext | null) => {
+		cache.delete(key)
+		cache.set(key, { at, value })
+		while (cache.size > limit) {
+			const oldest = cache.keys().next().value
+			if (oldest === undefined) break
+			cache.delete(oldest)
+		}
+	}
+
+	return async function readDetailSourceTask(item: ItemRecord): Promise<TaskContext | null> {
+		if (item.capturedContext || !item.source) return resolveItemSourceContext(item, provider)
+		const key = `${item.profileId}\0${item.source.provider}\0${item.source.externalId}`
+		const at = now()
+		const hit = cache.get(key)
+		if (hit && at - hit.at < ttlMs) {
+			cache.delete(key)
+			cache.set(key, hit)
+			return hit.value
+		}
+		const pending = inflight.get(key)
+		if (pending) return pending
+		const promise = (async () => {
+			try {
+				const value = await resolveItemSourceContext(item, provider)
+				remember(key, now(), value)
+				return value
+			} catch (err) {
+				remember(key, now(), null)
+				throw err
+			}
+		})().finally(() => {
+			if (inflight.get(key) === promise) inflight.delete(key)
+		})
+		inflight.set(key, promise)
+		return promise
+	}
+}
+
 function declaredAttachmentNames(item: ItemRecord, context: TaskContext): string[] {
 	return (context.attachments ?? []).map(attachment => {
 		if (!attachment.url.startsWith('/api/')) throw new Error('Captured attachment has an invalid declared served URL')

@@ -32,6 +32,7 @@ export function mountSidebarLayout({
 	const storedWidth = Number(read('helm.leftWidth'))
 	let preferredWidth = Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : 340
 	let hidden = read('helm.sidebarHidden') === 'true'
+	let publishedHidden: boolean | null = null
 	let disposed = false
 	let stopDrag: (() => void) | null = null
 	const clamp = (width: number): number => Math.min(Math.max(width, 300), 420, Math.floor(ownerWindow.innerWidth * 0.6))
@@ -75,6 +76,14 @@ export function mountSidebarLayout({
 		left.inert = hidden
 		left.hidden = hidden
 		divider.hidden = hidden
+		host.dataset.sidebarHidden = hidden ? 'true' : 'false'
+		if (publishedHidden !== hidden) {
+			publishedHidden = hidden
+			ownerWindow.dispatchEvent(new CustomEvent('helm-sidebar-visibility', { detail: { hidden } }))
+			const daemon = (ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } })
+				.helm?.daemon
+			void daemon?.pollWatch?.(!hidden)?.catch(() => undefined)
+		}
 		const label = hidden ? 'Show task sidebar' : 'Hide task sidebar'
 		toggle.setAttribute('aria-label', label)
 		toggle.title = label
@@ -126,6 +135,14 @@ export function mountSidebarLayout({
 		dispose(): void {
 			if (disposed) return
 			disposed = true
+			hidden = true
+			if (publishedHidden !== true) {
+				publishedHidden = true
+				ownerWindow.dispatchEvent(new CustomEvent('helm-sidebar-visibility', { detail: { hidden: true } }))
+				const daemon = (ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } })
+					.helm?.daemon
+				void daemon?.pollWatch?.(false)?.catch(() => undefined)
+			}
 			stopDrag?.()
 			toggle.removeEventListener('click', onToggle)
 			divider.removeEventListener('pointerdown', onDown)

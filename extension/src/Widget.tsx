@@ -219,7 +219,7 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 		let stopped = false
 		let timer: ReturnType<typeof setTimeout> | undefined
 		async function lookup() {
-			if (!source || stopped) return
+			if (!source || stopped || document.visibilityState !== 'visible') return
 			try {
 				const origin = new URL(await getServerUrl()).origin
 				const transport = createApi(origin)
@@ -270,16 +270,25 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 				if (!current(captured)) return
 				publish(captured, next)
 				setConnError(null)
-				if (next) void loadPrompt(captured, next, true)
+				// Reload the prompt only when this task is new. A forced reload hits ClientCare.
+				if (next) void loadPrompt(captured, next)
 			} catch (error) {
 				if (!stopped) setConnError(error instanceof Error ? error.message : 'Connection failed')
 			} finally {
-				if (!stopped) timer = setTimeout(lookup, 5000)
+				if (!stopped && document.visibilityState === 'visible') timer = setTimeout(lookup, 5000)
 			}
 		}
-		void lookup()
+		const onVisible = () => {
+			if (stopped) return
+			if (timer) clearTimeout(timer)
+			timer = undefined
+			if (document.visibilityState === 'visible') void lookup()
+		}
+		document.addEventListener('visibilitychange', onVisible)
+		if (document.visibilityState === 'visible') void lookup()
 		onCleanup(() => {
 			stopped = true
+			document.removeEventListener('visibilitychange', onVisible)
 			if (owner?.generation === epoch) {
 				owner = null
 				readGeneration++

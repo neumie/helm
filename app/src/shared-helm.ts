@@ -712,6 +712,8 @@ export interface DaemonApi {
 	/** Pause when running, resume when paused (reads the latest snapshot). */
 	pauseToggle(): Promise<HelmResult<{ paused: boolean }>>
 	poll(): Promise<HelmResult<{ message: string }>>
+	/** Automatic provider polling runs only while the task sidebar is visible. */
+	pollWatch(watching: boolean): Promise<HelmResult<{ watching: boolean }>>
 	listScheduledRuns(profileId: string): Promise<HelmResult<ScheduledSchedule[]>>
 	loadScheduledRun(profileId: string, id: string): Promise<HelmResult<ScheduledScheduleEditor>>
 	activeScheduledRuns(profileId: string): Promise<HelmResult<ScheduledRun[]>>

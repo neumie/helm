@@ -39,6 +39,8 @@ export interface DetailPageProps {
 	onDraftChange: (next: RunSelectionDraft) => void
 	/** True while this page is the top nav layer — gates the live log tail. */
 	active: boolean
+	/** False while the task sidebar is hidden. Live refresh must not run out of sight. */
+	visible?: boolean
 	onBack: () => void
 	onOpenPlan: (id: string) => void
 	onOpenTask: (id: string) => void
@@ -52,7 +54,8 @@ interface Confirmation {
 const KNOWLEDGE_DELIVERY_REFRESH_MS = 5_000
 
 export function DetailPage(props: DetailPageProps) {
-	const { id, snapshot, draft, onDraftChange, active, onBack, onOpenPlan, onOpenTask } = props
+	const { id, snapshot, draft, onDraftChange, active, visible = true, onBack, onOpenPlan, onOpenTask } = props
+	const shown = active && visible
 	const { item, phase, error, refetch, refetchQuietly } = useItemDetail(id, snapshot)
 	const now = useNow()
 	const token = useRef(0)
@@ -66,7 +69,7 @@ export function DetailPage(props: DetailPageProps) {
 		item?.knowledgeDeliveries?.some(delivery => delivery.state === 'pending' || delivery.state === 'delivering') ??
 		false
 	useEffect(() => {
-		if (!active || !deliveryInFlight) return
+		if (!shown || !deliveryInFlight) return
 		let alive = true
 		let timer: number
 		const refresh = async () => {
@@ -78,7 +81,7 @@ export function DetailPage(props: DetailPageProps) {
 			alive = false
 			window.clearTimeout(timer)
 		}
-	}, [active, deliveryInFlight, refetchQuietly])
+	}, [shown, deliveryInFlight, refetchQuietly])
 
 	if (!item) return <MissingDetail phase={phase} error={error} onBack={onBack} onRetry={refetch} />
 	const assigned = item.projectSlug !== null && item.baseRef !== null
@@ -286,7 +289,7 @@ export function DetailPage(props: DetailPageProps) {
 				return <FailureCard key="failure" item={item} hideError={state.attention?.text === item.errorMessage} />
 			case 'log':
 				return (
-					<LogSection key="log" item={item} live={active && item.status === 'running'} onLiveTick={refetchQuietly} />
+					<LogSection key="log" item={item} live={shown && item.status === 'running'} onLiveTick={refetchQuietly} />
 				)
 			case 'input':
 				return <InputSection key="input" item={item} />

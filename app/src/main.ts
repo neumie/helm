@@ -3061,7 +3061,9 @@ app.on('before-quit', event => {
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
 	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
-	// shutdown always follows the final resident lease attempt.
+	// shutdown always follows the final resident lease attempt. Release the
+	// provider watch first so a quit does not leave ClientCare polling on.
+	helmBridge.releaseTaskWatch()
 	helmBridge.stop()
 	killAllPtyClients()
 	sessionSupport?.registry.flush()

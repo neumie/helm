@@ -133,6 +133,10 @@ async function main() {
 			knowledge,
 		},
 		scheduledRuns,
+		watching => {
+			deployWatcher.setWatching(watching)
+			planStatusWatcher.setWatching(watching)
+		},
 	)
 	// Restore durable scheduled agents into the shared solve budget before either
 	// HTTP routes or direct Item-start surfaces can admit work. Disabled recurrence

@@ -11,6 +11,7 @@ export class Poller {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private running = false
 	private stopped = false
+	private watching = false
 	private pendingWake = false
 	private flight: Promise<void> | null = null
 	private controller: AbortController | null = null
@@ -34,14 +35,31 @@ export class Poller {
 		this.stopped = false
 		log.info(
 			'poller',
-			`Starting poller (interval: ${this.config.polling.intervalSeconds}s, provider: ${this.provider.name})`,
+			`Poller armed (interval: ${this.config.polling.intervalSeconds}s, provider: ${this.provider.name}); waiting until the task sidebar is visible`,
 		)
-		this.profileChanged()
+	}
+
+	/** Desktop task sidebar is the only automatic watcher. Hidden or absent means no provider poll. */
+	setWatching(watching: boolean): void {
+		this.watching = watching
+		if (!this.running || this.stopped) return
+		if (!watching) {
+			this.clearTimer()
+			return
+		}
+		if (this.flight) {
+			this.pendingWake = true
+			return
+		}
+		this.pendingWake = false
+		this.clearTimer()
+		void this.pollOnce()
 	}
 
 	stop(): Promise<void> {
 		this.running = false
 		this.stopped = true
+		this.watching = false
 		this.pendingWake = false
 		this.clearTimer()
 		this.controller?.abort()
@@ -52,6 +70,10 @@ export class Poller {
 	/** Coalesce changes into one latest-scope wake, never a second polling chain. */
 	profileChanged(): void {
 		if (!this.running) return
+		if (!this.watching) {
+			this.pendingWake = true
+			return
+		}
 		this.clearTimer()
 		if (this.flight) this.pendingWake = true
 		else void this.pollOnce()
@@ -74,10 +96,10 @@ export class Poller {
 				this.flight = null
 				this.controller = null
 				if (!this.running) return
-				if (this.pendingWake) {
+				if (this.pendingWake && this.watching) {
 					this.pendingWake = false
 					void this.pollOnce()
-				} else {
+				} else if (this.watching) {
 					this.timer = setTimeout(() => {
 						this.timer = null
 						void this.pollOnce()

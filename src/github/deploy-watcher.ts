@@ -307,6 +307,7 @@ interface Candidate {
 /** Bounded, fair, profile-scoped post-ship observer. */
 export class DeployWatcher {
 	private timer: ReturnType<typeof setTimeout> | null = null
+	private watching = false
 	private running = false
 	/** stop closes manual as well as timer admission before it aborts a tick. */
 	private admissionOpen = true
@@ -354,13 +355,28 @@ export class DeployWatcher {
 		this.running = true
 		this.admissionOpen = true
 		this.stopDrain = null
-		log.info('deploy', `Starting deploy watcher (interval: ${this.intervalSeconds}s)`)
+		log.info(
+			'deploy',
+			`Deploy watcher armed (interval: ${this.intervalSeconds}s); waiting until the task sidebar is visible`,
+		)
+	}
+
+	setWatching(watching: boolean): void {
+		this.watching = watching
+		if (!this.running) return
+		if (!watching) {
+			if (this.timer) clearTimeout(this.timer)
+			this.timer = null
+			return
+		}
+		if (this.currentTick || this.timer) return
 		void this.tick()
 	}
 
 	stop(): Promise<void> {
 		if (this.stopDrain) return this.stopDrain
 		this.running = false
+		this.watching = false
 		this.admissionOpen = false
 		if (this.timer) clearTimeout(this.timer)
 		this.timer = null
@@ -589,14 +605,17 @@ export class DeployWatcher {
 	}
 
 	private async tick(): Promise<void> {
-		if (!this.running) return
+		if (!this.running || !this.watching) return
 		try {
 			await this.pollOnce()
 		} catch (err) {
 			log.error('deploy', 'Deploy watcher failed', err)
 		}
-		if (this.running) {
-			this.timer = setTimeout(() => void this.tick(), this.intervalSeconds * 1000)
+		if (this.running && this.watching) {
+			this.timer = setTimeout(() => {
+				this.timer = null
+				void this.tick()
+			}, this.intervalSeconds * 1000)
 			this.timer.unref?.()
 		}
 	}

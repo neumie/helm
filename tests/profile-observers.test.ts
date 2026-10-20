@@ -602,3 +602,44 @@ test('watcher stop aborts admission, waits for an abort-ignoring dependency, and
 		rmSync(root, { recursive: true, force: true })
 	}
 })
+
+test('deploy and plan watchers stay quiet until the sidebar is visible', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-observer-watch-'))
+	const db = new DB(join(root, 'helm.db'), 'work')
+	let deploy: DeployWatcher | undefined
+	let plan: PlanStatusWatcher | undefined
+	try {
+		createShippedItem(db, 'shipped')
+		createPlannedItem(db, 'planned', join(root, 'tree'))
+		let deployCalls = 0
+		let planCalls = 0
+		deploy = new DeployWatcher(config, db, {
+			fetchDeployState: async () => {
+				deployCalls += 1
+				return null
+			},
+		})
+		plan = new PlanStatusWatcher(config, db, {
+			fetchGithubQueues: async () => {
+				planCalls += 1
+				return new Map()
+			},
+		})
+		deploy.start()
+		plan.start()
+		await Promise.resolve()
+		assert.equal(deployCalls, 0)
+		assert.equal(planCalls, 0)
+		deploy.setWatching(true)
+		plan.setWatching(true)
+		await Promise.all([deploy.pollOnce(), plan.pollOnce()])
+		assert.equal(deployCalls, 1)
+		assert.equal(planCalls, 1)
+		deploy.setWatching(false)
+		plan.setWatching(false)
+	} finally {
+		await Promise.all([deploy?.stop(), plan?.stop()]).catch(() => undefined)
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})

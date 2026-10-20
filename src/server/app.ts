@@ -57,6 +57,7 @@ export function createApp(
 	enricher: ItemEnricher,
 	profileContext?: ProfileContext,
 	scheduledRestartBlocker?: { restartBlockingRunCount(): number },
+	setObservationWatching?: (watching: boolean) => void,
 ) {
 	const app = new Hono()
 
@@ -75,6 +76,7 @@ export function createApp(
 			enricher,
 			profileContext,
 			scheduledRestartBlocker,
+			setObservationWatching,
 		}),
 	)
 

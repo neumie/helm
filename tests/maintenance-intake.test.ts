@@ -244,6 +244,7 @@ test('Poller coalesces A → B → A while a poll is admitted and owns only one 
 		)
 		try {
 			poller.start()
+			poller.setWatching(true)
 			const first = poller.pollOnce()
 			await turn()
 			active = runtime('profile-000000000001')
@@ -275,6 +276,38 @@ test('Poller coalesces A → B → A while a poll is admitted and owns only one 
 	})
 })
 
+test('a hidden task sidebar does not poll the provider', async () => {
+	await withDb(async db => {
+		let calls = 0
+		const poller = new Poller(
+			config,
+			db,
+			provider({
+				pollNewTasks: async () => {
+					calls += 1
+					return [task('seen')]
+				},
+			}),
+		)
+		try {
+			poller.start()
+			await turn()
+			assert.equal(calls, 0)
+			poller.profileChanged()
+			await turn()
+			assert.equal(calls, 0)
+			poller.setWatching(true)
+			await poller.pollOnce()
+			assert.equal(calls, 1)
+			poller.setWatching(false)
+			await turn()
+			assert.equal(calls, 1)
+		} finally {
+			await poller.stop()
+		}
+	})
+})
+
 test('profile changes retain the original tenant and the coalesced wake captures the latest tenant', async () => {
 	await withDb(async db => {
 		let active = runtime('work')
@@ -289,6 +322,7 @@ test('profile changes retain the original tenant and the coalesced wake captures
 		)
 		try {
 			poller.start()
+			poller.setWatching(true)
 			const first = poller.pollOnce()
 			await turn()
 			active = runtime('profile-000000000001')

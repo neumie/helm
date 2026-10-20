@@ -164,7 +164,13 @@ export class HelmBridge {
 		this.timer = setInterval(() => void this.tick(), POLL_MS)
 	}
 
+	releaseTaskWatch(): void {
+		if (this.stopped) return
+		void this.request('POST', '/poll/watch', { watching: false }).catch(() => undefined)
+	}
+
 	stop(): void {
+		this.releaseTaskWatch()
 		this.stopped = true
 		if (this.timer) clearInterval(this.timer)
 		if (this.profileSwitchTimer) this.clearProfileTimer(this.profileSwitchTimer)
@@ -739,6 +745,11 @@ export class HelmBridge {
 			const result = await this.request('POST', '/poll/trigger')
 			this.kick()
 			return result
+		})
+
+		ipcMain.handle('daemon:pollWatch', async (_e, watching: unknown, token: unknown) => {
+			if (stale(token)) return stale(token)
+			return this.request('POST', '/poll/watch', { watching: watching === true })
 		})
 
 		// Schedule definitions/history are profile-owned. Keep profileId in the
