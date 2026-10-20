@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ClipboardEvent, DragEvent } from 'react'
-import { locateReviewPassage } from '../../document-review/request'
+import { highlightPassage } from '../../document-review/request'
 import {
 	REVIEW_SCREENSHOT_BYTES,
 	REVIEW_SCREENSHOT_INSTRUCTION,
@@ -265,6 +265,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		end: Node
 		endOffset: number
 	} | null>(null)
+	const figureSelection = useRef<HTMLElement | null>(null)
 	const paintedHighlight = useRef<Highlight | null>(null)
 	const source = useRef<HTMLPreElement>(null)
 	const documentPane = useRef<HTMLElement>(null)
@@ -809,7 +810,53 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		if (!state) throw new Error('Document unavailable')
 		validateDocumentPassage(state.document, value)
 	}
+	function clearFigureMark(): void {
+		figureSelection.current?.removeAttribute('data-figure-selected')
+		figureSelection.current = null
+	}
+	function selectFigure(target: EventTarget | null): void {
+		if (!(target instanceof Element) || !reading.current?.contains(target) || !state) return
+		if (target.closest('button, input, textarea, select, label, a, .review-passage-comments, .review-passage-bubble'))
+			return
+		const figure = target.closest<HTMLElement>('[data-canvas-id], [data-review-image]')
+		if (!figure || !reading.current.contains(figure)) return
+		if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(figure.tagName)) return
+		const block = figure.matches('[data-source-start][data-source-end]')
+			? figure
+			: figure.closest<HTMLElement>('[data-source-start][data-source-end]')
+		if (!block) return
+		const start = Number(block.dataset.sourceStart)
+		const end = Number(block.dataset.sourceEnd)
+		const quote =
+			figure.getAttribute('aria-label')?.trim() ||
+			figure.getAttribute('title')?.trim() ||
+			figure.textContent?.trim() ||
+			'Rendered figure'
+		let next = highlightPassage(state.document.text, state.document.revision, start, end, quote, 'block')
+		if (next && figure.dataset.canvasId) {
+			const attested = state.document.canvas?.blocks.find(
+				item =>
+					item.id === figure.dataset.canvasId &&
+					item.start === start &&
+					item.end === end,
+			)
+			next = attested && next.start === attested.start && next.end === attested.end ? { ...next, canvasId: attested.id } : null
+		}
+		try {
+			if (next) validateCurrentPassage(next)
+		} catch {
+			next = null
+		}
+		if (!next || selectionLocked(true)) return
+		clearFigureMark()
+		figureSelection.current = figure
+		const range = document.createRange()
+		range.selectNode(figure)
+		openPassage(next, intent, null, reading.current, false, range)
+		figure.setAttribute('data-figure-selected', 'true')
+	}
 	function captureSelection(pointer = false): void {
+		clearFigureMark()
 		const selection = window.getSelection()
 		setCandidate(null)
 		if (
@@ -830,52 +877,69 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			endpointElement(range.endContainer)?.closest('.review-passage-comments')
 		)
 			return
-		const quote = selection.toString()
-		if (!quote.trim()) return
+		const readingRoot = reading.current
+		if (!readingRoot) return
+		const imageQuote = () =>
+			[...readingRoot.querySelectorAll<HTMLElement>('[data-review-image]')]
+				.filter(node => {
+					try {
+						return range.intersectsNode(node)
+					} catch {
+						return false
+					}
+				})
+				.map(node => node.textContent?.trim() || 'Image')
+				.join('\n')
+		const raw = selection.toString()
+		const quote = raw.trim() || imageQuote()
+		if (!quote) return
 		let next: ReviewPassage | null = null
 		if (source.current?.contains(range.commonAncestorContainer)) {
 			const prefix = range.cloneRange()
 			prefix.selectNodeContents(source.current)
 			prefix.setEnd(range.startContainer, range.startOffset)
 			const start = prefix.toString().length
-			if (quote.length <= 8000 && state.document.text.slice(start, start + quote.length) === quote)
-				next = {
-					revision: state.document.revision,
-					start,
-					end: start + quote.length,
-					source: quote,
-					quote,
-					kind: 'exact',
-				}
+			next = highlightPassage(state.document.text, state.document.revision, start, start + raw.length, raw, 'exact')
 		} else {
-			const element = (node: Node) => (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)
-			const first = element(range.startContainer)?.closest<HTMLElement>('[data-source-start]')
-			const last = element(range.endContainer)?.closest<HTMLElement>('[data-source-end]')
-			if (first && last && (!canvasMode || (first === last && first.dataset.canvasId)))
-				next = locateReviewPassage(
-					state.document.text,
-					state.document.revision,
-					Number(first.dataset.sourceStart),
-					Number(last.dataset.sourceEnd),
-					quote,
-				)
-		}
-		if (next && canvasMode && view === 'document') {
-			const element = endpointElement(range.startContainer)?.closest<HTMLElement>('[data-canvas-id]')
-			const block = state.document.canvas?.blocks.find(
-				block => block.id === element?.dataset.canvasId && block.start === next?.start && block.end === next?.end,
+			const blocks = [...readingRoot.querySelectorAll<HTMLElement>('[data-source-start][data-source-end]')].filter(
+				block => {
+					try {
+						return range.intersectsNode(block)
+					} catch {
+						return false
+					}
+				},
 			)
-			next = block ? { ...next, canvasId: block.id } : null
+			const canvasBlock =
+				canvasMode && view === 'document'
+					? (endpointElement(range.startContainer)?.closest<HTMLElement>('[data-canvas-id]') ??
+						blocks.find(block => block.dataset.canvasId))
+					: null
+			const covered = canvasBlock ? [canvasBlock] : blocks
+			if (covered.length > 0) {
+				const start = Math.min(...covered.map(block => Number(block.dataset.sourceStart)))
+				const end = Math.max(...covered.map(block => Number(block.dataset.sourceEnd)))
+				next = highlightPassage(state.document.text, state.document.revision, start, end, quote, 'block')
+				if (next && canvasBlock) {
+					const attested = state.document.canvas?.blocks.find(
+						block =>
+							block.id === canvasBlock.dataset.canvasId &&
+							block.start === Number(canvasBlock.dataset.sourceStart) &&
+							block.end === Number(canvasBlock.dataset.sourceEnd),
+					)
+					next =
+						attested && next.start === attested.start && next.end === attested.end
+							? { ...next, canvasId: attested.id }
+							: null
+				}
+			}
 		}
 		try {
 			if (next) validateCurrentPassage(next)
 		} catch {
 			next = null
 		}
-		if (!next) {
-			setError('Select one source block, up to 8,000 characters. Source offers exact selection.')
-			return
-		}
+		if (!next) return
 		const rect = range.getBoundingClientRect()
 		const parent = documentPane.current?.getBoundingClientRect()
 		if (pointer && !annotationId && !reanchoring.current && !selectionLocked(true)) {
@@ -2223,10 +2287,16 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								if (
 									selection?.anchorNode === started.anchor &&
 									selection.anchorOffset === started.anchorOffset &&
-									selection.focusNode === started.focus &&
-									selection.focusOffset === started.focusOffset
-								)
+								selection.focusNode === started.focus &&
+						selection.focusOffset === started.focusOffset
+					) {
+						selectFigure(event.target)
+						return
+					}
+								if (selection?.isCollapsed) {
+									selectFigure(event.target)
 									return
+								}
 								captureSelection(true)
 							}}
 							onKeyUp={() => captureSelection()}

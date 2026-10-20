@@ -257,6 +257,12 @@
 .document-review ::highlight(helm-review-comment-passage) {
 	background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
+.document-review [data-figure-selected='true'] {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+	border-radius: 4px;
+}
 .review-passage-comments {
 	position: absolute;
 	top: 0;
@@ -393,8 +399,13 @@
 	overflow-wrap: anywhere;
 }
 .review-image-note {
-	color: var(--text-2);
-	font-size: calc(12px * var(--ui-scale));
+	display: block;
+	margin: 8px 0;
+	padding: 8px 10px;
+	color: var(--text-1);
+	background: var(--well);
+	border-radius: var(--radius-md, 6px);
+	font-size: calc(13px * var(--ui-scale));
 }
 .review-full-source {
 	white-space: pre-wrap;

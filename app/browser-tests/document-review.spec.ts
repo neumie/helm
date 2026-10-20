@@ -1740,9 +1740,8 @@ test('ordinary clicks, programmatic selection and invalid oversized source never
 		window.getSelection()?.setBaseAndExtent(node, 0, node, 8001)
 	})
 	await reading.dispatchEvent('keyup', { key: 'Shift' })
-	await expect(page.getByRole('alert')).toContainText(
-		'Select one source block, up to 8,000 characters. Source offers exact selection.',
-	)
+	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeVisible()
+	await expect(page.getByRole('alert')).not.toContainText('Select one source block')
 	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toBeVisible()
 	await expect(reading).toBeFocused()
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)

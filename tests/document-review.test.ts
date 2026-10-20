@@ -18,7 +18,7 @@ import { createAgentAdapter } from '../src/solver/agent-adapter.js'
 import { ReviewJsonLines, projectReviewEvent } from '../src/solver/review-output.js'
 import { spawnClaude } from '../src/solver/spawn-claude.js'
 const { readReviewFile, reviewRevision, ReviewDocumentObservation } = documentModule
-const { locateReviewPassage, validatePassage, reviewPrompt } = requestModule
+const { locateReviewPassage, highlightPassage, validatePassage, reviewPrompt } = requestModule
 const { ReviewDraftStore } = draftModule
 const { parseReviewMarkdown } = markdownModule
 const { SessionRegistry, planSessionRestore, isValidSessionId } = sessionsModule
@@ -62,6 +62,22 @@ test('rendered quotes never pretend to be exact Markdown offsets; repeated text 
 	validatePassage(text, revision, selection)
 	assert.throws(() => validatePassage(`${text}edit`, reviewRevision(`${text}edit`), selection), /changed/)
 	assert.throws(() => validatePassage(text, revision, { ...selection, source: 'forged' }), /safely/)
+})
+
+test('a highlight can span blocks and clips to the passage cap instead of refusing', () => {
+	const text = `${'a'.repeat(9000)}\n\nsecond block`
+	const revision = reviewRevision(text)
+	const passage = highlightPassage(text, revision, 0, text.length, 'highlighted image and text', 'block')
+	assert.ok(passage)
+	assert.equal(passage.kind, 'block')
+	assert.equal(passage.end - passage.start, 8000)
+	assert.equal(passage.quote, 'highlighted image and text')
+	validatePassage(text, revision, passage)
+	const exact = highlightPassage(text, revision, 0, 8001, 'a'.repeat(8001), 'exact')
+	assert.ok(exact)
+	assert.equal(exact.kind, 'exact')
+	assert.equal(exact.source.length, 8000)
+	validatePassage(text, revision, exact)
 })
 
 test('native review access rejects foreign windows, subframes, stale profiles and disposed frames', () => {

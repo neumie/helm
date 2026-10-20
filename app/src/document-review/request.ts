@@ -42,12 +42,35 @@ export function locateReviewPassage(
 	end: number,
 	quote: string,
 ): ReviewPassage | null {
-	const block = text.slice(start, end)
-	if (!quote.trim() || block.length > REVIEW_PASSAGE_UNITS) return null
-	// Never infer a Markdown subrange from a rendered quote: entities, emphasis,
-	// links and repeated text make that inference untrustworthy. Source view alone
-	// supplies exact ranges. The containing source block is an honest locator.
-	return { revision, start, end, source: block, quote, kind: 'block' }
+	return highlightPassage(text, revision, start, end, quote, 'block')
+}
+
+/** Any highlight is accepted. The wire excerpt stays within the existing 8,000-unit passage cap. */
+export function highlightPassage(
+	text: string,
+	revision: string,
+	start: number,
+	end: number,
+	quote: string,
+	kind: 'exact' | 'block',
+): ReviewPassage | null {
+	if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || start > text.length)
+		return null
+	const clippedEnd = Math.min(end, text.length, start + REVIEW_PASSAGE_UNITS)
+	if (clippedEnd <= start) return null
+	const source = text.slice(start, clippedEnd)
+	if (kind === 'exact') {
+		const wanted = quote.slice(0, REVIEW_PASSAGE_UNITS)
+		let length = 0
+		const limit = Math.min(wanted.length, source.length)
+		while (length < limit && source[length] === wanted[length]) length++
+		if (length === 0) return null
+		const excerpt = source.slice(0, length)
+		return { revision, start, end: start + length, source: excerpt, quote: excerpt, kind: 'exact' }
+	}
+	const visible = quote.trim().slice(0, REVIEW_PASSAGE_UNITS)
+	if (!visible) return null
+	return { revision, start, end: clippedEnd, source, quote: visible, kind: 'block' }
 }
 
 export function reviewPrompt(
@@ -93,7 +116,7 @@ export function reviewPrompt(
 		`File (relative to your validated working directory): ${JSON.stringify(relativePath)}`,
 		`Content SHA-256: ${request.revision}; source lines: ${lines}. UTF-16 source range: ${passage ? `${start}–${end}` : 'none'}.`,
 		passage?.kind === 'block'
-			? 'The selected rendered quote maps only to the containing source block, NOT precise rendered-text offsets. Use the full source block as context; ask if the requested edit is ambiguous.'
+			? 'The highlight may cover text, an image caption, or several blocks. It maps to the attached source excerpt, not precise rendered-text offsets. The excerpt is at most 8,000 characters; read the file if the highlight continues. Ask if the requested edit is ambiguous.'
 			: '',
 		`Reference data: ${JSON.stringify({ passage, context, publicFields: request.canvasFields })}`,
 		`Operator instruction: ${JSON.stringify(request.instruction)}`,

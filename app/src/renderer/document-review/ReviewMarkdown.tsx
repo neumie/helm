@@ -129,7 +129,11 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 					break
 				}
 				case 'image':
-					node = <span className="review-image-note">Image not loaded: {decode(token.text || 'unnamed image')}</span>
+					node = (
+						<span className="review-image-note" data-review-image="">
+							{decode(token.text || 'Image')}
+						</span>
+					)
 					break
 				case 'html':
 					node = <span className="review-source-fallback">{token.raw}</span>
