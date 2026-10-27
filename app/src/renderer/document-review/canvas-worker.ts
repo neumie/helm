@@ -8,7 +8,15 @@ import type {
 	ReviewCanvasCompilation,
 } from '../../../../src/document-review/canvas-types.js'
 
-import { canvasInputTypes, canvasTags, isCanvasScalarProp, isCanvasStyle } from './canvas-vocabulary'
+import {
+	type CanvasLimit,
+	canvasInputTypes,
+	canvasLimitReasons,
+	canvasLimits,
+	canvasTags,
+	isCanvasScalarProp,
+	isCanvasStyle,
+} from './canvas-vocabulary'
 
 type TextItem = { text: string }
 type Child = Item | TextItem
@@ -51,6 +59,12 @@ export function startReviewCanvas(
 	const stringify = JSON.stringify.bind(JSON)
 	const parse = JSON.parse.bind(JSON)
 	let failed = false
+	// Set immediately before an internal budget throw; never read from producer-reachable error objects.
+	let limitReason: string | undefined
+	const limit = (kind: CanvasLimit): never => {
+		limitReason = canvasLimitReasons[kind]
+		throw new Error('bounds')
+	}
 	let sequence = 0
 	let serial = 0
 	const callbacks = new Map<string, (event: CanvasDisplayEvent) => void>()
@@ -73,7 +87,8 @@ export function startReviewCanvas(
 	const copyChildren = (value: unknown): Child[] => {
 		if (!isArray(value)) throw new Error('children')
 		const length = value.length
-		if (!safeInteger(length) || length < 0 || length > 2048) throw new Error('bounds')
+		if (!safeInteger(length) || length < 0) throw new Error('bounds')
+		if (length > canvasLimits.nodes) limit('nodes')
 		const children: Child[] = []
 		for (let i = 0; i < length; i++) children.push(value[i] as Child)
 		return children
@@ -138,13 +153,15 @@ export function startReviewCanvas(
 	const emit = (data: unknown): void => {
 		if (failed) return
 		const text = stringify(data)
-		if (text.length > 128 * 1024 || new TextEncoder().encode(text).length > 128 * 1024) throw new Error('bounds')
+		if (text.length > canvasLimits.frameBytes || new TextEncoder().encode(text).length > canvasLimits.frameBytes)
+			limit('frame')
 		send(text)
 	}
 	const fail = (): void => {
 		if (!failed) {
 			failed = true
-			send('{"type":"error","error":"Canvas execution or display limits failed"}')
+			const reason = limitReason ? `: ${limitReason}` : ''
+			send(stringify({ type: 'error', error: `Canvas execution or display limits failed${reason}` }))
 		}
 	}
 	const publish = (): void => {
@@ -159,12 +176,13 @@ export function startReviewCanvas(
 			const ids = new Map<string, CanvasDisplayNode[]>()
 			const publications: { item: Item; tag: string; props: Record<string, unknown>; node: CanvasDisplayNode }[] = []
 			const walk = (item: Child, depth: number): CanvasDisplayNode | string => {
-				if (++count > 2048 || depth > 32) throw new Error('bounds')
+				if (++count > canvasLimits.nodes) limit('nodes')
+				if (depth > canvasLimits.depth) limit('depth')
 				if (!item || typeof item !== 'object') throw new Error('child')
 				if ('text' in item) {
 					const text = textOf(item)
 					textUnits += text.length
-					if (textUnits > 64000) throw new Error('bounds')
+					if (textUnits > canvasLimits.textUnits) limit('text')
 					return text
 				}
 				const itemTag = item.tag
@@ -177,7 +195,7 @@ export function startReviewCanvas(
 					if (key === 'style' && value && typeof value === 'object') {
 						const style: Record<string, string | number> = {}
 						for (const [name, v] of entries(value)) if (isCanvasStyle(name, v)) style[name] = v
-						if (Object.keys(style).length > 40) throw new Error('bounds')
+						if (Object.keys(style).length > 40) limit('style')
 						props.style = style
 					}
 				}
@@ -191,22 +209,22 @@ export function startReviewCanvas(
 						for (const child of children)
 							if (child && typeof child === 'object' && 'text' in child) {
 								text += textOf(child)
-								if (text.length > 4000) throw new Error('bounds')
+								if (text.length > 4000) limit('value')
 							}
 						return text
 					}
 					const options: { value: string; selected: boolean; disabled: boolean }[] = []
 					let optionAttempts = 0
 					const collectOptions = (children: Child[], depth: number): void => {
-						if (depth > 32) throw new Error('bounds')
+						if (depth > canvasLimits.depth) limit('depth')
 						for (const child of children) {
-							if (++optionAttempts > 2048) throw new Error('bounds')
+							if (++optionAttempts > canvasLimits.nodes) limit('nodes')
 							if (!child || typeof child !== 'object' || !('tag' in child)) continue
 							const tag = child.tag
 							if (tag === 'option') {
 								const props = child.props
 								const value = String(props.value ?? childText(copyChildren(child.children)))
-								if (value.length > 4000) throw new Error('bounds')
+								if (value.length > 4000) limit('value')
 								options.push({ value, selected: Boolean(props.selected), disabled: Boolean(props.disabled) })
 							} else if (tag === 'optgroup') collectOptions(copyChildren(child.children), depth + 1)
 						}
@@ -338,11 +356,12 @@ export function startReviewCanvas(
 				const value = ['checkbox', 'radio'].includes(String(node.props.type))
 					? Boolean(node.props.checked)
 					: String(node.props.value ?? '')
-				if (id.length > 80 || (typeof value === 'string' && value.length > 4000)) throw new Error('bounds')
+				if (id.length > 80) throw new Error('bounds')
+				if (typeof value === 'string' && value.length > 4000) limit('value')
 				fieldUnits += typeof value === 'string' ? value.length : 0
 				fields.push({ id, value })
 			}
-			if (fields.length > 16 || fieldUnits > 16384) throw new Error('bounds')
+			if (fields.length > 16 || fieldUnits > 16384) limit('fields')
 			emit({ type: 'frame', sequence, frame: { nodes, fields } })
 		} catch {
 			fail()

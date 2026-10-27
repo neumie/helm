@@ -181,8 +181,17 @@ test('fields require compiler authority, unique current rendered IDs and bounded
 	const long = frame()
 	long.fields[0] = { id: 'field', value: 'x'.repeat(4001) }
 	assert.throws(() => validateCanvasFrame(long, compilation))
-	assert.throws(() => validateCanvasFrame({ nodes: ['x'.repeat(64001)], fields: [] }, compilation))
-	assert.throws(() => validateCanvasFrame({ nodes: Array.from({ length: 2049 }, () => 'x'), fields: [] }, compilation))
+	assert.throws(
+		() => validateCanvasFrame({ nodes: ['x'.repeat(64001)], fields: [] }, compilation),
+		/more than 64000 characters of text/,
+	)
+	assert.throws(
+		() => validateCanvasFrame({ nodes: Array.from({ length: 8193 }, () => 'x'), fields: [] }, compilation),
+		/more than 8192 rendered nodes/,
+	)
+	assert.doesNotThrow(() =>
+		validateCanvasFrame({ nodes: Array.from({ length: 4096 }, () => 'x'), fields: [] }, compilation),
+	)
 })
 test('projected fields require unique valid compiler bounds inside the current source, not only a matching ID', () => {
 	for (const blocks of [

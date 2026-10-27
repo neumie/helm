@@ -14,6 +14,7 @@ import {
 import type { ValidatedCanvasFrame, ValidatedCanvasNode } from './canvas-display'
 type LocalCanvasEvent = CanvasDisplayEvent & { values?: string[] }
 import { reviewCanvasWorkerSource } from './canvas-runtime.generated'
+import { canvasLimits } from './canvas-vocabulary'
 import type { PassageThread } from './passage-threads'
 
 export interface DocumentCanvasHandle {
@@ -140,8 +141,8 @@ export function DocumentCanvas({
 					try {
 						if (
 							typeof event.data !== 'string' ||
-							event.data.length > 128 * 1024 ||
-							new TextEncoder().encode(event.data).length > 128 * 1024
+							event.data.length > canvasLimits.frameBytes ||
+							new TextEncoder().encode(event.data).length > canvasLimits.frameBytes
 						)
 							throw new Error('Invalid canvas response')
 						const message = JSON.parse(event.data)
