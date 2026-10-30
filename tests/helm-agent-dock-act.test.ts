@@ -457,6 +457,14 @@ test('permission and plan decisions: allow once / always (only with suggestions)
 		body: { kind: 'decision', dialogId: `${DIALOG_ID.split('-')[0]}-9`, body: { decision: 'allow', always: false } },
 	})
 	assert.equal(dockActBody(only(plan), { type: 'allow', always: true }).ok, false)
+	// Approve sends the whole plan back: refuse whatever the dock could not show in full.
+	const planWith = (tool_input: unknown) =>
+		only(drive([[T0, poll(ask({ dialogs: [permissionDialog({ tool_name: 'ExitPlanMode', tool_input })] }))]]).state)
+	assert.equal(dockActBody(planWith({}), { type: 'allow' }).ok, false, 'no plan text')
+	assert.equal(dockActBody(planWith({ plan: `${'x'.repeat(16_385)}` }), { type: 'allow' }).ok, false, 'too long')
+	assert.equal(dockActBody(planWith({ plan: '1. x\n… (truncated)' }), { type: 'allow' }).ok, false, 'cut by Okena')
+	assert.equal(dockActBody(planWith({ plan: '1. x\u202e' }), { type: 'allow' }).ok, false, 'bidi override')
+	assert.equal(dockActBody(planWith({ plan: '1. x' }), { type: 'deny' }).ok, true, 'keep planning stays available')
 })
 
 test('always allow is refused unless the dock could show every suggestion Okena would apply', () => {

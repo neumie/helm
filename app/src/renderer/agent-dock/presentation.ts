@@ -5,7 +5,7 @@
 
 import type { AgentDockSnapshot, DockItem, DockReceipt, DockSession } from '../../agent-dock/model'
 
-export { alwaysAllowLabels, permissionReview } from '../../agent-dock/review'
+export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
 export type AgingTone = 'none' | 'warn' | 'danger'

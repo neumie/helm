@@ -28,7 +28,7 @@ import {
 	PERMISSION_SUGGESTIONS_MAX,
 	stableJson,
 } from './model'
-import { alwaysAllowLabels, permissionReview } from './review'
+import { alwaysAllowLabels, permissionReview, planReview } from './review'
 
 /** `ApiClaudeDecision` as Okena deserializes it (no other fields: deny_unknown_fields). */
 export type OkenaClaudeDecision =
@@ -165,8 +165,8 @@ function askDecision(
 		if (labels.length === 0) return refuse('invalid', 'Claude suggested no rule to always allow.')
 	}
 	// Okena allows with the full original tool_input: refuse unless the dock showed all of it.
-	if (fact.tool !== 'ExitPlanMode' && !permissionReview(fact.input).complete)
-		return refuse('invalid', 'Too long or unusual to show in full; review it in the terminal.')
+	const review = fact.tool === 'ExitPlanMode' ? planReview(fact.input) : permissionReview(fact.input)
+	if (!review.complete) return refuse('invalid', 'Too long or unusual to show in full; review it in the terminal.')
 	return { ok: true, body: { decision: 'allow', always: action.always === true } }
 }
 

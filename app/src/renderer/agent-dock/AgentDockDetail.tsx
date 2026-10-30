@@ -16,7 +16,7 @@ import {
 	useState,
 } from 'react'
 import type { AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
-import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX } from '../../agent-dock/review'
+import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX, REVIEW_PLAN_MAX, planReview } from '../../agent-dock/review'
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
@@ -39,7 +39,6 @@ import {
 	permissionReview,
 	plainAgentLine,
 	plainAgentText,
-	planText,
 	receiptView,
 	recentItems,
 	resolutionLabel,
@@ -820,9 +819,13 @@ function PermissionPanel(panel: PanelProps) {
 
 function PlanPanel(panel: PanelProps) {
 	const { item } = panel
-	const plan = item.fact.kind === 'ask' ? planText(item.fact.input) : null
+	const review = item.fact.kind === 'ask' ? planReview(item.fact.input) : null
+	const complete = review?.complete === true
+	// Approve sends the whole tool_input back: offer it only when every part of it shows here.
 	const choices: Choice[] = [
-		{ id: 'approve', label: <>Approve the plan</>, submit: 'Approve', action: { type: 'allow' } },
+		...(complete
+			? [{ id: 'approve', label: <>Approve the plan</>, submit: 'Approve', action: { type: 'allow' } } satisfies Choice]
+			: []),
 		{ id: 'keep', label: <>Keep planning</>, submit: 'Keep planning', action: 'deny' },
 	]
 	return (
@@ -831,12 +834,21 @@ function PlanPanel(panel: PanelProps) {
 			choices={choices}
 			messageLabel="What should change? (optional)"
 			messagePlaceholder="Tell the agent what to plan differently"
-			hint="Approve or keep planning"
+			hint={complete ? 'Approve or keep planning' : 'Approve in the terminal, or keep planning here'}
 		>
-			{plan ? (
-				<pre className="agent-dock-well agent-dock-plan">{plan}</pre>
+			{review?.plan ? (
+				<pre className="agent-dock-well agent-dock-plan">{plainAgentText(review.plan, REVIEW_PLAN_MAX)}</pre>
 			) : (
 				<p className="agent-dock-pop-text">Plan ready for approval.</p>
+			)}
+			{review?.fields ? (
+				<pre className="agent-dock-well agent-dock-command">{plainAgentText(review.fields, REVIEW_FIELDS_MAX)}</pre>
+			) : null}
+			{complete ? null : (
+				<p className="agent-dock-pop-warning">
+					The plan is missing, too long or unusual to show in full here. Review it in the agent's terminal to approve
+					it.
+				</p>
 			)}
 		</DecisionPanel>
 	)

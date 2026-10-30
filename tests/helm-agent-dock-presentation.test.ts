@@ -16,6 +16,7 @@ const {
 	alwaysAllowLabels,
 	askQuestions,
 	permissionReview,
+	planReview,
 	cardGist,
 	cardKindLabel,
 	cardTone,
@@ -414,4 +415,16 @@ test('popover placement keeps a higher-up prompt row visible and never collapses
 	const squeezed = place(null, short)
 	assert.ok(squeezed.maxHeight >= 120)
 	assert.ok(band(squeezed).bottom <= short.screenBottom - 4 * short.rowHeight)
+})
+
+test('plan review: approve needs the whole plan and every other field shown verbatim', () => {
+	assert.deepEqual(planReview({ plan: '1. a\n2. b' }), { plan: '1. a\n2. b', fields: null, complete: true })
+	const extra = planReview({ plan: '1. a', allowedPrompts: [{ tool: 'Bash', prompt: 'run tests' }] })
+	assert.match(extra.fields ?? '', /"allowedPrompts"/)
+	assert.equal(extra.complete, true)
+	assert.equal(planReview({}).complete, false)
+	assert.equal(planReview('1. a').complete, false)
+	assert.equal(planReview({ plan: 'p'.repeat(16_385) }).complete, false)
+	assert.equal(planReview({ plan: 'head\n… (truncated)' }).complete, false)
+	assert.equal(planReview({ plan: 'ok', note: 'x\u001b[2K' }).complete, false)
 })

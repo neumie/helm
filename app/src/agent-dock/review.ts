@@ -16,6 +16,8 @@ export const OKENA_TRUNCATION_MARK = '… (truncated)'
 export const REVIEW_COMMAND_MAX = 8_192
 /** Every other tool_input field, as pretty JSON; longer → review in the terminal. */
 export const REVIEW_FIELDS_MAX = 16_384
+/** An ExitPlanMode plan longer than this is not shown in full: review it in the terminal. */
+export const REVIEW_PLAN_MAX = 16_384
 const RULE_TOOL_MAX = 64
 const RULE_CONTENT_MAX = 240
 const DIRECTORY_MAX = 512
@@ -100,12 +102,44 @@ export function permissionReview(input: unknown): PermissionReview {
 	return { command, description, fields, flags, complete }
 }
 
+export interface PlanReview {
+	/** `tool_input.plan` verbatim, or null when Claude sent no plan text. */
+	plan: string | null
+	/** Every other field as pretty JSON, or null when there is none. */
+	fields: string | null
+	/** The plan and everything else Approve would approve render verbatim and in full. */
+	complete: boolean
+}
+
+/** What approving an ExitPlanMode dialog approves, and whether the dock can show all of it. */
+export function planReview(input: unknown): PlanReview {
+	if (!isRecord(input) || typeof input.plan !== 'string') return { plan: null, fields: null, complete: false }
+	const plan = input.plan
+	const rest: Record<string, unknown> = {}
+	for (const [key, value] of Object.entries(input)) if (key !== 'plan') rest[key] = value
+	let fields: string | null = null
+	let fieldsOk = true
+	if (Object.keys(rest).length > 0) {
+		try {
+			fields = JSON.stringify(rest, null, 2) ?? null
+		} catch {
+			fields = null
+		}
+		fieldsOk = fields !== null && fields.length <= REVIEW_FIELDS_MAX
+	}
+	const complete = fieldsOk && showsVerbatim(plan, REVIEW_PLAN_MAX) && allStringsVerbatim(input)
+	return { plan, fields, complete }
+}
+
 /**
  * "Always allow" wording for Claude's own `permission_suggestions`, or null when
  * the dock cannot show every entry it would apply: only allow `addRules`
  * (`Tool(rule)`) and `addDirectories` (the directory) are shown, so any other
  * entry (setMode, removeRules, replaceRules, deny/ask rules, …), a cut list, or
  * text that would not render verbatim means no "Always allow". [] = none sent.
+ * `destination` is ignored on purpose: Okena rewrites every entry to
+ * `"destination": "session"` before answering (okena-remote-server
+ * claude_remote/decision.rs `session_scoped`), so "(this session)" is accurate.
  */
 export function alwaysAllowLabels(suggestions: unknown, truncated = false): string[] | null {
 	if (truncated || (suggestions !== undefined && !Array.isArray(suggestions))) return null
