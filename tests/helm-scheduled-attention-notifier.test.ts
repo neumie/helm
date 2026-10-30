@@ -171,7 +171,7 @@ test('production main wires the main-only notifier beside resident startup and s
 	assert.match(main, /scheduledAttentionNotifier = new ScheduledAttentionNotifier/)
 	assert.match(
 		main,
-		/createWindow\(\)[\s\S]*if \(!screenshotPath && !profileSwitchAttestationMode\) scheduledAttentionNotifier\?\.start\(\)/,
+		/createWindow\(\)[\s\S]*if \(launchPolicy\.scheduledAttentionNotifier\) scheduledAttentionNotifier\?\.start\(\)/,
 	)
 	assert.match(main, /Promise\.all\(\[scheduledResidency\.stop\(\), scheduledAttentionNotifier\?\.stop\(\)\]\)/)
 })

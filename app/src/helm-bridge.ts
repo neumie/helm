@@ -125,6 +125,12 @@ export interface HelmBridgeOptions {
 	localControlToken?: () => Promise<string>
 	/** Compatibility alias for older constructors. */
 	scheduledControlToken?: () => Promise<string>
+	/**
+	 * Side-by-side dev instance: refuse every non-GET daemon request (task
+	 * watch, protocol-mismatch restart, scheduled lease/attention, profiles,
+	 * Item commands, config) so it can never steer the operator's daemon.
+	 */
+	readOnly?: { error: string }
 }
 
 export class HelmBridge {
@@ -165,7 +171,7 @@ export class HelmBridge {
 	}
 
 	releaseTaskWatch(): void {
-		if (this.stopped) return
+		if (this.stopped || this.options.readOnly) return
 		void this.request('POST', '/poll/watch', { watching: false }).catch(() => undefined)
 	}
 
@@ -297,7 +303,7 @@ export class HelmBridge {
 			this.daemonRestartAttempt = null
 			return false
 		}
-		if (status.queue.active > 0) return false
+		if (status.queue.active > 0 || this.options.readOnly) return false
 		const key = `${actualProtocol ?? 'missing'}/${actualBuild ?? 'missing'}`
 		if (this.daemonRestartAttempt === key) return false
 		this.daemonRestartAttempt = key
@@ -348,6 +354,7 @@ export class HelmBridge {
 		timeoutMs = REQUEST_TIMEOUT_MS,
 		headers?: Record<string, string>,
 	): Promise<HelmResult<T>> {
+		if (method !== 'GET' && this.options.readOnly) return { error: this.options.readOnly.error, status: 403 }
 		if (this.options.request) return this.options.request<T>(method, path, body, timeoutMs, headers)
 		try {
 			const res = await fetch(`${this.baseUrl}/api${path}`, {

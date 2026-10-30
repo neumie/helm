@@ -48,11 +48,20 @@ import {
 import type { HelmResult, ProfileActivationResult, ProfileKnowledgeBinding, ProfilesState } from './shared-helm'
 import { recordedShortcutInput } from './shortcut-recorder'
 import { type ShortcutAction, type ShortcutChord, electronAccelerator, matchingShortcutAction } from './shortcuts'
+import {
+	SIDE_BY_SIDE_ENV,
+	SIDE_BY_SIDE_READ_ONLY_ERROR,
+	SIDE_BY_SIDE_TITLE,
+	type SideBySideLaunch,
+	parseSideBySideLaunch,
+	sideBySideRequested,
+	startupPolicy,
+} from './side-by-side'
 import { isTabGroupColor } from './tab-group-colors'
 import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './terminal-preferences'
-import { type WarmProcess, TerminalWarmPool } from './terminal-warm'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
+import { TerminalWarmPool, type WarmProcess } from './terminal-warm'
 import { THEME_PRESETS } from './theme-presets'
 
 // HELM_URL preferred; VIGIL_URL still honored (legacy compat).
@@ -62,6 +71,10 @@ const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://local
 // renderer over IPC (the file:// renderer can't fetch :7474 itself).
 const helmBridge = new HelmBridge(daemonUrl, token => token === sessionProfileToken(), {
 	localControlToken: readLocalControlToken,
+	// Side-by-side dev instance never writes to the operator's daemon (task
+	// watch, mismatch restart, lease, profiles, Items). Requested-but-invalid
+	// launches exit below before the bridge starts.
+	...(sideBySideRequested(process.env) ? { readOnly: { error: SIDE_BY_SIDE_READ_ONLY_ERROR } } : {}),
 })
 // Main-owned only: its local-control token and resident capability never cross IPC.
 const scheduledResidency = new ElectronResidencyController({
@@ -136,6 +149,38 @@ function parseWindowSize(): { width: number; height: number } | null {
 	return { width: Number(match[1]), height: Number(match[2]) }
 }
 const windowSizeArg = parseWindowSize()
+
+// `HELM_SIDE_BY_SIDE=1 … --user-data-dir=<dedicated>` (app/scripts/side-by-side.sh):
+// a worktree dev instance beside the operator's running Helm. Fail closed
+// before any profile/socket state is touched; the policy below then skips every
+// singleton/owner effect (protocol handlers, scheduled lease/attention,
+// document-review control host, daemon + Remote pairing writes).
+let sideBySideLaunch: SideBySideLaunch | null = null
+try {
+	sideBySideLaunch = parseSideBySideLaunch({
+		argv: process.argv,
+		env: process.env,
+		appDataDir: app.getPath('appData'),
+		appName: APP_NAME,
+		uid: typeof process.getuid === 'function' ? process.getuid() : 0,
+		screenshot: screenshotPath !== null,
+		attestation: profileSwitchAttestationMode,
+		homeDir: os.homedir(),
+	})
+} catch (error) {
+	console.error(`[helm] side-by-side launch refused: ${error instanceof Error ? error.message : String(error)}`)
+	process.exit(2)
+}
+// Own dtach namespace (inherited by sessions.socketNamespaceRoot()); never /tmp/helm-<uid>.
+if (sideBySideLaunch) process.env.HELM_SOCKET_DIR = sideBySideLaunch.socketRoot
+const launchPolicy = startupPolicy({
+	screenshot: screenshotPath !== null,
+	attestation: profileSwitchAttestationMode,
+	sideBySide: sideBySideLaunch !== null,
+	customUserData: process.argv.some(a => a.startsWith('--user-data-dir=')),
+	tmpUserData: process.argv.includes('--user-data-dir-tmp'),
+	agentDockEnv: process.env.HELM_AGENT_DOCK,
+})
 
 app.setName(profileSwitchAttestationMode ? 'Helm Attestation' : APP_NAME)
 // Must run before anything touches userData so a screenshot run never fights a
@@ -221,20 +266,17 @@ const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
 // Okena Claude agent dock (read-only slice 1): main polls Okena's structured
 // Claude Remote API and spools to <userData>/agent-dock for `helm dock`.
 // Harness runs (screenshot, attestation, custom/tmp userData) never poll the
-// operator's live Okena unless HELM_AGENT_DOCK=1 opts in; HELM_AGENT_DOCK=0 disables it.
-const agentDockWatcher =
-	!profileSwitchAttestationMode &&
-	process.env.HELM_AGENT_DOCK !== '0' &&
-	(process.env.HELM_AGENT_DOCK === '1' ||
-		(!screenshotPath && !userDataDirArg && !process.argv.includes('--user-data-dir-tmp')))
-		? new AgentDockWatcher({
-				dir: path.join(app.getPath('userData'), 'agent-dock'),
-				source: new OkenaClaudeSource(new OkenaClient()),
-				publish: snapshot =>
-					sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
-				isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
-			})
-		: null
+// operator's live Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev
+// instances do by default); HELM_AGENT_DOCK=0 disables it. See startupPolicy().
+const agentDockWatcher = launchPolicy.agentDock
+	? new AgentDockWatcher({
+			dir: path.join(app.getPath('userData'), 'agent-dock'),
+			source: new OkenaClaudeSource(new OkenaClient()),
+			publish: snapshot =>
+				sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
+			isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+		})
+	: null
 // Transfer preflight is narrower than ordinary terminal IPC: it also requires
 // the current main renderer. A future move must add the controller's complete
 // snapshot/detach/attach capability hand-off before any move channel exists.
@@ -248,12 +290,12 @@ sessions.configureSessionProfile(sessionProfileId)
 // The app owns the `helm://` scheme (the extension's "Open" link is
 // helm://item/<id> — the browser dashboard is gone) and ALSO registers the
 // legacy `vigil://` scheme so pre-rename links keep working; the handler
-// treats both identically. Skipped for screenshot runs: a throwaway capture
-// must not steal the OS-level handler registration.
+// treats both identically. Skipped for screenshot/attestation/side-by-side
+// runs: a non-owner instance must not steal the OS-level handler registration.
 // On macOS an UNPACKAGED run (electron .) can't always claim the scheme —
 // LaunchServices wants CFBundleURLTypes in the bundle's Info.plist — so a
 // failed registration is logged, not fatal; a packaged Helm carries the scheme.
-if (!screenshotPath && !profileSwitchAttestationMode) {
+if (launchPolicy.protocolHandlers) {
 	for (const scheme of ['helm', 'vigil']) {
 		if (!app.setAsDefaultProtocolClient(scheme)) {
 			console.warn(`[helm] could not register as ${scheme}:// handler (unpackaged dev run?)`)
@@ -343,6 +385,12 @@ function enqueueDestination(destination: HelmItemDestination): void {
 
 app.on('open-url', (event, url) => {
 	event.preventDefault()
+	// The dev instance never routes deep links or switches profiles: a helm:// URL
+	// LaunchServices hands it belongs to the operator's Helm.
+	if (sideBySideLaunch) {
+		console.warn('[helm] open-url ignored: side-by-side instance')
+		return
+	}
 	const destination = parseHelmDestination(url)
 	if (!destination) return
 	if (!app.isReady()) {
@@ -881,6 +929,21 @@ function restoreScheduledAdoptions(profileToken: string): void {
 		.catch(error => console.warn('[helm] scheduled terminal restoration deferred:', error))
 }
 
+/** Unmistakable dev marker: fixed window title plus a click-through pill over the renderer. */
+function markSideBySideWindow(win: BrowserWindow): void {
+	win.on('page-title-updated', event => {
+		event.preventDefault()
+		win.setTitle(SIDE_BY_SIDE_TITLE)
+	})
+	win.webContents.on('did-finish-load', () => {
+		void win.webContents
+			.insertCSS(
+				`body::after{content:'DOCK DEV · read-only daemon';position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;padding:1px 10px;border-radius:999px;background:#c2410c;color:#fff;font:600 10px/16px -apple-system,system-ui,sans-serif;letter-spacing:.04em;opacity:.92}`,
+			)
+			.catch(() => undefined)
+	})
+}
+
 function createWindow(): BrowserWindow {
 	// Screenshot runs use fixed bounds (default or --window-size) for
 	// deterministic captures.
@@ -894,7 +957,7 @@ function createWindow(): BrowserWindow {
 		...state,
 		minWidth: MIN_WIDTH,
 		minHeight: MIN_HEIGHT,
-		title: 'Helm',
+		title: launchPolicy.windowTitle,
 		show: false,
 		backgroundColor: '#141517',
 		// Keep native traffic lights while rendering the cockpit into the titlebar.
@@ -932,6 +995,7 @@ function createWindow(): BrowserWindow {
 		if (/^https?:/.test(url)) void shell.openExternal(url)
 		return { action: 'deny' }
 	})
+	if (sideBySideLaunch) markSideBySideWindow(win)
 	win.on('focus', () => agentDockWatcher?.poke())
 	// A reloading/crashed renderer no longer shows the dock; the new one re-announces it.
 	win.webContents.on('did-start-loading', () => agentDockWatcher?.setVisible(false))
@@ -1079,6 +1143,8 @@ function createProfileSwitchCoordinator(): ProfileSwitchCoordinator {
 }
 
 function activateProfile(profileId: string, openItemId?: string): Promise<HelmResult<ProfileActivationResult>> {
+	// The daemon's active profile is global; a dev instance must not switch the operator's.
+	if (!launchPolicy.daemonWrites) return Promise.resolve({ error: SIDE_BY_SIDE_READ_ONLY_ERROR, status: 403 })
 	if (terminalTransferMain?.isBusy()) return Promise.resolve({ error: 'A terminal transfer is in progress.' })
 	if (!profileSwitchCoordinator) return Promise.resolve({ error: 'Helm is still starting.' })
 	return profileSwitchCoordinator.switchTo(profileId, openItemId)
@@ -1538,6 +1604,9 @@ function shellEnv(): Record<string, string> {
 	for (const [key, value] of Object.entries(process.env)) {
 		if (value === undefined) continue
 		if (key.startsWith('npm_') || key.startsWith('BUN_') || key === 'NODE_ENV' || key === 'INIT_CWD') continue
+		// The dev instance's own launch knobs must not leak into Helms/CLIs started from its terminals.
+		if (sideBySideLaunch && (key === SIDE_BY_SIDE_ENV || key === 'HELM_SOCKET_DIR' || key === 'HELM_AGENT_DOCK_DIR'))
+			continue
 		// Inherited terminal-session identity makes every new shell restore and save
 		// the parent Terminal.app/iTerm session. That is slow and wrong for Helm.
 		if (
@@ -1558,6 +1627,8 @@ function shellEnv(): Record<string, string> {
 	// Non-secret capability hint: the explicitly installed global Pi extension
 	// stays inert everywhere except an ordinary Helm terminal shell.
 	env.HELM_TERMINAL_AGENT_STATUS = '1'
+	// `helm dock` in a dev-instance terminal targets the dev spool, not the operator's.
+	if (sideBySideLaunch) env.HELM_AGENT_DOCK_DIR = path.join(app.getPath('userData'), 'agent-dock')
 	return env
 }
 
@@ -1905,6 +1976,7 @@ ipcMain.handle('remote-pairing:status', async (event, profileToken: unknown) => 
 })
 
 ipcMain.handle('remote-pairing:pair', async (event, label: unknown, profileToken: unknown) => {
+	if (!launchPolicy.remotePairingWrites) return { kind: 'error' as const, message: SIDE_BY_SIDE_READ_ONLY_ERROR }
 	const isCurrent = () => {
 		try {
 			requireCurrentRemotePairingSender(event, profileToken)
@@ -1939,6 +2011,7 @@ ipcMain.handle('remote-pairing:pair', async (event, label: unknown, profileToken
 })
 
 ipcMain.handle('remote-pairing:revoke', async (event, deviceId: unknown, profileToken: unknown) => {
+	if (!launchPolicy.remotePairingWrites) return { kind: 'error' as const, message: SIDE_BY_SIDE_READ_ONLY_ERROR }
 	const isCurrent = () => {
 		try {
 			requireCurrentRemotePairingSender(event, profileToken)
@@ -2812,7 +2885,7 @@ void app.whenReady().then(async () => {
 		if (result.status === 'quarantined') console.warn('[helm] terminal transfer recovery quarantined:', result.reason)
 	})
 	await terminalTransferRecovery
-	if (!profileSwitchAttestationMode) {
+	if (launchPolicy.scheduledAttention) {
 		scheduledAdoption = new ScheduledAttentionAdoptionCoordinator({
 			daemon: {
 				reserve: async ownership => {
@@ -2895,7 +2968,7 @@ void app.whenReady().then(async () => {
 		})
 	}
 	profileSwitchCoordinator = createProfileSwitchCoordinator()
-	if (!profileSwitchAttestationMode) {
+	if (launchPolicy.scheduledAttention) {
 		scheduledAttentionNotifier = new ScheduledAttentionNotifier({
 			list: async () => {
 				const token = await readLocalControlToken()
@@ -2959,12 +3032,14 @@ void app.whenReady().then(async () => {
 	if (!profileSwitchAttestationMode) buildMenu()
 	helmBridge.start()
 	// Screenshot and attestation harnesses use isolated lifecycle control and must
-	// never admit or poll real scheduled work as a side effect of their fixture.
-	if (!screenshotPath && !profileSwitchAttestationMode) void scheduledResidency.start()
+	// never admit or poll real scheduled work as a side effect of their fixture;
+	// side-by-side dev instances leave the lease to the operator's Helm.
+	if (launchPolicy.scheduledResidency) void scheduledResidency.start()
 	createWindow()
 	// Never blocks startup: an absent Okena is just a "source down" dock.
 	void agentDockWatcher?.start()
-	if (!screenshotPath && !profileSwitchAttestationMode) {
+	if (sideBySideLaunch) app.dock?.setBadge('dev')
+	if (launchPolicy.documentReviewControl) {
 		reviewControlStart = documentReviewControl.start().catch(() => {
 			console.warn(
 				'[helm] document review CLI control unavailable; existing hosts and private state were left untouched',
@@ -2972,7 +3047,7 @@ void app.whenReady().then(async () => {
 		})
 	}
 	// A click must fence against an actual current BrowserWindow/token.
-	if (!screenshotPath && !profileSwitchAttestationMode) scheduledAttentionNotifier?.start()
+	if (launchPolicy.scheduledAttentionNotifier) scheduledAttentionNotifier?.start()
 	if (profileSwitchAttestationMode) {
 		void runProfileSwitchAttestation()
 			.then(() => app.quit())
