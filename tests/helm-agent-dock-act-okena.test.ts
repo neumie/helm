@@ -396,7 +396,7 @@ test('reply: idle turn → CAS (transcript tail) → POST /prompt {text}; the us
 	}
 })
 
-test('reply refused when someone already answered in the terminal; prompt errors surface verbatim', async () => {
+test('reply refused when someone already answered in the terminal; prompt errors keep the Okena reason verbatim', async () => {
 	const h = await harness(okena => {
 		okena.detail = { ...structuredClone(SHOW_IDLE), busy: true }
 		okena.entries = [{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' }]
@@ -414,7 +414,7 @@ test('reply refused when someone already answered in the terminal; prompt errors
 		const failed = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
 		assert.deepEqual(failed.outcome, {
 			status: 'failed',
-			detail: `Okena POST /v1/claude/terminals/${TID}/prompt failed (409): No Claude session detected in this pane`,
+			detail: 'Okena refused the reply (409): No Claude session detected in this pane. Reply in the terminal.',
 		})
 		assert.equal(h.item('turn').state, 'open')
 

@@ -29,8 +29,9 @@ fi
 needs_build() {
 	local stamp="$APP_DIR/dist/main.cjs"
 	[[ -f "$stamp" && -f "$REPO_DIR/dist/cli/helm.js" ]] || return 0
-	# Any source newer than the last app bundle → rebuild.
-	[[ -n "$(find "$APP_DIR/src" "$REPO_DIR/src" -type f -newer "$stamp" -print -quit 2>/dev/null)" ]]
+	# Any source newer than the last app bundle → rebuild. Generated files are
+	# skipped: Storybook/tests rewrite them after a build without a source change.
+	[[ -n "$(find "$APP_DIR/src" "$REPO_DIR/src" -type f -newer "$stamp" ! -name '*.generated.*' -print -quit 2>/dev/null)" ]]
 }
 
 if [[ "$build" == yes ]] || { [[ "$build" == auto ]] && needs_build; }; then

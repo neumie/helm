@@ -578,6 +578,38 @@ test('turn CAS: idle, same session, last assistant unchanged, nobody replied', (
 	assert.equal(reason(turnStillWaiting(turn, fresh, null)), 'changed')
 })
 
+test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {
+	// Live: native Claude Code runs as its version (`2.1.314`), so Okena's foreground probe misses it and
+	// `POST …/prompt` answers 409 while the channel is off. Nothing was typed; the receipt must say what to do.
+	const noSession = Object.assign(
+		new Error('Okena POST /v1/claude/terminals/a6714847/prompt failed (409): No Claude session detected in this pane'),
+		{ status: 409 },
+	)
+	const outcome = dockPostFailure(noSession, false)
+	assert.equal(outcome.status, 'failed')
+	const detail = (outcome as { detail: string }).detail
+	assert.equal(detail, 'Okena refused the reply (409): No Claude session detected in this pane. Reply in the terminal.')
+	assert.doesNotMatch(detail, /\/v1\/claude\/terminals/)
+	// Busy (hooks detached) is also Okena saying "not now", not a transport fault.
+	const busy = Object.assign(
+		new Error(
+			"Okena POST /v1/claude/terminals/t/prompt failed (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
+		),
+		{ status: 409 },
+	)
+	assert.deepEqual(dockPostFailure(busy, false), {
+		status: 'failed',
+		detail:
+			"Okena refused the reply (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
+	})
+	// Dialog POSTs keep their verbatim detail.
+	const dialogConflict = Object.assign(new Error('Okena POST /x failed (409): nope'), { status: 409 })
+	assert.deepEqual(dockPostFailure(dialogConflict, true), {
+		status: 'failed',
+		detail: 'Okena POST /x failed (409): nope',
+	})
+})
+
 test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed; else verbatim failure', () => {
 	const notFound = Object.assign(new Error('Okena POST /x failed (404): dialog is no longer open'), { status: 404 })
 	assert.deepEqual(dockPostFailure(notFound, true), {
