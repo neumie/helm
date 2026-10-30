@@ -249,14 +249,64 @@ export class OkenaClient {
 		const res = await this.authorizedFetch(path, { method: 'GET', signal }, maxBytes)
 		const text = await readBoundedText(res, maxBytes)
 		if (!res.ok) {
-			if (res.status === 401) throw new Error(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`)
-			throw new Error(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`)
+			if (res.status === 401) throw new OkenaHttpError(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
+			throw new OkenaHttpError(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
 		}
 		try {
 			return JSON.parse(text) as unknown
 		} catch {
 			throw new Error(`Okena GET ${route} returned invalid JSON`)
 		}
+	}
+
+	/**
+	 * Bounded JSON POST to an Okena route (agent-dock answers). Throws OkenaHttpError
+	 * with the status and Okena's verbatim plain-text reason on non-2xx; a timeout
+	 * surfaces as a `TimeoutError`/`AbortError` (the request may have landed).
+	 */
+	async postJson(path: string, body: unknown, opts: OkenaReadOptions = {}): Promise<unknown> {
+		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
+		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
+		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
+		const route = path.split('?')[0]
+		const res = await this.authorizedFetch(
+			path,
+			{ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal },
+			maxBytes,
+		)
+		const text = await readBoundedText(res, maxBytes)
+		if (!res.ok) {
+			if (res.status === 401) throw new OkenaHttpError(`Okena POST ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
+			throw new OkenaHttpError(`Okena POST ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
+		}
+		if (!text.trim()) return null
+		try {
+			return JSON.parse(text) as unknown
+		} catch {
+			throw new Error(`Okena POST ${route} returned invalid JSON`)
+		}
+	}
+
+	/**
+	 * Answer an open Claude Remote dialog: `POST /v1/claude/terminals/{id}/dialogs/{dialog_id}`
+	 * with an `ApiClaudeDecision` body, exactly as `okena claude answer` sends it. 404 = the dialog closed.
+	 */
+	async postClaudeDialogDecision(
+		terminalId: string,
+		dialogId: string,
+		decision: unknown,
+		opts?: OkenaReadOptions,
+	): Promise<void> {
+		await this.postJson(
+			`/v1/claude/terminals/${encodeURIComponent(terminalId)}/dialogs/${encodeURIComponent(dialogId)}`,
+			decision,
+			opts,
+		)
+	}
+
+	/** Prompt a Claude pane: `POST /v1/claude/terminals/{id}/prompt` `{text}` → `{delivery}` (as `okena claude prompt`). */
+	async postClaudePrompt(terminalId: string, text: string, opts?: OkenaReadOptions): Promise<unknown> {
+		return this.postJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}/prompt`, { text }, opts)
 	}
 
 	/** `GET /v1/state` as unvalidated JSON (bounded). */
@@ -295,6 +345,17 @@ export class OkenaClient {
 			throw new Error(`Okena state failed (${res.status})`)
 		}
 		return res.json() as Promise<OkenaState>
+	}
+}
+
+/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason. */
+export class OkenaHttpError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message)
+		this.name = 'OkenaHttpError'
 	}
 }
 

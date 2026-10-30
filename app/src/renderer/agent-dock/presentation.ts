@@ -3,7 +3,9 @@
 // zod-free. Agent text is untrusted: every string that reaches the DOM passes
 // through plainAgentText and renders as React text, never markup.
 
-import type { AgentDockSnapshot, DockItem, DockSession } from '../../agent-dock/model'
+import type { AgentDockSnapshot, DockItem, DockReceipt, DockSession } from '../../agent-dock/model'
+
+export { alwaysAllowLabels, permissionReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
 export type AgingTone = 'none' | 'warn' | 'danger'
@@ -78,6 +80,100 @@ export function needsYouItems(snapshot: AgentDockSnapshot | null): DockItem[] {
 	return snapshot?.items.filter(item => item.state !== 'resolved') ?? []
 }
 
+/** A card whose dock answer just landed (or was refused) stays this long, so its receipt can be read. */
+export const RECEIPT_LINGER_MS = 6_000
+
+/** Resolved items that carry a dock receipt and closed less than RECEIPT_LINGER_MS ago. */
+export function lingeringItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
+	return (
+		snapshot?.items.filter(
+			item =>
+				item.state === 'resolved' &&
+				item.resolution !== undefined &&
+				// Jakub dismissed it himself (ack): no need to show it again.
+				item.resolution.by !== 'acked' &&
+				now - item.resolution.at < RECEIPT_LINGER_MS &&
+				receiptView(item) !== null,
+		) ?? []
+	)
+}
+
+/** Cards in rail order: everything that needs Jakub, then answers still showing their receipt. */
+export function railItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
+	const lingering = lingeringItems(snapshot, now)
+	return [...needsYouItems(snapshot), ...lingering.sort((a, b) => a.id - b.id)]
+}
+
+/** When the next lingering card leaves the rail (ms), or null. */
+export function nextLingerExpiry(snapshot: AgentDockSnapshot | null, now: number): number | null {
+	const ends = lingeringItems(snapshot, now).map(item => (item.resolution?.at ?? now) + RECEIPT_LINGER_MS)
+	return ends.length > 0 ? Math.min(...ends) : null
+}
+
+/** Mirrors model.ts DOCK_RISKY_PROMPT (the renderer may not value-import the zod model); a test keeps them equal. */
+export const RISKY_PROMPT = /deploy|prod|secret|push|merge/i
+
+/** The first risky word in a reply ("deploy"), or null. */
+export function riskyWord(text: string): string | null {
+	return RISKY_PROMPT.exec(text)?.[0]?.toLowerCase() ?? null
+}
+
+export type ReceiptTone = 'neutral' | 'warn' | 'success' | 'danger'
+
+export interface ReceiptView {
+	text: string
+	tone: ReceiptTone
+	/** Still in flight (Sending…). */
+	busy: boolean
+}
+
+const REFUSED_GONE = 'refused: already answered elsewhere'
+
+function doneText(item: DockItem, receipt: DockReceipt): string {
+	const plan = item.fact.kind === 'ask' && item.fact.tool === 'ExitPlanMode'
+	switch (receipt.action) {
+		case 'allow':
+			return plan ? '✓ approved' : receipt.always ? '✓ always allowed' : '✓ allowed'
+		case 'deny':
+			return plan ? '✓ sent back to planning' : '✓ denied'
+		default:
+			return '✓ answered'
+	}
+}
+
+const deliveryNote = (receipt: DockReceipt): string =>
+	receipt.delivery === 'queued' ? ' (queued until the agent is free)' : ''
+
+/**
+ * The receipt line for a card/popover, from main's snapshot only: Sending… →
+ * ✓ answered (observed) / sent, unconfirmed (amber after 10 s) / refused / the
+ * verbatim error. Null when Jakub has not answered this item from the dock.
+ */
+export function receiptView(item: DockItem): ReceiptView | null {
+	const receipt = item.receipt
+	if (!receipt) return null
+	if (item.state === 'resolved' && item.resolution?.by === 'dock')
+		return { text: doneText(item, receipt), tone: 'success', busy: false }
+	if (receipt.status === 'refused')
+		return {
+			text: receipt.reason === 'gone' ? REFUSED_GONE : `refused: ${plainAgentLine(receipt.detail ?? '', 200)}`,
+			tone: 'danger',
+			busy: false,
+		}
+	if (receipt.status === 'failed')
+		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger', busy: false }
+	if (item.state === 'resolved') return null
+	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral', busy: true }
+	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
+		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn', busy: false }
+	return null
+}
+
+/** Answer controls are live only for an open item while Okena is reachable. */
+export function canAnswer(item: DockItem, snapshot: AgentDockSnapshot | null): boolean {
+	return item.state === 'open' && snapshot?.source.state === 'ok'
+}
+
 export function recentItems(snapshot: AgentDockSnapshot | null, limit: number): DockItem[] {
 	return (snapshot?.items.filter(item => item.state === 'resolved') ?? []).slice(0, limit)
 }
@@ -94,6 +190,8 @@ export function sessionLabel(session: DockSession | undefined, key: string): str
 }
 
 export interface AskOption {
+	/** Position in Claude's raw `options` (what main indexes); malformed options are skipped, so it may differ from the shown number. */
+	index: number
 	label: string
 	description?: string
 	preview?: string
@@ -116,9 +214,11 @@ export function askQuestions(input: unknown): AskQuestion[] | null {
 	for (const raw of input.questions.slice(0, 16)) {
 		if (!isRecord(raw) || typeof raw.question !== 'string') return null
 		const options: AskOption[] = []
-		for (const option of Array.isArray(raw.options) ? raw.options.slice(0, 32) : []) {
-			if (!isRecord(option) || typeof option.label !== 'string') continue
+		for (const [index, option] of (Array.isArray(raw.options) ? raw.options.slice(0, 32) : []).entries()) {
+			// Main refuses these indexes too (no label to send): never offer them.
+			if (!isRecord(option) || typeof option.label !== 'string' || option.label === '') continue
 			options.push({
+				index,
 				label: plainAgentText(option.label, 512),
 				...(typeof option.description === 'string'
 					? { description: plainAgentText(option.description, AGENT_TEXT_MAX) }
@@ -178,6 +278,8 @@ export function resolutionLabel(item: DockItem): string {
 			return 'session ended'
 		case 'acked':
 			return 'acked'
+		case 'dock':
+			return 'answered from the dock'
 		default:
 			return 'resolved'
 	}
@@ -296,10 +398,11 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 // Card rail (design §3.24): cards, density, popover placement.
 // ---------------------------------------------------------------------------
 
-/** Card urgency edge: amber ask, red ask past 2h, dashed amber orphan, blue unchecked turn. */
-export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn'
+/** Card urgency edge: amber ask, red ask past 2h, dashed amber orphan, blue unchecked turn, green answered. */
+export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn' | 'done'
 
 export function cardTone(item: DockItem, now: number): CardTone {
+	if (item.state === 'resolved') return 'done'
 	if (item.state === 'orphaned') return 'orphaned'
 	if (item.kind === 'turn') return 'turn'
 	return agingTone(now - itemWaitingSince(item)) === 'danger' ? 'ask-danger' : 'ask'
@@ -364,31 +467,6 @@ export function cardGist(item: DockItem): string {
 export function sessionWhere(session: DockSession | undefined, key: string): { project: string; name: string } {
 	if (!session) return { project: '', name: `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}` }
 	return { project: plainAgentLine(session.project, 48), name: plainAgentLine(session.name, 64) }
-}
-
-/**
- * "Always allow" wording, sourced only from Claude's own `permission_suggestions`
- * (allow `addRules` → `Tool(rule)`, `addDirectories` → the directory). Empty when
- * Claude suggested nothing renderable: the dock then offers no such option.
- */
-export function alwaysAllowLabels(suggestions: unknown): string[] {
-	if (!Array.isArray(suggestions)) return []
-	const labels: string[] = []
-	for (const suggestion of suggestions.slice(0, 8)) {
-		if (!isRecord(suggestion)) continue
-		if (suggestion.type === 'addRules' && suggestion.behavior === 'allow' && Array.isArray(suggestion.rules)) {
-			for (const rule of suggestion.rules.slice(0, 8)) {
-				if (!isRecord(rule) || typeof rule.toolName !== 'string') continue
-				const tool = plainAgentLine(rule.toolName, 64)
-				const content = typeof rule.ruleContent === 'string' ? plainAgentLine(rule.ruleContent, 160) : ''
-				if (tool) labels.push(content ? `${tool}(${content})` : tool)
-			}
-		} else if (suggestion.type === 'addDirectories' && Array.isArray(suggestion.directories)) {
-			for (const directory of suggestion.directories.slice(0, 8))
-				if (typeof directory === 'string' && directory) labels.push(plainAgentLine(directory, 160))
-		}
-	}
-	return [...new Set(labels)]
 }
 
 /** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */

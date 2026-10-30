@@ -11,8 +11,9 @@
 //   dispatcher.cursor     last seq delivered by `helm dock watch`
 //   dispatcher.heartbeat  touched by `helm dock watch` every 20 s
 //
-// Transcript excerpts and dialog `tool_input` never reach disk: item `head`s are
-// at most 120 chars of the question, never turn text. `helm dock show` reads the
+// Transcript excerpts, dialog `tool_input` and dock answer text never reach disk:
+// item `head`s are tool name + counts, never question or turn text; a dock
+// receipt keeps only the action kind and status. `helm dock show` reads the
 // full content live from Okena instead.
 
 import { randomBytes } from 'node:crypto'
@@ -86,15 +87,29 @@ export type SpoolSession = z.infer<typeof spoolSessionSchema>
 
 export const spoolResolutionSchema = z.object({
 	at: ms,
-	by: z.enum(['outside', 'replied', 'superseded', 'session_ended', 'acked']),
+	by: z.enum(['outside', 'replied', 'superseded', 'session_ended', 'acked', 'dock']),
+})
+
+/** A dock answer's kind and status (slice 2). Never the answer or Okena's error words. */
+export const spoolReceiptSchema = z.object({
+	action: z.enum(['answer', 'allow', 'deny', 'prompt']),
+	status: z.enum(['sending', 'sent', 'unconfirmed', 'confirmed', 'refused', 'failed']),
+	at: ms,
+	always: z.boolean().optional(),
+	delivery: z.enum(['channel', 'pty', 'queued']).optional(),
+	reason: z
+		.enum(['gone', 'changed', 'busy', 'not_open', 'unknown_item', 'invalid', 'source_down', 'in_flight'])
+		.optional(),
 })
 
 export const spoolItemSchema = z.object({
 	id: z.number().int().positive(),
 	key: z.string(),
 	kind: z.enum(['ask', 'turn']),
-	state: z.enum(['open', 'orphaned', 'resolved']),
+	state: z.enum(['open', 'sending', 'unconfirmed', 'orphaned', 'resolved']),
 	session: z.string(),
+	/** Absent in slice-1 spools. */
+	rev: z.number().int().positive().optional(),
 	openedAt: ms,
 	orphanedAt: ms.optional(),
 	resolution: spoolResolutionSchema.optional(),
@@ -108,6 +123,7 @@ export const spoolItemSchema = z.object({
 	endedAt: ms.optional(),
 	hadBackground: z.boolean().optional(),
 	continuedAt: ms.optional(),
+	receipt: spoolReceiptSchema.optional(),
 	/** Resolved during an earlier Helm run (from the persisted 24 h ledger). */
 	fromLedger: z.boolean().optional(),
 })

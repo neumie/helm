@@ -1,6 +1,6 @@
 // IPC surface shared by preload (implements) and renderer (consumes as `window.helm`).
 
-import type { AgentDockSnapshot } from './agent-dock/model'
+import type { AgentDockActRequest, AgentDockActResult, AgentDockSnapshot } from './agent-dock/model'
 import type {
 	DaemonApi,
 	HelmResult,
@@ -399,22 +399,27 @@ export interface NavApi {
  * Agent dock IPC channels (reserved; main/preload implement them).
  * - snapshot: main → renderer push of the full `AgentDockSnapshot` while shown: on content change, a 10 s freshness refresh, and right after setVisible(true).
  * - setVisible: renderer → main `send`; main polls Okena fast only while some window shows the dock.
- * - ack: renderer → main `invoke(itemId)`; resolves true when the item was acked (turns and orphaned asks only).
+ * - ack: renderer → main `invoke(itemId)`; resolves true when the item was acked (turns, orphaned and unconfirmed items only).
+ * - act: renderer → main `invoke(AgentDockActRequest)`; main validates it, re-reads Okena (CAS) and answers the
+ *   dialog / sends the reply. Resolves with the outcome; the receipt also arrives in the next snapshot.
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
 export const AGENT_DOCK_IPC = {
 	snapshot: 'agent-dock:snapshot',
 	setVisible: 'agent-dock:set-visible',
 	ack: 'agent-dock:ack',
+	act: 'agent-dock:act',
 } as const
 
-/** Read-only Okena Claude agent dock (slice 1): no answering, prompting or control socket. */
+/** Okena Claude agent dock: read the queue, ack, and (slice 2) answer from a card. No control socket yet. */
 export interface AgentDockApi {
 	/** Push pattern like NavApi; returns unsubscribe. */
 	onSnapshot(listener: (snapshot: AgentDockSnapshot) => void): () => void
 	setVisible(visible: boolean): void
 	/** Jakub acknowledged an item (marks a turn's assistant message seen). Open asks are refused. */
 	ack(itemId: number): Promise<boolean>
+	/** Jakub answered from the dock. Never rejects for a refusal: the outcome says what happened. */
+	act(request: AgentDockActRequest): Promise<AgentDockActResult>
 }
 
 export interface RunContextWindowApi {
@@ -458,7 +463,7 @@ export interface HelmApi {
 	tabs: TabsApi
 	/** Deep-link navigation pushed from main (helm:// protocol). */
 	nav: NavApi
-	/** Okena Claude agent dock (read-only slice 1). Preload always exposes it; main may never push a snapshot. */
+	/** Okena Claude agent dock. Preload always exposes it; main may never push a snapshot. */
 	agentDock: AgentDockApi
 	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
 	daemon: DaemonApi

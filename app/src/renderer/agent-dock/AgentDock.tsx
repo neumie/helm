@@ -1,8 +1,9 @@
-// Agent dock body (read-only slice 1, design §3.24): the fixed 28px strip plus
+// Agent dock body (design §3.24): the fixed 28px strip plus
 // the card rail it toggles. The rail shows one card per item that owes Jakub
 // something (never paged out of sight: cards compact instead) and one Agents
 // button; a card opens a detail popover over the terminal that never covers the
-// terminal's last rows. Layout, persistence, focus return and ⌘⇧J belong to
+// terminal's last rows; answering happens in that popover (slice 2) and the
+// card shows the receipt. Layout, persistence, focus return and ⌘⇧J belong to
 // agent-dock-layout.ts. Agent text is untrusted and always rendered as plain
 // React text (never markup), bounded and control-stripped.
 
@@ -17,17 +18,18 @@ import {
 	useRef,
 	useState,
 } from 'react'
-import type { AgentDockSnapshot, DockItem, DockSession } from '../../agent-dock/model'
+import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn } from '../button'
 import { GLYPH } from '../sidebar/ui'
-import { AgentsDetail, ItemDetail } from './AgentDockDetail'
+import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail } from './AgentDockDetail'
 import {
 	type AgentDockPosition,
 	type PopoverPlacement,
 	type RailAgentsSlot,
 	type RailDensity,
 	type TerminalMetrics,
+	canAnswer,
 	cardGist,
 	cardKindLabel,
 	cardTone,
@@ -38,11 +40,13 @@ import {
 	itemAgeTone,
 	itemIndicator,
 	itemWaitingSince,
-	needsYouItems,
+	nextLingerExpiry,
 	orderedSessions,
 	plainAgentText,
 	popoverPlacement,
+	railItems,
 	railLayout,
+	receiptView,
 	sessionIndicator,
 	sessionStatusText,
 	sessionWhere,
@@ -62,6 +66,8 @@ export interface AgentDockProps {
 	onToggle(): void
 	onTogglePosition(): void
 	onAck(itemId: number): Promise<boolean>
+	/** Jakub answered from a popover (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
+	onAct?(itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult>
 	/** Viewport metrics of the active terminal; the popover keeps its last rows visible. */
 	terminalMetrics?: () => TerminalMetrics | null
 	/** After a popover opens or closes (the layout watches the active terminal only meanwhile). */
@@ -85,6 +91,7 @@ export function AgentDock({
 	onToggle,
 	onTogglePosition,
 	onAck,
+	onAct,
 	terminalMetrics,
 	onPopoverOpenChange,
 	initialOpen = null,
@@ -109,9 +116,20 @@ export function AgentDock({
 	const advanceFrom = useRef<number | null>(null)
 	const [pending, setPending] = useState<ReadonlySet<number>>(new Set())
 	const [refused, setRefused] = useState<ReadonlySet<number>>(new Set())
+	/** Acts awaiting main's answer (the button shows Sending… even before the snapshot does). */
+	const [submitting, setSubmitting] = useState<ReadonlySet<number>>(new Set())
+	/** Outcomes main could not record on the item (bad request, IPC failure), by item id. */
+	const [actErrors, setActErrors] = useState<ReadonlyMap<number, string>>(new Map())
+	/** Popover-level key handler of the shown body (digits pick, Enter submits). */
+	const detailKeys = useRef<DetailKeys | null>(null)
+	/** Unsent reply/deny drafts, by item: survive stepping and closing (memory only). */
+	const drafts = useRef<DockDrafts>(new Map()).current
+	/** Re-render clock for answered cards that linger with their receipt. */
+	const [lingerNow, setLingerNow] = useState(0)
+	const clock = Math.max(now, lingerNow)
 
-	const summary = dockSummary(snapshot, now)
-	const needs = expanded ? needsYouItems(snapshot) : []
+	const summary = dockSummary(snapshot, clock)
+	const needs = expanded ? railItems(snapshot, clock) : []
 	const openKey = targetKey(target)
 	const openIndex = target?.type === 'item' ? needs.findIndex(item => item.id === target.id) : -1
 	const openItem = openIndex >= 0 ? needs[openIndex] : undefined
@@ -154,6 +172,14 @@ export function AgentDock({
 		keepFocus.current = focusInPopover()
 		setTarget({ type: 'item', id: next.id })
 	}
+
+	// A card that just got its answer lingers RECEIPT_LINGER_MS with "✓ answered"; re-render when it should go.
+	useEffect(() => {
+		const expiry = nextLingerExpiry(snapshot, clock)
+		if (expiry === null) return
+		const timer = setTimeout(() => setLingerNow(Date.now()), Math.max(50, expiry - clock + 20))
+		return () => clearTimeout(timer)
+	}, [snapshot, clock])
 
 	// The open item went away: after a local ack show the next one, otherwise close.
 	useEffect(() => {
@@ -272,6 +298,45 @@ export function AgentDock({
 			})
 	}
 
+	const act = (item: DockItem, action: DockAction) => {
+		if (!onAct || submitting.has(item.id)) return
+		const done = (patch: (next: Map<number, string>) => void) =>
+			setActErrors(prev => {
+				const next = new Map(prev)
+				patch(next)
+				return next
+			})
+		done(next => next.delete(item.id))
+		setSubmitting(prev => new Set(prev).add(item.id))
+		void onAct(item.id, item.rev, action)
+			.catch(
+				(error: unknown): AgentDockActResult => ({
+					ok: false,
+					outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
+				}),
+			)
+			.then(result => {
+				setSubmitting(prev => {
+					const next = new Set(prev)
+					next.delete(item.id)
+					return next
+				})
+				const outcome = result.outcome
+				// Refusals/failures main recorded on the item show from the snapshot; keep the words for the rest.
+				if (outcome.status === 'refused' || outcome.status === 'failed')
+					done(next =>
+						next.set(
+							item.id,
+							outcome.status === 'refused' && outcome.reason === 'gone'
+								? 'refused: already answered elsewhere'
+								: outcome.status === 'refused'
+									? `refused: ${plainAgentText(outcome.detail, 200)}`
+									: plainAgentText(outcome.detail, 300),
+						),
+					)
+			})
+	}
+
 	const register = (key: string) => (node: HTMLButtonElement | null) => {
 		if (node) anchors.current.set(key, node)
 		else anchors.current.delete(key)
@@ -304,6 +369,11 @@ export function AgentDock({
 		if (event.key === 'Escape') {
 			event.preventDefault()
 			close(true)
+			return
+		}
+		// The shown body first: 1–9 pick options, Enter submits (never while typing in a field).
+		if (detailKeys.current?.(event)) {
+			event.preventDefault()
 			return
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -391,7 +461,7 @@ export function AgentDock({
 			{expanded ? (
 				<Rail
 					snapshot={snapshot}
-					now={now}
+					now={clock}
 					needs={needs}
 					openKey={popoverOpen ? openKey : null}
 					popoverId={popoverId}
@@ -428,17 +498,30 @@ export function AgentDock({
 						<ItemDetail
 							item={openItem}
 							session={findSession(snapshot, openItem.session)}
-							now={now}
+							now={clock}
 							index={openIndex}
 							total={needs.length}
 							pending={pending.has(openItem.id)}
 							refused={refused.has(openItem.id)}
+							canAct={onAct !== undefined && canAnswer(openItem, snapshot)}
+							blockedNote={
+								!onAct
+									? 'Answer in the terminal'
+									: snapshot.source.state !== 'ok'
+										? 'Okena unreachable: answer in the terminal'
+										: null
+							}
+							submitting={submitting.has(openItem.id)}
+							localError={actErrors.get(openItem.id) ?? null}
+							keys={detailKeys}
+							drafts={drafts}
 							onStep={step}
 							onClose={() => close(true)}
 							onAck={() => ack(openItem.id)}
+							onAct={action => act(openItem, action)}
 						/>
 					) : (
-						<AgentsDetail snapshot={snapshot} now={now} onClose={() => close(true)} />
+						<AgentsDetail snapshot={snapshot} now={clock} onClose={() => close(true)} />
 					)}
 				</section>
 			) : null}
@@ -581,6 +664,15 @@ function Card({
 		</span>
 	)
 	const kindNode = <span className="agent-dock-card-kind">{kind}</span>
+	// Once answered from the dock, the card says how it went instead of repeating the question.
+	const receipt = receiptView(item)
+	const gist = receipt ? (
+		<span className="agent-dock-card-receipt" data-tone={receipt.tone}>
+			{receipt.text}
+		</span>
+	) : (
+		cardGist(item)
+	)
 	const nameNode = (
 		<span className="agent-dock-card-where">
 			<span className="agent-dock-card-name">{where.name}</span>
@@ -597,7 +689,7 @@ function Card({
 					{ageNode}
 				</span>
 				<span className="agent-dock-card-row">{nameNode}</span>
-				<span className="agent-dock-card-gist">{cardGist(item)}</span>
+				<span className="agent-dock-card-gist">{gist}</span>
 			</>
 		)
 	else if (density === 'compact')
@@ -609,7 +701,7 @@ function Card({
 				</span>
 				<span className="agent-dock-card-row">
 					{kindNode}
-					<span className="agent-dock-card-line">{cardGist(item)}</span>
+					<span className="agent-dock-card-line">{gist}</span>
 					{ageNode}
 				</span>
 			</>
@@ -632,10 +724,12 @@ function Card({
 			data-tone={cardTone(item, now)}
 			data-kind={item.kind}
 			data-item-id={item.id}
+			data-state={item.state}
+			data-receipt={receipt?.tone}
 			data-open={String(open)}
 			aria-expanded={open}
 			aria-controls={open ? popoverId : undefined}
-			aria-label={`#${item.id} ${kind}, ${where.project ? `${where.project} / ` : ''}${where.name}, waiting ${age}`}
+			aria-label={`#${item.id} ${kind}, ${where.project ? `${where.project} / ` : ''}${where.name}, ${receipt ? receipt.text : `waiting ${age}`}`}
 			title={`${kind} · ${where.name}${where.project ? ` (${where.project})` : ''}`}
 			onClick={event => onOpen(event.detail === 0)}
 		>

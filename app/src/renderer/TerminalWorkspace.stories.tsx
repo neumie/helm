@@ -147,5 +147,56 @@ export const AgentDockTop: Story = {
 	},
 }
 
+/** Answering: Sending… while main runs the Okena CAS read and POST (receipt on the card and in the popover). */
+export const AgentDockReceiptSending: Story = {
+	args: {
+		options: {
+			agentDock: { scenario: 'receipt-sending', expanded: true, position: 'bottom', output: true, open: 'question' },
+		},
+	},
+}
+
+/** Sent but not observed within 10 s: amber "sent, unconfirmed" with Ack. */
+export const AgentDockReceiptUnconfirmed: Story = {
+	args: {
+		options: {
+			agentDock: {
+				scenario: 'receipt-unconfirmed',
+				expanded: true,
+				position: 'bottom',
+				output: true,
+				open: 'question',
+			},
+		},
+	},
+}
+
+/** Observed landing: "✓ answered" lingers on the card before it leaves the rail. */
+export const AgentDockReceiptAnswered: Story = {
+	args: {
+		options: {
+			agentDock: { scenario: 'receipt-answered', expanded: true, position: 'bottom', output: true, open: 'question' },
+		},
+	},
+}
+
+/** CAS mismatch: "refused: already answered elsewhere". */
+export const AgentDockReceiptRefused: Story = {
+	args: {
+		options: {
+			agentDock: { scenario: 'receipt-refused', expanded: true, position: 'bottom', output: true, open: 'question' },
+		},
+	},
+}
+
+/** Okena error: verbatim, controls live again. */
+export const AgentDockReceiptFailed: Story = {
+	args: {
+		options: {
+			agentDock: { scenario: 'receipt-failed', expanded: true, position: 'bottom', output: true, open: 'question' },
+		},
+	},
+}
+
 /** Chromium harness: stored layout preferences decide placement; the test drives scenarios. */
 export const AgentDockHarness: Story = { args: { options: { agentDock: { scenario: 'empty' }, expose: true } } }

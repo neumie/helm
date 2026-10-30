@@ -11,7 +11,8 @@
 //   state.json     counters (item id, event seq), seen assistant uuids, 24 h resolved ledger (heads only)
 //   snapshot.json  spool view for the CLI; rewritten on change or every SNAPSHOT_REFRESH_MS
 //   events.ndjson  appended events, ≤300-char lines, monotonic seq, rotated per local day
-// Transcript text and dialog `tool_input` never reach disk. Transcript cursors
+// Transcript text, dialog `tool_input` and dock answer text never reach disk
+// (receipts keep only the action kind and status). Transcript cursors
 // are intentionally NOT persisted: the reducer's restart seed needs a fresh
 // first page to learn each pane's last assistant message (a restored cursor
 // would skip it and lose "turn finished while Helm was closed").
@@ -36,13 +37,19 @@ import {
 	spoolItemSchema,
 	writePrivateFileAtomic,
 } from '../../../src/agent-dock/spool'
+import { REFUSAL_TEXT } from './act'
 import {
+	type AgentDockActResult,
 	type AgentDockEvent,
 	type AgentDockObservation,
 	type AgentDockSnapshot,
+	type DockActOutcome,
+	type DockAction,
 	type DockItem,
+	type DockRefusalReason,
 	type DockSession,
 	agentDockPersistedSchema,
+	parseAgentDockActRequest,
 } from './model'
 import {
 	type AgentDockState,
@@ -67,7 +74,14 @@ type WatcherPersisted = z.infer<typeof watcherStateSchema>
 
 export interface AgentDockObservationSource {
 	observe(state: AgentDockState, now: number): Promise<AgentDockObservation>
+	/** Slice 2: CAS read + Okena POST for one dock answer. Absent = the dock cannot answer. */
+	act?(target: { profile: string; terminalId: string }, item: DockItem, action: DockAction): Promise<DockActOutcome>
+	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
+	expedite?(target: { profile: string; terminalId: string }, until: number): void
 }
+
+/** How long after a sent dock reply the source keeps reading that pane's transcript. */
+export const ACT_EXPEDITE_MS = 20_000
 
 export interface AgentDockWatcherOptions {
 	/** `<userData>/agent-dock`. */
@@ -124,8 +138,22 @@ export function dockSpoolItem(item: DockItem): SpoolItem {
 		session: item.session,
 		openedAt: item.openedAt,
 		head: dockItemHead(item),
+		rev: item.rev,
 		...(item.orphanedAt !== undefined ? { orphanedAt: item.orphanedAt } : {}),
 		...(item.resolution ? { resolution: { ...item.resolution } } : {}),
+		// Kind and status only: never the answer, never Okena's error words (they reach disk).
+		...(item.receipt
+			? {
+					receipt: {
+						action: item.receipt.action,
+						status: item.receipt.status,
+						at: item.receipt.at,
+						...(item.receipt.always ? { always: true } : {}),
+						...(item.receipt.delivery ? { delivery: item.receipt.delivery } : {}),
+						...(item.receipt.reason ? { reason: item.receipt.reason } : {}),
+					},
+				}
+			: {}),
 	}
 	if (fact.kind === 'ask') return { ...base, tool: fact.tool, dialogId: fact.dialogId, createdAtMs: fact.createdAtMs }
 	return {
@@ -210,10 +238,15 @@ function contentDigest(snapshot: AgentDockSnapshot): string {
 		sessions: snapshot.sessions.map(session => ({ ...session, observedAt: 0 })),
 		items: snapshot.items.map(item => [
 			item.id,
+			item.rev,
 			item.state,
 			item.resolution?.by,
 			item.fact.kind,
 			item.fact.kind === 'turn' ? item.fact.continuedAt : undefined,
+			item.receipt?.status,
+			item.receipt?.reason,
+			item.receipt?.detail,
+			item.receipt?.delivery,
 		]),
 	})
 }
@@ -231,6 +264,8 @@ export class AgentDockWatcher {
 	private loaded = false
 	private stopped = false
 	private inFlight = false
+	/** A dock act is running: ticks wait so no observation lands between its CAS read and its POST result. */
+	private acting = false
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private io: Promise<void> = Promise.resolve()
 	private pendingLines: string[] = []
@@ -312,6 +347,59 @@ export class AgentDockWatcher {
 		return acked
 	}
 
+	/**
+	 * One dock answer (renderer IPC input, validated here). Order: preconditions
+	 * on the live item → `sending` (published) → source CAS read + Okena POST →
+	 * receipt. Ticks pause meanwhile. Resolves; never throws.
+	 */
+	async act(request: unknown): Promise<AgentDockActResult> {
+		const refused = (reason: DockRefusalReason, detail = REFUSAL_TEXT[reason]): AgentDockActResult => ({
+			ok: false,
+			outcome: { status: 'refused', reason, detail },
+		})
+		const parsed = parseAgentDockActRequest(request)
+		if (!parsed.ok) return refused('invalid', parsed.error)
+		const { itemId, rev, action } = parsed.value
+		if (this.stopped) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock stopped.' } }
+		if (this.acting) return refused('in_flight')
+		const item = this.state.items.find(candidate => candidate.id === itemId)
+		if (!item) return refused('unknown_item')
+		if (item.state !== 'open') return refused(item.state === 'resolved' ? 'gone' : 'not_open')
+		if (rev !== undefined && rev !== item.rev) return refused('changed')
+		if (this.state.source.state !== 'ok') return refused('source_down')
+		const session = this.state.sessions[item.session]?.session
+		if (!session) return refused('gone', 'The agent is no longer listed by Okena.')
+		const source = this.options.source
+		if (!source.act) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot answer.' } }
+		const target = { profile: session.profile, terminalId: session.terminalId }
+
+		this.acting = true
+		let outcome: DockActOutcome
+		try {
+			this.apply({
+				type: 'act.sending',
+				itemId,
+				action: action.type,
+				...(action.type === 'allow' && action.always ? { always: true } : {}),
+			})
+			this.publish(true)
+			try {
+				outcome = await source.act(target, item, action)
+			} catch (error) {
+				outcome = { status: 'failed', detail: errorMessage(error) }
+			}
+			this.apply({ type: 'act.result', itemId, outcome })
+			if (outcome.status === 'sent' && action.type === 'prompt') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
+			this.publish(true)
+			await this.flush()
+		} finally {
+			this.acting = false
+		}
+		// See it land as soon as possible.
+		this.poke()
+		return { ok: outcome.status === 'sent', outcome }
+	}
+
 	snapshot(): AgentDockSnapshot {
 		return agentDockSnapshot(this.state, this.now())
 	}
@@ -324,7 +412,7 @@ export class AgentDockWatcher {
 
 	/** One poll + spool write. Public for tests; the scheduler calls it. */
 	async tick(): Promise<void> {
-		if (this.inFlight || this.stopped) return
+		if (this.inFlight || this.stopped || this.acting) return
 		this.inFlight = true
 		try {
 			const observation = await this.options.source.observe(this.state, this.now())

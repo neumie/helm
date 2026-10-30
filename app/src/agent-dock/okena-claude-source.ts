@@ -1,7 +1,8 @@
 // Agent dock source: one read-only Okena Claude Remote observation per tick,
 // through Helm's existing OkenaClient (profile/token/endpoint resolution).
-// Structured API only; never screen contents (AGENTS.md). GET routes only —
-// slice 1 never answers dialogs, prompts or acts.
+// Structured API only; never screen contents (AGENTS.md). Observation is
+// GET-only; the only writes are `act()` (slice 2), each behind a fresh CAS read:
+// dialog decision POST or prompt POST (see act.ts for the exact Okena bodies).
 //
 // Per tick:
 //   1. `GET /v1/state` (fails => whole observation is source-down).
@@ -13,13 +14,19 @@
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
+import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
 import {
 	type AgentDockObservation,
+	type DockActOutcome,
+	type DockAction,
+	type DockItem,
 	type ObservedClaudeTerminal,
 	type OkenaClaudeSession,
 	type OkenaFetch,
+	type OkenaPromptDelivery,
 	okenaClaudeCandidates,
 	parseOkenaClaudeSession,
+	parseOkenaClaudeTranscriptPage,
 	parseOkenaState,
 	sessionKey,
 } from './model'
@@ -34,6 +41,10 @@ export const TRANSCRIPT_SWEEP_MS = 15_000
 /** Fan-out bound per tick; more panes than this are left unobserved (status unknown). */
 export const MAX_CLAUDE_TERMINALS = 64
 const READ_CONCURRENCY = 6
+/** The CAS read + POST of one act. Okena types a prompt into the pane before it answers, so give it room. */
+export const OKENA_ACT_TIMEOUT_MS = 15_000
+/** After a dock reply, read the transcript every tick (even while busy) this long, to see the user entry land. */
+export const EXPEDITE_MS = 20_000
 
 /** The OkenaClient surface the source uses (structural, so tests inject a double). */
 export interface OkenaClaudeClient {
@@ -46,6 +57,20 @@ export interface OkenaClaudeClient {
 		query?: { cursor?: number; sessionId?: string },
 		opts?: OkenaReadOptions,
 	): Promise<unknown>
+	/** Act routes (slice 2); a read-only double may omit them and the dock then cannot answer. */
+	postClaudeDialogDecision?(
+		terminalId: string,
+		dialogId: string,
+		decision: unknown,
+		opts?: OkenaReadOptions,
+	): Promise<void>
+	postClaudePrompt?(terminalId: string, text: string, opts?: OkenaReadOptions): Promise<unknown>
+}
+
+/** The pane an act targets. */
+export interface DockActTarget {
+	profile: string
+	terminalId: string
 }
 
 export interface TerminalReadState {
@@ -57,6 +82,8 @@ export interface TerminalReadState {
 	readAt?: number
 	/** busy→idle edge time awaiting its settle read. */
 	edgeAt?: number
+	/** Read the transcript every tick until then (a dock reply is waiting to be seen). */
+	expediteUntil?: number
 }
 
 const errorText = (error: unknown): string =>
@@ -88,6 +115,87 @@ export class OkenaClaudeSource {
 	private lastProfile: string | null = null
 
 	constructor(private readonly client: OkenaClaudeClient) {}
+
+	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
+	expedite(target: DockActTarget, until: number): void {
+		const key = sessionKey(target.profile, target.terminalId)
+		const read = this.reads.get(key)
+		if (read) read.expediteUntil = until
+		else this.reads.set(key, { dialogs: 0, expediteUntil: until })
+	}
+
+	/**
+	 * One dock act: validate, re-read the pane (CAS), then POST. Never throws.
+	 * The fresh read must match what Jakub saw (dialog id + verbatim input, or the
+	 * idle turn's last assistant uuid); otherwise nothing is sent.
+	 */
+	async act(target: DockActTarget, item: DockItem, action: DockAction): Promise<DockActOutcome> {
+		const built = dockActBody(item, action)
+		if (!built.ok) return { status: 'refused', reason: built.reason, detail: built.detail }
+		const client = this.client.forProfile(target.profile)
+		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }
+		let fresh: OkenaClaudeSession
+		try {
+			const parsed = parseOkenaClaudeSession(await client.getClaudeSession(target.terminalId, opts))
+			if (!parsed.ok) return { status: 'failed', detail: parsed.error }
+			fresh = parsed.value
+		} catch (error) {
+			if ((error as { status?: unknown }).status === 404)
+				return { status: 'refused', reason: 'gone', detail: 'The pane is no longer in Okena.' }
+			return { status: 'failed', detail: errorDetail(error) }
+		}
+		if (fresh.terminal_id !== target.terminalId) return { status: 'failed', detail: 'Okena answered for another pane.' }
+
+		const request = built.body
+		if (request.kind === 'decision') {
+			const check = askStillOpen(item, fresh)
+			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
+			if (!client.postClaudeDialogDecision)
+				return { status: 'failed', detail: 'This Okena client cannot answer dialogs.' }
+			try {
+				await client.postClaudeDialogDecision(target.terminalId, request.dialogId, request.body, {
+					timeoutMs: OKENA_ACT_TIMEOUT_MS,
+				})
+				return { status: 'sent' }
+			} catch (error) {
+				return dockPostFailure(error, true)
+			}
+		}
+
+		let page = null
+		try {
+			const parsed = parseOkenaClaudeTranscriptPage(
+				await client.getClaudeTranscript(
+					target.terminalId,
+					{},
+					{
+						maxBytes: OKENA_TRANSCRIPT_MAX_BYTES,
+						timeoutMs: OKENA_READ_TIMEOUT_MS,
+					},
+				),
+			)
+			page = parsed.ok ? parsed.value : null
+		} catch {
+			page = null
+		}
+		const check = turnStillWaiting(item, fresh, page)
+		if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
+		if (!client.postClaudePrompt) return { status: 'failed', detail: 'This Okena client cannot send prompts.' }
+		try {
+			const response = await client.postClaudePrompt(target.terminalId, request.body.text, {
+				timeoutMs: OKENA_ACT_TIMEOUT_MS,
+			})
+			const delivery = (response as { delivery?: unknown } | null)?.delivery
+			return {
+				status: 'sent',
+				...(delivery === 'channel' || delivery === 'pty' || delivery === 'queued'
+					? { delivery: delivery as OkenaPromptDelivery }
+					: {}),
+			}
+		} catch (error) {
+			return dockPostFailure(error, false)
+		}
+	}
 
 	/** One poll observation. Never throws: transport failures become `OkenaFetch` errors. */
 	async observe(state: AgentDockState, now: number): Promise<AgentDockObservation> {
@@ -139,14 +247,17 @@ export class OkenaClaudeSource {
 		const read = this.reads.get(key)
 		const request = agentDockTranscriptRequest(state, profile, terminalId)
 		const want = transcriptWanted(read, parsed.value, request, now)
+		const expedited = read?.expediteUntil !== undefined && now < read.expediteUntil && parsed.value.has_transcript
+		const doRead = want.read || expedited
 		this.reads.set(key, {
 			busy: parsed.value.busy,
 			dialogs: parsed.value.dialogs.length,
 			sessionId: parsed.value.session_id,
-			readAt: want.read ? now : read?.readAt,
+			readAt: doRead ? now : read?.readAt,
 			edgeAt: want.edgeAt,
+			...(expedited ? { expediteUntil: read?.expediteUntil } : {}),
 		})
-		if (!want.read) return { terminalId, detail }
+		if (!doRead) return { terminalId, detail }
 		// A cursor is only honoured with the session it came from; a new session starts with a reset page.
 		const query = request.sessionId === parsed.value.session_id ? request : {}
 		const transcript = await capture(() =>

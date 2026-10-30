@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
-import { type AgentDockPosition, cardKindLabel, needsYouItems } from './presentation'
+import { type AgentDockPosition, cardKindLabel, railItems } from './presentation'
 
 type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
@@ -18,7 +18,7 @@ const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boo
 function resolveOpen(snapshot: AgentDockSnapshot, open: OpenFixture | undefined): AgentDockTarget | null {
 	if (!open) return null
 	if (open === 'agents') return { type: 'agents' }
-	const item = needsYouItems(snapshot).find(OPEN_MATCH[open])
+	const item = railItems(snapshot, Date.now()).find(OPEN_MATCH[open])
 	return item ? { type: 'item', id: item.id } : null
 }
 
@@ -62,6 +62,7 @@ function AgentDockFixtureView({
 							onToggle={() => setExpanded(value => !value)}
 							onTogglePosition={() => setPosition(value => (value === 'bottom' ? 'top' : 'bottom'))}
 							onAck={fixture.api.ack}
+							onAct={(itemId, rev, action) => fixture.api.act({ itemId, rev, action })}
 						/>
 					) : null}
 				</div>
@@ -117,3 +118,21 @@ export const Connecting: Story = { args: { scenario: 'connecting', expanded: tru
 
 /** Top position: the rail and its popover open downward, away from the strip. */
 export const Top: Story = { args: { scenario: 'crowded', expanded: true, position: 'top', open: 'question' } }
+
+/** Answering: the question popover after Submit answers, while main runs the Okena CAS read and POST. */
+export const ReceiptSending: Story = { args: { scenario: 'receipt-sending', expanded: true, open: 'question' } }
+
+/** Okena took the answer but the dialog has not been seen closing for 10 s: amber, Ack offered. */
+export const ReceiptUnconfirmed: Story = { args: { scenario: 'receipt-unconfirmed', expanded: true, open: 'question' } }
+
+/** The dialog closed after the dock answer: the card lingers with "✓ answered", then leaves the rail. */
+export const ReceiptAnswered: Story = { args: { scenario: 'receipt-answered', expanded: true, open: 'question' } }
+
+/** CAS refused it: the dialog was already answered in the terminal. */
+export const ReceiptRefused: Story = { args: { scenario: 'receipt-refused', expanded: true, open: 'question' } }
+
+/** Okena failed the POST: the verbatim error, and the controls are live again for a retry. */
+export const ReceiptFailed: Story = { args: { scenario: 'receipt-failed', expanded: true, open: 'question' } }
+
+/** Receipt states on the cards with no popover open. */
+export const ReceiptCards: Story = { args: { scenario: 'receipt-unconfirmed', expanded: true } }

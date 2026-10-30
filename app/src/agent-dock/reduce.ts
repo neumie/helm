@@ -3,11 +3,14 @@
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
 import {
+	ACT_CONFIRM_MS,
 	type AgentDockEvent,
 	type AgentDockObservation,
 	type AgentDockPersisted,
 	type AgentDockSnapshot,
 	type AgentDockSourceHealth,
+	type DockActOutcome,
+	type DockActionKind,
 	type DockItem,
 	type DockResolutionBy,
 	type DockSession,
@@ -54,6 +57,8 @@ export interface AgentDockSessionRecord {
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
+	/** Dialog ids the last successful detail read showed open. */
+	dialogIds?: string[]
 }
 
 export interface AgentDockState {
@@ -113,7 +118,17 @@ function waitingSince(item: DockItem): number {
 	return item.openedAt
 }
 
-const ITEM_ORDER: Record<string, number> = { 'open:ask': 0, 'orphaned:ask': 1, 'open:turn': 2 }
+/** Sending/unconfirmed items keep their place, so a card never jumps while its answer lands. */
+const ITEM_ORDER: Record<string, number> = {
+	'open:ask': 0,
+	'sending:ask': 0,
+	'unconfirmed:ask': 0,
+	'orphaned:ask': 1,
+	'open:turn': 2,
+	'sending:turn': 2,
+	'unconfirmed:turn': 2,
+	'orphaned:turn': 2,
+}
 
 export function agentDockSnapshot(state: AgentDockState, now: number): AgentDockSnapshot {
 	const rank = (item: DockItem): number => ITEM_ORDER[`${item.state}:${item.kind}`] ?? 3
@@ -141,6 +156,12 @@ export function boundAgentText(text: string, max = TURN_TEXT_MAX): string {
 }
 
 const isLive = (item: DockItem): boolean => item.state !== 'resolved'
+/** Okena accepted Jakub's dock answer (sent, maybe unconfirmed): the next observed close is his. */
+const isDispatched = (item: DockItem): boolean =>
+	(item.state === 'sending' || item.state === 'unconfirmed') &&
+	(item.receipt?.status === 'sent' || item.receipt?.status === 'unconfirmed')
+/** The act's CAS read/POST is still running: an observed close cannot be attributed yet. */
+const isInFlight = (item: DockItem): boolean => item.state === 'sending' && item.receipt?.status === 'sending'
 
 function deriveStatus(detail: OkenaClaudeSession): DockSessionStatus {
 	if (detail.dialogs.length > 0) return 'waiting'
@@ -176,7 +197,11 @@ class Draft {
 					{ ...record, session: { ...record.session }, tail: { ...record.tail } },
 				]),
 			),
-			items: prev.items.map(item => ({ ...item, fact: { ...item.fact } })),
+			items: prev.items.map(item => ({
+				...item,
+				fact: { ...item.fact },
+				...(item.receipt ? { receipt: { ...item.receipt } } : {}),
+			})),
 			seen: { ...prev.seen },
 		}
 	}
@@ -188,6 +213,32 @@ class Draft {
 		this.events.push({ t: 'item.resolved', at: this.now, id: item.id, by })
 	}
 
+	/** Jakub's dock answer was observed taking effect (dialog closed / user entry after the turn). */
+	confirm(item: DockItem): void {
+		if (!isLive(item) || !item.receipt) return
+		item.receipt = { ...item.receipt, status: 'confirmed', at: this.now }
+		this.outcome(item, 'confirmed')
+		this.resolve(item, 'dock')
+	}
+
+	outcome(item: DockItem, status: 'confirmed' | 'unconfirmed' | 'refused' | 'failed'): void {
+		if (!item.receipt) return
+		this.events.push({
+			t: 'act.outcome',
+			at: this.now,
+			id: item.id,
+			action: item.receipt.action,
+			status,
+			...(item.receipt.reason ? { reason: item.receipt.reason } : {}),
+		})
+	}
+
+	/** A live item closed by an observation: Jakub's dock answer if one was sent, else `by`. */
+	close(item: DockItem, by: DockResolutionBy): void {
+		if (isDispatched(item)) this.confirm(item)
+		else this.resolve(item, by)
+	}
+
 	orphan(item: DockItem): void {
 		if (item.state !== 'open') return
 		item.state = 'orphaned'
@@ -195,8 +246,8 @@ class Draft {
 		this.events.push({ t: 'item.orphaned', at: this.now, id: item.id })
 	}
 
-	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state'>, silent: boolean): DockItem {
-		const opened: DockItem = { ...item, id: this.state.nextItemId++, openedAt: this.now, state: 'open' }
+	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state' | 'rev'>, silent: boolean): DockItem {
+		const opened: DockItem = { ...item, id: this.state.nextItemId++, rev: 1, openedAt: this.now, state: 'open' }
 		this.state.items.push(opened)
 		if (!silent) {
 			this.events.push({
@@ -356,7 +407,8 @@ function observeTerminal(
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
 		)
 		for (const item of liveTurns) {
-			if (repliedTurns.has((item.fact as DockTurnFact).assistantUuid)) draft.resolve(item, 'replied')
+			// An act still in flight cannot be attributed yet; the settle check below picks it up.
+			if (repliedTurns.has((item.fact as DockTurnFact).assistantUuid) && !isInFlight(item)) draft.close(item, 'replied')
 		}
 		// Unknown anchor (tail never read) proves nothing; a reset page alone is not new activity.
 		const progressed = activity || (orphanAnchor !== undefined && record.tail.lastAssistant?.uuid !== orphanAnchor)
@@ -369,18 +421,50 @@ function observeTerminal(
 	setStatus(record, status, now)
 	if (status === 'idle' || status === 'background') record.idleSince ??= now
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
+	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
+	for (const item of live()) {
+		if (item.fact.kind !== 'turn' || !isDispatched(item)) continue
+		if (record.tail.lastAssistant?.uuid === item.fact.assistantUuid && record.tail.userAfterLastAssistant)
+			draft.confirm(item)
+	}
 	if (status === 'working') {
 		for (const item of live()) {
-			if (item.fact.kind === 'turn' && !record.tail.userAfterLastAssistant) item.fact.continuedAt ??= now
+			if (item.fact.kind !== 'turn' || record.tail.userAfterLastAssistant || isDispatched(item) || isInFlight(item))
+				continue
+			if (item.fact.continuedAt === undefined) {
+				item.fact.continuedAt = now
+				item.rev += 1
+			}
 		}
 	}
 
 	// Asks: one item per Okena dialog; vanished → answered elsewhere, or orphaned across a restart.
+	record.dialogIds = detail.dialogs.map(dialog => dialog.id)
 	const present = new Set<string>()
 	for (const dialog of detail.dialogs) {
 		const itemKey = `ask:${key}:${dialog.id}`
 		present.add(itemKey)
-		if (draft.hasKey(itemKey)) continue
+		if (draft.hasKey(itemKey)) {
+			// Okena removes the dialog before acting on a decision, so an unconfirmed
+			// answer whose dialog is still open well after it was sent never landed:
+			// the agent still waits, so the item owes Jakub again.
+			const item = draft.state.items.find(candidate => candidate.key === itemKey)
+			if (
+				item?.state === 'unconfirmed' &&
+				item.receipt?.status === 'unconfirmed' &&
+				now - item.receipt.at >= ACT_CONFIRM_MS
+			) {
+				item.state = 'open'
+				item.receipt = {
+					...item.receipt,
+					status: 'failed',
+					at: now,
+					detail: 'Not delivered: the dialog is still open. Answer again.',
+				}
+				draft.outcome(item, 'failed')
+			}
+			continue
+		}
 		draft.open(
 			{
 				key: itemKey,
@@ -394,6 +478,9 @@ function observeTerminal(
 					...(dialog.permission_suggestions.length > 0
 						? { suggestions: dialog.permission_suggestions.slice(0, PERMISSION_SUGGESTIONS_MAX) }
 						: {}),
+					...(dialog.permission_suggestions.length > PERMISSION_SUGGESTIONS_MAX
+						? { suggestionsTruncated: true as const }
+						: {}),
 					createdAtMs: dialog.created_at_ms,
 				},
 			},
@@ -401,7 +488,13 @@ function observeTerminal(
 		)
 	}
 	for (const item of live()) {
-		if (item.fact.kind !== 'ask' || item.state !== 'open' || present.has(item.key)) continue
+		if (item.fact.kind !== 'ask' || present.has(item.key) || isInFlight(item)) continue
+		// Okena took Jakub's decision (decide() removes the dialog first): its close is his answer.
+		if (isDispatched(item)) {
+			draft.confirm(item)
+			continue
+		}
+		if (item.state !== 'open') continue
 		const hub = draft.state.hubPrefix
 		if (restarted || (hub !== undefined && okenaDialogPrefix(item.fact.dialogId) !== hub)) draft.orphan(item)
 		else draft.resolve(item, 'outside')
@@ -434,7 +527,7 @@ function observeTerminal(
 	if (last.uuid === seen) return
 	const itemKey = `turn:${detail.session_id ?? key}:${last.uuid}`
 	if (draft.hasKey(itemKey)) return
-	for (const item of live()) if (item.fact.kind === 'turn') draft.resolve(item, 'superseded')
+	for (const item of live()) if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
 	draft.open(
 		{
 			key: itemKey,
@@ -510,6 +603,8 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 			continue
 		}
 		// Last seen before a restart/reconnect: may not be relisted until its next step. Never resolve from absence.
+		// Its dialog ids died with the old hub.
+		record.dialogIds = undefined
 		for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
 		if (live.length === 0) delete draft.state.sessions[key]
 		else setStatus(record, 'unknown', now)
@@ -519,15 +614,83 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 function reduceAck(draft: Draft, itemId: number): void {
 	const item = draft.state.items.find(candidate => candidate.id === itemId)
 	// An open ask closes only when Okena shows its dialog gone; acking it would hide a waiting agent.
-	if (!item || item.state === 'resolved' || (item.fact.kind === 'ask' && item.state === 'open')) return
+	// An answer being sent is not ackable either; once unconfirmed, Jakub may check the terminal and ack
+	// (an unconfirmed ask only once Okena no longer shows its dialog: see below).
+	if (!item || item.state === 'resolved' || item.state === 'sending') return
+	if (item.fact.kind === 'ask' && item.state === 'open') return
+	// An unconfirmed answer whose dialog Okena still shows may never have landed: acking it would hide a blocked agent.
+	if (
+		item.fact.kind === 'ask' &&
+		item.state === 'unconfirmed' &&
+		draft.state.sessions[item.session]?.dialogIds?.includes(item.fact.dialogId)
+	)
+		return
 	if (item.fact.kind === 'turn') draft.state.seen[item.session] = item.fact.assistantUuid
 	draft.resolve(item, 'acked')
+}
+
+function reduceActSending(draft: Draft, itemId: number, action: DockActionKind, always: boolean | undefined): void {
+	const item = draft.state.items.find(candidate => candidate.id === itemId)
+	if (!item || item.state !== 'open') return
+	item.state = 'sending'
+	item.receipt = { action, ...(always ? { always: true } : {}), status: 'sending', at: draft.now }
+}
+
+function reduceActResult(draft: Draft, itemId: number, outcome: DockActOutcome): void {
+	const item = draft.state.items.find(candidate => candidate.id === itemId)
+	if (!item?.receipt || item.receipt.status !== 'sending') return
+	const receipt = item.receipt
+	const live = isLive(item)
+	if (outcome.status === 'sent') {
+		item.receipt = {
+			...receipt,
+			status: 'sent',
+			at: draft.now,
+			sentAt: draft.now,
+			...(outcome.delivery ? { delivery: outcome.delivery } : {}),
+		}
+		return
+	}
+	if (outcome.status === 'unconfirmed') {
+		item.receipt = { ...receipt, status: 'unconfirmed', at: draft.now, sentAt: draft.now, detail: outcome.detail }
+		if (live) item.state = 'unconfirmed'
+		draft.outcome(item, 'unconfirmed')
+		return
+	}
+	item.receipt = {
+		...receipt,
+		status: outcome.status,
+		at: draft.now,
+		detail: outcome.detail,
+		...(outcome.status === 'refused' ? { reason: outcome.reason } : {}),
+	}
+	// Nothing reached the agent: the item owes Jakub again (the next poll resolves it if it closed elsewhere).
+	if (live) item.state = 'open'
+	draft.outcome(item, outcome.status)
+}
+
+/** Sent but not observed for ACT_CONFIRM_MS: amber "sent, unconfirmed" until observed or acked. */
+function expireUnconfirmed(draft: Draft): void {
+	for (const item of draft.state.items) {
+		const receipt = item.receipt
+		if (item.state !== 'sending' || receipt?.status !== 'sent' || receipt.sentAt === undefined) continue
+		if (draft.now - receipt.sentAt < ACT_CONFIRM_MS) continue
+		item.state = 'unconfirmed'
+		item.receipt = { ...receipt, status: 'unconfirmed', at: draft.now }
+		draft.outcome(item, 'unconfirmed')
+	}
 }
 
 export function reduce(prev: AgentDockState, observation: AgentDockObservation, now: number): AgentDockReduction {
 	const draft = new Draft(prev, now)
 	if (observation.type === 'ack') reduceAck(draft, observation.itemId)
-	else reducePoll(draft, observation)
+	else if (observation.type === 'act.sending')
+		reduceActSending(draft, observation.itemId, observation.action, observation.always)
+	else if (observation.type === 'act.result') reduceActResult(draft, observation.itemId, observation.outcome)
+	else {
+		reducePoll(draft, observation)
+		expireUnconfirmed(draft)
+	}
 	draft.state.items = pruneResolved(draft.state.items, now)
 	return { state: draft.state, events: draft.events }
 }

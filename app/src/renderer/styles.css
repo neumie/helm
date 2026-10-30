@@ -1677,6 +1677,34 @@ body.dragging {
 	--card-kind: var(--accent);
 }
 
+/* Answered from the dock and observed landing: lingers a few seconds with its receipt. */
+.agent-dock-card[data-tone="done"] {
+	--card-edge: var(--success);
+	--card-kind: var(--text-1);
+}
+
+/* Receipt in place of the gist: Sending… (neutral), sent, unconfirmed (warn), ✓ (success), refused/error (danger). */
+.agent-dock-card-receipt,
+.agent-dock-receipt {
+	color: var(--text-1);
+	font-weight: 500;
+}
+
+.agent-dock-card-receipt[data-tone="warn"],
+.agent-dock-receipt[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-card-receipt[data-tone="success"],
+.agent-dock-receipt[data-tone="success"] {
+	color: var(--success);
+}
+
+.agent-dock-card-receipt[data-tone="danger"],
+.agent-dock-receipt[data-tone="danger"] {
+	color: var(--danger);
+}
+
 .agent-dock-card:hover,
 .agent-dock-card[data-open="true"] {
 	background: var(--fill-raised);
@@ -2389,6 +2417,22 @@ body.dragging {
 	min-width: 0;
 	font-size: calc(12px * var(--ui-scale));
 	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+/* Answer fields (Other…, deny message, reply) reuse the §3.7 .input/.textarea grammar. */
+.agent-dock-field-label {
+	display: flex;
+	flex-direction: column;
+}
+
+.agent-dock-field.textarea {
+	min-height: 64px;
+	max-height: 160px;
+}
+
+.agent-dock-confirm {
+	margin: 0 -16px;
 }
 
 .agent-dock-pop-foot-actions {

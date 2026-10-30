@@ -1754,6 +1754,15 @@ ipcMain.handle(AGENT_DOCK_IPC.ack, async (event, itemId: unknown, profileToken: 
 	return (await agentDockWatcher?.ack(itemId)) ?? false
 })
 
+// Dock answers: same gate as ack; the watcher validates the request and runs the Okena CAS read + POST.
+ipcMain.handle(AGENT_DOCK_IPC.act, async (event, request: unknown, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents)
+		return { ok: false, outcome: { status: 'failed', detail: 'This window cannot answer for the current profile.' } }
+	if (!agentDockWatcher)
+		return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
+	return agentDockWatcher.act(request)
+})
+
 ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
 	const href = parseExternalHttpUrl(value)

@@ -6,11 +6,32 @@
 import showAsk from '../../../../tests/fixtures/okena-claude/show-ask.json'
 import showIdle from '../../../../tests/fixtures/okena-claude/show-idle.json'
 import stateAsk from '../../../../tests/fixtures/okena-claude/state-ask.json'
-import type { AgentDockObservation, AgentDockSnapshot } from '../../agent-dock/model'
+import {
+	ACT_CONFIRM_MS,
+	type AgentDockActRequest,
+	type AgentDockActResult,
+	type AgentDockObservation,
+	type AgentDockSnapshot,
+	type DockActOutcome,
+	type DockAction,
+	type DockItem,
+} from '../../agent-dock/model'
 import { type AgentDockState, agentDockSnapshot, createAgentDockState, reduce } from '../../agent-dock/reduce'
 import type { AgentDockApi } from '../../shared'
 
-export type AgentDockScenario = 'connecting' | 'empty' | 'busy' | 'crowded' | 'orphaned' | 'down'
+export type AgentDockScenario =
+	| 'connecting'
+	| 'empty'
+	| 'busy'
+	| 'crowded'
+	| 'orphaned'
+	| 'down'
+	/** Receipt states (built by running real act observations through the reducer). */
+	| 'receipt-sending'
+	| 'receipt-unconfirmed'
+	| 'receipt-answered'
+	| 'receipt-refused'
+	| 'receipt-failed'
 
 type Json = Record<string, unknown>
 
@@ -305,59 +326,198 @@ function busyTimeline(
 	return { steps, live: afterAnswer, version }
 }
 
-/** Reducer state for a named scenario at `now` (ms). */
-export function agentDockScenarioState(name: AgentDockScenario, now: number): AgentDockState {
+type Live = Array<{ pane: Pane; body: Json; transcript?: Json }>
+
+interface ScenarioRun {
+	state: AgentDockState
+	/** The panes as Okena last showed them (no transcript pages), for follow-up polls. */
+	live: Live
+	version: number
+}
+
+const bare = (live: Live): Live => live.map(({ pane, body }) => ({ pane, body }))
+
+function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const persisted = { version: 1 as const, nextItemId: 3, seen: { [`${PROFILE}:${panes.turn.tid}`]: 'turn-a0' } }
 	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
-	if (name === 'connecting') return start
-	if (name === 'empty') return run([[now - 1_000, poll(1, [])]], start)
-	if (name === 'crowded') return run(busyTimeline(now, true).steps, start)
+	if (name === 'connecting') return { state: start, live: [], version: 0 }
+	if (name === 'empty') return { state: run([[now - 1_000, poll(1, [])]], start), live: [], version: 1 }
+	if (name === 'crowded') {
+		const crowded = busyTimeline(now, true)
+		return { state: run(crowded.steps, start), live: bare(crowded.live), version: crowded.version }
+	}
 	const busy = busyTimeline(now)
-	if (name === 'busy') return run(busy.steps, start)
+	if (name === 'busy') return { state: run(busy.steps, start), live: bare(busy.live), version: busy.version }
+	if (name.startsWith('receipt-'))
+		return receiptRun(name, now, { state: run(busy.steps, start), live: bare(busy.live), version: busy.version })
 	// Both outage scenarios replace the final "now" poll; the timeline stays monotonic.
 	const beforeNow = busy.steps.slice(0, -1)
-	if (name === 'down') return run([...beforeNow, [now - 2 * MINUTE, down('connect ECONNREFUSED')]], start)
+	if (name === 'down')
+		return {
+			state: run([...beforeNow, [now - 2 * MINUTE, down('connect ECONNREFUSED')]], start),
+			live: bare(busy.live),
+			version: busy.version,
+		}
 	// orphaned: Okena goes away and comes back; the recorded question vanished meanwhile.
-	const live = busy.live.map(entry =>
+	const live = bare(busy.live).map(entry =>
 		entry.pane === panes.ask ? { pane: panes.ask, body: detail(panes.ask, { busy: true }) } : entry,
 	)
-	return run(
-		[...beforeNow, [now - 150_000, down('connect ECONNREFUSED')], [now - MINUTE, poll(busy.version + 1, live)]],
-		start,
-	)
+	return {
+		state: run(
+			[...beforeNow, [now - 150_000, down('connect ECONNREFUSED')], [now - MINUTE, poll(busy.version + 1, live)]],
+			start,
+		),
+		live,
+		version: busy.version + 1,
+	}
+}
+
+/** Reducer state for a named scenario at `now` (ms). */
+export function agentDockScenarioState(name: AgentDockScenario, now: number): AgentDockState {
+	return scenarioRun(name, now).state
 }
 
 export function agentDockScenario(name: AgentDockScenario, now: number): AgentDockSnapshot {
 	return agentDockSnapshot(agentDockScenarioState(name, now), now)
 }
 
+const paneOf = (item: DockItem): Pane | undefined =>
+	Object.values(panes).find(pane => `${PROFILE}:${pane.tid}` === item.session)
+
+/**
+ * The next Okena poll after Jakub's dock answer landed: the dialog is gone from its
+ * pane, or (a reply) the pane is busy and the transcript shows the user entry.
+ */
+function landedPoll(scenario: ScenarioRun, item: DockItem): AgentDockObservation {
+	const pane = paneOf(item)
+	scenario.version += 1
+	const live: Live = scenario.live.map(entry => {
+		if (entry.pane !== pane) return entry
+		if (item.fact.kind === 'ask') {
+			const dialogId = item.fact.dialogId
+			const dialogs = ((entry.body.dialogs as Json[] | undefined) ?? []).filter(dialog => dialog.id !== dialogId)
+			return { pane: entry.pane, body: { ...entry.body, dialogs } }
+		}
+		return {
+			pane: entry.pane,
+			body: { ...entry.body, busy: true },
+			transcript: transcript(
+				entry.pane,
+				[user(`dock-${item.id}`, '(reply from the dock)')],
+				9_000 + scenario.version,
+				false,
+			),
+		}
+	})
+	scenario.live = bare(live)
+	return poll(scenario.version, live)
+}
+
+/** A poll that shows nothing new (the answer has not landed). */
+function samePoll(scenario: ScenarioRun): AgentDockObservation {
+	scenario.version += 1
+	return poll(scenario.version, scenario.live)
+}
+
+const actionKind = (action: DockAction) => ({
+	action: action.type,
+	...(action.type === 'allow' && action.always ? { always: true } : {}),
+})
+
+/** Receipt stories: the busy day, then one dock answer on the question card, through the real reducer. */
+function receiptRun(name: AgentDockScenario, now: number, scenario: ScenarioRun): ScenarioRun {
+	const question = scenario.state.items.find(item => item.kind === 'ask' && item.state === 'open')
+	if (!question) return scenario
+	const step = (observation: AgentDockObservation, at: number) => {
+		scenario.state = reduce(scenario.state, observation, at).state
+	}
+	const answer: DockAction = { type: 'answer', picks: [{ options: [1] }, { options: [0] }] }
+	step({ type: 'act.sending', itemId: question.id, ...actionKind(answer) }, now - 2_000)
+	if (name === 'receipt-sending') return scenario
+	if (name === 'receipt-failed') {
+		step(
+			{
+				type: 'act.result',
+				itemId: question.id,
+				outcome: {
+					status: 'failed',
+					detail: `Okena POST /v1/claude/terminals/${panes.ask.tid}/dialogs/${(question.fact as { dialogId: string }).dialogId} failed (500): bridge unavailable`,
+				},
+			},
+			now - 1_500,
+		)
+		return scenario
+	}
+	if (name === 'receipt-refused') {
+		step(
+			{
+				type: 'act.result',
+				itemId: question.id,
+				outcome: { status: 'refused', reason: 'gone', detail: 'already answered elsewhere' },
+			},
+			now - 1_500,
+		)
+		// Storybook only: stamped ahead of the wall clock so the lingering receipt stays put for review.
+		step(landedPoll(scenario, question), now + 10 * MINUTE)
+		return scenario
+	}
+	step({ type: 'act.result', itemId: question.id, outcome: { status: 'sent' } }, now - 1_500)
+	if (name === 'receipt-unconfirmed') {
+		step(samePoll(scenario), now - 1_500 + ACT_CONFIRM_MS)
+		return scenario
+	}
+	// receipt-answered — Storybook only: stamped ahead of the wall clock so "✓ answered" stays put for review.
+	step(landedPoll(scenario, question), now + 10 * MINUTE)
+	return scenario
+}
+
+/** How the in-memory act behaves (browser tests switch it; stories use the default). */
+export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
+
+/** Pause between the fixture act's steps, so Sending… is visible. */
+export const FIXTURE_ACT_STEP_MS = 250
+
 export interface AgentDockFixture {
 	api: AgentDockApi
-	calls: { visible: boolean[]; acks: number[] }
+	calls: { visible: boolean[]; acks: number[]; acts: AgentDockActRequest[] }
 	/** Replaces the reducer state with a scenario and pushes its snapshot through the production subscription. */
 	emitScenario(name: AgentDockScenario): void
+	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
+	setActMode(mode: AgentDockActMode): void
 	listenerCount(): number
 }
 
-/** In-memory AgentDockApi: ack runs the REAL reducer ack and pushes the next snapshot. */
+/**
+ * In-memory AgentDockApi over the REAL reducer: ack and act feed it the same
+ * observations main would (act.sending → act.result → the next Okena poll), so
+ * receipts move Sending… → ✓ answered / sent, unconfirmed / refused / error.
+ */
 export function createAgentDockFixture(
 	initial: AgentDockScenario | null,
 	clock: () => number = Date.now,
 ): AgentDockFixture {
 	const listeners = new Set<(snapshot: AgentDockSnapshot) => void>()
-	const calls: AgentDockFixture['calls'] = { visible: [], acks: [] }
-	let state: AgentDockState | null = initial ? agentDockScenarioState(initial, clock()) : null
+	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [] }
+	let scenario: ScenarioRun | null = initial ? scenarioRun(initial, clock()) : null
+	let mode: AgentDockActMode = 'confirm'
 	const push = () => {
-		if (!state) return
-		const snapshot = agentDockSnapshot(state, clock())
+		if (!scenario) return
+		const snapshot = agentDockSnapshot(scenario.state, clock())
 		for (const listener of listeners) listener(snapshot)
 	}
+	const apply = (observation: AgentDockObservation, at = clock()) => {
+		if (!scenario) return
+		scenario.state = reduce(scenario.state, observation, at).state
+		push()
+	}
+	const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+	const later = (run: () => void) => setTimeout(run, FIXTURE_ACT_STEP_MS)
 	return {
 		calls,
 		api: {
 			onSnapshot(listener) {
 				listeners.add(listener)
-				if (state) listener(agentDockSnapshot(state, clock()))
+				if (scenario) listener(agentDockSnapshot(scenario.state, clock()))
 				return () => listeners.delete(listener)
 			},
 			setVisible(visible) {
@@ -365,17 +525,50 @@ export function createAgentDockFixture(
 			},
 			async ack(itemId) {
 				calls.acks.push(itemId)
-				if (!state) return false
-				const before = state.items.find(item => item.id === itemId)?.state
-				state = reduce(state, { type: 'ack', itemId }, clock()).state
-				const acked = before !== 'resolved' && state.items.find(item => item.id === itemId)?.state === 'resolved'
+				if (!scenario) return false
+				const before = scenario.state.items.find(item => item.id === itemId)?.state
+				scenario.state = reduce(scenario.state, { type: 'ack', itemId }, clock()).state
+				const acked =
+					before !== 'resolved' && scenario.state.items.find(item => item.id === itemId)?.state === 'resolved'
 				if (acked) push()
 				return acked
 			},
+			async act(request): Promise<AgentDockActResult> {
+				calls.acts.push(structuredClone(request))
+				const current = scenario
+				const item = current?.state.items.find(candidate => candidate.id === request.itemId)
+				if (!current || !item || item.state !== 'open')
+					return {
+						ok: false,
+						outcome: { status: 'refused', reason: 'not_open', detail: 'not open for an answer right now' },
+					}
+				if (request.rev !== undefined && request.rev !== item.rev)
+					return { ok: false, outcome: { status: 'refused', reason: 'changed', detail: 'it changed since you looked' } }
+				apply({ type: 'act.sending', itemId: item.id, ...actionKind(request.action) })
+				await wait(FIXTURE_ACT_STEP_MS)
+				let outcome: DockActOutcome
+				if (mode === 'error') {
+					const target = item.fact.kind === 'ask' ? `dialogs/${item.fact.dialogId}` : 'prompt'
+					outcome = {
+						status: 'failed',
+						detail: `Okena POST /v1/claude/terminals/${paneOf(item)?.tid ?? 'unknown'}/${target} failed (500): bridge unavailable`,
+					}
+				} else if (mode === 'refused')
+					outcome = { status: 'refused', reason: 'gone', detail: 'already answered elsewhere' }
+				else outcome = { status: 'sent', ...(item.kind === 'turn' ? { delivery: 'pty' as const } : {}) }
+				apply({ type: 'act.result', itemId: item.id, outcome })
+				if (mode === 'confirm' || mode === 'refused') later(() => apply(landedPoll(current, item)))
+				// Not observed: the next poll comes after the confirmation window.
+				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
+				return { ok: outcome.status === 'sent', outcome }
+			},
 		},
 		emitScenario(name) {
-			state = agentDockScenarioState(name, clock())
+			scenario = scenarioRun(name, clock())
 			push()
+		},
+		setActMode(next) {
+			mode = next
 		},
 		listenerCount: () => listeners.size,
 	}

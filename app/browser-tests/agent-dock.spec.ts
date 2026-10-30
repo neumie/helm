@@ -45,6 +45,36 @@ async function emitScenario(page: Page, name: 'busy' | 'crowded' | 'empty' | 'do
 	}, name)
 }
 
+type ActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
+
+async function setActMode(page: Page, mode: ActMode): Promise<void> {
+	await page.evaluate(next => {
+		const dock = window.__helmWorkspaceFixture?.agentDock
+		if (!dock) throw new Error('Missing agent-dock fixture')
+		dock.setActMode(next)
+	}, mode)
+}
+
+const acts = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.calls.acts ?? [])
+const terminalWrites = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.length)
+
+/** Busy scenario, rail open, popover on item `index` (1 = question, 2 = permission, 3 = turn). */
+async function openItem(page: Page, index: 1 | 2 | 3) {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'busy')
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.focus()
+	await page.locator('.agent-dock-toggle').click()
+	const rail = page.locator('.agent-dock-rail')
+	await expect(rail.locator('.agent-dock-card')).toHaveCount(3)
+	await rail.locator('.agent-dock-card[aria-label*=" Question,"]').click()
+	const popover = page.locator('.agent-dock-popover')
+	for (let at = 1; at < index; at++) await popover.getByRole('button', { name: 'Next item' }).click()
+	await expect(popover).toContainText(`${index} of 3`)
+	return { input, rail, popover }
+}
+
 test.afterEach(async ({ page }) => {
 	await page.evaluate(keys => {
 		for (const key of keys) localStorage.removeItem(key)
@@ -138,13 +168,13 @@ test('cards open a popover clear of the last terminal rows; ‹ › and arrows s
 	await expect(input).toBeFocused()
 	await expect(popover).toContainText('1 of 3')
 	await expect(popover).toContainText(/Asked \d\d:\d\d/)
-	// Verbatim AskUserQuestion content, plain text; previews in monospace; answering stays in the terminal.
+	// Verbatim AskUserQuestion content, plain text; previews in monospace; nothing submits until every question has an answer.
 	await expect(popover).toContainText('Barva?')
 	await expect(popover.locator('.agent-dock-preview-text')).toHaveText('▇▇ blue')
 	await popover.getByRole('tab', { name: /Size/ }).click()
 	await expect(popover).toContainText('Velikost?')
 	await expect(popover.getByRole('button', { name: 'Submit answers' })).toBeDisabled()
-	await expect(popover).toContainText('Answer in the terminal for now')
+	await expect(popover).toContainText('Answer every question, then submit')
 	await expect(popover.getByRole('button', { name: /Ack/ })).toHaveCount(0)
 	await expect(input).toBeFocused()
 
@@ -392,4 +422,158 @@ test('the dock works when its layout preferences cannot be read or written', asy
 	await expect(page.locator('.agent-dock-rail')).toBeVisible()
 	await page.getByRole('button', { name: 'Move agent dock above terminals' }).click()
 	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'top')
+})
+
+test('answering a question from the popover: 1-9 pick, Enter submits, Sending… then ✓ answered, focus back in xterm', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'busy')
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.focus()
+	await page.keyboard.press('Meta+Shift+KeyJ')
+	const rail = page.locator('.agent-dock-rail')
+	const popover = page.locator('.agent-dock-popover')
+	await page.keyboard.press('Enter')
+	await expect(popover).toBeFocused()
+	await expect(popover).toContainText('1 of 3')
+	const card = rail.locator('.agent-dock-card[aria-label*=" Question,"]')
+	const itemId = Number(await card.getAttribute('data-item-id'))
+	const submit = popover.getByRole('button', { name: 'Submit answers' })
+
+	// Enter with an unanswered question submits nothing; "2" picks Blue and moves to the next question.
+	await page.keyboard.press('Enter')
+	expect(await acts(page)).toEqual([])
+	await page.keyboard.press('2')
+	await expect(popover.getByRole('tab', { name: /Size/ })).toHaveAttribute('aria-selected', 'true')
+	await expect(submit).toBeDisabled()
+	await page.keyboard.press('1')
+	await expect(submit).toBeEnabled()
+	await expect(popover).toContainText('Ready to submit')
+	// Back on the first tab the pick shows as pressed.
+	await popover.getByRole('tab', { name: /Color/ }).click()
+	await expect(popover.getByRole('button', { name: /Blue/ })).toHaveAttribute('aria-pressed', 'true')
+	await popover.focus()
+	await page.keyboard.press('Enter')
+
+	// The receipt: Sending… on the card first, then ✓ answered once the dialog is seen closed.
+	await expect(card).toHaveAttribute('aria-label', /Sending…/)
+	await expect(card).toContainText('✓ answered')
+	await expect(card).toHaveAttribute('data-receipt', 'success')
+	expect(await acts(page)).toEqual([
+		{ itemId, rev: 1, action: { type: 'answer', picks: [{ options: [1] }, { options: [0] }] } },
+	])
+	await expect(page.locator('.agent-dock-strip')).toContainText('2 need you')
+	await expect(input).toBeFocused()
+	expect(await terminalWrites(page)).toBe(0)
+	// The answered card leaves the rail after a moment.
+	await expect(card).toHaveCount(0, { timeout: 10_000 })
+})
+
+test('"Other…" takes free text per question; typing digits in it types, never picks', async ({ page }) => {
+	const { popover, rail } = await openItem(page, 1)
+	const itemId = Number(await rail.locator('.agent-dock-card[aria-label*=" Question,"]').getAttribute('data-item-id'))
+	await popover.getByRole('button', { name: /Other…/ }).click()
+	const other = popover.getByRole('textbox', { name: 'Your answer to question 1' })
+	await expect(other).toBeFocused()
+	await other.pressSequentially('Zelená 2')
+	await expect(other).toHaveValue('Zelená 2')
+	await popover.getByRole('tab', { name: /Size/ }).click()
+	await popover.getByRole('button', { name: /^2/ }).click()
+	await popover.getByRole('button', { name: 'Submit answers' }).click()
+	await expect(rail.locator(`.agent-dock-card[data-item-id="${itemId}"]`)).toContainText('✓ answered')
+	expect(await acts(page)).toEqual([
+		{ itemId, rev: 1, action: { type: 'answer', picks: [{ options: [], other: 'Zelená 2' }, { options: [1] }] } },
+	])
+	expect(await terminalWrites(page)).toBe(0)
+})
+
+test('permission: Deny with a message, refused when it was answered elsewhere; Always allow only from suggestions', async ({
+	page,
+}) => {
+	const { popover, rail } = await openItem(page, 2)
+	await setActMode(page, 'refused')
+	const card = rail.locator('.agent-dock-card[aria-label*=" Permission,"]')
+	const itemId = Number(await card.getAttribute('data-item-id'))
+	// No single click allows anything: the footer button stays disabled until a choice is picked.
+	await expect(popover.getByRole('button', { name: 'Allow once', exact: true })).toBeDisabled()
+	await popover.getByRole('button', { name: /Deny and tell the agent/ }).click()
+	const message = popover.getByRole('textbox', { name: 'Message to the agent (optional)' })
+	await expect(message).toBeFocused()
+	await message.fill('use deploy:preview')
+	const before = (await acts(page)).length
+	await popover.getByRole('button', { name: 'Deny', exact: true }).click()
+	// A deny message goes to the agent: risky words ask first, like a reply.
+	await expect(popover.getByRole('alert')).toContainText('This message mentions “deploy”')
+	expect((await acts(page)).length).toBe(before)
+	await popover.getByRole('button', { name: 'Send anyway' }).click()
+	await expect(card).toContainText('refused: already answered elsewhere')
+	await expect(card).toHaveAttribute('data-receipt', 'danger')
+	expect((await acts(page)).at(-1)).toEqual({
+		itemId,
+		rev: 1,
+		action: { type: 'deny', message: 'use deploy:preview', confirmed: true },
+	})
+
+	// Fresh scenario, Always allow: the rule comes from Claude's permission_suggestions.
+	await emitScenario(page, 'busy')
+	await setActMode(page, 'confirm')
+	// The popover stayed on the (same id) permission item; clicking its card again would close it.
+	if (!(await popover.isVisible())) await rail.locator('.agent-dock-card[aria-label*=" Permission,"]').click()
+	await expect(popover).toContainText('2 of 3')
+	await expect(popover).toContainText('(this session)')
+	await popover.getByRole('button', { name: /Always allow Bash\(npm run deploy:stage\)/ }).click()
+	await popover.getByRole('button', { name: 'Always allow', exact: true }).click()
+	const allowed = rail.locator('.agent-dock-card[aria-label*=" Permission,"]')
+	await expect(allowed).toContainText('✓ always allowed')
+	expect((await acts(page)).at(-1)?.action).toEqual({ type: 'allow', always: true })
+})
+
+test('reply to a finished turn: risky words ask first; unconfirmed turns amber and stays ackable', async ({ page }) => {
+	const { popover, rail, input } = await openItem(page, 3)
+	await setActMode(page, 'unconfirmed')
+	const card = rail.locator('.agent-dock-card[data-kind="turn"]')
+	const itemId = Number(await card.getAttribute('data-item-id'))
+	const reply = popover.getByRole('textbox', { name: 'Reply' })
+	await reply.click()
+	await expect(reply).toBeFocused()
+	await page.keyboard.type('Yes, push it 2')
+	await expect(reply).toHaveValue('Yes, push it 2')
+	await popover.getByRole('button', { name: 'Send', exact: true }).click()
+	await expect(popover.getByRole('alert')).toContainText('This reply mentions “push”')
+	expect(await acts(page)).toEqual([])
+	await popover.getByRole('button', { name: 'Send anyway' }).click()
+	await expect(card).toContainText('Sending…')
+	await expect(card).toContainText('sent, unconfirmed')
+	await expect(card).toHaveAttribute('data-receipt', 'warn')
+	expect(await acts(page)).toEqual([
+		{ itemId, rev: 1, action: { type: 'prompt', text: 'Yes, push it 2', confirmed: true } },
+	])
+	// The 2xx came back: focus goes back to the terminal; nothing was typed there by the dock itself.
+	await expect(input).toBeFocused()
+	expect(await terminalWrites(page)).toBe(0)
+	// The popover stays on the item after sending; ack from it.
+	await expect(popover).toContainText('sent, unconfirmed')
+	await popover.getByRole('button', { name: `Ack item ${itemId}` }).click()
+	await expect(card).toHaveCount(0)
+})
+
+test('an Okena error shows verbatim, the item stays open and can be answered again', async ({ page }) => {
+	const { popover, rail } = await openItem(page, 1)
+	await setActMode(page, 'error')
+	const card = rail.locator('.agent-dock-card[aria-label*=" Question,"]')
+	await popover.getByRole('button', { name: /Red/ }).click()
+	await popover.getByRole('tab', { name: /Size/ }).click()
+	await popover.getByRole('button', { name: /^1/ }).click()
+	const submit = popover.getByRole('button', { name: 'Submit answers' })
+	await submit.click()
+	await expect(popover.locator('.agent-dock-receipt')).toContainText('failed (500): bridge unavailable')
+	await expect(card).toHaveAttribute('data-state', 'open')
+	await expect(page.locator('.agent-dock-strip')).toContainText('3 need you')
+	await expect(submit).toBeEnabled()
+	await setActMode(page, 'confirm')
+	await submit.click()
+	await expect(card).toContainText('✓ answered')
+	expect((await acts(page)).length).toBe(2)
 })

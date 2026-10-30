@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
-import type { AgentDockSnapshot } from './agent-dock/model'
+import type { AgentDockActRequest, AgentDockActResult, AgentDockSnapshot } from './agent-dock/model'
 import type {
 	AGENT_DOCK_IPC,
 	AgentDockApi,
@@ -91,6 +91,7 @@ const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
 	snapshot: 'agent-dock:snapshot',
 	setVisible: 'agent-dock:set-visible',
 	ack: 'agent-dock:ack',
+	act: 'agent-dock:act',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -321,6 +322,8 @@ const api: HelmApi = {
 			}),
 		setVisible: visible => ipcRenderer.send(AGENT_DOCK_CHANNELS.setVisible, visible === true, sessionProfileToken),
 		ack: itemId => ipcRenderer.invoke(AGENT_DOCK_CHANNELS.ack, itemId, sessionProfileToken) as Promise<boolean>,
+		act: (request: AgentDockActRequest) =>
+			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.act, request, sessionProfileToken) as Promise<AgentDockActResult>,
 	} satisfies AgentDockApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

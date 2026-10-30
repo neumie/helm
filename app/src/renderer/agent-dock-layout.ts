@@ -1,9 +1,10 @@
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import type { AgentDockSnapshot } from '../agent-dock/model'
+import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
 import { AgentDock } from './agent-dock/AgentDock'
+import { isTextField } from './agent-dock/AgentDockDetail'
 import type { AgentDockPosition, TerminalMetrics } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
@@ -25,7 +26,8 @@ export interface MountedAgentDock {
 
 /**
  * Agent dock presentation inside `main#right`, next to `#terms` (below by default).
- * Read-only: it renders main-pushed snapshots and can only ack. Only the user's
+ * It renders main-pushed snapshots; Jakub acks and answers through `api` (main
+ * runs every Okena effect behind a fresh CAS read). Only the user's
  * rail toggle changes the dock's height (the rail has one fixed height); the
  * terminal pane shrinks through the grid row, so the #terms ResizeObserver refits
  * xterm. The detail popover floats over the terminal without resizing anything.
@@ -134,6 +136,7 @@ export function mountAgentDock({
 			onToggle: () => toggle(false),
 			onTogglePosition,
 			onAck,
+			onAct,
 			terminalMetrics,
 			onPopoverOpenChange: watchActiveScreen,
 		})
@@ -182,6 +185,22 @@ export function mountAgentDock({
 		return acked
 	}
 
+	// A successful answer hands the keyboard back to the terminal (unless Jakub already moved on elsewhere).
+	const onAct = async (itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult> => {
+		let result: AgentDockActResult
+		try {
+			result = await api.act({ itemId, rev, action })
+		} catch (error) {
+			result = {
+				ok: false,
+				outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
+			}
+		}
+		const active = ownerDocument.activeElement
+		if (!disposed && result.ok && (!active || active === ownerDocument.body || dock.contains(active))) focusTerminal()
+		return result
+	}
+
 	const publishVisible = (): void => {
 		const visible = !disposed && ownerDocument.visibilityState !== 'hidden'
 		if (published === visible) return
@@ -216,6 +235,10 @@ export function mountAgentDock({
 		const restore = restoreTerminal
 		restoreTerminal = false
 		if (event.detail === 0 || !restore) return
+		// Clicking into an answer field means "type here": the field keeps focus.
+		if ((event.target as Element | null)?.closest?.('input, textarea, label, [contenteditable="true"]')) return
+		// Picking "Other…" / "Deny" moves focus into the field it reveals; leave it there.
+		if (isTextField(ownerDocument.activeElement)) return
 		const selection = ownerWindow.getSelection()
 		if (selection && !selection.isCollapsed && dock.contains(selection.anchorNode)) return
 		focusTerminal()

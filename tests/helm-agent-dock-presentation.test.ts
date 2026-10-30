@@ -15,6 +15,7 @@ const {
 	agingTone,
 	alwaysAllowLabels,
 	askQuestions,
+	permissionReview,
 	cardGist,
 	cardKindLabel,
 	cardTone,
@@ -244,19 +245,60 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 	assert.match(itemTimeLine(bash, T).stamp, /^Asked \d\d:\d\d$/)
 })
 
-test('"Always allow" wording comes only from Claude\'s permission_suggestions', () => {
+test('"Always allow" wording comes only from Claude\'s permission_suggestions, and only when every entry shows', () => {
 	assert.deepEqual(alwaysAllowLabels(undefined), [])
 	assert.deepEqual(alwaysAllowLabels([]), [])
 	assert.deepEqual(
 		alwaysAllowLabels([
 			{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm run deploy:stage' }], behavior: 'allow' },
 			{ type: 'addRules', rules: [{ toolName: 'WebFetch' }], behavior: 'allow' },
-			{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'rm -rf' }], behavior: 'deny' },
-			{ type: 'setMode', mode: 'acceptEdits' },
 			{ type: 'addDirectories', directories: ['/tmp/out'] },
-			'garbage',
 		]),
 		['Bash(npm run deploy:stage)', 'WebFetch', '/tmp/out'],
+	)
+	// Okena applies EVERY suggestion: one the dock cannot word hides "Always allow" altogether.
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow' }
+	for (const hidden of [
+		{ type: 'setMode', mode: 'acceptEdits' },
+		{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'rm -rf' }], behavior: 'deny' },
+		{ type: 'removeRules', rules: [{ toolName: 'Bash' }], behavior: 'deny' },
+		{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'git push\u202e' }], behavior: 'allow' },
+		{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'x'.repeat(241) }], behavior: 'allow' },
+		'garbage',
+	])
+		assert.equal(alwaysAllowLabels([rule, hidden]), null, JSON.stringify(hidden))
+	assert.equal(alwaysAllowLabels(Array.from({ length: 9 }, () => rule)), null, 'more than the cap')
+	assert.equal(alwaysAllowLabels([rule], true), null, 'Okena sent more than were kept')
+})
+
+test('permission review: every tool_input field shows; anything cut or stripped needs the terminal', () => {
+	const plain = permissionReview({ command: 'ls -la', description: 'List' })
+	assert.deepEqual(plain, { command: 'ls -la', description: 'List', fields: null, flags: [], complete: true })
+	const sandbox = permissionReview({ command: 'curl x', dangerouslyDisableSandbox: true, timeout: 5 })
+	assert.deepEqual(sandbox.flags, ['dangerouslyDisableSandbox'])
+	assert.match(sandbox.fields ?? '', /"dangerouslyDisableSandbox": true/)
+	assert.equal(sandbox.complete, true)
+	assert.equal(permissionReview({ command: `echo ${'a'.repeat(9_000)}; rm -rf ~` }).complete, false)
+	assert.equal(permissionReview({ command: 'git push\u202e' }).complete, false)
+	assert.equal(permissionReview({ command: 'x\u001b[2K' }).complete, false)
+	assert.equal(permissionReview({ content: 'head\n… (truncated)' }).complete, false)
+	assert.equal(permissionReview({ file_path: '/a', content: 'b'.repeat(20_000) }).complete, false)
+	const edit = permissionReview({ file_path: '/a', old_string: 'x', new_string: 'y' })
+	assert.equal(edit.command, null)
+	assert.match(edit.fields ?? '', /"new_string": "y"/)
+	assert.equal(edit.complete, true)
+})
+
+test('AskUserQuestion options keep their raw index past malformed entries', () => {
+	const questions = askQuestions({
+		questions: [{ question: 'Q', options: ['bare', { label: 'A' }, { label: '' }, { label: 'B' }] }],
+	})
+	assert.deepEqual(
+		questions?.[0]?.options.map(option => [option.index, option.label]),
+		[
+			[1, 'A'],
+			[3, 'B'],
+		],
 	)
 })
 
