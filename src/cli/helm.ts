@@ -3,6 +3,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
+import { runDockProcess } from './dock.js'
 import { runEditCli } from './edit.js'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
 import { runReviewCli } from './review.js'
@@ -18,6 +19,7 @@ Commands:
   ingest   File a self-contained task (email, note, …) into a project
   edit     Iterate on a document with your running agent (helm edit FILE)
   review   Legacy advanced document-connection commands
+  dock     Agent dock: Okena Claude sessions that need you (watch/ls/show)
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
@@ -338,6 +340,17 @@ switch (command) {
 			)
 			process.exitCode = 1
 		})
+		break
+	case 'dock':
+		runDockProcess(process.argv.slice(3)).then(
+			code => {
+				process.exitCode = code
+			},
+			error => {
+				console.error(`Error: ${error instanceof Error ? error.message.slice(0, 400) : error}`)
+				process.exitCode = 1
+			},
+		)
 		break
 	case 'help':
 	case '--help':

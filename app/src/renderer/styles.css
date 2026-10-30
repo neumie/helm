@@ -999,18 +999,34 @@ body.dragging {
 
 #right {
 	grid-column: 3;
-	position: relative; /* anchors the #no-terms overlay */
+	position: relative;
 	min-width: 0;
 	min-height: 0;
+	/* Row grid: #terms takes the remaining height and the agent dock (§3.24)
+	 * takes its own auto row, so the #terms ResizeObserver refits xterm when the
+	 * dock opens. Without a mounted dock the auto row is empty. */
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) auto;
 	/* Terminal surface token, not --well: the pane must match the themed xterm
 	 * background exactly (a theme may split them). */
 	background: var(--term-bg);
 }
 
 #terms {
+	grid-row: 1;
+	grid-column: 1;
 	position: relative;
-	height: 100%;
 	min-height: 0;
+}
+
+#right[data-agent-dock-position="top"] {
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+#right[data-agent-dock-position="top"] #terms,
+#right[data-agent-dock-position="top"] #no-terms {
+	grid-row: 2;
 }
 
 /* Terminal well padding rule (§3.14): breathing room top/bottom/left only —
@@ -1230,8 +1246,12 @@ body.dragging {
 	}
 }
 
-/* No open terminal — centered state plus one action. Closing must not reveal another. */
+/* No open terminal — centered state plus one action. Closing must not reveal another.
+ * The explicit grid placement makes the terminal row (not all of #right) its
+ * containing block, so the card stays centered over the terminals beside the dock. */
 #no-terms {
+	grid-row: 1;
+	grid-column: 1;
 	position: absolute;
 	inset: 0;
 	z-index: 2;
@@ -1270,4 +1290,1198 @@ body.dragging {
 	border-radius: 4px;
 	background: var(--fill-subtle);
 	color: var(--text-1);
+}
+
+/* ---------- agent dock (§3.24) ---------- */
+
+/* Read-only Okena Claude queue beside the terminals. The 28px strip never
+ * changes height; the card rail it toggles has one fixed height; details open in
+ * a popover over the terminal. Flat: hairline edge toward the terminal. */
+#agent-dock[hidden] {
+	display: none;
+}
+
+.agent-dock {
+	grid-row: 2;
+	grid-column: 1;
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	background: var(--pane);
+	border-top: 1px solid var(--hairline);
+}
+
+#right[data-agent-dock-position="top"] .agent-dock {
+	grid-row: 1;
+	border-top: none;
+	border-bottom: 1px solid var(--hairline);
+}
+
+.agent-dock-view {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.agent-dock-strip {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	padding-right: 8px;
+	overflow: hidden;
+	container: agent-dock-strip / inline-size;
+}
+
+.agent-dock-toggle {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	height: 28px;
+	padding: 0 8px 0 16px;
+	border: none;
+	background: transparent;
+	color: var(--text-1);
+	font-family: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+	text-align: left;
+	cursor: pointer;
+	user-select: none;
+	overflow: hidden;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-toggle:hover {
+	background: var(--fill-subtle);
+}
+
+.agent-dock-toggle:focus-visible {
+	outline-offset: -2px;
+}
+
+.agent-dock-chevron {
+	flex: none;
+	display: inline-flex;
+	color: var(--text-2);
+	transition: transform 140ms ease-out;
+}
+
+/* The chevron points where the panel opens: away from the terminal. */
+.agent-dock[data-position="bottom"][data-expanded="false"] .agent-dock-chevron,
+.agent-dock[data-position="top"][data-expanded="true"] .agent-dock-chevron {
+	transform: rotate(180deg);
+}
+
+.agent-dock-needs {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-needs[data-tone="warn"] .agent-dock-needs-count {
+	color: var(--warn);
+	font-weight: 600;
+}
+
+.agent-dock-age {
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.agent-dock-age[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-age[data-tone="danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-head {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-0);
+}
+
+.agent-dock-counts {
+	flex: none;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-health {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 6px;
+	color: var(--text-2);
+}
+
+.agent-dock-health-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.agent-dock-health[data-tone="danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--neutral);
+}
+
+.agent-dock-health[data-tone="success"] .agent-dock-dot {
+	background: var(--success);
+}
+
+.agent-dock-health[data-tone="danger"] .agent-dock-dot {
+	background: var(--danger);
+}
+
+.agent-dock-kbd {
+	flex: none;
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-2);
+}
+
+.agent-dock-position {
+	flex: none;
+}
+
+/* Narrow #right (down to ~535px: 960px window minus a 420px sidebar): the needs count and
+   the newest head matter most, so the fixed-width hint and counts go first. */
+@container agent-dock-strip (max-width: 760px) {
+	.agent-dock-kbd,
+	.agent-dock-counts {
+		display: none;
+	}
+}
+
+/* ---------- card rail (§3.24) ---------- */
+
+/* Positioning context for the detail popover; strip and rail stack in it. */
+.agent-dock-host {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+/* One fixed height whatever it holds (88px of cards + 8px padding each side +
+ * the 1px hairline toward the strip), so new items never resize the terminal. */
+.agent-dock-rail {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 12px;
+	min-width: 0;
+	height: 105px;
+	padding: 8px 16px;
+	outline: none;
+	container: agent-dock-rail / inline-size;
+}
+
+.agent-dock-rail[hidden] {
+	display: none;
+}
+
+.agent-dock-host[data-position="bottom"] .agent-dock-rail {
+	border-bottom: 1px solid var(--hairline);
+}
+
+.agent-dock-host[data-position="top"] .agent-dock-rail {
+	border-top: 1px solid var(--hairline);
+}
+
+.agent-dock-rail-note {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 4px;
+	min-width: 0;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-2);
+	user-select: text;
+}
+
+/* Okena down: the note leads the (frozen) cards instead of filling the rail. */
+.agent-dock-rail-note[data-tone="warn"] {
+	flex: 0 1 256px;
+}
+
+.agent-dock-rail-note-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+	color: var(--text-1);
+}
+
+.agent-dock-rail-note-detail {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-title {
+	color: var(--warn);
+}
+
+/* Every item that needs Jakub stays in view: one row of full cards (beside the Agents
+ * block, then its narrow form), else two rows of compact cards, else the Agents button
+ * joins the grid, else three rows of dense chips that shrink to fit (railLayout). */
+.agent-dock-rail-main {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: stretch;
+	gap: 12px;
+	min-width: 0;
+}
+
+.agent-dock-cards {
+	flex: 1 1 auto;
+	display: grid;
+	grid-template-columns: repeat(var(--rail-columns, 1), minmax(0, 320px));
+	gap: 8px;
+	min-width: 0;
+	list-style: none;
+}
+
+.agent-dock-cards[data-density="full"] {
+	grid-template-rows: 88px;
+}
+
+.agent-dock-cards[data-density="compact"] {
+	grid-template-rows: repeat(2, 40px);
+}
+
+/* Last resort past ~10 items in a narrow pane: dense chips shrink to fit, never scroll. */
+.agent-dock-cards[data-density="dense"] {
+	grid-template-rows: repeat(3, 24px);
+}
+
+.agent-dock-cards-empty {
+	grid-column: 1 / -1;
+	align-self: center;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-2);
+	user-select: text;
+}
+
+.agent-dock-card-slot {
+	display: flex;
+	min-width: 0;
+	container: agent-dock-card / inline-size;
+}
+
+/* A tight compact/dense cell keeps the agent name whole: the project and gist give way
+ * first. Full cards (≥176px) keep the project on the name row; it ellipsizes first. */
+@container agent-dock-card (max-width: 200px) {
+	.agent-dock-card:not([data-density="full"]) .agent-dock-card-project,
+	.agent-dock-card-line {
+		display: none;
+	}
+}
+
+/* A squeezed dense chip keeps its edge, indicator and (ellipsized) name; the age goes. */
+@container agent-dock-card (max-width: 80px) {
+	.agent-dock-card[data-density="dense"] .agent-dock-card-age {
+		display: none;
+	}
+}
+
+.agent-dock-card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 4px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 12px;
+	border: none;
+	border-radius: 8px;
+	background: var(--fill-subtle);
+	color: var(--text-1);
+	font-family: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	text-align: left;
+	cursor: pointer;
+	user-select: none;
+	overflow: hidden;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-card[data-density="compact"] {
+	gap: 0;
+	padding: 4px 8px 4px 12px;
+}
+
+.agent-dock-card[data-density="dense"] {
+	padding: 0 8px 0 12px;
+	border-radius: 6px;
+}
+
+/* Urgency edge: 2px tone line on the leading edge; dashed when orphaned. */
+.agent-dock-card::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 2px;
+	background: var(--card-edge, var(--hairline-strong));
+}
+
+.agent-dock-card[data-tone="ask"] {
+	--card-edge: var(--warn);
+	--card-kind: var(--warn);
+}
+
+.agent-dock-card[data-tone="ask-danger"] {
+	--card-edge: var(--danger);
+	--card-kind: var(--danger);
+}
+
+.agent-dock-card[data-tone="orphaned"] {
+	--card-edge: repeating-linear-gradient(to bottom, var(--warn) 0 4px, transparent 4px 8px);
+	--card-kind: var(--warn);
+}
+
+.agent-dock-card[data-tone="turn"] {
+	--card-edge: var(--accent);
+	--card-kind: var(--accent);
+}
+
+.agent-dock-card:hover,
+.agent-dock-card[data-open="true"] {
+	background: var(--fill-raised);
+}
+
+/* The card whose popover is open: a strong inset ring, not only a fill step. */
+.agent-dock-card[data-open="true"],
+.agent-dock-agents-button[data-open="true"] {
+	box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+
+.agent-dock-card:focus-visible,
+.agent-dock-agents-button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.agent-dock-card-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 16px;
+}
+
+.agent-dock-card[data-density="dense"] .agent-dock-card-row {
+	height: 24px;
+}
+
+.agent-dock-card-kind {
+	flex: none;
+	font-weight: 600;
+	color: var(--card-kind, var(--text-1));
+	white-space: nowrap;
+}
+
+.agent-dock-card-age {
+	flex: none;
+	margin-left: auto;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.agent-dock-card-age[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-card-age[data-tone="danger"] {
+	color: var(--danger);
+}
+
+/* Name before project: the project ellipsizes (and vanishes) first. */
+.agent-dock-card-where {
+	flex: 0 1 auto;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	white-space: nowrap;
+}
+
+/* Never shrinks for the project (weighted flex-shrink still nibbles a few px); only the row caps it. */
+.agent-dock-card-name {
+	flex: 0 0 auto;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	color: var(--text-0);
+}
+
+.agent-dock-card-project {
+	flex: 0 1000 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-card-gist {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	min-width: 0;
+	overflow: hidden;
+	line-height: 16px;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-card-line {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-1);
+}
+
+/* Working agents: one button (count + the first agents); the popover lists them all.
+ * `side` 232px (name + status lines), `narrow` 140px (names only), or a grid cell. */
+.agent-dock-agents {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	width: 232px;
+	padding-left: 12px;
+	border-left: 1px solid var(--hairline);
+}
+
+.agent-dock-agents[data-slot="narrow"] {
+	width: 140px;
+}
+
+.agent-dock-agents-button {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-1);
+	font-family: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	text-align: left;
+	cursor: pointer;
+	user-select: none;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-agents-button:hover,
+.agent-dock-agents-button[data-open="true"] {
+	background: var(--fill-subtle);
+}
+
+.agent-dock-agents-title {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 16px;
+	font-weight: 600;
+	color: var(--text-1);
+}
+
+.agent-dock-agents-count {
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 400;
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agents-more {
+	display: inline-flex;
+	margin-left: auto;
+	color: var(--text-2);
+}
+
+.agent-dock-agents-summary {
+	height: 16px;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agents-lines {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.agent-dock-agent-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 16px;
+	white-space: nowrap;
+}
+
+.agent-dock-agent-slot {
+	flex: none;
+	display: inline-flex;
+	width: 6px;
+}
+
+.agent-dock-agent-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 500;
+	color: var(--text-0);
+}
+
+.agent-dock-agent-status {
+	flex: none;
+	margin-left: auto;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agent-more {
+	justify-content: flex-end;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-agent-line[data-status="unknown"] .agent-dock-agent-name,
+.agent-dock-agent-line[data-status="unreachable"] .agent-dock-agent-name {
+	color: var(--text-2);
+}
+
+.agent-dock-agents-empty {
+	align-self: center;
+	padding: 0 8px;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-1);
+}
+
+/* No session connected while items exist and the Agents slot is a grid cell. */
+.agent-dock-agents-cell-note {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.agent-dock-agents-cell-note .agent-dock-agents-empty {
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.3;
+}
+
+/* As a grid cell (tight rail) the button takes the cards' fill and size. */
+.agent-dock-agents-button[data-slot="cell"] {
+	justify-content: center;
+	gap: 0;
+	padding: 4px 8px 4px 12px;
+	border-radius: 8px;
+	background: var(--fill-subtle);
+}
+
+.agent-dock-agents-button[data-slot="cell"][data-density="dense"] {
+	padding: 0 8px 0 12px;
+	border-radius: 6px;
+}
+
+.agent-dock-agents-button[data-slot="cell"]:hover,
+.agent-dock-agents-button[data-slot="cell"][data-open="true"] {
+	background: var(--fill-raised);
+}
+
+.agent-dock-agents-button[data-slot="cell"][data-density="dense"] .agent-dock-agents-title {
+	height: 24px;
+}
+
+/* ---------- detail popover (§3.24, §3.8 surface) ---------- */
+
+/* Floats over the terminal (never resizes it). Placement (popoverPlacement) keeps the
+ * terminal's last 4 rows (input line) and, on a top dock, the 4 rows next to it visible. */
+.agent-dock-popover {
+	position: absolute;
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	background: var(--chrome);
+	box-shadow: var(--shadow-1);
+	color: var(--text-0);
+	font-size: calc(13px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	outline: none;
+	user-select: text;
+	container: agent-dock-pop / inline-size;
+	animation: agent-dock-pop-up 120ms ease-out;
+}
+
+.agent-dock-popover[data-position="top"] {
+	animation-name: agent-dock-pop-down;
+}
+
+@keyframes agent-dock-pop-up {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+
+@keyframes agent-dock-pop-down {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+}
+
+.agent-dock-pop-head {
+	flex: none;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		"title actions"
+		"meta actions";
+	column-gap: 12px;
+	row-gap: 4px;
+	padding: 8px 8px 8px 16px;
+	border-bottom: 1px solid var(--hairline);
+	user-select: none;
+}
+
+.agent-dock-pop-title {
+	grid-area: title;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding-top: 4px;
+	white-space: nowrap;
+}
+
+.agent-dock-pop-kind {
+	flex: none;
+	font-weight: 600;
+	color: var(--text-0);
+}
+
+.agent-dock-pop-kind[data-tone="ask"],
+.agent-dock-pop-kind[data-tone="orphaned"] {
+	color: var(--warn);
+}
+
+.agent-dock-pop-kind[data-tone="ask-danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-pop-kind[data-tone="turn"] {
+	color: var(--accent);
+}
+
+.agent-dock-pop-where {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Identity reads as on the cards: name first, project muted after it. */
+.agent-dock-pop-name {
+	font-weight: 600;
+	color: var(--text-0);
+}
+
+.agent-dock-pop-project {
+	margin-left: 8px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-pop-meta {
+	grid-area: meta;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding-bottom: 4px;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.agent-dock-pop-meta .agent-dock-card-age {
+	margin-left: 0;
+}
+
+.agent-dock-pop-id {
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	user-select: text;
+}
+
+.agent-dock-pop-actions {
+	grid-area: actions;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+/* "‹ 1 of 5 ›": steps through the items that need Jakub (also ← → / ↑ ↓ in the popover). */
+.agent-dock-stepper {
+	display: flex;
+	align-items: center;
+}
+
+.agent-dock-step-count {
+	min-width: 40px;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.agent-dock-step-prev svg {
+	transform: rotate(180deg);
+}
+
+.agent-dock-popover .icon-btn:disabled {
+	opacity: 0.45;
+	background: none;
+	cursor: default;
+}
+
+.agent-dock-pop-scroll {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	outline: none;
+}
+
+/* The body is a tab stop so clipped content scrolls from the keyboard (§4 ring, inset). */
+.agent-dock-pop-scroll:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.agent-dock-pop-scroll::-webkit-scrollbar {
+	width: 10px;
+}
+
+.agent-dock-pop-scroll::-webkit-scrollbar-thumb {
+	background: var(--thumb);
+	border: 3px solid transparent;
+	border-radius: 999px;
+	background-clip: padding-box;
+}
+
+.agent-dock-pop-scroll::-webkit-scrollbar-thumb:hover {
+	background-color: var(--thumb-hover);
+}
+
+.agent-dock-pop-body {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px 16px 16px;
+}
+
+.agent-dock-pop-text {
+	color: var(--text-0);
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-pop-label {
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.5;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-pop-quiet {
+	font-weight: 400;
+	color: var(--text-2);
+}
+
+.agent-dock-pop-warning {
+	padding: 8px 16px;
+	background: var(--warn-soft);
+	color: var(--warn);
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.5;
+}
+
+.agent-dock-pop-facts {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-2);
+}
+
+.agent-dock-pop-fact {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-mono {
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+}
+
+/* Verbatim agent previews/inputs: monospace plain text in a --well block. */
+.agent-dock-well {
+	padding: 8px 12px;
+	border-radius: 6px;
+	background: var(--well);
+	color: var(--text-1);
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	overflow: auto;
+}
+
+.agent-dock-command {
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-0);
+}
+
+/* Option previews are drawn text (mockups, tables): never rewrap them. */
+.agent-dock-preview-text {
+	max-height: 200px;
+	line-height: 1.3;
+	white-space: pre;
+	overflow-wrap: normal;
+}
+
+.agent-dock-question-tabs {
+	align-self: flex-start;
+	min-width: 280px;
+	max-width: 100%;
+}
+
+.agent-dock-question-n {
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-question-tab {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.agent-dock-question-done {
+	display: inline-flex;
+	color: var(--success);
+}
+
+.agent-dock-question {
+	font-weight: 500;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-ask-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 12px;
+}
+
+.agent-dock-ask-grid[data-previews="true"] {
+	grid-template-columns: minmax(0, 1fr) minmax(0, 236px);
+}
+
+@container agent-dock-pop (max-width: 540px) {
+	.agent-dock-ask-grid[data-previews="true"] {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.agent-dock-preview-text {
+		max-height: 120px;
+	}
+}
+
+.agent-dock-choices {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	list-style: none;
+}
+
+.agent-dock-choice {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	width: 100%;
+	padding: 8px;
+	border: none;
+	border-radius: 6px;
+	background: var(--fill-subtle);
+	color: var(--text-0);
+	font-family: inherit;
+	font-size: calc(13px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-choice:hover:not(:disabled),
+.agent-dock-choice[data-focused="true"] {
+	background: var(--fill-raised);
+}
+
+.agent-dock-choice[aria-pressed="true"] {
+	background: var(--accent-soft);
+}
+
+.agent-dock-choice:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.agent-dock-choice:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.agent-dock-choice[data-tone="danger"] .agent-dock-choice-label {
+	color: var(--danger);
+}
+
+.agent-dock-choice-n {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 4px;
+	background: var(--fill-raised);
+	color: var(--text-1);
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+}
+
+.agent-dock-choice[aria-pressed="true"] .agent-dock-choice-n {
+	background: var(--accent-fill);
+	color: var(--on-accent);
+}
+
+.agent-dock-choice-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.agent-dock-choice-label {
+	min-width: 0;
+	font-weight: 500;
+	line-height: 18px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-choice-description {
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.4;
+	color: var(--text-1);
+	white-space: pre-wrap;
+}
+
+.agent-dock-preview {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.agent-dock-preview-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-pop-foot {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 41px;
+	padding: 8px 8px 8px 16px;
+	border-top: 1px solid var(--hairline);
+	user-select: none;
+}
+
+.agent-dock-pop-note {
+	flex: 1;
+	min-width: 0;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-pop-foot-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.agent-dock-agent-rows {
+	padding: 4px 0;
+	list-style: none;
+}
+
+.agent-dock-agent-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 28px;
+	padding: 0 16px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-agent-where {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-dock-agent-row[data-status="unknown"] .agent-dock-pop-name,
+.agent-dock-agent-row[data-status="unreachable"] .agent-dock-pop-name {
+	color: var(--text-2);
+}
+
+.agent-dock-agent-meta {
+	flex: none;
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agent-row .agent-dock-agent-status {
+	min-width: 72px;
+	margin-left: 0;
+	text-align: right;
+}
+
+.agent-dock-recent {
+	padding: 8px 16px 12px;
+	border-top: 1px solid var(--hairline);
+}
+
+.agent-dock-recent-title {
+	margin-bottom: 4px;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 600;
+	color: var(--text-1);
+}
+
+.agent-dock-recent-rows {
+	list-style: none;
+}
+
+.agent-dock-recent-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 24px;
+	font-size: calc(12px * var(--ui-scale));
+	color: var(--text-1);
+}
+
+.agent-dock-recent-what {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-1);
+}
+
+.agent-dock-recent-what .agent-dock-pop-name {
+	font-weight: 500;
+}
+
+.agent-dock-recent-how {
+	flex: none;
+}
+
+.agent-dock-recent-row .agent-dock-card-age {
+	margin-left: auto;
 }

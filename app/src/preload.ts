@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
+import type { AgentDockSnapshot } from './agent-dock/model'
 import type {
+	AGENT_DOCK_IPC,
+	AgentDockApi,
 	AgentIntegrationsApi,
 	GraceClose,
 	HelmApi,
@@ -81,6 +84,14 @@ const termScroll = termScrollArg === 'top' || termScrollArg === 'middle' ? termS
 // (same convention as HELM_CLOSE_GRACE_MS in sessions.ts).
 const titleStickyEnv = Number(process.env.HELM_TITLE_STICKY_MS)
 const titleStickyMs = Number.isFinite(titleStickyEnv) && titleStickyEnv > 0 ? titleStickyEnv : null
+
+// Literal channel names: this sandboxed preload may only require `electron`.
+// Typed against the shared constant, so a renamed channel fails typecheck.
+const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
+	snapshot: 'agent-dock:snapshot',
+	setVisible: 'agent-dock:set-visible',
+	ack: 'agent-dock:ack',
+}
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
 	const handler = (_event: IpcRendererEvent, ...args: unknown[]) => listener(...(args as Args))
@@ -303,6 +314,14 @@ const api: HelmApi = {
 		onNext: listener => subscribe('tab:next', listener),
 		guardNativeDoubleClick: () => ipcRenderer.sendSync('window:guard-tab-double-click', sessionProfileToken) as boolean,
 	},
+	agentDock: {
+		onSnapshot: listener =>
+			subscribe<[AgentDockSnapshot, string]>(AGENT_DOCK_CHANNELS.snapshot, (snapshot, profileToken) => {
+				if (profileToken === sessionProfileToken) listener(snapshot)
+			}),
+		setVisible: visible => ipcRenderer.send(AGENT_DOCK_CHANNELS.setVisible, visible === true, sessionProfileToken),
+		ack: itemId => ipcRenderer.invoke(AGENT_DOCK_CHANNELS.ack, itemId, sessionProfileToken) as Promise<boolean>,
+	} satisfies AgentDockApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),
 		onGo: listener =>

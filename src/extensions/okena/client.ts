@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { taskCancelled } from '../../util/errors.js'
 
@@ -80,6 +80,27 @@ export class OkenaClient {
 		return this
 	}
 
+	/** Pin subsequent requests to one Okena profile id (e.g. a value from activeProfileId()). */
+	forProfile(profileId: string): OkenaClient {
+		return new OkenaClient(this.baseDir, profileId)
+	}
+
+	/**
+	 * The Okena profile id requests currently go to: the pinned one, else
+	 * profiles.json `last_used` → `default_profile`. Null when unresolvable.
+	 */
+	activeProfileId(): string | null {
+		if (this.profileId) return this.profileId
+		const profilesPath = join(this.baseDir, 'profiles.json')
+		if (!existsSync(profilesPath)) return null
+		try {
+			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			return profiles.last_used ?? profiles.default_profile ?? null
+		} catch {
+			return null
+		}
+	}
+
 	/**
 	 * Resolve the directory holding cli.json / remote.json.
 	 *
@@ -88,17 +109,15 @@ export class OkenaClient {
 	 * the active profile can change at runtime.
 	 */
 	private resolveConfigDir(): string | null {
-		const profilesPath = join(this.baseDir, 'profiles.json')
-		if (!existsSync(profilesPath)) return null
-		try {
-			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
-			const id = this.profileId ?? profiles.last_used ?? profiles.default_profile
-			if (!id) return null
-			const dir = join(this.baseDir, 'profiles', id)
-			return existsSync(dir) ? dir : null
-		} catch {
-			return null
-		}
+		if (!existsSync(join(this.baseDir, 'profiles.json'))) return null
+		const id = this.activeProfileId()
+		// Mirror Okena's validate_profile_id (ids may hold Unicode letters, e.g. "práce"),
+		// then make sure the joined path still lives directly under profiles/.
+		if (!id || id.includes('..') || /[/\\\0]/.test(id)) return null
+		const profilesDir = resolve(this.baseDir, 'profiles')
+		const dir = resolve(profilesDir, id)
+		if (!dir.startsWith(`${profilesDir}${sep}`)) return null
+		return existsSync(dir) ? dir : null
 	}
 
 	private loadCredentials(): OkenaCredentials | null {
@@ -152,14 +171,14 @@ export class OkenaClient {
 		}
 	}
 
-	private async authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+	private async authorizedFetch(path: string, init: RequestInit = {}, maxBytes?: number): Promise<Response> {
 		const creds = this.loadCredentials()
 		if (!creds) throw new Error('Okena not configured')
 
 		const send = (c: OkenaCredentials) => {
 			const headers = new Headers(init.headers)
 			headers.set('Authorization', `Bearer ${c.token}`)
-			return requestEndpoint(c.endpoint, path, { ...init, headers })
+			return requestEndpoint(c.endpoint, path, { ...init, headers }, maxBytes)
 		}
 
 		const res = await send(creds)
@@ -217,6 +236,58 @@ export class OkenaClient {
 		await this.action({ action: 'run_command', terminal_id: terminalId, command })
 	}
 
+	/**
+	 * Read-only bounded GET of an Okena JSON route. Throws a short verbatim error
+	 * on transport failure, timeout, non-2xx status, oversized body or invalid
+	 * JSON; the caller validates the shape.
+	 */
+	async getJson(path: string, opts: OkenaReadOptions = {}): Promise<unknown> {
+		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
+		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
+		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
+		const route = path.split('?')[0]
+		const res = await this.authorizedFetch(path, { method: 'GET', signal }, maxBytes)
+		const text = await readBoundedText(res, maxBytes)
+		if (!res.ok) {
+			if (res.status === 401) throw new Error(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`)
+			throw new Error(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`)
+		}
+		try {
+			return JSON.parse(text) as unknown
+		} catch {
+			throw new Error(`Okena GET ${route} returned invalid JSON`)
+		}
+	}
+
+	/** `GET /v1/state` as unvalidated JSON (bounded). */
+	getStateJson(opts?: OkenaReadOptions): Promise<unknown> {
+		return this.getJson('/v1/state', opts)
+	}
+
+	/** Claude Remote session detail: `GET /v1/claude/terminals/{id}` (404 = unknown terminal). */
+	getClaudeSession(terminalId: string, opts?: OkenaReadOptions): Promise<unknown> {
+		return this.getJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}`, opts)
+	}
+
+	/**
+	 * Claude Remote transcript page. A cursor is honoured only together with the
+	 * session id it came from; otherwise Okena answers a first page with reset=true.
+	 */
+	getClaudeTranscript(
+		terminalId: string,
+		query: { cursor?: number; sessionId?: string; agentId?: string } = {},
+		opts?: OkenaReadOptions,
+	): Promise<unknown> {
+		const params = new URLSearchParams()
+		if (query.cursor !== undefined && query.sessionId) {
+			params.set('cursor', String(query.cursor))
+			params.set('session_id', query.sessionId)
+		}
+		if (query.agentId) params.set('agent_id', query.agentId)
+		const search = params.size > 0 ? `?${params.toString()}` : ''
+		return this.getJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}/transcript${search}`, opts)
+	}
+
 	async getState(): Promise<OkenaState> {
 		const res = await this.authorizedFetch('/v1/state')
 		if (!res.ok) {
@@ -225,6 +296,39 @@ export class OkenaClient {
 		}
 		return res.json() as Promise<OkenaState>
 	}
+}
+
+export interface OkenaReadOptions {
+	/** Response body cap; larger bodies fail the read. */
+	maxBytes?: number
+	timeoutMs?: number
+	signal?: AbortSignal
+}
+
+const OKENA_READ_MAX_BYTES = 1024 * 1024
+const OKENA_READ_TIMEOUT_MS = 5000
+
+async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+	const declared = Number(res.headers.get('content-length') ?? Number.NaN)
+	if (Number.isFinite(declared) && declared > maxBytes) {
+		await res.body?.cancel().catch(() => {})
+		throw new Error(`Okena response exceeds ${maxBytes} bytes`)
+	}
+	if (!res.body) return ''
+	const reader = res.body.getReader()
+	const chunks: Uint8Array[] = []
+	let size = 0
+	for (;;) {
+		const { done, value } = await reader.read()
+		if (done) break
+		size += value.byteLength
+		if (size > maxBytes) {
+			await reader.cancel().catch(() => {})
+			throw new Error(`Okena response exceeds ${maxBytes} bytes`)
+		}
+		chunks.push(value)
+	}
+	return Buffer.concat(chunks).toString('utf8')
 }
 
 /** Compatibility wrapper for injected test/client doubles created before profile routing. */
@@ -250,7 +354,12 @@ export interface OkenaState {
 	}>
 }
 
-function requestEndpoint(endpoint: OkenaEndpoint, path: string, init: RequestInit = {}): Promise<Response> {
+function requestEndpoint(
+	endpoint: OkenaEndpoint,
+	path: string,
+	init: RequestInit = {},
+	maxBytes = Number.POSITIVE_INFINITY,
+): Promise<Response> {
 	if (endpoint.kind === 'http') return fetch(`${endpoint.baseUrl}${path}`, init)
 	if (init.body !== null && init.body !== undefined && typeof init.body !== 'string') {
 		return Promise.reject(new Error('Okena Unix-socket requests require a string body'))
@@ -274,7 +383,17 @@ function requestEndpoint(endpoint: OkenaEndpoint, path: string, init: RequestIni
 			},
 			res => {
 				const chunks: Buffer[] = []
-				res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+				let size = 0
+				res.on('data', chunk => {
+					const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+					size += bytes.length
+					if (size > maxBytes) {
+						fail(new Error(`Okena response exceeds ${maxBytes} bytes`))
+						req.destroy()
+						return
+					}
+					chunks.push(bytes)
+				})
 				res.once('aborted', () => fail(new Error('Okena Unix-socket response aborted')))
 				res.once('error', fail)
 				res.on('end', () => {

@@ -1,5 +1,6 @@
 // IPC surface shared by preload (implements) and renderer (consumes as `window.helm`).
 
+import type { AgentDockSnapshot } from './agent-dock/model'
 import type {
 	DaemonApi,
 	HelmResult,
@@ -394,6 +395,28 @@ export interface NavApi {
 	onGo(listener: (direction: 'back' | 'forward') => void): () => void
 }
 
+/**
+ * Agent dock IPC channels (reserved; main/preload implement them).
+ * - snapshot: main → renderer push of the full `AgentDockSnapshot` while shown: on content change, a 10 s freshness refresh, and right after setVisible(true).
+ * - setVisible: renderer → main `send`; main polls Okena fast only while some window shows the dock.
+ * - ack: renderer → main `invoke(itemId)`; resolves true when the item was acked (turns and orphaned asks only).
+ * Renderer → main messages carry the session profile token last, like the other preload channels.
+ */
+export const AGENT_DOCK_IPC = {
+	snapshot: 'agent-dock:snapshot',
+	setVisible: 'agent-dock:set-visible',
+	ack: 'agent-dock:ack',
+} as const
+
+/** Read-only Okena Claude agent dock (slice 1): no answering, prompting or control socket. */
+export interface AgentDockApi {
+	/** Push pattern like NavApi; returns unsubscribe. */
+	onSnapshot(listener: (snapshot: AgentDockSnapshot) => void): () => void
+	setVisible(visible: boolean): void
+	/** Jakub acknowledged an item (marks a turn's assistant message seen). Open asks are refused. */
+	ack(itemId: number): Promise<boolean>
+}
+
 export interface RunContextWindowApi {
 	open(itemId: string): Promise<void>
 }
@@ -435,6 +458,8 @@ export interface HelmApi {
 	tabs: TabsApi
 	/** Deep-link navigation pushed from main (helm:// protocol). */
 	nav: NavApi
+	/** Okena Claude agent dock (read-only slice 1). Preload always exposes it; main may never push a snapshot. */
+	agentDock: AgentDockApi
 	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
 	daemon: DaemonApi
 	/** Profile management and coordinated app/daemon switching. */

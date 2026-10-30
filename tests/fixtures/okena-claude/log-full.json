@@ -1,0 +1,33 @@
+{
+	"session_id": "eff77d11-bab6-4369-af2c-16e30679f31f",
+	"entries": [
+		{
+			"kind": "user",
+			"uuid": "30884a35-eb9f-4295-98f9-eb231f02a394",
+			"text": "Test pro dock: zavolej AskUserQuestion se 2 otázkami. Otázka 1 \"Barva?\" header \"Color\" možnosti Red, Blue (Blue s preview \"▇▇ blue\"). Otázka 2 \"Velikost?\" header \"Size\" možnosti S, M. Nic jiného nedělej.",
+			"origin": "channel"
+		},
+		{
+			"kind": "tool_use",
+			"uuid": "0de17bf0-f38d-4850-b777-6ce1593a0387",
+			"tool_use_id": "toolu_01VxzNJzegF7NRjPnPTqEg84",
+			"name": "AskUserQuestion",
+			"summary": "Barva?"
+		},
+		{
+			"kind": "tool_result",
+			"uuid": "afbf2bc8-86fd-44a8-ab2c-86c021abe30c",
+			"tool_use_id": "toolu_01VxzNJzegF7NRjPnPTqEg84",
+			"text": "Your questions have been answered: \"Barva?\"=\"Blue\", \"Velikost?\"=\"M\". You can now continue with these answers in mind.",
+			"is_error": false
+		},
+		{
+			"kind": "assistant",
+			"uuid": "a496fe0c-9dec-4a6d-8c2e-f9050c5c1f81",
+			"text": "Odpovědi: Barva = **Blue**, Velikost = **M**."
+		}
+	],
+	"cursor": 1276753,
+	"reset": true,
+	"next_cursor": "eff77d11-bab6-4369-af2c-16e30679f31f:1276753"
+}

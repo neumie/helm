@@ -13,6 +13,14 @@ import type {
 	TerminalPreferencesSnapshot,
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
+import { AGENT_DOCK_STORAGE, mountAgentDock } from './agent-dock-layout'
+import {
+	AGENT_DOCK_TERMINAL_TEXT,
+	type AgentDockFixture,
+	type AgentDockScenario,
+	createAgentDockFixture,
+} from './agent-dock/agent-dock-fixtures'
+import type { AgentDockPosition } from './agent-dock/presentation'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
@@ -25,6 +33,33 @@ export interface TerminalWorkspaceFixtureOptions {
 	expose?: boolean
 	/** Opt-in task-sidebar layout proof; default terminal workloads stay unchanged. */
 	sidebarVisibility?: boolean
+	/**
+	 * Opt-in agent-dock proof: mounts the production dock layout with an in-memory
+	 * AgentDockApi fed by reducer-built Okena fixtures. `expanded`/`position` are
+	 * written to the dock's layout preferences before mount; omitted values keep
+	 * whatever is stored (production defaults when nothing is). `output` writes a
+	 * recorded-looking shell session into the active terminal; `open` then clicks
+	 * that card (or the Agents button), like a pointer would.
+	 */
+	agentDock?: {
+		scenario?: AgentDockScenario | null
+		expanded?: boolean
+		position?: AgentDockPosition
+		output?: boolean
+		open?: AgentDockOpenFixture
+	}
+}
+
+export type AgentDockOpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
+
+/** Rail control each `agentDock.open` value clicks (card aria-labels start "#id Kind, …"). */
+const AGENT_DOCK_OPEN_SELECTOR: Record<AgentDockOpenFixture, string> = {
+	question: '.agent-dock-card[aria-label*=" Question,"]',
+	permission: '.agent-dock-card[aria-label*=" Permission,"]',
+	plan: '.agent-dock-card[aria-label*=" Plan,"]',
+	turn: '.agent-dock-card[data-kind="turn"]',
+	orphaned: '.agent-dock-card[data-tone="orphaned"]',
+	agents: '.agent-dock-agents-button',
 }
 
 export interface TerminalWorkspaceFixture {
@@ -44,6 +79,8 @@ export interface TerminalWorkspaceFixture {
 	clearWrites(): void
 	/** Listener count is observable so fixture cleanup is testable. */
 	preferenceListenerCount(): number
+	/** Present only with the opt-in `agentDock` option. */
+	agentDock?: AgentDockFixture
 	/** Emits raw PTY output through the production terminal write path. */
 	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
@@ -73,7 +110,7 @@ function shellNode<K extends keyof HTMLElementTagNameMap>(
 }
 
 /** Builds only the static production shell; mountTerminalWorkspace renders terminal UI. */
-function buildShell(root: HTMLElement, sidebarVisibility = false): void {
+function buildShell(root: HTMLElement, sidebarVisibility = false, agentDock = false): void {
 	root.replaceChildren()
 	const header = shellNode('header', 'topbar')
 	const chrome = shellNode('div', undefined, 'topbar-left')
@@ -143,6 +180,11 @@ function buildShell(root: HTMLElement, sidebarVisibility = false): void {
 	}
 	const right = shellNode('main', 'right')
 	right.append(shellNode('div', 'terms'))
+	if (agentDock) {
+		const dock = shellNode('section', 'agent-dock')
+		dock.hidden = true
+		right.append(dock)
+	}
 	const empty = shellNode('div', 'no-terms')
 	empty.hidden = true
 	const emptyCard = shellNode('div', undefined, 'no-terms-card')
@@ -487,13 +529,42 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 	useEffect(() => {
 		const root = rootRef.current
 		if (!root) return
-		buildShell(root, options.sidebarVisibility)
+		buildShell(root, options.sidebarVisibility, options.agentDock !== undefined)
 		const fixture = createTerminalWorkspaceFixture(options)
 		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({ root, helm: fixture.helm })
 		const sidebarLayout = options.sidebarVisibility
 			? mountSidebarLayout({ root, fitActive: () => workspace.fitActive() })
 			: null
+		let agentDockLayout: { dispose(): void } | null = null
+		let unmounted = false
+		if (options.agentDock) {
+			const { scenario = 'busy', expanded, position, open } = options.agentDock
+			const writePreference = (key: string, value: string | undefined) => {
+				if (value === undefined) return
+				try {
+					localStorage.setItem(key, value)
+				} catch {
+					// The dock must still mount without storage.
+				}
+			}
+			writePreference(AGENT_DOCK_STORAGE.expanded, expanded === undefined ? undefined : String(expanded))
+			writePreference(AGENT_DOCK_STORAGE.position, position)
+			const dockFixture = createAgentDockFixture(scenario)
+			fixture.agentDock = dockFixture
+			// Mount after this effect's commit, as production mounts outside any React render.
+			queueMicrotask(() => {
+				if (unmounted) return
+				agentDockLayout = mountAgentDock({
+					root,
+					fitActive: () => workspace.fitActive(),
+					api: dockFixture.api,
+					platform: fixture.helm.platform,
+				})
+			})
+		}
 		fixture.dispose = () => {
+			unmounted = true
+			agentDockLayout?.dispose()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 		}
@@ -501,8 +572,23 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = fixture
 		void workspace.ready.then(() => {
 			if (options.openBackground) (root.querySelector('#bg-toggle') as HTMLButtonElement | null)?.click()
+			if (options.agentDock?.output) {
+				// The default fixture's active tab is the 'shell' session.
+				fixture.emitData('shell', AGENT_DOCK_TERMINAL_TEXT)
+			}
+			const open = options.agentDock?.open
+			if (open)
+				requestAnimationFrame(() => {
+					if (unmounted) return
+					// A pointer click (detail 1): the popover opens and xterm keeps focus.
+					root
+						.querySelector(AGENT_DOCK_OPEN_SELECTOR[open])
+						?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+				})
 		})
 		return () => {
+			unmounted = true
+			agentDockLayout?.dispose()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 			if (options.expose)

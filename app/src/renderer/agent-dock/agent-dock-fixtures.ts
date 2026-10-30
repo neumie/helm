@@ -1,0 +1,426 @@
+// Storybook/Playwright-only agent-dock fixtures. Snapshots come from the REAL
+// recorded Okena bodies (tests/fixtures/okena-claude) driven through the
+// foundation reducer, never hand-written DockItems. Production code must not
+// import this module: it pulls the reducer (and zod) into the bundle.
+
+import showAsk from '../../../../tests/fixtures/okena-claude/show-ask.json'
+import showIdle from '../../../../tests/fixtures/okena-claude/show-idle.json'
+import stateAsk from '../../../../tests/fixtures/okena-claude/state-ask.json'
+import type { AgentDockObservation, AgentDockSnapshot } from '../../agent-dock/model'
+import { type AgentDockState, agentDockSnapshot, createAgentDockState, reduce } from '../../agent-dock/reduce'
+import type { AgentDockApi } from '../../shared'
+
+export type AgentDockScenario = 'connecting' | 'empty' | 'busy' | 'crowded' | 'orphaned' | 'down'
+
+type Json = Record<string, unknown>
+
+const PROFILE = 'storybook'
+const MINUTE = 60_000
+const clone = <T>(value: T): T => structuredClone(value)
+/** Jakub runs Okena with the MCP channel OFF: no channel attachment, terminal-origin prompts. */
+const channelOff = (body: Json): Json => ({ ...clone(body), channel_attached: false })
+const recordedDialog = (): Json => clone((showAsk.dialogs as Json[])[0] as Json)
+
+interface Pane {
+	tid: string
+	sid: string
+	projectId: string
+	project: string
+	name: string
+}
+
+const panes = {
+	ask: { tid: 'term-ask', sid: 'sess-ask', projectId: 'proj-helm', project: 'helm', name: 'agent-dock' },
+	turn: { tid: 'term-turn', sid: 'sess-turn', projectId: 'proj-quip', project: 'quip', name: 'ios-sync' },
+	working: { tid: 'term-work', sid: 'sess-work', projectId: 'proj-groove', project: 'groove-dungeon', name: 'levels' },
+	background: {
+		tid: 'term-bg',
+		sid: 'sess-bg',
+		projectId: 'proj-veka',
+		project: 'neumie-veka',
+		name: 'mobile-aktivity',
+	},
+	permission: {
+		tid: 'term-perm',
+		sid: 'sess-perm',
+		projectId: 'proj-veka',
+		project: 'neumie-veka',
+		name: 'mobile-hamburger',
+	},
+	answered: { tid: 'term-done', sid: 'sess-done', projectId: 'proj-helm', project: 'helm', name: 'release-notes' },
+	plan: { tid: 'term-plan', sid: 'sess-plan', projectId: 'proj-psyon', project: 'psyon', name: 'invoices-export' },
+	release: {
+		tid: 'term-release',
+		sid: 'sess-release',
+		projectId: 'proj-veka',
+		project: 'neumie-veka',
+		name: 'ios-release',
+	},
+} satisfies Record<string, Pane>
+
+/**
+ * Claude's own permission suggestion for a Bash dialog, in the shape Claude Code's
+ * PermissionRequest hook sends and Okena passes through verbatim (`permission_suggestions`).
+ */
+const bashSuggestion = (command: string): Json => ({
+	type: 'addRules',
+	rules: [{ toolName: 'Bash', ruleContent: command }],
+	behavior: 'allow',
+	destination: 'localSettings',
+})
+
+function detail(pane: Pane, overrides: Json = {}): Json {
+	return {
+		...channelOff(showIdle as Json),
+		terminal_id: pane.tid,
+		session_id: pane.sid,
+		...overrides,
+	}
+}
+
+function okenaState(version: number, live: Array<{ pane: Pane; body: Json }>): Json {
+	const projects = new Map<string, Json>()
+	for (const { pane } of live) {
+		const project = projects.get(pane.projectId) ?? {
+			id: pane.projectId,
+			name: pane.project,
+			path: `/fixture/${pane.project}`,
+			layout: { type: 'split', children: [] as Json[] },
+			terminal_names: {} as Record<string, string>,
+		}
+		;((project.layout as Json).children as Json[]).push({ type: 'terminal', terminal_id: pane.tid })
+		;(project.terminal_names as Record<string, string>)[pane.tid] = pane.name
+		projects.set(pane.projectId, project)
+	}
+	const dialogs: Record<string, number> = {}
+	for (const { pane, body } of live) {
+		const count = (body.dialogs as Json[] | undefined)?.length ?? 0
+		if (count > 0) dialogs[pane.tid] = count
+	}
+	return {
+		...clone(stateAsk as Json),
+		state_version: version,
+		claude_sessions: live.map(({ pane }) => pane.tid).sort(),
+		claude_dialogs: dialogs,
+		projects: [...projects.values()],
+	}
+}
+
+function transcript(pane: Pane, entries: Json[], cursor: number, reset: boolean): Json {
+	return { session_id: pane.sid, entries, cursor, reset }
+}
+
+const assistant = (uuid: string, text: string): Json => ({ kind: 'assistant', uuid, text })
+const user = (uuid: string, text: string): Json => ({ kind: 'user', uuid, text, origin: 'terminal' })
+
+/** Builds one poll; panes without a transcript this tick omit it, like the real source. */
+function poll(
+	version: number,
+	live: Array<{ pane: Pane; body: Json; transcript?: Json }>,
+): AgentDockObservation & { type: 'poll' } {
+	return {
+		type: 'poll',
+		profile: PROFILE,
+		state: { ok: true, body: okenaState(version, live) },
+		terminals: live.map(({ pane, body, transcript: page }) => ({
+			terminalId: pane.tid,
+			detail: { ok: true, body },
+			...(page ? { transcript: { ok: true, body: page } } : {}),
+		})),
+	}
+}
+
+const down = (error: string): AgentDockObservation => ({
+	type: 'poll',
+	profile: PROFILE,
+	state: { ok: false, error },
+	terminals: [],
+})
+
+/** Runs the timeline through the real reducer and returns its final state. */
+function run(steps: Array<[number, AgentDockObservation]>, start: AgentDockState): AgentDockState {
+	let state = start
+	for (const [at, observation] of steps) state = reduce(state, observation, at).state
+	return state
+}
+
+/**
+ * Busy day: a two-question AskUserQuestion (recorded fixture) waiting 2h+, a
+ * permission dialog waiting 40m, an unchecked turn from 6m ago, one working and
+ * one background agent, and an ask already answered in the terminal. `crowded`
+ * adds a plan approval waiting 25m and a second unchecked turn (five items).
+ */
+function busyTimeline(
+	now: number,
+	crowded = false,
+): {
+	steps: Array<[number, AgentDockObservation]>
+	live: Array<{ pane: Pane; body: Json }>
+	version: number
+} {
+	const t0 = now - 2 * 60 * MINUTE - 15 * MINUTE
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const askBody = detail(panes.ask, {
+		busy: true,
+		dialogs: [{ ...recordedDialog(), created_at_ms: t0 - MINUTE }],
+	})
+	const answeredBody = detail(panes.answered, {
+		busy: true,
+		dialogs: [
+			{
+				id: `${prefix}-2`,
+				tool_name: 'ExitPlanMode',
+				tool_input: { plan: '1. Write release notes\n2. Tag v1.4.0' },
+				permission_suggestions: [],
+				created_at_ms: t0 - 2 * MINUTE,
+			},
+		],
+	})
+	const working = detail(panes.working, { busy: true, pr_links: [] })
+	const background = detail(panes.background, {
+		busy: false,
+		running_subagents: [
+			{ agent_id: 'sub-1', agent_type: 'Explore' },
+			{ agent_id: 'sub-2', agent_type: 'Explore' },
+			{ agent_id: 'sub-3', agent_type: 'general-purpose' },
+		],
+	})
+	const turnWorking = detail(panes.turn, {
+		busy: true,
+		pr_links: [
+			{
+				number: 212,
+				url: 'https://github.com/example/quip/pull/212',
+				repository: 'example/quip',
+				last_seen_at: '2026-10-30T10:00:00Z',
+			},
+		],
+	})
+	const turnIdle = { ...turnWorking, busy: false }
+	const seedPage = (pane: Pane, uuid: string) =>
+		transcript(pane, [user(`${uuid}-u`, 'Start.'), assistant(uuid, 'Working on it.')], 1_000, true)
+	const steps: Array<[number, AgentDockObservation]> = []
+	let version = 4_000
+	const seedLive = [
+		{ pane: panes.ask, body: askBody, transcript: seedPage(panes.ask, 'ask-a0') },
+		{ pane: panes.answered, body: answeredBody, transcript: seedPage(panes.answered, 'done-a0') },
+		{ pane: panes.working, body: working, transcript: seedPage(panes.working, 'work-a0') },
+		{ pane: panes.background, body: background, transcript: seedPage(panes.background, 'bg-a0') },
+		{ pane: panes.turn, body: turnWorking, transcript: seedPage(panes.turn, 'turn-a0') },
+	]
+	steps.push([t0, poll(++version, seedLive)])
+	// 40 minutes ago a permission dialog opens in a new pane.
+	const permissionBody = detail(panes.permission, {
+		busy: true,
+		dialogs: [
+			{
+				id: `${prefix}-9`,
+				tool_name: 'Bash',
+				tool_input: { command: 'npm run deploy:stage', description: 'Deploy the worker to stage' },
+				permission_suggestions: [bashSuggestion('npm run deploy:stage')],
+				created_at_ms: now - 40 * MINUTE,
+			},
+		],
+	})
+	const planBody = detail(panes.plan, {
+		busy: true,
+		dialogs: [
+			{
+				id: `${prefix}-11`,
+				tool_name: 'ExitPlanMode',
+				tool_input: {
+					plan: [
+						'# Export invoices as ISDOC',
+						'',
+						'1. Add `isdoc` to the export format enum and the API schema.',
+						'2. Map Invoice to ISDOC 6.0.2 (supplier, customer, lines, VAT recap).',
+						'3. Validate against the official XSD in a unit test.',
+						'4. Add an "Export ISDOC" action to the invoice detail menu.',
+						'5. Ship behind the `isdoc-export` flag; enable for Psyon only.',
+					].join('\n'),
+				},
+				permission_suggestions: [],
+				created_at_ms: now - 25 * MINUTE,
+			},
+		],
+	})
+	const releaseWorking = detail(panes.release, { busy: true })
+	const releaseIdle = { ...releaseWorking, busy: false }
+	const withPermission = (turnBody: Json, turnPage?: Json, releaseBody = releaseWorking, releasePage?: Json) => [
+		{ pane: panes.ask, body: askBody },
+		{ pane: panes.answered, body: answeredBody },
+		{ pane: panes.working, body: working },
+		{ pane: panes.background, body: background },
+		{ pane: panes.turn, body: turnBody, ...(turnPage ? { transcript: turnPage } : {}) },
+		{ pane: panes.permission, body: permissionBody, transcript: seedPage(panes.permission, 'perm-a0') },
+		...(crowded
+			? [
+					{ pane: panes.plan, body: planBody, transcript: seedPage(panes.plan, 'plan-a0') },
+					{ pane: panes.release, body: releaseBody, ...(releasePage ? { transcript: releasePage } : {}) },
+				]
+			: []),
+	]
+	steps.push([
+		now - 40 * MINUTE,
+		poll(++version, withPermission(turnWorking, undefined, releaseWorking, seedPage(panes.release, 'release-a0'))),
+	])
+	if (crowded) {
+		// 22 minutes ago the iOS release agent hands a device test back to Jakub.
+		const releasePage = transcript(
+			panes.release,
+			[
+				assistant(
+					'release-a1',
+					'Released v1.101.2. It is live on prod (build 4127, phased rollout 100%).\n\nPlease test on a real iPhone: open Aktivity, then Vybrané události, and check the list scrolls without the jank from the bug report. The simulator does not reproduce it.',
+				),
+			],
+			2_000,
+			false,
+		)
+		steps.push([now - 22 * MINUTE, poll(++version, withPermission(turnWorking, undefined, releaseIdle, releasePage))])
+		steps.push([now - 22 * MINUTE + 9_000, poll(++version, withPermission(turnWorking, undefined, releaseIdle))])
+	}
+	const release = crowded ? releaseIdle : releaseWorking
+	// 6 minutes ago the quip agent finishes its turn with a prose question; it stays idle.
+	const turnPage = transcript(
+		panes.turn,
+		[
+			assistant(
+				'turn-a1',
+				'Done. Migrated 3 screens, tests green.\n\nPR #212 is ready. Before I deploy to stage, can you confirm the secret is set in stage?',
+			),
+		],
+		2_000,
+		false,
+	)
+	steps.push([now - 6 * MINUTE, poll(++version, withPermission(turnIdle, turnPage, release))])
+	steps.push([now - 6 * MINUTE + 9_000, poll(++version, withPermission(turnIdle, undefined, release))])
+	// 3 minutes ago the release-notes plan was approved in its own terminal.
+	const answeredNow = { ...answeredBody, dialogs: [] }
+	const afterAnswer = withPermission(turnIdle, undefined, release).map(entry =>
+		entry.pane === panes.answered ? { pane: panes.answered, body: answeredNow } : entry,
+	)
+	steps.push([now - 3 * MINUTE, poll(++version, afterAnswer)])
+	steps.push([now - 1_000, poll(++version, afterAnswer)])
+	return { steps, live: afterAnswer, version }
+}
+
+/** Reducer state for a named scenario at `now` (ms). */
+export function agentDockScenarioState(name: AgentDockScenario, now: number): AgentDockState {
+	const persisted = { version: 1 as const, nextItemId: 3, seen: { [`${PROFILE}:${panes.turn.tid}`]: 'turn-a0' } }
+	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
+	if (name === 'connecting') return start
+	if (name === 'empty') return run([[now - 1_000, poll(1, [])]], start)
+	if (name === 'crowded') return run(busyTimeline(now, true).steps, start)
+	const busy = busyTimeline(now)
+	if (name === 'busy') return run(busy.steps, start)
+	// Both outage scenarios replace the final "now" poll; the timeline stays monotonic.
+	const beforeNow = busy.steps.slice(0, -1)
+	if (name === 'down') return run([...beforeNow, [now - 2 * MINUTE, down('connect ECONNREFUSED')]], start)
+	// orphaned: Okena goes away and comes back; the recorded question vanished meanwhile.
+	const live = busy.live.map(entry =>
+		entry.pane === panes.ask ? { pane: panes.ask, body: detail(panes.ask, { busy: true }) } : entry,
+	)
+	return run(
+		[...beforeNow, [now - 150_000, down('connect ECONNREFUSED')], [now - MINUTE, poll(busy.version + 1, live)]],
+		start,
+	)
+}
+
+export function agentDockScenario(name: AgentDockScenario, now: number): AgentDockSnapshot {
+	return agentDockSnapshot(agentDockScenarioState(name, now), now)
+}
+
+export interface AgentDockFixture {
+	api: AgentDockApi
+	calls: { visible: boolean[]; acks: number[] }
+	/** Replaces the reducer state with a scenario and pushes its snapshot through the production subscription. */
+	emitScenario(name: AgentDockScenario): void
+	listenerCount(): number
+}
+
+/** In-memory AgentDockApi: ack runs the REAL reducer ack and pushes the next snapshot. */
+export function createAgentDockFixture(
+	initial: AgentDockScenario | null,
+	clock: () => number = Date.now,
+): AgentDockFixture {
+	const listeners = new Set<(snapshot: AgentDockSnapshot) => void>()
+	const calls: AgentDockFixture['calls'] = { visible: [], acks: [] }
+	let state: AgentDockState | null = initial ? agentDockScenarioState(initial, clock()) : null
+	const push = () => {
+		if (!state) return
+		const snapshot = agentDockSnapshot(state, clock())
+		for (const listener of listeners) listener(snapshot)
+	}
+	return {
+		calls,
+		api: {
+			onSnapshot(listener) {
+				listeners.add(listener)
+				if (state) listener(agentDockSnapshot(state, clock()))
+				return () => listeners.delete(listener)
+			},
+			setVisible(visible) {
+				calls.visible.push(visible)
+			},
+			async ack(itemId) {
+				calls.acks.push(itemId)
+				if (!state) return false
+				const before = state.items.find(item => item.id === itemId)?.state
+				state = reduce(state, { type: 'ack', itemId }, clock()).state
+				const acked = before !== 'resolved' && state.items.find(item => item.id === itemId)?.state === 'resolved'
+				if (acked) push()
+				return acked
+			},
+		},
+		emitScenario(name) {
+			state = agentDockScenarioState(name, clock())
+			push()
+		},
+		listenerCount: () => listeners.size,
+	}
+}
+
+/** A recorded-looking shell session for review stories: fills the terminal so the rows the popover keeps visible show. */
+export const AGENT_DOCK_TERMINAL_TEXT = [
+	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
+	'\x1b[1m❯\x1b[0m git log --oneline -12',
+	'\x1b[33m4f1c2a9\x1b[0m feat(agent-dock): card rail replaces the expanded list',
+	'\x1b[33m9b07e3d\x1b[0m feat(agent-dock): keep permission_suggestions on ask facts',
+	'\x1b[33m1e5d0c4\x1b[0m fix(agent-dock): never all-clear while an agent is unreadable',
+	'\x1b[33m7a2b9f1\x1b[0m feat(agent-dock): ⌘⇧J goes to the dock',
+	'\x1b[33m3c8e6d2\x1b[0m feat(agent-dock): orphan open asks across an Okena restart',
+	'\x1b[33m0d4f7a8\x1b[0m feat(agent-dock): spool events for helm dock watch',
+	'\x1b[33m6e9a1b3\x1b[0m feat(agent-dock): read Okena Claude Remote sessions',
+	'\x1b[33m2f3c5e7\x1b[0m chore: bump xterm to 6.0.0',
+	'\x1b[33m8a1d4c6\x1b[0m fix(terminal): refit after the sidebar hides',
+	'\x1b[33m5b6e2f9\x1b[0m feat(remote): limited subagent observation',
+	'\x1b[33mc4a7d10\x1b[0m docs(design-system): §3.21 activity indicator',
+	'\x1b[33me1f8b52\x1b[0m test(browser): sidebar visibility harness',
+	'',
+	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
+	'\x1b[1m❯\x1b[0m npm run test -- tests/helm-agent-dock-*.test.ts',
+	'',
+	'\x1b[32m✔\x1b[0m opens an ask when Okena reports a dialog \x1b[38;5;242m(0.41ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m resolves an ask answered in the terminal \x1b[38;5;242m(0.22ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m orphans open asks across an Okena restart \x1b[38;5;242m(0.37ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m supersedes a turn when the agent continues \x1b[38;5;242m(0.19ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m never persists turn text \x1b[38;5;242m(0.08ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m backs off while Okena is unreachable \x1b[38;5;242m(1.92ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m pushes nothing while idle \x1b[38;5;242m(0.66ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m rail keeps every item in view at 900px \x1b[38;5;242m(0.12ms)\x1b[0m',
+	'\x1b[32m✔\x1b[0m popover never covers the last terminal rows \x1b[38;5;242m(0.09ms)\x1b[0m',
+	'\x1b[38;5;245mℹ\x1b[0m tests 48',
+	'\x1b[38;5;245mℹ\x1b[0m pass 48',
+	'\x1b[38;5;245mℹ\x1b[0m fail 0',
+	'\x1b[38;5;245mℹ\x1b[0m duration_ms 214.00',
+	'',
+	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
+	'\x1b[1m❯\x1b[0m git status --short',
+	' \x1b[31mM\x1b[0m app/src/renderer/agent-dock/AgentDock.tsx',
+	' \x1b[31mM\x1b[0m app/src/renderer/styles.css',
+	' \x1b[31mM\x1b[0m docs/design-system.md',
+	'',
+	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
+	'\x1b[1m❯\x1b[0m ',
+].join('\r\n')

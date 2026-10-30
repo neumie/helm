@@ -165,6 +165,9 @@ export const NATIVE_SHORTCUT_RESERVATIONS: readonly NativeShortcutReservation[] 
 		owner: 'View > Toggle Developer Tools',
 		platforms: nonDarwinDesktop,
 	},
+	// Fixed renderer window-capture toggle (agent-dock-layout.ts); a menu or terminal binding
+	// on the same chord would swallow it or fire alongside it, so the editor must refuse it.
+	{ chord: native('KeyJ', { shift: true }), owner: 'Agent dock > Toggle' },
 ]
 
 export type ShortcutConflict =

@@ -1,5 +1,6 @@
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
+import { mountAgentDock } from './agent-dock-layout'
 import { appearance } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { mountSidebar } from './sidebar/SidebarRoot'
@@ -29,6 +30,17 @@ const workspace = mountTerminalWorkspace({ root: document, helm: window.helm, ap
 
 // Width/visibility are renderer presentation preferences, never placement mutations.
 mountSidebarLayout({ root: document, fitActive: () => workspace.fitActive() })
+
+// Read-only Okena Claude agent dock. An older preload without the bridge leaves
+// #agent-dock hidden and the terminal pane full height.
+const agentDock = window.helm.agentDock
+if (agentDock)
+	mountAgentDock({
+		root: document,
+		fitActive: () => workspace.fitActive(),
+		api: agentDock,
+		platform: window.helm.platform,
+	})
 
 // Profile activation reloads this renderer after its bridge fence and buffer
 // flush. The mount remains profile-token-bound through window.helm for its full

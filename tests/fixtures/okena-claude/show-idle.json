@@ -1,0 +1,15 @@
+{
+	"terminal_id": "ee3ba9c4-58cf-4e6f-8c3a-7fd17a87ad8f",
+	"session_id": "eff77d11-bab6-4369-af2c-16e30679f31f",
+	"has_transcript": true,
+	"hooks_attached": true,
+	"channel_attached": true,
+	"busy": false,
+	"queued_prompts": 0,
+	"dialogs": [],
+	"running_subagents": [],
+	"pr_links": [],
+	"project_id": "0ef0c81e-c5fd-4a6a-92c0-4aacf737bf69",
+	"project_name": "helm",
+	"terminal_name": null
+}

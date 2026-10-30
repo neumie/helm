@@ -1,0 +1,87 @@
+{
+	"state_version": 1148,
+	"claude_sessions": ["ee3ba9c4-58cf-4e6f-8c3a-7fd17a87ad8f"],
+	"claude_dialogs": {
+		"ee3ba9c4-58cf-4e6f-8c3a-7fd17a87ad8f": 1
+	},
+	"hooks": [
+		{
+			"id": 7,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-7",
+			"status": {
+				"state": "running"
+			},
+			"terminal_id": "16ac6564-955b-42ef-9383-a445e5824e57"
+		},
+		{
+			"id": 6,
+			"hook_type": "before_worktree_remove",
+			"command": "hatch down --force",
+			"project_name": "example-project-6",
+			"status": {
+				"state": "succeeded",
+				"duration_ms": 9024
+			},
+			"terminal_id": "88f7117e-54e6-458d-b030-04496d0b06ba"
+		},
+		{
+			"id": 5,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-5",
+			"status": {
+				"state": "succeeded",
+				"duration_ms": 658187
+			},
+			"terminal_id": "d41dec22-114b-4977-9f21-2704b6f3a5b1"
+		},
+		{
+			"id": 4,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-4",
+			"status": {
+				"state": "succeeded",
+				"duration_ms": 1557142
+			},
+			"terminal_id": "15bbeacb-0288-49b2-afa0-9f94921a03f0"
+		},
+		{
+			"id": 3,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-3",
+			"status": {
+				"state": "succeeded",
+				"duration_ms": 1553435
+			},
+			"terminal_id": "d4ef3cc8-6833-436c-bada-63cafabf29a7"
+		},
+		{
+			"id": 2,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-2",
+			"status": {
+				"state": "failed",
+				"duration_ms": 773343,
+				"exit_code": 1,
+				"stderr": ""
+			},
+			"terminal_id": "c1f171a4-78da-44e7-afb4-345336a39d65"
+		},
+		{
+			"id": 1,
+			"hook_type": "on_worktree_create",
+			"command": "hatch setup",
+			"project_name": "example-project-1",
+			"status": {
+				"state": "succeeded",
+				"duration_ms": 635346
+			},
+			"terminal_id": "b5f6e34a-f012-4df2-86e4-af3e61dcc7e8"
+		}
+	]
+}

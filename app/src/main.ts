@@ -6,9 +6,12 @@ import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell 
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
+import { OkenaClient } from '../../src/extensions/okena/client'
 import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
+import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
+import { AgentDockWatcher } from './agent-dock/watcher'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { createReviewControl } from './document-review/control'
@@ -36,7 +39,12 @@ import { ScheduledAttentionNotifier, showNativeAttentionNotification } from './s
 import { ElectronResidencyController } from './scheduled-residency'
 import { createSessionIpcGate } from './session-ipc-gate'
 import * as sessions from './sessions'
-import type { PiAgentStatusIntegrationSnapshot, TerminalPlacementCommitCommand, TerminalTransferEvent } from './shared'
+import {
+	AGENT_DOCK_IPC,
+	type PiAgentStatusIntegrationSnapshot,
+	type TerminalPlacementCommitCommand,
+	type TerminalTransferEvent,
+} from './shared'
 import type { HelmResult, ProfileActivationResult, ProfileKnowledgeBinding, ProfilesState } from './shared-helm'
 import { recordedShortcutInput } from './shortcut-recorder'
 import { type ShortcutAction, type ShortcutChord, electronAccelerator, matchingShortcutAction } from './shortcuts'
@@ -210,6 +218,23 @@ const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneratio
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
 const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
+// Okena Claude agent dock (read-only slice 1): main polls Okena's structured
+// Claude Remote API and spools to <userData>/agent-dock for `helm dock`.
+// Harness runs (screenshot, attestation, custom/tmp userData) never poll the
+// operator's live Okena unless HELM_AGENT_DOCK=1 opts in; HELM_AGENT_DOCK=0 disables it.
+const agentDockWatcher =
+	!profileSwitchAttestationMode &&
+	process.env.HELM_AGENT_DOCK !== '0' &&
+	(process.env.HELM_AGENT_DOCK === '1' ||
+		(!screenshotPath && !userDataDirArg && !process.argv.includes('--user-data-dir-tmp')))
+		? new AgentDockWatcher({
+				dir: path.join(app.getPath('userData'), 'agent-dock'),
+				source: new OkenaClaudeSource(new OkenaClient()),
+				publish: snapshot =>
+					sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
+				isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+			})
+		: null
 // Transfer preflight is narrower than ordinary terminal IPC: it also requires
 // the current main renderer. A future move must add the controller's complete
 // snapshot/detach/attach capability hand-off before any move channel exists.
@@ -907,7 +932,11 @@ function createWindow(): BrowserWindow {
 		if (/^https?:/.test(url)) void shell.openExternal(url)
 		return { action: 'deny' }
 	})
+	win.on('focus', () => agentDockWatcher?.poke())
+	// A reloading/crashed renderer no longer shows the dock; the new one re-announces it.
+	win.webContents.on('did-start-loading', () => agentDockWatcher?.setVisible(false))
 	win.webContents.on('render-process-gone', (_event, details) => {
+		agentDockWatcher?.setVisible(false)
 		if (screenshotPath || profileSwitchAttestationMode) return
 		const recovering = rendererCrashRecovery.recover(win.webContents, details)
 		console.error(
@@ -917,6 +946,7 @@ function createWindow(): BrowserWindow {
 		)
 	})
 	win.on('closed', () => {
+		agentDockWatcher?.setVisible(false)
 		cancelShortcutRecorder()
 		if (mainWindow === win) mainWindow = null
 		killAllPtyClients()
@@ -1711,6 +1741,18 @@ ipcMain.handle(
 		return true
 	},
 )
+
+// Agent dock: main renderer only, current profile token last (like the other session channels).
+ipcMain.on(AGENT_DOCK_IPC.setVisible, (event, visible: unknown, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return
+	agentDockWatcher?.setVisible(visible === true)
+})
+
+ipcMain.handle(AGENT_DOCK_IPC.ack, async (event, itemId: unknown, profileToken: unknown) => {
+	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
+	if (typeof itemId !== 'number' || !Number.isSafeInteger(itemId) || itemId <= 0) return false
+	return (await agentDockWatcher?.ack(itemId)) ?? false
+})
 
 ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
@@ -2911,6 +2953,8 @@ void app.whenReady().then(async () => {
 	// never admit or poll real scheduled work as a side effect of their fixture.
 	if (!screenshotPath && !profileSwitchAttestationMode) void scheduledResidency.start()
 	createWindow()
+	// Never blocks startup: an absent Okena is just a "source down" dock.
+	void agentDockWatcher?.start()
 	if (!screenshotPath && !profileSwitchAttestationMode) {
 		reviewControlStart = documentReviewControl.start().catch(() => {
 			console.warn(
@@ -3060,6 +3104,7 @@ app.on('before-quit', event => {
 
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
+	agentDockWatcher?.stop()
 	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
 	// shutdown always follows the final resident lease attempt. Release the
 	// provider watch first so a quit does not leave ClientCare polling on.

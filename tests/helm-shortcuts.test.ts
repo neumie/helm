@@ -123,6 +123,16 @@ test('structured conflicts identify native and Helm owners', () => {
 		owner: 'newTerminal',
 		ownerLabel: 'New terminal',
 	})
+	// The agent dock's fixed window-capture toggle cannot be shadowed by a menu or terminal binding.
+	for (const action of ['newTerminal', 'selectTerminal1'] as const) {
+		const dock = effectiveShortcuts()
+		dock[action] = [{ code: 'KeyJ', shift: true }]
+		assert.deepEqual(shortcutConflicts(dock)[0], {
+			kind: 'native',
+			chord: { code: 'KeyJ', shift: true },
+			owner: 'Agent dock > Toggle',
+		})
+	}
 })
 
 test('duplicate, native, system-owned, and macOS control-like conflicts are rejected', () => {
