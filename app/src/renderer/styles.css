@@ -1294,14 +1294,23 @@ body.dragging {
 
 /* ---------- agent dock (§3.24) ---------- */
 
-/* Read-only Okena Claude queue beside the terminals. The 28px strip never
- * changes height; the card rail it toggles has one fixed height; details open in
- * a popover over the terminal. Flat: hairline edge toward the terminal. */
+/* Okena Claude queue beside the terminals, drawn in the terminal's own language:
+ * one monospace face at the terminal's rhythm (12px / 18px rows) where text
+ * carries meaning, the UI face for prose, hairline rules and dim/bright text
+ * instead of fills. The 28px strip never changes height; the queue it toggles has
+ * one fixed height; an opened entry splits a pane off the terminal in-flow, and
+ * the pane and its entry share one edge (a tab joined to its page). */
 #agent-dock[hidden] {
 	display: none;
 }
 
 .agent-dock {
+	--dock-mono: "SF Mono", Menlo, ui-monospace, monospace;
+	--dock-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--dock-fs: calc(12px * var(--ui-scale));
+	--dock-lh: calc(18px * var(--ui-scale));
+	--dock-prose-fs: calc(13px * var(--ui-scale));
+	--dock-prose-lh: calc(20px * var(--ui-scale));
 	grid-row: 2;
 	grid-column: 1;
 	position: relative;
@@ -1309,20 +1318,36 @@ body.dragging {
 	flex-direction: column;
 	min-width: 0;
 	background: var(--pane);
-	border-top: 1px solid var(--hairline);
 }
 
 #right[data-agent-dock-position="top"] .agent-dock {
 	grid-row: 1;
-	border-top: none;
-	border-bottom: 1px solid var(--hairline);
 }
 
-.agent-dock-view {
+.agent-dock-view,
+.agent-dock-host {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 }
+
+.agent-dock-host {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: normal;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-1);
+}
+
+:where(.agent-dock-host) button {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+	text-align: left;
+}
+
+/* ---------- strip: the status line on the window edge ---------- */
 
 .agent-dock-strip {
 	flex: none;
@@ -1331,6 +1356,12 @@ body.dragging {
 	height: 28px;
 	overflow: hidden;
 	container: agent-dock-strip / inline-size;
+	/* The hairline toward the terminal (or the queue) is drawn inside the 28px. */
+	box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+.agent-dock-host[data-position="top"] .agent-dock-strip {
+	box-shadow: inset 0 -1px 0 var(--hairline);
 }
 
 .agent-dock-toggle {
@@ -1343,12 +1374,7 @@ body.dragging {
 	padding: 0 16px;
 	border: none;
 	background: transparent;
-	color: var(--text-1);
-	font-family: inherit;
-	font-size: calc(12px * var(--ui-scale));
-	letter-spacing: -0.01em;
 	white-space: nowrap;
-	text-align: left;
 	cursor: pointer;
 	user-select: none;
 	overflow: hidden;
@@ -1365,24 +1391,17 @@ body.dragging {
 
 .agent-dock-chevron {
 	flex: none;
-	display: inline-flex;
+	width: 1ch;
+	margin-right: -4px;
 	color: var(--text-2);
-	transition: transform 140ms ease-out;
-}
-
-/* The chevron points where the panel opens: away from the terminal. */
-.agent-dock[data-position="bottom"][data-expanded="false"] .agent-dock-chevron,
-.agent-dock[data-position="top"][data-expanded="true"] .agent-dock-chevron {
-	transform: rotate(180deg);
 }
 
 .agent-dock-needs {
 	flex: none;
 	display: inline-flex;
-	align-items: center;
-	gap: 8px;
+	align-items: baseline;
+	gap: 12px;
 	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
 }
 
 .agent-dock-needs[data-tone="warn"] .agent-dock-needs-count {
@@ -1390,17 +1409,22 @@ body.dragging {
 	font-weight: 600;
 }
 
-.agent-dock-age {
-	color: var(--text-2);
-	font-variant-numeric: tabular-nums;
+.agent-dock-age,
+.agent-dock-entry-age,
+.agent-dock-rule-age {
+	color: var(--text-1);
 	white-space: nowrap;
 }
 
-.agent-dock-age[data-tone="warn"] {
+.agent-dock-age[data-tone="warn"],
+.agent-dock-entry-age[data-tone="warn"],
+.agent-dock-rule-age[data-tone="warn"] {
 	color: var(--warn);
 }
 
-.agent-dock-age[data-tone="danger"] {
+.agent-dock-age[data-tone="danger"],
+.agent-dock-entry-age[data-tone="danger"],
+.agent-dock-rule-age[data-tone="danger"] {
 	color: var(--danger);
 }
 
@@ -1412,19 +1436,20 @@ body.dragging {
 	color: var(--text-0);
 }
 
-.agent-dock-counts {
+.agent-dock-counts,
+.agent-dock-kbd {
 	flex: none;
+	font: inherit;
 	color: var(--text-2);
-	font-variant-numeric: tabular-nums;
 }
 
 .agent-dock-health {
 	flex: 0 1 auto;
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	gap: 6px;
 	min-width: 6px;
-	color: var(--text-2);
+	color: var(--text-1);
 }
 
 .agent-dock-health-text {
@@ -1453,15 +1478,7 @@ body.dragging {
 	background: var(--danger);
 }
 
-.agent-dock-kbd {
-	flex: none;
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-2);
-}
-
-/* Narrow #right (down to ~535px: 960px window minus a 420px sidebar): the needs count and
-   the newest head matter most, so the fixed-width hint and counts go first. */
+/* Narrow #right: the needs count and the newest head matter most, so the hint and counts go first. */
 @container agent-dock-strip (max-width: 760px) {
 	.agent-dock-kbd,
 	.agent-dock-counts {
@@ -1469,431 +1486,350 @@ body.dragging {
 	}
 }
 
-/* ---------- card rail (§3.24) ---------- */
+/* ---------- queue: one entry per item, the Agents entry last ---------- */
 
-/* Positioning context for the detail popover; strip and rail stack in it. */
-.agent-dock-host {
+/* One fixed height whatever it holds (4 terminal rows + the hairline), so arriving items never refit xterm. */
+.agent-dock-rail {
 	position: relative;
 	display: flex;
-	flex-direction: column;
+	height: calc(var(--dock-lh) * 4 + 1px);
 	min-width: 0;
-}
-
-/* One fixed height whatever it holds (88px of cards + 8px padding each side +
- * the 1px hairline toward the strip), so new items never resize the terminal. */
-.agent-dock-rail {
-	flex: none;
-	display: flex;
-	align-items: stretch;
-	gap: 12px;
-	min-width: 0;
-	height: 105px;
-	padding: 8px 16px;
+	overflow: hidden;
 	outline: none;
-	container: agent-dock-rail / inline-size;
 }
 
 .agent-dock-rail[hidden] {
 	display: none;
 }
 
-.agent-dock-host[data-position="bottom"] .agent-dock-rail {
-	border-bottom: 1px solid var(--hairline);
+.agent-dock-ch-probe {
+	position: absolute;
+	top: 0;
+	left: 0;
+	visibility: hidden;
+	pointer-events: none;
+	white-space: pre;
 }
 
-.agent-dock-host[data-position="top"] .agent-dock-rail {
+.agent-dock-rail-main {
+	flex: 1 1 auto;
+	display: flex;
+	min-width: 0;
+}
+
+/* Every cell carries the queue's edge toward the pane/terminal, so the open entry can break it. */
+.agent-dock-rail-note,
+.agent-dock-queue > li,
+.agent-dock-rail-main > .agent-dock-agents-entry,
+.agent-dock-rail-main > .agent-dock-agents-empty {
 	border-top: 1px solid var(--hairline);
 }
 
+.agent-dock-host[data-position="top"]
+	:is(
+		.agent-dock-rail-note,
+		.agent-dock-queue > li,
+		.agent-dock-rail-main > .agent-dock-agents-entry,
+		.agent-dock-rail-main > .agent-dock-agents-empty
+	) {
+	border-top: none;
+	border-bottom: 1px solid var(--hairline);
+}
+
 .agent-dock-rail-note {
-	flex: 1 1 auto;
+	flex: 0 0 256px;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	gap: 4px;
-	min-width: 0;
+	padding: 0 16px;
+	border-right: 1px solid var(--hairline);
+	font-family: var(--dock-sans);
 	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.4;
-	color: var(--text-2);
-	user-select: text;
-}
-
-/* Okena down: the note leads the (frozen) cards instead of filling the rail. */
-.agent-dock-rail-note[data-tone="warn"] {
-	flex: 0 1 256px;
-}
-
-.agent-dock-rail-note-title {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-weight: 600;
+	line-height: calc(16px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	white-space: normal;
 	color: var(--text-1);
 }
 
-.agent-dock-rail-note-detail {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 3;
-	overflow: hidden;
-	overflow-wrap: anywhere;
+.agent-dock-rail > .agent-dock-rail-note:only-of-type {
+	flex: 1 1 auto;
+	border-right: none;
+}
+
+.agent-dock-rail-note-title {
+	color: var(--text-0);
+	font-weight: 600;
 }
 
 .agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-title {
 	color: var(--warn);
 }
 
-/* Every item that needs Jakub stays in view: one row of full cards (beside the Agents
- * block, then its narrow form), else two rows of compact cards, else the Agents button
- * joins the grid, else three rows of dense chips that shrink to fit (railLayout). */
-.agent-dock-rail-main {
-	flex: 1 1 auto;
-	display: flex;
-	align-items: stretch;
-	gap: 12px;
-	min-width: 0;
+.agent-dock-rail-note-detail {
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
 }
 
-.agent-dock-cards {
+.agent-dock-queue {
 	flex: 1 1 auto;
-	display: grid;
-	grid-template-columns: repeat(var(--rail-columns, 1), minmax(0, 320px));
-	gap: 8px;
+	display: flex;
 	min-width: 0;
+	margin: 0;
+	padding: 0;
 	list-style: none;
 }
 
-.agent-dock-cards[data-density="full"] {
-	grid-template-rows: 88px;
+.agent-dock-queue[data-density="compact"],
+.agent-dock-queue[data-density="dense"] {
+	display: grid;
+	grid-template-columns: repeat(var(--queue-columns, 1), minmax(0, 1fr));
+	grid-auto-rows: minmax(0, 1fr);
 }
 
-.agent-dock-cards[data-density="compact"] {
-	grid-template-rows: repeat(2, 40px);
-}
-
-/* Last resort past ~10 items in a narrow pane: dense chips shrink to fit, never scroll. */
-.agent-dock-cards[data-density="dense"] {
-	grid-template-rows: repeat(3, 24px);
-}
-
-.agent-dock-cards-empty {
-	grid-column: 1 / -1;
-	align-self: center;
-	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.4;
-	color: var(--text-2);
-	user-select: text;
-}
-
-.agent-dock-card-slot {
+.agent-dock-queue > li {
 	display: flex;
 	min-width: 0;
-	container: agent-dock-card / inline-size;
+	border-right: 1px solid var(--hairline);
 }
 
-/* A tight compact/dense cell keeps the agent name whole: the project and gist give way
- * first. Full cards (≥176px) keep the project on the name row; it ellipsizes first. */
-@container agent-dock-card (max-width: 200px) {
-	.agent-dock-card:not([data-density="full"]) .agent-dock-card-project,
-	.agent-dock-card-line {
-		display: none;
-	}
+/* Full: entries take the width their names need first, up to 320px; the rest is quiet fill. */
+.agent-dock-queue[data-density="full"] > .agent-dock-queue-slot {
+	flex: 1000 1 0;
+	max-width: 320px;
 }
 
-/* A squeezed dense chip keeps its edge, indicator and (ellipsized) name; the age goes. */
-@container agent-dock-card (max-width: 80px) {
-	.agent-dock-card[data-density="dense"] .agent-dock-card-age {
-		display: none;
-	}
+.agent-dock-queue > .agent-dock-queue-fill {
+	flex: 1 1 0;
+	border-right: none;
 }
 
-.agent-dock-card {
-	position: relative;
+.agent-dock-queue-empty {
+	flex: 1 1 auto;
+	align-items: center;
+	padding: 0 16px;
+	color: var(--text-1);
+}
+
+.agent-dock-entry {
+	container: agent-dock-entry / inline-size;
+}
+
+.agent-dock-entry,
+.agent-dock-agents-entry {
+	flex: 1;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
-	gap: 4px;
-	width: 100%;
 	min-width: 0;
-	padding: 8px 12px;
+	padding: 0 12px;
 	border: none;
-	border-radius: 8px;
-	background: var(--fill-subtle);
-	color: var(--text-1);
-	font-family: inherit;
-	font-size: calc(12px * var(--ui-scale));
-	letter-spacing: -0.01em;
-	text-align: left;
+	background: transparent;
 	cursor: pointer;
 	user-select: none;
-	overflow: hidden;
 	transition: background-color 140ms ease-out;
 }
 
-.agent-dock-card[data-density="compact"] {
-	gap: 0;
-	padding: 4px 8px 4px 12px;
+.agent-dock-queue > li:first-child .agent-dock-entry {
+	padding-left: 16px;
 }
 
-.agent-dock-card[data-density="dense"] {
-	padding: 0 8px 0 12px;
-	border-radius: 6px;
+.agent-dock-entry:hover,
+.agent-dock-agents-entry:hover {
+	background: var(--fill-subtle);
 }
 
-/* Urgency edge: 2px tone line on the leading edge; dashed when orphaned. */
-.agent-dock-card::before {
-	content: "";
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: 0;
-	width: 2px;
-	background: var(--card-edge, var(--hairline-strong));
-}
-
-.agent-dock-card[data-tone="ask"] {
-	--card-edge: var(--warn);
-	--card-kind: var(--warn);
-}
-
-.agent-dock-card[data-tone="ask-danger"] {
-	--card-edge: var(--danger);
-	--card-kind: var(--danger);
-}
-
-.agent-dock-card[data-tone="orphaned"] {
-	--card-edge: repeating-linear-gradient(to bottom, var(--warn) 0 4px, transparent 4px 8px);
-	--card-kind: var(--warn);
-}
-
-.agent-dock-card[data-tone="turn"] {
-	--card-edge: var(--accent);
-	--card-kind: var(--accent);
-}
-
-/* Answered from the dock and observed landing: lingers a few seconds with its receipt. */
-.agent-dock-card[data-tone="done"] {
-	--card-edge: var(--success);
-	--card-kind: var(--text-1);
-}
-
-/* Receipt in place of the gist: Sending… (neutral), sent, unconfirmed (warn), ✓ (success), refused/error (danger). */
-.agent-dock-card-receipt,
-.agent-dock-receipt {
-	color: var(--text-1);
-	font-weight: 500;
-}
-
-.agent-dock-card-receipt[data-tone="warn"],
-.agent-dock-receipt[data-tone="warn"] {
-	color: var(--warn);
-}
-
-.agent-dock-card-receipt[data-tone="success"],
-.agent-dock-receipt[data-tone="success"] {
-	color: var(--success);
-}
-
-.agent-dock-card-receipt[data-tone="danger"],
-.agent-dock-receipt[data-tone="danger"] {
-	color: var(--danger);
-}
-
-.agent-dock-card:hover,
-.agent-dock-card[data-open="true"] {
-	background: var(--fill-raised);
-}
-
-/* The card whose popover is open: a strong inset ring, not only a fill step. */
-.agent-dock-card[data-open="true"],
-.agent-dock-agents-button[data-open="true"] {
-	box-shadow: inset 0 0 0 1px var(--hairline-strong);
-}
-
-.agent-dock-card:focus-visible,
-.agent-dock-agents-button:focus-visible {
+.agent-dock-entry:focus-visible,
+.agent-dock-agents-entry:focus-visible {
 	outline: 2px solid var(--accent);
-	outline-offset: 2px;
+	outline-offset: -2px;
 }
 
-.agent-dock-card-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	height: 16px;
-}
-
-.agent-dock-card[data-density="dense"] .agent-dock-card-row {
-	height: 24px;
-}
-
-.agent-dock-card-kind {
-	flex: none;
-	font-weight: 600;
-	color: var(--card-kind, var(--text-1));
-	white-space: nowrap;
-}
-
-.agent-dock-card-age {
-	flex: none;
-	margin-left: auto;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-}
-
-.agent-dock-card-age[data-tone="warn"] {
-	color: var(--warn);
-}
-
-.agent-dock-card-age[data-tone="danger"] {
-	color: var(--danger);
-}
-
-/* Name before project: the project ellipsizes (and vanishes) first. */
-.agent-dock-card-where {
-	flex: 0 1 auto;
+.agent-dock-entry-line {
 	display: flex;
 	align-items: baseline;
 	gap: 8px;
 	min-width: 0;
+	height: var(--dock-lh);
 	white-space: nowrap;
 }
 
-/* Never shrinks for the project (weighted flex-shrink still nibbles a few px); only the row caps it. */
-.agent-dock-card-name {
-	flex: 0 0 auto;
-	max-width: 100%;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	font-weight: 600;
-	color: var(--text-0);
+/* Glyph, one cell, name: entryNameWidth counts exactly these cells. */
+.agent-dock-entry-head {
+	gap: 1ch;
 }
 
-.agent-dock-card-project {
-	flex: 0 1000 auto;
+/* The project takes what the name leaves. Under 4 cells it wraps onto the slot's clipped second line
+ * (the empty ::before keeps it from being first on the line), so it shows whole, ellipsized or not at
+ * all, never as a stub. */
+.agent-dock-entry-where {
+	flex: 1 1 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
 	min-width: 0;
+	height: var(--dock-lh);
 	overflow: hidden;
-	text-overflow: ellipsis;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
 }
 
-.agent-dock-card-gist {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	min-width: 0;
-	overflow: hidden;
-	line-height: 16px;
-	color: var(--text-1);
-	overflow-wrap: anywhere;
+/* A zero-width space, so the span's baseline is the text's and the project lines up with the name. */
+.agent-dock-entry-where::before {
+	content: "\200b";
+	flex: 0 0 0;
 }
 
-.agent-dock-card-line {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--text-1);
-}
-
-/* Working agents: one button (count + the first agents); the popover lists them all.
- * `side` 232px (name + status lines), `narrow` 140px (names only), or a grid cell. */
-.agent-dock-agents {
+.agent-dock-glyph {
 	flex: none;
-	display: flex;
-	align-items: stretch;
-	width: 232px;
-	padding-left: 12px;
-	border-left: 1px solid var(--hairline);
-}
-
-.agent-dock-agents[data-slot="narrow"] {
-	width: 140px;
-}
-
-.agent-dock-agents-button {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	width: 100%;
-	min-width: 0;
-	padding: 8px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	color: var(--text-1);
-	font-family: inherit;
-	font-size: calc(12px * var(--ui-scale));
-	letter-spacing: -0.01em;
-	text-align: left;
-	cursor: pointer;
-	user-select: none;
-	transition: background-color 140ms ease-out;
-}
-
-.agent-dock-agents-button:hover,
-.agent-dock-agents-button[data-open="true"] {
-	background: var(--fill-subtle);
-}
-
-.agent-dock-agents-title {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	height: 16px;
+	width: 1ch;
+	text-align: center;
 	font-weight: 600;
-	color: var(--text-1);
 }
 
-.agent-dock-agents-count {
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 400;
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
+.agent-dock-entry-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-0);
+	font-weight: 600;
 }
 
-.agent-dock-agents-more {
-	display: inline-flex;
+.agent-dock-entry-head > .agent-dock-entry-age,
+.agent-dock-entry-head > .agent-dock-entry-receipt,
+.agent-dock-entry-meta > .agent-dock-entry-age {
+	flex: none;
 	margin-left: auto;
+	padding-left: 8px;
+}
+
+/* Kind and gist sit under the name. */
+.agent-dock-entry-meta,
+.agent-dock-entry-gist {
+	padding-left: 2ch;
+}
+
+/* Kind and wait: the layout sizes entries so both fit; if they ever do not, the kind ellipsizes, never the wait. */
+.agent-dock-entry-kind {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.agent-dock-entry-project {
+	flex: 1 1 4ch;
+	min-width: 0;
+	max-width: max-content;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-2);
+	font-weight: 400;
+}
+
+.agent-dock-entry-gist {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	color: var(--text-2);
 }
 
-.agent-dock-agents-summary {
-	height: 16px;
+.agent-dock-entry-meta > .agent-dock-entry-receipt {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
 }
 
-.agent-dock-agents-lines {
+.agent-dock-entry[data-density="dense"] {
+	padding: 0 8px;
+}
+
+/* Tones: glyphs, kind words, receipts. Never fills. */
+.agent-dock-glyph[data-tone="ask"],
+.agent-dock-glyph[data-tone="orphaned"],
+.agent-dock-entry-kind[data-tone="ask"],
+.agent-dock-entry-kind[data-tone="orphaned"],
+.agent-dock-rule-kind[data-tone="ask"],
+.agent-dock-rule-kind[data-tone="orphaned"] {
+	color: var(--warn);
+}
+
+.agent-dock-glyph[data-tone="ask-danger"],
+.agent-dock-entry-kind[data-tone="ask-danger"],
+.agent-dock-rule-kind[data-tone="ask-danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-glyph[data-tone="turn"],
+.agent-dock-entry-kind[data-tone="turn"],
+.agent-dock-rule-kind[data-tone="turn"] {
+	color: var(--accent);
+}
+
+.agent-dock-glyph[data-tone="done"],
+.agent-dock-entry-kind[data-tone="done"],
+.agent-dock-rule-kind[data-tone="done"] {
+	color: var(--success);
+}
+
+.agent-dock-entry-receipt[data-tone="neutral"],
+.agent-dock-receipt[data-tone="neutral"] {
+	color: var(--text-1);
+}
+
+.agent-dock-entry-receipt[data-tone="warn"],
+.agent-dock-receipt[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-entry-receipt[data-tone="success"],
+.agent-dock-receipt[data-tone="success"] {
+	color: var(--success);
+}
+
+.agent-dock-entry-receipt[data-tone="danger"],
+.agent-dock-receipt[data-tone="danger"] {
+	color: var(--danger);
+}
+
+/* Agents entry: a column beside the entries, or the grid's last cell. */
+.agent-dock-rail-main > .agent-dock-agents-entry,
+.agent-dock-rail-main > .agent-dock-agents-empty {
+	flex: 0 0 216px;
+	padding: 0 16px 0 12px;
+	border-left: 1px solid var(--hairline);
+}
+
+.agent-dock-rail-main > [data-slot="narrow"] {
+	flex-basis: 96px;
+}
+
+.agent-dock-agents-empty {
 	display: flex;
-	flex-direction: column;
-	min-width: 0;
+	align-items: center;
+	font-family: var(--dock-sans);
+	font-size: calc(12px * var(--ui-scale));
+	line-height: calc(16px * var(--ui-scale));
+	letter-spacing: -0.01em;
+	color: var(--text-2);
+}
+
+.agent-dock-queue-agents > .agent-dock-agents-empty {
+	flex: 1;
+	padding: 0 12px;
+}
+
+.agent-dock-agents-title {
+	color: var(--text-0);
+	font-weight: 600;
+}
+
+.agent-dock-agents-count {
+	color: var(--text-1);
 }
 
 .agent-dock-agent-line {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	height: 16px;
-	white-space: nowrap;
-}
-
-.agent-dock-agent-slot {
-	flex: none;
-	display: inline-flex;
-	width: 6px;
+	gap: 1ch;
 }
 
 .agent-dock-agent-name {
@@ -1901,428 +1837,447 @@ body.dragging {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	font-weight: 500;
-	color: var(--text-0);
+	color: var(--text-1);
 }
 
-.agent-dock-agent-status {
-	flex: none;
+.agent-dock-agent-line > .agent-dock-entry-age {
 	margin-left: auto;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
+	padding-left: 8px;
 }
 
-.agent-dock-agent-more {
-	justify-content: flex-end;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-}
-
-.agent-dock-agent-line[data-status="unknown"] .agent-dock-agent-name,
-.agent-dock-agent-line[data-status="unreachable"] .agent-dock-agent-name {
+/* Agent status glyphs (Agents entry and pane). */
+.agent-dock-status {
+	flex: none;
+	width: 1ch;
+	text-align: center;
 	color: var(--text-2);
 }
 
-.agent-dock-agents-empty {
-	align-self: center;
-	padding: 0 8px;
-	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.4;
+.agent-dock-status[data-status="working"] {
+	color: var(--text-0);
+	animation: agent-dock-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-dock-status[data-status="background"] {
 	color: var(--text-1);
 }
 
-/* No session connected while items exist and the Agents slot is a grid cell. */
-.agent-dock-agents-cell-note {
-	display: flex;
-	align-items: center;
-	width: 100%;
-	min-width: 0;
-	overflow: hidden;
+.agent-dock-status[data-status="waiting"],
+.agent-dock-status[data-status="unknown"] {
+	color: var(--warn);
 }
 
-.agent-dock-agents-cell-note .agent-dock-agents-empty {
-	font-size: calc(11px * var(--ui-scale));
-	line-height: 1.3;
+@keyframes agent-dock-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
 }
 
-/* As a grid cell (tight rail) the button takes the cards' fill and size. */
-.agent-dock-agents-button[data-slot="cell"] {
-	justify-content: center;
-	gap: 0;
-	padding: 4px 8px 4px 12px;
-	border-radius: 8px;
-	background: var(--fill-subtle);
+/* ---------- open: the entry and its pane are one shape ---------- */
+
+/* While a pane is open the queue's edge is the pane's border… */
+.agent-dock-host[data-pane="true"]
+	:is(
+		.agent-dock-rail-note,
+		.agent-dock-queue > li,
+		.agent-dock-rail-main > .agent-dock-agents-entry,
+		.agent-dock-rail-main > .agent-dock-agents-empty
+	) {
+	border-top-color: var(--hairline-strong);
+	border-bottom-color: var(--hairline-strong);
 }
 
-.agent-dock-agents-button[data-slot="cell"][data-density="dense"] {
-	padding: 0 8px 0 12px;
-	border-radius: 6px;
+/* …which opens over the open entry: the entry takes the pane's surface and its sides carry the edge
+ * down. In a grid the open entry's column is the tab: the cells between it and the pane join too. */
+.agent-dock-queue > li[data-link],
+.agent-dock-rail-main > .agent-dock-agents-entry[data-open="true"] {
+	background: var(--term-bg);
+	border-right-color: var(--hairline-strong);
+	box-shadow: inset 1px 0 0 var(--hairline-strong);
 }
 
-.agent-dock-agents-button[data-slot="cell"]:hover,
-.agent-dock-agents-button[data-slot="cell"][data-open="true"] {
-	background: var(--fill-raised);
+.agent-dock-host[data-position="bottom"] .agent-dock-queue > li:is([data-link="open"], [data-link="between"]),
+.agent-dock-host[data-position="bottom"] .agent-dock-rail-main > .agent-dock-agents-entry[data-open="true"] {
+	border-top-color: transparent;
 }
 
-.agent-dock-agents-button[data-slot="cell"][data-density="dense"] .agent-dock-agents-title {
-	height: 24px;
+.agent-dock-host[data-position="top"] .agent-dock-queue > li:is([data-link="open"], [data-link="between"]),
+.agent-dock-host[data-position="top"] .agent-dock-rail-main > .agent-dock-agents-entry[data-open="true"] {
+	border-bottom-color: transparent;
 }
 
-/* ---------- detail popover (§3.24, §3.8 surface) ---------- */
+/* Inside the tab column the divider above (below, on a top dock) the open entry stays a quiet hairline. */
+.agent-dock-host[data-position="bottom"] .agent-dock-queue > li[data-link="open-far"] {
+	border-top-color: var(--hairline);
+}
 
-/* Floats over the terminal (never resizes it). Placement (popoverPlacement) keeps the
- * terminal's last 4 rows (input line) and, on a top dock, the 4 rows next to it visible. */
-.agent-dock-popover {
-	position: absolute;
-	z-index: 40;
+.agent-dock-host[data-position="top"] .agent-dock-queue > li[data-link="open-far"] {
+	border-bottom-color: var(--hairline);
+}
+
+.agent-dock-queue > li[data-link-left] {
+	border-right-color: transparent;
+}
+
+.agent-dock-rail-main > .agent-dock-agents-entry[data-open="true"] {
+	border-left-color: transparent;
+}
+
+.agent-dock-queue > li[data-link] .agent-dock-entry:hover,
+.agent-dock-queue > li[data-link] .agent-dock-agents-entry:hover,
+.agent-dock-agents-entry[data-open="true"]:hover {
+	background: transparent;
+}
+
+/* Bright/dim: the open entry is bright, the rest step back. */
+.agent-dock-host[data-pane="true"] .agent-dock-entry[data-open="false"] .agent-dock-entry-name,
+.agent-dock-host[data-pane="true"] .agent-dock-agents-entry[data-open="false"] .agent-dock-agents-title {
+	color: var(--text-1);
+	font-weight: 400;
+}
+
+.agent-dock-entry[data-open="true"] .agent-dock-entry-gist {
+	color: var(--text-1);
+}
+
+/* ---------- pane (in-flow split of the terminal row) ---------- */
+
+.agent-dock-pane {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
 	overflow: hidden;
-	border: 1px solid var(--hairline);
-	border-radius: 8px;
-	background: var(--chrome);
-	box-shadow: var(--shadow-1);
-	color: var(--text-0);
-	font-size: calc(13px * var(--ui-scale));
-	letter-spacing: -0.01em;
-	outline: none;
+	background: var(--term-bg);
 	user-select: text;
-	container: agent-dock-pop / inline-size;
-	animation: agent-dock-pop-up 120ms ease-out;
+	outline: none;
+	container: agent-dock-pane / inline-size;
 }
 
-.agent-dock-popover[data-position="top"] {
-	animation-name: agent-dock-pop-down;
+.agent-dock-pane:focus-visible {
+	box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-@keyframes agent-dock-pop-up {
-	from {
-		opacity: 0;
-		transform: translateY(4px);
-	}
+/* Top dock: the terminal continues below the pane, so the pane closes with a rule of its own. */
+.agent-dock-pane[data-position="top"] {
+	border-bottom: 1px solid var(--hairline-strong);
 }
 
-@keyframes agent-dock-pop-down {
-	from {
-		opacity: 0;
-		transform: translateY(-4px);
-	}
-}
-
-.agent-dock-pop-head {
+/* Titled rule: the pane's top border, tmux-style. */
+.agent-dock-rule {
 	flex: none;
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	grid-template-areas:
-		"title actions"
-		"meta actions";
-	column-gap: 12px;
-	row-gap: 4px;
-	padding: 8px 8px 8px 16px;
-	border-bottom: 1px solid var(--hairline);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	min-width: 0;
+	white-space: nowrap;
+	color: var(--text-1);
 	user-select: none;
 }
 
-.agent-dock-pop-title {
-	grid-area: title;
+.agent-dock-rule-lead,
+.agent-dock-rule-tail,
+.agent-dock-rule-fill {
+	height: 1px;
+	background: var(--hairline-strong);
+}
+
+.agent-dock-rule-lead,
+.agent-dock-rule-tail {
+	flex: none;
+	width: 8px;
+}
+
+.agent-dock-rule-fill {
+	flex: 1 1 auto;
+	min-width: 24px;
+}
+
+.agent-dock-rule-title {
 	display: flex;
-	align-items: center;
+	align-items: baseline;
 	gap: 8px;
 	min-width: 0;
-	padding-top: 4px;
-	white-space: nowrap;
+	overflow: hidden;
 }
 
-.agent-dock-pop-kind {
+.agent-dock-rule-title > .agent-dock-glyph {
+	margin-right: -2px;
+}
+
+.agent-dock-rule-kind {
 	flex: none;
-	font-weight: 600;
 	color: var(--text-0);
+	font-weight: 600;
 }
 
-.agent-dock-pop-kind[data-tone="ask"],
-.agent-dock-pop-kind[data-tone="orphaned"] {
-	color: var(--warn);
+.agent-dock-rule-name {
+	flex: none;
+	color: var(--text-0);
+	font-weight: 600;
 }
 
-.agent-dock-pop-kind[data-tone="ask-danger"] {
-	color: var(--danger);
-}
-
-.agent-dock-pop-kind[data-tone="turn"] {
-	color: var(--accent);
-}
-
-.agent-dock-pop-where {
+.agent-dock-rule-project {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	color: var(--text-2);
 }
 
-/* Identity reads as on the cards: name first, project muted after it. */
-.agent-dock-pop-name {
-	font-weight: 600;
-	color: var(--text-0);
-}
-
-.agent-dock-pop-project {
+.agent-dock-rule-meta {
+	flex: none;
+	display: flex;
+	gap: 8px;
 	margin-left: 8px;
-	font-size: calc(12px * var(--ui-scale));
 	color: var(--text-1);
 }
 
-.agent-dock-pop-meta {
-	grid-area: meta;
+.agent-dock-rule-end {
+	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 4px;
-	min-width: 0;
-	padding-bottom: 4px;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
+	gap: 8px;
 }
 
-.agent-dock-pop-meta .agent-dock-card-age {
-	margin-left: 0;
-}
-
-.agent-dock-pop-id {
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	user-select: text;
-}
-
-.agent-dock-pop-actions {
-	grid-area: actions;
-	display: flex;
-	align-items: center;
-	gap: 4px;
-}
-
-/* "‹ 1 of 5 ›": steps through the items that need Jakub (also ← → / ↑ ↓ in the popover). */
 .agent-dock-stepper {
 	display: flex;
 	align-items: center;
+	gap: 2px;
 }
 
 .agent-dock-step-count {
-	min-width: 40px;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
+	min-width: 3ch;
 	text-align: center;
-	white-space: nowrap;
+	color: var(--text-1);
 }
 
-.agent-dock-step-prev svg {
-	transform: rotate(180deg);
+.agent-dock-rule-btn {
+	min-width: 24px;
+	height: 24px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	text-align: center;
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 
-.agent-dock-popover .icon-btn:disabled {
-	opacity: 0.45;
-	background: none;
+.agent-dock-rule-btn:hover:not(:disabled) {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+
+.agent-dock-rule-btn:disabled {
+	opacity: 0.4;
 	cursor: default;
 }
 
-.agent-dock-pop-scroll {
+.agent-dock-rule-close {
+	color: var(--text-2);
+}
+
+.agent-dock-rule-close:hover {
+	color: var(--text-0);
+}
+
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-rule-project,
+	.agent-dock-rule-meta > :not(.agent-dock-rule-age) {
+		display: none;
+	}
+}
+
+/* Body: scrolls inside the pane's fixed height. */
+.agent-dock-pane-scroll {
 	flex: 1 1 auto;
 	min-height: 0;
-	overflow-y: auto;
+	overflow: auto;
+	padding: 2px 16px 8px;
 	outline: none;
 }
 
-/* The body is a tab stop so clipped content scrolls from the keyboard (§4 ring, inset). */
-.agent-dock-pop-scroll:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+.agent-dock-pane-scroll:focus-visible {
+	box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.agent-dock-pop-scroll::-webkit-scrollbar {
-	width: 10px;
-}
-
-.agent-dock-pop-scroll::-webkit-scrollbar-thumb {
-	background: var(--thumb);
-	border: 3px solid transparent;
-	border-radius: 999px;
-	background-clip: padding-box;
-}
-
-.agent-dock-pop-scroll::-webkit-scrollbar-thumb:hover {
-	background-color: var(--thumb-hover);
-}
-
-.agent-dock-pop-body {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-	padding: 12px 16px 16px;
-}
-
-.agent-dock-pop-text {
-	color: var(--text-0);
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-
-.agent-dock-pop-label {
-	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.5;
-	color: var(--text-1);
-	overflow-wrap: anywhere;
-}
-
-.agent-dock-pop-quiet {
-	font-weight: 400;
-	color: var(--text-2);
-}
-
-.agent-dock-pop-warning {
-	padding: 8px 16px;
-	background: var(--warn-soft);
-	color: var(--warn);
-	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.5;
-}
-
-.agent-dock-pop-facts {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 8px;
-	font-size: calc(12px * var(--ui-scale));
-	color: var(--text-2);
-}
-
-.agent-dock-pop-fact {
-	display: inline-flex;
-	align-items: center;
-	padding: 2px 8px;
-	border-radius: 999px;
-	background: var(--accent-soft);
-	color: var(--accent);
-	font-size: calc(11px * var(--ui-scale));
-	font-weight: 500;
-	font-variant-numeric: tabular-nums;
+/* Prose stays in the UI face: questions, descriptions, turn messages, warnings. */
+.agent-dock-question,
+.agent-dock-pane-lead,
+.agent-dock-pane-label,
+.agent-dock-choice-description,
+.agent-dock-message-text,
+.agent-dock-warn,
+.agent-dock-input,
+.agent-dock-facts {
+	font-family: var(--dock-sans);
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	letter-spacing: -0.01em;
 }
 
 .agent-dock-mono {
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: calc(11px * var(--ui-scale));
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: normal;
 }
 
-/* Verbatim agent previews/inputs: monospace plain text in a --well block. */
-.agent-dock-well {
-	padding: 8px 12px;
-	border-radius: 6px;
-	background: var(--well);
-	color: var(--text-1);
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: calc(11px * var(--ui-scale));
-	line-height: 1.5;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	overflow: auto;
-}
-
-.agent-dock-command {
-	font-size: calc(12px * var(--ui-scale));
+.agent-dock-bright {
 	color: var(--text-0);
 }
 
-/* Option previews are drawn text (mockups, tables): never rewrap them. */
-.agent-dock-preview-text {
-	max-height: 200px;
-	line-height: 1.3;
-	white-space: pre;
-	overflow-wrap: normal;
-}
-
-.agent-dock-question-tabs {
-	align-self: flex-start;
-	min-width: 280px;
-	max-width: 100%;
-}
-
-.agent-dock-question-n {
+.agent-dock-quiet {
 	color: var(--text-2);
-	font-variant-numeric: tabular-nums;
-}
-
-.agent-dock-question-tab {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.agent-dock-question-done {
-	display: inline-flex;
-	color: var(--success);
 }
 
 .agent-dock-question {
-	font-weight: 500;
-	line-height: 1.5;
+	margin: 4px 0 6px;
+	color: var(--text-0);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 
-.agent-dock-ask-grid {
+.agent-dock-pane-label {
+	margin: 4px 0 0;
+	color: var(--text-1);
+}
+
+.agent-dock-pane-lead {
+	margin: 6px 0 2px;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-warn {
+	display: grid;
+	grid-template-columns: 2ch minmax(0, 1fr);
+	margin: 6px 0;
+	color: var(--warn);
+}
+
+.agent-dock-warn-mark {
+	font-family: var(--dock-mono);
+	font-weight: 600;
+}
+
+/* Question tabs: `1 Color  ✓ Size`. */
+.agent-dock-qtabs {
+	display: flex;
+	gap: 4px;
+	margin: 4px 0 2px -8px;
+}
+
+.agent-dock-qtab {
+	display: inline-flex;
+	align-items: center;
+	gap: 1ch;
+	height: 24px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-2);
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.agent-dock-qtab:hover {
+	color: var(--text-1);
+}
+
+.agent-dock-qtab[aria-selected="true"] {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+
+.agent-dock-qtab-mark[data-done="true"] {
+	color: var(--success);
+}
+
+.agent-dock-qtab:focus-visible {
+	outline-offset: 0;
+}
+
+/* Question body: options, then the preview beside them (stacked when narrow). */
+.agent-dock-ask {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
-	gap: 12px;
 }
 
-.agent-dock-ask-grid[data-previews="true"] {
-	grid-template-columns: minmax(0, 1fr) minmax(0, 236px);
+.agent-dock-ask[data-previews="true"] {
+	grid-template-columns: fit-content(62%) minmax(200px, 1fr);
+	column-gap: 16px;
 }
 
-@container agent-dock-pop (max-width: 540px) {
-	.agent-dock-ask-grid[data-previews="true"] {
+.agent-dock-ask-main {
+	min-width: 0;
+}
+
+.agent-dock-preview {
+	min-width: 0;
+	padding: 4px 0 0 16px;
+	border-left: 1px solid var(--hairline);
+}
+
+.agent-dock-preview-label {
+	display: block;
+	margin-bottom: 6px;
+	color: var(--text-1);
+}
+
+.agent-dock-preview-text {
+	margin: 0;
+	font: inherit;
+	color: var(--text-0);
+	white-space: pre;
+	overflow: auto;
+}
+
+@container agent-dock-pane (max-width: 600px) {
+	.agent-dock-ask[data-previews="true"] {
 		grid-template-columns: minmax(0, 1fr);
 	}
-	.agent-dock-preview-text {
-		max-height: 120px;
+	.agent-dock-preview {
+		margin-top: 8px;
+		padding: 8px 0 0;
+		border-left: none;
+		border-top: 1px solid var(--hairline);
 	}
 }
 
+/* Choices: cursor | number | label | description, columns aligned across rows, like Claude Code's list. */
+/* The 16px edge tracks let the hover band run to the pane's edges (a subgrid's own padding would shift its first track). */
 .agent-dock-choices {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	list-style: none;
+	display: grid;
+	grid-template-columns: 16px 2ch 3ch max-content minmax(0, 1fr) 16px;
+	margin: 2px -16px 0;
+}
+
+.agent-dock-choices[data-multi="true"] {
+	grid-template-columns: 16px 4ch 3ch max-content minmax(0, 1fr) 16px;
 }
 
 .agent-dock-choice {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-	width: 100%;
-	padding: 8px;
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+	align-items: baseline;
+	min-height: 24px;
+	padding: 3px 0;
 	border: none;
-	border-radius: 6px;
-	background: var(--fill-subtle);
-	color: var(--text-0);
-	font-family: inherit;
-	font-size: calc(13px * var(--ui-scale));
-	letter-spacing: -0.01em;
-	text-align: left;
+	background: transparent;
+	color: var(--text-1);
 	cursor: pointer;
 	transition: background-color 140ms ease-out;
 }
 
 .agent-dock-choice:hover:not(:disabled),
 .agent-dock-choice[data-focused="true"] {
-	background: var(--fill-raised);
-}
-
-.agent-dock-choice[aria-pressed="true"] {
-	background: var(--accent-soft);
+	background: var(--fill-subtle);
 }
 
 .agent-dock-choice:disabled {
@@ -2331,195 +2286,312 @@ body.dragging {
 }
 
 .agent-dock-choice:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
+	outline-offset: -2px;
 }
 
-.agent-dock-choice[data-tone="danger"] .agent-dock-choice-label {
-	color: var(--danger);
+.agent-dock-choice-cursor {
+	grid-column: 2;
+	color: var(--accent);
+	font-weight: 600;
+	white-space: pre;
+}
+
+.agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor {
+	color: var(--text-2);
+	font-weight: 400;
+}
+
+.agent-dock-choices[data-multi="true"] .agent-dock-choice[aria-pressed="true"] .agent-dock-choice-cursor {
+	grid-column: 2;
+	color: var(--accent);
 }
 
 .agent-dock-choice-n {
-	flex: none;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 18px;
-	height: 18px;
-	border-radius: 4px;
-	background: var(--fill-raised);
-	color: var(--text-1);
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
-	font-size: calc(11px * var(--ui-scale));
-}
-
-.agent-dock-choice[aria-pressed="true"] .agent-dock-choice-n {
-	background: var(--accent-fill);
-	color: var(--on-accent);
-}
-
-.agent-dock-choice-copy {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
-}
-
-.agent-dock-choice-label {
-	min-width: 0;
-	font-weight: 500;
-	line-height: 18px;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-
-.agent-dock-choice-description {
-	font-size: calc(12px * var(--ui-scale));
-	line-height: 1.4;
-	color: var(--text-1);
-	white-space: pre-wrap;
-}
-
-.agent-dock-preview {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	min-width: 0;
-}
-
-.agent-dock-preview-label {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-}
-
-.agent-dock-pop-foot {
-	flex: none;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-height: 41px;
-	padding: 8px 8px 8px 16px;
-	border-top: 1px solid var(--hairline);
-	user-select: none;
-}
-
-.agent-dock-pop-note {
-	flex: 1;
-	min-width: 0;
-	font-size: calc(12px * var(--ui-scale));
-	color: var(--text-1);
-	overflow-wrap: anywhere;
-}
-
-/* Answer fields (Other…, deny message, reply) reuse the §3.7 .input/.textarea grammar. */
-.agent-dock-field-label {
-	display: flex;
-	flex-direction: column;
-}
-
-.agent-dock-field.textarea {
-	min-height: 64px;
-	max-height: 160px;
-}
-
-.agent-dock-confirm {
-	margin: 0 -16px;
-}
-
-.agent-dock-pop-foot-actions {
-	flex: none;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.agent-dock-agent-rows {
-	padding: 4px 0;
-	list-style: none;
-}
-
-.agent-dock-agent-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	min-height: 28px;
-	padding: 0 16px;
-	font-size: calc(12px * var(--ui-scale));
-	color: var(--text-1);
-}
-
-.agent-dock-agent-where {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.agent-dock-agent-row[data-status="unknown"] .agent-dock-pop-name,
-.agent-dock-agent-row[data-status="unreachable"] .agent-dock-pop-name {
+	grid-column: 3;
 	color: var(--text-2);
 }
 
-.agent-dock-agent-meta {
-	flex: none;
-	font-size: calc(11px * var(--ui-scale));
-	color: var(--text-1);
-	font-variant-numeric: tabular-nums;
+.agent-dock-choice-label {
+	grid-column: 4;
+	padding-right: 2ch;
+	color: var(--text-0);
+	white-space: nowrap;
 }
 
-.agent-dock-agent-row .agent-dock-agent-status {
-	min-width: 72px;
-	margin-left: 0;
-	text-align: right;
+.agent-dock-choice-description {
+	grid-column: 5;
+	min-width: 0;
+	color: var(--text-2);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
-.agent-dock-recent {
-	padding: 8px 16px 12px;
-	border-top: 1px solid var(--hairline);
+.agent-dock-choice[aria-pressed="true"] .agent-dock-choice-n {
+	color: var(--accent);
 }
 
-.agent-dock-recent-title {
-	margin-bottom: 4px;
-	font-size: calc(12px * var(--ui-scale));
+.agent-dock-choice[aria-pressed="true"] .agent-dock-choice-label {
 	font-weight: 600;
+}
+
+.agent-dock-choice[aria-pressed="true"] .agent-dock-choice-description {
 	color: var(--text-1);
 }
 
-.agent-dock-recent-rows {
+.agent-dock-choice[data-tone="danger"] .agent-dock-choice-label,
+.agent-dock-choice[data-tone="danger"][aria-pressed="true"] .agent-dock-choice-cursor,
+.agent-dock-choice[data-tone="danger"][aria-pressed="true"] .agent-dock-choice-n {
+	color: var(--danger);
+}
+
+/* Prompt: Claude Code's input — text between two rules, > in the gutter; focus turns the rules accent. */
+.agent-dock-prompt {
+	display: grid;
+	grid-template-columns: 2ch minmax(0, 1fr);
+	align-items: baseline;
+	max-width: 100ch;
+	margin: 8px 0 0;
+	padding: 4px 0;
+	border-top: 1px solid var(--hairline-strong);
+	border-bottom: 1px solid var(--hairline-strong);
+	transition: border-color 140ms ease-out;
+}
+
+.agent-dock-prompt:focus-within {
+	border-color: var(--accent);
+}
+
+.agent-dock-prompt-mark {
+	color: var(--text-2);
+	font-weight: 600;
+}
+
+.agent-dock-prompt:focus-within .agent-dock-prompt-mark {
+	color: var(--accent);
+}
+
+.agent-dock-input {
+	width: 100%;
+	min-width: 0;
+	padding: 0;
+	border: none;
+	outline: none;
+	background: transparent;
+	resize: none;
+	color: var(--text-0);
+	caret-color: var(--accent);
+}
+
+.agent-dock-input::placeholder {
+	color: var(--text-2);
+}
+
+.agent-dock-input:disabled {
+	opacity: 0.6;
+}
+
+/* Permission command, plan, tool input: verbatim, monospace. */
+.agent-dock-command {
+	margin: 6px 0 6px;
+	font: inherit;
+	color: var(--text-0);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-command-prompt {
+	color: var(--text-2);
+}
+
+.agent-dock-fields {
+	color: var(--text-1);
+}
+
+.agent-dock-plan {
+	margin: 6px 0 6px;
+	font: inherit;
+	color: var(--text-0);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* Turn: the last message as prose, ● in the gutter (Claude Code's own mark). */
+.agent-dock-message {
+	display: grid;
+	grid-template-columns: 2ch minmax(0, 1fr);
+	align-items: baseline;
+	max-width: 100ch;
+	margin-top: 6px;
+}
+
+.agent-dock-message-mark {
+	color: var(--text-0);
+	font-size: calc(9px * var(--ui-scale));
+}
+
+.agent-dock-message-text {
+	margin: 0;
+	color: var(--text-0);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	margin: 6px 0 0 2ch;
+	color: var(--text-2);
+}
+
+.agent-dock-fact-pr {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: normal;
+	color: var(--accent);
+}
+
+/* Footer: key hints left, receipt / hint, then the decision. No rule: the pane runs on into its entry.
+ * The note wraps (receipts, verbatim Okena errors and the risky-word question are read in full before
+ * acting); the footer grows and the scroll body gives way. */
+.agent-dock-foot {
+	flex: none;
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr) max-content;
+	grid-template-areas: "hints note actions";
+	align-items: center;
+	gap: 4px 16px;
+	min-height: 40px;
+	padding: 6px 16px;
+	user-select: none;
+}
+
+.agent-dock-foot-hints {
+	grid-area: hints;
+	display: flex;
+	gap: 16px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	color: var(--text-2);
+}
+
+.agent-dock-hint kbd {
+	font: inherit;
+	color: var(--text-1);
+}
+
+.agent-dock-foot-note {
+	grid-area: note;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	text-align: right;
+	color: var(--text-1);
+	user-select: text;
+}
+
+.agent-dock-foot-actions {
+	grid-area: actions;
+	display: flex;
+	gap: 8px;
+	white-space: nowrap;
+}
+
+.agent-dock-confirm {
+	color: var(--warn);
+}
+
+.agent-dock-key.btn {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: normal;
+	text-align: center;
+}
+
+/* A narrow pane keeps its key hints beside the decisions; the note takes a line of its own below. */
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-foot {
+		grid-template-columns: minmax(0, 1fr) max-content;
+		grid-template-areas:
+			"hints actions"
+			"note note";
+	}
+
+	.agent-dock-foot-note {
+		text-align: left;
+	}
+
+	.agent-dock-foot-note:empty {
+		display: none;
+	}
+}
+
+/* Agents: a table of observed facts, then Recent. */
+.agent-dock-table {
+	display: grid;
+	grid-template-columns: 1ch repeat(4, minmax(0, max-content));
+	column-gap: 2ch;
+	margin: 4px 0 0;
+	padding: 0;
 	list-style: none;
 }
 
-.agent-dock-recent-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	min-height: 24px;
-	font-size: calc(12px * var(--ui-scale));
-	color: var(--text-1);
+.agent-dock-tr {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+	align-items: baseline;
+	padding: 3px 0;
+	white-space: nowrap;
 }
 
-.agent-dock-recent-what {
+.agent-dock-tr > * {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
+}
+
+.agent-dock-td-name {
+	color: var(--text-0);
+}
+
+.agent-dock-td-name[data-dim="true"] {
 	color: var(--text-1);
 }
 
-.agent-dock-recent-what .agent-dock-pop-name {
-	font-weight: 500;
+.agent-dock-td-project,
+.agent-dock-td-meta {
+	color: var(--text-2);
 }
 
-.agent-dock-recent-how {
-	flex: none;
+.agent-dock-td-status {
+	color: var(--text-1);
 }
 
-.agent-dock-recent-row .agent-dock-card-age {
-	margin-left: auto;
+.agent-dock-td-status[data-status="working"] {
+	color: var(--text-0);
+}
+
+.agent-dock-td-status[data-status="waiting"],
+.agent-dock-td-status[data-status="unknown"] {
+	color: var(--warn);
+}
+
+.agent-dock-subrule {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 12px 0 2px;
+	font: inherit;
+	color: var(--text-2);
+}
+
+.agent-dock-subrule .agent-dock-rule-fill {
+	background: var(--hairline);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-dock-status {
+		animation: none;
+	}
 }

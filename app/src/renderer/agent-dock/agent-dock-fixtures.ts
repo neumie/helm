@@ -511,7 +511,13 @@ export function createAgentDockFixture(
 		push()
 	}
 	const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-	const later = (run: () => void) => setTimeout(run, FIXTURE_ACT_STEP_MS)
+	// A poll scheduled for one scenario never lands in the next one (emitScenario replaces it).
+	const later = (run: () => void) => {
+		const owner = scenario
+		setTimeout(() => {
+			if (scenario === owner) run()
+		}, FIXTURE_ACT_STEP_MS)
+	}
 	return {
 		calls,
 		api: {

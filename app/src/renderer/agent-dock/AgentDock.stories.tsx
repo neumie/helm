@@ -24,8 +24,8 @@ function resolveOpen(snapshot: AgentDockSnapshot, open: OpenFixture | undefined)
 
 /**
  * Real AgentDock body over reducer-built snapshots from the recorded Okena fixtures,
- * in a pane-sized frame: the empty terminal-colored area stands in for #terms so the
- * popover has room to open over it (the full workspace lives in Views / Terminal workspace).
+ * in a pane-sized frame: the empty terminal-colored area stands in for #terms and
+ * shrinks when a pane splits off it (the full workspace lives in Views / Terminal workspace).
  */
 function AgentDockFixtureView({
 	scenario,
@@ -43,7 +43,7 @@ function AgentDockFixtureView({
 	const [expanded, setExpanded] = useState(initialExpanded)
 	useEffect(() => fixture.api.onSnapshot(setSnapshot), [fixture])
 	const terminal = <div style={{ flex: '1 1 auto', minHeight: 0, background: 'var(--term-bg)' }} />
-	// With a popover requested, mount once the first snapshot exists so it can open on mount.
+	// With a pane requested, mount once the first snapshot exists so it can open on mount.
 	const ready = !open || snapshot !== null
 	return (
 		<div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -79,26 +79,26 @@ const meta: Meta<typeof AgentDockFixtureView> = {
 export default meta
 type Story = StoryObj<typeof AgentDockFixtureView>
 
-/** Rail open: two asks (one past 2h, one past 30m), an unchecked turn, and the Agents button. */
-export const RailOpen: Story = { args: { scenario: 'busy', expanded: true } }
+/** Queue open: two asks (one past 2h, one past 30m), an unchecked turn, and the Agents entry. */
+export const QueueOpen: Story = { args: { scenario: 'busy', expanded: true } }
 
 /** The default 28px strip; arriving items never change its height. */
 export const Collapsed: Story = { args: { scenario: 'busy', expanded: false } }
 
-/** Five items: plan approval and a second turn join; cards compact before anything leaves view. */
+/** Five items: plan approval and a second turn join; every agent name stays whole. */
 export const FiveItems: Story = { args: { scenario: 'crowded', expanded: true } }
 
-/** Question popover: two questions as tabs, options with live previews, disabled Submit answers. */
+/** Question pane: two questions as tabs, numbered options with live previews, disabled Submit answers. */
 export const QuestionOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'question' } }
 
-/** Permission popover: "Always allow" wording comes from Claude's permission_suggestions. */
+/** Permission pane: "Always allow" wording comes from Claude's permission_suggestions. */
 export const PermissionOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'permission' } }
 
 export const PlanOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'plan' } }
 
 export const TurnOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'turn' } }
 
-/** Okena restarted while a question was open: dashed edge, warning line, Ack. */
+/** Okena restarted while a question was open: amber kind, warning line, Ack. */
 export const OrphanedOpen: Story = { args: { scenario: 'orphaned', expanded: true, open: 'orphaned' } }
 
 export const AgentsOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'agents' } }
@@ -114,16 +114,16 @@ export const Empty: Story = { args: { scenario: 'empty', expanded: true } }
 /** Before the first Okena answer. */
 export const Connecting: Story = { args: { scenario: 'connecting', expanded: true } }
 
-/** Top position: the rail and its popover open downward, away from the strip. */
+/** Top position: strip, queue, then the pane split off the terminal below it. */
 export const Top: Story = { args: { scenario: 'crowded', expanded: true, position: 'top', open: 'question' } }
 
-/** Answering: the question popover after Submit answers, while main runs the Okena CAS read and POST. */
+/** Answering: the question pane after Submit answers, while main runs the Okena CAS read and POST. */
 export const ReceiptSending: Story = { args: { scenario: 'receipt-sending', expanded: true, open: 'question' } }
 
 /** Okena took the answer but the dialog has not been seen closing for 10 s: amber, Ack offered. */
 export const ReceiptUnconfirmed: Story = { args: { scenario: 'receipt-unconfirmed', expanded: true, open: 'question' } }
 
-/** The dialog closed after the dock answer: the card lingers with "✓ answered", then leaves the rail. */
+/** The dialog closed after the dock answer: the entry keeps its slot with "✓ answered", then leaves the queue. */
 export const ReceiptAnswered: Story = { args: { scenario: 'receipt-answered', expanded: true, open: 'question' } }
 
 /** CAS refused it: the dialog was already answered in the terminal. */
@@ -132,5 +132,5 @@ export const ReceiptRefused: Story = { args: { scenario: 'receipt-refused', expa
 /** Okena failed the POST: the verbatim error, and the controls are live again for a retry. */
 export const ReceiptFailed: Story = { args: { scenario: 'receipt-failed', expanded: true, open: 'question' } }
 
-/** Receipt states on the cards with no popover open. */
+/** Receipt states on the entries with no pane open. */
 export const ReceiptCards: Story = { args: { scenario: 'receipt-unconfirmed', expanded: true } }

@@ -23,15 +23,19 @@ const {
 	dockSummary,
 	itemAgeTone,
 	itemTimeLine,
-	popoverPlacement,
-	railLayout,
+	entryNameWidth,
+	keepOrder,
+	kindGlyph,
+	queueLayout,
+	statusGlyph,
 	sessionStatusText,
 	formatAge,
 	itemHeadline,
 	plainAgentLine,
 	plainAgentText,
 	resolutionLabel,
-	sessionIndicator,
+	sessionSince,
+	entryMetaChars,
 	toolInputText,
 } = presentationModule as PresentationModule
 
@@ -138,7 +142,6 @@ test('recorded AskUserQuestion input renders every question and preview verbatim
 test('summary never reads as all clear unless Okena is reachable', () => {
 	const ok = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T)
 	assert.equal(ok.needsText, 'Nothing needs you')
-	assert.equal(ok.indicator, null)
 	const down = dockSummary(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T)
 	assert.equal(down.needsText, 'State unknown')
 	assert.match(down.health.text, /^Okena unreachable since \d\d:\d\d$/)
@@ -174,18 +177,22 @@ test('summary counts needs, ages the oldest, and heads with the newest item', ()
 	assert.equal(summary.needsText, '2 need you')
 	assert.equal(summary.oldestText, 'oldest 3h')
 	assert.equal(summary.oldestTone, 'danger')
-	assert.equal(summary.indicator?.variant, 'waiting')
 	assert.equal(summary.head, '#8 helm / dock: PR ready?')
 	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
-	assert.equal(turnsOnly.indicator?.variant, 'attention')
 	assert.equal(turnsOnly.needsText, '1 needs you')
 })
 
-test('session indicators and row meta: busy, waiting, unchecked turn, stale', () => {
-	assert.equal(sessionIndicator(session({ status: 'working' }), [])?.variant, 'progress')
-	assert.equal(sessionIndicator(session({ status: 'waiting' }), [])?.variant, 'waiting')
-	assert.equal(sessionIndicator(session(), [turnItem()])?.variant, 'attention')
-	assert.equal(sessionIndicator(session(), []), null)
+test('agent rows: a waiting agent ages from its oldest open ask (as its entry does); row meta, stale', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const ask = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T - 60_000 } })
+	const waiting = session({ status: 'waiting', since: T + 30_000 })
+	assert.equal(sessionSince(snapshot(ok, [ask], [waiting]), waiting), T - 60_000)
+	assert.equal(
+		sessionStatusText(waiting, T + 60 * 60_000, sessionSince(snapshot(ok, [ask], [waiting]), waiting)),
+		'waiting 1h1m',
+	)
+	assert.equal(sessionSince(snapshot(ok, [], [waiting]), waiting), T + 30_000)
+	assert.equal(sessionSince(snapshot(ok, [ask], [session()]), session()), T)
 	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T })
 	assert.deepEqual(agentRowMeta(snap, session({ observedAt: T - 20_000 })), ['stale 20s'])
 	assert.deepEqual(agentRowMeta(snap, session({ status: 'unreachable' })), [])
@@ -215,6 +222,16 @@ test('card tone and age: red only for asks past 2h, dashed orphans, unchecked tu
 	assert.equal(itemAgeTone(oldAsk, now), 'danger')
 	assert.equal(cardKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
 	assert.equal(cardKindLabel(oldAsk), 'Permission')
+	// Once answered (or on its way) the wait stops ageing: no red "waiting" next to a ✓.
+	const answered = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'dock' } } as DockItem
+	assert.equal(itemAgeTone(answered, now), 'none')
+	assert.equal(itemAgeTone({ ...oldAsk, state: 'sending' } as DockItem, now), 'none')
+	assert.match(itemTimeLine(answered, now).waited, /^answered \d\d:\d\d$/)
+	assert.equal(itemTimeLine({ ...oldAsk, state: 'sending' } as DockItem, now).waited, 'sending')
+	const elsewhere = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'outside' } } as DockItem
+	assert.match(itemTimeLine(elsewhere, now).waited, /^closed \d\d:\d\d$/)
+	assert.equal(cardTone(answered, now), 'done')
+	assert.equal(cardTone(elsewhere, now), 'closed')
 })
 
 test("card gist: the turn's last paragraph, the plan title, the command", () => {
@@ -243,7 +260,7 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 	})
 	assert.equal(cardGist(bash), 'Bash: git push')
 	assert.deepEqual(itemTimeLine(turn, T + 6 * 60_000).waited, 'idle 6m')
-	assert.match(itemTimeLine(bash, T).stamp, /^Asked \d\d:\d\d$/)
+	assert.match(itemTimeLine(bash, T).stamp, /^asked \d\d:\d\d$/)
 })
 
 test('"Always allow" wording comes only from Claude\'s permission_suggestions, and only when every entry shows', () => {
@@ -313,108 +330,73 @@ test('agent lines show only observed facts', () => {
 	assert.deepEqual(agentRowMeta(snap, session({ hooksAttached: false })), ['not connected'])
 })
 
-test('rail layout never pages items away: full cards as long as possible, then compact, then the agents join the grid', () => {
-	assert.deepEqual(railLayout(0, 300), { density: 'full', columns: 1, agents: 'side' })
-	assert.deepEqual(railLayout(3, 1027), { density: 'full', columns: 3, agents: 'side' })
-	// 1100px window (rail ≈ 727): three full cards with 2-line gists beside the narrow Agents block.
-	assert.deepEqual(railLayout(3, 727), { density: 'full', columns: 3, agents: 'narrow' })
-	// 1400px window (rail ≈ 1027): five items compact beside the Agents block.
-	assert.deepEqual(railLayout(5, 1027), { density: 'compact', columns: 3, agents: 'side' })
-	// 900px window (rail ≈ 527): five items + Agents in a 3×2 grid.
-	assert.deepEqual(railLayout(5, 527), { density: 'compact', columns: 3, agents: 'cell' })
-	assert.deepEqual(railLayout(12, 527), { density: 'dense', columns: 5, agents: 'cell' })
-	// A lone card in a narrow pane keeps the full form beside the narrow block.
-	assert.deepEqual(railLayout(1, 340), { density: 'full', columns: 1, agents: 'narrow' })
-	// However many items: dense always gives every item (and Agents) a cell in three rows; CSS shrinks the
-	// columns to the rail width instead of scrolling.
+test('queue layout keeps every name and wait whole as long as possible, never pages items away', () => {
+	const ch = 7.2
+	// Busy (3 items: question, permission, turn) at a 1100px window (queue ≈ 759): one row beside the wide Agents column.
+	assert.deepEqual(queueLayout([10, 16, 11], 759, ch, [13, 15, 15]), { density: 'full', columns: 3, agents: 'side' })
+	// Crowded (5 items) at 1400 (≈ 1059): one row of full entries beside the wide column.
+	const crowded = [10, 16, 15, 11, 8]
+	const crowdedMeta = [13, 15, 9, 15, 15]
+	assert.deepEqual(queueLayout(crowded, 1059, ch, crowdedMeta), { density: 'full', columns: 5, agents: 'side' })
+	// Names alone would squeeze five into one row at 1100 (≈ 759) …
+	assert.deepEqual(queueLayout(crowded, 759, ch), { density: 'full', columns: 5, agents: 'narrow' })
+	// … but "Turn ended" + the wait would not fit beside "ios-sync": two rows rather than a hidden wait.
+	assert.deepEqual(queueLayout(crowded, 759, ch, crowdedMeta), { density: 'compact', columns: 3, agents: 'cell' })
+	// An entry is as wide as its name or its meta line (indent, kind, wait), whichever is wider.
+	const nameOnly = entryNameWidth(8, ch)
+	assert.ok(entryNameWidth(8, ch, 15) > nameOnly)
+	assert.equal(entryNameWidth(16, ch, 9), (16 + 2) * ch + 26)
+	// 900px window (≈ 559): two rows, the Agents entry as the last cell, every name and wait still whole.
+	const compact = queueLayout(crowded, 559, ch, crowdedMeta)
+	assert.deepEqual(compact, { density: 'compact', columns: 3, agents: 'cell' })
+	for (const [at, name] of crowded.entries())
+		assert.ok(entryNameWidth(name, ch, crowdedMeta[at]) <= 559 / compact.columns)
+	// Nothing to show: the empty note beside the wide column.
+	assert.deepEqual(queueLayout([], 300, ch), { density: 'full', columns: 1, agents: 'side' })
+	// However many items: dense gives every item (and Agents) a cell in three rows.
 	for (const count of [11, 30, 80]) {
-		const layout = railLayout(count, 300)
+		const layout = queueLayout(
+			Array.from({ length: count }, () => 12),
+			300,
+			ch,
+		)
 		assert.equal(layout.density, 'dense')
 		assert.equal(layout.agents, 'cell')
 		assert.ok(layout.columns * 3 >= count + 1)
 	}
 })
 
-test('popover placement keeps the last terminal rows visible and caps its height', () => {
-	const terminal = { top: 38, bottom: 766, screenTop: 50, screenBottom: 760, rowHeight: 18 }
-	const dock = { top: 766, left: 341, width: 1059, height: 134 }
-	const bottom = popoverPlacement({
-		position: 'bottom',
-		dock,
-		anchor: { left: 357, width: 250 },
-		terminal,
-		viewportHeight: 900,
-	})
-	// Popover bottom edge (viewport y) = dock bottom - css bottom.
-	const popoverBottom = dock.top + dock.height - (bottom.bottom ?? 0)
-	assert.ok(popoverBottom <= terminal.screenBottom - 4 * terminal.rowHeight)
-	// Snapped to the row grid: the row above the kept band is whole, never half covered.
-	assert.equal((popoverBottom - terminal.screenTop) % terminal.rowHeight, 0)
-	assert.equal(bottom.left, 16)
-	assert.equal(bottom.width, 640)
-	assert.ok(bottom.maxHeight <= 560 && bottom.maxHeight > 0)
-	assert.ok(popoverBottom - bottom.maxHeight >= terminal.top)
-	// Right-hand anchors clamp inside the dock.
-	assert.equal(
-		popoverPlacement({ position: 'bottom', dock, anchor: { left: 1300, width: 200 }, terminal, viewportHeight: 900 })
-			.left,
-		1059 - 16 - 640,
-	)
-	// Top dock: opens downward, below the rows next to it and above the input line.
-	const topDock = { top: 38, left: 341, width: 1059, height: 134 }
-	const topTerminal = { top: 172, bottom: 900, screenTop: 184, screenBottom: 894, rowHeight: 18 }
-	const top = popoverPlacement({
-		position: 'top',
-		dock: topDock,
-		anchor: { left: 357, width: 250 },
-		terminal: topTerminal,
-		viewportHeight: 900,
-	})
-	const popoverTop = topDock.top + (top.top ?? 0)
-	assert.ok(popoverTop >= topTerminal.screenTop + 4 * topTerminal.rowHeight)
-	assert.equal(popoverTop, topTerminal.screenTop + 5 * topTerminal.rowHeight)
-	assert.equal((popoverTop + top.maxHeight - topTerminal.screenTop) % topTerminal.rowHeight, 0)
-	assert.ok(popoverTop + top.maxHeight <= topTerminal.screenBottom - 4 * topTerminal.rowHeight)
-	// No terminal metrics (component review): hug the dock.
-	const bare = popoverPlacement({
-		position: 'bottom',
-		dock,
-		anchor: { left: 357, width: 1 },
-		terminal: null,
-		viewportHeight: 900,
-	})
-	assert.equal(bare.bottom, dock.height + 8)
+test('an open pane keeps entries in their slots: answered items stay put, new ones join the end', () => {
+	const item = (id: number, state: DockItem['state'] = 'open') => ({ id, state }) as DockItem
+	const ids = (items: DockItem[]) => items.map(entry => entry.id)
+	// The snapshot moves the answered #3 behind the open ones; the frozen order keeps it first.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7), item(3, 'resolved')])), [3, 5, 7])
+	// New items append, gone ones leave.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(9), item(3, 'resolved')])), [3, 5, 9])
+	// An entry that left the queue meanwhile (its receipt stopped lingering, answered in the terminal)
+	// keeps its slot from the snapshot until the pane closes; acked ones and ones the snapshot dropped leave.
+	const done = (id: number, by: 'dock' | 'outside' | 'acked') =>
+		({ id, state: 'resolved', resolution: { at: T, by } }) as DockItem
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'dock')])), [3, 5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], [done(5, 'outside')])), [3, 5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'acked')])), [5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)], [])), [5])
+	// No pane: the snapshot's own order.
+	assert.deepEqual(ids(keepOrder(null, [item(5), item(3)])), [5, 3])
 })
 
-test('popover placement keeps a higher-up prompt row visible and never collapses to nothing', () => {
-	const dock = { top: 766, left: 341, width: 1059, height: 134 }
-	const terminal = { top: 38, bottom: 766, screenTop: 50, screenBottom: 752, rowHeight: 18 }
-	const place = (cursorTop: number | null, metrics = terminal) =>
-		popoverPlacement({
-			position: 'bottom',
-			dock,
-			anchor: { left: 357, width: 250 },
-			terminal: { ...metrics, cursorTop },
-			viewportHeight: 900,
-		})
-	const band = (placement: ReturnType<typeof place>) => {
-		const bottom = dock.top + dock.height - (placement.bottom ?? 0)
-		return { top: bottom - placement.maxHeight, bottom }
-	}
-	// Prompt in the kept band (the usual case): unchanged.
-	assert.deepEqual(place(terminal.screenBottom - terminal.rowHeight), place(null))
-	// After `clear` the prompt sits on the first row: the popover opens below it, rows 0–2 stay visible.
-	const cleared = band(place(terminal.screenTop))
-	assert.ok(cleared.top >= terminal.screenTop + 2 * terminal.rowHeight)
-	// A prompt mid-screen: the larger side wins and the cursor row ±1 is never covered.
-	const mid = terminal.screenTop + 10 * terminal.rowHeight
-	const midBand = band(place(mid))
-	assert.ok(midBand.bottom <= mid - terminal.rowHeight || midBand.top >= mid + 2 * terminal.rowHeight)
-	// A short terminal (large font, small window): at least the minimum height, still above the input line.
-	const short = { top: 600, bottom: 766, screenTop: 606, screenBottom: 760, rowHeight: 22 }
-	const squeezed = place(null, short)
-	assert.ok(squeezed.maxHeight >= 120)
-	assert.ok(band(squeezed).bottom <= short.screenBottom - 4 * short.rowHeight)
+test('kind and status glyphs are single terminal cells', () => {
+	const ask = (tool: string) => ({ kind: 'ask', state: 'open', fact: { kind: 'ask', tool } }) as unknown as DockItem
+	assert.equal(kindGlyph(ask('AskUserQuestion')), '?')
+	assert.equal(kindGlyph(ask('ExitPlanMode')), '≡')
+	assert.equal(kindGlyph(ask('Bash')), '$')
+	assert.equal(kindGlyph({ kind: 'turn', state: 'open', fact: { kind: 'turn' } } as unknown as DockItem), '↵')
+	assert.equal(kindGlyph({ ...ask('Bash'), state: 'resolved', resolution: { at: T, by: 'dock' } } as DockItem), '✓')
+	// Closed elsewhere (a refused dock answer lingers too): no green ✓ beside a red refusal.
+	assert.equal(kindGlyph({ ...ask('Bash'), state: 'resolved', resolution: { at: T, by: 'outside' } } as DockItem), '$')
+	assert.equal(entryMetaChars({ ...ask('Bash'), kind: 'ask' } as DockItem), 'Permission'.length + 5)
+	for (const status of ['working', 'background', 'waiting', 'idle', 'unknown', 'unreachable'] as const)
+		assert.equal([...statusGlyph(status)].length, 1)
 })
 
 test('plan review: approve needs the whole plan and every other field shown verbatim', () => {

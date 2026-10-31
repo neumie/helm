@@ -39,7 +39,7 @@ export interface TerminalWorkspaceFixtureOptions {
 	 * written to the dock's layout preferences before mount; omitted values keep
 	 * whatever is stored (production defaults when nothing is). `output` writes a
 	 * recorded-looking shell session into the active terminal; `open` then clicks
-	 * that card (or the Agents button), like a pointer would.
+	 * that entry (or the Agents entry), like a pointer would.
 	 */
 	agentDock?: {
 		scenario?: AgentDockScenario | null
@@ -52,14 +52,14 @@ export interface TerminalWorkspaceFixtureOptions {
 
 export type AgentDockOpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
-/** Rail control each `agentDock.open` value clicks (card aria-labels start "#id Kind, …"). */
+/** Queue entry each `agentDock.open` value clicks (entry aria-labels start "#id Kind, …"). */
 const AGENT_DOCK_OPEN_SELECTOR: Record<AgentDockOpenFixture, string> = {
-	question: '.agent-dock-card[aria-label*=" Question,"]',
-	permission: '.agent-dock-card[aria-label*=" Permission,"]',
-	plan: '.agent-dock-card[aria-label*=" Plan,"]',
-	turn: '.agent-dock-card[data-kind="turn"]',
-	orphaned: '.agent-dock-card[data-tone="orphaned"]',
-	agents: '.agent-dock-agents-button',
+	question: '.agent-dock-entry[aria-label*=" Question,"]',
+	permission: '.agent-dock-entry[aria-label*=" Permission,"]',
+	plan: '.agent-dock-entry[aria-label*=" Plan,"]',
+	turn: '.agent-dock-entry[data-kind="turn"]',
+	orphaned: '.agent-dock-entry[data-tone="orphaned"]',
+	agents: '.agent-dock-agents-entry',
 }
 
 export interface TerminalWorkspaceFixture {
@@ -583,7 +583,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			if (open)
 				requestAnimationFrame(() => {
 					if (unmounted) return
-					// A pointer click (detail 1): the popover opens and xterm keeps focus.
+					// A pointer click (detail 1): the pane opens and xterm keeps focus.
 					root
 						.querySelector(AGENT_DOCK_OPEN_SELECTOR[open])
 						?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))

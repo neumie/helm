@@ -5,7 +5,7 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent
 import type { AgentDockApi } from '../shared'
 import { AgentDock } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/AgentDockDetail'
-import type { AgentDockPosition, TerminalMetrics } from './agent-dock/presentation'
+import type { AgentDockPosition } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -65,6 +65,9 @@ export const agentDockPosition = (() => {
 const AGE_TICK_MS = 30_000
 /** xterm cell height at the default 13px font (design §2.2) until a row has rendered. */
 const FALLBACK_ROW_HEIGHT = 19
+/** Terminal rows an open pane always leaves above (or below) itself, plus the well's 14px top/bottom padding. */
+const PANE_KEEPS_ROWS = 8
+const WELL_PADDING = 28
 
 export interface MountedAgentDock {
 	/** Open/close the rail: opening focuses the rail; closing returns dock focus to the terminal. */
@@ -75,10 +78,10 @@ export interface MountedAgentDock {
 /**
  * Agent dock presentation inside `main#right`, next to `#terms` (below by default).
  * It renders main-pushed snapshots; Jakub acks and answers through `api` (main
- * runs every Okena effect behind a fresh CAS read). Only the user's
- * rail toggle changes the dock's height (the rail has one fixed height); the
- * terminal pane shrinks through the grid row, so the #terms ResizeObserver refits
- * xterm. The detail popover floats over the terminal without resizing anything.
+ * runs every Okena effect behind a fresh CAS read). Only the user changes the
+ * dock's height — the queue toggle (the queue has one fixed height) and opening or
+ * closing a pane (its height is fixed while it is open); the terminal row shrinks
+ * through the grid, so xterm refits once per change. Nothing floats over the terminal.
  */
 export function mountAgentDock({
 	root,
@@ -132,7 +135,7 @@ export function mountAgentDock({
 	dock.classList.add('agent-dock')
 	const reactRoot = createRoot(view)
 
-	/** Keyboard home inside the dock: the open card, else the first card/Agents button, else the rail. */
+	/** Keyboard home inside the dock: the open entry, else the first entry/Agents entry, else the queue. */
 	const focusRail = (): void => {
 		const rail = dock.querySelector<HTMLElement>('.agent-dock-rail')
 		const stop =
@@ -140,24 +143,17 @@ export function mountAgentDock({
 			rail?.querySelector<HTMLElement>('[data-rail-stop]')
 		;(stop ?? rail)?.focus()
 	}
-	// Measured only while a popover is open (layout effect), never on the pty:data path.
-	const terminalMetrics = (): TerminalMetrics | null => {
-		const pane = terms.getBoundingClientRect()
-		if (pane.height <= 0) return null
-		const screen = terms.querySelector<HTMLElement>('.term-holder.active .xterm-screen')?.getBoundingClientRect()
-		const rowsElement = terms.querySelector<HTMLElement>('.term-holder.active .xterm-rows')
-		const rows = rowsElement?.childElementCount ?? 0
-		const visible = screen && screen.height > 0 ? screen : null
-		// The row holding xterm's drawn cursor (DOM renderer); absent while a TUI hides it.
-		const cursorRow = rowsElement?.querySelector('.xterm-cursor')?.closest('.xterm-rows > div')
-		return {
-			top: pane.top,
-			bottom: pane.bottom,
-			screenTop: visible ? visible.top : pane.top,
-			screenBottom: visible ? visible.bottom : pane.bottom,
-			rowHeight: visible && rows > 0 ? visible.height / rows : FALLBACK_ROW_HEIGHT,
-			cursorTop: visible && cursorRow ? cursorRow.getBoundingClientRect().top : null,
-		}
+	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
+	// minus the strip and queue, minus PANE_KEEPS_ROWS terminal rows and the well padding.
+	const paneRoom = (): number | null => {
+		const total = right.clientHeight
+		if (total <= 0) return null
+		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
+		const rest = dock.offsetHeight - (pane?.offsetHeight ?? 0)
+		const row =
+			terms.querySelector('.term-holder.active .xterm-rows > div')?.getBoundingClientRect().height ||
+			FALLBACK_ROW_HEIGHT
+		return Math.floor(total - rest - PANE_KEEPS_ROWS * row - WELL_PADDING)
 	}
 	const focusTerminal = (): void => {
 		if (focusTerminalOverride) {
@@ -184,26 +180,12 @@ export function mountAgentDock({
 			onToggle: () => toggle(false),
 			onAck,
 			onAct,
-			terminalMetrics,
-			onPopoverOpenChange: watchActiveScreen,
+			paneRoom,
+			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
+			onPaneChange: () => fitActive(),
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))
-		watchActiveScreen()
-	}
-
-	// While a popover is open, re-place it when the active terminal's grid changes without
-	// #right resizing (font size, tab switch hides the old screen); idle otherwise.
-	let watchedScreen: Element | null = null
-	const screenObserver = new ResizeObserver(() => render())
-	const watchActiveScreen = (): void => {
-		const next = dock.querySelector('.agent-dock-popover')
-			? terms.querySelector('.term-holder.active .xterm-screen')
-			: null
-		if (next === watchedScreen) return
-		screenObserver.disconnect()
-		watchedScreen = next
-		if (next) screenObserver.observe(next)
 	}
 
 	const toggle = (focusPanel: boolean): void => {
@@ -268,7 +250,7 @@ export function mountAgentDock({
 		if (expanded && !dock.contains(ownerDocument.activeElement)) focusRail()
 		else toggle(true)
 	}
-	// Esc in the dock returns to the terminal (an open popover consumes the first Esc itself).
+	// Esc in the dock returns to the terminal (an open pane consumes the first Esc itself).
 	const onDockKeydown = (event: KeyboardEvent): void => {
 		if (event.key !== 'Escape' || event.defaultPrevented) return
 		event.preventDefault()
@@ -292,7 +274,7 @@ export function mountAgentDock({
 		if (selection && !selection.isCollapsed && dock.contains(selection.anchorNode)) return
 		focusTerminal()
 	}
-	// Re-place an open popover when the pane changes size (window resize); the dock itself never resizes #right.
+	// Re-clamp an open pane when the window changes size; the dock itself never resizes #right.
 	const rightObserver = new ResizeObserver(() => render())
 	const ageTimer = ownerWindow.setInterval(() => {
 		if (ownerDocument.visibilityState !== 'hidden') render()
@@ -324,7 +306,6 @@ export function mountAgentDock({
 			unsubscribePosition()
 			publishVisible()
 			rightObserver.disconnect()
-			screenObserver.disconnect()
 			ownerWindow.clearInterval(ageTimer)
 			ownerWindow.removeEventListener('keydown', onWindowKeydown, { capture: true })
 			ownerDocument.removeEventListener('visibilitychange', publishVisible)

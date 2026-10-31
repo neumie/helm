@@ -9,7 +9,6 @@ export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-doc
 
 export type AgentDockPosition = 'top' | 'bottom'
 export type AgingTone = 'none' | 'warn' | 'danger'
-export type AgentIndicatorVariant = 'progress' | 'waiting' | 'attention'
 
 /** Aging escalation (design §2): amber after 30 minutes, red after 2 hours. */
 export const AGING_WARN_MS = 30 * 60_000
@@ -80,7 +79,7 @@ export function needsYouItems(snapshot: AgentDockSnapshot | null): DockItem[] {
 	return snapshot?.items.filter(item => item.state !== 'resolved') ?? []
 }
 
-/** A card whose dock answer just landed (or was refused) stays this long, so its receipt can be read. */
+/** An entry whose dock answer just landed (or was refused) stays this long, so its receipt can be read. */
 export const RECEIPT_LINGER_MS = 6_000
 
 /** Resolved items that carry a dock receipt and closed less than RECEIPT_LINGER_MS ago. */
@@ -98,13 +97,13 @@ export function lingeringItems(snapshot: AgentDockSnapshot | null, now: number):
 	)
 }
 
-/** Cards in rail order: everything that needs Jakub, then answers still showing their receipt. */
+/** Entries in queue order: everything that needs Jakub, then answers still showing their receipt. */
 export function railItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
 	const lingering = lingeringItems(snapshot, now)
 	return [...needsYouItems(snapshot), ...lingering.sort((a, b) => a.id - b.id)]
 }
 
-/** When the next lingering card leaves the rail (ms), or null. */
+/** When the next lingering entry leaves the queue (ms), or null. */
 export function nextLingerExpiry(snapshot: AgentDockSnapshot | null, now: number): number | null {
 	const ends = lingeringItems(snapshot, now).map(item => (item.resolution?.at ?? now) + RECEIPT_LINGER_MS)
 	return ends.length > 0 ? Math.min(...ends) : null
@@ -145,7 +144,7 @@ const deliveryNote = (receipt: DockReceipt): string =>
 	receipt.delivery === 'queued' ? ' (queued until the agent is free)' : ''
 
 /**
- * The receipt line for a card/popover, from main's snapshot only: Sending… →
+ * The receipt line for an entry/pane, from main's snapshot only: Sending… →
  * ✓ answered (observed) / sent, unconfirmed (amber after 10 s) / refused / the
  * verbatim error. Null when Jakub has not answered this item from the dock.
  */
@@ -285,20 +284,6 @@ export function resolutionLabel(item: DockItem): string {
 	}
 }
 
-/** Session chip indicator: busy → progress, open ask → waiting, unchecked turn → attention, else none. */
-export function sessionIndicator(
-	session: DockSession,
-	items: readonly DockItem[],
-): { variant: AgentIndicatorVariant; label: string } | null {
-	const live = items.filter(item => item.session === session.key && item.state !== 'resolved')
-	if (session.status === 'waiting' || live.some(item => item.kind === 'ask' && item.state === 'open'))
-		return { variant: 'waiting', label: 'Waiting for your answer' }
-	if (session.status === 'working') return { variant: 'progress', label: 'Working' }
-	if (session.status === 'background') return { variant: 'progress', label: 'Subagents running in the background' }
-	if (live.length > 0) return { variant: 'attention', label: 'Finished — unchecked' }
-	return null
-}
-
 const staleAge = (ms: number): string => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : formatAge(ms))
 
 /**
@@ -334,7 +319,6 @@ export interface AgentDockSummary {
 	needsTone: 'none' | 'warn'
 	oldestText: string | null
 	oldestTone: AgingTone
-	indicator: { variant: AgentIndicatorVariant; label: string } | null
 	head: string | null
 	counts: string | null
 	health: AgentDockHealth
@@ -362,7 +346,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 		const b = itemWaitingSince(latest)
 		return a > b || (a === b && item.id > latest.id) ? item : latest
 	}, null)
-	const hasAsk = needs.some(item => item.kind === 'ask' && item.state === 'open')
 	const working = snapshot?.sessions.filter(session => session.status === 'working').length ?? 0
 	const background = snapshot?.sessions.filter(session => session.status === 'background').length ?? 0
 	const counts = [working ? `${working} working` : '', background ? `${background} bg` : ''].filter(Boolean).join(' · ')
@@ -381,11 +364,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 		needsTone: needs.length > 0 || unknown > 0 ? 'warn' : 'none',
 		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
 		oldestTone,
-		indicator: hasAsk
-			? { variant: 'waiting', label: 'An agent is waiting for your answer' }
-			: needs.length > 0
-				? { variant: 'attention', label: 'Agent work is waiting to be checked' }
-				: null,
 		head: newest
 			? `#${newest.id} ${sessionLabel(findSession(snapshot, newest.session), newest.session)}: ${itemHeadline(newest)}`
 			: null,
@@ -395,26 +373,30 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 }
 
 // ---------------------------------------------------------------------------
-// Card rail (design §3.24): cards, density, popover placement.
+// Queue (design §3.24): entries, glyphs, density, stable order.
 // ---------------------------------------------------------------------------
 
-/** Card urgency edge: amber ask, red ask past 2h, dashed amber orphan, blue unchecked turn, green answered. */
-export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn' | 'done'
+/** Entry tone: amber ask, red ask past 2h, amber orphan, blue unchecked turn, green answered from the dock, quiet closed elsewhere. */
+export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn' | 'done' | 'closed'
+
+/** Answered from the dock (the only resolution that earns the green ✓). */
+const answeredHere = (item: DockItem): boolean => item.state === 'resolved' && item.resolution?.by === 'dock'
 
 export function cardTone(item: DockItem, now: number): CardTone {
-	if (item.state === 'resolved') return 'done'
+	if (item.state === 'resolved') return answeredHere(item) ? 'done' : 'closed'
 	if (item.state === 'orphaned') return 'orphaned'
 	if (item.kind === 'turn') return 'turn'
 	return agingTone(now - itemWaitingSince(item)) === 'danger' ? 'ask-danger' : 'ask'
 }
 
-/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as on the strip. */
+/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as on the strip. An answer on its way or landed no longer ages. */
 export function itemAgeTone(item: DockItem, now: number): AgingTone {
+	if (item.state === 'resolved' || item.state === 'sending') return 'none'
 	const tone = agingTone(now - itemWaitingSince(item))
 	return item.kind === 'turn' && tone === 'danger' ? 'warn' : tone
 }
 
-/** Short kind for cards and the popover head: Question / Plan / Permission / Turn ended / Orphaned …. */
+/** Short kind for entries and the pane's titled rule: Question / Plan / Permission / Turn ended / Orphaned …. */
 export function cardKindLabel(item: DockItem): string {
 	if (item.fact.kind === 'turn') return 'Turn ended'
 	const base =
@@ -422,18 +404,21 @@ export function cardKindLabel(item: DockItem): string {
 	return item.state === 'orphaned' ? `Orphaned ${base.toLowerCase()}` : base
 }
 
-export function itemIndicator(item: DockItem): { variant: AgentIndicatorVariant; label: string } {
-	if (item.kind === 'ask' && item.state === 'open') return { variant: 'waiting', label: 'Waiting for your answer' }
-	return { variant: 'attention', label: 'Waiting to be checked' }
-}
-
-/** "Asked 14:50" / "Finished 14:50" plus the wait in words, for the popover head. */
+/**
+ * "asked 14:50" / "finished 14:50" plus the wait in words, for the pane's titled rule.
+ * Once an answer is on its way or the item closed, the wait stops: "sending" /
+ * "answered 16:41" (from the dock) / "closed 16:41" (anywhere else).
+ */
 export function itemTimeLine(item: DockItem, now: number): { stamp: string; waited: string } {
 	const since = itemWaitingSince(item)
-	return {
-		stamp: `${item.kind === 'turn' ? 'Finished' : 'Asked'} ${formatClock(since)}`,
-		waited: `${item.kind === 'turn' ? 'idle' : 'waiting'} ${formatAge(now - since)}`,
-	}
+	const stamp = `${item.kind === 'turn' ? 'finished' : 'asked'} ${formatClock(since)}`
+	if (item.state === 'sending') return { stamp, waited: 'sending' }
+	if (item.state === 'resolved')
+		return {
+			stamp,
+			waited: `${answeredHere(item) ? 'answered' : 'closed'} ${formatClock(item.resolution?.at ?? now)}`,
+		}
+	return { stamp, waited: `${item.kind === 'turn' ? 'idle' : 'waiting'} ${formatAge(now - since)}` }
 }
 
 /** A permission dialog's shell command, when its tool input carries one. */
@@ -450,7 +435,7 @@ export function turnGist(text: string): string {
 	return plainAgentLine(paragraphs.at(-1) ?? text, 220)
 }
 
-/** Two-line card gist: the question, the plan's title, the command, or the turn's last paragraph. */
+/** Entry gist: the question, the plan's title, the command, or the turn's last paragraph. */
 export function cardGist(item: DockItem): string {
 	if (item.fact.kind === 'turn') return turnGist(item.fact.text) || 'Agent finished its turn'
 	const { tool, input } = item.fact
@@ -463,15 +448,27 @@ export function cardGist(item: DockItem): string {
 	return command ? `${plainAgentLine(tool, 32)}: ${plainAgentLine(command, 160)}` : itemHeadline(item)
 }
 
-/** Project and agent name kept apart so cards can ellipsize the project before the name. */
+/** Project and agent name kept apart so entries can ellipsize the project before the name. */
 export function sessionWhere(session: DockSession | undefined, key: string): { project: string; name: string } {
 	if (!session) return { project: '', name: `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}` }
 	return { project: plainAgentLine(session.project, 48), name: plainAgentLine(session.name, 64) }
 }
 
+/**
+ * When the agent's current status began, for its age: a waiting agent counts from its
+ * oldest open ask (the same clock as its queue entry), everything else from `since`.
+ */
+export function sessionSince(snapshot: AgentDockSnapshot | null, session: DockSession): number {
+	if (session.status !== 'waiting') return session.since
+	const asks = (snapshot?.items ?? []).filter(
+		item => item.session === session.key && item.kind === 'ask' && item.state === 'open',
+	)
+	return asks.length > 0 ? Math.min(...asks.map(itemWaitingSince)) : session.since
+}
+
 /** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
-export function sessionStatusText(session: DockSession, now: number): string {
-	const age = formatAge(now - session.since)
+export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
+	const age = formatAge(now - since)
 	switch (session.status) {
 		case 'working':
 			return `working ${age}`
@@ -497,50 +494,126 @@ const STATUS_ORDER: Record<DockSession['status'], number> = {
 	unreachable: 5,
 }
 
-/** Agents for the rail block and its popover: busy first, then waiting, idle, unknown; newest change first. */
+/** Agents for the Agents entry and pane: busy first, then waiting, idle, unknown; newest change first. */
 export function orderedSessions(snapshot: AgentDockSnapshot | null): DockSession[] {
 	return [...(snapshot?.sessions ?? [])].sort(
 		(a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.since - a.since,
 	)
 }
 
-export type RailDensity = 'full' | 'compact' | 'dense'
-/** Where the Agents button sits: a 232px block beside the cards, a 140px block, or the grid's last cell. */
-export type RailAgentsSlot = 'side' | 'narrow' | 'cell'
-/** Gap between cards and between compact rows (§2.3). */
-export const RAIL_GAP = 8
-/** Narrowest card per density (compact beside the Agents block needs room for a whole agent name). */
-export const RAIL_CARD_MIN = { full: 176, compactSide: 160, compact: 120 } as const
-/** Room the Agents block takes beside the cards: its width (12px inset + hairline included) plus the 12px rail gap. */
-export const RAIL_AGENTS_ROOM = { side: 244, narrow: 152 } as const
+/** Kind glyph: what the agent wants, in one terminal character (all in Menlo; tone carries urgency). */
+export function kindGlyph(item: DockItem): string {
+	if (answeredHere(item)) return '✓'
+	if (item.fact.kind === 'turn') return '↵'
+	if (item.fact.tool === 'AskUserQuestion') return '?'
+	if (item.fact.tool === 'ExitPlanMode') return '≡'
+	return '$'
+}
 
-export interface RailLayout {
-	density: RailDensity
-	columns: number
-	agents: RailAgentsSlot
+/** Agent status glyph for the Agents entry and pane (all in Menlo). */
+export function statusGlyph(status: DockSession['status']): string {
+	switch (status) {
+		case 'working':
+			return '✻'
+		case 'background':
+			return '◐'
+		case 'waiting':
+			return '?'
+		case 'idle':
+			return '·'
+		case 'unknown':
+			return '¿'
+		default:
+			return '▪'
+	}
 }
 
 /**
- * Picks the card form so every item that needs Jakub stays in view (never paged
- * or scrolled away), keeping full cards (legible names, 2-line gist) as long as
- * possible: one row of full cards beside the Agents block, then beside its narrow
- * form; else two rows of compact cards beside it (wide, then narrow); else two
- * rows with the Agents button as the last cell; else three rows of dense chips
- * that shrink to fit. `width` is the rail's content width.
+ * Queue order while a pane is open: entries already shown keep their slot (an
+ * answered item does not jump behind the open ones while its receipt shows), new
+ * ones join at the end. An entry that left the queue meanwhile (its receipt's
+ * linger ran out, it was answered in the terminal) stays in its slot from `held`
+ * — the snapshot's items — until the pane closes, so nothing shifts and the open
+ * pane never closes by itself; only what Jakub acked, or what the snapshot no
+ * longer has at all, leaves. `order` null = the snapshot's own order.
  */
-export function railLayout(count: number, width: number): RailLayout {
-	const fits = (columns: number, min: number, room: number) => columns * min + (columns - 1) * RAIL_GAP <= room
-	const columns = Math.max(1, count)
-	for (const agents of ['side', 'narrow'] as const)
-		if (fits(count, RAIL_CARD_MIN.full, width - RAIL_AGENTS_ROOM[agents])) return { density: 'full', columns, agents }
-	const two = Math.ceil(count / 2)
-	for (const agents of ['side', 'narrow'] as const)
-		if (fits(two, RAIL_CARD_MIN.compactSide, width - RAIL_AGENTS_ROOM[agents]))
-			return { density: 'compact', columns: two, agents }
-	const twoWithAgents = Math.ceil((count + 1) / 2)
-	if (fits(twoWithAgents, RAIL_CARD_MIN.compact, width))
-		return { density: 'compact', columns: twoWithAgents, agents: 'cell' }
-	// Dense chips never overflow: columns shrink (name, then age give way) instead of scrolling.
+export function keepOrder(
+	order: readonly number[] | null,
+	items: readonly DockItem[],
+	held: readonly DockItem[] = [],
+): DockItem[] {
+	if (!order) return [...items]
+	const byId = new Map(items.map(item => [item.id, item]))
+	const heldById = new Map(held.map(item => [item.id, item]))
+	const kept = order.flatMap(id => {
+		const item = byId.get(id) ?? heldById.get(id)
+		return item && item.resolution?.by !== 'acked' ? [item] : []
+	})
+	const known = new Set(order)
+	return [...kept, ...items.filter(item => !known.has(item.id))]
+}
+
+export type QueueDensity = 'full' | 'compact' | 'dense'
+/** Where the Agents entry sits: a wide column beside the entries, a narrow one, or the grid's last cell. */
+export type QueueAgentsSlot = 'side' | 'narrow' | 'cell'
+/** Horizontal room around an entry's text: 12px padding each side, its 1px divider and 1px of slack. */
+export const QUEUE_ENTRY_PAD = 26
+/** The first entry lines its text up with the strip's 16px inset: 4px more on the left. */
+export const QUEUE_FIRST_EXTRA = 4
+/** Narrowest full entry: beside the wide Agents column the gist keeps a readable width. */
+export const QUEUE_ENTRY_MIN = { side: 160, narrow: 112 } as const
+/** Room the Agents column takes beside the entries. */
+export const QUEUE_AGENTS_WIDTH = { side: 216, narrow: 96 } as const
+
+export interface QueueLayout {
+	density: QueueDensity
+	columns: number
+	agents: QueueAgentsSlot
+}
+
+/** Cells the wait takes in an entry's meta line ("2h16m"): a fixed budget so the layout never shifts as ages tick. */
+export const QUEUE_AGE_CHARS = 5
+/** Space around the wait in the meta line: the kind/age gap and the age's own left padding. */
+export const QUEUE_META_GAP = 16
+
+/** Cells an entry's meta line needs whole: the kind word and the wait. */
+export const entryMetaChars = (item: DockItem): number => [...cardKindLabel(item)].length + QUEUE_AGE_CHARS
+
+/**
+ * Width an entry needs to show its agent name whole (kind glyph, a space, the name)
+ * and its meta line whole (indent, kind, wait), plus padding.
+ */
+export const entryNameWidth = (nameChars: number, ch: number, metaChars = 0): number =>
+	Math.max((nameChars + 2) * ch, metaChars > 0 ? (metaChars + 2) * ch + QUEUE_META_GAP : 0) + QUEUE_ENTRY_PAD
+
+/**
+ * Picks the queue form so every item stays in view (never paged or scrolled away)
+ * and every agent name stays whole as long as possible: one row of full entries
+ * (name / kind · project · age / gist) beside the wide Agents column, then beside
+ * its narrow form; else two rows of compact entries (name / kind · age) with the
+ * Agents entry as the last cell; else three rows of one-line chips, the only form
+ * where a name may ellipsize. `nameChars` are the agent names' lengths in cells,
+ * `metaChars` the meta lines' (kind + wait, see entryMetaChars) so the wait is never
+ * pushed out of a full or compact entry, `ch` one monospace cell in px, `width` the
+ * queue's content width.
+ */
+export function queueLayout(
+	nameChars: readonly number[],
+	width: number,
+	ch: number,
+	metaChars: readonly number[] = [],
+): QueueLayout {
+	const count = nameChars.length
+	const needs = nameChars.map((chars, at) => entryNameWidth(chars, ch, metaChars[at] ?? 0))
+	const widest = Math.max(0, ...needs)
+	for (const agents of ['side', 'narrow'] as const) {
+		const total =
+			needs.reduce((sum, need) => sum + Math.max(need, QUEUE_ENTRY_MIN[agents]), 0) +
+			(count > 0 ? QUEUE_FIRST_EXTRA : 0)
+		if (total <= width - QUEUE_AGENTS_WIDTH[agents]) return { density: 'full', columns: Math.max(1, count), agents }
+	}
+	const two = Math.ceil((count + 1) / 2)
+	if (widest + QUEUE_FIRST_EXTRA <= width / two) return { density: 'compact', columns: two, agents: 'cell' }
 	return { density: 'dense', columns: Math.ceil((count + 1) / 3), agents: 'cell' }
 }
 
@@ -556,125 +629,4 @@ export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession):
 	if (lastGood !== null && session.status !== 'unreachable' && lastGood - session.observedAt > SESSION_STALE_MS)
 		meta.push(`stale ${staleAge(lastGood - session.observedAt)}`)
 	return meta
-}
-
-export interface PopoverRect {
-	top: number
-	left: number
-	width: number
-	height: number
-}
-
-export interface TerminalMetrics {
-	/** Viewport y of the terminal pane's top/bottom edges. */
-	top: number
-	bottom: number
-	/** Viewport y where xterm's rows start/end (inside the well padding). */
-	screenTop: number
-	screenBottom: number
-	/** One xterm row in px. */
-	rowHeight: number
-	/** Viewport y of the top of the row holding xterm's drawn cursor (the live prompt), if any. */
-	cursorTop?: number | null
-}
-
-/** Terminal rows the popover always leaves visible next to the dock and at the input line. */
-export const POPOVER_KEEP_ROWS = 4
-export const POPOVER_MAX_WIDTH = 640
-export const POPOVER_MAX_HEIGHT = 560
-/** Head + footer + a little body: below this the popover may cover more (never the input line). */
-export const POPOVER_MIN_HEIGHT = 120
-const POPOVER_GAP = 8
-const POPOVER_INSET = 16
-
-export interface PopoverPlacement {
-	/** Dock-relative CSS: `bottom` for a bottom dock (opens upward), `top` for a top dock. */
-	left: number
-	width: number
-	top?: number
-	bottom?: number
-	maxHeight: number
-	/** xterm row height when measured: the popover rounds its height up to whole rows so its free edge lands on the grid too. */
-	rowHeight: number | null
-}
-
-interface Band {
-	top: number
-	bottom: number
-}
-
-const bandHeight = (band: Band): number => band.bottom - band.top
-
-/**
- * Where the detail popover goes, in the dock's coordinate space. It floats over the
- * terminal but never covers the last POPOVER_KEEP_ROWS rows (the input line), the
- * cursor's row ±1 when the prompt sits higher up (after `clear`, a mid-screen TUI)
- * and, on a top dock, the rows next to the dock. Its edges snap to xterm's row grid
- * so no row is half hidden; its height is capped and the content scrolls inside.
- * When fewer than POPOVER_MIN_HEIGHT px are left it first gives up the cursor band,
- * then the rows next to a top dock / the space above the terminal, never the input
- * line. Without terminal metrics it hugs the dock.
- */
-export function popoverPlacement({
-	position,
-	dock,
-	anchor,
-	terminal,
-	viewportHeight,
-}: {
-	position: AgentDockPosition
-	dock: PopoverRect
-	anchor: { left: number; width: number }
-	terminal: TerminalMetrics | null
-	viewportHeight: number
-}): PopoverPlacement {
-	const width = Math.max(0, Math.min(POPOVER_MAX_WIDTH, dock.width - POPOVER_INSET * 2))
-	const left = Math.max(POPOVER_INSET, Math.min(anchor.left - dock.left, dock.width - POPOVER_INSET - width))
-	const dockBottom = dock.top + dock.height
-	let band: Band
-	if (!terminal)
-		band =
-			position === 'bottom'
-				? { top: POPOVER_GAP, bottom: dock.top - POPOVER_GAP }
-				: { top: dockBottom + POPOVER_GAP, bottom: viewportHeight - POPOVER_GAP }
-	else {
-		const row = Math.max(1, terminal.rowHeight)
-		const origin = terminal.screenTop
-		// Row boundaries at or above / at or below y (the gap lands inside a row that then stays whole).
-		const snapUp = (y: number) => origin + Math.floor((y - origin) / row + 1e-6) * row
-		const snapDown = (y: number) => origin + Math.ceil((y - origin) / row - 1e-6) * row
-		const keep = POPOVER_KEEP_ROWS * row
-		const input = snapUp(Math.min(terminal.screenBottom, terminal.bottom) - keep - POPOVER_GAP)
-		const nearDock =
-			position === 'top' ? snapDown(Math.max(terminal.screenTop, terminal.top) + keep + POPOVER_GAP) : null
-		const base: Band = {
-			top: nearDock ?? snapDown(terminal.top + POPOVER_GAP),
-			bottom: position === 'bottom' ? Math.min(input, dock.top - POPOVER_GAP) : input,
-		}
-		band = base
-		const cursor = terminal.cursorTop
-		if (typeof cursor === 'number' && cursor - row < base.bottom && cursor + 2 * row > base.top) {
-			const above = { top: base.top, bottom: Math.min(base.bottom, snapUp(cursor - row - POPOVER_GAP)) }
-			const below = { top: Math.max(base.top, snapDown(cursor + 2 * row + POPOVER_GAP)), bottom: base.bottom }
-			const best = bandHeight(above) >= bandHeight(below) ? above : below
-			if (bandHeight(best) >= POPOVER_MIN_HEIGHT) band = best
-		}
-		if (bandHeight(band) < POPOVER_MIN_HEIGHT) {
-			const need = Math.ceil(POPOVER_MIN_HEIGHT / row) * row
-			band = {
-				top:
-					position === 'bottom'
-						? Math.max(POPOVER_GAP, Math.min(base.top, base.bottom - need))
-						: Math.max(dockBottom + POPOVER_GAP, Math.min(base.top, base.bottom - need)),
-				bottom: base.bottom,
-			}
-		}
-	}
-	const capped = Math.max(0, Math.min(POPOVER_MAX_HEIGHT, bandHeight(band)))
-	const rowHeight = terminal ? Math.max(1, terminal.rowHeight) : null
-	// Whole rows only, so a capped popover's far edge also sits on a row boundary.
-	const maxHeight = rowHeight ? Math.floor(capped / rowHeight + 1e-6) * rowHeight : capped
-	return position === 'bottom'
-		? { left, width, bottom: dockBottom - band.bottom, maxHeight, rowHeight }
-		: { left, width, top: band.top - dock.top, maxHeight, rowHeight }
 }

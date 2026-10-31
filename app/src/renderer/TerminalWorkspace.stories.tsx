@@ -53,17 +53,17 @@ export const BrowserHarness: Story = { args: { options: { openBackground: true, 
 /** Shared production width/visibility seam; task DOM and terminal identities stay mounted. */
 export const SidebarVisibility: Story = { args: { options: { sidebarVisibility: true, expose: true } } }
 
-/** Opt-in agent dock below the terminals (production layout + reducer-built Okena fixtures): rail open. */
+/** Opt-in agent dock below the terminals (production layout + reducer-built Okena fixtures): queue open. */
 export const AgentDock: Story = {
 	args: { options: { agentDock: { scenario: 'busy', expanded: true, position: 'bottom', output: true } } },
 }
 
-/** The default 28px strip; arriving items never change its height or open the rail. */
+/** The default 28px strip; arriving items never change its height or open the queue. */
 export const AgentDockCollapsed: Story = {
 	args: { options: { agentDock: { scenario: 'busy', expanded: false, position: 'bottom', output: true } } },
 }
 
-/** Two-question AskUserQuestion with option previews; the popover keeps the last terminal rows visible. */
+/** Two-question AskUserQuestion with option previews in a pane split off the terminal (it refits once, nothing floats). */
 export const AgentDockQuestion: Story = {
 	args: {
 		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'question' } },
@@ -79,7 +79,7 @@ export const AgentDockPermission: Story = {
 	},
 }
 
-/** Plan approval: the plan verbatim in a well; approval stays in the terminal for now. */
+/** Plan approval: the plan verbatim, Approve the plan / Keep planning. */
 export const AgentDockPlan: Story = {
 	args: {
 		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'plan' } },
@@ -93,7 +93,7 @@ export const AgentDockTurn: Story = {
 	},
 }
 
-/** Orphaned question (Okena restarted while it was open): dashed edge, warning line, Ack. */
+/** Orphaned question (Okena restarted while it was open): amber kind, warning line, Ack. */
 export const AgentDockOrphaned: Story = {
 	args: {
 		options: {
@@ -102,7 +102,7 @@ export const AgentDockOrphaned: Story = {
 	},
 }
 
-/** The Agents button's popover: every listed agent with observed status/meta, then Recent. */
+/** The Agents pane: every listed agent with observed status/meta, then Recent. */
 export const AgentDockAgents: Story = {
 	args: {
 		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'agents' } },
@@ -116,7 +116,7 @@ const NARROW_VIEWPORT = {
 	},
 }
 
-/** 900px window: five items fold into compact cards so every one stays visible. */
+/** 900px window: five items fold into two rows of entries so every name stays whole. */
 export const AgentDockNarrow: Story = {
 	...NARROW_VIEWPORT,
 	args: { options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true } } },
@@ -130,7 +130,7 @@ export const AgentDockNarrowQuestion: Story = {
 	},
 }
 
-/** Okena unreachable: the rail leads with the outage, cards and agents are frozen, never "all clear". */
+/** Okena unreachable: the queue leads with the outage, entries and agents are frozen, never "all clear". */
 export const AgentDockSourceDown: Story = {
 	args: { options: { agentDock: { scenario: 'down', expanded: true, position: 'bottom', output: true } } },
 }
@@ -140,14 +140,14 @@ export const AgentDockEmpty: Story = {
 	args: { options: { agentDock: { scenario: 'empty', expanded: true, position: 'bottom' } } },
 }
 
-/** The persisted top position: the rail opens downward and so does the popover. */
+/** The persisted top position: strip, queue, then the pane above the terminal. */
 export const AgentDockTop: Story = {
 	args: {
 		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'top', output: true, open: 'question' } },
 	},
 }
 
-/** Answering: Sending… while main runs the Okena CAS read and POST (receipt on the card and in the popover). */
+/** Answering: Sending… while main runs the Okena CAS read and POST (receipt on the entry and in the pane). */
 export const AgentDockReceiptSending: Story = {
 	args: {
 		options: {
@@ -171,7 +171,7 @@ export const AgentDockReceiptUnconfirmed: Story = {
 	},
 }
 
-/** Observed landing: "✓ answered" lingers on the card before it leaves the rail. */
+/** Observed landing: "✓ answered" shows in place on the entry (it keeps its slot) before it leaves the queue. */
 export const AgentDockReceiptAnswered: Story = {
 	args: {
 		options: {

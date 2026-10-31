@@ -1,10 +1,13 @@
-// Agent dock detail popover bodies (design §3.24). Slice 2: Jakub answers from
-// here — pick options (click, or 1–9 while the popover has focus), Other… text,
-// allow / always allow / deny, approve / keep planning, or reply to a finished
-// turn — then one explicit submit; nothing is ever sent implicitly. Main re-reads
-// Okena (CAS) before the effect; the receipt (Sending… → ✓ answered / sent,
-// unconfirmed / refused / verbatim error) comes back in the snapshot. Agent text
-// is untrusted and always plain React text.
+// Agent dock pane bodies (design §3.24), drawn the way Claude Code's own TUI
+// draws a dialog: a titled rule on top, numbered choices with a > cursor on the
+// picked row, key hints in the footer. Jakub answers from here — pick options
+// (click, or 1–9 while the pane has focus), Other… text, allow / always allow /
+// deny, approve / keep planning, or reply to a finished turn — then one explicit
+// submit; nothing is ever sent implicitly. Main re-reads Okena (CAS) before the
+// effect; the receipt (Sending… → ✓ answered / sent, unconfirmed / refused /
+// verbatim error) comes back in the snapshot. Agent text is untrusted and always
+// plain React text. Monospace where it carries meaning (rule, choices, commands,
+// key hints); prose (questions, descriptions, turn messages) stays in the UI face.
 
 import {
 	type KeyboardEvent,
@@ -17,10 +20,7 @@ import {
 } from 'react'
 import type { AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX, REVIEW_PLAN_MAX, planReview } from '../../agent-dock/review'
-import { ActivityIndicator } from '../activity-indicator'
-import { Btn } from '../button'
-import { IconBtn } from '../icon-button'
-import { GLYPH } from '../sidebar/ui'
+import { Btn, type ButtonTone } from '../button'
 import {
 	type AskQuestion,
 	type ReceiptView,
@@ -33,8 +33,8 @@ import {
 	formatAge,
 	itemAgeTone,
 	itemHeadline,
-	itemIndicator,
 	itemTimeLine,
+	kindGlyph,
 	orderedSessions,
 	permissionReview,
 	plainAgentLine,
@@ -43,17 +43,44 @@ import {
 	recentItems,
 	resolutionLabel,
 	riskyWord,
-	sessionIndicator,
+	sessionSince,
 	sessionStatusText,
 	sessionWhere,
+	statusGlyph,
 } from './presentation'
 
-const RECENT_IN_POPOVER = 5
+const RECENT_IN_PANE = 5
 
-/** The popover body is a tab stop so keyboard users can scroll clipped content (↑ ↓, Page keys). */
+/** The pane body is a tab stop so keyboard users can scroll clipped content (↑ ↓, Page keys). */
 const SCROLL_REGION = { tabIndex: 0, role: 'region', 'aria-label': 'Details' } as const
 
-function DetailHead({
+/** The pane's top border, tmux-style: `─ ? Question name project  #3 asked 13:44 waiting 2h ──── ‹ 1/5 › esc ─`. */
+function Rule({ children, end }: { children: ReactNode; end: ReactNode }) {
+	return (
+		<header className="agent-dock-rule">
+			<span className="agent-dock-rule-lead" aria-hidden="true" />
+			<span className="agent-dock-rule-title">{children}</span>
+			<span className="agent-dock-rule-fill" aria-hidden="true" />
+			<span className="agent-dock-rule-end">{end}</span>
+			<span className="agent-dock-rule-tail" aria-hidden="true" />
+		</header>
+	)
+}
+
+function CloseKey({ onClose }: { onClose(): void }) {
+	return (
+		<button
+			type="button"
+			className="agent-dock-rule-btn agent-dock-rule-close"
+			aria-label="Close details"
+			onClick={onClose}
+		>
+			esc
+		</button>
+	)
+}
+
+function ItemRule({
 	item,
 	session,
 	now,
@@ -71,62 +98,106 @@ function DetailHead({
 	onClose(): void
 }) {
 	const where = sessionWhere(session, item.session)
-	const indicator = itemIndicator(item)
+	const tone = cardTone(item, now)
 	const time = itemTimeLine(item, now)
 	return (
-		<header className="agent-dock-pop-head">
-			<div className="agent-dock-pop-title">
-				<ActivityIndicator variant={indicator.variant} label={indicator.label} />
-				<span className="agent-dock-pop-kind" data-tone={cardTone(item, now)}>
-					{cardKindLabel(item)}
-				</span>
-				{/* Name first, project muted after it — as on the cards. */}
-				<span className="agent-dock-pop-where">
-					<span className="agent-dock-pop-name">{where.name}</span>
-					{where.project ? <span className="agent-dock-pop-project">{where.project}</span> : null}
-				</span>
-			</div>
-			<div className="agent-dock-pop-meta">
-				<span className="agent-dock-pop-id">#{item.id}</span>
-				<span aria-hidden="true">·</span>
+		<Rule
+			end={
+				<>
+					<span className="agent-dock-stepper">
+						<button
+							type="button"
+							className="agent-dock-rule-btn"
+							aria-label="Previous item"
+							disabled={index <= 0}
+							onClick={() => onStep(-1)}
+						>
+							‹
+						</button>
+						<span className="agent-dock-step-count" aria-live="polite">
+							{index + 1}/{total}
+						</span>
+						<button
+							type="button"
+							className="agent-dock-rule-btn"
+							aria-label="Next item"
+							disabled={index >= total - 1}
+							onClick={() => onStep(1)}
+						>
+							›
+						</button>
+					</span>
+					<CloseKey onClose={onClose} />
+				</>
+			}
+		>
+			<span className="agent-dock-glyph" data-tone={tone} aria-hidden="true">
+				{kindGlyph(item)}
+			</span>
+			<span className="agent-dock-rule-kind" data-tone={tone}>
+				{cardKindLabel(item)}
+			</span>
+			{/* Name first, project dim after it — as on the entries. */}
+			<span className="agent-dock-rule-name">{where.name}</span>
+			{where.project ? <span className="agent-dock-rule-project">{where.project}</span> : null}
+			<span className="agent-dock-rule-meta">
+				<span>#{item.id}</span>
 				<span>{time.stamp}</span>
-				<span aria-hidden="true">·</span>
-				<span className="agent-dock-card-age" data-tone={itemAgeTone(item, now)}>
+				<span className="agent-dock-rule-age" data-tone={itemAgeTone(item, now)}>
 					{time.waited}
 				</span>
-			</div>
-			<div className="agent-dock-pop-actions">
-				<div className="agent-dock-stepper">
-					<IconBtn
-						label="Previous item"
-						className="agent-dock-step-prev"
-						disabled={index <= 0}
-						onClick={() => onStep(-1)}
-					>
-						{GLYPH.chevronRight}
-					</IconBtn>
-					<span className="agent-dock-step-count" aria-live="polite">
-						{index + 1} of {total}
-					</span>
-					<IconBtn label="Next item" disabled={index >= total - 1} onClick={() => onStep(1)}>
-						{GLYPH.chevronRight}
-					</IconBtn>
-				</div>
-				<IconBtn label="Close details" onClick={onClose}>
-					{GLYPH.close}
-				</IconBtn>
-			</div>
-		</header>
+			</span>
+		</Rule>
 	)
 }
 
-/** Sticky footer: the receipt or hint in words on the left, decisions on the right. */
-function Footer({ note, children }: { note: ReactNode; children?: ReactNode }) {
+function Hint({ keys, children }: { keys: string; children: ReactNode }) {
 	return (
-		<footer className="agent-dock-pop-foot">
-			<span className="agent-dock-pop-note">{note}</span>
-			{children ? <div className="agent-dock-pop-foot-actions">{children}</div> : null}
+		<span className="agent-dock-hint">
+			<kbd>{keys}</kbd> {children}
+		</span>
+	)
+}
+
+/** Footer: key hints left, then the receipt / hint in words, then the decisions. No rule: the pane runs on into its entry. */
+function Footer({ hints, note, children }: { hints: ReactNode; note: ReactNode; children?: ReactNode }) {
+	return (
+		<footer className="agent-dock-foot">
+			<span className="agent-dock-foot-hints">{hints}</span>
+			<span className="agent-dock-foot-note">{note}</span>
+			{children ? <span className="agent-dock-foot-actions">{children}</span> : null}
 		</footer>
+	)
+}
+
+/** A footer decision: the shared button in the dock's monospace (its key is in the footer hints). */
+function Key({
+	tone,
+	disabled,
+	busy,
+	ariaLabel,
+	onClick,
+	children,
+}: {
+	tone: ButtonTone
+	disabled?: boolean
+	busy?: boolean
+	ariaLabel?: string
+	onClick(): void
+	children: string
+}) {
+	return (
+		<Btn
+			tone={tone}
+			sm
+			className="agent-dock-key"
+			disabled={disabled}
+			busy={busy}
+			ariaLabel={ariaLabel}
+			onClick={onClick}
+		>
+			{children}
+		</Btn>
 	)
 }
 
@@ -138,14 +209,23 @@ function Receipt({ view }: { view: ReceiptView }) {
 	)
 }
 
-/** Popover-level keys a body handles (digits, Enter). Returns true when it consumed the event. */
+/** Second confirmation for free text to the agent that mentions deploy/prod/secret/push/merge. */
+function RiskyConfirm({ word, what }: { word: string; what: string }) {
+	return (
+		<span className="agent-dock-confirm" role="alert">
+			{what} mentions “{word}”. Send it to the agent anyway?
+		</span>
+	)
+}
+
+/** Pane-level keys a body handles (digits, Enter). Returns true when it consumed the event. */
 export type DetailKeys = (event: KeyboardEvent<HTMLElement>) => boolean
 
-/** Typing in a field never picks options or submits through the popover keys. */
+/** Typing in a field never picks options or submits through the pane keys. */
 export const isTextField = (target: EventTarget | null): boolean =>
 	target instanceof Element && target.closest('input, textarea, [contenteditable="true"]') !== null
 
-/** Per-item text drafts that survive stepping and closing the popover (renderer memory only). */
+/** Per-item text drafts that survive stepping and closing the pane (renderer memory only). */
 export type DockDrafts = Map<string, string>
 
 function useDraft(drafts: DockDrafts, key: string): [string, (value: string) => void] {
@@ -175,7 +255,7 @@ interface PanelProps {
 	onAct(action: DockAction): void
 }
 
-/** Binds a body's key handler for the popover while it is mounted. */
+/** Binds a body's key handler for the pane while it is mounted. */
 function useKeys(keys: MutableRefObject<DetailKeys | null>, handler: DetailKeys): void {
 	const latest = useRef(handler)
 	latest.current = handler
@@ -195,7 +275,7 @@ const digitOf = (event: KeyboardEvent<HTMLElement>): number | null => {
 	return /^[1-9]$/.test(event.key) && Number.isInteger(digit) ? digit : null
 }
 
-/** Enter on the popover itself or its scroll body (buttons and fields keep their own Enter). */
+/** Enter on the pane itself or its scroll body (buttons and fields keep their own Enter). */
 const isBareEnter = (event: KeyboardEvent<HTMLElement>): boolean =>
 	event.key === 'Enter' &&
 	!event.shiftKey &&
@@ -203,7 +283,79 @@ const isBareEnter = (event: KeyboardEvent<HTMLElement>): boolean =>
 	!event.ctrlKey &&
 	!event.altKey &&
 	!isTextField(event.target) &&
-	(event.target === event.currentTarget || (event.target as Element).classList?.contains('agent-dock-pop-scroll'))
+	(event.target === event.currentTarget || (event.target as Element).classList?.contains('agent-dock-pane-scroll'))
+
+const pickHints = (count: number, verb: string, submit: string) => (
+	<>
+		<Hint keys={count > 1 ? `1–${count}` : '1'}>{verb}</Hint>
+		<Hint keys="enter">{submit}</Hint>
+		<Hint keys="esc">close</Hint>
+	</>
+)
+
+interface ChoiceRow {
+	id: string
+	label: ReactNode
+	description?: ReactNode
+	tone?: 'danger'
+}
+
+/** Numbered rows like Claude Code's own list: cursor, number, label, aligned description. */
+function Choices({
+	rows,
+	picked,
+	multi,
+	live,
+	focused,
+	label,
+	onPick,
+	onPoint,
+}: {
+	rows: ChoiceRow[]
+	picked: ReadonlySet<string>
+	multi?: boolean
+	live: boolean
+	/** The row whose preview shows (questions with previews). */
+	focused?: string | null
+	label: string
+	onPick(id: string): void
+	onPoint?(id: string): void
+}) {
+	return (
+		// biome-ignore lint/a11y/useSemanticElements: a fieldset cannot be the subgrid parent the choice rows align to.
+		<div className="agent-dock-choices" role="group" aria-label={label} data-multi={String(multi === true)}>
+			{rows.map((row, at) => {
+				const on = picked.has(row.id)
+				return (
+					<button
+						type="button"
+						key={row.id}
+						className="agent-dock-choice"
+						data-tone={row.tone}
+						data-focused={focused === undefined ? undefined : String(focused === row.id)}
+						aria-pressed={on}
+						disabled={!live}
+						onClick={() => onPick(row.id)}
+						onMouseEnter={() => onPoint?.(row.id)}
+						onFocus={() => onPoint?.(row.id)}
+					>
+						<span className="agent-dock-choice-cursor" aria-hidden="true">
+							{multi ? (on ? '[x]' : '[ ]') : on ? '>' : ''}
+						</span>
+						<span className="agent-dock-choice-n">{at + 1}</span>{' '}
+						<span className="agent-dock-choice-label">{row.label}</span>
+						{row.description ? (
+							<>
+								{' '}
+								<span className="agent-dock-choice-description">{row.description}</span>
+							</>
+						) : null}
+					</button>
+				)
+			})}
+		</div>
+	)
+}
 
 export function ItemDetail({
 	item,
@@ -244,38 +396,36 @@ export function ItemDetail({
 	onAck(): void
 	onAct(action: DockAction): void
 }) {
-	const head = (
-		<DetailHead item={item} session={session} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
-	)
 	const orphaned = item.state === 'orphaned'
 	const resolved = item.state === 'resolved'
 	const ackable =
 		!resolved && (item.kind === 'turn' || orphaned || item.state === 'unconfirmed') && item.state !== 'sending'
 	const ack = ackable ? (
-		<Btn tone="quiet" sm busy={pending} onClick={onAck} ariaLabel={`Ack item ${item.id}`}>
+		<Key tone="quiet" busy={pending} onClick={onAck} ariaLabel={`Ack item ${item.id}`}>
 			Ack
-		</Btn>
+		</Key>
 	) : null
 	const view = receiptView(item)
 	const receipt = view ? (
 		<Receipt view={view} />
 	) : localError ? (
 		<Receipt view={{ text: localError, tone: 'danger', busy: false }} />
+	) : resolved ? (
+		// Closed elsewhere while the pane showed it: it stays until Jakub closes the pane, saying how it went.
+		<Receipt view={{ text: resolutionLabel(item), tone: 'neutral', busy: false }} />
 	) : null
 	const warnings = (
 		<>
-			{refused ? <p className="agent-dock-pop-warning">Not acked: the item changed. Check it again.</p> : null}
+			{refused ? <Warn>Not acked: the item changed. Check it again.</Warn> : null}
 			{orphaned ? (
-				<p className="agent-dock-pop-warning">
-					Okena restarted while this was open. The agent may still be waiting in its terminal.
-				</p>
+				<Warn>Okena restarted while this was open. The agent may still be waiting in its terminal.</Warn>
 			) : null}
 			{item.state === 'unconfirmed' ? (
-				<p className="agent-dock-pop-warning">
+				<Warn>
 					{item.kind === 'ask'
 						? 'Helm has not seen this answer land. If the dialog is still open, it comes back here to answer again.'
 						: "Okena took the answer, but Helm has not seen it land. Check the agent's terminal, then Ack."}
-				</p>
+				</Warn>
 			) : null}
 		</>
 	)
@@ -299,9 +449,20 @@ export function ItemDetail({
 	else body = <PermissionPanel key={item.id} {...panel} />
 	return (
 		<>
-			{head}
+			<ItemRule item={item} session={session} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
 			{body}
 		</>
+	)
+}
+
+function Warn({ children }: { children: ReactNode }) {
+	return (
+		<p className="agent-dock-warn">
+			<span className="agent-dock-warn-mark" aria-hidden="true">
+				!
+			</span>
+			<span>{children}</span>
+		</p>
 	)
 }
 
@@ -336,6 +497,7 @@ function AskPanel({ item, live, blockedNote, receipt, ack, warnings, keys, submi
 	const previewIndex = picked.length > 0 ? (picked[picked.length - 1] ?? hovered) : hovered
 	const hasPreviews = question.options.some(option => option.preview)
 	const otherNumber = question.options.length + 1
+	const OTHER = 'other'
 
 	const showQuestion = (at: number) => {
 		setActive(at)
@@ -421,203 +583,140 @@ function AskPanel({ item, live, blockedNote, receipt, ack, warnings, keys, submi
 		event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[at]?.focus()
 	}
 	const otherActive = otherOn[active] ?? false
-	const note =
-		receipt ??
+	const rows: ChoiceRow[] = [
+		...question.options.map((option, at) => ({
+			id: String(at),
+			label: option.label,
+			...(option.description ? { description: option.description } : {}),
+		})),
+		{ id: OTHER, label: 'Other…', description: 'Type your own answer' },
+	]
+	const pickedIds = new Set([...picked.map(String), ...(otherActive ? [OTHER] : [])])
+	const note = confirming ? (
+		<RiskyConfirm word={confirming} what="This answer" />
+	) : (
+		(receipt ??
 		blockedNote ??
-		(complete ? 'Ready to submit' : questions.length > 1 ? 'Answer every question, then submit' : 'Pick an answer')
+		(complete ? 'Ready to submit' : questions.length > 1 ? 'Answer every question, then submit' : 'Pick an answer'))
+	)
+	const preview = question.options[previewIndex]
 	return (
 		<>
-			<div className="agent-dock-pop-scroll" {...SCROLL_REGION}>
+			<div className="agent-dock-pane-scroll" {...SCROLL_REGION}>
 				{warnings}
-				<div className="agent-dock-pop-body">
-					{questions.length > 1 ? (
-						<div
-							className="segmented agent-dock-question-tabs"
-							role="tablist"
-							aria-label="Questions"
-							style={{ gridTemplateColumns: `repeat(${questions.length}, minmax(0, 1fr))` }}
-							onKeyDown={onTabsKey}
-						>
-							{questions.map((entry, at) => (
-								<button
-									// biome-ignore lint/suspicious/noArrayIndexKey: positional, immutable list
-									key={at}
-									type="button"
-									role="tab"
-									aria-selected={at === active}
-									tabIndex={at === active ? 0 : -1}
-									className={`segment${at === active ? ' segment-active' : ''}`}
-									onClick={() => showQuestion(at)}
-								>
-									<span className="segment-body">
-										<span className="agent-dock-question-n">{at + 1}</span>
-										<span className="agent-dock-question-tab">{entry.header ?? `Question ${at + 1}`}</span>
-										{answered(at) ? <span className="agent-dock-question-done">{GLYPH.check}</span> : null}
-									</span>
-								</button>
-							))}
-						</div>
-					) : question.header ? (
-						<p className="agent-dock-pop-label">{question.header}</p>
-					) : null}
-					<p className="agent-dock-question">
-						{question.question}
-						{question.multiSelect ? <span className="agent-dock-pop-quiet"> (pick several)</span> : null}
-					</p>
-					<div className="agent-dock-ask-grid" data-previews={String(hasPreviews)}>
-						<ol className="agent-dock-choices" aria-label="Options">
-							{question.options.map((option, at) => (
-								// biome-ignore lint/suspicious/noArrayIndexKey: option numbers are positional, as in the terminal
-								<li key={at}>
+				<div className="agent-dock-ask" data-previews={String(hasPreviews)}>
+					<div className="agent-dock-ask-main">
+						{questions.length > 1 ? (
+							<div className="agent-dock-qtabs" role="tablist" aria-label="Questions" onKeyDown={onTabsKey}>
+								{questions.map((entry, at) => (
 									<button
+										// biome-ignore lint/suspicious/noArrayIndexKey: positional, immutable list
+										key={at}
 										type="button"
-										className="agent-dock-choice"
-										aria-pressed={picked.includes(at)}
-										disabled={!live}
-										data-focused={String(hasPreviews && previewIndex === at)}
-										onMouseEnter={() => setHovered(at)}
-										onFocus={() => setHovered(at)}
-										onClick={() => pick(at)}
+										role="tab"
+										aria-selected={at === active}
+										tabIndex={at === active ? 0 : -1}
+										className="agent-dock-qtab"
+										aria-label={`${entry.header ?? `Question ${at + 1}`}${answered(at) ? ', answered' : ''}`}
+										onClick={() => showQuestion(at)}
 									>
-										<span className="agent-dock-choice-n">{at + 1}</span>
-										<span className="agent-dock-choice-copy">
-											<span className="agent-dock-choice-label">{option.label}</span>
-											{option.description ? (
-												<span className="agent-dock-choice-description">{option.description}</span>
-											) : null}
+										<span className="agent-dock-qtab-mark" data-done={String(answered(at))} aria-hidden="true">
+											{answered(at) ? '✓' : at + 1}
 										</span>
+										<span>{entry.header ?? `Question ${at + 1}`}</span>
 									</button>
-								</li>
-							))}
-							<li>
-								<button
-									type="button"
-									className="agent-dock-choice"
-									aria-pressed={otherActive}
-									disabled={!live}
-									onClick={chooseOther}
-								>
-									<span className="agent-dock-choice-n">{otherNumber}</span>
-									<span className="agent-dock-choice-copy">
-										<span className="agent-dock-choice-label">Other…</span>
-										<span className="agent-dock-choice-description">Type your own answer</span>
-									</span>
-								</button>
-							</li>
-						</ol>
-						{hasPreviews ? (
-							<div className="agent-dock-preview">
-								<span className="agent-dock-preview-label">
-									Preview · {question.options[previewIndex]?.label ?? ''}
-								</span>
-								<pre className="agent-dock-well agent-dock-preview-text">
-									{question.options[previewIndex]?.preview ?? 'No preview for this option.'}
-								</pre>
+								))}
 							</div>
+						) : question.header ? (
+							<p className="agent-dock-pane-label">{question.header}</p>
 						) : null}
-					</div>
-					{otherActive ? (
-						<input
-							// Remount per question so the field follows the tab.
-							key={`other-${active}`}
-							ref={otherInput}
-							className="input agent-dock-field"
-							aria-label={`Your answer to question ${active + 1}`}
-							placeholder="Your answer"
-							maxLength={4096}
-							value={others[active] ?? ''}
-							disabled={!live}
-							onChange={event => {
-								const value = event.currentTarget.value
-								setOthers(prev => setAt(prev, active, value))
-								setConfirming(null)
-							}}
-							onKeyDown={event => {
-								if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-								event.preventDefault()
-								event.stopPropagation()
-								if (complete) submit(confirming !== null)
-								else {
-									const next = questions.findIndex((_, at) => !answered(at))
-									if (next >= 0) showQuestion(next)
-								}
+						<p className="agent-dock-question">
+							{question.question}
+							{question.multiSelect ? <span className="agent-dock-quiet"> (pick several)</span> : null}
+						</p>
+						<Choices
+							rows={rows}
+							picked={pickedIds}
+							multi={question.multiSelect}
+							live={live}
+							focused={hasPreviews ? String(previewIndex) : undefined}
+							label="Options"
+							onPick={id => (id === OTHER ? chooseOther() : pick(Number(id)))}
+							onPoint={id => {
+								if (id !== OTHER) setHovered(Number(id))
 							}}
 						/>
+						{otherActive ? (
+							<label className="agent-dock-prompt">
+								<span className="agent-dock-prompt-mark" aria-hidden="true">
+									&gt;
+								</span>
+								<input
+									// Remount per question so the field follows the tab.
+									key={`other-${active}`}
+									ref={otherInput}
+									className="agent-dock-input"
+									aria-label={`Your answer to question ${active + 1}`}
+									placeholder="Your answer"
+									maxLength={4096}
+									value={others[active] ?? ''}
+									disabled={!live}
+									onChange={event => {
+										const value = event.currentTarget.value
+										setOthers(prev => setAt(prev, active, value))
+										setConfirming(null)
+									}}
+									onKeyDown={event => {
+										if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+										event.preventDefault()
+										event.stopPropagation()
+										if (complete) submit(confirming !== null)
+										else {
+											const next = questions.findIndex((_, at) => !answered(at))
+											if (next >= 0) showQuestion(next)
+										}
+									}}
+								/>
+							</label>
+						) : null}
+					</div>
+					{hasPreviews ? (
+						<aside className="agent-dock-preview" aria-label="Preview">
+							<span className="agent-dock-preview-label">
+								<span className="agent-dock-quiet">preview</span> {preview?.label ?? ''}
+							</span>
+							<pre className="agent-dock-preview-text">{preview?.preview ?? 'No preview for this option.'}</pre>
+						</aside>
 					) : null}
-					{confirming ? <RiskyConfirm word={confirming} what="This answer" /> : null}
 				</div>
 			</div>
-			<Footer note={note}>
+			<Footer hints={pickHints(rows.length, 'pick', 'submit')} note={note}>
 				{ack}
 				{confirming ? (
 					<>
-						<Btn tone="ghost" sm onClick={() => setConfirming(null)}>
+						<Key tone="ghost" onClick={() => setConfirming(null)}>
 							Cancel
-						</Btn>
-						<Btn tone="danger" sm disabled={!live || !complete} busy={submitting} onClick={() => submit(true)}>
+						</Key>
+						<Key tone="danger" disabled={!live || !complete} busy={submitting} onClick={() => submit(true)}>
 							Send anyway
-						</Btn>
+						</Key>
 					</>
 				) : (
-					<Btn
+					<Key
 						tone={complete && live ? 'primary' : 'ghost'}
-						sm
 						disabled={!live || !complete}
 						busy={submitting}
 						onClick={() => submit()}
 					>
 						Submit answers
-					</Btn>
+					</Key>
 				)}
 			</Footer>
 		</>
 	)
 }
 
-/** Second confirmation for free text to the agent that mentions deploy/prod/secret/push/merge. */
-function RiskyConfirm({ word, what }: { word: string; what: string }) {
-	return (
-		<p className="agent-dock-pop-warning agent-dock-confirm" role="alert">
-			{what} mentions “{word}”. Send it to the agent anyway?
-		</p>
-	)
-}
-
-type Choice = { id: string; label: ReactNode; tone?: 'danger'; submit: string; action: DockAction | 'deny' }
-
-function ChoiceList({
-	choices,
-	selected,
-	live,
-	label,
-	onPick,
-}: {
-	choices: Choice[]
-	selected: string | null
-	live: boolean
-	label: string
-	onPick(id: string): void
-}) {
-	return (
-		<ol className="agent-dock-choices" aria-label={label}>
-			{choices.map((choice, at) => (
-				<li key={choice.id}>
-					<button
-						type="button"
-						className="agent-dock-choice"
-						data-tone={choice.tone}
-						aria-pressed={selected === choice.id}
-						disabled={!live}
-						onClick={() => onPick(choice.id)}
-					>
-						<span className="agent-dock-choice-n">{at + 1}</span>
-						<span className="agent-dock-choice-label">{choice.label}</span>
-					</button>
-				</li>
-			))}
-		</ol>
-	)
-}
+type Choice = ChoiceRow & { submit: string; action: DockAction | 'deny' }
 
 /**
  * Pick-then-submit body shared by permission and plan dialogs: a numbered choice,
@@ -686,19 +785,33 @@ function DecisionPanel({
 		}
 		return false
 	})
+	const note = confirming ? (
+		<RiskyConfirm word={confirming} what="This message" />
+	) : (
+		(receipt ?? blockedNote ?? (choice ? 'Ready to send' : hint))
+	)
 	return (
 		<>
-			<div className="agent-dock-pop-scroll" {...SCROLL_REGION}>
+			<div className="agent-dock-pane-scroll" {...SCROLL_REGION}>
 				{warnings}
-				<div className="agent-dock-pop-body">
+				<div className="agent-dock-pane-body">
 					{children}
-					<ChoiceList choices={choices} selected={selected} live={live} label="Choices" onPick={choose} />
+					<Choices
+						rows={choices}
+						picked={new Set(selected ? [selected] : [])}
+						live={live}
+						label="Choices"
+						onPick={choose}
+					/>
 					{choice?.action === 'deny' ? (
-						<label className="agent-dock-field-label">
-							<span className="field-label">{messageLabel}</span>
+						<label className="agent-dock-prompt">
+							<span className="agent-dock-prompt-mark" aria-hidden="true">
+								&gt;
+							</span>
 							<textarea
 								ref={messageRef}
-								className="input textarea agent-dock-field"
+								className="agent-dock-input"
+								aria-label={messageLabel}
 								placeholder={messagePlaceholder}
 								maxLength={4096}
 								rows={2}
@@ -718,30 +831,28 @@ function DecisionPanel({
 							/>
 						</label>
 					) : null}
-					{confirming ? <RiskyConfirm word={confirming} what="This message" /> : null}
 				</div>
 			</div>
-			<Footer note={receipt ?? blockedNote ?? (choice ? 'Ready to send' : hint)}>
+			<Footer hints={pickHints(choices.length, 'choose', 'confirm')} note={note}>
 				{ack}
 				{confirming ? (
 					<>
-						<Btn tone="ghost" sm onClick={() => setConfirming(null)}>
+						<Key tone="ghost" onClick={() => setConfirming(null)}>
 							Cancel
-						</Btn>
-						<Btn tone="danger" sm disabled={!live || !choice} busy={submitting} onClick={() => submit(true)}>
+						</Key>
+						<Key tone="danger" disabled={!live || !choice} busy={submitting} onClick={() => submit(true)}>
 							Send anyway
-						</Btn>
+						</Key>
 					</>
 				) : (
-					<Btn
+					<Key
 						tone={choice ? (choice.tone === 'danger' ? 'danger' : 'primary') : 'ghost'}
-						sm
 						disabled={!live || !choice}
 						busy={submitting}
 						onClick={() => submit()}
 					>
 						{choice?.submit ?? choices[0]?.submit ?? 'Send'}
-					</Btn>
+					</Key>
 				)}
 			</Footer>
 		</>
@@ -761,15 +872,15 @@ function PermissionPanel(panel: PanelProps) {
 	const description = review.description ? plainAgentLine(review.description, 240) : ''
 	const allows: Choice[] = review.complete
 		? [
-				{ id: 'once', label: <>Allow once</>, submit: 'Allow once', action: { type: 'allow' } },
+				{ id: 'once', label: 'Allow once', submit: 'Allow once', action: { type: 'allow' } },
 				...(always && always.length > 0
 					? [
 							{
 								id: 'always',
-								label: (
+								label: 'Always allow',
+								description: (
 									<>
-										Always allow <code className="agent-dock-mono">{always.join(', ')}</code>
-										<span className="agent-dock-pop-quiet"> (this session)</span>
+										<code className="agent-dock-mono">{always.join(', ')}</code> (this session)
 									</>
 								),
 								submit: 'Always allow',
@@ -781,7 +892,14 @@ function PermissionPanel(panel: PanelProps) {
 		: []
 	const choices: Choice[] = [
 		...allows,
-		{ id: 'deny', label: <>Deny and tell the agent what to do</>, tone: 'danger', submit: 'Deny', action: 'deny' },
+		{
+			id: 'deny',
+			label: 'Deny',
+			description: 'and tell the agent what to do',
+			tone: 'danger',
+			submit: 'Deny',
+			action: 'deny',
+		},
 	]
 	return (
 		<DecisionPanel
@@ -791,27 +909,31 @@ function PermissionPanel(panel: PanelProps) {
 			messagePlaceholder="What should it do instead?"
 			hint={review.complete ? 'Pick allow or deny' : 'Allow in the terminal, or deny here'}
 		>
-			<p className="agent-dock-pop-label">
-				{plainAgentLine(tool, 64)} wants to {review.command !== null ? 'run' : 'use'}
-				{description ? <span className="agent-dock-pop-quiet"> · {description}</span> : null}
+			<p className="agent-dock-pane-lead">
+				<span className="agent-dock-mono agent-dock-bright">{plainAgentLine(tool, 64)}</span> wants to{' '}
+				{review.command !== null ? 'run' : 'use'}
+				{description ? <span className="agent-dock-quiet"> · {description}</span> : null}
 			</p>
 			{review.flags.length > 0 ? (
-				<p className="agent-dock-pop-warning" role="note">
+				<Warn>
 					{review.flags
 						.map(flag => (flag === 'dangerouslyDisableSandbox' ? 'Runs outside the sandbox' : `${flag}: true`))
 						.join(' · ')}
-				</p>
+				</Warn>
 			) : null}
 			{review.command !== null ? (
-				<pre className="agent-dock-well agent-dock-command">{plainAgentText(review.command, REVIEW_COMMAND_MAX)}</pre>
+				<pre className="agent-dock-command">
+					<span className="agent-dock-command-prompt" aria-hidden="true">
+						${' '}
+					</span>
+					{plainAgentText(review.command, REVIEW_COMMAND_MAX)}
+				</pre>
 			) : null}
 			{review.fields !== null ? (
-				<pre className="agent-dock-well agent-dock-command">{plainAgentText(review.fields, REVIEW_FIELDS_MAX)}</pre>
+				<pre className="agent-dock-command agent-dock-fields">{plainAgentText(review.fields, REVIEW_FIELDS_MAX)}</pre>
 			) : null}
 			{review.complete ? null : (
-				<p className="agent-dock-pop-warning">
-					Too long or unusual to show in full here. Review it in the agent's terminal to allow it.
-				</p>
+				<Warn>Too long or unusual to show in full here. Review it in the agent's terminal to allow it.</Warn>
 			)}
 		</DecisionPanel>
 	)
@@ -824,9 +946,15 @@ function PlanPanel(panel: PanelProps) {
 	// Approve sends the whole tool_input back: offer it only when every part of it shows here.
 	const choices: Choice[] = [
 		...(complete
-			? [{ id: 'approve', label: <>Approve the plan</>, submit: 'Approve', action: { type: 'allow' } } satisfies Choice]
+			? [{ id: 'approve', label: 'Approve the plan', submit: 'Approve', action: { type: 'allow' } } satisfies Choice]
 			: []),
-		{ id: 'keep', label: <>Keep planning</>, submit: 'Keep planning', action: 'deny' },
+		{
+			id: 'keep',
+			label: 'Keep planning',
+			description: 'say what should change',
+			submit: 'Keep planning',
+			action: 'deny',
+		},
 	]
 	return (
 		<DecisionPanel
@@ -837,18 +965,18 @@ function PlanPanel(panel: PanelProps) {
 			hint={complete ? 'Approve or keep planning' : 'Approve in the terminal, or keep planning here'}
 		>
 			{review?.plan ? (
-				<pre className="agent-dock-well agent-dock-plan">{plainAgentText(review.plan, REVIEW_PLAN_MAX)}</pre>
+				<pre className="agent-dock-plan">{plainAgentText(review.plan, REVIEW_PLAN_MAX)}</pre>
 			) : (
-				<p className="agent-dock-pop-text">Plan ready for approval.</p>
+				<p className="agent-dock-pane-lead">Plan ready for approval.</p>
 			)}
 			{review?.fields ? (
-				<pre className="agent-dock-well agent-dock-command">{plainAgentText(review.fields, REVIEW_FIELDS_MAX)}</pre>
+				<pre className="agent-dock-command agent-dock-fields">{plainAgentText(review.fields, REVIEW_FIELDS_MAX)}</pre>
 			) : null}
 			{complete ? null : (
-				<p className="agent-dock-pop-warning">
+				<Warn>
 					The plan is missing, too long or unusual to show in full here. Review it in the agent's terminal to approve
 					it.
-				</p>
+				</Warn>
 			)}
 		</DecisionPanel>
 	)
@@ -877,29 +1005,42 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 		setConfirming(null)
 		onAct({ type: 'prompt', text, ...(risky ? { confirmed: true } : {}) })
 	}
+	const note = confirming ? (
+		<RiskyConfirm word={confirming} what="This reply" />
+	) : (
+		(receipt ?? blockedNote ?? 'Typed into the agent’s terminal as your next prompt')
+	)
 	return (
 		<>
-			<div className="agent-dock-pop-scroll" {...SCROLL_REGION}>
+			<div className="agent-dock-pane-scroll" {...SCROLL_REGION}>
 				{warnings}
-				<div className="agent-dock-pop-body">
-					<p className="agent-dock-pop-text">{plainAgentText(fact.text) || itemHeadline(item)}</p>
+				<div className="agent-dock-pane-body">
+					<div className="agent-dock-message">
+						<span className="agent-dock-message-mark" aria-hidden="true">
+							●
+						</span>
+						<p className="agent-dock-message-text">{plainAgentText(fact.text) || itemHeadline(item)}</p>
+					</div>
 					{notes.length > 0 || session?.prLinks.length ? (
-						<p className="agent-dock-pop-facts">
+						<p className="agent-dock-facts">
 							{session?.prLinks.slice(0, 4).map(pr => (
-								<span key={pr.number} className="agent-dock-pop-fact">
+								<span key={pr.number} className="agent-dock-fact-pr">
 									PR #{pr.number}
 								</span>
 							))}
-							{notes.map(note => (
-								<span key={note}>{note}</span>
+							{notes.map(line => (
+								<span key={line}>{line}</span>
 							))}
 						</p>
 					) : null}
-					<label className="agent-dock-field-label">
-						<span className="field-label">Reply</span>
+					<label className="agent-dock-prompt agent-dock-reply">
+						<span className="agent-dock-prompt-mark" aria-hidden="true">
+							&gt;
+						</span>
 						<textarea
-							className="input textarea agent-dock-field"
-							placeholder="Reply to the agent…  (⌘↵ sends)"
+							className="agent-dock-input"
+							aria-label="Reply"
+							placeholder="Reply to the agent"
 							maxLength={16384}
 							rows={2}
 							value={text}
@@ -917,41 +1058,38 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 							}}
 						/>
 					</label>
-					{confirming ? <RiskyConfirm word={confirming} what="This reply" /> : null}
 				</div>
 			</div>
-			<Footer note={receipt ?? blockedNote ?? 'Typed into the agent’s terminal as your next prompt'}>
+			<Footer
+				hints={
+					<>
+						<Hint keys="⌘ enter">send</Hint>
+						<Hint keys="esc">close</Hint>
+					</>
+				}
+				note={note}
+			>
 				{ack}
 				{confirming ? (
 					<>
-						<Btn tone="ghost" sm onClick={() => setConfirming(null)}>
+						<Key tone="ghost" onClick={() => setConfirming(null)}>
 							Cancel
-						</Btn>
-						<Btn tone="danger" sm disabled={!ready} busy={submitting} onClick={() => send(true)}>
+						</Key>
+						<Key tone="danger" disabled={!ready} busy={submitting} onClick={() => send(true)}>
 							Send anyway
-						</Btn>
+						</Key>
 					</>
 				) : (
-					<Btn tone={ready ? 'primary' : 'ghost'} sm disabled={!ready} busy={submitting} onClick={() => send(false)}>
+					<Key tone={ready ? 'primary' : 'ghost'} disabled={!ready} busy={submitting} onClick={() => send(false)}>
 						Send
-					</Btn>
+					</Key>
 				)}
 			</Footer>
 		</>
 	)
 }
 
-function RecentWhat({ item, session }: { item: DockItem; session: DockSession | undefined }) {
-	const where = sessionWhere(session, item.session)
-	return (
-		<span className="agent-dock-recent-what">
-			{cardKindLabel(item)} · <span className="agent-dock-pop-name">{where.name}</span>
-			{where.project ? <span className="agent-dock-pop-project">{where.project}</span> : null}
-		</span>
-	)
-}
-
-/** Every agent Okena lists, as info rows (only observed facts), then recently closed items. */
+/** Every agent Okena lists, as a table of observed facts, then recently closed items. */
 export function AgentsDetail({
 	snapshot,
 	now,
@@ -962,64 +1100,74 @@ export function AgentsDetail({
 	onClose(): void
 }) {
 	const sessions = orderedSessions(snapshot)
-	const recent = recentItems(snapshot, RECENT_IN_POPOVER)
+	const recent = recentItems(snapshot, RECENT_IN_PANE)
 	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
 	return (
 		<>
-			<header className="agent-dock-pop-head">
-				<div className="agent-dock-pop-title">
-					<span className="agent-dock-pop-kind">Agents</span>
-					<span className="agent-dock-pop-where">
-						{sessions.length} connected · {busy} busy
+			<Rule end={<CloseKey onClose={onClose} />}>
+				<span className="agent-dock-rule-kind">Agents</span>
+				<span className="agent-dock-rule-meta">
+					<span>
+						{sessions.length} connected, {busy} busy
 					</span>
+				</span>
+			</Rule>
+			<div className="agent-dock-pane-scroll" {...SCROLL_REGION}>
+				<div className="agent-dock-pane-body">
+					<ul className="agent-dock-table" aria-label="Agents">
+						{snapshot
+							? sessions.map(session => {
+									const where = sessionWhere(session, session.key)
+									const meta = agentRowMeta(snapshot, session)
+									return (
+										<li key={session.key} className="agent-dock-tr" data-status={session.status}>
+											<span className="agent-dock-status" data-status={session.status} aria-hidden="true">
+												{statusGlyph(session.status)}
+											</span>
+											<span className="agent-dock-td-name">{where.name}</span>
+											<span className="agent-dock-td-project">{where.project}</span>
+											<span className="agent-dock-td-status" data-status={session.status}>
+												{sessionStatusText(session, now, sessionSince(snapshot, session))}
+											</span>
+											<span className="agent-dock-td-meta">{meta.join('  ')}</span>
+										</li>
+									)
+								})
+							: null}
+					</ul>
+					{recent.length > 0 ? (
+						<section className="agent-dock-recent" aria-label="Recent">
+							<h3 className="agent-dock-subrule">
+								<span>Recent</span>
+								<span className="agent-dock-rule-fill" aria-hidden="true" />
+							</h3>
+							<ul className="agent-dock-table">
+								{recent.map(item => {
+									const where = sessionWhere(findSession(snapshot, item.session), item.session)
+									return (
+										<li key={item.id} className="agent-dock-tr agent-dock-recent-row">
+											<span className="agent-dock-status" aria-hidden="true">
+												{kindGlyph({ ...item, state: 'open' })}
+											</span>
+											<span className="agent-dock-td-name" data-dim="true">
+												{where.name}
+											</span>
+											<span className="agent-dock-td-project">
+												{cardKindLabel(item).toLowerCase()} #{item.id}
+											</span>
+											<span className="agent-dock-td-status">
+												{item.resolution ? `${formatAge(now - item.resolution.at)} ago` : ''}
+											</span>
+											<span className="agent-dock-td-meta">{resolutionLabel(item)}</span>
+										</li>
+									)
+								})}
+							</ul>
+						</section>
+					) : null}
 				</div>
-				<div className="agent-dock-pop-actions">
-					<IconBtn label="Close details" onClick={onClose}>
-						{GLYPH.close}
-					</IconBtn>
-				</div>
-			</header>
-			<div className="agent-dock-pop-scroll" {...SCROLL_REGION}>
-				<ul className="agent-dock-agent-rows">
-					{snapshot
-						? sessions.map(session => {
-								const indicator = sessionIndicator(session, snapshot.items)
-								const where = sessionWhere(session, session.key)
-								const meta = agentRowMeta(snapshot, session)
-								return (
-									<li key={session.key} className="agent-dock-agent-row" data-status={session.status}>
-										<span className="agent-dock-agent-slot">
-											{indicator ? <ActivityIndicator variant={indicator.variant} label={indicator.label} /> : null}
-										</span>
-										<span className="agent-dock-agent-where">
-											<span className="agent-dock-pop-name">{where.name}</span>
-											{where.project ? <span className="agent-dock-pop-project">{where.project}</span> : null}
-										</span>
-										{meta.length > 0 ? <span className="agent-dock-agent-meta">{meta.join(' · ')}</span> : null}
-										<span className="agent-dock-agent-status">{sessionStatusText(session, now)}</span>
-									</li>
-								)
-							})
-						: null}
-				</ul>
-				{recent.length > 0 ? (
-					<section className="agent-dock-recent" aria-label="Recent">
-						<h3 className="agent-dock-recent-title">Recent</h3>
-						<ol className="agent-dock-recent-rows">
-							{recent.map(item => (
-								<li key={item.id} className="agent-dock-recent-row">
-									<span className="agent-dock-pop-id">#{item.id}</span>
-									<RecentWhat item={item} session={findSession(snapshot, item.session)} />
-									<span className="agent-dock-recent-how">{resolutionLabel(item)}</span>
-									{item.resolution ? (
-										<span className="agent-dock-card-age">{formatAge(now - item.resolution.at)} ago</span>
-									) : null}
-								</li>
-							))}
-						</ol>
-					</section>
-				) : null}
 			</div>
+			<Footer hints={<Hint keys="esc">close</Hint>} note={null} />
 		</>
 	)
 }
