@@ -31,6 +31,7 @@ export function Btn({
 	ariaControls,
 	ariaCurrent,
 	ariaDisabled,
+	ariaKeyShortcuts,
 	type = 'button',
 	ref,
 }: {
@@ -49,6 +50,8 @@ export function Btn({
 	ariaCurrent?: 'page'
 	/** Marks a retained destination unavailable without removing its focus target. */
 	ariaDisabled?: boolean
+	/** Keys that trigger this action from elsewhere (e.g. "Meta+Enter"), for assistive tech. */
+	ariaKeyShortcuts?: string
 	type?: 'button' | 'submit' | 'reset'
 	/** Destination for focus restoration after an async or disappearing action. */
 	ref?: Ref<HTMLButtonElement>
@@ -64,6 +67,7 @@ export function Btn({
 			aria-controls={ariaControls}
 			aria-current={ariaCurrent}
 			aria-disabled={ariaDisabled}
+			aria-keyshortcuts={ariaKeyShortcuts}
 			onClick={event => {
 				if (ariaDisabled) {
 					event.preventDefault()

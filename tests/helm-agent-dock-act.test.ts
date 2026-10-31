@@ -663,11 +663,11 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 		assert.equal(parseAgentDockActRequest(bad).ok, false, JSON.stringify(bad)?.slice(0, 80))
 })
 
-test('receipt words: Sending… / ✓ answered / allowed / approved / denied', () => {
+test('receipt words: Sending… / ✓ answered / allowed / approved / denied / replied', () => {
 	const item = only(askOpen().state)
 	const sending = reduce(askOpen().state, { type: 'act.sending', itemId: item.id, action: 'answer' }, T0 + 1).state
 	assert.deepEqual(receiptView(only(sending)), { text: 'Sending…', tone: 'neutral', busy: true })
-	const words = (tool: string, action: 'allow' | 'deny', always = false) =>
+	const words = (tool: string, action: 'allow' | 'deny' | 'prompt', always = false) =>
 		receiptView({
 			...item,
 			fact: { ...(item.fact as Extract<DockItem['fact'], { kind: 'ask' }>), tool },
@@ -680,5 +680,6 @@ test('receipt words: Sending… / ✓ answered / allowed / approved / denied', (
 	assert.equal(words('ExitPlanMode', 'allow'), '✓ approved')
 	assert.equal(words('ExitPlanMode', 'deny'), '✓ sent back to planning')
 	assert.equal(words('Bash', 'deny'), '✓ denied')
+	assert.equal(words('Bash', 'prompt'), '✓ replied')
 	assert.equal(KEY.startsWith(PROFILE), true)
 })

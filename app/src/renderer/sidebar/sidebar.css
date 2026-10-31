@@ -8,19 +8,7 @@
  * layout metrics (heights, padding, hit targets) stay fixed; the terminal is
  * unaffected (its size is an xterm option). New rules MUST keep the calc. */
 
-/* Screen-reader-only live text must never enter the visible action-bar flow. */
-.sr-only {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	margin: -1px;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	clip-path: inset(50%);
-	white-space: nowrap;
-	border: 0;
-}
+/* .sr-only (screen-reader-only live text) lives in styles.css, shared by every surface. */
 
 /* ---------- shell & push navigation (§3.10) ---------- */
 

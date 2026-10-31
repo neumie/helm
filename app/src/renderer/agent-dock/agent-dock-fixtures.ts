@@ -333,6 +333,8 @@ interface ScenarioRun {
 	/** The panes as Okena last showed them (no transcript pages), for follow-up polls. */
 	live: Live
 	version: number
+	/** Answers this run sent from the dock, as the dock would remember them (receipt stories). */
+	sent?: Map<number, DockAction>
 }
 
 const bare = (live: Live): Live => live.map(({ pane, body }) => ({ pane, body }))
@@ -432,6 +434,7 @@ function receiptRun(name: AgentDockScenario, now: number, scenario: ScenarioRun)
 		scenario.state = reduce(scenario.state, observation, at).state
 	}
 	const answer: DockAction = { type: 'answer', picks: [{ options: [1] }, { options: [0] }] }
+	scenario.sent = new Map([[question.id, answer]])
 	step({ type: 'act.sending', itemId: question.id, ...actionKind(answer) }, now - 2_000)
 	if (name === 'receipt-sending') return scenario
 	if (name === 'receipt-failed') {
@@ -480,6 +483,8 @@ export const FIXTURE_ACT_STEP_MS = 250
 export interface AgentDockFixture {
 	api: AgentDockApi
 	calls: { visible: boolean[]; acks: number[]; acts: AgentDockActRequest[] }
+	/** Answers the current scenario already sent from the dock (the receipt stories), for AgentDock's initialSent. */
+	sent(): ReadonlyMap<number, DockAction>
 	/** Replaces the reducer state with a scenario and pushes its snapshot through the production subscription. */
 	emitScenario(name: AgentDockScenario): void
 	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
@@ -576,6 +581,7 @@ export function createAgentDockFixture(
 		setActMode(next) {
 			mode = next
 		},
+		sent: () => scenario?.sent ?? new Map(),
 		listenerCount: () => listeners.size,
 	}
 }

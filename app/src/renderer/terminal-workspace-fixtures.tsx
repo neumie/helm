@@ -52,11 +52,11 @@ export interface TerminalWorkspaceFixtureOptions {
 
 export type AgentDockOpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
-/** Queue entry each `agentDock.open` value clicks (entry aria-labels start "#id Kind, …"). */
+/** Queue entry each `agentDock.open` value clicks (entry aria-labels start "Kind, name …"). */
 const AGENT_DOCK_OPEN_SELECTOR: Record<AgentDockOpenFixture, string> = {
-	question: '.agent-dock-entry[aria-label*=" Question,"]',
-	permission: '.agent-dock-entry[aria-label*=" Permission,"]',
-	plan: '.agent-dock-entry[aria-label*=" Plan,"]',
+	question: '.agent-dock-entry[aria-label^="Question,"]',
+	permission: '.agent-dock-entry[aria-label^="Permission,"]',
+	plan: '.agent-dock-entry[aria-label^="Plan,"]',
 	turn: '.agent-dock-entry[data-kind="turn"]',
 	orphaned: '.agent-dock-entry[data-tone="orphaned"]',
 	agents: '.agent-dock-agents-entry',
@@ -562,6 +562,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					fitActive: () => workspace.fitActive(),
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
+					initialSent: dockFixture.sent(),
 				})
 			})
 		}

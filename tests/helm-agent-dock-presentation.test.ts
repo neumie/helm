@@ -34,6 +34,7 @@ const {
 	plainAgentLine,
 	plainAgentText,
 	resolutionLabel,
+	sentSummary,
 	sessionSince,
 	entryMetaChars,
 	toolInputText,
@@ -132,7 +133,7 @@ test('recorded AskUserQuestion input renders every question and preview verbatim
 	assert.equal(questions?.[0]?.options[1]?.preview, '▇▇ blue')
 	assert.equal(askQuestions({ questions: [{ nope: true }] }), null)
 	assert.equal(askQuestions('string'), null)
-	assert.equal(itemHeadline(askItem()), 'Barva? (+1)')
+	assert.equal(itemHeadline(askItem()), 'Barva? · 1 more question')
 	assert.equal(
 		itemHeadline(askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T } })),
 		'Allow Bash?',
@@ -177,7 +178,8 @@ test('summary counts needs, ages the oldest, and heads with the newest item', ()
 	assert.equal(summary.needsText, '2 need you')
 	assert.equal(summary.oldestText, 'oldest 3h')
 	assert.equal(summary.oldestTone, 'danger')
-	assert.equal(summary.head, '#8 helm / dock: PR ready?')
+	// The strip reads the newest item as its entry does: name, project, then the gist (no #id).
+	assert.deepEqual(summary.head, { name: 'dock', project: 'helm', gist: 'PR ready?' })
 	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
 	assert.equal(turnsOnly.needsText, '1 needs you')
 })
@@ -409,4 +411,17 @@ test('plan review: approve needs the whole plan and every other field shown verb
 	assert.equal(planReview({ plan: 'p'.repeat(16_385) }).complete, false)
 	assert.equal(planReview({ plan: 'head\n… (truncated)' }).complete, false)
 	assert.equal(planReview({ plan: 'ok', note: 'x\u001b[2K' }).complete, false)
+})
+
+test('sentSummary names what was sent: picked labels and Other text, or the deny message', () => {
+	const item = askItem()
+	assert.equal(sentSummary(item, { type: 'answer', picks: [{ options: [1] }, { options: [0] }] }), 'Blue, S')
+	assert.equal(
+		sentSummary(item, { type: 'answer', picks: [{ options: [], other: ' teal ' }, { options: [1] }] }),
+		'“teal”, M',
+	)
+	assert.equal(sentSummary(item, { type: 'deny', message: 'use the staging bucket' }), 'use the staging bucket')
+	assert.equal(sentSummary(item, { type: 'deny' }), null)
+	assert.equal(sentSummary(item, { type: 'allow' }), null)
+	assert.equal(sentSummary(item, { type: 'prompt', text: 'hi' }), null)
 })

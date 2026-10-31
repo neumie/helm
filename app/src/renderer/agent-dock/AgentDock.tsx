@@ -21,7 +21,7 @@ import {
 	useState,
 } from 'react'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
-import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail } from './AgentDockDetail'
+import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail, draftKeys } from './AgentDockDetail'
 import {
 	type AgentDockPosition,
 	QUEUE_ENTRY_MIN,
@@ -42,6 +42,7 @@ import {
 	itemWaitingSince,
 	keepOrder,
 	kindGlyph,
+	needsYouItems,
 	nextLingerExpiry,
 	orderedSessions,
 	plainAgentText,
@@ -75,6 +76,8 @@ export interface AgentDockProps {
 	onPaneChange?(open: boolean): void
 	/** Review fixtures only: the pane to show on first render. */
 	initialOpen?: AgentDockTarget | null
+	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
+	initialSent?: ReadonlyMap<number, DockAction>
 }
 
 /** The pane's height is set once when it opens (its first item's natural height, within these) and kept while it stays open. */
@@ -82,6 +85,8 @@ export const PANE_MIN_HEIGHT = 216
 export const PANE_MAX_HEIGHT = 480
 /** However little room is left, the pane keeps its rule, a few body rows and its footer. */
 const PANE_FLOOR = 120
+/** New asks arriving within this window are announced together ("3 new requests"). */
+const ANNOUNCE_COALESCE_MS = 2_000
 
 const targetKey = (target: AgentDockTarget | null): string | null =>
 	target === null ? null : target.type === 'agents' ? 'agents' : `item:${target.id}`
@@ -98,9 +103,11 @@ export function AgentDock({
 	paneRoom,
 	onPaneChange,
 	initialOpen = null,
+	initialSent,
 }: AgentDockProps) {
 	const railId = useId()
 	const paneId = useId()
+	const headId = useId()
 	const hostRef = useRef<HTMLDivElement>(null)
 	const paneRef = useRef<HTMLElement>(null)
 	const anchors = useRef(new Map<string, HTMLButtonElement>())
@@ -126,11 +133,17 @@ export function AgentDock({
 	const detailKeys = useRef<DetailKeys | null>(null)
 	/** Unsent reply/deny drafts, by item: survive stepping and closing (memory only). */
 	const drafts = useRef<DockDrafts>(new Map()).current
+	/**
+	 * What was last sent for an item, kept from submit until the item leaves (memory only): the pane
+	 * shows the sent picks under the receipt, and a refusal or failure restores them for a retry.
+	 */
+	const sent = useRef(new Map<number, DockAction>(initialSent ?? [])).current
 	/** Re-render clock for answered entries that linger with their receipt. */
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
 
 	const summary = dockSummary(snapshot, clock)
+	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
 	const needs = keepOrder(
@@ -165,7 +178,9 @@ export function AgentDock({
 	const open = (next: AgentDockTarget, viaKeyboard: boolean) => {
 		const key = targetKey(next)
 		if (key === openKey) {
-			close(viaKeyboard)
+			// Enter/Space on the open entry goes to its pane (confirming never deselects); a click closes it.
+			if (viaKeyboard) paneRef.current?.focus()
+			else close(false)
 			return
 		}
 		focusOnOpen.current = viaKeyboard
@@ -190,6 +205,13 @@ export function AgentDock({
 		const timer = setTimeout(() => setLingerNow(Date.now()), Math.max(50, expiry - clock + 20))
 		return () => clearTimeout(timer)
 	}, [snapshot, clock])
+
+	// A sent answer is remembered until its item leaves the snapshot.
+	useEffect(() => {
+		if (!snapshot || sent.size === 0) return
+		const ids = new Set(snapshot.items.map(item => item.id))
+		for (const id of sent.keys()) if (!ids.has(id)) sent.delete(id)
+	}, [snapshot, sent])
 
 	// The open item went away (a local ack, or the snapshot no longer has it): after an ack show the next one, otherwise close.
 	useEffect(() => {
@@ -287,6 +309,12 @@ export function AgentDock({
 				return next
 			})
 		done(next => next.delete(item.id))
+		sent.set(item.id, action)
+		// Sending disables the control that sent (choice, field, button); focus left on it would drop to
+		// <body>, out of the pane's keys. The pane itself keeps Esc and a retry's ⌘Enter.
+		const pane = paneRef.current
+		const focused = pane?.ownerDocument.activeElement
+		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
 		setSubmitting(prev => new Set(prev).add(item.id))
 		void onAct(item.id, item.rev, action)
 			.catch(
@@ -296,6 +324,8 @@ export function AgentDock({
 				}),
 			)
 			.then(result => {
+				// Answered: its drafts (picks, Other text, deny message, reply) have done their job.
+				if (result.ok) for (const key of draftKeys(item.id)) drafts.delete(key)
 				setSubmitting(prev => {
 					const next = new Set(prev)
 					next.delete(item.id)
@@ -344,16 +374,17 @@ export function AgentDock({
 
 	// Inside the pane: ← → / ↑ ↓ step between items (from the pane itself or ‹ ›; the body
 	// region keeps ↑ ↓ for scrolling, tabs and options keep their own arrows); paging keys
-	// scroll the body; Esc closes back to the entry.
+	// scroll the body; Esc closes back to the entry (after cancelling a confirmation).
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
+		// The shown body first: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field),
+		// Esc cancels a risky-word confirmation before it would close the pane.
+		if (detailKeys.current?.(event)) {
+			event.preventDefault()
+			return
+		}
 		if (event.key === 'Escape') {
 			event.preventDefault()
 			close(true)
-			return
-		}
-		// The shown body first: 1–9 pick options, Enter submits (never while typing in a field).
-		if (detailKeys.current?.(event)) {
-			event.preventDefault()
 			return
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -380,6 +411,9 @@ export function AgentDock({
 	}
 
 	const toggleLabel = `${expanded ? 'Collapse' : 'Expand'} agent dock (${shortcutLabel})`
+	// The strip's name says what it is and the state in words; the newest head is its description.
+	const toggleName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
+	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
 	// The glyph points where the queue opens: away from the terminal.
 	const chevron = (position === 'bottom') === expanded ? '▾' : '▴'
 	const strip = (
@@ -389,6 +423,9 @@ export function AgentDock({
 				className="agent-dock-toggle"
 				aria-expanded={expanded}
 				aria-controls={railId}
+				aria-label={toggleName}
+				aria-describedby={summary.head ? headId : undefined}
+				aria-keyshortcuts={keyShortcut}
 				title={toggleLabel}
 				onClick={onToggle}
 			>
@@ -403,7 +440,17 @@ export function AgentDock({
 						</span>
 					) : null}
 				</span>
-				<span className="agent-dock-head">{summary.head ?? ''}</span>
+				{/* The newest item in the entries' order: name bright, project dim, then the gist. */}
+				<span className="agent-dock-head" id={headId}>
+					{summary.head ? (
+						<>
+							<span className="agent-dock-head-name">{summary.head.name}</span>
+							{summary.head.project ? <span className="agent-dock-head-project"> {summary.head.project}</span> : null}
+							<span className="agent-dock-head-sep"> · </span>
+							{summary.head.gist}
+						</>
+					) : null}
+				</span>
 				{summary.counts ? <span className="agent-dock-counts">{summary.counts}</span> : null}
 				<span className="agent-dock-health" data-tone={summary.health.tone}>
 					<span className="agent-dock-dot" aria-hidden="true" />
@@ -447,7 +494,7 @@ export function AgentDock({
 			className="agent-dock-pane"
 			data-position={position}
 			tabIndex={-1}
-			aria-label={openItem ? `#${openItem.id} ${cardKindLabel(openItem)}` : 'Agents'}
+			aria-label={openItem && snapshot ? paneLabel(openItem, snapshot) : 'Agents'}
 			style={height === undefined ? undefined : { height }}
 			onKeyDown={onPaneKey}
 		>
@@ -470,9 +517,11 @@ export function AgentDock({
 								: null
 					}
 					submitting={submitting.has(openItem.id)}
+					sent={sent.get(openItem.id) ?? null}
 					localError={actErrors.get(openItem.id) ?? null}
 					keys={detailKeys}
 					drafts={drafts}
+					mod={shortcutLabel.startsWith('⌘') ? 'cmd' : 'ctrl'}
 					onStep={step}
 					onClose={() => close(true)}
 					onAck={() => ack(openItem.id)}
@@ -486,6 +535,9 @@ export function AgentDock({
 
 	return (
 		<div ref={hostRef} className="agent-dock-host" data-position={position} data-pane={String(paneOpen)}>
+			<span className="sr-only" aria-live="polite">
+				{announcement}
+			</span>
 			{position === 'top' ? (
 				<>
 					{strip}
@@ -553,7 +605,7 @@ function Queue({
 		return (
 			<div className="agent-dock-rail-note">
 				<span className="agent-dock-rail-note-title">Connecting to Okena…</span>
-				<span>Claude sessions appear once Okena's Claude Remote answers.</span>
+				<span>Claude sessions appear once Okena's Claude Remote answers</span>
 			</div>
 		)
 	const unknown = unknownSessionCount(snapshot)
@@ -591,9 +643,8 @@ function Queue({
 		if (!grid || at % layout.columns !== openAt % layout.columns) return undefined
 		return Math.floor(at / layout.columns) < Math.floor(openAt / layout.columns) ? 'between' : undefined
 	}
-	/** The cell left of a joined one drops its divider (the tab's own side carries the edge); in a grid only within a row. */
-	const linkLeft = (at: number): '' | undefined =>
-		link(at + 1) !== undefined && (grid ? (at + 1) % layout.columns !== 0 : at + 1 < needs.length) ? '' : undefined
+	/** Cells in the first column line their text up with the strip's 16px inset and draw no left tab side. */
+	const colFirst = (at: number): '' | undefined => ((grid ? at % layout.columns : at) === 0 ? '' : undefined)
 	const cell = (at: number): CSSProperties | undefined =>
 		grid
 			? {
@@ -607,17 +658,19 @@ function Queue({
 				0000000000
 			</span>
 			{source?.state === 'down' ? (
-				<div className="agent-dock-rail-note" data-tone="warn">
-					<span className="agent-dock-rail-note-title">Okena unreachable</span>
-					<span
-						className="agent-dock-rail-note-detail"
-						title={source.detail ? plainAgentText(source.detail, 200) : undefined}
-					>
-						{`Since ${formatClock(source.since)}. `}
-						{source.lastObservedAt !== null
-							? `Showing the last data from ${formatClock(source.lastObservedAt)}. Nothing resolves until Okena is back.`
-							: 'No data yet. Nothing resolves until Okena is back.'}
+				// Terminal lines, like the entries beside it (since when is on the strip already).
+				<div
+					className="agent-dock-rail-note"
+					data-tone="warn"
+					title={source.detail ? plainAgentText(source.detail, 200) : undefined}
+				>
+					<span className="agent-dock-rail-note-title">
+						<span aria-hidden="true">! </span>Okena unreachable
 					</span>
+					<span>
+						{source.lastObservedAt !== null ? `last data ${formatClock(source.lastObservedAt)}` : 'no data yet'}
+					</span>
+					<span>nothing resolves until it’s back</span>
 				</div>
 			) : null}
 			<div ref={setMain} className="agent-dock-rail-main">
@@ -630,10 +683,10 @@ function Queue({
 					{needs.length === 0 ? (
 						<li className="agent-dock-queue-empty">
 							{source?.state !== 'ok'
-								? 'Okena is unreachable, so open questions cannot be seen.'
+								? 'Okena is unreachable, so open questions cannot be seen'
 								: unknown > 0
-									? `${unknownAgentsText(unknown)}: Okena did not return readable detail, so their open questions cannot be seen.`
-									: 'Nothing needs you.'}
+									? `${unknownAgentsText(unknown)}: Okena did not return readable detail, so their open questions cannot be seen`
+									: 'Nothing needs you'}
 						</li>
 					) : (
 						needs.map((item, at) => (
@@ -642,7 +695,7 @@ function Queue({
 								className="agent-dock-queue-slot"
 								data-open={String(openKey === `item:${item.id}`)}
 								data-link={link(at)}
-								data-link-left={linkLeft(at)}
+								data-col-first={colFirst(at)}
 								style={
 									grid
 										? cell(at)
@@ -673,12 +726,13 @@ function Queue({
 							className="agent-dock-queue-slot agent-dock-queue-agents"
 							data-open={String(openKey === 'agents')}
 							data-link={link(needs.length)}
+							data-col-first={colFirst(needs.length)}
 							style={cell(needs.length)}
 						>
 							{agents}
 						</li>
 					) : null}
-					{grid ? null : <li className="agent-dock-queue-fill" aria-hidden="true" />}
+					{grid || needs.length === 0 ? null : <li className="agent-dock-queue-fill" aria-hidden="true" />}
 				</ul>
 				{grid ? null : agents}
 			</div>
@@ -708,6 +762,8 @@ function Entry({
 	const tone = cardTone(item, now)
 	const kind = cardKindLabel(item)
 	const age = formatAge(now - itemWaitingSince(item))
+	const gistId = useId()
+	const gist = cardGist(item)
 	// Once answered from the dock, the entry says how it went instead of repeating the question.
 	const receipt = receiptView(item)
 	const receiptNode = receipt ? (
@@ -717,7 +773,12 @@ function Entry({
 	) : null
 	const head = (
 		<span className="agent-dock-entry-line agent-dock-entry-head">
-			<span className="agent-dock-glyph" data-tone={tone} aria-hidden="true">
+			<span
+				className="agent-dock-glyph"
+				data-tone={tone}
+				data-glyph={kindGlyph(item) === '↵' ? 'return' : undefined}
+				aria-hidden="true"
+			>
 				{kindGlyph(item)}
 			</span>
 			<span className="agent-dock-entry-name">{where.name}</span>
@@ -752,7 +813,9 @@ function Entry({
 					</span>
 					{ageNode}
 				</span>
-				<span className="agent-dock-entry-line agent-dock-entry-gist">{receiptNode ?? cardGist(item)}</span>
+				<span className="agent-dock-entry-line agent-dock-entry-gist" id={receiptNode ? undefined : gistId}>
+					{receiptNode ?? gist}
+				</span>
 			</>
 		)
 	else if (density === 'compact')
@@ -770,6 +833,13 @@ function Entry({
 			</>
 		)
 	else body = head
+	// Compact and dense entries do not show the gist: it still describes the entry for assistive tech.
+	const hiddenGist =
+		density !== 'full' && !receipt ? (
+			<span className="sr-only" id={gistId}>
+				{gist}
+			</span>
+		) : null
 	return (
 		<button
 			ref={buttonRef}
@@ -785,11 +855,13 @@ function Entry({
 			data-open={String(open)}
 			aria-expanded={open}
 			aria-controls={open ? paneId : undefined}
-			aria-label={`#${item.id} ${kind}, ${where.project ? `${where.project} / ` : ''}${where.name}, ${receipt ? receipt.text : `waiting ${age}`}`}
+			aria-label={`${kind}, ${where.name}${where.project ? ` in ${where.project}` : ''}, ${receipt ? receipt.text : `${item.kind === 'turn' ? 'idle' : 'waiting'} ${age}`}`}
+			aria-describedby={receipt ? undefined : gistId}
 			title={`${kind} · ${where.name}${where.project ? ` (${where.project})` : ''}`}
 			onClick={event => onOpen(event.detail === 0)}
 		>
 			{body}
+			{hiddenGist}
 		</button>
 	)
 }
@@ -824,19 +896,21 @@ function AgentsEntry({
 	if (sessions.length === 0)
 		return (
 			<div className="agent-dock-agents-empty" data-slot={slot}>
-				No Claude session is connected to Okena's Claude Remote.
+				No Claude session is connected to Okena's Claude Remote
 			</div>
 		)
 	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
+	// One line only where the entries are one line (dense); otherwise it keeps their two-line rhythm.
+	const oneLine = slot === 'cell' && density === 'dense'
 	const title = (
 		<span className="agent-dock-entry-line">
 			<span className="agent-dock-agents-title">Agents</span>
 			<span className="agent-dock-agents-count">{sessions.length}</span>
-			{slot === 'cell' ? <span className="agent-dock-agents-count">· {busy} busy</span> : null}
+			{oneLine ? <span className="agent-dock-agents-count">· {busy} busy</span> : null}
 		</span>
 	)
 	let body: ReactNode = title
-	if (slot === 'narrow')
+	if (slot === 'narrow' || (slot === 'cell' && !oneLine))
 		body = (
 			<>
 				{title}
@@ -881,4 +955,58 @@ function AgentsEntry({
 			{body}
 		</button>
 	)
+}
+
+/** The pane's landmark name: what it is and whose (`Question, agent-dock, helm`). */
+function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
+	const where = sessionWhere(findSession(snapshot, item.session), item.session)
+	return `${cardKindLabel(item)}, ${where.name}${where.project ? `, ${where.project}` : ''}`
+}
+
+/**
+ * Polite words for items that newly need Jakub (the queue never opens by itself, so the strip
+ * changing is the only other signal). Only arrivals: never ticking ages or working counts. The
+ * first reachable snapshot is the baseline, and arrivals within ANNOUNCE_COALESCE_MS are one line.
+ */
+function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): string {
+	const seen = useRef<Set<number> | null>(null)
+	const queued = useRef<DockItem[]>([])
+	const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const latest = useRef(snapshot)
+	latest.current = snapshot
+	const [text, setText] = useState('')
+	useEffect(() => {
+		if (!snapshot || snapshot.source.state !== 'ok') return
+		const needs = needsYouItems(snapshot)
+		if (seen.current === null) {
+			seen.current = new Set(needs.map(item => item.id))
+			return
+		}
+		const known = seen.current
+		const fresh = needs.filter(item => !known.has(item.id))
+		for (const item of fresh) known.add(item.id)
+		if (fresh.length === 0) return
+		queued.current.push(...fresh)
+		if (timer.current !== null) return
+		timer.current = setTimeout(() => {
+			timer.current = null
+			const items = queued.current
+			queued.current = []
+			const [first] = items
+			if (!first) return
+			if (items.length > 1) {
+				setText(`${items.length} new requests`)
+				return
+			}
+			const where = sessionWhere(findSession(latest.current, first.session), first.session)
+			setText(`${cardKindLabel(first)} from ${where.name}${where.project ? ` in ${where.project}` : ''}`)
+		}, ANNOUNCE_COALESCE_MS)
+	}, [snapshot])
+	useEffect(
+		() => () => {
+			if (timer.current !== null) clearTimeout(timer.current)
+		},
+		[],
+	)
+	return text
 }

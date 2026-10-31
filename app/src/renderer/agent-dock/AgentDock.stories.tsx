@@ -58,6 +58,7 @@ function AgentDockFixtureView({
 							position={position}
 							shortcutLabel="⌘⇧J"
 							initialOpen={snapshot ? resolveOpen(snapshot, open) : null}
+							initialSent={fixture.sent()}
 							onToggle={() => setExpanded(value => !value)}
 							onAck={fixture.api.ack}
 							onAct={(itemId, rev, action) => fixture.api.act({ itemId, rev, action })}

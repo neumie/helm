@@ -90,6 +90,7 @@ export function mountAgentDock({
 	platform,
 	focusTerminal: focusTerminalOverride,
 	now = Date.now,
+	initialSent,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
@@ -99,6 +100,8 @@ export function mountAgentDock({
 	/** Defaults to the active xterm's input. */
 	focusTerminal?: () => void
 	now?: () => number
+	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
+	initialSent?: ReadonlyMap<number, DockAction>
 }): MountedAgentDock {
 	const ownerDocument = root instanceof Document ? root : root.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -135,8 +138,13 @@ export function mountAgentDock({
 	dock.classList.add('agent-dock')
 	const reactRoot = createRoot(view)
 
-	/** Keyboard home inside the dock: the open entry, else the first entry/Agents entry, else the queue. */
+	/** Keyboard home inside the dock: an open pane, else the first entry/Agents entry, else the queue. */
 	const focusRail = (): void => {
+		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
+		if (pane) {
+			pane.focus()
+			return
+		}
 		const rail = dock.querySelector<HTMLElement>('.agent-dock-rail')
 		const stop =
 			rail?.querySelector<HTMLElement>('[data-rail-stop][data-open="true"]') ??
@@ -161,8 +169,13 @@ export function mountAgentDock({
 			return
 		}
 		const input = terms.querySelector<HTMLElement>('.term-holder.active .xterm-helper-textarea')
-		if (input) input.focus()
-		else if (dock.contains(ownerDocument.activeElement)) (ownerDocument.activeElement as HTMLElement).blur()
+		if (input) {
+			// xterm's helper textarea still sits where the cursor was before the dock took rows: a plain
+			// focus() would scroll the overflow-hidden holder, clipping the top row over a blank band.
+			input.focus({ preventScroll: true })
+			const holder = input.closest<HTMLElement>('.term-holder.active')
+			if (holder && holder.scrollTop !== 0) holder.scrollTop = 0
+		} else if (dock.contains(ownerDocument.activeElement)) (ownerDocument.activeElement as HTMLElement).blur()
 	}
 
 	const render = (): void => {
@@ -183,6 +196,7 @@ export function mountAgentDock({
 			paneRoom,
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
+			initialSent,
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))

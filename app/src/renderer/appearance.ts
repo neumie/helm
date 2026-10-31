@@ -56,6 +56,18 @@ export interface AppearanceState {
 	/** Tokens of the active NON-preset theme, cached so a custom theme paints
 	 *  before the themes:list IPC answers. Null while a preset is active. */
 	themeTokensCache: Record<string, string> | null
+	/** Jakub picked the theme himself. Until he does, macOS Increase Contrast
+	 *  (`prefers-contrast: more`) selects the High contrast preset. */
+	themeChosen: boolean
+}
+
+/** The bundled preset that follows the OS "Increase contrast" setting while no theme was chosen. */
+export const CONTRAST_THEME_ID = 'high-contrast'
+
+/** The appearance in effect: the chosen theme, or High contrast while the OS asks for more contrast and none was chosen. */
+export function effectiveAppearance(state: AppearanceState, prefersContrast: boolean): AppearanceState {
+	if (state.themeChosen || !prefersContrast || !THEME_PRESETS[CONTRAST_THEME_ID]) return state
+	return { ...state, themeId: CONTRAST_THEME_ID, themeTokensCache: null }
 }
 
 const STORAGE_KEY = 'helm.appearance'
@@ -77,6 +89,10 @@ export function normalizeAppearance(raw: unknown): AppearanceState {
 		termFontSize: clampTermFont(typeof source.termFontSize === 'number' ? source.termFontSize : TERM_FONT_DEFAULT),
 		uiScale: normalizeUiScale(source.uiScale),
 		themeTokensCache: isTokenMap(source.themeTokensCache) ? source.themeTokensCache : null,
+		// Older stored state has no flag: any theme but the default was a choice.
+		themeChosen:
+			source.themeChosen === true ||
+			(typeof source.themeId === 'string' && source.themeId !== '' && source.themeId !== DEFAULT_THEME_ID),
 	}
 }
 
@@ -140,6 +156,8 @@ class AppearanceStore {
 	/** Custom-property names applied last round, so a theme/override switch
 	 *  removes tokens the new resolution no longer sets. */
 	private appliedKeys = new Set<string>()
+	/** macOS Increase Contrast, read through `prefers-contrast: more`. */
+	private prefersContrast = false
 
 	constructor() {
 		let raw: unknown = null
@@ -153,16 +171,30 @@ class AppearanceStore {
 		this.snapshot = this.buildSnapshot()
 	}
 
+	/** Follow the OS contrast setting live (renderer only). */
+	private watchContrast(): void {
+		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+		const query = window.matchMedia('(prefers-contrast: more)')
+		this.prefersContrast = query.matches
+		query.addEventListener('change', event => {
+			this.prefersContrast = event.matches
+			this.snapshot = this.buildSnapshot()
+			this.apply()
+			for (const listener of this.listeners) listener()
+		})
+	}
+
 	/** Apply persisted appearance before first paint, then refresh the theme
 	 *  list from <userData>/themes in the background. Renderer-only. */
 	init(): void {
 		// --ui-theme=<presetId> (screenshot harness): force a bundled preset for
 		// this run so themes are visually verifiable without stored state.
 		const forced = typeof window !== 'undefined' ? window.helm?.uiTheme : null
+		this.watchContrast()
 		if (forced && THEME_PRESETS[forced]) {
-			this.state = { ...this.state, themeId: forced, overrides: {}, themeTokensCache: null }
-			this.snapshot = this.buildSnapshot()
+			this.state = { ...this.state, themeId: forced, overrides: {}, themeTokensCache: null, themeChosen: true }
 		}
+		this.snapshot = this.buildSnapshot()
 		this.apply()
 		void this.refreshThemes()
 	}
@@ -183,7 +215,11 @@ class AppearanceStore {
 	}
 
 	setTheme(themeId: string): void {
-		if (themeId === this.state.themeId) return
+		if (themeId === this.snapshot.state.themeId) {
+			// Picking the theme the OS contrast setting chose makes it Jakub's choice.
+			if (!this.state.themeChosen) this.mutate({ themeId, themeChosen: true })
+			return
+		}
 		const theme = this.themes.find(entry => entry.id === themeId)
 		if (!theme) return
 		// Overrides are per-theme edits; switching themes starts clean.
@@ -191,6 +227,7 @@ class AppearanceStore {
 			themeId,
 			overrides: {},
 			themeTokensCache: THEME_PRESETS[themeId] ? null : theme.tokens,
+			themeChosen: true,
 		})
 	}
 
@@ -246,7 +283,8 @@ class AppearanceStore {
 	}
 
 	private buildSnapshot(): AppearanceSnapshot {
-		return { state: this.state, themes: this.themes, tokens: resolveTokens(this.state, this.themes) }
+		const state = effectiveAppearance(this.state, this.prefersContrast)
+		return { state, themes: this.themes, tokens: resolveTokens(state, this.themes) }
 	}
 
 	private persist(): void {

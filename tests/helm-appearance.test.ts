@@ -15,6 +15,7 @@ const {
 	TERM_FONT_MAX,
 	TERM_FONT_MIN,
 	clampTermFont,
+	effectiveAppearance,
 	normalizeAppearance,
 	resolveTokens,
 	stepTermFont,
@@ -83,4 +84,20 @@ test('termThemeFromTokens maps every --term-*/--ansi-* token onto the xterm them
 		assert.equal(typeof value, 'string')
 		assert.ok(value.length > 0)
 	}
+})
+
+test('macOS Increase Contrast picks High contrast until a theme is chosen', () => {
+	const fresh = normalizeAppearance(null)
+	assert.equal(fresh.themeChosen, false)
+	assert.equal(effectiveAppearance(fresh, true).themeId, 'high-contrast')
+	assert.equal(effectiveAppearance(fresh, false).themeId, DEFAULT_THEME_ID)
+	// Font or scale edits persist the default id without making it a choice.
+	assert.equal(normalizeAppearance({ themeId: DEFAULT_THEME_ID, termFontSize: 15 }).themeChosen, false)
+	// A stored non-default theme (older state without the flag) was a choice, and so is an explicit flag.
+	assert.equal(effectiveAppearance(normalizeAppearance({ themeId: 'my-theme' }), true).themeId, 'my-theme')
+	const chosenHelm = normalizeAppearance({ themeId: DEFAULT_THEME_ID, themeChosen: true })
+	assert.equal(effectiveAppearance(chosenHelm, true).themeId, DEFAULT_THEME_ID)
+	// Edits carry over to the followed preset.
+	const edited = normalizeAppearance({ overrides: { '--accent': '#123456' } })
+	assert.equal(resolveTokens(effectiveAppearance(edited, true), [])['--accent'], '#123456')
 })

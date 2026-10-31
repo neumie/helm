@@ -3,7 +3,7 @@
 // zod-free. Agent text is untrusted: every string that reaches the DOM passes
 // through plainAgentText and renders as React text, never markup.
 
-import type { AgentDockSnapshot, DockItem, DockReceipt, DockSession } from '../../agent-dock/model'
+import type { AgentDockSnapshot, DockAction, DockItem, DockReceipt, DockSession } from '../../agent-dock/model'
 
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
@@ -135,6 +135,9 @@ function doneText(item: DockItem, receipt: DockReceipt): string {
 			return plan ? '✓ approved' : receipt.always ? '✓ always allowed' : '✓ allowed'
 		case 'deny':
 			return plan ? '✓ sent back to planning' : '✓ denied'
+		// A reply is not an answer; "sent" would read like "sent, unconfirmed".
+		case 'prompt':
+			return '✓ replied'
 		default:
 			return '✓ answered'
 	}
@@ -166,6 +169,25 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
 		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn', busy: false }
 	return null
+}
+
+/**
+ * What Jakub sent, in words, for the pane's receipt (`✓ answered · Blue, M`, `✓ denied · use the
+ * staging bucket`): the picked option labels and Other text, or the deny message. Null when the
+ * act says nothing beyond its receipt (allow, approve, a reply that stays in its field).
+ */
+export function sentSummary(item: DockItem, action: DockAction): string | null {
+	if (action.type === 'deny') return action.message ? plainAgentLine(action.message, 80) || null : null
+	if (action.type !== 'answer' || item.fact.kind !== 'ask') return null
+	const questions = askQuestions(item.fact.input) ?? []
+	const parts = action.picks.flatMap((pick, at) => [
+		...pick.options.flatMap(raw => {
+			const option = questions[at]?.options.find(entry => entry.index === raw)
+			return option ? [option.label] : []
+		}),
+		...(pick.other?.trim() ? [`“${pick.other.trim()}”`] : []),
+	])
+	return parts.length > 0 ? plainAgentLine(parts.join(', '), 80) || null : null
 }
 
 /** Answer controls are live only for an open item while Okena is reachable. */
@@ -258,7 +280,8 @@ export function itemHeadline(item: DockItem): string {
 	if (tool === 'AskUserQuestion') {
 		const questions = askQuestions(input)
 		if (!questions?.[0]) return 'Question'
-		const more = questions.length > 1 ? ` (+${questions.length - 1})` : ''
+		const rest = questions.length - 1
+		const more = rest > 0 ? ` · ${rest} more question${rest === 1 ? '' : 's'}` : ''
 		return `${plainAgentLine(questions[0].question)}${more}`
 	}
 	if (tool === 'ExitPlanMode') return 'Plan ready for approval'
@@ -319,7 +342,8 @@ export interface AgentDockSummary {
 	needsTone: 'none' | 'warn'
 	oldestText: string | null
 	oldestTone: AgingTone
-	head: string | null
+	/** The newest item, read like its entry: name (bright), project (dim), then the gist. */
+	head: { name: string; project: string; gist: string } | null
 	counts: string | null
 	health: AgentDockHealth
 }
@@ -365,7 +389,7 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
 		oldestTone,
 		head: newest
-			? `#${newest.id} ${sessionLabel(findSession(snapshot, newest.session), newest.session)}: ${itemHeadline(newest)}`
+			? { ...sessionWhere(findSession(snapshot, newest.session), newest.session), gist: cardGist(newest) }
 			: null,
 		counts: counts || null,
 		health,
