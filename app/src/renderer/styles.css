@@ -1328,9 +1328,7 @@ body.dragging {
 	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 8px;
 	height: 28px;
-	padding-right: 8px;
 	overflow: hidden;
 	container: agent-dock-strip / inline-size;
 }
@@ -1342,7 +1340,7 @@ body.dragging {
 	gap: 12px;
 	min-width: 0;
 	height: 28px;
-	padding: 0 8px 0 16px;
+	padding: 0 16px;
 	border: none;
 	background: transparent;
 	color: var(--text-1);
@@ -1460,10 +1458,6 @@ body.dragging {
 	font-family: "SF Mono", Menlo, ui-monospace, monospace;
 	font-size: calc(11px * var(--ui-scale));
 	color: var(--text-2);
-}
-
-.agent-dock-position {
-	flex: none;
 }
 
 /* Narrow #right (down to ~535px: 960px window minus a 420px sidebar): the needs count and

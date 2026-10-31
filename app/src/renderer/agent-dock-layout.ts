@@ -13,6 +13,54 @@ export const AGENT_DOCK_STORAGE = {
 	position: 'helm.agentDock.position',
 } as const
 
+const readPosition = (raw: string | null): AgentDockPosition => (raw === 'top' ? 'top' : 'bottom')
+
+/**
+ * The dock's place relative to the terminals, chosen in Settings → Appearance (never on the
+ * strip). Every mounted dock subscribes and re-lays out live. A choice made while storage is
+ * unavailable still applies for this session; another Helm window's change arrives as a
+ * `storage` event.
+ */
+export const agentDockPosition = (() => {
+	let chosen: AgentDockPosition | null = null
+	const listeners = new Set<() => void>()
+	const notify = (): void => {
+		for (const listener of listeners) listener()
+	}
+	const onStorage = (event: StorageEvent): void => {
+		if (event.key !== AGENT_DOCK_STORAGE.position && event.key !== null) return
+		chosen = null
+		notify()
+	}
+	return {
+		get(): AgentDockPosition {
+			if (chosen) return chosen
+			try {
+				return readPosition(globalThis.localStorage.getItem(AGENT_DOCK_STORAGE.position))
+			} catch {
+				return 'bottom'
+			}
+		},
+		set(position: AgentDockPosition): void {
+			chosen = position
+			try {
+				globalThis.localStorage.setItem(AGENT_DOCK_STORAGE.position, position)
+			} catch {
+				// Presentation still works when storage is unavailable.
+			}
+			notify()
+		},
+		subscribe(listener: () => void): () => void {
+			if (listeners.size === 0) globalThis.addEventListener?.('storage', onStorage)
+			listeners.add(listener)
+			return () => {
+				listeners.delete(listener)
+				if (listeners.size === 0) globalThis.removeEventListener?.('storage', onStorage)
+			}
+		},
+	}
+})()
+
 /** Re-render ages ("oldest 12m") while nothing else changes. */
 const AGE_TICK_MS = 30_000
 /** xterm cell height at the default 13px font (design §2.2) until a row has rendered. */
@@ -72,7 +120,7 @@ export function mountAgentDock({
 	const mac = (platform ?? (/Mac/.test(ownerWindow.navigator.platform) ? 'darwin' : 'other')) === 'darwin'
 	const shortcutLabel = mac ? '⌘⇧J' : 'Ctrl+Shift+J'
 	let expanded = read(AGENT_DOCK_STORAGE.expanded) === 'true'
-	let position: AgentDockPosition = read(AGENT_DOCK_STORAGE.position) === 'top' ? 'top' : 'bottom'
+	let position = agentDockPosition.get()
 	let snapshot: AgentDockSnapshot | null = null
 	let published: boolean | null = null
 	let disposed = false
@@ -134,7 +182,6 @@ export function mountAgentDock({
 			position,
 			shortcutLabel,
 			onToggle: () => toggle(false),
-			onTogglePosition,
 			onAck,
 			onAct,
 			terminalMetrics,
@@ -170,12 +217,14 @@ export function mountAgentDock({
 		if (expanded && focusPanel) focusRail()
 	}
 
-	const onTogglePosition = (): void => {
-		position = position === 'bottom' ? 'top' : 'bottom'
-		save(AGENT_DOCK_STORAGE.position, position)
+	// Settings → Appearance moved the dock: the terminal row changes height, so refit xterm.
+	const unsubscribePosition = agentDockPosition.subscribe(() => {
+		const next = agentDockPosition.get()
+		if (next === position) return
+		position = next
 		render()
 		fitActive()
-	}
+	})
 
 	const onAck = async (itemId: number): Promise<boolean> => {
 		const focusInDock = dock.contains(ownerDocument.activeElement)
@@ -272,6 +321,7 @@ export function mountAgentDock({
 			if (disposed) return
 			disposed = true
 			unsubscribe()
+			unsubscribePosition()
 			publishVisible()
 			rightObserver.disconnect()
 			screenObserver.disconnect()

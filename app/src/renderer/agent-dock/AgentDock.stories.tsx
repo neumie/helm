@@ -30,7 +30,7 @@ function resolveOpen(snapshot: AgentDockSnapshot, open: OpenFixture | undefined)
 function AgentDockFixtureView({
 	scenario,
 	expanded: initialExpanded,
-	position: initialPosition = 'bottom',
+	position = 'bottom',
 	open,
 }: {
 	scenario: AgentDockScenario
@@ -41,7 +41,6 @@ function AgentDockFixtureView({
 	const fixture = useMemo(() => createAgentDockFixture(scenario), [scenario])
 	const [snapshot, setSnapshot] = useState<AgentDockSnapshot | null>(null)
 	const [expanded, setExpanded] = useState(initialExpanded)
-	const [position, setPosition] = useState(initialPosition)
 	useEffect(() => fixture.api.onSnapshot(setSnapshot), [fixture])
 	const terminal = <div style={{ flex: '1 1 auto', minHeight: 0, background: 'var(--term-bg)' }} />
 	// With a popover requested, mount once the first snapshot exists so it can open on mount.
@@ -60,7 +59,6 @@ function AgentDockFixtureView({
 							shortcutLabel="⌘⇧J"
 							initialOpen={snapshot ? resolveOpen(snapshot, open) : null}
 							onToggle={() => setExpanded(value => !value)}
-							onTogglePosition={() => setPosition(value => (value === 'bottom' ? 'top' : 'bottom'))}
 							onAck={fixture.api.ack}
 							onAct={(itemId, rev, action) => fixture.api.act({ itemId, rev, action })}
 						/>

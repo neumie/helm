@@ -20,7 +20,6 @@ import {
 } from 'react'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { ActivityIndicator } from '../activity-indicator'
-import { Btn } from '../button'
 import { GLYPH } from '../sidebar/ui'
 import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail } from './AgentDockDetail'
 import {
@@ -64,7 +63,6 @@ export interface AgentDockProps {
 	position: AgentDockPosition
 	shortcutLabel: string
 	onToggle(): void
-	onTogglePosition(): void
 	onAck(itemId: number): Promise<boolean>
 	/** Jakub answered from a popover (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
 	onAct?(itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult>
@@ -89,7 +87,6 @@ export function AgentDock({
 	position,
 	shortcutLabel,
 	onToggle,
-	onTogglePosition,
 	onAck,
 	onAct,
 	terminalMetrics,
@@ -433,17 +430,6 @@ export function AgentDock({
 				</span>
 				<kbd className="agent-dock-kbd">{shortcutLabel}</kbd>
 			</button>
-			{expanded ? (
-				<Btn
-					tone="ghost"
-					sm
-					className="agent-dock-position"
-					ariaLabel={position === 'bottom' ? 'Move agent dock above terminals' : 'Move agent dock below terminals'}
-					onClick={onTogglePosition}
-				>
-					{position === 'bottom' ? 'Move to top' : 'Move to bottom'}
-				</Btn>
-			) : null}
 		</div>
 	)
 

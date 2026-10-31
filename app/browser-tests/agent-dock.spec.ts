@@ -374,12 +374,54 @@ test('at a 900px window all five items stay visible as compact cards', async ({ 
 	expect(placed.y + placed.height).toBeLessThanOrEqual(rows.bottom - KEEP_ROWS * rows.rowHeight + 0.5)
 })
 
+/** The write Settings → Appearance makes; the strip itself carries no position control. */
+async function choosePosition(page: Page, position: 'top' | 'bottom'): Promise<void> {
+	await page.evaluate(next => {
+		const choose = window.__helmWorkspaceFixture?.setAgentDockPosition
+		if (!choose) throw new Error('Missing agent-dock fixture')
+		choose(next)
+	}, position)
+}
+
+test('Settings → Appearance picks the dock position and persists it', async ({ page }) => {
+	await page.goto('/iframe.html?id=views-sidebar--appearance&viewMode=story')
+	await page.evaluate(keys => {
+		for (const key of keys) localStorage.removeItem(key)
+	}, PREFERENCES)
+	await page.reload()
+	const choice = page.getByRole('tablist', { name: 'Agent dock position' })
+	await expect(choice.getByRole('tab', { name: 'Bottom' })).toHaveAttribute('aria-selected', 'true')
+	await choice.getByRole('tab', { name: 'Top' }).click()
+	await expect(choice.getByRole('tab', { name: 'Top' })).toHaveAttribute('aria-selected', 'true')
+	expect(await page.evaluate(() => localStorage.getItem('helm.agentDock.position'))).toBe('top')
+	await page.reload()
+	await expect(
+		page.getByRole('tablist', { name: 'Agent dock position' }).getByRole('tab', { name: 'Top' }),
+	).toHaveAttribute('aria-selected', 'true')
+})
+
+test('the strip has no position control; a settings change re-lays out the open dock live', async ({ page }) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'busy')
+	await page.locator('.agent-dock-toggle').click()
+	await expect(page.locator('.agent-dock-strip button')).toHaveCount(1)
+	const rowsBefore = await xtermRows(page)
+	await choosePosition(page, 'top')
+	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'top')
+	await expect(page.locator('.agent-dock-rail')).toBeVisible()
+	// Same rail height either way, so xterm refits to the same row count.
+	expect(await xtermRows(page)).toBe(rowsBefore)
+	await choosePosition(page, 'bottom')
+	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'bottom')
+})
+
 test('position persists; on top the rail and popover open downward clear of the terminal rows', async ({ page }) => {
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
 	await emitScenario(page, 'busy')
 	await page.locator('.agent-dock-toggle').click()
-	await page.getByRole('button', { name: 'Move agent dock above terminals' }).click()
+	await choosePosition(page, 'top')
 	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'top')
 	let dock = await box(page, '#agent-dock')
 	let terms = await box(page, '#terms')
@@ -420,7 +462,7 @@ test('the dock works when its layout preferences cannot be read or written', asy
 	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'bottom')
 	await page.locator('.agent-dock-toggle').click()
 	await expect(page.locator('.agent-dock-rail')).toBeVisible()
-	await page.getByRole('button', { name: 'Move agent dock above terminals' }).click()
+	await choosePosition(page, 'top')
 	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'top')
 })
 

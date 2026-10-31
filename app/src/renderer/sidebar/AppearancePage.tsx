@@ -1,9 +1,12 @@
 // Settings → Appearance (docs/design-system.md §2.8): theme picker, text
-// sizing, and per-token color wells for the terminal palette + UI accent.
-// Every control live-applies through the appearance store; persistence is
-// localStorage ('helm.appearance') + theme files in <userData>/themes.
+// sizing, per-token color wells for the terminal palette + UI accent, and the
+// agent dock's position (§3.24). Every control live-applies through its store;
+// persistence is localStorage ('helm.appearance', 'helm.agentDock.position') +
+// theme files in <userData>/themes.
 
 import { useEffect, useSyncExternalStore } from 'react'
+import { agentDockPosition } from '../agent-dock-layout'
+import type { AgentDockPosition } from '../agent-dock/presentation'
 import { TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, UI_SCALES, appearance } from '../appearance'
 import { Btn, Card, FieldLabel, PushHeader, Segmented, SelectInput } from './ui'
 
@@ -30,6 +33,11 @@ const ANSI_WELLS: ReadonlyArray<{ token: string; label: string }> = [
 	{ token: '--ansi-bright-magenta', label: 'Bright magenta' },
 	{ token: '--ansi-bright-cyan', label: 'Bright cyan' },
 	{ token: '--ansi-bright-white', label: 'Bright white' },
+]
+
+const DOCK_POSITIONS: Array<{ value: AgentDockPosition; label: string }> = [
+	{ value: 'bottom', label: 'Bottom' },
+	{ value: 'top', label: 'Top' },
 ]
 
 /** <input type=color> only speaks #rrggbb; normalize what the token holds. */
@@ -65,6 +73,7 @@ function Swatch({
 
 export function AppearancePage({ onBack }: { onBack: () => void }) {
 	const snap = useSyncExternalStore(appearance.subscribe, appearance.getSnapshot)
+	const dockPosition = useSyncExternalStore(agentDockPosition.subscribe, agentDockPosition.get)
 	// Pick up theme files dropped into <userData>/themes since startup.
 	useEffect(() => {
 		void appearance.refreshThemes()
@@ -145,6 +154,17 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 							options={UI_SCALES.map(scale => ({ value: String(scale.value), label: scale.label }))}
 							value={String(state.uiScale)}
 							onChange={value => appearance.setUiScale(Number(value))}
+						/>
+					</div>
+				</Card>
+				<Card label="Agent dock">
+					<div className="settings-field">
+						<FieldLabel>Position</FieldLabel>
+						<Segmented
+							label="Agent dock position"
+							options={DOCK_POSITIONS}
+							value={dockPosition}
+							onChange={value => agentDockPosition.set(value)}
 						/>
 					</div>
 				</Card>

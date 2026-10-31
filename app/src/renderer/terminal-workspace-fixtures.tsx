@@ -13,7 +13,7 @@ import type {
 	TerminalPreferencesSnapshot,
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
-import { AGENT_DOCK_STORAGE, mountAgentDock } from './agent-dock-layout'
+import { AGENT_DOCK_STORAGE, agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockFixture,
@@ -81,6 +81,8 @@ export interface TerminalWorkspaceFixture {
 	preferenceListenerCount(): number
 	/** Present only with the opt-in `agentDock` option. */
 	agentDock?: AgentDockFixture
+	/** Present only with `agentDock`: the same position write Settings → Appearance makes. */
+	setAgentDockPosition?(position: AgentDockPosition): void
 	/** Emits raw PTY output through the production terminal write path. */
 	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
@@ -548,9 +550,10 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 				}
 			}
 			writePreference(AGENT_DOCK_STORAGE.expanded, expanded === undefined ? undefined : String(expanded))
-			writePreference(AGENT_DOCK_STORAGE.position, position)
+			if (position) agentDockPosition.set(position)
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
+			fixture.setAgentDockPosition = agentDockPosition.set
 			// Mount after this effect's commit, as production mounts outside any React render.
 			queueMicrotask(() => {
 				if (unmounted) return
