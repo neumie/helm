@@ -44,7 +44,7 @@ import { PlanWorkspace } from '../../plan/workspace.js'
 import type { Poller } from '../../poller/poller.js'
 import type { ProfileRuntime, ProfileStore } from '../../profiles/store.js'
 import { DAEMON_BUILD_ID, DAEMON_PROTOCOL_VERSION } from '../../protocol.js'
-import type { TaskContext, TaskProvider } from '../../providers/provider.js'
+import { ProviderUnavailableError, type TaskContext, type TaskProvider } from '../../providers/provider.js'
 import type { Drainer } from '../../queue/drainer.js'
 import { ScheduleCommands } from '../../scheduled-runs/commands.js'
 import {
@@ -1160,6 +1160,9 @@ export function apiRoutes({
 			})
 			.strict()
 			.safeParse(body)
+		// `created: false` marks a definite failure before any Item row exists, so
+		// clients may drop their "outcome unknown" warning; omit it once an Item
+		// could have been written.
 		if (!parsed.success) {
 			const hasSolverAgent = typeof body === 'object' && body !== null && 'solverAgent' in body
 			return c.json(
@@ -1167,6 +1170,7 @@ export function apiRoutes({
 					error: hasSolverAgent
 						? 'solverAgent is only accepted by planning and Item action routes'
 						: 'Missing or invalid externalId',
+					created: false,
 				},
 				400,
 			)
@@ -1175,10 +1179,37 @@ export function apiRoutes({
 		const existing = itemCommands.getItemBySourceExternalId(parsed.data.externalId)
 		if (existing) return c.json({ data: await dashboardItem(existing) })
 
-		const summary = await provider.resolveTaskSummary(parsed.data.externalId)
-		if (!summary) return c.json({ error: `Task ${parsed.data.externalId} not found in ${provider.name}` }, 404)
+		let summary: Awaited<ReturnType<TaskProvider['resolveTaskSummary']>>
+		try {
+			summary = await provider.resolveTaskSummary(parsed.data.externalId)
+		} catch (err) {
+			// The lookup is a read that runs before any Item exists, so every
+			// failure here is a definite no-op. Other provider errors (auth, GraphQL)
+			// may echo upstream bodies: log them, answer generically.
+			if (err instanceof ProviderUnavailableError) {
+				log.warn('api', `Source lookup for ${parsed.data.externalId} failed: ${err.message}`)
+				return c.json(
+					{ error: `${err.message} Nothing was created; try again.`, code: 'provider_unavailable', created: false },
+					502,
+				)
+			}
+			log.error('api', `Source lookup for ${parsed.data.externalId} failed`, err)
+			return c.json(
+				{
+					error: `Could not look up task ${parsed.data.externalId} in ${provider.name}; see the daemon log for details. Nothing was created.`,
+					code: 'provider_error',
+					created: false,
+				},
+				502,
+			)
+		}
+		if (!summary)
+			return c.json({ error: `Task ${parsed.data.externalId} not found in ${provider.name}`, created: false }, 404)
 		if (!config.projects.some(p => p.slug === summary.projectSlug)) {
-			return c.json({ error: `Project '${summary.projectSlug}' is not configured in helm.config.json` }, 400)
+			return c.json(
+				{ error: `Project '${summary.projectSlug}' is not configured in helm.config.json`, created: false },
+				400,
+			)
 		}
 
 		const item = itemCommands.createSolveItem({
@@ -1751,6 +1782,8 @@ export function apiRoutes({
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err)
 			log.error('items', `Source-task creation failed for Item ${item.id}`, err)
+			// A ProviderUnavailableError message already says when the task may
+			// exist despite the failure (`mayHaveApplied`); never claim it does not.
 			return c.json({ error: `Source task creation failed: ${msg}` }, 502)
 		}
 	})
@@ -2099,7 +2132,7 @@ export function apiRoutes({
 		} catch (err) {
 			if (isCancellation(err, signal)) return c.json({ error: 'Request aborted' }, 503)
 			const msg = err instanceof Error ? err.message : String(err)
-			return c.json({ error: `${pass} failed: ${msg}` }, 500)
+			return c.json({ error: `${pass} failed: ${msg}` }, err instanceof ProviderUnavailableError ? 502 : 500)
 		}
 	})
 

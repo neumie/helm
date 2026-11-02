@@ -31,10 +31,12 @@ import type { ItemPayload, SolverEffort } from '../src/items/schema.js'
 import { PlanStatusWatcher, parseGithubPlanQueues } from '../src/plan/status-watcher.js'
 import { PlanWorkspace } from '../src/plan/workspace.js'
 import { Poller } from '../src/poller/poller.js'
+import { ProviderUnavailableError } from '../src/providers/provider.js'
 import { Drainer } from '../src/queue/drainer.js'
 import { AlmanacLoopRunner } from '../src/queue/loop-runner.js'
 import type { LoopRunParams, LoopRunResult, LoopRunner } from '../src/queue/loop-runner.js'
 import { processLoopItem, processSolveItem } from '../src/queue/worker.js'
+import { createApp } from '../src/server/app.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 import { createAgentAdapter } from '../src/solver/agent-adapter.js'
 import { buildPlanningPrompt, buildPrompt } from '../src/solver/prompt-builder.js'
@@ -5001,6 +5003,218 @@ test('server rejects solverAgent on source Item creation', async () => {
 		const body = (await res.json()) as { error: string }
 		assert.match(body.error, /solverAgent is only accepted by planning and Item action routes/)
 		assert.equal(db.items.findBySourceExternalId('task-source-agent'), null)
+	})
+})
+
+test('daemon answers a provider outage on source creation with a definite 502, readable cross-origin', async () => {
+	await withTempDb(async db => {
+		const enqueued: string[] = []
+		const outageProvider = {
+			...provider,
+			name: 'contember',
+			resolveTaskSummary: async () => {
+				throw new ProviderUnavailableError('Contember (clientcare)', 'timeout', {
+					cause: new TypeError('fetch failed'),
+				})
+			},
+		}
+		const app = createApp(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			outageProvider,
+			spawner as never,
+			{ enqueue: (items: Array<{ id: string }>) => enqueued.push(...items.map(item => item.id)) } as never,
+		)
+
+		const res = await app.request('/api/items/source', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Origin: 'chrome-extension://abcdefghijklmnop' },
+			body: JSON.stringify({ externalId: 'task-provider-outage' }),
+		})
+
+		assert.equal(res.status, 502)
+		assert.equal(res.headers.get('access-control-allow-origin'), 'chrome-extension://abcdefghijklmnop')
+		assert.deepEqual(await res.json(), {
+			error: 'Contember (clientcare) did not respond in time (timed out). Nothing was created; try again.',
+			code: 'provider_unavailable',
+			created: false,
+		})
+		assert.equal(db.items.findBySourceExternalId('task-provider-outage'), null)
+		assert.deepEqual(enqueued, [])
+	})
+})
+
+test('source lookup failures that are not outages still answer a definite, generic 502', async t => {
+	await withTempDb(async db => {
+		const logged: unknown[] = []
+		t.mock.method(console, 'error', (...args: unknown[]) => logged.push(...args))
+		const brokenProvider = {
+			...provider,
+			name: 'contember',
+			resolveTaskSummary: async () => {
+				throw new Error('GraphQL request failed (401): token=secret-value at /private/path')
+			},
+		}
+		const app = createApp(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			brokenProvider,
+			spawner as never,
+			fakeEnricher as never,
+		)
+
+		const res = await app.request('/api/items/source', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Origin: 'https://clientcare.eu.contember.cloud' },
+			body: JSON.stringify({ externalId: 'task-lookup-error' }),
+		})
+
+		assert.equal(res.status, 502)
+		assert.equal(res.headers.get('access-control-allow-origin'), 'https://clientcare.eu.contember.cloud')
+		const text = await res.text()
+		assert.doesNotMatch(text, /secret-value|private\/path/)
+		assert.deepEqual(JSON.parse(text), {
+			error:
+				'Could not look up task task-lookup-error in contember; see the daemon log for details. Nothing was created.',
+			code: 'provider_error',
+			created: false,
+		})
+		assert.equal(db.items.findBySourceExternalId('task-lookup-error'), null)
+	})
+})
+
+test('source creation marks every pre-creation rejection as created: false', async () => {
+	await withTempDb(async db => {
+		const sourceProvider = {
+			...provider,
+			name: 'contember',
+			resolveTaskSummary: async (externalId: string) =>
+				externalId === 'task-unconfigured' ? { projectSlug: 'not-configured', title: 'Unconfigured project' } : null,
+		}
+		const app = createApp(
+			config,
+			'helm.config.json',
+			db,
+			queue as never,
+			poller as never,
+			sourceProvider,
+			spawner as never,
+			fakeEnricher as never,
+		)
+		const post = (body: unknown) =>
+			app.request('/api/items/source', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body),
+			})
+
+		const invalid = await post({ externalId: '' })
+		assert.equal(invalid.status, 400)
+		assert.deepEqual(await invalid.json(), { error: 'Missing or invalid externalId', created: false })
+
+		const missing = await post({ externalId: 'task-missing' })
+		assert.equal(missing.status, 404)
+		assert.deepEqual(await missing.json(), { error: 'Task task-missing not found in contember', created: false })
+
+		const unconfigured = await post({ externalId: 'task-unconfigured' })
+		assert.equal(unconfigured.status, 400)
+		assert.deepEqual(await unconfigured.json(), {
+			error: "Project 'not-configured' is not configured in helm.config.json",
+			created: false,
+		})
+		assert.equal(db.items.findBySourceExternalId('task-unconfigured'), null)
+	})
+})
+
+test('daemon turns an unexpected route error into a generic JSON 500 that keeps CORS headers', async t => {
+	await withTempDb(async db => {
+		const consoleError = t.mock.method(console, 'error', () => undefined)
+		const brokenQueue = {
+			...queue,
+			getStatus: () => {
+				throw new Error('queue exploded: token=secret-value at /private/path')
+			},
+		}
+		const app = createApp(
+			config,
+			'helm.config.json',
+			db,
+			brokenQueue as never,
+			poller as never,
+			provider,
+			spawner as never,
+			fakeEnricher as never,
+		)
+
+		const res = await app.request('/api/status', {
+			headers: { Origin: 'https://clientcare.eu.contember.cloud' },
+		})
+
+		assert.equal(res.status, 500)
+		assert.match(res.headers.get('content-type') ?? '', /^application\/json/)
+		assert.equal(res.headers.get('access-control-allow-origin'), 'https://clientcare.eu.contember.cloud')
+		const text = await res.text()
+		assert.doesNotMatch(text, /secret-value|private\/path/)
+		// No `created: false`: an unexpected failure is not a definite no-op.
+		assert.deepEqual(JSON.parse(text), { error: 'Helm daemon internal error; see the daemon log for details.' })
+		assert.ok(consoleError.mock.callCount() > 0, 'the full error is still logged to stderr')
+
+		const tooLarge = await app.request('/api/items/ingest', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Content-Length': String(64 * 1024 * 1024) },
+			body: '{}',
+		})
+		assert.equal(tooLarge.status, 413)
+		assert.deepEqual(await tooLarge.json(), { error: 'Payload Too Large' })
+	})
+})
+
+test('Drainer auto-retries a solve Item whose source context hit a provider outage', async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-drainer-provider-outage-'))
+		const singleSolveConfig = { ...config, solver: { ...config.solver, concurrency: 1 } }
+		const commands = new ItemCommands(db.items, singleSolveConfig)
+		const item = commands.createSolveItem({
+			title: 'Source outage solve',
+			projectSlug: 'helm',
+			prompt: 'Load the source task context.',
+			source: { provider: 'fake', externalId: 'task-context-outage' },
+		})
+		db.items.update(item.id, { status: 'ready', queuedAt: '2026-06-19T12:00:01.000Z', workMode: 'agent' })
+		const outageProvider = {
+			...provider,
+			getTaskContext: async () => {
+				throw new ProviderUnavailableError('Contember (clientcare)', 'timeout', {
+					cause: new TypeError('fetch failed'),
+				})
+			},
+		}
+		const solver = new FakeSolveSolver(worktreeRoot)
+		const drainer = new Drainer(singleSolveConfig, db, outageProvider, solver)
+
+		try {
+			drainer.start()
+			drainer.resume()
+			await waitFor(() => db.items.get(item.id)?.status === 'failed', 'outage solve Item did not fail')
+
+			const failed = db.items.get(item.id)
+			assert.equal(failed?.errorPhase, 'poll')
+			assert.equal(failed?.errorMessage, 'Contember (clientcare) did not respond in time (timed out).')
+			assert.equal(solver.calls.length, 0, 'no agent session starts on a failed context read')
+			await waitFor(
+				() => (drainer as unknown as { retryTimers: Map<string, unknown> }).retryTimers.has(item.id),
+				'provider outage was not scheduled for auto-retry',
+			)
+		} finally {
+			drainer.stop()
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
 	})
 })
 

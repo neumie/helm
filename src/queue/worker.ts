@@ -19,7 +19,7 @@ import { KnowledgeProviderError } from '../knowledge/provider.js'
 import type { KnowledgeSnapshot } from '../knowledge/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
-import type { TaskContext, TaskProvider } from '../providers/provider.js'
+import { ProviderUnavailableError, type TaskContext, type TaskProvider } from '../providers/provider.js'
 import { assertAgentBudget } from '../solver/agent-adapter.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
@@ -182,7 +182,15 @@ async function buildSolveItemTaskContext(item: ItemRecord, provider: TaskProvide
 	if (item.capturedContext) return buildItemExecutionContext(item, item.capturedContext)
 
 	if (item.source) {
-		const sourceContext = await provider.getTaskContext(item.source.externalId)
+		let sourceContext: TaskContext | null
+		try {
+			sourceContext = await provider.getTaskContext(item.source.externalId)
+		} catch (err) {
+			// A provider outage before any agent session is a transient read
+			// failure: tag it `poll` so the Drainer's bounded auto-retry applies.
+			if (err instanceof ProviderUnavailableError) throw phaseError('poll', err.message)
+			throw err
+		}
 		if (!sourceContext) {
 			throw phaseError('poll', 'Item source not found in source system')
 		}

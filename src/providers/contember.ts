@@ -1,12 +1,74 @@
 import { log } from '../util/logger.js'
-import type {
-	CreatedSourceTask,
-	DescriptionBlock,
-	DiscoveredTask,
-	TaskContext,
-	TaskProvider,
-	TaskSummary,
+import {
+	type CreatedSourceTask,
+	type DescriptionBlock,
+	type DiscoveredTask,
+	ProviderUnavailableError,
+	type TaskContext,
+	type TaskProvider,
+	type TaskSummary,
 } from './provider.js'
+
+/** Bound every GraphQL round-trip so an unreachable API fails as a definite
+ *  provider outage well before interactive clients (widget: 120s) give up. */
+export const CONTEMBER_REQUEST_TIMEOUT_MS = 30_000
+
+/** Upstream error bodies are logged in full but cut short in error messages. */
+const UPSTREAM_BODY_SNIPPET = 200
+
+/** Failures that happen before a connection exists: the request never arrived. */
+const PRE_CONNECT_CODES = new Set([
+	'ECONNREFUSED',
+	'ENOTFOUND',
+	'EAI_AGAIN',
+	'EHOSTUNREACH',
+	'ENETUNREACH',
+	'UND_ERR_CONNECT_TIMEOUT',
+])
+
+const TIMEOUT_CODES = new Set([
+	'ETIMEDOUT',
+	'UND_ERR_CONNECT_TIMEOUT',
+	'UND_ERR_HEADERS_TIMEOUT',
+	'UND_ERR_BODY_TIMEOUT',
+])
+
+/** OS socket errors (`ECONNRESET`) and undici transport errors (`UND_ERR_SOCKET`);
+ *  never Node's `ERR_*` argument/validation codes, which are local bugs. */
+const NETWORK_CODE = /^(E[A-Z]+|UND_ERR_[A-Z_]+)$/
+
+function transportDetail(err: unknown): { code?: string; syscall?: string } {
+	for (let current = err, depth = 0; current && typeof current === 'object' && depth < 4; depth++) {
+		const { code, syscall } = current as { code?: unknown; syscall?: unknown }
+		if (typeof code === 'string' && NETWORK_CODE.test(code))
+			return { code, ...(typeof syscall === 'string' ? { syscall } : {}) }
+		current = (current as { cause?: unknown }).cause
+	}
+	return {}
+}
+
+/**
+ * Classify a failed fetch/body read. Caller cancellation is not an outage, and
+ * local errors fetch throws as `TypeError` (invalid URL or header value) stay
+ * ordinary errors so they are not misreported as a ClientCare outage.
+ */
+function providerTransportError(err: unknown, label: string, mutation: boolean, callerSignal?: AbortSignal): unknown {
+	if (callerSignal?.aborted) return err
+	const name = err instanceof Error ? err.name : ''
+	const { code, syscall } = transportDetail(err)
+	const preConnect =
+		(code !== undefined && PRE_CONNECT_CODES.has(code)) || syscall === 'connect' || syscall === 'getaddrinfo'
+	const options = { cause: err, mayHaveApplied: mutation && !preConnect }
+	if (name === 'TimeoutError' || name === 'AbortError' || (code && TIMEOUT_CODES.has(code)))
+		return new ProviderUnavailableError(label, 'timeout', options)
+	// undici reports connection failures as `TypeError: fetch failed` (with a
+	// coded cause) and a body cut off mid-read as `TypeError: terminated`.
+	const transportTypeError =
+		err instanceof TypeError && (err.message === 'fetch failed' || err.message === 'terminated')
+	if (transportTypeError || code)
+		return new ProviderUnavailableError(label, preConnect ? 'unreachable' : 'connection_lost', options)
+	return err
+}
 
 // -- GraphQL queries/mutations --
 
@@ -121,13 +183,18 @@ export interface ContemberProviderConfig {
 
 export class ContemberProvider implements TaskProvider {
 	readonly name = 'Contember'
+	/** Operator-facing name in outage messages, e.g. `Contember (clientcare)`. */
+	private label: string
 	private url: string
 	private token: string
 	private statuses: string[]
 	private taskBaseUrl?: string
+	private requestTimeoutMs: number
 
-	constructor(config: ContemberProviderConfig) {
+	constructor(config: ContemberProviderConfig, options: { requestTimeoutMs?: number } = {}) {
+		this.requestTimeoutMs = options.requestTimeoutMs ?? CONTEMBER_REQUEST_TIMEOUT_MS
 		this.url = `${config.apiBaseUrl}/content/${config.projectSlug}/live`
+		this.label = `Contember (${config.projectSlug})`
 		this.token = config.apiToken
 		this.statuses = config.statuses
 		this.taskBaseUrl = config.taskBaseUrl
@@ -312,24 +379,55 @@ export class ContemberProvider implements TaskProvider {
 
 	private async query<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
 		log.info('contember', `GraphQL → ${this.url}`, variables)
-		const res = await fetch(this.url, {
-			method: 'POST',
-			signal,
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${this.token}`,
-			},
-			body: JSON.stringify({ query, variables }),
-		})
+		// A mutation that fails after the request left may still have been applied.
+		const mutation = /^\s*mutation\b/.test(query)
+		const timeout = AbortSignal.timeout(this.requestTimeoutMs)
+		const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+		let res: Response
+		try {
+			res = await fetch(this.url, {
+				method: 'POST',
+				signal: requestSignal,
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${this.token}`,
+				},
+				body: JSON.stringify({ query, variables }),
+			})
+		} catch (err) {
+			throw providerTransportError(err, this.label, mutation, signal)
+		}
 
 		log.info('contember', `GraphQL ← ${res.status}`)
 
-		if (!res.ok) {
-			const text = await res.text()
-			throw new Error(`GraphQL request failed (${res.status}): ${text}`)
+		if (res.status === 502 || res.status === 503 || res.status === 504) {
+			await res.body?.cancel().catch(() => {})
+			throw new ProviderUnavailableError(this.label, 'unavailable', { status: res.status, mayHaveApplied: mutation })
 		}
 
-		const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> }
+		let text: string
+		try {
+			text = await res.text()
+		} catch (err) {
+			throw providerTransportError(err, this.label, mutation, signal)
+		}
+
+		if (!res.ok) {
+			log.error('contember', `GraphQL request failed (${res.status})`, text)
+			const flat = text.replace(/\s+/g, ' ').trim()
+			const snippet = flat.length > UPSTREAM_BODY_SNIPPET ? `${flat.slice(0, UPSTREAM_BODY_SNIPPET)}…` : flat
+			throw new Error(`GraphQL request failed (${res.status})${snippet ? `: ${snippet}` : ''}`)
+		}
+
+		let json: { data?: T; errors?: Array<{ message: string }> }
+		try {
+			json = JSON.parse(text) as typeof json
+		} catch {
+			log.error('contember', `GraphQL response (${res.status}) is not JSON`, text)
+			throw new Error(
+				`${this.label} returned a non-JSON response (HTTP ${res.status}).${mutation ? ' The change may still have been applied; check there before retrying.' : ''}`,
+			)
+		}
 
 		if (json.errors?.length) {
 			throw new Error(`GraphQL errors: ${json.errors.map(e => e.message).join(', ')}`)

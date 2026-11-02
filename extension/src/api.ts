@@ -232,6 +232,51 @@ function selectionBody(selection?: SolveSelection): Record<string, unknown> | un
 	return Object.keys(body).length > 0 ? body : undefined
 }
 
+/**
+ * A failed daemon request. `created === false` is the daemon's explicit statement
+ * that the request failed before creating anything, so the widget may report a
+ * definite failure instead of an unknown outcome.
+ */
+export class HelmApiError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly created?: false,
+	) {
+		super(message)
+		this.name = 'HelmApiError'
+	}
+}
+
+/**
+ * Whether a failed create is a definite no-op the widget may report plainly.
+ * Only the daemon's explicit `created: false` counts; a plain 500, non-JSON
+ * body, network drop or timeout stays an unknown outcome.
+ */
+export function isDefiniteCreateFailure(error: unknown): boolean {
+	return error instanceof HelmApiError && error.created === false
+}
+
+const SNIPPET_LENGTH = 120
+
+/**
+ * Parse a daemon `{ data | error }` envelope from raw text. A non-JSON body (an
+ * older daemon's plain-text 500, a proxy page) becomes a readable status error,
+ * never `Unexpected token ... is not valid JSON`. Mirrors `src/util/daemon-response.ts`
+ * (this package cannot import from `src/`).
+ */
+export function parseDaemonEnvelope(status: number, text: string): Record<string, unknown> {
+	try {
+		const value: unknown = JSON.parse(text)
+		if (value !== null && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+	} catch {
+		// Fall through to the readable status error.
+	}
+	const flat = text.replace(/\s+/g, ' ').trim()
+	const snippet = flat.length > SNIPPET_LENGTH ? `${flat.slice(0, SNIPPET_LENGTH)}…` : flat
+	throw new HelmApiError(`Helm daemon error ${status}${snippet ? `: ${snippet}` : ''}`, status)
+}
+
 /** A widget operation captures one canonical origin for its entire lifetime. */
 export function createApi(origin?: string) {
 	async function request<T>(path: string, method = 'GET', body?: unknown, formats = false): Promise<T> {
@@ -245,12 +290,14 @@ export function createApi(origin?: string) {
 			body: body === undefined ? undefined : JSON.stringify(body),
 			signal: AbortSignal.timeout(method === 'GET' ? 10_000 : 120_000),
 		})
-		const json = await response.json()
+		const json = parseDaemonEnvelope(response.status, await response.text())
 		if (!response.ok)
-			throw new Error(
-				`${json.error ?? `API error: ${response.status}`}${json.sessionMayExist === true ? ' A planning session may already exist; check your terminal before retrying.' : ''}`,
+			throw new HelmApiError(
+				`${typeof json.error === 'string' ? json.error : `API error: ${response.status}`}${json.sessionMayExist === true ? ' A planning session may already exist; check your terminal before retrying.' : ''}`,
+				response.status,
+				json.created === false ? false : undefined,
 			)
-		return json.data
+		return json.data as T
 	}
 	return {
 		status: () =>

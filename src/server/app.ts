@@ -1,10 +1,11 @@
 import { Hono } from 'hono'
 import type { Context, Next } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import type { ItemEnricher } from '../items/enricher.js'
 import type { Poller } from '../poller/poller.js'
-import type { TaskProvider } from '../providers/provider.js'
+import { ProviderUnavailableError, type TaskProvider } from '../providers/provider.js'
 import type { Drainer } from '../queue/drainer.js'
 import type { Spawner } from '../spawner/spawner.js'
 import { apiRoutes } from './routes/api.js'
@@ -46,6 +47,26 @@ export async function daemonCorsMiddleware(c: Context, next: Next): Promise<Resp
 	await next()
 }
 
+/**
+ * Every daemon failure is a parseable JSON `{ error }` — clients (widget, Electron,
+ * CLI) never see Hono's plain-text "Internal Server Error". Registered on the
+ * root app, so it runs inside `daemonCorsMiddleware` and keeps its CORS headers.
+ * Unexpected errors are logged in full to stderr but answered generically: their
+ * messages may carry paths, upstream bodies or credentials.
+ */
+export function daemonErrorHandler(err: Error, c: Context): Response {
+	if (err instanceof HTTPException) {
+		const fallback = err.status === 413 ? 'Payload Too Large' : `Request failed (HTTP ${err.status})`
+		return c.json({ error: err.message || fallback }, err.status)
+	}
+	if (err instanceof ProviderUnavailableError) {
+		console.error(`[api] ${c.req.method} ${c.req.path}: ${err.message}`, err.cause ?? '')
+		return c.json({ error: err.message, code: 'provider_unavailable' }, 502)
+	}
+	console.error(`[api] ${c.req.method} ${c.req.path} failed:`, err)
+	return c.json({ error: 'Helm daemon internal error; see the daemon log for details.' }, 500)
+}
+
 export function createApp(
 	config: HelmConfig,
 	configPath: string,
@@ -61,6 +82,7 @@ export function createApp(
 ) {
 	const app = new Hono()
 
+	app.onError(daemonErrorHandler)
 	app.use('/api/*', daemonCorsMiddleware)
 
 	app.route(

@@ -62,6 +62,52 @@ export interface CreatedSourceTask {
 	url?: string
 }
 
+export type ProviderUnavailableReason = 'timeout' | 'unreachable' | 'connection_lost' | 'unavailable'
+
+/**
+ * The task source could not be reached or did not answer in time (network
+ * failure, timeout, or a gateway 502/503/504). Providers throw it from their
+ * transport so routes can answer 502 with operator wording instead of a 500.
+ * The message states only what happened at the provider; each route adds what
+ * that means for Helm-side effects (e.g. "Nothing was created" only where true).
+ *
+ * `unreachable` is reserved for failures before a connection existed, so the
+ * request provably never arrived. Every other reason on a mutation sets
+ * `mayHaveApplied`, and the message then tells the operator to check the
+ * provider before retrying: the change may already be there.
+ */
+export class ProviderUnavailableError extends Error {
+	readonly reason: ProviderUnavailableReason
+	readonly providerLabel: string
+	readonly mayHaveApplied: boolean
+
+	constructor(
+		providerLabel: string,
+		reason: ProviderUnavailableReason,
+		options?: { cause?: unknown; status?: number; mayHaveApplied?: boolean },
+	) {
+		const mayHaveApplied = options?.mayHaveApplied === true && reason !== 'unreachable'
+		const what =
+			reason === 'timeout'
+				? `${providerLabel} did not respond in time (timed out).`
+				: reason === 'unreachable'
+					? `${providerLabel} could not be reached.`
+					: reason === 'connection_lost'
+						? `The connection to ${providerLabel} failed mid-request.`
+						: `${providerLabel} is unavailable (HTTP ${options?.status ?? 'error'}).`
+		super(
+			mayHaveApplied
+				? `${what} The change may still have been applied in ${providerLabel}; check there before retrying.`
+				: what,
+			options?.cause === undefined ? undefined : { cause: options.cause },
+		)
+		this.name = 'ProviderUnavailableError'
+		this.reason = reason
+		this.providerLabel = providerLabel
+		this.mayHaveApplied = mayHaveApplied
+	}
+}
+
 /**
  * Abstract interface that all task sources must implement.
  */

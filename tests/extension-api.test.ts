@@ -6,7 +6,8 @@ import extensionWidgetModule from '../extension/src/Widget.tsx'
 import extensionApiModule from '../extension/src/api.ts'
 
 const originalFetch = globalThis.fetch
-const { api } = extensionApiModule as typeof import('../extension/src/api.ts')
+type ExtensionApiModule = typeof import('../extension/src/api.ts')
+const { api } = extensionApiModule as ExtensionApiModule
 type ExtensionWidgetModule = typeof import('../extension/src/Widget.tsx')
 const { itemRunNotices, extensionItemActions } = extensionWidgetModule as ExtensionWidgetModule
 
@@ -295,6 +296,85 @@ test('captured extension transport pins origin and negotiates prompt reads acros
 		assert.deepEqual(calls[1].init?.headers, { 'X-Helm-Run-Context-Formats': '1,2' })
 		assert.deepEqual(JSON.parse(String(calls[2].init?.body)), { revision: 4, text: 'Narrative' })
 		assert.deepEqual(JSON.parse(String(calls[3].init?.body)), { expectedRunContextRevision: 5 })
+	} finally {
+		globalThis.fetch = originalFetch
+	}
+})
+
+test('extension API turns a non-JSON daemon error into a readable status error', async () => {
+	const { createApi, HelmApiError } = extensionApiModule as typeof import('../extension/src/api.ts')
+	globalThis.fetch = async () =>
+		new Response('Internal Server Error', { status: 500, headers: { 'content-type': 'text/plain' } })
+	try {
+		await assert.rejects(createApi('http://127.0.0.1:7474').createItemFromSource('task-1'), (error: unknown) => {
+			assert.ok(error instanceof HelmApiError)
+			assert.equal(error.message, 'Helm daemon error 500: Internal Server Error')
+			assert.equal(error.status, 500)
+			// A plain 500 is not a statement that nothing was created.
+			assert.equal(error.created, undefined)
+			return true
+		})
+		globalThis.fetch = async () => new Response(`<html>${'x'.repeat(400)}</html>`, { status: 502 })
+		await assert.rejects(createApi('http://127.0.0.1:7474').status(), (error: unknown) => {
+			assert.ok(error instanceof Error)
+			assert.match(error.message, /^Helm daemon error 502: <html>x+…$/)
+			assert.ok(error.message.length < 160)
+			return true
+		})
+	} finally {
+		globalThis.fetch = originalFetch
+	}
+})
+
+test('extension API surfaces the daemon definite-failure and planning-session hints', async () => {
+	const { createApi, HelmApiError } = extensionApiModule as typeof import('../extension/src/api.ts')
+	globalThis.fetch = async () =>
+		Response.json(
+			{
+				error: 'Contember (clientcare) did not respond (timed out). Nothing was created; try again.',
+				code: 'provider_unavailable',
+				created: false,
+			},
+			{ status: 502 },
+		)
+	try {
+		await assert.rejects(createApi('http://127.0.0.1:7474').createItemFromSource('task-1'), (error: unknown) => {
+			assert.ok(error instanceof HelmApiError)
+			assert.equal(error.message, 'Contember (clientcare) did not respond (timed out). Nothing was created; try again.')
+			assert.equal(error.status, 502)
+			assert.equal(error.created, false)
+			return true
+		})
+		globalThis.fetch = async () => Response.json({ error: 'Planning failed', sessionMayExist: true }, { status: 500 })
+		await assert.rejects(
+			createApi('http://127.0.0.1:7474').planItem('item-1'),
+			/Planning failed A planning session may already exist; check your terminal before retrying\.$/,
+		)
+	} finally {
+		globalThis.fetch = originalFetch
+	}
+})
+
+test('widget treats only the daemon created:false statement as a definite create failure', async () => {
+	const extensionApi = extensionApiModule as ExtensionApiModule
+	const { createApi, HelmApiError, isDefiniteCreateFailure } = extensionApi
+	assert.equal(isDefiniteCreateFailure(new HelmApiError('Nothing was created', 502, false)), true)
+	assert.equal(isDefiniteCreateFailure(new HelmApiError('Helm daemon error 500', 500)), false)
+	assert.equal(isDefiniteCreateFailure(new Error('Failed to fetch')), false)
+	assert.equal(isDefiniteCreateFailure(new DOMException('The operation timed out', 'TimeoutError')), false)
+
+	const api = createApi('http://127.0.0.1:7474')
+	globalThis.fetch = async () =>
+		Response.json(
+			{ error: 'Lookup failed. Nothing was created.', code: 'provider_error', created: false },
+			{ status: 502 },
+		)
+	try {
+		await assert.rejects(api.createItemFromSource('task-1'), (error: unknown) => isDefiniteCreateFailure(error))
+		globalThis.fetch = async () => Response.json({ error: 'Helm daemon internal error' }, { status: 500 })
+		await assert.rejects(api.createItemFromSource('task-1'), (error: unknown) => !isDefiniteCreateFailure(error))
+		globalThis.fetch = async () => new Response('Internal Server Error', { status: 500 })
+		await assert.rejects(api.createItemFromSource('task-1'), (error: unknown) => !isDefiniteCreateFailure(error))
 	} finally {
 		globalThis.fetch = originalFetch
 	}

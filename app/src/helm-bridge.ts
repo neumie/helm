@@ -28,6 +28,7 @@ const electron = (() => {
 })()
 const BrowserWindow = (electron?.BrowserWindow ?? { getAllWindows: () => [] }) as typeof Electron.BrowserWindow
 const ipcMain = electron?.ipcMain as typeof Electron.ipcMain
+import { parseDaemonEnvelope } from '../../src/util/daemon-response'
 import {
 	normalizeDashboardItemResult,
 	normalizeDashboardItems,
@@ -363,12 +364,17 @@ export class HelmBridge {
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: AbortSignal.timeout(timeoutMs),
 			})
-			const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string; sessionMayExist?: unknown }
+			let json: { data?: T; error?: unknown; sessionMayExist?: unknown }
+			try {
+				json = parseDaemonEnvelope(res.status, await res.text())
+			} catch (err) {
+				return { error: errorMessage(err), status: res.status }
+			}
 			// Daemon envelope passed through verbatim; a non-ok status without an
 			// `error` body still needs a message for the UI.
 			if (!res.ok)
 				return {
-					error: json.error ?? `API error: ${res.status}`,
+					error: typeof json.error === 'string' ? json.error : `API error: ${res.status}`,
 					status: res.status,
 					...(json.sessionMayExist === true ? { sessionMayExist: true as const } : {}),
 				}

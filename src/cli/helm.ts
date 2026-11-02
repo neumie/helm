@@ -3,6 +3,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
+import { parseDaemonEnvelope } from '../util/daemon-response.js'
 import { runDockProcess } from './dock.js'
 import { runEditCli } from './edit.js'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
@@ -185,7 +186,7 @@ export function resolveBaseUrl(args: string[]): string {
 }
 
 /** POST a JSON payload to the running daemon and unwrap its `{ data | error }` envelope. */
-async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown): Promise<T> {
+export async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown): Promise<T> {
 	let res: Response
 	try {
 		res = await fetch(`${baseUrl}${path}`, {
@@ -198,8 +199,8 @@ async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown):
 			`Could not reach the Helm daemon at ${baseUrl} — is it running? Start it with \`helm start\`, or set --url / $HELM_URL. (${err instanceof Error ? err.message : err})`,
 		)
 	}
-	const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string }
-	if (!res.ok) throw new Error(json.error ?? `Request failed: HTTP ${res.status}`)
+	const json = parseDaemonEnvelope(res.status, await res.text()) as { data?: T; error?: unknown }
+	if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : `Request failed: HTTP ${res.status}`)
 	return json.data as T
 }
 

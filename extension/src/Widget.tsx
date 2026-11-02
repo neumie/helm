@@ -14,6 +14,7 @@ import {
 	type SolverWorkspace,
 	createApi,
 	getServerUrl,
+	isDefiniteCreateFailure,
 } from './api'
 import { externalHttpUrl } from './external-url'
 import { getSync, setSync } from './storage'
@@ -341,7 +342,14 @@ export function Widget(props: { taskId: Accessor<string | null> }) {
 			if (!target) {
 				if (action !== 'start' && action !== 'edit' && action !== 'approve') return
 				mayHaveMutated = true
-				target = await captured.api.createItemFromSource(captured.source)
+				try {
+					target = await captured.api.createItemFromSource(captured.source)
+				} catch (error) {
+					// The daemon said nothing was created (e.g. ClientCare timed out):
+					// a definite failure, not an unknown outcome.
+					if (isDefiniteCreateFailure(error)) mayHaveMutated = false
+					throw error
+				}
 				if (!current(captured) || (target.profileId ?? 'work') !== captured.profile) return
 				publish(captured, target)
 				await verifyOwner(captured, target.id)

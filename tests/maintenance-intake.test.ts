@@ -11,7 +11,7 @@ import { ItemStore } from '../src/items/store.js'
 import { Poller } from '../src/poller/poller.js'
 import type { ProfileRuntime } from '../src/profiles/store.js'
 import { ContemberProvider } from '../src/providers/contember.js'
-import type { DiscoveredTask, TaskProvider } from '../src/providers/provider.js'
+import { type DiscoveredTask, ProviderUnavailableError, type TaskProvider } from '../src/providers/provider.js'
 
 const initial = '2025-01-01T00:00:00.000Z'
 const boundary = '2025-01-02T00:00:00.000Z'
@@ -388,9 +388,14 @@ test('stop aborts paged traversal and fences late generic provider results until
 test('Contember threads cancellation into fetch and admits no further page after abort', async t => {
 	const controller = new AbortController()
 	let calls = 0
+	let fetchSignal: AbortSignal | null | undefined
 	t.mock.method(globalThis, 'fetch', async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
 		calls++
-		assert.equal(init?.signal, controller.signal)
+		// The caller signal is combined with the provider's own request timeout,
+		// so fetch receives a derived signal that still follows the caller.
+		fetchSignal = init?.signal
+		assert.notEqual(fetchSignal, controller.signal)
+		assert.equal(fetchSignal?.aborted, false)
 		return Response.json({
 			data: {
 				listTask: Array.from({ length: 50 }, (_, n) => ({
@@ -406,6 +411,7 @@ test('Contember threads cancellation into fetch and admits no further page after
 		[Symbol.asyncIterator]()
 	assert.equal((await pages.next()).value?.length, 50)
 	controller.abort()
+	assert.equal(fetchSignal?.aborted, true)
 	await assert.rejects(pages.next(), { name: 'AbortError' })
 	assert.equal(calls, 1)
 	await assert.rejects(
@@ -416,4 +422,157 @@ test('Contember threads cancellation into fetch and admits no further page after
 		{ name: 'AbortError' },
 	)
 	assert.equal(calls, 1)
+})
+
+test('Contember maps network failures and gateway outages to ProviderUnavailableError', async t => {
+	const provider = new ContemberProvider(providerConfig)
+	const connectFailure = (code: string) =>
+		new TypeError('fetch failed', { cause: Object.assign(new Error(`connect ${code}`), { code }) })
+	const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+		throw connectFailure('ETIMEDOUT')
+	})
+	await assert.rejects(provider.resolveTaskSummary('task-1'), (error: unknown) => {
+		assert.ok(error instanceof ProviderUnavailableError)
+		assert.equal(error.reason, 'timeout')
+		assert.equal(error.message, 'Contember (fixture) did not respond in time (timed out).')
+		// The operator message never echoes the request URL or token.
+		assert.doesNotMatch(error.message, /provider\.invalid|fixture-only/)
+		return true
+	})
+
+	fetchMock.mock.mockImplementation(async () => {
+		throw connectFailure('ECONNREFUSED')
+	})
+	await assert.rejects(provider.getTaskContext('task-1'), { name: 'ProviderUnavailableError', reason: 'unreachable' })
+
+	fetchMock.mock.mockImplementation(async () => {
+		throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+	})
+	await assert.rejects(provider.resolveTaskSummary('task-1'), { reason: 'timeout' })
+
+	fetchMock.mock.mockImplementation(async () => new Response('<html>bad gateway</html>', { status: 503 }))
+	await assert.rejects(provider.resolveTaskSummary('task-1'), {
+		name: 'ProviderUnavailableError',
+		reason: 'unavailable',
+		message: 'Contember (fixture) is unavailable (HTTP 503).',
+	})
+
+	// Application-level failures stay ordinary errors.
+	fetchMock.mock.mockImplementation(async () => Response.json({ errors: [{ message: 'denied' }] }))
+	await assert.rejects(provider.resolveTaskSummary('task-1'), (error: unknown) => {
+		assert.ok(!(error instanceof ProviderUnavailableError))
+		assert.equal((error as Error).message, 'GraphQL errors: denied')
+		return true
+	})
+})
+
+test('Contember bounds each request with its own timeout', async t => {
+	const provider = new ContemberProvider(providerConfig, { requestTimeoutMs: 20 })
+	t.mock.method(
+		globalThis,
+		'fetch',
+		(_input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+			new Promise<Response>((_resolve, reject) => {
+				const signal = init?.signal
+				assert.ok(signal, 'fetch always receives a bounded signal')
+				signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+			}),
+	)
+	const started = Date.now()
+	await assert.rejects(provider.resolveTaskSummary('task-1'), {
+		name: 'ProviderUnavailableError',
+		reason: 'timeout',
+		mayHaveApplied: false,
+	})
+	assert.ok(Date.now() - started < 5_000, 'the provider timeout fired, not a test timeout')
+})
+
+test('Contember keeps local fetch errors, upstream failures and bad bodies as ordinary errors', async t => {
+	const provider = new ContemberProvider(providerConfig)
+	const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+		throw new TypeError('Failed to parse URL from not a url')
+	})
+	await assert.rejects(provider.resolveTaskSummary('task-1'), (error: unknown) => {
+		assert.ok(!(error instanceof ProviderUnavailableError), 'a local config error is not an outage')
+		assert.equal((error as Error).message, 'Failed to parse URL from not a url')
+		return true
+	})
+
+	fetchMock.mock.mockImplementation(async () => {
+		throw Object.assign(new TypeError('Invalid header value'), { code: 'ERR_INVALID_CHAR' })
+	})
+	await assert.rejects(provider.resolveTaskSummary('task-1'), (error: unknown) => {
+		assert.ok(!(error instanceof ProviderUnavailableError))
+		return true
+	})
+
+	fetchMock.mock.mockImplementation(async () => new Response(`denied ${'x'.repeat(500)}`, { status: 500 }))
+	await assert.rejects(provider.resolveTaskSummary('task-1'), (error: unknown) => {
+		assert.ok(!(error instanceof ProviderUnavailableError), 'a non-gateway 500 is an application error')
+		assert.match((error as Error).message, /^GraphQL request failed \(500\): denied x+…$/)
+		assert.ok((error as Error).message.length < 260, 'the upstream body is cut short')
+		return true
+	})
+
+	fetchMock.mock.mockImplementation(async () => new Response('<html>login</html>', { status: 200 }))
+	await assert.rejects(provider.resolveTaskSummary('task-1'), {
+		message: 'Contember (fixture) returned a non-JSON response (HTTP 200).',
+	})
+	await assert.rejects(provider.postComment('task-1', 'Hi'), {
+		message:
+			'Contember (fixture) returned a non-JSON response (HTTP 200). The change may still have been applied; check there before retrying.',
+	})
+})
+
+test('Contember says a mutation may have applied unless the request provably never left', async t => {
+	const provider = new ContemberProvider(providerConfig)
+	const coded = (message: string, code: string, syscall?: string) =>
+		new TypeError('fetch failed', {
+			cause: Object.assign(new Error(message), { code, ...(syscall ? { syscall } : {}) }),
+		})
+	const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+		throw coded('connect ECONNREFUSED', 'ECONNREFUSED', 'connect')
+	})
+	await assert.rejects(provider.postComment('task-1', 'Hi'), {
+		name: 'ProviderUnavailableError',
+		reason: 'unreachable',
+		mayHaveApplied: false,
+		message: 'Contember (fixture) could not be reached.',
+	})
+
+	fetchMock.mock.mockImplementation(async () => {
+		throw coded('read ECONNRESET', 'ECONNRESET', 'read')
+	})
+	await assert.rejects(provider.postComment('task-1', 'Hi'), {
+		reason: 'connection_lost',
+		mayHaveApplied: true,
+		message:
+			'The connection to Contember (fixture) failed mid-request. The change may still have been applied in Contember (fixture); check there before retrying.',
+	})
+	// The same failure on a read is an outage, with nothing to double-check.
+	await assert.rejects(provider.resolveTaskSummary('task-1'), {
+		reason: 'connection_lost',
+		mayHaveApplied: false,
+		message: 'The connection to Contember (fixture) failed mid-request.',
+	})
+
+	// A body cut off after a 200 (`TypeError: terminated`) may follow an applied change.
+	fetchMock.mock.mockImplementation(async () => {
+		const body = new ReadableStream({
+			start(controller) {
+				controller.error(new TypeError('terminated'))
+			},
+		})
+		return new Response(body, { status: 200 })
+	})
+	await assert.rejects(provider.createTask({ projectSlug: 'fixture', title: 'New' }), {
+		reason: 'connection_lost',
+		mayHaveApplied: true,
+	})
+
+	fetchMock.mock.mockImplementation(async () => new Response('gateway timeout', { status: 504 }))
+	await assert.rejects(provider.postComment('task-1', 'Hi'), {
+		reason: 'unavailable',
+		mayHaveApplied: true,
+	})
 })
