@@ -30,13 +30,17 @@ import {
 	type AgentDockPosition,
 	type AgentWho,
 	type TextWidth,
+	actErrorText,
 	agentWho,
+	agentsEntryText,
 	anySourceOk,
 	canAnswer,
 	dockHealth,
 	dockLabel,
+	emptyQueueText,
 	entryGist,
 	entryTone,
+	failedActResult,
 	findSession,
 	formatAge,
 	formatClock,
@@ -47,18 +51,14 @@ import {
 	keepOrder,
 	needsYouItems,
 	nextLingerExpiry,
-	noSessionText,
 	orderedSessions,
 	plainAgentText,
 	queueItems,
 	queueLayout,
 	receiptView,
-	sessionSince,
-	sessionStatusText,
 	snapshotSources,
 	sourceBlockedNote,
 	sourceNames,
-	unknownAgentsText,
 	unknownSessionCount,
 } from './presentation'
 
@@ -326,12 +326,7 @@ export function AgentDock({
 		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
 		setSubmitting(prev => new Set(prev).add(item.id))
 		void onAct(item.id, item.rev, action)
-			.catch(
-				(error: unknown): AgentDockActResult => ({
-					ok: false,
-					outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
-				}),
-			)
+			.catch(failedActResult)
 			.then(result => {
 				// Answered: its drafts (picks, Other text, deny message, reply) have done their job.
 				if (result.ok) for (const key of draftKeys(item.id)) drafts.delete(key)
@@ -340,19 +335,9 @@ export function AgentDock({
 					next.delete(item.id)
 					return next
 				})
-				const outcome = result.outcome
 				// Refusals/failures main recorded on the item show from the snapshot; keep the words for the rest.
-				if (outcome.status === 'refused' || outcome.status === 'failed')
-					done(next =>
-						next.set(
-							item.id,
-							outcome.status === 'refused' && outcome.reason === 'gone'
-								? 'refused: already answered elsewhere'
-								: outcome.status === 'refused'
-									? `refused: ${plainAgentText(outcome.detail, 200)}`
-									: plainAgentText(outcome.detail, 300),
-						),
-					)
+				const error = actErrorText(result.outcome)
+				if (error !== null) done(next => next.set(item.id, error))
 			})
 	}
 
@@ -636,15 +621,7 @@ function Queue({
 			) : null}
 			<ul ref={setList} className="agent-dock-queue" aria-label={`Needs you, ${needs.length}`}>
 				{needs.length === 0 ? (
-					<li className="agent-dock-queue-empty">
-						{source?.state === 'pending'
-							? `Waiting for ${sourceNames(snapshot, 'pending')}`
-							: source?.state !== 'ok'
-								? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
-								: unknown > 0
-									? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
-									: 'Nothing needs you'}
-					</li>
+					<li className="agent-dock-queue-empty">{emptyQueueText(snapshot)}</li>
 				) : (
 					layout.slots.map(({ index, width, name }) => {
 						const item = needs[index]
@@ -829,7 +806,7 @@ function AgentsEntry({
 	buttonRef(node: HTMLButtonElement | null): void
 	onOpen(viaKeyboard: boolean): void
 }) {
-	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
+	const words = agentsEntryText(snapshot, sessions, unknown, now)
 	return (
 		<div className="agent-dock-agents">
 			<button
@@ -840,25 +817,12 @@ function AgentsEntry({
 				data-open={String(open)}
 				aria-expanded={open}
 				aria-controls={open ? paneId : undefined}
-				aria-label={
-					sessions.length === 0
-						? `${noSessionText(snapshot)}. Show agents`
-						: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`
-				}
-				title={
-					sessions.length === 0
-						? noSessionText(snapshot)
-						: sessions
-								.map(
-									session =>
-										`${agentWho(snapshot, session.key).name}: ${sessionStatusText(session, now, sessionSince(snapshot, session))}`,
-								)
-								.join('\n')
-				}
+				aria-label={words.label}
+				title={words.title}
 				onClick={event => onOpen(event.detail === 0)}
 			>
 				<span className="agent-dock-entry-line">
-					{sessions.length === 0 ? 'no agents' : `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`}
+					{words.text}
 					{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
 				</span>
 			</button>

@@ -5,7 +5,7 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import { type AgentDockPosition, failedActResult } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -218,10 +218,7 @@ export function mountAgentDock({
 		try {
 			result = await api.act({ itemId, rev, action })
 		} catch (error) {
-			result = {
-				ok: false,
-				outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
-			}
+			result = failedActResult(error)
 		}
 		const active = ownerDocument.activeElement
 		if (!disposed && result.ok && (!active || active === ownerDocument.body || dock.contains(active))) focusTerminal()

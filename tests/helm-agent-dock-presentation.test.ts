@@ -21,6 +21,11 @@ const {
 	itemKindLabel,
 	entryTone,
 	dockLabel,
+	emptyQueueText,
+	agentsEntryText,
+	busyCount,
+	actErrorText,
+	failedActResult,
 	itemAgeTone,
 	itemTimeLine,
 	entryWidth,
@@ -187,6 +192,71 @@ test('the row label counts needs and ages the oldest; it names no item', () => {
 		dockLabel(snapshot(ok, items, [session({ status: 'waiting' })]), T),
 		'Agent dock, 2 need you, oldest 3h, Okena',
 	)
+})
+
+test('the empty queue never reads as all clear while a source is down or an agent is unreadable', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	assert.equal(emptyQueueText(snapshot(ok)), 'Nothing needs you')
+	assert.equal(emptyQueueText(snapshot({ state: 'pending', since: T, lastObservedAt: null })), 'Waiting for Okena')
+	assert.equal(
+		emptyQueueText(snapshot({ state: 'down', since: T, lastObservedAt: T })),
+		'Okena is unreachable, so open questions cannot be seen',
+	)
+	assert.equal(
+		emptyQueueText({
+			...snapshot({ state: 'down', since: T, lastObservedAt: T }),
+			sources: {
+				okena: { state: 'down', since: T, lastObservedAt: T },
+				helm: { state: 'down', since: T, lastObservedAt: T },
+			},
+		}),
+		'Okena and Helm terminals are unreachable, so open questions cannot be seen',
+	)
+	assert.equal(
+		emptyQueueText(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })])),
+		'State unknown for 1 agent: Okena did not return readable detail, so their open questions cannot be seen',
+	)
+})
+
+test('the Agents entry counts busy agents and names each in its tooltip', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const sessions = [
+		session({ status: 'working', since: T - 120_000 }),
+		session({ key: 'p1:t2', terminalId: 't2', name: 'other', status: 'background', since: T - 60_000 }),
+		session({ key: 'p1:t3', terminalId: 't3', name: 'idle one', status: 'idle', since: T - 60_000 }),
+	]
+	const snap = snapshot(ok, [], sessions)
+	assert.equal(busyCount(sessions), 2)
+	assert.deepEqual(agentsEntryText(snap, sessions, 0, T), {
+		text: 'agents 3 · 2 busy',
+		label: '3 agents, 2 busy. Show agents',
+		title: 'dock: working 2m\nother: background 1m\nidle one: idle 1m',
+	})
+	assert.equal(agentsEntryText(snap, sessions, 1, T).label, '3 agents, 2 busy, 1 unknown. Show agents')
+	const lone = [session({ status: 'idle' })]
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], lone), lone, 0, T), {
+		text: 'agents 1',
+		label: '1 agent, 0 busy. Show agents',
+		title: 'dock: idle <1m',
+	})
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], []), [], 2, T), {
+		text: 'no agents',
+		label: "No Claude session is connected to Okena's Claude Remote. Show agents",
+		title: "No Claude session is connected to Okena's Claude Remote",
+	})
+})
+
+test('act errors kept on the pane: refusals and failures in words, bounded; nothing for the rest', () => {
+	assert.equal(actErrorText({ status: 'refused', reason: 'gone', detail: 'x' }), 'refused: already answered elsewhere')
+	assert.equal(actErrorText({ status: 'refused', reason: 'busy', detail: 'agent\u0007 busy' }), 'refused: agent busy')
+	assert.equal(actErrorText({ status: 'failed', detail: 'x'.repeat(400) }), `${'x'.repeat(299)}…`)
+	assert.equal(actErrorText({ status: 'sent' }), null)
+	assert.equal(actErrorText({ status: 'unconfirmed', detail: 'timeout' }), null)
+	assert.deepEqual(failedActResult(new Error('IPC closed')), {
+		ok: false,
+		outcome: { status: 'failed', detail: 'IPC closed' },
+	})
+	assert.deepEqual(failedActResult('nope'), { ok: false, outcome: { status: 'failed', detail: 'nope' } })
 })
 
 test('agent rows: a waiting agent ages from its oldest open ask (as its entry does); row meta, stale', () => {

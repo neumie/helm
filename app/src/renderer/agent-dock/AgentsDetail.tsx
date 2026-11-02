@@ -5,6 +5,7 @@ import {
 	agentRowMeta,
 	agentWho,
 	agingTone,
+	busyCount,
 	formatAge,
 	itemKindLabel,
 	kindGlyph,
@@ -30,7 +31,7 @@ export function AgentsDetail({
 }) {
 	const sessions = orderedSessions(snapshot)
 	const recent = recentItems(snapshot, RECENT_IN_PANE)
-	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
+	const busy = busyCount(sessions)
 	return (
 		<>
 			<Header end={<CloseKey onClose={onClose} />}>

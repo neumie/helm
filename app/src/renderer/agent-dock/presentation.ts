@@ -4,8 +4,10 @@
 // through plainAgentText and renders as React text, never markup.
 
 import type {
+	AgentDockActResult,
 	AgentDockSnapshot,
 	AgentDockSourceHealth,
+	DockActOutcome,
 	DockAction,
 	DockItem,
 	DockReceipt,
@@ -135,6 +137,22 @@ export interface ReceiptView {
 }
 
 const REFUSED_GONE = 'refused: already answered elsewhere'
+
+/**
+ * Words for an act main refused or could not run, kept on the pane when main did not record them on
+ * the item (bad request, IPC failure); null for any other outcome.
+ */
+export function actErrorText(outcome: DockActOutcome): string | null {
+	if (outcome.status === 'refused')
+		return outcome.reason === 'gone' ? REFUSED_GONE : `refused: ${plainAgentText(outcome.detail, 200)}`
+	if (outcome.status === 'failed') return plainAgentText(outcome.detail, 300)
+	return null
+}
+
+/** An act that threw before main answered (IPC failure), as the result main would have sent. */
+export function failedActResult(error: unknown): AgentDockActResult {
+	return { ok: false, outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) } }
+}
 
 function doneText(item: DockItem, receipt: DockReceipt): string {
 	const plan = item.fact.kind === 'ask' && item.fact.tool === 'ExitPlanMode'
@@ -566,6 +584,62 @@ export function sessionSince(snapshot: AgentDockSnapshot | null, session: DockSe
 		item => item.session === session.key && item.kind === 'ask' && item.state === 'open',
 	)
 	return asks.length > 0 ? Math.min(...asks.map(itemWaitingSince)) : session.since
+}
+
+/** Agents busy right now (working, or with background work only): the Agents entry and pane count them. */
+export const busyCount = (sessions: readonly DockSession[]): number =>
+	sessions.filter(session => session.status === 'working' || session.status === 'background').length
+
+export interface AgentsEntryText {
+	/** The entry's own words (`agents 4 · 2 busy`; `agents 8` alone when none is busy; `no agents`). */
+	text: string
+	label: string
+	/** One line per agent: its name and status words. */
+	title: string
+}
+
+/**
+ * The Agents entry in words. `unknown` counts agents whose state could not be read (named only while
+ * items show; the entry adds its own toned `· N unknown`).
+ */
+export function agentsEntryText(
+	snapshot: AgentDockSnapshot,
+	sessions: readonly DockSession[],
+	unknown: number,
+	now: number,
+): AgentsEntryText {
+	if (sessions.length === 0) {
+		const none = noSessionText(snapshot)
+		return { text: 'no agents', label: `${none}. Show agents`, title: none }
+	}
+	const busy = busyCount(sessions)
+	return {
+		text: `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`,
+		label: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`,
+		title: sessions
+			.map(
+				session =>
+					`${agentWho(snapshot, session.key).name}: ${sessionStatusText(session, now, sessionSince(snapshot, session))}`,
+			)
+			.join('\n'),
+	}
+}
+
+/**
+ * The empty queue's one line: never "Nothing needs you" unless every source is reachable and every
+ * listed agent was read.
+ */
+export function emptyQueueText(snapshot: AgentDockSnapshot): string {
+	const source = snapshot.source.state
+	if (source === 'pending') return `Waiting for ${sourceNames(snapshot, 'pending')}`
+	if (source !== 'ok') {
+		const down = sourceNames(snapshot, 'down')
+		return `${down} ${down === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
+	}
+	const unknown = unknownSessionCount(snapshot)
+	if (unknown > 0)
+		return `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
+	return 'Nothing needs you'
 }
 
 /** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
