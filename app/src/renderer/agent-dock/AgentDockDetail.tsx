@@ -43,6 +43,7 @@ import {
 	permissionReview,
 	plainAgentLine,
 	plainAgentText,
+	planApproveModeText,
 	receiptView,
 	recentItems,
 	resolutionLabel,
@@ -599,7 +600,17 @@ export function ItemDetail({
 	const sourceName = session?.source === 'helm' ? "Helm's Claude hub" : 'Okena'
 	const view = receiptView(item)
 	const receipt = view ? (
-		<Receipt view={view} detail={sent && view.tone !== 'danger' ? sentSummary(item, sent) : null} />
+		<Receipt
+			view={view}
+			detail={
+				view.tone === 'danger'
+					? null
+					: ((sent ? sentSummary(item, sent) : null) ??
+						(view.tone === 'success' && item.receipt?.action === 'allow'
+							? planApproveModeText(item, session?.source)
+							: null))
+			}
+		/>
 	) : localError ? (
 		<Receipt view={{ text: localError, tone: 'danger', busy: false }} />
 	) : resolved ? (
@@ -642,7 +653,7 @@ export function ItemDetail({
 	if (item.fact.kind === 'turn') body = <TurnPanel key={item.id} {...panel} session={session} />
 	else if (item.fact.tool === 'AskUserQuestion' && askQuestions(item.fact.input))
 		body = <AskPanel key={item.id} {...panel} />
-	else if (item.fact.tool === 'ExitPlanMode') body = <PlanPanel key={item.id} {...panel} />
+	else if (item.fact.tool === 'ExitPlanMode') body = <PlanPanel key={item.id} {...panel} session={session} />
 	else body = <PermissionPanel key={item.id} {...panel} />
 	return (
 		<>
@@ -1341,10 +1352,12 @@ function PermissionPanel(panel: PanelProps) {
 	)
 }
 
-function PlanPanel(panel: PanelProps) {
-	const { item } = panel
+function PlanPanel(panel: PanelProps & { session: DockSession | undefined }) {
+	const { item, session } = panel
 	const review = item.fact.kind === 'ask' ? planReview(item.fact.input) : null
 	const complete = review?.complete === true
+	// Helm terminals: approving also switches the agent to accept edits (said here and in the receipt).
+	const mode = planApproveModeText(item, session?.source)
 	// Approve sends the whole tool_input back: offer it only when every part of it shows here.
 	const choices: Choice[] = [
 		...(complete
@@ -1352,6 +1365,7 @@ function PlanPanel(panel: PanelProps) {
 					{
 						id: 'approve',
 						label: 'Approve the plan',
+						...(mode ? { description: `then ${mode}` } : {}),
 						submit: 'Approve',
 						ready: 'Ready to approve',
 						action: { type: 'allow' },

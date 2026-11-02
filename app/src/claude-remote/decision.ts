@@ -9,7 +9,8 @@
 //   - "always allow" is offered only when every Claude suggestion is an
 //     `addRules` entry, each rewritten to `destination: "session"` (an applied
 //     `addDirectories` did not stop the next prompt in the spike);
-//   - a mode switch is a `setMode` entry in `updatedPermissions` (session).
+//   - a mode switch is a `setMode` entry in `updatedPermissions` (session); the
+//     hub sends `acceptEdits` with every dock plan approval (review.ts planApproveMode).
 // Pure: no IO. The dock body it takes is act.ts's `OkenaClaudeDecision`.
 
 import type { OkenaClaudeDecision } from '../agent-dock/act'

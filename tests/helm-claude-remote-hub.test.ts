@@ -406,6 +406,43 @@ test('decide encodes the dock decision for the waiting hook; unknown dialog is 4
 	assert.throws(() => core.decide(REF, id, { decision: 'deny' }), { status: 404 })
 })
 
+test('approving a plan from the dock also switches the session to acceptEdits; keep planning and other allows do not', () => {
+	const plan = withDialog('ExitPlanMode', PLAN)
+	plan.core.decide(REF, plan.id, { decision: 'allow', always: false })
+	assert.deepEqual(plan.pending.outputs, [
+		{
+			hookSpecificOutput: {
+				hookEventName: 'PermissionRequest',
+				decision: {
+					behavior: 'allow',
+					updatedInput: PLAN,
+					updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }],
+				},
+			},
+		},
+	])
+	const keep = withDialog('ExitPlanMode', PLAN)
+	keep.core.decide(REF, keep.id, { decision: 'deny', message: 'smaller steps' })
+	assert.deepEqual(keep.pending.outputs, [
+		{
+			hookSpecificOutput: {
+				hookEventName: 'PermissionRequest',
+				decision: { behavior: 'deny', message: 'smaller steps' },
+			},
+		},
+	])
+	const bash = withDialog('Bash', { command: 'ls' })
+	bash.core.decide(REF, bash.id, { decision: 'allow', always: false })
+	assert.deepEqual(bash.pending.outputs, [
+		{
+			hookSpecificOutput: {
+				hookEventName: 'PermissionRequest',
+				decision: { behavior: 'allow', updatedInput: { command: 'ls' } },
+			},
+		},
+	])
+})
+
 test('long strings are cut and marked in the dialog view; the decision still repeats the full input', () => {
 	const content = `x${'é'.repeat(20_000)}`
 	const { core, pending, id } = withDialog('Write', { file_path: '/a', content })

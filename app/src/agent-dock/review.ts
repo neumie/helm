@@ -171,3 +171,18 @@ export function alwaysAllowLabels(suggestions: unknown, truncated = false): stri
 	}
 	return [...new Set(labels)]
 }
+
+/**
+ * Approving a plan from the dock also switches the agent to accept edits (Jakub's call: an approved
+ * plan is meant to run). Only where the answer can carry it: Helm's own Claude hub sends a session
+ * `setMode` with the allow (`updatedPermissions`, verified on Claude Code 2.1.316). Okena's
+ * `ApiClaudeDecision` is `allow {always}` / `deny` / `answer` with deny_unknown_fields and no
+ * permission updates, so an Okena plan approval leaves the mode alone. Main (hub-core) and the
+ * renderer (the plan choice and its receipt) read this one function.
+ */
+export const PLAN_APPROVE_MODE = 'acceptEdits' as const
+
+/** The permission mode a dock plan approval switches the session to, for a session of `source`. */
+export function planApproveMode(source: string | undefined): typeof PLAN_APPROVE_MODE | null {
+	return source === 'helm' ? PLAN_APPROVE_MODE : null
+}

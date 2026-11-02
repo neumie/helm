@@ -403,7 +403,8 @@ test(
 			assert.match(input.plan as string, new RegExp(file.replace('.', '\\.')))
 			const approved = await h.watcher.act({ itemId: plan.id, rev: plan.rev, action: { type: 'allow' } })
 			assert.equal(approved.ok, true, JSON.stringify(approved))
-			// Approving leaves plan mode; the write itself may ask again: allow it from the dock too.
+			// Approving leaves plan mode for acceptEdits (setMode rides on the allow), so the write
+			// should not ask; anything that still does is allowed from the dock too.
 			const target = join(h.project, file)
 			await h.until(
 				() => {

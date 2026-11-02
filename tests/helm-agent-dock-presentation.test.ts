@@ -47,6 +47,11 @@ const {
 	sentSummary,
 	sessionSince,
 	toolInputText,
+	dockHealth,
+	noSessionText,
+	planApproveModeText,
+	sourceBlockedNote,
+	canAnswer,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -550,4 +555,39 @@ test('sentSummary names what was sent: picked labels and Other text, or the deny
 	assert.equal(sentSummary(item, { type: 'deny' }), null)
 	assert.equal(sentSummary(item, { type: 'allow' }), null)
 	assert.equal(sentSummary(item, { type: 'prompt', text: 'hi' }), null)
+})
+
+test('approving a plan says it switches to accept edits only for Helm terminals (Okena cannot carry setMode)', () => {
+	const plan = askItem({
+		fact: { kind: 'ask', dialogId: 'd', tool: 'ExitPlanMode', input: { plan: '1. x' }, createdAtMs: T },
+	})
+	assert.equal(planApproveModeText(plan, 'helm'), 'accept edits on')
+	assert.equal(planApproveModeText(plan, 'okena'), null)
+	assert.equal(planApproveModeText(plan, undefined), null)
+	assert.equal(planApproveModeText(askItem(), 'helm'), null)
+	assert.equal(planApproveModeText(turnItem(), 'helm'), null)
+})
+
+test('sources are words in the existing slots: health tooltip, down note, blocked answer, no-session label', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const down = { state: 'down' as const, since: T, lastObservedAt: T - 60_000, detail: 'ECONNREFUSED' }
+	const okenaOnly = snapshot(ok)
+	assert.deepEqual(dockHealth(okenaOnly), { tone: 'success', text: 'Okena' })
+	assert.equal(noSessionText(okenaOnly), "No Claude session is connected to Okena's Claude Remote")
+	const both: AgentDockSnapshot = { ...snapshot(ok), sources: { okena: ok, helm: ok } }
+	assert.deepEqual(dockHealth(both), { tone: 'success', text: 'Okena · Helm terminals' })
+	assert.equal(noSessionText(both), 'No Claude session is connected to Okena and Helm terminals')
+	// Helm's hub down while Okena answers: the Okena item stays answerable, the Helm one says why not.
+	const helmSession = session({ key: 'p1:t2', terminalId: 't2', source: 'helm' })
+	const okenaItem = askItem()
+	const helmItem = askItem({ id: 9, key: 'ask:p1:t2:d', session: 'p1:t2' })
+	const split: AgentDockSnapshot = {
+		...snapshot(down, [okenaItem, helmItem], [session({ source: 'okena' }), helmSession]),
+		sources: { okena: ok, helm: down },
+	}
+	assert.match(dockHealth(split).text, /^Helm terminals unreachable since /)
+	assert.equal(canAnswer(okenaItem, split), true)
+	assert.equal(sourceBlockedNote(okenaItem, split), null)
+	assert.equal(canAnswer(helmItem, split), false)
+	assert.equal(sourceBlockedNote(helmItem, split), 'Helm terminals unreachable: answer in the terminal')
 })

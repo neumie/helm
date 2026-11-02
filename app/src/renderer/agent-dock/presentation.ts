@@ -13,6 +13,8 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
+import { planApproveMode } from '../../agent-dock/review'
+
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
@@ -177,6 +179,16 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
 		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn', busy: false }
 	return null
+}
+
+/**
+ * What approving this plan from the dock also does, in words, or null (not a plan, or a source whose
+ * answer cannot switch modes — Okena). The plan choice's description and the approved receipt's detail
+ * (`✓ approved · accept edits on`) say it; the queue entry keeps its short receipt.
+ */
+export function planApproveModeText(item: DockItem, source: DockSourceId | undefined): string | null {
+	if (item.fact.kind !== 'ask' || item.fact.tool !== 'ExitPlanMode') return null
+	return planApproveMode(source ?? 'okena') === 'acceptEdits' ? 'accept edits on' : null
 }
 
 /**

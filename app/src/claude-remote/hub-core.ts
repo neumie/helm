@@ -38,6 +38,7 @@
 
 import type { OkenaClaudeDecision } from '../agent-dock/act'
 import { stableJson } from '../agent-dock/model'
+import { planApproveMode } from '../agent-dock/review'
 import { CANCELLED_OUTPUT, type HookDecisionResult, hookDecisionOutput } from './decision'
 
 export interface TerminalRef {
@@ -410,9 +411,15 @@ export class ClaudeHubCore {
 		const t = this.visibleTerminal(ref)
 		const dialog = t.dialogs.find(entry => entry.id === dialogId)
 		if (!dialog) throw new HubError(404, 'dialog is no longer open')
+		// Approving a plan from the dock also leaves plan mode for accept edits (review.ts planApproveMode).
+		const mode =
+			dialog.toolName === 'ExitPlanMode' && decision.decision === 'allow' && !decision.always
+				? (planApproveMode('helm') ?? undefined)
+				: undefined
 		const result: HookDecisionResult = hookDecisionOutput(
 			{ toolName: dialog.toolName, toolInput: dialog.toolInput, suggestions: dialog.suggestions },
 			decision,
+			mode,
 		)
 		if (!result.ok) throw new HubError(result.status, result.error)
 		t.dialogs = t.dialogs.filter(entry => entry !== dialog)
