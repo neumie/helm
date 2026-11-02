@@ -434,17 +434,19 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 // Queue (design §3.24): entries, glyphs, density, stable order.
 // ---------------------------------------------------------------------------
 
-/** Entry tone: amber ask, red ask past 2h, amber orphan, blue unchecked turn, green answered from the dock, quiet closed elsewhere. */
-export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn' | 'done' | 'closed'
+/**
+ * Kind tone for the glyph: amber ask and orphan, blue unchecked turn, green answered from the dock,
+ * quiet closed elsewhere. It never ages: how long it has waited is the age text's tone alone.
+ */
+export type CardTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
 
 /** Answered from the dock (the only resolution that earns the green ✓). */
 const answeredHere = (item: DockItem): boolean => item.state === 'resolved' && item.resolution?.by === 'dock'
 
-export function cardTone(item: DockItem, now: number): CardTone {
+export function cardTone(item: DockItem): CardTone {
 	if (item.state === 'resolved') return answeredHere(item) ? 'done' : 'closed'
 	if (item.state === 'orphaned') return 'orphaned'
-	if (item.kind === 'turn') return 'turn'
-	return agingTone(now - itemWaitingSince(item)) === 'danger' ? 'ask-danger' : 'ask'
+	return item.kind === 'turn' ? 'turn' : 'ask'
 }
 
 /** Item age tone; unchecked turns cap at warn (only blocking asks go red), as on the strip. An answer on its way or landed no longer ages. */
@@ -611,8 +613,10 @@ export const QUEUE_ENTRY_PAD = 16
 export const QUEUE_GAP = 4
 /** Narrowest entry, so a short name never makes a sliver. */
 export const QUEUE_ENTRY_MIN = 112
-/** Widest name an entry grows for; a longer one ellipsizes (the entry's label and tooltip keep it whole). */
-export const QUEUE_NAME_MAX = 40
+/** Most cells a name gets in the queue; a longer one is shortened in the middle (`shortenName`). */
+export const QUEUE_NAME_MAX = 28
+/** Least cells names are shortened to so every entry fits before any go behind "+N more". */
+export const QUEUE_NAME_MIN = 16
 /** Cells the wait takes in an entry's second line ("2h16m"): a fixed budget so the queue never re-lays out as ages tick. */
 export const QUEUE_AGE_CHARS = 5
 
@@ -623,27 +627,127 @@ export const entryKindText = (item: DockItem): string => cardKindLabel(item).toL
 export const entryMetaChars = (item: DockItem): number => [...entryKindText(item)].length + 3 + QUEUE_AGE_CHARS
 
 /**
- * Width of one entry: its name line (glyph, a space, the name) or its second line (indent, kind · wait),
- * whichever is longer, plus padding; at least QUEUE_ENTRY_MIN, names past QUEUE_NAME_MAX cells ellipsize.
+ * A name cut in the middle to `max` cells, keeping its start, its end and a twin's ` #N`
+ * (`company-create-save-firm #2` → `company-create-…-firm #2`); unchanged when it fits. The kept end
+ * is whole words (from a `-`, `_`, `/` or `.`) when one fits a third of the room.
  */
-export const entryWidth = (nameChars: number, ch: number, metaChars = 0): number =>
-	Math.max(
-		QUEUE_ENTRY_MIN,
-		Math.ceil(Math.max(Math.min(nameChars, QUEUE_NAME_MAX) + 2, metaChars + 2) * ch) + QUEUE_ENTRY_PAD,
-	)
+export function shortenName(name: string, max: number): string {
+	const chars = [...name]
+	if (chars.length <= max) return name
+	const suffix = /\s#\d+$/.exec(name)?.[0] ?? ''
+	const body = chars.slice(0, chars.length - suffix.length)
+	const room = max - suffix.length - 1
+	if (room < 4) return `${chars.slice(0, Math.max(1, max - 1)).join('')}…`
+	const budget = Math.floor(room / 3)
+	let tail = budget
+	for (let at = body.length - 2; at >= body.length - budget - 1 && at > 0; at -= 1)
+		if (/[-_/.]/.test(body[at] ?? '')) tail = body.length - at
+	return `${body.slice(0, room - tail).join('')}…${body.slice(body.length - tail).join('')}${suffix}`
+}
 
 /**
- * How many entries the one-row queue shows: all of them when they fit `room` (px), else as many as
- * fit beside the quiet "+N more" cell (`moreWidth` px). Never a second row, never a scroll; the rest
- * stay one ‹ › step away in the pane.
+ * Width of one entry: its name line (glyph, a space, the name up to `nameMax` cells) or its second
+ * line (indent, kind · wait), whichever is longer, plus padding; at least QUEUE_ENTRY_MIN.
  */
-export function queueFit(widths: readonly number[], room: number, moreWidth: number): number {
-	const span = (count: number) =>
-		widths.slice(0, count).reduce((sum, width) => sum + width, 0) + QUEUE_GAP * Math.max(0, count - 1)
-	if (span(widths.length) <= room) return widths.length
-	let shown = 0
-	while (shown < widths.length && span(shown + 1) + QUEUE_GAP + moreWidth <= room) shown += 1
-	return shown
+export const entryWidth = (nameChars: number, ch: number, metaChars = 0, nameMax = QUEUE_NAME_MAX): number =>
+	Math.max(QUEUE_ENTRY_MIN, Math.ceil(Math.max(Math.min(nameChars, nameMax) + 2, metaChars + 2) * ch) + QUEUE_ENTRY_PAD)
+
+/** Cells of name an entry `width` px wide has room for (after padding, glyph and its space). */
+export const entryNameRoom = (width: number, ch: number): number =>
+	ch > 0 ? Math.min(QUEUE_NAME_MAX, Math.max(1, Math.floor((width - QUEUE_ENTRY_PAD) / ch) - 2)) : QUEUE_NAME_MAX
+
+/** Width of the "+N more" cell, sized for the longest count it could show so it never re-lays out the row. */
+export const moreWidth = (count: number, ch: number): number =>
+	Math.ceil(`+${count} more`.length * ch) + QUEUE_ENTRY_PAD
+
+export interface QueueSlot {
+	/** Index into the entries. */
+	index: number
+	/** px. */
+	width: number
+}
+
+export interface QueueLayout {
+	/** Entries in the row, in display order (queue order, except an open entry that had to move in). */
+	slots: QueueSlot[]
+	/** Entries behind the "+N more" cell, in queue order (empty: no cell). */
+	hidden: number[]
+	/** Width of the "+N more" cell, px. */
+	more: number
+}
+
+export interface QueueEntryCells {
+	/** Cells of the agent's name. */
+	nameChars: number
+	/** Cells of the second line with the fixed wait budget (`entryMetaChars`). */
+	metaChars: number
+	/** Cells of the second line as it reads now (the real wait): the least a squeezed entry keeps. */
+	metaNow?: number
+}
+
+/**
+ * The one-row queue (never a second row, never a scroll). Names shorten first — from QUEUE_NAME_MAX
+ * down to QUEUE_NAME_MIN cells, cut in the middle — then entries squeeze evenly down to their second
+ * line as it reads now (never under QUEUE_ENTRY_MIN, the kind never cut), so every entry shows when it
+ * can. Only past that do as many as fit show beside one "+N more" cell. The open entry is always in
+ * the row: when it would be hidden it takes the last slot.
+ */
+export function queueLayout(entries: readonly QueueEntryCells[], ch: number, room: number, open = -1): QueueLayout {
+	const all = entries.map((_, index) => index)
+	const widthsAt = (cap: number) => entries.map(entry => entryWidth(entry.nameChars, ch, entry.metaChars, cap))
+	const span = (widths: readonly number[]) =>
+		widths.reduce((sum, width) => sum + width, 0) + QUEUE_GAP * Math.max(0, widths.length - 1)
+	const row = (widths: readonly number[]): QueueLayout => ({
+		slots: all.map(index => ({ index, width: widths[index] ?? 0 })),
+		hidden: [],
+		more: 0,
+	})
+	if (ch <= 0 || room <= 0) return row([])
+	for (let cap = QUEUE_NAME_MAX; cap >= QUEUE_NAME_MIN; cap -= 1) {
+		const widths = widthsAt(cap)
+		if (span(widths) <= room) return row(widths)
+	}
+	const widths = widthsAt(QUEUE_NAME_MIN)
+	// Squeeze: every entry down to a common width `level`, none under its floor.
+	const floors = entries.map(entry => entryWidth(0, ch, entry.metaNow ?? entry.metaChars))
+	const at = (level: number) => widths.map((width, index) => Math.min(width, Math.max(floors[index] ?? 0, level)))
+	if (span(floors) <= room) {
+		let low = 0
+		let high = Math.max(...widths)
+		while (high - low > 0.5) {
+			const mid = (low + high) / 2
+			if (span(at(mid)) <= room) low = mid
+			else high = mid
+		}
+		return row(at(Math.floor(low)).map(Math.floor))
+	}
+	const more = moreWidth(entries.length, ch)
+	const fitting = (sized: readonly number[]) => {
+		let count = 0
+		while (count < sized.length && span(sized.slice(0, count + 1)) + QUEUE_GAP + more <= room) count += 1
+		return count
+	}
+	const shown = fitting(widths)
+	// The names get back what room the entries beside "+N more" leave (the same count shows).
+	for (let cap = QUEUE_NAME_MAX; cap > QUEUE_NAME_MIN; cap -= 1) {
+		const wider = widthsAt(cap)
+		if (fitting(wider) < shown) continue
+		widths.splice(0, widths.length, ...wider)
+		break
+	}
+	let visible = all.slice(0, shown)
+	if (open >= shown && open < entries.length) {
+		// The open entry takes the last slot; drop more from the end until it fits.
+		visible = [...visible.slice(0, Math.max(0, shown - 1)), open]
+		while (visible.length > 1 && span(visible.map(index => widths[index] ?? 0)) + QUEUE_GAP + more > room)
+			visible = [...visible.slice(0, -2), open]
+	}
+	const inRow = new Set(visible)
+	return {
+		slots: visible.map(index => ({ index, width: widths[index] ?? 0 })),
+		hidden: all.filter(index => !inRow.has(index)),
+		more,
+	}
 }
 
 /** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */

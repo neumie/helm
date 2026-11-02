@@ -371,6 +371,8 @@ test('at a 1100px window the queue is one row: names and waits whole, the rest b
 	expect(shown).toBeLessThan(8)
 	await expect(rail.locator('.agent-dock-more')).toHaveText(`+${8 - shown} more`)
 	await wholeNames()
+	// Nothing busy: the Agents entry says only `agents 8`.
+	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('agents 8')
 	const railBox = await box(page, '.agent-dock-rail')
 	for (const entry of await rail.locator('.agent-dock-entry, .agent-dock-more').all()) {
 		const entryBox = await entry.boundingBox()
@@ -393,7 +395,47 @@ test('at a 1100px window the queue is one row: names and waits whole, the rest b
 	expect(await rail.locator('.agent-dock-queue').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
 })
 
-test('"+N more" opens the next item past the row and stands in for it; ‹ › reach every item', async ({ page }) => {
+test('a wait is toned once, on its entry: the glyph keeps its kind color, the header age and the open strip stay quiet', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'busy')
+	const strip = page.locator('.agent-dock-strip')
+	await expect(strip).toContainText('oldest 2h')
+	await page.locator('.agent-dock-toggle').click()
+	// Open, the queue shows every wait: the strip drops "oldest" (its accessible name keeps it).
+	await expect(strip).not.toContainText('oldest')
+	await expect(page.locator('.agent-dock-toggle')).toHaveAttribute('aria-label', /oldest 2h/)
+	const first = page.locator('.agent-dock-entry').first()
+	await expect(first.locator('.agent-dock-entry-age')).toHaveAttribute('data-tone', 'danger')
+	// Past 2h the age is red; the glyph still says "ask" in amber, never red beside it.
+	await expect(first.locator('.agent-dock-glyph')).toHaveAttribute('data-tone', 'ask')
+	const colors = await page.evaluate(() => {
+		const root = getComputedStyle(document.querySelector('.agent-dock') as Element)
+		const probe = (value: string) => {
+			const node = document.createElement('span')
+			node.style.color = value
+			document.body.append(node)
+			const color = getComputedStyle(node).color
+			node.remove()
+			return color
+		}
+		return {
+			glyph: getComputedStyle(document.querySelector('.agent-dock-entry .agent-dock-glyph') as Element).color,
+			warn: probe(root.getPropertyValue('--warn')),
+		}
+	})
+	expect(colors.glyph).toBe(colors.warn)
+	await first.click()
+	const age = page.locator('.agent-dock-pane .agent-dock-title-age')
+	await expect(age).toHaveText(/^waiting 2h/)
+	await expect(age).not.toHaveAttribute('data-tone', /.+/)
+})
+
+test('"+N more" opens the next item past the row, which takes the last slot; ‹ › reach every item', async ({
+	page,
+}) => {
 	await page.setViewportSize({ width: 900, height: 700 })
 	await openHarness(page)
 	await emitScenario(page, 'overflow')
@@ -409,15 +451,26 @@ test('"+N more" opens the next item past the row and stands in for it; ‹ › r
 	await expect(pane).toContainText(`${shown + 1}/8`)
 	await expectPaneBesideTerminal(page)
 	await expect(input).toBeFocused()
-	await expect(more).toHaveAttribute('data-open', 'true')
-	await expect(rail.locator('.agent-dock-entry[data-open="true"]')).toHaveCount(0)
-	for (let at = shown + 1; at < 8; at++) await pane.getByRole('button', { name: 'Next item' }).click()
+	// The open item is never hidden behind "+N more": it takes the row's last slot, with the selected fill.
+	const openEntry = rail.locator('.agent-dock-entry[data-open="true"]')
+	const lastIsOpen = async () => {
+		await expect(openEntry).toHaveCount(1)
+		await expect(rail.locator('.agent-dock-entry').last()).toHaveAttribute('data-open', 'true')
+		await expect(more).toHaveAttribute('data-open', 'false')
+		expect(await rail.locator('.agent-dock-entry').count()).toBeLessThanOrEqual(shown)
+	}
+	await lastIsOpen()
+	for (let at = shown + 1; at < 8; at++) {
+		await pane.getByRole('button', { name: 'Next item' }).click()
+		await lastIsOpen()
+	}
 	await expect(pane).toContainText('8/8')
-	// Stepping back into the row hands the selection to that entry.
+	// Stepping back into the row: the queue's own order again, the selection on that entry.
 	for (let at = 8; at > shown; at--) await pane.getByRole('button', { name: 'Previous item' }).click()
 	await expect(pane).toContainText(`${shown}/8`)
-	await expect(more).toHaveAttribute('data-open', 'false')
-	await expect(rail.locator('.agent-dock-entry[data-open="true"]')).toHaveCount(1)
+	await expect(openEntry).toHaveCount(1)
+	await expect(rail.locator('.agent-dock-entry')).toHaveCount(shown)
+	await expect(more).toHaveText(`+${8 - shown} more`)
 })
 
 /** The write Settings → Appearance makes; the strip itself carries no position control. */
@@ -892,7 +945,7 @@ test('footer key hints show only while the pane holds focus (pointer use leaves 
 	await expect(pane).toBeVisible()
 	await pane.focus()
 	expect(await hintsShown(page)).toBe('visible')
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^1–3 pick\s*cmd enter submit\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^1–3 pick\s*⌘↵ submit\s*esc close$/)
 	// Screen readers get the keys from aria-keyshortcuts, not the hint text.
 	await expect(pane.locator('.agent-dock-foot-hints')).toHaveAttribute('aria-hidden', 'true')
 	await expect(pane.getByRole('button', { name: 'Submit answers' })).toHaveAttribute('aria-keyshortcuts', 'Meta+Enter')
@@ -907,7 +960,8 @@ test('a stray typed key drops the pick, so a following Enter sends nothing', asy
 	await page.keyboard.press('Enter')
 	expect(await acts(page)).toEqual([])
 	await expect(pane.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
-	await expect(pane).toContainText('Pick allow or deny')
+	// Nothing armed: no note (the disabled Send and the `1–3 pick` hint say it).
+	await expect(pane.locator('.agent-dock-foot-note')).toHaveText('')
 
 	// A question: the picks stay, but Enter is disarmed until the next pick.
 	await page.keyboard.press('ArrowLeft')
@@ -916,7 +970,7 @@ test('a stray typed key drops the pick, so a following Enter sends nothing', asy
 	await page.keyboard.press('1')
 	await expect(pane).toContainText('Ready to submit')
 	await page.keyboard.press('x')
-	await expect(pane).toContainText('Pick an answer')
+	await expect(pane.locator('.agent-dock-foot-note')).toHaveText('')
 	await page.keyboard.press('Enter')
 	expect(await acts(page)).toEqual([])
 	await page.keyboard.press('1')
@@ -1004,7 +1058,7 @@ test('deny: the field is one line, keeps the command in view, and its hint is th
 	await expect(message).toBeFocused()
 	await expect(pane.locator('.agent-dock-command')).toBeInViewport({ ratio: 1 })
 	expect(await pane.locator('.agent-dock-pane-scroll').evaluate(node => node.scrollTop)).toBe(0)
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^cmd enter deny\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ deny\s*esc close$/)
 	await page.keyboard.type('stop here')
 	await page.keyboard.press('Enter')
 	expect(await acts(page)).toEqual([])
@@ -1178,11 +1232,16 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	await expect(strip).not.toContainText('company-create')
 	await page.locator('.agent-dock-toggle').click()
 	const names = page.locator('.agent-dock-entry-name')
+	// Past 28 cells a name is cut in the middle in the queue; its label and tooltip keep it whole.
 	await expect(names).toHaveText([
 		'company-create-save-firm',
 		'company-create-save-firm #2',
-		'repeated-android-camera-permission',
+		/^repeated-android.*….*n$/,
 	])
+	await expect(page.locator('.agent-dock-entry[data-kind="turn"]')).toHaveAttribute(
+		'aria-label',
+		/^Turn ended, repeated-android-camera-permission in crm-mobile, idle /,
+	)
 	// No gist and no task title in the queue; two quiet lines per entry.
 	const rail = page.locator('.agent-dock-rail')
 	await expect(rail).not.toContainText('ClientCare')

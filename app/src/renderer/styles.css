@@ -1326,6 +1326,9 @@ body.dragging {
 	--dock-lh: calc(18px * var(--ui-scale));
 	--dock-prose-fs: calc(13px * var(--ui-scale));
 	--dock-prose-lh: calc(20px * var(--ui-scale));
+	/* The dock's dim text: --text-2 lifted toward --text-1 so 12px meta (`kind · age`, project, hints)
+	 * reads at ≥4.5:1 on --chrome and ≥3:1 on the selected fill. */
+	--dock-dim: color-mix(in srgb, var(--text-1) 60%, var(--text-2));
 	grid-row: 2;
 	grid-column: 1;
 	position: relative;
@@ -1395,6 +1398,8 @@ body.dragging {
 	display: flex;
 	align-items: center;
 	height: 28px;
+	/* 8px + the toggle's 8px puts the text on the 16px column; the toggle's hover/focus are inset like an entry's. */
+	padding: 0 8px;
 	overflow: hidden;
 	container: agent-dock-strip / inline-size;
 }
@@ -1414,9 +1419,10 @@ body.dragging {
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	height: 28px;
-	padding: 0 16px;
+	height: 24px;
+	padding: 0 8px;
 	border: none;
+	border-radius: 6px;
 	background: transparent;
 	white-space: nowrap;
 	cursor: pointer;
@@ -1436,7 +1442,7 @@ body.dragging {
 .agent-dock-chevron {
 	flex: none;
 	width: 1ch;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-needs {
@@ -1451,7 +1457,7 @@ body.dragging {
 
 .agent-dock-sep {
 	flex: none;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-strip-fill {
@@ -1459,12 +1465,13 @@ body.dragging {
 	min-width: 0;
 }
 
-/* Ages are dim until they are genuinely old: --warn past 30m, --danger past 2h (asks only). */
+/* Ages are dim until they are genuinely old: --warn past 30m, --danger past 2h (asks only) — on the
+ * entry and the collapsed strip only; the pane header's age stays dim (one toned age per wait). */
 .agent-dock-age,
 .agent-dock-entry-age,
 .agent-dock-title-age {
 	flex: none;
-	color: var(--text-2);
+	color: var(--dock-dim);
 	white-space: nowrap;
 }
 
@@ -1473,14 +1480,12 @@ body.dragging {
 }
 
 .agent-dock-age[data-tone="warn"],
-.agent-dock-entry-age[data-tone="warn"],
-.agent-dock-title-age[data-tone="warn"] {
+.agent-dock-entry-age[data-tone="warn"] {
 	color: var(--warn);
 }
 
 .agent-dock-age[data-tone="danger"],
-.agent-dock-entry-age[data-tone="danger"],
-.agent-dock-title-age[data-tone="danger"] {
+.agent-dock-entry-age[data-tone="danger"] {
 	color: var(--danger);
 }
 
@@ -1491,7 +1496,7 @@ body.dragging {
 	font: inherit;
 	font-family: var(--dock-sans);
 	letter-spacing: 0.04em;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-health {
@@ -1580,7 +1585,7 @@ body.dragging {
 }
 
 .agent-dock-rail-note-dim {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-mark {
@@ -1676,7 +1681,7 @@ body.dragging {
 	flex: none;
 	width: 1ch;
 	text-align: center;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 /* Menlo's ↵ sits below the cap height: lift it a pixel so it lines up with the name beside it. */
@@ -1685,13 +1690,9 @@ body.dragging {
 	top: -1px;
 }
 
-/* Tones live on the kind glyph only. */
+/* Tones live on the kind glyph only, and say the kind, never the age (the age text does that). */
 .agent-dock-glyph:is([data-tone="ask"], [data-tone="orphaned"]) {
 	color: var(--warn);
-}
-
-.agent-dock-glyph[data-tone="ask-danger"] {
-	color: var(--danger);
 }
 
 .agent-dock-glyph[data-tone="turn"] {
@@ -1718,7 +1719,7 @@ body.dragging {
 /* Second line under the name: `kind · age`, dim; the kind ellipsizes before the age ever would. */
 .agent-dock-entry-meta {
 	padding-left: 2ch;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-entry-kind,
@@ -1735,7 +1736,7 @@ body.dragging {
 
 /* "+N more": one quiet cell for what the row has no room for. */
 .agent-dock-more {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-more:hover,
@@ -1781,9 +1782,11 @@ body.dragging {
 	background: var(--hairline);
 }
 
+/* Right-aligned, so its text ends on the strip's right column (under ⌘⇧J). */
 .agent-dock-agents-entry {
+	align-items: flex-end;
 	min-width: calc(10ch + 16px);
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-agents-entry:hover,
@@ -1796,7 +1799,7 @@ body.dragging {
 	flex: none;
 	width: 1ch;
 	text-align: center;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-status[data-status="working"] {
@@ -1891,7 +1894,7 @@ body.dragging {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-title-end {
@@ -1899,7 +1902,7 @@ body.dragging {
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-stepper {
@@ -1907,11 +1910,9 @@ body.dragging {
 	align-items: center;
 }
 
-/* Menlo's ‹ › sit small at x-height: the UI face draws them at cap size. */
+/* ‹ 1/3 › in one face on one 18px line, centred in the 28px buttons, so the arrows sit on the count's baseline. */
 .agent-dock-stepper > .agent-dock-title-btn {
 	padding: 0;
-	font-family: var(--dock-sans);
-	font-size: calc(15px * var(--ui-scale));
 }
 
 .agent-dock-step-count {
@@ -1961,7 +1962,7 @@ body.dragging {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 /* Body: the request (question, command, plan, message) scrolls inside the pane's fixed height and gives
@@ -2040,7 +2041,7 @@ body.dragging {
 }
 
 .agent-dock-quiet {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-question {
@@ -2050,9 +2051,9 @@ body.dragging {
 	overflow-wrap: anywhere;
 }
 
-.agent-dock-pane-label {
-	margin: 4px 0 0;
-	color: var(--text-1);
+/* A single question's short header leads its line, dim. */
+.agent-dock-question-header {
+	color: var(--dock-dim);
 }
 
 .agent-dock-pane-lead {
@@ -2089,7 +2090,7 @@ body.dragging {
 	border: none;
 	border-radius: 4px;
 	background: transparent;
-	color: var(--text-2);
+	color: var(--dock-dim);
 	cursor: pointer;
 	transition: color 140ms ease-out;
 }
@@ -2141,12 +2142,12 @@ body.dragging {
 }
 
 .agent-dock-preview-n {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 /* Nothing pointed at yet: the first option with a preview shows, named dim so it never reads as picked. */
 .agent-dock-preview-label[data-pointed="false"] {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-preview-text {
@@ -2164,7 +2165,7 @@ body.dragging {
 	font-size: var(--dock-prose-fs);
 	line-height: var(--dock-prose-lh);
 	letter-spacing: -0.01em;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 @container agent-dock-pane (max-width: 600px) {
@@ -2180,15 +2181,16 @@ body.dragging {
 }
 
 /* Choices: cursor | number | label | description, columns aligned across rows, like Claude Code's list. */
-/* The 16px edge tracks let the hover band run to the pane's edges (a subgrid's own padding would shift its first track). */
+/* The 8px edge tracks inset the hover band and focus ring like a queue entry's (8px in, radius 6) while the
+ * text stays on the 16px column (a subgrid's own padding would shift its first track). */
 .agent-dock-choices {
 	display: grid;
-	grid-template-columns: 16px 2ch 3ch max-content minmax(0, 1fr) 16px;
-	margin: 4px -16px 0;
+	grid-template-columns: 8px 2ch 3ch max-content minmax(0, 1fr) 8px;
+	margin: 4px -8px 0;
 }
 
 .agent-dock-choices[data-multi="true"] {
-	grid-template-columns: 16px 4ch 3ch max-content minmax(0, 1fr) 16px;
+	grid-template-columns: 8px 4ch 3ch max-content minmax(0, 1fr) 8px;
 }
 
 /* One fixed pitch: 24px rows whatever a row holds (its description runs on the 18px mono line). */
@@ -2201,6 +2203,7 @@ body.dragging {
 	min-height: 24px;
 	padding: 0;
 	border: none;
+	border-radius: 6px;
 	background: transparent;
 	color: var(--text-1);
 	cursor: pointer;
@@ -2228,7 +2231,7 @@ body.dragging {
 }
 
 .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-choices[data-multi="true"] .agent-dock-choice[aria-checked="true"] .agent-dock-choice-cursor {
@@ -2238,7 +2241,7 @@ body.dragging {
 
 .agent-dock-choice-n {
 	grid-column: 3;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-choice-label {
@@ -2288,7 +2291,7 @@ body.dragging {
 }
 
 .agent-dock-prompt-mark {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-prompt:focus-within .agent-dock-prompt-mark {
@@ -2309,7 +2312,7 @@ body.dragging {
 }
 
 .agent-dock-input::placeholder {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-input:disabled {
@@ -2334,7 +2337,7 @@ body.dragging {
 }
 
 .agent-dock-command-prompt {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-fields {
@@ -2375,7 +2378,7 @@ body.dragging {
 	flex-wrap: wrap;
 	gap: 4px 16px;
 	margin: 8px 0 0 2ch;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-fact-pr {
@@ -2410,12 +2413,17 @@ body.dragging {
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-hint kbd {
 	font: inherit;
 	color: var(--text-1);
+}
+
+.agent-dock-hint kbd[data-face="sans"] {
+	font-family: var(--dock-sans);
+	letter-spacing: 0.04em;
 }
 
 /* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid. */
@@ -2466,7 +2474,7 @@ body.dragging {
  * place, so nothing shifts; it fills in as primary (or danger) once a pick arms it. */
 .agent-dock-key.btn:disabled {
 	background: transparent;
-	color: var(--text-2);
+	color: var(--dock-dim);
 	opacity: 1;
 }
 
@@ -2525,7 +2533,7 @@ body.dragging {
 
 .agent-dock-td-project,
 .agent-dock-td-meta {
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 .agent-dock-td-status {
@@ -2549,7 +2557,7 @@ body.dragging {
 .agent-dock-subhead {
 	margin: 16px 0 4px;
 	font: inherit;
-	color: var(--text-2);
+	color: var(--dock-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

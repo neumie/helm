@@ -36,7 +36,6 @@ import {
 	cardKindLabel,
 	cardTone,
 	formatAge,
-	itemAgeTone,
 	itemHeadline,
 	itemTimeLine,
 	kindGlyph,
@@ -203,15 +202,14 @@ function ItemHeader({
 			}
 		>
 			<span className="agent-dock-title-kind">
-				<Glyph item={item} tone={cardTone(item, now)} />
+				<Glyph item={item} tone={cardTone(item)} />
 				{kind}
 			</span>
 			{/* A long name ellipsizes before the age would; the project gives way first. */}
 			<span className="agent-dock-title-name">{who.name}</span>
 			{who.project ? <span className="agent-dock-title-project">{who.project}</span> : null}
-			<span className="agent-dock-title-age" data-tone={itemAgeTone(item, now)}>
-				{time.waited}
-			</span>
+			{/* Dim always: the entry's age carries the aging tone, once (design §3.24 Aging). */}
+			<span className="agent-dock-title-age">{time.waited}</span>
 		</Header>
 	)
 }
@@ -219,7 +217,8 @@ function ItemHeader({
 function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children: ReactNode }) {
 	return (
 		<span className="agent-dock-hint" data-pick={pick ? '' : undefined}>
-			<kbd>{keys}</kbd> {children}
+			{/* ⌘ sits small in Menlo: the shortcut is set in the UI face, as the strip's ⌘⇧J is. */}
+			<kbd data-face={keys.startsWith('⌘') ? 'sans' : undefined}>{keys}</kbd> {children}
 		</span>
 	)
 }
@@ -418,6 +417,9 @@ function submitKeys(
 
 const modShortcut = (mod: DockModKey): string => (mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter')
 
+/** The submit key as the hints show it: one notation with the strip's `⌘⇧J` (`Ctrl+Enter` off macOS). */
+const modHint = (mod: DockModKey): string => (mod === 'cmd' ? '⌘↵' : 'Ctrl+Enter')
+
 const closeHints = <Hint keys="esc">close</Hint>
 const cancelHints = <Hint keys="esc">cancel</Hint>
 
@@ -426,7 +428,7 @@ const pickHints = (count: number, mod: DockModKey) => (
 		<Hint keys={count > 1 ? `1–${count}` : '1'} pick>
 			pick
 		</Hint>
-		<Hint keys={`${mod} enter`}>submit</Hint>
+		<Hint keys={modHint(mod)}>submit</Hint>
 		<Hint keys="esc">close</Hint>
 	</>
 )
@@ -894,11 +896,12 @@ function AskPanel({
 	) : (
 		(receipt ??
 		blockedNote ??
+		// Nothing to say before a pick: the disabled Submit and the `1–N pick` hint already say it.
 		(complete && armed
 			? 'Ready to submit'
 			: questions.length > 1 && !complete
 				? 'Answer every question, then submit'
-				: 'Pick an answer'))
+				: null))
 	)
 	const preview = question.options[previewIndex]
 	return (
@@ -926,10 +929,12 @@ function AskPanel({
 							</button>
 						))}
 					</div>
-				) : question.header ? (
-					<p className="agent-dock-pane-label">{question.header}</p>
 				) : null}
 				<p className="agent-dock-question" id={questionId}>
+					{/* A single question's short header (`IČO`) leads its line, dim, rather than a line of its own. */}
+					{questions.length === 1 && question.header ? (
+						<span className="agent-dock-question-header">{question.header} · </span>
+					) : null}
 					{question.question}
 					{question.multiSelect ? <span className="agent-dock-quiet"> (pick several)</span> : null}
 				</p>
@@ -1077,7 +1082,8 @@ function DecisionPanel({
 	messagePlaceholder: string
 	/** Hint word for ⌘Enter while the deny/keep-planning field shows ("deny", "send back"). */
 	denyVerb: string
-	hint: string
+	/** The note before a pick, only when it says more than the choices do. */
+	hint: string | null
 }) {
 	const {
 		item,
@@ -1173,7 +1179,7 @@ function DecisionPanel({
 		cancelHints
 	) : denying ? (
 		<>
-			<Hint keys={`${mod} enter`}>{denyVerb}</Hint>
+			<Hint keys={modHint(mod)}>{denyVerb}</Hint>
 			<Hint keys="esc">close</Hint>
 		</>
 	) : (
@@ -1304,7 +1310,7 @@ function PermissionPanel(panel: PanelProps) {
 			messageLabel="Message to the agent (optional)"
 			messagePlaceholder="What should it do instead?"
 			denyVerb="deny"
-			hint={review.complete ? 'Pick allow or deny' : 'Allow in the terminal, or deny here'}
+			hint={review.complete ? null : 'Allow in the terminal, or deny here'}
 		>
 			<p className="agent-dock-pane-lead" id={leadId}>
 				<span className="agent-dock-mono agent-dock-bright">{plainAgentLine(tool, 64)}</span> wants to{' '}
@@ -1371,7 +1377,7 @@ function PlanPanel(panel: PanelProps) {
 			messageLabel="What should change? (optional)"
 			messagePlaceholder="Tell the agent what to plan differently"
 			denyVerb="send back"
-			hint={complete ? 'Approve or keep planning' : 'Approve in the terminal, or keep planning here'}
+			hint={complete ? null : 'Approve in the terminal, or keep planning here'}
 		>
 			{review?.plan ? (
 				<pre className="agent-dock-plan">{plainAgentText(review.plan, REVIEW_PLAN_MAX)}</pre>
@@ -1447,11 +1453,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 		fact.hadBackground ? 'Subagents were still running.' : '',
 		fact.continuedAt ? 'Tools ran again afterwards.' : '',
 	].filter(Boolean)
-	const note = confirming ? (
-		<RiskyConfirm word={confirming} what="This reply" />
-	) : (
-		(receipt ?? blockedNote ?? 'Typed into the agent’s terminal as your next prompt')
-	)
+	const note = confirming ? <RiskyConfirm word={confirming} what="This reply" /> : (receipt ?? blockedNote ?? null)
 	return (
 		<>
 			<ScrollBody label="Last message">
@@ -1485,6 +1487,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 							aria-label="Reply"
 							aria-keyshortcuts={modShortcut(mod)}
 							placeholder="Reply to the agent"
+							title="Typed into the agent's terminal as your next prompt"
 							maxLength={16384}
 							rows={1}
 							value={text}
@@ -1505,7 +1508,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 						cancelHints
 					) : (
 						<>
-							<Hint keys={`${mod} enter`}>send</Hint>
+							<Hint keys={modHint(mod)}>send</Hint>
 							<Hint keys="esc">close</Hint>
 						</>
 					)

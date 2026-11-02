@@ -15,7 +15,6 @@ import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail, draftKeys }
 import {
 	type AgentDockPosition,
 	type AgentWho,
-	QUEUE_ENTRY_PAD,
 	agentWho,
 	canAnswer,
 	cardGist,
@@ -24,7 +23,7 @@ import {
 	dockSummary,
 	entryKindText,
 	entryMetaChars,
-	entryWidth,
+	entryNameRoom,
 	findSession,
 	formatAge,
 	formatClock,
@@ -36,11 +35,12 @@ import {
 	nextLingerExpiry,
 	orderedSessions,
 	plainAgentText,
-	queueFit,
+	queueLayout,
 	railItems,
 	receiptView,
 	sessionSince,
 	sessionStatusText,
+	shortenName,
 	unknownAgentsText,
 	unknownSessionCount,
 } from './presentation'
@@ -422,7 +422,8 @@ export function AgentDock({
 				<span className="agent-dock-needs" data-unknown={summary.unknownCount > 0 ? '' : undefined}>
 					{summary.needsText}
 				</span>
-				{summary.oldestText ? (
+				{/* Open, the queue shows every wait itself: the strip names the oldest only while collapsed. */}
+				{summary.oldestText && !expanded ? (
 					<>
 						<span className="agent-dock-sep" aria-hidden="true">
 							·
@@ -596,11 +597,19 @@ function Queue({
 		)
 	const unknown = unknownSessionCount(snapshot)
 	const whos = needs.map(item => agentWho(snapshot, item.session))
-	const widths = needs.map((item, at) => entryWidth([...(whos[at]?.name ?? '')].length, ch, entryMetaChars(item)))
-	// The "+N more" cell is sized for the longest count it could show, so it never re-lays out the row.
-	const moreWidth = Math.ceil(`+${needs.length} more`.length * ch) + QUEUE_ENTRY_PAD
-	const shown = ch > 0 && room > 0 ? queueFit(widths, room, moreWidth) : needs.length
-	const hidden = needs.slice(shown)
+	const openIndex = needs.findIndex(item => `item:${item.id}` === openKey)
+	// Names shorten (in the middle) before anything goes behind "+N more"; the open entry is always in the row.
+	const layout = queueLayout(
+		needs.map((item, at) => ({
+			nameChars: [...(whos[at]?.name ?? '')].length,
+			metaChars: entryMetaChars(item),
+			metaNow: [...entryKindText(item)].length + 3 + formatAge(now - itemWaitingSince(item)).length,
+		})),
+		ch,
+		room,
+		openIndex,
+	)
+	const hidden = layout.hidden.flatMap(at => (needs[at] ? [needs[at]] : []))
 	const openHidden = hidden.find(item => `item:${item.id}` === openKey)
 	const sessions = orderedSessions(snapshot)
 	return (
@@ -637,22 +646,28 @@ function Queue({
 								: 'Nothing needs you'}
 					</li>
 				) : (
-					needs.slice(0, shown).map((item, at) => (
-						<li key={item.id} className="agent-dock-queue-slot" style={{ flexBasis: widths[at] }}>
-							<Entry
-								item={item}
-								who={whos[at] ?? { name: '', title: '', project: '' }}
-								now={now}
-								open={openKey === `item:${item.id}`}
-								paneId={paneId}
-								buttonRef={register(`item:${item.id}`)}
-								onOpen={viaKeyboard => onOpen({ type: 'item', id: item.id }, viaKeyboard)}
-							/>
-						</li>
-					))
+					layout.slots.map(({ index, width }) => {
+						const item = needs[index]
+						if (!item) return null
+						const who = whos[index] ?? { name: '', title: '', project: '' }
+						return (
+							<li key={item.id} className="agent-dock-queue-slot" style={width ? { flexBasis: width } : undefined}>
+								<Entry
+									item={item}
+									who={who}
+									shownName={width ? shortenName(who.name, entryNameRoom(width, ch)) : who.name}
+									now={now}
+									open={openKey === `item:${item.id}`}
+									paneId={paneId}
+									buttonRef={register(`item:${item.id}`)}
+									onOpen={viaKeyboard => onOpen({ type: 'item', id: item.id }, viaKeyboard)}
+								/>
+							</li>
+						)
+					})
 				)}
 				{hidden.length > 0 ? (
-					<li className="agent-dock-queue-slot" style={{ flexBasis: moreWidth }}>
+					<li className="agent-dock-queue-slot" style={{ flexBasis: layout.more }}>
 						<MoreEntry
 							items={hidden}
 							snapshot={snapshot}
@@ -680,13 +695,13 @@ function Queue({
 	)
 }
 
-/** Kind glyph: the one colored mark (tone carries urgency); Menlo's ↵ sits low, so it is lifted a pixel. */
-function KindGlyph({ item, now }: { item: DockItem; now: number }) {
+/** Kind glyph: the one colored mark (its kind's tone, never its age); Menlo's ↵ sits low, so it is lifted a pixel. */
+function KindGlyph({ item }: { item: DockItem }) {
 	const glyph = kindGlyph(item)
 	return (
 		<span
 			className="agent-dock-glyph"
-			data-tone={cardTone(item, now)}
+			data-tone={cardTone(item)}
 			data-glyph={glyph === '↵' ? 'return' : undefined}
 			aria-hidden="true"
 		>
@@ -702,6 +717,7 @@ function KindGlyph({ item, now }: { item: DockItem; now: number }) {
 function Entry({
 	item,
 	who,
+	shownName,
 	now,
 	open,
 	paneId,
@@ -710,6 +726,8 @@ function Entry({
 }: {
 	item: DockItem
 	who: AgentWho
+	/** The name as the entry has room for it (cut in the middle); its label and tooltip keep it whole. */
+	shownName: string
 	now: number
 	open: boolean
 	paneId: string
@@ -726,7 +744,7 @@ function Entry({
 			type="button"
 			className="agent-dock-entry"
 			data-rail-stop=""
-			data-tone={cardTone(item, now)}
+			data-tone={cardTone(item)}
 			data-kind={item.kind}
 			data-item-id={item.id}
 			data-state={item.state}
@@ -740,8 +758,8 @@ function Entry({
 			onClick={event => onOpen(event.detail === 0)}
 		>
 			<span className="agent-dock-entry-line">
-				<KindGlyph item={item} now={now} />
-				<span className="agent-dock-entry-name">{who.name}</span>
+				<KindGlyph item={item} />
+				<span className="agent-dock-entry-name">{shownName}</span>
 			</span>
 			<span className="agent-dock-entry-line agent-dock-entry-meta">
 				{receipt ? (
@@ -809,8 +827,8 @@ function MoreEntry({
 }
 
 /**
- * The Agents entry: two quiet lines (`agents 4` / `2 busy`) after the queue's one hairline; the pane
- * lists them all. Only what DockSession observed (status, since) — never invented activity.
+ * The Agents entry: two quiet lines (`agents 4` / `2 busy`; `agents 8` alone when none is busy) after
+ * the queue's one hairline; the pane lists them all. Only what DockSession observed (status, since) — never invented activity.
  */
 function AgentsEntry({
 	snapshot,
@@ -858,7 +876,12 @@ function AgentsEntry({
 				onClick={event => onOpen(event.detail === 0)}
 			>
 				<span className="agent-dock-entry-line">agents {sessions.length}</span>
-				<span className="agent-dock-entry-line">{sessions.length === 0 ? 'none connected' : `${busy} busy`}</span>
+				{/* Nothing busy says nothing: `agents 8` alone. */}
+				{sessions.length === 0 ? (
+					<span className="agent-dock-entry-line">none connected</span>
+				) : busy > 0 ? (
+					<span className="agent-dock-entry-line">{busy} busy</span>
+				) : null}
 			</button>
 		</div>
 	)

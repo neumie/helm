@@ -23,14 +23,18 @@ const {
 	dockSummary,
 	itemAgeTone,
 	itemTimeLine,
+	entryNameRoom,
 	entryWidth,
 	keepOrder,
 	kindGlyph,
-	queueFit,
+	moreWidth,
+	queueLayout,
 	QUEUE_ENTRY_MIN,
 	QUEUE_ENTRY_PAD,
 	QUEUE_GAP,
 	QUEUE_NAME_MAX,
+	QUEUE_NAME_MIN,
+	shortenName,
 	agentNames,
 	agentWho,
 	branchShortName,
@@ -218,14 +222,13 @@ test('resolution labels say how the item closed', () => {
 	assert.equal(resolutionLabel(turnItem({ state: 'resolved', resolution: { at: T, by: 'acked' } })), 'acked')
 })
 
-test('card tone and age: red only for asks past 2h, dashed orphans, unchecked turns cap at amber', () => {
+test('card tone and age: the glyph keeps its kind tone, only the age turns red (asks past 2h), turns cap at amber', () => {
 	const now = T + 3 * 60 * 60_000
 	const oldAsk = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T } })
-	assert.equal(cardTone(oldAsk, T + 60_000), 'ask')
-	assert.equal(cardTone(oldAsk, now), 'ask-danger')
-	assert.equal(cardTone(askItem({ state: 'orphaned' }), now), 'orphaned')
+	assert.equal(cardTone(oldAsk), 'ask')
+	assert.equal(cardTone(askItem({ state: 'orphaned' })), 'orphaned')
 	const oldTurn = turnItem()
-	assert.equal(cardTone(oldTurn, now), 'turn')
+	assert.equal(cardTone(oldTurn), 'turn')
 	assert.equal(itemAgeTone(oldTurn, now), 'warn')
 	assert.equal(itemAgeTone(oldAsk, now), 'danger')
 	assert.equal(cardKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
@@ -238,8 +241,8 @@ test('card tone and age: red only for asks past 2h, dashed orphans, unchecked tu
 	assert.equal(itemTimeLine({ ...oldAsk, state: 'sending' } as DockItem, now).waited, 'sending')
 	const elsewhere = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'outside' } } as DockItem
 	assert.match(itemTimeLine(elsewhere, now).waited, /^closed \d\d:\d\d$/)
-	assert.equal(cardTone(answered, now), 'done')
-	assert.equal(cardTone(elsewhere, now), 'closed')
+	assert.equal(cardTone(answered), 'done')
+	assert.equal(cardTone(elsewhere), 'closed')
 })
 
 test("card gist: the turn's last paragraph, the plan title, the command", () => {
@@ -338,26 +341,77 @@ test('agent lines show only observed facts', () => {
 	assert.deepEqual(agentRowMeta(snap, session({ hooksAttached: false })), ['not connected'])
 })
 
-test('the queue is one row: what fits shows, the rest sit behind one "+N more" cell', () => {
+test("queue names shorten in the middle, keeping a twin's #N", () => {
+	assert.equal(shortenName('crm', 28), 'crm')
+	assert.equal(shortenName('company-create-save-firm #2', 28), 'company-create-save-firm #2')
+	const twin = shortenName('company-create-save-firm #2', 20)
+	assert.equal([...twin].length, 20)
+	assert.equal(twin, 'company-cre…-firm #2')
+	assert.equal(shortenName('company-create-save-firm #2', 24), 'company-create-…-firm #2')
+	const long = shortenName('repeated-android-camera-permission', 16)
+	assert.equal([...long].length, 16)
+	assert.ok(long.startsWith('repeated-') && long.endsWith('ion') && long.includes('…'))
+	// No room for a middle cut: the start and an ellipsis.
+	assert.equal(shortenName('abcdefgh #12', 6), 'abcde…')
+})
+
+test('the queue is one row: names shorten before anything hides, the open entry always shows', () => {
 	const ch = 7.2
-	// An entry is as wide as its name line (glyph, space, name) or its second line (indent, kind · wait).
-	assert.equal(entryWidth(34, ch, 15), Math.ceil(36 * ch) + QUEUE_ENTRY_PAD)
+	// An entry is as wide as its name line (glyph, space, name ≤ cap) or its second line (indent, kind · wait).
+	assert.equal(entryWidth(34, ch, 15), Math.ceil((QUEUE_NAME_MAX + 2) * ch) + QUEUE_ENTRY_PAD)
 	assert.equal(entryWidth(8, ch, 22), Math.max(QUEUE_ENTRY_MIN, Math.ceil(24 * ch) + QUEUE_ENTRY_PAD))
-	// Short names never make slivers; very long ones stop growing (they ellipsize, the tooltip keeps them).
 	assert.equal(entryWidth(1, ch), QUEUE_ENTRY_MIN)
-	assert.equal(entryWidth(200, ch), entryWidth(QUEUE_NAME_MAX, ch))
-	// Everything fits: no "+N more".
-	assert.equal(queueFit([200, 200, 200], 600 + 2 * QUEUE_GAP, 80), 3)
-	// One pixel short: as many as fit beside the "+N more" cell.
-	assert.equal(queueFit([200, 200, 200], 600 + 2 * QUEUE_GAP - 1, 80), 2)
-	assert.equal(queueFit([200, 200, 200], 200 + QUEUE_GAP + 80, 80), 1)
-	// Order is kept: a narrow later entry never jumps ahead of a wide earlier one.
-	assert.equal(queueFit([300, 100, 100], 250, 80), 0)
-	assert.equal(queueFit([], 0, 80), 0)
-	// Eight items at a 1100px window (≈ 900px of room): some show, the rest are counted.
-	const widths = Array.from({ length: 8 }, () => entryWidth(28, ch, 19))
-	const shown = queueFit(widths, 900, entryWidth(0, ch))
-	assert.ok(shown > 0 && shown < 8)
+	assert.equal(entryWidth(200, ch, 0, 16), Math.ceil(18 * ch) + QUEUE_ENTRY_PAD)
+	assert.equal(entryNameRoom(entryWidth(40, ch), ch), QUEUE_NAME_MAX)
+	const entry = (nameChars: number, metaChars = 16) => ({ nameChars, metaChars })
+	const real = [entry(24), entry(27), entry(34, 18)]
+	// Everything fits at full names: no "+N more".
+	const wide = queueLayout(real, ch, 2000)
+	assert.deepEqual(
+		wide.slots.map(slot => slot.index),
+		[0, 1, 2],
+	)
+	assert.deepEqual(wide.hidden, [])
+	// Tighter: the names shorten (never below QUEUE_NAME_MIN) before any entry hides.
+	const minSpan =
+		real.reduce((sum, e) => sum + entryWidth(e.nameChars, ch, e.metaChars, QUEUE_NAME_MIN), 0) + 2 * QUEUE_GAP
+	const tight = queueLayout(real, ch, minSpan)
+	assert.deepEqual(tight.hidden, [])
+	assert.ok(tight.slots.every(slot => entryNameRoom(slot.width, ch) >= QUEUE_NAME_MIN))
+	assert.ok(entryNameRoom(tight.slots[2]?.width ?? 0, ch) < QUEUE_NAME_MAX)
+	// Still too wide: entries squeeze evenly down to their second line as it reads now, rather than "+1 more".
+	const now = [entry(24, 16), entry(27, 16), entry(34, 18)].map(e => ({ ...e, metaNow: e.metaChars - 2 }))
+	const floors = now.map(e => entryWidth(0, ch, e.metaNow))
+	const floorSpan = floors.reduce((sum, width) => sum + width, 0) + 2 * QUEUE_GAP
+	const squeezed = queueLayout(now, ch, floorSpan + 10)
+	assert.deepEqual(squeezed.hidden, [])
+	assert.equal(squeezed.slots.length, 3)
+	assert.ok(squeezed.slots.every((slot, at) => slot.width >= (floors[at] ?? 0) - 1))
+	assert.ok(squeezed.slots.reduce((sum, slot) => sum + slot.width, 0) + 2 * QUEUE_GAP <= floorSpan + 10)
+	// Below every floor: "+N more".
+	assert.ok(queueLayout(now, ch, floorSpan - 10).hidden.length > 0)
+	// Eight items in about 600px: some show, the rest sit behind one "+N more" cell sized for the count.
+	const eight = Array.from({ length: 8 }, () => entry(28, 19))
+	const row = queueLayout(eight, ch, 600)
+	assert.ok(row.slots.length > 0 && row.slots.length < 8)
+	assert.equal(row.slots.length + row.hidden.length, 8)
+	assert.equal(row.more, moreWidth(8, ch))
+	const span = row.slots.reduce((sum, slot) => sum + slot.width + QUEUE_GAP, 0) + row.more
+	assert.ok(span <= 600)
+	// Queue order is kept.
+	assert.deepEqual(
+		row.slots.map(slot => slot.index),
+		row.slots.map((_, at) => at),
+	)
+	// An open entry that would hide takes the last slot instead; the one it replaced goes behind "+N more".
+	const open = queueLayout(eight, ch, 600, 6)
+	assert.equal(open.slots.at(-1)?.index, 6)
+	assert.ok(!open.hidden.includes(6))
+	assert.equal(open.slots.length + open.hidden.length, 8)
+	assert.ok(open.hidden.includes(row.slots.length - 1))
+	// Unmeasured (no font cell yet): everything, unsized.
+	assert.equal(queueLayout(eight, 0, 600).slots.length, 8)
+	assert.deepEqual(queueLayout([], ch, 600), { slots: [], hidden: [], more: 0 })
 })
 
 test('short agent names: the branch without its type prefix, numbered when two agents share it', () => {
