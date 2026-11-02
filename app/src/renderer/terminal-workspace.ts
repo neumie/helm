@@ -36,7 +36,7 @@ import {
 	tabGroupHeading,
 	tabGroupMembersId,
 } from './tab-groups'
-import { tabNumberSlot, tabNumberSlots } from './tab-numbers'
+import { adjacentVisibleTabId, tabNumberSlot, tabNumberSlots } from './tab-numbers'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import {
 	type TerminalAgentStateTracker,
@@ -1380,11 +1380,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 	window.addEventListener('focus', onWindowFocus)
 
-	function cycleTab(delta: number): void {
-		if (tabs.length === 0) return
-		const activeIndex = activeTab ? tabs.indexOf(activeTab) : -1
-		const current = activeIndex >= 0 ? activeIndex : delta > 0 ? -1 : 0
-		const next = tabs[(current + delta + tabs.length) % tabs.length]
+	/**
+	 * Previous/next tab over the same visible strip tabs ⌘1–⌘9 number (§3.18),
+	 * without the nine-tab limit: members of a collapsed folder are skipped.
+	 */
+	function cycleTab(direction: 1 | -1): void {
+		const activeId = activeTab ? tabIdentity(activeTab) : null
+		const targetId = adjacentVisibleTabId(tabGroupComposition().strip, activeId, direction)
+		const next = targetId === null ? undefined : tabs.find(tab => tabIdentity(tab) === targetId)
 		if (next && next !== activeTab) activate(next)
 	}
 
@@ -3559,7 +3562,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (opts?.sessionId) {
 			try {
 				const snapshot = await helm.buffers.read(opts.sessionId)
-						if (snapshot && !tab.closed) {
+				if (snapshot && !tab.closed) {
 					await new Promise<void>(resolve => {
 						tab.term.write(snapshot, () => {
 							if (!tab.closed) {
