@@ -220,20 +220,21 @@ export async function ensurePrivateDir(dir: string): Promise<void> {
 	if ((stat.mode & 0o077) !== 0) await chmod(dir, 0o700)
 }
 
-/** Atomic 0600 replace: temp file in the same directory, fsync, rename. */
+/** Atomic 0600 replace: temp file in the same directory, fsync, rename. A failed write never leaves its temp file behind. */
 export async function writePrivateFileAtomic(path: string, data: string): Promise<void> {
 	const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+	// O_EXCL: a failed open created nothing to clean up.
 	const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
 	try {
-		await file.writeFile(data)
-		await file.sync()
-	} finally {
-		await file.close()
-	}
-	try {
+		try {
+			await file.writeFile(data)
+			await file.sync()
+		} finally {
+			await file.close()
+		}
 		await rename(temp, path)
 	} catch (error) {
-		await rm(temp, { force: true })
+		await rm(temp, { force: true }).catch(() => {})
 		throw error
 	}
 }

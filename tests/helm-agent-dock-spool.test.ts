@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
@@ -24,6 +25,7 @@ import {
 	localDay,
 	readSpoolEvents,
 	readSpoolSnapshot,
+	writePrivateFileAtomic,
 } from '../src/agent-dock/spool.js'
 import { EXIT_HELM_DOWN, EXIT_SOURCE_DOWN, runDockCli } from '../src/cli/dock.js'
 
@@ -351,6 +353,26 @@ test('event lines stay within 300 chars and spool dir defaults match Electron us
 	assert.equal(defaultAgentDockDir({}, 'darwin', '/Users/x'), '/Users/x/Library/Application Support/Helm/agent-dock')
 	assert.equal(defaultAgentDockDir({}, 'linux', '/home/x'), '/home/x/.config/Helm/agent-dock')
 	assert.equal(defaultAgentDockDir({ HELM_AGENT_DOCK_DIR: '/tmp/d' }, 'darwin', '/Users/x'), '/tmp/d')
+})
+
+test('a failed atomic write leaves no temp file behind (write and rename failures alike)', async () => {
+	const dir = tempDir()
+	try {
+		// The write itself fails (stands in for ENOSPC/EIO): the partial temp file must go too.
+		await assert.rejects(writePrivateFileAtomic(join(dir, 'state.json'), 42 as unknown as string))
+		// The rename fails (the target is a non-empty directory).
+		const blocked = join(dir, 'snapshot.json')
+		mkdirSync(join(blocked, 'child'), { recursive: true })
+		await assert.rejects(writePrivateFileAtomic(blocked, '{}'))
+		assert.deepEqual(
+			readdirSync(dir).filter(name => name.endsWith('.tmp')),
+			[],
+		)
+		await writePrivateFileAtomic(join(dir, 'state.json'), '{"ok":true}')
+		assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), '{"ok":true}')
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
 })
 
 // ---------------------------------------------------------------------------
