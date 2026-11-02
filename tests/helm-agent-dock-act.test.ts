@@ -140,7 +140,6 @@ const ANSWER: DockAction = { type: 'answer', picks: [{ options: [1] }, { options
 test('dock answer: sending → sent → dialog closes → resolved by dock with a confirmed receipt', () => {
 	const { state: seeded } = askOpen()
 	const item = only(seeded)
-	assert.equal(item.rev, 1)
 	const { state, events } = drive(
 		[
 			[T0 + 1_000, { type: 'act.sending', itemId: item.id, action: 'answer' }],
@@ -349,9 +348,8 @@ test('a reply read mid-flight is attributed once the POST answers (tail flag sur
 	assert.equal(only(after, 'turn').resolution?.by, 'dock')
 })
 
-test('the agent working again closes an undispatched turn instead of bumping its rev', () => {
+test('the agent working again closes an undispatched turn instead of changing it in place', () => {
 	const { state: open } = turnOpen()
-	const turn = only(open, 'turn')
 	const { state, events } = drive(
 		[
 			[T0 + 30_000, poll(idle({ busy: true }))],
@@ -359,7 +357,6 @@ test('the agent working again closes an undispatched turn instead of bumping its
 		],
 		open,
 	)
-	assert.equal(only(state, 'turn').rev, turn.rev)
 	assert.equal(only(state, 'turn').resolution?.by, 'superseded')
 	assert.deepEqual(
 		events.map(event => event.t),
@@ -730,7 +727,7 @@ test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed
 })
 
 test('act requests are strictly validated (IPC input is untrusted)', () => {
-	assert.ok(parseAgentDockActRequest({ itemId: 3, rev: 1, action: ANSWER }).ok)
+	assert.ok(parseAgentDockActRequest({ itemId: 3, action: ANSWER }).ok)
 	assert.ok(parseAgentDockActRequest({ itemId: 3, action: { type: 'prompt', text: 'ok', confirmed: true } }).ok)
 	for (const bad of [
 		null,
@@ -741,6 +738,7 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 		{ itemId: 3, action: { type: 'shell', command: 'rm' } },
 		{ itemId: 3, action: { type: 'prompt', text: 'x'.repeat(20_000) } },
 		{ itemId: 3, action: ANSWER, sneaky: true },
+		{ itemId: 3, rev: 1, action: ANSWER },
 	])
 		assert.equal(parseAgentDockActRequest(bad).ok, false, JSON.stringify(bad)?.slice(0, 80))
 })

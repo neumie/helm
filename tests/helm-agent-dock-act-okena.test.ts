@@ -214,7 +214,6 @@ test('answer: CAS read, then POST the ApiClaudeDecision answer body; the closed 
 		const gets = h.okena.gets.length
 		const result = await h.watcher.act({
 			itemId: ask.id,
-			rev: ask.rev,
 			action: { type: 'answer', picks: [{ options: [1] }, { options: [0] }] },
 		})
 		assert.deepEqual(result, { ok: true, outcome: { status: 'sent' } })
@@ -252,7 +251,7 @@ test('permission: Always allow posts {decision:allow, always:true}; Deny posts t
 	try {
 		await h.tick()
 		const first = h.item()
-		assert.equal((await h.watcher.act({ itemId: first.id, rev: 1, action: { type: 'allow', always: true } })).ok, true)
+		assert.equal((await h.watcher.act({ itemId: first.id, action: { type: 'allow', always: true } })).ok, true)
 		await h.tick()
 		assert.equal(h.items().find(item => item.id === first.id)?.resolution?.by, 'dock')
 		assert.equal(h.items().find(item => item.id === first.id)?.receipt?.always, true)
@@ -297,7 +296,7 @@ test('CAS refusal: the dialog changed under the same id → nothing is posted, t
 			...h.okena.detail,
 			dialogs: [bashDialog('perm-1', { tool_input: { command: 'npm run deploy:prod' } })],
 		}
-		const result = await h.watcher.act({ itemId: ask.id, rev: 1, action: { type: 'allow' } })
+		const result = await h.watcher.act({ itemId: ask.id, action: { type: 'allow' } })
 		assert.equal(result.ok, false)
 		assert.equal(result.outcome.status, 'refused')
 		assert.equal(result.outcome.status === 'refused' && result.outcome.reason, 'changed')
@@ -307,15 +306,9 @@ test('CAS refusal: the dialog changed under the same id → nothing is posted, t
 
 		// Gone before the CAS read: refused as answered elsewhere, still no POST.
 		h.okena.detail = { ...h.okena.detail, dialogs: [] }
-		const gone = await h.watcher.act({ itemId: ask.id, rev: 1, action: { type: 'allow' } })
+		const gone = await h.watcher.act({ itemId: ask.id, action: { type: 'allow' } })
 		assert.equal(gone.outcome.status === 'refused' && gone.outcome.reason, 'gone')
 		assert.deepEqual(h.okena.posts, [])
-
-		// A stale rev never even reads Okena.
-		const gets = h.okena.gets.length
-		const stale = await h.watcher.act({ itemId: ask.id, rev: 7, action: { type: 'allow' } })
-		assert.equal(stale.outcome.status === 'refused' && stale.outcome.reason, 'changed')
-		assert.equal(h.okena.gets.length, gets)
 	} finally {
 		await h.done()
 	}
@@ -328,7 +321,7 @@ test('Okena errors: 500 is a verbatim failure (item reopens); 404 on the dialog 
 		const ask = h.item()
 		const answer = { type: 'answer', picks: [{ options: [0] }, { options: [1] }] }
 		h.okena.dialogReply = { status: 500, text: 'bridge unavailable' }
-		const failed = await h.watcher.act({ itemId: ask.id, rev: 1, action: answer })
+		const failed = await h.watcher.act({ itemId: ask.id, action: answer })
 		assert.deepEqual(failed, {
 			ok: false,
 			outcome: {
@@ -340,7 +333,7 @@ test('Okena errors: 500 is a verbatim failure (item reopens); 404 on the dialog 
 		assert.equal(h.item().receipt?.status, 'failed')
 
 		h.okena.dialogReply = { status: 404, text: 'dialog is no longer open' }
-		const gone = await h.watcher.act({ itemId: ask.id, rev: 1, action: answer })
+		const gone = await h.watcher.act({ itemId: ask.id, action: answer })
 		assert.equal(gone.outcome.status, 'refused')
 		assert.equal(gone.outcome.status === 'refused' && gone.outcome.reason, 'gone')
 		assert.match(gone.outcome.status === 'refused' ? gone.outcome.detail : '', /\(404\): dialog is no longer open/)
@@ -368,14 +361,13 @@ test('reply: idle turn → CAS (transcript tail) → POST /prompt {text}; the us
 		const turn = h.item('turn')
 		assert.equal(turn.state, 'open')
 
-		const risky = await h.watcher.act({ itemId: turn.id, rev: turn.rev, action: { type: 'prompt', text: 'merge it' } })
+		const risky = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'merge it' } })
 		assert.equal(risky.outcome.status === 'refused' && risky.outcome.reason, 'invalid')
 		assert.deepEqual(h.okena.posts, [])
 
 		const gets = h.okena.gets.length
 		const sent = await h.watcher.act({
 			itemId: turn.id,
-			rev: turn.rev,
 			action: { type: 'prompt', text: 'Ano, pokračuj s merge.\n', confirmed: true },
 		})
 		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' } })

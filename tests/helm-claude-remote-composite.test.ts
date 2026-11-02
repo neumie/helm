@@ -154,7 +154,6 @@ test('Okena down freezes only Okena: Helm terminals keep updating and answering;
 
 		const refused = await h.watcher.act({
 			itemId: okenaAskItem.id,
-			rev: okenaAskItem.rev,
 			action: { type: 'answer', picks: [{ options: [0] }] },
 		})
 		assert.deepEqual(refused.outcome, {
@@ -168,7 +167,6 @@ test('Okena down freezes only Okena: Helm terminals keep updating and answering;
 		assert.equal(live.id, helmAskItem.id)
 		const sent = await h.watcher.act({
 			itemId: live.id,
-			rev: live.rev,
 			action: { type: 'answer', picks: [{ options: [0] }] },
 		})
 		assert.equal(sent.ok, true, JSON.stringify(sent))

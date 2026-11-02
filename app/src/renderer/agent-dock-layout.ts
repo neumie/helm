@@ -214,10 +214,10 @@ export function mountAgentDock({
 	}
 
 	// A successful answer hands the keyboard back to the terminal (unless Jakub already moved on elsewhere).
-	const onAct = async (itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult> => {
+	const onAct = async (itemId: number, action: DockAction): Promise<AgentDockActResult> => {
 		let result: AgentDockActResult
 		try {
-			result = await api.act({ itemId, rev, action })
+			result = await api.act({ itemId, action })
 		} catch (error) {
 			result = {
 				ok: false,

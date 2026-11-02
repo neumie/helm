@@ -125,7 +125,7 @@ export const spoolItemSchema = z.object({
 	kind: z.enum(DOCK_ITEM_KINDS),
 	state: z.enum(DOCK_ITEM_STATES),
 	session: z.string(),
-	/** Absent in slice-1 spools. */
+	/** Written by older Helm builds (always 1); read, never written. */
 	rev: z.number().int().positive().optional(),
 	openedAt: ms,
 	orphanedAt: ms.optional(),

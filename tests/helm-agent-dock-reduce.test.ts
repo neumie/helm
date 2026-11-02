@@ -503,7 +503,6 @@ test('real shape: a terminal reply never read while the agent works closes the t
 	])
 	assert.deepEqual(early.events, [])
 	assert.equal(itemsOf(early.state, 'turn')[0]?.state, 'open')
-	assert.equal(itemsOf(early.state, 'turn')[0]?.rev, 1)
 
 	const late = reduce(early.state, poll(working()), at + 1500 + TURN_RESUMED_MS)
 	assert.deepEqual(late.events, [{ t: 'item.resolved', at: at + 1500 + TURN_RESUMED_MS, id: 1, by: 'superseded' }])

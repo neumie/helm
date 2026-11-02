@@ -56,7 +56,7 @@ function AgentDockFixtureView({
 							initialOpen={snapshot ? resolveOpen(snapshot, open) : null}
 							initialSent={fixture.sent()}
 							onAck={fixture.api.ack}
-							onAct={(itemId, rev, action) => fixture.api.act({ itemId, rev, action })}
+							onAct={(itemId, action) => fixture.api.act({ itemId, action })}
 						/>
 					) : null}
 				</div>

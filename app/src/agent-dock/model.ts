@@ -264,11 +264,6 @@ export interface DockItem {
 	key: string
 	kind: DockItemKind
 	session: SessionKey
-	/**
-	 * Fact version for the act CAS; acts carry the rev they saw. Starts at 1 and nothing bumps it
-	 * today: a turn whose agent moves on closes (`superseded`/`replied`) instead of changing in place.
-	 */
-	rev: number
 	openedAt: number
 	fact: DockItemFact
 	state: DockItemState
@@ -307,8 +302,6 @@ export type DockAction =
 
 export interface AgentDockActRequest {
 	itemId: number
-	/** The item rev the renderer showed; a different current rev refuses the act. */
-	rev?: number
 	action: DockAction
 }
 
@@ -382,7 +375,6 @@ const dockActionSchema = z.discriminatedUnion('type', [
 export const agentDockActRequestSchema = z
 	.object({
 		itemId: z.number().int().positive().safe(),
-		rev: z.number().int().positive().safe().optional(),
 		action: dockActionSchema,
 	})
 	.strict()

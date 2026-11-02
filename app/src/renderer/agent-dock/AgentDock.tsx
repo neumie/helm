@@ -75,7 +75,7 @@ export interface AgentDockProps {
 	handle?: MutableRefObject<AgentDockHandle | null>
 	onAck(itemId: number): Promise<boolean>
 	/** Jakub answered from the pane (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
-	onAct?(itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult>
+	onAct?(itemId: number, action: DockAction): Promise<AgentDockActResult>
 	/** Most px the pane may take so the terminal keeps its rows (the layout measures #right); null = no limit known. */
 	paneRoom?: () => number | null
 	/** After the pane opens or closes: the terminal row changed height once, refit it. */
@@ -320,7 +320,7 @@ export function AgentDock({
 		const focused = pane?.ownerDocument.activeElement
 		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
 		setSubmitting(prev => new Set(prev).add(item.id))
-		void onAct(item.id, item.rev, action)
+		void onAct(item.id, action)
 			.catch(
 				(error: unknown): AgentDockActResult => ({
 					ok: false,

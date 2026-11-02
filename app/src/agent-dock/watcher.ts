@@ -148,7 +148,6 @@ export function dockSpoolItem(item: DockItem): SpoolItem {
 		session: item.session,
 		openedAt: item.openedAt,
 		head: dockItemHead(item),
-		rev: item.rev,
 		...(item.orphanedAt !== undefined ? { orphanedAt: item.orphanedAt } : {}),
 		...(item.resolution ? { resolution: { ...item.resolution } } : {}),
 		// Kind and status only: never the answer, never Okena's error words (they reach disk).
@@ -255,7 +254,6 @@ function contentDigest(snapshot: AgentDockSnapshot): string {
 		sessions: snapshot.sessions.map(session => ({ ...session, observedAt: 0 })),
 		items: snapshot.items.map(item => [
 			item.id,
-			item.rev,
 			item.state,
 			item.resolution?.by,
 			item.fact.kind,
@@ -375,13 +373,12 @@ export class AgentDockWatcher {
 		})
 		const parsed = parseAgentDockActRequest(request)
 		if (!parsed.ok) return refused('invalid', parsed.error)
-		const { itemId, rev, action } = parsed.value
+		const { itemId, action } = parsed.value
 		if (this.stopped) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock stopped.' } }
 		if (this.acting) return refused('in_flight')
 		const item = this.state.items.find(candidate => candidate.id === itemId)
 		if (!item) return refused('unknown_item')
 		if (item.state !== 'open') return refused(item.state === 'resolved' ? 'gone' : 'not_open')
-		if (rev !== undefined && rev !== item.rev) return refused('changed')
 		const session = this.state.sessions[item.session]?.session
 		if (!session) return refused('gone', DOCK_SOURCE_TEXT[dockSourceOfSessionKey(item.session)].notListed)
 		if (this.state.sources[session.source]?.health.state !== 'ok')

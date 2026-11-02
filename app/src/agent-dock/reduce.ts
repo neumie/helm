@@ -320,8 +320,8 @@ class Draft {
 		this.events.push({ t: 'item.orphaned', at: this.now, id: item.id })
 	}
 
-	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state' | 'rev'>, silent: boolean): DockItem {
-		const opened: DockItem = { ...item, id: this.state.nextItemId++, rev: 1, openedAt: this.now, state: 'open' }
+	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state'>, silent: boolean): DockItem {
+		const opened: DockItem = { ...item, id: this.state.nextItemId++, openedAt: this.now, state: 'open' }
 		this.state.items.push(opened)
 		if (!silent) {
 			this.events.push({
