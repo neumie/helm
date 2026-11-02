@@ -669,15 +669,6 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	}
 }
 
-/** Reducer state for a named scenario at `now` (ms). */
-export function agentDockScenarioState(name: AgentDockScenario, now: number): AgentDockState {
-	return scenarioRun(name, now).state
-}
-
-export function agentDockScenario(name: AgentDockScenario, now: number): AgentDockSnapshot {
-	return agentDockSnapshot(agentDockScenarioState(name, now), now)
-}
-
 const paneOf = (item: DockItem): Pane | undefined =>
 	[...Object.values(panes), ...Object.values(realPanes)].find(pane => `${PROFILE}:${pane.tid}` === item.session)
 
@@ -879,7 +870,7 @@ export function createAgentDockFixture(
 	}
 }
 
-/** A recorded-looking shell session for review stories: fills the terminal so the rows the popover keeps visible show. */
+/** A recorded-looking shell session for stories: fills the terminal so the rows above the dock show. */
 export const AGENT_DOCK_TERMINAL_TEXT = [
 	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
 	'\x1b[1m❯\x1b[0m git log --oneline -12',
@@ -939,7 +930,7 @@ const ccTitledRule = (title: string): string => {
 /**
  * The bottom of a Claude Code session as the terminal shows it under the dock: transcript,
  * the session's titled rule, the prompt box between two full-width rules, then the status
- * block. A stress test for the dock's edge (§3.24 Divider): Claude Code's own thin rules
+ * block. A stress test for the dock's edge (§3.24 Surface): Claude Code's own thin rules
  * sit right above it. Autowrap is off while it draws so the rules fit any width; the
  * cursor is hidden, as Claude Code hides it.
  */

@@ -4,8 +4,8 @@ import { createRoot } from 'react-dom/client'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
-import { isTextField } from './agent-dock/AgentDockDetail'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import { isTextField } from './agent-dock/pane-keys'
+import { type AgentDockPosition, failedActResult } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -60,7 +60,7 @@ export const agentDockPosition = (() => {
 	}
 })()
 
-/** Re-render ages ("oldest 12m") while nothing else changes. */
+/** Re-render waits/ages in the queue while nothing else changes. */
 const AGE_TICK_MS = 30_000
 /** xterm cell height at the default 13px font (design §2.2) until a row has rendered. */
 const FALLBACK_ROW_HEIGHT = 19
@@ -109,7 +109,6 @@ export function mountAgentDock({
 	const dock = root.querySelector<HTMLElement>('#agent-dock')
 	if (!ownerWindow || !right || !terms || !dock) throw new Error('Missing agent-dock layout shell')
 	const mac = (platform ?? (/Mac/.test(ownerWindow.navigator.platform) ? 'darwin' : 'other')) === 'darwin'
-	const shortcutLabel = mac ? '⌘⇧J' : 'Ctrl+Shift+J'
 	let position = agentDockPosition.get()
 	let snapshot: AgentDockSnapshot | null = null
 	let published: boolean | null = null
@@ -124,17 +123,17 @@ export function mountAgentDock({
 	const reactRoot = createRoot(view)
 
 	/** Keyboard home inside the dock: an open pane, else the open or first entry/Agents entry, else the row. */
-	const focusRail = (): void => {
+	const focusDock = (): void => {
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
 		if (pane) {
 			pane.focus()
 			return
 		}
-		const rail = dock.querySelector<HTMLElement>('.agent-dock-rail')
+		const row = dock.querySelector<HTMLElement>('.agent-dock-row')
 		const stop =
-			rail?.querySelector<HTMLElement>('[data-rail-stop][data-open="true"]') ??
-			rail?.querySelector<HTMLElement>('[data-rail-stop]')
-		;(stop ?? rail)?.focus()
+			row?.querySelector<HTMLElement>('[data-row-stop][data-open="true"]') ??
+			row?.querySelector<HTMLElement>('[data-row-stop]')
+		;(stop ?? row)?.focus()
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
 	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding.
@@ -172,7 +171,7 @@ export function mountAgentDock({
 			snapshot,
 			now: now(),
 			position,
-			shortcutLabel,
+			mod: mac ? 'cmd' : 'ctrl',
 			handle,
 			onAck,
 			onAct,
@@ -189,7 +188,7 @@ export function mountAgentDock({
 	// pane unmounts (Chromium accessibility safety); closing it refits xterm through onPaneChange.
 	const toggle = (): void => {
 		if (!dock.contains(ownerDocument.activeElement)) {
-			focusRail()
+			focusDock()
 			return
 		}
 		focusTerminal()
@@ -209,7 +208,7 @@ export function mountAgentDock({
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		const acked = await api.ack(itemId)
 		// The acked row disappears; keep keyboard focus inside the dock instead of dropping it to <body>.
-		if (!disposed && focusInDock && !dock.contains(ownerDocument.activeElement)) focusRail()
+		if (!disposed && focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
 		return acked
 	}
 
@@ -219,10 +218,7 @@ export function mountAgentDock({
 		try {
 			result = await api.act({ itemId, action })
 		} catch (error) {
-			result = {
-				ok: false,
-				outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
-			}
+			result = failedActResult(error)
 		}
 		const active = ownerDocument.activeElement
 		if (!disposed && result.ok && (!active || active === ownerDocument.body || dock.contains(active))) focusTerminal()
@@ -289,7 +285,7 @@ export function mountAgentDock({
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		render()
 		// A live update removed the focused row (resolved elsewhere): keep keyboard focus in the dock.
-		if (focusInDock && !dock.contains(ownerDocument.activeElement)) focusRail()
+		if (focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
 	})
 	publishVisible()
 	fitActive()

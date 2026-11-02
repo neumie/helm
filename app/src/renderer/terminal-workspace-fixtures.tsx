@@ -43,7 +43,7 @@ export interface TerminalWorkspaceFixtureOptions {
 	 */
 	relayPrimaryDigits?: boolean
 	/**
-	 * Review only: renders under a bundled preset (tokens on :root + the matching xterm theme)
+	 * Story only: renders under a bundled preset (tokens on :root + the matching xterm theme)
 	 * without touching the persisted appearance; omitted keeps the production appearance.
 	 */
 	theme?: keyof typeof THEME_PRESETS
@@ -540,7 +540,7 @@ export function createTerminalWorkspaceFixture(
 }
 
 /**
- * Review-only preset: its tokens go on :root (inline, as appearance.ts applies them) and
+ * Story-only preset: its tokens go on :root (inline, as appearance.ts applies them) and
  * xterm gets the matching theme through the workspace's appearance seam; nothing persists.
  * `restore` puts back whatever inline tokens were there before.
  */

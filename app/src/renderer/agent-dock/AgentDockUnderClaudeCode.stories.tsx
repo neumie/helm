@@ -39,7 +39,7 @@ function AgentDockClaudeCodeView({
 }
 
 const meta: Meta<typeof AgentDockClaudeCodeView> = {
-	title: 'Views/Agent dock divider',
+	title: 'Views/Agent dock under Claude Code',
 	component: AgentDockClaudeCodeView,
 	parameters: { layout: 'fullscreen' },
 	args: { scenario: 'single-turn', state: 'turn', position: 'bottom', theme: 'helm' },

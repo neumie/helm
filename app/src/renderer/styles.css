@@ -1479,7 +1479,7 @@ body.dragging {
 /* ---------- queue row: one line per entry, then agents, Okena's dot and ⌘⇧J ---------- */
 
 /* One 28px band whatever it holds, with or without a pane, so arriving items never refit xterm. */
-.agent-dock-rail {
+.agent-dock-row {
 	position: relative;
 	flex: none;
 	display: flex;
@@ -1501,7 +1501,7 @@ body.dragging {
 }
 
 /* Okena down / connecting: one quiet line in the row, like the entries beside it. */
-.agent-dock-rail-note {
+.agent-dock-row-note {
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
@@ -1510,17 +1510,17 @@ body.dragging {
 	color: var(--text-1);
 }
 
-.agent-dock-rail-note > span {
+.agent-dock-row-note > span {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-mark {
+.agent-dock-row-note[data-tone="warn"] .agent-dock-row-note-mark {
 	color: var(--warn);
 }
 
-.agent-dock-rail > .agent-dock-rail-note:only-of-type {
+.agent-dock-row > .agent-dock-row-note:only-of-type {
 	flex: 1 1 auto;
 	max-width: none;
 }
@@ -1539,10 +1539,6 @@ body.dragging {
 	padding: 0;
 	overflow: hidden;
 	list-style: none;
-}
-
-.agent-dock-rail-note + .agent-dock-queue {
-	padding-left: 0;
 }
 
 .agent-dock-queue-slot {
@@ -1912,7 +1908,6 @@ body.dragging {
 /* What is read is 13/20: questions, turn messages, warnings, fields. */
 .agent-dock-question,
 .agent-dock-pane-lead,
-.agent-dock-pane-label,
 .agent-dock-message-text,
 .agent-dock-warn,
 .agent-dock-input,
@@ -1963,10 +1958,6 @@ body.dragging {
 	grid-template-columns: 2ch minmax(0, 1fr);
 	margin: 8px 0;
 	color: var(--warn);
-}
-
-.agent-dock-warn-mark {
-	color: inherit;
 }
 
 /* Question tabs: `1 Color  ✓ Size`, terminal-style — the shown one bright and underlined, the rest

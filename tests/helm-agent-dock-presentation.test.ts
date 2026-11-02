@@ -17,10 +17,15 @@ const {
 	askQuestions,
 	permissionReview,
 	planReview,
-	cardGist,
-	cardKindLabel,
-	cardTone,
-	dockSummary,
+	entryGist,
+	itemKindLabel,
+	entryTone,
+	dockLabel,
+	emptyQueueText,
+	agentsEntryText,
+	busyCount,
+	actErrorText,
+	failedActResult,
 	itemAgeTone,
 	itemTimeLine,
 	entryWidth,
@@ -46,7 +51,6 @@ const {
 	resolutionLabel,
 	sentSummary,
 	sessionSince,
-	toolInputText,
 	dockHealth,
 	noSessionText,
 	planApproveModeText,
@@ -123,7 +127,6 @@ test('agent text is control- and bidi-stripped, bounded, and never markup', () =
 	assert.equal(plainAgentText('x'.repeat(10), 5), 'xxxx…')
 	assert.equal(plainAgentText(`${'x'.repeat(3)}😀tail`, 5), 'xxx…')
 	assert.equal(plainAgentLine('  two\n\nlines  '), 'two lines')
-	assert.equal(toolInputText({ command: 'ls' }), '{\n  "command": "ls"\n}')
 })
 
 test('ages and aging tones follow the 30 m / 2 h escalation', () => {
@@ -154,47 +157,106 @@ test('recorded AskUserQuestion input renders every question and preview verbatim
 	)
 })
 
-test('summary never reads as all clear unless Okena is reachable', () => {
-	const ok = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T)
-	assert.equal(ok.needsText, 'Nothing needs you')
-	const down = dockSummary(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T)
-	assert.equal(down.needsText, 'State unknown')
-	assert.match(down.health.text, /^Okena unreachable since \d\d:\d\d$/)
-	assert.equal(dockSummary(null, T).needsText, 'Waiting for Okena')
-	assert.equal(dockSummary(null, T).health.text, 'Okena connecting…')
+test('the row label never reads as all clear unless Okena is reachable', () => {
+	assert.equal(
+		dockLabel(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T),
+		'Agent dock, Nothing needs you, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T),
+		/^Agent dock, State unknown, Okena unreachable since \d\d:\d\d$/,
+	)
+	assert.equal(dockLabel(null, T), 'Agent dock, Waiting for Okena, Okena connecting…')
+	assert.equal(dockHealth(null).text, 'Okena connecting…')
 })
 
-test('summary never reads as all clear while a listed agent is unreadable', () => {
+test('the row label never reads as all clear while a listed agent is unreadable', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
-	const blind = dockSummary(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T)
-	assert.equal(blind.needsText, 'State unknown for 1 agent')
-	assert.equal(blind.needsTone, 'warn')
-	assert.equal(blind.unknownCount, 1)
-	const mixed = dockSummary(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T)
-	assert.equal(mixed.needsText, '1 needs you · 1 unknown')
+	assert.equal(
+		dockLabel(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T),
+		'Agent dock, State unknown for 1 agent, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T),
+		/^Agent dock, 1 needs you · 1 unknown, oldest [^,]+, Okena$/,
+	)
 })
 
-test('summary aging: only blocking asks turn red; old unchecked turns cap at amber', () => {
+test('the row label counts needs and ages the oldest; it names no item', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
 	const oldTurn = turnItem({ openedAt: T - 3 * 60 * 60_000 })
 	if (oldTurn.fact.kind === 'turn') oldTurn.fact.endedAt = T - 3 * 60 * 60_000
-	const turnsOnly = dockSummary(snapshot(ok, [oldTurn]), T)
-	assert.equal(turnsOnly.oldestText, 'oldest 3h')
-	assert.equal(turnsOnly.oldestTone, 'warn')
+	assert.equal(dockLabel(snapshot(ok, [oldTurn]), T), 'Agent dock, 1 needs you, oldest 3h, Okena')
+	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
+	assert.equal(
+		dockLabel(snapshot(ok, items, [session({ status: 'waiting' })]), T),
+		'Agent dock, 2 need you, oldest 3h, Okena',
+	)
 })
 
-test('summary counts needs and ages the oldest; the summary names no item', () => {
-	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
-	const summary = dockSummary(
-		snapshot({ state: 'ok', since: T, lastObservedAt: T }, items, [session({ status: 'waiting' })]),
-		T,
+test('the empty queue never reads as all clear while a source is down or an agent is unreadable', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	assert.equal(emptyQueueText(snapshot(ok)), 'Nothing needs you')
+	assert.equal(emptyQueueText(snapshot({ state: 'pending', since: T, lastObservedAt: null })), 'Waiting for Okena')
+	assert.equal(
+		emptyQueueText(snapshot({ state: 'down', since: T, lastObservedAt: T })),
+		'Okena is unreachable, so open questions cannot be seen',
 	)
-	assert.equal(summary.needsText, '2 need you')
-	assert.equal(summary.oldestText, 'oldest 3h')
-	assert.equal(summary.oldestTone, 'danger')
-	assert.ok(!('head' in summary))
-	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
-	assert.equal(turnsOnly.needsText, '1 needs you')
+	assert.equal(
+		emptyQueueText({
+			...snapshot({ state: 'down', since: T, lastObservedAt: T }),
+			sources: {
+				okena: { state: 'down', since: T, lastObservedAt: T },
+				helm: { state: 'down', since: T, lastObservedAt: T },
+			},
+		}),
+		'Okena and Helm terminals are unreachable, so open questions cannot be seen',
+	)
+	assert.equal(
+		emptyQueueText(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })])),
+		'State unknown for 1 agent: Okena did not return readable detail, so their open questions cannot be seen',
+	)
+})
+
+test('the Agents entry counts busy agents and names each in its tooltip', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const sessions = [
+		session({ status: 'working', since: T - 120_000 }),
+		session({ key: 'p1:t2', terminalId: 't2', name: 'other', status: 'background', since: T - 60_000 }),
+		session({ key: 'p1:t3', terminalId: 't3', name: 'idle one', status: 'idle', since: T - 60_000 }),
+	]
+	const snap = snapshot(ok, [], sessions)
+	assert.equal(busyCount(sessions), 2)
+	assert.deepEqual(agentsEntryText(snap, sessions, 0, T), {
+		text: 'agents 3 · 2 busy',
+		label: '3 agents, 2 busy. Show agents',
+		title: 'dock: working 2m\nother: background 1m\nidle one: idle 1m',
+	})
+	assert.equal(agentsEntryText(snap, sessions, 1, T).label, '3 agents, 2 busy, 1 unknown. Show agents')
+	const lone = [session({ status: 'idle' })]
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], lone), lone, 0, T), {
+		text: 'agents 1',
+		label: '1 agent, 0 busy. Show agents',
+		title: 'dock: idle <1m',
+	})
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], []), [], 2, T), {
+		text: 'no agents',
+		label: "No Claude session is connected to Okena's Claude Remote. Show agents",
+		title: "No Claude session is connected to Okena's Claude Remote",
+	})
+})
+
+test('act errors kept on the pane: refusals and failures in words, bounded; nothing for the rest', () => {
+	assert.equal(actErrorText({ status: 'refused', reason: 'gone', detail: 'x' }), 'refused: already answered elsewhere')
+	assert.equal(actErrorText({ status: 'refused', reason: 'busy', detail: 'agent\u0007 busy' }), 'refused: agent busy')
+	assert.equal(actErrorText({ status: 'failed', detail: 'x'.repeat(400) }), `${'x'.repeat(299)}…`)
+	assert.equal(actErrorText({ status: 'sent' }), null)
+	assert.equal(actErrorText({ status: 'unconfirmed', detail: 'timeout' }), null)
+	assert.deepEqual(failedActResult(new Error('IPC closed')), {
+		ok: false,
+		outcome: { status: 'failed', detail: 'IPC closed' },
+	})
+	assert.deepEqual(failedActResult('nope'), { ok: false, outcome: { status: 'failed', detail: 'nope' } })
 })
 
 test('agent rows: a waiting agent ages from its oldest open ask (as its entry does); row meta, stale', () => {
@@ -228,14 +290,14 @@ test('resolution labels say how the item closed', () => {
 test('card tone and age: the glyph keeps its kind tone, only the age turns red (asks past 2h), turns cap at amber', () => {
 	const now = T + 3 * 60 * 60_000
 	const oldAsk = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T } })
-	assert.equal(cardTone(oldAsk), 'ask')
-	assert.equal(cardTone(askItem({ state: 'orphaned' })), 'orphaned')
+	assert.equal(entryTone(oldAsk), 'ask')
+	assert.equal(entryTone(askItem({ state: 'orphaned' })), 'orphaned')
 	const oldTurn = turnItem()
-	assert.equal(cardTone(oldTurn), 'turn')
+	assert.equal(entryTone(oldTurn), 'turn')
 	assert.equal(itemAgeTone(oldTurn, now), 'warn')
 	assert.equal(itemAgeTone(oldAsk, now), 'danger')
-	assert.equal(cardKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
-	assert.equal(cardKindLabel(oldAsk), 'Permission')
+	assert.equal(itemKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
+	assert.equal(itemKindLabel(oldAsk), 'Permission')
 	// Once answered (or on its way) the wait stops ageing: no red "waiting" next to a ✓.
 	const answered = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'dock' } } as DockItem
 	assert.equal(itemAgeTone(answered, now), 'none')
@@ -244,8 +306,8 @@ test('card tone and age: the glyph keeps its kind tone, only the age turns red (
 	assert.equal(itemTimeLine({ ...oldAsk, state: 'sending' } as DockItem, now).waited, 'sending')
 	const elsewhere = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'outside' } } as DockItem
 	assert.match(itemTimeLine(elsewhere, now).waited, /^closed \d\d:\d\d$/)
-	assert.equal(cardTone(answered), 'done')
-	assert.equal(cardTone(elsewhere), 'closed')
+	assert.equal(entryTone(answered), 'done')
+	assert.equal(entryTone(elsewhere), 'closed')
 })
 
 test("card gist: the turn's last paragraph, the plan title, the command", () => {
@@ -258,7 +320,7 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			hadBackground: false,
 		},
 	})
-	assert.equal(cardGist(turn), 'Can you confirm the stage secret?')
+	assert.equal(entryGist(turn), 'Can you confirm the stage secret?')
 	const plan = askItem({
 		fact: {
 			kind: 'ask',
@@ -268,11 +330,11 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			createdAtMs: T,
 		},
 	})
-	assert.equal(cardGist(plan), 'Export ISDOC')
+	assert.equal(entryGist(plan), 'Export ISDOC')
 	const bash = askItem({
 		fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: { command: 'git push\u202e' }, createdAtMs: T },
 	})
-	assert.equal(cardGist(bash), 'Bash: git push')
+	assert.equal(entryGist(bash), 'Bash: git push')
 	assert.deepEqual(itemTimeLine(turn, T + 6 * 60_000).waited, 'idle 6m')
 	assert.match(itemTimeLine(bash, T).stamp, /^asked \d\d:\d\d$/)
 })

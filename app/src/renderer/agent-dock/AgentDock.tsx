@@ -16,49 +16,33 @@ import {
 	useEffect,
 	useId,
 	useLayoutEffect,
-	useMemo,
 	useRef,
 	useState,
 } from 'react'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from '../../agent-dock/model'
-import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail, draftKeys } from './AgentDockDetail'
+import { ItemDetail } from './AgentDockDetail'
+import { type AgentDockTarget, Queue } from './AgentDockQueue'
+import { AgentsDetail } from './AgentsDetail'
+import { type DetailKeys, type DockModKey, dockShortcut } from './pane-keys'
+import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
-	type AgentWho,
-	type TextWidth,
+	actErrorText,
 	agentWho,
-	anySourceOk,
 	canAnswer,
-	cardGist,
-	cardKindLabel,
-	cardTone,
-	dockSummary,
+	dockHealth,
+	dockLabel,
+	failedActResult,
 	findSession,
-	formatAge,
-	formatClock,
-	itemAgeTone,
-	itemSourceHealth,
-	itemWaitingSince,
+	itemKindLabel,
 	keepOrder,
-	kindGlyph,
-	needsYouItems,
 	nextLingerExpiry,
-	noSessionText,
-	orderedSessions,
-	plainAgentText,
-	queueLayout,
-	railItems,
-	receiptView,
-	sessionSince,
-	sessionStatusText,
-	snapshotSources,
+	queueItems,
 	sourceBlockedNote,
-	sourceNames,
-	unknownAgentsText,
-	unknownSessionCount,
 } from './presentation'
+import { useArrivalAnnouncement } from './use-arrival-announcement'
 
-export type AgentDockTarget = { type: 'item'; id: number } | { type: 'agents' }
+export type { AgentDockTarget }
 
 /** What the layout may ask of a mounted dock (⌘⇧J pressed inside it). */
 export interface AgentDockHandle {
@@ -70,7 +54,8 @@ export interface AgentDockProps {
 	snapshot: AgentDockSnapshot | null
 	now: number
 	position: AgentDockPosition
-	shortcutLabel: string
+	/** The platform's modifier: `cmd` on macOS (⌘⇧J, ⌘↵), `ctrl` elsewhere. */
+	mod: DockModKey
 	/** Filled with the dock's handle while it is mounted. */
 	handle?: MutableRefObject<AgentDockHandle | null>
 	onAck(itemId: number): Promise<boolean>
@@ -91,8 +76,6 @@ export const PANE_MIN_HEIGHT = 216
 export const PANE_MAX_HEIGHT = 480
 /** However little room is left, the pane keeps its rule, a few body rows and its footer. */
 const PANE_FLOOR = 120
-/** New asks arriving within this window are announced together ("3 new requests"). */
-const ANNOUNCE_COALESCE_MS = 2_000
 
 const targetKey = (target: AgentDockTarget | null): string | null =>
 	target === null ? null : target.type === 'agents' ? 'agents' : `item:${target.id}`
@@ -101,7 +84,7 @@ export function AgentDock({
 	snapshot,
 	now,
 	position,
-	shortcutLabel,
+	mod,
 	handle,
 	onAck,
 	onAct,
@@ -145,11 +128,11 @@ export function AgentDock({
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
 
-	const summary = dockSummary(snapshot, clock)
+	const health = dockHealth(snapshot)
 	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
-	const needs = keepOrder(target ? order.current : null, railItems(snapshot, clock), snapshot?.items ?? [])
+	const needs = keepOrder(target ? order.current : null, queueItems(snapshot, clock), snapshot?.items ?? [])
 	order.current = target ? needs.map(item => item.id) : null
 	const openKey = targetKey(target)
 	const openIndex = target?.type === 'item' ? needs.findIndex(item => item.id === target.id) : -1
@@ -321,12 +304,7 @@ export function AgentDock({
 		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
 		setSubmitting(prev => new Set(prev).add(item.id))
 		void onAct(item.id, action)
-			.catch(
-				(error: unknown): AgentDockActResult => ({
-					ok: false,
-					outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) },
-				}),
-			)
+			.catch(failedActResult)
 			.then(result => {
 				// Answered: its drafts (picks, Other text, deny message, reply) have done their job.
 				if (result.ok) for (const key of draftKeys(item.id)) drafts.delete(key)
@@ -335,19 +313,9 @@ export function AgentDock({
 					next.delete(item.id)
 					return next
 				})
-				const outcome = result.outcome
 				// Refusals/failures main recorded on the item show from the snapshot; keep the words for the rest.
-				if (outcome.status === 'refused' || outcome.status === 'failed')
-					done(next =>
-						next.set(
-							item.id,
-							outcome.status === 'refused' && outcome.reason === 'gone'
-								? 'refused: already answered elsewhere'
-								: outcome.status === 'refused'
-									? `refused: ${plainAgentText(outcome.detail, 200)}`
-									: plainAgentText(outcome.detail, 300),
-						),
-					)
+				const error = actErrorText(result.outcome)
+				if (error !== null) done(next => next.set(item.id, error))
 			})
 	}
 
@@ -357,14 +325,14 @@ export function AgentDock({
 	}
 
 	// Roving ←/→ (Home/End) across entries and the Agents entry; Esc closes an open pane first.
-	const onRailKey = (event: KeyboardEvent<HTMLDivElement>) => {
+	const onRowKey = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.key === 'Escape' && paneOpen) {
 			event.preventDefault()
 			close(false)
 			return
 		}
 		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-		const stops = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-rail-stop]')]
+		const stops = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-row-stop]')]
 		const index = stops.indexOf(event.target as HTMLButtonElement)
 		const next =
 			event.key === 'Home'
@@ -415,16 +383,16 @@ export function AgentDock({
 	}
 
 	// The row's name says what it is and the state in words.
-	const dockName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
-	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
+	const dockName = dockLabel(snapshot, clock)
+	const shortcut = dockShortcut(mod)
 
-	const rail = (
+	const row = (
 		<section
-			className="agent-dock-rail"
+			className="agent-dock-row"
 			aria-label={dockName}
-			aria-keyshortcuts={keyShortcut}
+			aria-keyshortcuts={shortcut.aria}
 			tabIndex={-1}
-			onKeyDown={onRailKey}
+			onKeyDown={onRowKey}
 		>
 			<Queue
 				snapshot={snapshot}
@@ -438,14 +406,12 @@ export function AgentDock({
 			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
 			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
 			<span className="agent-dock-row-end">
-				<span className="agent-dock-health" data-tone={summary.health.tone} title={summary.health.text}>
+				<span className="agent-dock-health" data-tone={health.tone} title={health.text}>
 					<span className="agent-dock-dot" aria-hidden="true" />
-					{summary.health.tone === 'success' ? null : (
-						<span className="agent-dock-health-text">{summary.health.text}</span>
-					)}
+					{health.tone === 'success' ? null : <span className="agent-dock-health-text">{health.text}</span>}
 				</span>
-				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcutLabel})`}>
-					{shortcutLabel}
+				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcut.label})`}>
+					{shortcut.label}
 				</kbd>
 			</span>
 		</section>
@@ -480,7 +446,7 @@ export function AgentDock({
 					localError={actErrors.get(openItem.id) ?? null}
 					keys={detailKeys}
 					drafts={drafts}
-					mod={shortcutLabel.startsWith('⌘') ? 'cmd' : 'ctrl'}
+					mod={mod}
 					onStep={step}
 					onClose={() => close(true)}
 					onAck={() => ack(openItem.id)}
@@ -493,381 +459,21 @@ export function AgentDock({
 	) : null
 
 	return (
-		<div ref={hostRef} className="agent-dock-host" data-position={position} data-pane={String(paneOpen)}>
+		<div ref={hostRef} className="agent-dock-host">
 			<span className="sr-only" aria-live="polite">
 				{announcement}
 			</span>
 			{position === 'top' ? (
 				<>
-					{rail}
+					{row}
 					{pane}
 				</>
 			) : (
 				<>
 					{pane}
-					{rail}
+					{row}
 				</>
 			)}
-		</div>
-	)
-}
-
-/**
- * Real text widths in the queue's own font: `measure(text)` lays the text out in a hidden meter beside
- * the entries (same face, size, letter-spacing and tabular digits) and caches it. A sentinel's width
- * changing (UI text scale, font) starts a fresh cache. Null until both nodes are mounted.
- */
-function useTextWidth(sentinel: HTMLElement | null, meter: HTMLElement | null): TextWidth | null {
-	const [font, setFont] = useState(0)
-	useLayoutEffect(() => {
-		if (!sentinel) return
-		const update = () => setFont(sentinel.getBoundingClientRect().width)
-		update()
-		const observer = new ResizeObserver(update)
-		observer.observe(sentinel)
-		return () => observer.disconnect()
-	}, [sentinel])
-	return useMemo(() => {
-		if (!meter || font <= 0) return null
-		const cache = new Map<string, number>()
-		return (text: string) => {
-			let width = cache.get(text)
-			if (width === undefined) {
-				meter.textContent = text
-				width = meter.getBoundingClientRect().width
-				cache.set(text, width)
-			}
-			return width
-		}
-	}, [meter, font])
-}
-
-/** What follows an entry's name on its line: the receipt once answered from the dock, else the wait. */
-const entryTail = (item: DockItem, now: number): string =>
-	receiptView(item)?.text ?? formatAge(now - itemWaitingSince(item))
-
-function Queue({
-	snapshot,
-	now,
-	needs,
-	openKey,
-	paneId,
-	register,
-	onOpen,
-}: {
-	snapshot: AgentDockSnapshot | null
-	now: number
-	needs: DockItem[]
-	openKey: string | null
-	paneId: string
-	register(key: string): (node: HTMLButtonElement | null) => void
-	onOpen(target: AgentDockTarget, viaKeyboard: boolean): void
-}) {
-	// The entries' room can mount after the first render (Connecting → data): measure it via a callback ref.
-	const [list, setList] = useState<HTMLUListElement | null>(null)
-	const [sentinel, setSentinel] = useState<HTMLSpanElement | null>(null)
-	const [meter, setMeter] = useState<HTMLSpanElement | null>(null)
-	const [room, setRoom] = useState(0)
-	const measure = useTextWidth(sentinel, meter)
-	useLayoutEffect(() => {
-		if (!list) return
-		const update = () => {
-			const style = getComputedStyle(list)
-			setRoom(list.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight))
-		}
-		update()
-		const observer = new ResizeObserver(update)
-		observer.observe(list)
-		return () => observer.disconnect()
-	}, [list])
-	const meters = (
-		<span className="agent-dock-measure" aria-hidden="true">
-			<span ref={setSentinel}>0123456789 abcdefghijklmnopqrstuvwxyz</span>
-			<span ref={setMeter} />
-		</span>
-	)
-	const source = snapshot?.source
-	// Only while no source has answered yet: one source connecting never hides another's entries.
-	if (!snapshot || (source?.state === 'pending' && !anySourceOk(snapshot)))
-		return (
-			<div className="agent-dock-rail-note">
-				<span>Connecting to {sourceNames(snapshot, 'pending')}…</span>
-			</div>
-		)
-	const unknown = unknownSessionCount(snapshot)
-	const whos = needs.map(item => agentWho(snapshot, item.session))
-	const openIndex = needs.findIndex(item => `item:${item.id}` === openKey)
-	// Names shorten (in the middle) before anything goes behind "+N more"; the open entry is always in the row.
-	const layout = queueLayout(
-		needs.map((item, at) => ({ name: whos[at]?.name ?? '', tail: entryTail(item, now) })),
-		measure,
-		room,
-		openIndex,
-	)
-	const hidden = layout.hidden.flatMap(at => (needs[at] ? [needs[at]] : []))
-	const openHidden = hidden.find(item => `item:${item.id}` === openKey)
-	const sessions = orderedSessions(snapshot)
-	return (
-		<>
-			{meters}
-			{source?.state === 'down' ? (
-				// One quiet line, like the entries beside it; when data was last seen is its tooltip.
-				<div
-					className="agent-dock-rail-note"
-					data-tone="warn"
-					title={[
-						source.lastObservedAt !== null ? `last data ${formatClock(source.lastObservedAt)}` : 'no data yet',
-						'nothing resolves until it’s back',
-						source.detail ? plainAgentText(source.detail, 200) : '',
-					]
-						.filter(Boolean)
-						.join('\n')}
-				>
-					<span>
-						<span className="agent-dock-rail-note-mark" aria-hidden="true">
-							!{' '}
-						</span>
-						{sourceNames(snapshot, 'down')} unreachable
-					</span>
-				</div>
-			) : null}
-			<ul ref={setList} className="agent-dock-queue" aria-label={`Needs you, ${needs.length}`}>
-				{needs.length === 0 ? (
-					<li className="agent-dock-queue-empty">
-						{source?.state === 'pending'
-							? `Waiting for ${sourceNames(snapshot, 'pending')}`
-							: source?.state !== 'ok'
-								? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
-								: unknown > 0
-									? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
-									: 'Nothing needs you'}
-					</li>
-				) : (
-					layout.slots.map(({ index, width, name }) => {
-						const item = needs[index]
-						if (!item) return null
-						const who = whos[index] ?? { name: '', title: '', project: '' }
-						return (
-							<li key={item.id} className="agent-dock-queue-slot" style={width ? { flexBasis: width } : undefined}>
-								<Entry
-									item={item}
-									who={who}
-									shownName={name}
-									now={now}
-									open={openKey === `item:${item.id}`}
-									paneId={paneId}
-									buttonRef={register(`item:${item.id}`)}
-									onOpen={viaKeyboard => onOpen({ type: 'item', id: item.id }, viaKeyboard)}
-								/>
-							</li>
-						)
-					})
-				)}
-				{hidden.length > 0 ? (
-					<li className="agent-dock-queue-slot" style={layout.more ? { flexBasis: layout.more } : undefined}>
-						<MoreEntry
-							items={hidden}
-							snapshot={snapshot}
-							open={openHidden !== undefined}
-							paneId={paneId}
-							buttonRef={register('more')}
-							onOpen={viaKeyboard => {
-								const next = openHidden ?? hidden[0]
-								if (next) onOpen({ type: 'item', id: next.id }, viaKeyboard)
-							}}
-						/>
-					</li>
-				) : null}
-			</ul>
-			<AgentsEntry
-				snapshot={snapshot}
-				sessions={sessions}
-				unknown={needs.length > 0 ? unknown : 0}
-				now={now}
-				open={openKey === 'agents'}
-				paneId={paneId}
-				buttonRef={register('agents')}
-				onOpen={viaKeyboard => onOpen({ type: 'agents' }, viaKeyboard)}
-			/>
-		</>
-	)
-}
-
-/** Kind glyph: the one colored mark (its kind's tone, never its age), in a fixed box so names line up. */
-function KindGlyph({ item }: { item: DockItem }) {
-	return (
-		<span className="agent-dock-glyph" data-tone={cardTone(item)} aria-hidden="true">
-			{kindGlyph(item)}
-		</span>
-	)
-}
-
-/**
- * One item, one quiet line: the kind glyph (its tone is the kind), the agent's short name, then the
- * wait (toned only once it is genuinely old) or, once answered from the dock, the receipt.
- */
-function Entry({
-	item,
-	who,
-	shownName,
-	now,
-	open,
-	paneId,
-	buttonRef,
-	onOpen,
-}: {
-	item: DockItem
-	who: AgentWho
-	/** The name as the entry has room for it (cut in the middle); its label and tooltip keep it whole. */
-	shownName: string
-	now: number
-	open: boolean
-	paneId: string
-	buttonRef(node: HTMLButtonElement | null): void
-	onOpen(viaKeyboard: boolean): void
-}) {
-	const kind = cardKindLabel(item)
-	const age = formatAge(now - itemWaitingSince(item))
-	const gistId = useId()
-	const receipt = receiptView(item)
-	return (
-		<button
-			ref={buttonRef}
-			type="button"
-			className="agent-dock-entry"
-			data-rail-stop=""
-			data-tone={cardTone(item)}
-			data-kind={item.kind}
-			data-item-id={item.id}
-			data-state={item.state}
-			data-receipt={receipt?.tone}
-			data-open={String(open)}
-			aria-expanded={open}
-			aria-controls={open ? paneId : undefined}
-			aria-label={`${kind}, ${who.name}${who.project ? ` in ${who.project}` : ''}, ${receipt ? receipt.text : `${item.kind === 'turn' ? 'idle' : 'waiting'} ${age}`}`}
-			aria-describedby={receipt ? undefined : gistId}
-			title={[`${kind} · ${who.name}`, who.title, who.project].filter(Boolean).join('\n')}
-			onClick={event => onOpen(event.detail === 0)}
-		>
-			<span className="agent-dock-entry-line">
-				<KindGlyph item={item} />
-				<span className="agent-dock-entry-name">{shownName}</span>
-				{receipt ? (
-					<span className="agent-dock-entry-receipt" data-tone={receipt.tone}>
-						{receipt.text}
-					</span>
-				) : (
-					<span className="agent-dock-entry-age" data-tone={itemAgeTone(item, now)}>
-						{age}
-					</span>
-				)}
-			</span>
-			{/* The queue shows no gist; it still describes the entry for assistive tech. */}
-			{receipt ? null : (
-				<span className="sr-only" id={gistId}>
-					{cardGist(item)}
-				</span>
-			)}
-		</button>
-	)
-}
-
-/**
- * The items the row has no room for, as one quiet cell. It opens the first of them (‹ › then step
- * through the rest) and stands in for whichever of them is open.
- */
-function MoreEntry({
-	items,
-	snapshot,
-	open,
-	paneId,
-	buttonRef,
-	onOpen,
-}: {
-	items: DockItem[]
-	snapshot: AgentDockSnapshot
-	open: boolean
-	paneId: string
-	buttonRef(node: HTMLButtonElement | null): void
-	onOpen(viaKeyboard: boolean): void
-}) {
-	const names = items.map(item => `${cardKindLabel(item)}, ${agentWho(snapshot, item.session).name}`)
-	return (
-		<button
-			ref={buttonRef}
-			type="button"
-			className="agent-dock-more"
-			data-rail-stop=""
-			data-open={String(open)}
-			aria-expanded={open}
-			aria-controls={open ? paneId : undefined}
-			aria-label={`${items.length} more: ${names.join('; ')}`}
-			title={names.join('\n')}
-			onClick={event => onOpen(event.detail === 0)}
-		>
-			<span className="agent-dock-entry-line">+{items.length} more</span>
-		</button>
-	)
-}
-
-/**
- * The Agents entry, one quiet line after the queue (`agents 4 · 2 busy`; `agents 8` alone when none is
- * busy), and the pane lists them all. Only what DockSession observed (status, since) — never invented
- * activity. Agents whose state their source could not read while items show are named here, toned: the row
- * never reads as complete without them.
- */
-function AgentsEntry({
-	snapshot,
-	sessions,
-	unknown,
-	now,
-	open,
-	paneId,
-	buttonRef,
-	onOpen,
-}: {
-	snapshot: AgentDockSnapshot
-	sessions: ReturnType<typeof orderedSessions>
-	unknown: number
-	now: number
-	open: boolean
-	paneId: string
-	buttonRef(node: HTMLButtonElement | null): void
-	onOpen(viaKeyboard: boolean): void
-}) {
-	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
-	return (
-		<div className="agent-dock-agents">
-			<button
-				ref={buttonRef}
-				type="button"
-				className="agent-dock-agents-entry"
-				data-rail-stop=""
-				data-open={String(open)}
-				aria-expanded={open}
-				aria-controls={open ? paneId : undefined}
-				aria-label={
-					sessions.length === 0
-						? `${noSessionText(snapshot)}. Show agents`
-						: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`
-				}
-				title={
-					sessions.length === 0
-						? noSessionText(snapshot)
-						: sessions
-								.map(
-									session =>
-										`${agentWho(snapshot, session.key).name}: ${sessionStatusText(session, now, sessionSince(snapshot, session))}`,
-								)
-								.join('\n')
-				}
-				onClick={event => onOpen(event.detail === 0)}
-			>
-				<span className="agent-dock-entry-line">
-					{sessions.length === 0 ? 'no agents' : `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`}
-					{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
-				</span>
-			</button>
 		</div>
 	)
 }
@@ -875,56 +481,5 @@ function AgentsEntry({
 /** The pane's landmark name: what it is and whose (`Question, company-create-save-firm, crm`). */
 function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
 	const who = agentWho(snapshot, item.session)
-	return `${cardKindLabel(item)}, ${who.name}${who.project ? `, ${who.project}` : ''}`
-}
-
-/**
- * Polite words for items that newly need Jakub (the queue never opens a pane by itself, so the row
- * changing is the only other signal). Only arrivals: never ticking ages or working counts. Per
- * source: its first reachable snapshot is its baseline, its items count only while it is reachable
- * (one source down never mutes another), and arrivals within ANNOUNCE_COALESCE_MS are one line.
- */
-function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): string {
-	const seen = useRef(new Set<number>())
-	const baselined = useRef(new Set<string>())
-	const queued = useRef<DockItem[]>([])
-	const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const latest = useRef(snapshot)
-	latest.current = snapshot
-	const [text, setText] = useState('')
-	useEffect(() => {
-		if (!snapshot) return
-		const known = seen.current
-		const sourceOf = (item: DockItem) => findSession(snapshot, item.session)?.source ?? 'okena'
-		const fresh: DockItem[] = []
-		for (const item of needsYouItems(snapshot)) {
-			if (known.has(item.id) || itemSourceHealth(item, snapshot)?.state !== 'ok') continue
-			known.add(item.id)
-			if (baselined.current.has(sourceOf(item))) fresh.push(item)
-		}
-		for (const [id, health] of snapshotSources(snapshot)) if (health.state === 'ok') baselined.current.add(id)
-		if (fresh.length === 0) return
-		queued.current.push(...fresh)
-		if (timer.current !== null) return
-		timer.current = setTimeout(() => {
-			timer.current = null
-			const items = queued.current
-			queued.current = []
-			const [first] = items
-			if (!first) return
-			if (items.length > 1) {
-				setText(`${items.length} new requests`)
-				return
-			}
-			const who = agentWho(latest.current, first.session)
-			setText(`${cardKindLabel(first)} from ${who.name}${who.project ? ` in ${who.project}` : ''}`)
-		}, ANNOUNCE_COALESCE_MS)
-	}, [snapshot])
-	useEffect(
-		() => () => {
-			if (timer.current !== null) clearTimeout(timer.current)
-		},
-		[],
-	)
-	return text
+	return `${itemKindLabel(item)}, ${who.name}${who.project ? `, ${who.project}` : ''}`
 }
