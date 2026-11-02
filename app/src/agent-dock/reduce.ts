@@ -2,6 +2,7 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
+import { boundText } from '../../../src/agent-dock/text'
 import { itemWaitingSince } from './item-order'
 import {
 	ACT_CONFIRM_MS,
@@ -210,17 +211,6 @@ export function aggregateSourceHealth(
 	if (pending.length > 0)
 		return { state: 'pending', since: Math.min(...pending.map(health => health.since)), lastObservedAt: lastSeen(all) }
 	return { state: 'ok', since: Math.max(...all.map(health => health.since)), lastObservedAt: lastSeen(all) }
-}
-
-/** Strip C0/C1 controls except tab/newline, then bound by UTF-16 length without splitting a surrogate pair. */
-export function boundAgentText(text: string, max = TURN_TEXT_MAX): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
-	const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-	if (clean.length <= max) return clean
-	let end = max - 1
-	const code = clean.charCodeAt(end - 1)
-	if (code >= 0xd800 && code <= 0xdbff) end -= 1
-	return `${clean.slice(0, end)}…`
 }
 
 const isLive = (item: DockItem): boolean => item.state !== 'resolved'
@@ -653,7 +643,7 @@ function observeTerminal(
 				kind: 'turn',
 				sessionId: detail.session_id,
 				assistantUuid: last.uuid,
-				text: boundAgentText(last.text),
+				text: boundText(last.text, TURN_TEXT_MAX),
 				endedAt: resumed?.endedAt ?? record.idleSince ?? now,
 				hadBackground: status === 'background',
 			},

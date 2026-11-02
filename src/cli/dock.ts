@@ -36,6 +36,7 @@ import {
 	readSpoolSnapshot,
 	writePrivateFileAtomic,
 } from '../agent-dock/spool.js'
+import { boundText } from '../agent-dock/text.js'
 import { OkenaClient } from '../extensions/okena/client.js'
 
 export const DOCK_HELP = `Usage: helm dock <command> [options]
@@ -150,13 +151,6 @@ const ageText = (ms: number): string => {
 const clock = (at: number): string => {
 	const date = new Date(at)
 	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
-
-/** Plain text for untrusted agent content: controls stripped except newline/tab, bounded. */
-function plainText(text: string, max: number): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
-	const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-	return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`
 }
 
 const sessionLabel = (session: SpoolSession | undefined, key: string): string =>
@@ -302,7 +296,7 @@ async function readLive(dir: string, snapshot: SpoolSnapshot, item: SpoolItem, d
 		return { kind: 'turn', found: false, reason: 'the pane now runs a different Claude session' }
 	const entry = page.entries.find(candidate => candidate.kind === 'assistant' && candidate.uuid === item.assistantUuid)
 	return entry && typeof entry.text === 'string'
-		? { kind: 'turn', found: true, text: plainText(entry.text, LIVE_TURN_MAX) }
+		? { kind: 'turn', found: true, text: boundText(entry.text, LIVE_TURN_MAX) }
 		: { kind: 'turn', found: false, reason: 'message is not in the latest transcript page' }
 }
 
@@ -345,7 +339,7 @@ async function runShow(dir: string, idArg: string | undefined, flags: Set<string
 	if (live?.kind === 'ask') {
 		if (live.open) {
 			lines.push(`tool: ${live.tool}`, 'input (untrusted agent data):')
-			lines.push(plainText(JSON.stringify(live.input, null, 2) ?? 'null', LIVE_INPUT_MAX))
+			lines.push(boundText(JSON.stringify(live.input, null, 2) ?? 'null', LIVE_INPUT_MAX))
 		} else
 			lines.push(
 				`${sourceOf(session, item.session) === 'helm' ? 'Helm' : 'Okena'} no longer shows this dialog open (answered elsewhere or pending refresh).`,

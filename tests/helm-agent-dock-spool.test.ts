@@ -546,3 +546,48 @@ test('helm dock watch: catchup, missed events after the cursor, follow, rotation
 		rmSync(root, { recursive: true, force: true })
 	}
 })
+
+test('helm dock show bounds live turn text without splitting a surrogate pair', async () => {
+	const root = tempDir()
+	const dir = join(root, 'agent-dock')
+	try {
+		const now = Date.now()
+		mkdirSync(dir, { recursive: true, mode: 0o700 })
+		const snapshot: SpoolSnapshot = {
+			version: 1,
+			pid: process.pid,
+			writtenAt: now,
+			generatedAt: now,
+			source: { state: 'ok', since: now, lastObservedAt: now },
+			sessions: [],
+			items: [
+				{
+					id: 1,
+					key: 'turn:p:t1:u1',
+					kind: 'turn',
+					state: 'open',
+					session: 'p:t1',
+					openedAt: now,
+					head: 'Turn ended',
+					assistantUuid: 'u1',
+					endedAt: now,
+					hadBackground: false,
+				},
+			],
+		}
+		writeFileSync(join(dir, 'snapshot.json'), JSON.stringify(snapshot))
+		// The emoji's high surrogate sits exactly at the 2048-unit cut.
+		const text = `${'a'.repeat(2046)}😀 and more`
+		const okena = () => ({
+			getClaudeSession: async () => ({ dialogs: [] }),
+			getClaudeTranscript: async () => ({ entries: [{ kind: 'assistant', uuid: 'u1', text }] }),
+		})
+		const show = capture()
+		assert.equal(await runDockCli(['show', '1', '--json', '--dir', dir], { ...show.deps, now: () => now, okena }), 0)
+		const live = JSON.parse(show.out[0] ?? '{}').live as { text: string }
+		assert.equal(live.text, `${'a'.repeat(2046)}…`)
+		assert.doesNotMatch(live.text, /[\ud800-\udbff](?![\udc00-\udfff])/)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})

@@ -4,6 +4,7 @@
 // seed/epoch/health per source and one source going down never freezes the
 // other. Acts and expedites route by the session's source.
 
+import { errorDetail } from './act'
 import type { AgentDockObservation, DockActOutcome, DockAction, DockItem, DockSourceId } from './model'
 import type { AgentDockState } from './reduce'
 import type { AgentDockObservationSource, AgentDockTarget } from './watcher'
@@ -30,7 +31,7 @@ export class CompositeDockSource implements AgentDockObservationSource {
 					return await source.observe(state, now)
 				} catch (error) {
 					// A source must never take the others down with it.
-					const detail = (error instanceof Error ? error.message : String(error)).slice(0, 300)
+					const detail = errorDetail(error)
 					return {
 						type: 'poll',
 						source: source.id,

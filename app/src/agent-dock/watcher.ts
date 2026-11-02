@@ -32,13 +32,13 @@ import {
 	appendPrivateText,
 	ensurePrivateDir,
 	formatEventLine,
-	oneLine,
 	readSpoolFile,
 	rotateSpoolEvents,
 	spoolHighWater,
 	spoolItemSchema,
 	writePrivateFileAtomic,
 } from '../../../src/agent-dock/spool'
+import { oneLine } from '../../../src/agent-dock/text'
 import { REFUSAL_TEXT } from './act'
 import {
 	type AgentDockActResult,

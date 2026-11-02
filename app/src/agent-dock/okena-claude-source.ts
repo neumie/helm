@@ -85,14 +85,11 @@ export interface TerminalReadState {
 	expediteUntil?: number
 }
 
-const errorText = (error: unknown): string =>
-	(error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300)
-
 async function capture(read: () => Promise<unknown>): Promise<OkenaFetch> {
 	try {
 		return { ok: true, body: await read() }
 	} catch (error) {
-		return { ok: false, error: errorText(error) }
+		return { ok: false, error: errorDetail(error) }
 	}
 }
 

@@ -34,6 +34,7 @@ import {
 	DOCK_SOURCE_HEALTH_STATES,
 	DOCK_SOURCE_IDS,
 } from './dock-vocabulary.js'
+import { oneLine } from './text.js'
 
 export const AGENT_DOCK_DIR_ENV = 'HELM_AGENT_DOCK_DIR'
 export const SPOOL_STATE_FILE = 'state.json'
@@ -172,20 +173,8 @@ export const spoolEventSchema = z.object({ seq: z.number().int().positive(), t: 
 export type SpoolEvent = z.infer<typeof spoolEventSchema>
 
 // ---------------------------------------------------------------------------
-// Text helpers
+// Event lines
 // ---------------------------------------------------------------------------
-
-/** One line: controls/newlines collapsed to spaces, bounded with an ellipsis. */
-export function oneLine(text: string, max: number): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: collapsing controls is the point
-	const controls = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g
-	const flat = text.replace(controls, ' ').replace(/\s+/g, ' ').trim()
-	if (flat.length <= max) return flat
-	let end = max - 1
-	const code = flat.charCodeAt(end - 1)
-	if (code >= 0xd800 && code <= 0xdbff) end -= 1
-	return `${flat.slice(0, end)}…`
-}
 
 /** Local calendar day `YYYY-MM-DD` (rotation boundary). */
 export function localDay(at: number): string {
