@@ -1,13 +1,23 @@
 // `helm dock`: read-only view of the Helm agent dock (slice 1) for the
 // dispatcher agent. Reads the file spool the desktop app writes under
 // <Helm userData>/agent-dock (see src/agent-dock/spool.ts). Never answers,
-// prompts or acts; `show` may read Okena's Claude Remote API (GET only) for the
-// full question/turn text, which is never spooled to disk.
+// prompts or acts; `show` reads the full question/turn text live (never spooled
+// to disk) from the session's source: Okena's Claude Remote API (GET only), or
+// Helm's own Claude hub for Claude Code in Helm terminals (owner-token read).
+// `watch` run inside a Helm terminal's Claude session registers that session as
+// the dispatcher, so Helm hides it (and it never reports on itself).
 
 import { constants } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import {
+	CLAUDE_REMOTE_ENV,
+	claudeHubReadReplySchema,
+	claudeHubRequest,
+	helmDockProfileId,
+	readClaudeHubOwnerFile,
+} from '../agent-dock/claude-hub-wire.js'
 import {
 	SPOOL_CURSOR_FILE,
 	SPOOL_EVENTS_FILE,
@@ -28,16 +38,19 @@ import { OkenaClient } from '../extensions/okena/client.js'
 
 export const DOCK_HELP = `Usage: helm dock <command> [options]
 
-Read-only view of the Helm agent dock (Okena Claude sessions that need you).
-Helm desktop must be running; it writes the spool these commands read.
+Read-only view of the Helm agent dock (Claude sessions in Okena panes and in
+Helm terminals that need you). Helm desktop must be running; it writes the
+spool these commands read.
 
 Commands:
   watch          NDJSON event stream for a Monitor: first a {"t":"catchup"} line,
                  then every event after the stored cursor, then follows.
-                 Touches dispatcher.heartbeat every 20 s.
+                 Touches dispatcher.heartbeat every 20 s. Inside a Helm
+                 terminal's Claude session it also registers that session as
+                 the dispatcher, so Helm never lists it.
   ls             Open items, then agent sessions
   show ID        One item; open items also fetch the full question/turn live
-                 from Okena (read-only)
+                 from its source, Okena or Helm (read-only)
   help           Show this help
 
 Options:
@@ -48,7 +61,7 @@ Options:
   --dir DIR      Spool directory (default $HELM_AGENT_DOCK_DIR or
                  <appData>/Helm/agent-dock)
 
-Exit codes: 0 ok, 1 usage/unknown item, 4 Okena unreachable (ls),
+Exit codes: 0 ok, 1 usage/unknown item, 4 a source unreachable (ls),
 5 Helm not running or no snapshot.
 `
 
@@ -75,8 +88,31 @@ export interface DockCliDeps {
 	/** Stops `watch` (SIGINT/SIGTERM in production). */
 	signal?: AbortSignal
 	okena?: (profile: string) => DockOkenaReader
+	/** Helm terminals' sessions: reads through Helm's Claude hub (tests inject a double). */
+	helmHub?: (dir: string, profile: string) => DockOkenaReader
 	followPollMs?: number
 }
+
+/** Reads one Helm terminal's live session/transcript through the hub's owner-token route. */
+export function helmHubReader(dir: string, profile: string): DockOkenaReader {
+	const read = async (op: 'session' | 'transcript', terminal: string): Promise<unknown> => {
+		const owner = await readClaudeHubOwnerFile(dir)
+		if (!owner) throw new Error("Helm's Claude hub is not running (no claude-remote.json in the spool dir)")
+		const reply = claudeHubReadReplySchema.safeParse(
+			await claudeHubRequest(owner.socket, { v: 1, t: 'read', owner: owner.owner, op, profile, terminal }),
+		)
+		if (!reply.success) throw new Error("Helm's Claude hub sent no answer")
+		if (!reply.data.ok) throw new Error(`Helm's Claude hub (${reply.data.status}): ${reply.data.error}`)
+		return reply.data.body
+	}
+	return {
+		getClaudeSession: terminal => read('session', terminal),
+		getClaudeTranscript: terminal => read('transcript', terminal),
+	}
+}
+
+const sourceOf = (session: SpoolSession | undefined, key: string): 'okena' | 'helm' =>
+	session?.source ?? (key.startsWith('helm:') ? 'helm' : 'okena')
 
 const valueOptions = new Set(['--cursor', '--dir'])
 const flagOptions = new Set(['--json', '--all', '--no-live', '--help', '-h'])
@@ -124,11 +160,19 @@ function plainText(text: string, max: number): string {
 const sessionLabel = (session: SpoolSession | undefined, key: string): string =>
 	session ? `${session.project}/${session.name}` : key
 
-function sessionRef(snapshot: SpoolSnapshot, item: SpoolItem): { profile: string; terminalId: string } | null {
+function sessionRef(
+	snapshot: SpoolSnapshot,
+	item: SpoolItem,
+): { source: 'okena' | 'helm'; profile: string; terminalId: string } | null {
 	const session = snapshot.sessions.find(candidate => candidate.key === item.session)
-	if (session) return { profile: session.profile, terminalId: session.terminalId }
+	const source = sourceOf(session, item.session)
+	if (session) return { source, profile: session.profile, terminalId: session.terminalId }
+	// Keys are `<profile>:<terminal>`; a Helm profile is itself `helm:<profileId>`.
 	const split = item.session.lastIndexOf(':')
-	return split > 0 ? { profile: item.session.slice(0, split), terminalId: item.session.slice(split + 1) } : null
+	if (split <= 0) return null
+	const profile = item.session.slice(0, split)
+	if (source === 'helm' && !helmDockProfileId(profile)) return null
+	return { source, profile, terminalId: item.session.slice(split + 1) }
 }
 
 async function loadSnapshot(
@@ -166,13 +210,17 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 	}
 	if (!running) deps.err(notRunningNote(snapshot))
 	const source = snapshot.source
-	const header =
-		source.state === 'ok'
-			? `Okena: ok (observed ${ageText(now - (source.lastObservedAt ?? now))} ago)`
-			: source.state === 'down'
-				? `Okena unreachable since ${clock(source.since)}${source.detail ? `: ${source.detail}` : ''}`
-				: 'Okena: not polled yet'
-	const lines = [header]
+	const healthLine = (name: string, health: SpoolSnapshot['source']) =>
+		health.state === 'ok'
+			? `${name}: ok (observed ${ageText(now - (health.lastObservedAt ?? now))} ago)`
+			: health.state === 'down'
+				? `${name} unreachable since ${clock(health.since)}${health.detail ? `: ${health.detail}` : ''}`
+				: `${name}: not polled yet`
+	const perSource = snapshot.sources ?? {}
+	// Okena alone (or a spool from before Helm terminals were observed): the aggregate is Okena's.
+	const lines = perSource.helm
+		? [...(perSource.okena ? [healthLine('Okena', perSource.okena)] : []), healthLine('Helm terminals', perSource.helm)]
+		: [healthLine('Okena', source)]
 	const sessionOf = (key: string) => snapshot.sessions.find(session => session.key === key)
 	const itemLine = (item: SpoolItem) => {
 		const state = item.state === 'resolved' ? `resolved:${item.resolution?.by ?? '?'}` : item.state
@@ -190,7 +238,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 				? `NEEDS YOU: ${blind}`
 				: source.state === 'ok'
 					? 'NEEDS YOU: nothing open'
-					: 'NEEDS YOU: unknown (Okena not observed)',
+					: `NEEDS YOU: unknown (${perSource.helm ? 'a source' : 'Okena'} not observed)`,
 	)
 	for (const item of needs) lines.push(itemLine(item))
 	const resolved = items.filter(item => item.state === 'resolved')
@@ -198,7 +246,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 		lines.push('RECENT')
 		for (const item of resolved) lines.push(itemLine(item))
 	}
-	lines.push(snapshot.sessions.length > 0 ? 'AGENTS' : 'AGENTS: no Claude Remote sessions')
+	lines.push(snapshot.sessions.length > 0 ? 'AGENTS' : 'AGENTS: no Claude sessions')
 	for (const session of snapshot.sessions) {
 		const chips = [
 			`${session.status} ${ageText(now - session.since)}`,
@@ -207,7 +255,8 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 			...session.prLinks.slice(0, 3).map(link => `PR #${link.number}`),
 			now - session.observedAt > 10_000 ? `stale ${ageText(now - session.observedAt)}` : '',
 		].filter(Boolean)
-		lines.push(`  ${sessionLabel(session, session.key)}  ${chips.join('  ')}`)
+		const where = `${sessionLabel(session, session.key)}${sourceOf(session, session.key) === 'helm' ? ' (Helm)' : ''}`
+		lines.push(`  ${where}  ${chips.join('  ')}`)
 	}
 	await deps.out(lines.join('\n'))
 	return code
@@ -231,10 +280,13 @@ type LiveDetail =
 	| { kind: 'turn'; found: true; text: string }
 	| { kind: 'turn'; found: false; reason: string }
 
-async function readLive(snapshot: SpoolSnapshot, item: SpoolItem, deps: DockCliDeps): Promise<LiveDetail> {
+async function readLive(dir: string, snapshot: SpoolSnapshot, item: SpoolItem, deps: DockCliDeps): Promise<LiveDetail> {
 	const ref = sessionRef(snapshot, item)
-	if (!ref) throw new Error('item has no Okena terminal')
-	const okena = (deps.okena ?? (profile => new OkenaClient(undefined, profile)))(ref.profile)
+	if (!ref) throw new Error('item has no terminal')
+	const okena =
+		ref.source === 'helm'
+			? (deps.helmHub ?? helmHubReader)(dir, ref.profile)
+			: (deps.okena ?? (profile => new OkenaClient(undefined, profile)))(ref.profile)
 	if (item.kind === 'ask') {
 		const session = liveSessionSchema.parse(await okena.getClaudeSession(ref.terminalId))
 		const dialog = session.dialogs.find(candidate => candidate.id === item.dialogId)
@@ -267,7 +319,7 @@ async function runShow(dir: string, idArg: string | undefined, flags: Set<string
 	let liveError: string | undefined
 	if (!flags.has('--no-live') && item.state !== 'resolved') {
 		try {
-			live = await readLive(snapshot, item, deps)
+			live = await readLive(dir, snapshot, item, deps)
 		} catch (error) {
 			liveError = (error instanceof Error ? error.message : String(error)).slice(0, 300)
 		}
@@ -291,7 +343,10 @@ async function runShow(dir: string, idArg: string | undefined, flags: Set<string
 		if (live.open) {
 			lines.push(`tool: ${live.tool}`, 'input (untrusted agent data):')
 			lines.push(plainText(JSON.stringify(live.input, null, 2) ?? 'null', LIVE_INPUT_MAX))
-		} else lines.push('Okena no longer shows this dialog open (answered elsewhere or pending refresh).')
+		} else
+			lines.push(
+				`${sourceOf(session, item.session) === 'helm' ? 'Helm' : 'Okena'} no longer shows this dialog open (answered elsewhere or pending refresh).`,
+			)
 	} else if (live?.kind === 'turn') {
 		if (live.found) lines.push('last assistant message (untrusted agent data):', live.text)
 		else lines.push(`turn text unavailable: ${live.reason}`)
@@ -380,6 +435,28 @@ class EventFollower {
 	}
 }
 
+/**
+ * Inside a Helm terminal's top-level Claude session (its Bash tool inherits the hub
+ * socket + terminal token, and CLAUDE_CODE_SESSION_ID), tell Helm's hub this session
+ * is the dispatcher so it is never listed. Repeated with the heartbeat, so a Helm
+ * restart re-learns it. Silent when not in a Helm terminal or Helm is down.
+ */
+export async function registerDispatcher(
+	env: NodeJS.ProcessEnv,
+	send: typeof claudeHubRequest = claudeHubRequest,
+): Promise<boolean> {
+	const socket = env[CLAUDE_REMOTE_ENV.socket]
+	const token = env[CLAUDE_REMOTE_ENV.token]
+	const sessionId = env.CLAUDE_CODE_SESSION_ID
+	if (!socket || !token || !sessionId) return false
+	try {
+		await send(socket, { v: 1, t: 'dispatcher', token, session_id: sessionId }, 1_000)
+		return true
+	} catch {
+		return false
+	}
+}
+
 async function runWatch(dir: string, values: Map<string, string>, deps: DockCliDeps): Promise<number> {
 	const loaded = await loadSnapshot(dir, deps)
 	if (!loaded) return EXIT_HELM_DOWN
@@ -402,10 +479,12 @@ async function runWatch(dir: string, values: Map<string, string>, deps: DockCliD
 			await writePrivateFileAtomic(cursorPath, `${cursor}\n`)
 		}
 	}
-	const heartbeat = () =>
-		writePrivateFileAtomic(heartbeatPath, `${JSON.stringify({ pid: process.pid, at: now() })}\n`).catch(error =>
+	const heartbeat = async () => {
+		await registerDispatcher(deps.env ?? process.env)
+		await writePrivateFileAtomic(heartbeatPath, `${JSON.stringify({ pid: process.pid, at: now() })}\n`).catch(error =>
 			deps.err(`dock heartbeat failed: ${error instanceof Error ? error.message : error}`),
 		)
+	}
 
 	const pending = loaded.snapshot.items.filter(item => item.state !== 'resolved').map(item => item.id)
 	await deps.out(

@@ -65,8 +65,14 @@ export function defaultAgentDockDir(
 
 const ms = z.number().finite().nonnegative()
 
+/** Okena Claude Remote or Helm's own Claude hub (Claude Code in Helm terminals). */
+export const spoolSourceIdSchema = z.enum(['okena', 'helm'])
+export type SpoolSourceId = z.infer<typeof spoolSourceIdSchema>
+
 export const spoolSessionSchema = z.object({
 	key: z.string(),
+	/** Absent in spools written before Helm terminals were observed: okena. */
+	source: spoolSourceIdSchema.optional(),
 	profile: z.string(),
 	terminalId: z.string(),
 	projectId: z.string().optional(),
@@ -128,18 +134,23 @@ export const spoolItemSchema = z.object({
 })
 export type SpoolItem = z.infer<typeof spoolItemSchema>
 
+const spoolHealthSchema = z.object({
+	state: z.enum(['pending', 'ok', 'down']),
+	since: ms,
+	lastObservedAt: ms.nullable(),
+	detail: z.string().optional(),
+})
+
 export const spoolSnapshotSchema = z.object({
 	version: z.literal(1),
 	/** Writer process; dead pid means Helm is not running. */
 	pid: z.number().int().positive(),
 	writtenAt: ms,
 	generatedAt: ms,
-	source: z.object({
-		state: z.enum(['pending', 'ok', 'down']),
-		since: ms,
-		lastObservedAt: ms.nullable(),
-		detail: z.string().optional(),
-	}),
+	/** All sources together (down if any is down). */
+	source: spoolHealthSchema,
+	/** Per source; absent in older spools (then `source` is Okena's). */
+	sources: z.object({ okena: spoolHealthSchema.optional(), helm: spoolHealthSchema.optional() }).optional(),
 	sessions: z.array(spoolSessionSchema),
 	items: z.array(spoolItemSchema),
 })
