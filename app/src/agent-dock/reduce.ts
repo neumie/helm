@@ -310,6 +310,13 @@ class Draft {
 		this.events.push({ t: 'item.orphaned', at: this.now, id: item.id })
 	}
 
+	reopen(item: DockItem): void {
+		if (item.state !== 'orphaned') return
+		item.state = 'open'
+		item.orphanedAt = undefined
+		this.events.push({ t: 'item.reopened', at: this.now, id: item.id })
+	}
+
 	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state'>, silent: boolean): DockItem {
 		const opened: DockItem = { ...item, id: this.state.nextItemId++, openedAt: this.now, state: 'open' }
 		this.state.items.push(opened)
@@ -512,7 +519,12 @@ function observeTerminal(
 		// Unknown anchor (tail never read) proves nothing; a reset page alone is not new activity.
 		const progressed = activity || (orphanAnchor !== undefined && record.tail.lastAssistant?.uuid !== orphanAnchor)
 		if (progressed) {
-			for (const item of live()) if (item.state === 'orphaned') draft.resolve(item, 'outside')
+			// An orphaned ask whose dialog is listed right now is still waiting (it reopens below).
+			const open = new Set(detail.dialogs.map(dialog => dialog.id))
+			for (const item of live()) {
+				if (item.state !== 'orphaned' || (item.fact.kind === 'ask' && open.has(item.fact.dialogId))) continue
+				draft.resolve(item, 'outside')
+			}
 		}
 	}
 
@@ -551,7 +563,10 @@ function observeTerminal(
 			// answer whose dialog is still open well after it was sent never landed:
 			// the agent still waits, so the item owes Jakub again.
 			const item = draft.state.items.find(candidate => candidate.key === itemKey)
-			if (
+			// Orphaned while its profile was not polled (or across a reconnect), and the source
+			// lists the same dialog again: the agent still waits, so it owes Jakub again.
+			if (item?.state === 'orphaned') draft.reopen(item)
+			else if (
 				item?.state === 'unconfirmed' &&
 				item.receipt?.status === 'unconfirmed' &&
 				now - item.receipt.at >= ACT_CONFIRM_MS
@@ -702,7 +717,12 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 
 	const listed = new Set(candidates.map(terminalId => sessionKey(observation.profile, terminalId)))
 	for (const [key, record] of Object.entries(draft.state.sessions)) {
-		if (record.session.source !== id || record.session.profile !== observation.profile || listed.has(key)) continue
+		if (record.session.source !== id) continue
+		if (record.session.profile !== observation.profile) {
+			unobservedProfile(draft, key, record)
+			continue
+		}
+		if (listed.has(key)) continue
 		const live = draft.liveItems(key)
 		if (record.epoch === src.epoch) {
 			// Gone within one source epoch: SessionEnd or pane closed.
@@ -717,6 +737,21 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 		if (live.length === 0) delete draft.state.sessions[key]
 		else setStatus(record, 'unknown', now)
 	}
+}
+
+/**
+ * The source now polls another profile (Okena `last_used` changed, Helm switched its
+ * session profile): this session is simply not observed any more. Its agent may still
+ * run there, so nothing resolves from the absence; open asks orphan (ackable, and they
+ * reopen if that profile is polled again with the dialog still listed), turns stay, and
+ * the row reads unknown until it is seen again (or goes once nothing is live).
+ */
+function unobservedProfile(draft: Draft, key: SessionKey, record: AgentDockSessionRecord): void {
+	record.dialogIds = undefined
+	const live = draft.liveItems(key)
+	for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
+	if (live.length === 0) delete draft.state.sessions[key]
+	else setStatus(record, 'unknown', draft.now)
 }
 
 function reduceAck(draft: Draft, itemId: number): void {

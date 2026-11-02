@@ -815,3 +815,72 @@ test('snapshot orders open asks, orphaned, open turns, then recent; persistence 
 	assert.equal(restored.items.length, 0)
 	assert.equal(restored.nextItemId, withAsks.nextItemId)
 })
+
+// --- profile switch -----------------------------------------------------------
+
+for (const [source, profileA, profileB] of [
+	['okena', 'p1', 'p2'],
+	['helm', 'helm:work', 'helm:home'],
+] as const) {
+	const pollAs = (profile: string, detail: Json | null): AgentDockObservation => ({
+		...poll(detail),
+		source,
+		profile,
+	})
+
+	test(`${source}: a profile switch orphans the old profile's open asks instead of freezing them`, () => {
+		const keyA = sessionKey(profileA, TID)
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 600_000, pollAs(profileB, null)],
+		])
+		const item = itemsOf(state, 'ask')[0]
+		assert.equal(item?.state, 'orphaned')
+		assert.equal(state.sessions[keyA]?.session.status, 'unknown')
+		// Nothing resolves from not being observed: the agent may still wait there.
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned'],
+		)
+		// Jakub can clear it; an open ask could not be acked.
+		const acked = reduce(state, { type: 'ack', itemId: item?.id ?? 0 }, T0 + 600_001)
+		assert.equal(acked.state.items[0]?.resolution?.by, 'acked')
+		// Nothing live any more: the next poll of the other profile drops the row.
+		assert.equal(reduce(acked.state, pollAs(profileB, null), T0 + 601_500).state.sessions[keyA], undefined)
+	})
+
+	test(`${source}: switching back with the dialog still listed reopens the ask`, () => {
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, pollAs(profileA, ask())],
+		])
+		const items = itemsOf(state, 'ask')
+		assert.equal(items.length, 1)
+		assert.equal(items[0]?.state, 'open')
+		assert.equal(items[0]?.orphanedAt, undefined)
+		assert.equal(state.sessions[sessionKey(profileA, TID)]?.session.status, 'waiting')
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned', 'item.reopened'],
+		)
+	})
+
+	test(`${source}: transcript activity never closes an orphaned ask whose dialog is listed again`, () => {
+		const withPage = (profile: string, transcript: Json): AgentDockObservation => ({
+			...poll(ask(), { transcript }),
+			source,
+			profile,
+		})
+		const { state } = run(createAgentDockState(null, T0), [
+			[T0, withPage(profileA, fullLog())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, withPage(profileA, page([assistant('after-switch')], { cursor: 999_999 }))],
+		])
+		assert.deepEqual(
+			itemsOf(state, 'ask').map(item => item.state),
+			['open'],
+		)
+	})
+}

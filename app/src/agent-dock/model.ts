@@ -432,6 +432,8 @@ export type AgentDockEvent =
 	| { t: 'item.opened'; at: number; id: number; kind: DockItemKind; session: SessionKey; key: string }
 	| { t: 'item.resolved'; at: number; id: number; by: DockResolutionBy }
 	| { t: 'item.orphaned'; at: number; id: number }
+	/** An orphaned ask's dialog is listed again: it owes Jakub again. */
+	| { t: 'item.reopened'; at: number; id: number }
 	| { t: 'source.health'; at: number; state: 'ok' | 'down'; source?: DockSourceId; detail?: string }
 	/** A dock answer's end state. Never carries answer text or Okena error text (disk). */
 	| {
