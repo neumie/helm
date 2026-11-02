@@ -1,4 +1,4 @@
-// Agent dock acts (slice 2): pure validation, Okena request bodies and the
+// Agent dock acts: pure validation, Okena request bodies and the
 // compare-and-set checks main runs on a FRESH Okena read before every effect.
 // No IO here; okena-claude-source.ts performs the reads/POSTs, reduce.ts owns
 // the item lifecycle. Answer text only passes through: it is never returned in
@@ -14,6 +14,7 @@
 //     → 200 {"delivery":"channel"|"pty"|"queued"} | 400 empty/too long | 409 busy/no session
 // (the same bodies `okena claude answer` / `okena claude prompt` send).
 
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import {
 	DOCK_RISKY_PROMPT,
 	type DockActOutcome,
@@ -25,10 +26,9 @@ import {
 	type OkenaClaudeEntry,
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
-	PERMISSION_SUGGESTIONS_MAX,
 	stableJson,
 } from './model'
-import { alwaysAllowLabels, permissionReview, planReview } from './review'
+import { PERMISSION_SUGGESTIONS_MAX, alwaysAllowLabels, permissionReview, planReview } from './review'
 
 /** `ApiClaudeDecision` as Okena deserializes it (no other fields: deny_unknown_fields). */
 export type OkenaClaudeDecision =
@@ -60,7 +60,7 @@ export const REFUSAL_TEXT: Record<DockRefusalReason, string> = {
 	not_open: 'not open for an answer right now',
 	unknown_item: 'this item is gone',
 	invalid: 'the answer is incomplete',
-	source_down: 'Okena is unreachable; answer in the terminal',
+	source_down: DOCK_SOURCE_TEXT.okena.sourceDown,
 	in_flight: 'another answer is still being sent',
 }
 
@@ -226,6 +226,8 @@ export function turnStillWaiting(
 
 /** Errors that prove the request never reached Okena (nothing to confirm). */
 const NOT_SENT_CODES = new Set([
+	/** OkenaClient OKENA_NOT_CONFIGURED: no profile/credentials, nothing was sent. */
+	'OKENA_NOT_CONFIGURED',
 	'ECONNREFUSED',
 	'ENOENT',
 	'ENOTDIR',
@@ -249,28 +251,33 @@ function errorCode(error: unknown): string | undefined {
  * sent nothing. Every other transport error (timeout, reset, hang-up, a bad body
  * after a 200) may have landed: unconfirmed, so the next poll can confirm it.
  */
-export function dockPostFailure(error: unknown, dialog: boolean, source = 'Okena'): DockActOutcome {
+export function dockPostFailure(
+	error: unknown,
+	dialog: boolean,
+	source = DOCK_SOURCE_TEXT.okena.label,
+): DockActOutcome {
 	const detail = errorDetail(error)
 	const status = (error as { status?: unknown } | null)?.status
 	if (typeof status === 'number') {
 		if (dialog && status === 404) return { status: 'refused', reason: 'gone', detail }
-		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(detail, source) }
+		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(error, detail, source) }
 		return { status: 'failed', detail }
 	}
 	const code = errorCode(error)
-	if ((code !== undefined && NOT_SENT_CODES.has(code)) || /^Okena not configured/.test(detail))
-		return { status: 'failed', detail }
+	if (code !== undefined && NOT_SENT_CODES.has(code)) return { status: 'failed', detail }
 	return { status: 'unconfirmed', detail: `No answer from ${source}: ${detail}` }
 }
 
 /**
  * A 409 on `POST …/prompt` is Okena refusing to type (nothing was sent). Drop the
- * route (terminal id noise) and keep Okena's reason verbatim. "No Claude session detected"
+ * route (terminal id noise) and keep Okena's reason verbatim: both transports put it
+ * on the error as `reason` (OkenaHttpError, Helm hub). "No Claude session detected"
  * also happens when Okena's foreground probe misses a running native `claude`
  * (its process name is the version, e.g. `2.1.314`), so say where to reply instead.
  */
-function promptConflictDetail(detail: string, source: string): string {
-	const reason = /(?:failed |Helm Claude hub )\(409\): (.*)$/.exec(detail)?.[1]?.trim() || detail
+function promptConflictDetail(error: unknown, detail: string, source: string): string {
+	const own = (error as { reason?: unknown } | null)?.reason
+	const reason = (typeof own === 'string' ? own.replace(/\s+/g, ' ').trim() : '') || detail
 	if (!/No Claude session detected/i.test(reason)) return `${source} refused the reply (409): ${reason}`
 	return `${source} refused the reply (409): ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Reply in the terminal.`
 }

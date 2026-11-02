@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import compositeModule from '../app/src/agent-dock/composite-source.ts'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
 import runtimeModule from '../app/src/claude-remote/runtime.ts'
@@ -21,6 +22,7 @@ import runtimeModule from '../app/src/claude-remote/runtime.ts'
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type TerminalRef = import('../app/src/claude-remote/hub-core.ts').TerminalRef
 const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
+const { CompositeDockSource } = compositeModule as typeof import('../app/src/agent-dock/composite-source.ts')
 const { AgentDockWatcher } = watcherModule as typeof import('../app/src/agent-dock/watcher.ts')
 type RuntimeModule = typeof import('../app/src/claude-remote/runtime.ts')
 const { createClaudeRemote, HOOK_FILE, PRELOAD_FILE } = runtimeModule as RuntimeModule
@@ -164,10 +166,7 @@ async function harness(name: string) {
 
 	const watcher = new AgentDockWatcher({
 		dir: join(root, 'ud', 'agent-dock'),
-		source: new OkenaClaudeSource(remote.hub, {
-			name: 'Helm terminals',
-			notRunning: "Helm's Claude hub is not listening",
-		}),
+		source: new CompositeDockSource([new OkenaClaudeSource(remote.hub, 'helm')]),
 		publish: () => {},
 		isFocused: () => true,
 		log: () => {},
@@ -296,7 +295,6 @@ test(
 			assert.ok(blue >= 0)
 			const answered = await h.watcher.act({
 				itemId: ask.id,
-				rev: ask.rev,
 				action: { type: 'answer', picks: [{ options: [blue] }] },
 			})
 			assert.equal(answered.ok, true, JSON.stringify(answered))
@@ -310,7 +308,6 @@ test(
 			// 3. A dock reply is typed into the pane (bracketed paste + Enter) and runs.
 			const replied = await h.watcher.act({
 				itemId: turn.id,
-				rev: turn.rev,
 				action: { type: 'prompt', text: 'Now reply with only the word PONG.' },
 			})
 			assert.equal(replied.ok, true, JSON.stringify(replied))
@@ -356,7 +353,7 @@ test(
 				`Run exactly this one bash command and nothing else: ${CLAUDE} -p --model ${MODEL} 'Reply with the word NESTED'`,
 			)
 			const nested = await h.until(() => askFor(h.items(), 'Bash'), 'Bash permission for nested claude')
-			const allowed = await h.watcher.act({ itemId: nested.id, rev: nested.rev, action: { type: 'allow' } })
+			const allowed = await h.watcher.act({ itemId: nested.id, action: { type: 'allow' } })
 			assert.equal(allowed.ok, true, JSON.stringify(allowed))
 			const nestedTurn = await h.until(() => turnWith(h.items(), /./, lastTurn), 'turn after nested claude', 180_000)
 			console.log('[nested] turn:', JSON.stringify((nestedTurn.fact as { text: string }).text).slice(0, 300))
@@ -404,7 +401,7 @@ test(
 			console.log('[plan] plan:', JSON.stringify(input.plan))
 			assert.equal(typeof input.plan, 'string')
 			assert.match(input.plan as string, new RegExp(file.replace('.', '\\.')))
-			const approved = await h.watcher.act({ itemId: plan.id, rev: plan.rev, action: { type: 'allow' } })
+			const approved = await h.watcher.act({ itemId: plan.id, action: { type: 'allow' } })
 			assert.equal(approved.ok, true, JSON.stringify(approved))
 			// Approving leaves plan mode for acceptEdits (setMode rides on the allow), so the write
 			// should not ask; anything that still does is allowed from the dock too.
@@ -412,7 +409,7 @@ test(
 			await h.until(
 				() => {
 					const next = h.items().find(item => item.kind === 'ask' && item.state === 'open' && item.id !== plan.id)
-					if (next) void h.watcher.act({ itemId: next.id, rev: next.rev, action: { type: 'allow' } })
+					if (next) void h.watcher.act({ itemId: next.id, action: { type: 'allow' } })
 					return existsSync(target)
 				},
 				'planned file written',
@@ -469,7 +466,6 @@ test(
 			h.typed.set(id, [])
 			const afterKill = await h.watcher.act({
 				itemId: one.id,
-				rev: one.rev,
 				action: { type: 'prompt', text: 'echo SHOULD-NOT-RUN' },
 			})
 			console.log('[life] reply after kill -9:', JSON.stringify(afterKill))
@@ -484,7 +480,6 @@ test(
 			h.typed.set(id, [])
 			const afterExit = await h.watcher.act({
 				itemId: two.id,
-				rev: two.rev,
 				action: { type: 'prompt', text: 'echo SHOULD-NOT-RUN' },
 			})
 			console.log('[life] reply after /exit:', JSON.stringify(afterExit))

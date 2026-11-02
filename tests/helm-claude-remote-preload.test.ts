@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
+import { until } from './helpers/agent-dock'
 
 const require = createRequire(import.meta.url)
 const { helmClaudePlan, hooksSettings, holdLifeline, CLAUDE_ENTRY, REMOTE_ENV } =
@@ -148,10 +149,7 @@ test('lifeline: one attach line held open, reconnected after the hub goes away',
 		})
 		return new Promise<typeof server>(resolve => server.listen(path, () => resolve(server)))
 	}
-	const wait = async (probe: () => boolean) => {
-		for (let i = 0; i < 100 && !probe(); i++) await new Promise(resolve => setTimeout(resolve, 50))
-		assert.ok(probe())
-	}
+	const wait = (probe: () => boolean) => until(probe, 'the lifeline', 5_000)
 	let server = await listen()
 	try {
 		holdLifeline(path, 'v1.work.t.mac', 4242)

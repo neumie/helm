@@ -1,4 +1,4 @@
-// `helm dock`: read-only view of the Helm agent dock (slice 1) for the
+// `helm dock`: read-only view of the Helm agent dock for the
 // dispatcher agent. Reads the file spool the desktop app writes under
 // <Helm userData>/agent-dock (see src/agent-dock/spool.ts). Never answers,
 // prompts or acts; `show` reads the full question/turn text live (never spooled
@@ -15,9 +15,11 @@ import {
 	CLAUDE_REMOTE_ENV,
 	claudeHubReadReplySchema,
 	claudeHubRequest,
+	dockSourceOfSessionKey,
 	helmDockProfileId,
 	readClaudeHubOwnerFile,
 } from '../agent-dock/claude-hub-wire.js'
+import { DOCK_SOURCE_TEXT, type DockSourceId } from '../agent-dock/dock-vocabulary.js'
 import {
 	SPOOL_CURSOR_FILE,
 	SPOOL_EVENTS_FILE,
@@ -34,6 +36,7 @@ import {
 	readSpoolSnapshot,
 	writePrivateFileAtomic,
 } from '../agent-dock/spool.js'
+import { boundText } from '../agent-dock/text.js'
 import { OkenaClient } from '../extensions/okena/client.js'
 
 export const DOCK_HELP = `Usage: helm dock <command> [options]
@@ -56,7 +59,7 @@ Commands:
 Options:
   --json         Machine-readable output (ls, show)
   --all          ls: include resolved items from the last 24 h
-  --no-live      show: spool data only, no Okena read
+  --no-live      show: spool data only, no live source read
   --cursor FILE  watch: cursor file (default <dir>/dispatcher.cursor)
   --dir DIR      Spool directory (default $HELM_AGENT_DOCK_DIR or
                  <appData>/Helm/agent-dock)
@@ -111,8 +114,8 @@ export function helmHubReader(dir: string, profile: string): DockOkenaReader {
 	}
 }
 
-const sourceOf = (session: SpoolSession | undefined, key: string): 'okena' | 'helm' =>
-	session?.source ?? (key.startsWith('helm:') ? 'helm' : 'okena')
+const sourceOf = (session: SpoolSession | undefined, key: string): DockSourceId =>
+	session?.source ?? dockSourceOfSessionKey(key)
 
 const valueOptions = new Set(['--cursor', '--dir'])
 const flagOptions = new Set(['--json', '--all', '--no-live', '--help', '-h'])
@@ -150,20 +153,13 @@ const clock = (at: number): string => {
 	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-/** Plain text for untrusted agent content: controls stripped except newline/tab, bounded. */
-function plainText(text: string, max: number): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
-	const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-	return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`
-}
-
 const sessionLabel = (session: SpoolSession | undefined, key: string): string =>
 	session ? `${session.project}/${session.name}` : key
 
 function sessionRef(
 	snapshot: SpoolSnapshot,
 	item: SpoolItem,
-): { source: 'okena' | 'helm'; profile: string; terminalId: string } | null {
+): { source: DockSourceId; profile: string; terminalId: string } | null {
 	const session = snapshot.sessions.find(candidate => candidate.key === item.session)
 	const source = sourceOf(session, item.session)
 	if (session) return { source, profile: session.profile, terminalId: session.terminalId }
@@ -218,9 +214,10 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 				: `${name}: not polled yet`
 	const perSource = snapshot.sources ?? {}
 	// Okena alone (or a spool from before Helm terminals were observed): the aggregate is Okena's.
+	const { okena, helm } = DOCK_SOURCE_TEXT
 	const lines = perSource.helm
-		? [...(perSource.okena ? [healthLine('Okena', perSource.okena)] : []), healthLine('Helm terminals', perSource.helm)]
-		: [healthLine('Okena', source)]
+		? [...(perSource.okena ? [healthLine(okena.label, perSource.okena)] : []), healthLine(helm.label, perSource.helm)]
+		: [healthLine(okena.label, source)]
 	const sessionOf = (key: string) => snapshot.sessions.find(session => session.key === key)
 	const itemLine = (item: SpoolItem) => {
 		const state = item.state === 'resolved' ? `resolved:${item.resolution?.by ?? '?'}` : item.state
@@ -238,7 +235,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 				? `NEEDS YOU: ${blind}`
 				: source.state === 'ok'
 					? 'NEEDS YOU: nothing open'
-					: `NEEDS YOU: unknown (${perSource.helm ? 'a source' : 'Okena'} not observed)`,
+					: `NEEDS YOU: unknown (${perSource.helm ? 'a source' : okena.label} not observed)`,
 	)
 	for (const item of needs) lines.push(itemLine(item))
 	const resolved = items.filter(item => item.state === 'resolved')
@@ -299,7 +296,7 @@ async function readLive(dir: string, snapshot: SpoolSnapshot, item: SpoolItem, d
 		return { kind: 'turn', found: false, reason: 'the pane now runs a different Claude session' }
 	const entry = page.entries.find(candidate => candidate.kind === 'assistant' && candidate.uuid === item.assistantUuid)
 	return entry && typeof entry.text === 'string'
-		? { kind: 'turn', found: true, text: plainText(entry.text, LIVE_TURN_MAX) }
+		? { kind: 'turn', found: true, text: boundText(entry.text, LIVE_TURN_MAX) }
 		: { kind: 'turn', found: false, reason: 'message is not in the latest transcript page' }
 }
 
@@ -342,7 +339,7 @@ async function runShow(dir: string, idArg: string | undefined, flags: Set<string
 	if (live?.kind === 'ask') {
 		if (live.open) {
 			lines.push(`tool: ${live.tool}`, 'input (untrusted agent data):')
-			lines.push(plainText(JSON.stringify(live.input, null, 2) ?? 'null', LIVE_INPUT_MAX))
+			lines.push(boundText(JSON.stringify(live.input, null, 2) ?? 'null', LIVE_INPUT_MAX))
 		} else
 			lines.push(
 				`${sourceOf(session, item.session) === 'helm' ? 'Helm' : 'Okena'} no longer shows this dialog open (answered elsewhere or pending refresh).`,

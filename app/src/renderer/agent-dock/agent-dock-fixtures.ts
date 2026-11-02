@@ -161,6 +161,7 @@ function poll(
 ): AgentDockObservation & { type: 'poll' } {
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: { ok: true, body: okenaState(version, live) },
 		terminals: live.map(({ pane, body, transcript: page }) => ({
@@ -173,6 +174,7 @@ function poll(
 
 const down = (error: string): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error },
 	terminals: [],
@@ -846,8 +848,6 @@ export function createAgentDockFixture(
 						ok: false,
 						outcome: { status: 'refused', reason: 'not_open', detail: 'not open for an answer right now' },
 					}
-				if (request.rev !== undefined && request.rev !== item.rev)
-					return { ok: false, outcome: { status: 'refused', reason: 'changed', detail: 'it changed since you looked' } }
 				apply({ type: 'act.sending', itemId: item.id, ...actionKind(request.action) })
 				await wait(FIXTURE_ACT_STEP_MS)
 				let outcome: DockActOutcome

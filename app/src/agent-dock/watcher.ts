@@ -7,7 +7,8 @@
 // stream) must still get events while the dock is collapsed, and one GET
 // /v1/state + per-pane detail every 5 s is cheap. Ticks never overlap.
 //
-// Disk (`<userData>/agent-dock`, 0700; files 0600, atomic replace):
+// Disk (`<userData>/agent-dock`, 0700; files 0600, atomic replace; shapes from
+// spool-projection.ts):
 //   state.json     counters (item id, event seq), seen assistant uuids, 24 h resolved ledger (heads only)
 //   snapshot.json  spool view for the CLI; rewritten on change or every SNAPSHOT_REFRESH_MS
 //   events.ndjson  appended events, ≤300-char lines, monotonic seq, rotated per local day
@@ -20,17 +21,15 @@
 import { rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { dockSourceOfSessionKey } from '../../../src/agent-dock/claude-hub-wire'
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import {
-	ITEM_HEAD_MAX,
 	SPOOL_EVENTS_FILE,
 	SPOOL_SNAPSHOT_FILE,
 	SPOOL_STATE_FILE,
 	type SpoolItem,
-	type SpoolSnapshot,
 	appendPrivateText,
 	ensurePrivateDir,
-	formatEventLine,
-	oneLine,
 	readSpoolFile,
 	rotateSpoolEvents,
 	spoolHighWater,
@@ -47,25 +46,17 @@ import {
 	type DockAction,
 	type DockItem,
 	type DockRefusalReason,
-	type DockSession,
 	type DockSourceId,
 	agentDockPersistedSchema,
 	parseAgentDockActRequest,
 } from './model'
-import {
-	type AgentDockState,
-	RESOLVED_RETENTION_MS,
-	agentDockPersisted,
-	agentDockSnapshot,
-	createAgentDockState,
-	reduce,
-} from './reduce'
+import { type AgentDockState, agentDockPersisted, agentDockSnapshot, createAgentDockState, reduce } from './reduce'
+import { contentDigest, dockEventLine, dockSpoolItem, dockSpoolSnapshot, pruneLedger } from './spool-projection'
 
 export const FOCUSED_INTERVAL_MS = 1_500
 export const UNFOCUSED_INTERVAL_MS = 5_000
 export const BACKGROUND_INTERVAL_MS = 5_000
 export const SNAPSHOT_REFRESH_MS = 10_000
-export const LEDGER_MAX = 200
 
 const watcherStateSchema = agentDockPersistedSchema.extend({
 	nextSeq: z.number().int().positive().default(1),
@@ -81,9 +72,9 @@ export interface AgentDockTarget {
 }
 
 export interface AgentDockObservationSource {
-	/** One tick: a poll per source (the composite returns one per source). */
-	observe(state: AgentDockState, now: number): Promise<AgentDockObservation | AgentDockObservation[]>
-	/** Slice 2: CAS read + source write for one dock answer. Absent = the dock cannot answer. */
+	/** One tick: a poll per source (CompositeDockSource). */
+	observe(state: AgentDockState, now: number): Promise<AgentDockObservation[]>
+	/** CAS read + source write for one dock answer. Absent = the dock cannot answer. */
 	act?(target: AgentDockTarget, item: DockItem, action: DockAction): Promise<DockActOutcome>
 	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
 	expedite?(target: AgentDockTarget, until: number): void
@@ -103,171 +94,6 @@ export interface AgentDockWatcherOptions {
 	pid?: number
 	log?: (message: string) => void
 }
-
-// ---------------------------------------------------------------------------
-// Pure spool projections (exported for tests)
-// ---------------------------------------------------------------------------
-
-const record = (value: unknown): Record<string, unknown> | null =>
-	value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
-
-/**
- * ≤120-char item label built only from non-agent facts (tool name, counts): this
- * string reaches state.json, snapshot.json and events.ndjson, so it must never
- * carry dialog `tool_input` (question text, permission descriptions) or turn
- * text. Full text stays in memory/IPC; `helm dock show` reads it live.
- */
-export function dockItemHead(item: DockItem): string {
-	const fact = item.fact
-	if (fact.kind === 'turn') {
-		const parts = ['Turn ended']
-		if (fact.hadBackground) parts.push('background still running')
-		return oneLine(parts.join(' · '), ITEM_HEAD_MAX)
-	}
-	const input = record(fact.input)
-	if (fact.tool === 'AskUserQuestion') {
-		const questions = Array.isArray(input?.questions) ? input.questions : []
-		const first = record(questions[0])
-		const parts = ['AskUserQuestion', `${questions.length} question${questions.length === 1 ? '' : 's'}`]
-		if (Array.isArray(first?.options)) parts.push(`${first.options.length} opts`)
-		return parts.join(' · ')
-	}
-	if (fact.tool === 'ExitPlanMode') return 'ExitPlanMode: plan ready for review'
-	return oneLine(`Permission: ${fact.tool}`, ITEM_HEAD_MAX)
-}
-
-export function dockSpoolItem(item: DockItem): SpoolItem {
-	const fact = item.fact
-	const base: SpoolItem = {
-		id: item.id,
-		key: item.key,
-		kind: item.kind,
-		state: item.state,
-		session: item.session,
-		openedAt: item.openedAt,
-		head: dockItemHead(item),
-		rev: item.rev,
-		...(item.orphanedAt !== undefined ? { orphanedAt: item.orphanedAt } : {}),
-		...(item.resolution ? { resolution: { ...item.resolution } } : {}),
-		// Kind and status only: never the answer, never Okena's error words (they reach disk).
-		...(item.receipt
-			? {
-					receipt: {
-						action: item.receipt.action,
-						status: item.receipt.status,
-						at: item.receipt.at,
-						...(item.receipt.always ? { always: true } : {}),
-						...(item.receipt.delivery ? { delivery: item.receipt.delivery } : {}),
-						...(item.receipt.reason ? { reason: item.receipt.reason } : {}),
-					},
-				}
-			: {}),
-	}
-	if (fact.kind === 'ask') return { ...base, tool: fact.tool, dialogId: fact.dialogId, createdAtMs: fact.createdAtMs }
-	return {
-		...base,
-		assistantUuid: fact.assistantUuid,
-		endedAt: fact.endedAt,
-		hadBackground: fact.hadBackground,
-		...(fact.sessionId ? { sessionId: fact.sessionId } : {}),
-	}
-}
-
-export function dockSpoolSnapshot(
-	snapshot: AgentDockSnapshot,
-	ledger: readonly SpoolItem[],
-	writtenAt: number,
-	pid: number,
-): SpoolSnapshot {
-	const items = snapshot.items.map(dockSpoolItem)
-	const live = new Set(items.map(item => item.id))
-	const earlier = ledger
-		.filter(item => !live.has(item.id))
-		.map(item => ({ ...item, fromLedger: true }))
-		.sort((a, b) => (b.resolution?.at ?? 0) - (a.resolution?.at ?? 0))
-	return {
-		version: 1,
-		pid,
-		writtenAt,
-		generatedAt: snapshot.generatedAt,
-		source: { ...snapshot.source },
-		sources: Object.fromEntries(Object.entries(snapshot.sources).map(([id, health]) => [id, { ...health }])),
-		// `source` only for Helm sessions: an Okena-only spool stays byte-identical (absent = okena).
-		sessions: snapshot.sessions.map(({ source, ...session }) => ({
-			...session,
-			...(source === 'okena' ? {} : { source }),
-			prLinks: session.prLinks.map(link => ({ ...link })),
-		})),
-		items: [...items, ...earlier],
-	}
-}
-
-const where = (session: DockSession | undefined): string | undefined =>
-	session ? oneLine(`${session.project}/${session.name}`, 60) : undefined
-
-/** One events.ndjson line (≤300 chars) for a reducer event. */
-export function dockEventLine(
-	event: AgentDockEvent,
-	seq: number,
-	items: readonly DockItem[],
-	sessions: readonly DockSession[],
-): string {
-	if (event.t === 'item.opened') {
-		const item = items.find(candidate => candidate.id === event.id)
-		return formatEventLine({
-			seq,
-			t: event.t,
-			at: event.at,
-			id: event.id,
-			kind: event.kind,
-			where: where(sessions.find(session => session.key === event.session)),
-			head: item ? dockItemHead(item) : undefined,
-			session: event.session,
-		})
-	}
-	if (event.t === 'source.health') {
-		return formatEventLine({
-			seq,
-			t: event.t,
-			at: event.at,
-			state: event.state,
-			...(event.source && event.source !== 'okena' ? { source: event.source } : {}),
-			...(event.detail ? { detail: oneLine(event.detail, 160) } : {}),
-		})
-	}
-	return formatEventLine({ seq, ...event })
-}
-
-function pruneLedger(ledger: SpoolItem[], now: number): SpoolItem[] {
-	return ledger
-		.filter(item => item.resolution && now - item.resolution.at <= RESOLVED_RETENTION_MS)
-		.sort((a, b) => (b.resolution?.at ?? 0) - (a.resolution?.at ?? 0))
-		.slice(0, LEDGER_MAX)
-}
-
-/** Digest of what the CLI/renderer care about, ignoring per-tick freshness stamps. */
-function contentDigest(snapshot: AgentDockSnapshot): string {
-	return JSON.stringify({
-		source: { state: snapshot.source.state, detail: snapshot.source.detail },
-		sources: Object.entries(snapshot.sources).map(([id, health]) => [id, health?.state, health?.detail]),
-		sessions: snapshot.sessions.map(session => ({ ...session, observedAt: 0 })),
-		items: snapshot.items.map(item => [
-			item.id,
-			item.rev,
-			item.state,
-			item.resolution?.by,
-			item.fact.kind,
-			item.receipt?.status,
-			item.receipt?.reason,
-			item.receipt?.detail,
-			item.receipt?.delivery,
-		]),
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Watcher
-// ---------------------------------------------------------------------------
 
 export class AgentDockWatcher {
 	private state: AgentDockState
@@ -373,27 +199,16 @@ export class AgentDockWatcher {
 		})
 		const parsed = parseAgentDockActRequest(request)
 		if (!parsed.ok) return refused('invalid', parsed.error)
-		const { itemId, rev, action } = parsed.value
+		const { itemId, action } = parsed.value
 		if (this.stopped) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock stopped.' } }
 		if (this.acting) return refused('in_flight')
 		const item = this.state.items.find(candidate => candidate.id === itemId)
 		if (!item) return refused('unknown_item')
 		if (item.state !== 'open') return refused(item.state === 'resolved' ? 'gone' : 'not_open')
-		if (rev !== undefined && rev !== item.rev) return refused('changed')
 		const session = this.state.sessions[item.session]?.session
-		// Okena wording unchanged; Helm terminals name their own source.
-		if (!session)
-			return refused(
-				'gone',
-				item.session.startsWith('helm:')
-					? 'The agent is no longer listed in Helm terminals.'
-					: 'The agent is no longer listed by Okena.',
-			)
+		if (!session) return refused('gone', DOCK_SOURCE_TEXT[dockSourceOfSessionKey(item.session)].notListed)
 		if (this.state.sources[session.source]?.health.state !== 'ok')
-			return refused(
-				'source_down',
-				session.source === 'okena' ? undefined : 'Helm terminals are unreachable; answer in the terminal',
-			)
+			return refused('source_down', DOCK_SOURCE_TEXT[session.source].sourceDown)
 		const source = this.options.source
 		if (!source.act) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot answer.' } }
 		const target: AgentDockTarget = { source: session.source, profile: session.profile, terminalId: session.terminalId }
@@ -442,7 +257,7 @@ export class AgentDockWatcher {
 		try {
 			const observed = await this.options.source.observe(this.state, this.now())
 			if (this.stopped) return
-			for (const observation of Array.isArray(observed) ? observed : [observed]) this.apply(observation)
+			for (const observation of observed) this.apply(observation)
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
 			await this.flush()

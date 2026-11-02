@@ -4,7 +4,7 @@
 // then the Agents entry, the sources' health dot and ⌘⇧J — and, when an entry is opened, a pane
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
-// happens in the pane (slice 2) and the receipt shows in place; entries keep their
+// happens in the pane and the receipt shows in place; entries keep their
 // slots while the pane is open. Layout, focus return and ⌘⇧J belong to
 // agent-dock-layout.ts. Agent text is untrusted and always rendered as plain React
 // text (never markup), bounded and control-stripped.
@@ -75,7 +75,7 @@ export interface AgentDockProps {
 	handle?: MutableRefObject<AgentDockHandle | null>
 	onAck(itemId: number): Promise<boolean>
 	/** Jakub answered from the pane (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
-	onAct?(itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult>
+	onAct?(itemId: number, action: DockAction): Promise<AgentDockActResult>
 	/** Most px the pane may take so the terminal keeps its rows (the layout measures #right); null = no limit known. */
 	paneRoom?: () => number | null
 	/** After the pane opens or closes: the terminal row changed height once, refit it. */
@@ -320,7 +320,7 @@ export function AgentDock({
 		const focused = pane?.ownerDocument.activeElement
 		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
 		setSubmitting(prev => new Set(prev).add(item.id))
-		void onAct(item.id, item.rev, action)
+		void onAct(item.id, action)
 			.catch(
 				(error: unknown): AgentDockActResult => ({
 					ok: false,
@@ -414,7 +414,7 @@ export function AgentDock({
 		step(delta)
 	}
 
-	// The row's name says what it is and the state in words (the summary row of earlier docks).
+	// The row's name says what it is and the state in words.
 	const dockName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
 	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
 

@@ -594,7 +594,7 @@ test('answering a question from the pane: 1-9 pick, Enter submits, Sending… th
 	await expect(entry).toContainText('✓ answered')
 	await expect(entry).toHaveAttribute('data-receipt', 'success')
 	expect(await acts(page)).toEqual([
-		{ itemId, rev: 1, action: { type: 'answer', picks: [{ options: [1] }, { options: [0] }] } },
+		{ itemId, action: { type: 'answer', picks: [{ options: [1] }, { options: [0] }] } },
 	])
 	await expect(rail).toHaveAttribute('aria-label', /^Agent dock, 2 need you/)
 	await expect(input).toBeFocused()
@@ -631,7 +631,7 @@ test('"Other…" takes free text per question; typing digits in it types, never 
 	await pane.getByRole('button', { name: 'Submit answers' }).click()
 	await expect(rail.locator(`.agent-dock-entry[data-item-id="${itemId}"]`)).toContainText('✓ answered')
 	expect(await acts(page)).toEqual([
-		{ itemId, rev: 1, action: { type: 'answer', picks: [{ options: [], other: 'Zelená 2' }, { options: [1] }] } },
+		{ itemId, action: { type: 'answer', picks: [{ options: [], other: 'Zelená 2' }, { options: [1] }] } },
 	])
 	expect(await terminalWrites(page)).toBe(0)
 })
@@ -659,7 +659,6 @@ test('permission: Deny with a message, refused when it was answered elsewhere; A
 	await expect(entry).toHaveAttribute('data-receipt', 'danger')
 	expect((await acts(page)).at(-1)).toEqual({
 		itemId,
-		rev: 1,
 		action: { type: 'deny', message: 'use deploy:preview', confirmed: true },
 	})
 
@@ -694,9 +693,7 @@ test('reply to a finished turn: risky words ask first; unconfirmed turns amber a
 	await expect(entry).toContainText('Sending…')
 	await expect(entry).toContainText('sent, unconfirmed')
 	await expect(entry).toHaveAttribute('data-receipt', 'warn')
-	expect(await acts(page)).toEqual([
-		{ itemId, rev: 1, action: { type: 'prompt', text: 'Yes, push it 2', confirmed: true } },
-	])
+	expect(await acts(page)).toEqual([{ itemId, action: { type: 'prompt', text: 'Yes, push it 2', confirmed: true } }])
 	// The 2xx came back: focus goes back to the terminal; nothing was typed there by the dock itself.
 	await expect(input).toBeFocused()
 	expect(await terminalWrites(page)).toBe(0)

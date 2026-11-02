@@ -266,8 +266,8 @@ const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneratio
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
 const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
-// Okena Claude agent dock (read-only slice 1): main polls Okena's structured
-// Claude Remote API and spools to <userData>/agent-dock for `helm dock`.
+// Agent dock: main polls Okena's Claude Remote API (and Helm's own Claude hub,
+// below), spools to <userData>/agent-dock for `helm dock`, and answers via act().
 // Harness runs (screenshot, attestation, custom/tmp userData) never poll the
 // operator's live Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev
 // instances do by default); HELM_AGENT_DOCK=0 disables it. See startupPolicy().
@@ -322,18 +322,8 @@ const agentDockWatcher = launchPolicy.agentDock
 	? new AgentDockWatcher({
 			dir: path.join(app.getPath('userData'), 'agent-dock'),
 			source: new CompositeDockSource([
-				{ id: 'okena', source: new OkenaClaudeSource(new OkenaClient()) },
-				...(claudeRemote
-					? [
-							{
-								id: 'helm' as const,
-								source: new OkenaClaudeSource(claudeRemote.hub, {
-									name: 'Helm terminals',
-									notRunning: "Helm's Claude hub is not listening",
-								}),
-							},
-						]
-					: []),
+				new OkenaClaudeSource(new OkenaClient()),
+				...(claudeRemote ? [new OkenaClaudeSource(claudeRemote.hub, 'helm')] : []),
 			]),
 			publish: snapshot =>
 				sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
+import { okenaFixture } from './helpers/agent-dock'
 
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
@@ -30,9 +31,7 @@ const {
 	reduce,
 } = reduceModule as ReduceModule
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const SHOW_ASK = fixture('show-ask.json')
@@ -105,6 +104,7 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: {
 			ok: true,
@@ -123,6 +123,7 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 }
 const down = (error = 'connect ECONNREFUSED'): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error },
 	terminals: [],
@@ -501,7 +502,6 @@ test('real shape: a terminal reply never read while the agent works closes the t
 	])
 	assert.deepEqual(early.events, [])
 	assert.equal(itemsOf(early.state, 'turn')[0]?.state, 'open')
-	assert.equal(itemsOf(early.state, 'turn')[0]?.rev, 1)
 
 	const late = reduce(early.state, poll(working()), at + 1500 + TURN_RESUMED_MS)
 	assert.deepEqual(late.events, [{ t: 'item.resolved', at: at + 1500 + TURN_RESUMED_MS, id: 1, by: 'superseded' }])
@@ -813,4 +813,101 @@ test('snapshot orders open asks, orphaned, open turns, then recent; persistence 
 	assert.deepEqual(restored.sources, {})
 	assert.equal(restored.items.length, 0)
 	assert.equal(restored.nextItemId, withAsks.nextItemId)
+})
+
+// --- profile switch -----------------------------------------------------------
+
+for (const [source, profileA, profileB] of [
+	['okena', 'p1', 'p2'],
+	['helm', 'helm:work', 'helm:home'],
+] as const) {
+	const pollAs = (profile: string, detail: Json | null): AgentDockObservation => ({
+		...poll(detail),
+		source,
+		profile,
+	})
+
+	test(`${source}: a profile switch orphans the old profile's open asks instead of freezing them`, () => {
+		const keyA = sessionKey(profileA, TID)
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 600_000, pollAs(profileB, null)],
+		])
+		const item = itemsOf(state, 'ask')[0]
+		assert.equal(item?.state, 'orphaned')
+		assert.equal(state.sessions[keyA]?.session.status, 'unknown')
+		// Nothing resolves from not being observed: the agent may still wait there.
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned'],
+		)
+		// Jakub can clear it; an open ask could not be acked.
+		const acked = reduce(state, { type: 'ack', itemId: item?.id ?? 0 }, T0 + 600_001)
+		assert.equal(acked.state.items[0]?.resolution?.by, 'acked')
+		// Nothing live any more: the next poll of the other profile drops the row.
+		assert.equal(reduce(acked.state, pollAs(profileB, null), T0 + 601_500).state.sessions[keyA], undefined)
+	})
+
+	test(`${source}: switching back with the dialog still listed reopens the ask`, () => {
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, pollAs(profileA, ask())],
+		])
+		const items = itemsOf(state, 'ask')
+		assert.equal(items.length, 1)
+		assert.equal(items[0]?.state, 'open')
+		assert.equal(items[0]?.orphanedAt, undefined)
+		assert.equal(state.sessions[sessionKey(profileA, TID)]?.session.status, 'waiting')
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned', 'item.reopened'],
+		)
+	})
+
+	test(`${source}: transcript activity never closes an orphaned ask whose dialog is listed again`, () => {
+		const withPage = (profile: string, transcript: Json): AgentDockObservation => ({
+			...poll(ask(), { transcript }),
+			source,
+			profile,
+		})
+		const { state } = run(createAgentDockState(null, T0), [
+			[T0, withPage(profileA, fullLog())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, withPage(profileA, page([assistant('after-switch')], { cursor: 999_999 }))],
+		])
+		assert.deepEqual(
+			itemsOf(state, 'ask').map(item => item.state),
+			['open'],
+		)
+	})
+}
+
+// --- boundary -------------------------------------------------------------------
+
+test('the dock core never imports terminal output, pty or screen code', () => {
+	const app = new URL('../app/src/', import.meta.url)
+	const files = [
+		...readdirSync(new URL('agent-dock/', app))
+			.filter(name => name.endsWith('.ts'))
+			.map(name => new URL(`agent-dock/${name}`, app)),
+		new URL('claude-remote/hub-core.ts', app),
+		new URL('claude-remote/hub.ts', app),
+	]
+	const forbidden = /node-pty|xterm|session-buffer|pty-host|\/pty\b|\/sessions?\//
+	for (const bad of ['node-pty', '@xterm/headless', '../session-buffer', './pty-host', '../sessions/registry'])
+		assert.match(bad, forbidden)
+	for (const file of files) {
+		const source = readFileSync(file, 'utf8')
+		const specifiers = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map(
+			match => match[1] ?? match[2] ?? '',
+		)
+		for (const specifier of specifiers)
+			assert.doesNotMatch(
+				specifier,
+				forbidden,
+				`${file.pathname}: AGENTS.md: the dock never infers agent state from terminal output/screen/pty liveness`,
+			)
+	}
 })

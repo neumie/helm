@@ -1,12 +1,27 @@
 // Agent dock contract: Okena Claude Remote wire schemas (zod, fail closed) plus
 // the dock's own session/item/snapshot types. Pure: no IO, no Electron. Main
-// (watcher), the renderer (`import type` only) and the CLI share this file.
+// (watcher, sources, act) and the renderer (`import type` only) share this file;
+// the CLI and the spool share only src/agent-dock/ (dock-vocabulary.ts, spool.ts).
 //
 // Items open and close only from observed Okena facts, Jakub's ack, or an
-// answer Jakub sent from the dock that Okena then shows taking effect (slice 2).
+// answer Jakub sent from the dock that Okena then shows taking effect.
 // Never infer agent state from screen contents (AGENTS.md).
 
 import { z } from 'zod'
+import type {
+	DOCK_ACTION_KINDS,
+	DOCK_ITEM_KINDS,
+	DOCK_ITEM_STATES,
+	DOCK_PROMPT_DELIVERIES,
+	DOCK_RECEIPT_STATUSES,
+	DOCK_REFUSAL_REASONS,
+	DOCK_RESOLUTION_BY,
+	DOCK_SESSION_STATUSES,
+	DOCK_SOURCE_HEALTH_STATES,
+	DockSourceId,
+} from '../../../src/agent-dock/dock-vocabulary'
+
+export { DOCK_RISKY_PROMPT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 
 // ---------------------------------------------------------------------------
 // Okena wire schemas (okena f67bbf7b: okena-core/src/{api,claude_remote}.rs).
@@ -46,7 +61,7 @@ export const okenaClaudeDialogSchema = z.object({
 })
 export type OkenaClaudeDialog = z.infer<typeof okenaClaudeDialogSchema>
 
-export const okenaClaudePrLinkSchema = z.object({
+const okenaClaudePrLinkSchema = z.object({
 	number: u64,
 	url: z.string().url(),
 	repository: z.string(),
@@ -159,23 +174,11 @@ export type SessionKey = string
 
 export const sessionKey = (profile: string, terminalId: string): SessionKey => `${profile}:${terminalId}`
 
-/**
- * Where a dock session is observed: Okena Claude Remote (`okena`) or Helm's own
- * Claude hub for Claude Code in Helm terminals (`helm`; profile `helm:<profileId>`,
- * so its keys are `helm:<profileId>:<dtach session id>`). Both speak the same
- * Okena-shaped wire; the reducer keeps epoch/seed/health per source.
- */
-export type DockSourceId = 'okena' | 'helm'
-export const DOCK_SOURCES: readonly DockSourceId[] = ['okena', 'helm']
-/** Words for a source in dock/CLI text. */
-export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+// Word lists (sources, statuses, states, reasons, …) live in
+// src/agent-dock/dock-vocabulary.ts, shared with the spool schemas and the renderer.
 
-/**
- * working: busy. background: not busy but subagents still running. idle: not busy.
- * waiting: an Okena dialog is open. unknown: busy missing or detail unparseable/unfetched.
- * unreachable: Okena itself is down (frozen row).
- */
-export type DockSessionStatus = 'working' | 'background' | 'idle' | 'waiting' | 'unknown' | 'unreachable'
+/** See DOCK_SESSION_STATUSES. */
+export type DockSessionStatus = (typeof DOCK_SESSION_STATUSES)[number]
 
 export interface DockPrLink {
 	number: number
@@ -211,16 +214,11 @@ export interface DockSession {
 	channelAttached: boolean
 }
 
-export type DockItemKind = 'ask' | 'turn'
-/**
- * open: owes Jakub. sending: Jakub answered from the dock; Helm is sending it or
- * waiting to see it land. unconfirmed: Okena took it but Helm has not seen the
- * dialog close / a user entry within ACT_CONFIRM_MS (amber; stays until observed
- * or acked). orphaned: sticky until transcript activity or ack.
- */
-export type DockItemState = 'open' | 'sending' | 'unconfirmed' | 'orphaned' | 'resolved'
-/** `dock`: Jakub's dock answer, observed taking effect. */
-export type DockResolutionBy = 'outside' | 'replied' | 'superseded' | 'session_ended' | 'acked' | 'dock'
+export type DockItemKind = (typeof DOCK_ITEM_KINDS)[number]
+/** See DOCK_ITEM_STATES. */
+export type DockItemState = (typeof DOCK_ITEM_STATES)[number]
+/** See DOCK_RESOLUTION_BY. */
+export type DockResolutionBy = (typeof DOCK_RESOLUTION_BY)[number]
 
 export interface DockAskFact {
 	kind: 'ask'
@@ -240,8 +238,6 @@ export interface DockAskFact {
 	suggestionsTruncated?: true
 	createdAtMs: number
 }
-
-export { PERMISSION_SUGGESTIONS_MAX } from './review'
 
 export interface DockTurnFact {
 	kind: 'turn'
@@ -268,11 +264,6 @@ export interface DockItem {
 	key: string
 	kind: DockItemKind
 	session: SessionKey
-	/**
-	 * Fact version for the act CAS; acts carry the rev they saw. Starts at 1 and nothing bumps it
-	 * today: a turn whose agent moves on closes (`superseded`/`replied`) instead of changing in place.
-	 */
-	rev: number
 	openedAt: number
 	fact: DockItemFact
 	state: DockItemState
@@ -283,12 +274,12 @@ export interface DockItem {
 }
 
 // ---------------------------------------------------------------------------
-// Dock actions (slice 2): Jakub answers from a card. Main re-reads Okena (CAS)
+// Dock actions: Jakub answers from the dock. Main re-reads Okena (CAS)
 // before every effect; answer text lives only in this request and the one
 // Okena POST built from it, never in state, events or disk.
 // ---------------------------------------------------------------------------
 
-export type DockActionKind = 'answer' | 'allow' | 'deny' | 'prompt'
+export type DockActionKind = (typeof DOCK_ACTION_KINDS)[number]
 
 /** One AskUserQuestion answer, by position: picked option indexes (several only for multiSelect) and/or Other text. */
 export interface DockAnswerPick {
@@ -311,26 +302,13 @@ export type DockAction =
 
 export interface AgentDockActRequest {
 	itemId: number
-	/** The item rev the renderer showed; a different current rev refuses the act. */
-	rev?: number
 	action: DockAction
 }
 
-export type DockRefusalReason =
-	/** The dialog/turn is no longer there: answered elsewhere. */
-	| 'gone'
-	/** The question, its options or the turn changed since it was shown. */
-	| 'changed'
-	/** The agent is working again; a reply would be queued behind work Jakub has not seen. */
-	| 'busy'
-	/** Not answerable from the dock now (sending, unconfirmed, orphaned, resolved). */
-	| 'not_open'
-	| 'unknown_item'
-	| 'invalid'
-	| 'source_down'
-	| 'in_flight'
+/** See DOCK_REFUSAL_REASONS. */
+export type DockRefusalReason = (typeof DOCK_REFUSAL_REASONS)[number]
 
-export type OkenaPromptDelivery = 'channel' | 'pty' | 'queued'
+export type OkenaPromptDelivery = (typeof DOCK_PROMPT_DELIVERIES)[number]
 
 /** What one act did (main → reducer and → renderer). `detail` is verbatim Okena/transport text, never answer text. */
 export type DockActOutcome =
@@ -342,7 +320,7 @@ export type DockActOutcome =
 
 export type AgentDockActResult = { ok: true; outcome: DockActOutcome } | { ok: false; outcome: DockActOutcome }
 
-export type DockReceiptStatus = 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed'
+export type DockReceiptStatus = (typeof DOCK_RECEIPT_STATUSES)[number]
 
 export interface DockReceipt {
 	action: DockActionKind
@@ -361,8 +339,6 @@ export interface DockReceipt {
 
 /** Okena accepted an answer but Helm has not observed it this long: unconfirmed (amber). */
 export const ACT_CONFIRM_MS = 10_000
-/** Free text to the agent (replies, deny messages, Other answers) that mentions these needs a second, explicit confirmation (renderer) and `confirmed` (main). */
-export const DOCK_RISKY_PROMPT = /deploy|prod|secret|push|merge/i
 /** Okena refuses prompts over 64 KiB (`MAX_PROMPT_BYTES`); Helm bounds by UTF-16 units under that. */
 export const DOCK_PROMPT_MAX = 16_384
 export const DOCK_MESSAGE_MAX = 4_096
@@ -399,7 +375,6 @@ const dockActionSchema = z.discriminatedUnion('type', [
 export const agentDockActRequestSchema = z
 	.object({
 		itemId: z.number().int().positive().safe(),
-		rev: z.number().int().positive().safe().optional(),
 		action: dockActionSchema,
 	})
 	.strict()
@@ -423,7 +398,7 @@ export function stableJson(value: unknown, depth = 0): string {
 	return JSON.stringify(value) ?? 'null'
 }
 
-export type AgentDockSourceState = 'pending' | 'ok' | 'down'
+export type AgentDockSourceState = (typeof DOCK_SOURCE_HEALTH_STATES)[number]
 
 /** Okena reachability. `pending` = never polled yet; the UI must not show "all clear" for it. */
 export interface AgentDockSourceHealth {
@@ -457,6 +432,8 @@ export type AgentDockEvent =
 	| { t: 'item.opened'; at: number; id: number; kind: DockItemKind; session: SessionKey; key: string }
 	| { t: 'item.resolved'; at: number; id: number; by: DockResolutionBy }
 	| { t: 'item.orphaned'; at: number; id: number }
+	/** An orphaned ask's dialog is listed again: it owes Jakub again. */
+	| { t: 'item.reopened'; at: number; id: number }
 	| { t: 'source.health'; at: number; state: 'ok' | 'down'; source?: DockSourceId; detail?: string }
 	/** A dock answer's end state. Never carries answer text or Okena error text (disk). */
 	| {
@@ -484,8 +461,8 @@ export interface ObservedClaudeTerminal {
 }
 
 export type AgentDockObservation =
-	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. Absent source = okena. */
-	| { type: 'poll'; source?: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
+	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. */
+	| { type: 'poll'; source: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
 	/** Jakub acked an item in the dock. */
 	| { type: 'ack'; itemId: number }
 	/** Jakub answered from the dock; main is about to run the CAS read and the Okena POST. */
@@ -494,8 +471,10 @@ export type AgentDockObservation =
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
 
 // ---------------------------------------------------------------------------
-// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids only.
-// Items, turn text and dialog input are never written to disk in slice 1.
+// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids (the
+// watcher adds its event seq and the resolved-item ledger).
+// Turn text and dialog input are never written to disk; see spool.ts for what
+// snapshot.json and events.ndjson hold.
 // ---------------------------------------------------------------------------
 
 export const agentDockPersistedSchema = z.object({

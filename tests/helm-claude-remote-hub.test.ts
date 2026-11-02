@@ -858,12 +858,12 @@ test('socket: a bad token is answered {} (permission) or ignored (event); the ow
 test('end to end: AskUserQuestion → dock ask item → act answer reaches the waiting hook; Stop → turn → reply typed', async () => {
 	const f = await hubFixture()
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			const reduced = reduce(state, { ...observation, source: 'helm' }, at)
+			const reduced = reduce(state, observation, at)
 			state = reduced.state
 			return reduced.events
 		}
@@ -931,7 +931,10 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			text: 'again',
 		})
 		assert.equal(again.status, 'failed')
-		assert.match(again.status === 'failed' ? again.detail : '', /^Helm terminals refused the reply \(409\)/)
+		assert.equal(
+			again.status === 'failed' ? again.detail : '',
+			'Helm terminals refused the reply (409): A reply is still being typed.',
+		)
 
 		// claude killed (-9) in the terminal: its lifeline closes, nothing is typed into the shell left behind.
 		await f.event(ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'thanks' }))
@@ -958,12 +961,12 @@ test('hub: a Helm-terminal session gets its cwd’s branch (read once per BRANCH
 		},
 	})
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			state = reduce(state, { ...observation, source: 'helm' }, at).state
+			state = reduce(state, observation, at).state
 		}
 		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
 		await tick(T0 + 1000)

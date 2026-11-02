@@ -173,7 +173,7 @@ export class OkenaClient {
 
 	private async authorizedFetch(path: string, init: RequestInit = {}, maxBytes?: number): Promise<Response> {
 		const creds = this.loadCredentials()
-		if (!creds) throw new Error('Okena not configured')
+		if (!creds) throw Object.assign(new Error('Okena not configured'), { code: OKENA_NOT_CONFIGURED })
 
 		const send = (c: OkenaCredentials) => {
 			const headers = new Headers(init.headers)
@@ -241,49 +241,47 @@ export class OkenaClient {
 	 * on transport failure, timeout, non-2xx status, oversized body or invalid
 	 * JSON; the caller validates the shape.
 	 */
-	async getJson(path: string, opts: OkenaReadOptions = {}): Promise<unknown> {
-		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
-		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
-		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
-		const route = path.split('?')[0]
-		const res = await this.authorizedFetch(path, { method: 'GET', signal }, maxBytes)
-		const text = await readBoundedText(res, maxBytes)
-		if (!res.ok) {
-			if (res.status === 401) throw new OkenaHttpError(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
-		}
-		try {
-			return JSON.parse(text) as unknown
-		} catch {
-			throw new Error(`Okena GET ${route} returned invalid JSON`)
-		}
+	getJson(path: string, opts: OkenaReadOptions = {}): Promise<unknown> {
+		return this.requestJson('GET', path, undefined, opts)
 	}
 
 	/**
 	 * Bounded JSON POST to an Okena route (agent-dock answers). Throws OkenaHttpError
 	 * with the status and Okena's verbatim plain-text reason on non-2xx; a timeout
-	 * surfaces as a `TimeoutError`/`AbortError` (the request may have landed).
+	 * surfaces as a `TimeoutError`/`AbortError` (the request may have landed). An
+	 * empty 2xx body is null.
 	 */
-	async postJson(path: string, body: unknown, opts: OkenaReadOptions = {}): Promise<unknown> {
+	postJson(path: string, body: unknown, opts: OkenaReadOptions = {}): Promise<unknown> {
+		return this.requestJson('POST', path, body, opts)
+	}
+
+	private async requestJson(
+		method: 'GET' | 'POST',
+		path: string,
+		body: unknown,
+		opts: OkenaReadOptions,
+	): Promise<unknown> {
 		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
 		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
 		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
 		const route = path.split('?')[0]
-		const res = await this.authorizedFetch(
-			path,
-			{ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal },
-			maxBytes,
-		)
+		const init: RequestInit =
+			method === 'POST'
+				? { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }
+				: { method, signal }
+		const res = await this.authorizedFetch(path, init, maxBytes)
 		const text = await readBoundedText(res, maxBytes)
 		if (!res.ok) {
-			if (res.status === 401) throw new OkenaHttpError(`Okena POST ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena POST ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
+			if (res.status === 401)
+				throw new OkenaHttpError(`Okena ${method} ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
+			const reason = text.slice(0, 200)
+			throw new OkenaHttpError(`Okena ${method} ${route} failed (${res.status}): ${reason}`, res.status, reason)
 		}
-		if (!text.trim()) return null
+		if (method === 'POST' && !text.trim()) return null
 		try {
 			return JSON.parse(text) as unknown
 		} catch {
-			throw new Error(`Okena POST ${route} returned invalid JSON`)
+			throw new Error(`Okena ${method} ${route} returned invalid JSON`)
 		}
 	}
 
@@ -325,7 +323,7 @@ export class OkenaClient {
 	 */
 	getClaudeTranscript(
 		terminalId: string,
-		query: { cursor?: number; sessionId?: string; agentId?: string } = {},
+		query: { cursor?: number; sessionId?: string } = {},
 		opts?: OkenaReadOptions,
 	): Promise<unknown> {
 		const params = new URLSearchParams()
@@ -333,7 +331,6 @@ export class OkenaClient {
 			params.set('cursor', String(query.cursor))
 			params.set('session_id', query.sessionId)
 		}
-		if (query.agentId) params.set('agent_id', query.agentId)
 		const search = params.size > 0 ? `?${params.toString()}` : ''
 		return this.getJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}/transcript${search}`, opts)
 	}
@@ -348,11 +345,15 @@ export class OkenaClient {
 	}
 }
 
-/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason. */
+/** `code` of the error a request throws when no Okena profile/credentials resolve (nothing was sent). */
+export const OKENA_NOT_CONFIGURED = 'OKENA_NOT_CONFIGURED'
+
+/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason, `reason` the reason alone (its first 200 chars). */
 export class OkenaHttpError extends Error {
 	constructor(
 		message: string,
 		readonly status: number,
+		readonly reason?: string,
 	) {
 		super(message)
 		this.name = 'OkenaHttpError'
