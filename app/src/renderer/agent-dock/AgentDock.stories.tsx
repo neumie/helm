@@ -3,7 +3,13 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
-import { type AgentDockPosition, cardKindLabel, railItems } from './presentation'
+import {
+	AGENT_DOCK_DIVIDER_DEFAULT,
+	type AgentDockDivider,
+	type AgentDockPosition,
+	cardKindLabel,
+	railItems,
+} from './presentation'
 
 type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
@@ -32,11 +38,13 @@ function AgentDockFixtureView({
 	expanded: initialExpanded,
 	position = 'bottom',
 	open,
+	divider = AGENT_DOCK_DIVIDER_DEFAULT,
 }: {
 	scenario: AgentDockScenario
 	expanded: boolean
 	position?: AgentDockPosition
 	open?: OpenFixture
+	divider?: AgentDockDivider
 }) {
 	const fixture = useMemo(() => createAgentDockFixture(scenario), [scenario])
 	const [snapshot, setSnapshot] = useState<AgentDockSnapshot | null>(null)
@@ -48,7 +56,7 @@ function AgentDockFixtureView({
 	return (
 		<div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
 			{position === 'bottom' ? terminal : null}
-			<div className="agent-dock" data-position={position} data-expanded={String(expanded)}>
+			<div className="agent-dock" data-position={position} data-expanded={String(expanded)} data-divider={divider}>
 				<div className="agent-dock-view">
 					{ready ? (
 						<AgentDock

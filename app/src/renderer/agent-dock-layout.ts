@@ -5,7 +5,7 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent
 import type { AgentDockApi } from '../shared'
 import { AgentDock } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/AgentDockDetail'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import { AGENT_DOCK_DIVIDER_DEFAULT, type AgentDockDivider, type AgentDockPosition } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -91,6 +91,7 @@ export function mountAgentDock({
 	focusTerminal: focusTerminalOverride,
 	now = Date.now,
 	initialSent,
+	divider = AGENT_DOCK_DIVIDER_DEFAULT,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
@@ -102,6 +103,8 @@ export function mountAgentDock({
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
+	/** Review stories only: the dock's edge toward the terminal (§3.24 Divider); production keeps the default. */
+	divider?: AgentDockDivider
 }): MountedAgentDock {
 	const ownerDocument = root instanceof Document ? root : root.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -136,6 +139,7 @@ export function mountAgentDock({
 	view.className = 'agent-dock-view'
 	dock.replaceChildren(view)
 	dock.classList.add('agent-dock')
+	dock.dataset.divider = divider
 	const reactRoot = createRoot(view)
 
 	/** Keyboard home inside the dock: an open pane, else the first entry/Agents entry, else the queue. */
@@ -331,6 +335,7 @@ export function mountAgentDock({
 			dock.classList.remove('agent-dock')
 			delete dock.dataset.position
 			delete dock.dataset.expanded
+			delete dock.dataset.divider
 			delete right.dataset.agentDockPosition
 			// Unmount outside any React commit that may be disposing this mount (e.g. a fixture effect cleanup).
 			queueMicrotask(() => {

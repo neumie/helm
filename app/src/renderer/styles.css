@@ -1326,17 +1326,125 @@ body.dragging {
 	--dock-lh: calc(18px * var(--ui-scale));
 	--dock-prose-fs: calc(13px * var(--ui-scale));
 	--dock-prose-lh: calc(20px * var(--ui-scale));
+	/* Component-local surfaces (not theme tokens): the divider variant below picks them. */
+	--dock-bg: var(--pane);
+	--dock-pane-bg: var(--term-bg);
+	--dock-edge: var(--hairline);
 	grid-row: 2;
 	grid-column: 1;
 	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-	background: var(--pane);
+	background: var(--dock-bg);
 }
 
 #right[data-agent-dock-position="top"] .agent-dock {
 	grid-row: 1;
+}
+
+/* ---------- divider: where the terminal ends and the dock begins ----------
+ * Claude Code draws its own full-width hairline rules right above the dock, so a dim
+ * rule alone reads as one more of them. The dock's edge toward the terminal is set by
+ * `data-divider` (production: surface; the others are review variants, §3.24 Divider). */
+
+/* surface and accent-edge: one 1px edge laid over the dock's terminal-side pixel row,
+ * above the pane / queue / strip backgrounds (it replaces their own hairline there). */
+.agent-dock:is([data-divider="surface"], [data-divider="accent-edge"])::before {
+	content: "";
+	position: absolute;
+	z-index: 1;
+	top: 0;
+	right: 0;
+	left: 0;
+	height: 1px;
+	background: var(--dock-edge);
+	pointer-events: none;
+}
+
+.agent-dock[data-position="top"]:is([data-divider="surface"], [data-divider="accent-edge"])::before {
+	top: auto;
+	bottom: 0;
+}
+
+/* A — surface: the whole dock (strip, queue, pane, the open tab) is window chrome, like the
+ * topbar above the terminal; the terminal ends where the material changes. */
+.agent-dock[data-divider="surface"] {
+	--dock-bg: var(--chrome);
+	--dock-pane-bg: var(--chrome);
+	--dock-edge: var(--hairline-strong);
+}
+
+/* B — pane gap: a 4px --chrome sash between two hairlines, like a tmux / iTerm split; the dock
+ * is a second pane below it. The sash's dock-side hairline stands in for the dock's own first edge. */
+.agent-dock[data-divider="pane-gap"]::before {
+	content: "";
+	flex: none;
+	height: 6px;
+	background: var(--chrome);
+	box-shadow: inset 0 1px 0 var(--hairline-strong), inset 0 -1px 0 var(--hairline-strong);
+}
+
+.agent-dock[data-divider="pane-gap"][data-position="top"]::before {
+	order: 1;
+}
+
+.agent-dock[data-divider="pane-gap"][data-expanded="false"] .agent-dock-strip {
+	box-shadow: none;
+}
+
+.agent-dock[data-divider="pane-gap"][data-position="bottom"]
+	.agent-dock-host[data-pane="false"]
+	:is(
+		.agent-dock-rail-note,
+		.agent-dock-queue > li,
+		.agent-dock-rail-main > .agent-dock-agents-entry,
+		.agent-dock-rail-main > .agent-dock-agents-empty
+	) {
+	border-top-color: transparent;
+}
+
+.agent-dock[data-divider="pane-gap"][data-position="top"]
+	.agent-dock-host[data-pane="false"]
+	:is(
+		.agent-dock-rail-note,
+		.agent-dock-queue > li,
+		.agent-dock-rail-main > .agent-dock-agents-entry,
+		.agent-dock-rail-main > .agent-dock-agents-empty
+	) {
+	border-bottom-color: transparent;
+}
+
+.agent-dock[data-divider="pane-gap"] .agent-dock-pane[data-position="top"] {
+	border-bottom-color: transparent;
+}
+
+/* C — accent edge: today's surfaces; the edge is the open item's tone at half strength
+ * (the --danger-strong mix), neutral with nothing open, and the titled rule sits on a
+ * --fill-subtle band. */
+.agent-dock[data-divider="accent-edge"] {
+	--dock-tone: var(--neutral);
+	--dock-edge: color-mix(in srgb, var(--dock-tone) 50%, transparent);
+}
+
+.agent-dock[data-divider="accent-edge"]:has(.agent-dock-host:is([data-pane-tone="ask"], [data-pane-tone="orphaned"])) {
+	--dock-tone: var(--warn);
+}
+
+.agent-dock[data-divider="accent-edge"]:has(.agent-dock-host[data-pane-tone="ask-danger"]) {
+	--dock-tone: var(--danger);
+}
+
+.agent-dock[data-divider="accent-edge"]:has(.agent-dock-host[data-pane-tone="turn"]) {
+	--dock-tone: var(--accent);
+}
+
+.agent-dock[data-divider="accent-edge"]:has(.agent-dock-host[data-pane-tone="done"]) {
+	--dock-tone: var(--success);
+}
+
+.agent-dock[data-divider="accent-edge"] .agent-dock-pane > .agent-dock-rule {
+	background: var(--fill-subtle);
 }
 
 .agent-dock-view,
@@ -1850,6 +1958,13 @@ body.dragging {
 	flex-basis: 96px;
 }
 
+/* When the entries leave room, the quiet fill and the Agents column are one open area: no divider
+ * between them, so the fill never reads as an empty cell (a missing card) between two hairlines. */
+.agent-dock-queue:has(> .agent-dock-queue-fill)
+	+ :is(.agent-dock-agents-entry, .agent-dock-agents-empty):not([data-open="true"]) {
+	border-left-color: transparent;
+}
+
 .agent-dock-agents-empty {
 	display: flex;
 	align-items: center;
@@ -1941,7 +2056,7 @@ body.dragging {
  * dock's divider already is that edge. */
 .agent-dock-queue > li[data-link] {
 	position: relative;
-	background: var(--term-bg);
+	background: var(--dock-pane-bg);
 }
 
 .agent-dock-queue > li[data-link]::before,
@@ -1975,7 +2090,7 @@ body.dragging {
 }
 
 .agent-dock-rail-main > .agent-dock-agents-entry[data-open="true"] {
-	background: var(--term-bg);
+	background: var(--dock-pane-bg);
 	box-shadow: inset 1px 0 0 var(--hairline-strong);
 }
 
@@ -2026,7 +2141,7 @@ body.dragging {
 	flex-direction: column;
 	min-height: 0;
 	overflow: hidden;
-	background: var(--term-bg);
+	background: var(--dock-pane-bg);
 	user-select: text;
 	outline: none;
 	container: agent-dock-pane / inline-size;

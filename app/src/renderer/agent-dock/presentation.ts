@@ -8,6 +8,17 @@ import type { AgentDockSnapshot, DockAction, DockItem, DockReceipt, DockSession 
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
+
+/**
+ * How the dock's edge toward the terminal reads (design §3.24 "Divider"). Production
+ * mounts the default; the other variants stay selectable in review stories only.
+ * - `surface`: the whole dock on `--chrome` with a `--hairline-strong` edge (a change of material).
+ * - `pane-gap`: a 4px `--chrome` gutter between hairlines, then the dock (a tmux/iTerm split).
+ * - `accent-edge`: no surface change; a 1px edge in the open item's tone (neutral when none is open).
+ */
+export type AgentDockDivider = 'surface' | 'pane-gap' | 'accent-edge'
+export const AGENT_DOCK_DIVIDERS: readonly AgentDockDivider[] = ['surface', 'pane-gap', 'accent-edge']
+export const AGENT_DOCK_DIVIDER_DEFAULT: AgentDockDivider = 'surface'
 export type AgingTone = 'none' | 'warn' | 'danger'
 
 /** Aging escalation (design §2): amber after 30 minutes, red after 2 hours. */

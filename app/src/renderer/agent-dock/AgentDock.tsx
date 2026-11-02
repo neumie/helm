@@ -534,7 +534,13 @@ export function AgentDock({
 	) : null
 
 	return (
-		<div ref={hostRef} className="agent-dock-host" data-position={position} data-pane={String(paneOpen)}>
+		<div
+			ref={hostRef}
+			className="agent-dock-host"
+			data-position={position}
+			data-pane={String(paneOpen)}
+			data-pane-tone={paneOpen ? (openItem ? cardTone(openItem, clock) : 'agents') : undefined}
+		>
 			<span className="sr-only" aria-live="polite">
 				{announcement}
 			</span>

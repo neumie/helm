@@ -13,14 +13,17 @@ import type {
 	TerminalPreferencesSnapshot,
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
+import { THEME_PRESETS } from '../theme-presets'
 import { AGENT_DOCK_STORAGE, agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockFixture,
 	type AgentDockScenario,
+	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import type { AgentDockDivider, AgentDockPosition } from './agent-dock/presentation'
+import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
@@ -34,19 +37,27 @@ export interface TerminalWorkspaceFixtureOptions {
 	/** Opt-in task-sidebar layout proof; default terminal workloads stay unchanged. */
 	sidebarVisibility?: boolean
 	/**
+	 * Review only: renders under a bundled preset (tokens on :root + the matching xterm theme)
+	 * without touching the persisted appearance; omitted keeps the production appearance.
+	 */
+	theme?: keyof typeof THEME_PRESETS
+	/**
 	 * Opt-in agent-dock proof: mounts the production dock layout with an in-memory
 	 * AgentDockApi fed by reducer-built Okena fixtures. `expanded`/`position` are
 	 * written to the dock's layout preferences before mount; omitted values keep
 	 * whatever is stored (production defaults when nothing is). `output` writes a
-	 * recorded-looking shell session into the active terminal; `open` then clicks
-	 * that entry (or the Agents entry), like a pointer would.
+	 * recorded-looking shell session into the active terminal (`'claude-code'`: the
+	 * bottom of a Claude Code session, its own rules right above the dock); `open` then
+	 * clicks that entry (or the Agents entry), like a pointer would. `divider` picks a
+	 * review variant of the dock's edge (§3.24 Divider); omitted keeps production's.
 	 */
 	agentDock?: {
 		scenario?: AgentDockScenario | null
 		expanded?: boolean
 		position?: AgentDockPosition
-		output?: boolean
+		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
+		divider?: AgentDockDivider
 	}
 }
 
@@ -525,6 +536,36 @@ export function createTerminalWorkspaceFixture(
 	}
 }
 
+/**
+ * Review-only preset: its tokens go on :root (inline, as appearance.ts applies them) and
+ * xterm gets the matching theme through the workspace's appearance seam; nothing persists.
+ * `restore` puts back whatever inline tokens were there before.
+ */
+function applyPresetTheme(id: keyof typeof THEME_PRESETS): {
+	appearance: typeof productionAppearance
+	restore(): void
+} {
+	const tokens = THEME_PRESETS[id]?.tokens ?? {}
+	const style = document.documentElement.style
+	const previous = Object.keys(tokens).map(key => [key, style.getPropertyValue(key)] as const)
+	for (const [key, value] of Object.entries(tokens)) style.setProperty(key, value)
+	const appearance = {
+		getTermTheme: () => termThemeFromTokens(tokens),
+		getTermFontSize: () => TERM_FONT_DEFAULT,
+		subscribe: () => () => {},
+		stepTermFontSize: () => {},
+	} as unknown as typeof productionAppearance
+	return {
+		appearance,
+		restore() {
+			for (const [key, value] of previous) {
+				if (value) style.setProperty(key, value)
+				else style.removeProperty(key)
+			}
+		},
+	}
+}
+
 /** Production mount host used identically by Storybook and Playwright. */
 export function TerminalWorkspaceFixtureView({ options = {} }: { options?: TerminalWorkspaceFixtureOptions }) {
 	const rootRef = useRef<HTMLDivElement>(null)
@@ -533,14 +574,19 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		if (!root) return
 		buildShell(root, options.sidebarVisibility, options.agentDock !== undefined)
 		const fixture = createTerminalWorkspaceFixture(options)
-		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({ root, helm: fixture.helm })
+		const theme = options.theme ? applyPresetTheme(options.theme) : null
+		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({
+			root,
+			helm: fixture.helm,
+			...(theme ? { appearance: theme.appearance } : {}),
+		})
 		const sidebarLayout = options.sidebarVisibility
 			? mountSidebarLayout({ root, fitActive: () => workspace.fitActive() })
 			: null
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', expanded, position, open } = options.agentDock
+			const { scenario = 'busy', expanded, position, open, divider } = options.agentDock
 			const writePreference = (key: string, value: string | undefined) => {
 				if (value === undefined) return
 				try {
@@ -563,6 +609,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
+					...(divider ? { divider } : {}),
 				})
 			})
 		}
@@ -571,6 +618,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			agentDockLayout?.dispose()
 			sidebarLayout?.dispose()
 			workspace.dispose()
+			theme?.restore()
 		}
 		if (options.expose)
 			(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = fixture
@@ -578,7 +626,10 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			if (options.openBackground) (root.querySelector('#bg-toggle') as HTMLButtonElement | null)?.click()
 			if (options.agentDock?.output) {
 				// The default fixture's active tab is the 'shell' session.
-				fixture.emitData('shell', AGENT_DOCK_TERMINAL_TEXT)
+				fixture.emitData(
+					'shell',
+					options.agentDock.output === 'claude-code' ? CLAUDE_CODE_TERMINAL_TEXT : AGENT_DOCK_TERMINAL_TEXT,
+				)
 			}
 			const open = options.agentDock?.open
 			if (open)
@@ -595,6 +646,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			agentDockLayout?.dispose()
 			sidebarLayout?.dispose()
 			workspace.dispose()
+			theme?.restore()
 			if (options.expose)
 				(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = undefined
 		}

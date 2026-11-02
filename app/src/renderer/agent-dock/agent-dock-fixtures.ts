@@ -26,6 +26,8 @@ export type AgentDockScenario =
 	| 'crowded'
 	| 'orphaned'
 	| 'down'
+	/** One agent, one unchecked turn that ended a minute ago (the queue's single-entry layout). */
+	| 'single-turn'
 	/** Receipt states (built by running real act observations through the reducer). */
 	| 'receipt-sending'
 	| 'receipt-unconfirmed'
@@ -344,6 +346,36 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
 	if (name === 'connecting') return { state: start, live: [], version: 0 }
 	if (name === 'empty') return { state: run([[now - 1_000, poll(1, [])]], start), live: [], version: 1 }
+	if (name === 'single-turn') {
+		const working = detail(panes.turn, { busy: true })
+		const idle = { ...working, busy: false }
+		const page = transcript(
+			panes.turn,
+			[assistant('turn-a1', 'Hotovo. Commit 1a84c0e je na main, working tree je čistý.\n\nMám to pushnout?')],
+			2_000,
+			false,
+		)
+		const steps: Array<[number, AgentDockObservation]> = [
+			[
+				now - 20 * MINUTE,
+				poll(5_001, [
+					{
+						pane: panes.turn,
+						body: working,
+						transcript: transcript(
+							panes.turn,
+							[user('turn-a0-u', 'Start.'), assistant('turn-a0', 'Working on it.')],
+							1_000,
+							true,
+						),
+					},
+				]),
+			],
+			[now - MINUTE, poll(5_002, [{ pane: panes.turn, body: idle, transcript: page }])],
+			[now - MINUTE + 9_000, poll(5_003, [{ pane: panes.turn, body: idle }])],
+		]
+		return { state: run(steps, start), live: [{ pane: panes.turn, body: idle }], version: 5_003 }
+	}
 	if (name === 'crowded') {
 		const crowded = busyTimeline(now, true)
 		return { state: run(crowded.steps, start), live: bare(crowded.live), version: crowded.version }
@@ -629,3 +661,72 @@ export const AGENT_DOCK_TERMINAL_TEXT = [
 	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
 	'\x1b[1m❯\x1b[0m ',
 ].join('\r\n')
+
+const CC_DIM = '\x1b[38;2;136;136;136m'
+const CC_RULE = '\x1b[38;2;102;102;102m'
+const CC_GREEN = '\x1b[38;2;78;186;101m'
+const CC_PINK = '\x1b[38;2;255;107;128m'
+const CC_RESET = '\x1b[0m'
+/** Wider than any terminal: drawn with autowrap off, it stops at the right margin like Claude Code's own rules. */
+const CC_FULL_RULE = `${CC_RULE}${'─'.repeat(512)}${CC_RESET}`
+/** A full-width rule with a title right-aligned before its last `─` (cursor to the margin, then back). */
+const ccTitledRule = (title: string): string => {
+	const tail = ` ${title} ─`
+	return `${CC_FULL_RULE}\x1b[999C\x1b[${[...tail].length - 1}D${CC_RULE}${tail}${CC_RESET}`
+}
+
+/**
+ * The bottom of a Claude Code session as the terminal shows it under the dock: transcript,
+ * the session's titled rule, the prompt box between two full-width rules, then the status
+ * block. A stress test for the dock's edge (§3.24 Divider): Claude Code's own thin rules
+ * sit right above it. Autowrap is off while it draws so the rules fit any width; the
+ * cursor is hidden, as Claude Code hides it.
+ */
+export const CLAUDE_CODE_TERMINAL_TEXT = `\x1b[?25l\x1b[?7l${[
+	`${CC_DIM}>${CC_RESET} zkontroluj, proč nejde vidět divider v docku`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Read(app/src/renderer/styles.css)`,
+	`  ${CC_DIM}⎿  Read 2825 lines${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Search(pattern: "agent-dock-strip", path: "app/src/renderer")`,
+	`  ${CC_DIM}⎿  Found 4 files${CC_RESET}`,
+	'',
+	'⏺ Strip má nahoře jen inset hairline rgba(255,255,255,.07) a pane sedí na --term-bg,',
+	'  takže hranice terminál → dock je jen další tenká čára. Claude Code kreslí přesně',
+	'  takové čáry kolem promptu, proto ji oko nepozná.',
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Bash(git status --short)`,
+	`  ${CC_DIM}⎿   M projects/helm/helm.md${CC_RESET}`,
+	`  ${CC_DIM}     M projects/jvs/jvs.md${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Update(projects/helm/helm.md)`,
+	`  ${CC_DIM}⎿  Updated projects/helm/helm.md with 3 additions and 1 removal${CC_RESET}`,
+	`  ${CC_DIM}     41    ## Agent dock${CC_RESET}`,
+	`  ${CC_DIM}     42 -  - divider: hairline${CC_RESET}`,
+	`  ${CC_DIM}     42 +  - divider: surface / pane gap / accent edge (review)${CC_RESET}`,
+	`  ${CC_DIM}     43 +  - stress test: Claude Code session under the dock${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Bash(git commit -am "docs(helm): agent dock divider variants")`,
+	`  ${CC_DIM}⎿  [main 1a84c0e] docs(helm): agent dock divider variants${CC_RESET}`,
+	`  ${CC_DIM}     2 files changed, 9 insertions(+), 3 deletions(-)${CC_RESET}`,
+	'',
+	'⏺ Hotovo. Commit 1a84c0e je na main, working tree je čistý.',
+	'',
+	'  - helm.md: tři varianty divideru s poznámkou, co která řeší',
+	'  - jvs.md: odkaz na screenshoty v scratchpadu',
+	'',
+	'  Mám to pushnout?',
+	'',
+	`${CC_DIM}>${CC_RESET} a co ten queue strip dole, ta prázdná buňka uprostřed?`,
+	'',
+	'⏺ To je výplň mezi poslední položkou a sloupcem Agents: má vlastní horní hairline,',
+	'  takže vypadá jako chybějící karta. Opravím to spolu s dividerem.',
+	'',
+	ccTitledRule('helm · agent dock divider'),
+	CC_FULL_RULE,
+	'❯ jo pushni to',
+	CC_FULL_RULE,
+	`  ${CC_DIM}~/vault${CC_RESET}`,
+	`  ${CC_DIM}Opus 5.5 · effort high · ctx 15%${CC_RESET}`,
+	`  ${CC_PINK}▸▸ bypass permissions on${CC_RESET}${CC_DIM} (shift+tab to cycle) · ← 1 agent${CC_RESET}`,
+].join('\r\n')}\x1b[?7h`
