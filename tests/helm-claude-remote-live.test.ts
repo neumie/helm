@@ -164,10 +164,7 @@ async function harness(name: string) {
 
 	const watcher = new AgentDockWatcher({
 		dir: join(root, 'ud', 'agent-dock'),
-		source: new OkenaClaudeSource(remote.hub, {
-			name: 'Helm terminals',
-			notRunning: "Helm's Claude hub is not listening",
-		}),
+		source: new OkenaClaudeSource(remote.hub, 'helm'),
 		publish: () => {},
 		isFocused: () => true,
 		log: () => {},

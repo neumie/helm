@@ -19,6 +19,7 @@ import { open } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { z } from 'zod'
+import type { DockSourceId } from './dock-vocabulary.js'
 
 export const CLAUDE_HUB_SOCKET_NAME = 'claude-remote.sock'
 /** Runtime copies of the preload and hook client (no whitespace: Bun splits BUN_OPTIONS on it). */
@@ -66,14 +67,20 @@ export const claudeHubReadReplySchema = z.union([
 	z.object({ ok: z.literal(false), status: z.number().int(), error: z.string() }),
 ])
 
+const HELM_DOCK_PROFILE_PREFIX = 'helm:'
+
 /** Profile part of a Helm dock profile (`helm:<profileId>`), or null for an Okena profile. */
 export function helmDockProfileId(profile: string): string | null {
-	if (!profile.startsWith('helm:')) return null
-	const id = profile.slice('helm:'.length)
+	if (!profile.startsWith(HELM_DOCK_PROFILE_PREFIX)) return null
+	const id = profile.slice(HELM_DOCK_PROFILE_PREFIX.length)
 	return safeId.test(id) ? id : null
 }
 
-export const helmDockProfile = (profileId: string): string => `helm:${profileId}`
+export const helmDockProfile = (profileId: string): string => `${HELM_DOCK_PROFILE_PREFIX}${profileId}`
+
+/** The source a dock session key (`<profile>:<terminal>`) belongs to: Helm profiles are `helm:<profileId>`. */
+export const dockSourceOfSessionKey = (key: string): DockSourceId =>
+	key.startsWith(HELM_DOCK_PROFILE_PREFIX) ? 'helm' : 'okena'
 
 /** Sends one request line and resolves the first reply line (or null when the hub closed without one). */
 export function claudeHubRequest(

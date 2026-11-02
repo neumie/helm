@@ -327,10 +327,7 @@ const agentDockWatcher = launchPolicy.agentDock
 					? [
 							{
 								id: 'helm' as const,
-								source: new OkenaClaudeSource(claudeRemote.hub, {
-									name: 'Helm terminals',
-									notRunning: "Helm's Claude hub is not listening",
-								}),
+								source: new OkenaClaudeSource(claudeRemote.hub, 'helm'),
 							},
 						]
 					: []),

@@ -15,9 +15,11 @@ import {
 	CLAUDE_REMOTE_ENV,
 	claudeHubReadReplySchema,
 	claudeHubRequest,
+	dockSourceOfSessionKey,
 	helmDockProfileId,
 	readClaudeHubOwnerFile,
 } from '../agent-dock/claude-hub-wire.js'
+import { DOCK_SOURCE_TEXT, type DockSourceId } from '../agent-dock/dock-vocabulary.js'
 import {
 	SPOOL_CURSOR_FILE,
 	SPOOL_EVENTS_FILE,
@@ -111,8 +113,8 @@ export function helmHubReader(dir: string, profile: string): DockOkenaReader {
 	}
 }
 
-const sourceOf = (session: SpoolSession | undefined, key: string): 'okena' | 'helm' =>
-	session?.source ?? (key.startsWith('helm:') ? 'helm' : 'okena')
+const sourceOf = (session: SpoolSession | undefined, key: string): DockSourceId =>
+	session?.source ?? dockSourceOfSessionKey(key)
 
 const valueOptions = new Set(['--cursor', '--dir'])
 const flagOptions = new Set(['--json', '--all', '--no-live', '--help', '-h'])
@@ -163,7 +165,7 @@ const sessionLabel = (session: SpoolSession | undefined, key: string): string =>
 function sessionRef(
 	snapshot: SpoolSnapshot,
 	item: SpoolItem,
-): { source: 'okena' | 'helm'; profile: string; terminalId: string } | null {
+): { source: DockSourceId; profile: string; terminalId: string } | null {
 	const session = snapshot.sessions.find(candidate => candidate.key === item.session)
 	const source = sourceOf(session, item.session)
 	if (session) return { source, profile: session.profile, terminalId: session.terminalId }
@@ -218,9 +220,10 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 				: `${name}: not polled yet`
 	const perSource = snapshot.sources ?? {}
 	// Okena alone (or a spool from before Helm terminals were observed): the aggregate is Okena's.
+	const { okena, helm } = DOCK_SOURCE_TEXT
 	const lines = perSource.helm
-		? [...(perSource.okena ? [healthLine('Okena', perSource.okena)] : []), healthLine('Helm terminals', perSource.helm)]
-		: [healthLine('Okena', source)]
+		? [...(perSource.okena ? [healthLine(okena.label, perSource.okena)] : []), healthLine(helm.label, perSource.helm)]
+		: [healthLine(okena.label, source)]
 	const sessionOf = (key: string) => snapshot.sessions.find(session => session.key === key)
 	const itemLine = (item: SpoolItem) => {
 		const state = item.state === 'resolved' ? `resolved:${item.resolution?.by ?? '?'}` : item.state
@@ -238,7 +241,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 				? `NEEDS YOU: ${blind}`
 				: source.state === 'ok'
 					? 'NEEDS YOU: nothing open'
-					: `NEEDS YOU: unknown (${perSource.helm ? 'a source' : 'Okena'} not observed)`,
+					: `NEEDS YOU: unknown (${perSource.helm ? 'a source' : okena.label} not observed)`,
 	)
 	for (const item of needs) lines.push(itemLine(item))
 	const resolved = items.filter(item => item.state === 'resolved')

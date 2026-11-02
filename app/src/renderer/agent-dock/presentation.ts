@@ -13,7 +13,7 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
-import { DOCK_RISKY_PROMPT, DOCK_SOURCE_IDS, DOCK_SOURCE_LABEL } from '../../../../src/agent-dock/dock-vocabulary.js'
+import { DOCK_RISKY_PROMPT, DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
 import { itemWaitingSince } from '../../agent-dock/item-order'
 import { planApproveMode } from '../../agent-dock/review'
 
@@ -222,9 +222,13 @@ export function sourceNames(snapshot: AgentDockSnapshot | null, state?: AgentDoc
 	const all = snapshot ? snapshotSources(snapshot) : []
 	const names = all
 		.filter(([, health]) => state === undefined || health.state === state)
-		.map(([id]) => DOCK_SOURCE_LABEL[id])
+		.map(([id]) => DOCK_SOURCE_TEXT[id].label)
 	const list =
-		names.length > 0 ? names : all.length > 0 ? all.map(([id]) => DOCK_SOURCE_LABEL[id]) : [DOCK_SOURCE_LABEL.okena]
+		names.length > 0
+			? names
+			: all.length > 0
+				? all.map(([id]) => DOCK_SOURCE_TEXT[id].label)
+				: [DOCK_SOURCE_TEXT.okena.label]
 	return list.length === 1 ? (list[0] as string) : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
 }
 
@@ -253,7 +257,7 @@ export function sourceBlockedNote(item: DockItem, snapshot: AgentDockSnapshot | 
 	const health = itemSourceHealth(item, snapshot)
 	if (!snapshot || health?.state === 'ok') return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
-	return `${DOCK_SOURCE_LABEL[source]} unreachable: answer in the terminal`
+	return `${DOCK_SOURCE_TEXT[source].label} unreachable: answer in the terminal`
 }
 
 /** Answer controls are live only for an open item while its source is reachable. */
@@ -453,7 +457,7 @@ export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth 
 	return {
 		tone: 'success',
 		text: snapshotSources(snapshot)
-			.map(([id]) => DOCK_SOURCE_LABEL[id])
+			.map(([id]) => DOCK_SOURCE_TEXT[id].label)
 			.join(' · '),
 	}
 }

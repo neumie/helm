@@ -858,7 +858,7 @@ test('socket: a bad token is answered {} (permission) or ignored (event); the ow
 test('end to end: AskUserQuestion → dock ask item → act answer reaches the waiting hook; Stop → turn → reply typed', async () => {
 	const f = await hubFixture()
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
@@ -958,7 +958,7 @@ test('hub: a Helm-terminal session gets its cwd’s branch (read once per BRANCH
 		},
 	})
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)

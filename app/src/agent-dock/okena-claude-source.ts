@@ -15,6 +15,7 @@
 //      the reply in the terminal: its user entry closes the turn).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
 import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
 import {
@@ -22,6 +23,7 @@ import {
 	type DockActOutcome,
 	type DockAction,
 	type DockItem,
+	type DockSourceId,
 	type ObservedClaudeTerminal,
 	type OkenaClaudeSession,
 	type OkenaFetch,
@@ -112,27 +114,20 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
-/** How a source names itself in refusals and errors (the Helm hub reuses this class). */
-export interface OkenaClaudeSourceLabels {
-	/** "Okena" / "Helm terminals" in act failures (matches the dock's source wording). */
-	name: string
-	/** Poll error while the client has no active profile. */
-	notRunning: string
-}
-
-export const OKENA_SOURCE_LABELS: OkenaClaudeSourceLabels = {
-	name: 'Okena',
-	notRunning: 'Okena not configured or not running',
-}
-
 export class OkenaClaudeSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
 
+	/** How this source names itself in act failures and poll errors (DOCK_SOURCE_TEXT). */
+	private readonly text: (typeof DOCK_SOURCE_TEXT)[DockSourceId]
+
+	/** `id`: which dock source this client is (Okena, or Helm's own hub, which reuses this class). */
 	constructor(
 		private readonly client: OkenaClaudeClient,
-		private readonly labels: OkenaClaudeSourceLabels = OKENA_SOURCE_LABELS,
-	) {}
+		readonly id: DockSourceId = 'okena',
+	) {
+		this.text = DOCK_SOURCE_TEXT[id]
+	}
 
 	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
 	expedite(target: DockActTarget, until: number): void {
@@ -159,25 +154,25 @@ export class OkenaClaudeSource {
 			fresh = parsed.value
 		} catch (error) {
 			if ((error as { status?: unknown }).status === 404)
-				return { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.labels.name}.` }
+				return { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.text.label}.` }
 			return { status: 'failed', detail: errorDetail(error) }
 		}
 		if (fresh.terminal_id !== target.terminalId)
-			return { status: 'failed', detail: `${this.labels.name} answered for another pane.` }
+			return { status: 'failed', detail: `${this.text.label} answered for another pane.` }
 
 		const request = built.body
 		if (request.kind === 'decision') {
 			const check = askStillOpen(item, fresh)
 			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 			if (!client.postClaudeDialogDecision)
-				return { status: 'failed', detail: `This ${this.labels.name} client cannot answer dialogs.` }
+				return { status: 'failed', detail: `This ${this.text.label} client cannot answer dialogs.` }
 			try {
 				await client.postClaudeDialogDecision(target.terminalId, request.dialogId, request.body, {
 					timeoutMs: OKENA_ACT_TIMEOUT_MS,
 				})
 				return { status: 'sent' }
 			} catch (error) {
-				return dockPostFailure(error, true, this.labels.name)
+				return dockPostFailure(error, true, this.text.label)
 			}
 		}
 
@@ -200,7 +195,7 @@ export class OkenaClaudeSource {
 		const check = turnStillWaiting(item, fresh, page)
 		if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 		if (!client.postClaudePrompt)
-			return { status: 'failed', detail: `This ${this.labels.name} client cannot send prompts.` }
+			return { status: 'failed', detail: `This ${this.text.label} client cannot send prompts.` }
 		try {
 			const response = await client.postClaudePrompt(target.terminalId, request.body.text, {
 				timeoutMs: OKENA_ACT_TIMEOUT_MS,
@@ -213,7 +208,7 @@ export class OkenaClaudeSource {
 					: {}),
 			}
 		} catch (error) {
-			return dockPostFailure(error, false, this.labels.name)
+			return dockPostFailure(error, false, this.text.label)
 		}
 	}
 
@@ -224,7 +219,7 @@ export class OkenaClaudeSource {
 			return {
 				type: 'poll',
 				profile: this.lastProfile ?? 'unknown',
-				state: { ok: false, error: this.labels.notRunning },
+				state: { ok: false, error: this.text.notRunning },
 				terminals: [],
 			}
 		}

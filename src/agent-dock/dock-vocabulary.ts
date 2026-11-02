@@ -12,8 +12,33 @@
 export const DOCK_SOURCE_IDS = ['okena', 'helm'] as const
 export type DockSourceId = (typeof DOCK_SOURCE_IDS)[number]
 
-/** Words for a source in dock/CLI text. */
-export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+/** How a source names itself in dock, act and CLI text (the only place these words are written). */
+export const DOCK_SOURCE_TEXT: Record<
+	DockSourceId,
+	{
+		/** "Okena" / "Helm terminals": health lines, act failures, source lists. */
+		label: string
+		/** Act refusal when the item's session is no longer listed. */
+		notListed: string
+		/** Act refusal while the source is down. */
+		sourceDown: string
+		/** Poll error while the source has no active profile / is not listening. */
+		notRunning: string
+	}
+> = {
+	okena: {
+		label: 'Okena',
+		notListed: 'The agent is no longer listed by Okena.',
+		sourceDown: 'Okena is unreachable; answer in the terminal',
+		notRunning: 'Okena not configured or not running',
+	},
+	helm: {
+		label: 'Helm terminals',
+		notListed: 'The agent is no longer listed in Helm terminals.',
+		sourceDown: 'Helm terminals are unreachable; answer in the terminal',
+		notRunning: "Helm's Claude hub is not listening",
+	},
+}
 
 /** A source's reachability. `pending` = never polled yet; the UI must not show "all clear" for it. */
 export const DOCK_SOURCE_HEALTH_STATES = ['pending', 'ok', 'down'] as const

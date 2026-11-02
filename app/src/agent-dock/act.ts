@@ -14,6 +14,7 @@
 //     → 200 {"delivery":"channel"|"pty"|"queued"} | 400 empty/too long | 409 busy/no session
 // (the same bodies `okena claude answer` / `okena claude prompt` send).
 
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import {
 	DOCK_RISKY_PROMPT,
 	type DockActOutcome,
@@ -59,7 +60,7 @@ export const REFUSAL_TEXT: Record<DockRefusalReason, string> = {
 	not_open: 'not open for an answer right now',
 	unknown_item: 'this item is gone',
 	invalid: 'the answer is incomplete',
-	source_down: 'Okena is unreachable; answer in the terminal',
+	source_down: DOCK_SOURCE_TEXT.okena.sourceDown,
 	in_flight: 'another answer is still being sent',
 }
 
@@ -248,7 +249,11 @@ function errorCode(error: unknown): string | undefined {
  * sent nothing. Every other transport error (timeout, reset, hang-up, a bad body
  * after a 200) may have landed: unconfirmed, so the next poll can confirm it.
  */
-export function dockPostFailure(error: unknown, dialog: boolean, source = 'Okena'): DockActOutcome {
+export function dockPostFailure(
+	error: unknown,
+	dialog: boolean,
+	source = DOCK_SOURCE_TEXT.okena.label,
+): DockActOutcome {
 	const detail = errorDetail(error)
 	const status = (error as { status?: unknown } | null)?.status
 	if (typeof status === 'number') {

@@ -20,6 +20,8 @@
 import { rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { dockSourceOfSessionKey } from '../../../src/agent-dock/claude-hub-wire'
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import {
 	ITEM_HEAD_MAX,
 	SPOOL_EVENTS_FILE,
@@ -381,19 +383,9 @@ export class AgentDockWatcher {
 		if (item.state !== 'open') return refused(item.state === 'resolved' ? 'gone' : 'not_open')
 		if (rev !== undefined && rev !== item.rev) return refused('changed')
 		const session = this.state.sessions[item.session]?.session
-		// Okena wording unchanged; Helm terminals name their own source.
-		if (!session)
-			return refused(
-				'gone',
-				item.session.startsWith('helm:')
-					? 'The agent is no longer listed in Helm terminals.'
-					: 'The agent is no longer listed by Okena.',
-			)
+		if (!session) return refused('gone', DOCK_SOURCE_TEXT[dockSourceOfSessionKey(item.session)].notListed)
 		if (this.state.sources[session.source]?.health.state !== 'ok')
-			return refused(
-				'source_down',
-				session.source === 'okena' ? undefined : 'Helm terminals are unreachable; answer in the terminal',
-			)
+			return refused('source_down', DOCK_SOURCE_TEXT[session.source].sourceDown)
 		const source = this.options.source
 		if (!source.act) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot answer.' } }
 		const target: AgentDockTarget = { source: session.source, profile: session.profile, terminalId: session.terminalId }
