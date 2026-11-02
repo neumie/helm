@@ -52,7 +52,7 @@ function AgentDockFixtureView({
 							snapshot={snapshot}
 							now={Date.now()}
 							position={position}
-							shortcutLabel="⌘⇧J"
+							mod="cmd"
 							initialOpen={snapshot ? resolveOpen(snapshot, open) : null}
 							initialSent={fixture.sent()}
 							onAck={fixture.api.ack}

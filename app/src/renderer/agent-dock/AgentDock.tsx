@@ -24,7 +24,7 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from
 import { ItemDetail } from './AgentDockDetail'
 import { AgentsDetail } from './AgentsDetail'
 import { KindGlyph } from './pane-chrome'
-import type { DetailKeys } from './pane-keys'
+import { type DetailKeys, type DockModKey, dockShortcut } from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
@@ -74,7 +74,8 @@ export interface AgentDockProps {
 	snapshot: AgentDockSnapshot | null
 	now: number
 	position: AgentDockPosition
-	shortcutLabel: string
+	/** The platform's modifier: `cmd` on macOS (⌘⇧J, ⌘↵), `ctrl` elsewhere. */
+	mod: DockModKey
 	/** Filled with the dock's handle while it is mounted. */
 	handle?: MutableRefObject<AgentDockHandle | null>
 	onAck(itemId: number): Promise<boolean>
@@ -105,7 +106,7 @@ export function AgentDock({
 	snapshot,
 	now,
 	position,
-	shortcutLabel,
+	mod,
 	handle,
 	onAck,
 	onAct,
@@ -420,13 +421,13 @@ export function AgentDock({
 
 	// The row's name says what it is and the state in words.
 	const dockName = dockLabel(snapshot, clock)
-	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
+	const shortcut = dockShortcut(mod)
 
 	const row = (
 		<section
 			className="agent-dock-row"
 			aria-label={dockName}
-			aria-keyshortcuts={keyShortcut}
+			aria-keyshortcuts={shortcut.aria}
 			tabIndex={-1}
 			onKeyDown={onRowKey}
 		>
@@ -446,8 +447,8 @@ export function AgentDock({
 					<span className="agent-dock-dot" aria-hidden="true" />
 					{health.tone === 'success' ? null : <span className="agent-dock-health-text">{health.text}</span>}
 				</span>
-				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcutLabel})`}>
-					{shortcutLabel}
+				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcut.label})`}>
+					{shortcut.label}
 				</kbd>
 			</span>
 		</section>
@@ -482,7 +483,7 @@ export function AgentDock({
 					localError={actErrors.get(openItem.id) ?? null}
 					keys={detailKeys}
 					drafts={drafts}
-					mod={shortcutLabel.startsWith('⌘') ? 'cmd' : 'ctrl'}
+					mod={mod}
 					onStep={step}
 					onClose={() => close(true)}
 					onAck={() => ack(openItem.id)}

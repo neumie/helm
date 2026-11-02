@@ -109,7 +109,6 @@ export function mountAgentDock({
 	const dock = root.querySelector<HTMLElement>('#agent-dock')
 	if (!ownerWindow || !right || !terms || !dock) throw new Error('Missing agent-dock layout shell')
 	const mac = (platform ?? (/Mac/.test(ownerWindow.navigator.platform) ? 'darwin' : 'other')) === 'darwin'
-	const shortcutLabel = mac ? '⌘⇧J' : 'Ctrl+Shift+J'
 	let position = agentDockPosition.get()
 	let snapshot: AgentDockSnapshot | null = null
 	let published: boolean | null = null
@@ -172,7 +171,7 @@ export function mountAgentDock({
 			snapshot,
 			now: now(),
 			position,
-			shortcutLabel,
+			mod: mac ? 'cmd' : 'ctrl',
 			handle,
 			onAck,
 			onAct,

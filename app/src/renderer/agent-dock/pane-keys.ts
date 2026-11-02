@@ -93,5 +93,9 @@ export function submitKeys(
 
 export const modShortcut = (mod: DockModKey): string => (mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter')
 
+/** The go-to-dock key: as the row shows it (one notation with the hints) and as aria-keyshortcuts names it. */
+export const dockShortcut = (mod: DockModKey): { label: string; aria: string } =>
+	mod === 'cmd' ? { label: '⌘⇧J', aria: 'Meta+Shift+J' } : { label: 'Ctrl+Shift+J', aria: 'Control+Shift+J' }
+
 /** The submit key as the hints show it: one notation with the row's `⌘⇧J` (`Ctrl+Enter` off macOS). */
 export const modHint = (mod: DockModKey): string => (mod === 'cmd' ? '⌘↵' : 'Ctrl+Enter')
