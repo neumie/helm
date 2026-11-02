@@ -1310,11 +1310,11 @@ body.dragging {
 /* ---------- agent dock (§3.24) ---------- */
 
 /* Okena Claude queue beside the terminals: one --chrome surface, the topbar mirrored
- * (window chrome, one 1px --hairline edge toward the terminal). A monospace face at the
- * terminal's rhythm (12px / 18px rows) where text carries meaning, the UI face for
- * prose; bright/dim text instead of fills, color only on glyphs. The 28px strip never
- * changes height; the queue it toggles is one row of fixed height; an opened entry
- * splits a pane off the terminal in-flow. */
+ * (window chrome, one 1px --hairline edge toward the terminal). Two bands: the 28px queue
+ * row (always shown, never changes height) and, when an entry is opened, a pane split off
+ * the terminal in-flow. One typeface, the UI's — 12/18 for the row and meta, 13/20 for what
+ * is read; mono only for literal commands, code, plans and previews. Bright/dim text instead
+ * of fills, color only on glyphs. */
 #agent-dock[hidden] {
 	display: none;
 }
@@ -1326,7 +1326,7 @@ body.dragging {
 	--dock-lh: calc(18px * var(--ui-scale));
 	--dock-prose-fs: calc(13px * var(--ui-scale));
 	--dock-prose-lh: calc(20px * var(--ui-scale));
-	/* The dock's dim text: --text-2 lifted toward --text-1 so 12px meta (`kind · age`, project, hints)
+	/* The dock's dim text: --text-2 lifted toward --text-1 so 12px meta (ages, context, hints)
 	 * reads at ≥4.5:1 on --chrome and ≥3:1 on the selected fill. */
 	--dock-dim: color-mix(in srgb, var(--text-1) 60%, var(--text-2));
 	grid-row: 2;
@@ -1344,7 +1344,7 @@ body.dragging {
 
 /* The edge toward the terminal: the topbar's own border, mirrored. The change of surface
  * (--chrome against the terminal) is what separates; this line only crisps it. It is laid
- * over the dock's terminal-side pixel row, above the strip / queue / pane. While the pane
+ * over the dock's terminal-side pixel row, above the queue row / pane. While the pane
  * holds the keys it turns accent (tmux's active border). */
 .agent-dock::before {
 	content: "";
@@ -1376,10 +1376,10 @@ body.dragging {
 }
 
 .agent-dock-host {
-	font-family: var(--dock-mono);
+	font-family: var(--dock-sans);
 	font-size: var(--dock-fs);
 	line-height: var(--dock-lh);
-	letter-spacing: normal;
+	letter-spacing: -0.01em;
 	font-variant-numeric: tabular-nums;
 	color: var(--text-1);
 }
@@ -1391,110 +1391,36 @@ body.dragging {
 	text-align: left;
 }
 
-/* ---------- strip: the status line on the window edge ---------- */
-
-.agent-dock-strip {
-	flex: none;
-	display: flex;
-	align-items: center;
-	height: 28px;
-	/* 8px + the toggle's 8px puts the text on the 16px column; the toggle's hover/focus are inset like an entry's. */
-	padding: 0 8px;
-	overflow: hidden;
-	container: agent-dock-strip / inline-size;
-}
-
-/* With the queue open, one hairline sets the status line apart from it (drawn inside the 28px). */
-.agent-dock[data-expanded="true"] .agent-dock-host[data-position="bottom"] .agent-dock-strip {
-	box-shadow: inset 0 1px 0 var(--hairline);
-}
-
-.agent-dock[data-expanded="true"] .agent-dock-host[data-position="top"] .agent-dock-strip {
-	box-shadow: inset 0 -1px 0 var(--hairline);
-}
-
-.agent-dock-toggle {
-	flex: 1;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	height: 24px;
-	padding: 0 8px;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
-	white-space: nowrap;
-	cursor: pointer;
-	user-select: none;
-	overflow: hidden;
-	transition: background-color 140ms ease-out;
-}
-
-.agent-dock-toggle:hover {
-	background: var(--fill-subtle);
-}
-
-.agent-dock-toggle:focus-visible {
-	outline-offset: -2px;
-}
-
-.agent-dock-chevron {
-	flex: none;
-	width: 1ch;
-	color: var(--dock-dim);
-}
-
-.agent-dock-needs {
-	flex: none;
-	color: var(--text-0);
-}
-
-/* Agents the dock cannot read: a genuine warning, so it keeps its tone. */
-.agent-dock-needs[data-unknown] {
-	color: var(--warn);
-}
-
-.agent-dock-sep {
-	flex: none;
-	color: var(--dock-dim);
-}
-
-.agent-dock-strip-fill {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
 /* Ages are dim until they are genuinely old: --warn past 30m, --danger past 2h (asks only) — on the
- * entry and the collapsed strip only; the pane header's age stays dim (one toned age per wait). */
-.agent-dock-age,
-.agent-dock-entry-age,
-.agent-dock-title-age {
+ * entry only, the one place a wait shows (one toned age per wait). */
+.agent-dock-entry-age {
 	flex: none;
 	color: var(--dock-dim);
 	white-space: nowrap;
 }
 
-.agent-dock-age {
-	color: var(--text-1);
-}
-
-.agent-dock-age[data-tone="warn"],
 .agent-dock-entry-age[data-tone="warn"] {
 	color: var(--warn);
 }
 
-.agent-dock-age[data-tone="danger"],
 .agent-dock-entry-age[data-tone="danger"] {
 	color: var(--danger);
 }
 
+/* The row's end: Okena's health, then the key that goes to the dock; its text ends on the 16px column. */
+.agent-dock-row-end {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding: 0 16px 0 8px;
+	white-space: nowrap;
+}
+
 .agent-dock-kbd {
 	flex: none;
-	margin-left: 8px;
-	/* Menlo draws ⌘ ⇧ at half the cap height: the strip's shortcut is set in the UI face, where they sit at cap size. */
 	font: inherit;
-	font-family: var(--dock-sans);
 	letter-spacing: 0.04em;
 	color: var(--dock-dim);
 }
@@ -1534,31 +1460,22 @@ body.dragging {
 	background: var(--danger);
 }
 
-/* Narrow #right: the needs count matters most; the key hint goes first, then the health words ellipsize. */
-@container agent-dock-strip (max-width: 560px) {
-	.agent-dock-kbd {
-		display: none;
-	}
-}
+/* ---------- queue row: one line per entry, then agents, Okena's dot and ⌘⇧J ---------- */
 
-/* ---------- queue: one row of entries, then the Agents entry ---------- */
-
-/* One fixed height whatever it holds (two terminal lines + padding), so arriving items never refit
- * xterm. Whole pixels at any UI text scale. */
+/* One 28px band whatever it holds, with or without a pane, so arriving items never refit xterm. */
 .agent-dock-rail {
 	position: relative;
+	flex: none;
 	display: flex;
-	height: calc(round(down, var(--dock-lh) * 2, 1px) + 24px);
+	align-items: center;
+	height: 28px;
 	min-width: 0;
 	overflow: hidden;
 	outline: none;
 }
 
-.agent-dock-rail[hidden] {
-	display: none;
-}
-
-.agent-dock-ch-probe {
+/* Hidden meters the row measures its texts with (same face, size, spacing and digits as the entries). */
+.agent-dock-measure {
 	position: absolute;
 	top: 0;
 	left: 0;
@@ -1567,12 +1484,11 @@ body.dragging {
 	white-space: pre;
 }
 
-/* Okena down / connecting: two quiet lines in the queue's own face, like the entries beside it. */
+/* Okena down / connecting: one quiet line in the row, like the entries beside it. */
 .agent-dock-rail-note {
 	flex: 0 0 auto;
 	display: flex;
-	flex-direction: column;
-	justify-content: center;
+	align-items: center;
 	max-width: calc(48ch + 32px);
 	padding: 0 16px;
 	color: var(--text-1);
@@ -1582,10 +1498,6 @@ body.dragging {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.agent-dock-rail-note-dim {
-	color: var(--dock-dim);
 }
 
 .agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-mark {
@@ -1598,11 +1510,13 @@ body.dragging {
 }
 
 /* Entries are separated by space, never rules. Cells touch and fill the row edge to edge, so the
- * selected fill has no inset; each entry's 16px padding puts every glyph on the strip's 16px text
- * column. */
+ * selected fill has no inset; each entry's 16px padding puts every glyph on the 16px text column.
+ * Each cell is as wide as its text really sets (queueLayout), so the fill ends right after the wait. */
 .agent-dock-queue {
 	flex: 1 1 0;
 	display: flex;
+	align-items: stretch;
+	align-self: stretch;
 	gap: 0;
 	min-width: 0;
 	margin: 0;
@@ -1640,7 +1554,8 @@ body.dragging {
 	flex-direction: column;
 	justify-content: center;
 	min-width: 0;
-	padding: 12px 16px;
+	height: 28px;
+	padding: 0 16px;
 	border: none;
 	border-radius: 0;
 	background: transparent;
@@ -1672,23 +1587,19 @@ body.dragging {
 .agent-dock-entry-line {
 	display: flex;
 	align-items: baseline;
-	gap: 1ch;
+	/* QUEUE_LINE_GAP: after the glyph and after the name. */
+	gap: 6px;
 	min-width: 0;
 	height: var(--dock-lh);
 	white-space: nowrap;
 }
 
+/* Glyphs differ in width in the UI face (↵ is wide): one 12px box (QUEUE_GLYPH), so names line up. */
 .agent-dock-glyph {
 	flex: none;
-	width: 1ch;
+	width: 12px;
 	text-align: center;
 	color: var(--dock-dim);
-}
-
-/* Menlo's ↵ sits below the cap height: lift it a pixel so it lines up with the name beside it. */
-.agent-dock-glyph[data-glyph="return"] {
-	position: relative;
-	top: -1px;
 }
 
 /* Tones live on the kind glyph only, and say the kind, never the age (the age text does that). */
@@ -1717,22 +1628,12 @@ body.dragging {
 	color: var(--text-0);
 }
 
-/* Second line under the name: `kind · age`, dim; the kind ellipsizes before the age ever would. */
-.agent-dock-entry-meta {
-	padding-left: 2ch;
-	color: var(--dock-dim);
-}
-
-.agent-dock-entry-kind,
+/* A receipt replaces the wait after the name; it ellipsizes before the name would. */
 .agent-dock-entry-receipt {
 	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-}
-
-.agent-dock-entry-sep {
-	flex: none;
 }
 
 /* "+N more": one quiet cell for what the row has no room for. */
@@ -1765,29 +1666,22 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* Agents: after the queue's one hairline (inset, a separator rather than a cell wall), dim. */
+/* Agents: one dim line after the entries (no rule), before Okena's dot. */
 .agent-dock-agents {
 	flex: none;
-	position: relative;
 	display: flex;
-	padding: 0 0 0 1px;
+	align-self: stretch;
+	align-items: center;
 }
 
-.agent-dock-agents::before {
-	content: "";
-	position: absolute;
-	top: 12px;
-	bottom: 12px;
-	left: 0;
-	width: 1px;
-	background: var(--hairline);
-}
-
-/* Right-aligned, so its text ends on the strip's right column (under ⌘⇧J). */
 .agent-dock-agents-entry {
-	align-items: flex-end;
-	min-width: calc(10ch + 16px);
+	min-width: 0;
 	color: var(--dock-dim);
+}
+
+/* Agents whose state Okena could not read: a genuine warning, so it keeps its tone. */
+.agent-dock-agents-unknown {
+	color: var(--warn);
 }
 
 .agent-dock-agents-entry:hover,
@@ -1848,8 +1742,8 @@ body.dragging {
 	border-top: 1px solid var(--hairline);
 }
 
-/* Header: a plain row on the surface — kind glyph (the one colored mark) and kind, the agent, then
- * the project and age dim; ‹ 1/3 › and esc dim on the right. No rule. */
+/* Header: a plain row on the surface — kind glyph (the one colored mark) and kind, then the question's
+ * context dim (the queue's selected fill says whose); ‹ 1/3 › and esc dim on the right. No rule. */
 .agent-dock-title {
 	flex: none;
 	display: flex;
@@ -1867,7 +1761,7 @@ body.dragging {
 	flex: 1 1 auto;
 	display: flex;
 	align-items: baseline;
-	gap: 12px;
+	gap: 8px;
 	min-width: 0;
 	overflow: hidden;
 }
@@ -1876,20 +1770,12 @@ body.dragging {
 	flex: none;
 	display: inline-flex;
 	align-items: baseline;
-	gap: 1ch;
-	color: var(--text-1);
-}
-
-/* A long name ellipsizes (whole in the tooltip and the pane's label) so the age stays in view; the
- * project gives way first. */
-.agent-dock-title-name {
-	flex: 0 1 auto;
-	min-width: 4ch;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	gap: 8px;
+	font-size: var(--dock-prose-fs);
 	color: var(--text-0);
 }
 
+.agent-dock-title-context,
 .agent-dock-title-project {
 	flex: 0 1000 auto;
 	min-width: 0;
@@ -1957,15 +1843,6 @@ body.dragging {
 	}
 }
 
-/* The full task title the short name stands for: dim context above the request. */
-.agent-dock-context {
-	margin: 0 0 4px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dock-dim);
-}
-
 /* Body: the request (question, command, plan, message) scrolls inside the pane's fixed height and gives
  * way first (it keeps about two rows); the choices block under it stays put, and the footer sits on the
  * pane's bottom edge. A fade marks content below the fold. */
@@ -2016,25 +1893,32 @@ body.dragging {
 	margin-top: 4px;
 }
 
-/* Prose stays in the UI face: questions, descriptions, turn messages, warnings. */
+/* What is read is 13/20: questions, turn messages, warnings, fields. */
 .agent-dock-question,
 .agent-dock-pane-lead,
 .agent-dock-pane-label,
-.agent-dock-choice-description,
 .agent-dock-message-text,
 .agent-dock-warn,
 .agent-dock-input,
 .agent-dock-facts {
-	font-family: var(--dock-sans);
 	font-size: var(--dock-prose-fs);
 	line-height: var(--dock-prose-lh);
-	letter-spacing: -0.01em;
 }
 
-.agent-dock-mono {
+/* Literal code (the Always-allow rule): mono. The tool's name in the lead is a word, not code. */
+.agent-dock-mono,
+.agent-dock-command,
+.agent-dock-plan,
+.agent-dock-preview-text {
 	font-family: var(--dock-mono);
 	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
 	letter-spacing: normal;
+}
+
+.agent-dock-pane-lead .agent-dock-mono {
+	font: inherit;
+	letter-spacing: inherit;
 }
 
 .agent-dock-bright {
@@ -2052,11 +1936,6 @@ body.dragging {
 	overflow-wrap: anywhere;
 }
 
-/* A single question's short header leads its line, dim. */
-.agent-dock-question-header {
-	color: var(--dock-dim);
-}
-
 .agent-dock-pane-lead {
 	margin: 8px 0 4px;
 	color: var(--text-1);
@@ -2071,7 +1950,7 @@ body.dragging {
 }
 
 .agent-dock-warn-mark {
-	font-family: var(--dock-mono);
+	color: inherit;
 }
 
 /* Question tabs: `1 Color  ✓ Size`, terminal-style — the shown one bright and underlined, the rest
@@ -2153,19 +2032,16 @@ body.dragging {
 
 .agent-dock-preview-text {
 	margin: 0;
-	font: inherit;
 	color: var(--text-0);
 	white-space: pre;
 	overflow: auto;
 }
 
-/* Not agent output: says so in the UI face, dim. */
+/* Not agent output: says so, dim. */
 .agent-dock-preview-empty {
 	margin: 0;
-	font-family: var(--dock-sans);
 	font-size: var(--dock-prose-fs);
 	line-height: var(--dock-prose-lh);
-	letter-spacing: -0.01em;
 	color: var(--dock-dim);
 }
 
@@ -2181,27 +2057,23 @@ body.dragging {
 	}
 }
 
-/* Choices: cursor | number | label | description, columns aligned across rows, like Claude Code's list. */
-/* The 8px edge tracks inset the hover band and focus ring like a queue entry's (8px in, radius 6) while the
- * text stays on the 16px column (a subgrid's own padding would shift its first track). */
+/* Choices: drawn mark | label | dim description on one line | number (a key hint, shown only while the
+ * pane holds the keys); columns aligned across rows. 28px rows. The 8px edge tracks inset the hover band
+ * and focus ring like a queue entry's (8px in, radius 6) while the text stays on the 16px column (a
+ * subgrid's own padding would shift its first track). */
 .agent-dock-choices {
 	display: grid;
-	grid-template-columns: 8px 2ch 3ch max-content minmax(0, 1fr) 8px;
+	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
 	margin: 4px -8px 0;
 }
 
-.agent-dock-choices[data-multi="true"] {
-	grid-template-columns: 8px 4ch 3ch max-content minmax(0, 1fr) 8px;
-}
-
-/* One fixed pitch: 24px rows whatever a row holds (its description runs on the 18px mono line). */
 .agent-dock-choice {
 	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: subgrid;
 	align-items: baseline;
 	align-content: center;
-	min-height: 24px;
+	min-height: 28px;
 	padding: 0;
 	border: none;
 	border-radius: 6px;
@@ -2209,6 +2081,11 @@ body.dragging {
 	color: var(--text-1);
 	cursor: pointer;
 	transition: background-color 140ms ease-out;
+}
+
+/* The number sits after the description in the grid but first in the DOM: keep every cell on the row's one line. */
+.agent-dock-choice > * {
+	grid-row: 1;
 }
 
 /* The row band means pointing: hover only (the preview target is named in the preview, not banded). */
@@ -2225,52 +2102,74 @@ body.dragging {
 	outline-offset: -2px;
 }
 
+/* The mark: an accent dot on the picked row; for several, a box that fills in. */
 .agent-dock-choice-cursor {
 	grid-column: 2;
-	color: var(--accent);
-	white-space: pre;
+	align-self: center;
+	justify-self: start;
+	box-sizing: border-box;
+	width: 6px;
+	height: 6px;
+	margin-left: 1px;
+	border-radius: 999px;
+}
+
+.agent-dock-choice-cursor[data-on="true"] {
+	background: var(--accent);
 }
 
 .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor {
-	color: var(--dock-dim);
+	width: 10px;
+	height: 10px;
+	margin-left: 0;
+	border: 1px solid var(--dock-dim);
+	border-radius: 3px;
 }
 
-.agent-dock-choices[data-multi="true"] .agent-dock-choice[aria-checked="true"] .agent-dock-choice-cursor {
-	grid-column: 2;
-	color: var(--accent);
-}
-
-.agent-dock-choice-n {
-	grid-column: 3;
-	color: var(--dock-dim);
+.agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor[data-on="true"] {
+	border-color: var(--accent);
+	background: var(--accent);
 }
 
 .agent-dock-choice-label {
-	grid-column: 4;
-	padding-right: 2ch;
+	grid-column: 3;
+	padding-right: 12px;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
 	color: var(--text-0);
 	white-space: nowrap;
 }
 
+/* One line, dim; the whole of it is the row's tooltip. */
 .agent-dock-choice-description {
-	grid-column: 5;
+	grid-column: 4;
 	min-width: 0;
-	line-height: var(--dock-lh);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dock-dim);
+}
+
+.agent-dock-choice[aria-checked="true"] .agent-dock-choice-description {
 	color: var(--text-1);
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+}
+
+.agent-dock-choice-n {
+	grid-column: 5;
+	padding-left: 12px;
+	color: var(--dock-dim);
+	visibility: hidden;
+}
+
+.agent-dock-pane:focus-within:not(:has(.agent-dock-input:focus)) .agent-dock-choice-n {
+	visibility: visible;
 }
 
 .agent-dock-choice[aria-checked="true"] .agent-dock-choice-n {
 	color: var(--accent);
 }
 
-.agent-dock-choice[aria-checked="true"] .agent-dock-choice-description {
-	color: var(--text-0);
-}
-
 .agent-dock-choice[data-tone="danger"] .agent-dock-choice-label,
-.agent-dock-choice[data-tone="danger"][aria-checked="true"] .agent-dock-choice-cursor,
 .agent-dock-choice[data-tone="danger"][aria-checked="true"] .agent-dock-choice-n {
 	color: var(--danger);
 }
@@ -2331,7 +2230,6 @@ body.dragging {
 /* Permission command, plan, tool input: verbatim, monospace. */
 .agent-dock-command {
 	margin: 8px 0;
-	font: inherit;
 	color: var(--text-0);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
@@ -2347,7 +2245,6 @@ body.dragging {
 
 .agent-dock-plan {
 	margin: 8px 0;
-	font: inherit;
 	color: var(--text-0);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
@@ -2383,9 +2280,6 @@ body.dragging {
 }
 
 .agent-dock-fact-pr {
-	font-family: var(--dock-mono);
-	font-size: var(--dock-fs);
-	letter-spacing: normal;
 	color: var(--text-1);
 }
 
@@ -2422,8 +2316,7 @@ body.dragging {
 	color: var(--text-1);
 }
 
-.agent-dock-hint kbd[data-face="sans"] {
-	font-family: var(--dock-sans);
+.agent-dock-hint kbd[data-face="symbols"] {
 	letter-spacing: 0.04em;
 }
 
@@ -2464,10 +2357,10 @@ body.dragging {
 }
 
 .agent-dock-key.btn {
-	font-family: var(--dock-mono);
+	font-family: var(--dock-sans);
 	font-size: var(--dock-fs);
 	font-weight: 400;
-	letter-spacing: normal;
+	letter-spacing: -0.01em;
 	text-align: center;
 }
 
@@ -2565,225 +2458,4 @@ body.dragging {
 	.agent-dock-status {
 		animation: none;
 	}
-}
-
-/* ---------- review looks (agent-dock/look.ts; Storybook only, production renders none) ---------- */
-
-/* Calm type (one-typeface, two-bands, focus): one face, the UI's, everywhere in the dock; mono only for
- * literal commands and code (permission command, Always-allow rule, plan, previews). 12/18 for the
- * strip, queue and meta; 13/20 for what is read (names in the pane header, question, option labels). */
-.agent-dock-host[data-look] {
-	font-family: var(--dock-sans);
-	letter-spacing: -0.01em;
-}
-
-.agent-dock-host[data-look] :is(.agent-dock-command, .agent-dock-plan, .agent-dock-preview-text) {
-	font-family: var(--dock-mono);
-	font-size: var(--dock-fs);
-	line-height: var(--dock-lh);
-	letter-spacing: normal;
-}
-
-/* Words that were mono only to match the terminal: the tool's name in the lead, PR numbers, marks, keys. */
-.agent-dock-host[data-look] :is(.agent-dock-pane-lead .agent-dock-mono, .agent-dock-fact-pr, .agent-dock-warn-mark) {
-	font-family: inherit;
-	font-size: inherit;
-	letter-spacing: inherit;
-}
-
-.agent-dock-host[data-look] .agent-dock-key.btn {
-	font-family: var(--dock-sans);
-	letter-spacing: -0.01em;
-}
-
-/* Menlo's ↵ sat low; the UI face's does not. */
-.agent-dock-host[data-look] .agent-dock-glyph[data-glyph="return"] {
-	top: 0;
-}
-
-/* Glyphs differ in width in the UI face (↵ is wide): one 12px box, and the meta line indents past it. */
-.agent-dock-host[data-look] .agent-dock-glyph {
-	width: 12px;
-}
-
-.agent-dock-host[data-look] .agent-dock-entry-meta {
-	padding-left: 16px;
-}
-
-/* Header: glyph, name (13, bright), dim age; nothing else (project and task title are the tooltip's). */
-.agent-dock-host[data-look] .agent-dock-title-text {
-	gap: 8px;
-}
-
-.agent-dock-host[data-look] .agent-dock-title-name {
-	font-size: var(--dock-prose-fs);
-}
-
-.agent-dock-title-sep {
-	flex: none;
-	color: var(--dock-dim);
-}
-
-/* two-bands: kind (13) and its context dim; ‹ › without a count (the queue's selected fill places it). */
-.agent-dock-host[data-look="two-bands"] .agent-dock-title-kind {
-	font-size: var(--dock-prose-fs);
-	color: var(--text-0);
-}
-
-.agent-dock-host[data-look="two-bands"] .agent-dock-step-count {
-	min-width: 4px;
-}
-
-/* Choices: drawn mark | label | dim description on one line | number (a key hint, only while the
- * pane holds the keys). 28px rows. */
-.agent-dock-host[data-look] .agent-dock-choices,
-.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] {
-	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
-}
-
-.agent-dock-host[data-look] .agent-dock-choice {
-	min-height: 28px;
-}
-
-/* The number sits after the description in the grid but first in the DOM: keep every cell on the row's one line. */
-.agent-dock-host[data-look] .agent-dock-choice > * {
-	grid-row: 1;
-}
-
-/* `question · 52m` in the UI face: a space-width gap, not a mono cell. */
-.agent-dock-host[data-look] .agent-dock-entry-line {
-	gap: 4px;
-}
-
-.agent-dock-host[data-look] .agent-dock-choice-cursor,
-.agent-dock-host[data-look]
-	.agent-dock-choices[data-multi="true"]
-	.agent-dock-choice[aria-checked="true"]
-	.agent-dock-choice-cursor {
-	grid-column: 2;
-	align-self: center;
-	justify-self: start;
-	box-sizing: border-box;
-	width: 6px;
-	height: 6px;
-	margin-left: 1px;
-	border-radius: 999px;
-}
-
-.agent-dock-host[data-look] .agent-dock-choice-cursor[data-on="true"] {
-	background: var(--accent);
-}
-
-.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor {
-	width: 10px;
-	height: 10px;
-	margin-left: 0;
-	border: 1px solid var(--dock-dim);
-	border-radius: 3px;
-}
-
-.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor[data-on="true"] {
-	border-color: var(--accent);
-	background: var(--accent);
-}
-
-.agent-dock-host[data-look] .agent-dock-choice-label {
-	grid-column: 3;
-	padding-right: 12px;
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-}
-
-.agent-dock-host[data-look] .agent-dock-choice-description {
-	grid-column: 4;
-	overflow: hidden;
-	font-size: var(--dock-fs);
-	line-height: var(--dock-lh);
-	letter-spacing: -0.01em;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dock-dim);
-}
-
-.agent-dock-host[data-look] .agent-dock-choice[aria-checked="true"] .agent-dock-choice-description {
-	color: var(--text-1);
-}
-
-.agent-dock-host[data-look] .agent-dock-choice-n {
-	grid-column: 5;
-	padding-left: 12px;
-	color: var(--dock-dim);
-	visibility: hidden;
-}
-
-.agent-dock-host[data-look] .agent-dock-pane:focus-within:not(:has(.agent-dock-input:focus)) .agent-dock-choice-n {
-	visibility: visible;
-}
-
-/* Row looks (two-bands, focus): one 28px band — the queue's entries on one line each, then agents, Okena's
- * dot and ⌘⇧J — that the strip collapses into at the same height (no refit on toggle). */
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail {
-	align-items: center;
-	height: 28px;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-queue {
-	align-items: stretch;
-	padding: 0;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"])
-	:is(.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry) {
-	height: 28px;
-	padding: 0 16px;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-entry-line {
-	align-items: baseline;
-	gap: 6px;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents {
-	padding: 0;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents::before {
-	display: none;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents-entry {
-	min-width: 0;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail-note {
-	flex-direction: row;
-	align-items: center;
-}
-
-.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail-note-dim {
-	display: none;
-}
-
-.agent-dock-row-toggle {
-	flex: none;
-	margin-right: 8px;
-}
-
-.agent-dock-row-toggle .agent-dock-kbd {
-	margin-left: 0;
-}
-
-.agent-dock-strip-agents {
-	flex: none;
-	color: var(--dock-dim);
-}
-
-/* focus: while a pane is open it is the whole dock (the row keeps its layout, unseen, for focus return). */
-.agent-dock-host[data-look="focus"][data-pane="true"] .agent-dock-rail {
-	height: 0;
-	visibility: hidden;
-}
-
-.agent-dock-host[data-look="focus"] .agent-dock-pane {
-	border: none;
 }

@@ -1,31 +1,37 @@
 // Agent dock body (design §3.24): one --chrome surface below (or above) the terminal,
-// like the topbar mirrored. The fixed 28px strip (a status line), the one-row queue
-// it toggles (two quiet lines per item that owes Jakub something, "+N more" when they
-// do not fit, then the Agents entry) and, when an entry is opened, a pane split off
-// the terminal in-flow — the terminal row shrinks and refits once, nothing ever
-// floats over its text. Answering happens in the pane (slice 2) and the receipt
-// shows in place; entries keep their slots while the pane is open. Layout,
-// persistence, focus return and ⌘⇧J belong to agent-dock-layout.ts. Agent text is
-// untrusted and always rendered as plain React text (never markup), bounded and
-// control-stripped.
+// like the topbar mirrored. Two bands: the 28px queue row — one quiet line per item
+// that owes Jakub something (glyph, short name, wait), "+N more" when they do not fit,
+// then the Agents entry, Okena's dot and ⌘⇧J — and, when an entry is opened, a pane
+// split off the terminal in-flow: the terminal row shrinks and refits once, nothing
+// ever floats over its text. The row is the same with or without a pane. Answering
+// happens in the pane (slice 2) and the receipt shows in place; entries keep their
+// slots while the pane is open. Layout, focus return and ⌘⇧J belong to
+// agent-dock-layout.ts. Agent text is untrusted and always rendered as plain React
+// text (never markup), bounded and control-stripped.
 
-import { type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+	type KeyboardEvent,
+	type MutableRefObject,
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from '../../agent-dock/model'
 import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail, draftKeys } from './AgentDockDetail'
-import { type AgentDockLook, AgentDockLookContext, isRowLook } from './look'
 import {
 	type AgentDockPosition,
 	type AgentWho,
-	QUEUE_AGE_CHARS,
+	type TextWidth,
 	agentWho,
 	canAnswer,
 	cardGist,
 	cardKindLabel,
 	cardTone,
 	dockSummary,
-	entryKindText,
-	entryMetaChars,
-	entryNameRoom,
 	findSession,
 	formatAge,
 	formatClock,
@@ -42,21 +48,25 @@ import {
 	receiptView,
 	sessionSince,
 	sessionStatusText,
-	shortenName,
 	unknownAgentsText,
 	unknownSessionCount,
 } from './presentation'
 
 export type AgentDockTarget = { type: 'item'; id: number } | { type: 'agents' }
 
+/** What the layout may ask of a mounted dock (⌘⇧J pressed inside it). */
+export interface AgentDockHandle {
+	/** Close an open pane (no focus move: the layout hands focus back to the terminal first). */
+	closePane(): void
+}
+
 export interface AgentDockProps {
 	snapshot: AgentDockSnapshot | null
 	now: number
-	/** Queue open (user toggle only: new items never open it or resize the terminal). */
-	expanded: boolean
 	position: AgentDockPosition
 	shortcutLabel: string
-	onToggle(): void
+	/** Filled with the dock's handle while it is mounted. */
+	handle?: MutableRefObject<AgentDockHandle | null>
 	onAck(itemId: number): Promise<boolean>
 	/** Jakub answered from the pane (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
 	onAct?(itemId: number, rev: number, action: DockAction): Promise<AgentDockActResult>
@@ -68,8 +78,6 @@ export interface AgentDockProps {
 	initialOpen?: AgentDockTarget | null
 	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
 	initialSent?: ReadonlyMap<number, DockAction>
-	/** Review stories only: a calmer look to compare (look.ts); production renders 'current'. */
-	look?: AgentDockLook
 }
 
 /** The pane's height is set once when it opens (its first item's natural height, within these) and kept while it stays open. */
@@ -86,21 +94,16 @@ const targetKey = (target: AgentDockTarget | null): string | null =>
 export function AgentDock({
 	snapshot,
 	now,
-	expanded,
 	position,
 	shortcutLabel,
-	onToggle,
+	handle,
 	onAck,
 	onAct,
 	paneRoom,
 	onPaneChange,
 	initialOpen = null,
 	initialSent,
-	look = 'current',
 }: AgentDockProps) {
-	/** The queue is one line-high row that absorbs the strip (two-bands, focus). */
-	const row = isRowLook(look)
-	const railId = useId()
 	const paneId = useId()
 	const hostRef = useRef<HTMLDivElement>(null)
 	const paneRef = useRef<HTMLElement>(null)
@@ -140,16 +143,12 @@ export function AgentDock({
 	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
-	const needs = keepOrder(
-		target ? order.current : null,
-		expanded ? railItems(snapshot, clock) : [],
-		snapshot?.items ?? [],
-	)
+	const needs = keepOrder(target ? order.current : null, railItems(snapshot, clock), snapshot?.items ?? [])
 	order.current = target ? needs.map(item => item.id) : null
 	const openKey = targetKey(target)
 	const openIndex = target?.type === 'item' ? needs.findIndex(item => item.id === target.id) : -1
 	const openItem = openIndex >= 0 ? needs[openIndex] : undefined
-	const paneOpen = expanded && (target?.type === 'agents' || openItem !== undefined)
+	const paneOpen = target?.type === 'agents' || openItem !== undefined
 	const paneShown = paneOpen && paneHeight !== null
 	const room = paneOpen ? (paneRoom?.() ?? null) : null
 	const height =
@@ -164,6 +163,14 @@ export function AgentDock({
 		// An item past the queue's "+N more" cell has no entry of its own: that cell stands in for it.
 		if (refocus && key) queueMicrotask(() => (anchors.current.get(key) ?? anchors.current.get('more'))?.focus())
 	}, [])
+
+	useEffect(() => {
+		if (!handle) return
+		handle.current = { closePane: () => close(false) }
+		return () => {
+			handle.current = null
+		}
+	}, [handle, close])
 
 	const focusInPane = () => {
 		const pane = paneRef.current
@@ -210,17 +217,13 @@ export function AgentDock({
 
 	// The open item went away (a local ack, or the snapshot no longer has it): after an ack show the next one, otherwise close.
 	useEffect(() => {
-		if (!expanded) {
-			if (target) close(false)
-			return
-		}
 		if (target?.type !== 'item' || openItem) return
 		const from = advanceFrom.current
 		advanceFrom.current = null
 		const next = from === null ? undefined : (needs[Math.min(from, needs.length - 1)] ?? undefined)
 		if (next) setTarget({ type: 'item', id: next.id })
 		else close(false)
-	}, [expanded, target, openItem, needs, close])
+	}, [target, openItem, needs, close])
 
 	// The pane's height is decided once, before the first paint: the opened item's natural
 	// height within [PANE_MIN_HEIGHT, PANE_MAX_HEIGHT]. Stepping and answering keep it (the body
@@ -405,99 +408,40 @@ export function AgentDock({
 		step(delta)
 	}
 
-	const toggleLabel = `${expanded ? 'Collapse' : 'Expand'} agent dock (${shortcutLabel})`
-	// The strip's name says what it is and the state in words.
-	const toggleName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
+	// The row's name says what it is and the state in words (the summary row of earlier docks).
+	const dockName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
 	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
-	// The glyph points where the queue opens: away from the terminal.
-	const chevron = (position === 'bottom') === expanded ? '▾' : '▴'
-	// Healthy is a dot (the label says "Okena"); connecting and down say so in words.
-	const health = (
-		<span className="agent-dock-health" data-tone={summary.health.tone} title={summary.health.text}>
-			<span className="agent-dock-dot" aria-hidden="true" />
-			{summary.health.tone === 'success' ? null : <span className="agent-dock-health-text">{summary.health.text}</span>}
-		</span>
-	)
-	const agentCount = snapshot && snapshot.source.state !== 'pending' ? snapshot.sessions.length : null
-	const strip = (
-		<div className="agent-dock-strip">
-			<button
-				type="button"
-				className="agent-dock-toggle"
-				aria-expanded={expanded}
-				aria-controls={railId}
-				aria-label={toggleName}
-				aria-keyshortcuts={keyShortcut}
-				title={toggleLabel}
-				onClick={onToggle}
-			>
-				<span className="agent-dock-chevron" aria-hidden="true">
-					{chevron}
-				</span>
-				<span className="agent-dock-needs" data-unknown={summary.unknownCount > 0 ? '' : undefined}>
-					{summary.needsText}
-				</span>
-				{/* Open, the queue shows every wait itself: the strip names the oldest only while collapsed. */}
-				{summary.oldestText && !expanded ? (
-					<>
-						<span className="agent-dock-sep" aria-hidden="true">
-							·
-						</span>
-						<span className="agent-dock-age" data-tone={summary.oldestTone}>
-							{summary.oldestText}
-						</span>
-					</>
-				) : null}
-				<span className="agent-dock-strip-fill" />
-				{/* The row looks' collapsed state ends like their open row: agents, Okena, ⌘⇧J. */}
-				{row && agentCount !== null ? <span className="agent-dock-strip-agents">agents {agentCount}</span> : null}
-				{health}
-				<kbd className="agent-dock-kbd">{shortcutLabel}</kbd>
-			</button>
-		</div>
-	)
-
-	// Row looks, queue open: no strip; the row ends in Okena's dot and ⌘⇧J, which collapse it.
-	const rowToggle = (
-		<button
-			type="button"
-			className="agent-dock-toggle agent-dock-row-toggle"
-			aria-expanded={expanded}
-			aria-controls={railId}
-			aria-label={toggleName}
-			aria-keyshortcuts={keyShortcut}
-			title={toggleLabel}
-			onClick={onToggle}
-		>
-			{health}
-			<kbd className="agent-dock-kbd">{shortcutLabel}</kbd>
-		</button>
-	)
 
 	const rail = (
 		<section
-			id={railId}
 			className="agent-dock-rail"
-			aria-label="Agent dock"
-			hidden={!expanded}
-			inert={!expanded}
+			aria-label={dockName}
+			aria-keyshortcuts={keyShortcut}
 			tabIndex={-1}
 			onKeyDown={onRailKey}
 		>
-			{/* Collapsed (the common case): mount no item content. */}
-			{expanded ? (
-				<Queue
-					snapshot={snapshot}
-					now={clock}
-					needs={needs}
-					openKey={paneOpen ? openKey : null}
-					paneId={paneId}
-					register={register}
-					onOpen={open}
-					inline={row}
-				/>
-			) : null}
-			{expanded && row ? rowToggle : null}
+			<Queue
+				snapshot={snapshot}
+				now={clock}
+				needs={needs}
+				openKey={paneOpen ? openKey : null}
+				paneId={paneId}
+				register={register}
+				onOpen={open}
+			/>
+			{/* The row ends in Okena's health and the key that goes to the dock. Healthy is a dot (its
+			    tooltip says "Okena"); connecting and down say so in words. */}
+			<span className="agent-dock-row-end">
+				<span className="agent-dock-health" data-tone={summary.health.tone} title={summary.health.text}>
+					<span className="agent-dock-dot" aria-hidden="true" />
+					{summary.health.tone === 'success' ? null : (
+						<span className="agent-dock-health-text">{summary.health.text}</span>
+					)}
+				</span>
+				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcutLabel})`}>
+					{shortcutLabel}
+				</kbd>
+			</span>
 		</section>
 	)
 
@@ -549,48 +493,58 @@ export function AgentDock({
 	) : null
 
 	return (
-		<AgentDockLookContext.Provider value={look}>
-			<div
-				ref={hostRef}
-				className="agent-dock-host"
-				data-position={position}
-				data-pane={String(paneOpen)}
-				data-look={look === 'current' ? undefined : look}
-			>
-				<span className="sr-only" aria-live="polite">
-					{announcement}
-				</span>
-				{position === 'top' ? (
-					<>
-						{row && expanded ? null : strip}
-						{rail}
-						{pane}
-					</>
-				) : (
-					<>
-						{pane}
-						{rail}
-						{row && expanded ? null : strip}
-					</>
-				)}
-			</div>
-		</AgentDockLookContext.Provider>
+		<div ref={hostRef} className="agent-dock-host" data-position={position} data-pane={String(paneOpen)}>
+			<span className="sr-only" aria-live="polite">
+				{announcement}
+			</span>
+			{position === 'top' ? (
+				<>
+					{rail}
+					{pane}
+				</>
+			) : (
+				<>
+					{pane}
+					{rail}
+				</>
+			)}
+		</div>
 	)
 }
 
-/** Width of one monospace cell in the queue's font, measured once per mount (and on font changes). */
-function useCellWidth(probe: HTMLElement | null): number {
-	const [ch, setCh] = useState(0)
+/**
+ * Real text widths in the queue's own font: `measure(text)` lays the text out in a hidden meter beside
+ * the entries (same face, size, letter-spacing and tabular digits) and caches it. A sentinel's width
+ * changing (UI text scale, font) starts a fresh cache. Null until both nodes are mounted.
+ */
+function useTextWidth(sentinel: HTMLElement | null, meter: HTMLElement | null): TextWidth | null {
+	const [font, setFont] = useState(0)
 	useLayoutEffect(() => {
-		if (!probe) return
-		const measure = () => setCh(probe.getBoundingClientRect().width / 10)
-		measure()
-		const observer = new ResizeObserver(measure)
-		observer.observe(probe)
+		if (!sentinel) return
+		const update = () => setFont(sentinel.getBoundingClientRect().width)
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(sentinel)
 		return () => observer.disconnect()
-	}, [probe])
-	return ch
+	}, [sentinel])
+	return useMemo(() => {
+		if (!meter || font <= 0) return null
+		const cache = new Map<string, number>()
+		return (text: string) => {
+			let width = cache.get(text)
+			if (width === undefined) {
+				meter.textContent = text
+				width = meter.getBoundingClientRect().width
+				cache.set(text, width)
+			}
+			return width
+		}
+	}, [meter, font])
 }
+
+/** What follows an entry's name on its line: the receipt once answered from the dock, else the wait. */
+const entryTail = (item: DockItem, now: number): string =>
+	receiptView(item)?.text ?? formatAge(now - itemWaitingSince(item))
 
 function Queue({
 	snapshot,
@@ -600,7 +554,6 @@ function Queue({
 	paneId,
 	register,
 	onOpen,
-	inline = false,
 }: {
 	snapshot: AgentDockSnapshot | null
 	now: number
@@ -609,51 +562,44 @@ function Queue({
 	paneId: string
 	register(key: string): (node: HTMLButtonElement | null) => void
 	onOpen(target: AgentDockTarget, viaKeyboard: boolean): void
-	/** One line per entry (glyph, name, age) in the row looks. */
-	inline?: boolean
 }) {
 	// The entries' room can mount after the first render (Connecting → data): measure it via a callback ref.
-
 	const [list, setList] = useState<HTMLUListElement | null>(null)
-	const [probe, setProbe] = useState<HTMLSpanElement | null>(null)
+	const [sentinel, setSentinel] = useState<HTMLSpanElement | null>(null)
+	const [meter, setMeter] = useState<HTMLSpanElement | null>(null)
 	const [room, setRoom] = useState(0)
-	const ch = useCellWidth(probe)
+	const measure = useTextWidth(sentinel, meter)
 	useLayoutEffect(() => {
 		if (!list) return
-		const measure = () => {
+		const update = () => {
 			const style = getComputedStyle(list)
 			setRoom(list.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight))
 		}
-		measure()
-		const observer = new ResizeObserver(measure)
+		update()
+		const observer = new ResizeObserver(update)
 		observer.observe(list)
 		return () => observer.disconnect()
 	}, [list])
+	const meters = (
+		<span className="agent-dock-measure" aria-hidden="true">
+			<span ref={setSentinel}>0123456789 abcdefghijklmnopqrstuvwxyz</span>
+			<span ref={setMeter} />
+		</span>
+	)
 	const source = snapshot?.source
 	if (!snapshot || source?.state === 'pending')
 		return (
 			<div className="agent-dock-rail-note">
 				<span>Connecting to Okena…</span>
-				<span className="agent-dock-rail-note-dim">Claude sessions appear once Okena's Claude Remote answers</span>
 			</div>
 		)
 	const unknown = unknownSessionCount(snapshot)
 	const whos = needs.map(item => agentWho(snapshot, item.session))
 	const openIndex = needs.findIndex(item => `item:${item.id}` === openKey)
-	// One line (row looks): the wait (or receipt) follows the name, so it counts with the name's cells.
-	const tails = needs.map(item =>
-		inline ? 1 + Math.max(QUEUE_AGE_CHARS, [...(receiptView(item)?.text ?? '')].length) : 0,
-	)
 	// Names shorten (in the middle) before anything goes behind "+N more"; the open entry is always in the row.
 	const layout = queueLayout(
-		needs.map((item, at) => {
-			const nameChars = [...(whos[at]?.name ?? '')].length
-			const ageNow = formatAge(now - itemWaitingSince(item)).length
-			return inline
-				? { nameChars, tailChars: tails[at] ?? 0, metaChars: 0, metaNow: Math.min(nameChars, 4) + 1 + ageNow }
-				: { nameChars, metaChars: entryMetaChars(item), metaNow: [...entryKindText(item)].length + 3 + ageNow }
-		}),
-		ch,
+		needs.map((item, at) => ({ name: whos[at]?.name ?? '', tail: entryTail(item, now) })),
+		measure,
 		room,
 		openIndex,
 	)
@@ -662,26 +608,25 @@ function Queue({
 	const sessions = orderedSessions(snapshot)
 	return (
 		<>
-			{/* A cell is a digit: in the calm looks' proportional face a little wider than most letters, so names fit. */}
-			<span ref={setProbe} className="agent-dock-ch-probe" aria-hidden="true">
-				0000000000
-			</span>
+			{meters}
 			{source?.state === 'down' ? (
-				// Two quiet lines, like the entries beside it (since when is on the strip already).
+				// One quiet line, like the entries beside it; when data was last seen is its tooltip.
 				<div
 					className="agent-dock-rail-note"
 					data-tone="warn"
-					title={source.detail ? plainAgentText(source.detail, 200) : undefined}
+					title={[
+						source.lastObservedAt !== null ? `last data ${formatClock(source.lastObservedAt)}` : 'no data yet',
+						'nothing resolves until it’s back',
+						source.detail ? plainAgentText(source.detail, 200) : '',
+					]
+						.filter(Boolean)
+						.join('\n')}
 				>
 					<span>
 						<span className="agent-dock-rail-note-mark" aria-hidden="true">
 							!{' '}
 						</span>
 						Okena unreachable
-					</span>
-					<span className="agent-dock-rail-note-dim">
-						{source.lastObservedAt !== null ? `last data ${formatClock(source.lastObservedAt)}` : 'no data yet'}
-						{' · nothing resolves until it’s back'}
 					</span>
 				</div>
 			) : null}
@@ -695,7 +640,7 @@ function Queue({
 								: 'Nothing needs you'}
 					</li>
 				) : (
-					layout.slots.map(({ index, width }) => {
+					layout.slots.map(({ index, width, name }) => {
 						const item = needs[index]
 						if (!item) return null
 						const who = whos[index] ?? { name: '', title: '', project: '' }
@@ -704,10 +649,7 @@ function Queue({
 								<Entry
 									item={item}
 									who={who}
-									shownName={
-										width ? shortenName(who.name, entryNameRoom(width - (tails[index] ?? 0) * ch, ch)) : who.name
-									}
-									inline={inline}
+									shownName={name}
 									now={now}
 									open={openKey === `item:${item.id}`}
 									paneId={paneId}
@@ -719,7 +661,7 @@ function Queue({
 					})
 				)}
 				{hidden.length > 0 ? (
-					<li className="agent-dock-queue-slot" style={{ flexBasis: layout.more }}>
+					<li className="agent-dock-queue-slot" style={layout.more ? { flexBasis: layout.more } : undefined}>
 						<MoreEntry
 							items={hidden}
 							snapshot={snapshot}
@@ -736,8 +678,8 @@ function Queue({
 			</ul>
 			<AgentsEntry
 				snapshot={snapshot}
-				inline={inline}
 				sessions={sessions}
+				unknown={needs.length > 0 ? unknown : 0}
 				now={now}
 				open={openKey === 'agents'}
 				paneId={paneId}
@@ -748,24 +690,18 @@ function Queue({
 	)
 }
 
-/** Kind glyph: the one colored mark (its kind's tone, never its age); Menlo's ↵ sits low, so it is lifted a pixel. */
+/** Kind glyph: the one colored mark (its kind's tone, never its age), in a fixed box so names line up. */
 function KindGlyph({ item }: { item: DockItem }) {
-	const glyph = kindGlyph(item)
 	return (
-		<span
-			className="agent-dock-glyph"
-			data-tone={cardTone(item)}
-			data-glyph={glyph === '↵' ? 'return' : undefined}
-			aria-hidden="true"
-		>
-			{glyph}
+		<span className="agent-dock-glyph" data-tone={cardTone(item)} aria-hidden="true">
+			{kindGlyph(item)}
 		</span>
 	)
 }
 
 /**
- * One item, two quiet lines: the kind glyph and the agent's short name, then `kind · age` dim
- * (the age toned only once it is genuinely old) or, once answered from the dock, the receipt.
+ * One item, one quiet line: the kind glyph (its tone is the kind), the agent's short name, then the
+ * wait (toned only once it is genuinely old) or, once answered from the dock, the receipt.
  */
 function Entry({
 	item,
@@ -776,14 +712,11 @@ function Entry({
 	paneId,
 	buttonRef,
 	onOpen,
-	inline = false,
 }: {
 	item: DockItem
 	who: AgentWho
 	/** The name as the entry has room for it (cut in the middle); its label and tooltip keep it whole. */
 	shownName: string
-	/** One line: glyph, name, then the age (or receipt); the kind is the glyph's tone and the tooltip's. */
-	inline?: boolean
 	now: number
 	open: boolean
 	paneId: string
@@ -810,48 +743,22 @@ function Entry({
 			aria-controls={open ? paneId : undefined}
 			aria-label={`${kind}, ${who.name}${who.project ? ` in ${who.project}` : ''}, ${receipt ? receipt.text : `${item.kind === 'turn' ? 'idle' : 'waiting'} ${age}`}`}
 			aria-describedby={receipt ? undefined : gistId}
-			title={[inline ? `${kind} · ${who.name}` : who.name, who.title, who.project].filter(Boolean).join('\n')}
+			title={[`${kind} · ${who.name}`, who.title, who.project].filter(Boolean).join('\n')}
 			onClick={event => onOpen(event.detail === 0)}
 		>
-			{inline ? (
-				<span className="agent-dock-entry-line">
-					<KindGlyph item={item} />
-					<span className="agent-dock-entry-name">{shownName}</span>
-					{receipt ? (
-						<span className="agent-dock-entry-receipt" data-tone={receipt.tone}>
-							{receipt.text}
-						</span>
-					) : (
-						<span className="agent-dock-entry-age" data-tone={itemAgeTone(item, now)}>
-							{age}
-						</span>
-					)}
-				</span>
-			) : (
-				<>
-					<span className="agent-dock-entry-line">
-						<KindGlyph item={item} />
-						<span className="agent-dock-entry-name">{shownName}</span>
+			<span className="agent-dock-entry-line">
+				<KindGlyph item={item} />
+				<span className="agent-dock-entry-name">{shownName}</span>
+				{receipt ? (
+					<span className="agent-dock-entry-receipt" data-tone={receipt.tone}>
+						{receipt.text}
 					</span>
-					<span className="agent-dock-entry-line agent-dock-entry-meta">
-						{receipt ? (
-							<span className="agent-dock-entry-receipt" data-tone={receipt.tone}>
-								{receipt.text}
-							</span>
-						) : (
-							<>
-								<span className="agent-dock-entry-kind">{entryKindText(item)}</span>
-								<span className="agent-dock-entry-sep" aria-hidden="true">
-									·
-								</span>
-								<span className="agent-dock-entry-age" data-tone={itemAgeTone(item, now)}>
-									{age}
-								</span>
-							</>
-						)}
+				) : (
+					<span className="agent-dock-entry-age" data-tone={itemAgeTone(item, now)}>
+						{age}
 					</span>
-				</>
-			)}
+				)}
+			</span>
 			{/* The queue shows no gist; it still describes the entry for assistive tech. */}
 			{receipt ? null : (
 				<span className="sr-only" id={gistId}>
@@ -901,13 +808,15 @@ function MoreEntry({
 }
 
 /**
- * The Agents entry: two quiet lines (`agents 4` / `2 busy`; `agents 8` alone when none is busy) after
- * the queue's one hairline; the pane lists them all. Only what DockSession observed (status, since) — never invented activity.
+ * The Agents entry, one quiet line after the queue (`agents 4 · 2 busy`; `agents 8` alone when none is
+ * busy), and the pane lists them all. Only what DockSession observed (status, since) — never invented
+ * activity. Agents whose state Okena could not read while items show are named here, toned: the row
+ * never reads as complete without them.
  */
 function AgentsEntry({
 	snapshot,
-	inline = false,
 	sessions,
+	unknown,
 	now,
 	open,
 	paneId,
@@ -915,9 +824,8 @@ function AgentsEntry({
 	onOpen,
 }: {
 	snapshot: AgentDockSnapshot
-	/** One line (`agents 4 · 2 busy`) in the row looks. */
-	inline?: boolean
 	sessions: ReturnType<typeof orderedSessions>
+	unknown: number
 	now: number
 	open: boolean
 	paneId: string
@@ -938,7 +846,7 @@ function AgentsEntry({
 				aria-label={
 					sessions.length === 0
 						? "No Claude session is connected to Okena's Claude Remote. Show agents"
-						: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy. Show agents`
+						: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`
 				}
 				title={
 					sessions.length === 0
@@ -952,19 +860,10 @@ function AgentsEntry({
 				}
 				onClick={event => onOpen(event.detail === 0)}
 			>
-				{inline ? (
-					<span className="agent-dock-entry-line">
-						{sessions.length === 0 ? 'no agents' : `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`}
-					</span>
-				) : (
-					<span className="agent-dock-entry-line">agents {sessions.length}</span>
-				)}
-				{/* Nothing busy says nothing: `agents 8` alone. */}
-				{inline ? null : sessions.length === 0 ? (
-					<span className="agent-dock-entry-line">none connected</span>
-				) : busy > 0 ? (
-					<span className="agent-dock-entry-line">{busy} busy</span>
-				) : null}
+				<span className="agent-dock-entry-line">
+					{sessions.length === 0 ? 'no agents' : `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`}
+					{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
+				</span>
 			</button>
 		</div>
 	)
@@ -977,7 +876,7 @@ function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
 }
 
 /**
- * Polite words for items that newly need Jakub (the queue never opens by itself, so the strip
+ * Polite words for items that newly need Jakub (the queue never opens a pane by itself, so the row
  * changing is the only other signal). Only arrivals: never ticking ages or working counts. The
  * first reachable snapshot is the baseline, and arrivals within ANNOUNCE_COALESCE_MS are one line.
  */

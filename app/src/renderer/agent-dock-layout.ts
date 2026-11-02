@@ -3,14 +3,12 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
-import { AgentDock } from './agent-dock/AgentDock'
+import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/AgentDockDetail'
-import type { AgentDockLook } from './agent-dock/look'
 import type { AgentDockPosition } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
-	expanded: 'helm.agentDock.expanded',
 	position: 'helm.agentDock.position',
 } as const
 
@@ -18,7 +16,7 @@ const readPosition = (raw: string | null): AgentDockPosition => (raw === 'top' ?
 
 /**
  * The dock's place relative to the terminals, chosen in Settings → Appearance (never on the
- * strip). Every mounted dock subscribes and re-lays out live. A choice made while storage is
+ * queue row). Every mounted dock subscribes and re-lays out live. A choice made while storage is
  * unavailable still applies for this session; another Helm window's change arrives as a
  * `storage` event.
  */
@@ -71,7 +69,7 @@ const PANE_KEEPS_ROWS = 8
 const WELL_PADDING = 28
 
 export interface MountedAgentDock {
-	/** Open/close the rail: opening focuses the rail; closing returns dock focus to the terminal. */
+	/** ⌘⇧J: go to the dock (its open pane, else the open or first entry); from inside it, close the pane and return to the terminal. */
 	toggle(): void
 	dispose(): void
 }
@@ -79,9 +77,9 @@ export interface MountedAgentDock {
 /**
  * Agent dock presentation inside `main#right`, next to `#terms` (below by default).
  * It renders main-pushed snapshots; Jakub acks and answers through `api` (main
- * runs every Okena effect behind a fresh CAS read). Only the user changes the
- * dock's height — the queue toggle (the queue has one fixed height) and opening or
- * closing a pane (its height is fixed while it is open); the terminal row shrinks
+ * runs every Okena effect behind a fresh CAS read). The queue row is always shown at
+ * one fixed height, so arriving items never refit xterm; only opening or closing a
+ * pane changes the dock's height (fixed while it is open): the terminal row shrinks
  * through the grid, so xterm refits once per change. Nothing floats over the terminal.
  */
 export function mountAgentDock({
@@ -92,7 +90,6 @@ export function mountAgentDock({
 	focusTerminal: focusTerminalOverride,
 	now = Date.now,
 	initialSent,
-	look,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
@@ -104,8 +101,6 @@ export function mountAgentDock({
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
-	/** Review stories only: a calmer look to compare (agent-dock/look.ts); omitted renders the shipped dock. */
-	look?: AgentDockLook
 }): MountedAgentDock {
 	const ownerDocument = root instanceof Document ? root : root.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -113,28 +108,14 @@ export function mountAgentDock({
 	const terms = root.querySelector<HTMLElement>('#terms')
 	const dock = root.querySelector<HTMLElement>('#agent-dock')
 	if (!ownerWindow || !right || !terms || !dock) throw new Error('Missing agent-dock layout shell')
-	const read = (key: string): string | null => {
-		try {
-			return ownerWindow.localStorage.getItem(key)
-		} catch {
-			return null
-		}
-	}
-	const save = (key: string, value: string): void => {
-		try {
-			ownerWindow.localStorage.setItem(key, value)
-		} catch {
-			// Presentation still works when storage is unavailable.
-		}
-	}
 	const mac = (platform ?? (/Mac/.test(ownerWindow.navigator.platform) ? 'darwin' : 'other')) === 'darwin'
 	const shortcutLabel = mac ? '⌘⇧J' : 'Ctrl+Shift+J'
-	let expanded = read(AGENT_DOCK_STORAGE.expanded) === 'true'
 	let position = agentDockPosition.get()
 	let snapshot: AgentDockSnapshot | null = null
 	let published: boolean | null = null
 	let disposed = false
 	let restoreTerminal = false
+	const handle: { current: AgentDockHandle | null } = { current: null }
 
 	const view = ownerDocument.createElement('div')
 	view.className = 'agent-dock-view'
@@ -142,7 +123,7 @@ export function mountAgentDock({
 	dock.classList.add('agent-dock')
 	const reactRoot = createRoot(view)
 
-	/** Keyboard home inside the dock: an open pane, else the first entry/Agents entry, else the queue. */
+	/** Keyboard home inside the dock: an open pane, else the open or first entry/Agents entry, else the row. */
 	const focusRail = (): void => {
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
 		if (pane) {
@@ -156,7 +137,7 @@ export function mountAgentDock({
 		;(stop ?? rail)?.focus()
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
-	// minus the strip and queue, minus PANE_KEEPS_ROWS terminal rows and the well padding.
+	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding.
 	const paneRoom = (): number | null => {
 		const total = right.clientHeight
 		if (total <= 0) return null
@@ -186,36 +167,33 @@ export function mountAgentDock({
 		if (disposed) return
 		dock.hidden = false
 		dock.dataset.position = position
-		dock.dataset.expanded = String(expanded)
 		right.dataset.agentDockPosition = position
 		const element = createElement(AgentDock, {
 			snapshot,
 			now: now(),
-			expanded,
 			position,
 			shortcutLabel,
-			onToggle: () => toggle(false),
+			handle,
 			onAck,
 			onAct,
 			paneRoom,
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
 			initialSent,
-			look,
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))
 	}
 
-	const toggle = (focusPanel: boolean): void => {
-		const focusInDock = dock.contains(ownerDocument.activeElement)
-		expanded = !expanded
-		// Move owned focus out before the panel turns inert/hidden (Chromium accessibility safety).
-		if (!expanded && focusInDock) focusTerminal()
-		save(AGENT_DOCK_STORAGE.expanded, String(expanded))
-		render()
-		fitActive()
-		if (expanded && focusPanel) focusRail()
+	// "Go to the dock", or — pressed inside it — leave: focus goes back to the terminal before an open
+	// pane unmounts (Chromium accessibility safety); closing it refits xterm through onPaneChange.
+	const toggle = (): void => {
+		if (!dock.contains(ownerDocument.activeElement)) {
+			focusRail()
+			return
+		}
+		focusTerminal()
+		flushSync(() => handle.current?.closePane())
 	}
 
 	// Settings → Appearance moved the dock: the terminal row changes height, so refit xterm.
@@ -259,15 +237,15 @@ export function mountAgentDock({
 	}
 
 	// ⌘⇧J = "go to the dock" from anywhere, including a focused xterm (window capture runs
-	// before xterm's textarea): an already-expanded dock just takes focus (no layout change,
-	// so no PTY resize under a TUI being typed into); pressed again inside the dock it collapses.
+	// before xterm's textarea): the dock just takes focus (no layout change, so no PTY resize
+	// under a TUI being typed into); pressed again inside the dock it closes an open pane and
+	// hands the keys back to the terminal.
 	const onWindowKeydown = (event: KeyboardEvent): void => {
 		if (event.repeat || event.isComposing || event.code !== 'KeyJ' || !event.shiftKey || event.altKey) return
 		if (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return
 		event.preventDefault()
 		event.stopPropagation()
-		if (expanded && !dock.contains(ownerDocument.activeElement)) focusRail()
-		else toggle(true)
+		toggle()
 	}
 	// Esc in the dock returns to the terminal (an open pane consumes the first Esc itself).
 	const onDockKeydown = (event: KeyboardEvent): void => {
@@ -317,7 +295,7 @@ export function mountAgentDock({
 	fitActive()
 
 	return {
-		toggle: () => toggle(true),
+		toggle,
 		dispose(): void {
 			if (disposed) return
 			disposed = true
@@ -335,7 +313,6 @@ export function mountAgentDock({
 			dock.hidden = true
 			dock.classList.remove('agent-dock')
 			delete dock.dataset.position
-			delete dock.dataset.expanded
 			delete right.dataset.agentDockPosition
 			// Unmount outside any React commit that may be disposing this mount (e.g. a fixture effect cleanup).
 			queueMicrotask(() => {

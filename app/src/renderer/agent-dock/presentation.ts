@@ -1,4 +1,4 @@
-// Pure agent-dock presentation helpers: snapshot → strip/panel facts. No DOM,
+// Pure agent-dock presentation helpers: snapshot → queue row/pane facts. No DOM,
 // no runtime import of the zod model (types only), so the renderer bundle stays
 // zod-free. Agent text is untrusted: every string that reaches the DOM passes
 // through plainAgentText and renders as React text, never markup.
@@ -35,7 +35,7 @@ export function plainAgentText(value: unknown, max = AGENT_TEXT_MAX): string {
 	return `${clean.slice(0, end)}…`
 }
 
-/** One-line variant for strip heads and row titles. */
+/** One-line variant for header context and row titles. */
 export function plainAgentLine(value: unknown, max = 160): string {
 	return plainAgentText(
 		plainAgentText(value, max * 4)
@@ -244,7 +244,7 @@ export function agentNames(sessions: readonly DockSession[]): Map<string, string
 }
 
 export interface AgentWho {
-	/** The short name (`company-create-save-firm #2`): queue, pane header, strip, Agents table, labels. */
+	/** The short name (`company-create-save-firm #2`): queue, Agents table, labels, announcements. */
 	name: string
 	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
 	title: string
@@ -449,7 +449,7 @@ export function cardTone(item: DockItem): CardTone {
 	return item.kind === 'turn' ? 'turn' : 'ask'
 }
 
-/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as on the strip. An answer on its way or landed no longer ages. */
+/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as in the summary. An answer on its way or landed no longer ages. */
 export function itemAgeTone(item: DockItem, now: number): AgingTone {
 	if (item.state === 'resolved' || item.state === 'sending') return 'none'
 	const tone = agingTone(now - itemWaitingSince(item))
@@ -609,22 +609,21 @@ export function keepOrder(
 
 /** Room around an entry's text: 16px padding each side (the fill runs edge to edge). */
 export const QUEUE_ENTRY_PAD = 32
-/** Space between entries (no rules between them). */
-export const QUEUE_GAP = 0
-/** Narrowest entry, so a short name never makes a sliver. */
-export const QUEUE_ENTRY_MIN = 112
+/** The kind glyph's fixed box (`.agent-dock-glyph`): glyphs differ in width in the UI face. */
+export const QUEUE_GLYPH = 12
+/** Space after the glyph and after the name on an entry's line (`.agent-dock-entry-line` gap). */
+export const QUEUE_LINE_GAP = 6
+/** Everything in an entry besides its two texts (name, then wait or receipt). */
+export const QUEUE_ENTRY_CHROME = QUEUE_ENTRY_PAD + QUEUE_GLYPH + 2 * QUEUE_LINE_GAP
 /** Most cells a name gets in the queue; a longer one is shortened in the middle (`shortenName`). */
 export const QUEUE_NAME_MAX = 28
-/** Least cells names are shortened to so every entry fits before any go behind "+N more". */
+/** Least cells names are shortened to, all alike, before single entries squeeze further. */
 export const QUEUE_NAME_MIN = 16
-/** Cells the wait takes in an entry's second line ("2h16m"): a fixed budget so the queue never re-lays out as ages tick. */
-export const QUEUE_AGE_CHARS = 5
+/** Least cells a squeezed name keeps (the wait beside it stays whole) before any go behind "+N more". */
+export const QUEUE_NAME_FLOOR = 4
 
-/** An entry's quiet second line before the wait: the kind in lowercase (`question`, `turn ended`). */
-export const entryKindText = (item: DockItem): string => cardKindLabel(item).toLowerCase()
-
-/** Cells an entry's second line needs: kind, ` · `, the wait budget. */
-export const entryMetaChars = (item: DockItem): number => [...entryKindText(item)].length + 3 + QUEUE_AGE_CHARS
+/** Width in px of `text` set in the queue's own font (the renderer measures it in the DOM). */
+export type TextWidth = (text: string) => number
 
 /**
  * A name cut in the middle to `max` cells, keeping its start, its end and a twin's ` #N`
@@ -645,36 +644,31 @@ export function shortenName(name: string, max: number): string {
 	return `${body.slice(0, room - tail).join('')}…${body.slice(body.length - tail).join('')}${suffix}`
 }
 
-/**
- * Width of one entry: its name line (glyph, a space, the name up to `nameMax` cells) or its second
- * line (indent, kind · wait), whichever is longer, plus padding; at least QUEUE_ENTRY_MIN.
- */
-export const entryWidth = (
-	nameChars: number,
-	ch: number,
-	metaChars = 0,
-	nameMax = QUEUE_NAME_MAX,
-	/** Cells after the name on its own line (a one-line entry's ` 52m`), outside the name's cap. */
-	tailChars = 0,
-): number =>
-	Math.max(
-		QUEUE_ENTRY_MIN,
-		Math.ceil(Math.max(Math.min(nameChars, nameMax) + 2 + tailChars, metaChars + 2) * ch) + QUEUE_ENTRY_PAD,
-	)
+/** One queue entry's texts: the agent's short name and what follows it (the wait, or a receipt). */
+export interface QueueEntryText {
+	name: string
+	tail: string
+}
 
-/** Cells of name an entry `width` px wide has room for (after padding, glyph and its space). */
-export const entryNameRoom = (width: number, ch: number): number =>
-	ch > 0 ? Math.min(QUEUE_NAME_MAX, Math.max(1, Math.floor((width - QUEUE_ENTRY_PAD) / ch) - 2)) : QUEUE_NAME_MAX
+/**
+ * Width of one entry with its name cut to `cap` cells: padding, glyph box, the name and its tail as
+ * they really set (`measure`), rounded up to whole px so the text always fits and the selected fill
+ * ends right after it.
+ */
+export const entryWidth = (entry: QueueEntryText, cap: number, measure: TextWidth): number =>
+	Math.ceil(QUEUE_ENTRY_CHROME + measure(shortenName(entry.name, cap)) + measure(entry.tail))
 
 /** Width of the "+N more" cell, sized for the longest count it could show so it never re-lays out the row. */
-export const moreWidth = (count: number, ch: number): number =>
-	Math.ceil(`+${count} more`.length * ch) + QUEUE_ENTRY_PAD
+export const moreWidth = (count: number, measure: TextWidth): number =>
+	Math.ceil(measure(`+${count} more`)) + QUEUE_ENTRY_PAD
 
 export interface QueueSlot {
 	/** Index into the entries. */
 	index: number
-	/** px. */
+	/** px (0 = not measured yet: the slot takes its natural width). */
 	width: number
+	/** The name as shown in this slot (`shortenName` of the whole one). */
+	name: string
 }
 
 export interface QueueLayout {
@@ -686,78 +680,77 @@ export interface QueueLayout {
 	more: number
 }
 
-export interface QueueEntryCells {
-	/** Cells of the agent's name. */
-	nameChars: number
-	/** Cells of the second line with the fixed wait budget (`entryMetaChars`). */
-	metaChars: number
-	/** Cells of the second line as it reads now (the real wait): the least a squeezed entry keeps. */
-	metaNow?: number
-	/** Cells after the name on the name's own line (one-line entries); never shortened. */
-	tailChars?: number
-}
-
 /**
- * The one-row queue (never a second row, never a scroll). Names shorten first — from QUEUE_NAME_MAX
- * down to QUEUE_NAME_MIN cells, cut in the middle — then entries squeeze evenly down to their second
- * line as it reads now (never under QUEUE_ENTRY_MIN, the kind never cut), so every entry shows when it
- * can. Only past that do as many as fit show beside one "+N more" cell. The open entry is always in
- * the row: when it would be hidden it takes the last slot.
+ * The one-row queue (never a second row, never a scroll), from real text widths. Names shorten first —
+ * all alike, from QUEUE_NAME_MAX down to QUEUE_NAME_MIN cells, cut in the middle — then the widest
+ * entry's name gives up a cell at a time down to QUEUE_NAME_FLOOR (its wait never cut), so every entry
+ * shows when it can. Only past that do as many as fit show beside one "+N more" cell. The open entry
+ * is always in the row: when it would be hidden it takes the last slot. Without a measure (not mounted
+ * yet) or room, every entry shows at its natural width.
  */
-export function queueLayout(entries: readonly QueueEntryCells[], ch: number, room: number, open = -1): QueueLayout {
+export function queueLayout(
+	entries: readonly QueueEntryText[],
+	measure: TextWidth | null,
+	room: number,
+	open = -1,
+): QueueLayout {
 	const all = entries.map((_, index) => index)
-	const widthsAt = (cap: number) =>
-		entries.map(entry => entryWidth(entry.nameChars, ch, entry.metaChars, cap, entry.tailChars))
-	const span = (widths: readonly number[]) =>
-		widths.reduce((sum, width) => sum + width, 0) + QUEUE_GAP * Math.max(0, widths.length - 1)
-	const row = (widths: readonly number[]): QueueLayout => ({
-		slots: all.map(index => ({ index, width: widths[index] ?? 0 })),
+	if (!measure || room <= 0)
+		return { slots: all.map(index => ({ index, width: 0, name: entries[index]?.name ?? '' })), hidden: [], more: 0 }
+	const nameAt = (index: number, cap: number) => shortenName(entries[index]?.name ?? '', cap)
+	const widthAt = (index: number, cap: number) => entryWidth(entries[index] ?? { name: '', tail: '' }, cap, measure)
+	const sized = (caps: readonly number[]) => all.map(index => widthAt(index, caps[index] ?? QUEUE_NAME_MAX))
+	const span = (widths: readonly number[]) => widths.reduce((sum, width) => sum + width, 0)
+	const row = (caps: readonly number[], widths: readonly number[]): QueueLayout => ({
+		slots: all.map(index => ({ index, width: widths[index] ?? 0, name: nameAt(index, caps[index] ?? QUEUE_NAME_MAX) })),
 		hidden: [],
 		more: 0,
 	})
-	if (ch <= 0 || room <= 0) return row([])
 	for (let cap = QUEUE_NAME_MAX; cap >= QUEUE_NAME_MIN; cap -= 1) {
-		const widths = widthsAt(cap)
-		if (span(widths) <= room) return row(widths)
+		const caps = all.map(() => cap)
+		const widths = sized(caps)
+		if (span(widths) <= room) return row(caps, widths)
 	}
-	const widths = widthsAt(QUEUE_NAME_MIN)
-	// Squeeze: every entry down to a common width `level`, none under its floor.
-	const floors = entries.map(entry => entryWidth(0, ch, entry.metaNow ?? entry.metaChars))
-	const at = (level: number) => widths.map((width, index) => Math.min(width, Math.max(floors[index] ?? 0, level)))
-	if (span(floors) <= room) {
-		let low = 0
-		let high = Math.max(...widths)
-		while (high - low > 0.5) {
-			const mid = (low + high) / 2
-			if (span(at(mid)) <= room) low = mid
-			else high = mid
-		}
-		return row(at(Math.floor(low)).map(Math.floor))
+	// Squeeze: the widest entry's name gives up a cell, again and again, none under QUEUE_NAME_FLOOR.
+	const caps = all.map(index => Math.min(QUEUE_NAME_MIN, [...(entries[index]?.name ?? '')].length))
+	const widths = sized(caps)
+	while (span(widths) > room) {
+		let widest = -1
+		for (const index of all)
+			if ((caps[index] ?? 0) > QUEUE_NAME_FLOOR && (widest < 0 || (widths[index] ?? 0) > (widths[widest] ?? 0)))
+				widest = index
+		if (widest < 0) break
+		caps[widest] = (caps[widest] ?? QUEUE_NAME_FLOOR) - 1
+		widths[widest] = widthAt(widest, caps[widest] ?? QUEUE_NAME_FLOOR)
 	}
-	const more = moreWidth(entries.length, ch)
-	const fitting = (sized: readonly number[]) => {
+	if (span(widths) <= room) return row(caps, widths)
+	const more = moreWidth(entries.length, measure)
+	let cap = QUEUE_NAME_MIN
+	let shownWidths = sized(all.map(() => cap))
+	const fitting = (sizedWidths: readonly number[]) => {
 		let count = 0
-		while (count < sized.length && span(sized.slice(0, count + 1)) + QUEUE_GAP + more <= room) count += 1
+		while (count < sizedWidths.length && span(sizedWidths.slice(0, count + 1)) + more <= room) count += 1
 		return count
 	}
-	const shown = fitting(widths)
+	const shown = fitting(shownWidths)
 	// The names get back what room the entries beside "+N more" leave (the same count shows).
-	for (let cap = QUEUE_NAME_MAX; cap > QUEUE_NAME_MIN; cap -= 1) {
-		const wider = widthsAt(cap)
-		if (fitting(wider) < shown) continue
-		widths.splice(0, widths.length, ...wider)
+	for (let wider = QUEUE_NAME_MAX; wider > QUEUE_NAME_MIN; wider -= 1) {
+		const widthsAt = sized(all.map(() => wider))
+		if (fitting(widthsAt) < shown) continue
+		cap = wider
+		shownWidths = widthsAt
 		break
 	}
 	let visible = all.slice(0, shown)
 	if (open >= shown && open < entries.length) {
 		// The open entry takes the last slot; drop more from the end until it fits.
 		visible = [...visible.slice(0, Math.max(0, shown - 1)), open]
-		while (visible.length > 1 && span(visible.map(index => widths[index] ?? 0)) + QUEUE_GAP + more > room)
+		while (visible.length > 1 && span(visible.map(index => shownWidths[index] ?? 0)) + more > room)
 			visible = [...visible.slice(0, -2), open]
 	}
 	const inRow = new Set(visible)
 	return {
-		slots: visible.map(index => ({ index, width: widths[index] ?? 0 })),
+		slots: visible.map(index => ({ index, width: shownWidths[index] ?? 0, name: nameAt(index, cap) })),
 		hidden: all.filter(index => !inRow.has(index)),
 		more,
 	}

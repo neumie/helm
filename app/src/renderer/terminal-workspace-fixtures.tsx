@@ -14,7 +14,7 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { AGENT_DOCK_STORAGE, agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import { agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockFixture,
@@ -22,7 +22,6 @@ import {
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockLook } from './agent-dock/look'
 import type { AgentDockPosition } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
@@ -44,21 +43,18 @@ export interface TerminalWorkspaceFixtureOptions {
 	theme?: keyof typeof THEME_PRESETS
 	/**
 	 * Opt-in agent-dock proof: mounts the production dock layout with an in-memory
-	 * AgentDockApi fed by reducer-built Okena fixtures. `expanded`/`position` are
-	 * written to the dock's layout preferences before mount; omitted values keep
-	 * whatever is stored (production defaults when nothing is). `output` writes a
+	 * AgentDockApi fed by reducer-built Okena fixtures. `position` is written to the
+	 * dock's layout preference before mount; omitted, it keeps whatever is stored
+	 * (the production default when nothing is). `output` writes a
 	 * recorded-looking shell session into the active terminal (`'claude-code'`: the
 	 * bottom of a Claude Code session, its own rules right above the dock); `open` then
 	 * clicks that entry (or the Agents entry), like a pointer would.
 	 */
 	agentDock?: {
 		scenario?: AgentDockScenario | null
-		expanded?: boolean
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
-		/** Review only: a calmer dock look to compare (Views / Agent dock calm). */
-		look?: AgentDockLook
 	}
 }
 
@@ -587,16 +583,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', expanded, position, open, look } = options.agentDock
-			const writePreference = (key: string, value: string | undefined) => {
-				if (value === undefined) return
-				try {
-					localStorage.setItem(key, value)
-				} catch {
-					// The dock must still mount without storage.
-				}
-			}
-			writePreference(AGENT_DOCK_STORAGE.expanded, expanded === undefined ? undefined : String(expanded))
+			const { scenario = 'busy', position } = options.agentDock
 			if (position) agentDockPosition.set(position)
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
@@ -610,7 +597,6 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
-					look,
 				})
 			})
 		}
