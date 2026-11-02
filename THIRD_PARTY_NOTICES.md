@@ -30,6 +30,14 @@ credentials outside the intentional local command/test.
 
 Remote uses exactly pinned `marked@18.0.11` (MIT, Christopher Jeffrey and contributors): <https://github.com/markedjs/marked>. The complete package license ships in its dependency distribution. Helm uses its lexer only, rendering an explicit React element allowlist instead of generated HTML; images never trigger network requests. The package manager's minimum-release-age policy remains enabled.
 
+## Okena Claude Code preload
+
+`app/src/claude-remote/preload.cjs` (the Bun `--preload` that adds Helm's Claude Code hooks to a Helm terminal's top-level interactive `claude`) is adapted from Okena's Claude Code preload (`preload.js`, revision ef25cc81) and its hook/dialog design (`decision.rs`, `hub.rs`): argv/entry gating, guarded flags and subcommands, and inline `--settings` injection. The hub protocol, tokens and decision encoding are Helm's own.
+
+- Project: Okena — <https://github.com/contember/okena>
+- Copyright (c) 2026 Contember Limited
+- License: MIT (full text below, under Heroicons; identical terms with this copyright line)
+
 ## Heroicons (16px solid)
 
 Helm vendors native-size Heroicons for distinct concepts:
