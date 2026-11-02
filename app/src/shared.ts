@@ -398,9 +398,9 @@ export interface NavApi {
 /**
  * Agent dock IPC channels (reserved; main/preload implement them).
  * - snapshot: main → renderer push of the full `AgentDockSnapshot` while shown: on content change, a 10 s freshness refresh, and right after setVisible(true).
- * - setVisible: renderer → main `send`; main polls Okena fast only while some window shows the dock.
+ * - setVisible: renderer → main `send`; main polls the dock sources fast only while some window shows the dock.
  * - ack: renderer → main `invoke(itemId)`; resolves true when the item was acked (turns, orphaned and unconfirmed items only).
- * - act: renderer → main `invoke(AgentDockActRequest)`; main validates it, re-reads Okena (CAS) and answers the
+ * - act: renderer → main `invoke(AgentDockActRequest)`; main validates it, re-reads the session's source (CAS) and answers the
  *   dialog / sends the reply. Resolves with the outcome; the receipt also arrives in the next snapshot.
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
@@ -411,7 +411,7 @@ export const AGENT_DOCK_IPC = {
 	act: 'agent-dock:act',
 } as const
 
-/** Agent dock: read the queue, ack, and answer from the pane. No control socket yet. */
+/** Agent dock (Okena + Helm-terminal Claude sessions): read the queue, ack, and answer from the pane. No control socket yet. */
 export interface AgentDockApi {
 	/** Push pattern like NavApi; returns unsubscribe. */
 	onSnapshot(listener: (snapshot: AgentDockSnapshot) => void): () => void
@@ -463,7 +463,7 @@ export interface HelmApi {
 	tabs: TabsApi
 	/** Deep-link navigation pushed from main (helm:// protocol). */
 	nav: NavApi
-	/** Okena Claude agent dock. Preload always exposes it; main may never push a snapshot. */
+	/** Agent dock. Preload always exposes it; main may never push a snapshot. */
 	agentDock: AgentDockApi
 	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
 	daemon: DaemonApi

@@ -231,4 +231,4 @@ if (require.main === module) {
 	)
 }
 
-module.exports = { main, slim, clip, EVENT_STRING_MAX }
+module.exports = { main, slim, clip, EVENT_STRING_MAX, EVENT_TEXT_MAX }

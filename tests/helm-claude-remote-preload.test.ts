@@ -1,10 +1,13 @@
 // The Helm Claude preload's gate is a pure function of (argv, env, execPath).
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { CLAUDE_REMOTE_ENV } from '../src/agent-dock/claude-hub-wire'
 import { until } from './helpers/agent-dock'
 
 const require = createRequire(import.meta.url)
@@ -97,6 +100,8 @@ test('claude skips (and loses the Helm variables) outside a Helm terminal, in Ok
 		}
 	}
 	assert.deepEqual(REMOTE_ENV, Object.keys(ENV))
+	// The CJS preload restates the TS wire's env names: they must stay the same set.
+	assert.deepEqual([...REMOTE_ENV].sort(), Object.values(CLAUDE_REMOTE_ENV).sort())
 })
 
 test('print, version, help, background modes and subcommands skip, also as clusters', () => {
@@ -163,6 +168,49 @@ test('lifeline: one attach line held open, reconnected after the hub goes away',
 		assert.equal(JSON.parse(lines[1] as string).t, 'attach')
 	} finally {
 		for (const socket of sockets) socket.destroy()
+		await new Promise<void>(resolve => server.close(() => resolve()))
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('a hookless claude (user --settings) reports degraded AND holds a lifeline, so its exit ends the entry', async () => {
+	const dir = mkdtempSync('/tmp/hcr-life-')
+	const path = join(dir, 'hub.sock')
+	const lines: Array<Record<string, unknown>> = []
+	const server = createServer(socket => {
+		socket.setEncoding('utf8')
+		socket.on('data', chunk => {
+			for (const line of String(chunk).split('\n')) if (line) lines.push(JSON.parse(line))
+		})
+	})
+	await new Promise<void>(resolve => server.listen(path, () => resolve()))
+	try {
+		// The preload as Bun runs it, inside a `claude` started with the user's own --settings.
+		const preload = fileURLToPath(new URL('../app/src/claude-remote/preload.cjs', import.meta.url))
+		const script = [
+			'globalThis.Bun = {}',
+			`process.argv = [process.argv[0], ${JSON.stringify(CLAUDE_ENTRY)}, '--settings', '/x.json']`,
+			`Object.defineProperty(process, 'execPath', { value: ${JSON.stringify(EXEC)} })`,
+			`require(${JSON.stringify(preload)})`,
+			"process.stdout.write(JSON.stringify(Object.keys(process.env).filter(key => key.startsWith('HELM_CLAUDE_REMOTE_'))))",
+			'setTimeout(() => {}, 400)',
+		].join('\n')
+		const child = spawn(process.execPath, ['-e', script], {
+			env: { ...ENV, PATH: process.env.PATH ?? '', HELM_CLAUDE_REMOTE_SOCKET: path },
+			stdio: ['ignore', 'pipe', 'inherit'],
+		})
+		let out = ''
+		child.stdout.on('data', chunk => {
+			out += chunk
+		})
+		const exited = new Promise(resolve => child.on('exit', resolve))
+		for (let i = 0; i < 100 && lines.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 20))
+		await exited
+		assert.equal(out, '[]', 'no HELM_CLAUDE_REMOTE_* left for its children')
+		const byKind = Object.fromEntries(lines.map(line => [line.t, line]))
+		assert.equal(byKind.degraded?.reason, 'user_settings')
+		assert.deepEqual(byKind.attach, { v: 1, t: 'attach', token: ENV.HELM_CLAUDE_REMOTE_TOKEN, pid: child.pid })
+	} finally {
 		await new Promise<void>(resolve => server.close(() => resolve()))
 		rmSync(dir, { recursive: true, force: true })
 	}
