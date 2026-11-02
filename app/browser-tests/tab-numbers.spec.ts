@@ -125,6 +125,27 @@ test('a hidden active tab steps to the nearest visible tab on either side', asyn
 	}
 })
 
+test('a hidden active tab skips its hidden folder siblings too', async ({ page }) => {
+	await open(page, 'build-expanded')
+	const review = page.locator('#tabs .tab-group-toggle', { hasText: 'Review' })
+	// tests and release logs are adjacent in the Review folder: a plain neighbour step
+	// would land on the other hidden member instead of the nearest visible tab.
+	for (const [start, step, expected] of [
+		['tests', next, 'api'],
+		['release logs', previous, 'dev server'],
+	] as const) {
+		await review.click()
+		await expect(review).toHaveAttribute('aria-expanded', 'true')
+		await tab(page, start).click()
+		await expect(active(page)).toHaveText(start)
+		await review.click()
+		await expect(review).toHaveAttribute('aria-expanded', 'false')
+		await expect(tab(page, start)).toBeHidden()
+		await step(page)
+		await expect(active(page)).toHaveText(expected)
+	}
+})
+
 test('cycling reaches visible tabs past the ninth', async ({ page }) => {
 	await open(page, 'build-expanded')
 	await page.locator('#tabs .tab-group-toggle', { hasText: 'Review' }).click()
