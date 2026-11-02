@@ -6,15 +6,16 @@ import {
 	type ChoiceRow,
 	Choices,
 	Footer,
-	Key,
+	PromptField,
 	RiskyConfirm,
 	ScrollBody,
+	SubmitActions,
 	cancelHints,
 	closeHints,
 	pickHints,
 	useScrollEdges,
 } from './pane-chrome'
-import { digitOf, isStrayKey, modShortcut, submitKeys, useKeys } from './pane-keys'
+import { digitOf, isStrayKey, submitKeys, useKeys } from './pane-keys'
 import type { PanelProps } from './panel'
 import { type AskQuestion, askQuestions, riskyWord } from './presentation'
 
@@ -313,10 +314,7 @@ export function AskPanel({
 							}}
 						/>
 						{otherActive ? (
-							<label className="agent-dock-prompt">
-								<span className="agent-dock-prompt-mark" aria-hidden="true">
-									&gt;
-								</span>
+							<PromptField>
 								<input
 									// Remount per question so the field follows the tab.
 									key={`other-${active}`}
@@ -346,7 +344,7 @@ export function AskPanel({
 										}
 									}}
 								/>
-							</label>
+							</PromptField>
 						) : null}
 					</div>
 					{hasPreviews ? (
@@ -371,26 +369,17 @@ export function AskPanel({
 			</div>
 			<Footer hints={!answerable ? closeHints : confirming ? cancelHints : pickHints(rows.length, mod)} note={note}>
 				{ack}
-				{!decidable ? null : confirming ? (
-					<>
-						<Key tone="ghost" onClick={() => setConfirming(null)}>
-							Cancel
-						</Key>
-						<Key tone="danger" disabled={!live || !complete} busy={submitting} onClick={() => submit(true)}>
-							Send anyway
-						</Key>
-					</>
-				) : (
-					<Key
-						tone="primary"
-						disabled={!live || !complete}
-						busy={submitting}
-						keyShortcuts={modShortcut(mod)}
-						onClick={() => submit()}
-					>
-						Submit answers
-					</Key>
-				)}
+				<SubmitActions
+					decidable={decidable}
+					confirming={confirming !== null}
+					disabled={!live || !complete}
+					busy={submitting}
+					mod={mod}
+					label="Submit answers"
+					onSubmit={() => submit()}
+					onConfirm={() => submit(true)}
+					onCancel={() => setConfirming(null)}
+				/>
 			</Footer>
 		</>
 	)

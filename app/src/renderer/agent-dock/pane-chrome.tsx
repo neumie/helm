@@ -4,7 +4,7 @@
 import { type KeyboardEvent, type ReactNode, type Ref, type RefObject, useLayoutEffect, useRef, useState } from 'react'
 import type { DockItem } from '../../agent-dock/model'
 import { Btn, type ButtonTone } from '../button'
-import { type DockModKey, modHint, noModifiers } from './pane-keys'
+import { type DockModKey, modHint, modShortcut, noModifiers } from './pane-keys'
 import {
 	type AgentWho,
 	type ReceiptView,
@@ -235,6 +235,63 @@ export function Key({
 		>
 			{children}
 		</Btn>
+	)
+}
+
+/**
+ * The footer's submit: nothing while the item cannot be decided here; Cancel and Send anyway while the
+ * risky-word confirmation asks; otherwise the primary key (⌘Enter).
+ */
+export function SubmitActions({
+	decidable,
+	confirming,
+	disabled,
+	busy,
+	mod,
+	tone = 'primary',
+	label,
+	onSubmit,
+	onConfirm,
+	onCancel,
+}: {
+	decidable: boolean
+	confirming: boolean
+	disabled: boolean
+	busy: boolean
+	mod: DockModKey
+	tone?: ButtonTone
+	label: string
+	onSubmit(): void
+	onConfirm(): void
+	onCancel(): void
+}) {
+	if (!decidable) return null
+	return confirming ? (
+		<>
+			<Key tone="ghost" onClick={onCancel}>
+				Cancel
+			</Key>
+			<Key tone="danger" disabled={disabled} busy={busy} onClick={onConfirm}>
+				Send anyway
+			</Key>
+		</>
+	) : (
+		<Key tone={tone} disabled={disabled} busy={busy} keyShortcuts={modShortcut(mod)} onClick={onSubmit}>
+			{label}
+		</Key>
+	)
+}
+
+/** The `>` prompt a free-text field sits in (an Other… answer, a deny message, a reply). */
+export function PromptField({ children }: { children: ReactNode }) {
+	return (
+		// biome-ignore lint/a11y/noLabelWithoutControl: the field (input or textarea) is the children
+		<label className="agent-dock-prompt">
+			<span className="agent-dock-prompt-mark" aria-hidden="true">
+				&gt;
+			</span>
+			{children}
+		</label>
 	)
 }
 

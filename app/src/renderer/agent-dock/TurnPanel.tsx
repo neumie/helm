@@ -2,7 +2,16 @@
 // terminal as the next prompt.
 import { useRef, useState } from 'react'
 import type { DockSession } from '../../agent-dock/model'
-import { Footer, Hint, Key, RiskyConfirm, ScrollBody, cancelHints, closeHints } from './pane-chrome'
+import {
+	Footer,
+	Hint,
+	PromptField,
+	RiskyConfirm,
+	ScrollBody,
+	SubmitActions,
+	cancelHints,
+	closeHints,
+} from './pane-chrome'
 import { isPrintable, modHint, modShortcut, submitKeys, useKeys } from './pane-keys'
 import { type PanelProps, useDraft } from './panel'
 import { itemHeadline, plainAgentText, riskyWord } from './presentation'
@@ -83,10 +92,7 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 						))}
 					</p>
 				) : null}
-				<label className="agent-dock-prompt">
-					<span className="agent-dock-prompt-mark" aria-hidden="true">
-						&gt;
-					</span>
+				<PromptField>
 					<textarea
 						ref={replyRef}
 						className="agent-dock-input agent-dock-input-fit"
@@ -103,7 +109,7 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 							setConfirming(null)
 						}}
 					/>
-				</label>
+				</PromptField>
 			</ScrollBody>
 			<Footer
 				hints={
@@ -121,26 +127,17 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 				note={note}
 			>
 				{ack}
-				{!decidable ? null : confirming ? (
-					<>
-						<Key tone="ghost" onClick={() => setConfirming(null)}>
-							Cancel
-						</Key>
-						<Key tone="danger" disabled={!ready} busy={submitting} onClick={() => send(true)}>
-							Send anyway
-						</Key>
-					</>
-				) : (
-					<Key
-						tone="primary"
-						disabled={!ready}
-						busy={submitting}
-						keyShortcuts={modShortcut(mod)}
-						onClick={() => send(false)}
-					>
-						Send
-					</Key>
-				)}
+				<SubmitActions
+					decidable={decidable}
+					confirming={confirming !== null}
+					disabled={!ready}
+					busy={submitting}
+					mod={mod}
+					label="Send"
+					onSubmit={() => send(false)}
+					onConfirm={() => send(true)}
+					onCancel={() => setConfirming(null)}
+				/>
 			</Footer>
 		</>
 	)

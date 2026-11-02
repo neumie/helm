@@ -8,9 +8,10 @@ import {
 	Choices,
 	Footer,
 	Hint,
-	Key,
+	PromptField,
 	RiskyConfirm,
 	ScrollBody,
+	SubmitActions,
 	Warn,
 	cancelHints,
 	closeHints,
@@ -187,10 +188,7 @@ function DecisionPanel({
 					onPick={choose}
 				/>
 				{denying ? (
-					<label className="agent-dock-prompt">
-						<span className="agent-dock-prompt-mark" aria-hidden="true">
-							&gt;
-						</span>
+					<PromptField>
 						<textarea
 							ref={messageRef}
 							className="agent-dock-input agent-dock-input-fit agent-dock-input-grow"
@@ -206,31 +204,23 @@ function DecisionPanel({
 								setConfirming(null)
 							}}
 						/>
-					</label>
+					</PromptField>
 				) : null}
 			</div>
 			<Footer hints={hints} note={note}>
 				{ack}
-				{!decidable ? null : confirming ? (
-					<>
-						<Key tone="ghost" onClick={() => setConfirming(null)}>
-							Cancel
-						</Key>
-						<Key tone="danger" disabled={!live || !choice} busy={submitting} onClick={() => submit(true)}>
-							Send anyway
-						</Key>
-					</>
-				) : (
-					<Key
-						tone={choice?.tone === 'danger' ? 'danger' : 'primary'}
-						disabled={!live || !choice}
-						busy={submitting}
-						keyShortcuts={modShortcut(mod)}
-						onClick={() => submit()}
-					>
-						{choice?.submit ?? 'Send'}
-					</Key>
-				)}
+				<SubmitActions
+					decidable={decidable}
+					confirming={confirming !== null}
+					disabled={!live || !choice}
+					busy={submitting}
+					mod={mod}
+					tone={choice?.tone === 'danger' ? 'danger' : 'primary'}
+					label={choice?.submit ?? 'Send'}
+					onSubmit={() => submit()}
+					onConfirm={() => submit(true)}
+					onCancel={() => setConfirming(null)}
+				/>
 			</Footer>
 		</>
 	)
