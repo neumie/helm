@@ -667,15 +667,6 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	}
 }
 
-/** Reducer state for a named scenario at `now` (ms). */
-export function agentDockScenarioState(name: AgentDockScenario, now: number): AgentDockState {
-	return scenarioRun(name, now).state
-}
-
-export function agentDockScenario(name: AgentDockScenario, now: number): AgentDockSnapshot {
-	return agentDockSnapshot(agentDockScenarioState(name, now), now)
-}
-
 const paneOf = (item: DockItem): Pane | undefined =>
 	[...Object.values(panes), ...Object.values(realPanes)].find(pane => `${PROFILE}:${pane.tid}` === item.session)
 

@@ -24,11 +24,11 @@ export type AgingTone = 'none' | 'warn' | 'danger'
 export const AGING_WARN_MS = 30 * 60_000
 export const AGING_DANGER_MS = 2 * 60 * 60_000
 /** A session whose last detail read lags the last good /v1/state by this much renders stale. */
-export const SESSION_STALE_MS = 10_000
+const SESSION_STALE_MS = 10_000
 /** Bounds for agent text the dock renders (turn excerpts are already ≤2 KiB from the reducer). */
-export const AGENT_TEXT_MAX = 2_048
-export const TOOL_INPUT_TEXT_MAX = 4_096
-export const PREVIEW_TEXT_MAX = 2_048
+const AGENT_TEXT_MAX = 2_048
+const TOOL_INPUT_TEXT_MAX = 4_096
+const PREVIEW_TEXT_MAX = 2_048
 
 // C0/C1 controls except tab/newline, plus bidi overrides/isolates that could reorder rendered text.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
@@ -132,8 +132,6 @@ export type ReceiptTone = 'neutral' | 'warn' | 'success' | 'danger'
 export interface ReceiptView {
 	text: string
 	tone: ReceiptTone
-	/** Still in flight (Sending…). */
-	busy: boolean
 }
 
 const REFUSED_GONE = 'refused: already answered elsewhere'
@@ -165,19 +163,18 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	const receipt = item.receipt
 	if (!receipt) return null
 	if (item.state === 'resolved' && item.resolution?.by === 'dock')
-		return { text: doneText(item, receipt), tone: 'success', busy: false }
+		return { text: doneText(item, receipt), tone: 'success' }
 	if (receipt.status === 'refused')
 		return {
 			text: receipt.reason === 'gone' ? REFUSED_GONE : `refused: ${plainAgentLine(receipt.detail ?? '', 200)}`,
 			tone: 'danger',
-			busy: false,
 		}
 	if (receipt.status === 'failed')
-		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger', busy: false }
+		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger' }
 	if (item.state === 'resolved') return null
-	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral', busy: true }
+	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral' }
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
-		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn', busy: false }
+		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn' }
 	return null
 }
 
@@ -215,7 +212,7 @@ export function sentSummary(item: DockItem, action: DockAction): string | null {
 // ---------------------------------------------------------------------------
 
 /** Words for a source (mirrors model.ts DOCK_SOURCE_LABEL; the renderer imports model types only). */
-export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
 const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
 
 /** Each source's own health in display order; before any source reports (`sources` empty) the merged health reads as Okena alone. */
@@ -384,19 +381,8 @@ export function askQuestions(input: unknown): AskQuestion[] | null {
 }
 
 /** ExitPlanMode plan text, when Okena included a plan file. */
-export function planText(input: unknown): string | null {
+function planText(input: unknown): string | null {
 	return isRecord(input) && typeof input.plan === 'string' ? plainAgentText(input.plan, TOOL_INPUT_TEXT_MAX) : null
-}
-
-/** Any other tool input as bounded pretty JSON, rendered verbatim in a monospace block. */
-export function toolInputText(input: unknown, max = TOOL_INPUT_TEXT_MAX): string {
-	let text: string
-	try {
-		text = typeof input === 'string' ? input : (JSON.stringify(input, null, 2) ?? '')
-	} catch {
-		text = ''
-	}
-	return plainAgentText(text, max)
 }
 
 /** One-line summary of what the item is about. */
@@ -567,12 +553,12 @@ export function itemTimeLine(item: DockItem, now: number): { stamp: string; wait
 }
 
 /** A permission dialog's shell command, when its tool input carries one. */
-export function commandOf(input: unknown): string | null {
+function commandOf(input: unknown): string | null {
 	return isRecord(input) && typeof input.command === 'string' ? plainAgentText(input.command, 1_024) : null
 }
 
 /** The part of a turn that is about Jakub: its last paragraph (questions and handoffs land there). */
-export function turnGist(text: string): string {
+function turnGist(text: string): string {
 	const paragraphs = plainAgentText(text)
 		.split(/\n\s*\n/)
 		.map(part => part.trim())

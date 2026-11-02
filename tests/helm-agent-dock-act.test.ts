@@ -729,7 +729,7 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 test('receipt words: Sending… / ✓ answered / allowed / approved / denied / replied', () => {
 	const item = only(askOpen().state)
 	const sending = reduce(askOpen().state, { type: 'act.sending', itemId: item.id, action: 'answer' }, T0 + 1).state
-	assert.deepEqual(receiptView(only(sending)), { text: 'Sending…', tone: 'neutral', busy: true })
+	assert.deepEqual(receiptView(only(sending)), { text: 'Sending…', tone: 'neutral' })
 	const words = (tool: string, action: 'allow' | 'deny' | 'prompt', always = false) =>
 		receiptView({
 			...item,

@@ -46,7 +46,6 @@ const {
 	resolutionLabel,
 	sentSummary,
 	sessionSince,
-	toolInputText,
 	dockHealth,
 	noSessionText,
 	planApproveModeText,
@@ -123,7 +122,6 @@ test('agent text is control- and bidi-stripped, bounded, and never markup', () =
 	assert.equal(plainAgentText('x'.repeat(10), 5), 'xxxx…')
 	assert.equal(plainAgentText(`${'x'.repeat(3)}😀tail`, 5), 'xxx…')
 	assert.equal(plainAgentLine('  two\n\nlines  '), 'two lines')
-	assert.equal(toolInputText({ command: 'ls' }), '{\n  "command": "ls"\n}')
 })
 
 test('ages and aging tones follow the 30 m / 2 h escalation', () => {
