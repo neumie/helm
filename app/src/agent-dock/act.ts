@@ -249,18 +249,18 @@ function errorCode(error: unknown): string | undefined {
  * sent nothing. Every other transport error (timeout, reset, hang-up, a bad body
  * after a 200) may have landed: unconfirmed, so the next poll can confirm it.
  */
-export function dockPostFailure(error: unknown, dialog: boolean): DockActOutcome {
+export function dockPostFailure(error: unknown, dialog: boolean, source = 'Okena'): DockActOutcome {
 	const detail = errorDetail(error)
 	const status = (error as { status?: unknown } | null)?.status
 	if (typeof status === 'number') {
 		if (dialog && status === 404) return { status: 'refused', reason: 'gone', detail }
-		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(detail) }
+		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(detail, source) }
 		return { status: 'failed', detail }
 	}
 	const code = errorCode(error)
 	if ((code !== undefined && NOT_SENT_CODES.has(code)) || /^Okena not configured/.test(detail))
 		return { status: 'failed', detail }
-	return { status: 'unconfirmed', detail: `No answer from Okena: ${detail}` }
+	return { status: 'unconfirmed', detail: `No answer from ${source}: ${detail}` }
 }
 
 /**
@@ -269,10 +269,10 @@ export function dockPostFailure(error: unknown, dialog: boolean): DockActOutcome
  * also happens when Okena's foreground probe misses a running native `claude`
  * (its process name is the version, e.g. `2.1.314`), so say where to reply instead.
  */
-function promptConflictDetail(detail: string): string {
-	const reason = /failed \(409\): (.*)$/.exec(detail)?.[1]?.trim() || detail
-	if (!/No Claude session detected/i.test(reason)) return `Okena refused the reply (409): ${reason}`
-	return `Okena refused the reply (409): ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Reply in the terminal.`
+function promptConflictDetail(detail: string, source: string): string {
+	const reason = /(?:failed |Helm Claude hub )\(409\): (.*)$/.exec(detail)?.[1]?.trim() || detail
+	if (!/No Claude session detected/i.test(reason)) return `${source} refused the reply (409): ${reason}`
+	return `${source} refused the reply (409): ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Reply in the terminal.`
 }
 
 export const errorDetail = (error: unknown): string =>

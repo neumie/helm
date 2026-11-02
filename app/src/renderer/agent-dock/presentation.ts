@@ -3,7 +3,15 @@
 // zod-free. Agent text is untrusted: every string that reaches the DOM passes
 // through plainAgentText and renders as React text, never markup.
 
-import type { AgentDockSnapshot, DockAction, DockItem, DockReceipt, DockSession } from '../../agent-dock/model'
+import type {
+	AgentDockSnapshot,
+	AgentDockSourceHealth,
+	DockAction,
+	DockItem,
+	DockReceipt,
+	DockSession,
+	DockSourceId,
+} from '../../agent-dock/model'
 
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
@@ -190,9 +198,52 @@ export function sentSummary(item: DockItem, action: DockAction): string | null {
 	return parts.length > 0 ? plainAgentLine(parts.join(', '), 80) || null : null
 }
 
-/** Answer controls are live only for an open item while Okena is reachable. */
+// ---------------------------------------------------------------------------
+// Sources (Okena Claude Remote, Helm's own Claude hub for Helm terminals)
+// ---------------------------------------------------------------------------
+
+/** Words for a source (mirrors model.ts DOCK_SOURCE_LABEL; the renderer imports model types only). */
+export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
+
+/** Sources in the snapshot with their health; an older snapshot without `sources` is Okena alone. */
+function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
+	const sources = snapshot.sources
+	if (!sources || Object.keys(sources).length === 0) return [['okena', snapshot.source]]
+	return SOURCE_ORDER.flatMap(id => {
+		const health = sources[id]
+		return health ? [[id, health] as [DockSourceId, AgentDockSourceHealth]] : []
+	})
+}
+
+/** "Okena", "Helm terminals", "Okena and Helm terminals" for the sources in `state` (all sources when none is). */
+export function sourceNames(snapshot: AgentDockSnapshot | null, state?: AgentDockSourceHealth['state']): string {
+	const all = snapshot ? snapshotSources(snapshot) : []
+	const names = all
+		.filter(([, health]) => state === undefined || health.state === state)
+		.map(([id]) => SOURCE_LABEL[id])
+	const list = names.length > 0 ? names : all.length > 0 ? all.map(([id]) => SOURCE_LABEL[id]) : [SOURCE_LABEL.okena]
+	return list.length === 1 ? (list[0] as string) : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
+}
+
+/** The health of the source that observes this item's session (answering is gated on it). */
+export function itemSourceHealth(item: DockItem, snapshot: AgentDockSnapshot | null): AgentDockSourceHealth | null {
+	if (!snapshot) return null
+	const source = findSession(snapshot, item.session)?.source ?? 'okena'
+	return snapshot.sources?.[source] ?? (source === 'okena' ? snapshot.source : null)
+}
+
+/** Why the item cannot be answered here because its source is down, or null. */
+export function sourceBlockedNote(item: DockItem, snapshot: AgentDockSnapshot | null): string | null {
+	const health = itemSourceHealth(item, snapshot)
+	if (!snapshot || health?.state === 'ok') return null
+	const source = findSession(snapshot, item.session)?.source ?? 'okena'
+	return `${SOURCE_LABEL[source]} unreachable: answer in the terminal`
+}
+
+/** Answer controls are live only for an open item while its source is reachable. */
 export function canAnswer(item: DockItem, snapshot: AgentDockSnapshot | null): boolean {
-	return item.state === 'open' && snapshot?.source.state === 'ok'
+	return item.state === 'open' && itemSourceHealth(item, snapshot)?.state === 'ok'
 }
 
 export function recentItems(snapshot: AgentDockSnapshot | null, limit: number): DockItem[] {
@@ -327,10 +378,19 @@ export interface AgentDockHealth {
 }
 
 export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth {
-	if (!snapshot || snapshot.source.state === 'pending') return { tone: 'neutral', text: 'Okena connecting…' }
+	if (!snapshot || snapshot.source.state === 'pending')
+		return { tone: 'neutral', text: `${sourceNames(snapshot, 'pending')} connecting…` }
 	if (snapshot.source.state === 'down')
-		return { tone: 'danger', text: `Okena unreachable since ${formatClock(snapshot.source.since)}` }
-	return { tone: 'success', text: 'Okena' }
+		return {
+			tone: 'danger',
+			text: `${sourceNames(snapshot, 'down')} unreachable since ${formatClock(snapshot.source.since)}`,
+		}
+	return {
+		tone: 'success',
+		text: snapshotSources(snapshot)
+			.map(([id]) => SOURCE_LABEL[id])
+			.join(' · '),
+	}
 }
 
 export interface AgentDockSummary {
@@ -380,7 +440,7 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 	else if (unknown > 0) needsText = unknownAgentsText(unknown)
 	else if (source === 'ok') needsText = 'Nothing needs you'
 	else if (source === 'down') needsText = 'State unknown'
-	else needsText = 'Waiting for Okena'
+	else needsText = `Waiting for ${sourceNames(snapshot, 'pending')}`
 	return {
 		needCount: needs.length,
 		unknownCount: unknown,
@@ -649,7 +709,7 @@ export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession):
 	if (session.subagents > 0) meta.push(`${session.subagents} subagent${session.subagents === 1 ? '' : 's'}`)
 	if (session.queuedPrompts > 0) meta.push(`queued ${session.queuedPrompts}`)
 	for (const pr of session.prLinks.slice(0, 2)) meta.push(`PR #${pr.number}`)
-	const lastGood = snapshot.source.lastObservedAt
+	const lastGood = snapshot.sources?.[session.source ?? 'okena']?.lastObservedAt ?? snapshot.source.lastObservedAt
 	if (lastGood !== null && session.status !== 'unreachable' && lastGood - session.observedAt > SESSION_STALE_MS)
 		meta.push(`stale ${staleAge(lastGood - session.observedAt)}`)
 	return meta

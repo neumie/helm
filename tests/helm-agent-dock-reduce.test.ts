@@ -315,7 +315,7 @@ test('dialog-id prefix change while an ask is open orphans it', () => {
 		restarted.events.map(event => event.t),
 		['item.opened', 'item.orphaned'],
 	)
-	assert.equal(restarted.state.hubPrefix, 'ffff0000')
+	assert.equal(restarted.state.sources.okena?.hubPrefix, 'ffff0000')
 	// Sticky: an idle poll does not resolve it from absence.
 	const later = reduce(restarted.state, poll(idle()), T0 + 6000)
 	assert.equal(later.state.items.find(item => item.id === old?.id)?.state, 'orphaned')
@@ -348,7 +348,7 @@ test('source down freezes everything; reconnect orphans asks that vanished meanw
 	const seeded = run(createAgentDockState(null, T0), [[T0, poll(ask(), { transcript: fullLog() })]]).state
 	const frozen = reduce(seeded, down(), T0 + 1000)
 	assert.deepEqual(frozen.events, [
-		{ t: 'source.health', at: T0 + 1000, state: 'down', detail: 'connect ECONNREFUSED' },
+		{ t: 'source.health', at: T0 + 1000, state: 'down', source: 'okena', detail: 'connect ECONNREFUSED' },
 	])
 	assert.equal(frozen.state.source.lastObservedAt, T0)
 	assert.equal(frozen.state.sessions[KEY]?.session.status, 'unreachable')
@@ -745,7 +745,7 @@ test('state_version regression counts as an Okena restart', () => {
 		next.events.map(event => event.t),
 		['item.orphaned'],
 	)
-	assert.equal(next.state.epoch, seeded.epoch + 1)
+	assert.equal(next.state.sources.okena?.epoch, (seeded.sources.okena?.epoch ?? 0) + 1)
 })
 
 // --- ack, snapshot, persistence ----------------------------------------------
@@ -810,7 +810,7 @@ test('snapshot orders open asks, orphaned, open turns, then recent; persistence 
 	assert.deepEqual(Object.keys(persisted).sort(), ['nextItemId', 'seen', 'version'])
 	assert.equal(persisted.nextItemId, withAsks.nextItemId)
 	const restored = createAgentDockState(persisted, at + 5000)
-	assert.equal(restored.seeded, false)
+	assert.deepEqual(restored.sources, {})
 	assert.equal(restored.items.length, 0)
 	assert.equal(restored.nextItemId, withAsks.nextItemId)
 })

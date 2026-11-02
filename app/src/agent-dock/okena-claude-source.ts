@@ -114,11 +114,27 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
+/** How a source names itself in refusals and errors (the Helm hub reuses this class). */
+export interface OkenaClaudeSourceLabels {
+	/** "Okena" / "Helm" in act failures. */
+	name: string
+	/** Poll error while the client has no active profile. */
+	notRunning: string
+}
+
+export const OKENA_SOURCE_LABELS: OkenaClaudeSourceLabels = {
+	name: 'Okena',
+	notRunning: 'Okena not configured or not running',
+}
+
 export class OkenaClaudeSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
 
-	constructor(private readonly client: OkenaClaudeClient) {}
+	constructor(
+		private readonly client: OkenaClaudeClient,
+		private readonly labels: OkenaClaudeSourceLabels = OKENA_SOURCE_LABELS,
+	) {}
 
 	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
 	expedite(target: DockActTarget, until: number): void {
@@ -145,24 +161,25 @@ export class OkenaClaudeSource {
 			fresh = parsed.value
 		} catch (error) {
 			if ((error as { status?: unknown }).status === 404)
-				return { status: 'refused', reason: 'gone', detail: 'The pane is no longer in Okena.' }
+				return { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.labels.name}.` }
 			return { status: 'failed', detail: errorDetail(error) }
 		}
-		if (fresh.terminal_id !== target.terminalId) return { status: 'failed', detail: 'Okena answered for another pane.' }
+		if (fresh.terminal_id !== target.terminalId)
+			return { status: 'failed', detail: `${this.labels.name} answered for another pane.` }
 
 		const request = built.body
 		if (request.kind === 'decision') {
 			const check = askStillOpen(item, fresh)
 			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 			if (!client.postClaudeDialogDecision)
-				return { status: 'failed', detail: 'This Okena client cannot answer dialogs.' }
+				return { status: 'failed', detail: `This ${this.labels.name} client cannot answer dialogs.` }
 			try {
 				await client.postClaudeDialogDecision(target.terminalId, request.dialogId, request.body, {
 					timeoutMs: OKENA_ACT_TIMEOUT_MS,
 				})
 				return { status: 'sent' }
 			} catch (error) {
-				return dockPostFailure(error, true)
+				return dockPostFailure(error, true, this.labels.name)
 			}
 		}
 
@@ -184,7 +201,8 @@ export class OkenaClaudeSource {
 		}
 		const check = turnStillWaiting(item, fresh, page)
 		if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
-		if (!client.postClaudePrompt) return { status: 'failed', detail: 'This Okena client cannot send prompts.' }
+		if (!client.postClaudePrompt)
+			return { status: 'failed', detail: `This ${this.labels.name} client cannot send prompts.` }
 		try {
 			const response = await client.postClaudePrompt(target.terminalId, request.body.text, {
 				timeoutMs: OKENA_ACT_TIMEOUT_MS,
@@ -197,7 +215,7 @@ export class OkenaClaudeSource {
 					: {}),
 			}
 		} catch (error) {
-			return dockPostFailure(error, false)
+			return dockPostFailure(error, false, this.labels.name)
 		}
 	}
 
@@ -208,7 +226,7 @@ export class OkenaClaudeSource {
 			return {
 				type: 'poll',
 				profile: this.lastProfile ?? 'unknown',
-				state: { ok: false, error: 'Okena not configured or not running' },
+				state: { ok: false, error: this.labels.notRunning },
 				terminals: [],
 			}
 		}

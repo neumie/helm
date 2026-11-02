@@ -52,6 +52,8 @@ import {
 	sessionSince,
 	sessionStatusText,
 	sessionWhere,
+	sourceBlockedNote,
+	sourceNames,
 	statusGlyph,
 	unknownAgentsText,
 	unknownSessionCount,
@@ -509,13 +511,7 @@ export function AgentDock({
 					pending={pending.has(openItem.id)}
 					refused={refused.has(openItem.id)}
 					canAct={onAct !== undefined && canAnswer(openItem, snapshot)}
-					blockedNote={
-						!onAct
-							? 'Answer in the terminal'
-							: snapshot.source.state !== 'ok'
-								? 'Okena unreachable: answer in the terminal'
-								: null
-					}
+					blockedNote={!onAct ? 'Answer in the terminal' : sourceBlockedNote(openItem, snapshot)}
 					submitting={submitting.has(openItem.id)}
 					sent={sent.get(openItem.id) ?? null}
 					localError={actErrors.get(openItem.id) ?? null}
@@ -604,8 +600,12 @@ function Queue({
 	if (!snapshot || source?.state === 'pending')
 		return (
 			<div className="agent-dock-rail-note">
-				<span className="agent-dock-rail-note-title">Connecting to Okena…</span>
-				<span>Claude sessions appear once Okena's Claude Remote answers</span>
+				<span className="agent-dock-rail-note-title">Connecting to {sourceNames(snapshot, 'pending')}…</span>
+				<span>
+					{sourceNames(snapshot, 'pending') === 'Okena'
+						? "Claude sessions appear once Okena's Claude Remote answers"
+						: 'Claude sessions appear once their sources answer'}
+				</span>
 			</div>
 		)
 	const unknown = unknownSessionCount(snapshot)
@@ -665,7 +665,8 @@ function Queue({
 					title={source.detail ? plainAgentText(source.detail, 200) : undefined}
 				>
 					<span className="agent-dock-rail-note-title">
-						<span aria-hidden="true">! </span>Okena unreachable
+						<span aria-hidden="true">! </span>
+						{sourceNames(snapshot, 'down')} unreachable
 					</span>
 					<span>
 						{source.lastObservedAt !== null ? `last data ${formatClock(source.lastObservedAt)}` : 'no data yet'}
@@ -683,9 +684,9 @@ function Queue({
 					{needs.length === 0 ? (
 						<li className="agent-dock-queue-empty">
 							{source?.state !== 'ok'
-								? 'Okena is unreachable, so open questions cannot be seen'
+								? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
 								: unknown > 0
-									? `${unknownAgentsText(unknown)}: Okena did not return readable detail, so their open questions cannot be seen`
+									? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
 									: 'Nothing needs you'}
 						</li>
 					) : (
@@ -896,7 +897,9 @@ function AgentsEntry({
 	if (sessions.length === 0)
 		return (
 			<div className="agent-dock-agents-empty" data-slot={slot}>
-				No Claude session is connected to Okena's Claude Remote
+				{sourceNames(snapshot) === 'Okena'
+					? "No Claude session is connected to Okena's Claude Remote"
+					: `No Claude session is connected to ${sourceNames(snapshot)}`}
 			</div>
 		)
 	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
