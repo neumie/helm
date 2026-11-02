@@ -32,7 +32,9 @@
 // decided (PostToolUse/PostToolUseFailure for the same prompt + tool + input;
 // PreToolUse runs BEFORE the permission check, so it proves nothing), the prompt
 // stopped, a new prompt started, the session ended or the terminal closed. A
-// hook Claude SIGTERMs (terminal No/Esc) reports `cancelled`.
+// hook Claude SIGTERMs (terminal No/Esc) reports `cancelled`. Known gap: a
+// terminal "Yes" neither SIGTERMs the hook nor writes the transcript until the
+// tool finishes (verified on CC 2.1.316), so the dock ask stays open meanwhile.
 
 import type { OkenaClaudeDecision } from '../agent-dock/act'
 import { stableJson } from '../agent-dock/model'
