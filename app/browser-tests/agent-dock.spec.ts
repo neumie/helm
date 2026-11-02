@@ -47,7 +47,16 @@ async function expectPaneBesideTerminal(page: Page, position: 'top' | 'bottom' =
 
 async function emitScenario(
 	page: Page,
-	name: 'busy' | 'crowded' | 'empty' | 'down' | 'orphaned' | 'real-case' | 'overflow' | 'helm-terminals',
+	name:
+		| 'busy'
+		| 'crowded'
+		| 'empty'
+		| 'down'
+		| 'orphaned'
+		| 'real-case'
+		| 'overflow'
+		| 'helm-terminals'
+		| 'helm-add-directories',
 ): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
@@ -647,6 +656,24 @@ test('keep planning sends the plan back with the message: deny, then ✓ sent ba
 	await expect(entry).toContainText('✓ sent back to planning')
 	await expect(pane.locator('.agent-dock-receipt')).toHaveText('✓ sent back to planning · split the migration first')
 	expect(await acts(page)).toEqual([{ itemId, action: { type: 'deny', message: 'split the migration first' } }])
+})
+
+test('a Helm-terminal permission suggesting addDirectories offers no Always allow (its hub applies rules only)', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'helm-add-directories')
+	const entry = row(page).locator('.agent-dock-entry[aria-label^="Permission,"]')
+	await expect(entry).toHaveCount(1)
+	await entry.click()
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane).toBeVisible()
+	await expect(pane.getByRole('radio')).toHaveCount(2)
+	await expect(pane.getByRole('radio', { name: /Allow once/ })).toBeVisible()
+	await expect(pane.getByRole('radio', { name: /Deny and tell the agent/ })).toBeVisible()
+	await expect(pane).not.toContainText('Always allow')
+	await expect(pane).not.toContainText('(this session)')
 })
 
 test('"Other…" takes free text per question; typing digits in it types, never picks', async ({ page }) => {

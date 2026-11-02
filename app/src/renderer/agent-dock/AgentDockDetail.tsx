@@ -140,7 +140,7 @@ export function ItemDetail({
 	else if (item.fact.tool === 'AskUserQuestion' && askQuestions(item.fact.input))
 		body = <AskPanel key={item.id} {...panel} />
 	else if (item.fact.tool === 'ExitPlanMode') body = <PlanPanel key={item.id} {...panel} session={session} />
-	else body = <PermissionPanel key={item.id} {...panel} />
+	else body = <PermissionPanel key={item.id} {...panel} session={session} />
 	return (
 		<>
 			<ItemHeader item={item} who={who} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />

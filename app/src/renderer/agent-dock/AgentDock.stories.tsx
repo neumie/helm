@@ -83,6 +83,12 @@ export const HelmTerminals: Story = { args: { scenario: 'helm-terminals' } }
 /** A plan from a Helm terminal: Approve also switches the agent to accept edits (said in its description). */
 export const HelmPlanOpen: Story = { args: { scenario: 'helm-terminals', open: 'plan' } }
 
+/**
+ * A permission from a Helm terminal whose suggestions include `addDirectories`: Helm's hub applies
+ * rule suggestions only, so the pane offers Allow once and Deny, no "Always allow" (Okena would).
+ */
+export const HelmPermissionAddDirectories: Story = { args: { scenario: 'helm-add-directories', open: 'permission' } }
+
 /** Five items: plan approval and a second turn join, still one row. */
 export const FiveItems: Story = { args: { scenario: 'crowded' } }
 

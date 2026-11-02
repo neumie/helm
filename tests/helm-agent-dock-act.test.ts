@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import actModule from '../app/src/agent-dock/act.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
+import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import presentationModule from '../app/src/renderer/agent-dock/presentation.ts'
 import { OKENA_NOT_CONFIGURED, OkenaClient, OkenaHttpError } from '../src/extensions/okena/client.js'
@@ -21,6 +22,7 @@ type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type DockAction = import('../app/src/agent-dock/model.ts').DockAction
 
 const { askStillOpen, dockActBody, dockPostFailure, turnStillWaiting } = actModule as ActModule
+const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
 const {
 	ACT_CONFIRM_MS,
 	parseAgentDockActRequest,
@@ -545,6 +547,50 @@ test('always allow is refused unless the dock could show every suggestion Okena 
 		session(ask({ dialogs: [permissionDialog({ permission_suggestions: suggestions })] }))
 	assert.deepEqual(askStillOpen(many, freshDialog(Array.from({ length: 9 }, () => rule))), { ok: true })
 	assert.equal((askStillOpen(many, freshDialog(eight)) as { reason?: string }).reason, 'changed')
+})
+
+test('Helm terminals: always allow with an addDirectories suggestion is refused before any request; Okena sends it', async () => {
+	const dirs = { type: 'addDirectories', directories: ['/repo/other'], destination: 'session' }
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow' }
+	const detail = (suggestions: unknown[]) =>
+		ask({ dialogs: [permissionDialog({ permission_suggestions: suggestions })] })
+	const item = (suggestions: unknown[]) => only(drive([[T0, poll(detail(suggestions))]]).state)
+	const always: DockAction = { type: 'allow', always: true }
+	assert.equal(dockActBody(item([dirs]), always).ok, true, 'Okena (the default source)')
+	assert.equal(dockActBody(item([dirs]), always, 'okena').ok, true)
+	const refused = dockActBody(item([dirs]), always, 'helm')
+	assert.equal(refused.ok === false && refused.reason, 'invalid')
+	assert.equal(dockActBody(item([rule, dirs]), always, 'helm').ok, false, 'one directory spoils the set')
+	assert.equal(dockActBody(item([rule]), always, 'helm').ok, true, 'rules alone still work')
+	assert.equal(dockActBody(item([dirs]), { type: 'allow' }, 'helm').ok, true, 'allow once applies no suggestion')
+
+	// Through the source: the Helm one never reads or POSTs; the Okena one answers as before.
+	const calls: string[] = []
+	const client = (suggestions: unknown[]) => {
+		const self = {
+			activeProfileId: () => PROFILE,
+			forProfile: () => self,
+			getStateJson: async () => clone(STATE_ASK),
+			getClaudeSession: async () => {
+				calls.push('read')
+				return detail(suggestions)
+			},
+			getClaudeTranscript: async () => page([], 0, true),
+			postClaudeDialogDecision: async (_terminal: string, dialog: string, body: unknown) => {
+				calls.push(`post ${dialog} ${JSON.stringify(body)}`)
+				return {}
+			},
+			postClaudePrompt: async () => ({ delivery: 'pty' }),
+		}
+		return self
+	}
+	const target = { profile: PROFILE, terminalId: TID }
+	const helm = await new OkenaClaudeSource(client([dirs]), 'helm').act(target, item([dirs]), always)
+	assert.equal(helm.status === 'refused' && helm.reason, 'invalid')
+	assert.deepEqual(calls, [], 'no read, no POST')
+	const okena = await new OkenaClaudeSource(client([dirs]), 'okena').act(target, item([dirs]), always)
+	assert.deepEqual(okena, { status: 'sent' })
+	assert.deepEqual(calls, ['read', `post ${DIALOG_ID.split('-')[0]}-9 {"decision":"allow","always":true}`])
 })
 
 test('allow is refused when the dock could not show the whole tool input', () => {

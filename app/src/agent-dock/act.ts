@@ -14,7 +14,7 @@
 //     → 200 {"delivery":"channel"|"pty"|"queued"} | 400 empty/too long | 409 busy/no session
 // (the same bodies `okena claude answer` / `okena claude prompt` send).
 
-import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
+import { DOCK_SOURCE_TEXT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 import {
 	DOCK_RISKY_PROMPT,
 	type DockActOutcome,
@@ -28,7 +28,13 @@ import {
 	type OkenaClaudeTranscriptPage,
 	stableJson,
 } from './model'
-import { PERMISSION_SUGGESTIONS_MAX, alwaysAllowLabels, permissionReview, planReview } from './review'
+import {
+	PERMISSION_SUGGESTIONS_MAX,
+	alwaysAllowLabels,
+	alwaysAllowRulesOnly,
+	permissionReview,
+	planReview,
+} from './review'
 
 /** `ApiClaudeDecision` as Okena deserializes it (no other fields: deny_unknown_fields). */
 export type OkenaClaudeDecision =
@@ -93,11 +99,13 @@ const riskyDetail = (what: string): string => `This ${what} mentions deploy/prod
 
 /**
  * Validates an action against the item's fact and builds the Okena body.
- * Pure; uses only the item's own (verbatim) fact. Refusals never echo answer text.
+ * Pure; uses only the item's own (verbatim) fact and the `source` that will answer it.
+ * Refusals never echo answer text.
  */
 export function dockActBody(
 	item: DockItem,
 	action: DockAction,
+	source: DockSourceId = 'okena',
 ): { ok: true; body: DockActRequestBody } | { ok: false; reason: DockRefusalReason; detail: string } {
 	const fact = item.fact
 	if (fact.kind === 'turn') {
@@ -108,7 +116,7 @@ export function dockActBody(
 		return { ok: true, body: { kind: 'prompt', body: { text } } }
 	}
 	if (action.type === 'prompt') return refuse('invalid', 'An open dialog takes an answer, not a reply.')
-	const decision = askDecision(fact, action)
+	const decision = askDecision(fact, action, source)
 	if (!decision.ok) return decision
 	return { ok: true, body: { kind: 'decision', dialogId: fact.dialogId, body: decision.body } }
 }
@@ -116,6 +124,7 @@ export function dockActBody(
 function askDecision(
 	fact: DockAskFact,
 	action: Exclude<DockAction, { type: 'prompt' }>,
+	source: DockSourceId,
 ): { ok: true; body: OkenaClaudeDecision } | { ok: false; reason: DockRefusalReason; detail: string } {
 	if (fact.tool === 'AskUserQuestion') {
 		if (action.type !== 'answer') return refuse('invalid', 'This question takes answers.')
@@ -158,10 +167,13 @@ function askDecision(
 	}
 	if (action.always === true) {
 		if (fact.tool === 'ExitPlanMode') return refuse('invalid', 'A plan is approved once.')
-		// Okena applies EVERY suggestion: refuse unless the dock could show each one verbatim.
-		const labels = alwaysAllowLabels(fact.suggestions, fact.suggestionsTruncated === true)
+		// The source applies EVERY suggestion: refuse unless the dock could show each one verbatim
+		// (and, for Helm's hub, unless each is a rule: it cannot apply addDirectories).
+		const labels = alwaysAllowLabels(fact.suggestions, fact.suggestionsTruncated === true, {
+			rulesOnly: alwaysAllowRulesOnly(source),
+		})
 		if (labels === null)
-			return refuse('invalid', 'Claude suggested rules the dock cannot show; answer in the terminal.')
+			return refuse('invalid', 'Claude suggested rules the dock cannot always allow; answer in the terminal.')
 		if (labels.length === 0) return refuse('invalid', 'Claude suggested no rule to always allow.')
 	}
 	// Okena allows with the full original tool_input: refuse unless the dock showed all of it.

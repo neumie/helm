@@ -21,7 +21,7 @@ import {
 import { digitOf, isStrayKey, modHint, modShortcut, submitKeys, useKeys } from './pane-keys'
 import { type PanelProps, useDraft } from './panel'
 import {
-	alwaysAllowLabels,
+	alwaysAllowChoice,
 	permissionReview,
 	plainAgentLine,
 	plainAgentText,
@@ -226,17 +226,16 @@ function DecisionPanel({
 	)
 }
 
-export function PermissionPanel(panel: PanelProps) {
-	const { item } = panel
+export function PermissionPanel(panel: PanelProps & { session: DockSession | undefined }) {
+	const { item, session } = panel
 	const leadId = useId()
 	if (item.fact.kind !== 'ask') return null
 	const { tool, input } = item.fact
 	// Okena allows with the full original tool_input and applies every suggestion:
 	// offer Allow only when all of it shows here verbatim (main refuses otherwise too).
+	// Helm terminals: Always allow only for rule suggestions (the hub cannot apply addDirectories).
 	const review = permissionReview(input)
-	const always = review.complete
-		? alwaysAllowLabels(item.fact.suggestions, item.fact.suggestionsTruncated === true)
-		: null
+	const always = review.complete ? alwaysAllowChoice(item, session?.source) : null
 	const description = review.description ? plainAgentLine(review.description, 240) : ''
 	const allows: Choice[] = review.complete
 		? [

@@ -48,6 +48,11 @@ export type AgentDockScenario =
 	 * the health names both sources, and the plan's Approve says it also switches to accept edits.
 	 */
 	| 'helm-terminals'
+	/**
+	 * `helm-terminals` with Claude also suggesting `addDirectories` for the permission: Helm's hub can
+	 * only apply rule suggestions, so that pane offers Allow once and Deny, no "Always allow".
+	 */
+	| 'helm-add-directories'
 
 type Json = Record<string, unknown>
 
@@ -196,6 +201,7 @@ function run(steps: Array<[number, AgentDockObservation]>, start: AgentDockState
 function busyTimeline(
 	now: number,
 	crowded = false,
+	permissionSuggestions: Json[] = [bashSuggestion('npm run deploy:stage')],
 ): {
 	steps: Array<[number, AgentDockObservation]>
 	live: Array<{ pane: Pane; body: Json }>
@@ -260,7 +266,7 @@ function busyTimeline(
 				id: `${prefix}-9`,
 				tool_name: 'Bash',
 				tool_input: { command: 'npm run deploy:stage', description: 'Deploy the worker to stage' },
-				permission_suggestions: [bashSuggestion('npm run deploy:stage')],
+				permission_suggestions: permissionSuggestions,
 				created_at_ms: now - 40 * MINUTE,
 			},
 		],
@@ -633,8 +639,17 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		const crowded = busyTimeline(now, true)
 		return { state: run(crowded.steps, start), live: bare(crowded.live), version: crowded.version }
 	}
-	if (name === 'helm-terminals') {
-		const crowded = busyTimeline(now, true)
+	if (name === 'helm-terminals' || name === 'helm-add-directories') {
+		const crowded = busyTimeline(
+			now,
+			true,
+			name === 'helm-add-directories'
+				? [
+						bashSuggestion('npm run deploy:stage'),
+						{ type: 'addDirectories', directories: ['/fixture/neumie-veka-worker'], destination: 'session' },
+					]
+				: undefined,
+		)
 		const steps: Array<[number, AgentDockObservation]> = crowded.steps.map(([at, observation]) => [
 			at,
 			{ ...observation, source: 'helm' } as AgentDockObservation,

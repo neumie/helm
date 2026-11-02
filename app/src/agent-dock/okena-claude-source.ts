@@ -135,7 +135,7 @@ export class OkenaClaudeSource implements DockSource {
 	 * idle turn's last assistant uuid); otherwise nothing is sent.
 	 */
 	async act(target: DockPane, item: DockItem, action: DockAction): Promise<DockActOutcome> {
-		const built = dockActBody(item, action)
+		const built = dockActBody(item, action, this.id)
 		if (!built.ok) return { status: 'refused', reason: built.reason, detail: built.detail }
 		const client = this.client.forProfile(target.profile)
 		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }

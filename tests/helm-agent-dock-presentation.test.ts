@@ -13,6 +13,7 @@ const {
 	AGING_WARN_MS,
 	agentRowMeta,
 	agingTone,
+	alwaysAllowChoice,
 	alwaysAllowLabels,
 	askQuestions,
 	permissionReview,
@@ -363,6 +364,25 @@ test('"Always allow" wording comes only from Claude\'s permission_suggestions, a
 		assert.equal(alwaysAllowLabels([rule, hidden]), null, JSON.stringify(hidden))
 	assert.equal(alwaysAllowLabels(Array.from({ length: 9 }, () => rule)), null, 'more than the cap')
 	assert.equal(alwaysAllowLabels([rule], true), null, 'Okena sent more than were kept')
+})
+
+test('"Always allow" for a Helm terminal takes rule suggestions only (its hub cannot apply addDirectories)', () => {
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow' }
+	const dirs = { type: 'addDirectories', directories: ['/tmp/out'], destination: 'session' }
+	assert.deepEqual(alwaysAllowLabels([rule], false, { rulesOnly: true }), ['Bash(ls)'])
+	assert.equal(alwaysAllowLabels([dirs], false, { rulesOnly: true }), null)
+	assert.equal(alwaysAllowLabels([rule, dirs], false, { rulesOnly: true }), null)
+	const permission = (suggestions: unknown[]) =>
+		askItem({
+			fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: { command: 'ls' }, suggestions, createdAtMs: T },
+		})
+	assert.equal(alwaysAllowChoice(permission([dirs]), 'helm'), null)
+	assert.equal(alwaysAllowChoice(permission([rule, dirs]), 'helm'), null)
+	assert.deepEqual(alwaysAllowChoice(permission([rule]), 'helm'), ['Bash(ls)'])
+	// Okena applies addDirectories: unchanged there (and for a session without a source).
+	assert.deepEqual(alwaysAllowChoice(permission([dirs]), 'okena'), ['/tmp/out'])
+	assert.deepEqual(alwaysAllowChoice(permission([rule, dirs]), undefined), ['Bash(ls)', '/tmp/out'])
+	assert.equal(alwaysAllowChoice(turnItem(), 'okena'), null)
 })
 
 test('permission review: every tool_input field shows; anything cut or stripped needs the terminal', () => {

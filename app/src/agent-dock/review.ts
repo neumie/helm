@@ -140,8 +140,13 @@ export function planReview(input: unknown): PlanReview {
  * `destination` is ignored on purpose: Okena rewrites every entry to
  * `"destination": "session"` before answering (okena-remote-server
  * claude_remote/decision.rs `session_scoped`), so "(this session)" is accurate.
+ * `rulesOnly` (see alwaysAllowRulesOnly): `addDirectories` also means null.
  */
-export function alwaysAllowLabels(suggestions: unknown, truncated = false): string[] | null {
+export function alwaysAllowLabels(
+	suggestions: unknown,
+	truncated = false,
+	{ rulesOnly = false }: { rulesOnly?: boolean } = {},
+): string[] | null {
 	if (truncated || (suggestions !== undefined && !Array.isArray(suggestions))) return null
 	const list = (suggestions as unknown[] | undefined) ?? []
 	if (list.length > PERMISSION_SUGGESTIONS_MAX) return null
@@ -159,7 +164,7 @@ export function alwaysAllowLabels(suggestions: unknown, truncated = false): stri
 				else if (line(rule.ruleContent, RULE_CONTENT_MAX)) labels.push(`${rule.toolName}(${rule.ruleContent})`)
 				else return null
 			}
-		} else if (suggestion.type === 'addDirectories') {
+		} else if (suggestion.type === 'addDirectories' && !rulesOnly) {
 			const directories = suggestion.directories
 			if (!Array.isArray(directories) || directories.length === 0 || directories.length > RULES_PER_SUGGESTION_MAX)
 				return null
@@ -170,6 +175,16 @@ export function alwaysAllowLabels(suggestions: unknown, truncated = false): stri
 		} else return null
 	}
 	return [...new Set(labels)]
+}
+
+/**
+ * Whether "Always allow" takes only allow `addRules` suggestions for a session of `source`. Helm's own
+ * Claude hub refuses any other entry (claude-remote/decision.ts: an applied `addDirectories` did not
+ * stop the next prompt in the Claude Code 2.1.316 spike), so the dock neither offers nor sends it
+ * there. Okena applies `addDirectories` too. Main (act.ts) and the renderer read this one function.
+ */
+export function alwaysAllowRulesOnly(source: string | undefined): boolean {
+	return source === 'helm'
 }
 
 /**

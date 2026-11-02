@@ -17,7 +17,7 @@ import type {
 
 import { DOCK_RISKY_PROMPT, DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
 import { itemWaitingSince } from '../../agent-dock/item-order'
-import { planApproveMode } from '../../agent-dock/review'
+import { alwaysAllowLabels, alwaysAllowRulesOnly, planApproveMode } from '../../agent-dock/review'
 
 export { itemWaitingSince } from '../../agent-dock/item-order'
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
@@ -187,6 +187,18 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
 		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn' }
 	return null
+}
+
+/**
+ * The "Always allow" choice's labels for this ask, for a session of `source` (null or [] = no such
+ * choice). Helm terminals take rule suggestions only (review.ts alwaysAllowRulesOnly); main refuses
+ * the same (act.ts).
+ */
+export function alwaysAllowChoice(item: DockItem, source: DockSourceId | undefined): string[] | null {
+	if (item.fact.kind !== 'ask') return null
+	return alwaysAllowLabels(item.fact.suggestions, item.fact.suggestionsTruncated === true, {
+		rulesOnly: alwaysAllowRulesOnly(source ?? 'okena'),
+	})
 }
 
 /**
