@@ -21,6 +21,19 @@ export const canvasStyles: ReadonlySet<string> = new Set(
 		' ',
 	),
 )
+/** Display budgets shared by the canvas Worker and the parent-side frame validator. */
+export const canvasLimits = { nodes: 8192, depth: 32, textUnits: 64000, frameBytes: 1024 * 1024 } as const
+/** Fixed, producer-independent explanations for an exceeded display budget. */
+export const canvasLimitReasons = {
+	nodes: `more than ${canvasLimits.nodes} rendered nodes`,
+	depth: `nesting deeper than ${canvasLimits.depth} elements`,
+	text: `more than ${canvasLimits.textUnits} characters of text`,
+	frame: 'rendered output larger than 1 MiB',
+	style: 'more than 40 style properties on one element',
+	value: 'a field or option value longer than 4000 characters',
+	fields: 'more than 16 feedback fields or 16384 field characters',
+} as const
+export type CanvasLimit = keyof typeof canvasLimitReasons
 export const canvasInputTypes: ReadonlySet<string> = new Set(['text', 'number', 'checkbox', 'radio', 'email'])
 
 export function isCanvasScalarProp(key: string, value: unknown): value is string | number | boolean {

@@ -282,23 +282,42 @@ test('exact bundled browser worker uses real React hooks, bounded inert frames a
 			'export default ()=> <div id="box" dangerouslySetInnerHTML={{__html:"<img src=https://example.com>"}} style={{backgroundImage:"url(https://example.com)",color:"red"}}><a href="https://example.com">no navigation</a></div>',
 		)
 		assert.ok(inert.some(m => m.type === 'error'))
-		for (const source of [
-			'export default ()=> <p>{"x".repeat(64001)}</p>',
-			'export default ()=> <p>{"€".repeat(64000)}</p>',
-			`export default ()=> ${'<div>'.repeat(34)}deep${'</div>'.repeat(34)}`,
-			'export default ()=> <input id="large" value={"x".repeat(4001)}/>',
-			`export default ()=> <div>${Array.from({ length: 5 }, (_, i) => `<input id="large${i}" value={"x".repeat(4000)}/>`).join('')}</div>`,
-			'export default ()=> <input id="file" type="file"/>',
-			'export default ()=> <div>{Array.from({length:2049},()=> <span>x</span>)}</div>',
-			'export default ()=> <input id="secret" type="password"/>',
-			`export default ()=> <div>${Array.from({ length: 17 }, (_, i) => `<input id="f${i}" value="x"/>`).join('')}</div>`,
-		]) {
+		for (const [source, reason] of [
+			['export default ()=> <p>{"x".repeat(64001)}</p>', /more than 64000 characters of text/],
+			[
+				'export default ()=> <div>{Array.from({length:4000},()=> <div style={{gridTemplateColumns:"1fr ".repeat(30),width:"1".repeat(120),height:"€".repeat(120)}}/>)}</div>',
+				/rendered output larger than 1 MiB/,
+			],
+			[`export default ()=> ${'<div>'.repeat(34)}deep${'</div>'.repeat(34)}`, /nesting deeper than 32 elements/],
+			['export default ()=> <input id="large" value={"x".repeat(4001)}/>', /value longer than 4000 characters/],
+			[
+				`export default ()=> <div>${Array.from({ length: 5 }, (_, i) => `<input id="large${i}" value={"x".repeat(4000)}/>`).join('')}</div>`,
+				/more than 16 feedback fields or 16384 field characters/,
+			],
+			['export default ()=> <input id="file" type="file"/>', /limits failed$/],
+			[
+				'export default ()=> <div>{Array.from({length:4097},()=> <span>x</span>)}</div>',
+				/more than 8192 rendered nodes/,
+			],
+			['export default ()=> <input id="secret" type="password"/>', /limits failed$/],
+			[
+				`export default ()=> <div>${Array.from({ length: 17 }, (_, i) => `<input id="f${i}" value="x"/>`).join('')}</div>`,
+				/more than 16 feedback fields or 16384 field characters/,
+			],
+		] as const) {
 			const bounded = await run(source)
-			assert.ok(
-				bounded.some(m => m.type === 'error'),
-				JSON.stringify(bounded).slice(0, 300),
-			)
+			const error = bounded.find(m => m.type === 'error')
+			assert.ok(error?.type === 'error', JSON.stringify(bounded).slice(0, 300))
+			assert.match(error.error, reason)
 		}
+		// Medium documents (thousands of nodes, a few hundred KiB of frame) stay within the display budgets.
+		const medium = await run(
+			'export default ()=> <div>{Array.from({length:1500},(_,i)=> <p style={{color:"#334455",padding:"4px 8px",borderRadius:8,fontSize:14}}>{"Řádek " + i}</p>)}</div>',
+		)
+		assert.equal(
+			medium.some(m => m.type === 'error'),
+			false,
+		)
 		await assert.rejects(
 			run('while(true){} export default ()=>null', false, 'click', true, false, undefined, 2000),
 			/Worker did not settle/,

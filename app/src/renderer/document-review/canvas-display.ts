@@ -6,7 +6,15 @@ import type {
 	ReviewCanvasCompilation,
 } from '../../document-review/types'
 
-import { canvasInputTypes, canvasTags, isCanvasScalarProp, isCanvasStyle } from './canvas-vocabulary'
+import {
+	type CanvasLimit,
+	canvasInputTypes,
+	canvasLimitReasons,
+	canvasLimits,
+	canvasTags,
+	isCanvasScalarProp,
+	isCanvasStyle,
+} from './canvas-vocabulary'
 export { canvasTags } from './canvas-vocabulary'
 
 export function canvasSourceBlock(
@@ -57,8 +65,9 @@ export function validateCanvasValues(value: unknown): string[] {
 function record(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value)
 }
-function fail(): never {
-	throw new Error('Document canvas display is unavailable. Read the source instead.')
+function fail(limit?: CanvasLimit): never {
+	const reason = limit ? ` (${canvasLimitReasons[limit]})` : ''
+	throw new Error(`Document canvas display is unavailable${reason}. Read the source instead.`)
 }
 
 /** Independent parent-side validation. No producer HTML, URLs, CSS capabilities or spread props. */
@@ -83,10 +92,11 @@ export function validateCanvasFrame(
 	const sourceIds = new Map<string, number>()
 	const controlIds = new Set<string>()
 	const node = (value: unknown, depth: number): string | ValidatedCanvasNode => {
-		if (depth > 32 || ++count > 2048) fail()
+		if (depth > canvasLimits.depth) fail('depth')
+		if (++count > canvasLimits.nodes) fail('nodes')
 		if (typeof value === 'string') {
 			text += value.length
-			if (text > 64000) fail()
+			if (text > canvasLimits.textUnits) fail('text')
 			return value
 		}
 		if (
@@ -106,7 +116,8 @@ export function validateCanvasFrame(
 		const props: ValidatedCanvasNode['props'] = {}
 		for (const [key, prop] of Object.entries(value.props)) {
 			if (key === 'style') {
-				if (!record(prop) || Object.keys(prop).length > 40) fail()
+				if (!record(prop)) fail()
+				if (Object.keys(prop).length > 40) fail('style')
 				const safe: Record<string, string | number> = {}
 				for (const [name, css] of Object.entries(prop)) {
 					if (!isCanvasStyle(name, css)) fail()
@@ -126,7 +137,8 @@ export function validateCanvasFrame(
 				props[key] = prop
 			} else fail()
 		}
-		if (text > 64000 || Object.keys(props).length > 40) fail()
+		if (text > canvasLimits.textUnits) fail('text')
+		if (Object.keys(props).length > 40) fail()
 		let provenance: string | undefined
 		if (value.sourceId !== undefined) {
 			if (
@@ -176,7 +188,7 @@ export function validateCanvasFrame(
 			}
 	}
 	deauthorizeDuplicates(nodes)
-	if (value.fields.length > 16) fail()
+	if (value.fields.length > 16) fail('fields')
 	let units = 0
 	const fieldIds = new Set<string>()
 	const fields: CanvasFieldValue[] = value.fields.map(value => {
