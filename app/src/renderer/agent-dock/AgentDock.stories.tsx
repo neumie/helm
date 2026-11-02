@@ -1,11 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
+import type { AgentDockOpenFixture as OpenFixture } from '../terminal-workspace-fixtures'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
 import { type AgentDockPosition, itemKindLabel, queueItems } from './presentation'
-
-type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
 const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boolean> = {
 	question: item => itemKindLabel(item) === 'Question',
