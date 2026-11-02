@@ -213,6 +213,19 @@ test('degraded (user --settings): listed, not connected, state unknown; a Sessio
 	assert.equal(session(core).hooks_attached, true)
 })
 
+test('degraded: its claude exiting (the preload lifeline closes) drops the entry; another pid’s close does not', () => {
+	const core = new ClaudeHubCore({ prefix: 'cc34' })
+	const sessions = () => (core.stateJson('work') as { claude_sessions: string[] }).claude_sessions
+	core.attached(REF, 300)
+	core.degraded(REF, 300, 'user_settings', '/repo/x', T0)
+	core.attached(REF, 999)
+	core.detached(REF, 999)
+	assert.deepEqual(sessions(), ['term1'])
+	core.detached(REF, 300)
+	assert.deepEqual(sessions(), [])
+	assert.throws(() => core.session(REF), { status: 404 })
+})
+
 // ---------------------------------------------------------------------------
 // Core: busy table, filters, out-of-order delivery
 // ---------------------------------------------------------------------------

@@ -349,6 +349,11 @@ export class ClaudeHubCore {
 		}
 		t.lifelines.delete(pid)
 		if (t.primary && !t.primary.ended && t.primary.pid === pid) this.sessionEnd(t)
+		else if (t.primary === undefined && t.degraded?.pid === pid) {
+			// The hookless claude exited: its "no hooks" entry goes with it.
+			t.degraded = undefined
+			this.changed()
+		}
 	}
 
 	/** Helm quits: forget everything WITHOUT answering waiting hooks (they reconnect to the next hub). */
