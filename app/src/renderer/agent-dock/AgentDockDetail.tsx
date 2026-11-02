@@ -596,6 +596,7 @@ export function ItemDetail({
 			Ack
 		</Key>
 	) : null
+	const sourceName = session?.source === 'helm' ? "Helm's Claude hub" : 'Okena'
 	const view = receiptView(item)
 	const receipt = view ? (
 		<Receipt view={view} detail={sent && view.tone !== 'danger' ? sentSummary(item, sent) : null} />
@@ -609,13 +610,13 @@ export function ItemDetail({
 		<>
 			{refused ? <Warn>Not acked: the item changed. Check it again.</Warn> : null}
 			{orphaned ? (
-				<Warn>Okena restarted while this was open. The agent may still be waiting in its terminal.</Warn>
+				<Warn>{sourceName} restarted while this was open. The agent may still be waiting in its terminal.</Warn>
 			) : null}
 			{item.state === 'unconfirmed' ? (
 				<Warn>
 					{item.kind === 'ask'
 						? 'Helm has not seen this answer land. If the dialog is still open, it comes back here to answer again.'
-						: "Okena took the answer, but Helm has not seen it land. Check the agent's terminal, then Ack."}
+						: `${sourceName} took the answer, but Helm has not seen it land. Check the agent's terminal, then Ack.`}
 				</Warn>
 			) : null}
 		</>
@@ -627,7 +628,7 @@ export function ItemDetail({
 		decidable: canAct || submitting || item.state === 'sending',
 		sent,
 		mod,
-		blockedNote: orphaned ? 'Answer in the terminal (Okena lost this dialog)' : canAct ? null : blockedNote,
+		blockedNote: orphaned ? `Answer in the terminal (${sourceName} lost this dialog)` : canAct ? null : blockedNote,
 		receipt,
 		ack,
 		warnings,
@@ -1447,10 +1448,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 	})
 	if (item.fact.kind !== 'turn') return null
 	const fact = item.fact
-	const notes = [
-		fact.hadBackground ? 'Subagents were still running.' : '',
-		fact.continuedAt ? 'Tools ran again afterwards.' : '',
-	].filter(Boolean)
+	const notes = [fact.hadBackground ? 'Subagents were still running.' : ''].filter(Boolean)
 	const note = confirming ? <RiskyConfirm word={confirming} what="This reply" /> : (receipt ?? blockedNote ?? null)
 	return (
 		<>

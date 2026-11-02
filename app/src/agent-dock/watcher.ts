@@ -48,6 +48,7 @@ import {
 	type DockItem,
 	type DockRefusalReason,
 	type DockSession,
+	type DockSourceId,
 	agentDockPersistedSchema,
 	parseAgentDockActRequest,
 } from './model'
@@ -72,12 +73,20 @@ const watcherStateSchema = agentDockPersistedSchema.extend({
 })
 type WatcherPersisted = z.infer<typeof watcherStateSchema>
 
+/** The pane an act or expedite targets; `source` routes it (composite-source.ts). */
+export interface AgentDockTarget {
+	source: DockSourceId
+	profile: string
+	terminalId: string
+}
+
 export interface AgentDockObservationSource {
-	observe(state: AgentDockState, now: number): Promise<AgentDockObservation>
-	/** Slice 2: CAS read + Okena POST for one dock answer. Absent = the dock cannot answer. */
-	act?(target: { profile: string; terminalId: string }, item: DockItem, action: DockAction): Promise<DockActOutcome>
+	/** One tick: a poll per source (the composite returns one per source). */
+	observe(state: AgentDockState, now: number): Promise<AgentDockObservation | AgentDockObservation[]>
+	/** Slice 2: CAS read + source write for one dock answer. Absent = the dock cannot answer. */
+	act?(target: AgentDockTarget, item: DockItem, action: DockAction): Promise<DockActOutcome>
 	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
-	expedite?(target: { profile: string; terminalId: string }, until: number): void
+	expedite?(target: AgentDockTarget, until: number): void
 }
 
 /** How long after a sent dock reply the source keeps reading that pane's transcript. */
@@ -113,7 +122,6 @@ export function dockItemHead(item: DockItem): string {
 	if (fact.kind === 'turn') {
 		const parts = ['Turn ended']
 		if (fact.hadBackground) parts.push('background still running')
-		if (fact.continuedAt !== undefined) parts.push('tools ran again')
 		return oneLine(parts.join(' · '), ITEM_HEAD_MAX)
 	}
 	const input = record(fact.input)
@@ -162,7 +170,6 @@ export function dockSpoolItem(item: DockItem): SpoolItem {
 		endedAt: fact.endedAt,
 		hadBackground: fact.hadBackground,
 		...(fact.sessionId ? { sessionId: fact.sessionId } : {}),
-		...(fact.continuedAt !== undefined ? { continuedAt: fact.continuedAt } : {}),
 	}
 }
 
@@ -184,7 +191,13 @@ export function dockSpoolSnapshot(
 		writtenAt,
 		generatedAt: snapshot.generatedAt,
 		source: { ...snapshot.source },
-		sessions: snapshot.sessions.map(session => ({ ...session, prLinks: session.prLinks.map(link => ({ ...link })) })),
+		sources: Object.fromEntries(Object.entries(snapshot.sources).map(([id, health]) => [id, { ...health }])),
+		// `source` only for Helm sessions: an Okena-only spool stays byte-identical (absent = okena).
+		sessions: snapshot.sessions.map(({ source, ...session }) => ({
+			...session,
+			...(source === 'okena' ? {} : { source }),
+			prLinks: session.prLinks.map(link => ({ ...link })),
+		})),
 		items: [...items, ...earlier],
 	}
 }
@@ -218,6 +231,7 @@ export function dockEventLine(
 			t: event.t,
 			at: event.at,
 			state: event.state,
+			...(event.source && event.source !== 'okena' ? { source: event.source } : {}),
 			...(event.detail ? { detail: oneLine(event.detail, 160) } : {}),
 		})
 	}
@@ -235,6 +249,7 @@ function pruneLedger(ledger: SpoolItem[], now: number): SpoolItem[] {
 function contentDigest(snapshot: AgentDockSnapshot): string {
 	return JSON.stringify({
 		source: { state: snapshot.source.state, detail: snapshot.source.detail },
+		sources: Object.entries(snapshot.sources).map(([id, health]) => [id, health?.state, health?.detail]),
 		sessions: snapshot.sessions.map(session => ({ ...session, observedAt: 0 })),
 		items: snapshot.items.map(item => [
 			item.id,
@@ -242,7 +257,6 @@ function contentDigest(snapshot: AgentDockSnapshot): string {
 			item.state,
 			item.resolution?.by,
 			item.fact.kind,
-			item.fact.kind === 'turn' ? item.fact.continuedAt : undefined,
 			item.receipt?.status,
 			item.receipt?.reason,
 			item.receipt?.detail,
@@ -366,12 +380,23 @@ export class AgentDockWatcher {
 		if (!item) return refused('unknown_item')
 		if (item.state !== 'open') return refused(item.state === 'resolved' ? 'gone' : 'not_open')
 		if (rev !== undefined && rev !== item.rev) return refused('changed')
-		if (this.state.source.state !== 'ok') return refused('source_down')
 		const session = this.state.sessions[item.session]?.session
-		if (!session) return refused('gone', 'The agent is no longer listed by Okena.')
+		// Okena wording unchanged; Helm terminals name their own source.
+		if (!session)
+			return refused(
+				'gone',
+				item.session.startsWith('helm:')
+					? 'The agent is no longer listed in Helm terminals.'
+					: 'The agent is no longer listed by Okena.',
+			)
+		if (this.state.sources[session.source]?.health.state !== 'ok')
+			return refused(
+				'source_down',
+				session.source === 'okena' ? undefined : 'Helm terminals are unreachable; answer in the terminal',
+			)
 		const source = this.options.source
 		if (!source.act) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot answer.' } }
-		const target = { profile: session.profile, terminalId: session.terminalId }
+		const target: AgentDockTarget = { source: session.source, profile: session.profile, terminalId: session.terminalId }
 
 		this.acting = true
 		let outcome: DockActOutcome
@@ -415,9 +440,9 @@ export class AgentDockWatcher {
 		if (this.inFlight || this.stopped || this.acting) return
 		this.inFlight = true
 		try {
-			const observation = await this.options.source.observe(this.state, this.now())
+			const observed = await this.options.source.observe(this.state, this.now())
 			if (this.stopped) return
-			this.apply(observation)
+			for (const observation of Array.isArray(observed) ? observed : [observed]) this.apply(observation)
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
 			await this.flush()

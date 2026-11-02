@@ -160,6 +160,17 @@ export type SessionKey = string
 export const sessionKey = (profile: string, terminalId: string): SessionKey => `${profile}:${terminalId}`
 
 /**
+ * Where a dock session is observed: Okena Claude Remote (`okena`) or Helm's own
+ * Claude hub for Claude Code in Helm terminals (`helm`; profile `helm:<profileId>`,
+ * so its keys are `helm:<profileId>:<dtach session id>`). Both speak the same
+ * Okena-shaped wire; the reducer keeps epoch/seed/health per source.
+ */
+export type DockSourceId = 'okena' | 'helm'
+export const DOCK_SOURCES: readonly DockSourceId[] = ['okena', 'helm']
+/** Words for a source in dock/CLI text. */
+export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+
+/**
  * working: busy. background: not busy but subagents still running. idle: not busy.
  * waiting: an Okena dialog is open. unknown: busy missing or detail unparseable/unfetched.
  * unreachable: Okena itself is down (frozen row).
@@ -174,6 +185,8 @@ export interface DockPrLink {
 
 export interface DockSession {
 	key: SessionKey
+	/** Which source observes it (absent in snapshots from before Helm terminals were observed = okena). */
+	source: DockSourceId
 	profile: string
 	terminalId: string
 	/** For Okena `focus_terminal`; absent when the pane is not in any project layout. */
@@ -239,8 +252,6 @@ export interface DockTurnFact {
 	endedAt: number
 	/** Subagents were still running when the turn ended. */
 	hadBackground: boolean
-	/** Tools ran again without a user entry; the turn stays open. */
-	continuedAt?: number
 }
 
 export type DockItemFact = DockAskFact | DockTurnFact
@@ -257,7 +268,10 @@ export interface DockItem {
 	key: string
 	kind: DockItemKind
 	session: SessionKey
-	/** Starts at 1; bumps when the fact changes under Jakub (a turn's tools ran again). Acts carry the rev they saw. */
+	/**
+	 * Fact version for the act CAS; acts carry the rev they saw. Starts at 1 and nothing bumps it
+	 * today: a turn whose agent moves on closes (`superseded`/`replied`) instead of changing in place.
+	 */
 	rev: number
 	openedAt: number
 	fact: DockItemFact
@@ -425,7 +439,14 @@ export interface AgentDockSourceHealth {
 /** Pushed main → renderer on every change (channel AGENT_DOCK_IPC.snapshot). */
 export interface AgentDockSnapshot {
 	generatedAt: number
+	/**
+	 * All sources together: down if any is down, else pending if any is pending, else ok.
+	 * Kept for whole-dock text ("never all clear from missing data"); answering is gated
+	 * per source (`sources[session.source]`).
+	 */
 	source: AgentDockSourceHealth
+	/** Each observed source's own health. */
+	sources: Partial<Record<DockSourceId, AgentDockSourceHealth>>
 	sessions: DockSession[]
 	/** Open asks oldest first, then orphaned, then open turns oldest first, then resolved newest first. */
 	items: DockItem[]
@@ -436,7 +457,7 @@ export type AgentDockEvent =
 	| { t: 'item.opened'; at: number; id: number; kind: DockItemKind; session: SessionKey; key: string }
 	| { t: 'item.resolved'; at: number; id: number; by: DockResolutionBy }
 	| { t: 'item.orphaned'; at: number; id: number }
-	| { t: 'source.health'; at: number; state: 'ok' | 'down'; detail?: string }
+	| { t: 'source.health'; at: number; state: 'ok' | 'down'; source?: DockSourceId; detail?: string }
 	/** A dock answer's end state. Never carries answer text or Okena error text (disk). */
 	| {
 			t: 'act.outcome'
@@ -463,8 +484,8 @@ export interface ObservedClaudeTerminal {
 }
 
 export type AgentDockObservation =
-	/** One tick: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. */
-	| { type: 'poll'; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
+	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. Absent source = okena. */
+	| { type: 'poll'; source?: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
 	/** Jakub acked an item in the dock. */
 	| { type: 'ack'; itemId: number }
 	/** Jakub answered from the dock; main is about to run the CAS read and the Okena POST. */

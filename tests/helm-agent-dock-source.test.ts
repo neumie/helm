@@ -13,7 +13,7 @@ type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
 type OkenaClaudeClient = import('../app/src/agent-dock/okena-claude-source.ts').OkenaClaudeClient
 type OkenaClaudeSession = import('../app/src/agent-dock/model.ts').OkenaClaudeSession
 
-const { OkenaClaudeSource, TRANSCRIPT_SWEEP_MS, transcriptWanted, OKENA_TRANSCRIPT_MAX_BYTES } =
+const { OkenaClaudeSource, REPLY_READ_MS, TRANSCRIPT_SWEEP_MS, transcriptWanted, OKENA_TRANSCRIPT_MAX_BYTES } =
 	sourceModule as SourceModule
 const { TURN_IDLE_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
 
@@ -200,6 +200,76 @@ test('transcript policy: never while working; busy→idle edge, settle read and 
 	// Missing cursor (first read) is throttled to the sweep so a 404ing transcript is not hammered.
 	assert.equal(transcriptWanted(undefined, idle, {}, 0).read, true)
 	assert.equal(transcriptWanted({ busy: false, dialogs: 0, sessionId: SID, readAt: 0 }, idle, {}, 1_500).read, false)
+})
+
+test('transcript policy: a busy pane with a live turn is re-read every REPLY_READ_MS', () => {
+	const working = detailOf({ ...SHOW_ASK, busy: true, dialogs: [] })
+	const cursor = { cursor: 10, sessionId: SID }
+	const prev = { busy: true, dialogs: 0, sessionId: SID, readAt: 1_000 }
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + REPLY_READ_MS, false).read, false)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + REPLY_READ_MS - 1, true).read, false)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + REPLY_READ_MS, true).read, true)
+	// The idle→busy edge itself (Jakub just submitted a reply in the terminal) reads at once.
+	assert.equal(transcriptWanted({ ...prev, busy: false }, working, cursor, 1_001, true).read, true)
+	assert.equal(transcriptWanted({ ...prev, busy: false }, working, cursor, 1_001, false).read, false)
+	// Without a cursor the first-read throttle still applies.
+	assert.equal(transcriptWanted(prev, working, {}, 1_000 + REPLY_READ_MS, true).read, false)
+})
+
+test('a reply typed in the terminal while a turn is open is read while busy and closes the turn as replied', async () => {
+	const turnUuid = 'b1000000-0000-4000-8000-000000000001'
+	const okena = new FakeOkena()
+	const source = new OkenaClaudeSource(okena)
+	let state = createAgentDockState(null, 0)
+	const step = async (now: number) => {
+		const observation = await source.observe(state, now)
+		const next = reduce(state, observation, now)
+		state = next.state
+		return next.events
+	}
+	okena.detail = channelOff({ ...SHOW_ASK, dialogs: [], busy: true })
+	await step(0) // seed while working: first (reset) page
+	okena.detail = channelOff(SHOW_IDLE)
+	okena.transcript = {
+		session_id: SID,
+		entries: [{ kind: 'assistant', uuid: turnUuid, text: 'Shall I test it on the emulator?' }],
+		cursor: LOG_FULL.cursor + 100,
+		reset: false,
+	}
+	await step(1_500) // busy→idle edge read
+	okena.transcript = { session_id: SID, entries: [], cursor: LOG_FULL.cursor + 100, reset: false }
+	const opened = await step(1_500 + TURN_IDLE_MS) // settle read: the turn opens
+	assert.deepEqual(
+		opened.map(event => event.t),
+		['item.opened'],
+	)
+
+	// Jakub answers in the terminal: busy from now on, the reply only in the transcript.
+	okena.calls = []
+	okena.detail = channelOff({ ...SHOW_ASK, dialogs: [], busy: true })
+	okena.transcript = {
+		session_id: SID,
+		entries: [
+			{ kind: 'user', uuid: 'u-terminal', text: 'test it on the emulator', origin: 'terminal' },
+			{ kind: 'tool_use', uuid: 'tu-1', tool_use_id: 'x1', name: 'Bash', summary: 'ls' },
+		],
+		cursor: LOG_FULL.cursor + 400,
+		reset: false,
+	}
+	const replied = await step(1_500 + TURN_IDLE_MS + 1_500)
+	assert.deepEqual(okena.calls.find(call => call.route === 'transcript')?.query, {
+		cursor: LOG_FULL.cursor + 100,
+		sessionId: SID,
+	})
+	assert.deepEqual(
+		replied.map(event => (event.t === 'item.resolved' ? event.by : event.t)),
+		['replied'],
+	)
+
+	// Nothing live any more: the busy pane is not read again.
+	okena.calls = []
+	await step(1_500 + TURN_IDLE_MS + 1_500 + 60_000)
+	assert.equal(okena.calls.filter(call => call.route === 'transcript').length, 0)
 })
 
 test('continuation reads send the reducer cursor with its session id; a new session drops the cursor', async () => {

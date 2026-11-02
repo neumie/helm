@@ -72,5 +72,8 @@ await build({
 })
 cpSync('src/renderer/document-review.html', 'dist/document-review.html')
 cpSync('src/renderer/index.html', 'dist/index.html')
+// Claude in Helm terminals: plain CommonJS run by Bun (preload) and Node (hook client), never bundled.
+cpSync('src/claude-remote/preload.cjs', 'dist/claude-remote-preload.cjs')
+cpSync('src/claude-remote/hook-client.cjs', 'dist/claude-remote-hook.cjs')
 cpSync('src/renderer/run-context-editor.html', 'dist/run-context-editor.html')
 console.log('helm built to dist/')

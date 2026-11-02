@@ -1,7 +1,7 @@
 // Agent dock body (design §3.24): one --chrome surface below (or above) the terminal,
 // like the topbar mirrored. Two bands: the 28px queue row — one quiet line per item
 // that owes Jakub something (glyph, short name, wait), "+N more" when they do not fit,
-// then the Agents entry, Okena's dot and ⌘⇧J — and, when an entry is opened, a pane
+// then the Agents entry, the sources' health dot and ⌘⇧J — and, when an entry is opened, a pane
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
 // happens in the pane (slice 2) and the receipt shows in place; entries keep their
@@ -41,6 +41,7 @@ import {
 	kindGlyph,
 	needsYouItems,
 	nextLingerExpiry,
+	noSessionText,
 	orderedSessions,
 	plainAgentText,
 	queueLayout,
@@ -48,6 +49,8 @@ import {
 	receiptView,
 	sessionSince,
 	sessionStatusText,
+	sourceBlockedNote,
+	sourceNames,
 	unknownAgentsText,
 	unknownSessionCount,
 } from './presentation'
@@ -429,8 +432,8 @@ export function AgentDock({
 				register={register}
 				onOpen={open}
 			/>
-			{/* The row ends in Okena's health and the key that goes to the dock. Healthy is a dot (its
-			    tooltip says "Okena"); connecting and down say so in words. */}
+			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
+			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
 			<span className="agent-dock-row-end">
 				<span className="agent-dock-health" data-tone={summary.health.tone} title={summary.health.text}>
 					<span className="agent-dock-dot" aria-hidden="true" />
@@ -468,13 +471,7 @@ export function AgentDock({
 					pending={pending.has(openItem.id)}
 					refused={refused.has(openItem.id)}
 					canAct={onAct !== undefined && canAnswer(openItem, snapshot)}
-					blockedNote={
-						!onAct
-							? 'Answer in the terminal'
-							: snapshot.source.state !== 'ok'
-								? 'Okena unreachable: answer in the terminal'
-								: null
-					}
+					blockedNote={!onAct ? 'Answer in the terminal' : sourceBlockedNote(openItem, snapshot)}
 					submitting={submitting.has(openItem.id)}
 					sent={sent.get(openItem.id) ?? null}
 					localError={actErrors.get(openItem.id) ?? null}
@@ -590,7 +587,7 @@ function Queue({
 	if (!snapshot || source?.state === 'pending')
 		return (
 			<div className="agent-dock-rail-note">
-				<span>Connecting to Okena…</span>
+				<span>Connecting to {sourceNames(snapshot, 'pending')}…</span>
 			</div>
 		)
 	const unknown = unknownSessionCount(snapshot)
@@ -626,7 +623,7 @@ function Queue({
 						<span className="agent-dock-rail-note-mark" aria-hidden="true">
 							!{' '}
 						</span>
-						Okena unreachable
+						{sourceNames(snapshot, 'down')} unreachable
 					</span>
 				</div>
 			) : null}
@@ -634,9 +631,9 @@ function Queue({
 				{needs.length === 0 ? (
 					<li className="agent-dock-queue-empty">
 						{source?.state !== 'ok'
-							? 'Okena is unreachable, so open questions cannot be seen'
+							? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
 							: unknown > 0
-								? `${unknownAgentsText(unknown)}: Okena did not return readable detail, so their open questions cannot be seen`
+								? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
 								: 'Nothing needs you'}
 					</li>
 				) : (
@@ -810,7 +807,7 @@ function MoreEntry({
 /**
  * The Agents entry, one quiet line after the queue (`agents 4 · 2 busy`; `agents 8` alone when none is
  * busy), and the pane lists them all. Only what DockSession observed (status, since) — never invented
- * activity. Agents whose state Okena could not read while items show are named here, toned: the row
+ * activity. Agents whose state their source could not read while items show are named here, toned: the row
  * never reads as complete without them.
  */
 function AgentsEntry({
@@ -845,12 +842,12 @@ function AgentsEntry({
 				aria-controls={open ? paneId : undefined}
 				aria-label={
 					sessions.length === 0
-						? "No Claude session is connected to Okena's Claude Remote. Show agents"
+						? `${noSessionText(snapshot)}. Show agents`
 						: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`
 				}
 				title={
 					sessions.length === 0
-						? "No Claude session is connected to Okena's Claude Remote"
+						? noSessionText(snapshot)
 						: sessions
 								.map(
 									session =>

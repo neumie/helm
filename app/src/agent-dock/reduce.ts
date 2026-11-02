@@ -15,6 +15,7 @@ import {
 	type DockResolutionBy,
 	type DockSession,
 	type DockSessionStatus,
+	type DockSourceId,
 	type DockTurnFact,
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
@@ -32,6 +33,17 @@ import {
 
 /** A session must stay idle this long before an unchecked turn opens (filters quick resumes). */
 export const TURN_IDLE_MS = 8_000
+/**
+ * A session whose main agent is busy (Okena `busy: true`, working or in its own dialog) this
+ * long no longer waits for Jakub: the open turn closes `superseded` even when no reply entry
+ * was read. A dialog raised while the main agent is idle (a background subagent) does not count.
+ */
+export const TURN_RESUMED_MS = 8_000
+/**
+ * Two observations further apart than this do not make one continuous idle/busy stretch
+ * (Helm asleep, Okena down, the pane unlisted or unreadable in between): both restart.
+ */
+export const OBSERVATION_GAP_MS = 15_000
 /** Turn excerpt bound (memory only). */
 export const TURN_TEXT_MAX = 2_048
 /** Resolved items are kept for the Recent lane and dedupe, bounded by age and count. */
@@ -48,12 +60,20 @@ interface TranscriptTail {
 
 export interface AgentDockSessionRecord {
 	session: DockSession
-	/** Okena epoch this session was last observed in; older = seen before an Okena restart/reconnect. */
+	/** Its source's epoch this session was last observed in; older = seen before a restart/reconnect. */
 	epoch: number
 	/** Status from the last successful detail read (the displayed status may be `unreachable`). */
 	observedStatus?: DockSessionStatus
 	/** First observation of the current idle/background stretch. */
 	idleSince?: number
+	/** First observation of the current stretch with the main agent busy (Okena `busy: true`). */
+	busySince?: number
+	/**
+	 * The turn closed because the agent went back to work with nothing read after it. If the
+	 * pane stops again at that same message, the turn opens again (once per stop) and keeps
+	 * its original `endedAt`, so its waiting age is not reset by the round trip.
+	 */
+	resumedTurn?: { key: string; endedAt: number }
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
@@ -61,14 +81,22 @@ export interface AgentDockSessionRecord {
 	dialogIds?: string[]
 }
 
-export interface AgentDockState {
-	/** False until the first successful `/v1/state`; that tick is the seed. */
+/** Per-source observation state: each source seeds, restarts and goes down on its own. */
+export interface AgentDockSourceState {
+	/** False until the source's first successful `/v1/state`; that tick is its seed. */
 	seeded: boolean
 	/** Bumped on reconnect after down, `state_version` regression, or dialog-prefix change. */
 	epoch: number
-	nextItemId: number
 	stateVersion?: number
 	hubPrefix?: string
+	health: AgentDockSourceHealth
+}
+
+export interface AgentDockState {
+	nextItemId: number
+	/** Sources observed so far (a source appears with its first poll). */
+	sources: Partial<Record<DockSourceId, AgentDockSourceState>>
+	/** All sources together (see AgentDockSnapshot.source); recomputed after every reduction. */
 	source: AgentDockSourceHealth
 	sessions: Record<SessionKey, AgentDockSessionRecord>
 	items: DockItem[]
@@ -83,9 +111,8 @@ export interface AgentDockReduction {
 
 export function createAgentDockState(persisted?: AgentDockPersisted | null, now = 0): AgentDockState {
 	return {
-		seeded: false,
-		epoch: 0,
 		nextItemId: persisted?.nextItemId ?? 1,
+		sources: {},
 		source: { state: 'pending', since: now, lastObservedAt: null },
 		sessions: {},
 		items: [],
@@ -105,6 +132,15 @@ export function agentDockTranscriptRequest(
 ): { cursor?: number; sessionId?: string } {
 	const tail = state.sessions[sessionKey(profile, terminalId)]?.tail
 	return tail?.cursor === undefined || !tail.sessionId ? {} : { cursor: tail.cursor, sessionId: tail.sessionId }
+}
+
+/**
+ * Whether the source should read this pane's transcript while it is busy: a turn item
+ * is live, and the user entry that answers it (or the agent's next message) closes it.
+ */
+export function agentDockAwaitingReply(state: AgentDockState, profile: string, terminalId: string): boolean {
+	const key = sessionKey(profile, terminalId)
+	return state.items.some(item => item.session === key && item.kind === 'turn' && isLive(item))
 }
 
 /**
@@ -141,7 +177,49 @@ export function agentDockSnapshot(state: AgentDockState, now: number): AgentDock
 	const sessions = Object.values(state.sessions)
 		.map(record => ({ ...record.session, prLinks: [...record.session.prLinks] }))
 		.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key))
-	return { generatedAt: now, source: { ...state.source }, sessions, items }
+	const sources: AgentDockSnapshot['sources'] = {}
+	for (const [id, entry] of Object.entries(state.sources)) if (entry) sources[id as DockSourceId] = { ...entry.health }
+	return { generatedAt: now, source: { ...state.source }, sources, sessions, items }
+}
+
+/**
+ * The dock-wide health of all sources: down when any is down (since the earliest,
+ * last data of the down ones), else pending when any is pending, else ok. No
+ * source polled yet stays pending from `fallback`.
+ */
+export function aggregateSourceHealth(
+	sources: AgentDockState['sources'],
+	fallback: AgentDockSourceHealth,
+): AgentDockSourceHealth {
+	const all = Object.values(sources).flatMap(entry => (entry ? [entry.health] : []))
+	if (all.length === 0) return { ...fallback }
+	const down = all.filter(health => health.state === 'down')
+	const lastSeen = (list: AgentDockSourceHealth[]): number | null =>
+		list.reduce<number | null>(
+			(max, health) =>
+				health.lastObservedAt === null
+					? max
+					: max === null
+						? health.lastObservedAt
+						: Math.max(max, health.lastObservedAt),
+			null,
+		)
+	if (down.length > 0) {
+		const detail = down
+			.map(health => health.detail)
+			.filter(Boolean)
+			.join(' · ')
+		return {
+			state: 'down',
+			since: Math.min(...down.map(health => health.since)),
+			lastObservedAt: lastSeen(down),
+			...(detail ? { detail } : {}),
+		}
+	}
+	const pending = all.filter(health => health.state === 'pending')
+	if (pending.length > 0)
+		return { state: 'pending', since: Math.min(...pending.map(health => health.since)), lastObservedAt: lastSeen(all) }
+	return { state: 'ok', since: Math.max(...all.map(health => health.since)), lastObservedAt: lastSeen(all) }
 }
 
 /** Strip C0/C1 controls except tab/newline, then bound by UTF-16 length without splitting a surrogate pair. */
@@ -191,6 +269,12 @@ class Draft {
 		this.state = {
 			...prev,
 			source: { ...prev.source },
+			sources: Object.fromEntries(
+				Object.entries(prev.sources).map(([id, entry]) => [
+					id,
+					entry ? { ...entry, health: { ...entry.health } } : entry,
+				]),
+			),
 			sessions: Object.fromEntries(
 				Object.entries(prev.sessions).map(([key, record]) => [
 					key,
@@ -270,11 +354,22 @@ class Draft {
 		return this.state.items.some(item => item.key === key)
 	}
 
-	health(next: AgentDockSourceHealth, emit: boolean): void {
-		const changed = this.state.source.state !== next.state
-		this.state.source = changed ? next : { ...next, since: this.state.source.since }
+	/** The observation state of `id`, created pending on its first poll. */
+	src(id: DockSourceId): AgentDockSourceState {
+		let entry = this.state.sources[id]
+		if (!entry) {
+			entry = { seeded: false, epoch: 0, health: { state: 'pending', since: this.now, lastObservedAt: null } }
+			this.state.sources[id] = entry
+		}
+		return entry
+	}
+
+	health(id: DockSourceId, next: AgentDockSourceHealth, emit: boolean): void {
+		const entry = this.src(id)
+		const changed = entry.health.state !== next.state
+		entry.health = changed ? next : { ...next, since: entry.health.since }
 		if (changed && emit && next.state !== 'pending') {
-			this.events.push({ t: 'source.health', at: this.now, state: next.state, detail: next.detail })
+			this.events.push({ t: 'source.health', at: this.now, state: next.state, source: id, detail: next.detail })
 		}
 	}
 }
@@ -285,13 +380,16 @@ function setStatus(record: AgentDockSessionRecord, status: DockSessionStatus, no
 	record.session.status = status
 }
 
-function sourceDown(draft: Draft, detail: string): void {
+function sourceDown(draft: Draft, id: DockSourceId, detail: string): void {
+	const entry = draft.src(id)
 	draft.health(
-		{ state: 'down', since: draft.now, lastObservedAt: draft.state.source.lastObservedAt, detail },
-		draft.state.source.state !== 'down',
+		id,
+		{ state: 'down', since: draft.now, lastObservedAt: entry.health.lastObservedAt, detail },
+		entry.health.state !== 'down',
 	)
-	// Freeze: rows go grey with their age; no item opens, orphans or resolves from missing data.
-	for (const record of Object.values(draft.state.sessions)) record.session.status = 'unreachable'
+	// Freeze this source's rows: grey with their age; no item opens, orphans or resolves from missing data.
+	for (const record of Object.values(draft.state.sessions))
+		if (record.session.source === id) record.session.status = 'unreachable'
 }
 
 /** Applies one transcript page; returns whether a user entry followed each live turn's assistant uuid. */
@@ -324,6 +422,7 @@ function applyTranscript(
 }
 
 interface TickContext {
+	source: DockSourceId
 	profile: string
 	state: OkenaState
 	seedTick: boolean
@@ -339,12 +438,14 @@ function observeTerminal(
 	const key = sessionKey(ctx.profile, terminalId)
 	const project = okenaTerminalProject(ctx.state, terminalId)
 	const existing = draft.state.sessions[key]
+	const src = draft.src(ctx.source)
 	const record: AgentDockSessionRecord = existing ?? {
-		epoch: draft.state.epoch,
+		epoch: src.epoch,
 		seedPending: ctx.seedTick,
 		tail: { userAfterLastAssistant: false },
 		session: {
 			key,
+			source: ctx.source,
 			profile: ctx.profile,
 			terminalId,
 			project: '',
@@ -369,12 +470,19 @@ function observeTerminal(
 
 	const detail = observed.detail
 	if (!detail || detail.terminal_id !== terminalId) {
-		// Fail closed: no fact, so nothing opens or closes for this session.
+		// Fail closed: no fact, so nothing opens or closes for this session, and the
+		// idle/busy stretch is broken (it may have changed unseen in between).
 		setStatus(record, 'unknown', now)
+		record.idleSince = undefined
+		record.busySince = undefined
 		return
 	}
-	// Last observed before an Okena restart/reconnect (epoch already bumped for this tick).
-	const restarted = existing !== undefined && existing.epoch !== draft.state.epoch
+	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
+		record.idleSince = undefined
+		record.busySince = undefined
+	}
+	// Last observed before a source restart/reconnect (epoch already bumped for this tick).
+	const restarted = existing !== undefined && existing.epoch !== src.epoch
 	const live = () => draft.liveItems(key)
 
 	// A new Claude conversation in the same pane ends everything the old one owed.
@@ -382,6 +490,8 @@ function observeTerminal(
 		for (const item of live()) draft.resolve(item, 'session_ended')
 		record.tail = { userAfterLastAssistant: false }
 		record.idleSince = undefined
+		record.busySince = undefined
+		record.resumedTurn = undefined
 	}
 	record.session.sessionId = detail.session_id
 	record.session.subagents = detail.running_subagents.length
@@ -395,7 +505,7 @@ function observeTerminal(
 	record.session.hooksAttached = detail.hooks_attached
 	record.session.channelAttached = detail.channel_attached
 	record.session.observedAt = now
-	record.epoch = draft.state.epoch
+	record.epoch = src.epoch
 
 	// Transcript: replies, orphan recovery.
 	const page = observed.transcript
@@ -407,9 +517,17 @@ function observeTerminal(
 			page,
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
 		)
+		const newest = record.tail.lastAssistant?.uuid
 		for (const item of liveTurns) {
 			// An act still in flight cannot be attributed yet; the settle check below picks it up.
-			if (repliedTurns.has((item.fact as DockTurnFact).assistantUuid) && !isInFlight(item)) draft.close(item, 'replied')
+			if (isInFlight(item)) continue
+			const fact = item.fact as DockTurnFact
+			if (repliedTurns.has(fact.assistantUuid)) draft.close(item, 'replied')
+			// The agent said something after the turn (a background wake, or a reset page whose
+			// window no longer reaches the turn): it is not waiting on that message any more.
+			// A dock reply already sent waits for its own user entry (or the ack) instead.
+			else if (newest !== undefined && newest !== fact.assistantUuid && !isDispatched(item))
+				draft.resolve(item, 'superseded')
 		}
 		// Unknown anchor (tail never read) proves nothing; a reset page alone is not new activity.
 		const progressed = activity || (orphanAnchor !== undefined && record.tail.lastAssistant?.uuid !== orphanAnchor)
@@ -422,20 +540,23 @@ function observeTerminal(
 	setStatus(record, status, now)
 	if (status === 'idle' || status === 'background') record.idleSince ??= now
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
+	if (detail.busy === true) record.busySince ??= now
+	else record.busySince = undefined
 	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
 	for (const item of live()) {
 		if (item.fact.kind !== 'turn' || !isDispatched(item)) continue
 		if (record.tail.lastAssistant?.uuid === item.fact.assistantUuid && record.tail.userAfterLastAssistant)
 			draft.confirm(item)
 	}
-	if (status === 'working') {
+	// A turn means "the agent waits for you". Main agent busy past a short debounce, it plainly
+	// does not (Jakub typed in the terminal and the entry was not read yet, or a background task
+	// woke it): close it. A dock reply being sent or confirmed keeps its item until its own entry
+	// is seen. A dialog with the main agent idle (background subagent) leaves the turn open.
+	if (record.busySince !== undefined && now - record.busySince >= TURN_RESUMED_MS) {
 		for (const item of live()) {
-			if (item.fact.kind !== 'turn' || record.tail.userAfterLastAssistant || isDispatched(item) || isInFlight(item))
-				continue
-			if (item.fact.continuedAt === undefined) {
-				item.fact.continuedAt = now
-				item.rev += 1
-			}
+			if (item.fact.kind !== 'turn' || isDispatched(item) || isInFlight(item)) continue
+			record.resumedTurn = { key: item.key, endedAt: item.fact.endedAt }
+			draft.resolve(item, 'superseded')
 		}
 	}
 
@@ -496,7 +617,7 @@ function observeTerminal(
 			continue
 		}
 		if (item.state !== 'open') continue
-		const hub = draft.state.hubPrefix
+		const hub = src.hubPrefix
 		if (restarted || (hub !== undefined && okenaDialogPrefix(item.fact.dialogId) !== hub)) draft.orphan(item)
 		else draft.resolve(item, 'outside')
 	}
@@ -527,7 +648,11 @@ function observeTerminal(
 	}
 	if (last.uuid === seen) return
 	const itemKey = `turn:${detail.session_id ?? key}:${last.uuid}`
-	if (draft.hasKey(itemKey)) return
+	// Closed only because the agent went back to work, and it stopped at that same message
+	// again with no reply in between: it waits for Jakub again, as a new item.
+	const resumed = record.resumedTurn?.key === itemKey ? record.resumedTurn : undefined
+	if (draft.hasKey(itemKey) && resumed === undefined) return
+	record.resumedTurn = undefined
 	for (const item of live()) if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
 	draft.open(
 		{
@@ -539,7 +664,7 @@ function observeTerminal(
 				sessionId: detail.session_id,
 				assistantUuid: last.uuid,
 				text: boundAgentText(last.text),
-				endedAt: record.idleSince ?? now,
+				endedAt: resumed?.endedAt ?? record.idleSince ?? now,
 				hadBackground: status === 'background',
 			},
 		},
@@ -549,20 +674,22 @@ function observeTerminal(
 
 function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { type: 'poll' }>): void {
 	const { now } = draft
+	const id: DockSourceId = observation.source ?? 'okena'
 	if (!observation.state.ok) {
-		sourceDown(draft, observation.state.error)
+		sourceDown(draft, id, observation.state.error)
 		return
 	}
 	const parsedState = parseOkenaState(observation.state.body)
 	if (!parsedState.ok) {
-		sourceDown(draft, parsedState.error)
+		sourceDown(draft, id, parsedState.error)
 		return
 	}
 	const okenaState = parsedState.value
+	const src = draft.src(id)
 
-	const seedTick = !draft.state.seeded
-	const reconnected = draft.state.source.state === 'down' && draft.state.source.lastObservedAt !== null
-	const regressed = draft.state.stateVersion !== undefined && okenaState.state_version < draft.state.stateVersion
+	const seedTick = !src.seeded
+	const reconnected = src.health.state === 'down' && src.health.lastObservedAt !== null
+	const regressed = src.stateVersion !== undefined && okenaState.state_version < src.stateVersion
 
 	const details = new Map<string, { detail: OkenaClaudeSession | null; transcript: OkenaClaudeTranscriptPage | null }>()
 	for (const terminal of observation.terminals) {
@@ -579,15 +706,15 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 		.flatMap(entry => entry.detail?.dialogs ?? [])
 		.sort((a, b) => b.created_at_ms - a.created_at_ms)[0]
 	const prefix = newest ? okenaDialogPrefix(newest.id) : undefined
-	const prefixChanged = prefix !== undefined && draft.state.hubPrefix !== undefined && prefix !== draft.state.hubPrefix
-	if (prefix !== undefined) draft.state.hubPrefix = prefix
-	if (reconnected || regressed || prefixChanged) draft.state.epoch += 1
+	const prefixChanged = prefix !== undefined && src.hubPrefix !== undefined && prefix !== src.hubPrefix
+	if (prefix !== undefined) src.hubPrefix = prefix
+	if (reconnected || regressed || prefixChanged) src.epoch += 1
 
-	draft.health({ state: 'ok', since: now, lastObservedAt: now }, !seedTick)
-	draft.state.stateVersion = okenaState.state_version
-	draft.state.seeded = true
+	draft.health(id, { state: 'ok', since: now, lastObservedAt: now }, !seedTick)
+	src.stateVersion = okenaState.state_version
+	src.seeded = true
 
-	const ctx: TickContext = { profile: observation.profile, state: okenaState, seedTick }
+	const ctx: TickContext = { source: id, profile: observation.profile, state: okenaState, seedTick }
 	const candidates = okenaClaudeCandidates(okenaState)
 	for (const terminalId of candidates) {
 		observeTerminal(draft, ctx, terminalId, details.get(terminalId) ?? { detail: null, transcript: null })
@@ -595,10 +722,10 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 
 	const listed = new Set(candidates.map(terminalId => sessionKey(observation.profile, terminalId)))
 	for (const [key, record] of Object.entries(draft.state.sessions)) {
-		if (record.session.profile !== observation.profile || listed.has(key)) continue
+		if (record.session.source !== id || record.session.profile !== observation.profile || listed.has(key)) continue
 		const live = draft.liveItems(key)
-		if (record.epoch === draft.state.epoch) {
-			// Gone within one Okena epoch: SessionEnd or pane closed.
+		if (record.epoch === src.epoch) {
+			// Gone within one source epoch: SessionEnd or pane closed.
 			for (const item of live) draft.resolve(item, 'session_ended')
 			delete draft.state.sessions[key]
 			continue
@@ -692,6 +819,7 @@ export function reduce(prev: AgentDockState, observation: AgentDockObservation, 
 		reducePoll(draft, observation)
 		expireUnconfirmed(draft)
 	}
+	draft.state.source = aggregateSourceHealth(draft.state.sources, draft.state.source)
 	draft.state.items = pruneResolved(draft.state.items, now)
 	return { state: draft.state, events: draft.events }
 }
