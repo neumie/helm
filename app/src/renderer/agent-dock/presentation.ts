@@ -8,17 +8,6 @@ import type { AgentDockSnapshot, DockAction, DockItem, DockReceipt, DockSession 
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
-
-/**
- * How the dock's edge toward the terminal reads (design §3.24 "Divider"). Production
- * mounts the default; the other variants stay selectable in review stories only.
- * - `surface`: the whole dock on `--chrome` with a `--hairline-strong` edge (a change of material).
- * - `pane-gap`: a 4px `--chrome` gutter between hairlines, then the dock (a tmux/iTerm split).
- * - `accent-edge`: no surface change; a 1px edge in the open item's tone (neutral when none is open).
- */
-export type AgentDockDivider = 'surface' | 'pane-gap' | 'accent-edge'
-export const AGENT_DOCK_DIVIDERS: readonly AgentDockDivider[] = ['surface', 'pane-gap', 'accent-edge']
-export const AGENT_DOCK_DIVIDER_DEFAULT: AgentDockDivider = 'surface'
 export type AgingTone = 'none' | 'warn' | 'danger'
 
 /** Aging escalation (design §2): amber after 30 minutes, red after 2 hours. */
@@ -214,11 +203,61 @@ export function findSession(snapshot: AgentDockSnapshot | null, key: string): Do
 	return snapshot?.sessions.find(session => session.key === key)
 }
 
-export function sessionLabel(session: DockSession | undefined, key: string): string {
-	if (!session) return `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
-	const project = plainAgentLine(session.project, 48)
-	const name = plainAgentLine(session.name, 64)
-	return project ? `${project} / ${name}` : name
+// ---------------------------------------------------------------------------
+// Agent names (design §3.24 "Names"): one short name per agent, used everywhere.
+// ---------------------------------------------------------------------------
+
+/** Conventional branch-type prefixes the short name drops (`fix/company-create-save-firm` → `company-create-save-firm`). */
+const BRANCH_TYPE_PREFIX = /^(?:fix|feat|chore|refactor|docs|test|perf|build|ci|style|wip|hotfix|release)\//
+/** Branches that say nothing about the work in them: the agent keeps its terminal name instead. */
+const DEFAULT_BRANCHES = new Set(['main', 'master', 'develop', 'trunk'])
+
+/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a bare prefix). */
+export function branchShortName(branch: unknown): string {
+	const line = plainAgentLine(branch, 120)
+	if (DEFAULT_BRANCHES.has(line)) return ''
+	return line.replace(BRANCH_TYPE_PREFIX, '')
+}
+
+const terminalName = (key: string): string => `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
+
+/** The name before duplicates are numbered: the short branch, else Okena's pane name, else the terminal. */
+function baseAgentName(session: DockSession): string {
+	return branchShortName(session.branch) || plainAgentLine(session.name, 64) || terminalName(session.key)
+}
+
+/**
+ * Short agent names by session key. Agents that would share a name (two sessions on one branch)
+ * are numbered in a stable order (by session key): `company-create-save-firm`, `… #2`, `… #3`.
+ */
+export function agentNames(sessions: readonly DockSession[]): Map<string, string> {
+	const names = new Map<string, string>()
+	const seen = new Map<string, number>()
+	const ordered = [...sessions].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+	for (const session of ordered) {
+		const base = baseAgentName(session)
+		const count = (seen.get(base) ?? 0) + 1
+		seen.set(base, count)
+		names.set(session.key, count === 1 ? base : `${base} #${count}`)
+	}
+	return names
+}
+
+export interface AgentWho {
+	/** The short name (`company-create-save-firm #2`): queue, pane header, strip, Agents table, labels. */
+	name: string
+	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
+	title: string
+	project: string
+}
+
+/** Who an item or agent is, by session key; an unknown key reads as its terminal. */
+export function agentWho(snapshot: AgentDockSnapshot | null, key: string): AgentWho {
+	const session = findSession(snapshot, key)
+	if (!session) return { name: terminalName(key), title: '', project: '' }
+	const name = agentNames(snapshot?.sessions ?? []).get(key) ?? baseAgentName(session)
+	const full = plainAgentLine(session.name, 200)
+	return { name, title: full && full !== name ? full : '', project: plainAgentLine(session.project, 48) }
 }
 
 export interface AskOption {
@@ -353,9 +392,6 @@ export interface AgentDockSummary {
 	needsTone: 'none' | 'warn'
 	oldestText: string | null
 	oldestTone: AgingTone
-	/** The newest item, read like its entry: name (bright), project (dim), then the gist. */
-	head: { name: string; project: string; gist: string } | null
-	counts: string | null
 	health: AgentDockHealth
 }
 
@@ -375,15 +411,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 	const turnTone = oldest === null ? 'none' : agingTone(now - oldest)
 	const oldestTone: AgingTone =
 		askTone === 'danger' ? 'danger' : askTone === 'warn' || turnTone !== 'none' ? 'warn' : 'none'
-	const newest = needs.reduce<DockItem | null>((latest, item) => {
-		if (!latest) return item
-		const a = itemWaitingSince(item)
-		const b = itemWaitingSince(latest)
-		return a > b || (a === b && item.id > latest.id) ? item : latest
-	}, null)
-	const working = snapshot?.sessions.filter(session => session.status === 'working').length ?? 0
-	const background = snapshot?.sessions.filter(session => session.status === 'background').length ?? 0
-	const counts = [working ? `${working} working` : '', background ? `${background} bg` : ''].filter(Boolean).join(' · ')
 	const unknown = unknownSessionCount(snapshot)
 	let needsText: string
 	if (needs.length > 0)
@@ -399,10 +426,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 		needsTone: needs.length > 0 || unknown > 0 ? 'warn' : 'none',
 		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
 		oldestTone,
-		head: newest
-			? { ...sessionWhere(findSession(snapshot, newest.session), newest.session), gist: cardGist(newest) }
-			: null,
-		counts: counts || null,
 		health,
 	}
 }
@@ -431,7 +454,7 @@ export function itemAgeTone(item: DockItem, now: number): AgingTone {
 	return item.kind === 'turn' && tone === 'danger' ? 'warn' : tone
 }
 
-/** Short kind for entries and the pane's titled rule: Question / Plan / Permission / Turn ended / Orphaned …. */
+/** Short kind for entries and the pane header: Question / Plan / Permission / Turn ended / Orphaned …. */
 export function cardKindLabel(item: DockItem): string {
 	if (item.fact.kind === 'turn') return 'Turn ended'
 	const base =
@@ -440,7 +463,7 @@ export function cardKindLabel(item: DockItem): string {
 }
 
 /**
- * "asked 14:50" / "finished 14:50" plus the wait in words, for the pane's titled rule.
+ * "asked 14:50" / "finished 14:50" (the header's tooltip) plus the wait in words (the header itself).
  * Once an answer is on its way or the item closed, the wait stops: "sending" /
  * "answered 16:41" (from the dock) / "closed 16:41" (anywhere else).
  */
@@ -481,12 +504,6 @@ export function cardGist(item: DockItem): string {
 	if (tool === 'AskUserQuestion') return itemHeadline(item)
 	const command = commandOf(input)
 	return command ? `${plainAgentLine(tool, 32)}: ${plainAgentLine(command, 160)}` : itemHeadline(item)
-}
-
-/** Project and agent name kept apart so entries can ellipsize the project before the name. */
-export function sessionWhere(session: DockSession | undefined, key: string): { project: string; name: string } {
-	if (!session) return { project: '', name: `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}` }
-	return { project: plainAgentLine(session.project, 48), name: plainAgentLine(session.name, 64) }
 }
 
 /**
@@ -588,68 +605,45 @@ export function keepOrder(
 	return [...kept, ...items.filter(item => !known.has(item.id))]
 }
 
-export type QueueDensity = 'full' | 'compact' | 'dense'
-/** Where the Agents entry sits: a wide column beside the entries, a narrow one, or the grid's last cell. */
-export type QueueAgentsSlot = 'side' | 'narrow' | 'cell'
-/** Horizontal room around an entry's text: 12px padding each side, its 1px divider and 1px of slack. */
-export const QUEUE_ENTRY_PAD = 26
-/** The first entry lines its text up with the strip's 16px inset: 4px more on the left. */
-export const QUEUE_FIRST_EXTRA = 4
-/** Narrowest full entry: beside the wide Agents column the gist keeps a readable width. */
-export const QUEUE_ENTRY_MIN = { side: 160, narrow: 112 } as const
-/** Room the Agents column takes beside the entries. */
-export const QUEUE_AGENTS_WIDTH = { side: 216, narrow: 96 } as const
-
-export interface QueueLayout {
-	density: QueueDensity
-	columns: number
-	agents: QueueAgentsSlot
-}
-
-/** Cells the wait takes in an entry's meta line ("2h16m"): a fixed budget so the layout never shifts as ages tick. */
+/** Room around an entry's text: 8px padding each side. */
+export const QUEUE_ENTRY_PAD = 16
+/** Space between entries (no rules between them). */
+export const QUEUE_GAP = 4
+/** Narrowest entry, so a short name never makes a sliver. */
+export const QUEUE_ENTRY_MIN = 112
+/** Widest name an entry grows for; a longer one ellipsizes (the entry's label and tooltip keep it whole). */
+export const QUEUE_NAME_MAX = 40
+/** Cells the wait takes in an entry's second line ("2h16m"): a fixed budget so the queue never re-lays out as ages tick. */
 export const QUEUE_AGE_CHARS = 5
-/** Space around the wait in the meta line: the kind/age gap and the age's own left padding. */
-export const QUEUE_META_GAP = 16
 
-/** Cells an entry's meta line needs whole: the kind word and the wait. */
-export const entryMetaChars = (item: DockItem): number => [...cardKindLabel(item)].length + QUEUE_AGE_CHARS
+/** An entry's quiet second line before the wait: the kind in lowercase (`question`, `turn ended`). */
+export const entryKindText = (item: DockItem): string => cardKindLabel(item).toLowerCase()
 
-/**
- * Width an entry needs to show its agent name whole (kind glyph, a space, the name)
- * and its meta line whole (indent, kind, wait), plus padding.
- */
-export const entryNameWidth = (nameChars: number, ch: number, metaChars = 0): number =>
-	Math.max((nameChars + 2) * ch, metaChars > 0 ? (metaChars + 2) * ch + QUEUE_META_GAP : 0) + QUEUE_ENTRY_PAD
+/** Cells an entry's second line needs: kind, ` · `, the wait budget. */
+export const entryMetaChars = (item: DockItem): number => [...entryKindText(item)].length + 3 + QUEUE_AGE_CHARS
 
 /**
- * Picks the queue form so every item stays in view (never paged or scrolled away)
- * and every agent name stays whole as long as possible: one row of full entries
- * (name / kind · project · age / gist) beside the wide Agents column, then beside
- * its narrow form; else two rows of compact entries (name / kind · age) with the
- * Agents entry as the last cell; else three rows of one-line chips, the only form
- * where a name may ellipsize. `nameChars` are the agent names' lengths in cells,
- * `metaChars` the meta lines' (kind + wait, see entryMetaChars) so the wait is never
- * pushed out of a full or compact entry, `ch` one monospace cell in px, `width` the
- * queue's content width.
+ * Width of one entry: its name line (glyph, a space, the name) or its second line (indent, kind · wait),
+ * whichever is longer, plus padding; at least QUEUE_ENTRY_MIN, names past QUEUE_NAME_MAX cells ellipsize.
  */
-export function queueLayout(
-	nameChars: readonly number[],
-	width: number,
-	ch: number,
-	metaChars: readonly number[] = [],
-): QueueLayout {
-	const count = nameChars.length
-	const needs = nameChars.map((chars, at) => entryNameWidth(chars, ch, metaChars[at] ?? 0))
-	const widest = Math.max(0, ...needs)
-	for (const agents of ['side', 'narrow'] as const) {
-		const total =
-			needs.reduce((sum, need) => sum + Math.max(need, QUEUE_ENTRY_MIN[agents]), 0) +
-			(count > 0 ? QUEUE_FIRST_EXTRA : 0)
-		if (total <= width - QUEUE_AGENTS_WIDTH[agents]) return { density: 'full', columns: Math.max(1, count), agents }
-	}
-	const two = Math.ceil((count + 1) / 2)
-	if (widest + QUEUE_FIRST_EXTRA <= width / two) return { density: 'compact', columns: two, agents: 'cell' }
-	return { density: 'dense', columns: Math.ceil((count + 1) / 3), agents: 'cell' }
+export const entryWidth = (nameChars: number, ch: number, metaChars = 0): number =>
+	Math.max(
+		QUEUE_ENTRY_MIN,
+		Math.ceil(Math.max(Math.min(nameChars, QUEUE_NAME_MAX) + 2, metaChars + 2) * ch) + QUEUE_ENTRY_PAD,
+	)
+
+/**
+ * How many entries the one-row queue shows: all of them when they fit `room` (px), else as many as
+ * fit beside the quiet "+N more" cell (`moreWidth` px). Never a second row, never a scroll; the rest
+ * stay one ‹ › step away in the pane.
+ */
+export function queueFit(widths: readonly number[], room: number, moreWidth: number): number {
+	const span = (count: number) =>
+		widths.slice(0, count).reduce((sum, width) => sum + width, 0) + QUEUE_GAP * Math.max(0, count - 1)
+	if (span(widths.length) <= room) return widths.length
+	let shown = 0
+	while (shown < widths.length && span(shown + 1) + QUEUE_GAP + moreWidth <= room) shown += 1
+	return shown
 }
 
 /** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */

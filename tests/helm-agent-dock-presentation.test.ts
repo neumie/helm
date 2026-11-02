@@ -23,10 +23,17 @@ const {
 	dockSummary,
 	itemAgeTone,
 	itemTimeLine,
-	entryNameWidth,
+	entryWidth,
 	keepOrder,
 	kindGlyph,
-	queueLayout,
+	queueFit,
+	QUEUE_ENTRY_MIN,
+	QUEUE_ENTRY_PAD,
+	QUEUE_GAP,
+	QUEUE_NAME_MAX,
+	agentNames,
+	agentWho,
+	branchShortName,
 	statusGlyph,
 	sessionStatusText,
 	formatAge,
@@ -169,7 +176,7 @@ test('strip aging: only blocking asks turn red; old unchecked turns cap at amber
 	assert.equal(turnsOnly.oldestTone, 'warn')
 })
 
-test('summary counts needs, ages the oldest, and heads with the newest item', () => {
+test('summary counts needs and ages the oldest; the strip names no item', () => {
 	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
 	const summary = dockSummary(
 		snapshot({ state: 'ok', since: T, lastObservedAt: T }, items, [session({ status: 'waiting' })]),
@@ -178,8 +185,7 @@ test('summary counts needs, ages the oldest, and heads with the newest item', ()
 	assert.equal(summary.needsText, '2 need you')
 	assert.equal(summary.oldestText, 'oldest 3h')
 	assert.equal(summary.oldestTone, 'danger')
-	// The strip reads the newest item as its entry does: name, project, then the gist (no #id).
-	assert.deepEqual(summary.head, { name: 'dock', project: 'helm', gist: 'PR ready?' })
+	assert.ok(!('head' in summary))
 	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
 	assert.equal(turnsOnly.needsText, '1 needs you')
 })
@@ -332,40 +338,76 @@ test('agent lines show only observed facts', () => {
 	assert.deepEqual(agentRowMeta(snap, session({ hooksAttached: false })), ['not connected'])
 })
 
-test('queue layout keeps every name and wait whole as long as possible, never pages items away', () => {
+test('the queue is one row: what fits shows, the rest sit behind one "+N more" cell', () => {
 	const ch = 7.2
-	// Busy (3 items: question, permission, turn) at a 1100px window (queue ≈ 759): one row beside the wide Agents column.
-	assert.deepEqual(queueLayout([10, 16, 11], 759, ch, [13, 15, 15]), { density: 'full', columns: 3, agents: 'side' })
-	// Crowded (5 items) at 1400 (≈ 1059): one row of full entries beside the wide column.
-	const crowded = [10, 16, 15, 11, 8]
-	const crowdedMeta = [13, 15, 9, 15, 15]
-	assert.deepEqual(queueLayout(crowded, 1059, ch, crowdedMeta), { density: 'full', columns: 5, agents: 'side' })
-	// Names alone would squeeze five into one row at 1100 (≈ 759) …
-	assert.deepEqual(queueLayout(crowded, 759, ch), { density: 'full', columns: 5, agents: 'narrow' })
-	// … but "Turn ended" + the wait would not fit beside "ios-sync": two rows rather than a hidden wait.
-	assert.deepEqual(queueLayout(crowded, 759, ch, crowdedMeta), { density: 'compact', columns: 3, agents: 'cell' })
-	// An entry is as wide as its name or its meta line (indent, kind, wait), whichever is wider.
-	const nameOnly = entryNameWidth(8, ch)
-	assert.ok(entryNameWidth(8, ch, 15) > nameOnly)
-	assert.equal(entryNameWidth(16, ch, 9), (16 + 2) * ch + 26)
-	// 900px window (≈ 559): two rows, the Agents entry as the last cell, every name and wait still whole.
-	const compact = queueLayout(crowded, 559, ch, crowdedMeta)
-	assert.deepEqual(compact, { density: 'compact', columns: 3, agents: 'cell' })
-	for (const [at, name] of crowded.entries())
-		assert.ok(entryNameWidth(name, ch, crowdedMeta[at]) <= 559 / compact.columns)
-	// Nothing to show: the empty note beside the wide column.
-	assert.deepEqual(queueLayout([], 300, ch), { density: 'full', columns: 1, agents: 'side' })
-	// However many items: dense gives every item (and Agents) a cell in three rows.
-	for (const count of [11, 30, 80]) {
-		const layout = queueLayout(
-			Array.from({ length: count }, () => 12),
-			300,
-			ch,
-		)
-		assert.equal(layout.density, 'dense')
-		assert.equal(layout.agents, 'cell')
-		assert.ok(layout.columns * 3 >= count + 1)
-	}
+	// An entry is as wide as its name line (glyph, space, name) or its second line (indent, kind · wait).
+	assert.equal(entryWidth(34, ch, 15), Math.ceil(36 * ch) + QUEUE_ENTRY_PAD)
+	assert.equal(entryWidth(8, ch, 22), Math.max(QUEUE_ENTRY_MIN, Math.ceil(24 * ch) + QUEUE_ENTRY_PAD))
+	// Short names never make slivers; very long ones stop growing (they ellipsize, the tooltip keeps them).
+	assert.equal(entryWidth(1, ch), QUEUE_ENTRY_MIN)
+	assert.equal(entryWidth(200, ch), entryWidth(QUEUE_NAME_MAX, ch))
+	// Everything fits: no "+N more".
+	assert.equal(queueFit([200, 200, 200], 600 + 2 * QUEUE_GAP, 80), 3)
+	// One pixel short: as many as fit beside the "+N more" cell.
+	assert.equal(queueFit([200, 200, 200], 600 + 2 * QUEUE_GAP - 1, 80), 2)
+	assert.equal(queueFit([200, 200, 200], 200 + QUEUE_GAP + 80, 80), 1)
+	// Order is kept: a narrow later entry never jumps ahead of a wide earlier one.
+	assert.equal(queueFit([300, 100, 100], 250, 80), 0)
+	assert.equal(queueFit([], 0, 80), 0)
+	// Eight items at a 1100px window (≈ 900px of room): some show, the rest are counted.
+	const widths = Array.from({ length: 8 }, () => entryWidth(28, ch, 19))
+	const shown = queueFit(widths, 900, entryWidth(0, ch))
+	assert.ok(shown > 0 && shown < 8)
+})
+
+test('short agent names: the branch without its type prefix, numbered when two agents share it', () => {
+	assert.equal(branchShortName('fix/repeated-android-camera-permission'), 'repeated-android-camera-permission')
+	for (const prefix of [
+		'feat',
+		'chore',
+		'refactor',
+		'docs',
+		'test',
+		'perf',
+		'build',
+		'ci',
+		'style',
+		'wip',
+		'hotfix',
+		'release',
+	])
+		assert.equal(branchShortName(`${prefix}/x-y`), 'x-y')
+	// Only the one leading type prefix goes; other slashes stay.
+	assert.equal(branchShortName('fix/api/retry'), 'api/retry')
+	assert.equal(branchShortName('jakub/fix-x'), 'jakub/fix-x')
+	// Nothing identifying left: the caller falls back.
+	assert.equal(branchShortName('fix/'), '')
+	assert.equal(branchShortName('main'), '')
+	assert.equal(branchShortName(undefined), '')
+	// Untrusted: control/bidi-stripped like any agent text.
+	assert.equal(branchShortName('fix/a\u202eb'), 'ab')
+
+	const title = 'Při zakládání nové společnosti se neuloží firma (ClientCare #4182)'
+	const one = session({ key: 'p:t1', name: title, branch: 'fix/company-create-save-firm' })
+	const two = session({ key: 'p:t2', name: title, branch: 'fix/company-create-save-firm' })
+	const camera = session({ key: 'p:t3', name: 'Android kamera', branch: 'fix/repeated-android-camera-permission' })
+	const plain = session({ key: 'p:t4', name: 'ios-sync' })
+	const onMain = session({ key: 'p:t5', name: 'release-notes', branch: 'main' })
+	// Stable order (by session key), whatever order the snapshot lists them in.
+	const names = agentNames([two, plain, camera, onMain, one])
+	assert.equal(names.get('p:t1'), 'company-create-save-firm')
+	assert.equal(names.get('p:t2'), 'company-create-save-firm #2')
+	assert.equal(names.get('p:t3'), 'repeated-android-camera-permission')
+	assert.equal(names.get('p:t4'), 'ios-sync')
+	assert.equal(names.get('p:t5'), 'release-notes')
+	const three = session({ key: 'p:t0', name: 'x', branch: 'feat/company-create-save-firm' })
+	assert.equal(agentNames([one, two, three]).get('p:t2'), 'company-create-save-firm #3')
+
+	// Who: the short name everywhere, the full pane name as the title (only when it says more).
+	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T }, [], [one, two, plain])
+	assert.deepEqual(agentWho(snap, 'p:t2'), { name: 'company-create-save-firm #2', title, project: 'helm' })
+	assert.deepEqual(agentWho(snap, 'p:t4'), { name: 'ios-sync', title: '', project: 'helm' })
+	assert.deepEqual(agentWho(snap, 'p:abcdef0123'), { name: 'terminal abcdef0…', title: '', project: '' })
 })
 
 test('an open pane keeps entries in their slots: answered items stay put, new ones join the end', () => {
@@ -396,7 +438,7 @@ test('kind and status glyphs are single terminal cells', () => {
 	assert.equal(kindGlyph({ ...ask('Bash'), state: 'resolved', resolution: { at: T, by: 'dock' } } as DockItem), '✓')
 	// Closed elsewhere (a refused dock answer lingers too): no green ✓ beside a red refusal.
 	assert.equal(kindGlyph({ ...ask('Bash'), state: 'resolved', resolution: { at: T, by: 'outside' } } as DockItem), '$')
-	assert.equal(entryMetaChars({ ...ask('Bash'), kind: 'ask' } as DockItem), 'Permission'.length + 5)
+	assert.equal(entryMetaChars({ ...ask('Bash'), kind: 'ask' } as DockItem), 'permission · '.length + 5)
 	for (const status of ['working', 'background', 'waiting', 'idle', 'unknown', 'unreachable'] as const)
 		assert.equal([...statusGlyph(status)].length, 1)
 })

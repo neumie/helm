@@ -22,7 +22,7 @@ import {
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockDivider, AgentDockPosition } from './agent-dock/presentation'
+import type { AgentDockPosition } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
@@ -48,8 +48,7 @@ export interface TerminalWorkspaceFixtureOptions {
 	 * whatever is stored (production defaults when nothing is). `output` writes a
 	 * recorded-looking shell session into the active terminal (`'claude-code'`: the
 	 * bottom of a Claude Code session, its own rules right above the dock); `open` then
-	 * clicks that entry (or the Agents entry), like a pointer would. `divider` picks a
-	 * review variant of the dock's edge (§3.24 Divider); omitted keeps production's.
+	 * clicks that entry (or the Agents entry), like a pointer would.
 	 */
 	agentDock?: {
 		scenario?: AgentDockScenario | null
@@ -57,7 +56,6 @@ export interface TerminalWorkspaceFixtureOptions {
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
-		divider?: AgentDockDivider
 	}
 }
 
@@ -586,7 +584,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', expanded, position, open, divider } = options.agentDock
+			const { scenario = 'busy', expanded, position, open } = options.agentDock
 			const writePreference = (key: string, value: string | undefined) => {
 				if (value === undefined) return
 				try {
@@ -609,7 +607,6 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
-					...(divider ? { divider } : {}),
 				})
 			})
 		}

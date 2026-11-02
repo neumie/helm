@@ -44,7 +44,10 @@ async function expectPaneBesideTerminal(page: Page, position: 'top' | 'bottom' =
 	}
 }
 
-async function emitScenario(page: Page, name: 'busy' | 'crowded' | 'empty' | 'down' | 'orphaned'): Promise<void> {
+async function emitScenario(
+	page: Page,
+	name: 'busy' | 'crowded' | 'empty' | 'down' | 'orphaned' | 'real-case' | 'overflow',
+): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
 		if (!dock) throw new Error('Missing agent-dock fixture')
@@ -145,7 +148,7 @@ test('the rail toggle refits the terminal; items arriving in an open rail never 
 	await expect(input).toBeFocused()
 	expect(await page.evaluate(() => localStorage.getItem('helm.agentDock.expanded'))).toBe('true')
 	const openTerms = await box(page, '#terms')
-	expect(openTerms.height).toBeLessThan(collapsedTerms.height - 60)
+	expect(openTerms.height).toBeLessThan(collapsedTerms.height - 40)
 	await expect.poll(() => xtermRows(page)).toBeLessThan(collapsedRows)
 	const openRows = await xtermRows(page)
 	await expect(rail).toContainText('Nothing needs you')
@@ -183,7 +186,9 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 	await expect(pane).toBeVisible()
 	await expect(input).toBeFocused()
 	await expect(pane).toContainText('1/3')
-	await expect(pane).toContainText(/asked \d\d:\d\d/)
+	// The header carries no id or clock; the exact time is its tooltip.
+	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /asked \d\d:\d\d/)
+	await expect(pane.locator('.agent-dock-title')).not.toContainText(/#\d|asked/)
 	// Verbatim AskUserQuestion content, plain text; previews in monospace; nothing submits until every question has an answer.
 	await expect(pane).toContainText('Barva?')
 	await expect(pane.locator('.agent-dock-preview-text')).toHaveText('▇▇ blue')
@@ -235,7 +240,7 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 
 	// Ack on the unchecked turn runs the reducer ack and shows the next item.
 	await expect(pane).toContainText('can you confirm the secret is set in stage?')
-	await expect(pane).toContainText(/finished \d\d:\d\d/)
+	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /finished \d\d:\d\d/)
 	const turnId = Number(await rail.locator('.agent-dock-entry[data-kind="turn"]').getAttribute('data-item-id'))
 	await pane.getByRole('button', { name: `Ack item ${turnId}` }).click()
 	await expect(rail.locator('.agent-dock-entry[data-kind="turn"]')).toHaveCount(0)
@@ -344,69 +349,75 @@ test('keyboard stepping keeps focus in the pane; question tabs keep their own ar
 	expect(await page.evaluate(() => !!document.activeElement?.closest('#agent-dock'))).toBe(true)
 })
 
-test('at a 1100px window entries keep every agent name and wait whole', async ({ page }) => {
+test('at a 1100px window the queue is one row: names and waits whole, the rest behind "+N more"', async ({ page }) => {
 	await page.setViewportSize({ width: 1100, height: 800 })
 	await openHarness(page)
 	await emitScenario(page, 'busy')
 	await page.locator('.agent-dock-toggle').click()
 	const rail = page.locator('.agent-dock-rail')
 	await expect(rail.locator('.agent-dock-entry')).toHaveCount(3)
-	await expect(rail.locator('.agent-dock-queue')).toHaveAttribute('data-density', 'full')
-	await expect(rail.locator('.agent-dock-entry-gist').first()).toBeVisible()
-	for (const name of await rail.locator('.agent-dock-entry-name').all())
-		expect(await name.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+	await expect(rail.locator('.agent-dock-more')).toHaveCount(0)
+	const wholeNames = async () => {
+		for (const name of await rail.locator('.agent-dock-entry-name').all())
+			expect(await name.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+	}
+	await wholeNames()
 	await expect(rail.locator('.agent-dock-agents-entry')).toBeVisible()
 
-	// Five items take two rows rather than squeezing one: every name and every wait stays in view.
-	await emitScenario(page, 'crowded')
-	await expect(rail.locator('.agent-dock-entry')).toHaveCount(5)
-	await expect(rail.locator('.agent-dock-queue')).toHaveAttribute('data-density', 'compact')
-	for (const name of await rail.locator('.agent-dock-entry-name').all())
-		expect(await name.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
-	for (const entry of await rail.locator('.agent-dock-entry').all()) {
-		const age = entry.locator('.agent-dock-entry-age')
+	// Eight items: one row only — what fits shows, then one quiet "+N more" cell; nothing scrolls.
+	await emitScenario(page, 'overflow')
+	const shown = await rail.locator('.agent-dock-entry').count()
+	expect(shown).toBeGreaterThan(0)
+	expect(shown).toBeLessThan(8)
+	await expect(rail.locator('.agent-dock-more')).toHaveText(`+${8 - shown} more`)
+	await wholeNames()
+	const railBox = await box(page, '.agent-dock-rail')
+	for (const entry of await rail.locator('.agent-dock-entry, .agent-dock-more').all()) {
+		const entryBox = await entry.boundingBox()
+		if (!entryBox) throw new Error('entry not laid out')
+		// One row: every cell inside the rail's single band.
+		expect(entryBox.y).toBeGreaterThanOrEqual(railBox.y)
+		expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(railBox.y + railBox.height + 0.5)
+		expect(entryBox.x + entryBox.width).toBeLessThanOrEqual(railBox.x + railBox.width + 0.5)
+	}
+	for (const age of await rail.locator('.agent-dock-entry-age').all()) {
 		await expect(age).toBeVisible()
-		// On the entry's own line, not wrapped onto a clipped one.
 		expect(
 			await age.evaluate(node => {
 				const line = (node.parentElement as HTMLElement).getBoundingClientRect()
 				const rect = node.getBoundingClientRect()
-				return rect.top >= line.top - 0.5 && rect.bottom <= line.bottom + 0.5 && rect.right <= line.right + 0.5
+				return rect.right <= line.right + 0.5
 			}),
 		).toBe(true)
 	}
 	expect(await rail.locator('.agent-dock-queue').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
 })
 
-test('at a 900px window all five items stay visible in two rows with whole names', async ({ page }) => {
+test('"+N more" opens the next item past the row and stands in for it; ‹ › reach every item', async ({ page }) => {
 	await page.setViewportSize({ width: 900, height: 700 })
 	await openHarness(page)
-	await emitScenario(page, 'crowded')
+	await emitScenario(page, 'overflow')
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.focus()
 	await page.locator('.agent-dock-toggle').click()
 	const rail = page.locator('.agent-dock-rail')
-	const entries = rail.locator('.agent-dock-entry')
-	await expect(entries).toHaveCount(5)
-	await expect(rail.locator('.agent-dock-queue')).toHaveAttribute('data-density', 'compact')
-	const railBox = await box(page, '.agent-dock-rail')
-	for (const entry of await entries.all()) {
-		const entryBox = await entry.boundingBox()
-		if (!entryBox) throw new Error('entry not laid out')
-		expect(entryBox.x).toBeGreaterThanOrEqual(railBox.x)
-		expect(entryBox.x + entryBox.width).toBeLessThanOrEqual(railBox.x + railBox.width + 0.5)
-		expect(entryBox.y).toBeGreaterThanOrEqual(railBox.y)
-		expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(railBox.y + railBox.height + 0.5)
-		// The agent name is never ellipsized away.
-		const name = entry.locator('.agent-dock-entry-name')
-		expect(await name.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
-	}
-	await expect(rail.locator('.agent-dock-agents-entry')).toBeVisible()
-	// Nothing is paged or scrolled out of sight.
-	expect(await rail.locator('.agent-dock-queue').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
-
-	// The question pane still splits off the terminal instead of covering it.
-	await rail.locator('.agent-dock-entry[aria-label^="Question,"]').click()
-	await expect(page.locator('.agent-dock-pane')).toBeVisible()
+	const more = rail.locator('.agent-dock-more')
+	await expect(more).toBeVisible()
+	const shown = await rail.locator('.agent-dock-entry').count()
+	await more.click()
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane).toContainText(`${shown + 1}/8`)
 	await expectPaneBesideTerminal(page)
+	await expect(input).toBeFocused()
+	await expect(more).toHaveAttribute('data-open', 'true')
+	await expect(rail.locator('.agent-dock-entry[data-open="true"]')).toHaveCount(0)
+	for (let at = shown + 1; at < 8; at++) await pane.getByRole('button', { name: 'Next item' }).click()
+	await expect(pane).toContainText('8/8')
+	// Stepping back into the row hands the selection to that entry.
+	for (let at = 8; at > shown; at--) await pane.getByRole('button', { name: 'Previous item' }).click()
+	await expect(pane).toContainText(`${shown}/8`)
+	await expect(more).toHaveAttribute('data-open', 'false')
+	await expect(rail.locator('.agent-dock-entry[data-open="true"]')).toHaveCount(1)
 })
 
 /** The write Settings → Appearance makes; the strip itself carries no position control. */
@@ -472,9 +483,6 @@ test('position persists; on top the strip leads, then the queue, then the pane a
 	const pane = await box(page, '.agent-dock-pane')
 	expect(pane.y).toBeGreaterThanOrEqual(rail.y + rail.height - 0.5)
 	await expectPaneBesideTerminal(page, 'top')
-	// The open entry opens downward into its pane.
-	const entry = await box(page, '.agent-dock-queue > li[data-open="true"]')
-	expect(Math.abs(entry.y + entry.height - pane.y)).toBeLessThan(0.5)
 
 	await page.reload()
 	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
@@ -552,7 +560,7 @@ test('answering a question from the pane: 1-9 pick, Enter submits, Sending… th
 	// Handing focus back never scrolls the terminal holder (no clipped top row over a blank band).
 	expect(await holderScroll(page)).toBe(0)
 	expect(await terminalWrites(page)).toBe(0)
-	await expect(pane.locator('.agent-dock-rule-age')).toHaveText(/^answered \d\d:\d\d$/)
+	await expect(pane.locator('.agent-dock-title-age')).toHaveText(/^answered \d\d:\d\d$/)
 	// Resolved: the receipt is the footer; no decision button and no key hints that would do nothing.
 	await expect(pane.getByRole('button', { name: 'Submit answers' })).toHaveCount(0)
 	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText('esc close')
@@ -676,66 +684,57 @@ test('an Okena error shows verbatim, the item stays open and can be answered aga
 	expect((await acts(page)).length).toBe(2)
 })
 
-/** Computed edge colours and surface of an element (the open entry's slot or the pane). */
-const surface = (page: Page, selector: string) =>
+/** A color token as the page computes it. */
+const tokenColor = (page: Page, token: string) =>
+	page.evaluate(name => {
+		const probe = document.createElement('span')
+		probe.style.color = `var(${name})`
+		document.querySelector('.agent-dock-host')?.append(probe)
+		const color = getComputedStyle(probe).color
+		probe.remove()
+		return color
+	}, token)
+
+const background = (page: Page, selector: string) =>
 	page
 		.locator(selector)
 		.first()
-		.evaluate(node => {
-			const style = getComputedStyle(node)
-			return {
-				background: style.backgroundColor,
-				top: style.borderTopWidth === '0px' ? 'none' : style.borderTopColor,
-				bottom: style.borderBottomWidth === '0px' ? 'none' : style.borderBottomColor,
-			}
-		})
+		.evaluate(node => getComputedStyle(node).backgroundColor)
 
-const OPEN_EDGE = ['none', 'rgba(0, 0, 0, 0)']
-
-test('the open entry and its pane are one shape: the pane edge opens over the entry', async ({ page }) => {
-	const { rail, pane } = await openItem(page, 2)
-	const slot = '.agent-dock-queue > li[data-open="true"]'
-	await expect(rail.locator(`${slot} .agent-dock-entry`)).toHaveAttribute('aria-label', /Permission,/)
-	const paneBox = await box(page, '.agent-dock-pane')
-	const entry = await box(page, slot)
-	// Shared edge: the entry starts exactly where the pane ends, inside the pane's width.
-	expect(Math.abs(entry.y - (paneBox.y + paneBox.height))).toBeLessThan(0.5)
-	expect(entry.x).toBeGreaterThanOrEqual(paneBox.x - 0.5)
-	expect(entry.x + entry.width).toBeLessThanOrEqual(paneBox.x + paneBox.width + 0.5)
-	// The pane has no bottom rule and the entry no top rule there; both share the pane's surface.
-	const paneSurface = await surface(page, '.agent-dock-pane')
-	const entrySurface = await surface(page, slot)
-	expect(OPEN_EDGE).toContain(paneSurface.bottom)
-	expect(OPEN_EDGE).toContain(entrySurface.top)
-	expect(entrySurface.background).toBe(paneSurface.background)
-	// Every other entry keeps the queue's edge toward the pane, on the queue's own surface.
-	const closed = await surface(page, '.agent-dock-queue > li[data-open="false"]')
-	expect(OPEN_EDGE).not.toContain(closed.top)
-	expect(closed.background).not.toBe(paneSurface.background)
-	// No footer rule between the pane's body and the entry.
-	const foot = await pane.locator('.agent-dock-foot').evaluate(node => getComputedStyle(node).borderTopWidth)
-	expect(foot).toBe('0px')
-})
-
-test('in two rows a far-row entry joins its pane through its column', async ({ page }) => {
-	await page.setViewportSize({ width: 900, height: 700 })
-	await openHarness(page)
-	await emitScenario(page, 'crowded')
-	await page.locator('.agent-dock-toggle').click()
-	const rail = page.locator('.agent-dock-rail')
-	await expect(rail.locator('.agent-dock-queue')).toHaveAttribute('data-density', 'compact')
-	await rail.locator('.agent-dock-entry[data-kind="turn"]').first().click()
-	await expect(page.locator('.agent-dock-pane')).toBeVisible()
-	const open = await box(page, '.agent-dock-queue > li[data-open="true"]')
-	const between = await box(page, '.agent-dock-queue > li[data-link="between"]')
-	const paneBox = await box(page, '.agent-dock-pane')
-	// The cell above the open entry is the tab's upper half: same column, touching the pane.
-	expect(Math.abs(between.x - open.x)).toBeLessThan(0.5)
-	expect(Math.abs(between.y - (paneBox.y + paneBox.height))).toBeLessThan(0.5)
-	expect(OPEN_EDGE).toContain((await surface(page, '.agent-dock-queue > li[data-link="between"]')).top)
-	expect((await surface(page, '.agent-dock-queue > li[data-link="between"]')).background).toBe(
-		(await surface(page, '.agent-dock-pane')).background,
+test('the dock is one --chrome surface, its edge the topbar border mirrored; no rule in the pane header', async ({
+	page,
+}) => {
+	const { pane } = await openItem(page, 2)
+	const dock = page.locator('#agent-dock')
+	// Same surface and line as the topbar: the dock is the topbar, mirrored.
+	expect(await background(page, '#agent-dock')).toBe(await background(page, '#topbar'))
+	const topbarEdge = await page.locator('#topbar').evaluate(node => getComputedStyle(node).borderBottomColor)
+	const edge = await dock.evaluate(node => {
+		const style = getComputedStyle(node, '::before')
+		return { color: style.backgroundColor, height: style.height }
+	})
+	expect(edge).toEqual({ color: topbarEdge, height: '1px' })
+	// The pane, the queue and the strip sit on that one surface (no fills of their own).
+	for (const part of ['.agent-dock-pane', '.agent-dock-rail', '.agent-dock-strip'])
+		expect(await background(page, part)).toBe('rgba(0, 0, 0, 0)')
+	// The header is a plain row: no box-drawing text, no drawn rule.
+	const header = pane.locator('.agent-dock-title')
+	await expect(header).not.toContainText(/[─━]/)
+	expect(await header.evaluate(node => getComputedStyle(node).borderBottomWidth)).toBe('0px')
+	// One hairline between the pane and the queue; the open entry is a selected fill, joined to nothing.
+	expect(await pane.evaluate(node => getComputedStyle(node).borderBottomWidth)).toBe('1px')
+	const open = page.locator('.agent-dock-entry[data-open="true"]')
+	await expect(open).toHaveAttribute('aria-label', /^Permission,/)
+	const raised = await tokenColor(page, '--fill-raised')
+	await expect.poll(() => open.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(raised)
+	// No bold anywhere in the dock.
+	const bold = await page.evaluate(
+		() =>
+			[...document.querySelectorAll('#agent-dock *')].filter(
+				node => Number(getComputedStyle(node).fontWeight) >= 600 && (node.textContent ?? '').trim() !== '',
+			).length,
 	)
+	expect(bold).toBe(0)
 })
 
 test('an answered entry keeps its slot while the pane is open; the receipt shows in place', async ({ page }) => {
@@ -1084,64 +1083,45 @@ test('Enter on the open entry goes to its pane; a click on it closes; ⌘⇧J wi
 	await expect(pane).toHaveCount(0)
 })
 
-test('the active pane: focus turns its rule and tab sides accent at 1px, never a ring box', async ({ page }) => {
+test('the active pane: focus turns the dock edge accent at 1px, never a ring box', async ({ page }) => {
 	const { pane } = await openItem(page, 2)
-	const accent = await page.evaluate(() => {
-		const probe = document.createElement('span')
-		probe.style.color = 'var(--accent)'
-		document.querySelector('.agent-dock-host')?.append(probe)
-		const color = getComputedStyle(probe).color
-		probe.remove()
-		return color
-	})
-	const fill = pane.locator('.agent-dock-rule > .agent-dock-rule-fill')
-	const side = (which: '::before' | '::after') =>
-		page
-			.locator('.agent-dock-queue > li[data-open="true"]')
-			.evaluate((node, pseudo) => getComputedStyle(node, pseudo).backgroundColor, which)
-	// Pointer-opened: the keys stay with the terminal, so the border is the quiet strong hairline.
-	await expect.poll(() => fill.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe(accent)
+	const accent = await tokenColor(page, '--accent')
+	const edge = () => page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').backgroundColor)
+	// Pointer-opened: the keys stay with the terminal, so the edge is the quiet hairline.
+	await expect.poll(edge).not.toBe(accent)
 	await pane.focus()
-	await expect.poll(() => fill.evaluate(node => getComputedStyle(node).backgroundColor)).toBe(accent)
-	await expect.poll(() => side('::before')).toBe(accent)
-	await expect.poll(() => side('::after')).toBe(accent)
+	await expect.poll(edge).toBe(accent)
 	expect(await pane.evaluate(node => getComputedStyle(node).boxShadow)).toBe('none')
-	expect(await fill.evaluate(node => node.getBoundingClientRect().height)).toBe(1)
+	expect(await page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').height)).toBe('1px')
 })
 
-test('in a grid every row starts on the 16px inset, and the tab sides land on the column dividers', async ({
-	page,
-}) => {
-	await page.setViewportSize({ width: 1100, height: 800 })
+test("entries sit on the strip's 16px text column and are separated by space, not rules", async ({ page }) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
 	await emitScenario(page, 'crowded')
 	await page.locator('.agent-dock-toggle').click()
-	const queue = page.locator('.agent-dock-queue')
-	await expect(queue).toHaveAttribute('data-density', 'compact')
-	const glyphX = (selector: string) =>
-		page
-			.locator(selector)
-			.first()
-			.evaluate(node => node.getBoundingClientRect().x)
-	const columns = Number(await queue.evaluate(node => getComputedStyle(node).getPropertyValue('--queue-columns')))
-	const rowOne = await glyphX('.agent-dock-queue > li:nth-child(1) .agent-dock-glyph')
-	const rowTwo = await glyphX(`.agent-dock-queue > li:nth-child(${columns + 1}) .agent-dock-glyph`)
-	expect(Math.abs(rowOne - rowTwo)).toBeLessThan(0.5)
-	// Open the second column's top entry: its right side is the same pixel column as the divider below it.
-	await page.locator('.agent-dock-queue > li:nth-child(2) .agent-dock-entry').click()
-	await expect(page.locator('.agent-dock-pane')).toBeVisible()
-	const tab = await page.locator('.agent-dock-queue > li:nth-child(2)').evaluate(node => ({
-		right: node.getBoundingClientRect().right,
-		margin: getComputedStyle(node).marginRight,
-		border: getComputedStyle(node).borderRightWidth,
-		side: getComputedStyle(node, '::after').right,
+	const dock = await box(page, '#agent-dock')
+	const glyph = await box(page, '.agent-dock-queue .agent-dock-glyph')
+	const chevron = await box(page, '.agent-dock-chevron')
+	expect(Math.abs(glyph.x - dock.x - 16)).toBeLessThan(0.5)
+	expect(Math.abs(chevron.x - glyph.x)).toBeLessThan(0.5)
+	for (const slot of await page.locator('.agent-dock-queue > li').all())
+		expect(
+			await slot.evaluate(node => {
+				const style = getComputedStyle(node)
+				return [
+					style.borderLeftWidth,
+					style.borderRightWidth,
+					getComputedStyle(node.firstElementChild as Element).borderRightWidth,
+				]
+			}),
+		).toEqual(['0px', '0px', '0px'])
+	// One hairline at most: before the Agents entry.
+	const separator = await page.locator('.agent-dock-agents').evaluate(node => ({
+		width: getComputedStyle(node, '::before').width,
+		content: getComputedStyle(node, '::before').content,
 	}))
-	const below = await page
-		.locator(`.agent-dock-queue > li:nth-child(${columns + 2})`)
-		.evaluate(node => node.getBoundingClientRect().right)
-	// The side is laid over the cell's own 1px divider (no margin), the pixel column every row's divider uses.
-	expect(tab).toMatchObject({ margin: '0px', border: '1px', side: '-1px' })
-	expect(Math.abs(tab.right - below)).toBeLessThan(0.5)
+	expect(separator.width).toBe('1px')
 })
 
 test('decisions: unarmed buttons are quiet keys, the note names the act, unanswerable items offer Ack only', async ({
@@ -1186,11 +1166,44 @@ test('the receipt says what was sent and the sent picks stay shown; a failure ke
 	await expect(pane.getByRole('radio', { checked: true })).toHaveAccessibleName(/Blue|M/)
 })
 
-test('one identity order everywhere: the strip heads name, project, then the gist', async ({ page }) => {
-	await page.setViewportSize({ width: 1400, height: 820 })
+test('one short name everywhere: the branch without its type, numbered twins, the task title only as context', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 900 })
 	await openHarness(page)
-	await emitScenario(page, 'busy')
-	const head = page.locator('.agent-dock-head')
-	await expect(head).toHaveText(/^ios-sync quip · PR #212 is ready/)
-	await expect(head.locator('.agent-dock-head-name')).toHaveCount(1)
+	await emitScenario(page, 'real-case')
+	const strip = page.locator('.agent-dock-strip')
+	// The strip names no item: the count, the oldest wait, Okena's dot, the shortcut.
+	await expect(strip).toContainText('3 need you')
+	await expect(strip).not.toContainText('company-create')
+	await page.locator('.agent-dock-toggle').click()
+	const names = page.locator('.agent-dock-entry-name')
+	await expect(names).toHaveText([
+		'company-create-save-firm',
+		'company-create-save-firm #2',
+		'repeated-android-camera-permission',
+	])
+	// No gist and no task title in the queue; two quiet lines per entry.
+	const rail = page.locator('.agent-dock-rail')
+	await expect(rail).not.toContainText('ClientCare')
+	await expect(page.locator('.agent-dock-entry-meta').first()).toHaveText(/^question\s*·\s*\d/)
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText(/agents 4\s*2 busy/)
+	await expect(page.locator('.agent-dock-entry').first()).toHaveAttribute('title', /ClientCare #4182/)
+	await expect(page.locator('.agent-dock-entry').nth(1)).toHaveAttribute(
+		'aria-label',
+		/^Permission, company-create-save-firm #2 in crm, waiting 12m$/,
+	)
+	await page.locator('.agent-dock-entry[data-kind="turn"]').click()
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane.locator('.agent-dock-title-name')).toHaveText('repeated-android-camera-permission')
+	await expect(pane.locator('.agent-dock-context')).toContainText('(ClientCare #4153)')
+	await expect(pane).toHaveAttribute('aria-label', 'Turn ended, repeated-android-camera-permission, crm-mobile')
+	await page.locator('.agent-dock-agents-entry').click()
+	// Busy first, then waiting; every agent by its short name.
+	await expect(pane.locator('.agent-dock-td-name')).toHaveText([
+		'isdoc-export',
+		'repeated-android-camera-permission',
+		'company-create-save-firm #2',
+		'company-create-save-firm',
+	])
 })

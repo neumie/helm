@@ -3,13 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
-import {
-	AGENT_DOCK_DIVIDER_DEFAULT,
-	type AgentDockDivider,
-	type AgentDockPosition,
-	cardKindLabel,
-	railItems,
-} from './presentation'
+import { type AgentDockPosition, cardKindLabel, railItems } from './presentation'
 
 type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
@@ -38,13 +32,11 @@ function AgentDockFixtureView({
 	expanded: initialExpanded,
 	position = 'bottom',
 	open,
-	divider = AGENT_DOCK_DIVIDER_DEFAULT,
 }: {
 	scenario: AgentDockScenario
 	expanded: boolean
 	position?: AgentDockPosition
 	open?: OpenFixture
-	divider?: AgentDockDivider
 }) {
 	const fixture = useMemo(() => createAgentDockFixture(scenario), [scenario])
 	const [snapshot, setSnapshot] = useState<AgentDockSnapshot | null>(null)
@@ -56,7 +48,7 @@ function AgentDockFixtureView({
 	return (
 		<div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
 			{position === 'bottom' ? terminal : null}
-			<div className="agent-dock" data-position={position} data-expanded={String(expanded)} data-divider={divider}>
+			<div className="agent-dock" data-position={position} data-expanded={String(expanded)}>
 				<div className="agent-dock-view">
 					{ready ? (
 						<AgentDock
@@ -94,7 +86,7 @@ export const QueueOpen: Story = { args: { scenario: 'busy', expanded: true } }
 /** The default 28px strip; arriving items never change its height. */
 export const Collapsed: Story = { args: { scenario: 'busy', expanded: false } }
 
-/** Five items: plan approval and a second turn join; every agent name stays whole. */
+/** Five items: plan approval and a second turn join, still one row. */
 export const FiveItems: Story = { args: { scenario: 'crowded', expanded: true } }
 
 /** Question pane: two questions as tabs, numbered options with live previews, disabled Submit answers. */
@@ -106,6 +98,19 @@ export const PermissionOpen: Story = { args: { scenario: 'crowded', expanded: tr
 export const PlanOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'plan' } }
 
 export const TurnOpen: Story = { args: { scenario: 'crowded', expanded: true, open: 'turn' } }
+
+/**
+ * Jakub's real case: long ClientCare task titles behind short branch names — two sessions on
+ * `fix/company-create-save-firm` (the second numbered `#2`), a turn on
+ * `fix/repeated-android-camera-permission`; agents 4, 2 busy.
+ */
+export const RealCase: Story = { args: { scenario: 'real-case', expanded: true } }
+export const RealCaseTurn: Story = { args: { scenario: 'real-case', expanded: true, open: 'turn' } }
+export const RealCaseQuestion: Story = { args: { scenario: 'real-case', expanded: true, open: 'question' } }
+export const RealCasePermission: Story = { args: { scenario: 'real-case', expanded: true, open: 'permission' } }
+
+/** Eight items: the row shows what fits, then one quiet "+N more" cell that opens the next. */
+export const Overflow: Story = { args: { scenario: 'overflow', expanded: true } }
 
 /** Okena restarted while a question was open: amber kind, warning line, Ack. */
 export const OrphanedOpen: Story = { args: { scenario: 'orphaned', expanded: true, open: 'orphaned' } }

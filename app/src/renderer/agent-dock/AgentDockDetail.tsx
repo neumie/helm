@@ -1,12 +1,12 @@
-// Agent dock pane bodies (design §3.24), drawn the way Claude Code's own TUI
-// draws a dialog: a titled rule on top, numbered choices with a > cursor on the
-// picked row, key hints in the footer. Jakub answers from here — pick options
+// Agent dock pane bodies (design §3.24): a plain header row on the dock's surface
+// (kind glyph, kind, agent, project, age; ‹ › and esc), numbered choices with a >
+// cursor on the picked row, key hints in the footer. Jakub answers from here — pick options
 // (click, or 1–9 while the pane has focus), Other… text, allow / always allow /
 // deny, approve / keep planning, or reply to a finished turn — then one explicit
 // submit; nothing is ever sent implicitly. Main re-reads Okena (CAS) before the
 // effect; the receipt (Sending… → ✓ answered / sent, unconfirmed / refused /
 // verbatim error) comes back in the snapshot. Agent text is untrusted and always
-// plain React text. Monospace where it carries meaning (rule, choices, commands,
+// plain React text. Monospace where it carries meaning (header, choices, commands,
 // key hints); prose (questions, descriptions, turn messages) stays in the UI face.
 
 import {
@@ -25,15 +25,16 @@ import type { AgentDockSnapshot, DockAction, DockItem, DockSession } from '../..
 import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX, REVIEW_PLAN_MAX, planReview } from '../../agent-dock/review'
 import { Btn, type ButtonTone } from '../button'
 import {
+	type AgentWho,
 	type AskQuestion,
 	type ReceiptView,
 	agentRowMeta,
+	agentWho,
 	agingTone,
 	alwaysAllowLabels,
 	askQuestions,
 	cardKindLabel,
 	cardTone,
-	findSession,
 	formatAge,
 	itemAgeTone,
 	itemHeadline,
@@ -50,7 +51,6 @@ import {
 	sentSummary,
 	sessionSince,
 	sessionStatusText,
-	sessionWhere,
 	statusGlyph,
 } from './presentation'
 
@@ -102,15 +102,17 @@ function ScrollBody({ label, children }: { label: string; children: ReactNode })
 	)
 }
 
-/** The pane's top border, tmux-style: `─ ? Question name project  #3 asked 13:44 · waiting 2h ──── ‹ 1/5 › esc ─`. */
-function Rule({ children, end }: { children: ReactNode; end: ReactNode }) {
+/**
+ * The pane's header: a plain row on the dock's surface (no rule): what and whose on the left, the
+ * stepper and esc on the right. `title` is the full context (task title, exact time) for its tooltip.
+ */
+function Header({ children, end, title }: { children: ReactNode; end: ReactNode; title?: string }) {
 	return (
-		<header className="agent-dock-rule">
-			<span className="agent-dock-rule-lead" aria-hidden="true" />
-			<span className="agent-dock-rule-title">{children}</span>
-			<span className="agent-dock-rule-fill" aria-hidden="true" />
-			<span className="agent-dock-rule-end">{end}</span>
-			<span className="agent-dock-rule-tail" aria-hidden="true" />
+		<header className="agent-dock-title">
+			<span className="agent-dock-title-text" title={title}>
+				{children}
+			</span>
+			<span className="agent-dock-title-end">{end}</span>
 		</header>
 	)
 }
@@ -119,7 +121,7 @@ function CloseKey({ onClose }: { onClose(): void }) {
 	return (
 		<button
 			type="button"
-			className="agent-dock-rule-btn agent-dock-rule-close"
+			className="agent-dock-title-btn agent-dock-title-close"
 			aria-label="Close details"
 			aria-keyshortcuts="Escape"
 			onClick={onClose}
@@ -129,7 +131,7 @@ function CloseKey({ onClose }: { onClose(): void }) {
 	)
 }
 
-/** Kind glyph; `↵` sits low in Menlo, so it is nudged up a pixel (the glyph itself stays). */
+/** Kind glyph: the header's one colored mark; Menlo's ↵ sits low, so it is nudged up a pixel (the glyph itself stays). */
 function Glyph({ item, tone }: { item: DockItem; tone: string }) {
 	const glyph = kindGlyph(item)
 	return (
@@ -144,9 +146,9 @@ function Glyph({ item, tone }: { item: DockItem; tone: string }) {
 	)
 }
 
-function ItemRule({
+function ItemHeader({
 	item,
-	session,
+	who,
 	now,
 	index,
 	total,
@@ -154,24 +156,24 @@ function ItemRule({
 	onClose,
 }: {
 	item: DockItem
-	session: DockSession | undefined
+	who: AgentWho
 	now: number
 	index: number
 	total: number
 	onStep(delta: number): void
 	onClose(): void
 }) {
-	const where = sessionWhere(session, item.session)
-	const tone = cardTone(item, now)
 	const time = itemTimeLine(item, now)
+	const kind = cardKindLabel(item)
 	return (
-		<Rule
+		<Header
+			title={[who.title || who.name, `${kind} #${item.id} · ${time.stamp}`].join('\n')}
 			end={
 				<>
 					<span className="agent-dock-stepper">
 						<button
 							type="button"
-							className="agent-dock-rule-btn"
+							className="agent-dock-title-btn"
 							aria-label="Previous item"
 							disabled={index <= 0}
 							onClick={() => onStep(-1)}
@@ -188,7 +190,7 @@ function ItemRule({
 						</span>
 						<button
 							type="button"
-							className="agent-dock-rule-btn"
+							className="agent-dock-title-btn"
 							aria-label="Next item"
 							disabled={index >= total - 1}
 							onClick={() => onStep(1)}
@@ -200,26 +202,17 @@ function ItemRule({
 				</>
 			}
 		>
-			<Glyph item={item} tone={tone} />
-			<span className="agent-dock-rule-kind" data-tone={tone}>
-				{cardKindLabel(item)}
+			<span className="agent-dock-title-kind">
+				<Glyph item={item} tone={cardTone(item, now)} />
+				{kind}
 			</span>
-			{/* Name first, project dim after it — as on the entries. A long name ellipsizes before the wait would. */}
-			<span className="agent-dock-rule-name" title={where.name}>
-				{where.name}
+			{/* A long name ellipsizes before the age would; the project gives way first. */}
+			<span className="agent-dock-title-name">{who.name}</span>
+			{who.project ? <span className="agent-dock-title-project">{who.project}</span> : null}
+			<span className="agent-dock-title-age" data-tone={itemAgeTone(item, now)}>
+				{time.waited}
 			</span>
-			{where.project ? <span className="agent-dock-rule-project">{where.project}</span> : null}
-			<span className="agent-dock-rule-meta">
-				<span>#{item.id}</span>
-				<span>{time.stamp}</span>
-				<span className="agent-dock-rule-sep" aria-hidden="true">
-					·
-				</span>
-				<span className="agent-dock-rule-age" data-tone={itemAgeTone(item, now)}>
-					{time.waited}
-				</span>
-			</span>
-		</Rule>
+		</Header>
 	)
 }
 
@@ -232,8 +225,8 @@ function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children
 }
 
 /**
- * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule: the pane runs
- * on into its entry. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
+ * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule of its own: the
+ * pane's one hairline toward the queue closes it. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
  * and show only while the pane holds focus, since only then do the keys reach it.
  */
 function Footer({ hints, note, children }: { hints: ReactNode; note: ReactNode; children?: ReactNode }) {
@@ -546,6 +539,7 @@ function Choices({
 export function ItemDetail({
 	item,
 	session,
+	who,
 	now,
 	index,
 	total,
@@ -566,6 +560,7 @@ export function ItemDetail({
 }: {
 	item: DockItem
 	session: DockSession | undefined
+	who: AgentWho
 	now: number
 	index: number
 	total: number
@@ -606,6 +601,8 @@ export function ItemDetail({
 	) : null
 	const warnings = (
 		<>
+			{/* The full task title (Okena's pane name) the short name stands for: dim context, never the queue. */}
+			{who.title ? <p className="agent-dock-context">{who.title}</p> : null}
 			{refused ? <Warn>Not acked: the item changed. Check it again.</Warn> : null}
 			{orphaned ? (
 				<Warn>Okena restarted while this was open. The agent may still be waiting in its terminal.</Warn>
@@ -644,7 +641,7 @@ export function ItemDetail({
 	else body = <PermissionPanel key={item.id} {...panel} />
 	return (
 		<>
-			<ItemRule item={item} session={session} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
+			<ItemHeader item={item} who={who} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
 			{body}
 		</>
 	)
@@ -1556,20 +1553,18 @@ export function AgentsDetail({
 	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
 	return (
 		<>
-			<Rule end={<CloseKey onClose={onClose} />}>
-				<span className="agent-dock-rule-kind agent-dock-rule-title-word">Agents</span>
-				<span className="agent-dock-rule-meta">
-					<span>
-						{sessions.length} connected, {busy} busy
-					</span>
+			<Header end={<CloseKey onClose={onClose} />}>
+				<span className="agent-dock-title-kind">Agents</span>
+				<span className="agent-dock-title-project">
+					{sessions.length} connected · {busy} busy
 				</span>
-			</Rule>
+			</Header>
 			<ScrollBody label="Agent list">
 				<div className="agent-dock-pane-body">
 					<ul className="agent-dock-table" aria-label="Agents">
 						{snapshot
 							? sessions.map(session => {
-									const where = sessionWhere(session, session.key)
+									const who = agentWho(snapshot, session.key)
 									const meta = agentRowMeta(snapshot, session)
 									const since = sessionSince(snapshot, session)
 									return (
@@ -1577,8 +1572,10 @@ export function AgentsDetail({
 											<span className="agent-dock-status" data-status={session.status} aria-hidden="true">
 												{statusGlyph(session.status)}
 											</span>
-											<span className="agent-dock-td-name">{where.name}</span>
-											<span className="agent-dock-td-project">{where.project}</span>
+											<span className="agent-dock-td-name" title={who.title || undefined}>
+												{who.name}
+											</span>
+											<span className="agent-dock-td-project">{who.project}</span>
 											{/* A waiting agent ages on its entry's clock, so it takes its entry's tone too. */}
 											<span
 												className="agent-dock-td-status"
@@ -1595,20 +1592,17 @@ export function AgentsDetail({
 					</ul>
 					{recent.length > 0 ? (
 						<section className="agent-dock-recent">
-							<h3 className="agent-dock-subrule">
-								<span>Recent</span>
-								<span className="agent-dock-rule-fill" aria-hidden="true" />
-							</h3>
+							<h3 className="agent-dock-subhead">Recent</h3>
 							<ul className="agent-dock-table">
 								{recent.map(item => {
-									const where = sessionWhere(findSession(snapshot, item.session), item.session)
+									const who = agentWho(snapshot, item.session)
 									return (
 										<li key={item.id} className="agent-dock-tr agent-dock-recent-row">
 											<span className="agent-dock-status" aria-hidden="true">
 												{kindGlyph({ ...item, state: 'open' })}
 											</span>
-											<span className="agent-dock-td-name" data-dim="true">
-												{where.name}
+											<span className="agent-dock-td-name" data-dim="true" title={who.title || undefined}>
+												{who.name}
 											</span>
 											<span className="agent-dock-td-project">
 												{cardKindLabel(item).toLowerCase()} #{item.id}

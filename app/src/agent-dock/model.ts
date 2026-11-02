@@ -179,7 +179,10 @@ export interface DockSession {
 	/** For Okena `focus_terminal`; absent when the pane is not in any project layout. */
 	projectId?: string
 	project: string
+	/** Okena's name for the pane (its terminal name, else the project's branch, else `terminal <id>`). */
 	name: string
+	/** The project's git branch as Okena reports it (`fix/company-create-save-firm`); the dock's short agent names come from it. */
+	branch?: string
 	/** Claude conversation id; a change resolves the old session's items `session_ended`. */
 	sessionId?: string
 	status: DockSessionStatus
