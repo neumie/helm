@@ -1,6 +1,7 @@
 // Agent dock IPC: act can approve permissions and type replies into terminals, so
 // every dock channel is gated on the current profile token AND the main window's
-// renderer (agent-dock-main.ts registers them; main.ts supplies the gate).
+// renderer (agent-dock-main.ts registers them; main.ts supplies the gate). Also
+// main's side of the hub wiring: its quarantine gates and terminal-close owner.
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -125,4 +126,25 @@ test('main: a hub reply never reaches a quarantined session, attached (pty) or p
 	const parked = wiring.slice(wiring.indexOf('dtachSocket:'), wiring.indexOf('dtachBinary:'))
 	assert.match(parked, /if \(!ordinarySessionAllowed\(ref\.terminalId, ref\.profileId\)\) return null/)
 	assert.match(parked, /isSessionBusy\(ref\.terminalId\)\) return null/)
+})
+
+test('main: a terminal close reaches the hub under the profile that owned it, captured before the async kill or reap', () => {
+	assert.match(
+		main,
+		/const claudeTerminalClosed = \(sessionId: string, profileId: string\) =>\s*agentDock\.terminalClosed\(\{ profileId, terminalId: sessionId \}\)/,
+	)
+	const calls = [...main.matchAll(/claudeTerminalClosed\((\w+), (\w+)\)/g)].map(match => match[2])
+	assert.deepEqual(calls, ['profileId', 'owningProfile', 'profileId'])
+	// Grace close: captured with its storage, when the finalizer is admitted.
+	const grace = main.slice(
+		main.indexOf('const graceCloser = new sessions.GraceCloser('),
+		main.indexOf('function wrapWarmProcess'),
+	)
+	assert.ok(grace.indexOf('const profileId = sessionProfileId') < grace.indexOf('return () => {'))
+	// Hard kill: captured before killSession resolves.
+	const kill = main.slice(
+		main.indexOf("ipcMain.on('pty:kill'"),
+		main.indexOf("ipcMain.handle('session:close-with-grace'"),
+	)
+	assert.ok(kill.indexOf('const profileId = sessionProfileId') < kill.indexOf('sessions.killSession(sid).then('))
 })

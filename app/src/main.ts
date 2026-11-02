@@ -297,9 +297,13 @@ const agentDock = createAgentDockMain({
 	isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
 	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
 })
-/** Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone. */
-const claudeTerminalClosed = (sessionId: string) =>
-	agentDock.terminalClosed({ profileId: sessionProfileId, terminalId: sessionId })
+/**
+ * Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone.
+ * `profileId` is the terminal's owner, captured before the asynchronous kill/reap (a profile
+ * switch can land in between).
+ */
+const claudeTerminalClosed = (sessionId: string, profileId: string) =>
+	agentDock.terminalClosed({ profileId, terminalId: sessionId })
 // Transfer preflight is narrower than ordinary terminal IPC: it also requires
 // the current main renderer. A future move must add the controller's complete
 // snapshot/detach/attach capability hand-off before any move channel exists.
@@ -695,13 +699,14 @@ const graceCloseSupports = new Map<string, SessionSupport | null>()
 const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined, sessionId => {
 	if (!ordinarySessionAllowed(sessionId)) return null
 	const support = graceCloseSupports.get(sessionId) ?? null
+	const profileId = sessionProfileId
 	graceCloseSupports.delete(sessionId)
 	// Capture storage before the asynchronous kill. Namespace/crash cleanup may
 	// clear the map, but cannot discard this admitted finalizer's ownership.
 	return () => {
 		support?.registry.remove(sessionId)
 		support?.buffers.remove(sessionId)
-		claudeTerminalClosed(sessionId)
+		claudeTerminalClosed(sessionId, profileId)
 	}
 })
 
@@ -2115,7 +2120,7 @@ function publishOrdinaryPty(
 				if (dead && ordinarySessionAllowed(sid, owningProfile)) {
 					support.registry.remove(sid)
 					support.buffers.remove(sid)
-					claudeTerminalClosed(sid)
+					claudeTerminalClosed(sid, owningProfile)
 				}
 			})
 		}
@@ -2245,12 +2250,13 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 	if (entry.sessionId && entry.backing !== 'run-owned') {
 		const sid = entry.sessionId
 		const support = getSessionSupport()
+		const profileId = sessionProfileId
 		graceCloser.undo(sid) // a hard kill supersedes any pending grace timer
 		graceCloseSupports.delete(sid)
 		void sessions.killSession(sid).then(() => {
 			support?.registry.remove(sid)
 			support?.buffers.remove(sid)
-			claudeTerminalClosed(sid)
+			claudeTerminalClosed(sid, profileId)
 		})
 	}
 	try {
