@@ -636,7 +636,7 @@ test('approving a plan in a Helm terminal: the choice says it switches to accept
 	await pane.getByRole('button', { name: 'Approve', exact: true }).click()
 	await expect(entry).toContainText('✓ approved')
 	await expect(pane.locator('.agent-dock-receipt')).toHaveText('✓ approved · accept edits on')
-	expect(await acts(page)).toEqual([{ itemId, rev: 1, action: { type: 'allow' } }])
+	expect(await acts(page)).toEqual([{ itemId, action: { type: 'allow' } }])
 })
 
 test('keep planning sends the plan back with the message: deny, then ✓ sent back to planning', async ({ page }) => {
@@ -646,7 +646,7 @@ test('keep planning sends the plan back with the message: deny, then ✓ sent ba
 	await pane.getByRole('button', { name: 'Keep planning', exact: true }).click()
 	await expect(entry).toContainText('✓ sent back to planning')
 	await expect(pane.locator('.agent-dock-receipt')).toHaveText('✓ sent back to planning · split the migration first')
-	expect(await acts(page)).toEqual([{ itemId, rev: 1, action: { type: 'deny', message: 'split the migration first' } }])
+	expect(await acts(page)).toEqual([{ itemId, action: { type: 'deny', message: 'split the migration first' } }])
 })
 
 test('"Other…" takes free text per question; typing digits in it types, never picks', async ({ page }) => {
