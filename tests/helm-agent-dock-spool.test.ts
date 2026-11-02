@@ -15,6 +15,7 @@ import { appendFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import projectionModule from '../app/src/agent-dock/spool-projection.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
 import {
 	MAX_EVENT_LINE,
@@ -33,14 +34,9 @@ type WatcherModule = typeof import('../app/src/agent-dock/watcher.ts')
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
 type AgentDockSnapshot = import('../app/src/agent-dock/model.ts').AgentDockSnapshot
 
-const {
-	AgentDockWatcher,
-	BACKGROUND_INTERVAL_MS,
-	FOCUSED_INTERVAL_MS,
-	SNAPSHOT_REFRESH_MS,
-	UNFOCUSED_INTERVAL_MS,
-	dockItemHead,
-} = watcherModule as WatcherModule
+const { AgentDockWatcher, BACKGROUND_INTERVAL_MS, FOCUSED_INTERVAL_MS, SNAPSHOT_REFRESH_MS, UNFOCUSED_INTERVAL_MS } =
+	watcherModule as WatcherModule
+const { dockItemHead } = projectionModule as typeof import('../app/src/agent-dock/spool-projection.ts')
 
 function fixture<T = Record<string, unknown>>(name: string): T {
 	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
