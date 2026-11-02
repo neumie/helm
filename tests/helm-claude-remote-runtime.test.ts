@@ -174,3 +174,20 @@ test('deliver: no dtach socket (unreachable or refused by main) or no dtach bina
 test('dtachPush: a failing dtach rejects with its stderr', async () => {
 	await assert.rejects(dtachPush(FAILING_DTACH, join(STUBS, 'sock'), 'x'), /dtach -p exited 1: dtach: no such session/)
 })
+
+test('a terminal Helm closed reports again once a spawn gives it a fresh environment', async () => {
+	const root = mkdtempSync('/tmp/hcr-rt-')
+	try {
+		const remote = remoteIn(root)
+		const listed = () => (remote.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions
+		const start = { hook_event_name: 'SessionStart', session_id: 's1', source: 'startup' }
+		remote.hub.terminalClosed(REF)
+		remote.hub.core.event(REF, PID, Date.now(), start)
+		assert.deepEqual(listed(), [])
+		remote.environment({ PATH: '/bin' }, REF)
+		remote.hub.core.event(REF, PID, Date.now(), start)
+		assert.deepEqual(listed(), ['t1'])
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})

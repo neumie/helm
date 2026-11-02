@@ -221,6 +221,11 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		this.tails.delete(`${ref.profileId}:${ref.terminalId}`)
 	}
 
+	/** Helm spawned this terminal with a fresh token (a reused id may report again). */
+	terminalOpened(ref: TerminalRef): void {
+		this.core.terminalOpened(ref)
+	}
+
 	// -------------------------------------------------------------------------
 	// OkenaClaudeClient (the dock reads and acts through this)
 	// -------------------------------------------------------------------------

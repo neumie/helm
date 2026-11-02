@@ -71,6 +71,8 @@ export const EXCLUDED_SESSIONS_MAX = 64
 const DIALOGS_MAX = 32
 const SUBAGENTS_MAX = 64
 const LIFELINES_MAX = 8
+/** Terminals Helm closed whose late hooks are still ignored (dtach ids are random, never reused). */
+const CLOSED_TERMINALS_MAX = 256
 /** Event strings longer than this are cut by the hook client (hook-client.cjs EVENT_STRING_MAX). */
 export const EVENT_STRING_MAX = 4096
 /** A reply the hub typed blocks a second one until its UserPromptSubmit, at most this long. */
@@ -200,6 +202,8 @@ function sameCall(fullRequested: unknown, clippedRan: unknown): boolean {
 
 export class ClaudeHubCore {
 	private readonly terminals = new Map<string, TerminalState>()
+	/** Keys of terminals Helm closed: late input for them must not bring a session back. */
+	private readonly closedTerminals: string[] = []
 	private readonly excluded: string[]
 	private dialogCounter = 0
 	private assistantCounter = 0
@@ -226,6 +230,7 @@ export class ClaudeHubCore {
 		if (!name || !sessionId) return
 		// Claude's internal forks: a SubagentStop with an empty agent_type after almost every turn.
 		if ((name === 'SubagentStop' || name === 'SubagentStart') && str(input.agent_type) === undefined) return
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		if (name === 'SessionStart') {
 			this.sessionStart(t, pid, sessionId, input, at)
@@ -278,7 +283,7 @@ export class ClaudeHubCore {
 		if (!isRecord(input)) return leave()
 		const sessionId = str(input.session_id)
 		const toolName = str(input.tool_name)
-		if (!sessionId || !toolName) return leave()
+		if (!sessionId || !toolName || this.isClosed(ref)) return leave()
 		const t = this.terminal(ref)
 		if (!this.accepts(t, pid, sessionId, at, input) || this.isExcluded(sessionId)) return leave()
 		if (t.dialogs.length >= DIALOGS_MAX) return leave()
@@ -312,6 +317,7 @@ export class ClaudeHubCore {
 
 	/** The preload saw this terminal's interactive claude start without hooks (user --settings). */
 	degraded(ref: TerminalRef, pid: number, reason: string, cwd: string | undefined, at: number): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		// The token is in the agent's tool env: a tool child cannot knock out a primary whose claude still runs.
 		const primary = t.primary
@@ -326,6 +332,7 @@ export class ClaudeHubCore {
 
 	/** The preload of claude `pid` in this terminal opened its lifeline. */
 	attached(ref: TerminalRef, pid: number): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		if (!t.lifelines.has(pid) && t.lifelines.size >= LIFELINES_MAX) return
 		t.lifelines.set(pid, (t.lifelines.get(pid) ?? 0) + 1)
@@ -351,13 +358,23 @@ export class ClaudeHubCore {
 		this.changed()
 	}
 
-	/** Helm's own terminal lifecycle: the dtach session is gone (structured, not inferred). */
+	/**
+	 * Helm's own terminal lifecycle: the dtach session is gone (structured, not inferred). Hooks
+	 * the dying claude sent before its SIGHUP can arrive after this; they are ignored from now on.
+	 */
 	terminalClosed(ref: TerminalRef): void {
+		pushBounded(this.closedTerminals, terminalKey(ref), CLOSED_TERMINALS_MAX)
 		const t = this.terminals.get(terminalKey(ref))
 		if (!t) return
 		this.releaseAll(t)
 		this.terminals.delete(terminalKey(ref))
 		this.changed()
+	}
+
+	/** Helm gave this terminal a fresh environment (spawn): it may report again. */
+	terminalOpened(ref: TerminalRef): void {
+		const index = this.closedTerminals.indexOf(terminalKey(ref))
+		if (index !== -1) this.closedTerminals.splice(index, 1)
 	}
 
 	/** A transcript `[Request interrupted by user…]` marker (structured: Claude wrote it). */
@@ -379,6 +396,7 @@ export class ClaudeHubCore {
 	 * the id waits for it.
 	 */
 	registerDispatcher(ref: TerminalRef, sessionId: string): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		const primary = t.primary
 		if (primary && !primary.ended) {
@@ -598,6 +616,10 @@ export class ClaudeHubCore {
 			this.terminals.set(key, t)
 		}
 		return t
+	}
+
+	private isClosed(ref: TerminalRef): boolean {
+		return this.closedTerminals.includes(terminalKey(ref))
 	}
 
 	private listed(t: TerminalState): boolean {

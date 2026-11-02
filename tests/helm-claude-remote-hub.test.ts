@@ -167,6 +167,40 @@ test('terminal lifecycle: Helm closing the terminal releases its hooks and drops
 	assert.throws(() => core.session(REF), { status: 404 })
 })
 
+test('a closed terminal stays closed: late hooks of its dying claude never bring a session back', () => {
+	const core = started()
+	core.attached(REF, PID)
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'go' }))
+	core.terminalClosed(REF)
+	const sessions = () => (core.stateJson('work') as { claude_sessions: string[] }).claude_sessions
+	// Sent before the SIGHUP, processed after Helm's close.
+	core.event(REF, PID, T0 + 2, ev('PostToolUseFailure', { prompt_id: 'p1', tool_name: 'Bash', tool_input: {} }))
+	core.event(REF, PID, T0 + 3, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'late' }))
+	core.attached(REF, PID)
+	core.degraded(REF, PID, 'user_settings', '/repo/x', T0 + 4)
+	core.registerDispatcher(REF, SID)
+	assert.deepEqual(sessions(), [])
+	const late = hook()
+	assert.equal(
+		core.permission(
+			REF,
+			PID,
+			T0 + 5,
+			ev('PermissionRequest', { prompt_id: 'p1', tool_name: 'Bash', tool_input: {} }),
+			late,
+		),
+		null,
+	)
+	assert.deepEqual(late.outputs, [{}], 'left to the terminal at once')
+	core.detached(REF, PID)
+	assert.deepEqual(sessions(), [])
+	assert.throws(() => core.session(REF), { status: 404 })
+	// Helm spawning that terminal again (fresh environment) lets it report again.
+	core.terminalOpened(REF)
+	core.event(REF, 300, T0 + 6, ev('SessionStart', { session_id: 'sess-new', source: 'startup' }))
+	assert.deepEqual(sessions(), ['term1'])
+})
+
 test('degraded (user --settings): listed, not connected, state unknown; a SessionStart clears it', () => {
 	const core = new ClaudeHubCore({ prefix: 'cc33' })
 	core.degraded(REF, 300, 'user_settings', '/repo/x', T0)
