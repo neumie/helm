@@ -78,6 +78,12 @@ type Story = StoryObj<typeof AgentDockFixtureView>
 /** The 28px queue row, no pane: two asks (one past 2h, one past 30m), an unchecked turn, the Agents entry. */
 export const Queue: Story = { args: { scenario: 'busy' } }
 
+/** Claude in Helm terminals beside Okena: the same row; the health tooltip reads "Okena · Helm terminals". */
+export const HelmTerminals: Story = { args: { scenario: 'helm-terminals' } }
+
+/** A plan from a Helm terminal: Approve also switches the agent to accept edits (said in its description). */
+export const HelmPlanOpen: Story = { args: { scenario: 'helm-terminals', open: 'plan' } }
+
 /** Five items: plan approval and a second turn join, still one row. */
 export const FiveItems: Story = { args: { scenario: 'crowded' } }
 

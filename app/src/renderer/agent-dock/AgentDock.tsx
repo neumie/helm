@@ -27,6 +27,7 @@ import {
 	type AgentWho,
 	type TextWidth,
 	agentWho,
+	anySourceOk,
 	canAnswer,
 	cardGist,
 	cardKindLabel,
@@ -36,6 +37,7 @@ import {
 	formatAge,
 	formatClock,
 	itemAgeTone,
+	itemSourceHealth,
 	itemWaitingSince,
 	keepOrder,
 	kindGlyph,
@@ -49,6 +51,7 @@ import {
 	receiptView,
 	sessionSince,
 	sessionStatusText,
+	snapshotSources,
 	sourceBlockedNote,
 	sourceNames,
 	unknownAgentsText,
@@ -584,7 +587,8 @@ function Queue({
 		</span>
 	)
 	const source = snapshot?.source
-	if (!snapshot || source?.state === 'pending')
+	// Only while no source has answered yet: one source connecting never hides another's entries.
+	if (!snapshot || (source?.state === 'pending' && !anySourceOk(snapshot)))
 		return (
 			<div className="agent-dock-rail-note">
 				<span>Connecting to {sourceNames(snapshot, 'pending')}…</span>
@@ -630,11 +634,13 @@ function Queue({
 			<ul ref={setList} className="agent-dock-queue" aria-label={`Needs you, ${needs.length}`}>
 				{needs.length === 0 ? (
 					<li className="agent-dock-queue-empty">
-						{source?.state !== 'ok'
-							? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
-							: unknown > 0
-								? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
-								: 'Nothing needs you'}
+						{source?.state === 'pending'
+							? `Waiting for ${sourceNames(snapshot, 'pending')}`
+							: source?.state !== 'ok'
+								? `${sourceNames(snapshot, 'down')} ${sourceNames(snapshot, 'down') === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
+								: unknown > 0
+									? `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
+									: 'Nothing needs you'}
 					</li>
 				) : (
 					layout.slots.map(({ index, width, name }) => {
@@ -874,26 +880,29 @@ function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
 
 /**
  * Polite words for items that newly need Jakub (the queue never opens a pane by itself, so the row
- * changing is the only other signal). Only arrivals: never ticking ages or working counts. The
- * first reachable snapshot is the baseline, and arrivals within ANNOUNCE_COALESCE_MS are one line.
+ * changing is the only other signal). Only arrivals: never ticking ages or working counts. Per
+ * source: its first reachable snapshot is its baseline, its items count only while it is reachable
+ * (one source down never mutes another), and arrivals within ANNOUNCE_COALESCE_MS are one line.
  */
 function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): string {
-	const seen = useRef<Set<number> | null>(null)
+	const seen = useRef(new Set<number>())
+	const baselined = useRef(new Set<string>())
 	const queued = useRef<DockItem[]>([])
 	const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const latest = useRef(snapshot)
 	latest.current = snapshot
 	const [text, setText] = useState('')
 	useEffect(() => {
-		if (!snapshot || snapshot.source.state !== 'ok') return
-		const needs = needsYouItems(snapshot)
-		if (seen.current === null) {
-			seen.current = new Set(needs.map(item => item.id))
-			return
-		}
+		if (!snapshot) return
 		const known = seen.current
-		const fresh = needs.filter(item => !known.has(item.id))
-		for (const item of fresh) known.add(item.id)
+		const sourceOf = (item: DockItem) => findSession(snapshot, item.session)?.source ?? 'okena'
+		const fresh: DockItem[] = []
+		for (const item of needsYouItems(snapshot)) {
+			if (known.has(item.id) || itemSourceHealth(item, snapshot)?.state !== 'ok') continue
+			known.add(item.id)
+			if (baselined.current.has(sourceOf(item))) fresh.push(item)
+		}
+		for (const [id, health] of snapshotSources(snapshot)) if (health.state === 'ok') baselined.current.add(id)
 		if (fresh.length === 0) return
 		queued.current.push(...fresh)
 		if (timer.current !== null) return

@@ -1365,7 +1365,7 @@ function PlanPanel(panel: PanelProps & { session: DockSession | undefined }) {
 					{
 						id: 'approve',
 						label: 'Approve the plan',
-						...(mode ? { description: `then ${mode}` } : {}),
+						...(mode ? { description: 'and switch to accept edits' } : {}),
 						submit: 'Approve',
 						ready: 'Ready to approve',
 						action: { type: 'allow' },

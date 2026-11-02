@@ -15,6 +15,7 @@ import {
 	type DockActOutcome,
 	type DockAction,
 	type DockItem,
+	type DockSourceId,
 } from '../../agent-dock/model'
 import { type AgentDockState, agentDockSnapshot, createAgentDockState, reduce } from '../../agent-dock/reduce'
 import type { AgentDockApi } from '../../shared'
@@ -42,6 +43,11 @@ export type AgentDockScenario =
 	| 'receipt-answered'
 	| 'receipt-refused'
 	| 'receipt-failed'
+	/**
+	 * The crowded day running in Helm's own terminals (source `helm`) beside a reachable, empty Okena:
+	 * the health names both sources, and the plan's Approve says it also switches to accept edits.
+	 */
+	| 'helm-terminals'
 
 type Json = Record<string, unknown>
 
@@ -573,7 +579,12 @@ interface ScenarioRun {
 	version: number
 	/** Answers this run sent from the dock, as the dock would remember them (receipt stories). */
 	sent?: Map<number, DockAction>
+	/** Source the run's panes belong to (default Okena); follow-up polls carry it. */
+	source?: DockSourceId
 }
+
+const fromSource = (scenario: ScenarioRun, observation: AgentDockObservation): AgentDockObservation =>
+	scenario.source && observation.type === 'poll' ? { ...observation, source: scenario.source } : observation
 
 const bare = (live: Live): Live => live.map(({ pane, body }) => ({ pane, body }))
 
@@ -619,6 +630,16 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	if (name === 'crowded') {
 		const crowded = busyTimeline(now, true)
 		return { state: run(crowded.steps, start), live: bare(crowded.live), version: crowded.version }
+	}
+	if (name === 'helm-terminals') {
+		const crowded = busyTimeline(now, true)
+		const steps: Array<[number, AgentDockObservation]> = crowded.steps.map(([at, observation]) => [
+			at,
+			{ ...observation, source: 'helm' } as AgentDockObservation,
+		])
+		// Okena answers too (nothing of its own open), so the row's health names both sources.
+		steps.push([now - 1_000, { ...poll(1, []), profile: 'okena-storybook', source: 'okena' }])
+		return { state: run(steps, start), live: bare(crowded.live), version: crowded.version, source: 'helm' }
 	}
 	const busy = busyTimeline(now)
 	if (name === 'busy') return { state: run(busy.steps, start), live: bare(busy.live), version: busy.version }
@@ -684,13 +705,13 @@ function landedPoll(scenario: ScenarioRun, item: DockItem): AgentDockObservation
 		}
 	})
 	scenario.live = bare(live)
-	return poll(scenario.version, live)
+	return fromSource(scenario, poll(scenario.version, live))
 }
 
 /** A poll that shows nothing new (the answer has not landed). */
 function samePoll(scenario: ScenarioRun): AgentDockObservation {
 	scenario.version += 1
-	return poll(scenario.version, scenario.live)
+	return fromSource(scenario, poll(scenario.version, scenario.live))
 }
 
 const actionKind = (action: DockAction) => ({

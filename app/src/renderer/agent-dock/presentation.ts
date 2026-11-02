@@ -219,7 +219,8 @@ export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm
 const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
 
 /** Sources in the snapshot with their health; an older snapshot without `sources` is Okena alone. */
-function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
+/** Each source's own health in display order (an old single-source snapshot reads as Okena). */
+export function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
 	const sources = snapshot.sources
 	if (!sources || Object.keys(sources).length === 0) return [['okena', snapshot.source]]
 	return SOURCE_ORDER.flatMap(id => {
@@ -247,6 +248,11 @@ export function noSessionText(snapshot: AgentDockSnapshot | null): string {
 }
 
 /** The health of the source that observes this item's session (answering is gated on it). */
+/** True once at least one source has answered: the queue can show what it knows while another source connects. */
+export function anySourceOk(snapshot: AgentDockSnapshot | null): boolean {
+	return snapshot !== null && snapshotSources(snapshot).some(([, health]) => health.state === 'ok')
+}
+
 export function itemSourceHealth(item: DockItem, snapshot: AgentDockSnapshot | null): AgentDockSourceHealth | null {
 	if (!snapshot) return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
