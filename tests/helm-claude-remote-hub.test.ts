@@ -22,7 +22,7 @@ type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type TerminalRef = import('../app/src/claude-remote/hub-core.ts').TerminalRef
 
 const { ClaudeHubCore, DIALOG_TRUNCATION_MARK, TYPING_GUARD_MS } = coreModule as CoreModule
-const { HelmClaudeHub, interruptMarkerAt, promptChunks, sanitizePrompt } = hubModule as HubModule
+const { BRANCH_TTL_MS, HelmClaudeHub, interruptMarkerAt, promptChunks, sanitizePrompt } = hubModule as HubModule
 const { claudeHubTokens, claudeRemoteTerminalEnvironment } = tokenModule as TokenModule
 const { OkenaClaudeSource } = sourceModule as SourceModule
 const { TURN_IDLE_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
@@ -74,6 +74,20 @@ test('views parse with the dock’s own Okena schemas', () => {
 		[['helm', '/repo/helm']],
 	)
 	assert.deepEqual((core.stateJson('other') as { claude_sessions: string[] }).claude_sessions, [])
+})
+
+test('state view: each cwd project carries its git branch when one is known (the dock’s short agent names)', () => {
+	const core = started()
+	const branches: Record<string, string> = { '/repo/helm': 'fix/agent-dock-divider' }
+	const state = core.stateJson('work', cwd => branches[cwd]) as {
+		projects: Array<{ path: string; git_status?: { branch: string } }>
+	}
+	assert.deepEqual(state.projects[0]?.git_status, { branch: 'fix/agent-dock-divider' })
+	assert.ok(parseOkenaState(state).ok)
+	assert.deepEqual(core.projectCwds('work'), ['/repo/helm'])
+	assert.deepEqual(core.projectCwds('other'), [])
+	const none = core.stateJson('work') as { projects: Array<{ git_status?: unknown }> }
+	assert.equal(none.projects[0]?.git_status, undefined)
 })
 
 test('only the primary (pid, session) counts; another process in the terminal is fenced off', () => {
@@ -750,7 +764,7 @@ function send(socket: string, line: Record<string, unknown>, waitReply = false):
 	})
 }
 
-async function hubFixture() {
+async function hubFixture(extra: { readBranch?: (path: string) => Promise<string | null> } = {}) {
 	const dir = mkdtempSync('/tmp/hcr-hub-')
 	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
 	const delivered: Array<{ ref: TerminalRef; chunks: string[] }> = []
@@ -770,6 +784,7 @@ async function hubFixture() {
 		transcriptRoots: [transcripts],
 		now: () => now,
 		log: () => {},
+		...extra,
 	})
 	assert.equal(await hub.start(), true)
 	const token = tokens.mint(REF)
@@ -843,7 +858,7 @@ test('socket: a bad token is answered {} (permission) or ignored (event); the ow
 test('end to end: AskUserQuestion → dock ask item → act answer reaches the waiting hook; Stop → turn → reply typed', async () => {
 	const f = await hubFixture()
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
@@ -916,7 +931,7 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			text: 'again',
 		})
 		assert.equal(again.status, 'failed')
-		assert.match(again.status === 'failed' ? again.detail : '', /^Helm refused the reply \(409\)/)
+		assert.match(again.status === 'failed' ? again.detail : '', /^Helm terminals refused the reply \(409\)/)
 
 		// claude killed (-9) in the terminal: its lifeline closes, nothing is typed into the shell left behind.
 		await f.event(ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'thanks' }))
@@ -927,6 +942,47 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			status: 404,
 		})
 		assert.deepEqual(f.delivered, [])
+	} finally {
+		f.cleanup()
+	}
+})
+
+test('hub: a Helm-terminal session gets its cwd’s branch (read once per BRANCH_TTL_MS, failures read as none)', async () => {
+	const reads: string[] = []
+	let branch: string | null = 'feat/helm-terminal-claude'
+	const f = await hubFixture({
+		readBranch: async path => {
+			reads.push(path)
+			if (branch === 'boom') throw new Error('git failed')
+			return branch
+		},
+	})
+	try {
+		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		let state = createAgentDockState(null, T0)
+		const tick = async (at: number) => {
+			f.setNow(at)
+			const observation = await source.observe(state, at)
+			state = reduce(state, { ...observation, source: 'helm' }, at).state
+		}
+		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
+		await tick(T0 + 1000)
+		assert.equal(state.sessions['helm:work:term1']?.session.branch, 'feat/helm-terminal-claude')
+		// An unnamed terminal still lands in its cwd project (found through the hub's flat layout).
+		assert.equal(state.sessions['helm:work:term1']?.session.project, 'helm')
+		assert.equal(state.sessions['helm:work:term1']?.session.name, 'feat/helm-terminal-claude')
+		branch = 'main'
+		await tick(T0 + 2000)
+		assert.equal(
+			state.sessions['helm:work:term1']?.session.branch,
+			'feat/helm-terminal-claude',
+			'cached within the TTL',
+		)
+		assert.deepEqual(reads, ['/repo/helm'])
+		branch = 'boom'
+		await tick(T0 + 1000 + BRANCH_TTL_MS)
+		assert.equal(state.sessions['helm:work:term1']?.session.branch, undefined)
+		assert.deepEqual(reads, ['/repo/helm', '/repo/helm'])
 	} finally {
 		f.cleanup()
 	}

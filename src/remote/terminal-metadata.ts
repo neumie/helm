@@ -100,7 +100,7 @@ function containsTerminal(layout: unknown, terminalId: string): boolean {
 	return found
 }
 
-type BranchReader = (path: string) => Promise<string | null>
+export type BranchReader = (path: string) => Promise<string | null>
 
 function isolatedGitEnvironment(): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {}
@@ -117,7 +117,8 @@ function isolatedGitEnvironment(): NodeJS.ProcessEnv {
 	return env
 }
 
-async function readGitBranch(path: string): Promise<string | null> {
+/** The checked-out branch of the git work tree at `path` (an absolute, canonical, user-owned directory), else null. */
+export async function readGitBranch(path: string): Promise<string | null> {
 	if (!isAbsolute(path) || path.length > 4096) return null
 	try {
 		const directory = await lstat(path)

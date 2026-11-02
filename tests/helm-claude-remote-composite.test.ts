@@ -81,7 +81,7 @@ async function harness() {
 		{ id: 'okena', source: okena },
 		{
 			id: 'helm',
-			source: new OkenaClaudeSource(hub, { name: 'Helm', notRunning: "Helm's Claude hub is not listening" }),
+			source: new OkenaClaudeSource(hub, { name: 'Helm terminals', notRunning: "Helm's Claude hub is not listening" }),
 		},
 	])
 	const watcher = new AgentDockWatcher({

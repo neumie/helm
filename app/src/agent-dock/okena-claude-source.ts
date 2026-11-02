@@ -116,7 +116,7 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 
 /** How a source names itself in refusals and errors (the Helm hub reuses this class). */
 export interface OkenaClaudeSourceLabels {
-	/** "Okena" / "Helm" in act failures. */
+	/** "Okena" / "Helm terminals" in act failures (matches the dock's source wording). */
 	name: string
 	/** Poll error while the client has no active profile. */
 	notRunning: string

@@ -21,6 +21,7 @@ import { z } from 'zod'
 import { CLAUDE_HUB_MAX_LINE_BYTES, helmDockProfile, helmDockProfileId } from '../../../src/agent-dock/claude-hub-wire'
 import { ensurePrivateDir, writePrivateFileAtomic } from '../../../src/agent-dock/spool'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
+import { type BranchReader, readGitBranch } from '../../../src/remote/terminal-metadata'
 import type { OkenaClaudeDecision } from '../agent-dock/act'
 import type { OkenaClaudeClient } from '../agent-dock/okena-claude-source'
 import { CANCELLED_OUTPUT } from './decision'
@@ -38,6 +39,10 @@ const INTERRUPT_MARKER = '[Request interrupted by user'
 const CLOCK_SKEW_MS = 10 * 60 * 1000
 /** A connection must send its request line this soon (long-polls and lifelines then wait without one). */
 export const FIRST_LINE_TIMEOUT_MS = 5_000
+/** How long a session cwd's git branch is reused before the hub reads it again. */
+export const BRANCH_TTL_MS = 10_000
+/** Branch reads one state view may start (more cwds keep their last value until a later view). */
+const BRANCH_READS_PER_VIEW = 16
 /** Hook long-polls + one lifeline per running claude + reads. */
 const MAX_CONNECTIONS = 1024
 
@@ -61,6 +66,8 @@ export interface HelmClaudeHubOptions {
 	log?: (message: string) => void
 	/** Default FIRST_LINE_TIMEOUT_MS (tests shorten it). */
 	firstLineTimeoutMs?: number
+	/** Reads a session cwd's git branch (default `git branch --show-current`, user-owned dirs only). */
+	readBranch?: BranchReader
 }
 
 const requestSchema = z.discriminatedUnion('t', [
@@ -130,6 +137,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private readonly sockets = new Set<Socket>()
 	private readonly now: () => number
 	private readonly roots: string[]
+	/** Session cwd -> its branch as last read (null: none / not a work tree) and when. */
+	private readonly branches = new Map<string, { branch: string | null; at: number }>()
 
 	constructor(private readonly options: HelmClaudeHubOptions) {
 		this.now = options.now ?? Date.now
@@ -255,7 +264,28 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private async stateJson(profileId: string): Promise<unknown> {
 		if (!this.listening) throw errorWithStatus(503, 'not listening')
 		await this.scanTranscripts()
-		return this.core.stateJson(profileId)
+		await this.refreshBranches(this.core.projectCwds(profileId))
+		return this.core.stateJson(profileId, cwd => this.branches.get(cwd)?.branch ?? undefined)
+	}
+
+	/** Re-reads stale cwd branches (bounded per view) and forgets cwds no session uses any more. */
+	private async refreshBranches(cwds: string[]): Promise<void> {
+		const live = new Set(cwds)
+		for (const cwd of this.branches.keys()) if (!live.has(cwd)) this.branches.delete(cwd)
+		const now = this.now()
+		const stale = cwds
+			.filter(cwd => {
+				const known = this.branches.get(cwd)
+				return !known || now - known.at >= BRANCH_TTL_MS
+			})
+			.slice(0, BRANCH_READS_PER_VIEW)
+		const read = this.options.readBranch ?? readGitBranch
+		await Promise.all(
+			stale.map(async cwd => {
+				const branch = await read(cwd).catch(() => null)
+				this.branches.set(cwd, { branch, at: now })
+			}),
+		)
 	}
 
 	private call<T>(run: () => T): T {

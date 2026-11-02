@@ -460,12 +460,32 @@ export class ClaudeHubCore {
 		return out
 	}
 
-	stateJson(profileId: string): Record<string, unknown> {
+	/** Working directories of the sessions `stateJson(profileId)` lists (the hub reads their git branches). */
+	projectCwds(profileId: string): string[] {
+		const cwds = new Set<string>()
+		for (const t of this.terminals.values()) {
+			if (t.ref.profileId !== profileId || !this.listed(t)) continue
+			const cwd = t.primary?.cwd ?? t.degraded?.cwd
+			if (cwd) cwds.add(cwd)
+		}
+		return [...cwds]
+	}
+
+	/** Okena's state view; `branchOf` fills each cwd project's `git_status.branch` (the dock's short agent names). */
+	stateJson(profileId: string, branchOf?: (cwd: string) => string | undefined): Record<string, unknown> {
 		const sessions: string[] = []
 		const dialogs: Record<string, number> = {}
 		const projects = new Map<
 			string,
-			{ id: string; name: string; path?: string; terminal_names: Record<string, string> }
+			{
+				id: string
+				name: string
+				path?: string
+				terminal_names: Record<string, string>
+				/** Flat pane list in Okena's layout shape: the dock finds a terminal's project by it (named or not). */
+				layout: { type: 'tabs'; children: Array<{ type: 'terminal'; terminal_id: string }> }
+				git_status?: { branch: string }
+			}
 		>()
 		for (const t of this.terminals.values()) {
 			if (t.ref.profileId !== profileId || !this.listed(t)) continue
@@ -474,12 +494,16 @@ export class ClaudeHubCore {
 			if (t.dialogs.length > 0) dialogs[id] = t.dialogs.length
 			const cwd = t.primary?.cwd ?? t.degraded?.cwd
 			const projectId = cwd ? `cwd:${cwd}` : 'helm'
+			const branch = cwd ? branchOf?.(cwd) : undefined
 			const project = projects.get(projectId) ?? {
 				id: projectId,
 				name: cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : 'Helm',
 				...(cwd ? { path: cwd } : {}),
 				terminal_names: {},
+				layout: { type: 'tabs', children: [] },
+				...(branch ? { git_status: { branch } } : {}),
 			}
+			project.layout.children.push({ type: 'terminal', terminal_id: id })
 			const name = this.options.terminalName?.(t.ref)
 			if (name) project.terminal_names[id] = name
 			projects.set(projectId, project)
