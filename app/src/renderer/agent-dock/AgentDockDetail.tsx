@@ -24,6 +24,7 @@ import {
 import type { AgentDockSnapshot, DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX, REVIEW_PLAN_MAX, planReview } from '../../agent-dock/review'
 import { Btn, type ButtonTone } from '../button'
+import { isCalmLook, useDockLook } from './look'
 import {
 	type AgentWho,
 	type AskQuestion,
@@ -162,11 +163,19 @@ function ItemHeader({
 	onStep(delta: number): void
 	onClose(): void
 }) {
+	const look = useDockLook()
 	const time = itemTimeLine(item, now)
 	const kind = cardKindLabel(item)
+	// two-bands: the queue's selected fill says whose; the header says only what (kind + question context).
+	const bands = look === 'two-bands'
 	return (
 		<Header
-			title={[who.title || who.name, `${kind} #${item.id} · ${time.stamp}`].join('\n')}
+			title={(isCalmLook(look)
+				? [who.title || who.name, who.project, `${kind} #${item.id} · ${time.stamp} · ${time.waited}`]
+				: [who.title || who.name, `${kind} #${item.id} · ${time.stamp}`]
+			)
+				.filter(Boolean)
+				.join('\n')}
 			end={
 				<>
 					<span className="agent-dock-stepper">
@@ -180,9 +189,11 @@ function ItemHeader({
 							‹
 						</button>
 						<span className="agent-dock-step-count" aria-live="polite">
-							<span aria-hidden="true">
-								{index + 1}/{total}
-							</span>
+							{bands ? null : (
+								<span aria-hidden="true">
+									{index + 1}/{total}
+								</span>
+							)}
 							<span className="sr-only">
 								Item {index + 1} of {total}
 							</span>
@@ -201,17 +212,52 @@ function ItemHeader({
 				</>
 			}
 		>
-			<span className="agent-dock-title-kind">
-				<Glyph item={item} tone={cardTone(item)} />
-				{kind}
-			</span>
-			{/* A long name ellipsizes before the age would; the project gives way first. */}
-			<span className="agent-dock-title-name">{who.name}</span>
-			{who.project ? <span className="agent-dock-title-project">{who.project}</span> : null}
-			{/* Dim always: the entry's age carries the aging tone, once (design §3.24 Aging). */}
-			<span className="agent-dock-title-age">{time.waited}</span>
+			{look === 'current' ? (
+				<>
+					<span className="agent-dock-title-kind">
+						<Glyph item={item} tone={cardTone(item)} />
+						{kind}
+					</span>
+					{/* A long name ellipsizes before the age would; the project gives way first. */}
+					<span className="agent-dock-title-name">{who.name}</span>
+					{who.project ? <span className="agent-dock-title-project">{who.project}</span> : null}
+					{/* Dim always: the entry's age carries the aging tone, once (design §3.24 Aging). */}
+					<span className="agent-dock-title-age">{time.waited}</span>
+				</>
+			) : bands ? (
+				<>
+					<span className="agent-dock-title-kind">
+						<Glyph item={item} tone={cardTone(item)} />
+						{kind}
+					</span>
+					{headerContext(item) ? <span className="agent-dock-title-project">{headerContext(item)}</span> : null}
+				</>
+			) : (
+				<>
+					{/* The kind is the glyph's tone (and the pane's name for assistive tech); project and task title are the tooltip's. */}
+					<span className="agent-dock-title-kind">
+						<Glyph item={item} tone={cardTone(item)} />
+						<span className="sr-only">{kind}</span>
+					</span>
+					<span className="agent-dock-title-name">{who.name}</span>
+					{look === 'focus' ? (
+						<span className="agent-dock-title-sep" aria-hidden="true">
+							·
+						</span>
+					) : null}
+					<span className="agent-dock-title-age">{time.waited}</span>
+				</>
+			)}
 		</Header>
 	)
+}
+
+/** two-bands header context after the kind: a single question's short header, or how many questions. */
+function headerContext(item: DockItem): string | null {
+	if (item.fact.kind !== 'ask' || item.fact.tool !== 'AskUserQuestion') return null
+	const questions = askQuestions(item.fact.input) ?? []
+	if (questions.length > 1) return `${questions.length} questions`
+	return questions[0]?.header ? plainAgentLine(questions[0].header, 64) : null
 }
 
 function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children: ReactNode }) {
@@ -469,6 +515,7 @@ function Choices({
 	onPick(id: string): void
 	onPoint?(id: string): void
 }) {
+	const calm = isCalmLook(useDockLook())
 	const [current, setCurrent] = useState<string | null>(null)
 	const stop =
 		(current !== null && rows.some(row => row.id === current) ? current : null) ??
@@ -511,6 +558,8 @@ function Choices({
 						role={multi ? 'checkbox' : 'radio'}
 						data-tone={row.tone}
 						aria-checked={on}
+						// Calm looks keep the description to one line: the whole of it is the row's tooltip.
+						title={calm && typeof row.description === 'string' ? row.description : undefined}
 						tabIndex={row.id === stop ? 0 : -1}
 						disabled={!live}
 						onClick={() => onPick(row.id)}
@@ -520,8 +569,9 @@ function Choices({
 							onPoint?.(row.id)
 						}}
 					>
-						<span className="agent-dock-choice-cursor" aria-hidden="true">
-							{multi ? (on ? '[x]' : '[ ]') : on ? '>' : ''}
+						{/* Calm looks draw the mark (a dot, or a box for several) instead of `>` / `[x]`. */}
+						<span className="agent-dock-choice-cursor" data-on={String(on)} aria-hidden="true">
+							{calm ? '' : multi ? (on ? '[x]' : '[ ]') : on ? '>' : ''}
 						</span>
 						<span className="agent-dock-choice-n">{at + 1}</span>{' '}
 						<span className="agent-dock-choice-label">{row.label}</span>
@@ -583,6 +633,7 @@ export function ItemDetail({
 	onAck(): void
 	onAct(action: DockAction): void
 }) {
+	const look = useDockLook()
 	const orphaned = item.state === 'orphaned'
 	const resolved = item.state === 'resolved'
 	const ackable =
@@ -604,7 +655,7 @@ export function ItemDetail({
 	const warnings = (
 		<>
 			{/* The full task title (Okena's pane name) the short name stands for: dim context, never the queue. */}
-			{who.title ? <p className="agent-dock-context">{who.title}</p> : null}
+			{who.title && look === 'current' ? <p className="agent-dock-context">{who.title}</p> : null}
 			{refused ? <Warn>Not acked: the item changed. Check it again.</Warn> : null}
 			{orphaned ? (
 				<Warn>Okena restarted while this was open. The agent may still be waiting in its terminal.</Warn>
@@ -722,6 +773,7 @@ function AskPanel({
 	submitting,
 	onAct,
 }: PanelProps) {
+	const look = useDockLook()
 	const questions = item.fact.kind === 'ask' ? (askQuestions(item.fact.input) ?? []) : []
 	const draftKey = `ask:${item.id}`
 	// Picks and Other text survive ‹ ›, closing the pane and collapsing the queue, like reply/deny drafts.
@@ -932,7 +984,8 @@ function AskPanel({
 				) : null}
 				<p className="agent-dock-question" id={questionId}>
 					{/* A single question's short header (`IČO`) leads its line, dim, rather than a line of its own. */}
-					{questions.length === 1 && question.header ? (
+					{/* two-bands names it in the pane header instead. */}
+					{questions.length === 1 && question.header && look !== 'two-bands' ? (
 						<span className="agent-dock-question-header">{question.header} · </span>
 					) : null}
 					{question.question}

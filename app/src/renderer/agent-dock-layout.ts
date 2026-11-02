@@ -5,6 +5,7 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent
 import type { AgentDockApi } from '../shared'
 import { AgentDock } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/AgentDockDetail'
+import type { AgentDockLook } from './agent-dock/look'
 import type { AgentDockPosition } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
@@ -91,6 +92,7 @@ export function mountAgentDock({
 	focusTerminal: focusTerminalOverride,
 	now = Date.now,
 	initialSent,
+	look,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
@@ -102,6 +104,8 @@ export function mountAgentDock({
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
+	/** Review stories only: a calmer look to compare (agent-dock/look.ts); omitted renders the shipped dock. */
+	look?: AgentDockLook
 }): MountedAgentDock {
 	const ownerDocument = root instanceof Document ? root : root.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -197,6 +201,7 @@ export function mountAgentDock({
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
 			initialSent,
+			look,
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))

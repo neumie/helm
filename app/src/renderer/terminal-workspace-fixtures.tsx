@@ -22,6 +22,7 @@ import {
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
+import type { AgentDockLook } from './agent-dock/look'
 import type { AgentDockPosition } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
@@ -56,6 +57,8 @@ export interface TerminalWorkspaceFixtureOptions {
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
+		/** Review only: a calmer dock look to compare (Views / Agent dock calm). */
+		look?: AgentDockLook
 	}
 }
 
@@ -584,7 +587,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', expanded, position, open } = options.agentDock
+			const { scenario = 'busy', expanded, position, open, look } = options.agentDock
 			const writePreference = (key: string, value: string | undefined) => {
 				if (value === undefined) return
 				try {
@@ -607,6 +610,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
+					look,
 				})
 			})
 		}

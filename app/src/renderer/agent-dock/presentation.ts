@@ -649,8 +649,18 @@ export function shortenName(name: string, max: number): string {
  * Width of one entry: its name line (glyph, a space, the name up to `nameMax` cells) or its second
  * line (indent, kind · wait), whichever is longer, plus padding; at least QUEUE_ENTRY_MIN.
  */
-export const entryWidth = (nameChars: number, ch: number, metaChars = 0, nameMax = QUEUE_NAME_MAX): number =>
-	Math.max(QUEUE_ENTRY_MIN, Math.ceil(Math.max(Math.min(nameChars, nameMax) + 2, metaChars + 2) * ch) + QUEUE_ENTRY_PAD)
+export const entryWidth = (
+	nameChars: number,
+	ch: number,
+	metaChars = 0,
+	nameMax = QUEUE_NAME_MAX,
+	/** Cells after the name on its own line (a one-line entry's ` 52m`), outside the name's cap. */
+	tailChars = 0,
+): number =>
+	Math.max(
+		QUEUE_ENTRY_MIN,
+		Math.ceil(Math.max(Math.min(nameChars, nameMax) + 2 + tailChars, metaChars + 2) * ch) + QUEUE_ENTRY_PAD,
+	)
 
 /** Cells of name an entry `width` px wide has room for (after padding, glyph and its space). */
 export const entryNameRoom = (width: number, ch: number): number =>
@@ -683,6 +693,8 @@ export interface QueueEntryCells {
 	metaChars: number
 	/** Cells of the second line as it reads now (the real wait): the least a squeezed entry keeps. */
 	metaNow?: number
+	/** Cells after the name on the name's own line (one-line entries); never shortened. */
+	tailChars?: number
 }
 
 /**
@@ -694,7 +706,8 @@ export interface QueueEntryCells {
  */
 export function queueLayout(entries: readonly QueueEntryCells[], ch: number, room: number, open = -1): QueueLayout {
 	const all = entries.map((_, index) => index)
-	const widthsAt = (cap: number) => entries.map(entry => entryWidth(entry.nameChars, ch, entry.metaChars, cap))
+	const widthsAt = (cap: number) =>
+		entries.map(entry => entryWidth(entry.nameChars, ch, entry.metaChars, cap, entry.tailChars))
 	const span = (widths: readonly number[]) =>
 		widths.reduce((sum, width) => sum + width, 0) + QUEUE_GAP * Math.max(0, widths.length - 1)
 	const row = (widths: readonly number[]): QueueLayout => ({

@@ -2565,3 +2565,224 @@ body.dragging {
 		animation: none;
 	}
 }
+
+/* ---------- review looks (agent-dock/look.ts; Storybook only, production renders none) ---------- */
+
+/* Calm type (one-typeface, two-bands, focus): one face, the UI's, everywhere in the dock; mono only for
+ * literal commands and code (permission command, Always-allow rule, plan, previews). 12/18 for the
+ * strip, queue and meta; 13/20 for what is read (names in the pane header, question, option labels). */
+.agent-dock-host[data-look] {
+	font-family: var(--dock-sans);
+	letter-spacing: -0.01em;
+}
+
+.agent-dock-host[data-look] :is(.agent-dock-command, .agent-dock-plan, .agent-dock-preview-text) {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: normal;
+}
+
+/* Words that were mono only to match the terminal: the tool's name in the lead, PR numbers, marks, keys. */
+.agent-dock-host[data-look] :is(.agent-dock-pane-lead .agent-dock-mono, .agent-dock-fact-pr, .agent-dock-warn-mark) {
+	font-family: inherit;
+	font-size: inherit;
+	letter-spacing: inherit;
+}
+
+.agent-dock-host[data-look] .agent-dock-key.btn {
+	font-family: var(--dock-sans);
+	letter-spacing: -0.01em;
+}
+
+/* Menlo's ↵ sat low; the UI face's does not. */
+.agent-dock-host[data-look] .agent-dock-glyph[data-glyph="return"] {
+	top: 0;
+}
+
+/* Glyphs differ in width in the UI face (↵ is wide): one 12px box, and the meta line indents past it. */
+.agent-dock-host[data-look] .agent-dock-glyph {
+	width: 12px;
+}
+
+.agent-dock-host[data-look] .agent-dock-entry-meta {
+	padding-left: 16px;
+}
+
+/* Header: glyph, name (13, bright), dim age; nothing else (project and task title are the tooltip's). */
+.agent-dock-host[data-look] .agent-dock-title-text {
+	gap: 8px;
+}
+
+.agent-dock-host[data-look] .agent-dock-title-name {
+	font-size: var(--dock-prose-fs);
+}
+
+.agent-dock-title-sep {
+	flex: none;
+	color: var(--dock-dim);
+}
+
+/* two-bands: kind (13) and its context dim; ‹ › without a count (the queue's selected fill places it). */
+.agent-dock-host[data-look="two-bands"] .agent-dock-title-kind {
+	font-size: var(--dock-prose-fs);
+	color: var(--text-0);
+}
+
+.agent-dock-host[data-look="two-bands"] .agent-dock-step-count {
+	min-width: 4px;
+}
+
+/* Choices: drawn mark | label | dim description on one line | number (a key hint, only while the
+ * pane holds the keys). 28px rows. */
+.agent-dock-host[data-look] .agent-dock-choices,
+.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] {
+	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
+}
+
+.agent-dock-host[data-look] .agent-dock-choice {
+	min-height: 28px;
+}
+
+/* The number sits after the description in the grid but first in the DOM: keep every cell on the row's one line. */
+.agent-dock-host[data-look] .agent-dock-choice > * {
+	grid-row: 1;
+}
+
+/* `question · 52m` in the UI face: a space-width gap, not a mono cell. */
+.agent-dock-host[data-look] .agent-dock-entry-line {
+	gap: 4px;
+}
+
+.agent-dock-host[data-look] .agent-dock-choice-cursor,
+.agent-dock-host[data-look]
+	.agent-dock-choices[data-multi="true"]
+	.agent-dock-choice[aria-checked="true"]
+	.agent-dock-choice-cursor {
+	grid-column: 2;
+	align-self: center;
+	justify-self: start;
+	box-sizing: border-box;
+	width: 6px;
+	height: 6px;
+	margin-left: 1px;
+	border-radius: 999px;
+}
+
+.agent-dock-host[data-look] .agent-dock-choice-cursor[data-on="true"] {
+	background: var(--accent);
+}
+
+.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor {
+	width: 10px;
+	height: 10px;
+	margin-left: 0;
+	border: 1px solid var(--dock-dim);
+	border-radius: 3px;
+}
+
+.agent-dock-host[data-look] .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor[data-on="true"] {
+	border-color: var(--accent);
+	background: var(--accent);
+}
+
+.agent-dock-host[data-look] .agent-dock-choice-label {
+	grid-column: 3;
+	padding-right: 12px;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+}
+
+.agent-dock-host[data-look] .agent-dock-choice-description {
+	grid-column: 4;
+	overflow: hidden;
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: -0.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dock-dim);
+}
+
+.agent-dock-host[data-look] .agent-dock-choice[aria-checked="true"] .agent-dock-choice-description {
+	color: var(--text-1);
+}
+
+.agent-dock-host[data-look] .agent-dock-choice-n {
+	grid-column: 5;
+	padding-left: 12px;
+	color: var(--dock-dim);
+	visibility: hidden;
+}
+
+.agent-dock-host[data-look] .agent-dock-pane:focus-within:not(:has(.agent-dock-input:focus)) .agent-dock-choice-n {
+	visibility: visible;
+}
+
+/* Row looks (two-bands, focus): one 28px band — the queue's entries on one line each, then agents, Okena's
+ * dot and ⌘⇧J — that the strip collapses into at the same height (no refit on toggle). */
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail {
+	align-items: center;
+	height: 28px;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-queue {
+	align-items: center;
+	padding: 2px 0 2px 8px;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"])
+	:is(.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry) {
+	height: 24px;
+	padding: 0 8px;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-entry-line {
+	align-items: baseline;
+	gap: 6px;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents {
+	padding: 2px 0;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents::before {
+	display: none;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents-entry {
+	min-width: 0;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail-note {
+	flex-direction: row;
+	align-items: center;
+}
+
+.agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-rail-note-dim {
+	display: none;
+}
+
+.agent-dock-row-toggle {
+	flex: none;
+	margin-right: 8px;
+}
+
+.agent-dock-row-toggle .agent-dock-kbd {
+	margin-left: 0;
+}
+
+.agent-dock-strip-agents {
+	flex: none;
+	color: var(--dock-dim);
+}
+
+/* focus: while a pane is open it is the whole dock (the row keeps its layout, unseen, for focus return). */
+.agent-dock-host[data-look="focus"][data-pane="true"] .agent-dock-rail {
+	height: 0;
+	visibility: hidden;
+}
+
+.agent-dock-host[data-look="focus"] .agent-dock-pane {
+	border: none;
+}
