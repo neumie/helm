@@ -552,20 +552,36 @@ function observeTerminal(
 		}
 	}
 
-	// Asks: one item per Okena dialog; vanished → answered elsewhere, or orphaned across a restart.
+	reconcileAsks(draft, record, key, detail, restarted, ctx.seedTick)
+	maybeOpenTurn(draft, record, key, detail, status)
+}
+/**
+ * Asks: one item per dialog; vanished → answered elsewhere (or Jakub's dock answer
+ * landing), or orphaned across a source restart.
+ */
+function reconcileAsks(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	detail: OkenaClaudeSession,
+	restarted: boolean,
+	seedTick: boolean,
+): void {
+	const { now } = draft
+	const src = draft.src(record.session.source)
 	record.dialogIds = detail.dialogs.map(dialog => dialog.id)
 	const present = new Set<string>()
 	for (const dialog of detail.dialogs) {
 		const itemKey = `ask:${key}:${dialog.id}`
 		present.add(itemKey)
 		if (draft.hasKey(itemKey)) {
-			// Okena removes the dialog before acting on a decision, so an unconfirmed
-			// answer whose dialog is still open well after it was sent never landed:
-			// the agent still waits, so the item owes Jakub again.
 			const item = draft.state.items.find(candidate => candidate.key === itemKey)
 			// Orphaned while its profile was not polled (or across a reconnect), and the source
 			// lists the same dialog again: the agent still waits, so it owes Jakub again.
 			if (item?.state === 'orphaned') draft.reopen(item)
+			// Okena removes the dialog before acting on a decision, so an unconfirmed
+			// answer whose dialog is still open well after it was sent never landed:
+			// the agent still waits, so the item owes Jakub again.
 			else if (
 				item?.state === 'unconfirmed' &&
 				item.receipt?.status === 'unconfirmed' &&
@@ -601,10 +617,10 @@ function observeTerminal(
 					createdAtMs: dialog.created_at_ms,
 				},
 			},
-			ctx.seedTick,
+			seedTick,
 		)
 	}
-	for (const item of live()) {
+	for (const item of draft.liveItems(key)) {
 		if (item.fact.kind !== 'ask' || present.has(item.key) || isInFlight(item)) continue
 		// Okena took Jakub's decision (decide() removes the dialog first): its close is his answer.
 		if (isDispatched(item)) {
@@ -616,8 +632,17 @@ function observeTerminal(
 		if (restarted || (hub !== undefined && okenaDialogPrefix(item.fact.dialogId) !== hub)) draft.orphan(item)
 		else draft.resolve(item, 'outside')
 	}
+}
 
-	// Turns: the transcript's last assistant message, after a stable idle stretch.
+/** Turns: the transcript's last assistant message opens one, after a stable idle stretch. */
+function maybeOpenTurn(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	detail: OkenaClaudeSession,
+	status: DockSessionStatus,
+): void {
+	const { now } = draft
 	const last = record.tail.lastAssistant
 	const tailKnown = detail.has_transcript && record.tail.cursor !== undefined
 	// Silent seed adoption covers only what already existed when Helm first saw the pane
@@ -648,7 +673,8 @@ function observeTerminal(
 	const resumed = record.resumedTurn?.key === itemKey ? record.resumedTurn : undefined
 	if (draft.hasKey(itemKey) && resumed === undefined) return
 	record.resumedTurn = undefined
-	for (const item of live()) if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
+	for (const item of draft.liveItems(key))
+		if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
 	draft.open(
 		{
 			key: itemKey,
