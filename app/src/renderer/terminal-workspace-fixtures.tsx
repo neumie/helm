@@ -22,7 +22,6 @@ import {
 } from './agent-dock/agent-dock-fixtures'
 import type { AgentDockPosition } from './agent-dock/presentation'
 import { mountSidebarLayout } from './sidebar-layout'
-import type { TabNumberReviewOptions } from './tab-numbers'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
 export interface TerminalWorkspaceFixtureOptions {
@@ -34,12 +33,10 @@ export interface TerminalWorkspaceFixtureOptions {
 	expose?: boolean
 	/** Opt-in task-sidebar layout proof; default terminal workloads stay unchanged. */
 	sidebarVisibility?: boolean
-	/** Review-only ⌘1–⌘9 numbering/hint variants, passed straight to the production mount. */
-	tabNumbers?: TabNumberReviewOptions
 	/**
 	 * Browsers keep ⌘1–⌘9 for their own tabs, so a story can let ⌥1–⌥9 / ⌃1–⌃9
-	 * stand in: the relay re-dispatches them (and a lone ⌥ hold) as the ⌘ events
-	 * Helm receives in Electron. Off everywhere else.
+	 * stand in: the relay re-dispatches them as the ⌘ events Helm receives in
+	 * Electron. Off everywhere else.
 	 */
 	relayPrimaryDigits?: boolean
 	/**
@@ -544,11 +541,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		const fixture = createTerminalWorkspaceFixture(options)
 		// Registered before the mount so the stand-in chord never reaches the workspace or xterm.
 		const disposeRelay = options.relayPrimaryDigits ? relayPrimaryDigits() : () => {}
-		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({
-			root,
-			helm: fixture.helm,
-			...(options.tabNumbers ? { tabNumbers: options.tabNumbers } : {}),
-		})
+		const workspace: MountedTerminalWorkspace = mountTerminalWorkspace({ root, helm: fixture.helm })
 		const sidebarLayout = options.sidebarVisibility
 			? mountSidebarLayout({ root, fitActive: () => workspace.fitActive() })
 			: null
@@ -621,30 +614,16 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 
 /** Story-only ⌥/⌃ + digit → ⌘ + digit relay (see `relayPrimaryDigits`). */
 function relayPrimaryDigits(): () => void {
-	const relay = (type: 'keydown' | 'keyup', init: KeyboardEventInit) =>
-		window.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }))
 	const onKeydown = (event: KeyboardEvent) => {
 		if (!event.isTrusted || event.metaKey) return
-		if (event.key === 'Alt' && !event.ctrlKey && !event.shiftKey) {
-			// The real ⌥ must not also reach Helm, or it would cancel the ⌘-hold it stands for.
-			event.stopImmediatePropagation()
-			relay('keydown', { key: 'Meta', code: 'MetaLeft', metaKey: true, repeat: event.repeat })
-			return
-		}
 		if (!/^Digit[1-9]$/.test(event.code) || !(event.altKey || event.ctrlKey) || event.shiftKey) return
 		event.preventDefault()
 		event.stopImmediatePropagation()
-		relay('keydown', { key: event.code.slice(5), code: event.code, metaKey: true, repeat: event.repeat })
-	}
-	const onKeyup = (event: KeyboardEvent) => {
-		if (event.isTrusted && event.key === 'Alt') relay('keyup', { key: 'Meta', code: 'MetaLeft' })
+		const init = { key: event.code.slice(5), code: event.code, metaKey: true, repeat: event.repeat }
+		window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
 	}
 	window.addEventListener('keydown', onKeydown, { capture: true })
-	window.addEventListener('keyup', onKeyup, { capture: true })
-	return () => {
-		window.removeEventListener('keydown', onKeydown, { capture: true })
-		window.removeEventListener('keyup', onKeyup, { capture: true })
-	}
+	return () => window.removeEventListener('keydown', onKeydown, { capture: true })
 }
 
 export function fixtureSessions(): RestoredSession[] {

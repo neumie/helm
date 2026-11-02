@@ -36,14 +36,7 @@ import {
 	tabGroupHeading,
 	tabGroupMembersId,
 } from './tab-groups'
-import {
-	type TabNumberHints,
-	type TabNumberMode,
-	type TabNumberReviewOptions,
-	tabNumberLabels,
-	tabNumberSlot,
-	tabNumberSlots,
-} from './tab-numbers'
+import { tabNumberSlot, tabNumberSlots } from './tab-numbers'
 import { decideTabTitle, isShellDefaultTitle, normalizeTabTitle } from './tab-title'
 import {
 	type TerminalAgentStateTracker,
@@ -85,11 +78,6 @@ export interface TerminalWorkspaceMountOptions {
 	helm: TerminalWorkspaceHelm
 	/** Explicit runtime dependency; production passes the shared appearance owner. */
 	appearance?: typeof productionAppearance
-	/**
-	 * Review-only ⌘1–⌘9 numbering/hint variants (Storybook). Production omits it:
-	 * flat numbering that includes collapsed members, and no number hints.
-	 */
-	tabNumbers?: TabNumberReviewOptions
 }
 
 export interface MountedTerminalWorkspace {
@@ -222,12 +210,6 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	// pane edge (that exact bug shipped once; don't mount into the holder again).
 
 	const tabs: Tab[] = []
-	const tabNumberMode: TabNumberMode = options.tabNumbers?.mode ?? 'all'
-	const tabNumberHints: TabNumberHints = options.tabNumbers?.hints ?? 'none'
-	/** Strip member each group last showed, so a collapsed group's one slot reopens it. */
-	const lastActiveByGroup = new Map<string, string>()
-	/** Collapsed-group slot numbers for the next group-header render. */
-	let groupTabNumbers: ReadonlyMap<string, number> = new Map()
 	let terminalPreferences: TerminalPreferencesSnapshot | null = null
 	const shortcutHint = (action: keyof TerminalPreferencesSnapshot['shortcuts']): string | null => {
 		const binding = (terminalPreferences?.shortcuts ?? effectiveShortcuts())[action][0]
@@ -240,7 +222,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			tab.closeButton.title = closeHint ? `Close (${closeHint})` : 'Close'
 			tab.closeButton.setAttribute('aria-label', closeHint ? `Close terminal (${closeHint})` : 'Close terminal')
 		}
-		if (tabNumberHints !== 'none') renderTabGroups()
+		refreshTabNumbers()
 		refreshEmptyCopy()
 	}
 	const applyTerminalPreferences = (snapshot: TerminalPreferencesSnapshot) => {
@@ -480,7 +462,6 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		}
 		summary.append(label)
 		toggle.append(summary)
-		if (section.surface === 'strip') applyGroupNumberHint(toggle, summary, section.groupId as string)
 		if (section.collapsed || section.surface === 'background') {
 			const count = document.createElement('span')
 			count.className = 'tab-group-count'
@@ -617,33 +598,29 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const focusedHeader = focusedGroupHeader(tabsEl)
 		const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
 		const strip = tabGroupComposition().strip
-		// Restore activates every attached tab in turn; only post-hydration selections are the operator's.
-		if (placementHydrated && activeTab?.groupId && !activeTab.parked)
-			lastActiveByGroup.set(activeTab.groupId, tabIdentity(activeTab))
-		if (tabNumberHints !== 'none') {
-			const labels = tabNumberLabels(tabNumberSlots(strip, tabNumberMode, lastActiveByGroup))
-			groupTabNumbers = labels.byGroup
-			for (const tab of tabs) applyTabNumberHint(tab.tabButton, labels.byTab.get(tabIdentity(tab)) ?? null)
-		}
+		refreshTabNumbers(strip)
 		tabsEl.textContent = ''
 		for (const section of strip) tabsEl.append(createStripSection(section, byId))
 		restoreFocusedGroupHeader(tabsEl, focusedHeader)
 	}
 
-	/** Hint text for one slot: the bare digit for leading variants, the full chord when trailing or rebound. */
+	/**
+	 * ⌘1–⌘9 digits (§3.18 "Tab numbers"): every tab visible in the strip shows the
+	 * number that selects it; members of collapsed groups and tabs past nine show none.
+	 * Parked tabs are cleared too: a Background drag preview clones their button.
+	 */
+	function refreshTabNumbers(strip = tabGroupComposition().strip): void {
+		const numbers = new Map(tabNumberSlots(strip).map(slot => [slot.tabId, slot.number]))
+		for (const tab of [...tabs, ...parked]) applyTabNumberHint(tab.tabButton, numbers.get(tabIdentity(tab)) ?? null)
+	}
+
+	/** The bare digit for the default ⌘N binding; the live chord when it was rebound. */
 	function tabNumberText(number: number): string | null {
 		const action = `selectTerminal${number}` as keyof TerminalPreferencesSnapshot['shortcuts']
 		const binding = (terminalPreferences?.shortcuts ?? effectiveShortcuts())[action]?.[0]
 		if (!binding) return null
 		const plainDigit = binding.code === `Digit${number}` && !binding.shift && !binding.alt
-		return tabNumberHints !== 'trailing' && plainDigit ? String(number) : shortcutDisplay(binding, helm.platform)
-	}
-
-	function createTabNumberHint(): HTMLSpanElement {
-		const hint = document.createElement('span')
-		hint.className = 'tab-number'
-		hint.setAttribute('aria-hidden', 'true')
-		return hint
+		return plainDigit ? String(number) : shortcutDisplay(binding, helm.platform)
 	}
 
 	function applyTabNumberHint(button: HTMLElement, number: number | null): void {
@@ -655,44 +632,13 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			return
 		}
 		if (!hint) {
-			hint = createTabNumberHint()
-			if (tabNumberHints === 'trailing') button.insertBefore(hint, button.querySelector(':scope > .tab-close'))
-			else button.prepend(hint)
+			hint = document.createElement('span')
+			hint.className = 'tab-number'
+			hint.setAttribute('aria-hidden', 'true')
+			button.prepend(hint)
 		}
 		hint.textContent = text
 		button.dataset.tabNumber = String(number)
-	}
-
-	function applyGroupNumberHint(toggle: HTMLElement, summary: HTMLElement, groupId: string): void {
-		if (tabNumberHints === 'none') return
-		const number = groupTabNumbers.get(groupId)
-		const text = number === undefined ? null : tabNumberText(number)
-		if (text !== null) toggle.dataset.tabNumber = String(number)
-		if (tabNumberHints === 'always') {
-			// A one-slot group header always reserves the digit column so disclosure
-			// never shifts the Folder icon or name.
-			if (text === null && tabNumberMode !== 'folder-slot') return
-			const hint = createTabNumberHint()
-			hint.textContent = text ?? ''
-			summary.prepend(hint)
-			return
-		}
-		if (text === null) return
-		const hint = createTabNumberHint()
-		hint.textContent = text
-		if (tabNumberHints === 'trailing') summary.append(hint)
-		else toggle.prepend(hint)
-	}
-
-	/** ⌘N through the review numbering; a collapsed group's slot expands it and opens its last tab. */
-	function selectTabNumber(number: number): void {
-		const slot = tabNumberSlot(tabNumberSlots(tabGroupComposition().strip, tabNumberMode, lastActiveByGroup), number)
-		const target = slot ? tabs.find(tab => tabIdentity(tab) === slot.tabId) : undefined
-		if (!slot || !target) return
-		// Select first: placement applies a select synchronously but refuses one
-		// while the asynchronous collapse commit is in flight.
-		if (target !== activeTab) activate(target)
-		if (slot.groupId !== null) setGroupCollapsed(slot.groupId, 'strip', false)
 	}
 
 	function setGroupCollapsed(groupId: string, surface: TabGroupSurface, collapsed: boolean): void {
@@ -3790,47 +3736,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			const action = `selectTerminal${index}` as keyof typeof bindings
 			if (!bindings[action].some(chord => matchesShortcut(event, chord, helm.platform))) continue
 			event.preventDefault()
-			if (tabNumberMode !== 'all') {
-				selectTabNumber(index)
-				return
-			}
-			const target = tabs[index - 1]
+			// The same numbering as the strip digits: visible tabs only, fewer tabs is a no-op.
+			const slot = tabNumberSlot(tabNumberSlots(tabGroupComposition().strip), index)
+			const target = slot ? tabs.find(tab => tabIdentity(tab) === slot.tabId) : undefined
 			if (target) activate(target)
 			return
 		}
 	}
 	window.addEventListener('keydown', onWorkspaceKeydown, { capture: true })
-
-	// Review-only `hold` hints: like browser tab hints, numbers appear only while
-	// the Primary modifier is held alone for a beat, so ⌘C/⌘V never flash them.
-	const TAB_NUMBER_HOLD_DELAY_MS = 250
-	const primaryKey = helm.platform === 'darwin' ? 'Meta' : 'Control'
-	let tabNumberHoldTimer: number | null = null
-	const setTabNumbersHeld = (held: boolean) => {
-		if (tabNumberHoldTimer !== null) window.clearTimeout(tabNumberHoldTimer)
-		tabNumberHoldTimer = null
-		tabsEl.classList.toggle('tab-numbers-held', held || options.tabNumbers?.held === true)
-	}
-	const onTabNumberHoldKeydown = (event: KeyboardEvent) => {
-		if (event.key !== primaryKey) {
-			// A chord before the delay is an ordinary shortcut, not a request for hints.
-			if (tabNumberHoldTimer !== null) setTabNumbersHeld(false)
-			return
-		}
-		if (event.repeat || tabNumberHoldTimer !== null || tabsEl.classList.contains('tab-numbers-held')) return
-		tabNumberHoldTimer = window.setTimeout(() => setTabNumbersHeld(true), TAB_NUMBER_HOLD_DELAY_MS)
-	}
-	const onTabNumberHoldKeyup = (event: KeyboardEvent) => {
-		if (event.key === primaryKey) setTabNumbersHeld(false)
-	}
-	const onTabNumberHoldBlur = () => setTabNumbersHeld(false)
-	if (tabNumberHints !== 'none') tabsEl.dataset.tabNumberHints = tabNumberHints
-	if (tabNumberHints === 'hold') {
-		setTabNumbersHeld(false)
-		window.addEventListener('keydown', onTabNumberHoldKeydown, { capture: true })
-		window.addEventListener('keyup', onTabNumberHoldKeyup, { capture: true })
-		window.addEventListener('blur', onTabNumberHoldBlur)
-	}
 
 	// --ui-preview=background[-strip] (screenshot harness): park one running and
 	// one exited session — real ptys, really parked — so the strip control, badge,
@@ -4112,10 +4025,6 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			unsubscribeScheduledOpen()
 			window.removeEventListener('focus', onWindowFocus)
 			window.removeEventListener('keydown', onWorkspaceKeydown, { capture: true })
-			window.removeEventListener('keydown', onTabNumberHoldKeydown, { capture: true })
-			window.removeEventListener('keyup', onTabNumberHoldKeyup, { capture: true })
-			window.removeEventListener('blur', onTabNumberHoldBlur)
-			if (tabNumberHoldTimer !== null) window.clearTimeout(tabNumberHoldTimer)
 			newTabButton.removeEventListener('click', onNewTabClick)
 			bgToggle.removeEventListener('click', onBackgroundToggle)
 			closeBackgroundPopover()

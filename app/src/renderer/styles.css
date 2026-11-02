@@ -489,9 +489,8 @@ body.group-dragging .tab-group-toggle {
 	text-overflow: ellipsis;
 }
 
-/* ⌘1–⌘9 number hints (§3.18 "Tab numbers"): review-only variants selected by
- * #tabs[data-tab-number-hints]; production renders no .tab-number at all. Every
- * variant stays Meta-quiet (11/400, --text-2) — the topbar owns no bold element. */
+/* ⌘1–⌘9 digits (§3.18 "Tab numbers"): a dim leading digit on every tab visible
+ * in the strip. Meta-quiet (11/400, --text-2) — the topbar owns no bold element. */
 .tab-number {
 	flex: none;
 	color: var(--text-2);
@@ -504,53 +503,6 @@ body.group-dragging .tab-group-toggle {
 	/* 11px mono centered beside 13px text sits high; drop it onto the label baseline. */
 	position: relative;
 	top: 1px;
-}
-
-/* always: a dim leading digit; a one-slot group header reserves the column even
- * while expanded so disclosure never shifts the Folder icon or name. */
-#tabs[data-tab-number-hints="always"] .tab-group-summary > .tab-number {
-	min-width: 1ch;
-}
-
-/* hold: kbd-shaped badges over the leading edge, only while ⌘ is held. */
-#tabs[data-tab-number-hints="hold"] .tab-group-toggle {
-	position: relative;
-}
-
-#tabs[data-tab-number-hints="hold"] .tab-number {
-	position: absolute;
-	top: 50%;
-	left: 4px;
-	z-index: 1;
-	min-width: 16px;
-	padding: 2px 4px;
-	border: 1px solid var(--hairline-strong);
-	border-radius: 4px;
-	background: var(--chrome);
-	color: var(--text-1);
-	text-align: center;
-	opacity: 0;
-	transform: translateY(-50%);
-	transition: opacity 120ms ease-out;
-}
-
-#tabs[data-tab-number-hints="hold"].tab-numbers-held .tab-number {
-	opacity: 1;
-}
-
-/* trailing: ⌘N beside ×, on hover and on the active tab. Set in the UI face so
- * ⌘ sits at cap height (Menlo draws it half-size — same exception as ⌘⇧J, §3.24). */
-#tabs[data-tab-number-hints="trailing"] .tab-number {
-	font-family: inherit;
-	letter-spacing: 0.04em;
-	opacity: 0;
-	transition: opacity 140ms ease-out;
-}
-
-#tabs[data-tab-number-hints="trailing"] .tab:hover > .tab-number,
-#tabs[data-tab-number-hints="trailing"] .tab.active > .tab-number,
-#tabs[data-tab-number-hints="trailing"] .tab-group-toggle:hover .tab-number {
-	opacity: 1;
 }
 
 /* Reusable in-progress primitive (§3.21): a six-dot Braille cell whose
