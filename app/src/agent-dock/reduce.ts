@@ -145,7 +145,7 @@ export function agentDockAwaitingReply(state: AgentDockState, profile: string, t
 	return state.items.some(item => item.session === key && item.kind === 'turn' && isLive(item))
 }
 
-/** Sending/unconfirmed items keep their place, so a card never jumps while its answer lands. */
+/** Sending/unconfirmed items keep their place, so an entry never jumps while its answer lands. */
 const ITEM_ORDER: Record<string, number> = {
 	'open:ask': 0,
 	'sending:ask': 0,
@@ -555,6 +555,7 @@ function observeTerminal(
 	reconcileAsks(draft, record, key, detail, restarted, ctx.seedTick)
 	maybeOpenTurn(draft, record, key, detail, status)
 }
+
 /**
  * Asks: one item per dialog; vanished → answered elsewhere (or Jakub's dock answer
  * landing), or orphaned across a source restart.
@@ -744,35 +745,32 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 	const listed = new Set(candidates.map(terminalId => sessionKey(observation.profile, terminalId)))
 	for (const [key, record] of Object.entries(draft.state.sessions)) {
 		if (record.session.source !== id) continue
+		// Another profile is polled now (Okena `last_used` changed, Helm switched its session
+		// profile): its agent may still run there, it is just not observed.
 		if (record.session.profile !== observation.profile) {
-			unobservedProfile(draft, key, record)
+			unobserved(draft, key, record)
 			continue
 		}
 		if (listed.has(key)) continue
-		const live = draft.liveItems(key)
 		if (record.epoch === src.epoch) {
 			// Gone within one source epoch: SessionEnd or pane closed.
-			for (const item of live) draft.resolve(item, 'session_ended')
+			for (const item of draft.liveItems(key)) draft.resolve(item, 'session_ended')
 			delete draft.state.sessions[key]
 			continue
 		}
-		// Last seen before a restart/reconnect: may not be relisted until its next step. Never resolve from absence.
+		// Last seen before a restart/reconnect: may not be relisted until its next step.
 		// Its dialog ids died with the old hub.
-		record.dialogIds = undefined
-		for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
-		if (live.length === 0) delete draft.state.sessions[key]
-		else setStatus(record, 'unknown', now)
+		unobserved(draft, key, record)
 	}
 }
 
 /**
- * The source now polls another profile (Okena `last_used` changed, Helm switched its
- * session profile): this session is simply not observed any more. Its agent may still
- * run there, so nothing resolves from the absence; open asks orphan (ackable, and they
- * reopen if that profile is polled again with the dialog still listed), turns stay, and
- * the row reads unknown until it is seen again (or goes once nothing is live).
+ * A session the source no longer shows (another profile is polled, or it was last seen
+ * before a restart/reconnect). Never resolve from absence: open asks orphan (ackable, and
+ * they reopen if the same dialog is listed again), turns stay, and the row reads unknown
+ * until it is seen again (or goes once nothing is live).
  */
-function unobservedProfile(draft: Draft, key: SessionKey, record: AgentDockSessionRecord): void {
+function unobserved(draft: Draft, key: SessionKey, record: AgentDockSessionRecord): void {
 	record.dialogIds = undefined
 	const live = draft.liveItems(key)
 	for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)

@@ -1,4 +1,4 @@
-// Agent dock slice 2, end to end below the renderer: AgentDockWatcher.act →
+// Agent dock answers, end to end below the renderer: AgentDockWatcher.act →
 // OkenaClaudeSource (CAS read) → real OkenaClient → a fake Okena HTTP server on
 // a private Unix socket. Asserts the exact Okena routes/bodies (the ones
 // `okena claude answer` / `okena claude prompt` send) and that no answer text
