@@ -607,10 +607,10 @@ export function keepOrder(
 	return [...kept, ...items.filter(item => !known.has(item.id))]
 }
 
-/** Room around an entry's text: 8px padding each side. */
-export const QUEUE_ENTRY_PAD = 16
+/** Room around an entry's text: 16px padding each side (the fill runs edge to edge). */
+export const QUEUE_ENTRY_PAD = 32
 /** Space between entries (no rules between them). */
-export const QUEUE_GAP = 4
+export const QUEUE_GAP = 0
 /** Narrowest entry, so a short name never makes a sliver. */
 export const QUEUE_ENTRY_MIN = 112
 /** Most cells a name gets in the queue; a longer one is shortened in the middle (`shortenName`). */

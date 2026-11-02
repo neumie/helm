@@ -1597,15 +1597,16 @@ body.dragging {
 	max-width: none;
 }
 
-/* Entries are separated by space, never rules. The 8px inset plus each entry's 8px padding puts
- * every glyph on the strip's 16px text column. */
+/* Entries are separated by space, never rules. Cells touch and fill the row edge to edge, so the
+ * selected fill has no inset; each entry's 16px padding puts every glyph on the strip's 16px text
+ * column. */
 .agent-dock-queue {
 	flex: 1 1 0;
 	display: flex;
-	gap: 4px;
+	gap: 0;
 	min-width: 0;
 	margin: 0;
-	padding: 8px;
+	padding: 0;
 	overflow: hidden;
 	list-style: none;
 }
@@ -1639,9 +1640,9 @@ body.dragging {
 	flex-direction: column;
 	justify-content: center;
 	min-width: 0;
-	padding: 4px 8px;
+	padding: 12px 16px;
 	border: none;
-	border-radius: 6px;
+	border-radius: 0;
 	background: transparent;
 	cursor: pointer;
 	user-select: none;
@@ -1769,7 +1770,7 @@ body.dragging {
 	flex: none;
 	position: relative;
 	display: flex;
-	padding: 8px 8px 8px 9px;
+	padding: 0 0 0 1px;
 }
 
 .agent-dock-agents::before {
@@ -2727,14 +2728,14 @@ body.dragging {
 }
 
 .agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-queue {
-	align-items: center;
-	padding: 2px 0 2px 8px;
+	align-items: stretch;
+	padding: 0;
 }
 
 .agent-dock-host:is([data-look="two-bands"], [data-look="focus"])
 	:is(.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry) {
-	height: 24px;
-	padding: 0 8px;
+	height: 28px;
+	padding: 0 16px;
 }
 
 .agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-entry-line {
@@ -2743,7 +2744,7 @@ body.dragging {
 }
 
 .agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents {
-	padding: 2px 0;
+	padding: 0;
 }
 
 .agent-dock-host:is([data-look="two-bands"], [data-look="focus"]) .agent-dock-agents::before {
