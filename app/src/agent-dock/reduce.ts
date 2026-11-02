@@ -2,6 +2,7 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
+import { itemWaitingSince } from './item-order'
 import {
 	ACT_CONFIRM_MS,
 	type AgentDockEvent,
@@ -143,17 +144,6 @@ export function agentDockAwaitingReply(state: AgentDockState, profile: string, t
 	return state.items.some(item => item.session === key && item.kind === 'turn' && isLive(item))
 }
 
-/**
- * When the item started owing Jakub (same rule as the renderer's itemWaitingSince,
- * which cannot value-import this module): the dialog's own timestamp, else when the
- * turn ended, else first observed. Live items sort oldest-waiting first on this.
- */
-function waitingSince(item: DockItem): number {
-	if (item.fact.kind === 'ask' && item.fact.createdAtMs > 0) return Math.min(item.fact.createdAtMs, item.openedAt)
-	if (item.fact.kind === 'turn') return item.fact.endedAt
-	return item.openedAt
-}
-
 /** Sending/unconfirmed items keep their place, so a card never jumps while its answer lands. */
 const ITEM_ORDER: Record<string, number> = {
 	'open:ask': 0,
@@ -172,7 +162,7 @@ export function agentDockSnapshot(state: AgentDockState, now: number): AgentDock
 		const byRank = rank(a) - rank(b)
 		if (byRank !== 0) return byRank
 		if (a.state === 'resolved') return (b.resolution?.at ?? 0) - (a.resolution?.at ?? 0) || b.id - a.id
-		return waitingSince(a) - waitingSince(b) || a.id - b.id
+		return itemWaitingSince(a) - itemWaitingSince(b) || a.id - b.id
 	})
 	const sessions = Object.values(state.sessions)
 		.map(record => ({ ...record.session, prLinks: [...record.session.prLinks] }))

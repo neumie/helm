@@ -22,6 +22,18 @@ import { chmod, lstat, mkdir, open, readdir, rename, rm } from 'node:fs/promises
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
+import {
+	DOCK_ACTION_KINDS,
+	DOCK_ITEM_KINDS,
+	DOCK_ITEM_STATES,
+	DOCK_PROMPT_DELIVERIES,
+	DOCK_RECEIPT_STATUSES,
+	DOCK_REFUSAL_REASONS,
+	DOCK_RESOLUTION_BY,
+	DOCK_SESSION_STATUSES,
+	DOCK_SOURCE_HEALTH_STATES,
+	DOCK_SOURCE_IDS,
+} from './dock-vocabulary.js'
 
 export const AGENT_DOCK_DIR_ENV = 'HELM_AGENT_DOCK_DIR'
 export const SPOOL_STATE_FILE = 'state.json'
@@ -66,7 +78,7 @@ export function defaultAgentDockDir(
 const ms = z.number().finite().nonnegative()
 
 /** Okena Claude Remote or Helm's own Claude hub (Claude Code in Helm terminals). */
-export const spoolSourceIdSchema = z.enum(['okena', 'helm'])
+export const spoolSourceIdSchema = z.enum(DOCK_SOURCE_IDS)
 export type SpoolSourceId = z.infer<typeof spoolSourceIdSchema>
 
 export const spoolSessionSchema = z.object({
@@ -80,7 +92,7 @@ export const spoolSessionSchema = z.object({
 	name: z.string(),
 	branch: z.string().optional(),
 	sessionId: z.string().optional(),
-	status: z.enum(['working', 'background', 'idle', 'waiting', 'unknown', 'unreachable']),
+	status: z.enum(DOCK_SESSION_STATUSES),
 	since: ms,
 	observedAt: ms,
 	subagents: z.number().int().nonnegative(),
@@ -94,26 +106,24 @@ export type SpoolSession = z.infer<typeof spoolSessionSchema>
 
 export const spoolResolutionSchema = z.object({
 	at: ms,
-	by: z.enum(['outside', 'replied', 'superseded', 'session_ended', 'acked', 'dock']),
+	by: z.enum(DOCK_RESOLUTION_BY),
 })
 
 /** A dock answer's kind and status (slice 2). Never the answer or Okena's error words. */
 export const spoolReceiptSchema = z.object({
-	action: z.enum(['answer', 'allow', 'deny', 'prompt']),
-	status: z.enum(['sending', 'sent', 'unconfirmed', 'confirmed', 'refused', 'failed']),
+	action: z.enum(DOCK_ACTION_KINDS),
+	status: z.enum(DOCK_RECEIPT_STATUSES),
 	at: ms,
 	always: z.boolean().optional(),
-	delivery: z.enum(['channel', 'pty', 'queued']).optional(),
-	reason: z
-		.enum(['gone', 'changed', 'busy', 'not_open', 'unknown_item', 'invalid', 'source_down', 'in_flight'])
-		.optional(),
+	delivery: z.enum(DOCK_PROMPT_DELIVERIES).optional(),
+	reason: z.enum(DOCK_REFUSAL_REASONS).optional(),
 })
 
 export const spoolItemSchema = z.object({
 	id: z.number().int().positive(),
 	key: z.string(),
-	kind: z.enum(['ask', 'turn']),
-	state: z.enum(['open', 'sending', 'unconfirmed', 'orphaned', 'resolved']),
+	kind: z.enum(DOCK_ITEM_KINDS),
+	state: z.enum(DOCK_ITEM_STATES),
 	session: z.string(),
 	/** Absent in slice-1 spools. */
 	rev: z.number().int().positive().optional(),
@@ -136,7 +146,7 @@ export const spoolItemSchema = z.object({
 export type SpoolItem = z.infer<typeof spoolItemSchema>
 
 const spoolHealthSchema = z.object({
-	state: z.enum(['pending', 'ok', 'down']),
+	state: z.enum(DOCK_SOURCE_HEALTH_STATES),
 	since: ms,
 	lastObservedAt: ms.nullable(),
 	detail: z.string().optional(),

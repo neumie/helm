@@ -13,8 +13,11 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
+import { DOCK_RISKY_PROMPT, DOCK_SOURCE_IDS, DOCK_SOURCE_LABEL } from '../../../../src/agent-dock/dock-vocabulary.js'
+import { itemWaitingSince } from '../../agent-dock/item-order'
 import { planApproveMode } from '../../agent-dock/review'
 
+export { itemWaitingSince } from '../../agent-dock/item-order'
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
@@ -77,13 +80,6 @@ export function agingTone(ms: number): AgingTone {
 	return 'none'
 }
 
-/** When the item started owing Jakub: the dialog's own timestamp, else when the turn ended, else first observed. */
-export function itemWaitingSince(item: DockItem): number {
-	if (item.fact.kind === 'ask' && item.fact.createdAtMs > 0) return Math.min(item.fact.createdAtMs, item.openedAt)
-	if (item.fact.kind === 'turn') return item.fact.endedAt
-	return item.openedAt
-}
-
 /** Items that need Jakub, in the snapshot's order (open asks, orphaned, open turns). */
 export function needsYouItems(snapshot: AgentDockSnapshot | null): DockItem[] {
 	return snapshot?.items.filter(item => item.state !== 'resolved') ?? []
@@ -119,12 +115,9 @@ export function nextLingerExpiry(snapshot: AgentDockSnapshot | null, now: number
 	return ends.length > 0 ? Math.min(...ends) : null
 }
 
-/** Mirrors model.ts DOCK_RISKY_PROMPT (the renderer may not value-import the zod model); a test keeps them equal. */
-export const RISKY_PROMPT = /deploy|prod|secret|push|merge/i
-
-/** The first risky word in a reply ("deploy"), or null. */
+/** The first risky word in a reply ("deploy"), or null (DOCK_RISKY_PROMPT, the rule main enforces). */
 export function riskyWord(text: string): string | null {
-	return RISKY_PROMPT.exec(text)?.[0]?.toLowerCase() ?? null
+	return DOCK_RISKY_PROMPT.exec(text)?.[0]?.toLowerCase() ?? null
 }
 
 export type ReceiptTone = 'neutral' | 'warn' | 'success' | 'danger'
@@ -214,16 +207,11 @@ export function sentSummary(item: DockItem, action: DockAction): string | null {
 // Sources (Okena Claude Remote, Helm's own Claude hub for Helm terminals)
 // ---------------------------------------------------------------------------
 
-/** Words for a source (mirrors model.ts DOCK_SOURCE_LABEL; the renderer imports model types only). */
-export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
-const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
-
-/** Sources in the snapshot with their health; an older snapshot without `sources` is Okena alone. */
 /** Each source's own health in display order (an old single-source snapshot reads as Okena). */
 export function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
 	const sources = snapshot.sources
 	if (!sources || Object.keys(sources).length === 0) return [['okena', snapshot.source]]
-	return SOURCE_ORDER.flatMap(id => {
+	return DOCK_SOURCE_IDS.flatMap(id => {
 		const health = sources[id]
 		return health ? [[id, health] as [DockSourceId, AgentDockSourceHealth]] : []
 	})
@@ -234,8 +222,9 @@ export function sourceNames(snapshot: AgentDockSnapshot | null, state?: AgentDoc
 	const all = snapshot ? snapshotSources(snapshot) : []
 	const names = all
 		.filter(([, health]) => state === undefined || health.state === state)
-		.map(([id]) => SOURCE_LABEL[id])
-	const list = names.length > 0 ? names : all.length > 0 ? all.map(([id]) => SOURCE_LABEL[id]) : [SOURCE_LABEL.okena]
+		.map(([id]) => DOCK_SOURCE_LABEL[id])
+	const list =
+		names.length > 0 ? names : all.length > 0 ? all.map(([id]) => DOCK_SOURCE_LABEL[id]) : [DOCK_SOURCE_LABEL.okena]
 	return list.length === 1 ? (list[0] as string) : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
 }
 
@@ -264,7 +253,7 @@ export function sourceBlockedNote(item: DockItem, snapshot: AgentDockSnapshot | 
 	const health = itemSourceHealth(item, snapshot)
 	if (!snapshot || health?.state === 'ok') return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
-	return `${SOURCE_LABEL[source]} unreachable: answer in the terminal`
+	return `${DOCK_SOURCE_LABEL[source]} unreachable: answer in the terminal`
 }
 
 /** Answer controls are live only for an open item while its source is reachable. */
@@ -464,7 +453,7 @@ export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth 
 	return {
 		tone: 'success',
 		text: snapshotSources(snapshot)
-			.map(([id]) => SOURCE_LABEL[id])
+			.map(([id]) => DOCK_SOURCE_LABEL[id])
 			.join(' · '),
 	}
 }

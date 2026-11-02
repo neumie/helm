@@ -1,12 +1,27 @@
 // Agent dock contract: Okena Claude Remote wire schemas (zod, fail closed) plus
 // the dock's own session/item/snapshot types. Pure: no IO, no Electron. Main
-// (watcher), the renderer (`import type` only) and the CLI share this file.
+// (watcher, sources, act) and the renderer (`import type` only) share this file;
+// the CLI and the spool share only src/agent-dock/ (dock-vocabulary.ts, spool.ts).
 //
 // Items open and close only from observed Okena facts, Jakub's ack, or an
 // answer Jakub sent from the dock that Okena then shows taking effect (slice 2).
 // Never infer agent state from screen contents (AGENTS.md).
 
 import { z } from 'zod'
+import type {
+	DOCK_ACTION_KINDS,
+	DOCK_ITEM_KINDS,
+	DOCK_ITEM_STATES,
+	DOCK_PROMPT_DELIVERIES,
+	DOCK_RECEIPT_STATUSES,
+	DOCK_REFUSAL_REASONS,
+	DOCK_RESOLUTION_BY,
+	DOCK_SESSION_STATUSES,
+	DOCK_SOURCE_HEALTH_STATES,
+	DockSourceId,
+} from '../../../src/agent-dock/dock-vocabulary'
+
+export { DOCK_RISKY_PROMPT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 
 // ---------------------------------------------------------------------------
 // Okena wire schemas (okena f67bbf7b: okena-core/src/{api,claude_remote}.rs).
@@ -159,22 +174,11 @@ export type SessionKey = string
 
 export const sessionKey = (profile: string, terminalId: string): SessionKey => `${profile}:${terminalId}`
 
-/**
- * Where a dock session is observed: Okena Claude Remote (`okena`) or Helm's own
- * Claude hub for Claude Code in Helm terminals (`helm`; profile `helm:<profileId>`,
- * so its keys are `helm:<profileId>:<dtach session id>`). Both speak the same
- * Okena-shaped wire; the reducer keeps epoch/seed/health per source.
- */
-export type DockSourceId = 'okena' | 'helm'
-/** Words for a source in dock/CLI text. */
-export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+// Word lists (sources, statuses, states, reasons, …) live in
+// src/agent-dock/dock-vocabulary.ts, shared with the spool schemas and the renderer.
 
-/**
- * working: busy. background: not busy but subagents still running. idle: not busy.
- * waiting: an Okena dialog is open. unknown: busy missing or detail unparseable/unfetched.
- * unreachable: Okena itself is down (frozen row).
- */
-export type DockSessionStatus = 'working' | 'background' | 'idle' | 'waiting' | 'unknown' | 'unreachable'
+/** See DOCK_SESSION_STATUSES. */
+export type DockSessionStatus = (typeof DOCK_SESSION_STATUSES)[number]
 
 export interface DockPrLink {
 	number: number
@@ -210,16 +214,11 @@ export interface DockSession {
 	channelAttached: boolean
 }
 
-export type DockItemKind = 'ask' | 'turn'
-/**
- * open: owes Jakub. sending: Jakub answered from the dock; Helm is sending it or
- * waiting to see it land. unconfirmed: Okena took it but Helm has not seen the
- * dialog close / a user entry within ACT_CONFIRM_MS (amber; stays until observed
- * or acked). orphaned: sticky until transcript activity or ack.
- */
-export type DockItemState = 'open' | 'sending' | 'unconfirmed' | 'orphaned' | 'resolved'
-/** `dock`: Jakub's dock answer, observed taking effect. */
-export type DockResolutionBy = 'outside' | 'replied' | 'superseded' | 'session_ended' | 'acked' | 'dock'
+export type DockItemKind = (typeof DOCK_ITEM_KINDS)[number]
+/** See DOCK_ITEM_STATES. */
+export type DockItemState = (typeof DOCK_ITEM_STATES)[number]
+/** See DOCK_RESOLUTION_BY. */
+export type DockResolutionBy = (typeof DOCK_RESOLUTION_BY)[number]
 
 export interface DockAskFact {
 	kind: 'ask'
@@ -285,7 +284,7 @@ export interface DockItem {
 // Okena POST built from it, never in state, events or disk.
 // ---------------------------------------------------------------------------
 
-export type DockActionKind = 'answer' | 'allow' | 'deny' | 'prompt'
+export type DockActionKind = (typeof DOCK_ACTION_KINDS)[number]
 
 /** One AskUserQuestion answer, by position: picked option indexes (several only for multiSelect) and/or Other text. */
 export interface DockAnswerPick {
@@ -313,21 +312,10 @@ export interface AgentDockActRequest {
 	action: DockAction
 }
 
-export type DockRefusalReason =
-	/** The dialog/turn is no longer there: answered elsewhere. */
-	| 'gone'
-	/** The question, its options or the turn changed since it was shown. */
-	| 'changed'
-	/** The agent is working again; a reply would be queued behind work Jakub has not seen. */
-	| 'busy'
-	/** Not answerable from the dock now (sending, unconfirmed, orphaned, resolved). */
-	| 'not_open'
-	| 'unknown_item'
-	| 'invalid'
-	| 'source_down'
-	| 'in_flight'
+/** See DOCK_REFUSAL_REASONS. */
+export type DockRefusalReason = (typeof DOCK_REFUSAL_REASONS)[number]
 
-export type OkenaPromptDelivery = 'channel' | 'pty' | 'queued'
+export type OkenaPromptDelivery = (typeof DOCK_PROMPT_DELIVERIES)[number]
 
 /** What one act did (main → reducer and → renderer). `detail` is verbatim Okena/transport text, never answer text. */
 export type DockActOutcome =
@@ -339,7 +327,7 @@ export type DockActOutcome =
 
 export type AgentDockActResult = { ok: true; outcome: DockActOutcome } | { ok: false; outcome: DockActOutcome }
 
-export type DockReceiptStatus = 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed'
+export type DockReceiptStatus = (typeof DOCK_RECEIPT_STATUSES)[number]
 
 export interface DockReceipt {
 	action: DockActionKind
@@ -358,8 +346,6 @@ export interface DockReceipt {
 
 /** Okena accepted an answer but Helm has not observed it this long: unconfirmed (amber). */
 export const ACT_CONFIRM_MS = 10_000
-/** Free text to the agent (replies, deny messages, Other answers) that mentions these needs a second, explicit confirmation (renderer) and `confirmed` (main). */
-export const DOCK_RISKY_PROMPT = /deploy|prod|secret|push|merge/i
 /** Okena refuses prompts over 64 KiB (`MAX_PROMPT_BYTES`); Helm bounds by UTF-16 units under that. */
 export const DOCK_PROMPT_MAX = 16_384
 export const DOCK_MESSAGE_MAX = 4_096
@@ -420,7 +406,7 @@ export function stableJson(value: unknown, depth = 0): string {
 	return JSON.stringify(value) ?? 'null'
 }
 
-export type AgentDockSourceState = 'pending' | 'ok' | 'down'
+export type AgentDockSourceState = (typeof DOCK_SOURCE_HEALTH_STATES)[number]
 
 /** Okena reachability. `pending` = never polled yet; the UI must not show "all clear" for it. */
 export interface AgentDockSourceHealth {

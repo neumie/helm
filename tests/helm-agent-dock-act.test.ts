@@ -22,7 +22,6 @@ type DockAction = import('../app/src/agent-dock/model.ts').DockAction
 const { askStillOpen, dockActBody, dockPostFailure, turnStillWaiting } = actModule as ActModule
 const {
 	ACT_CONFIRM_MS,
-	DOCK_RISKY_PROMPT,
 	parseAgentDockActRequest,
 	parseOkenaClaudeSession,
 	parseOkenaClaudeTranscriptPage,
@@ -30,7 +29,7 @@ const {
 	stableJson,
 } = modelModule as ModelModule
 const { TURN_IDLE_MS, TURN_RESUMED_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
-const { RISKY_PROMPT, lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
+const { lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
 	presentationModule as PresentationModule
 
 type Json = Record<string, unknown>
@@ -595,9 +594,6 @@ test('replies: trailing whitespace trimmed, blank refused, risky words need conf
 	assert.equal(risky.ok, false)
 	assert.equal(dockActBody(turn, { type: 'prompt', text: 'git push it', confirmed: true }).ok, true)
 	assert.equal(dockActBody(turn, { type: 'answer', picks: [] }).ok, false)
-	// The renderer's copy of the risky pattern is the model's.
-	assert.equal(RISKY_PROMPT.source, DOCK_RISKY_PROMPT.source)
-	assert.equal(RISKY_PROMPT.flags, DOCK_RISKY_PROMPT.flags)
 	assert.equal(riskyWord('Ship it to PROD now'), 'prod')
 	assert.equal(riskyWord('Looks good'), null)
 })
