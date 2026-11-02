@@ -26,6 +26,7 @@ import {
 	readSpoolSnapshot,
 } from '../src/agent-dock/spool.js'
 import { EXIT_HELM_DOWN, EXIT_SOURCE_DOWN, runDockCli } from '../src/cli/dock.js'
+import { until } from './helpers/until'
 
 type WatcherModule = typeof import('../app/src/agent-dock/watcher.ts')
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
@@ -446,14 +447,6 @@ test('helm dock ls/show read the snapshot; exit 4 when Okena is down, 5 when Hel
 		rmSync(root, { recursive: true, force: true })
 	}
 })
-
-async function until(check: () => boolean, label: string): Promise<void> {
-	const deadline = Date.now() + 3_000
-	while (!check()) {
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
-		await new Promise(resolve => setTimeout(resolve, 5))
-	}
-}
 
 test('helm dock watch: catchup, missed events after the cursor, follow, rotation without loss or duplicates', async () => {
 	const root = tempDir()

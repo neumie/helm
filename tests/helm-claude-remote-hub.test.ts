@@ -2,7 +2,7 @@
 // pending lifetime, filters, out-of-order events, exclusion) and the socket hub
 // as the dock's OkenaClaudeClient (OkenaClaudeSource + reducer + act unchanged).
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,6 +12,7 @@ import reduceModule from '../app/src/agent-dock/reduce.ts'
 import coreModule from '../app/src/claude-remote/hub-core.ts'
 import hubModule from '../app/src/claude-remote/hub.ts'
 import tokenModule from '../app/src/claude-remote/token.ts'
+import { until } from './helpers/until'
 
 type CoreModule = typeof import('../app/src/claude-remote/hub-core.ts')
 type HubModule = typeof import('../app/src/claude-remote/hub.ts')
@@ -886,7 +887,10 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			},
 			true,
 		)
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() => (f.hub.core.session(REF) as { dialogs: unknown[] }).dialogs.length === 1,
+			'the waiting hook’s dialog',
+		)
 		const events = await tick(T0 + 2000)
 		const ask = state.items.find(item => item.kind === 'ask')
 		assert.ok(ask, JSON.stringify(events))
@@ -1016,7 +1020,12 @@ test('socket: owner read route, dispatcher registration (persisted), degraded no
 		assert.equal((f.hub.core.session(REF) as { busy?: boolean }).busy, false)
 
 		await send(f.hub.socketPath, { v: 1, t: 'dispatcher', token: f.token, session_id: SID })
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() =>
+				existsSync(join(f.dir, 'excluded.json')) &&
+				(f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.length === 0,
+			'dispatcher persisted',
+		)
 		assert.deepEqual((await f.hub.getStateJson()) as { claude_sessions: string[] }, {
 			...(f.hub.core.stateJson('work') as object),
 			claude_sessions: [],
@@ -1033,7 +1042,10 @@ test('socket: owner read route, dispatcher registration (persisted), degraded no
 			reason: 'user_settings',
 			cwd: '/repo/y',
 		})
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() => (f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.includes('term2'),
+			'degraded registered',
+		)
 		assert.deepEqual((f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions, ['term2'])
 	} finally {
 		f.cleanup()
@@ -1076,6 +1088,11 @@ test('socket: a connection without a request line is dropped; Helm quitting leav
 			},
 			true,
 		)
+		await until(
+			() => (hub.core.session(REF) as { dialogs: unknown[] }).dialogs.length === 1,
+			'the waiting hook’s dialog',
+		)
+		// Past the 100 ms first-line timeout: the long-poll is still held.
 		await new Promise(resolve => setTimeout(resolve, 150))
 		assert.equal(session(hub.core).dialogs.length, 1, 'a long-poll outlives the first-line timeout')
 		hub.stop()
