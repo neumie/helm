@@ -1,4 +1,4 @@
-// Agent dock file spool (slice 1, read-only transport): Helm main writes it,
+// Agent dock file spool (read-only transport): Helm main writes it,
 // `helm dock` reads it. Lives in root `src/` so both the Electron main bundle
 // (`app/src/agent-dock/watcher.ts`) and the CLI (`src/cli/dock.ts`) share one
 // contract. Pure Node, no Electron.
@@ -110,7 +110,7 @@ export const spoolResolutionSchema = z.object({
 	by: z.enum(DOCK_RESOLUTION_BY),
 })
 
-/** A dock answer's kind and status (slice 2). Never the answer or Okena's error words. */
+/** A dock answer's kind and status. Never the answer or Okena's error words. */
 export const spoolReceiptSchema = z.object({
 	action: z.enum(DOCK_ACTION_KINDS),
 	status: z.enum(DOCK_RECEIPT_STATUSES),

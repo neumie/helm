@@ -1,4 +1,4 @@
-// Agent dock slice 2: answering from a card. Pure pieces only (reducer act
+// Agent dock: answering from the dock. Pure pieces only (reducer act
 // lifecycle, CAS checks, Okena bodies, presentation receipts); the HTTP path
 // against a fake Okena lives in helm-agent-dock-act-okena.test.ts.
 

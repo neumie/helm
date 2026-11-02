@@ -4,7 +4,7 @@
 // the CLI and the spool share only src/agent-dock/ (dock-vocabulary.ts, spool.ts).
 //
 // Items open and close only from observed Okena facts, Jakub's ack, or an
-// answer Jakub sent from the dock that Okena then shows taking effect (slice 2).
+// answer Jakub sent from the dock that Okena then shows taking effect.
 // Never infer agent state from screen contents (AGENTS.md).
 
 import { z } from 'zod'
@@ -274,7 +274,7 @@ export interface DockItem {
 }
 
 // ---------------------------------------------------------------------------
-// Dock actions (slice 2): Jakub answers from a card. Main re-reads Okena (CAS)
+// Dock actions: Jakub answers from the dock. Main re-reads Okena (CAS)
 // before every effect; answer text lives only in this request and the one
 // Okena POST built from it, never in state, events or disk.
 // ---------------------------------------------------------------------------
@@ -471,8 +471,10 @@ export type AgentDockObservation =
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
 
 // ---------------------------------------------------------------------------
-// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids only.
-// Items, turn text and dialog input are never written to disk in slice 1.
+// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids (the
+// watcher adds its event seq and the resolved-item ledger).
+// Turn text and dialog input are never written to disk; see spool.ts for what
+// snapshot.json and events.ndjson hold.
 // ---------------------------------------------------------------------------
 
 export const agentDockPersistedSchema = z.object({

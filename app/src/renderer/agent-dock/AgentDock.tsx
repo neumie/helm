@@ -4,7 +4,7 @@
 // then the Agents entry, the sources' health dot and ⌘⇧J — and, when an entry is opened, a pane
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
-// happens in the pane (slice 2) and the receipt shows in place; entries keep their
+// happens in the pane and the receipt shows in place; entries keep their
 // slots while the pane is open. Layout, focus return and ⌘⇧J belong to
 // agent-dock-layout.ts. Agent text is untrusted and always rendered as plain React
 // text (never markup), bounded and control-stripped.
@@ -414,7 +414,7 @@ export function AgentDock({
 		step(delta)
 	}
 
-	// The row's name says what it is and the state in words (the summary row of earlier docks).
+	// The row's name says what it is and the state in words.
 	const dockName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
 	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
 

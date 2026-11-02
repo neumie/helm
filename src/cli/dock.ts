@@ -1,4 +1,4 @@
-// `helm dock`: read-only view of the Helm agent dock (slice 1) for the
+// `helm dock`: read-only view of the Helm agent dock for the
 // dispatcher agent. Reads the file spool the desktop app writes under
 // <Helm userData>/agent-dock (see src/agent-dock/spool.ts). Never answers,
 // prompts or acts; `show` reads the full question/turn text live (never spooled
@@ -59,7 +59,7 @@ Commands:
 Options:
   --json         Machine-readable output (ls, show)
   --all          ls: include resolved items from the last 24 h
-  --no-live      show: spool data only, no Okena read
+  --no-live      show: spool data only, no live source read
   --cursor FILE  watch: cursor file (default <dir>/dispatcher.cursor)
   --dir DIR      Spool directory (default $HELM_AGENT_DOCK_DIR or
                  <appData>/Helm/agent-dock)

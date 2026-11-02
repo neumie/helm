@@ -411,7 +411,7 @@ export const AGENT_DOCK_IPC = {
 	act: 'agent-dock:act',
 } as const
 
-/** Okena Claude agent dock: read the queue, ack, and (slice 2) answer from a card. No control socket yet. */
+/** Agent dock: read the queue, ack, and answer from the pane. No control socket yet. */
 export interface AgentDockApi {
 	/** Push pattern like NavApi; returns unsubscribe. */
 	onSnapshot(listener: (snapshot: AgentDockSnapshot) => void): () => void

@@ -1,4 +1,4 @@
-// Agent dock acts (slice 2): pure validation, Okena request bodies and the
+// Agent dock acts: pure validation, Okena request bodies and the
 // compare-and-set checks main runs on a FRESH Okena read before every effect.
 // No IO here; okena-claude-source.ts performs the reads/POSTs, reduce.ts owns
 // the item lifecycle. Answer text only passes through: it is never returned in

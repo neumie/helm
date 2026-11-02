@@ -74,7 +74,7 @@ export interface AgentDockTarget {
 export interface AgentDockObservationSource {
 	/** One tick: a poll per source (CompositeDockSource). */
 	observe(state: AgentDockState, now: number): Promise<AgentDockObservation[]>
-	/** Slice 2: CAS read + source write for one dock answer. Absent = the dock cannot answer. */
+	/** CAS read + source write for one dock answer. Absent = the dock cannot answer. */
 	act?(target: AgentDockTarget, item: DockItem, action: DockAction): Promise<DockActOutcome>
 	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
 	expedite?(target: AgentDockTarget, until: number): void

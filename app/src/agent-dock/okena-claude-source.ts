@@ -1,7 +1,7 @@
 // Agent dock source: one read-only Okena Claude Remote observation per tick,
 // through Helm's existing OkenaClient (profile/token/endpoint resolution).
 // Structured API only; never screen contents (AGENTS.md). Observation is
-// GET-only; the only writes are `act()` (slice 2), each behind a fresh CAS read:
+// GET-only; the only writes are `act()`, each behind a fresh CAS read:
 // dialog decision POST or prompt POST (see act.ts for the exact Okena bodies).
 //
 // Per tick:
@@ -62,7 +62,7 @@ export interface OkenaClaudeClient {
 		query?: { cursor?: number; sessionId?: string },
 		opts?: OkenaReadOptions,
 	): Promise<unknown>
-	/** Act routes (slice 2); a read-only double may omit them and the dock then cannot answer. */
+	/** Act routes; a read-only double may omit them and the dock then cannot answer. */
 	postClaudeDialogDecision?(
 		terminalId: string,
 		dialogId: string,
