@@ -17,11 +17,11 @@ async function openHarness(page: Page): Promise<void> {
 	}, PREFERENCES)
 	await page.reload()
 	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
-	await expect(page.locator('#agent-dock .agent-dock-rail')).toBeVisible()
+	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
 }
 
 /** The queue row: always shown, the dock's state in words as its name. */
-const row = (page: Page) => page.locator('#agent-dock .agent-dock-rail')
+const row = (page: Page) => page.locator('#agent-dock .agent-dock-row')
 
 const box = async (page: Page, selector: string) => {
 	const value = await page.locator(selector).first().boundingBox()
@@ -255,7 +255,7 @@ test('⌘⇧J goes to the dock: focuses an entry, Esc returns, pressed inside it
 	const input = page.locator('.term-holder.active .xterm-helper-textarea')
 	await input.focus()
 	const rail = row(page)
-	const firstEntry = rail.locator('[data-rail-stop]').first()
+	const firstEntry = rail.locator('[data-row-stop]').first()
 	const terms = await box(page, '#terms')
 
 	await page.keyboard.press('Meta+Shift+KeyJ')
@@ -297,7 +297,7 @@ test('keyboard stepping keeps focus in the pane; question tabs keep their own ar
 	await page.keyboard.press('Meta+Shift+KeyJ')
 	const rail = row(page)
 	const pane = page.locator('.agent-dock-pane')
-	await expect(rail.locator('[data-rail-stop]').first()).toBeFocused()
+	await expect(rail.locator('[data-row-stop]').first()).toBeFocused()
 	await page.keyboard.press('Enter')
 	await expect(pane).toBeFocused()
 	await expect(pane).toContainText('1/3')
@@ -370,7 +370,7 @@ test('at a 1100px window the queue is one row: names and waits whole, each fill 
 	for (const room of await tailRoom()) expect(room).toBeLessThanOrEqual(18)
 	// Nothing busy: the Agents entry says only `agents 8`.
 	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('agents 8')
-	const railBox = await box(page, '.agent-dock-rail')
+	const railBox = await box(page, '.agent-dock-row')
 	for (const entry of await rail.locator('.agent-dock-entry, .agent-dock-more').all()) {
 		const entryBox = await entry.boundingBox()
 		if (!entryBox) throw new Error('entry not laid out')
@@ -517,11 +517,11 @@ test('position persists; on top the queue row leads, then the pane above the ter
 	let dock = await box(page, '#agent-dock')
 	let terms = await box(page, '#terms')
 	expect(dock.y + dock.height).toBeLessThanOrEqual(terms.y + 0.5)
-	expect((await box(page, '.agent-dock-rail')).y).toBe(dock.y)
+	expect((await box(page, '.agent-dock-row')).y).toBe(dock.y)
 
 	await page.locator('.agent-dock-entry').first().click()
 	await expect(page.locator('.agent-dock-pane')).toBeVisible()
-	const rail = await box(page, '.agent-dock-rail')
+	const rail = await box(page, '.agent-dock-row')
 	const pane = await box(page, '.agent-dock-pane')
 	expect(pane.y).toBeGreaterThanOrEqual(rail.y + rail.height - 0.5)
 	await expectPaneBesideTerminal(page, 'top')
@@ -529,7 +529,7 @@ test('position persists; on top the queue row leads, then the pane above the ter
 	await page.reload()
 	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
 	await expect(page.locator('#right')).toHaveAttribute('data-agent-dock-position', 'top')
-	await expect(page.locator('.agent-dock-rail')).toBeVisible()
+	await expect(page.locator('.agent-dock-row')).toBeVisible()
 	dock = await box(page, '#agent-dock')
 	terms = await box(page, '#terms')
 	expect(dock.y + dock.height).toBeLessThanOrEqual(terms.y + 0.5)
@@ -756,7 +756,7 @@ test('the dock is one --chrome surface, its edge the topbar border mirrored; no 
 	})
 	expect(edge).toEqual({ color: topbarEdge, height: '1px' })
 	// The pane and the queue row sit on that one surface (no fills of their own).
-	for (const part of ['.agent-dock-pane', '.agent-dock-rail'])
+	for (const part of ['.agent-dock-pane', '.agent-dock-row'])
 		expect(await background(page, part)).toBe('rgba(0, 0, 0, 0)')
 	// One typeface: the UI face for the row, the header and the choices; mono only for the literal command.
 	const face = (selector: string) =>
@@ -903,7 +903,7 @@ async function openByKeyboard(page: Page, index: 1 | 2 | 3) {
 	await input.focus()
 	await page.keyboard.press('Meta+Shift+KeyJ')
 	const rail = row(page)
-	await expect(rail.locator('[data-rail-stop]').first()).toBeFocused()
+	await expect(rail.locator('[data-row-stop]').first()).toBeFocused()
 	for (let at = 1; at < index; at++) await page.keyboard.press('ArrowRight')
 	await page.keyboard.press('Enter')
 	const pane = page.locator('.agent-dock-pane')
@@ -926,7 +926,7 @@ test('handing focus back to the terminal never scrolls its holder', async ({ pag
 	await expect(input).toBeFocused()
 	expect(await holderScroll(page)).toBe(0)
 	await page.keyboard.press('Meta+Shift+KeyJ')
-	await expect(page.locator('.agent-dock-rail [data-rail-stop]').first()).toBeFocused()
+	await expect(page.locator('.agent-dock-row [data-row-stop]').first()).toBeFocused()
 	await page.keyboard.press('Escape')
 	await expect(input).toBeFocused()
 	expect(await holderScroll(page)).toBe(0)

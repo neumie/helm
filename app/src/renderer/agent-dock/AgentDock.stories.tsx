@@ -3,14 +3,14 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
-import { type AgentDockPosition, cardKindLabel, railItems } from './presentation'
+import { type AgentDockPosition, itemKindLabel, queueItems } from './presentation'
 
 type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
 const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boolean> = {
-	question: item => cardKindLabel(item) === 'Question',
-	permission: item => cardKindLabel(item) === 'Permission',
-	plan: item => cardKindLabel(item) === 'Plan',
+	question: item => itemKindLabel(item) === 'Question',
+	permission: item => itemKindLabel(item) === 'Permission',
+	plan: item => itemKindLabel(item) === 'Plan',
 	turn: item => item.kind === 'turn',
 	orphaned: item => item.state === 'orphaned',
 }
@@ -18,7 +18,7 @@ const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boo
 function resolveOpen(snapshot: AgentDockSnapshot, open: OpenFixture | undefined): AgentDockTarget | null {
 	if (!open) return null
 	if (open === 'agents') return { type: 'agents' }
-	const item = railItems(snapshot, Date.now()).find(OPEN_MATCH[open])
+	const item = queueItems(snapshot, Date.now()).find(OPEN_MATCH[open])
 	return item ? { type: 'item', id: item.id } : null
 }
 
@@ -143,4 +143,4 @@ export const ReceiptRefused: Story = { args: { scenario: 'receipt-refused', open
 export const ReceiptFailed: Story = { args: { scenario: 'receipt-failed', open: 'question' } }
 
 /** Receipt states on the entries with no pane open. */
-export const ReceiptCards: Story = { args: { scenario: 'receipt-unconfirmed' } }
+export const ReceiptEntries: Story = { args: { scenario: 'receipt-unconfirmed' } }

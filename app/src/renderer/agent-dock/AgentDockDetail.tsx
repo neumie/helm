@@ -33,10 +33,10 @@ import {
 	agingTone,
 	alwaysAllowLabels,
 	askQuestions,
-	cardKindLabel,
-	cardTone,
+	entryTone,
 	formatAge,
 	itemHeadline,
+	itemKindLabel,
 	itemTimeLine,
 	kindGlyph,
 	orderedSessions,
@@ -158,7 +158,7 @@ function ItemHeader({
 	onClose(): void
 }) {
 	const time = itemTimeLine(item, now)
-	const kind = cardKindLabel(item)
+	const kind = itemKindLabel(item)
 	const context = headerContext(item)
 	// The queue's selected fill says whose; the header says only what (kind + question context).
 	// Whose, the task title and when are its tooltip.
@@ -202,7 +202,7 @@ function ItemHeader({
 			}
 		>
 			<span className="agent-dock-title-kind">
-				<Glyph item={item} tone={cardTone(item)} />
+				<Glyph item={item} tone={entryTone(item)} />
 				{kind}
 			</span>
 			{context ? <span className="agent-dock-title-context">{context}</span> : null}
@@ -1615,7 +1615,7 @@ export function AgentsDetail({
 											{who.name}
 										</span>
 										<span className="agent-dock-td-project">
-											{cardKindLabel(item).toLowerCase()} #{item.id}
+											{itemKindLabel(item).toLowerCase()} #{item.id}
 										</span>
 										<span className="agent-dock-td-status">
 											{item.resolution ? `${formatAge(now - item.resolution.at)} ago` : ''}

@@ -30,7 +30,7 @@ const {
 	stableJson,
 } = modelModule as ModelModule
 const { TURN_IDLE_MS, TURN_RESUMED_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
-const { RISKY_PROMPT, lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
+const { RISKY_PROMPT, lingeringItems, queueItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
 	presentationModule as PresentationModule
 
 type Json = Record<string, unknown>
@@ -219,7 +219,7 @@ test('sent but not observed for 10 s: unconfirmed (event once); still open later
 	} as AgentDockState
 	const acked = reduce(restarted, { type: 'ack', itemId: item.id }, T0 + 21_000).state
 	assert.equal(only(acked).resolution?.by, 'acked')
-	// He dismissed it himself: it leaves the rail at once (no lingering receipt).
+	// He dismissed it himself: it leaves the queue at once (no lingering receipt).
 	assert.deepEqual(
 		lingeringItems({ generatedAt: T0, source: acked.source, sessions: [], items: acked.items }, T0 + 21_000),
 		[],
@@ -257,11 +257,11 @@ test('a refused act returns the item to open with its receipt; the close that fo
 	const closed = drive([[T0 + 2_000, poll(ask({ dialogs: [] }))]], state).state
 	assert.equal(only(closed).resolution?.by, 'outside')
 	assert.equal(only(closed).receipt?.status, 'refused')
-	// The renderer keeps it on the rail a moment with the refusal.
+	// The renderer keeps it in the queue a moment with the refusal.
 	const snapshot = { generatedAt: T0 + 2_500, source: closed.source, sessions: [], items: closed.items }
 	assert.equal(lingeringItems(snapshot, T0 + 2_500).length, 1)
 	assert.equal(receiptView(only(closed))?.text, 'refused: already answered elsewhere')
-	assert.equal(railItems(snapshot, T0 + 2_000 + RECEIPT_LINGER_MS).length, 0)
+	assert.equal(queueItems(snapshot, T0 + 2_000 + RECEIPT_LINGER_MS).length, 0)
 })
 
 test('a failed act keeps the verbatim error, reopens the item, and a retry can send again', () => {

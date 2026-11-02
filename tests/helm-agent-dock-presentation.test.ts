@@ -17,9 +17,9 @@ const {
 	askQuestions,
 	permissionReview,
 	planReview,
-	cardGist,
-	cardKindLabel,
-	cardTone,
+	entryGist,
+	itemKindLabel,
+	entryTone,
 	dockLabel,
 	itemAgeTone,
 	itemTimeLine,
@@ -220,14 +220,14 @@ test('resolution labels say how the item closed', () => {
 test('card tone and age: the glyph keeps its kind tone, only the age turns red (asks past 2h), turns cap at amber', () => {
 	const now = T + 3 * 60 * 60_000
 	const oldAsk = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T } })
-	assert.equal(cardTone(oldAsk), 'ask')
-	assert.equal(cardTone(askItem({ state: 'orphaned' })), 'orphaned')
+	assert.equal(entryTone(oldAsk), 'ask')
+	assert.equal(entryTone(askItem({ state: 'orphaned' })), 'orphaned')
 	const oldTurn = turnItem()
-	assert.equal(cardTone(oldTurn), 'turn')
+	assert.equal(entryTone(oldTurn), 'turn')
 	assert.equal(itemAgeTone(oldTurn, now), 'warn')
 	assert.equal(itemAgeTone(oldAsk, now), 'danger')
-	assert.equal(cardKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
-	assert.equal(cardKindLabel(oldAsk), 'Permission')
+	assert.equal(itemKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
+	assert.equal(itemKindLabel(oldAsk), 'Permission')
 	// Once answered (or on its way) the wait stops ageing: no red "waiting" next to a ✓.
 	const answered = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'dock' } } as DockItem
 	assert.equal(itemAgeTone(answered, now), 'none')
@@ -236,8 +236,8 @@ test('card tone and age: the glyph keeps its kind tone, only the age turns red (
 	assert.equal(itemTimeLine({ ...oldAsk, state: 'sending' } as DockItem, now).waited, 'sending')
 	const elsewhere = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'outside' } } as DockItem
 	assert.match(itemTimeLine(elsewhere, now).waited, /^closed \d\d:\d\d$/)
-	assert.equal(cardTone(answered), 'done')
-	assert.equal(cardTone(elsewhere), 'closed')
+	assert.equal(entryTone(answered), 'done')
+	assert.equal(entryTone(elsewhere), 'closed')
 })
 
 test("card gist: the turn's last paragraph, the plan title, the command", () => {
@@ -250,7 +250,7 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			hadBackground: false,
 		},
 	})
-	assert.equal(cardGist(turn), 'Can you confirm the stage secret?')
+	assert.equal(entryGist(turn), 'Can you confirm the stage secret?')
 	const plan = askItem({
 		fact: {
 			kind: 'ask',
@@ -260,11 +260,11 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			createdAtMs: T,
 		},
 	})
-	assert.equal(cardGist(plan), 'Export ISDOC')
+	assert.equal(entryGist(plan), 'Export ISDOC')
 	const bash = askItem({
 		fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: { command: 'git push\u202e' }, createdAtMs: T },
 	})
-	assert.equal(cardGist(bash), 'Bash: git push')
+	assert.equal(entryGist(bash), 'Bash: git push')
 	assert.deepEqual(itemTimeLine(turn, T + 6 * 60_000).waited, 'idle 6m')
 	assert.match(itemTimeLine(bash, T).stamp, /^asked \d\d:\d\d$/)
 })

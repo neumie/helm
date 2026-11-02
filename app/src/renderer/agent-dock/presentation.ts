@@ -108,7 +108,7 @@ export function lingeringItems(snapshot: AgentDockSnapshot | null, now: number):
 }
 
 /** Entries in queue order: everything that needs Jakub, then answers still showing their receipt. */
-export function railItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
+export function queueItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
 	const lingering = lingeringItems(snapshot, now)
 	return [...needsYouItems(snapshot), ...lingering.sort((a, b) => a.id - b.id)]
 }
@@ -486,12 +486,12 @@ export function dockLabel(snapshot: AgentDockSnapshot | null, now: number): stri
  * Kind tone for the glyph: amber ask and orphan, blue unchecked turn, green answered from the dock,
  * quiet closed elsewhere. It never ages: how long it has waited is the age text's tone alone.
  */
-export type CardTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
+export type EntryTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
 
 /** Answered from the dock (the only resolution that earns the green ✓). */
 const answeredHere = (item: DockItem): boolean => item.state === 'resolved' && item.resolution?.by === 'dock'
 
-export function cardTone(item: DockItem): CardTone {
+export function entryTone(item: DockItem): EntryTone {
 	if (item.state === 'resolved') return answeredHere(item) ? 'done' : 'closed'
 	if (item.state === 'orphaned') return 'orphaned'
 	return item.kind === 'turn' ? 'turn' : 'ask'
@@ -505,7 +505,7 @@ export function itemAgeTone(item: DockItem, now: number): AgingTone {
 }
 
 /** Short kind for entries and the pane header: Question / Plan / Permission / Turn ended / Orphaned …. */
-export function cardKindLabel(item: DockItem): string {
+export function itemKindLabel(item: DockItem): string {
 	if (item.fact.kind === 'turn') return 'Turn ended'
 	const base =
 		item.fact.tool === 'AskUserQuestion' ? 'Question' : item.fact.tool === 'ExitPlanMode' ? 'Plan' : 'Permission'
@@ -544,7 +544,7 @@ function turnGist(text: string): string {
 }
 
 /** Entry gist: the question, the plan's title, the command, or the turn's last paragraph. */
-export function cardGist(item: DockItem): string {
+export function entryGist(item: DockItem): string {
 	if (item.fact.kind === 'turn') return turnGist(item.fact.text) || 'Agent finished its turn'
 	const { tool, input } = item.fact
 	if (tool === 'ExitPlanMode') {

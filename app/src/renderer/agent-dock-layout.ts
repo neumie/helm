@@ -124,17 +124,17 @@ export function mountAgentDock({
 	const reactRoot = createRoot(view)
 
 	/** Keyboard home inside the dock: an open pane, else the open or first entry/Agents entry, else the row. */
-	const focusRail = (): void => {
+	const focusDock = (): void => {
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
 		if (pane) {
 			pane.focus()
 			return
 		}
-		const rail = dock.querySelector<HTMLElement>('.agent-dock-rail')
+		const row = dock.querySelector<HTMLElement>('.agent-dock-row')
 		const stop =
-			rail?.querySelector<HTMLElement>('[data-rail-stop][data-open="true"]') ??
-			rail?.querySelector<HTMLElement>('[data-rail-stop]')
-		;(stop ?? rail)?.focus()
+			row?.querySelector<HTMLElement>('[data-row-stop][data-open="true"]') ??
+			row?.querySelector<HTMLElement>('[data-row-stop]')
+		;(stop ?? row)?.focus()
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
 	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding.
@@ -189,7 +189,7 @@ export function mountAgentDock({
 	// pane unmounts (Chromium accessibility safety); closing it refits xterm through onPaneChange.
 	const toggle = (): void => {
 		if (!dock.contains(ownerDocument.activeElement)) {
-			focusRail()
+			focusDock()
 			return
 		}
 		focusTerminal()
@@ -209,7 +209,7 @@ export function mountAgentDock({
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		const acked = await api.ack(itemId)
 		// The acked row disappears; keep keyboard focus inside the dock instead of dropping it to <body>.
-		if (!disposed && focusInDock && !dock.contains(ownerDocument.activeElement)) focusRail()
+		if (!disposed && focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
 		return acked
 	}
 
@@ -289,7 +289,7 @@ export function mountAgentDock({
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		render()
 		// A live update removed the focused row (resolved elsewhere): keep keyboard focus in the dock.
-		if (focusInDock && !dock.contains(ownerDocument.activeElement)) focusRail()
+		if (focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
 	})
 	publishVisible()
 	fitActive()
