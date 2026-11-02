@@ -9,6 +9,7 @@ import actModule from '../app/src/agent-dock/act.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import presentationModule from '../app/src/renderer/agent-dock/presentation.ts'
+import { OKENA_NOT_CONFIGURED, OkenaClient, OkenaHttpError } from '../src/extensions/okena/client.js'
 
 type ActModule = typeof import('../app/src/agent-dock/act.ts')
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
@@ -649,9 +650,10 @@ test('turn CAS: idle, same session, last assistant unchanged, nobody replied', (
 test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {
 	// Live: native Claude Code runs as its version (`2.1.314`), so Okena's foreground probe misses it and
 	// `POST …/prompt` answers 409 while the channel is off. Nothing was typed; the receipt must say what to do.
-	const noSession = Object.assign(
-		new Error('Okena POST /v1/claude/terminals/a6714847/prompt failed (409): No Claude session detected in this pane'),
-		{ status: 409 },
+	const noSession = new OkenaHttpError(
+		'Okena POST /v1/claude/terminals/a6714847/prompt failed (409): No Claude session detected in this pane',
+		409,
+		'No Claude session detected in this pane',
 	)
 	const outcome = dockPostFailure(noSession, false)
 	assert.equal(outcome.status, 'failed')
@@ -659,26 +661,39 @@ test('a reply Okena cannot type (409, no Claude detected in the pane) says to re
 	assert.equal(detail, 'Okena refused the reply (409): No Claude session detected in this pane. Reply in the terminal.')
 	assert.doesNotMatch(detail, /\/v1\/claude\/terminals/)
 	// Busy (hooks detached) is also Okena saying "not now", not a transport fault.
-	const busy = Object.assign(
-		new Error(
-			"Okena POST /v1/claude/terminals/t/prompt failed (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
-		),
-		{ status: 409 },
+	const busy = new OkenaHttpError(
+		"Okena POST /v1/claude/terminals/t/prompt failed (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
+		409,
+		"Claude is busy and Okena's hooks are not attached; try again when it finishes",
 	)
 	assert.deepEqual(dockPostFailure(busy, false), {
 		status: 'failed',
 		detail:
 			"Okena refused the reply (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
 	})
+	// Helm's hub carries its reason the same way (`status` + `reason`); whitespace collapses like the detail.
+	const hubBusy = Object.assign(new Error('Helm Claude hub (409): A reply is  still being typed.\n'), {
+		status: 409,
+		reason: 'A reply is  still being typed.\n',
+	})
+	assert.deepEqual(dockPostFailure(hubBusy, false, 'Helm terminals'), {
+		status: 'failed',
+		detail: 'Helm terminals refused the reply (409): A reply is still being typed.',
+	})
+	// No reason on the error: the whole detail stands in for it.
+	assert.deepEqual(dockPostFailure(Object.assign(new Error('conflict'), { status: 409 }), false), {
+		status: 'failed',
+		detail: 'Okena refused the reply (409): conflict',
+	})
 	// Dialog POSTs keep their verbatim detail.
-	const dialogConflict = Object.assign(new Error('Okena POST /x failed (409): nope'), { status: 409 })
+	const dialogConflict = new OkenaHttpError('Okena POST /x failed (409): nope', 409, 'nope')
 	assert.deepEqual(dockPostFailure(dialogConflict, true), {
 		status: 'failed',
 		detail: 'Okena POST /x failed (409): nope',
 	})
 })
 
-test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed; else verbatim failure', () => {
+test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed; else verbatim failure', async () => {
 	const notFound = Object.assign(new Error('Okena POST /x failed (404): dialog is no longer open'), { status: 404 })
 	assert.deepEqual(dockPostFailure(notFound, true), {
 		status: 'refused',
@@ -695,7 +710,14 @@ test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed
 	})
 	const fetchRefused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
 	assert.equal(dockPostFailure(fetchRefused, true).status, 'failed')
-	assert.equal(dockPostFailure(new Error('Okena not configured'), true).status, 'failed')
+	// No Okena profile/credentials: the client throws before sending anything (coded, not matched by its words).
+	const unconfigured = await new OkenaClient('/nonexistent/okena-config').postClaudePrompt('t', 'hi').then(
+		() => null,
+		(error: unknown) => error,
+	)
+	assert.equal((unconfigured as { code?: unknown }).code, OKENA_NOT_CONFIGURED)
+	assert.deepEqual(dockPostFailure(unconfigured, true), { status: 'failed', detail: 'Okena not configured' })
+	assert.equal(dockPostFailure(new Error('Okena not configured'), true).status, 'unconfirmed')
 	assert.equal(dockPostFailure(Object.assign(new Error('failed (500): x'), { status: 500 }), true).status, 'failed')
 	// After the request went out, anything without an Okena status may have landed: unconfirmed, never "failed".
 	for (const error of [

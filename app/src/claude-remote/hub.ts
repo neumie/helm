@@ -104,8 +104,9 @@ const excludedFileSchema = z.object({
 	sessions: z.array(z.string().max(200)).max(EXCLUDED_SESSIONS_MAX),
 })
 
-const errorWithStatus = (status: number, message: string): Error & { status: number } =>
-	Object.assign(new Error(`Helm Claude hub (${status}): ${message}`), { status })
+/** Shaped like OkenaHttpError (`status`, `reason`), so dockPostFailure reads both transports alike. */
+const errorWithStatus = (status: number, message: string): Error & { status: number; reason: string } =>
+	Object.assign(new Error(`Helm Claude hub (${status}): ${message}`), { status, reason: message })
 
 /** Reply text for the terminal: no escape/control bytes (they could end the bracketed paste), CRs become newlines. */
 export function sanitizePrompt(text: string): string {

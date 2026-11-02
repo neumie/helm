@@ -931,7 +931,10 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			text: 'again',
 		})
 		assert.equal(again.status, 'failed')
-		assert.match(again.status === 'failed' ? again.detail : '', /^Helm terminals refused the reply \(409\)/)
+		assert.equal(
+			again.status === 'failed' ? again.detail : '',
+			'Helm terminals refused the reply (409): A reply is still being typed.',
+		)
 
 		// claude killed (-9) in the terminal: its lifeline closes, nothing is typed into the shell left behind.
 		await f.event(ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'thanks' }))

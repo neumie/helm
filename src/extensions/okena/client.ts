@@ -173,7 +173,7 @@ export class OkenaClient {
 
 	private async authorizedFetch(path: string, init: RequestInit = {}, maxBytes?: number): Promise<Response> {
 		const creds = this.loadCredentials()
-		if (!creds) throw new Error('Okena not configured')
+		if (!creds) throw Object.assign(new Error('Okena not configured'), { code: OKENA_NOT_CONFIGURED })
 
 		const send = (c: OkenaCredentials) => {
 			const headers = new Headers(init.headers)
@@ -250,7 +250,8 @@ export class OkenaClient {
 		const text = await readBoundedText(res, maxBytes)
 		if (!res.ok) {
 			if (res.status === 401) throw new OkenaHttpError(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
+			const reason = text.slice(0, 200)
+			throw new OkenaHttpError(`Okena GET ${route} failed (${res.status}): ${reason}`, res.status, reason)
 		}
 		try {
 			return JSON.parse(text) as unknown
@@ -277,7 +278,8 @@ export class OkenaClient {
 		const text = await readBoundedText(res, maxBytes)
 		if (!res.ok) {
 			if (res.status === 401) throw new OkenaHttpError(`Okena POST ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena POST ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
+			const reason = text.slice(0, 200)
+			throw new OkenaHttpError(`Okena POST ${route} failed (${res.status}): ${reason}`, res.status, reason)
 		}
 		if (!text.trim()) return null
 		try {
@@ -347,11 +349,15 @@ export class OkenaClient {
 	}
 }
 
-/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason. */
+/** `code` of the error a request throws when no Okena profile/credentials resolve (nothing was sent). */
+export const OKENA_NOT_CONFIGURED = 'OKENA_NOT_CONFIGURED'
+
+/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason, `reason` the reason alone (its first 200 chars). */
 export class OkenaHttpError extends Error {
 	constructor(
 		message: string,
 		readonly status: number,
+		readonly reason?: string,
 	) {
 		super(message)
 		this.name = 'OkenaHttpError'

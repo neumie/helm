@@ -226,6 +226,8 @@ export function turnStillWaiting(
 
 /** Errors that prove the request never reached Okena (nothing to confirm). */
 const NOT_SENT_CODES = new Set([
+	/** OkenaClient OKENA_NOT_CONFIGURED: no profile/credentials, nothing was sent. */
+	'OKENA_NOT_CONFIGURED',
 	'ECONNREFUSED',
 	'ENOENT',
 	'ENOTDIR',
@@ -258,23 +260,24 @@ export function dockPostFailure(
 	const status = (error as { status?: unknown } | null)?.status
 	if (typeof status === 'number') {
 		if (dialog && status === 404) return { status: 'refused', reason: 'gone', detail }
-		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(detail, source) }
+		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(error, detail, source) }
 		return { status: 'failed', detail }
 	}
 	const code = errorCode(error)
-	if ((code !== undefined && NOT_SENT_CODES.has(code)) || /^Okena not configured/.test(detail))
-		return { status: 'failed', detail }
+	if (code !== undefined && NOT_SENT_CODES.has(code)) return { status: 'failed', detail }
 	return { status: 'unconfirmed', detail: `No answer from ${source}: ${detail}` }
 }
 
 /**
  * A 409 on `POST …/prompt` is Okena refusing to type (nothing was sent). Drop the
- * route (terminal id noise) and keep Okena's reason verbatim. "No Claude session detected"
+ * route (terminal id noise) and keep Okena's reason verbatim: both transports put it
+ * on the error as `reason` (OkenaHttpError, Helm hub). "No Claude session detected"
  * also happens when Okena's foreground probe misses a running native `claude`
  * (its process name is the version, e.g. `2.1.314`), so say where to reply instead.
  */
-function promptConflictDetail(detail: string, source: string): string {
-	const reason = /(?:failed |Helm Claude hub )\(409\): (.*)$/.exec(detail)?.[1]?.trim() || detail
+function promptConflictDetail(error: unknown, detail: string, source: string): string {
+	const own = (error as { reason?: unknown } | null)?.reason
+	const reason = (typeof own === 'string' ? own.replace(/\s+/g, ' ').trim() : '') || detail
 	if (!/No Claude session detected/i.test(reason)) return `${source} refused the reply (409): ${reason}`
 	return `${source} refused the reply (409): ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Reply in the terminal.`
 }
