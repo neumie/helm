@@ -20,7 +20,6 @@ import {
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
 	type OkenaState,
-	PERMISSION_SUGGESTIONS_MAX,
 	type SessionKey,
 	okenaClaudeCandidates,
 	okenaDialogPrefix,
@@ -30,6 +29,7 @@ import {
 	parseOkenaState,
 	sessionKey,
 } from './model'
+import { PERMISSION_SUGGESTIONS_MAX } from './review'
 
 /** A session must stay idle this long before an unchecked turn opens (filters quick resumes). */
 export const TURN_IDLE_MS = 8_000

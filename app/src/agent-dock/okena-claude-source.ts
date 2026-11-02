@@ -47,8 +47,6 @@ export const MAX_CLAUDE_TERMINALS = 64
 const READ_CONCURRENCY = 6
 /** The CAS read + POST of one act. Okena types a prompt into the pane before it answers, so give it room. */
 export const OKENA_ACT_TIMEOUT_MS = 15_000
-/** After a dock reply, read the transcript every tick (even while busy) this long, to see the user entry land. */
-export const EXPEDITE_MS = 20_000
 
 /** The OkenaClient surface the source uses (structural, so tests inject a double). */
 export interface OkenaClaudeClient {

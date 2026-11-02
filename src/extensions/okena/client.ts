@@ -325,7 +325,7 @@ export class OkenaClient {
 	 */
 	getClaudeTranscript(
 		terminalId: string,
-		query: { cursor?: number; sessionId?: string; agentId?: string } = {},
+		query: { cursor?: number; sessionId?: string } = {},
 		opts?: OkenaReadOptions,
 	): Promise<unknown> {
 		const params = new URLSearchParams()
@@ -333,7 +333,6 @@ export class OkenaClient {
 			params.set('cursor', String(query.cursor))
 			params.set('session_id', query.sessionId)
 		}
-		if (query.agentId) params.set('agent_id', query.agentId)
 		const search = params.size > 0 ? `?${params.toString()}` : ''
 		return this.getJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}/transcript${search}`, opts)
 	}

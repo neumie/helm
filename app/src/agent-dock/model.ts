@@ -46,7 +46,7 @@ export const okenaClaudeDialogSchema = z.object({
 })
 export type OkenaClaudeDialog = z.infer<typeof okenaClaudeDialogSchema>
 
-export const okenaClaudePrLinkSchema = z.object({
+const okenaClaudePrLinkSchema = z.object({
 	number: u64,
 	url: z.string().url(),
 	repository: z.string(),
@@ -166,7 +166,6 @@ export const sessionKey = (profile: string, terminalId: string): SessionKey => `
  * Okena-shaped wire; the reducer keeps epoch/seed/health per source.
  */
 export type DockSourceId = 'okena' | 'helm'
-export const DOCK_SOURCES: readonly DockSourceId[] = ['okena', 'helm']
 /** Words for a source in dock/CLI text. */
 export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
 
@@ -240,8 +239,6 @@ export interface DockAskFact {
 	suggestionsTruncated?: true
 	createdAtMs: number
 }
-
-export { PERMISSION_SUGGESTIONS_MAX } from './review'
 
 export interface DockTurnFact {
 	kind: 'turn'

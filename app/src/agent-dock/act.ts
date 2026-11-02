@@ -25,10 +25,9 @@ import {
 	type OkenaClaudeEntry,
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
-	PERMISSION_SUGGESTIONS_MAX,
 	stableJson,
 } from './model'
-import { alwaysAllowLabels, permissionReview, planReview } from './review'
+import { PERMISSION_SUGGESTIONS_MAX, alwaysAllowLabels, permissionReview, planReview } from './review'
 
 /** `ApiClaudeDecision` as Okena deserializes it (no other fields: deny_unknown_fields). */
 export type OkenaClaudeDecision =
