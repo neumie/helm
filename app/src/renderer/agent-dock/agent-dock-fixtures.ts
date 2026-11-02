@@ -161,6 +161,7 @@ function poll(
 ): AgentDockObservation & { type: 'poll' } {
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: { ok: true, body: okenaState(version, live) },
 		terminals: live.map(({ pane, body, transcript: page }) => ({
@@ -173,6 +174,7 @@ function poll(
 
 const down = (error: string): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error },
 	terminals: [],

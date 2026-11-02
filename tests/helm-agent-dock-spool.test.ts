@@ -65,6 +65,7 @@ const QUESTION_TEXT = 'Barva?' // the first question in the dialog's tool_input
 
 const pollAsk = (dialogId = '4b4eb160-4'): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: true, body: STATE_ASK },
 	terminals: [
@@ -83,12 +84,14 @@ const pollAsk = (dialogId = '4b4eb160-4'): AgentDockObservation => ({
 })
 const pollIdle = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: true, body: { ...STATE_ASK, claude_dialogs: {} } },
 	terminals: [{ terminalId: TID, detail: { ok: true, body: SHOW_IDLE } }],
 })
 const pollDown = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error: 'Okena not configured or not running' },
 	terminals: [],
@@ -96,10 +99,10 @@ const pollDown = (): AgentDockObservation => ({
 
 class ScriptedSource {
 	queue: AgentDockObservation[] = []
-	async observe(): Promise<AgentDockObservation> {
+	async observe(): Promise<AgentDockObservation[]> {
 		const next = this.queue.shift()
 		if (!next) throw new Error('no scripted observation')
-		return next
+		return [next]
 	}
 }
 

@@ -18,6 +18,7 @@
 import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
 import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
+import type { DockPane, DockSource } from './composite-source'
 import {
 	type AgentDockObservation,
 	type DockActOutcome,
@@ -71,12 +72,6 @@ export interface OkenaClaudeClient {
 	postClaudePrompt?(terminalId: string, text: string, opts?: OkenaReadOptions): Promise<unknown>
 }
 
-/** The pane an act targets. */
-export interface DockActTarget {
-	profile: string
-	terminalId: string
-}
-
 export interface TerminalReadState {
 	/** Last parsed detail facts, for edge detection. */
 	busy?: boolean
@@ -114,7 +109,7 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
-export class OkenaClaudeSource {
+export class OkenaClaudeSource implements DockSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
 
@@ -130,7 +125,7 @@ export class OkenaClaudeSource {
 	}
 
 	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
-	expedite(target: DockActTarget, until: number): void {
+	expedite(target: DockPane, until: number): void {
 		const key = sessionKey(target.profile, target.terminalId)
 		const read = this.reads.get(key)
 		if (read) read.expediteUntil = until
@@ -142,7 +137,7 @@ export class OkenaClaudeSource {
 	 * The fresh read must match what Jakub saw (dialog id + verbatim input, or the
 	 * idle turn's last assistant uuid); otherwise nothing is sent.
 	 */
-	async act(target: DockActTarget, item: DockItem, action: DockAction): Promise<DockActOutcome> {
+	async act(target: DockPane, item: DockItem, action: DockAction): Promise<DockActOutcome> {
 		const built = dockActBody(item, action)
 		if (!built.ok) return { status: 'refused', reason: built.reason, detail: built.detail }
 		const client = this.client.forProfile(target.profile)
@@ -214,10 +209,12 @@ export class OkenaClaudeSource {
 
 	/** One poll observation. Never throws: transport failures become `OkenaFetch` errors. */
 	async observe(state: AgentDockState, now: number): Promise<AgentDockObservation> {
+		const source = this.id
 		const profile = this.client.activeProfileId()
 		if (!profile) {
 			return {
 				type: 'poll',
+				source,
 				profile: this.lastProfile ?? 'unknown',
 				state: { ok: false, error: this.text.notRunning },
 				terminals: [],
@@ -230,9 +227,10 @@ export class OkenaClaudeSource {
 		const stateFetch = await capture(() =>
 			client.getStateJson({ maxBytes: OKENA_STATE_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }),
 		)
-		if (!stateFetch.ok) return { type: 'poll', profile, state: stateFetch, terminals: [] }
+		if (!stateFetch.ok) return { type: 'poll', source, profile, state: stateFetch, terminals: [] }
 		const parsedState = parseOkenaState(stateFetch.body)
-		if (!parsedState.ok) return { type: 'poll', profile, state: { ok: false, error: parsedState.error }, terminals: [] }
+		if (!parsedState.ok)
+			return { type: 'poll', source, profile, state: { ok: false, error: parsedState.error }, terminals: [] }
 
 		const candidates = okenaClaudeCandidates(parsedState.value).slice(0, MAX_CLAUDE_TERMINALS)
 		const terminals = await mapLimited(candidates, READ_CONCURRENCY, terminalId =>
@@ -240,7 +238,7 @@ export class OkenaClaudeSource {
 		)
 		const listed = new Set(candidates.map(terminalId => sessionKey(profile, terminalId)))
 		for (const key of this.reads.keys()) if (!listed.has(key)) this.reads.delete(key)
-		return { type: 'poll', profile, state: stateFetch, terminals }
+		return { type: 'poll', source, profile, state: stateFetch, terminals }
 	}
 
 	private async observeTerminal(

@@ -33,12 +33,14 @@ const TID = SHOW_ASK.terminal_id as string
 const OKENA_PROFILE = 'okena-profile'
 const okenaAsk = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: OKENA_PROFILE,
 	state: { ok: true, body: STATE_ASK },
 	terminals: [{ terminalId: TID, detail: { ok: true, body: SHOW_ASK }, transcript: { ok: true, body: LOG_FULL } }],
 })
 const okenaDown = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: OKENA_PROFILE,
 	state: { ok: false, error: 'connect ENOENT' },
 	terminals: [],
@@ -71,19 +73,14 @@ async function harness() {
 	const okenaQueue: AgentDockObservation[] = []
 	const okenaActs: string[] = []
 	const okena = {
+		id: 'okena' as const,
 		observe: async () => okenaQueue.shift() ?? okenaDown(),
 		act: async (target: { profile: string; terminalId: string }) => {
 			okenaActs.push(`${target.profile}:${target.terminalId}`)
 			return { status: 'sent' as const }
 		},
 	}
-	const source = new CompositeDockSource([
-		{ id: 'okena', source: okena },
-		{
-			id: 'helm',
-			source: new OkenaClaudeSource(hub, 'helm'),
-		},
-	])
+	const source = new CompositeDockSource([okena, new OkenaClaudeSource(hub, 'helm')])
 	const watcher = new AgentDockWatcher({
 		dir,
 		source,
@@ -204,24 +201,20 @@ test('composite: a throwing source becomes its own down poll; acts route by sess
 	const composite = new CompositeDockSource([
 		{
 			id: 'okena',
-			source: {
-				observe: async () => {
-					throw new Error('boom')
-				},
-				act: async () => {
-					acts.push('okena')
-					return { status: 'sent' as const }
-				},
+			observe: async () => {
+				throw new Error('boom')
+			},
+			act: async () => {
+				acts.push('okena')
+				return { status: 'sent' as const }
 			},
 		},
 		{
 			id: 'helm',
-			source: {
-				observe: async () => okenaDown(),
-				act: async target => {
-					acts.push(`helm:${target.terminalId}`)
-					return { status: 'sent' as const }
-				},
+			observe: async () => ({ ...okenaDown(), source: 'helm' as const }),
+			act: async target => {
+				acts.push(`helm:${target.terminalId}`)
+				return { status: 'sent' as const }
 			},
 		},
 	])

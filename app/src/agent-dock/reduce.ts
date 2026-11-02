@@ -664,7 +664,7 @@ function observeTerminal(
 
 function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { type: 'poll' }>): void {
 	const { now } = draft
-	const id: DockSourceId = observation.source ?? 'okena'
+	const id = observation.source
 	if (!observation.state.ok) {
 		sourceDown(draft, id, observation.state.error)
 		return

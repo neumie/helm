@@ -467,8 +467,8 @@ export interface ObservedClaudeTerminal {
 }
 
 export type AgentDockObservation =
-	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. Absent source = okena. */
-	| { type: 'poll'; source?: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
+	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. */
+	| { type: 'poll'; source: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
 	/** Jakub acked an item in the dock. */
 	| { type: 'ack'; itemId: number }
 	/** Jakub answered from the dock; main is about to run the CAS read and the Okena POST. */

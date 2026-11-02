@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import compositeModule from '../app/src/agent-dock/composite-source.ts'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
 import runtimeModule from '../app/src/claude-remote/runtime.ts'
@@ -21,6 +22,7 @@ import runtimeModule from '../app/src/claude-remote/runtime.ts'
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type TerminalRef = import('../app/src/claude-remote/hub-core.ts').TerminalRef
 const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
+const { CompositeDockSource } = compositeModule as typeof import('../app/src/agent-dock/composite-source.ts')
 const { AgentDockWatcher } = watcherModule as typeof import('../app/src/agent-dock/watcher.ts')
 type RuntimeModule = typeof import('../app/src/claude-remote/runtime.ts')
 const { createClaudeRemote, HOOK_FILE, PRELOAD_FILE } = runtimeModule as RuntimeModule
@@ -164,7 +166,7 @@ async function harness(name: string) {
 
 	const watcher = new AgentDockWatcher({
 		dir: join(root, 'ud', 'agent-dock'),
-		source: new OkenaClaudeSource(remote.hub, 'helm'),
+		source: new CompositeDockSource([new OkenaClaudeSource(remote.hub, 'helm')]),
 		publish: () => {},
 		isFocused: () => true,
 		log: () => {},

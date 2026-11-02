@@ -10,6 +10,7 @@ import { type IncomingMessage, type Server, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import compositeModule from '../app/src/agent-dock/composite-source.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
@@ -23,6 +24,7 @@ type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 
 const { OkenaClaudeSource } = sourceModule as SourceModule
+const { CompositeDockSource } = compositeModule as typeof import('../app/src/agent-dock/composite-source.ts')
 const { AgentDockWatcher } = watcherModule as WatcherModule
 const { TURN_IDLE_MS } = reduceModule as ReduceModule
 const { ACT_CONFIRM_MS } = modelModule as ModelModule
@@ -166,7 +168,7 @@ async function harness(setup?: (okena: FakeOkenaServer) => void) {
 	})
 	const dir = join(root, 'agent-dock')
 	const clock = { now: 1_793_364_800_000 }
-	const source = new OkenaClaudeSource(new OkenaClient(writeProfile(root, socketPath)))
+	const source = new CompositeDockSource([new OkenaClaudeSource(new OkenaClient(writeProfile(root, socketPath)))])
 	const watcher = new AgentDockWatcher({
 		dir,
 		source,

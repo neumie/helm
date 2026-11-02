@@ -863,7 +863,7 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			const reduced = reduce(state, { ...observation, source: 'helm' }, at)
+			const reduced = reduce(state, observation, at)
 			state = reduced.state
 			return reduced.events
 		}
@@ -963,7 +963,7 @@ test('hub: a Helm-terminal session gets its cwd’s branch (read once per BRANCH
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			state = reduce(state, { ...observation, source: 'helm' }, at).state
+			state = reduce(state, observation, at).state
 		}
 		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
 		await tick(T0 + 1000)

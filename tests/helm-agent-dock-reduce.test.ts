@@ -105,6 +105,7 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: {
 			ok: true,
@@ -123,6 +124,7 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 }
 const down = (error = 'connect ECONNREFUSED'): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error },
 	terminals: [],

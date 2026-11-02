@@ -73,6 +73,7 @@ function poll(detail: Json | null, transcript?: Json): AgentDockObservation {
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: {
 			ok: true,

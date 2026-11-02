@@ -322,15 +322,8 @@ const agentDockWatcher = launchPolicy.agentDock
 	? new AgentDockWatcher({
 			dir: path.join(app.getPath('userData'), 'agent-dock'),
 			source: new CompositeDockSource([
-				{ id: 'okena', source: new OkenaClaudeSource(new OkenaClient()) },
-				...(claudeRemote
-					? [
-							{
-								id: 'helm' as const,
-								source: new OkenaClaudeSource(claudeRemote.hub, 'helm'),
-							},
-						]
-					: []),
+				new OkenaClaudeSource(new OkenaClient()),
+				...(claudeRemote ? [new OkenaClaudeSource(claudeRemote.hub, 'helm')] : []),
 			]),
 			publish: snapshot =>
 				sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),

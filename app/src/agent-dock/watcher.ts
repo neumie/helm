@@ -83,8 +83,8 @@ export interface AgentDockTarget {
 }
 
 export interface AgentDockObservationSource {
-	/** One tick: a poll per source (the composite returns one per source). */
-	observe(state: AgentDockState, now: number): Promise<AgentDockObservation | AgentDockObservation[]>
+	/** One tick: a poll per source (CompositeDockSource). */
+	observe(state: AgentDockState, now: number): Promise<AgentDockObservation[]>
 	/** Slice 2: CAS read + source write for one dock answer. Absent = the dock cannot answer. */
 	act?(target: AgentDockTarget, item: DockItem, action: DockAction): Promise<DockActOutcome>
 	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
@@ -434,7 +434,7 @@ export class AgentDockWatcher {
 		try {
 			const observed = await this.options.source.observe(this.state, this.now())
 			if (this.stopped) return
-			for (const observation of Array.isArray(observed) ? observed : [observed]) this.apply(observation)
+			for (const observation of observed) this.apply(observation)
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
 			await this.flush()
