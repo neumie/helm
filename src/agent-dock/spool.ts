@@ -72,6 +72,7 @@ export const spoolSessionSchema = z.object({
 	projectId: z.string().optional(),
 	project: z.string(),
 	name: z.string(),
+	branch: z.string().optional(),
 	sessionId: z.string().optional(),
 	status: z.enum(['working', 'background', 'idle', 'waiting', 'unknown', 'unreachable']),
 	since: ms,

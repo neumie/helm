@@ -1,4 +1,4 @@
-// Pure agent-dock presentation helpers: snapshot → strip/panel facts. No DOM,
+// Pure agent-dock presentation helpers: snapshot → queue row/pane facts. No DOM,
 // no runtime import of the zod model (types only), so the renderer bundle stays
 // zod-free. Agent text is untrusted: every string that reaches the DOM passes
 // through plainAgentText and renders as React text, never markup.
@@ -35,7 +35,7 @@ export function plainAgentText(value: unknown, max = AGENT_TEXT_MAX): string {
 	return `${clean.slice(0, end)}…`
 }
 
-/** One-line variant for strip heads and row titles. */
+/** One-line variant for header context and row titles. */
 export function plainAgentLine(value: unknown, max = 160): string {
 	return plainAgentText(
 		plainAgentText(value, max * 4)
@@ -203,11 +203,61 @@ export function findSession(snapshot: AgentDockSnapshot | null, key: string): Do
 	return snapshot?.sessions.find(session => session.key === key)
 }
 
-export function sessionLabel(session: DockSession | undefined, key: string): string {
-	if (!session) return `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
-	const project = plainAgentLine(session.project, 48)
-	const name = plainAgentLine(session.name, 64)
-	return project ? `${project} / ${name}` : name
+// ---------------------------------------------------------------------------
+// Agent names (design §3.24 "Names"): one short name per agent, used everywhere.
+// ---------------------------------------------------------------------------
+
+/** Conventional branch-type prefixes the short name drops (`fix/company-create-save-firm` → `company-create-save-firm`). */
+const BRANCH_TYPE_PREFIX = /^(?:fix|feat|chore|refactor|docs|test|perf|build|ci|style|wip|hotfix|release)\//
+/** Branches that say nothing about the work in them: the agent keeps its terminal name instead. */
+const DEFAULT_BRANCHES = new Set(['main', 'master', 'develop', 'trunk'])
+
+/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a bare prefix). */
+export function branchShortName(branch: unknown): string {
+	const line = plainAgentLine(branch, 120)
+	if (DEFAULT_BRANCHES.has(line)) return ''
+	return line.replace(BRANCH_TYPE_PREFIX, '')
+}
+
+const terminalName = (key: string): string => `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
+
+/** The name before duplicates are numbered: the short branch, else Okena's pane name, else the terminal. */
+function baseAgentName(session: DockSession): string {
+	return branchShortName(session.branch) || plainAgentLine(session.name, 64) || terminalName(session.key)
+}
+
+/**
+ * Short agent names by session key. Agents that would share a name (two sessions on one branch)
+ * are numbered in a stable order (by session key): `company-create-save-firm`, `… #2`, `… #3`.
+ */
+export function agentNames(sessions: readonly DockSession[]): Map<string, string> {
+	const names = new Map<string, string>()
+	const seen = new Map<string, number>()
+	const ordered = [...sessions].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+	for (const session of ordered) {
+		const base = baseAgentName(session)
+		const count = (seen.get(base) ?? 0) + 1
+		seen.set(base, count)
+		names.set(session.key, count === 1 ? base : `${base} #${count}`)
+	}
+	return names
+}
+
+export interface AgentWho {
+	/** The short name (`company-create-save-firm #2`): queue, Agents table, labels, announcements. */
+	name: string
+	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
+	title: string
+	project: string
+}
+
+/** Who an item or agent is, by session key; an unknown key reads as its terminal. */
+export function agentWho(snapshot: AgentDockSnapshot | null, key: string): AgentWho {
+	const session = findSession(snapshot, key)
+	if (!session) return { name: terminalName(key), title: '', project: '' }
+	const name = agentNames(snapshot?.sessions ?? []).get(key) ?? baseAgentName(session)
+	const full = plainAgentLine(session.name, 200)
+	return { name, title: full && full !== name ? full : '', project: plainAgentLine(session.project, 48) }
 }
 
 export interface AskOption {
@@ -342,9 +392,6 @@ export interface AgentDockSummary {
 	needsTone: 'none' | 'warn'
 	oldestText: string | null
 	oldestTone: AgingTone
-	/** The newest item, read like its entry: name (bright), project (dim), then the gist. */
-	head: { name: string; project: string; gist: string } | null
-	counts: string | null
 	health: AgentDockHealth
 }
 
@@ -364,15 +411,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 	const turnTone = oldest === null ? 'none' : agingTone(now - oldest)
 	const oldestTone: AgingTone =
 		askTone === 'danger' ? 'danger' : askTone === 'warn' || turnTone !== 'none' ? 'warn' : 'none'
-	const newest = needs.reduce<DockItem | null>((latest, item) => {
-		if (!latest) return item
-		const a = itemWaitingSince(item)
-		const b = itemWaitingSince(latest)
-		return a > b || (a === b && item.id > latest.id) ? item : latest
-	}, null)
-	const working = snapshot?.sessions.filter(session => session.status === 'working').length ?? 0
-	const background = snapshot?.sessions.filter(session => session.status === 'background').length ?? 0
-	const counts = [working ? `${working} working` : '', background ? `${background} bg` : ''].filter(Boolean).join(' · ')
 	const unknown = unknownSessionCount(snapshot)
 	let needsText: string
 	if (needs.length > 0)
@@ -388,10 +426,6 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 		needsTone: needs.length > 0 || unknown > 0 ? 'warn' : 'none',
 		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
 		oldestTone,
-		head: newest
-			? { ...sessionWhere(findSession(snapshot, newest.session), newest.session), gist: cardGist(newest) }
-			: null,
-		counts: counts || null,
 		health,
 	}
 }
@@ -400,27 +434,29 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 // Queue (design §3.24): entries, glyphs, density, stable order.
 // ---------------------------------------------------------------------------
 
-/** Entry tone: amber ask, red ask past 2h, amber orphan, blue unchecked turn, green answered from the dock, quiet closed elsewhere. */
-export type CardTone = 'ask' | 'ask-danger' | 'orphaned' | 'turn' | 'done' | 'closed'
+/**
+ * Kind tone for the glyph: amber ask and orphan, blue unchecked turn, green answered from the dock,
+ * quiet closed elsewhere. It never ages: how long it has waited is the age text's tone alone.
+ */
+export type CardTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
 
 /** Answered from the dock (the only resolution that earns the green ✓). */
 const answeredHere = (item: DockItem): boolean => item.state === 'resolved' && item.resolution?.by === 'dock'
 
-export function cardTone(item: DockItem, now: number): CardTone {
+export function cardTone(item: DockItem): CardTone {
 	if (item.state === 'resolved') return answeredHere(item) ? 'done' : 'closed'
 	if (item.state === 'orphaned') return 'orphaned'
-	if (item.kind === 'turn') return 'turn'
-	return agingTone(now - itemWaitingSince(item)) === 'danger' ? 'ask-danger' : 'ask'
+	return item.kind === 'turn' ? 'turn' : 'ask'
 }
 
-/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as on the strip. An answer on its way or landed no longer ages. */
+/** Item age tone; unchecked turns cap at warn (only blocking asks go red), as in the summary. An answer on its way or landed no longer ages. */
 export function itemAgeTone(item: DockItem, now: number): AgingTone {
 	if (item.state === 'resolved' || item.state === 'sending') return 'none'
 	const tone = agingTone(now - itemWaitingSince(item))
 	return item.kind === 'turn' && tone === 'danger' ? 'warn' : tone
 }
 
-/** Short kind for entries and the pane's titled rule: Question / Plan / Permission / Turn ended / Orphaned …. */
+/** Short kind for entries and the pane header: Question / Plan / Permission / Turn ended / Orphaned …. */
 export function cardKindLabel(item: DockItem): string {
 	if (item.fact.kind === 'turn') return 'Turn ended'
 	const base =
@@ -429,7 +465,7 @@ export function cardKindLabel(item: DockItem): string {
 }
 
 /**
- * "asked 14:50" / "finished 14:50" plus the wait in words, for the pane's titled rule.
+ * "asked 14:50" / "finished 14:50" (the header's tooltip) plus the wait in words (the header itself).
  * Once an answer is on its way or the item closed, the wait stops: "sending" /
  * "answered 16:41" (from the dock) / "closed 16:41" (anywhere else).
  */
@@ -470,12 +506,6 @@ export function cardGist(item: DockItem): string {
 	if (tool === 'AskUserQuestion') return itemHeadline(item)
 	const command = commandOf(input)
 	return command ? `${plainAgentLine(tool, 32)}: ${plainAgentLine(command, 160)}` : itemHeadline(item)
-}
-
-/** Project and agent name kept apart so entries can ellipsize the project before the name. */
-export function sessionWhere(session: DockSession | undefined, key: string): { project: string; name: string } {
-	if (!session) return { project: '', name: `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}` }
-	return { project: plainAgentLine(session.project, 48), name: plainAgentLine(session.name, 64) }
 }
 
 /**
@@ -577,68 +607,153 @@ export function keepOrder(
 	return [...kept, ...items.filter(item => !known.has(item.id))]
 }
 
-export type QueueDensity = 'full' | 'compact' | 'dense'
-/** Where the Agents entry sits: a wide column beside the entries, a narrow one, or the grid's last cell. */
-export type QueueAgentsSlot = 'side' | 'narrow' | 'cell'
-/** Horizontal room around an entry's text: 12px padding each side, its 1px divider and 1px of slack. */
-export const QUEUE_ENTRY_PAD = 26
-/** The first entry lines its text up with the strip's 16px inset: 4px more on the left. */
-export const QUEUE_FIRST_EXTRA = 4
-/** Narrowest full entry: beside the wide Agents column the gist keeps a readable width. */
-export const QUEUE_ENTRY_MIN = { side: 160, narrow: 112 } as const
-/** Room the Agents column takes beside the entries. */
-export const QUEUE_AGENTS_WIDTH = { side: 216, narrow: 96 } as const
+/** Room around an entry's text: 16px padding each side (the fill runs edge to edge). */
+export const QUEUE_ENTRY_PAD = 32
+/** The kind glyph's fixed box (`.agent-dock-glyph`): glyphs differ in width in the UI face. */
+export const QUEUE_GLYPH = 12
+/** Space after the glyph and after the name on an entry's line (`.agent-dock-entry-line` gap). */
+export const QUEUE_LINE_GAP = 6
+/** Everything in an entry besides its two texts (name, then wait or receipt). */
+export const QUEUE_ENTRY_CHROME = QUEUE_ENTRY_PAD + QUEUE_GLYPH + 2 * QUEUE_LINE_GAP
+/** Most cells a name gets in the queue; a longer one is shortened in the middle (`shortenName`). */
+export const QUEUE_NAME_MAX = 28
+/** Least cells names are shortened to, all alike, before single entries squeeze further. */
+export const QUEUE_NAME_MIN = 16
+/** Least cells a squeezed name keeps (the wait beside it stays whole) before any go behind "+N more". */
+export const QUEUE_NAME_FLOOR = 4
 
-export interface QueueLayout {
-	density: QueueDensity
-	columns: number
-	agents: QueueAgentsSlot
+/** Width in px of `text` set in the queue's own font (the renderer measures it in the DOM). */
+export type TextWidth = (text: string) => number
+
+/**
+ * A name cut in the middle to `max` cells, keeping its start, its end and a twin's ` #N`
+ * (`company-create-save-firm #2` → `company-create-…-firm #2`); unchanged when it fits. The kept end
+ * is whole words (from a `-`, `_`, `/` or `.`) when one fits a third of the room.
+ */
+export function shortenName(name: string, max: number): string {
+	const chars = [...name]
+	if (chars.length <= max) return name
+	const suffix = /\s#\d+$/.exec(name)?.[0] ?? ''
+	const body = chars.slice(0, chars.length - suffix.length)
+	const room = max - suffix.length - 1
+	if (room < 4) return `${chars.slice(0, Math.max(1, max - 1)).join('')}…`
+	const budget = Math.floor(room / 3)
+	let tail = budget
+	for (let at = body.length - 2; at >= body.length - budget - 1 && at > 0; at -= 1)
+		if (/[-_/.]/.test(body[at] ?? '')) tail = body.length - at
+	return `${body.slice(0, room - tail).join('')}…${body.slice(body.length - tail).join('')}${suffix}`
 }
 
-/** Cells the wait takes in an entry's meta line ("2h16m"): a fixed budget so the layout never shifts as ages tick. */
-export const QUEUE_AGE_CHARS = 5
-/** Space around the wait in the meta line: the kind/age gap and the age's own left padding. */
-export const QUEUE_META_GAP = 16
-
-/** Cells an entry's meta line needs whole: the kind word and the wait. */
-export const entryMetaChars = (item: DockItem): number => [...cardKindLabel(item)].length + QUEUE_AGE_CHARS
+/** One queue entry's texts: the agent's short name and what follows it (the wait, or a receipt). */
+export interface QueueEntryText {
+	name: string
+	tail: string
+}
 
 /**
- * Width an entry needs to show its agent name whole (kind glyph, a space, the name)
- * and its meta line whole (indent, kind, wait), plus padding.
+ * Width of one entry with its name cut to `cap` cells: padding, glyph box, the name and its tail as
+ * they really set (`measure`), rounded up to whole px so the text always fits and the selected fill
+ * ends right after it.
  */
-export const entryNameWidth = (nameChars: number, ch: number, metaChars = 0): number =>
-	Math.max((nameChars + 2) * ch, metaChars > 0 ? (metaChars + 2) * ch + QUEUE_META_GAP : 0) + QUEUE_ENTRY_PAD
+export const entryWidth = (entry: QueueEntryText, cap: number, measure: TextWidth): number =>
+	Math.ceil(QUEUE_ENTRY_CHROME + measure(shortenName(entry.name, cap)) + measure(entry.tail))
+
+/** Width of the "+N more" cell, sized for the longest count it could show so it never re-lays out the row. */
+export const moreWidth = (count: number, measure: TextWidth): number =>
+	Math.ceil(measure(`+${count} more`)) + QUEUE_ENTRY_PAD
+
+export interface QueueSlot {
+	/** Index into the entries. */
+	index: number
+	/** px (0 = not measured yet: the slot takes its natural width). */
+	width: number
+	/** The name as shown in this slot (`shortenName` of the whole one). */
+	name: string
+}
+
+export interface QueueLayout {
+	/** Entries in the row, in display order (queue order, except an open entry that had to move in). */
+	slots: QueueSlot[]
+	/** Entries behind the "+N more" cell, in queue order (empty: no cell). */
+	hidden: number[]
+	/** Width of the "+N more" cell, px. */
+	more: number
+}
 
 /**
- * Picks the queue form so every item stays in view (never paged or scrolled away)
- * and every agent name stays whole as long as possible: one row of full entries
- * (name / kind · project · age / gist) beside the wide Agents column, then beside
- * its narrow form; else two rows of compact entries (name / kind · age) with the
- * Agents entry as the last cell; else three rows of one-line chips, the only form
- * where a name may ellipsize. `nameChars` are the agent names' lengths in cells,
- * `metaChars` the meta lines' (kind + wait, see entryMetaChars) so the wait is never
- * pushed out of a full or compact entry, `ch` one monospace cell in px, `width` the
- * queue's content width.
+ * The one-row queue (never a second row, never a scroll), from real text widths. Names shorten first —
+ * all alike, from QUEUE_NAME_MAX down to QUEUE_NAME_MIN cells, cut in the middle — then the widest
+ * entry's name gives up a cell at a time down to QUEUE_NAME_FLOOR (its wait never cut), so every entry
+ * shows when it can. Only past that do as many as fit show beside one "+N more" cell. The open entry
+ * is always in the row: when it would be hidden it takes the last slot. Without a measure (not mounted
+ * yet) or room, every entry shows at its natural width.
  */
 export function queueLayout(
-	nameChars: readonly number[],
-	width: number,
-	ch: number,
-	metaChars: readonly number[] = [],
+	entries: readonly QueueEntryText[],
+	measure: TextWidth | null,
+	room: number,
+	open = -1,
 ): QueueLayout {
-	const count = nameChars.length
-	const needs = nameChars.map((chars, at) => entryNameWidth(chars, ch, metaChars[at] ?? 0))
-	const widest = Math.max(0, ...needs)
-	for (const agents of ['side', 'narrow'] as const) {
-		const total =
-			needs.reduce((sum, need) => sum + Math.max(need, QUEUE_ENTRY_MIN[agents]), 0) +
-			(count > 0 ? QUEUE_FIRST_EXTRA : 0)
-		if (total <= width - QUEUE_AGENTS_WIDTH[agents]) return { density: 'full', columns: Math.max(1, count), agents }
+	const all = entries.map((_, index) => index)
+	if (!measure || room <= 0)
+		return { slots: all.map(index => ({ index, width: 0, name: entries[index]?.name ?? '' })), hidden: [], more: 0 }
+	const nameAt = (index: number, cap: number) => shortenName(entries[index]?.name ?? '', cap)
+	const widthAt = (index: number, cap: number) => entryWidth(entries[index] ?? { name: '', tail: '' }, cap, measure)
+	const sized = (caps: readonly number[]) => all.map(index => widthAt(index, caps[index] ?? QUEUE_NAME_MAX))
+	const span = (widths: readonly number[]) => widths.reduce((sum, width) => sum + width, 0)
+	const row = (caps: readonly number[], widths: readonly number[]): QueueLayout => ({
+		slots: all.map(index => ({ index, width: widths[index] ?? 0, name: nameAt(index, caps[index] ?? QUEUE_NAME_MAX) })),
+		hidden: [],
+		more: 0,
+	})
+	for (let cap = QUEUE_NAME_MAX; cap >= QUEUE_NAME_MIN; cap -= 1) {
+		const caps = all.map(() => cap)
+		const widths = sized(caps)
+		if (span(widths) <= room) return row(caps, widths)
 	}
-	const two = Math.ceil((count + 1) / 2)
-	if (widest + QUEUE_FIRST_EXTRA <= width / two) return { density: 'compact', columns: two, agents: 'cell' }
-	return { density: 'dense', columns: Math.ceil((count + 1) / 3), agents: 'cell' }
+	// Squeeze: the widest entry's name gives up a cell, again and again, none under QUEUE_NAME_FLOOR.
+	const caps = all.map(index => Math.min(QUEUE_NAME_MIN, [...(entries[index]?.name ?? '')].length))
+	const widths = sized(caps)
+	while (span(widths) > room) {
+		let widest = -1
+		for (const index of all)
+			if ((caps[index] ?? 0) > QUEUE_NAME_FLOOR && (widest < 0 || (widths[index] ?? 0) > (widths[widest] ?? 0)))
+				widest = index
+		if (widest < 0) break
+		caps[widest] = (caps[widest] ?? QUEUE_NAME_FLOOR) - 1
+		widths[widest] = widthAt(widest, caps[widest] ?? QUEUE_NAME_FLOOR)
+	}
+	if (span(widths) <= room) return row(caps, widths)
+	const more = moreWidth(entries.length, measure)
+	let cap = QUEUE_NAME_MIN
+	let shownWidths = sized(all.map(() => cap))
+	const fitting = (sizedWidths: readonly number[]) => {
+		let count = 0
+		while (count < sizedWidths.length && span(sizedWidths.slice(0, count + 1)) + more <= room) count += 1
+		return count
+	}
+	const shown = fitting(shownWidths)
+	// The names get back what room the entries beside "+N more" leave (the same count shows).
+	for (let wider = QUEUE_NAME_MAX; wider > QUEUE_NAME_MIN; wider -= 1) {
+		const widthsAt = sized(all.map(() => wider))
+		if (fitting(widthsAt) < shown) continue
+		cap = wider
+		shownWidths = widthsAt
+		break
+	}
+	let visible = all.slice(0, shown)
+	if (open >= shown && open < entries.length) {
+		// The open entry takes the last slot; drop more from the end until it fits.
+		visible = [...visible.slice(0, Math.max(0, shown - 1)), open]
+		while (visible.length > 1 && span(visible.map(index => shownWidths[index] ?? 0)) + more > room)
+			visible = [...visible.slice(0, -2), open]
+	}
+	const inRow = new Set(visible)
+	return {
+		slots: visible.map(index => ({ index, width: shownWidths[index] ?? 0, name: nameAt(index, cap) })),
+		hidden: all.filter(index => !inRow.has(index)),
+		more,
+	}
 }
 
 /** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */

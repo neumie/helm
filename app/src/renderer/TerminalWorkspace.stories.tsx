@@ -53,20 +53,15 @@ export const BrowserHarness: Story = { args: { options: { openBackground: true, 
 /** Shared production width/visibility seam; task DOM and terminal identities stay mounted. */
 export const SidebarVisibility: Story = { args: { options: { sidebarVisibility: true, expose: true } } }
 
-/** Opt-in agent dock below the terminals (production layout + reducer-built Okena fixtures): queue open. */
+/** Opt-in agent dock below the terminals (production layout + reducer-built Okena fixtures): the 28px queue row, no pane; arriving items never change its height. */
 export const AgentDock: Story = {
-	args: { options: { agentDock: { scenario: 'busy', expanded: true, position: 'bottom', output: true } } },
-}
-
-/** The default 28px strip; arriving items never change its height or open the queue. */
-export const AgentDockCollapsed: Story = {
-	args: { options: { agentDock: { scenario: 'busy', expanded: false, position: 'bottom', output: true } } },
+	args: { options: { agentDock: { scenario: 'busy', position: 'bottom', output: true } } },
 }
 
 /** Two-question AskUserQuestion with option previews in a pane split off the terminal (it refits once, nothing floats). */
 export const AgentDockQuestion: Story = {
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'question' } },
+		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'question' } },
 	},
 }
 
@@ -74,7 +69,7 @@ export const AgentDockQuestion: Story = {
 export const AgentDockPermission: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'permission' },
+			agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'permission' },
 		},
 	},
 }
@@ -82,14 +77,14 @@ export const AgentDockPermission: Story = {
 /** Plan approval: the plan verbatim, Approve the plan / Keep planning. */
 export const AgentDockPlan: Story = {
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'plan' } },
+		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'plan' } },
 	},
 }
 
 /** Unchecked turn: the full last message, PR facts, and a live Ack. */
 export const AgentDockTurn: Story = {
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'turn' } },
+		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'turn' } },
 	},
 }
 
@@ -97,7 +92,7 @@ export const AgentDockTurn: Story = {
 export const AgentDockOrphaned: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'orphaned', expanded: true, position: 'bottom', output: true, open: 'orphaned' },
+			agentDock: { scenario: 'orphaned', position: 'bottom', output: true, open: 'orphaned' },
 		},
 	},
 }
@@ -105,7 +100,7 @@ export const AgentDockOrphaned: Story = {
 /** The Agents pane: every listed agent with observed status/meta, then Recent. */
 export const AgentDockAgents: Story = {
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'agents' } },
+		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'agents' } },
 	},
 }
 
@@ -116,34 +111,34 @@ const NARROW_VIEWPORT = {
 	},
 }
 
-/** 900px window: five items fold into two rows of entries so every name stays whole. */
+/** 900px window: five items in the one row, names shortened in the middle, the rest behind "+N more". */
 export const AgentDockNarrow: Story = {
 	...NARROW_VIEWPORT,
-	args: { options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true } } },
+	args: { options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true } } },
 }
 
 /** 900px window with the question open: the preview stacks under the options. */
 export const AgentDockNarrowQuestion: Story = {
 	...NARROW_VIEWPORT,
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'bottom', output: true, open: 'question' } },
+		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'question' } },
 	},
 }
 
 /** Okena unreachable: the queue leads with the outage, entries and agents are frozen, never "all clear". */
 export const AgentDockSourceDown: Story = {
-	args: { options: { agentDock: { scenario: 'down', expanded: true, position: 'bottom', output: true } } },
+	args: { options: { agentDock: { scenario: 'down', position: 'bottom', output: true } } },
 }
 
 /** Okena reachable, no Claude session connected. */
 export const AgentDockEmpty: Story = {
-	args: { options: { agentDock: { scenario: 'empty', expanded: true, position: 'bottom' } } },
+	args: { options: { agentDock: { scenario: 'empty', position: 'bottom' } } },
 }
 
-/** The persisted top position: strip, queue, then the pane above the terminal. */
+/** The persisted top position: the queue row, then the pane above the terminal. */
 export const AgentDockTop: Story = {
 	args: {
-		options: { agentDock: { scenario: 'crowded', expanded: true, position: 'top', output: true, open: 'question' } },
+		options: { agentDock: { scenario: 'crowded', position: 'top', output: true, open: 'question' } },
 	},
 }
 
@@ -151,7 +146,7 @@ export const AgentDockTop: Story = {
 export const AgentDockReceiptSending: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'receipt-sending', expanded: true, position: 'bottom', output: true, open: 'question' },
+			agentDock: { scenario: 'receipt-sending', position: 'bottom', output: true, open: 'question' },
 		},
 	},
 }
@@ -162,7 +157,6 @@ export const AgentDockReceiptUnconfirmed: Story = {
 		options: {
 			agentDock: {
 				scenario: 'receipt-unconfirmed',
-				expanded: true,
 				position: 'bottom',
 				output: true,
 				open: 'question',
@@ -175,7 +169,7 @@ export const AgentDockReceiptUnconfirmed: Story = {
 export const AgentDockReceiptAnswered: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'receipt-answered', expanded: true, position: 'bottom', output: true, open: 'question' },
+			agentDock: { scenario: 'receipt-answered', position: 'bottom', output: true, open: 'question' },
 		},
 	},
 }
@@ -184,7 +178,7 @@ export const AgentDockReceiptAnswered: Story = {
 export const AgentDockReceiptRefused: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'receipt-refused', expanded: true, position: 'bottom', output: true, open: 'question' },
+			agentDock: { scenario: 'receipt-refused', position: 'bottom', output: true, open: 'question' },
 		},
 	},
 }
@@ -193,7 +187,7 @@ export const AgentDockReceiptRefused: Story = {
 export const AgentDockReceiptFailed: Story = {
 	args: {
 		options: {
-			agentDock: { scenario: 'receipt-failed', expanded: true, position: 'bottom', output: true, open: 'question' },
+			agentDock: { scenario: 'receipt-failed', position: 'bottom', output: true, open: 'question' },
 		},
 	},
 }

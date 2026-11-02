@@ -26,6 +26,16 @@ export type AgentDockScenario =
 	| 'crowded'
 	| 'orphaned'
 	| 'down'
+	/** One agent, one unchecked turn that ended a minute ago (the queue's single-entry layout). */
+	| 'single-turn'
+	/**
+	 * Jakub's real day: three items whose panes carry long ClientCare task titles. Two sessions share
+	 * the worktree branch `fix/company-create-save-firm` (a question and a permission), one turn ended on
+	 * `fix/repeated-android-camera-permission` with subagents still running; four agents, two busy.
+	 */
+	| 'real-case'
+	/** Eight items from eight agents: the one-row queue shows what fits and one quiet "+N more" cell. */
+	| 'overflow'
 	/** Receipt states (built by running real act observations through the reducer). */
 	| 'receipt-sending'
 	| 'receipt-unconfirmed'
@@ -47,7 +57,10 @@ interface Pane {
 	sid: string
 	projectId: string
 	project: string
+	/** Okena's terminal name for the pane (`terminal_names`). */
 	name: string
+	/** The project's git branch (`git_status.branch`), when the fixture has one. */
+	branch?: string
 }
 
 const panes = {
@@ -108,6 +121,7 @@ function okenaState(version: number, live: Array<{ pane: Pane; body: Json }>): J
 			path: `/fixture/${pane.project}`,
 			layout: { type: 'split', children: [] as Json[] },
 			terminal_names: {} as Record<string, string>,
+			...(pane.branch ? { git_status: { branch: pane.branch } } : {}),
 		}
 		;((project.layout as Json).children as Json[]).push({ type: 'terminal', terminal_id: pane.tid })
 		;(project.terminal_names as Record<string, string>)[pane.tid] = pane.name
@@ -326,6 +340,230 @@ function busyTimeline(
 	return { steps, live: afterAnswer, version }
 }
 
+/** ClientCare task titles as Okena names the panes Helm launched for them (long on purpose). */
+const CC_COMPANY_TITLE =
+	'Při zakládání nové společnosti se po kliknutí na Uložit neuloží firma a formulář se vrátí bez chybové hlášky (ClientCare #4182)'
+const CC_CAMERA_TITLE =
+	'Android: aplikace se při každém spuštění znovu ptá na oprávnění ke kameře, i když ho uživatel už povolil (ClientCare #4153)'
+const CC_ISDOC_TITLE = 'Export faktur do formátu ISDOC pro účetní z detailu faktury (ClientCare #4120)'
+
+const realPanes = {
+	company: {
+		tid: 'term-cc-company-1',
+		sid: 'sess-cc-company-1',
+		projectId: 'proj-crm',
+		project: 'crm',
+		name: CC_COMPANY_TITLE,
+		branch: 'fix/company-create-save-firm',
+	},
+	companyTwo: {
+		tid: 'term-cc-company-2',
+		sid: 'sess-cc-company-2',
+		projectId: 'proj-crm',
+		project: 'crm',
+		name: CC_COMPANY_TITLE,
+		branch: 'fix/company-create-save-firm',
+	},
+	camera: {
+		tid: 'term-cc-camera',
+		sid: 'sess-cc-camera',
+		projectId: 'proj-crm-mobile',
+		project: 'crm-mobile',
+		name: CC_CAMERA_TITLE,
+		branch: 'fix/repeated-android-camera-permission',
+	},
+	isdoc: {
+		tid: 'term-cc-isdoc',
+		sid: 'sess-cc-isdoc',
+		projectId: 'proj-crm-billing',
+		project: 'crm-billing',
+		name: CC_ISDOC_TITLE,
+		branch: 'feat/isdoc-export',
+	},
+} satisfies Record<string, Pane>
+
+const seedPage = (pane: Pane, uuid: string): Json =>
+	transcript(pane, [user(`${uuid}-u`, 'Start.'), assistant(uuid, 'Working on it.')], 1_000, true)
+
+/** Jakub's real case (see AgentDockScenario 'real-case'), through the real reducer. */
+function realCaseTimeline(now: number): { steps: Array<[number, AgentDockObservation]>; live: Live; version: number } {
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const question = detail(realPanes.company, {
+		busy: true,
+		dialogs: [
+			{
+				id: `${prefix}-41`,
+				tool_name: 'AskUserQuestion',
+				tool_input: {
+					questions: [
+						{
+							header: 'IČO',
+							question: 'Má jít firma uložit i bez IČO, nebo má formulář IČO vyžadovat ještě před uložením?',
+							multiSelect: false,
+							options: [
+								{ label: 'Uložit bez IČO', description: 'IČO zůstane prázdné; doplní se později v detailu firmy.' },
+								{
+									label: 'Vyžadovat IČO',
+									description: 'Tlačítko Uložit zůstane neaktivní, dokud IČO nebude vyplněné.',
+								},
+								{ label: 'Jen pro tuzemské firmy', description: 'IČO povinné jen u firem se sídlem v ČR.' },
+							],
+						},
+					],
+				},
+				permission_suggestions: [],
+				created_at_ms: now - 52 * MINUTE,
+			},
+		],
+	})
+	const permission = detail(realPanes.companyTwo, {
+		busy: true,
+		dialogs: [
+			{
+				id: `${prefix}-42`,
+				tool_name: 'Bash',
+				tool_input: {
+					command: 'php artisan test --filter=CompanyCreateTest',
+					description: 'Run the company create feature tests',
+				},
+				permission_suggestions: [bashSuggestion('php artisan test:*')],
+				created_at_ms: now - 12 * MINUTE,
+			},
+		],
+	})
+	const cameraWorking = detail(realPanes.camera, { busy: true })
+	const cameraDone = {
+		...cameraWorking,
+		busy: false,
+		running_subagents: [{ agent_id: 'sub-cam-1', agent_type: 'Explore' }],
+	}
+	const isdoc = detail(realPanes.isdoc, { busy: true })
+	const companyTwoWorking = detail(realPanes.companyTwo, { busy: true })
+	const live = (camera: Json, page?: Json, companyTwo = permission): Live => [
+		{ pane: realPanes.company, body: question },
+		{ pane: realPanes.companyTwo, body: companyTwo },
+		{ pane: realPanes.camera, body: camera, ...(page ? { transcript: page } : {}) },
+		{ pane: realPanes.isdoc, body: isdoc },
+	]
+	const steps: Array<[number, AgentDockObservation]> = [
+		[
+			now - 70 * MINUTE,
+			poll(6_001, [
+				{
+					pane: realPanes.company,
+					body: detail(realPanes.company, { busy: true }),
+					transcript: seedPage(realPanes.company, 'cc1-a0'),
+				},
+				{ pane: realPanes.companyTwo, body: companyTwoWorking, transcript: seedPage(realPanes.companyTwo, 'cc2-a0') },
+				{ pane: realPanes.camera, body: cameraWorking, transcript: seedPage(realPanes.camera, 'cam-a0') },
+				{ pane: realPanes.isdoc, body: isdoc, transcript: seedPage(realPanes.isdoc, 'isdoc-a0') },
+			]),
+		],
+		[now - 52 * MINUTE, poll(6_002, live(cameraWorking, undefined, companyTwoWorking))],
+		[now - 12 * MINUTE, poll(6_003, live(cameraWorking))],
+	]
+	const cameraPage = transcript(
+		realPanes.camera,
+		[
+			assistant(
+				'cam-a1',
+				'Hotovo. Oprávnění ke kameře se teď drží přes ActivityResultContracts.RequestPermission a stav se ukládá do DataStore, takže se dialog po restartu aplikace už neukazuje. Ověřeno na Pixelu 7 (Android 15) i na emulátoru s Androidem 13.\n\nMám otevřít PR do develop, nebo to ještě chceš vyzkoušet na svém telefonu?',
+			),
+		],
+		2_000,
+		false,
+	)
+	steps.push([now - MINUTE, poll(6_004, live(cameraDone, cameraPage))])
+	steps.push([now - MINUTE + 9_000, poll(6_005, live(cameraDone))])
+	return { steps, live: live(cameraDone), version: 6_005 }
+}
+
+/** Eight agents, one item each, oldest first: what a full day can look like at 1100px. */
+function overflowTimeline(now: number): { steps: Array<[number, AgentDockObservation]>; live: Live; version: number } {
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const branches = [
+		'fix/company-create-save-firm',
+		'fix/repeated-android-camera-permission',
+		'feat/isdoc-export',
+		'fix/invoice-rounding-vat',
+		'chore/upgrade-laravel-12',
+		'feat/contact-person-roles',
+		'refactor/address-autocomplete',
+		'fix/login-throttle-message',
+	]
+	const overflowPanes: Pane[] = branches.map((branch, at) => ({
+		tid: `term-over-${at + 1}`,
+		sid: `sess-over-${at + 1}`,
+		projectId: `proj-over-${at + 1}`,
+		project: at % 3 === 1 ? 'crm-mobile' : 'crm',
+		name: `ClientCare #${4100 + at * 7}`,
+		branch,
+	}))
+	// Asks every other pane (question / permission), unchecked turns in between, oldest first.
+	const ageOf = (at: number) => (8 - at) * 17 * MINUTE
+	const isTurn = (at: number) => at % 3 === 2
+	const askBody = (pane: Pane, at: number): Json =>
+		detail(pane, {
+			busy: true,
+			dialogs: [
+				at % 2 === 0
+					? { ...recordedDialog(), id: `${prefix}-${60 + at}`, created_at_ms: now - ageOf(at) }
+					: {
+							id: `${prefix}-${60 + at}`,
+							tool_name: 'Bash',
+							tool_input: { command: 'npm test', description: 'Run the unit tests' },
+							permission_suggestions: [],
+							created_at_ms: now - ageOf(at),
+						},
+			],
+		})
+	const working = (pane: Pane) => detail(pane, { busy: true })
+	const idle = (pane: Pane) => ({ ...working(pane), busy: false })
+	const steps: Array<[number, AgentDockObservation]> = [
+		[
+			now - 3 * 60 * MINUTE,
+			poll(
+				7_001,
+				overflowPanes.map(pane => ({ pane, body: working(pane), transcript: seedPage(pane, `${pane.tid}-a0`) })),
+			),
+		],
+	]
+	let version = 7_001
+	const state = overflowPanes.map(
+		pane => ({ pane, body: working(pane) }) as { pane: Pane; body: Json; transcript?: Json },
+	)
+	for (const [at, pane] of overflowPanes.entries()) {
+		const entry = state[at] as { pane: Pane; body: Json; transcript?: Json }
+		if (isTurn(at)) {
+			entry.body = idle(pane)
+			entry.transcript = transcript(
+				pane,
+				[assistant(`${pane.tid}-a1`, 'Done. Tests green.\n\nShall I open the PR?')],
+				2_000,
+				false,
+			)
+		} else entry.body = askBody(pane, at)
+		steps.push([
+			now - ageOf(at),
+			poll(
+				++version,
+				state.map(({ pane: p, body, transcript: page }) => ({ pane: p, body, ...(page ? { transcript: page } : {}) })),
+			),
+		])
+		entry.transcript = undefined
+		steps.push([
+			now - ageOf(at) + 9_000,
+			poll(
+				++version,
+				state.map(({ pane: p, body }) => ({ pane: p, body })),
+			),
+		])
+	}
+	const live = state.map(({ pane, body }) => ({ pane, body }))
+	steps.push([now - 1_000, poll(++version, live)])
+	return { steps, live, version }
+}
+
 type Live = Array<{ pane: Pane; body: Json; transcript?: Json }>
 
 interface ScenarioRun {
@@ -344,6 +582,40 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
 	if (name === 'connecting') return { state: start, live: [], version: 0 }
 	if (name === 'empty') return { state: run([[now - 1_000, poll(1, [])]], start), live: [], version: 1 }
+	if (name === 'single-turn') {
+		const working = detail(panes.turn, { busy: true })
+		const idle = { ...working, busy: false }
+		const page = transcript(
+			panes.turn,
+			[assistant('turn-a1', 'Hotovo. Commit 1a84c0e je na main, working tree je čistý.\n\nMám to pushnout?')],
+			2_000,
+			false,
+		)
+		const steps: Array<[number, AgentDockObservation]> = [
+			[
+				now - 20 * MINUTE,
+				poll(5_001, [
+					{
+						pane: panes.turn,
+						body: working,
+						transcript: transcript(
+							panes.turn,
+							[user('turn-a0-u', 'Start.'), assistant('turn-a0', 'Working on it.')],
+							1_000,
+							true,
+						),
+					},
+				]),
+			],
+			[now - MINUTE, poll(5_002, [{ pane: panes.turn, body: idle, transcript: page }])],
+			[now - MINUTE + 9_000, poll(5_003, [{ pane: panes.turn, body: idle }])],
+		]
+		return { state: run(steps, start), live: [{ pane: panes.turn, body: idle }], version: 5_003 }
+	}
+	if (name === 'real-case' || name === 'overflow') {
+		const timeline = name === 'real-case' ? realCaseTimeline(now) : overflowTimeline(now)
+		return { state: run(timeline.steps, start), live: bare(timeline.live), version: timeline.version }
+	}
 	if (name === 'crowded') {
 		const crowded = busyTimeline(now, true)
 		return { state: run(crowded.steps, start), live: bare(crowded.live), version: crowded.version }
@@ -384,7 +656,7 @@ export function agentDockScenario(name: AgentDockScenario, now: number): AgentDo
 }
 
 const paneOf = (item: DockItem): Pane | undefined =>
-	Object.values(panes).find(pane => `${PROFILE}:${pane.tid}` === item.session)
+	[...Object.values(panes), ...Object.values(realPanes)].find(pane => `${PROFILE}:${pane.tid}` === item.session)
 
 /**
  * The next Okena poll after Jakub's dock answer landed: the dialog is gone from its
@@ -629,3 +901,72 @@ export const AGENT_DOCK_TERMINAL_TEXT = [
 	'\x1b[38;5;242m~/code/neumie/helm\x1b[0m \x1b[38;5;110mfeat/agent-dock\x1b[0m',
 	'\x1b[1m❯\x1b[0m ',
 ].join('\r\n')
+
+const CC_DIM = '\x1b[38;2;136;136;136m'
+const CC_RULE = '\x1b[38;2;102;102;102m'
+const CC_GREEN = '\x1b[38;2;78;186;101m'
+const CC_PINK = '\x1b[38;2;255;107;128m'
+const CC_RESET = '\x1b[0m'
+/** Wider than any terminal: drawn with autowrap off, it stops at the right margin like Claude Code's own rules. */
+const CC_FULL_RULE = `${CC_RULE}${'─'.repeat(512)}${CC_RESET}`
+/** A full-width rule with a title right-aligned before its last `─` (cursor to the margin, then back). */
+const ccTitledRule = (title: string): string => {
+	const tail = ` ${title} ─`
+	return `${CC_FULL_RULE}\x1b[999C\x1b[${[...tail].length - 1}D${CC_RULE}${tail}${CC_RESET}`
+}
+
+/**
+ * The bottom of a Claude Code session as the terminal shows it under the dock: transcript,
+ * the session's titled rule, the prompt box between two full-width rules, then the status
+ * block. A stress test for the dock's edge (§3.24 Divider): Claude Code's own thin rules
+ * sit right above it. Autowrap is off while it draws so the rules fit any width; the
+ * cursor is hidden, as Claude Code hides it.
+ */
+export const CLAUDE_CODE_TERMINAL_TEXT = `\x1b[?25l\x1b[?7l${[
+	`${CC_DIM}>${CC_RESET} zkontroluj, proč nejde vidět divider v docku`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Read(app/src/renderer/styles.css)`,
+	`  ${CC_DIM}⎿  Read 2825 lines${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Search(pattern: "agent-dock-strip", path: "app/src/renderer")`,
+	`  ${CC_DIM}⎿  Found 4 files${CC_RESET}`,
+	'',
+	'⏺ Strip má nahoře jen inset hairline rgba(255,255,255,.07) a pane sedí na --term-bg,',
+	'  takže hranice terminál → dock je jen další tenká čára. Claude Code kreslí přesně',
+	'  takové čáry kolem promptu, proto ji oko nepozná.',
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Bash(git status --short)`,
+	`  ${CC_DIM}⎿   M projects/helm/helm.md${CC_RESET}`,
+	`  ${CC_DIM}     M projects/jvs/jvs.md${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Update(projects/helm/helm.md)`,
+	`  ${CC_DIM}⎿  Updated projects/helm/helm.md with 3 additions and 1 removal${CC_RESET}`,
+	`  ${CC_DIM}     41    ## Agent dock${CC_RESET}`,
+	`  ${CC_DIM}     42 -  - divider: hairline${CC_RESET}`,
+	`  ${CC_DIM}     42 +  - divider: surface / pane gap / accent edge (review)${CC_RESET}`,
+	`  ${CC_DIM}     43 +  - stress test: Claude Code session under the dock${CC_RESET}`,
+	'',
+	`${CC_GREEN}⏺${CC_RESET} Bash(git commit -am "docs(helm): agent dock divider variants")`,
+	`  ${CC_DIM}⎿  [main 1a84c0e] docs(helm): agent dock divider variants${CC_RESET}`,
+	`  ${CC_DIM}     2 files changed, 9 insertions(+), 3 deletions(-)${CC_RESET}`,
+	'',
+	'⏺ Hotovo. Commit 1a84c0e je na main, working tree je čistý.',
+	'',
+	'  - helm.md: tři varianty divideru s poznámkou, co která řeší',
+	'  - jvs.md: odkaz na screenshoty v scratchpadu',
+	'',
+	'  Mám to pushnout?',
+	'',
+	`${CC_DIM}>${CC_RESET} a co ten queue strip dole, ta prázdná buňka uprostřed?`,
+	'',
+	'⏺ To je výplň mezi poslední položkou a sloupcem Agents: má vlastní horní hairline,',
+	'  takže vypadá jako chybějící karta. Opravím to spolu s dividerem.',
+	'',
+	ccTitledRule('helm · agent dock divider'),
+	CC_FULL_RULE,
+	'❯ jo pushni to',
+	CC_FULL_RULE,
+	`  ${CC_DIM}~/vault${CC_RESET}`,
+	`  ${CC_DIM}Opus 5.5 · effort high · ctx 15%${CC_RESET}`,
+	`  ${CC_PINK}▸▸ bypass permissions on${CC_RESET}${CC_DIM} (shift+tab to cycle) · ← 1 agent${CC_RESET}`,
+].join('\r\n')}\x1b[?7h`

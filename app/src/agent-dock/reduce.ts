@@ -365,6 +365,7 @@ function observeTerminal(
 	record.session.project = project?.name ?? 'unknown project'
 	record.session.name =
 		project?.terminal_names?.[terminalId] ?? project?.git_status?.branch ?? `terminal ${terminalId.slice(0, 8)}`
+	record.session.branch = project?.git_status?.branch || undefined
 
 	const detail = observed.detail
 	if (!detail || detail.terminal_id !== terminalId) {

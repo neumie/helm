@@ -1,14 +1,14 @@
-// Agent dock pane bodies (design §3.24), drawn the way Claude Code's own TUI
-// draws a dialog: a titled rule on top, numbered choices with a > cursor on the
-// picked row, key hints in the footer. Jakub answers from here — pick options
+// Agent dock pane bodies (design §3.24): a plain header row on the dock's surface
+// (kind glyph, kind, the question's context; ‹ 1/3 › and esc), choices as one line each
+// (a drawn mark on the picked row, label, dim description; numbers as key hints while the
+// pane holds the keys), key hints in the footer. Jakub answers from here — pick options
 // (click, or 1–9 while the pane has focus), Other… text, allow / always allow /
 // deny, approve / keep planning, or reply to a finished turn — then one explicit
 // submit; nothing is ever sent implicitly. Main re-reads Okena (CAS) before the
 // effect; the receipt (Sending… → ✓ answered / sent, unconfirmed / refused /
 // verbatim error) comes back in the snapshot. Agent text is untrusted and always
-// plain React text. Monospace where it carries meaning (rule, choices, commands,
-// key hints); prose (questions, descriptions, turn messages) stays in the UI face.
-
+// plain React text. One typeface, the UI's; mono only for literal commands, code,
+// plans and previews.
 import {
 	type KeyboardEvent,
 	type MutableRefObject,
@@ -25,17 +25,17 @@ import type { AgentDockSnapshot, DockAction, DockItem, DockSession } from '../..
 import { REVIEW_COMMAND_MAX, REVIEW_FIELDS_MAX, REVIEW_PLAN_MAX, planReview } from '../../agent-dock/review'
 import { Btn, type ButtonTone } from '../button'
 import {
+	type AgentWho,
 	type AskQuestion,
 	type ReceiptView,
 	agentRowMeta,
+	agentWho,
 	agingTone,
 	alwaysAllowLabels,
 	askQuestions,
 	cardKindLabel,
 	cardTone,
-	findSession,
 	formatAge,
-	itemAgeTone,
 	itemHeadline,
 	itemTimeLine,
 	kindGlyph,
@@ -50,7 +50,6 @@ import {
 	sentSummary,
 	sessionSince,
 	sessionStatusText,
-	sessionWhere,
 	statusGlyph,
 } from './presentation'
 
@@ -102,15 +101,17 @@ function ScrollBody({ label, children }: { label: string; children: ReactNode })
 	)
 }
 
-/** The pane's top border, tmux-style: `─ ? Question name project  #3 asked 13:44 · waiting 2h ──── ‹ 1/5 › esc ─`. */
-function Rule({ children, end }: { children: ReactNode; end: ReactNode }) {
+/**
+ * The pane's header: a plain row on the dock's surface (no rule): what and whose on the left, the
+ * stepper and esc on the right. `title` is the full context (task title, exact time) for its tooltip.
+ */
+function Header({ children, end, title }: { children: ReactNode; end: ReactNode; title?: string }) {
 	return (
-		<header className="agent-dock-rule">
-			<span className="agent-dock-rule-lead" aria-hidden="true" />
-			<span className="agent-dock-rule-title">{children}</span>
-			<span className="agent-dock-rule-fill" aria-hidden="true" />
-			<span className="agent-dock-rule-end">{end}</span>
-			<span className="agent-dock-rule-tail" aria-hidden="true" />
+		<header className="agent-dock-title">
+			<span className="agent-dock-title-text" title={title}>
+				{children}
+			</span>
+			<span className="agent-dock-title-end">{end}</span>
 		</header>
 	)
 }
@@ -119,7 +120,7 @@ function CloseKey({ onClose }: { onClose(): void }) {
 	return (
 		<button
 			type="button"
-			className="agent-dock-rule-btn agent-dock-rule-close"
+			className="agent-dock-title-btn agent-dock-title-close"
 			aria-label="Close details"
 			aria-keyshortcuts="Escape"
 			onClick={onClose}
@@ -129,24 +130,18 @@ function CloseKey({ onClose }: { onClose(): void }) {
 	)
 }
 
-/** Kind glyph; `↵` sits low in Menlo, so it is nudged up a pixel (the glyph itself stays). */
+/** Kind glyph: the header's one colored mark. */
 function Glyph({ item, tone }: { item: DockItem; tone: string }) {
-	const glyph = kindGlyph(item)
 	return (
-		<span
-			className="agent-dock-glyph"
-			data-tone={tone}
-			data-glyph={glyph === '↵' ? 'return' : undefined}
-			aria-hidden="true"
-		>
-			{glyph}
+		<span className="agent-dock-glyph" data-tone={tone} aria-hidden="true">
+			{kindGlyph(item)}
 		</span>
 	)
 }
 
-function ItemRule({
+function ItemHeader({
 	item,
-	session,
+	who,
 	now,
 	index,
 	total,
@@ -154,24 +149,29 @@ function ItemRule({
 	onClose,
 }: {
 	item: DockItem
-	session: DockSession | undefined
+	who: AgentWho
 	now: number
 	index: number
 	total: number
 	onStep(delta: number): void
 	onClose(): void
 }) {
-	const where = sessionWhere(session, item.session)
-	const tone = cardTone(item, now)
 	const time = itemTimeLine(item, now)
+	const kind = cardKindLabel(item)
+	const context = headerContext(item)
+	// The queue's selected fill says whose; the header says only what (kind + question context).
+	// Whose, the task title and when are its tooltip.
 	return (
-		<Rule
+		<Header
+			title={[who.title || who.name, who.project, `${kind} #${item.id} · ${time.stamp} · ${time.waited}`]
+				.filter(Boolean)
+				.join('\n')}
 			end={
 				<>
 					<span className="agent-dock-stepper">
 						<button
 							type="button"
-							className="agent-dock-rule-btn"
+							className="agent-dock-title-btn"
 							aria-label="Previous item"
 							disabled={index <= 0}
 							onClick={() => onStep(-1)}
@@ -188,7 +188,7 @@ function ItemRule({
 						</span>
 						<button
 							type="button"
-							className="agent-dock-rule-btn"
+							className="agent-dock-title-btn"
 							aria-label="Next item"
 							disabled={index >= total - 1}
 							onClick={() => onStep(1)}
@@ -200,40 +200,35 @@ function ItemRule({
 				</>
 			}
 		>
-			<Glyph item={item} tone={tone} />
-			<span className="agent-dock-rule-kind" data-tone={tone}>
-				{cardKindLabel(item)}
+			<span className="agent-dock-title-kind">
+				<Glyph item={item} tone={cardTone(item)} />
+				{kind}
 			</span>
-			{/* Name first, project dim after it — as on the entries. A long name ellipsizes before the wait would. */}
-			<span className="agent-dock-rule-name" title={where.name}>
-				{where.name}
-			</span>
-			{where.project ? <span className="agent-dock-rule-project">{where.project}</span> : null}
-			<span className="agent-dock-rule-meta">
-				<span>#{item.id}</span>
-				<span>{time.stamp}</span>
-				<span className="agent-dock-rule-sep" aria-hidden="true">
-					·
-				</span>
-				<span className="agent-dock-rule-age" data-tone={itemAgeTone(item, now)}>
-					{time.waited}
-				</span>
-			</span>
-		</Rule>
+			{context ? <span className="agent-dock-title-context">{context}</span> : null}
+		</Header>
 	)
+}
+
+/** Header context after the kind: a single question's short header, or how many questions. */
+function headerContext(item: DockItem): string | null {
+	if (item.fact.kind !== 'ask' || item.fact.tool !== 'AskUserQuestion') return null
+	const questions = askQuestions(item.fact.input) ?? []
+	if (questions.length > 1) return `${questions.length} questions`
+	return questions[0]?.header ? plainAgentLine(questions[0].header, 64) : null
 }
 
 function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children: ReactNode }) {
 	return (
 		<span className="agent-dock-hint" data-pick={pick ? '' : undefined}>
-			<kbd>{keys}</kbd> {children}
+			{/* Modifier symbols get the row's ⌘⇧J spacing. */}
+			<kbd data-face={keys.startsWith('⌘') ? 'symbols' : undefined}>{keys}</kbd> {children}
 		</span>
 	)
 }
 
 /**
- * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule: the pane runs
- * on into its entry. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
+ * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule of its own: the
+ * pane's one hairline toward the queue closes it. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
  * and show only while the pane holds focus, since only then do the keys reach it.
  */
 function Footer({ hints, note, children }: { hints: ReactNode; note: ReactNode; children?: ReactNode }) {
@@ -425,6 +420,9 @@ function submitKeys(
 
 const modShortcut = (mod: DockModKey): string => (mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter')
 
+/** The submit key as the hints show it: one notation with the row's `⌘⇧J` (`Ctrl+Enter` off macOS). */
+const modHint = (mod: DockModKey): string => (mod === 'cmd' ? '⌘↵' : 'Ctrl+Enter')
+
 const closeHints = <Hint keys="esc">close</Hint>
 const cancelHints = <Hint keys="esc">cancel</Hint>
 
@@ -433,7 +431,7 @@ const pickHints = (count: number, mod: DockModKey) => (
 		<Hint keys={count > 1 ? `1–${count}` : '1'} pick>
 			pick
 		</Hint>
-		<Hint keys={`${mod} enter`}>submit</Hint>
+		<Hint keys={modHint(mod)}>submit</Hint>
 		<Hint keys="esc">close</Hint>
 	</>
 )
@@ -516,6 +514,8 @@ function Choices({
 						role={multi ? 'checkbox' : 'radio'}
 						data-tone={row.tone}
 						aria-checked={on}
+						// The description keeps to one line: the whole of it is the row's tooltip.
+						title={typeof row.description === 'string' ? row.description : undefined}
 						tabIndex={row.id === stop ? 0 : -1}
 						disabled={!live}
 						onClick={() => onPick(row.id)}
@@ -525,9 +525,8 @@ function Choices({
 							onPoint?.(row.id)
 						}}
 					>
-						<span className="agent-dock-choice-cursor" aria-hidden="true">
-							{multi ? (on ? '[x]' : '[ ]') : on ? '>' : ''}
-						</span>
+						{/* The mark is drawn (a dot, or a box for several); aria-checked says it. */}
+						<span className="agent-dock-choice-cursor" data-on={String(on)} aria-hidden="true" />
 						<span className="agent-dock-choice-n">{at + 1}</span>{' '}
 						<span className="agent-dock-choice-label">{row.label}</span>
 						{row.description ? (
@@ -546,6 +545,7 @@ function Choices({
 export function ItemDetail({
 	item,
 	session,
+	who,
 	now,
 	index,
 	total,
@@ -566,6 +566,7 @@ export function ItemDetail({
 }: {
 	item: DockItem
 	session: DockSession | undefined
+	who: AgentWho
 	now: number
 	index: number
 	total: number
@@ -644,7 +645,7 @@ export function ItemDetail({
 	else body = <PermissionPanel key={item.id} {...panel} />
 	return (
 		<>
-			<ItemRule item={item} session={session} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
+			<ItemHeader item={item} who={who} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
 			{body}
 		</>
 	)
@@ -897,11 +898,12 @@ function AskPanel({
 	) : (
 		(receipt ??
 		blockedNote ??
+		// Nothing to say before a pick: the disabled Submit and the `1–N pick` hint already say it.
 		(complete && armed
 			? 'Ready to submit'
 			: questions.length > 1 && !complete
 				? 'Answer every question, then submit'
-				: 'Pick an answer'))
+				: null))
 	)
 	const preview = question.options[previewIndex]
 	return (
@@ -929,8 +931,6 @@ function AskPanel({
 							</button>
 						))}
 					</div>
-				) : question.header ? (
-					<p className="agent-dock-pane-label">{question.header}</p>
 				) : null}
 				<p className="agent-dock-question" id={questionId}>
 					{question.question}
@@ -1080,7 +1080,8 @@ function DecisionPanel({
 	messagePlaceholder: string
 	/** Hint word for ⌘Enter while the deny/keep-planning field shows ("deny", "send back"). */
 	denyVerb: string
-	hint: string
+	/** The note before a pick, only when it says more than the choices do. */
+	hint: string | null
 }) {
 	const {
 		item,
@@ -1176,7 +1177,7 @@ function DecisionPanel({
 		cancelHints
 	) : denying ? (
 		<>
-			<Hint keys={`${mod} enter`}>{denyVerb}</Hint>
+			<Hint keys={modHint(mod)}>{denyVerb}</Hint>
 			<Hint keys="esc">close</Hint>
 		</>
 	) : (
@@ -1307,7 +1308,7 @@ function PermissionPanel(panel: PanelProps) {
 			messageLabel="Message to the agent (optional)"
 			messagePlaceholder="What should it do instead?"
 			denyVerb="deny"
-			hint={review.complete ? 'Pick allow or deny' : 'Allow in the terminal, or deny here'}
+			hint={review.complete ? null : 'Allow in the terminal, or deny here'}
 		>
 			<p className="agent-dock-pane-lead" id={leadId}>
 				<span className="agent-dock-mono agent-dock-bright">{plainAgentLine(tool, 64)}</span> wants to{' '}
@@ -1374,7 +1375,7 @@ function PlanPanel(panel: PanelProps) {
 			messageLabel="What should change? (optional)"
 			messagePlaceholder="Tell the agent what to plan differently"
 			denyVerb="send back"
-			hint={complete ? 'Approve or keep planning' : 'Approve in the terminal, or keep planning here'}
+			hint={complete ? null : 'Approve in the terminal, or keep planning here'}
 		>
 			{review?.plan ? (
 				<pre className="agent-dock-plan">{plainAgentText(review.plan, REVIEW_PLAN_MAX)}</pre>
@@ -1450,11 +1451,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 		fact.hadBackground ? 'Subagents were still running.' : '',
 		fact.continuedAt ? 'Tools ran again afterwards.' : '',
 	].filter(Boolean)
-	const note = confirming ? (
-		<RiskyConfirm word={confirming} what="This reply" />
-	) : (
-		(receipt ?? blockedNote ?? 'Typed into the agent’s terminal as your next prompt')
-	)
+	const note = confirming ? <RiskyConfirm word={confirming} what="This reply" /> : (receipt ?? blockedNote ?? null)
 	return (
 		<>
 			<ScrollBody label="Last message">
@@ -1488,6 +1485,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 							aria-label="Reply"
 							aria-keyshortcuts={modShortcut(mod)}
 							placeholder="Reply to the agent"
+							title="Typed into the agent's terminal as your next prompt"
 							maxLength={16384}
 							rows={1}
 							value={text}
@@ -1508,7 +1506,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 						cancelHints
 					) : (
 						<>
-							<Hint keys={`${mod} enter`}>send</Hint>
+							<Hint keys={modHint(mod)}>send</Hint>
 							<Hint keys="esc">close</Hint>
 						</>
 					)
@@ -1556,20 +1554,18 @@ export function AgentsDetail({
 	const busy = sessions.filter(session => session.status === 'working' || session.status === 'background').length
 	return (
 		<>
-			<Rule end={<CloseKey onClose={onClose} />}>
-				<span className="agent-dock-rule-kind agent-dock-rule-title-word">Agents</span>
-				<span className="agent-dock-rule-meta">
-					<span>
-						{sessions.length} connected, {busy} busy
-					</span>
+			<Header end={<CloseKey onClose={onClose} />}>
+				<span className="agent-dock-title-kind">Agents</span>
+				<span className="agent-dock-title-project">
+					{sessions.length} connected · {busy} busy
 				</span>
-			</Rule>
+			</Header>
 			<ScrollBody label="Agent list">
 				<div className="agent-dock-pane-body">
 					<ul className="agent-dock-table" aria-label="Agents">
 						{snapshot
 							? sessions.map(session => {
-									const where = sessionWhere(session, session.key)
+									const who = agentWho(snapshot, session.key)
 									const meta = agentRowMeta(snapshot, session)
 									const since = sessionSince(snapshot, session)
 									return (
@@ -1577,8 +1573,10 @@ export function AgentsDetail({
 											<span className="agent-dock-status" data-status={session.status} aria-hidden="true">
 												{statusGlyph(session.status)}
 											</span>
-											<span className="agent-dock-td-name">{where.name}</span>
-											<span className="agent-dock-td-project">{where.project}</span>
+											<span className="agent-dock-td-name" title={who.title || undefined}>
+												{who.name}
+											</span>
+											<span className="agent-dock-td-project">{who.project}</span>
 											{/* A waiting agent ages on its entry's clock, so it takes its entry's tone too. */}
 											<span
 												className="agent-dock-td-status"
@@ -1595,20 +1593,17 @@ export function AgentsDetail({
 					</ul>
 					{recent.length > 0 ? (
 						<section className="agent-dock-recent">
-							<h3 className="agent-dock-subrule">
-								<span>Recent</span>
-								<span className="agent-dock-rule-fill" aria-hidden="true" />
-							</h3>
+							<h3 className="agent-dock-subhead">Recent</h3>
 							<ul className="agent-dock-table">
 								{recent.map(item => {
-									const where = sessionWhere(findSession(snapshot, item.session), item.session)
+									const who = agentWho(snapshot, item.session)
 									return (
 										<li key={item.id} className="agent-dock-tr agent-dock-recent-row">
 											<span className="agent-dock-status" aria-hidden="true">
 												{kindGlyph({ ...item, state: 'open' })}
 											</span>
-											<span className="agent-dock-td-name" data-dim="true">
-												{where.name}
+											<span className="agent-dock-td-name" data-dim="true" title={who.title || undefined}>
+												{who.name}
 											</span>
 											<span className="agent-dock-td-project">
 												{cardKindLabel(item).toLowerCase()} #{item.id}
