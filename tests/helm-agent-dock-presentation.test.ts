@@ -20,7 +20,7 @@ const {
 	cardGist,
 	cardKindLabel,
 	cardTone,
-	dockSummary,
+	dockLabel,
 	itemAgeTone,
 	itemTimeLine,
 	entryWidth,
@@ -152,47 +152,41 @@ test('recorded AskUserQuestion input renders every question and preview verbatim
 	)
 })
 
-test('summary never reads as all clear unless Okena is reachable', () => {
-	const ok = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T)
-	assert.equal(ok.needsText, 'Nothing needs you')
-	const down = dockSummary(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T)
-	assert.equal(down.needsText, 'State unknown')
-	assert.match(down.health.text, /^Okena unreachable since \d\d:\d\d$/)
-	assert.equal(dockSummary(null, T).needsText, 'Waiting for Okena')
-	assert.equal(dockSummary(null, T).health.text, 'Okena connecting…')
+test('the row label never reads as all clear unless Okena is reachable', () => {
+	assert.equal(
+		dockLabel(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T),
+		'Agent dock, Nothing needs you, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T),
+		/^Agent dock, State unknown, Okena unreachable since \d\d:\d\d$/,
+	)
+	assert.equal(dockLabel(null, T), 'Agent dock, Waiting for Okena, Okena connecting…')
+	assert.equal(dockHealth(null).text, 'Okena connecting…')
 })
 
-test('summary never reads as all clear while a listed agent is unreadable', () => {
+test('the row label never reads as all clear while a listed agent is unreadable', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
-	const blind = dockSummary(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T)
-	assert.equal(blind.needsText, 'State unknown for 1 agent')
-	assert.equal(blind.needsTone, 'warn')
-	assert.equal(blind.unknownCount, 1)
-	const mixed = dockSummary(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T)
-	assert.equal(mixed.needsText, '1 needs you · 1 unknown')
+	assert.equal(
+		dockLabel(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T),
+		'Agent dock, State unknown for 1 agent, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T),
+		/^Agent dock, 1 needs you · 1 unknown, oldest [^,]+, Okena$/,
+	)
 })
 
-test('summary aging: only blocking asks turn red; old unchecked turns cap at amber', () => {
+test('the row label counts needs and ages the oldest; it names no item', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
 	const oldTurn = turnItem({ openedAt: T - 3 * 60 * 60_000 })
 	if (oldTurn.fact.kind === 'turn') oldTurn.fact.endedAt = T - 3 * 60 * 60_000
-	const turnsOnly = dockSummary(snapshot(ok, [oldTurn]), T)
-	assert.equal(turnsOnly.oldestText, 'oldest 3h')
-	assert.equal(turnsOnly.oldestTone, 'warn')
-})
-
-test('summary counts needs and ages the oldest; the summary names no item', () => {
+	assert.equal(dockLabel(snapshot(ok, [oldTurn]), T), 'Agent dock, 1 needs you, oldest 3h, Okena')
 	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
-	const summary = dockSummary(
-		snapshot({ state: 'ok', since: T, lastObservedAt: T }, items, [session({ status: 'waiting' })]),
-		T,
+	assert.equal(
+		dockLabel(snapshot(ok, items, [session({ status: 'waiting' })]), T),
+		'Agent dock, 2 need you, oldest 3h, Okena',
 	)
-	assert.equal(summary.needsText, '2 need you')
-	assert.equal(summary.oldestText, 'oldest 3h')
-	assert.equal(summary.oldestTone, 'danger')
-	assert.ok(!('head' in summary))
-	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
-	assert.equal(turnsOnly.needsText, '1 needs you')
 })
 
 test('agent rows: a waiting agent ages from its oldest open ask (as its entry does); row meta, stale', () => {

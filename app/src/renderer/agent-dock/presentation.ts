@@ -454,34 +454,18 @@ export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth 
 	}
 }
 
-export interface AgentDockSummary {
-	needCount: number
-	/** Listed agents whose state could not be read (see unknownSessionCount). */
-	unknownCount: number
-	/** Text for the needs slot; never "all clear" unless Okena is reachable and every agent was read. */
-	needsText: string
-	needsTone: 'none' | 'warn'
-	oldestText: string | null
-	oldestTone: AgingTone
-	health: AgentDockHealth
-}
-
-export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): AgentDockSummary {
+/**
+ * The queue row's accessible name: what needs Jakub, how long the oldest has waited and the sources'
+ * health, in words (`Agent dock, 3 need you, oldest 2h16m, Okena`). Never "all clear" unless the
+ * source is reachable and every listed agent was read.
+ */
+export function dockLabel(snapshot: AgentDockSnapshot | null, now: number): string {
 	const needs = needsYouItems(snapshot)
-	const health = dockHealth(snapshot)
 	const source = snapshot?.source.state ?? 'pending'
-	const oldestOf = (items: readonly DockItem[]) =>
-		items.reduce<number | null>((min, item) => {
-			const since = itemWaitingSince(item)
-			return min === null || since < min ? since : min
-		}, null)
-	const oldest = oldestOf(needs)
-	// Red means "an agent is stuck waiting on you": only blocking asks escalate past amber.
-	const oldestAsk = oldestOf(needs.filter(item => item.kind === 'ask'))
-	const askTone = oldestAsk === null ? 'none' : agingTone(now - oldestAsk)
-	const turnTone = oldest === null ? 'none' : agingTone(now - oldest)
-	const oldestTone: AgingTone =
-		askTone === 'danger' ? 'danger' : askTone === 'warn' || turnTone !== 'none' ? 'warn' : 'none'
+	const oldest = needs.reduce<number | null>((min, item) => {
+		const since = itemWaitingSince(item)
+		return min === null || since < min ? since : min
+	}, null)
 	const unknown = unknownSessionCount(snapshot)
 	let needsText: string
 	if (needs.length > 0)
@@ -490,15 +474,8 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 	else if (source === 'ok') needsText = 'Nothing needs you'
 	else if (source === 'down') needsText = 'State unknown'
 	else needsText = `Waiting for ${sourceNames(snapshot, 'pending')}`
-	return {
-		needCount: needs.length,
-		unknownCount: unknown,
-		needsText,
-		needsTone: needs.length > 0 || unknown > 0 ? 'warn' : 'none',
-		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
-		oldestTone,
-		health,
-	}
+	const oldestText = oldest === null ? '' : `, oldest ${formatAge(now - oldest)}`
+	return `Agent dock, ${needsText}${oldestText}, ${dockHealth(snapshot).text}`
 }
 
 // ---------------------------------------------------------------------------

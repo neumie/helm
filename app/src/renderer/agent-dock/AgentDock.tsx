@@ -32,7 +32,8 @@ import {
 	cardGist,
 	cardKindLabel,
 	cardTone,
-	dockSummary,
+	dockHealth,
+	dockLabel,
 	findSession,
 	formatAge,
 	formatClock,
@@ -145,7 +146,7 @@ export function AgentDock({
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
 
-	const summary = dockSummary(snapshot, clock)
+	const health = dockHealth(snapshot)
 	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
@@ -414,8 +415,8 @@ export function AgentDock({
 		step(delta)
 	}
 
-	// The row's name says what it is and the state in words (the summary row of earlier docks).
-	const dockName = `Agent dock, ${summary.needsText}${summary.oldestText ? `, ${summary.oldestText}` : ''}, ${summary.health.text}`
+	// The row's name says what it is and the state in words.
+	const dockName = dockLabel(snapshot, clock)
 	const keyShortcut = shortcutLabel.startsWith('⌘') ? 'Meta+Shift+J' : 'Control+Shift+J'
 
 	const rail = (
@@ -438,11 +439,9 @@ export function AgentDock({
 			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
 			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
 			<span className="agent-dock-row-end">
-				<span className="agent-dock-health" data-tone={summary.health.tone} title={summary.health.text}>
+				<span className="agent-dock-health" data-tone={health.tone} title={health.text}>
 					<span className="agent-dock-dot" aria-hidden="true" />
-					{summary.health.tone === 'success' ? null : (
-						<span className="agent-dock-health-text">{summary.health.text}</span>
-					)}
+					{health.tone === 'success' ? null : <span className="agent-dock-health-text">{health.text}</span>}
 				</span>
 				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcutLabel})`}>
 					{shortcutLabel}
