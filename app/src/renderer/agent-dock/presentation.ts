@@ -449,7 +449,7 @@ export function unknownSessionCount(snapshot: AgentDockSnapshot | null): number 
 	return snapshot.sessions.filter(session => session.status === 'unknown').length
 }
 
-export const unknownAgentsText = (count: number): string => `State unknown for ${count} agent${count === 1 ? '' : 's'}`
+const unknownAgentsText = (count: number): string => `State unknown for ${count} agent${count === 1 ? '' : 's'}`
 
 export interface AgentDockHealth {
 	tone: 'success' | 'danger' | 'neutral'
