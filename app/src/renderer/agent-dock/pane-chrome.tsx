@@ -88,10 +88,13 @@ export function CloseKey({ onClose }: { onClose(): void }) {
 	)
 }
 
-/** Kind glyph: the header's one colored mark. */
-function Glyph({ item, tone }: { item: DockItem; tone: string }) {
+/**
+ * Kind glyph: the one colored mark of a queue entry and the pane header (its kind's tone, never its
+ * age), in a fixed box so names line up.
+ */
+export function KindGlyph({ item }: { item: DockItem }) {
 	return (
-		<span className="agent-dock-glyph" data-tone={tone} aria-hidden="true">
+		<span className="agent-dock-glyph" data-tone={entryTone(item)} aria-hidden="true">
 			{kindGlyph(item)}
 		</span>
 	)
@@ -159,7 +162,7 @@ export function ItemHeader({
 			}
 		>
 			<span className="agent-dock-title-kind">
-				<Glyph item={item} tone={entryTone(item)} />
+				<KindGlyph item={item} />
 				{kind}
 			</span>
 			{context ? <span className="agent-dock-title-context">{context}</span> : null}

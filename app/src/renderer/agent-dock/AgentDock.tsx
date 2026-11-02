@@ -23,6 +23,7 @@ import {
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from '../../agent-dock/model'
 import { ItemDetail } from './AgentDockDetail'
 import { AgentsDetail } from './AgentsDetail'
+import { KindGlyph } from './pane-chrome'
 import type { DetailKeys } from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
 import {
@@ -44,7 +45,6 @@ import {
 	itemSourceHealth,
 	itemWaitingSince,
 	keepOrder,
-	kindGlyph,
 	needsYouItems,
 	nextLingerExpiry,
 	noSessionText,
@@ -692,15 +692,6 @@ function Queue({
 				onOpen={viaKeyboard => onOpen({ type: 'agents' }, viaKeyboard)}
 			/>
 		</>
-	)
-}
-
-/** Kind glyph: the one colored mark (its kind's tone, never its age), in a fixed box so names line up. */
-function KindGlyph({ item }: { item: DockItem }) {
-	return (
-		<span className="agent-dock-glyph" data-tone={entryTone(item)} aria-hidden="true">
-			{kindGlyph(item)}
-		</span>
 	)
 }
 
