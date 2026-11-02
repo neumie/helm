@@ -137,6 +137,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private readonly sockets = new Set<Socket>()
 	private readonly now: () => number
 	private readonly roots: string[]
+	/** Dispatcher-id writes, one after another (the latest list lands last). */
+	private persisting: Promise<void> = Promise.resolve()
 	/** Session cwd -> its branch as last read (null: none / not a work tree) and when. */
 	private readonly branches = new Map<string, { branch: string | null; at: number }>()
 
@@ -572,20 +574,24 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		if (!file) return
 		try {
 			const parsed = excludedFileSchema.safeParse(JSON.parse(await readFile(file, 'utf8')))
-			if (parsed.success) for (const id of parsed.data.sessions) this.core.exclude(id)
+			if (parsed.success) this.core.loadExcluded(parsed.data.sessions)
 		} catch {
 			// none yet
 		}
 	}
 
-	private async persistExcluded(ids: string[]): Promise<void> {
+	/** Queued behind the previous write: concurrent atomic renames could land an older, shorter list last. */
+	private persistExcluded(ids: string[]): Promise<void> {
 		const file = this.options.excludedFile
-		if (!file) return
-		try {
-			await writePrivateFileAtomic(file, JSON.stringify({ version: 1, sessions: ids }))
-		} catch (error) {
-			this.warn(`could not save dispatcher sessions in ${dirname(file)}: ${(error as Error).message}`)
-		}
+		if (!file) return this.persisting
+		this.persisting = this.persisting.then(async () => {
+			try {
+				await writePrivateFileAtomic(file, JSON.stringify({ version: 1, sessions: ids }))
+			} catch (error) {
+				this.warn(`could not save dispatcher sessions in ${dirname(file)}: ${(error as Error).message}`)
+			}
+		})
+		return this.persisting
 	}
 
 	private warn(message: string): void {

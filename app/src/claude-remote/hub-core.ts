@@ -132,8 +132,7 @@ interface TerminalState {
 export interface HubCoreOptions {
 	/** Dialog id prefix, new per hub start (the reducer orphans asks across a prefix change). */
 	prefix: string
-	/** Sessions to hide entirely (the dispatcher's own). */
-	excluded?: Iterable<string>
+	/** The hidden (dispatcher) session ids changed: persist them. */
 	onExcludedChange?(ids: string[]): void
 	/** Display name of a Helm terminal (its tab name), if any. */
 	terminalName?(ref: TerminalRef): string | undefined
@@ -204,15 +203,13 @@ export class ClaudeHubCore {
 	private readonly terminals = new Map<string, TerminalState>()
 	/** Keys of terminals Helm closed: late input for them must not bring a session back. */
 	private readonly closedTerminals: string[] = []
-	private readonly excluded: string[]
+	private readonly excluded: string[] = []
 	private dialogCounter = 0
 	private assistantCounter = 0
 	/** Bumped on every visible change (Okena `state_version`). */
 	stateVersion = 1
 
-	constructor(private readonly options: HubCoreOptions) {
-		this.excluded = [...(options.excluded ?? [])].slice(-EXCLUDED_SESSIONS_MAX)
-	}
+	constructor(private readonly options: HubCoreOptions) {}
 
 	get prefix(): string {
 		return this.options.prefix
@@ -411,7 +408,12 @@ export class ClaudeHubCore {
 		t.pendingDispatcher = sessionId
 	}
 
-	/** Hide a session entirely (the dispatcher's own; persisted ids are loaded through here). */
+	/** The persisted hidden ids, at hub start (no change to report: they came from the file). */
+	loadExcluded(ids: Iterable<string>): void {
+		for (const id of ids) pushBounded(this.excluded, id, EXCLUDED_SESSIONS_MAX)
+	}
+
+	/** Hide a session entirely (the dispatcher's own). */
 	exclude(sessionId: string): void {
 		if (this.excluded.includes(sessionId)) return
 		pushBounded(this.excluded, sessionId, EXCLUDED_SESSIONS_MAX)

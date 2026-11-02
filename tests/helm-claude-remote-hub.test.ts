@@ -1117,6 +1117,35 @@ test('socket: owner read route, dispatcher registration (persisted), degraded no
 	}
 })
 
+test('persisted dispatcher ids: loaded without rewriting the file or bumping the state; new ones are written in order', async () => {
+	const dir = mkdtempSync('/tmp/hcr-hub-')
+	const excludedFile = join(dir, 'excluded.json')
+	writeFileSync(excludedFile, JSON.stringify({ version: 1, sessions: ['s1', 's2', 's3'] }))
+	const hub = new HelmClaudeHub({
+		socketPath: join(dir, 'hub.sock'),
+		tokens: claudeHubTokens(Buffer.alloc(32, 9)),
+		activeProfileId: () => 'work',
+		deliver: async () => 'pty',
+		excludedFile,
+		now: () => T0,
+		log: () => {},
+	})
+	try {
+		const before = hub.core.stateVersion
+		assert.equal(await hub.start(), true)
+		assert.equal(hub.core.stateVersion, before)
+		assert.ok(['s1', 's2', 's3'].every(id => hub.core.isExcluded(id)))
+		for (const id of ['s4', 's5', 's6']) hub.core.exclude(id)
+		const saved = () => JSON.parse(readFileSync(excludedFile, 'utf8')).sessions as string[]
+		await until(() => saved().length === 6, 'the latest list on disk')
+		await new Promise(resolve => setTimeout(resolve, 50))
+		assert.deepEqual(saved(), ['s1', 's2', 's3', 's4', 's5', 's6'])
+	} finally {
+		hub.stop()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
 test('socket: a connection without a request line is dropped; Helm quitting leaves waiting hooks unanswered (they reconnect)', async () => {
 	const dir = mkdtempSync('/tmp/hcr-hub-')
 	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
