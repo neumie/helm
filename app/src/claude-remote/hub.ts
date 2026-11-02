@@ -25,7 +25,7 @@ import { type BranchReader, readGitBranch } from '../../../src/remote/terminal-m
 import type { OkenaClaudeDecision } from '../agent-dock/act'
 import type { OkenaClaudeClient } from '../agent-dock/okena-claude-source'
 import { CANCELLED_OUTPUT } from './decision'
-import { ClaudeHubCore, EXCLUDED_SESSIONS_MAX, HubError, type TerminalRef } from './hub-core'
+import { ClaudeHubCore, EXCLUDED_SESSIONS_MAX, HubError, type TerminalRef, terminalKey } from './hub-core'
 import type { ClaudeHubTokens } from './token'
 
 /** Gap between the paste and Enter, so the TUI has taken the paste in (Okena ENTER_DELAY). */
@@ -157,10 +157,6 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		return this.options.socketPath
 	}
 
-	isListening(): boolean {
-		return this.listening
-	}
-
 	/** Listens on the socket (refusing to steal one another live hub answers on). Never throws. */
 	async start(): Promise<boolean> {
 		try {
@@ -220,7 +216,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	/** Helm's terminal lifecycle: the dtach session ended (reaped, killed, closed). */
 	terminalClosed(ref: TerminalRef): void {
 		this.core.terminalClosed(ref)
-		this.tails.delete(`${ref.profileId}:${ref.terminalId}`)
+		this.tails.delete(terminalKey(ref))
 	}
 
 	/** Helm spawned this terminal with a fresh token (a reused id may report again). */
@@ -510,7 +506,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	/** Reads what busy primaries' transcripts appended since the last tick, for interrupt markers. */
 	async scanTranscripts(): Promise<void> {
 		const busy = this.core.busyTranscripts().slice(0, TRANSCRIPT_SCANS_PER_TICK)
-		const keys = new Set(busy.map(entry => `${entry.ref.profileId}:${entry.ref.terminalId}`))
+		const keys = new Set(busy.map(entry => terminalKey(entry.ref)))
 		for (const key of this.tails.keys()) if (!keys.has(key)) this.tails.delete(key)
 		for (const entry of busy) {
 			try {
@@ -534,7 +530,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private async scanOne(ref: TerminalRef, sessionId: string, path: string): Promise<void> {
 		const real = await this.transcriptAllowed(path)
 		if (!real) return
-		const key = `${ref.profileId}:${ref.terminalId}`
+		const key = terminalKey(ref)
 		const handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW)
 		try {
 			const info = await handle.stat()

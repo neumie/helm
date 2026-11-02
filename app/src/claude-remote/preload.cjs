@@ -235,8 +235,6 @@ function run() {
 		if (plan.action === 'inject') {
 			process.argv.splice(0, process.argv.length, ...plan.argv)
 			holdLifeline(process.env[ENV_SOCKET], process.env[ENV_TOKEN], process.pid)
-			if (process.env.HELM_CLAUDE_REMOTE_DEBUG === '1')
-				process.stderr.write(`helm-claude-remote: argv ${JSON.stringify(process.argv)}\n`)
 			return
 		}
 		if (!plan.inClaude) return

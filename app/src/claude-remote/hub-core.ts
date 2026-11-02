@@ -211,10 +211,6 @@ export class ClaudeHubCore {
 
 	constructor(private readonly options: HubCoreOptions) {}
 
-	get prefix(): string {
-		return this.options.prefix
-	}
-
 	// -------------------------------------------------------------------------
 	// Inputs
 	// -------------------------------------------------------------------------
@@ -427,10 +423,6 @@ export class ClaudeHubCore {
 		return sessionId !== undefined && this.excluded.includes(sessionId)
 	}
 
-	excludedSessions(): string[] {
-		return [...this.excluded]
-	}
-
 	/** Jakub's dock answer: encode it and hand it to the waiting hook. */
 	decide(ref: TerminalRef, dialogId: string, decision: OkenaClaudeDecision): void {
 		const t = this.visibleTerminal(ref)
@@ -591,10 +583,6 @@ export class ClaudeHubCore {
 			cursor: t.nextSeq,
 			reset: !continuation,
 		}
-	}
-
-	terminalRefs(): TerminalRef[] {
-		return [...this.terminals.values()].map(t => t.ref)
 	}
 
 	// -------------------------------------------------------------------------
