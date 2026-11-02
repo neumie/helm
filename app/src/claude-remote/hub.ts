@@ -178,9 +178,9 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 					resolve()
 				})
 			})
+			this.server = server
 			await chmod(path, 0o600)
 			server.on('error', error => this.warn(`socket error: ${error.message}`))
-			this.server = server
 			this.listening = true
 			if (this.options.ownerFile) {
 				await ensurePrivateDir(dirname(this.options.ownerFile))
@@ -202,6 +202,9 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	 * lifelines reconnect the same way.
 	 */
 	stop(): void {
+		// Only the hub that bound the socket removes it: one that never started (another live
+		// hub answers there, or the root is not private) must not unlink that hub's socket.
+		const owned = this.server !== null
 		this.listening = false
 		this.core.shutdown()
 		this.tails.clear()
@@ -209,7 +212,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		this.server = null
 		for (const socket of this.sockets) socket.destroy()
 		this.sockets.clear()
-		void unlink(this.options.socketPath).catch(() => {})
+		if (owned) void unlink(this.options.socketPath).catch(() => {})
 	}
 
 	/** Helm's terminal lifecycle: the dtach session ended (reaped, killed, closed). */

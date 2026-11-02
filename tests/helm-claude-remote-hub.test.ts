@@ -1102,3 +1102,41 @@ test('socket: a connection without a request line is dropped; Helm quitting leav
 		rmSync(dir, { recursive: true, force: true })
 	}
 })
+
+test('socket: a second hub on a live hub’s socket stays off, and stopping it leaves that hub’s socket alone', async () => {
+	const dir = mkdtempSync('/tmp/hcr-hub-')
+	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
+	const options = {
+		socketPath: join(dir, 'hub.sock'),
+		tokens,
+		activeProfileId: () => 'work',
+		deliver: async () => 'pty' as const,
+		now: () => T0,
+		log: () => {},
+	}
+	const first = new HelmClaudeHub(options)
+	const second = new HelmClaudeHub(options)
+	try {
+		assert.equal(await first.start(), true)
+		assert.equal(await second.start(), false, 'another process answers there')
+		second.stop()
+		await new Promise(resolve => setTimeout(resolve, 20))
+		assert.ok(existsSync(options.socketPath), 'the live hub’s socket is still there')
+		await send(options.socketPath, {
+			v: 1,
+			t: 'event',
+			token: tokens.mint(REF),
+			pid: PID,
+			at: T0,
+			input: ev('SessionStart'),
+		})
+		await until(
+			() => (first.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.includes('term1'),
+			'the live hub still hears hooks',
+		)
+	} finally {
+		second.stop()
+		first.stop()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
