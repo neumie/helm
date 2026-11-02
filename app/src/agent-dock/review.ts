@@ -1,7 +1,7 @@
 // Agent dock: what an Allow / Always allow from the dock would actually grant,
 // and whether the dock can show ALL of it verbatim. Zod-free and DOM-free so
 // main (act.ts refuses what the renderer could not show in full) and the
-// renderer (presentation, AgentDockDetail) share one definition.
+// renderer (presentation, the dock's pane bodies) share one definition.
 //
 // Okena's Allow sends the dialog's full original `tool_input` back as
 // `updatedInput`, and "Always allow" applies EVERY `permission_suggestions`

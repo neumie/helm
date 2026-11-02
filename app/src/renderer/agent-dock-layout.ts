@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
-import { isTextField } from './agent-dock/AgentDockDetail'
+import { isTextField } from './agent-dock/pane-keys'
 import type { AgentDockPosition } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */

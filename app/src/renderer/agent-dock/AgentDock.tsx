@@ -21,7 +21,10 @@ import {
 	useState,
 } from 'react'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from '../../agent-dock/model'
-import { AgentsDetail, type DetailKeys, type DockDrafts, ItemDetail, draftKeys } from './AgentDockDetail'
+import { ItemDetail } from './AgentDockDetail'
+import { AgentsDetail } from './AgentsDetail'
+import type { DetailKeys } from './pane-keys'
+import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
 	type AgentWho,
