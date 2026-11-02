@@ -84,7 +84,7 @@ export interface AgentDockSessionRecord {
 }
 
 /** Per-source observation state: each source seeds, restarts and goes down on its own. */
-export interface AgentDockSourceState {
+export interface SourceObservationState {
 	/** False until the source's first successful `/v1/state`; that tick is its seed. */
 	seeded: boolean
 	/** Bumped on reconnect after down, `state_version` regression, or dialog-prefix change. */
@@ -97,7 +97,7 @@ export interface AgentDockSourceState {
 export interface AgentDockState {
 	nextItemId: number
 	/** Sources observed so far (a source appears with its first poll). */
-	sources: Partial<Record<DockSourceId, AgentDockSourceState>>
+	sources: Partial<Record<DockSourceId, SourceObservationState>>
 	/** All sources together (see AgentDockSnapshot.source); recomputed after every reduction. */
 	source: AgentDockSourceHealth
 	sessions: Record<SessionKey, AgentDockSessionRecord>
@@ -335,7 +335,7 @@ class Draft {
 	}
 
 	/** The observation state of `id`, created pending on its first poll. */
-	src(id: DockSourceId): AgentDockSourceState {
+	src(id: DockSourceId): SourceObservationState {
 		let entry = this.state.sources[id]
 		if (!entry) {
 			entry = { seeded: false, epoch: 0, health: { state: 'pending', since: this.now, lastObservedAt: null } }
