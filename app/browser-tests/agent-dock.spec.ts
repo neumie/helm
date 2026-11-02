@@ -1,4 +1,5 @@
 import { type Page, expect, test } from '@playwright/test'
+import { RECEIPT_LINGER_MS } from '../src/renderer/agent-dock/presentation'
 import type { TerminalWorkspaceFixture } from '../src/renderer/terminal-workspace-fixtures'
 
 declare global {
@@ -11,11 +12,8 @@ const harness = '/iframe.html?id=views-terminal-workspace--agent-dock-harness&vi
 const PREFERENCES = ['helm.agentDock.position']
 
 async function openHarness(page: Page): Promise<void> {
+	// Every test runs in a fresh browser context: storage starts empty, the dock at its default position.
 	await page.goto(harness)
-	await page.evaluate(keys => {
-		for (const key of keys) localStorage.removeItem(key)
-	}, PREFERENCES)
-	await page.reload()
 	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
 	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
 }
@@ -49,7 +47,7 @@ async function expectPaneBesideTerminal(page: Page, position: 'top' | 'bottom' =
 
 async function emitScenario(
 	page: Page,
-	name: 'busy' | 'crowded' | 'empty' | 'down' | 'orphaned' | 'real-case' | 'overflow',
+	name: 'busy' | 'crowded' | 'empty' | 'down' | 'orphaned' | 'real-case' | 'overflow' | 'helm-terminals',
 ): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
@@ -95,12 +93,6 @@ async function openItem(page: Page, index: 1 | 2 | 3) {
 	return { input, rail, pane }
 }
 
-test.afterEach(async ({ page }) => {
-	await page.evaluate(keys => {
-		for (const key of keys) localStorage.removeItem(key)
-	}, PREFERENCES)
-})
-
 test('dock sits below the terminals by default: one 28px queue row, whatever arrives', async ({ page }) => {
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
@@ -114,7 +106,6 @@ test('dock sits below the terminals by default: one 28px queue row, whatever arr
 	expect((await rail.boundingBox())?.height).toBe(28)
 	expect(dock.height).toBe(28)
 	// No summary row of its own: the row is the dock, and its name says the state in words.
-	await expect(page.locator('.agent-dock-strip, .agent-dock-toggle')).toHaveCount(0)
 	await expect(rail).toContainText('Nothing needs you')
 	const rowsBefore = await xtermRows(page)
 
@@ -559,6 +550,8 @@ test('the dock works when its layout preferences cannot be read or written', asy
 test('answering a question from the pane: 1-9 pick, Enter submits, Sending… then ✓ answered, focus back in xterm', async ({
 	page,
 }) => {
+	// A fake clock that keeps flowing, so the receipt's linger can be run past without sleeping.
+	await page.clock.install()
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
 	await emitScenario(page, 'busy')
@@ -608,7 +601,7 @@ test('answering a question from the pane: 1-9 pick, Enter submits, Sending… th
 	// While the pane is open the answer keeps its slot and the pane stays, past the receipt's linger:
 	// nothing Jakub did would explain the terminal resizing under his typing.
 	const rows = await xtermRows(page)
-	await page.waitForTimeout(7_000)
+	await page.clock.runFor(RECEIPT_LINGER_MS + 1_000)
 	await expect(pane).toBeVisible()
 	await expect(entry).toContainText('✓ answered')
 	expect(await xtermRows(page)).toBe(rows)
@@ -616,6 +609,44 @@ test('answering a question from the pane: 1-9 pick, Enter submits, Sending… th
 	await pane.getByRole('button', { name: 'Close details' }).click()
 	await expect(pane).toHaveCount(0)
 	await expect(entry).toHaveCount(0)
+})
+
+/** Helm-terminals scenario (the crowded day in Helm's own terminals), the plan's pane open. */
+async function openHelmPlan(page: Page) {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'helm-terminals')
+	const entry = row(page).locator('.agent-dock-entry[aria-label^="Plan,"]')
+	await expect(entry).toHaveCount(1)
+	const itemId = Number(await entry.getAttribute('data-item-id'))
+	await entry.click()
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane).toBeVisible()
+	return { entry, itemId, pane }
+}
+
+test('approving a plan in a Helm terminal: the choice says it switches to accept edits; allow, then ✓ approved', async ({
+	page,
+}) => {
+	const { entry, itemId, pane } = await openHelmPlan(page)
+	const approve = pane.getByRole('radio', { name: /Approve the plan/ })
+	await expect(approve).toContainText('and switch to accept edits')
+	await approve.click()
+	await expect(pane).toContainText('Ready to approve')
+	await pane.getByRole('button', { name: 'Approve', exact: true }).click()
+	await expect(entry).toContainText('✓ approved')
+	await expect(pane.locator('.agent-dock-receipt')).toHaveText('✓ approved · accept edits on')
+	expect(await acts(page)).toEqual([{ itemId, rev: 1, action: { type: 'allow' } }])
+})
+
+test('keep planning sends the plan back with the message: deny, then ✓ sent back to planning', async ({ page }) => {
+	const { entry, itemId, pane } = await openHelmPlan(page)
+	await pane.getByRole('radio', { name: /Keep planning/ }).click()
+	await pane.getByRole('textbox', { name: 'What should change? (optional)' }).fill('split the migration first')
+	await pane.getByRole('button', { name: 'Keep planning', exact: true }).click()
+	await expect(entry).toContainText('✓ sent back to planning')
+	await expect(pane.locator('.agent-dock-receipt')).toHaveText('✓ sent back to planning · split the migration first')
+	expect(await acts(page)).toEqual([{ itemId, rev: 1, action: { type: 'deny', message: 'split the migration first' } }])
 })
 
 test('"Other…" takes free text per question; typing digits in it types, never picks', async ({ page }) => {

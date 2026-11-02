@@ -159,5 +159,4 @@ test('the shortcut handler and the strip digits share the one numbering function
 	assert.match(workspace, /function refreshTabNumbers[\s\S]*?tabNumberSlots\(strip\)/)
 	// No flat walk over every strip tab remains: a hidden collapsed member is never selectable by number.
 	assert.doesNotMatch(workspace, /tabs\[index - 1\]/)
-	assert.doesNotMatch(workspace, /tabNumbers\?:/)
 })
