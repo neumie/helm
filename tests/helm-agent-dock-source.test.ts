@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import test from 'node:test'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import { OkenaClient } from '../src/extensions/okena/client.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type SourceModule = typeof import('../app/src/agent-dock/okena-claude-source.ts')
 type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
@@ -17,9 +18,7 @@ const { OkenaClaudeSource, REPLY_READ_MS, TRANSCRIPT_SWEEP_MS, transcriptWanted,
 	sourceModule as SourceModule
 const { TURN_IDLE_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const STATE_ASK = fixture('state-ask.json')

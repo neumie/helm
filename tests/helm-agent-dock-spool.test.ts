@@ -29,6 +29,7 @@ import {
 	writePrivateFileAtomic,
 } from '../src/agent-dock/spool.js'
 import { EXIT_HELM_DOWN, EXIT_SOURCE_DOWN, runDockCli } from '../src/cli/dock.js'
+import { okenaFixture, until } from './helpers/agent-dock'
 
 type WatcherModule = typeof import('../app/src/agent-dock/watcher.ts')
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
@@ -38,9 +39,7 @@ const { AgentDockWatcher, BACKGROUND_INTERVAL_MS, FOCUSED_INTERVAL_MS, SNAPSHOT_
 	watcherModule as WatcherModule
 const { dockItemHead } = projectionModule as typeof import('../app/src/agent-dock/spool-projection.ts')
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const STATE_ASK = fixture('state-ask.json')
@@ -467,14 +466,6 @@ test('helm dock ls/show read the snapshot; exit 4 when Okena is down, 5 when Hel
 		rmSync(root, { recursive: true, force: true })
 	}
 })
-
-async function until(check: () => boolean, label: string): Promise<void> {
-	const deadline = Date.now() + 3_000
-	while (!check()) {
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
-		await new Promise(resolve => setTimeout(resolve, 5))
-	}
-}
 
 test('helm dock watch: catchup, missed events after the cursor, follow, rotation without loss or duplicates', async () => {
 	const root = tempDir()

@@ -16,6 +16,7 @@ import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
 import { OkenaClient } from '../src/extensions/okena/client.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type SourceModule = typeof import('../app/src/agent-dock/okena-claude-source.ts')
 type WatcherModule = typeof import('../app/src/agent-dock/watcher.ts')
@@ -30,9 +31,7 @@ const { TURN_IDLE_MS } = reduceModule as ReduceModule
 const { ACT_CONFIRM_MS } = modelModule as ModelModule
 
 type Json = Record<string, unknown>
-function fixture<T = Json>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture<Json>
 const STATE_ASK = fixture('state-ask.json')
 const SHOW_ASK: Json = { ...fixture('show-ask.json'), channel_attached: false }
 const SHOW_IDLE: Json = { ...fixture('show-idle.json'), channel_attached: false }

@@ -3,13 +3,13 @@
 // against a fake Okena lives in helm-agent-dock-act-okena.test.ts.
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import actModule from '../app/src/agent-dock/act.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import presentationModule from '../app/src/renderer/agent-dock/presentation.ts'
 import { OKENA_NOT_CONFIGURED, OkenaClient, OkenaHttpError } from '../src/extensions/okena/client.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type ActModule = typeof import('../app/src/agent-dock/act.ts')
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
@@ -34,9 +34,7 @@ const { lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
 	presentationModule as PresentationModule
 
 type Json = Record<string, unknown>
-function fixture<T = Json>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture<Json>
 const SHOW_ASK = fixture('show-ask.json')
 const SHOW_IDLE = fixture('show-idle.json')
 const STATE_ASK = fixture('state-ask.json')

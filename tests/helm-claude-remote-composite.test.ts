@@ -2,7 +2,7 @@
 // state (one source down never freezes the other), act routing by session
 // source, the spool's per-source map, CLI routing and dispatcher registration.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import compositeModule from '../app/src/agent-dock/composite-source.ts'
@@ -12,6 +12,7 @@ import hubModule from '../app/src/claude-remote/hub.ts'
 import tokenModule from '../app/src/claude-remote/token.ts'
 import { readSpoolSnapshot } from '../src/agent-dock/spool.js'
 import { registerDispatcher, runDockCli } from '../src/cli/dock.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
@@ -24,8 +25,7 @@ const { HelmClaudeHub } = hubModule as typeof import('../app/src/claude-remote/h
 const { claudeHubTokens } = tokenModule as typeof import('../app/src/claude-remote/token.ts')
 
 type Json = Record<string, unknown>
-const fixture = (name: string) =>
-	JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as Json
+const fixture = okenaFixture<Json>
 const STATE_ASK = fixture('state-ask.json')
 const SHOW_ASK = { ...fixture('show-ask.json'), channel_attached: false }
 const LOG_FULL = fixture('log-full.json')

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
+import { okenaFixture } from './helpers/agent-dock'
 
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
@@ -30,9 +30,7 @@ const {
 	reduce,
 } = reduceModule as ReduceModule
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const SHOW_ASK = fixture('show-ask.json')
