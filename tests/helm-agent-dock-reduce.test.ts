@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
@@ -882,3 +883,31 @@ for (const [source, profileA, profileB] of [
 		)
 	})
 }
+
+// --- boundary -------------------------------------------------------------------
+
+test('the dock core never imports terminal output, pty or screen code', () => {
+	const app = new URL('../app/src/', import.meta.url)
+	const files = [
+		...readdirSync(new URL('agent-dock/', app))
+			.filter(name => name.endsWith('.ts'))
+			.map(name => new URL(`agent-dock/${name}`, app)),
+		new URL('claude-remote/hub-core.ts', app),
+		new URL('claude-remote/hub.ts', app),
+	]
+	const forbidden = /node-pty|xterm|session-buffer|pty-host|\/pty\b|\/sessions?\//
+	for (const bad of ['node-pty', '@xterm/headless', '../session-buffer', './pty-host', '../sessions/registry'])
+		assert.match(bad, forbidden)
+	for (const file of files) {
+		const source = readFileSync(file, 'utf8')
+		const specifiers = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map(
+			match => match[1] ?? match[2] ?? '',
+		)
+		for (const specifier of specifiers)
+			assert.doesNotMatch(
+				specifier,
+				forbidden,
+				`${file.pathname}: AGENTS.md: the dock never infers agent state from terminal output/screen/pty liveness`,
+			)
+	}
+})
