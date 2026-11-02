@@ -2,11 +2,14 @@
 // the hook JSON on stdin and the terminal's socket/token in its environment.
 import assert from 'node:assert/strict'
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { type Server, type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import coreModule from '../app/src/claude-remote/hub-core.ts'
+import { CLAUDE_REMOTE_ENV } from '../src/agent-dock/claude-hub-wire'
 
 const HOOK = fileURLToPath(new URL('../app/src/claude-remote/hook-client.cjs', import.meta.url))
 const TOKEN = 'v1.work.term1.abcdefghijklmnopqrstuvwxyz'
@@ -228,4 +231,15 @@ test('the reconnect window counts from the drop, not from when the hook started'
 		await close(server)
 		cleanup()
 	}
+})
+
+test('the CJS hook client restates the TS wire: env names and clip bounds stay equal to hub-core', () => {
+	const core = coreModule as typeof import('../app/src/claude-remote/hub-core.ts')
+	const client = createRequire(import.meta.url)(HOOK) as { EVENT_STRING_MAX: number; EVENT_TEXT_MAX: number }
+	// Event strings are clipped to this and the hub compares them clipped (sameCall): both sides must agree.
+	assert.equal(client.EVENT_STRING_MAX, core.EVENT_STRING_MAX)
+	assert.equal(client.EVENT_TEXT_MAX, core.ENTRY_TEXT_MAX)
+	const source = readFileSync(HOOK, 'utf8')
+	assert.match(source, new RegExp(`env\\.${CLAUDE_REMOTE_ENV.socket}\\b`))
+	assert.match(source, new RegExp(`env\\.${CLAUDE_REMOTE_ENV.token}\\b`))
 })

@@ -7,6 +7,7 @@ import { type Socket, createServer } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { CLAUDE_REMOTE_ENV } from '../src/agent-dock/claude-hub-wire'
 
 const require = createRequire(import.meta.url)
 const { helmClaudePlan, hooksSettings, holdLifeline, CLAUDE_ENTRY, REMOTE_ENV } =
@@ -98,6 +99,8 @@ test('claude skips (and loses the Helm variables) outside a Helm terminal, in Ok
 		}
 	}
 	assert.deepEqual(REMOTE_ENV, Object.keys(ENV))
+	// The CJS preload restates the TS wire's env names: they must stay the same set.
+	assert.deepEqual([...REMOTE_ENV].sort(), Object.values(CLAUDE_REMOTE_ENV).sort())
 })
 
 test('print, version, help, background modes and subcommands skip, also as clusters', () => {
