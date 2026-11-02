@@ -244,7 +244,7 @@ function Footer({ hints, note, children }: { hints: ReactNode; note: ReactNode; 
 	)
 }
 
-/** A footer decision: the shared button in the dock's monospace (its key is in the footer hints). */
+/** A footer decision: the shared button in the dock's typeface (its key is in the footer hints). */
 function Key({
 	tone,
 	disabled,
@@ -1199,7 +1199,7 @@ function DecisionPanel({
 		<>
 			<ScrollBody label={bodyLabel}>
 				{warnings}
-				<div className="agent-dock-pane-body">{children}</div>
+				{children}
 			</ScrollBody>
 			{/* Choices never scroll out of a pane sized for an earlier item: only the request above them scrolls. */}
 			<div ref={fixedRef} className="agent-dock-pane-fixed">
@@ -1468,47 +1468,45 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 		<>
 			<ScrollBody label="Last message">
 				{warnings}
-				<div className="agent-dock-pane-body">
-					<div className="agent-dock-message">
-						<span className="agent-dock-message-mark" aria-hidden="true">
-							●
-						</span>
-						<p className="agent-dock-message-text">{plainAgentText(fact.text) || itemHeadline(item)}</p>
-					</div>
-					{notes.length > 0 || session?.prLinks.length ? (
-						<p className="agent-dock-facts">
-							{session?.prLinks.slice(0, 4).map(pr => (
-								<span key={pr.number} className="agent-dock-fact-pr">
-									PR #{pr.number}
-								</span>
-							))}
-							{notes.map(line => (
-								<span key={line}>{line}</span>
-							))}
-						</p>
-					) : null}
-					<label className="agent-dock-prompt agent-dock-reply">
-						<span className="agent-dock-prompt-mark" aria-hidden="true">
-							&gt;
-						</span>
-						<textarea
-							ref={replyRef}
-							className="agent-dock-input agent-dock-input-fit"
-							aria-label="Reply"
-							aria-keyshortcuts={modShortcut(mod)}
-							placeholder="Reply to the agent"
-							title="Typed into the agent's terminal as your next prompt"
-							maxLength={16384}
-							rows={1}
-							value={text}
-							disabled={!live}
-							onChange={event => {
-								setText(event.currentTarget.value)
-								setConfirming(null)
-							}}
-						/>
-					</label>
+				<div className="agent-dock-message">
+					<span className="agent-dock-message-mark" aria-hidden="true">
+						●
+					</span>
+					<p className="agent-dock-message-text">{plainAgentText(fact.text) || itemHeadline(item)}</p>
 				</div>
+				{notes.length > 0 || session?.prLinks.length ? (
+					<p className="agent-dock-facts">
+						{session?.prLinks.slice(0, 4).map(pr => (
+							<span key={pr.number} className="agent-dock-fact-pr">
+								PR #{pr.number}
+							</span>
+						))}
+						{notes.map(line => (
+							<span key={line}>{line}</span>
+						))}
+					</p>
+				) : null}
+				<label className="agent-dock-prompt">
+					<span className="agent-dock-prompt-mark" aria-hidden="true">
+						&gt;
+					</span>
+					<textarea
+						ref={replyRef}
+						className="agent-dock-input agent-dock-input-fit"
+						aria-label="Reply"
+						aria-keyshortcuts={modShortcut(mod)}
+						placeholder="Reply to the agent"
+						title="Typed into the agent's terminal as your next prompt"
+						maxLength={16384}
+						rows={1}
+						value={text}
+						disabled={!live}
+						onChange={event => {
+							setText(event.currentTarget.value)
+							setConfirming(null)
+						}}
+					/>
+				</label>
 			</ScrollBody>
 			<Footer
 				hints={
@@ -1573,64 +1571,62 @@ export function AgentsDetail({
 				</span>
 			</Header>
 			<ScrollBody label="Agent list">
-				<div className="agent-dock-pane-body">
-					<ul className="agent-dock-table" aria-label="Agents">
-						{snapshot
-							? sessions.map(session => {
-									const who = agentWho(snapshot, session.key)
-									const meta = agentRowMeta(snapshot, session)
-									const since = sessionSince(snapshot, session)
-									return (
-										<li key={session.key} className="agent-dock-tr" data-status={session.status}>
-											<span className="agent-dock-status" data-status={session.status} aria-hidden="true">
-												{statusGlyph(session.status)}
-											</span>
-											<span className="agent-dock-td-name" title={who.title || undefined}>
-												{who.name}
-											</span>
-											<span className="agent-dock-td-project">{who.project}</span>
-											{/* A waiting agent ages on its entry's clock, so it takes its entry's tone too. */}
-											<span
-												className="agent-dock-td-status"
-												data-status={session.status}
-												data-tone={session.status === 'waiting' ? agingTone(now - since) : undefined}
-											>
-												{sessionStatusText(session, now, since)}
-											</span>
-											<span className="agent-dock-td-meta">{meta.join('  ')}</span>
-										</li>
-									)
-								})
-							: null}
-					</ul>
-					{recent.length > 0 ? (
-						<section className="agent-dock-recent">
-							<h3 className="agent-dock-subhead">Recent</h3>
-							<ul className="agent-dock-table">
-								{recent.map(item => {
-									const who = agentWho(snapshot, item.session)
-									return (
-										<li key={item.id} className="agent-dock-tr agent-dock-recent-row">
-											<span className="agent-dock-status" aria-hidden="true">
-												{kindGlyph({ ...item, state: 'open' })}
-											</span>
-											<span className="agent-dock-td-name" data-dim="true" title={who.title || undefined}>
-												{who.name}
-											</span>
-											<span className="agent-dock-td-project">
-												{cardKindLabel(item).toLowerCase()} #{item.id}
-											</span>
-											<span className="agent-dock-td-status">
-												{item.resolution ? `${formatAge(now - item.resolution.at)} ago` : ''}
-											</span>
-											<span className="agent-dock-td-meta">{resolutionLabel(item)}</span>
-										</li>
-									)
-								})}
-							</ul>
-						</section>
-					) : null}
-				</div>
+				<ul className="agent-dock-table" aria-label="Agents">
+					{snapshot
+						? sessions.map(session => {
+								const who = agentWho(snapshot, session.key)
+								const meta = agentRowMeta(snapshot, session)
+								const since = sessionSince(snapshot, session)
+								return (
+									<li key={session.key} className="agent-dock-tr">
+										<span className="agent-dock-status" data-status={session.status} aria-hidden="true">
+											{statusGlyph(session.status)}
+										</span>
+										<span className="agent-dock-td-name" title={who.title || undefined}>
+											{who.name}
+										</span>
+										<span className="agent-dock-td-project">{who.project}</span>
+										{/* A waiting agent ages on its entry's clock, so it takes its entry's tone too. */}
+										<span
+											className="agent-dock-td-status"
+											data-status={session.status}
+											data-tone={session.status === 'waiting' ? agingTone(now - since) : undefined}
+										>
+											{sessionStatusText(session, now, since)}
+										</span>
+										<span className="agent-dock-td-meta">{meta.join('  ')}</span>
+									</li>
+								)
+							})
+						: null}
+				</ul>
+				{recent.length > 0 ? (
+					<section>
+						<h3 className="agent-dock-subhead">Recent</h3>
+						<ul className="agent-dock-table">
+							{recent.map(item => {
+								const who = agentWho(snapshot, item.session)
+								return (
+									<li key={item.id} className="agent-dock-tr">
+										<span className="agent-dock-status" aria-hidden="true">
+											{kindGlyph({ ...item, state: 'open' })}
+										</span>
+										<span className="agent-dock-td-name" data-dim="true" title={who.title || undefined}>
+											{who.name}
+										</span>
+										<span className="agent-dock-td-project">
+											{cardKindLabel(item).toLowerCase()} #{item.id}
+										</span>
+										<span className="agent-dock-td-status">
+											{item.resolution ? `${formatAge(now - item.resolution.at)} ago` : ''}
+										</span>
+										<span className="agent-dock-td-meta">{resolutionLabel(item)}</span>
+									</li>
+								)
+							})}
+						</ul>
+					</section>
+				) : null}
 			</ScrollBody>
 			<Footer hints={closeHints} note={null} />
 		</>

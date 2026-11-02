@@ -492,7 +492,7 @@ export function AgentDock({
 	) : null
 
 	return (
-		<div ref={hostRef} className="agent-dock-host" data-position={position} data-pane={String(paneOpen)}>
+		<div ref={hostRef} className="agent-dock-host">
 			<span className="sr-only" aria-live="polite">
 				{announcement}
 			</span>
