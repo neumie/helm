@@ -10,10 +10,13 @@ import { OkenaClient } from '../../src/extensions/okena/client'
 import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
+import { CompositeDockSource } from './agent-dock/composite-source'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
 import { AgentDockWatcher } from './agent-dock/watcher'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
+import { type ClaudeRemote, createClaudeRemote } from './claude-remote/runtime'
+import { claudeRemoteTerminalEnvironment } from './claude-remote/token'
 import { createReviewControl } from './document-review/control'
 import { DocumentReviewWindows } from './document-review/window'
 import { parseExternalHttpUrl } from './external-url'
@@ -268,10 +271,70 @@ const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
 // Harness runs (screenshot, attestation, custom/tmp userData) never poll the
 // operator's live Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev
 // instances do by default); HELM_AGENT_DOCK=0 disables it. See startupPolicy().
+// Claude in Helm terminals (same policy as the dock): Helm's own hub for the
+// top-level `claude` of every new Helm terminal (preload + --settings hooks →
+// <socket root>/claude-remote.sock). It is the dock's second source.
+let claudeRemote: ClaudeRemote | null = null
+if (launchPolicy.agentDock) {
+	try {
+		claudeRemote = createClaudeRemote({
+			socketRoot: sessions.socketNamespaceRoot(),
+			distDir: __dirname,
+			userDataDir: app.getPath('userData'),
+			agentDockDir: path.join(app.getPath('userData'), 'agent-dock'),
+			electronPath: process.execPath,
+			activeProfileId: () => sessionProfileId,
+			writeAttached: (ref, data) => {
+				if (ref.profileId !== sessionProfileId) return false
+				for (const entry of ptys.values()) {
+					if (entry.sessionId !== ref.terminalId || entry.backing !== 'ordinary') continue
+					if (!ordinarySessionAllowed(ref.terminalId) || terminalTransferMain?.isSessionBusy(ref.terminalId))
+						return false
+					entry.proc.write(data)
+					return true
+				}
+				return false
+			},
+			dtachSocket: ref => {
+				if (!sessions.isValidSessionProfileId(ref.profileId)) return null
+				if (terminalTransferMain?.isSessionBusy(ref.terminalId)) return null
+				return sessions.socketPathForProfile(ref.profileId, ref.terminalId)
+			},
+			dtachBinary: () => sessions.resolveDtachBinary(),
+			terminalName: ref =>
+				ref.profileId === sessionProfileId ? getSessionSupport()?.registry.get(ref.terminalId)?.customName : undefined,
+		})
+	} catch (error) {
+		console.warn(
+			`[helm] Claude in Helm terminals unavailable: ${error instanceof Error ? error.message : String(error)}`,
+		)
+	}
+}
+/** Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone. */
+const claudeTerminalClosed = (sessionId: string) =>
+	claudeRemote?.hub.terminalClosed({ profileId: sessionProfileId, terminalId: sessionId })
+/** Both spawn sites: the hub's preload/socket/token for this dtach terminal (inherited ones always dropped). */
+const claudeTerminalEnvironment = (env: Record<string, string>, sessionId: string | null): Record<string, string> =>
+	claudeRemote
+		? claudeRemote.environment(env, sessionId ? { profileId: sessionProfileId, terminalId: sessionId } : null)
+		: claudeRemoteTerminalEnvironment(env, null, null)
 const agentDockWatcher = launchPolicy.agentDock
 	? new AgentDockWatcher({
 			dir: path.join(app.getPath('userData'), 'agent-dock'),
-			source: new OkenaClaudeSource(new OkenaClient()),
+			source: new CompositeDockSource([
+				{ id: 'okena', source: new OkenaClaudeSource(new OkenaClient()) },
+				...(claudeRemote
+					? [
+							{
+								id: 'helm' as const,
+								source: new OkenaClaudeSource(claudeRemote.hub, {
+									name: 'Helm',
+									notRunning: "Helm's Claude hub is not listening",
+								}),
+							},
+						]
+					: []),
+			]),
 			publish: snapshot =>
 				sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
 			isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
@@ -678,6 +741,7 @@ const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined,
 	return () => {
 		support?.registry.remove(sessionId)
 		support?.buffers.remove(sessionId)
+		claudeTerminalClosed(sessionId)
 	}
 })
 
@@ -724,7 +788,10 @@ const warmTerminals = new TerminalWarmPool({
 			cols: 120,
 			rows: 40,
 			cwd,
-			env: remoteTerminalEnvironment(shellEnv(), { sessionId, registryFile: support.registry.filePath }),
+			env: claudeTerminalEnvironment(
+				remoteTerminalEnvironment(shellEnv(), { sessionId, registryFile: support.registry.filePath }),
+				sessionId,
+			),
 		})
 		warmPtyBySession.set(sessionId, proc)
 		return { sessionId, proc: wrapWarmProcess(proc) }
@@ -1599,6 +1666,21 @@ interface SpawnArgs {
 // files (nvm hard-errors on npm_config_prefix). Inherited terminal-session
 // identity is the same class of leak: it makes Helm shells restore a parent
 // Terminal.app session. Spawn shells with a scrubbed environment instead.
+/** Session identity Claude Code sets for its children (not user configuration such as CLAUDE_CODE_USE_BEDROCK). */
+const CLAUDE_SESSION_ENV = new Set([
+	'CLAUDECODE',
+	'CLAUDE_PID',
+	'CLAUDE_JOB_DIR',
+	'CLAUDE_CODE_ENTRYPOINT',
+	'CLAUDE_CODE_EXECPATH',
+	'CLAUDE_CODE_SESSION_ID',
+	'CLAUDE_CODE_CHILD_SESSION',
+	'CLAUDE_CODE_SESSION_ATTENDED',
+	'CLAUDE_CODE_MESSAGING_SOCKET',
+	'CLAUDE_CODE_MESSAGING_TOKEN',
+	'CLAUDE_CODE_SSE_PORT',
+])
+
 function shellEnv(): Record<string, string> {
 	const env: Record<string, string> = {}
 	for (const [key, value] of Object.entries(process.env)) {
@@ -1607,6 +1689,10 @@ function shellEnv(): Record<string, string> {
 		// The dev instance's own launch knobs must not leak into Helms/CLIs started from its terminals.
 		if (sideBySideLaunch && (key === SIDE_BY_SIDE_ENV || key === 'HELM_SOCKET_DIR' || key === 'HELM_AGENT_DOCK_DIR'))
 			continue
+		// A Helm started from a Claude Code session (dev instances launched by agents) must not
+		// make its terminals look like that session's children: the Claude hooks preload would
+		// skip every claude there, and `helm dock watch` would register the launcher's session.
+		if (CLAUDE_SESSION_ENV.has(key)) continue
 		// Inherited terminal-session identity makes every new shell restore and save
 		// the parent Terminal.app/iTerm session. That is slow and wrong for Helm.
 		if (
@@ -2085,6 +2171,7 @@ function publishOrdinaryPty(
 				if (dead && ordinarySessionAllowed(sid, owningProfile)) {
 					support.registry.remove(sid)
 					support.buffers.remove(sid)
+					claudeTerminalClosed(sid)
 				}
 			})
 		}
@@ -2160,9 +2247,12 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		// cwd is main-owned. The renderer can select it only through the OS folder
 		// picker above and can never smuggle an arbitrary path into pty:spawn.
 		cwd,
-		env: remoteTerminalEnvironment(
-			shellEnv(),
-			sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
+		env: claudeTerminalEnvironment(
+			remoteTerminalEnvironment(
+				shellEnv(),
+				sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
+			),
+			sessionId && support ? sessionId : null,
 		),
 	})
 	if (!restoring) warmTerminals.ensure()
@@ -2222,6 +2312,7 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 		void sessions.killSession(sid).then(() => {
 			support?.registry.remove(sid)
 			support?.buffers.remove(sid)
+			claudeTerminalClosed(sid)
 		})
 	}
 	try {
@@ -3036,8 +3127,9 @@ void app.whenReady().then(async () => {
 	// side-by-side dev instances leave the lease to the operator's Helm.
 	if (launchPolicy.scheduledResidency) void scheduledResidency.start()
 	createWindow()
-	// Never blocks startup: an absent Okena is just a "source down" dock.
-	void agentDockWatcher?.start()
+	// Never blocks startup: an absent Okena is just a "source down" dock. The hub
+	// listens first so the dock's first Helm poll finds it.
+	void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => void agentDockWatcher?.start())
 	if (sideBySideLaunch) app.dock?.setBadge('dev')
 	if (launchPolicy.documentReviewControl) {
 		reviewControlStart = documentReviewControl.start().catch(() => {
@@ -3189,6 +3281,7 @@ app.on('before-quit', event => {
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
 	agentDockWatcher?.stop()
+	claudeRemote?.stop()
 	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
 	// shutdown always follows the final resident lease attempt. Release the
 	// provider watch first so a quit does not leave ClientCare polling on.
