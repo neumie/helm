@@ -29,7 +29,7 @@ const {
 	sessionKey,
 	stableJson,
 } = modelModule as ModelModule
-const { TURN_IDLE_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
+const { TURN_IDLE_MS, TURN_RESUMED_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
 const { RISKY_PROMPT, lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
 	presentationModule as PresentationModule
 
@@ -348,15 +348,78 @@ test('a reply read mid-flight is attributed once the POST answers (tail flag sur
 	assert.equal(only(after, 'turn').resolution?.by, 'dock')
 })
 
-test('tools running again bump the turn rev (a stale popover act is refused by rev)', () => {
+test('the agent working again closes an undispatched turn instead of bumping its rev', () => {
 	const { state: open } = turnOpen()
 	const turn = only(open, 'turn')
-	const working = drive([[T0 + 30_000, poll(idle({ busy: true }))]], open).state
-	assert.equal(only(working, 'turn').rev, turn.rev + 1)
-	assert.ok(only(working, 'turn').fact.kind === 'turn')
-	// Stays bumped once (not every busy tick).
-	const still = drive([[T0 + 31_500, poll(idle({ busy: true }))]], working).state
-	assert.equal(only(still, 'turn').rev, turn.rev + 1)
+	const { state, events } = drive(
+		[
+			[T0 + 30_000, poll(idle({ busy: true }))],
+			[T0 + 30_000 + TURN_RESUMED_MS, poll(idle({ busy: true }))],
+		],
+		open,
+	)
+	assert.equal(only(state, 'turn').rev, turn.rev)
+	assert.equal(only(state, 'turn').resolution?.by, 'superseded')
+	assert.deepEqual(
+		events.map(event => event.t),
+		['item.resolved'],
+	)
+})
+
+test('dock reply in flight: a long busy stretch never closes the turn; its own user entry does', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	// Okena typed the reply, so the pane is busy before the POST even answers (ticks normally pause
+	// while acting; a poll landing anyway must not attribute or supersede anything).
+	const sending = drive(
+		[
+			[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+			[T0 + 20_100, poll(idle({ busy: true }))],
+			[T0 + 20_100 + TURN_RESUMED_MS, poll(idle({ busy: true }))],
+		],
+		open,
+	)
+	assert.deepEqual(sending.events, [])
+	assert.equal(only(sending.state, 'turn').state, 'sending')
+
+	// Sent, still busy well past the debounce and past ACT_CONFIRM_MS: amber, never superseded.
+	const sent = drive(
+		[
+			[T0 + 30_000, { type: 'act.result', itemId: turn.id, outcome: { status: 'sent', delivery: 'pty' } }],
+			[T0 + 30_000 + TURN_RESUMED_MS, poll(idle({ busy: true }))],
+			[T0 + 30_000 + ACT_CONFIRM_MS + 1, poll(idle({ busy: true }))],
+		],
+		sending.state,
+	)
+	assert.equal(only(sent.state, 'turn').state, 'unconfirmed')
+	assert.ok(!sent.events.some(event => event.t === 'item.resolved'))
+
+	// Its user entry (read while busy) confirms it as answered from the dock.
+	const seen = drive(
+		[[T0 + 90_000, poll(idle({ busy: true }), page([user('u-dock'), assistant('a2', 'On it.')], 300))]],
+		sent.state,
+	)
+	assert.equal(only(seen.state, 'turn').resolution?.by, 'dock')
+	assert.equal(only(seen.state, 'turn').receipt?.status, 'confirmed')
+})
+
+test('a refused dock reply leaves the turn open; the agent resuming then closes it', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	const { state } = drive(
+		[
+			[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+			[
+				T0 + 20_500,
+				{ type: 'act.result', itemId: turn.id, outcome: { status: 'refused', reason: 'busy', detail: 'busy' } },
+			],
+			[T0 + 21_000, poll(idle({ busy: true }))],
+			[T0 + 21_000 + TURN_RESUMED_MS, poll(idle({ busy: true }))],
+		],
+		open,
+	)
+	assert.equal(only(state, 'turn').resolution?.by, 'superseded')
+	assert.equal(only(state, 'turn').receipt?.status, 'refused')
 })
 
 // ---------------------------------------------------------------------------

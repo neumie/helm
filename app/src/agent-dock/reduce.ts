@@ -32,6 +32,17 @@ import {
 
 /** A session must stay idle this long before an unchecked turn opens (filters quick resumes). */
 export const TURN_IDLE_MS = 8_000
+/**
+ * A session whose main agent is busy (Okena `busy: true`, working or in its own dialog) this
+ * long no longer waits for Jakub: the open turn closes `superseded` even when no reply entry
+ * was read. A dialog raised while the main agent is idle (a background subagent) does not count.
+ */
+export const TURN_RESUMED_MS = 8_000
+/**
+ * Two observations further apart than this do not make one continuous idle/busy stretch
+ * (Helm asleep, Okena down, the pane unlisted or unreadable in between): both restart.
+ */
+export const OBSERVATION_GAP_MS = 15_000
 /** Turn excerpt bound (memory only). */
 export const TURN_TEXT_MAX = 2_048
 /** Resolved items are kept for the Recent lane and dedupe, bounded by age and count. */
@@ -54,6 +65,14 @@ export interface AgentDockSessionRecord {
 	observedStatus?: DockSessionStatus
 	/** First observation of the current idle/background stretch. */
 	idleSince?: number
+	/** First observation of the current stretch with the main agent busy (Okena `busy: true`). */
+	busySince?: number
+	/**
+	 * The turn closed because the agent went back to work with nothing read after it. If the
+	 * pane stops again at that same message, the turn opens again (once per stop) and keeps
+	 * its original `endedAt`, so its waiting age is not reset by the round trip.
+	 */
+	resumedTurn?: { key: string; endedAt: number }
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
@@ -105,6 +124,15 @@ export function agentDockTranscriptRequest(
 ): { cursor?: number; sessionId?: string } {
 	const tail = state.sessions[sessionKey(profile, terminalId)]?.tail
 	return tail?.cursor === undefined || !tail.sessionId ? {} : { cursor: tail.cursor, sessionId: tail.sessionId }
+}
+
+/**
+ * Whether the source should read this pane's transcript while it is busy: a turn item
+ * is live, and the user entry that answers it (or the agent's next message) closes it.
+ */
+export function agentDockAwaitingReply(state: AgentDockState, profile: string, terminalId: string): boolean {
+	const key = sessionKey(profile, terminalId)
+	return state.items.some(item => item.session === key && item.kind === 'turn' && isLive(item))
 }
 
 /**
@@ -368,9 +396,16 @@ function observeTerminal(
 
 	const detail = observed.detail
 	if (!detail || detail.terminal_id !== terminalId) {
-		// Fail closed: no fact, so nothing opens or closes for this session.
+		// Fail closed: no fact, so nothing opens or closes for this session, and the
+		// idle/busy stretch is broken (it may have changed unseen in between).
 		setStatus(record, 'unknown', now)
+		record.idleSince = undefined
+		record.busySince = undefined
 		return
+	}
+	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
+		record.idleSince = undefined
+		record.busySince = undefined
 	}
 	// Last observed before an Okena restart/reconnect (epoch already bumped for this tick).
 	const restarted = existing !== undefined && existing.epoch !== draft.state.epoch
@@ -381,6 +416,8 @@ function observeTerminal(
 		for (const item of live()) draft.resolve(item, 'session_ended')
 		record.tail = { userAfterLastAssistant: false }
 		record.idleSince = undefined
+		record.busySince = undefined
+		record.resumedTurn = undefined
 	}
 	record.session.sessionId = detail.session_id
 	record.session.subagents = detail.running_subagents.length
@@ -406,9 +443,17 @@ function observeTerminal(
 			page,
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
 		)
+		const newest = record.tail.lastAssistant?.uuid
 		for (const item of liveTurns) {
 			// An act still in flight cannot be attributed yet; the settle check below picks it up.
-			if (repliedTurns.has((item.fact as DockTurnFact).assistantUuid) && !isInFlight(item)) draft.close(item, 'replied')
+			if (isInFlight(item)) continue
+			const fact = item.fact as DockTurnFact
+			if (repliedTurns.has(fact.assistantUuid)) draft.close(item, 'replied')
+			// The agent said something after the turn (a background wake, or a reset page whose
+			// window no longer reaches the turn): it is not waiting on that message any more.
+			// A dock reply already sent waits for its own user entry (or the ack) instead.
+			else if (newest !== undefined && newest !== fact.assistantUuid && !isDispatched(item))
+				draft.resolve(item, 'superseded')
 		}
 		// Unknown anchor (tail never read) proves nothing; a reset page alone is not new activity.
 		const progressed = activity || (orphanAnchor !== undefined && record.tail.lastAssistant?.uuid !== orphanAnchor)
@@ -421,20 +466,23 @@ function observeTerminal(
 	setStatus(record, status, now)
 	if (status === 'idle' || status === 'background') record.idleSince ??= now
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
+	if (detail.busy === true) record.busySince ??= now
+	else record.busySince = undefined
 	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
 	for (const item of live()) {
 		if (item.fact.kind !== 'turn' || !isDispatched(item)) continue
 		if (record.tail.lastAssistant?.uuid === item.fact.assistantUuid && record.tail.userAfterLastAssistant)
 			draft.confirm(item)
 	}
-	if (status === 'working') {
+	// A turn means "the agent waits for you". Main agent busy past a short debounce, it plainly
+	// does not (Jakub typed in the terminal and the entry was not read yet, or a background task
+	// woke it): close it. A dock reply being sent or confirmed keeps its item until its own entry
+	// is seen. A dialog with the main agent idle (background subagent) leaves the turn open.
+	if (record.busySince !== undefined && now - record.busySince >= TURN_RESUMED_MS) {
 		for (const item of live()) {
-			if (item.fact.kind !== 'turn' || record.tail.userAfterLastAssistant || isDispatched(item) || isInFlight(item))
-				continue
-			if (item.fact.continuedAt === undefined) {
-				item.fact.continuedAt = now
-				item.rev += 1
-			}
+			if (item.fact.kind !== 'turn' || isDispatched(item) || isInFlight(item)) continue
+			record.resumedTurn = { key: item.key, endedAt: item.fact.endedAt }
+			draft.resolve(item, 'superseded')
 		}
 	}
 
@@ -526,7 +574,11 @@ function observeTerminal(
 	}
 	if (last.uuid === seen) return
 	const itemKey = `turn:${detail.session_id ?? key}:${last.uuid}`
-	if (draft.hasKey(itemKey)) return
+	// Closed only because the agent went back to work, and it stopped at that same message
+	// again with no reply in between: it waits for Jakub again, as a new item.
+	const resumed = record.resumedTurn?.key === itemKey ? record.resumedTurn : undefined
+	if (draft.hasKey(itemKey) && resumed === undefined) return
+	record.resumedTurn = undefined
 	for (const item of live()) if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
 	draft.open(
 		{
@@ -538,7 +590,7 @@ function observeTerminal(
 				sessionId: detail.session_id,
 				assistantUuid: last.uuid,
 				text: boundAgentText(last.text),
-				endedAt: record.idleSince ?? now,
+				endedAt: resumed?.endedAt ?? record.idleSince ?? now,
 				hadBackground: status === 'background',
 			},
 		},

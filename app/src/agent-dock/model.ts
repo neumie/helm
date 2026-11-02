@@ -236,8 +236,6 @@ export interface DockTurnFact {
 	endedAt: number
 	/** Subagents were still running when the turn ended. */
 	hadBackground: boolean
-	/** Tools ran again without a user entry; the turn stays open. */
-	continuedAt?: number
 }
 
 export type DockItemFact = DockAskFact | DockTurnFact
@@ -254,7 +252,10 @@ export interface DockItem {
 	key: string
 	kind: DockItemKind
 	session: SessionKey
-	/** Starts at 1; bumps when the fact changes under Jakub (a turn's tools ran again). Acts carry the rev they saw. */
+	/**
+	 * Fact version for the act CAS; acts carry the rev they saw. Starts at 1 and nothing bumps it
+	 * today: a turn whose agent moves on closes (`superseded`/`replied`) instead of changing in place.
+	 */
 	rev: number
 	openedAt: number
 	fact: DockItemFact

@@ -9,8 +9,10 @@
 //   2. `GET /v1/claude/terminals/{id}` for every okenaClaudeCandidates() id.
 //   3. `GET …/transcript?cursor=&session_id=` only when needed: first read of a
 //      pane, a new Claude session, a busy→idle edge, one settle read once the
-//      idle stretch reaches TURN_IDLE_MS, and a TRANSCRIPT_SWEEP_MS sweep while
-//      idle (catches anything written after the edge read).
+//      idle stretch reaches TURN_IDLE_MS, a TRANSCRIPT_SWEEP_MS sweep while
+//      idle (catches anything written after the edge read), and every
+//      REPLY_READ_MS while a busy pane still has a live turn item (Jakub typed
+//      the reply in the terminal: its user entry closes the turn).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
@@ -30,7 +32,7 @@ import {
 	parseOkenaState,
 	sessionKey,
 } from './model'
-import { type AgentDockState, TURN_IDLE_MS, agentDockTranscriptRequest } from './reduce'
+import { type AgentDockState, TURN_IDLE_MS, agentDockAwaitingReply, agentDockTranscriptRequest } from './reduce'
 
 export const OKENA_STATE_MAX_BYTES = 4 * 1024 * 1024
 export const OKENA_SESSION_MAX_BYTES = 2 * 1024 * 1024
@@ -38,6 +40,8 @@ export const OKENA_SESSION_MAX_BYTES = 2 * 1024 * 1024
 export const OKENA_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024
 export const OKENA_READ_TIMEOUT_MS = 3_000
 export const TRANSCRIPT_SWEEP_MS = 15_000
+/** While a busy pane has a live turn item, re-read its transcript this often (continuation pages are small). */
+export const REPLY_READ_MS = 2_000
 /** Fan-out bound per tick; more panes than this are left unobserved (status unknown). */
 export const MAX_CLAUDE_TERMINALS = 64
 const READ_CONCURRENCY = 6
@@ -246,7 +250,7 @@ export class OkenaClaudeSource {
 		const key = sessionKey(profile, terminalId)
 		const read = this.reads.get(key)
 		const request = agentDockTranscriptRequest(state, profile, terminalId)
-		const want = transcriptWanted(read, parsed.value, request, now)
+		const want = transcriptWanted(read, parsed.value, request, now, agentDockAwaitingReply(state, profile, terminalId))
 		const expedited = read?.expediteUntil !== undefined && now < read.expediteUntil && parsed.value.has_transcript
 		const doRead = want.read || expedited
 		this.reads.set(key, {
@@ -271,14 +275,17 @@ export class OkenaClaudeSource {
 }
 
 /**
- * Transcript read policy (pure, exported for tests). Reads only while the pane
- * is idle or for its first/new-session read; never while it is working.
+ * Transcript read policy (pure, exported for tests). Reads while the pane is
+ * idle, for its first/new-session read, and while it is busy only when a turn
+ * item for it is still live (`awaitingReply`): the reply typed in the terminal
+ * is what makes the pane busy, and only the transcript shows it.
  */
 export function transcriptWanted(
 	prev: TerminalReadState | undefined,
 	detail: OkenaClaudeSession,
 	request: { cursor?: number; sessionId?: string },
 	now: number,
+	awaitingReply = false,
 ): { read: boolean; edgeAt?: number } {
 	if (!detail.has_transcript) return { read: false }
 	const idle = detail.busy === false && detail.dialogs.length === 0
@@ -290,7 +297,12 @@ export function transcriptWanted(
 	// First read of this pane (or the reducer lost its cursor): throttled so a 404ing transcript is not hammered.
 	if (request.cursor === undefined && sinceRead >= TRANSCRIPT_SWEEP_MS) return { read: true, edgeAt }
 	if (prev !== undefined && prev.sessionId !== detail.session_id) return { read: true, edgeAt }
-	if (!idle) return { read: false }
+	if (!idle) {
+		// Awaiting a reply: read on the idle→busy edge (a reply typed in the terminal is what
+		// makes the pane busy), then every REPLY_READ_MS until the reducer closes the turn.
+		const resumed = prev !== undefined && prev.busy === false && prev.dialogs === 0
+		return { read: awaitingReply && request.cursor !== undefined && (resumed || sinceRead >= REPLY_READ_MS) }
+	}
 	if (edge) return { read: true, edgeAt }
 	if (edgeAt !== undefined && now - edgeAt >= TURN_IDLE_MS) {
 		// Settle read: the turn rule fires on this tick with fresh data.

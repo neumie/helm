@@ -295,7 +295,7 @@ export function resolutionLabel(item: DockItem): string {
 		case 'replied':
 			return 'replied in terminal'
 		case 'superseded':
-			return 'superseded by a newer turn'
+			return 'agent moved on'
 		case 'session_ended':
 			return 'session ended'
 		case 'acked':

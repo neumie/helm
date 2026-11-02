@@ -20,7 +20,9 @@ const {
 } = modelModule as ModelModule
 const {
 	TURN_IDLE_MS,
+	TURN_RESUMED_MS,
 	TURN_TEXT_MAX,
+	agentDockAwaitingReply,
 	agentDockPersisted,
 	agentDockSnapshot,
 	agentDockTranscriptRequest,
@@ -38,6 +40,12 @@ const SHOW_IDLE = fixture('show-idle.json')
 const STATE_ASK = fixture('state-ask.json')
 const LOG_FULL = fixture('log-full.json')
 const LS_ASK = fixture<Json[]>('ls-ask.json')
+/**
+ * Shape of a real reset page (`okena claude log`, no cursor: last 200 entries, reset: true)
+ * from the pane where the bug showed: texts replaced, kinds/uuids/order kept. Entry 52 is the
+ * turn's assistant message, entry 53 Jakub's reply typed in the terminal, then 146 entries of work.
+ */
+const LOG_RESET_REPLY = fixture('log-reset-reply.json')
 
 const PROFILE = 'p1'
 const TID = SHOW_ASK.terminal_id as string
@@ -447,28 +455,225 @@ test('a reset page still finds the reply after the turn uuid', () => {
 	assert.equal(replied.events[0]?.t === 'item.resolved' && replied.events[0].by, 'replied')
 })
 
-test('a newer turn supersedes the open one; background wake marks continuedAt', () => {
+test('a newer turn supersedes the open one', () => {
 	const { state, at } = withOpenTurn()
 	const { state: final, events } = run(state, [
-		[
-			at + 1000,
-			poll(working(), {
-				transcript: page([{ kind: 'tool_use', uuid: 't', tool_use_id: 'x', name: 'Bash', summary: 'ls' }], {
-					cursor: 1_330_000,
-				}),
-			}),
-		],
-		[at + 2000, poll(idle(), { transcript: page([assistant('b2')], { cursor: 1_340_000 }) })],
-		[at + 2000 + TURN_IDLE_MS, poll(idle())],
+		[at + 1000, poll(idle(), { transcript: page([assistant('b2')], { cursor: 1_340_000 }) })],
+		[at + 1000 + TURN_IDLE_MS, poll(idle())],
 	])
-	const first = final.items.find(item => item.id === 1)
-	assert.equal(first?.fact.kind === 'turn' && first.fact.continuedAt, at + 1000)
 	assert.deepEqual(
 		events.map(event => event.t),
 		['item.resolved', 'item.opened'],
 	)
-	assert.equal(first?.resolution?.by, 'superseded')
+	assert.equal(final.items.find(item => item.id === 1)?.resolution?.by, 'superseded')
 	assert.equal(itemsOf(final, 'turn').find(item => item.state === 'open')?.key, `turn:${SID}:b2`)
+})
+
+// --- the agent moved on (Jakub replied in the terminal, or it woke by itself) ----
+
+const RESET_ENTRIES = LOG_RESET_REPLY.entries as Json[]
+const TURN_UUID = '1c3039d1-8e3a-4a5b-b212-bbd5942221d0'
+const tool = (uuid: string): Json => ({ kind: 'tool_use', uuid, tool_use_id: `x-${uuid}`, name: 'Bash', summary: 'ls' })
+
+/** The real timeline up to the turn: a reset page while working, then the turn ends and settles. */
+function realTurnOpen(): { state: AgentDockState; at: number } {
+	const t1 = T0 + 1000
+	const { state } = run(createAgentDockState(null, T0), [
+		[T0, poll(working(), { transcript: page(RESET_ENTRIES.slice(0, 52), { cursor: 10_000_000, reset: true }) })],
+		[t1, poll(idle(), { transcript: page(RESET_ENTRIES.slice(52, 53), { cursor: 10_010_000 }) })],
+		[t1 + TURN_IDLE_MS, poll(idle())],
+	])
+	const [turn] = itemsOf(state, 'turn')
+	assert.equal(turn?.state, 'open')
+	assert.equal(turn?.fact.kind === 'turn' && turn.fact.assistantUuid, TURN_UUID)
+	return { state, at: t1 + TURN_IDLE_MS }
+}
+
+test('real shape: a terminal reply never read while the agent works closes the turn after the debounce', () => {
+	// Jakub replied in the terminal; the pane is busy from then on. Okena's busy flag is all the
+	// dock sees on those ticks (no transcript read), which used to leave the turn open for good
+	// with "tools ran again" for as long as the agent worked (17 min in the report).
+	const { state, at } = realTurnOpen()
+	assert.equal(agentDockAwaitingReply(state, PROFILE, TID), true)
+	const early = run(state, [
+		[at + 1500, poll(working())],
+		[at + 1500 + TURN_RESUMED_MS - 1, poll(working())],
+	])
+	assert.deepEqual(early.events, [])
+	assert.equal(itemsOf(early.state, 'turn')[0]?.state, 'open')
+	assert.equal(itemsOf(early.state, 'turn')[0]?.rev, 1)
+
+	const late = reduce(early.state, poll(working()), at + 1500 + TURN_RESUMED_MS)
+	assert.deepEqual(late.events, [{ t: 'item.resolved', at: at + 1500 + TURN_RESUMED_MS, id: 1, by: 'superseded' }])
+	assert.equal(agentDockAwaitingReply(late.state, PROFILE, TID), false)
+	// 17 minutes later it is still closed and nothing else opened.
+	const later = run(late.state, [[at + 17 * 60_000, poll(working())]])
+	assert.deepEqual(later.events, [])
+})
+
+test('real shape: the reply entry read while busy (continuation page) resolves the turn as replied', () => {
+	const { state, at } = realTurnOpen()
+	const replied = reduce(
+		state,
+		poll(working(), { transcript: page(RESET_ENTRIES.slice(53, 60), { cursor: 10_050_000 }) }),
+		at + 1500,
+	)
+	assert.deepEqual(replied.events, [{ t: 'item.resolved', at: at + 1500, id: 1, by: 'replied' }])
+})
+
+test('real shape: a reset page of the last 200 entries still attributes the reply after the turn', () => {
+	const { state, at } = realTurnOpen()
+	const replied = reduce(state, poll(working(), { transcript: channelOff(LOG_RESET_REPLY) }), at + 17 * 60_000)
+	assert.deepEqual(replied.events, [{ t: 'item.resolved', at: at + 17 * 60_000, id: 1, by: 'replied' }])
+	// The tail restarts from the reset page: the agent's latest message, with no reply after it.
+	const tail = replied.state.sessions[KEY]?.tail
+	assert.equal(tail?.cursor, LOG_RESET_REPLY.cursor)
+	assert.notEqual(tail?.lastAssistant?.uuid, TURN_UUID)
+	assert.equal(tail?.userAfterLastAssistant, false)
+})
+
+test('real shape: a reset page whose window no longer reaches the turn closes it as superseded', () => {
+	const { state, at } = realTurnOpen()
+	const moved = reduce(
+		state,
+		poll(working(), { transcript: page(RESET_ENTRIES.slice(60), { cursor: 15_000_000, reset: true }) }),
+		at + 1500,
+	)
+	assert.deepEqual(moved.events, [{ t: 'item.resolved', at: at + 1500, id: 1, by: 'superseded' }])
+})
+
+test('background continuation without a reply: a newer message closes the turn at once', () => {
+	const { state, at } = withOpenTurn()
+	const woke = reduce(
+		state,
+		poll(working(), {
+			transcript: page([tool('t1'), assistant('b2', 'Background build finished.')], { cursor: 1_330_000 }),
+		}),
+		at + 1000,
+	)
+	assert.deepEqual(woke.events, [{ t: 'item.resolved', at: at + 1000, id: 1, by: 'superseded' }])
+})
+
+test('background continuation that stops at the same message again opens the turn again', () => {
+	const { state, at } = withOpenTurn()
+	// Tools ran (no reply, no new message) for longer than the debounce, then the agent stopped.
+	const { state: final, events } = run(state, [
+		[at + 1000, poll(working())],
+		[at + 1000 + TURN_RESUMED_MS, poll(working())],
+		[at + 20_000, poll(idle(), { transcript: page([tool('t1')], { cursor: 1_330_000 }) })],
+		[at + 20_000 + TURN_IDLE_MS, poll(idle())],
+	])
+	assert.deepEqual(
+		events.map(event => (event.t === 'item.resolved' ? `${event.t}:${event.by}` : event.t)),
+		['item.resolved:superseded', 'item.opened'],
+	)
+	const turns = itemsOf(final, 'turn')
+	assert.deepEqual(
+		turns.map(item => [item.id, item.state]),
+		[
+			[1, 'resolved'],
+			[2, 'open'],
+		],
+	)
+	// The reopened turn keeps when the agent first stopped: its waiting age is not reset.
+	assert.equal(turns[1]?.fact.kind === 'turn' && turns[1].fact.endedAt, at - TURN_IDLE_MS)
+	assert.equal(turns[0]?.fact.kind === 'turn' && turns[0].fact.endedAt, at - TURN_IDLE_MS)
+	// Once only: further idle ticks do not open a third item.
+	assert.deepEqual(run(final, [[at + 60_000, poll(idle())]]).events, [])
+})
+
+test('repeated wake cycles at the same message keep the first endedAt on every reopen', () => {
+	const { state, at } = withOpenTurn()
+	let current = state
+	let t = at
+	for (let cycle = 0; cycle < 3; cycle++) {
+		current = run(current, [
+			[t + 1000, poll(working())],
+			[t + 1000 + TURN_RESUMED_MS, poll(working())],
+			[t + 12_000, poll(idle())],
+			[t + 12_000 + TURN_IDLE_MS, poll(idle())],
+		]).state
+		t += 12_000 + TURN_IDLE_MS
+	}
+	const open = itemsOf(current, 'turn').filter(item => item.state === 'open')
+	assert.equal(open.length, 1)
+	assert.equal(open[0]?.fact.kind === 'turn' && open[0].fact.endedAt, at - TURN_IDLE_MS)
+})
+
+test('a busy blip shorter than the debounce leaves the same turn open with no events', () => {
+	const { state, at } = withOpenTurn()
+	const { state: final, events } = run(state, [
+		[at + 1000, poll(working())],
+		[at + 1000 + TURN_RESUMED_MS - 1, poll(working())],
+		[at + 1000 + TURN_RESUMED_MS + 500, poll(idle())],
+		[at + 1000 + TURN_RESUMED_MS + 500 + TURN_IDLE_MS, poll(idle())],
+	])
+	assert.deepEqual(events, [])
+	const turns = itemsOf(final, 'turn')
+	assert.deepEqual(
+		turns.map(item => [item.id, item.state]),
+		[[1, 'open']],
+	)
+})
+
+test('a background subagent dialog while the main agent idles does not close the turn', () => {
+	const bg = { running_subagents: [{ agent_id: 'a1', agent_type: 'Explore' }] }
+	const { state, at } = withOpenTurn()
+	const subDialog = ask({ busy: false, ...bg, dialogs: [dialog('4b4eb160-7', at + 1000)] })
+	const { state: final, events } = run(state, [
+		[at + 1000, poll(idle(bg))],
+		[at + 2000, poll(subDialog)],
+		[at + 2000 + TURN_RESUMED_MS, poll(subDialog)],
+		[at + 30_000, poll(subDialog)],
+		[at + 31_000, poll(idle(bg))],
+		[at + 31_000 + TURN_IDLE_MS, poll(idle(bg))],
+	])
+	assert.equal(final.sessions[KEY]?.session.status, 'background')
+	// Only the ask item opened and went away; the turn (id 1) stayed open throughout.
+	assert.deepEqual(
+		events.map(event => (event.t === 'item.resolved' ? `${event.t}:${event.id}:${event.by}` : event.t)),
+		['item.opened', 'item.resolved:2:outside'],
+	)
+	const turn = itemsOf(final, 'turn')[0]
+	assert.equal(turn?.id, 1)
+	assert.equal(turn?.state, 'open')
+})
+
+test('busy stretches split by an observation gap do not add up to the debounce', () => {
+	const { state, at } = withOpenTurn()
+	// Busy briefly, then nothing observed (Helm asleep / pane unreadable), then busy again.
+	const gapped = run(state, [
+		[at + 1000, poll(working())],
+		[at + 60_000, poll(working())],
+	])
+	assert.deepEqual(gapped.events, [])
+	assert.equal(itemsOf(gapped.state, 'turn')[0]?.state, 'open')
+	// A continuous stretch after the gap still closes it.
+	const later = reduce(gapped.state, poll(working()), at + 60_000 + TURN_RESUMED_MS)
+	assert.deepEqual(later.events, [{ t: 'item.resolved', at: at + 60_000 + TURN_RESUMED_MS, id: 1, by: 'superseded' }])
+})
+
+test('an unreadable session detail breaks the busy stretch', () => {
+	const { state, at } = withOpenTurn()
+	const broken = run(state, [
+		[at + 1000, poll(working())],
+		[at + 3000, poll({ ...working(), terminal_id: 'someone-else' })],
+		[at + 1000 + TURN_RESUMED_MS, poll(working())],
+	])
+	assert.deepEqual(broken.events, [])
+	assert.equal(itemsOf(broken.state, 'turn')[0]?.state, 'open')
+})
+
+test('a dialog that stays open past the debounce also closes the turn (the agent moved on)', () => {
+	const { state, at } = withOpenTurn()
+	const { events } = run(state, [
+		[at + 1000, poll(ask({ dialogs: [dialog('4b4eb160-9', at + 1000)] }))],
+		[at + 1000 + TURN_RESUMED_MS, poll(ask({ dialogs: [dialog('4b4eb160-9', at + 1000)] }))],
+	])
+	assert.deepEqual(
+		events.map(event => (event.t === 'item.resolved' ? `${event.t}:${event.id}:${event.by}` : event.t)),
+		['item.opened', 'item.resolved:1:superseded'],
+	)
 })
 
 test('subagents still running after the turn: background status and hadBackground', () => {

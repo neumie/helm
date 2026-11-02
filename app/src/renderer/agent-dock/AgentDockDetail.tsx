@@ -1446,10 +1446,7 @@ function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 	})
 	if (item.fact.kind !== 'turn') return null
 	const fact = item.fact
-	const notes = [
-		fact.hadBackground ? 'Subagents were still running.' : '',
-		fact.continuedAt ? 'Tools ran again afterwards.' : '',
-	].filter(Boolean)
+	const notes = [fact.hadBackground ? 'Subagents were still running.' : ''].filter(Boolean)
 	const note = confirming ? (
 		<RiskyConfirm word={confirming} what="This reply" />
 	) : (

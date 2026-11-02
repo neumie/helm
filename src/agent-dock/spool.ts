@@ -122,7 +122,6 @@ export const spoolItemSchema = z.object({
 	assistantUuid: z.string().optional(),
 	endedAt: ms.optional(),
 	hadBackground: z.boolean().optional(),
-	continuedAt: ms.optional(),
 	receipt: spoolReceiptSchema.optional(),
 	/** Resolved during an earlier Helm run (from the persisted 24 h ledger). */
 	fromLedger: z.boolean().optional(),

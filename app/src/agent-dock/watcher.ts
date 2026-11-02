@@ -113,7 +113,6 @@ export function dockItemHead(item: DockItem): string {
 	if (fact.kind === 'turn') {
 		const parts = ['Turn ended']
 		if (fact.hadBackground) parts.push('background still running')
-		if (fact.continuedAt !== undefined) parts.push('tools ran again')
 		return oneLine(parts.join(' · '), ITEM_HEAD_MAX)
 	}
 	const input = record(fact.input)
@@ -162,7 +161,6 @@ export function dockSpoolItem(item: DockItem): SpoolItem {
 		endedAt: fact.endedAt,
 		hadBackground: fact.hadBackground,
 		...(fact.sessionId ? { sessionId: fact.sessionId } : {}),
-		...(fact.continuedAt !== undefined ? { continuedAt: fact.continuedAt } : {}),
 	}
 }
 
@@ -242,7 +240,6 @@ function contentDigest(snapshot: AgentDockSnapshot): string {
 			item.state,
 			item.resolution?.by,
 			item.fact.kind,
-			item.fact.kind === 'turn' ? item.fact.continuedAt : undefined,
 			item.receipt?.status,
 			item.receipt?.reason,
 			item.receipt?.detail,
