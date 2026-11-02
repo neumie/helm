@@ -623,6 +623,24 @@ test('Stop before its UserPromptSubmit: the user entry still lands BEFORE the an
 	assert.equal((core.transcript(REF, {}) as { entries: unknown[] }).entries.length, 4)
 })
 
+test('renumbered entries: a reader whose cursor was taken after the early Stop also gets a reset page, not a replay', () => {
+	const core = started()
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p0', prompt: 'first' }))
+	core.event(REF, PID, T0 + 2, ev('Stop', { prompt_id: 'p0', last_assistant_message: 'one' }))
+	core.event(REF, PID, T0 + 4, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'two' }))
+	const read = core.transcript(REF, {}) as { cursor: number }
+	core.event(REF, PID, T0 + 3, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'reply' }))
+	const page = core.transcript(REF, { cursor: read.cursor, sessionId: SID }) as {
+		reset: boolean
+		entries: Array<{ kind: string; text: string }>
+	}
+	assert.equal(page.reset, true)
+	assert.deepEqual(
+		page.entries.map(entry => `${entry.kind}:${entry.text}`),
+		['user:first', 'assistant:one', 'user:reply', 'assistant:two'],
+	)
+})
+
 test('a very late UserPromptSubmit does not release a newer prompt’s dialog', () => {
 	const core = started()
 	const newer = hook()

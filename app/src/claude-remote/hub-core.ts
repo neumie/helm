@@ -785,6 +785,8 @@ export class ClaudeHubCore {
 		}
 		const user: Entry = { seq: 0, kind: 'user', uuid, text: bounded(prompt) }
 		const ordered = [...t.entries.slice(0, answer), user, ...t.entries.slice(answer)]
+		// Skip one seq: every cursor handed out so far (<= nextSeq) is then below the new first seq.
+		t.nextSeq += 1
 		t.entries = ordered.map(entry => ({ ...entry, seq: t.nextSeq++ })).slice(-ENTRIES_MAX)
 	}
 
