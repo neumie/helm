@@ -52,7 +52,8 @@ const wrap = (decision: Record<string, unknown>): Record<string, unknown> => ({
 export function hookDecisionOutput(
 	dialog: HookDialogFacts,
 	decision: OkenaClaudeDecision,
-	mode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
+	// Only the plan-approval switch; the dock never grants a broader mode.
+	mode?: 'acceptEdits',
 ): HookDecisionResult {
 	if (decision.decision === 'deny') {
 		const message = decision.message?.trim() ? decision.message : DEFAULT_DENY_MESSAGE
