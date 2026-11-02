@@ -115,3 +115,14 @@ test('main gates the dock channels on the session IPC gate and the main window; 
 		assert.ok(preload.slice(start, start + 120).includes('sessionProfileToken'), channel)
 	}
 })
+
+test('main: a hub reply never reaches a quarantined session, attached (pty) or parked (dtach push)', () => {
+	const start = main.indexOf('const agentDock = createAgentDockMain({')
+	const wiring = main.slice(start, main.indexOf('\n})\n', start))
+	const attached = wiring.slice(wiring.indexOf('writeAttached:'), wiring.indexOf('dtachSocket:'))
+	assert.match(attached, /!ordinarySessionAllowed\(ref\.terminalId\)/)
+	// writeAttached's false means "not attached" to deliver(), which then pushes: the push path needs its own gate.
+	const parked = wiring.slice(wiring.indexOf('dtachSocket:'), wiring.indexOf('dtachBinary:'))
+	assert.match(parked, /if \(!ordinarySessionAllowed\(ref\.terminalId, ref\.profileId\)\) return null/)
+	assert.match(parked, /isSessionBusy\(ref\.terminalId\)\) return null/)
+})

@@ -282,8 +282,10 @@ const agentDock = createAgentDockMain({
 		}
 		return false
 	},
+	// Null (409 "not reachable") for a quarantined session too: writeAttached's false must not fall through to a push.
 	dtachSocket: ref => {
 		if (!sessions.isValidSessionProfileId(ref.profileId)) return null
+		if (!ordinarySessionAllowed(ref.terminalId, ref.profileId)) return null
 		if (terminalTransferMain?.isSessionBusy(ref.terminalId)) return null
 		return sessions.socketPathForProfile(ref.profileId, ref.terminalId)
 	},
