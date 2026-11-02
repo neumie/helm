@@ -218,8 +218,7 @@ export function sentSummary(item: DockItem, action: DockAction): string | null {
 export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
 const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
 
-/** Sources in the snapshot with their health; an older snapshot without `sources` is Okena alone. */
-/** Each source's own health in display order (an old single-source snapshot reads as Okena). */
+/** Each source's own health in display order; before any source reports (`sources` empty) the merged health reads as Okena alone. */
 export function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
 	const sources = snapshot.sources
 	if (!sources || Object.keys(sources).length === 0) return [['okena', snapshot.source]]
@@ -247,12 +246,12 @@ export function noSessionText(snapshot: AgentDockSnapshot | null): string {
 		: `No Claude session is connected to ${names}`
 }
 
-/** The health of the source that observes this item's session (answering is gated on it). */
 /** True once at least one source has answered: the queue can show what it knows while another source connects. */
 export function anySourceOk(snapshot: AgentDockSnapshot | null): boolean {
 	return snapshot !== null && snapshotSources(snapshot).some(([, health]) => health.state === 'ok')
 }
 
+/** The health of the source that observes this item's session (answering is gated on it). */
 export function itemSourceHealth(item: DockItem, snapshot: AgentDockSnapshot | null): AgentDockSourceHealth | null {
 	if (!snapshot) return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
@@ -641,7 +640,7 @@ export function orderedSessions(snapshot: AgentDockSnapshot | null): DockSession
 	)
 }
 
-/** Kind glyph: what the agent wants, in one terminal character (all in Menlo; tone carries urgency). */
+/** Kind glyph: what the agent wants, in one character (its tone carries the kind). */
 export function kindGlyph(item: DockItem): string {
 	if (answeredHere(item)) return '✓'
 	if (item.fact.kind === 'turn') return '↵'
@@ -650,7 +649,7 @@ export function kindGlyph(item: DockItem): string {
 	return '$'
 }
 
-/** Agent status glyph for the Agents entry and pane (all in Menlo). */
+/** Agent status glyph for the Agents pane table. */
 export function statusGlyph(status: DockSession['status']): string {
 	switch (status) {
 		case 'working':
@@ -850,7 +849,7 @@ export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession):
 	if (session.subagents > 0) meta.push(`${session.subagents} subagent${session.subagents === 1 ? '' : 's'}`)
 	if (session.queuedPrompts > 0) meta.push(`queued ${session.queuedPrompts}`)
 	for (const pr of session.prLinks.slice(0, 2)) meta.push(`PR #${pr.number}`)
-	const lastGood = snapshot.sources?.[session.source ?? 'okena']?.lastObservedAt ?? snapshot.source.lastObservedAt
+	const lastGood = snapshot.sources?.[session.source]?.lastObservedAt ?? snapshot.source.lastObservedAt
 	if (lastGood !== null && session.status !== 'unreachable' && lastGood - session.observedAt > SESSION_STALE_MS)
 		meta.push(`stale ${staleAge(lastGood - session.observedAt)}`)
 	return meta

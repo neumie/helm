@@ -60,7 +60,7 @@ export const agentDockPosition = (() => {
 	}
 })()
 
-/** Re-render ages ("oldest 12m") while nothing else changes. */
+/** Re-render waits/ages in the queue while nothing else changes. */
 const AGE_TICK_MS = 30_000
 /** xterm cell height at the default 13px font (design §2.2) until a row has rendered. */
 const FALLBACK_ROW_HEIGHT = 19

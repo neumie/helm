@@ -185,7 +185,7 @@ export interface DockPrLink {
 
 export interface DockSession {
 	key: SessionKey
-	/** Which source observes it (absent in snapshots from before Helm terminals were observed = okena). */
+	/** Which source observes it (Okena's Claude Remote, or Helm's own hub for Helm terminals). */
 	source: DockSourceId
 	profile: string
 	terminalId: string
