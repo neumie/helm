@@ -3,6 +3,8 @@
 // the Agents entry. AgentDock owns which pane is open; the row only reports clicks and keys.
 import { useId, useLayoutEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
+import { AgentsEntryLine, useAgentsEntryVariant } from './AgentsEntryLine'
+import { agentsTally } from './agents-entry'
 import { KindGlyph } from './pane-chrome'
 import {
 	type AgentWho,
@@ -18,6 +20,7 @@ import {
 	itemAgeTone,
 	itemKindLabel,
 	itemWaitingSince,
+	noSessionText,
 	orderedSessions,
 	plainAgentText,
 	queueLayout,
@@ -349,8 +352,12 @@ function AgentsEntry({
 	onOpen(viaKeyboard: boolean): void
 }) {
 	const words = agentsEntryText(snapshot, sessions, unknown, now)
+	// Story-only candidate looks (data-agents-entry on #agent-dock); without one, the current line.
+	const [wrap, setWrap] = useState<HTMLDivElement | null>(null)
+	const variant = useAgentsEntryVariant(wrap)
+	const tally = variant ? agentsTally(sessions, noSessionText(snapshot)) : null
 	return (
-		<div className="agent-dock-agents">
+		<div ref={setWrap} className="agent-dock-agents" data-variant={variant ?? undefined}>
 			<button
 				ref={buttonRef}
 				type="button"
@@ -359,14 +366,20 @@ function AgentsEntry({
 				data-open={String(open)}
 				aria-expanded={open}
 				aria-controls={open ? paneId : undefined}
-				aria-label={words.label}
+				aria-label={tally ? tally.label : words.label}
 				title={words.title}
 				onClick={event => onOpen(event.detail === 0)}
 			>
-				<span className="agent-dock-entry-line">
-					{words.text}
-					{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
-				</span>
+				{variant && tally ? (
+					<span className="agent-dock-entry-line" aria-hidden="true">
+						<AgentsEntryLine variant={variant} tally={tally} unknown={unknown} />
+					</span>
+				) : (
+					<span className="agent-dock-entry-line">
+						{words.text}
+						{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
+					</span>
+				)}
 			</button>
 		</div>
 	)

@@ -1787,6 +1787,149 @@ body.dragging {
 	color: var(--text-1);
 }
 
+/* Agents entry candidates E1–E6 (story-only until Jakub picks: data-agents-entry on #agent-dock). Same
+ * cell, click, keys and fill as the current entry; only the line differs. Words dim, counts --text-1,
+ * status glyphs toned as in the Agents pane (working brightest, waiting/unknown --warn), never animated
+ * in the row. */
+.agent-dock-agents[data-variant] .agent-dock-entry-line {
+	gap: 0.3em;
+}
+
+.agent-dock-agents-n {
+	color: var(--text-1);
+	transition: color 140ms ease-out;
+}
+
+.agent-dock-agents-entry:is([data-open="true"], :focus) .agent-dock-agents-n {
+	color: var(--text-0);
+}
+
+.agent-dock-agents-title {
+	color: var(--text-1);
+}
+
+.agent-dock-agents-entry:is([data-open="true"], :focus) .agent-dock-agents-title {
+	color: var(--text-0);
+}
+
+.agent-dock-agents-mark {
+	color: var(--dock-dim);
+}
+
+.agent-dock-agents-mark[data-status="working"] {
+	color: var(--text-0);
+}
+
+.agent-dock-agents-mark[data-status="background"] {
+	color: var(--text-1);
+}
+
+.agent-dock-agents-mark:is([data-status="waiting"], [data-status="unknown"]),
+.agent-dock-agents-state:is([data-status="waiting"], [data-status="unknown"]),
+.agent-dock-agents-rest[data-tone="warn"] {
+	color: var(--warn);
+}
+
+/* E2: one glyph per agent, each in the same 11px box so the cluster keeps one rhythm (✻ is wide). */
+.agent-dock-agents-marks {
+	display: inline-flex;
+	align-items: baseline;
+}
+
+.agent-dock-agents-marks .agent-dock-agents-mark {
+	width: 11px;
+	text-align: center;
+}
+
+.agent-dock-agents-rest {
+	padding-left: 5px;
+}
+
+/* E3: glyph and count per state present, states apart like words. */
+.agent-dock-agents[data-variant="E3"] .agent-dock-entry-line {
+	gap: 12px;
+}
+
+.agent-dock-agents-state {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 4px;
+}
+
+/* E4: the word bright, the states after it dim and tight (✻2 ◐1 ·1). */
+.agent-dock-agents[data-variant="E4"] .agent-dock-entry-line {
+	gap: 8px;
+}
+
+.agent-dock-agents-states {
+	display: inline-flex;
+	gap: 7px;
+}
+
+.agent-dock-agents-states .agent-dock-agents-state {
+	gap: 1px;
+}
+
+/* E5: the agents join the row's end (Okena's dot, ⌘⇧J) as one trailing group, set off from the
+ * queue by a short hairline instead of a cell of their own. */
+.agent-dock-agents[data-variant="E5"]::before {
+	content: "";
+	flex: none;
+	width: 1px;
+	height: 12px;
+	margin-right: 6px;
+	background: var(--hairline-strong);
+	transition: opacity 140ms ease-out;
+}
+
+/* Open or focused, the fill sets the group off on its own: the hairline steps back. */
+.agent-dock-agents[data-variant="E5"]:has(.agent-dock-agents-entry:is([data-open="true"], :focus))::before {
+	opacity: 0;
+}
+
+.agent-dock-agents[data-variant="E5"] .agent-dock-agents-entry {
+	padding: 0 8px 0 10px;
+}
+
+.agent-dock-agents[data-variant="E5"] + .agent-dock-row-end {
+	padding-left: 4px;
+}
+
+/* E6: the count, then a 3px bar with one 8px segment per agent (busy bright, idle faint, attention
+ * --warn). Past AGENTS_BAR_MAX it keeps one width and thins its gaps. */
+.agent-dock-agents-bar {
+	display: inline-flex;
+	align-self: center;
+	gap: 3px;
+	height: 3px;
+	margin-left: 5px;
+	position: relative;
+	top: 1px;
+}
+
+.agent-dock-agents-bar[data-capped="true"] {
+	width: 107px;
+	gap: 1px;
+}
+
+.agent-dock-agents-seg {
+	flex: 1 1 0;
+	border-radius: 1.5px;
+	background: color-mix(in srgb, var(--text-2) 70%, transparent);
+}
+
+.agent-dock-agents-seg[data-status="working"] {
+	background: var(--text-0);
+}
+
+.agent-dock-agents-seg[data-status="background"] {
+	background: var(--text-1);
+}
+
+.agent-dock-agents-seg:is([data-status="waiting"], [data-status="unknown"]) {
+	background: var(--warn);
+}
+
 @keyframes agent-dock-pulse {
 	0%,
 	100% {
