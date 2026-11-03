@@ -1,4 +1,4 @@
-// The Agents pane: every listed agent as a table of observed facts, then recently closed items.
+// The Agents pane: every listed agent as a table of observed facts.
 import type { AgentDockSnapshot } from '../../agent-dock/model'
 import { CloseKey, Footer, Header, ScrollBody, closeHints } from './pane-chrome'
 import {
@@ -6,20 +6,13 @@ import {
 	agentWho,
 	agingTone,
 	busyCount,
-	formatAge,
-	itemKindLabel,
-	kindGlyph,
 	orderedSessions,
-	recentItems,
-	resolutionLabel,
 	sessionSince,
 	sessionStatusText,
 	statusGlyph,
 } from './presentation'
 
-const RECENT_IN_PANE = 5
-
-/** Every agent Okena lists, as a table of observed facts, then recently closed items. */
+/** Every listed agent (Okena and Helm terminals), as a table of observed facts. */
 export function AgentsDetail({
 	snapshot,
 	now,
@@ -30,7 +23,6 @@ export function AgentsDetail({
 	onClose(): void
 }) {
 	const sessions = orderedSessions(snapshot)
-	const recent = recentItems(snapshot, RECENT_IN_PANE)
 	const busy = busyCount(sessions)
 	return (
 		<>
@@ -70,33 +62,6 @@ export function AgentsDetail({
 							})
 						: null}
 				</ul>
-				{recent.length > 0 ? (
-					<section>
-						<h3 className="agent-dock-subhead">Recent</h3>
-						<ul className="agent-dock-table">
-							{recent.map(item => {
-								const who = agentWho(snapshot, item.session)
-								return (
-									<li key={item.id} className="agent-dock-tr">
-										<span className="agent-dock-status" aria-hidden="true">
-											{kindGlyph({ ...item, state: 'open' })}
-										</span>
-										<span className="agent-dock-td-name" data-dim="true" title={who.title || undefined}>
-											{who.name}
-										</span>
-										<span className="agent-dock-td-project">
-											{itemKindLabel(item).toLowerCase()} #{item.id}
-										</span>
-										<span className="agent-dock-td-status">
-											{item.resolution ? `${formatAge(now - item.resolution.at)} ago` : ''}
-										</span>
-										<span className="agent-dock-td-meta">{resolutionLabel(item)}</span>
-									</li>
-								)
-							})}
-						</ul>
-					</section>
-				) : null}
 			</ScrollBody>
 			<Footer hints={closeHints} note={null} />
 		</>

@@ -97,7 +97,7 @@ export const AgentDockOrphaned: Story = {
 	},
 }
 
-/** The Agents pane: every listed agent with observed status/meta, then Recent. */
+/** The Agents pane: every listed agent with observed status/meta. */
 export const AgentDockAgents: Story = {
 	args: {
 		options: { agentDock: { scenario: 'crowded', position: 'bottom', output: true, open: 'agents' } },

@@ -2398,7 +2398,7 @@ body.dragging {
 	}
 }
 
-/* Agents: a table of observed facts, then Recent. */
+/* Agents: a table of observed facts. */
 .agent-dock-table {
 	display: grid;
 	grid-template-columns: 1ch repeat(4, minmax(0, max-content));
@@ -2428,10 +2428,6 @@ body.dragging {
 	color: var(--text-0);
 }
 
-.agent-dock-td-name[data-dim="true"] {
-	color: var(--text-1);
-}
-
 .agent-dock-td-project,
 .agent-dock-td-meta {
 	color: var(--dock-dim);
@@ -2453,12 +2449,6 @@ body.dragging {
 /* A waiting agent ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
 .agent-dock-td-status[data-tone="danger"] {
 	color: var(--danger);
-}
-
-.agent-dock-subhead {
-	margin: 16px 0 4px;
-	font: inherit;
-	color: var(--dock-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

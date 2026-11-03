@@ -48,7 +48,7 @@ export const TURN_RESUMED_MS = 8_000
 export const OBSERVATION_GAP_MS = 15_000
 /** Turn excerpt bound (memory only). */
 export const TURN_TEXT_MAX = 2_048
-/** Resolved items are kept for the Recent lane and dedupe, bounded by age and count. */
+/** Resolved items are kept for dedupe (and a receipt's linger), bounded by age and count. */
 export const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000
 export const RESOLVED_MAX = 50
 

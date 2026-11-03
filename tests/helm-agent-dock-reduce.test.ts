@@ -303,7 +303,7 @@ test('ask opens on dialog appear and resolves outside when it vanishes', () => {
 	assert.equal(opened.events[0]?.t === 'item.opened' && opened.events[0].kind, 'ask')
 	const vanished = reduce(opened.state, poll(idle()), T0 + 2000)
 	assert.deepEqual(vanished.events, [{ t: 'item.resolved', at: T0 + 2000, id: 1, by: 'outside' }])
-	// The same dialog id never reopens (dedupe key retained in Recent).
+	// The same dialog id never reopens (the resolved item keeps its dedupe key).
 	assert.equal(reduce(vanished.state, poll(ask()), T0 + 3000).events.length, 0)
 })
 

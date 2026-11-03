@@ -292,10 +292,6 @@ export function canAnswer(item: DockItem, snapshot: AgentDockSnapshot | null): b
 	return item.state === 'open' && itemSourceHealth(item, snapshot)?.state === 'ok'
 }
 
-export function recentItems(snapshot: AgentDockSnapshot | null, limit: number): DockItem[] {
-	return (snapshot?.items.filter(item => item.state === 'resolved') ?? []).slice(0, limit)
-}
-
 export function findSession(snapshot: AgentDockSnapshot | null, key: string): DockSession | undefined {
 	return snapshot?.sessions.find(session => session.key === key)
 }
