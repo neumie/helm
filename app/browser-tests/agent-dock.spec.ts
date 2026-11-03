@@ -707,18 +707,10 @@ test('permission: Deny with a message, refused when it was answered elsewhere; A
 	const message = pane.getByRole('textbox', { name: 'Message to the agent (optional)' })
 	await expect(message).toBeFocused()
 	await message.fill('use deploy:preview')
-	const before = (await acts(page)).length
 	await pane.getByRole('button', { name: 'Deny', exact: true }).click()
-	// A deny message goes to the agent: risky words ask first, like a reply.
-	await expect(pane.getByRole('alert')).toContainText('This message mentions “deploy”')
-	expect((await acts(page)).length).toBe(before)
-	await pane.getByRole('button', { name: 'Send anyway' }).click()
 	await expect(entry).toContainText('refused: already answered elsewhere')
 	await expect(entry).toHaveAttribute('data-receipt', 'danger')
-	expect((await acts(page)).at(-1)).toEqual({
-		itemId,
-		action: { type: 'deny', message: 'use deploy:preview', confirmed: true },
-	})
+	expect((await acts(page)).at(-1)).toEqual({ itemId, action: { type: 'deny', message: 'use deploy:preview' } })
 
 	// Fresh scenario, Always allow: the rule comes from Claude's permission_suggestions.
 	await emitScenario(page, 'busy')
@@ -734,7 +726,7 @@ test('permission: Deny with a message, refused when it was answered elsewhere; A
 	expect((await acts(page)).at(-1)?.action).toEqual({ type: 'allow', always: true })
 })
 
-test('reply to a finished turn: risky words ask first; unconfirmed turns amber and stays ackable', async ({ page }) => {
+test('reply to a finished turn: unconfirmed turns amber and stays ackable', async ({ page }) => {
 	const { pane, rail, input } = await openItem(page, 3)
 	await setActMode(page, 'unconfirmed')
 	const entry = rail.locator('.agent-dock-entry[data-kind="turn"]')
@@ -745,13 +737,10 @@ test('reply to a finished turn: risky words ask first; unconfirmed turns amber a
 	await page.keyboard.type('Yes, push it 2')
 	await expect(reply).toHaveValue('Yes, push it 2')
 	await pane.getByRole('button', { name: 'Send', exact: true }).click()
-	await expect(pane.getByRole('alert')).toContainText('This reply mentions “push”')
-	expect(await acts(page)).toEqual([])
-	await pane.getByRole('button', { name: 'Send anyway' }).click()
 	await expect(entry).toContainText('Sending…')
 	await expect(entry).toContainText('sent, unconfirmed')
 	await expect(entry).toHaveAttribute('data-receipt', 'warn')
-	expect(await acts(page)).toEqual([{ itemId, action: { type: 'prompt', text: 'Yes, push it 2', confirmed: true } }])
+	expect(await acts(page)).toEqual([{ itemId, action: { type: 'prompt', text: 'Yes, push it 2' } }])
 	// The 2xx came back: focus goes back to the terminal; nothing was typed there by the dock itself.
 	await expect(input).toBeFocused()
 	expect(await terminalWrites(page)).toBe(0)
@@ -931,22 +920,20 @@ test('the pane never floats over terminal rows: in-flow, one refit on open and o
 	expect(seen[2]).toBe(termsBefore.height)
 })
 
-test('the footer note wraps: the risky-word question reads whole at a 1100px window', async ({ page }) => {
+test('the footer note wraps: a verbatim Okena error reads whole at a 1100px window', async ({ page }) => {
 	await page.setViewportSize({ width: 1100, height: 800 })
 	await openHarness(page)
 	await emitScenario(page, 'busy')
+	await setActMode(page, 'error')
 	await page.locator('.agent-dock-entry[data-kind="turn"]').click()
 	const pane = page.locator('.agent-dock-pane')
-	await pane.getByRole('textbox', { name: 'Reply' }).fill('please deploy it')
+	await pane.getByRole('textbox', { name: 'Reply' }).fill('please continue')
 	await pane.getByRole('button', { name: 'Send', exact: true }).click()
-	const alert = pane.getByRole('alert')
-	await expect(alert).toContainText('This reply mentions “deploy”. Send it to the agent anyway?')
 	const note = pane.locator('.agent-dock-foot-note')
+	await expect(note).toContainText('failed (500): bridge unavailable')
 	expect(
 		await note.evaluate(node => node.scrollWidth <= node.clientWidth && node.scrollHeight <= node.clientHeight),
 	).toBe(true)
-	await expect(pane.getByRole('button', { name: 'Send anyway' })).toBeVisible()
-	expect(await acts(page)).toEqual([])
 })
 
 /** Busy scenario, queue open by ⌘⇧J, the pane opened from the keyboard on item `index` (it has focus). */
@@ -1039,29 +1026,15 @@ test('a stray typed key drops the pick, so a following Enter sends nothing', asy
 	await expect.poll(async () => (await acts(page)).length).toBe(1)
 })
 
-test('the risky-word confirmation: repeating the send key never confirms, Esc cancels it and keeps the pane', async ({
-	page,
-}) => {
+test('a reply that mentions "deploy to production" sends on the first submit, no second step', async ({ page }) => {
 	const { pane } = await openItem(page, 3)
 	const reply = pane.getByRole('textbox', { name: 'Reply' })
 	await reply.click()
-	await page.keyboard.type('please push it')
+	await page.keyboard.type('ok, deploy to production')
 	await page.keyboard.press('Meta+Enter')
-	await expect(pane.getByRole('alert')).toContainText('This reply mentions “push”')
-	await expect(reply).toBeFocused()
-	await page.keyboard.press('Meta+Enter')
-	await page.keyboard.press('Meta+Enter')
-	expect(await acts(page)).toEqual([])
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText('esc cancel')
-	await page.keyboard.press('Escape')
-	await expect(pane.getByRole('alert')).toHaveCount(0)
-	await expect(pane).toBeVisible()
-	await expect(reply).toHaveValue('please push it')
-	// Only Send anyway sends.
-	await page.keyboard.press('Meta+Enter')
-	await pane.getByRole('button', { name: 'Send anyway' }).click()
 	await expect.poll(async () => (await acts(page)).length).toBe(1)
-	expect((await acts(page))[0]?.action).toEqual({ type: 'prompt', text: 'please push it', confirmed: true })
+	expect((await acts(page))[0]?.action).toEqual({ type: 'prompt', text: 'ok, deploy to production' })
+	await expect(pane.getByRole('alert')).toHaveCount(0)
 })
 
 test('question picks and Other text survive stepping away and back', async ({ page }) => {

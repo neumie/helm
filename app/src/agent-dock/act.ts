@@ -16,7 +16,6 @@
 
 import { DOCK_SOURCE_TEXT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 import {
-	DOCK_RISKY_PROMPT,
 	type DockActOutcome,
 	type DockAction,
 	type DockAskFact,
@@ -95,8 +94,6 @@ function rawQuestions(input: unknown): RawQuestion[] | null {
 
 const clean = (text: string | undefined): string => (text ?? '').trim()
 
-const riskyDetail = (what: string): string => `This ${what} mentions deploy/prod/secret/push/merge; confirm it first.`
-
 /**
  * Validates an action against the item's fact and builds the Okena body.
  * Pure; uses only the item's own (verbatim) fact and the `source` that will answer it.
@@ -112,7 +109,6 @@ export function dockActBody(
 		if (action.type !== 'prompt') return refuse('invalid', 'A finished turn takes a reply.')
 		const text = action.text.replace(/\s+$/u, '')
 		if (!text.trim()) return refuse('invalid', 'The reply is empty.')
-		if (DOCK_RISKY_PROMPT.test(text) && action.confirmed !== true) return refuse('invalid', riskyDetail('reply'))
 		return { ok: true, body: { kind: 'prompt', body: { text } } }
 	}
 	if (action.type === 'prompt') return refuse('invalid', 'An open dialog takes an answer, not a reply.')
@@ -133,12 +129,10 @@ function askDecision(
 		if (action.picks.length !== questions.length) return refuse('invalid', 'Answer every question first.')
 		// A Map, then fromEntries: a question literally named "__proto__" stays an own key.
 		const answers = new Map<string, string>()
-		let riskyOther = false
 		for (const [index, question] of questions.entries()) {
 			const pick = action.picks[index]
 			if (!pick) return refuse('invalid', 'Answer every question first.')
 			const other = clean(pick.other)
-			if (other && DOCK_RISKY_PROMPT.test(other)) riskyOther = true
 			const options = [...new Set(pick.options)]
 			if (options.length === 0 && !other) return refuse('invalid', `Answer question ${index + 1} first.`)
 			if (!question.multiSelect && options.length + (other ? 1 : 0) > 1)
@@ -155,14 +149,11 @@ function askDecision(
 			// Okena: "Multi-select answers are comma-separated labels".
 			answers.set(question.question, labels.join(', '))
 		}
-		if (riskyOther && action.confirmed !== true) return refuse('invalid', riskyDetail('answer'))
 		return { ok: true, body: { decision: 'answer', answers: Object.fromEntries(answers) } }
 	}
 	if (action.type === 'answer') return refuse('invalid', 'This dialog takes allow or deny.')
 	if (action.type === 'deny') {
 		const message = clean(action.message)
-		if (message && DOCK_RISKY_PROMPT.test(message) && action.confirmed !== true)
-			return refuse('invalid', riskyDetail('message'))
 		return { ok: true, body: message ? { decision: 'deny', message } : { decision: 'deny' } }
 	}
 	if (action.always === true) {

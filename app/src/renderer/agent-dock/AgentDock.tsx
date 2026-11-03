@@ -346,10 +346,9 @@ export function AgentDock({
 
 	// Inside the pane: ← → / ↑ ↓ step between items (from the pane itself or ‹ ›; the body
 	// region keeps ↑ ↓ for scrolling, tabs and options keep their own arrows); paging keys
-	// scroll the body; Esc closes back to the entry (after cancelling a confirmation).
+	// scroll the body; Esc closes back to the entry.
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
-		// The shown body first: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field),
-		// Esc cancels a risky-word confirmation before it would close the pane.
+		// The shown body first: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field).
 		if (detailKeys.current?.(event)) {
 			event.preventDefault()
 			return

@@ -32,8 +32,7 @@ const {
 	stableJson,
 } = modelModule as ModelModule
 const { TURN_IDLE_MS, TURN_RESUMED_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
-const { lingeringItems, queueItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
-	presentationModule as PresentationModule
+const { lingeringItems, queueItems, receiptView, RECEIPT_LINGER_MS } = presentationModule as PresentationModule
 
 type Json = Record<string, unknown>
 const fixture = okenaFixture<Json>
@@ -502,7 +501,7 @@ test('permission and plan decisions: allow once / always (only with suggestions)
 	}
 	assert.deepEqual(decision({ type: 'allow' }), { decision: 'allow', always: false })
 	assert.deepEqual(decision({ type: 'allow', always: true }), { decision: 'allow', always: true })
-	assert.deepEqual(decision({ type: 'deny', message: '  use deploy:preview ', confirmed: true }), {
+	assert.deepEqual(decision({ type: 'deny', message: '  use deploy:preview ' }), {
 		decision: 'deny',
 		message: 'use deploy:preview',
 	})
@@ -610,35 +609,30 @@ test('allow is refused when the dock could not show the whole tool input', () =>
 	}
 })
 
-test('free text to the agent needs the same risky-word confirmation everywhere', () => {
+test('free text to the agent goes as typed: no word in it needs a second step', () => {
 	const permission = only(drive([[T0, poll(ask({ dialogs: [permissionDialog()] }))]]).state)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main and deploy' }).ok, false)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main', confirmed: true }).ok, true)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'use the preview' }).ok, true)
+	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main and deploy' }).ok, true)
 	const question = only(askOpen().state)
-	const other = (text: string, confirmed?: boolean): DockAction => ({
+	const other = (text: string): DockAction => ({
 		type: 'answer',
 		picks: [{ options: [], other: text }, { options: [0] }],
-		...(confirmed ? { confirmed } : {}),
 	})
-	assert.equal(dockActBody(question, other('merge it to prod')).ok, false)
-	assert.equal(dockActBody(question, other('merge it to prod', true)).ok, true)
-	assert.equal(dockActBody(question, other('zelená')).ok, true)
+	assert.equal(dockActBody(question, other('merge it to prod')).ok, true)
+	const turn = only(turnOpen().state, 'turn')
+	assert.deepEqual(dockActBody(turn, { type: 'prompt', text: 'Secret je nastavený, deploy to production.' }), {
+		ok: true,
+		body: { kind: 'prompt', body: { text: 'Secret je nastavený, deploy to production.' } },
+	})
 })
 
-test('replies: trailing whitespace trimmed, blank refused, risky words need confirmed', () => {
+test('replies: trailing whitespace trimmed, blank refused', () => {
 	const turn = only(turnOpen().state, 'turn')
 	assert.deepEqual(dockActBody(turn, { type: 'prompt', text: 'Ano, pokračuj.\n\n' }), {
 		ok: true,
 		body: { kind: 'prompt', body: { text: 'Ano, pokračuj.' } },
 	})
 	assert.equal(dockActBody(turn, { type: 'prompt', text: '  \n' }).ok, false)
-	const risky = dockActBody(turn, { type: 'prompt', text: 'Secret je nastavený, deployni stage.' })
-	assert.equal(risky.ok, false)
-	assert.equal(dockActBody(turn, { type: 'prompt', text: 'git push it', confirmed: true }).ok, true)
 	assert.equal(dockActBody(turn, { type: 'answer', picks: [] }).ok, false)
-	assert.equal(riskyWord('Ship it to PROD now'), 'prod')
-	assert.equal(riskyWord('Looks good'), null)
 })
 
 // ---------------------------------------------------------------------------
@@ -772,7 +766,7 @@ test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed
 
 test('act requests are strictly validated (IPC input is untrusted)', () => {
 	assert.ok(parseAgentDockActRequest({ itemId: 3, action: ANSWER }).ok)
-	assert.ok(parseAgentDockActRequest({ itemId: 3, action: { type: 'prompt', text: 'ok', confirmed: true } }).ok)
+	assert.ok(parseAgentDockActRequest({ itemId: 3, action: { type: 'prompt', text: 'deploy it' } }).ok)
 	for (const bad of [
 		null,
 		{ itemId: 0, action: ANSWER },
@@ -783,6 +777,10 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 		{ itemId: 3, action: { type: 'prompt', text: 'x'.repeat(20_000) } },
 		{ itemId: 3, action: ANSWER, sneaky: true },
 		{ itemId: 3, rev: 1, action: ANSWER },
+		// No second confirmation exists: a leftover `confirmed` is an unknown key.
+		{ itemId: 3, action: { type: 'prompt', text: 'deploy it', confirmed: true } },
+		{ itemId: 3, action: { type: 'deny', message: 'push it', confirmed: true } },
+		{ itemId: 3, action: { ...ANSWER, confirmed: true } },
 	])
 		assert.equal(parseAgentDockActRequest(bad).ok, false, JSON.stringify(bad)?.slice(0, 80))
 })

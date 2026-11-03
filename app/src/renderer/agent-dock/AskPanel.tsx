@@ -7,17 +7,15 @@ import {
 	Choices,
 	Footer,
 	PromptField,
-	RiskyConfirm,
 	ScrollBody,
 	SubmitActions,
-	cancelHints,
 	closeHints,
 	pickHints,
 	useScrollEdges,
 } from './pane-chrome'
 import { digitOf, isStrayKey, submitKeys, useKeys } from './pane-keys'
 import type { PanelProps } from './panel'
-import { type AskQuestion, askQuestions, riskyWord } from './presentation'
+import { type AskQuestion, askQuestions } from './presentation'
 
 interface AskDraft {
 	active: number
@@ -100,8 +98,6 @@ export function AskPanel({
 	useScrollEdges(fixedRef)
 	const focusChoices = useRef(false)
 	const questionId = useId()
-	/** The risky word an Other answer mentions, while the second confirmation asks. */
-	const [confirming, setConfirming] = useState<string | null>(null)
 	// Until Jakub points at an option, preview the first option that has one (no row is highlighted for it).
 	const firstPreview = (at: number) =>
 		Math.max(
@@ -147,7 +143,6 @@ export function AskPanel({
 	const pick = (option: number) => {
 		if (!live) return
 		setArmed(true)
-		setConfirming(null)
 		setHovered(option)
 		if (question.multiSelect) {
 			const has = picked.includes(option)
@@ -167,21 +162,14 @@ export function AskPanel({
 	const chooseOther = () => {
 		if (!live) return
 		setArmed(true)
-		setConfirming(null)
 		const on = !(otherOn[active] ?? false) || !question.multiSelect
 		setOtherOn(prev => setAt(prev, active, on))
 		if (!question.multiSelect) setPicks(prev => setAt(prev, active, []))
 		if (on) focusOther.current = true
 	}
 	const otherText = (at: number) => ((otherOn[at] ?? false) ? (others[at] ?? '').trim() : '')
-	const submit = (confirmed = false) => {
+	const submit = () => {
 		if (!live || !complete) return
-		const risky = questions.map((_, at) => riskyWord(otherText(at))).find(word => word !== null) ?? null
-		if (risky && !confirmed) {
-			setConfirming(risky)
-			return
-		}
-		setConfirming(null)
 		onAct({
 			type: 'answer',
 			// Main indexes Claude's raw options; the shown numbers skip malformed ones.
@@ -192,14 +180,11 @@ export function AskPanel({
 				}),
 				...(otherText(at) ? { other: others[at] } : {}),
 			})),
-			...(risky ? { confirmed: true } : {}),
 		})
 	}
 	useKeys(keys, event => {
 		const keyed = submitKeys(event, {
-			confirming: confirming !== null,
 			bareEnter: true,
-			cancel: () => setConfirming(null),
 			submit: () => {
 				if (armed) submit()
 			},
@@ -250,18 +235,15 @@ export function AskPanel({
 		{ id: OTHER, label: 'Other…', description: 'Type your own answer' },
 	]
 	const pickedIds = new Set([...picked.map(String), ...(otherActive ? [OTHER] : [])])
-	const note = confirming ? (
-		<RiskyConfirm word={confirming} what="This answer" />
-	) : (
-		(receipt ??
+	const note =
+		receipt ??
 		blockedNote ??
 		// Nothing to say before a pick: the disabled Submit and the `1–N pick` hint already say it.
 		(complete && armed
 			? 'Ready to submit'
 			: questions.length > 1 && !complete
 				? 'Answer every question, then submit'
-				: null))
-	)
+				: null)
 	const preview = question.options[previewIndex]
 	return (
 		<>
@@ -328,7 +310,6 @@ export function AskPanel({
 									onChange={event => {
 										const value = event.currentTarget.value
 										setOthers(prev => setAt(prev, active, value))
-										setConfirming(null)
 										setArmed(true)
 									}}
 									onKeyDown={event => {
@@ -336,7 +317,7 @@ export function AskPanel({
 										if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || event.nativeEvent.isComposing) return
 										event.preventDefault()
 										event.stopPropagation()
-										if (confirming !== null || event.repeat) return
+										if (event.repeat) return
 										if (complete) submit()
 										else {
 											const next = questions.findIndex((_, at) => !answered(at))
@@ -367,18 +348,15 @@ export function AskPanel({
 					) : null}
 				</div>
 			</div>
-			<Footer hints={!answerable ? closeHints : confirming ? cancelHints : pickHints(rows.length, mod)} note={note}>
+			<Footer hints={!answerable ? closeHints : pickHints(rows.length, mod)} note={note}>
 				{ack}
 				<SubmitActions
 					decidable={decidable}
-					confirming={confirming !== null}
 					disabled={!live || !complete}
 					busy={submitting}
 					mod={mod}
 					label="Submit answers"
 					onSubmit={() => submit()}
-					onConfirm={() => submit(true)}
-					onCancel={() => setConfirming(null)}
 				/>
 			</Footer>
 		</>

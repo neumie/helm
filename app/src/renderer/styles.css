@@ -2396,8 +2396,7 @@ body.dragging {
 
 /* Footer: key hints left, receipt / hint, then the decision. No rule of its own (the pane's hairline
  * toward the queue closes it).
- * The note wraps (receipts, verbatim Okena errors and the risky-word question are read in full before
- * acting); the footer grows and the scroll body gives way. */
+ * The note wraps (receipts and verbatim Okena errors are read in full before acting); the footer grows and the scroll body gives way. */
 .agent-dock-foot {
 	flex: none;
 	display: grid;
@@ -2456,10 +2455,6 @@ body.dragging {
 	display: flex;
 	gap: 8px;
 	white-space: nowrap;
-}
-
-.agent-dock-confirm {
-	color: var(--warn);
 }
 
 /* What was sent, after the receipt word: plain text, not the receipt's tone. */

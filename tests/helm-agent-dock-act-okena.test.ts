@@ -262,7 +262,7 @@ test('permission: Always allow posts {decision:allow, always:true}; Deny posts t
 		assert.ok(second)
 		const denied = await h.watcher.act({
 			itemId: second.id,
-			action: { type: 'deny', message: '  use deploy:preview instead\n', confirmed: true },
+			action: { type: 'deny', message: '  use deploy:preview instead\n' },
 		})
 		assert.equal(denied.ok, true)
 		assert.deepEqual(
@@ -360,14 +360,10 @@ test('reply: idle turn → CAS (transcript tail) → POST /prompt {text}; the us
 		const turn = h.item('turn')
 		assert.equal(turn.state, 'open')
 
-		const risky = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'merge it' } })
-		assert.equal(risky.outcome.status === 'refused' && risky.outcome.reason, 'invalid')
-		assert.deepEqual(h.okena.posts, [])
-
 		const gets = h.okena.gets.length
 		const sent = await h.watcher.act({
 			itemId: turn.id,
-			action: { type: 'prompt', text: 'Ano, pokračuj s merge.\n', confirmed: true },
+			action: { type: 'prompt', text: 'Ano, pokračuj s merge.\n' },
 		})
 		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' } })
 		assert.deepEqual(h.okena.gets.slice(gets), [

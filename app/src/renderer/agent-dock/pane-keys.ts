@@ -1,13 +1,12 @@
 // Agent dock pane keys (design §3.24): the pane-level key handler a body binds while it is
 // mounted, and the predicates it is built from (digits pick, ⌘Enter / Enter submit, a stray
-// typed key disarms, Esc cancels a risky-word confirmation). Typing in a field never picks or
-// submits through these.
+// typed key disarms). Typing in a field never picks or submits through these.
 import { type KeyboardEvent, type MutableRefObject, useLayoutEffect, useRef } from 'react'
 
 /** The word for the submit modifier in key hints: `cmd` on macOS (Menlo draws ⌘ small), `ctrl` elsewhere. */
 export type DockModKey = 'cmd' | 'ctrl'
 
-/** Pane-level keys a body handles (digits, Enter, Esc while confirming). Returns true when it consumed the event. */
+/** Pane-level keys a body handles (digits, Enter). Returns true when it consumed the event. */
 export type DetailKeys = (event: KeyboardEvent<HTMLElement>) => boolean
 
 /** Typing in a field never picks options or submits through the pane keys. */
@@ -67,25 +66,15 @@ export const isStrayKey = (event: KeyboardEvent<HTMLElement>): boolean =>
 	isPrintable(event) && !/^[1-9]$/.test(event.key)
 
 /**
- * Submit keys under the risky-word rule: ⌘Enter anywhere in the pane and, where `bareEnter`, Enter
- * on the pane or its body. While the confirmation asks, neither sends — only Send anyway does — a
- * held key never submits, and Esc cancels the confirmation instead of closing the pane.
+ * Submit keys: ⌘Enter anywhere in the pane and, where `bareEnter`, Enter on the pane or its body.
+ * A held key never submits.
  */
 export function submitKeys(
 	event: KeyboardEvent<HTMLElement>,
-	{
-		confirming,
-		bareEnter,
-		cancel,
-		submit,
-	}: { confirming: boolean; bareEnter: boolean; cancel(): void; submit(): void },
+	{ bareEnter, submit }: { bareEnter: boolean; submit(): void },
 ): boolean {
-	if (event.key === 'Escape' && confirming) {
-		cancel()
-		return true
-	}
 	if (isModEnter(event) || (bareEnter && isBareEnter(event))) {
-		if (!confirming && !event.repeat) submit()
+		if (!event.repeat) submit()
 		return true
 	}
 	return false

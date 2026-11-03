@@ -15,7 +15,7 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
-import { DOCK_RISKY_PROMPT, DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
+import { DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
 import { itemWaitingSince } from '../../agent-dock/item-order'
 import { alwaysAllowLabels, alwaysAllowRulesOnly, planApproveMode } from '../../agent-dock/review'
 
@@ -115,11 +115,6 @@ export function queueItems(snapshot: AgentDockSnapshot | null, now: number): Doc
 export function nextLingerExpiry(snapshot: AgentDockSnapshot | null, now: number): number | null {
 	const ends = lingeringItems(snapshot, now).map(item => (item.resolution?.at ?? now) + RECEIPT_LINGER_MS)
 	return ends.length > 0 ? Math.min(...ends) : null
-}
-
-/** The first risky word in a reply ("deploy"), or null (DOCK_RISKY_PROMPT, the rule main enforces). */
-export function riskyWord(text: string): string | null {
-	return DOCK_RISKY_PROMPT.exec(text)?.[0]?.toLowerCase() ?? null
 }
 
 export type ReceiptTone = 'neutral' | 'warn' | 'success' | 'danger'

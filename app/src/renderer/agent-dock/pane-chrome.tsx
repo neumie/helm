@@ -238,44 +238,26 @@ export function Key({
 	)
 }
 
-/**
- * The footer's submit: nothing while the item cannot be decided here; Cancel and Send anyway while the
- * risky-word confirmation asks; otherwise the primary key (⌘Enter).
- */
+/** The footer's submit: nothing while the item cannot be decided here; otherwise the primary key (⌘Enter). */
 export function SubmitActions({
 	decidable,
-	confirming,
 	disabled,
 	busy,
 	mod,
 	tone = 'primary',
 	label,
 	onSubmit,
-	onConfirm,
-	onCancel,
 }: {
 	decidable: boolean
-	confirming: boolean
 	disabled: boolean
 	busy: boolean
 	mod: DockModKey
 	tone?: ButtonTone
 	label: string
 	onSubmit(): void
-	onConfirm(): void
-	onCancel(): void
 }) {
 	if (!decidable) return null
-	return confirming ? (
-		<>
-			<Key tone="ghost" onClick={onCancel}>
-				Cancel
-			</Key>
-			<Key tone="danger" disabled={disabled} busy={busy} onClick={onConfirm}>
-				Send anyway
-			</Key>
-		</>
-	) : (
+	return (
 		<Key tone={tone} disabled={disabled} busy={busy} keyShortcuts={modShortcut(mod)} onClick={onSubmit}>
 			{label}
 		</Key>
@@ -305,15 +287,6 @@ export function Receipt({ view, detail = null }: { view: ReceiptView; detail?: s
 	)
 }
 
-/** Second confirmation for free text to the agent that mentions deploy/prod/secret/push/merge. */
-export function RiskyConfirm({ word, what }: { word: string; what: string }) {
-	return (
-		<span className="agent-dock-confirm" role="alert">
-			{what} mentions “{word}”. Send it to the agent anyway?
-		</span>
-	)
-}
-
 export function Warn({ children }: { children: ReactNode }) {
 	return (
 		<p className="agent-dock-warn">
@@ -326,7 +299,6 @@ export function Warn({ children }: { children: ReactNode }) {
 }
 
 export const closeHints = <Hint keys="esc">close</Hint>
-export const cancelHints = <Hint keys="esc">cancel</Hint>
 
 export const pickHints = (count: number, mod: DockModKey) => (
 	<>

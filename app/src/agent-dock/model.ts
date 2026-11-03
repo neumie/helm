@@ -21,7 +21,7 @@ import type {
 	DockSourceId,
 } from '../../../src/agent-dock/dock-vocabulary'
 
-export { DOCK_RISKY_PROMPT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
+export type { DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 
 // ---------------------------------------------------------------------------
 // Okena wire schemas (okena f67bbf7b: okena-core/src/{api,claude_remote}.rs).
@@ -288,17 +288,14 @@ export interface DockAnswerPick {
 }
 
 export type DockAction =
-	/**
-	 * AskUserQuestion: one pick per question, in tool_input order. Main maps them to Okena's `{question: label}`.
-	 * `confirmed` is required when any Other text matches DOCK_RISKY_PROMPT.
-	 */
-	| { type: 'answer'; picks: DockAnswerPick[]; confirmed?: boolean }
+	/** AskUserQuestion: one pick per question, in tool_input order. Main maps them to Okena's `{question: label}`. */
+	| { type: 'answer'; picks: DockAnswerPick[] }
 	/** Permission allow / ExitPlanMode approve. `always` only when Claude sent permission_suggestions. */
 	| { type: 'allow'; always?: boolean }
-	/** Permission deny / ExitPlanMode keep planning; the message goes to the agent (`confirmed` as for prompts). */
-	| { type: 'deny'; message?: string; confirmed?: boolean }
-	/** Reply to a finished turn. `confirmed` is required when the text matches DOCK_RISKY_PROMPT. */
-	| { type: 'prompt'; text: string; confirmed?: boolean }
+	/** Permission deny / ExitPlanMode keep planning; the message goes to the agent. */
+	| { type: 'deny'; message?: string }
+	/** Reply to a finished turn. */
+	| { type: 'prompt'; text: string }
 
 export interface AgentDockActRequest {
 	itemId: number
@@ -352,24 +349,10 @@ const dockAnswerPickSchema = z
 	.strict()
 
 const dockActionSchema = z.discriminatedUnion('type', [
-	z
-		.object({
-			type: z.literal('answer'),
-			picks: z.array(dockAnswerPickSchema).min(1).max(16),
-			confirmed: z.boolean().optional(),
-		})
-		.strict(),
+	z.object({ type: z.literal('answer'), picks: z.array(dockAnswerPickSchema).min(1).max(16) }).strict(),
 	z.object({ type: z.literal('allow'), always: z.boolean().optional() }).strict(),
-	z
-		.object({
-			type: z.literal('deny'),
-			message: z.string().max(DOCK_MESSAGE_MAX).optional(),
-			confirmed: z.boolean().optional(),
-		})
-		.strict(),
-	z
-		.object({ type: z.literal('prompt'), text: z.string().max(DOCK_PROMPT_MAX), confirmed: z.boolean().optional() })
-		.strict(),
+	z.object({ type: z.literal('deny'), message: z.string().max(DOCK_MESSAGE_MAX).optional() }).strict(),
+	z.object({ type: z.literal('prompt'), text: z.string().max(DOCK_PROMPT_MAX) }).strict(),
 ])
 
 export const agentDockActRequestSchema = z

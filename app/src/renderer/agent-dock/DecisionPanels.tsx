@@ -9,11 +9,9 @@ import {
 	Footer,
 	Hint,
 	PromptField,
-	RiskyConfirm,
 	ScrollBody,
 	SubmitActions,
 	Warn,
-	cancelHints,
 	closeHints,
 	pickHints,
 	useScrollEdges,
@@ -26,7 +24,6 @@ import {
 	plainAgentLine,
 	plainAgentText,
 	planApproveModeText,
-	riskyWord,
 } from './presentation'
 
 /** A decision row: what its button says, the note once it is picked ("Ready to deny"), and the act. */
@@ -91,8 +88,6 @@ function DecisionPanel({
 	// A sent decision stays shown (dimmed while sending, under the receipt after); a failure keeps it armed.
 	const [selected, setSelected] = useState<string | null>(() => sentChoice(choices, sent))
 	const [message, setMessage] = useDraft(drafts, `deny:${item.id}`, sent?.type === 'deny' ? (sent.message ?? '') : '')
-	/** The risky word a deny message mentions, while the second confirmation asks. */
-	const [confirming, setConfirming] = useState<string | null>(null)
 	const messageRef = useRef<HTMLTextAreaElement>(null)
 	const fixedRef = useRef<HTMLDivElement>(null)
 	useScrollEdges(fixedRef)
@@ -114,31 +109,19 @@ function DecisionPanel({
 	const choose = (id: string) => {
 		if (!live) return
 		setSelected(id)
-		setConfirming(null)
 		if (choices.find(entry => entry.id === id)?.action === 'deny') focusMessage.current = true
 	}
-	const submit = (confirmed = false) => {
+	const submit = () => {
 		if (!live || !choice) return
 		if (choice.action !== 'deny') {
 			onAct(choice.action)
 			return
 		}
 		const text = message.trim()
-		const risky = riskyWord(text)
-		if (risky && !confirmed) {
-			setConfirming(risky)
-			return
-		}
-		setConfirming(null)
-		onAct({ type: 'deny', ...(text ? { message: text } : {}), ...(risky ? { confirmed: true } : {}) })
+		onAct({ type: 'deny', ...(text ? { message: text } : {}) })
 	}
 	useKeys(keys, event => {
-		const keyed = submitKeys(event, {
-			confirming: confirming !== null,
-			bareEnter: true,
-			cancel: () => setConfirming(null),
-			submit: () => submit(),
-		})
+		const keyed = submitKeys(event, { bareEnter: true, submit })
 		if (keyed) return true
 		const digit = digitOf(event)
 		if (digit !== null) {
@@ -150,20 +133,13 @@ function DecisionPanel({
 		// Letters typed at the pane are meant for somewhere else: drop the pick so a stray Enter sends nothing.
 		if (isStrayKey(event)) {
 			setSelected(null)
-			setConfirming(null)
 			return true
 		}
 		return false
 	})
-	const note = confirming ? (
-		<RiskyConfirm word={confirming} what="This message" />
-	) : (
-		(receipt ?? blockedNote ?? choice?.ready ?? hint)
-	)
+	const note = receipt ?? blockedNote ?? choice?.ready ?? hint
 	const hints = !answerable ? (
 		closeHints
-	) : confirming ? (
-		cancelHints
 	) : denying ? (
 		<>
 			<Hint keys={modHint(mod)}>{denyVerb}</Hint>
@@ -199,10 +175,7 @@ function DecisionPanel({
 							rows={1}
 							value={message}
 							disabled={!live}
-							onChange={event => {
-								setMessage(event.currentTarget.value)
-								setConfirming(null)
-							}}
+							onChange={event => setMessage(event.currentTarget.value)}
 						/>
 					</PromptField>
 				) : null}
@@ -211,15 +184,12 @@ function DecisionPanel({
 				{ack}
 				<SubmitActions
 					decidable={decidable}
-					confirming={confirming !== null}
 					disabled={!live || !choice}
 					busy={submitting}
 					mod={mod}
 					tone={choice?.tone === 'danger' ? 'danger' : 'primary'}
 					label={choice?.submit ?? 'Send'}
-					onSubmit={() => submit()}
-					onConfirm={() => submit(true)}
-					onCancel={() => setConfirming(null)}
+					onSubmit={submit}
 				/>
 			</Footer>
 		</>

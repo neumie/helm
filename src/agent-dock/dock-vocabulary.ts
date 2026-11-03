@@ -86,6 +86,3 @@ export const DOCK_REFUSAL_REASONS = [
 
 /** How Okena (or Helm's hub) delivered a reply to the agent. */
 export const DOCK_PROMPT_DELIVERIES = ['channel', 'pty', 'queued'] as const
-
-/** Free text to the agent (replies, deny messages, Other answers) that mentions these needs a second, explicit confirmation (renderer) and `confirmed` (main). */
-export const DOCK_RISKY_PROMPT = /deploy|prod|secret|push|merge/i
