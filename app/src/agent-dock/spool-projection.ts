@@ -95,9 +95,11 @@ export function dockSpoolSnapshot(
 		source: { ...snapshot.source },
 		sources: Object.fromEntries(Object.entries(snapshot.sources).map(([id, health]) => [id, { ...health }])),
 		// `source` only for Helm sessions: an Okena-only spool stays byte-identical (absent = okena).
-		sessions: snapshot.sessions.map(({ source, ...session }) => ({
+		// Background-task counts only while some run, for the same reason.
+		sessions: snapshot.sessions.map(({ source, backgroundTasks, backgroundShells, ...session }) => ({
 			...session,
 			...(source === 'okena' ? {} : { source }),
+			...(backgroundTasks > 0 ? { backgroundTasks, backgroundShells } : {}),
 			prLinks: session.prLinks.map(link => ({ ...link })),
 		})),
 		items: [...items, ...earlier],

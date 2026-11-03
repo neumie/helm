@@ -119,7 +119,10 @@ interface TerminalState {
 	endedSessions: string[]
 	dialogs: Dialog[]
 	subagents: Map<string, string>
+	/** The last Stop's in-flight background tasks besides subagents (those are `subagents`). */
 	backgroundTasks: number
+	/** How many of backgroundTasks are shells. */
+	backgroundShells: number
 	entries: Entry[]
 	nextSeq: number
 	typingUntil?: number
@@ -537,8 +540,6 @@ export class ClaudeHubCore {
 		const t = this.visibleTerminal(ref)
 		const primary = t.primary && !t.primary.ended ? t.primary : undefined
 		const running = [...t.subagents.entries()].map(([agent_id, agent_type]) => ({ agent_id, agent_type }))
-		for (let index = 0; index < t.backgroundTasks; index++)
-			running.push({ agent_id: `background-${index + 1}`, agent_type: 'background task' })
 		return {
 			terminal_id: ref.terminalId,
 			...(primary ? { session_id: primary.sessionId } : {}),
@@ -555,6 +556,9 @@ export class ClaudeHubCore {
 				created_at_ms: dialog.createdAtMs,
 			})),
 			running_subagents: primary ? running : [],
+			/** Helm-only field (model.ts): the last Stop's `background_tasks`, counted apart from subagents. */
+			background_tasks: primary ? t.backgroundTasks : 0,
+			background_shells: primary ? t.backgroundShells : 0,
 			pr_links: [],
 		}
 	}
@@ -604,6 +608,7 @@ export class ClaudeHubCore {
 				dialogs: [],
 				subagents: new Map(),
 				backgroundTasks: 0,
+				backgroundShells: 0,
 				entries: [],
 				nextSeq: 1,
 				lifelines: new Map(),
@@ -679,6 +684,7 @@ export class ClaudeHubCore {
 		t.finished = []
 		t.subagents.clear()
 		t.backgroundTasks = 0
+		t.backgroundShells = 0
 		t.entries = []
 		t.typingUntil = undefined
 	}
@@ -720,6 +726,7 @@ export class ClaudeHubCore {
 		t.activePrompt = undefined
 		t.subagents.clear()
 		t.backgroundTasks = 0
+		t.backgroundShells = 0
 		this.changed()
 	}
 
@@ -799,7 +806,12 @@ export class ClaudeHubCore {
 		const newer =
 			active?.id !== undefined && promptId !== undefined && active.id !== promptId && !this.isFinished(t, active.id)
 		if (!newer) this.idle(t)
-		t.backgroundTasks = Array.isArray(input.background_tasks) ? Math.min(input.background_tasks.length, 32) : 0
+		// Claude lists background subagents there too; SubagentStart/Stop count those (`subagents`).
+		const tasks = (Array.isArray(input.background_tasks) ? input.background_tasks.slice(0, 32) : []).map(task =>
+			task && typeof task === 'object' ? (task as { type?: unknown }).type : undefined,
+		)
+		t.backgroundTasks = tasks.filter(type => type !== 'subagent').length
+		t.backgroundShells = tasks.filter(type => type === 'shell').length
 		const message = typeof input.last_assistant_message === 'string' ? input.last_assistant_message : ''
 		const text =
 			name === 'StopFailure'

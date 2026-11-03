@@ -12,6 +12,7 @@ const {
 	AGING_DANGER_MS,
 	AGING_WARN_MS,
 	agentRowMeta,
+	backgroundTasksText,
 	agingTone,
 	alwaysAllowChoice,
 	alwaysAllowLabels,
@@ -81,6 +82,8 @@ function session(overrides: Partial<DockSession> = {}): DockSession {
 		since: T,
 		observedAt: T,
 		subagents: 0,
+		backgroundTasks: 0,
+		backgroundShells: 0,
 		queuedPrompts: 0,
 		prLinks: [],
 		hasTranscript: true,
@@ -441,6 +444,24 @@ test('agent lines show only observed facts', () => {
 	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T })
 	assert.deepEqual(agentRowMeta(snap, busy), ['3 subagents', 'queued 1'])
 	assert.deepEqual(agentRowMeta(snap, session({ hooksAttached: false })), ['not connected'])
+})
+
+test('background tasks read like subagents: "1 shell", "2 shells", else "N background tasks"', () => {
+	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T })
+	const shell = session({ status: 'background', since: T - 2 * 60_000, backgroundTasks: 1, backgroundShells: 1 })
+	assert.equal(sessionStatusText(shell, T), 'background 2m')
+	assert.deepEqual(agentRowMeta(snap, shell), ['1 shell'])
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 2, backgroundShells: 2 })), ['2 shells'])
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 2, backgroundShells: 1 })), ['2 background tasks'])
+	// Helm's hub counts without kinds: never called shells.
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 1, backgroundShells: 0 })), ['1 background task'])
+	assert.deepEqual(
+		agentRowMeta(snap, session({ subagents: 2, backgroundTasks: 1, backgroundShells: 1, queuedPrompts: 1 })),
+		['2 subagents', '1 shell', 'queued 1'],
+	)
+	assert.equal(backgroundTasksText(session()), '')
+	// A background shell makes the agent count as busy, like subagents.
+	assert.equal(busyCount([shell, session()]), 1)
 })
 
 test("queue names shorten in the middle, keeping a twin's #N", () => {

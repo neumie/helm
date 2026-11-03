@@ -13,11 +13,16 @@
 //      idle (catches anything written after the edge read), and every
 //      REPLY_READ_MS while a busy pane still has a live turn item (Jakub typed
 //      the reply in the terminal: its user entry closes the turn).
+//   4. Background tasks (Okena only, `background` observer): what the session's own
+//      JSONL appended, every tick while the main agent is idle and every
+//      BACKGROUND_BUSY_READ_MS while busy (keeps each read small). Okena's transcript
+//      page hides the task notifications that end them (claude-transcript-tail.ts).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
 import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
+import type { BackgroundTaskObserver } from './claude-transcript-tail'
 import type { DockPane, DockSource } from './composite-source'
 import {
 	type AgentDockObservation,
@@ -30,6 +35,7 @@ import {
 	type OkenaFetch,
 	type OkenaPromptDelivery,
 	okenaClaudeCandidates,
+	okenaTerminalProject,
 	parseOkenaClaudeSession,
 	parseOkenaClaudeTranscriptPage,
 	parseOkenaState,
@@ -45,6 +51,8 @@ export const OKENA_READ_TIMEOUT_MS = 3_000
 export const TRANSCRIPT_SWEEP_MS = 15_000
 /** While a busy pane has a live turn item, re-read its transcript this often (continuation pages are small). */
 export const REPLY_READ_MS = 2_000
+/** While the main agent is busy its background tasks do not change its status: tail its transcript this often. */
+export const BACKGROUND_BUSY_READ_MS = 5_000
 /** Fan-out bound per tick; more panes than this are left unobserved (status unknown). */
 export const MAX_CLAUDE_TERMINALS = 64
 const READ_CONCURRENCY = 6
@@ -83,6 +91,8 @@ export interface TerminalReadState {
 	edgeAt?: number
 	/** Read the transcript every tick until then (a dock reply is waiting to be seen). */
 	expediteUntil?: number
+	/** Last background-task read of the session's transcript file. */
+	backgroundAt?: number
 }
 
 async function capture(read: () => Promise<unknown>): Promise<OkenaFetch> {
@@ -113,10 +123,14 @@ export class OkenaClaudeSource implements DockSource {
 	/** How this source names itself in act failures and poll errors (DOCK_SOURCE_TEXT). */
 	private readonly text: (typeof DOCK_SOURCE_TEXT)[DockSourceId]
 
-	/** `id`: which dock source this client is (Okena, or Helm's own hub, which reuses this class). */
+	/**
+	 * `id`: which dock source this client is (Okena, or Helm's own hub, which reuses this class).
+	 * `background`: reads background tasks from transcript files (Okena; the hub counts its own).
+	 */
 	constructor(
 		private readonly client: OkenaClaudeClient,
 		readonly id: DockSourceId = 'okena',
+		private readonly background?: BackgroundTaskObserver,
 	) {
 		this.text = DOCK_SOURCE_TEXT[id]
 	}
@@ -231,7 +245,14 @@ export class OkenaClaudeSource implements DockSource {
 
 		const candidates = okenaClaudeCandidates(parsedState.value).slice(0, MAX_CLAUDE_TERMINALS)
 		const terminals = await mapLimited(candidates, READ_CONCURRENCY, terminalId =>
-			this.observeTerminal(client, state, profile, terminalId, now),
+			this.observeTerminal(
+				client,
+				state,
+				profile,
+				terminalId,
+				now,
+				okenaTerminalProject(parsedState.value, terminalId)?.path,
+			),
 		)
 		const listed = new Set(candidates.map(terminalId => sessionKey(profile, terminalId)))
 		for (const key of this.reads.keys()) if (!listed.has(key)) this.reads.delete(key)
@@ -244,6 +265,7 @@ export class OkenaClaudeSource implements DockSource {
 		profile: string,
 		terminalId: string,
 		now: number,
+		cwd?: string,
 	): Promise<ObservedClaudeTerminal> {
 		const detail = await capture(() =>
 			client.getClaudeSession(terminalId, { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }),
@@ -259,15 +281,30 @@ export class OkenaClaudeSource implements DockSource {
 		const want = transcriptWanted(read, parsed.value, request, now, agentDockAwaitingReply(state, profile, terminalId))
 		const expedited = read?.expediteUntil !== undefined && now < read.expediteUntil && parsed.value.has_transcript
 		const doRead = want.read || expedited
+		const sessionId = parsed.value.session_id
+		const backgroundDue =
+			this.background !== undefined &&
+			sessionId !== undefined &&
+			(parsed.value.busy !== true ||
+				read?.backgroundAt === undefined ||
+				read.sessionId !== sessionId ||
+				now - read.backgroundAt >= BACKGROUND_BUSY_READ_MS)
 		this.reads.set(key, {
 			busy: parsed.value.busy,
 			dialogs: parsed.value.dialogs.length,
-			sessionId: parsed.value.session_id,
+			sessionId,
 			readAt: doRead ? now : read?.readAt,
 			edgeAt: want.edgeAt,
 			...(expedited ? { expediteUntil: read?.expediteUntil } : {}),
+			...(backgroundDue
+				? { backgroundAt: now }
+				: read?.backgroundAt !== undefined
+					? { backgroundAt: read.backgroundAt }
+					: {}),
 		})
-		if (!doRead) return { terminalId, detail }
+		const background = await this.observeBackground(sessionId, cwd, backgroundDue, now)
+		const withBackground = background ? { background } : {}
+		if (!doRead) return { terminalId, detail, ...withBackground }
 		// A cursor is only honoured with the session it came from; a new session starts with a reset page.
 		const query = request.sessionId === parsed.value.session_id ? request : {}
 		const transcript = await capture(() =>
@@ -276,7 +313,22 @@ export class OkenaClaudeSource implements DockSource {
 				timeoutMs: OKENA_READ_TIMEOUT_MS,
 			}),
 		)
-		return { terminalId, detail, transcript }
+		return { terminalId, detail, transcript, ...withBackground }
+	}
+
+	/** The session's background tasks; never throws (unreadable = no claim). */
+	private async observeBackground(
+		sessionId: string | undefined,
+		cwd: string | undefined,
+		refresh: boolean,
+		now: number,
+	): Promise<ObservedClaudeTerminal['background']> {
+		if (!this.background || sessionId === undefined) return undefined
+		try {
+			return await this.background.observe(sessionId, { cwd, refresh, now })
+		} catch {
+			return undefined
+		}
 	}
 }
 

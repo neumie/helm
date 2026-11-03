@@ -50,7 +50,7 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 	})
 	if (item.fact.kind !== 'turn') return null
 	const fact = item.fact
-	const notes = [fact.hadBackground ? 'Subagents were still running.' : ''].filter(Boolean)
+	const notes = [fact.hadBackground ? 'Background work was still running.' : ''].filter(Boolean)
 	const note = receipt ?? blockedNote ?? null
 	return (
 		<>

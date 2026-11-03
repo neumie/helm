@@ -20,6 +20,7 @@ import type {
 	DOCK_SOURCE_HEALTH_STATES,
 	DockSourceId,
 } from '../../../src/agent-dock/dock-vocabulary'
+import type { ObservedBackgroundTasks } from './background-tasks'
 
 export type { DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 
@@ -82,6 +83,13 @@ export const okenaClaudeSessionSchema = z.object({
 	queued_prompts: u64,
 	dialogs: z.array(okenaClaudeDialogSchema),
 	running_subagents: z.array(z.object({ agent_id: z.string(), agent_type: z.string() })).default([]),
+	/**
+	 * Helm's own hub only (Okena never sends it): background tasks the Stop hook listed as
+	 * still running. Okena panes get theirs from the transcript file (ObservedClaudeTerminal.background).
+	 */
+	background_tasks: u64.optional(),
+	/** Helm's hub only: how many of background_tasks are shells. */
+	background_shells: u64.optional(),
 	pr_links: z.array(okenaClaudePrLinkSchema).default([]),
 })
 export type OkenaClaudeSession = z.infer<typeof okenaClaudeSessionSchema>
@@ -215,6 +223,10 @@ export interface DockSession {
 	/** Last successful detail fetch (ms); rows older than ~10 s render stale. */
 	observedAt: number
 	subagents: number
+	/** Background tasks the main agent started that have not ended (shells, workflows, monitors; not subagents). */
+	backgroundTasks: number
+	/** How many of `backgroundTasks` are shells (Bash `run_in_background`); 0 when the source cannot tell. */
+	backgroundShells: number
 	queuedPrompts: number
 	prLinks: DockPrLink[]
 	hasTranscript: boolean
@@ -254,7 +266,7 @@ export interface DockTurnFact {
 	/** Last assistant message, bounded to TURN_TEXT_MAX and control-stripped. Memory only, never persisted. */
 	text: string
 	endedAt: number
-	/** Subagents were still running when the turn ended. */
+	/** Subagents or background tasks were still running when the turn ended (status `background`). */
 	hadBackground: boolean
 }
 
@@ -449,6 +461,8 @@ export interface ObservedClaudeTerminal {
 	detail: OkenaFetch
 	/** Present only when the source fetched the transcript this tick (see agentDockTranscriptRequest). */
 	transcript?: OkenaFetch
+	/** Background tasks from the session's own transcript file (Okena panes); absent = unknown, no claim. */
+	background?: ObservedBackgroundTasks
 }
 
 export type AgentDockObservation =

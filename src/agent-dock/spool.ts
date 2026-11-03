@@ -98,6 +98,10 @@ export const spoolSessionSchema = z.object({
 	since: ms,
 	observedAt: ms,
 	subagents: z.number().int().nonnegative(),
+	/** Background tasks (shells, workflows, monitors) still running; absent = none (and in older spools). */
+	backgroundTasks: z.number().int().nonnegative().optional(),
+	/** How many of backgroundTasks are shells; written with it. */
+	backgroundShells: z.number().int().nonnegative().optional(),
 	queuedPrompts: z.number().int().nonnegative(),
 	prLinks: z.array(z.object({ number: z.number().int(), url: z.string(), repository: z.string() })),
 	hasTranscript: z.boolean(),
