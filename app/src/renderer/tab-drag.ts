@@ -37,6 +37,22 @@ export function stripDropInsertionIndex(pointerX: number, tabs: readonly Horizon
 	return index === -1 ? tabs.length : index
 }
 
+const GROUP_EDGE_MIN_PX = 6
+const GROUP_EDGE_MAX_PX = 16
+
+/**
+ * Whether a pointer over a folder header sits in its "beside, not into" edge:
+ * the leading quarter (6–16px) of any header drops before the folder, and the
+ * trailing quarter of a collapsed header (the whole folder) drops after it. The
+ * middle keeps joining the folder, so a run of adjacent folders never hides
+ * the slots between them.
+ */
+export function pointerOnGroupHeaderEdge(pointerX: number, header: HorizontalRect, collapsed: boolean): boolean {
+	const edge = Math.min(GROUP_EDGE_MAX_PX, Math.max(GROUP_EDGE_MIN_PX, header.width / 4))
+	if (pointerX < header.left + edge) return true
+	return collapsed && pointerX >= header.left + header.width - edge
+}
+
 const AUTO_SCROLL_EDGE_PX = 28
 const AUTO_SCROLL_STEP_PX = 12
 
@@ -106,6 +122,7 @@ export default {
 	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
+	pointerOnGroupHeaderEdge,
 	stripDropInsertionIndex,
 	tabDropInsertionIndex,
 	tabStripAutoScrollDelta,

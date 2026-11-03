@@ -381,7 +381,8 @@ button:focus-visible,
 /* Author display rules override the HTML hidden state unless this explicit
  * rule wins. Collapse keeps terminal DOM mounted while hiding every member. */
 .tab-group-members[hidden],
-.bg-group-members[hidden] {
+.bg-group-members[hidden],
+.tab[hidden] {
 	display: none;
 }
 

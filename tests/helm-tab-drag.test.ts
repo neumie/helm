@@ -9,6 +9,7 @@ const {
 	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
+	pointerOnGroupHeaderEdge,
 	stripDropInsertionIndex,
 	tabDropInsertionIndex,
 	tabStripAutoScrollDelta,
@@ -95,4 +96,22 @@ test('magnetic background target uses a quiet expanded hit area', () => {
 	assert.equal(pointInExpandedRect(194, 20, target, 8), true)
 	assert.equal(pointInExpandedRect(190, 20, target, 8), false)
 	assert.equal(pointInExpandedRect(210, 45, target, 8), true)
+})
+
+test('folder header edges drop beside the folder; the middle joins it', () => {
+	const collapsed = { left: 100, width: 96 } // quarter = 24 → clamped to 16
+	assert.equal(pointerOnGroupHeaderEdge(100, collapsed, true), true)
+	assert.equal(pointerOnGroupHeaderEdge(115, collapsed, true), true)
+	assert.equal(pointerOnGroupHeaderEdge(116, collapsed, true), false)
+	assert.equal(pointerOnGroupHeaderEdge(148, collapsed, true), false)
+	assert.equal(pointerOnGroupHeaderEdge(179, collapsed, true), false)
+	assert.equal(pointerOnGroupHeaderEdge(180, collapsed, true), true)
+	// An expanded header only owns the leading edge: past it come its own members.
+	assert.equal(pointerOnGroupHeaderEdge(180, collapsed, false), false)
+	assert.equal(pointerOnGroupHeaderEdge(110, collapsed, false), true)
+	// A narrow header keeps a 6px edge on each side and a joinable middle.
+	const narrow = { left: 0, width: 20 }
+	assert.equal(pointerOnGroupHeaderEdge(5, narrow, true), true)
+	assert.equal(pointerOnGroupHeaderEdge(10, narrow, true), false)
+	assert.equal(pointerOnGroupHeaderEdge(14, narrow, true), true)
 })

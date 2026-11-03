@@ -26,6 +26,7 @@ import {
 	dragThresholdExceeded,
 	groupDropInsertionIndex,
 	pointInExpandedRect,
+	pointerOnGroupHeaderEdge,
 	stripDropInsertionIndex,
 	tabStripAutoScrollDelta,
 } from './tab-drag'
@@ -250,6 +251,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	let applyingPlacementSnapshot = false
 	/** Drag-only DOM surface; Tab.parked remains committed PTY ownership. */
 	let projectedSurfaceById: ReadonlyMap<string, 'strip' | 'background'> | null = null
+	/**
+	 * The strip tab being dragged. While it is projected into a collapsed folder its
+	 * placeholder stays visible there (the folder's other members stay hidden), so
+	 * the folder keeps its width under the pointer instead of collapsing the slot.
+	 */
+	let stripDragSlotTab: Tab | null = null
 	const profileToken = helm.terminalTransfer.profileToken()
 	const tokenSeparator = profileToken.lastIndexOf(':')
 	const placementProfileId = tokenSeparator > 0 ? profileToken.slice(0, tokenSeparator) : profileToken
@@ -337,8 +344,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			tab.groupId = membership.get(tab.visualId) ?? null
 		}
 		applyingPlacementSnapshot = true
-		projectStripOrder(strip, snapshot.drag !== null)
-		parked.splice(0, parked.length, ...background)
+		// Group metadata lands before the strip renders, so one render sees the whole snapshot.
 		tabGroups = snapshot.groups.map(group => ({
 			id: group.id,
 			name: group.name,
@@ -347,6 +353,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			collapsedBackground: group.collapsedBackground,
 		}))
 		tabGroupsVersion += 1
+		projectStripOrder(strip, snapshot.drag !== null)
+		parked.splice(0, parked.length, ...background)
 		const selected = snapshot.selectedId ? lookup(snapshot.selectedId) : null
 		if (selected) activate(selected)
 		else {
@@ -580,27 +588,61 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (section.kind === 'group') membersEl.id = tabGroupMembersId(section.groupId, section.surface)
 		membersEl.setAttribute('role', 'tablist')
 		membersEl.setAttribute('aria-label', section.kind === 'group' ? `${section.name} terminals` : 'Terminals')
-		membersEl.hidden = section.collapsed
+		const dragSlot =
+			section.collapsed && !cloneMembers && section.members.some(member => byId.get(member.id) === stripDragSlotTab)
+		membersEl.hidden = section.collapsed && !dragSlot
 		for (const member of section.members) {
 			const tab = byId.get(member.id)
 			if (!tab) continue
 			// Live sections retain terminal button identity. Drag projections clone the
 			// same DOM so their intrinsic width cannot drift from the eventual result.
 			const button = cloneMembers ? createTabStripProjection(tab) : tab.tabButton
-			button.hidden = false
+			button.hidden = dragSlot && tab !== stripDragSlotTab
 			membersEl.append(button)
 		}
 		sectionEl.append(membersEl)
 		return section.kind === 'group' ? sectionEl : membersEl
 	}
 
+	/** Everything the strip DOM is built from; tab buttons themselves are live elements. */
+	function stripRenderKey(strip: readonly TabGroupSection[]): string {
+		return JSON.stringify([
+			stripDragSlotTab ? tabIdentity(stripDragSlotTab) : null,
+			strip.map(section => [
+				section.kind,
+				section.groupId,
+				section.name,
+				section.color,
+				section.collapsed,
+				collapsedGroupAgentDisplay(section),
+				section.members.map(member => member.id),
+			]),
+		])
+	}
+
+	let renderedStripKey: string | null = null
+
 	function renderTabGroups(): void {
-		const focusedHeader = focusedGroupHeader(tabsEl)
 		const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
 		const strip = tabGroupComposition().strip
 		refreshTabNumbers(strip)
+		// A drag projects on every pointer move. Rebuilding an unchanged strip would
+		// detach every tab and replace each folder wrapper mid-FLIP, so it snaps.
+		const key = stripRenderKey(strip)
+		const intact =
+			key === renderedStripKey &&
+			tabsEl.childElementCount === strip.length &&
+			strip.every(section =>
+				section.members.every(member => {
+					const tab = byId.get(member.id)
+					return !tab || tabsEl.contains(tab.tabButton)
+				}),
+			)
+		if (intact) return
+		const focusedHeader = focusedGroupHeader(tabsEl)
 		tabsEl.textContent = ''
 		for (const section of strip) tabsEl.append(createStripSection(section, byId))
+		renderedStripKey = key
 		restoreFocusedGroupHeader(tabsEl, focusedHeader)
 	}
 
@@ -1351,6 +1393,10 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			void placement.execute({ type: 'select', id: placementId(tab) })
 			return
 		}
+		// Every placement snapshot (each drag move included) re-selects. Only a terminal
+		// that is not already shown needs the reveal: refit + full repaint blanks xterm
+		// for a frame, so repeating it for the visible terminal makes it flicker.
+		const reveal = activeTab !== tab || !tab.holder.classList.contains('active')
 		activeTab = tab
 		clearTabAgentAttention(tab)
 		// Reveal and focus the destination before hiding the current holder. Leaving
@@ -1366,6 +1412,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		renderTabGroups()
 		syncEmptyState()
 		updateBackgroundUi()
+		if (!reveal) return
 		revealRedraw.add(tab)
 		// Fit after the holder becomes visible; hidden containers measure as 0x0.
 		requestAnimationFrame(() => {
@@ -1802,10 +1849,16 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		drag.placementDrag?.reset()
 	}
 
+	/** The folder a strip point joins; null between units, including folder header edges. */
 	function stripGroupAtPoint(x: number, y: number): string | null {
 		const hit = document.elementFromPoint(x, y)
 		const section = hit instanceof Element ? hit.closest<HTMLElement>('.tab-group-section') : null
-		return section?.dataset.groupId || null
+		const groupId = section?.dataset.groupId || null
+		const header = hit instanceof Element ? hit.closest<HTMLElement>('[data-tab-group-header]') : null
+		if (!section || !groupId || !header) return groupId
+		return pointerOnGroupHeaderEdge(x, header.getBoundingClientRect(), section.classList.contains('collapsed'))
+			? null
+			: groupId
 	}
 
 	function updateTabDragTarget(drag: TabPointerDrag): void {
@@ -1832,6 +1885,24 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 
 		drag.dropTarget = 'strip'
 		const targetGroupId = drag.tab.sessionId ? stripGroupAtPoint(drag.x, drag.y) : drag.originalGroupId
+		drag.dropGroupId = targetGroupId
+		if (targetGroupId === null) {
+			// Ungrouped tabs are not one bucket: every folder is a unit between them, so
+			// the slot comes from rendered unit midpoints (a collapsed folder's hidden
+			// members have no geometry). Units exclude the dragged tab: post-removal index.
+			const units = stripDragUnitsExcluding('', drag.tab)
+			const unitIndex = stripDropInsertionIndex(
+				drag.x,
+				units.map(unit => unit.rect),
+			)
+			drag.placementDrag?.project({
+				surface: 'strip',
+				index: placementIndexForStripUnits(units, unitIndex),
+				groupId: null,
+			})
+			positionTabPreview(drag)
+			return
+		}
 		const targetPeers = tabs.filter(tab => tab !== drag.tab && tab.groupId === targetGroupId)
 		const visiblePeerRects = targetPeers
 			.map(tab => tab.tabButton.getBoundingClientRect())
@@ -1852,7 +1923,6 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			peerInsertionIndex,
 			fallbackInsertionIndex,
 		)
-		drag.dropGroupId = targetGroupId
 		// groupDropInsertionIndex is anchored in the pre-removal strip. Placement
 		// requires post-removal raw terminal index, so subtract the dragged tab when
 		// its original slot precedes the anchor.
@@ -1896,6 +1966,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		document.body.appendChild(preview)
 		drag.preview = preview
 		drag.tab.tabButton.classList.add('drag-placeholder')
+		stripDragSlotTab = drag.tab
 		renderTabGroups()
 		document.body.classList.add('tab-dragging')
 		bgToggle.hidden = false
@@ -1992,6 +2063,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		removeTabPointerListeners(drag)
 		if (drag.frame !== null) cancelAnimationFrame(drag.frame)
 		if (!drag.started) return
+		// The committed (or restored) render hides a collapsed folder's members again.
+		stripDragSlotTab = null
 
 		suppressTabClick.add(drag.tab)
 		setTimeout(() => suppressTabClick.delete(drag.tab), 0)
@@ -2453,10 +2526,20 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 				const sectionEl = stripGroupElement(section.groupId as string)
 				const members = section.members.flatMap(member => {
 					const tab = byId.get(member.id)
-					return tab ? [tab] : []
+					return tab && tab !== excludedTab ? [tab] : []
 				})
-				if (sectionEl && members.length > 0)
-					units.push({ members, rect: sectionEl.getBoundingClientRect(), element: sectionEl })
+				if (!sectionEl || members.length === 0) continue
+				const rect = sectionEl.getBoundingClientRect()
+				// An excluded tab's own slot inside a folder is not part of the folder's midpoint.
+				const slot =
+					excludedTab && sectionEl.contains(excludedTab.tabButton)
+						? excludedTab.tabButton.getBoundingClientRect().width
+						: 0
+				units.push({
+					members,
+					rect: slot > 0 ? new DOMRect(rect.left, rect.top, rect.width - slot, rect.height) : rect,
+					element: sectionEl,
+				})
 				continue
 			}
 			for (const member of section.members) {
