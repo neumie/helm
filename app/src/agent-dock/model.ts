@@ -39,6 +39,8 @@ const okenaProjectSchema = z.object({
 	layout: z.unknown().optional(),
 	terminal_names: z.record(z.string(), z.string()).optional(),
 	git_status: z.object({ branch: z.string().nullish() }).nullish(),
+	/** Present when the project is a git worktree Okena made from another project (its repository). */
+	worktree_info: z.object({ parent_project_id: z.string() }).nullish(),
 })
 
 /** `GET /v1/state`, only the fields the dock reads. Empty maps are omitted by the server. */
@@ -195,6 +197,12 @@ export interface DockSession {
 	/** For Okena `focus_terminal`; absent when the pane is not in any project layout. */
 	projectId?: string
 	project: string
+	/**
+	 * The repository's Okena project name when the pane's project is a worktree of it
+	 * (`worktree_info.parent_project_id`; `project` is then the worktree, usually named after its branch).
+	 * Absent otherwise: `project` is the repository itself.
+	 */
+	repo?: string
 	/** Okena's name for the pane (its terminal name, else the project's branch, else `terminal <id>`). */
 	name: string
 	/** The project's git branch as Okena reports it (`fix/company-create-save-firm`); the dock's short agent names come from it. */

@@ -41,6 +41,8 @@ const {
 	QUEUE_NAME_MIN,
 	shortenName,
 	agentNames,
+	agentRepoGroups,
+	agentRows,
 	agentWho,
 	branchShortName,
 	statusGlyph,
@@ -582,6 +584,61 @@ test('short agent names: the branch without its type prefix, numbered when two a
 	assert.deepEqual(agentWho(snap, 'p:t2'), { name: 'company-create-save-firm #2', title, project: 'helm' })
 	assert.deepEqual(agentWho(snap, 'p:t4'), { name: 'ios-sync', title: '', project: 'helm' })
 	assert.deepEqual(agentWho(snap, 'p:abcdef0123'), { name: 'terminal abcdef0…', title: '', project: '' })
+})
+
+test("a detached HEAD's commit hash is no name: the agent keeps its pane or repository name", () => {
+	// 7–40 hex characters say nothing about the work, like a default branch.
+	for (const hash of ['d1aee9df', 'D1AEE9D', 'a'.repeat(40), '3610328']) assert.equal(branchShortName(hash), '', hash)
+	for (const branch of ['d1aee9', 'a'.repeat(41), 'd1aee9dg', 'fix/d1aee9df'])
+		assert.notEqual(branchShortName(branch), '', branch)
+
+	// Psyon's main checkout on a detached HEAD: Okena names the unnamed pane after the hash, so the
+	// agent reads as its project, everywhere agentWho is used (queue, header, Agents pane, labels).
+	const psyon = session({ key: 'p:t1', project: 'Psyon', name: 'd1aee9df', branch: 'd1aee9df', status: 'working' })
+	// A named pane on a detached HEAD keeps its pane name.
+	const named = session({ key: 'p:t2', project: 'Psyon', name: 'release-check', branch: '3610328' })
+	// A JVS worktree: Okena's project is named after the branch; the repository is its parent project.
+	const repair = session({
+		key: 'p:t3',
+		project: 'fix/repair-done-still-out-of-service',
+		repo: 'JVS',
+		name: '[Echo] Kubo, tady bude chybka.',
+		branch: 'fix/repair-done-still-out-of-service',
+	})
+	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T }, [], [psyon, named, repair])
+	assert.deepEqual(agentWho(snap, 'p:t1'), { name: 'Psyon', title: '', project: 'Psyon' })
+	assert.deepEqual(agentWho(snap, 'p:t2'), { name: 'release-check', title: '', project: 'Psyon' })
+	assert.deepEqual(agentWho(snap, 'p:t3'), {
+		name: 'repair-done-still-out-of-service',
+		title: '[Echo] Kubo, tady bude chybka.',
+		project: 'JVS',
+	})
+	// The same name reaches the Agents entry's tooltip.
+	assert.match(agentsEntryText(snap, [psyon], 0, T + 4 * 60_000).title, /^Psyon: working 4m$/)
+
+	// Agents pane rows carry the repository they group under; meta stays a list.
+	const rows = agentRows(snap, T)
+	assert.deepEqual(
+		rows.map(row => [row.name, row.repo, row.word]),
+		[
+			['Psyon', 'Psyon', 'working'],
+			['release-check', 'Psyon', 'idle'],
+			['repair-done-still-out-of-service', 'JVS', 'idle'],
+		],
+	)
+	const groupKeys = (list: typeof rows) =>
+		agentRepoGroups(list).map(group => ({ repo: group.repo, keys: group.rows.map(row => row.key) }))
+	assert.deepEqual(groupKeys(rows), [
+		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
+		{ repo: 'JVS', keys: ['p:t3'] },
+	])
+	// Groups follow their first agent; agents with no known repository come last, whatever their order.
+	const unplaced = { ...rows[0], key: 'p:t0', repo: '' }
+	assert.deepEqual(groupKeys([unplaced, rows[2], ...rows.slice(0, 2)]), [
+		{ repo: 'JVS', keys: ['p:t3'] },
+		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
+		{ repo: '', keys: ['p:t0'] },
+	])
 })
 
 test('an open pane keeps entries in their slots: answered items stay put, new ones join the end', () => {

@@ -451,6 +451,8 @@ function observeTerminal(
 	draft.state.sessions[key] = record
 	record.session.projectId = project?.id
 	record.session.project = project?.name ?? 'unknown project'
+	const parentId = project?.worktree_info?.parent_project_id
+	record.session.repo = (parentId && ctx.state.projects.find(p => p.id === parentId)?.name) || undefined
 	record.session.name =
 		project?.terminal_names?.[terminalId] ?? project?.git_status?.branch ?? `terminal ${terminalId.slice(0, 8)}`
 	record.session.branch = project?.git_status?.branch || undefined

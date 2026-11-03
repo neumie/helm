@@ -39,6 +39,13 @@ export type AgentDockScenario =
 	| 'real-case'
 	/** Eight items from eight agents: the one-row queue shows what fits and one quiet "+N more" cell. */
 	| 'overflow'
+	/**
+	 * Jakub's Agents pane: Psyon's main checkout on a detached HEAD (`d1aee9df`, no pane name) working
+	 * 4m with 4 subagents; two JVS worktrees (Okena projects named after their branches) idle <1m with
+	 * PRs; a Psyon worktree waiting on a question; a JVS worktree whose detail could not be read; and
+	 * Claude in a Helm terminal with background work.
+	 */
+	| 'agents-pane'
 	/** Receipt states (built by running real act observations through the reducer). */
 	| 'receipt-sending'
 	| 'receipt-unconfirmed'
@@ -91,10 +98,12 @@ interface Pane {
 	sid: string
 	projectId: string
 	project: string
-	/** Okena's terminal name for the pane (`terminal_names`). */
-	name: string
+	/** Okena's terminal name for the pane (`terminal_names`); absent for a pane Okena never named. */
+	name?: string
 	/** The project's git branch (`git_status.branch`), when the fixture has one. */
 	branch?: string
+	/** The repository project this one is an Okena worktree of (`worktree_info.parent_project_id`). */
+	parent?: { id: string; name: string }
 }
 
 const panes = {
@@ -156,11 +165,21 @@ function okenaState(version: number, live: Array<{ pane: Pane; body: Json }>): J
 			layout: { type: 'split', children: [] as Json[] },
 			terminal_names: {} as Record<string, string>,
 			...(pane.branch ? { git_status: { branch: pane.branch } } : {}),
+			...(pane.parent ? { worktree_info: { parent_project_id: pane.parent.id } } : {}),
 		}
 		;((project.layout as Json).children as Json[]).push({ type: 'terminal', terminal_id: pane.tid })
-		;(project.terminal_names as Record<string, string>)[pane.tid] = pane.name
+		if (pane.name !== undefined) (project.terminal_names as Record<string, string>)[pane.tid] = pane.name
 		projects.set(pane.projectId, project)
 	}
+	// A worktree's repository is listed too, with or without panes of its own (JVS has none open).
+	for (const { pane } of live)
+		if (pane.parent && !projects.has(pane.parent.id))
+			projects.set(pane.parent.id, {
+				id: pane.parent.id,
+				name: pane.parent.name,
+				path: `/fixture/${pane.parent.name}`,
+				terminal_names: {},
+			})
 	const dialogs: Record<string, number> = {}
 	for (const { pane, body } of live) {
 		const count = (body.dialogs as Json[] | undefined)?.length ?? 0
@@ -603,6 +622,169 @@ function overflowTimeline(now: number): { steps: Array<[number, AgentDockObserva
 
 type Live = Array<{ pane: Pane; body: Json; transcript?: Json }>
 
+const PSYON = { id: 'proj-psyon', name: 'Psyon' }
+const JVS = { id: 'proj-jvs', name: 'JVS' }
+
+/** The Agents pane's day (AgentDockScenario 'agents-pane'): Okena's panes, then the Helm terminal. */
+const agentsPanes = {
+	psyon: { tid: 'term-psyon', sid: 'sess-psyon', projectId: PSYON.id, project: PSYON.name, branch: 'd1aee9df' },
+	repair: {
+		tid: 'term-jvs-repair',
+		sid: 'sess-jvs-repair',
+		projectId: 'proj-jvs-repair',
+		project: 'fix/repair-done-still-out-of-service',
+		name: '[Echo] Kubo, tady bude chybka. Stav po dokončení …',
+		branch: 'fix/repair-done-still-out-of-service',
+		parent: JVS,
+	},
+	imageLink: {
+		tid: 'term-jvs-image',
+		sid: 'sess-jvs-image',
+		projectId: 'proj-jvs-image',
+		project: 'feat/service-protocol-image-link',
+		name: 'Servisní protokol, udělat odkaz na obrázek, Nejlíp kdyby v protokolu byl odkaz na obrázek a nebo do emailu poslat jako přílohu v odkaze.',
+		branch: 'feat/service-protocol-image-link',
+		parent: JVS,
+	},
+	invoices: {
+		tid: 'term-psyon-invoices',
+		sid: 'sess-psyon-invoices',
+		projectId: 'proj-psyon-invoices',
+		project: 'feat/invoice-pdf-export',
+		name: 'Export faktur do PDF s logem firmy (ClientCare #4211)',
+		branch: 'feat/invoice-pdf-export',
+		parent: PSYON,
+	},
+	calendar: {
+		tid: 'term-jvs-calendar',
+		sid: 'sess-jvs-calendar',
+		projectId: 'proj-jvs-calendar',
+		project: 'fix/rental-calendar-overlap',
+		name: 'Kalendář pronájmů: překrývající se rezervace jeřábu (ClientCare #4198)',
+		branch: 'fix/rental-calendar-overlap',
+		parent: JVS,
+	},
+	helm: {
+		tid: 'term-helm-vault',
+		sid: 'sess-helm-vault',
+		projectId: 'cwd:/fixture/vault',
+		project: 'vault',
+		name: 'inbox-triage',
+		branch: 'main',
+	},
+} satisfies Record<string, Pane>
+
+const prLink = (number: number): Json => ({
+	number,
+	url: `https://github.com/contember-external/crane-rental/pull/${number}`,
+	repository: 'contember-external/crane-rental',
+	last_seen_at: '2026-11-03T09:00:00Z',
+})
+
+/** The Agents pane's day, through the real reducer: Okena polls and Helm's hub polls, interleaved. */
+function agentsPaneTimeline(now: number): {
+	steps: Array<[number, AgentDockObservation]>
+	live: Live
+	version: number
+} {
+	const p = agentsPanes
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const subagents = (count: number): Json[] =>
+		Array.from({ length: count }, (_, index) => ({ agent_id: `sub-psyon-${index + 1}`, agent_type: 'Explore' }))
+	const busy = (pane: Pane, overrides: Json = {}) => detail(pane, { busy: true, ...overrides })
+	const idle = (pane: Pane, overrides: Json = {}) => detail(pane, { busy: false, ...overrides })
+	const repairPrs = { pr_links: [prLink(956), prLink(484)] }
+	const imagePrs = { pr_links: [prLink(953)] }
+	const question = busy(p.invoices, {
+		dialogs: [
+			{
+				id: `${prefix}-71`,
+				tool_name: 'AskUserQuestion',
+				tool_input: {
+					questions: [
+						{
+							header: 'Logo',
+							question: 'Má být logo firmy v PDF vpravo nahoře, nebo v patičce?',
+							multiSelect: false,
+							options: [{ label: 'Vpravo nahoře' }, { label: 'V patičce' }],
+						},
+					],
+				},
+				permission_suggestions: [],
+				created_at_ms: now - 12 * MINUTE,
+			},
+		],
+	})
+	const okena = (version: number, live: Live, unreadable: Pane[] = []): AgentDockObservation => {
+		const observation = poll(version, live)
+		return {
+			...observation,
+			terminals: observation.terminals.map(terminal =>
+				unreadable.some(pane => pane.tid === terminal.terminalId)
+					? { terminalId: terminal.terminalId, detail: { ok: false, error: 'read timed out after 5000 ms' } }
+					: terminal,
+			),
+		}
+	}
+	const helm = (version: number, body: Json, page?: Json): AgentDockObservation => ({
+		...poll(version, [{ pane: p.helm, body, ...(page ? { transcript: page } : {}) }]),
+		source: 'helm',
+		profile: 'helm',
+	})
+	const ended = (pane: Pane, uuid: string, text: string): Json =>
+		transcript(pane, [assistant(uuid, text)], 2_000, false)
+	// Before: everything busy except Psyon's main checkout (idle until it starts 4 minutes ago).
+	const early: Live = [
+		{ pane: p.psyon, body: idle(p.psyon), transcript: seedPage(p.psyon, 'psyon-a0') },
+		{ pane: p.repair, body: busy(p.repair, repairPrs), transcript: seedPage(p.repair, 'repair-a0') },
+		{ pane: p.imageLink, body: busy(p.imageLink, imagePrs), transcript: seedPage(p.imageLink, 'image-a0') },
+		{ pane: p.invoices, body: busy(p.invoices), transcript: seedPage(p.invoices, 'invoices-a0') },
+		{ pane: p.calendar, body: busy(p.calendar), transcript: seedPage(p.calendar, 'calendar-a0') },
+	]
+	const at12: Live = bare(early).map(entry =>
+		entry.pane === p.invoices ? { pane: p.invoices, body: question } : entry,
+	)
+	const at4: Live = at12.map(entry =>
+		entry.pane === p.psyon ? { pane: p.psyon, body: busy(p.psyon, { running_subagents: subagents(4) }) } : entry,
+	)
+	const endedNow: Live = at4.map(entry =>
+		entry.pane === p.repair
+			? {
+					pane: p.repair,
+					body: idle(p.repair, repairPrs),
+					transcript: ended(p.repair, 'repair-a1', 'Hotovo, PR #956 je mergnutý. Mám zavřít i #484?'),
+				}
+			: entry.pane === p.imageLink
+				? {
+						pane: p.imageLink,
+						body: idle(p.imageLink, imagePrs),
+						transcript: ended(
+							p.imageLink,
+							'image-a1',
+							'PR #953 je otevřený, odkaz na obrázek je v protokolu i v e-mailu.',
+						),
+					}
+				: entry,
+	)
+	const helmWorking = busy(p.helm)
+	const helmBackground = idle(p.helm, {
+		running_subagents: [{ agent_id: 'background-1', agent_type: 'background task' }],
+	})
+	const steps: Array<[number, AgentDockObservation]> = [
+		[now - 30 * MINUTE, okena(8_001, early)],
+		[now - 30 * MINUTE + 1_000, helm(1, helmWorking, seedPage(p.helm, 'helm-a0'))],
+		[now - 12 * MINUTE, okena(8_002, at12)],
+		[now - 9 * MINUTE, helm(2, helmBackground)],
+		[now - 4 * MINUTE, okena(8_003, at4)],
+		[now - 2 * MINUTE, okena(8_004, bare(at4), [p.calendar])],
+		[now - 40_000, okena(8_005, endedNow, [p.calendar])],
+		[now - 30_000, okena(8_006, bare(endedNow), [p.calendar])],
+		[now - 1_500, helm(3, helmBackground)],
+		[now - 1_000, okena(8_007, bare(endedNow), [p.calendar])],
+	]
+	return { steps, live: bare(endedNow), version: 8_007 }
+}
+
 interface ScenarioRun {
 	state: AgentDockState
 	/** The panes as Okena last showed them (no transcript pages), for follow-up polls. */
@@ -661,6 +843,10 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		]
 		return { state: run(steps, start), live: [{ pane: panes.turn, body: idle }], version: 5_003 }
 	}
+	if (name === 'agents-pane') {
+		const timeline = agentsPaneTimeline(now)
+		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
+	}
 	if (name === 'real-case' || name === 'overflow') {
 		const timeline = name === 'real-case' ? realCaseTimeline(now) : overflowTimeline(now)
 		return { state: run(timeline.steps, start), live: bare(timeline.live), version: timeline.version }
@@ -715,7 +901,9 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 }
 
 const paneOf = (item: DockItem): Pane | undefined =>
-	[...Object.values(panes), ...Object.values(realPanes)].find(pane => `${PROFILE}:${pane.tid}` === item.session)
+	[...Object.values(panes), ...Object.values(realPanes), ...Object.values(agentsPanes)].find(
+		pane => `${PROFILE}:${pane.tid}` === item.session,
+	)
 
 /**
  * The next Okena poll after Jakub's dock answer landed: the dialog is gone from its

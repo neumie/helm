@@ -90,6 +90,7 @@ export const spoolSessionSchema = z.object({
 	terminalId: z.string(),
 	projectId: z.string().optional(),
 	project: z.string(),
+	repo: z.string().optional(),
 	name: z.string(),
 	branch: z.string().optional(),
 	sessionId: z.string().optional(),

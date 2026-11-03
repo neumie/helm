@@ -1717,28 +1717,6 @@ body.dragging {
 	color: var(--text-1);
 }
 
-/* Agent status glyphs (Agents pane). */
-.agent-dock-status {
-	flex: none;
-	width: 1ch;
-	text-align: center;
-	color: var(--dock-dim);
-}
-
-.agent-dock-status[data-status="working"] {
-	color: var(--text-0);
-	animation: agent-dock-pulse 1.6s ease-in-out infinite;
-}
-
-.agent-dock-status[data-status="background"] {
-	color: var(--text-1);
-}
-
-.agent-dock-status[data-status="waiting"],
-.agent-dock-status[data-status="unknown"] {
-	color: var(--warn);
-}
-
 @keyframes agent-dock-pulse {
 	0%,
 	100% {
@@ -2512,61 +2490,127 @@ body.dragging {
 	}
 }
 
-/* Agents: a table of observed facts. */
-.agent-dock-table {
+/* Agents pane (design §3.24 Agents): agents grouped under dim project headings, every row a 12px
+ * status-glyph box (the queue's glyph box, so glyphs sit on the 16px column), the short name, the status
+ * word and age, meta. One grid for the whole list — groups, their lists and rows are subgrids — so the
+ * columns line up across groups, each as wide as its widest cell (never stretched across the pane),
+ * ages right-aligned. */
+.agent-dock-agent-list {
+	--agent-row: calc(24px * var(--ui-scale));
 	display: grid;
-	grid-template-columns: 1ch repeat(4, minmax(0, max-content));
-	column-gap: 2ch;
-	margin: 4px 0 0;
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, max-content);
+	justify-content: start;
+	max-width: 100%;
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agent-group,
+.agent-dock-agent-rows,
+.agent-dock-agent {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+}
+
+.agent-dock-agent-rows {
+	margin: 0;
 	padding: 0;
 	list-style: none;
 }
 
-.agent-dock-tr {
+/* The project heading: dim, the row's size and weight (no bold in the dock), a little air above. */
+.agent-dock-agent-group-name {
 	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: subgrid;
-	align-items: baseline;
-	align-content: center;
-	min-height: 24px;
+	align-content: end;
+	min-height: var(--agent-row);
+	margin: 0;
+	padding-top: 8px;
+	font: inherit;
+	color: var(--dock-dim);
 	white-space: nowrap;
-}
-
-.agent-dock-tr > * {
-	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
-.agent-dock-td-name {
-	color: var(--text-0);
+.agent-dock-agent-group:first-child .agent-dock-agent-group-name {
+	padding-top: 0;
 }
 
-.agent-dock-td-project,
-.agent-dock-td-meta {
+.agent-dock-agent {
+	align-items: baseline;
+	align-content: center;
+	min-height: var(--agent-row);
+	white-space: nowrap;
+}
+
+.agent-dock-agent-glyph {
+	width: 12px;
+	text-align: center;
+	font-size: var(--dock-prose-fs);
 	color: var(--dock-dim);
 }
 
-.agent-dock-td-status {
+.agent-dock-agent-glyph[data-status="working"] {
+	color: var(--text-0);
+	animation: agent-dock-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-dock-agent-glyph[data-status="background"] {
 	color: var(--text-1);
 }
 
-.agent-dock-td-status[data-status="working"] {
-	color: var(--text-0);
-}
-
-.agent-dock-td-status[data-status="unknown"],
-.agent-dock-td-status[data-tone="warn"] {
+.agent-dock-agent-glyph:is([data-status="waiting"], [data-status="unknown"]) {
 	color: var(--warn);
 }
 
+.agent-dock-agent-name {
+	min-width: 0;
+	max-width: 40ch;
+	padding-left: 8px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-1);
+}
+
+.agent-dock-agent-meta {
+	min-width: 0;
+	padding-left: 24px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--dock-dim);
+}
+
+/* Status words carry the state by brightness: busy and waiting read, idle and frozen recede. The word and
+ * the age are cells of their own (the state span only carries the color). */
+.agent-dock-agent-state {
+	display: contents;
+	color: var(--text-1);
+}
+
+.agent-dock-agent-state:is([data-status="idle"], [data-status="unreachable"]) {
+	color: var(--dock-dim);
+}
+
 /* A waiting agent ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
-.agent-dock-td-status[data-tone="danger"] {
+.agent-dock-agent-state:is([data-status="unknown"], [data-tone="warn"]) {
+	color: var(--warn);
+}
+
+.agent-dock-agent-state[data-tone="danger"] {
 	color: var(--danger);
 }
 
+.agent-dock-agent-word {
+	padding-left: 24px;
+}
+
+.agent-dock-agent-age {
+	padding-left: 6px;
+	justify-self: end;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.agent-dock-status {
+	.agent-dock-agent-glyph {
 		animation: none;
 	}
 }

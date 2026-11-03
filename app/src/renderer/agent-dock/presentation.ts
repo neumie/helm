@@ -326,19 +326,45 @@ export function findSession(snapshot: AgentDockSnapshot | null, key: string): Do
 const BRANCH_TYPE_PREFIX = /^(?:fix|feat|chore|refactor|docs|test|perf|build|ci|style|wip|hotfix|release)\//
 /** Branches that say nothing about the work in them: the agent keeps its terminal name instead. */
 const DEFAULT_BRANCHES = new Set(['main', 'master', 'develop', 'trunk'])
+/** A detached HEAD: Okena reports the commit hash as the "branch" (`d1aee9df`), which says nothing about the work either. */
+const COMMIT_HASH = /^[0-9a-f]{7,40}$/i
 
-/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a bare prefix). */
+/** Says nothing about the work: no branch, a default branch, or a detached HEAD's commit hash. */
+const anonymousBranch = (line: string): boolean => line === '' || DEFAULT_BRANCHES.has(line) || COMMIT_HASH.test(line)
+
+/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a commit hash, a bare prefix). */
 export function branchShortName(branch: unknown): string {
 	const line = plainAgentLine(branch, 120)
-	if (DEFAULT_BRANCHES.has(line)) return ''
+	if (anonymousBranch(line)) return ''
 	return line.replace(BRANCH_TYPE_PREFIX, '')
 }
 
 const terminalName = (key: string): string => `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
 
-/** The name before duplicates are numbered: the short branch, else Okena's pane name, else the terminal. */
+/**
+ * The repository an agent works in: Okena's parent project of a worktree (`repo`, `JVS`), else the
+ * pane's own project (a main checkout, `Psyon`). '' when the reducer could not place the pane.
+ */
+export function agentRepo(session: DockSession): string {
+	const repo = plainAgentLine(session.repo || session.project, 48)
+	return repo === 'unknown project' ? '' : repo
+}
+
+/**
+ * Okena's pane name, unless it is only an anonymous branch: Okena names an unnamed pane after its
+ * project's branch (`d1aee9df`, `main`), which says nothing about the work.
+ */
+function paneName(session: DockSession): string {
+	const name = plainAgentLine(session.name, 64)
+	return anonymousBranch(name) ? '' : name
+}
+
+/**
+ * The name before duplicates are numbered: the short branch, else Okena's pane name, else the
+ * repository (a main checkout on a default branch or a detached HEAD reads `Psyon`), else the terminal.
+ */
 function baseAgentName(session: DockSession): string {
-	return branchShortName(session.branch) || plainAgentLine(session.name, 64) || terminalName(session.key)
+	return branchShortName(session.branch) || paneName(session) || agentRepo(session) || terminalName(session.key)
 }
 
 /**
@@ -363,6 +389,7 @@ export interface AgentWho {
 	name: string
 	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
 	title: string
+	/** The repository (`agentRepo`: `JVS` for a JVS worktree, never the worktree's branch-named project). */
 	project: string
 }
 
@@ -371,8 +398,8 @@ export function agentWho(snapshot: AgentDockSnapshot | null, key: string): Agent
 	const session = findSession(snapshot, key)
 	if (!session) return { name: terminalName(key), title: '', project: '' }
 	const name = agentNames(snapshot?.sessions ?? []).get(key) ?? baseAgentName(session)
-	const full = plainAgentLine(session.name, 200)
-	return { name, title: full && full !== name ? full : '', project: plainAgentLine(session.project, 48) }
+	const full = paneName(session) ? plainAgentLine(session.name, 200) : ''
+	return { name, title: full && full !== name ? full : '', project: agentRepo(session) }
 }
 
 export interface AskOption {
@@ -666,23 +693,29 @@ export function emptyQueueText(snapshot: AgentDockSnapshot): string {
 	return 'Nothing needs you'
 }
 
-/** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
-export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
-	const age = formatAge(now - since)
+/** Status words for an agent line, as its word and its age ('' for `frozen` / `unknown`): only what DockSession observed. */
+export function sessionStatusParts(
+	session: DockSession,
+	now: number,
+	since = session.since,
+): { word: string; age: string } {
 	switch (session.status) {
 		case 'working':
-			return `working ${age}`
 		case 'background':
-			return `background ${age}`
 		case 'waiting':
-			return `waiting ${age}`
 		case 'idle':
-			return `idle ${age}`
+			return { word: session.status, age: formatAge(now - since) }
 		case 'unreachable':
-			return 'frozen'
+			return { word: 'frozen', age: '' }
 		default:
-			return 'unknown'
+			return { word: 'unknown', age: '' }
 	}
+}
+
+/** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
+export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
+	const { word, age } = sessionStatusParts(session, now, since)
+	return age ? `${word} ${age}` : word
 }
 
 const STATUS_ORDER: Record<DockSession['status'], number> = {
@@ -914,4 +947,59 @@ export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession):
 	if (lastGood !== null && session.status !== 'unreachable' && lastGood - session.observedAt > SESSION_STALE_MS)
 		meta.push(`stale ${staleAge(lastGood - session.observedAt)}`)
 	return meta
+}
+
+/** One agent line in the Agents pane (grouped by `repo` under its heading). */
+export interface AgentRow {
+	key: string
+	status: DockSession['status']
+	glyph: string
+	/** The short name (`agentWho`). */
+	name: string
+	/** Okena's full pane name, for the tooltip; '' when it adds nothing. */
+	title: string
+	/** The repository (`agentRepo`), the row's group; '' when unknown. */
+	repo: string
+	/** Status word (`working`) and age (`4m`; '' for `frozen` / `unknown`). */
+	word: string
+	age: string
+	/** A waiting agent ages on its oldest ask's clock and takes that entry's tone; undefined otherwise. */
+	tone?: AgingTone
+	/** `agentRowMeta`: subagents, queued, PR #, not connected, stale. */
+	meta: string[]
+}
+
+/** The Agents pane's rows, in `orderedSessions` order (busy first). */
+export function agentRows(snapshot: AgentDockSnapshot | null, now: number): AgentRow[] {
+	if (!snapshot) return []
+	return orderedSessions(snapshot).map(session => {
+		const who = agentWho(snapshot, session.key)
+		const since = sessionSince(snapshot, session)
+		const { word, age } = sessionStatusParts(session, now, since)
+		return {
+			key: session.key,
+			status: session.status,
+			glyph: statusGlyph(session.status),
+			name: who.name,
+			title: who.title,
+			repo: who.project,
+			word,
+			age,
+			...(session.status === 'waiting' ? { tone: agingTone(now - since) } : {}),
+			meta: agentRowMeta(snapshot, session),
+		}
+	})
+}
+
+/**
+ * The Agents pane's groups: one per repository in the order its first agent shows (so the busiest
+ * repository leads), each keeping the rows' order. Agents with no known repository share one ''
+ * group, last.
+ */
+export function agentRepoGroups(rows: readonly AgentRow[]): Array<{ repo: string; rows: AgentRow[] }> {
+	const groups = new Map<string, AgentRow[]>()
+	for (const row of rows) groups.set(row.repo, [...(groups.get(row.repo) ?? []), row])
+	const unplaced = groups.get('')
+	groups.delete('')
+	return [...groups, ...(unplaced ? [['', unplaced] as const] : [])].map(([repo, grouped]) => ({ repo, rows: grouped }))
 }
