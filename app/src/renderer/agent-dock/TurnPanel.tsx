@@ -1,6 +1,6 @@
 // The turn-ended pane body: the agent's last message, PR links, and a reply typed into its
 // terminal as the next prompt.
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { DockSession } from '../../agent-dock/model'
 import {
 	Footer,
@@ -14,7 +14,8 @@ import {
 } from './pane-chrome'
 import { isPrintable, modHint, modShortcut, submitKeys, useKeys } from './pane-keys'
 import { type PanelProps, useDraft } from './panel'
-import { itemHeadline, plainAgentText, riskyWord } from './presentation'
+import { itemHeadline, riskyWord } from './presentation'
+import { turnMessage } from './turn-markdown'
 
 export function TurnPanel(panel: PanelProps & { session: DockSession | undefined }) {
 	const {
@@ -39,6 +40,8 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 	/** The risky word the pending confirmation is about, while it asks. */
 	const [confirming, setConfirming] = useState<string | null>(null)
 	const replyRef = useRef<HTMLTextAreaElement>(null)
+	// Lexed once per message, not on every keystroke in the reply.
+	const message = useMemo(() => (item.fact.kind === 'turn' ? turnMessage(item.fact.text) : null), [item.fact])
 	const ready = live && text.trim() !== ''
 	const send = (confirmed: boolean) => {
 		if (!ready) return
@@ -78,7 +81,7 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 					<span className="agent-dock-message-mark" aria-hidden="true">
 						●
 					</span>
-					<p className="agent-dock-message-text">{plainAgentText(fact.text) || itemHeadline(item)}</p>
+					{message ?? <p className="agent-dock-message-text">{itemHeadline(item)}</p>}
 				</div>
 				{notes.length > 0 || session?.prLinks.length ? (
 					<p className="agent-dock-facts">

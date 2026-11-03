@@ -29,6 +29,8 @@ export type AgentDockScenario =
 	| 'down'
 	/** One agent, one unchecked turn that ended a minute ago (the queue's single-entry layout). */
 	| 'single-turn'
+	/** `single-turn` whose last message is Claude's Markdown (`TURN_MARKDOWN_TEXT`): bold, nested lists, code. */
+	| 'markdown-turn'
 	/**
 	 * Jakub's real day: three items whose panes carry long ClientCare task titles. Two sessions share
 	 * the worktree branch `fix/company-create-save-firm` (a question and a permission), one turn ended on
@@ -55,6 +57,24 @@ export type AgentDockScenario =
 	| 'helm-add-directories'
 
 type Json = Record<string, unknown>
+
+/** A real Claude Code turn ending (Czech, Markdown, cut mid-sentence by the excerpt bound), verbatim. */
+export const TURN_MARKDOWN_TEXT = [
+	'**Původní problém:** jeden klient s vadným e-mailem (např. `jmeno@emailcz`) → SmartEmailing odmítne celou hromadnou kampaň. Worker pak spadl s chybou 500 a admin ukázal jen „Nepodařilo se odeslat kampaň." Nebylo poznat, kdo za to může.',
+	'',
+	'**1. Kontrola e-mailů před odesláním**',
+	'- Nová fce `isValidEmailAddress` v `lib/src/utils/email.ts`. Kontrola je záměrně volná, chytá jen adresy, které SmartEmailing stejně odmítne:',
+	'  - adresa má jen jedno `@`',
+	'  - doména má tečku (`jmeno@emailcz` neprojde)',
+	'  - uvnitř nejsou mezery ani znaky `, ; : < > ( ) [ ] \\ "`, typicky čárka zbylá po kopírování',
+	'- Worker (`worker/src/modules/smart-emailing/sendCampaign.ts`) zkontroluje všechny příjemce ještě před voláním SmartEmailingu.',
+	'  - Pokud je e-mail chybný nebo chybí, vrátí 422 `invalidRecipients` s ID klientů a nic se neodešle.',
+	'  - Dřív chybějící e-mail skončil chybou 500 a vadný se vůbec nekontroloval.',
+	'',
+	'**2. Když SmartEmailing odmítne nebo neodpoví**',
+	'- Odpověď 4xx znamená jisté odmítnutí, nic neodešlo. Worker vrátí 502 `smartEmailingRejected` a důvod od SmartEmailingu.',
+	'- Odpověď 5xx, výpadek spojení nebo nečitelná odpověď → 502 `smartEmailingUnconfirmed`. Kampaň mohla odejít, admin',
+].join('\n')
 
 const PROFILE = 'storybook'
 const MINUTE = 60_000
@@ -601,12 +621,19 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
 	if (name === 'connecting') return { state: start, live: [], version: 0 }
 	if (name === 'empty') return { state: run([[now - 1_000, poll(1, [])]], start), live: [], version: 1 }
-	if (name === 'single-turn') {
+	if (name === 'single-turn' || name === 'markdown-turn') {
 		const working = detail(panes.turn, { busy: true })
 		const idle = { ...working, busy: false }
 		const page = transcript(
 			panes.turn,
-			[assistant('turn-a1', 'Hotovo. Commit 1a84c0e je na main, working tree je čistý.\n\nMám to pushnout?')],
+			[
+				assistant(
+					'turn-a1',
+					name === 'markdown-turn'
+						? TURN_MARKDOWN_TEXT
+						: 'Hotovo. Commit 1a84c0e je na main, working tree je čistý.\n\nMám to pushnout?',
+				),
+			],
 			2_000,
 			false,
 		)

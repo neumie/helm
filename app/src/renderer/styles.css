@@ -1921,6 +1921,7 @@ body.dragging {
 .agent-dock-question,
 .agent-dock-pane-lead,
 .agent-dock-message-text,
+.agent-dock-md,
 .agent-dock-warn,
 .agent-dock-input,
 .agent-dock-facts {
@@ -2288,6 +2289,93 @@ body.dragging {
 	color: var(--text-0);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+}
+
+/* The message as Markdown (turn-markdown.ts → safe-markdown.ts: explicit elements, never HTML).
+ * By the dock's rules: no weight anywhere; emphasis (bold, headings) is --text-0 against the
+ * --text-1 body, list markers dim, inline code and code blocks in mono with no box. Compact rhythm on
+ * the 13/20 reading text: 8px between blocks, 2px between list items (and after a list's lead line),
+ * one 18px step per list level. */
+.agent-dock-md {
+	min-width: 0;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-md-plain {
+	white-space: pre-wrap;
+}
+
+.agent-dock-md :where(p, h3, h4, h5, h6, ul, ol, pre, blockquote) {
+	margin: 0;
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: 400;
+	white-space: pre-line;
+}
+
+/* Blocks 8px apart, but a paragraph's own list (`Lead:` then `- item`) follows it at the item pitch. */
+.agent-dock-md > * + *,
+.agent-dock-md blockquote > * + * {
+	margin-top: 8px;
+}
+
+.agent-dock-md p + :is(ul, ol) {
+	margin-top: 2px;
+}
+
+.agent-dock-md :is(strong, h3, h4, h5, h6) {
+	color: var(--text-0);
+	font-weight: 400;
+}
+
+.agent-dock-md :is(ul, ol) {
+	padding-left: 18px;
+	white-space: normal;
+}
+
+.agent-dock-md li {
+	padding-left: 2px;
+	white-space: pre-line;
+}
+
+.agent-dock-md li + li,
+.agent-dock-md li > :is(ul, ol),
+.agent-dock-md li > p + * {
+	margin-top: 2px;
+}
+
+.agent-dock-md li::marker {
+	color: var(--dock-dim);
+}
+
+.agent-dock-md code {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: normal;
+}
+
+.agent-dock-md pre {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: normal;
+	white-space: pre-wrap;
+}
+
+.agent-dock-md pre code {
+	font-size: inherit;
+}
+
+.agent-dock-md blockquote {
+	padding-left: 18px;
+	color: var(--dock-dim);
+}
+
+.agent-dock-md hr {
+	height: 0;
+	margin: 8px 0 0;
+	border: 0;
 }
 
 .agent-dock-facts {

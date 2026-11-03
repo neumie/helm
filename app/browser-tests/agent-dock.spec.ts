@@ -1392,3 +1392,35 @@ test('keys in the dock light its edge accent at 1px; the focused entry is the se
 	await expect(row(page).locator('.agent-dock-agents-entry')).toBeFocused()
 	await expect.poll(() => dockEdge(page)).toBe(await tokenColor(page, '--accent'))
 })
+
+test('a turn message renders as quiet Markdown: nested lists, mono code, emphasis by tone, never weight', async ({
+	page,
+}) => {
+	await page.goto('/iframe.html?id=views-agent-dock-turn-message--markdown&viewMode=story')
+	const message = page.locator('.agent-dock-pane .agent-dock-md')
+	await expect(message.locator(':scope > ul')).toHaveCount(2)
+	await expect(message.locator('li > ul')).toHaveCount(2)
+	await expect(message.locator('code').first()).toHaveText('jmeno@emailcz')
+	// Markdown marks are gone; HTML-like text inside code stays literal.
+	await expect(message).not.toContainText('**')
+	await expect(message.locator('code', { hasText: '< >' })).toHaveCount(1)
+	const style = (selector: string, property: string) =>
+		message
+			.locator(selector)
+			.first()
+			.evaluate((node, name) => getComputedStyle(node).getPropertyValue(name), property)
+	expect(await style('code', 'font-family')).toMatch(/SF Mono/)
+	expect(await style('p', 'font-family')).not.toMatch(/SF Mono|Menlo/)
+	expect(await style('strong', 'font-weight')).toBe('400')
+	expect(await style('strong', 'color')).toBe(await tokenColor(page, '--text-0'))
+	expect(await style('p', 'color')).toBe(await tokenColor(page, '--text-1'))
+	// One step of indent per list level.
+	const left = (selector: string) =>
+		message
+			.locator(selector)
+			.first()
+			.evaluate(node => node.getBoundingClientRect().left)
+	const step = (await left('li li')) - (await left(':scope > ul > li'))
+	expect(step).toBeGreaterThan(12)
+	expect(step).toBeLessThan(28)
+})
