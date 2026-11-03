@@ -14,7 +14,7 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import { agentDockAgentsLayout, agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
@@ -23,7 +23,7 @@ import {
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import type { AgentDockPosition, AgentsLayout } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
@@ -66,6 +66,10 @@ export interface TerminalWorkspaceFixtureOptions {
 		focusDock?: boolean
 		/** Story only: `afterMs` after the terminal is ready, a new agent's item of `kind` arrives. */
 		arrive?: { kind: AgentDockArrivalKind; afterMs: number }
+		/** The Agents pane's grouping, stored like Jakub's switch before the dock mounts (else the stored one). */
+		agentsLayout?: AgentsLayout
+		/** Story only, with `open: 'agents'`: then click this agent's row (by its short name), like a pointer would. */
+		openAgent?: string
 	}
 }
 
@@ -597,8 +601,9 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', position } = options.agentDock
+			const { scenario = 'busy', position, agentsLayout } = options.agentDock
 			if (position) agentDockPosition.set(position)
+			if (agentsLayout) agentDockAgentsLayout.set(agentsLayout)
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
@@ -659,9 +664,19 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 				requestAnimationFrame(() => {
 					if (unmounted) return
 					// A pointer click (detail 1): the pane opens and xterm keeps focus.
-					root
-						.querySelector(AGENT_DOCK_OPEN_SELECTOR[open])
-						?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					const click = (node: Element | null | undefined) =>
+						node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					click(root.querySelector(AGENT_DOCK_OPEN_SELECTOR[open]))
+					const agent = options.agentDock?.openAgent
+					if (open === 'agents' && agent)
+						requestAnimationFrame(() => {
+							if (unmounted) return
+							click(
+								[...root.querySelectorAll<HTMLElement>('.agent-dock-agent')].find(
+									row => row.querySelector('.agent-dock-agent-name')?.textContent === agent,
+								),
+							)
+						})
 				})
 		})
 		return () => {

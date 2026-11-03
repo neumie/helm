@@ -417,6 +417,68 @@ test('reply refused when someone already answered in the terminal; prompt errors
 	}
 })
 
+test('agent detail: the full last message read live; a reply only once its turn is acked, CAS on what was read', async () => {
+	const h = await harness(okena => {
+		okena.detail = { ...structuredClone(SHOW_IDLE), busy: true }
+		okena.entries = [{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' }]
+	})
+	try {
+		await h.tick()
+		h.okena.entries.push({ kind: 'assistant', uuid: 'a-1', text: '**Merged.**\n\nThe deploy runs at 18:00.' })
+		h.okena.detail = { ...h.okena.detail, busy: false }
+		h.okena.version++
+		await h.tick()
+		await h.tick(TURN_IDLE_MS)
+		const turn = h.item('turn')
+		const key = h.watcher.snapshot().sessions[0]?.key as string
+		assert.deepEqual(h.watcher.snapshot().sessions[0]?.lastMessage, {
+			uuid: 'a-1',
+			text: '**Merged.**',
+			at: h.watcher.snapshot().sessions[0]?.lastMessage?.at,
+			seen: false,
+		})
+
+		const read = await h.watcher.readMessage(key)
+		assert.deepEqual(read, {
+			ok: true,
+			message: { uuid: 'a-1', text: '**Merged.**\n\nThe deploy runs at 18:00.' },
+			sessionId: SID,
+		})
+		assert.equal((await h.watcher.readMessage('p1:nope')).ok, false)
+
+		// The open turn is where a reply goes: the agent detail refuses before any request.
+		const posts = h.okena.posts.length
+		const early = await h.watcher.prompt({ session: key, sessionId: SID, assistantUuid: 'a-1', text: 'ok' })
+		assert.equal(early.outcome.status === 'refused' && early.outcome.reason, 'not_open')
+		assert.equal(h.okena.posts.length, posts)
+
+		assert.equal(await h.watcher.ack(turn.id), true)
+		assert.equal(h.watcher.snapshot().sessions[0]?.lastMessage?.seen, true)
+
+		// Read something older than the tail: refused, nothing typed.
+		const stale = await h.watcher.prompt({ session: key, sessionId: SID, assistantUuid: 'a-0', text: 'ok' })
+		assert.equal(stale.outcome.status === 'refused' && stale.outcome.reason, 'changed')
+		assert.equal(h.okena.posts.length, posts)
+
+		const sent = await h.watcher.prompt({
+			session: key,
+			sessionId: SID,
+			assistantUuid: 'a-1',
+			text: 'Díky, pusť to.\n',
+		})
+		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' } })
+		assert.deepEqual(h.okena.posts.at(-1)?.body, { text: 'Díky, pusť to.' })
+		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.status, 'sent')
+		// Okena typed it (the fake adds the user entry and goes busy): the expedited read confirms it.
+		await h.tick()
+		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.status, 'confirmed')
+		assert.ok(!h.disk().includes('pusť'))
+		assert.ok(!h.disk().includes('Merged'))
+	} finally {
+		await h.done()
+	}
+})
+
 test('a 2xx whose dialog stays open turns amber after 10 s, is not ackable, then comes back to answer again', async () => {
 	const h = await harness()
 	try {

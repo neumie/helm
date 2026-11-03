@@ -107,8 +107,8 @@ export function dockActBody(
 	const fact = item.fact
 	if (fact.kind === 'turn') {
 		if (action.type !== 'prompt') return refuse('invalid', 'A finished turn takes a reply.')
-		const text = action.text.replace(/\s+$/u, '')
-		if (!text.trim()) return refuse('invalid', 'The reply is empty.')
+		const text = promptText(action.text)
+		if (text === null) return refuse('invalid', 'The reply is empty.')
 		return { ok: true, body: { kind: 'prompt', body: { text } } }
 	}
 	if (action.type === 'prompt') return refuse('invalid', 'An open dialog takes an answer, not a reply.')
@@ -206,12 +206,25 @@ export function turnStillWaiting(
 ): DockCheck {
 	if (item.fact.kind !== 'turn') return refuse('invalid', 'Not a turn.')
 	const fact: DockTurnFact = item.fact
-	if (fact.sessionId && fresh.session_id && fact.sessionId !== fresh.session_id)
+	return sessionStillIdle({ sessionId: fact.sessionId, assistantUuid: fact.assistantUuid }, fresh, page)
+}
+
+/**
+ * CAS for a reply to an agent (a turn's, or one from the agent detail with no item): the same
+ * Claude session Jakub saw, idle with no dialog, and the transcript tail still ends at the
+ * message he read (`assistantUuid`; with none, at no assistant message) with no user entry after it.
+ */
+export function sessionStillIdle(
+	expect: { sessionId?: string; assistantUuid?: string },
+	fresh: OkenaClaudeSession,
+	page: OkenaClaudeTranscriptPage | null,
+): DockCheck {
+	if (expect.sessionId && fresh.session_id && expect.sessionId !== fresh.session_id)
 		return refuse('gone', 'A new Claude session started in this pane.')
 	if (fresh.dialogs.length > 0) return refuse('busy', 'The agent opened a dialog; answer that first.')
 	if (fresh.busy !== false) return refuse('busy', REFUSAL_TEXT.busy)
 	if (!page) return refuse('changed', 'The transcript could not be read; check the terminal.')
-	if (fact.sessionId && page.session_id && page.session_id !== fact.sessionId)
+	if (expect.sessionId && page.session_id && page.session_id !== expect.sessionId)
 		return refuse('gone', 'A new Claude session started in this pane.')
 	let last: OkenaClaudeEntry | undefined
 	let userAfter = false
@@ -221,10 +234,20 @@ export function turnStillWaiting(
 			userAfter = false
 		} else if (entry.kind === 'user') userAfter = true
 	}
-	if (!last) return refuse('changed', 'The turn is no longer in the transcript tail; check the terminal.')
-	if (last.uuid !== fact.assistantUuid) return refuse('changed', 'The agent said something new; check it again.')
+	if (expect.assistantUuid === undefined) {
+		if (last) return refuse('changed', 'The agent said something new; check it again.')
+	} else {
+		if (!last) return refuse('changed', 'The turn is no longer in the transcript tail; check the terminal.')
+		if (last.uuid !== expect.assistantUuid) return refuse('changed', 'The agent said something new; check it again.')
+	}
 	if (userAfter) return refuse('gone', 'Someone already replied in the terminal.')
 	return { ok: true }
+}
+
+/** A reply's text as it is sent: trailing whitespace dropped; null when nothing is left. */
+export function promptText(text: string): string | null {
+	const trimmed = text.replace(/\s+$/u, '')
+	return trimmed.trim() ? trimmed : null
 }
 
 /** Errors that prove the request never reached Okena (nothing to confirm). */

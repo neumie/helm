@@ -85,5 +85,10 @@ export const DOCK_REFUSAL_REASONS = [
 	'in_flight',
 ] as const
 
+/** Bound for an agent's last-message excerpt (`DockSession.lastMessage.text`): one line. */
+export const DOCK_EXCERPT_MAX = 160
+/** Bound for the full last message the agent detail reads live (memory/IPC only). */
+export const DOCK_LIVE_MESSAGE_MAX = 8_192
+
 /** How Okena (or Helm's hub) delivered a reply to the agent. */
 export const DOCK_PROMPT_DELIVERIES = ['channel', 'pty', 'queued'] as const

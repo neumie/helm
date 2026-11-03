@@ -1,7 +1,7 @@
 // Agent dock body (design §3.24): one --chrome surface below (or above) the terminal,
 // like the topbar mirrored. Two bands: the 28px queue row — one quiet line per item
 // that owes Jakub something (glyph, short name, wait), "+N more" when they do not fit,
-// then the Agents entry, the sources' health dot and ⌘⇧J — and, when an entry is opened, a pane
+// then the Agents entry and ⌘⇧J — and, when an entry is opened, a pane
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
 // happens in the pane and the receipt shows in place; entries keep their
@@ -19,19 +19,29 @@ import {
 	useRef,
 	useState,
 } from 'react'
-import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from '../../agent-dock/model'
+import type {
+	AgentDockActResult,
+	AgentDockMessageResult,
+	AgentDockPromptRequest,
+	AgentDockSnapshot,
+	DockAction,
+	DockItem,
+} from '../../agent-dock/model'
 import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
+import { AgentPanel, agentDraftKey } from './AgentPanel'
 import { AgentsDetail } from './AgentsDetail'
 import { type DetailKeys, type DockModKey, dockShortcut, isAckKey, keepsEditKey } from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
+	type AgentRow,
+	type AgentsLayout,
 	actErrorText,
+	agentOverview,
 	agentWho,
 	canAck,
 	canAnswer,
-	dockHealth,
 	dockLabel,
 	failedActResult,
 	findSession,
@@ -63,6 +73,14 @@ export interface AgentDockProps {
 	onAck(itemId: number): Promise<boolean>
 	/** Jakub answered from the pane (main runs the Okena CAS + POST; the receipt arrives in the snapshot). */
 	onAct?(itemId: number, action: DockAction): Promise<AgentDockActResult>
+	/** Jakub replied from an agent's detail (it owed him nothing); the receipt arrives on its session. */
+	onPrompt?(request: AgentDockPromptRequest): Promise<AgentDockActResult>
+	/** The agent detail's full last message, read live through the agent's source. */
+	readMessage?(session: string): Promise<AgentDockMessageResult>
+	/** How the Agents pane groups its rows (Jakub's stored setting); default `by-state`. */
+	agentsLayout?: AgentsLayout
+	/** Jakub switched the grouping in the Agents pane header (or with `G`): store it. */
+	onAgentsLayout?(layout: AgentsLayout): void
 	/** Most px the pane may take so the terminal keeps its rows (the layout measures #right); null = no limit known. */
 	paneRoom?: () => number | null
 	/** After the pane opens or closes: the terminal row changed height once, refit it. */
@@ -81,8 +99,20 @@ export const PANE_MAX_HEIGHT = 480
 /** However little room is left, the pane keeps its rule, a few body rows and its footer. */
 const PANE_FLOOR = 120
 
+/** An agent-detail reply's local error, while the agent's last message is still the one it answered. */
+const promptError = (
+	error: { text: string; uuid?: string } | undefined,
+	lastUuid: string | undefined,
+): string | null => (error && error.uuid === lastUuid ? error.text : null)
+
 const targetKey = (target: AgentDockTarget | null): string | null =>
-	target === null ? null : target.type === 'agents' ? 'agents' : `item:${target.id}`
+	target === null
+		? null
+		: target.type === 'agents'
+			? 'agents'
+			: target.type === 'agent'
+				? `agent:${target.key}`
+				: `item:${target.id}`
 
 export function AgentDock({
 	snapshot,
@@ -92,6 +122,10 @@ export function AgentDock({
 	handle,
 	onAck,
 	onAct,
+	onPrompt,
+	readMessage,
+	agentsLayout = 'by-state',
+	onAgentsLayout,
 	paneRoom,
 	onPaneChange,
 	focusTerminal,
@@ -133,11 +167,26 @@ export function AgentDock({
 	 * shows the sent picks under the receipt, and a refusal or failure restores them for a retry.
 	 */
 	const sent = useRef(new Map<number, DockAction>(initialSent ?? [])).current
+	/** The Agents pane's row that holds its tab stop: the last one focused or opened. */
+	const [agentCurrent, setAgentCurrent] = useState<string | null>(
+		initialOpen?.type === 'agent' ? initialOpen.key : null,
+	)
+	/** The Agents pane's grouping: the stored setting, switched in its header (stored through onAgentsLayout). */
+	const [layout, setLayout] = useState<AgentsLayout>(agentsLayout)
+	useLayoutEffect(() => setLayout(agentsLayout), [agentsLayout])
+	const chooseLayout = (next: AgentsLayout) => {
+		setLayout(next)
+		onAgentsLayout?.(next)
+	}
+	/** Opened from the Agents pane (an agent's detail or its item): Esc goes back to that row. */
+	const returnTo = useRef<string | null>(initialOpen?.type === 'agent' ? initialOpen.key : null)
+	/** Agent-detail replies awaiting main's answer, and words main could not record, by session key. */
+	const [prompting, setPrompting] = useState<ReadonlySet<string>>(new Set())
+	const [promptErrors, setPromptErrors] = useState<ReadonlyMap<string, { text: string; uuid?: string }>>(new Map())
 	/** Re-render clock for answered entries that linger with their receipt. */
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
 
-	const health = dockHealth(snapshot)
 	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
@@ -156,14 +205,24 @@ export function AgentDock({
 	const openItem =
 		liveItem ?? (target?.type === 'item' && shownItem.current?.id === target.id ? shownItem.current : undefined)
 	shownItem.current = openItem
-	const paneOpen = target?.type === 'agents' || openItem !== undefined
+	// The Agents pane's order (its layout's groups, flattened): ‹ › in an agent's detail follow it.
+	const overview = agentOverview(snapshot, clock, layout)
+	const agentOrder = overview.flatMap(group => group.rows)
+	const agentIndex = target?.type === 'agent' ? agentOrder.findIndex(row => row.key === target.key) : -1
+	const agentRow: AgentRow | undefined = agentOrder[agentIndex]
+	const agentSession = agentRow ? findSession(snapshot, agentRow.key) : undefined
+	const paneOpen =
+		target?.type === 'agents' || (agentRow !== undefined && agentSession !== undefined) || openItem !== undefined
 	const paneShown = paneOpen && paneHeight !== null
 	const room = paneOpen ? (paneRoom?.() ?? null) : null
 	const height =
 		paneHeight === null ? undefined : Math.max(PANE_FLOOR, Math.min(paneHeight, room ?? Number.POSITIVE_INFINITY))
 
 	const close = useCallback((refocus: boolean) => {
-		const key = targetKey(targetRef.current)
+		const shown = targetRef.current
+		// An agent's detail stands under the Agents entry.
+		const key = shown?.type === 'agent' ? 'agents' : targetKey(shown)
+		returnTo.current = null
 		focusOnOpen.current = false
 		keepFocus.current = false
 		setTarget(null)
@@ -209,10 +268,19 @@ export function AgentDock({
 		setTarget(next)
 	}
 
+	/** Keyboard home in the pane: the Agents pane's current row, else the pane itself. */
+	const focusPaneHome = () => {
+		const pane = paneRef.current
+		const row =
+			targetRef.current?.type === 'agents' ? pane?.querySelector<HTMLElement>('.agent-dock-agent[tabindex="0"]') : null
+		;(row ?? pane)?.focus()
+	}
+
 	const open = (next: AgentDockTarget, viaKeyboard: boolean) => {
+		returnTo.current = null
 		if (targetKey(next) === openKey) {
 			// Enter/Space on the open entry goes to its pane (confirming never deselects); a click closes it.
-			if (viaKeyboard) paneRef.current?.focus()
+			if (viaKeyboard) focusPaneHome()
 			else close(false)
 			return
 		}
@@ -224,6 +292,36 @@ export function AgentDock({
 		const next = needs[openIndex + delta]
 		if (openIndex < 0 || !next) return
 		show({ type: 'item', id: next.id }, false, onChoices)
+	}
+
+	/** From the Agents pane: the agent's live item (its most urgent), else its detail. */
+	const openAgent = (row: AgentRow, viaKeyboard: boolean) => {
+		setAgentCurrent(row.key)
+		returnTo.current = row.key
+		show(row.itemId !== undefined ? { type: 'item', id: row.itemId } : { type: 'agent', key: row.key }, viaKeyboard)
+	}
+
+	/** ‹ › in an agent's detail: the previous / next agent in the Agents pane's order. */
+	const stepAgent = (delta: number) => {
+		const next = agentOrder[agentIndex + delta]
+		if (agentIndex < 0 || !next) return
+		setAgentCurrent(next.key)
+		returnTo.current = next.key
+		show({ type: 'agent', key: next.key }, false)
+	}
+
+	/** Esc from an agent's detail (or an item opened from the Agents pane): back to the list, on that agent's row. */
+	const backToAgents = () => {
+		const key = returnTo.current
+		returnTo.current = null
+		if (key) setAgentCurrent(key)
+		show({ type: 'agents' }, focusInPane())
+	}
+
+	/** The pane's Esc: back to the Agents pane when it came from there, else close back to the entry. */
+	const leavePane = () => {
+		if (targetRef.current?.type === 'agent' || returnTo.current !== null) backToAgents()
+		else close(true)
 	}
 
 	/**
@@ -285,13 +383,19 @@ export function AgentDock({
 		setPaneHeight(Math.min(PANE_MAX_HEIGHT, Math.max(PANE_MIN_HEIGHT, Math.ceil(natural))))
 	})
 
-	// Keyboard-opened panes take focus; pointer use never does (the layout keeps xterm focused).
+	// Keyboard-opened panes take focus (the Agents pane: its current row); pointer use never does (the
+	// layout keeps xterm focused).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: re-run per opened target, not only per height
 	useEffect(() => {
 		if (!paneShown || !focusOnOpen.current) return
 		focusOnOpen.current = false
-		paneRef.current?.focus()
+		focusPaneHome()
 	}, [paneShown, openKey])
+
+	// An agent's detail whose agent left the snapshot goes back to the list.
+	useLayoutEffect(() => {
+		if (target?.type === 'agent' && !agentRow) setTarget({ type: 'agents' })
+	}, [target, agentRow])
 
 	// A step or ack swapped the content under a focused control (or disabled it at an end): keep focus in the
 	// pane — on the new body's choices when the step came from a choice and it has live ones.
@@ -407,6 +511,41 @@ export function AgentDock({
 			})
 	}
 
+	/** A reply from an agent's detail; resolves with main's result (the field clears itself on success). */
+	const prompt = (key: string, request: Omit<AgentDockPromptRequest, 'session'>): Promise<AgentDockActResult> => {
+		if (!onPrompt || prompting.has(key))
+			return Promise.resolve({ ok: false, outcome: { status: 'refused', reason: 'in_flight', detail: '' } })
+		const edit = (patch: (next: Map<string, { text: string; uuid?: string }>) => void) =>
+			setPromptErrors(prev => {
+				const next = new Map(prev)
+				patch(next)
+				return next
+			})
+		edit(next => next.delete(key))
+		// Sending disables the field: keep the keys in the pane, not on <body>.
+		const pane = paneRef.current
+		const focused = pane?.ownerDocument.activeElement
+		if (pane && focused && focused !== pane && pane.contains(focused)) pane.focus({ preventScroll: true })
+		setPrompting(prev => new Set(prev).add(key))
+		return onPrompt({ session: key, ...request })
+			.catch(failedActResult)
+			.then(result => {
+				if (result.ok) drafts.delete(agentDraftKey(key))
+				setPrompting(prev => {
+					const next = new Set(prev)
+					next.delete(key)
+					return next
+				})
+				const error = actErrorText(result.outcome)
+				// Tied to the message it answered: once the agent says something new it no longer applies.
+				if (error !== null)
+					edit(next =>
+						next.set(key, { text: error, ...(request.assistantUuid ? { uuid: request.assistantUuid } : {}) }),
+					)
+				return result
+			})
+	}
+
 	const register = (key: string) => (node: HTMLButtonElement | null) => {
 		if (node) anchors.current.set(key, node)
 		else anchors.current.delete(key)
@@ -453,7 +592,7 @@ export function AgentDock({
 		}
 		if (event.key === 'Escape') {
 			event.preventDefault()
-			close(true)
+			leavePane()
 			return
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -469,7 +608,7 @@ export function AgentDock({
 			else scroller.scrollTop += event.key === 'PageUp' || (event.key === ' ' && event.shiftKey) ? -page : page
 			return
 		}
-		if (target?.type !== 'item') return
+		if (target?.type !== 'item' && target?.type !== 'agent') return
 		const horizontal = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
 		const vertical = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
 		const stop = onPane && vertical ? choiceStop(pane) : null
@@ -483,7 +622,8 @@ export function AgentDock({
 		const delta = onPane || onStepper ? horizontal || vertical : from === scroller || onChoice ? horizontal : 0
 		if (!delta) return
 		event.preventDefault()
-		step(delta, onChoice)
+		if (target.type === 'agent') stepAgent(delta)
+		else step(delta, onChoice)
 	}
 
 	// The row's name says what it is and the state in words.
@@ -502,18 +642,14 @@ export function AgentDock({
 				snapshot={snapshot}
 				now={clock}
 				needs={needs}
-				openKey={paneOpen ? openKey : null}
+				openKey={paneOpen ? (target?.type === 'agent' ? 'agents' : openKey) : null}
 				paneId={paneId}
 				register={register}
 				onOpen={open}
 			/>
-			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
-			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
+			{/* The row ends in the key that goes to the dock. Each source's health is in the Agents pane
+			    header; an outage stays in the row as its lead note (down, connecting) and its name. */}
 			<span className="agent-dock-row-end">
-				<span className="agent-dock-health" data-tone={health.tone} title={health.text}>
-					<span className="agent-dock-dot" aria-hidden="true" />
-					{health.tone === 'success' ? null : <span className="agent-dock-health-text">{health.text}</span>}
-				</span>
 				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcut.label})`}>
 					{shortcut.label}
 				</kbd>
@@ -528,7 +664,13 @@ export function AgentDock({
 			className="agent-dock-pane"
 			data-position={position}
 			tabIndex={-1}
-			aria-label={openItem && snapshot ? paneLabel(openItem, snapshot) : 'Agents'}
+			aria-label={
+				openItem && snapshot
+					? paneLabel(openItem, snapshot)
+					: agentRow
+						? `Agent, ${agentRow.name}${agentRow.repo ? `, ${agentRow.repo}` : ''}`
+						: 'Agents'
+			}
 			style={height === undefined ? undefined : { height }}
 			onKeyDown={onPaneKey}
 		>
@@ -552,12 +694,43 @@ export function AgentDock({
 					drafts={drafts}
 					mod={mod}
 					onStep={step}
-					onClose={() => close(true)}
+					onClose={leavePane}
 					onAck={() => ack(openItem.id)}
 					onAct={action => act(openItem, action)}
 				/>
+			) : agentRow && agentSession ? (
+				<AgentPanel
+					key={agentRow.key}
+					snapshot={snapshot}
+					session={agentSession}
+					row={agentRow}
+					now={clock}
+					index={agentIndex}
+					total={agentOrder.length}
+					mod={mod}
+					keys={detailKeys}
+					drafts={drafts}
+					submitting={prompting.has(agentRow.key)}
+					localError={promptError(promptErrors.get(agentRow.key), agentSession.lastMessage?.uuid)}
+					readMessage={readMessage}
+					canPrompt={onPrompt !== undefined}
+					onStep={stepAgent}
+					onClose={leavePane}
+					onOpenItem={itemId => show({ type: 'item', id: itemId }, focusInPane())}
+					onPrompt={request => prompt(agentRow.key, request)}
+				/>
 			) : (
-				<AgentsDetail snapshot={snapshot} now={clock} onClose={() => close(true)} />
+				<AgentsDetail
+					snapshot={snapshot}
+					now={clock}
+					layout={layout}
+					onLayout={chooseLayout}
+					current={agentCurrent}
+					keys={detailKeys}
+					onCurrent={setAgentCurrent}
+					onOpen={openAgent}
+					onClose={() => close(true)}
+				/>
 			)}
 		</section>
 	) : null

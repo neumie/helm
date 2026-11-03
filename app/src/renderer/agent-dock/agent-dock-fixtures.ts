@@ -11,7 +11,9 @@ import {
 	ACT_CONFIRM_MS,
 	type AgentDockActRequest,
 	type AgentDockActResult,
+	type AgentDockMessageResult,
 	type AgentDockObservation,
+	type AgentDockPromptRequest,
 	type AgentDockSnapshot,
 	type DockActOutcome,
 	type DockAction,
@@ -22,6 +24,7 @@ import {
 	type AgentDockState,
 	TURN_IDLE_MS,
 	agentDockSnapshot,
+	aggregateSourceHealth,
 	createAgentDockState,
 	reduce,
 } from '../../agent-dock/reduce'
@@ -53,6 +56,21 @@ export type AgentDockScenario =
 	 * Claude in a Helm terminal with background work.
 	 */
 	| 'agents-pane'
+	/**
+	 * The Agents overview (every state relative to Jakub), through the real reducer: a question
+	 * (12m), a permission (3m) and a plan (25m) need him; a JVS worktree's reply has waited 45m (with
+	 * PRs); Psyon's detached checkout works with 4 subagents; a Helm-terminal agent runs a background
+	 * shell (`1 shell`); another JVS worktree's turn was read (acked) 15m ago; one pane's detail is unreadable; one
+	 * Okena pane runs Claude without hooks (not connected).
+	 */
+	| 'agents-overview'
+	/** `agents-overview` with Okena unreachable since 2 minutes ago: its agents freeze, Helm's stays live. */
+	| 'agents-okena-down'
+	/**
+	 * `agents-overview` (3 minutes earlier) before Helm's hub first answers: Okena connected with its
+	 * agents, Helm terminals still connecting (no Helm agent yet).
+	 */
+	| 'agents-helm-connecting'
 	/**
 	 * Jakub's report: Claude merged PR #953, started the stage deploy in a background shell, said
 	 * "ozvu se, až doběhne" and stopped 2m ago. Okena says idle; the shell makes it `background`
@@ -799,6 +817,223 @@ function agentsPaneTimeline(now: number): {
 	return { steps, live: bare(endedNow), version: 8_007 }
 }
 
+/** The Agents overview's panes (AgentDockScenario 'agents-overview'); `helm` is a Helm terminal. */
+const overviewPanes = {
+	...agentsPanes,
+	deploy: {
+		tid: 'term-jvs-deploy',
+		sid: 'sess-jvs-deploy',
+		projectId: 'proj-jvs-deploy',
+		project: 'chore/stage-deploy',
+		name: 'Nasadit stage s novými API klíči (ClientCare #4230)',
+		branch: 'chore/stage-deploy',
+		parent: JVS,
+	},
+	contacts: {
+		tid: 'term-psyon-contacts',
+		sid: 'sess-psyon-contacts',
+		projectId: 'proj-psyon-contacts',
+		project: 'feat/contact-import',
+		name: 'Import kontaktů z CSV podle IČO (ClientCare #4219)',
+		branch: 'feat/contact-import',
+		parent: PSYON,
+	},
+	notes: {
+		tid: 'term-vault-notes',
+		sid: 'sess-vault-notes',
+		projectId: 'proj-vault',
+		project: 'vault',
+		name: 'notes',
+		branch: 'main',
+	},
+} satisfies Record<string, Pane>
+
+/** What each overview agent last said (first lines are what the Agents pane shows). */
+export const OVERVIEW_MESSAGES = {
+	psyon: 'Procházím všechny moduly fakturace a sepisuji, co jde sdílet.\n\nZatím: export, upomínky, ISDOC.',
+	invoices: 'Generátor PDF je hotový, zbývá rozhodnout umístění loga.',
+	deploy: 'Klíče jsou vygenerované, teď je nahraju na stage.',
+	contacts: 'Plán importu kontaktů je hotový, posílám ho ke schválení.',
+	repair: 'Hotovo, PR #956 je mergnutý a oprava stavu po dokončení opravy je na stage.\n\nMám zavřít i #484?',
+	imageLink: [
+		'**PR #953 je otevřený**: odkaz na obrázek je v protokolu i v e-mailu.',
+		'',
+		'- Protokol: odkaz pod fotkou vede na plnou velikost (`/media/{id}`).',
+		'- E-mail: příloha zůstala jen jako odkaz, aby zpráva nepřekročila limit.',
+		'',
+		'Testy prošly; čeká to na review.',
+	].join('\n'),
+	calendar: 'Opravuji kontrolu překryvu rezervací jeřábu.',
+	notes: 'Poznámky jsou seřazené podle data.',
+	helm: 'Třídím inbox: 12 poznámek, 3 k archivaci.\n\nNa pozadí běží přepočet odkazů.',
+} as const
+
+/**
+ * The Agents overview's day, through the real reducer: Okena polls and Helm's hub polls, interleaved.
+ * `withHelm: false` leaves Helm's hub out (its agent never shows).
+ */
+function agentsOverviewRun(now: number, start: AgentDockState, withHelm = true): ScenarioRun {
+	const p = overviewPanes
+	const m = OVERVIEW_MESSAGES
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const busy = (pane: Pane, overrides: Json = {}) => detail(pane, { busy: true, ...overrides })
+	const idle = (pane: Pane, overrides: Json = {}) => detail(pane, { busy: false, ...overrides })
+	const seed = (pane: Pane, uuid: string, text: string): Json =>
+		transcript(pane, [user(`${uuid}-u`, 'Start.'), assistant(uuid, text)], 1_000, true)
+	const ended = (pane: Pane, uuid: string, text: string): Json =>
+		transcript(pane, [assistant(uuid, text)], 2_000, false)
+	const dialog = (n: number, tool: string, input: Json, at: number): Json => ({
+		id: `${prefix}-${n}`,
+		tool_name: tool,
+		tool_input: input,
+		permission_suggestions: [],
+		created_at_ms: at,
+	})
+	const repairPrs = { pr_links: [prLink(956), prLink(484)] }
+	const imagePrs = { pr_links: [prLink(953)] }
+	const subagents = Array.from({ length: 4 }, (_, index) => ({ agent_id: `sub-${index + 1}`, agent_type: 'Explore' }))
+	const notConnected = { ...detail(p.notes), hooks_attached: false, channel_attached: false, busy: undefined }
+
+	const question = busy(p.invoices, {
+		dialogs: [
+			dialog(
+				71,
+				'AskUserQuestion',
+				{
+					questions: [
+						{
+							header: 'Logo',
+							question: 'Má být logo firmy v PDF vpravo nahoře, nebo v patičce?',
+							multiSelect: false,
+							options: [{ label: 'Vpravo nahoře' }, { label: 'V patičce' }],
+						},
+					],
+				},
+				now - 12 * MINUTE,
+			),
+		],
+	})
+	const plan = busy(p.contacts, {
+		dialogs: [
+			dialog(
+				72,
+				'ExitPlanMode',
+				{
+					plan: '# Import kontaktů z CSV\n1. Načíst CSV\n2. Spárovat kontakty podle IČO\n3. Nové založit, staré doplnit',
+				},
+				now - 25 * MINUTE,
+			),
+		],
+	})
+	const permission = busy(p.deploy, {
+		dialogs: [
+			dialog(
+				73,
+				'Bash',
+				{ command: 'npm run keys:rotate -- --env stage', description: 'Rotate the stage API keys' },
+				now - 3 * MINUTE,
+			),
+		],
+	})
+
+	let live: Live = [
+		{ pane: p.psyon, body: idle(p.psyon), transcript: seed(p.psyon, 'psyon-a0', m.psyon) },
+		{ pane: p.invoices, body: busy(p.invoices), transcript: seed(p.invoices, 'invoices-a0', m.invoices) },
+		{ pane: p.deploy, body: busy(p.deploy), transcript: seed(p.deploy, 'deploy-a0', m.deploy) },
+		{ pane: p.contacts, body: busy(p.contacts), transcript: seed(p.contacts, 'contacts-a0', m.contacts) },
+		{ pane: p.repair, body: busy(p.repair, repairPrs), transcript: seed(p.repair, 'repair-a0', 'Začínám.') },
+		{ pane: p.imageLink, body: busy(p.imageLink, imagePrs), transcript: seed(p.imageLink, 'image-a0', 'Začínám.') },
+		{ pane: p.calendar, body: busy(p.calendar), transcript: seed(p.calendar, 'calendar-a0', m.calendar) },
+		{ pane: p.notes, body: notConnected, transcript: seed(p.notes, 'notes-a0', m.notes) },
+	]
+	let version = 9_000
+	let state = start
+	const okena = (at: number, unreadable: Pane[] = []) => {
+		const observation = poll(++version, live)
+		state = reduce(
+			state,
+			{
+				...observation,
+				terminals: observation.terminals.map(terminal =>
+					unreadable.some(pane => pane.tid === terminal.terminalId)
+						? { terminalId: terminal.terminalId, detail: { ok: false, error: 'read timed out after 5000 ms' } }
+						: terminal,
+				),
+			},
+			at,
+		).state
+		live = bare(live)
+	}
+	const swap = (pane: Pane, body: Json, page?: Json) => {
+		live = live.map(entry => (entry.pane === pane ? { pane, body, ...(page ? { transcript: page } : {}) } : entry))
+	}
+	let helmVersion = 0
+	const helm = (at: number, body: Json, page?: Json) => {
+		if (!withHelm) return
+		state = reduce(
+			state,
+			{
+				...poll(++helmVersion, [{ pane: p.helm, body, ...(page ? { transcript: page } : {}) }]),
+				source: 'helm',
+				profile: 'helm',
+			},
+			at,
+		).state
+	}
+	// Helm's hub counts the Stop hook's background tasks: one shell (the link recount) still runs.
+	const helmBackground = idle(p.helm, { background_tasks: 1, background_shells: 1 })
+
+	okena(now - 60 * MINUTE)
+	helm(now - 60 * MINUTE + 1_000, busy(p.helm), seed(p.helm, 'helm-a0', m.helm))
+	// Repair: its turn ends 45 minutes ago and still waits for a reply.
+	swap(p.repair, idle(p.repair, repairPrs), ended(p.repair, 'repair-a1', m.repair))
+	okena(now - 45 * MINUTE)
+	okena(now - 45 * MINUTE + TURN_IDLE_MS + 1_000)
+	// Service protocol: its turn ends 25 minutes ago and is read (acked) 15 minutes ago; a plan asks.
+	swap(p.imageLink, idle(p.imageLink, imagePrs), ended(p.imageLink, 'image-a1', m.imageLink))
+	swap(p.contacts, plan)
+	okena(now - 25 * MINUTE)
+	okena(now - 25 * MINUTE + TURN_IDLE_MS + 1_000)
+	const read = state.items.find(item => item.session === `${PROFILE}:${p.imageLink.tid}` && item.kind === 'turn')
+	if (read) state = reduce(state, { type: 'ack', itemId: read.id }, now - 15 * MINUTE).state
+	swap(p.invoices, question)
+	okena(now - 12 * MINUTE)
+	helm(now - 9 * MINUTE, helmBackground)
+	swap(p.psyon, busy(p.psyon, { running_subagents: subagents }))
+	okena(now - 4 * MINUTE)
+	swap(p.deploy, permission)
+	okena(now - 3 * MINUTE)
+	okena(now - 2 * MINUTE, [p.calendar])
+	helm(now - 1_500, helmBackground)
+	okena(now - 1_000, [p.calendar])
+	return {
+		state,
+		live,
+		version,
+		...(withHelm ? { helmLive: [{ pane: p.helm, body: helmBackground }] } : {}),
+		unreadable: [p.calendar.tid],
+	}
+}
+
+/** 'agents-okena-down' / 'agents-helm-connecting': the overview's day with one source not answering. */
+function agentsSourceHealthRun(
+	name: 'agents-okena-down' | 'agents-helm-connecting',
+	now: number,
+	start: AgentDockState,
+): ScenarioRun {
+	if (name === 'agents-okena-down') {
+		const run = agentsOverviewRun(now - 3 * MINUTE, start)
+		return { ...run, state: reduce(run.state, down('connect ECONNREFUSED'), now - 2 * MINUTE).state }
+	}
+	// Helm's hub registered but has not answered yet: the shape of its first poll still on its way.
+	const run = agentsOverviewRun(now, start, false)
+	const sources: AgentDockState['sources'] = {
+		...run.state.sources,
+		helm: { seeded: false, epoch: 0, health: { state: 'pending', since: now - 20_000, lastObservedAt: null } },
+	}
+	return { ...run, state: { ...run.state, sources, source: aggregateSourceHealth(sources, run.state.source) } }
+}
+
 /** 'background-shell': the stage deploy runs in a background shell after Claude stopped. */
 function backgroundShellTimeline(now: number): {
 	steps: Array<[number, AgentDockObservation]>
@@ -833,6 +1068,10 @@ interface ScenarioRun {
 	state: AgentDockState
 	/** The panes as Okena last showed them (no transcript pages), for follow-up polls. */
 	live: Live
+	/** Panes of Helm's own hub when the run has both sources (follow-up polls of those carry `helm`). */
+	helmLive?: Live
+	/** Panes whose detail stays unreadable in follow-up polls. */
+	unreadable?: string[]
 	version: number
 	/** Answers this run sent from the dock, as the dock would remember them (receipt stories). */
 	sent?: Map<number, DockAction>
@@ -840,8 +1079,18 @@ interface ScenarioRun {
 	source?: DockSourceId
 }
 
-const fromSource = (scenario: ScenarioRun, observation: AgentDockObservation): AgentDockObservation =>
-	scenario.source && observation.type === 'poll' ? { ...observation, source: scenario.source } : observation
+const fromSource = (scenario: ScenarioRun, observation: AgentDockObservation): AgentDockObservation => {
+	if (observation.type !== 'poll') return observation
+	const unreadable = scenario.unreadable ?? []
+	const terminals = unreadable.length
+		? observation.terminals.map(terminal =>
+				unreadable.includes(terminal.terminalId)
+					? { terminalId: terminal.terminalId, detail: { ok: false as const, error: 'read timed out after 5000 ms' } }
+					: terminal,
+			)
+		: observation.terminals
+	return { ...observation, ...(scenario.source ? { source: scenario.source } : {}), terminals }
+}
 
 const bare = (live: Live): Live =>
 	live.map(({ pane, body, background }) => ({ pane, body, ...(background ? { background } : {}) }))
@@ -892,6 +1141,8 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		const timeline = agentsPaneTimeline(now)
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
 	}
+	if (name === 'agents-overview') return agentsOverviewRun(now, start)
+	if (name === 'agents-okena-down' || name === 'agents-helm-connecting') return agentsSourceHealthRun(name, now, start)
 	if (name === 'background-shell') {
 		const timeline = backgroundShellTimeline(now)
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
@@ -949,10 +1200,15 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	}
 }
 
-const paneOf = (item: DockItem): Pane | undefined =>
-	[...Object.values(panes), ...Object.values(realPanes), ...Object.values(agentsPanes)].find(
-		pane => `${PROFILE}:${pane.tid}` === item.session,
-	)
+const paneOfKey = (key: string): Pane | undefined =>
+	[
+		...Object.values(panes),
+		...Object.values(realPanes),
+		...Object.values(agentsPanes),
+		...Object.values(overviewPanes),
+	].find(pane => `${PROFILE}:${pane.tid}` === key || `helm:${pane.tid}` === key)
+
+const paneOf = (item: DockItem): Pane | undefined => paneOfKey(item.session)
 
 /**
  * The next Okena poll after Jakub's dock answer landed: the dialog is gone from its
@@ -981,6 +1237,37 @@ function landedPoll(scenario: ScenarioRun, item: DockItem): AgentDockObservation
 	})
 	scenario.live = bare(live)
 	return fromSource(scenario, poll(scenario.version, live))
+}
+
+/**
+ * The next poll after a reply from the agent detail landed: the pane works on it and its transcript
+ * shows the user entry after the message Jakub read.
+ */
+function promptLandedPoll(scenario: ScenarioRun, key: string): AgentDockObservation {
+	const pane = paneOfKey(key)
+	const onHelm = scenario.helmLive?.some(entry => entry.pane === pane) === true
+	const live = (onHelm ? scenario.helmLive : scenario.live) ?? []
+	scenario.version += 1
+	const next: Live = live.map(entry =>
+		entry.pane !== pane
+			? entry
+			: {
+					pane: entry.pane,
+					body: { ...entry.body, busy: true },
+					transcript: transcript(
+						entry.pane,
+						[user(`dock-reply-${scenario.version}`, '(reply from the dock)')],
+						9_000 + scenario.version,
+						false,
+					),
+				},
+	)
+	if (onHelm) {
+		scenario.helmLive = bare(next)
+		return { ...poll(scenario.version, next), source: 'helm', profile: 'helm' }
+	}
+	scenario.live = bare(next)
+	return fromSource(scenario, poll(scenario.version, next))
 }
 
 /** A poll that shows nothing new (the answer has not landed). */
@@ -1106,7 +1393,13 @@ export const FIXTURE_ACT_STEP_MS = 250
 
 export interface AgentDockFixture {
 	api: AgentDockApi
-	calls: { visible: boolean[]; acks: number[]; acts: AgentDockActRequest[] }
+	calls: {
+		visible: boolean[]
+		acks: number[]
+		acts: AgentDockActRequest[]
+		prompts: AgentDockPromptRequest[]
+		reads: string[]
+	}
 	/** Answers the current scenario already sent from the dock (the receipt stories), for AgentDock's initialSent. */
 	sent(): ReadonlyMap<number, DockAction>
 	/** Replaces the reducer state with a scenario and pushes its snapshot through the production subscription. */
@@ -1132,7 +1425,7 @@ export function createAgentDockFixture(
 	clock: () => number = Date.now,
 ): AgentDockFixture {
 	const listeners = new Set<(snapshot: AgentDockSnapshot) => void>()
-	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [] }
+	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [], prompts: [], reads: [] }
 	let scenario: ScenarioRun | null = initial ? scenarioRun(initial, clock()) : null
 	let mode: AgentDockActMode = 'confirm'
 	let arrivals = 0
@@ -1201,6 +1494,44 @@ export function createAgentDockFixture(
 				// Not observed: the next poll comes after the confirmation window.
 				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
 				return { ok: outcome.status === 'sent', outcome }
+			},
+			// A reply from the agent detail: the same act observations main would apply, then the landing poll.
+			async prompt(request): Promise<AgentDockActResult> {
+				calls.prompts.push(structuredClone(request))
+				const current = scenario
+				if (!current?.state.sessions[request.session])
+					return { ok: false, outcome: { status: 'refused', reason: 'gone', detail: 'The agent is no longer listed.' } }
+				apply({
+					type: 'prompt.sending',
+					session: request.session,
+					...(request.assistantUuid ? { assistantUuid: request.assistantUuid } : {}),
+				})
+				await wait(FIXTURE_ACT_STEP_MS)
+				const outcome: DockActOutcome =
+					mode === 'error'
+						? {
+								status: 'failed',
+								detail: `Okena POST /v1/claude/terminals/${paneOfKey(request.session)?.tid ?? 'unknown'}/prompt failed (500): bridge unavailable`,
+							}
+						: mode === 'refused'
+							? { status: 'refused', reason: 'changed', detail: 'The agent said something new; check it again.' }
+							: { status: 'sent', delivery: 'pty' }
+				apply({ type: 'prompt.result', session: request.session, outcome })
+				if (mode === 'confirm') later(() => apply(promptLandedPoll(current, request.session)))
+				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
+				return { ok: outcome.status === 'sent', outcome }
+			},
+			// The live read: what the reducer last read for the pane (its full text, in memory).
+			async lastMessage(session): Promise<AgentDockMessageResult> {
+				calls.reads.push(session)
+				const record = scenario?.state.sessions[session]
+				if (!record) return { ok: false, detail: 'The agent is no longer listed.' }
+				const last = record.tail.lastAssistant
+				return {
+					ok: true,
+					...(record.session.sessionId ? { sessionId: record.session.sessionId } : {}),
+					...(last ? { message: { uuid: last.uuid, text: last.text } } : {}),
+				}
 			},
 		},
 		emitScenario(name) {

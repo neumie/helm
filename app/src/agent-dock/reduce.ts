@@ -2,7 +2,7 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
-import { boundText } from '../../../src/agent-dock/text'
+import { boundText, excerptLine } from '../../../src/agent-dock/text'
 import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
 import { itemWaitingSince } from './item-order'
 import {
@@ -12,6 +12,7 @@ import {
 	type AgentDockPersisted,
 	type AgentDockSnapshot,
 	type AgentDockSourceHealth,
+	DOCK_EXCERPT_MAX,
 	type DockActOutcome,
 	type DockActionKind,
 	type DockItem,
@@ -56,7 +57,8 @@ export const RESOLVED_MAX = 50
 interface TranscriptTail {
 	sessionId?: string
 	cursor?: number
-	lastAssistant?: { uuid: string; text: string }
+	/** `at`: when Helm first read it; `excerpt`: its bounded first line (DockSession.lastMessage). */
+	lastAssistant?: { uuid: string; text: string; at: number; excerpt: string }
 	/** A user entry was seen after lastAssistant (any origin). */
 	userAfterLastAssistant: boolean
 }
@@ -167,7 +169,24 @@ export function agentDockSnapshot(state: AgentDockState, now: number): AgentDock
 		return itemWaitingSince(a) - itemWaitingSince(b) || a.id - b.id
 	})
 	const sessions = Object.values(state.sessions)
-		.map(record => ({ ...record.session, prLinks: [...record.session.prLinks] }))
+		.map((record): DockSession => {
+			const last = record.tail.lastAssistant
+			return {
+				...record.session,
+				prLinks: [...record.session.prLinks],
+				...(record.session.reply ? { reply: { ...record.session.reply } } : {}),
+				...(last
+					? {
+							lastMessage: {
+								uuid: last.uuid,
+								text: last.excerpt,
+								at: last.at,
+								seen: state.seen[record.session.key] === last.uuid,
+							},
+						}
+					: {}),
+			}
+		})
 		.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key))
 	const sources: AgentDockSnapshot['sources'] = {}
 	for (const [id, entry] of Object.entries(state.sources)) if (entry) sources[id as DockSourceId] = { ...entry.health }
@@ -411,7 +430,9 @@ function applyTranscript(
 	record: AgentDockSessionRecord,
 	page: OkenaClaudeTranscriptPage,
 	liveTurnUuids: Set<string>,
+	now: number,
 ): { repliedTurns: Set<string>; activity: boolean } {
+	const before = record.tail.lastAssistant
 	const tail: TranscriptTail = page.reset ? { userAfterLastAssistant: false } : { ...record.tail }
 	// On a continuation every live turn's uuid is already behind the cursor.
 	const passed = new Set(page.reset ? [] : liveTurnUuids)
@@ -419,7 +440,15 @@ function applyTranscript(
 	let activity = false
 	for (const entry of page.entries) {
 		if (entry.kind === 'assistant') {
-			tail.lastAssistant = { uuid: entry.uuid, text: entry.text }
+			// A reset page re-reads messages Helm already knows: they keep when it first read them.
+			const known =
+				before?.uuid === entry.uuid ? before : tail.lastAssistant?.uuid === entry.uuid ? tail.lastAssistant : null
+			tail.lastAssistant = {
+				uuid: entry.uuid,
+				text: entry.text,
+				at: known?.at ?? now,
+				excerpt: excerptLine(entry.text, DOCK_EXCERPT_MAX),
+			}
 			tail.userAfterLastAssistant = false
 			if (liveTurnUuids.has(entry.uuid)) passed.add(entry.uuid)
 			if (!page.reset) activity = true
@@ -514,6 +543,7 @@ function observeTerminal(
 		record.idleSince = undefined
 		record.busySince = undefined
 		record.resumedTurn = undefined
+		record.session.reply = undefined
 	}
 	record.session.sessionId = detail.session_id
 	record.session.subagents = detail.running_subagents.length
@@ -541,8 +571,17 @@ function observeTerminal(
 			record,
 			page,
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
+			now,
 		)
 		const newest = record.tail.lastAssistant?.uuid
+		// A settled agent-detail reply (landed, refused, failed) says nothing about a newer message.
+		const settled = record.session.reply
+		if (
+			settled &&
+			newest !== orphanAnchor &&
+			(settled.status === 'confirmed' || settled.status === 'refused' || settled.status === 'failed')
+		)
+			record.session.reply = undefined
 		for (const item of liveTurns) {
 			// An act still in flight cannot be attributed yet; the settle check below picks it up.
 			if (isInFlight(item)) continue
@@ -578,6 +617,7 @@ function observeTerminal(
 		if (record.tail.lastAssistant?.uuid === item.fact.assistantUuid && record.tail.userAfterLastAssistant)
 			draft.confirm(item)
 	}
+	confirmSessionReply(record, now)
 	// A turn means "the agent waits for you". Main agent busy past a short debounce, it plainly
 	// does not (Jakub typed in the terminal and the entry was not read yet, or a background task
 	// woke it): close it. A dock reply being sent or confirmed keeps its item until its own entry
@@ -592,6 +632,21 @@ function observeTerminal(
 
 	reconcileAsks(draft, record, key, detail, restarted, ctx.seedTick)
 	maybeOpenTurn(draft, record, key, detail, status)
+}
+
+/**
+ * A reply sent from the agent detail (no item) lands once the transcript shows a user entry
+ * after the message Jakub replied to, or the agent already said something after it.
+ */
+function confirmSessionReply(record: AgentDockSessionRecord, now: number): void {
+	const reply = record.session.reply
+	if (!reply || (reply.status !== 'sent' && reply.status !== 'unconfirmed')) return
+	const last = record.tail.lastAssistant?.uuid
+	const landed =
+		reply.assistantUuid === undefined
+			? record.tail.userAfterLastAssistant
+			: last !== undefined && (last !== reply.assistantUuid || record.tail.userAfterLastAssistant)
+	if (landed) record.session.reply = { ...reply, status: 'confirmed', at: now }
 }
 
 /**
@@ -882,8 +937,53 @@ function reduceActResult(draft: Draft, itemId: number, outcome: DockActOutcome):
 	draft.outcome(item, outcome.status)
 }
 
+/** Jakub replied from the agent detail: the reply is on its way (the message he read counts as seen). */
+function reducePromptSending(draft: Draft, key: SessionKey, assistantUuid: string | undefined): void {
+	const record = draft.state.sessions[key]
+	if (!record) return
+	record.session.reply = {
+		action: 'prompt',
+		status: 'sending',
+		at: draft.now,
+		...(assistantUuid ? { assistantUuid } : {}),
+	}
+	// Only the message the reducer holds as the last one: an older uuid (a stale live read) never
+	// moves `seen` back, which would reopen a turn Jakub already acked.
+	if (assistantUuid && record.tail.lastAssistant?.uuid === assistantUuid) draft.state.seen[key] = assistantUuid
+}
+
+function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutcome): void {
+	const record = draft.state.sessions[key]
+	const reply = record?.session.reply
+	if (!record || reply?.status !== 'sending') return
+	const { now } = draft
+	if (outcome.status === 'sent')
+		record.session.reply = {
+			...reply,
+			status: 'sent',
+			at: now,
+			sentAt: now,
+			...(outcome.delivery ? { delivery: outcome.delivery } : {}),
+		}
+	else if (outcome.status === 'unconfirmed')
+		record.session.reply = { ...reply, status: 'unconfirmed', at: now, sentAt: now, detail: outcome.detail }
+	else
+		record.session.reply = {
+			...reply,
+			status: outcome.status,
+			at: now,
+			detail: outcome.detail,
+			...(outcome.status === 'refused' ? { reason: outcome.reason } : {}),
+		}
+}
+
 /** Sent but not observed for ACT_CONFIRM_MS: amber "sent, unconfirmed" until observed or acked. */
 function expireUnconfirmed(draft: Draft): void {
+	for (const record of Object.values(draft.state.sessions)) {
+		const reply = record.session.reply
+		if (reply?.status !== 'sent' || reply.sentAt === undefined || draft.now - reply.sentAt < ACT_CONFIRM_MS) continue
+		record.session.reply = { ...reply, status: 'unconfirmed', at: draft.now }
+	}
 	for (const item of draft.state.items) {
 		const receipt = item.receipt
 		if (item.state !== 'sending' || receipt?.status !== 'sent' || receipt.sentAt === undefined) continue
@@ -900,6 +1000,9 @@ export function reduce(prev: AgentDockState, observation: AgentDockObservation, 
 	else if (observation.type === 'act.sending')
 		reduceActSending(draft, observation.itemId, observation.action, observation.always)
 	else if (observation.type === 'act.result') reduceActResult(draft, observation.itemId, observation.outcome)
+	else if (observation.type === 'prompt.sending')
+		reducePromptSending(draft, observation.session, observation.assistantUuid)
+	else if (observation.type === 'prompt.result') reducePromptResult(draft, observation.session, observation.outcome)
 	else {
 		reducePoll(draft, observation)
 		expireUnconfirmed(draft)

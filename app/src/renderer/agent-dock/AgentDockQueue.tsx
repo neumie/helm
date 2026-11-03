@@ -26,8 +26,8 @@ import {
 } from './presentation'
 import { type ArrivalKind, mostUrgent, useArrivalFlash } from './use-arrival-flash'
 
-/** What a pane shows: one item, or the Agents list. */
-export type AgentDockTarget = { type: 'item'; id: number } | { type: 'agents' }
+/** What a pane shows: one item, the Agents list, or one agent's detail (opened from that list). */
+export type AgentDockTarget = { type: 'item'; id: number } | { type: 'agents' } | { type: 'agent'; key: string }
 
 /**
  * Real text widths in the queue's own font: `measure(text)` lays the text out in a hidden meter beside

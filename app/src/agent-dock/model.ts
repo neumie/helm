@@ -232,6 +232,35 @@ export interface DockSession {
 	hasTranscript: boolean
 	hooksAttached: boolean
 	channelAttached: boolean
+	/**
+	 * The agent's last assistant message as the reducer last read it (transcript tail), as a
+	 * bounded one-line excerpt. Absent until a transcript page showed one. Memory/IPC only:
+	 * the spool keeps only `at`/`seen`, never the text.
+	 */
+	lastMessage?: DockLastMessage
+	/**
+	 * Jakub's last reply sent from the agent detail (no item: the agent owed him nothing), and how
+	 * it went. Never carries the reply text. Memory/IPC only.
+	 */
+	reply?: DockSessionReply
+}
+
+export { DOCK_EXCERPT_MAX, DOCK_LIVE_MESSAGE_MAX } from '../../../src/agent-dock/dock-vocabulary'
+
+export interface DockLastMessage {
+	/** Transcript uuid of the assistant entry: the reply CAS checks the agent still stops at it. */
+	uuid: string
+	/** First non-empty line, control/bidi-stripped, at most DOCK_EXCERPT_MAX (dock-vocabulary.ts). */
+	text: string
+	/** When Helm first read this message (ms); transcripts carry no time of their own. */
+	at: number
+	/** Jakub has seen it: acked (its turn item), adopted at Helm's first look, or replied to from the dock. */
+	seen: boolean
+}
+
+export interface DockSessionReply extends DockReceipt {
+	/** The message Jakub replied to (its uuid), when he saw one. */
+	assistantUuid?: string
 }
 
 export type DockItemKind = (typeof DOCK_ITEM_KINDS)[number]
@@ -386,6 +415,42 @@ export const agentDockActRequestSchema = z
 export const parseAgentDockActRequest = (body: unknown): ParseResult<AgentDockActRequest> =>
 	parseWith(agentDockActRequestSchema, 'act request', body)
 
+/**
+ * A reply to an agent that owes Jakub nothing (no open item), sent from the agent detail.
+ * Main re-reads the pane (CAS): same Claude session, idle with no dialog, and its transcript
+ * still ends at `assistantUuid` (the message Jakub read) with no user entry after it.
+ */
+export interface AgentDockPromptRequest {
+	session: SessionKey
+	/** The Claude conversation Jakub saw; a new one in the pane refuses. */
+	sessionId?: string
+	/** The last message Jakub saw; absent when he saw none. */
+	assistantUuid?: string
+	text: string
+}
+
+export const agentDockPromptRequestSchema = z
+	.object({
+		session: z.string().min(1).max(512),
+		sessionId: z.string().min(1).max(512).optional(),
+		assistantUuid: z.string().min(1).max(512).optional(),
+		text: z.string().max(DOCK_PROMPT_MAX),
+	})
+	.strict()
+
+export const parseAgentDockPromptRequest = (body: unknown): ParseResult<AgentDockPromptRequest> =>
+	parseWith(agentDockPromptRequestSchema, 'prompt request', body)
+
+/** The agent's last message, read live through its source for the agent detail (`helm dock show` does the same). */
+export type AgentDockMessageResult =
+	| {
+			ok: true
+			/** Absent when the transcript has no assistant entry yet. */
+			message?: { uuid: string; text: string }
+			sessionId?: string
+	  }
+	| { ok: false; detail: string }
+
 /** Deterministic JSON (sorted object keys) for comparing Okena dialog inputs across reads. */
 export function stableJson(value: unknown, depth = 0): string {
 	if (depth > 64) return '"…"'
@@ -474,6 +539,10 @@ export type AgentDockObservation =
 	| { type: 'act.sending'; itemId: number; action: DockActionKind; always?: boolean }
 	/** How that act went. */
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
+	/** Jakub replied from the agent detail (no item); main is about to run the CAS read and the POST. */
+	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string }
+	/** How that reply went. */
+	| { type: 'prompt.result'; session: SessionKey; outcome: DockActOutcome }
 
 // ---------------------------------------------------------------------------
 // Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids (the

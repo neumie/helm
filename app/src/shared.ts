@@ -1,6 +1,12 @@
 // IPC surface shared by preload (implements) and renderer (consumes as `window.helm`).
 
-import type { AgentDockActRequest, AgentDockActResult, AgentDockSnapshot } from './agent-dock/model'
+import type {
+	AgentDockActRequest,
+	AgentDockActResult,
+	AgentDockMessageResult,
+	AgentDockPromptRequest,
+	AgentDockSnapshot,
+} from './agent-dock/model'
 import type {
 	DaemonApi,
 	HelmResult,
@@ -402,6 +408,9 @@ export interface NavApi {
  * - ack: renderer → main `invoke(itemId)`; resolves true when the item was acked (turns, orphaned and unconfirmed items only).
  * - act: renderer → main `invoke(AgentDockActRequest)`; main validates it, re-reads the session's source (CAS) and answers the
  *   dialog / sends the reply. Resolves with the outcome; the receipt also arrives in the next snapshot.
+ * - prompt: renderer → main `invoke(AgentDockPromptRequest)`; a reply from the agent detail to an agent with no open
+ *   item, behind the same CAS as a turn reply; its receipt arrives on the session (`DockSession.reply`).
+ * - message: renderer → main `invoke(sessionKey)`; the agent's last assistant message, read live through its source.
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
 export const AGENT_DOCK_IPC = {
@@ -409,6 +418,8 @@ export const AGENT_DOCK_IPC = {
 	setVisible: 'agent-dock:set-visible',
 	ack: 'agent-dock:ack',
 	act: 'agent-dock:act',
+	prompt: 'agent-dock:prompt',
+	message: 'agent-dock:message',
 } as const
 
 /** Agent dock (Okena + Helm-terminal Claude sessions): read the queue, ack, and answer from the pane. No control socket yet. */
@@ -420,6 +431,10 @@ export interface AgentDockApi {
 	ack(itemId: number): Promise<boolean>
 	/** Jakub answered from the dock. Never rejects for a refusal: the outcome says what happened. */
 	act(request: AgentDockActRequest): Promise<AgentDockActResult>
+	/** Jakub replied from the agent detail (the agent owes him nothing). Never rejects for a refusal. */
+	prompt(request: AgentDockPromptRequest): Promise<AgentDockActResult>
+	/** The agent's full last message, read live through its source (memory only). */
+	lastMessage(session: string): Promise<AgentDockMessageResult>
 }
 
 export interface RunContextWindowApi {

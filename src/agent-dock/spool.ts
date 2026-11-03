@@ -107,6 +107,8 @@ export const spoolSessionSchema = z.object({
 	hasTranscript: z.boolean(),
 	hooksAttached: z.boolean(),
 	channelAttached: z.boolean(),
+	/** When Helm read the agent's last message and whether Jakub has seen it. Never its text. */
+	lastMessage: z.object({ at: ms, seen: z.boolean() }).optional(),
 })
 export type SpoolSession = z.infer<typeof spoolSessionSchema>
 

@@ -994,3 +994,178 @@ test('the dock core never imports terminal output, pty or screen code', () => {
 			)
 	}
 })
+
+// --- Agents overview: last message and replies from the agent detail -------------
+
+const sessionOf = (state: AgentDockState, at: number) => agentDockSnapshot(state, at).sessions[0]
+
+test('the snapshot carries the last message as a bounded, sanitized first line; acking marks it seen', () => {
+	const t1 = T0 + 1000
+	const esc = String.fromCharCode(0x1b)
+	const rlo = String.fromCharCode(0x202e)
+	const text = `\n\n  ${esc}[31m**Hotovo**${rlo} ${'x'.repeat(400)}\nsecond line`
+	const { state } = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1', text)], { cursor: 1_300_000 }) })],
+	])
+	const last = sessionOf(state, t1)?.lastMessage
+	assert.equal(last?.uuid, 'b1')
+	assert.equal(last?.at, t1)
+	assert.equal(last?.seen, false)
+	assert.ok((last?.text.length ?? 0) <= 160)
+	assert.ok(last?.text.startsWith('[31m**Hotovo** xxx'), last?.text)
+	assert.ok(last?.text.endsWith('…'))
+	assert.ok(!last?.text.includes(esc) && !last?.text.includes(rlo) && !last?.text.includes('\n'))
+
+	// The turn opens, Jakub acks it: the same message now reads as seen.
+	const opened = reduce(state, poll(idle()), t1 + TURN_IDLE_MS).state
+	const turn = itemsOf(opened, 'turn')[0]
+	assert.ok(turn)
+	const acked = reduce(opened, { type: 'ack', itemId: turn.id }, t1 + TURN_IDLE_MS + 1000).state
+	assert.equal(sessionOf(acked, t1 + TURN_IDLE_MS + 1000)?.lastMessage?.seen, true)
+
+	// A reset page re-reading the same message keeps when Helm first read it.
+	const reread = reduce(
+		acked,
+		poll(idle(), { transcript: page([user('u0'), assistant('b1', text)], { cursor: 1_400_000, reset: true }) }),
+		t1 + 60_000,
+	).state
+	assert.equal(sessionOf(reread, t1 + 60_000)?.lastMessage?.at, t1)
+})
+
+test('a first-ever idle pane adopts its last message as seen (read), with its excerpt', () => {
+	const { state } = run(createAgentDockState(null, T0), [[T0, poll(idle(), { transcript: fullLog() })]])
+	const last = sessionOf(state, T0)?.lastMessage
+	assert.equal(last?.uuid, ASSISTANT_UUID)
+	assert.equal(last?.seen, true)
+	assert.ok(last?.text)
+})
+
+/** An idle pane whose last message Jakub has read (adopted at Helm's first look). */
+function readPane(): { state: AgentDockState; at: number } {
+	const { state } = run(createAgentDockState(null, T0), [[T0, poll(idle(), { transcript: fullLog() })]])
+	return { state, at: T0 + 1000 }
+}
+
+test('a reply from the agent detail: sending → sent → confirmed once its user entry follows the message', () => {
+	const { state, at } = readPane()
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }, at)
+	assert.deepEqual(sending.events, [])
+	assert.equal(sessionOf(sending.state, at)?.reply?.status, 'sending')
+	assert.equal(sessionOf(sending.state, at)?.reply?.assistantUuid, ASSISTANT_UUID)
+	const sent = reduce(
+		sending.state,
+		{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'pty' } },
+		at + 100,
+	).state
+	assert.deepEqual(
+		{ ...sessionOf(sent, at + 100)?.reply },
+		{
+			action: 'prompt',
+			status: 'sent',
+			at: at + 100,
+			sentAt: at + 100,
+			delivery: 'pty',
+			assistantUuid: ASSISTANT_UUID,
+		},
+	)
+	// The pane works on it and its transcript shows the reply after the message Jakub read.
+	const landed = reduce(
+		sent,
+		poll(working(), { transcript: page([user('u-dock')], { cursor: 1_500_000 }) }),
+		at + 2000,
+	).state
+	assert.equal(sessionOf(landed, at + 2000)?.reply?.status, 'confirmed')
+	// No item was ever opened for it.
+	assert.deepEqual(landed.items, [])
+})
+
+test('a reply from the agent detail goes unconfirmed after 10 s unseen; refusals keep their reason', () => {
+	const { state, at } = readPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 10_200, poll(idle())],
+	]).state
+	assert.equal(sessionOf(sent, at + 10_200)?.reply?.status, 'unconfirmed')
+
+	const refused = run(state, [
+		[at, { type: 'prompt.sending', session: KEY }],
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+		],
+	]).state
+	assert.deepEqual(
+		{ ...sessionOf(refused, at + 100)?.reply },
+		{ action: 'prompt', status: 'refused', at: at + 100, reason: 'changed', detail: 'new' },
+	)
+	// A result for a reply that is not sending, or for an unknown pane, changes nothing.
+	assert.deepEqual(
+		reduce(refused, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }, at + 200).state.sessions[KEY]
+			?.session.reply?.status,
+		'refused',
+	)
+	assert.deepEqual(reduce(state, { type: 'prompt.sending', session: 'p1:nope' }, at).state.sessions, state.sessions)
+})
+
+test('a new Claude session in the pane drops the old reply receipt', () => {
+	const { state, at } = readPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 1000, poll(idle({ session_id: 'another-session' }))],
+	]).state
+	assert.equal(sessionOf(sent, at + 1000)?.reply, undefined)
+})
+
+test('a settled agent-detail reply (landed, refused, failed) clears once the agent says something new', () => {
+	const { state, at } = readPane()
+	for (const outcome of [
+		{ status: 'refused', reason: 'changed', detail: 'The agent said something new; check it again.' },
+		{ status: 'failed', detail: 'bridge unavailable' },
+	] as const) {
+		const settled = run(state, [
+			[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+			[at + 100, { type: 'prompt.result', session: KEY, outcome }],
+			// The same message again: the receipt stays.
+			[at + 1000, poll(idle())],
+		]).state
+		assert.equal(sessionOf(settled, at + 1000)?.reply?.status, outcome.status)
+		const moved = reduce(
+			settled,
+			poll(idle(), { transcript: page([assistant('b-new', 'Něco nového.')], { cursor: 1_600_000 }) }),
+			at + 2000,
+		).state
+		assert.equal(sessionOf(moved, at + 2000)?.lastMessage?.uuid, 'b-new')
+		assert.equal(sessionOf(moved, at + 2000)?.reply, undefined, outcome.status)
+	}
+	// Landed (✓ replied), then the agent answers: the receipt goes with the message it answered.
+	const landed = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 2000, poll(working(), { transcript: page([user('u-dock')], { cursor: 1_500_000 }) })],
+	]).state
+	assert.equal(sessionOf(landed, at + 2000)?.reply?.status, 'confirmed')
+	const answered = reduce(
+		landed,
+		poll(idle(), { transcript: page([assistant('b-answer', 'Hotovo.')], { cursor: 1_600_000 }) }),
+		at + 5000,
+	).state
+	assert.equal(sessionOf(answered, at + 5000)?.reply, undefined)
+})
+
+test('a reply naming an older message than the last one never moves seen back (no turn for an acked message)', () => {
+	const { state, at } = readPane()
+	// Jakub has seen ASSISTANT_UUID; the renderer's (stale) live read still shows an older uuid.
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: 'older-uuid' }, at).state
+	assert.equal(sending.seen[KEY], ASSISTANT_UUID)
+	assert.equal(sessionOf(sending, at)?.lastMessage?.seen, true)
+	const refused = run(sending, [
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+		],
+		[at + 100 + TURN_IDLE_MS + 1000, poll(idle())],
+	]).state
+	assert.deepEqual(itemsOf(refused, 'turn'), [])
+})

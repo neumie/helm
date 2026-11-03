@@ -37,7 +37,8 @@ type AgentDockSnapshot = import('../app/src/agent-dock/model.ts').AgentDockSnaps
 
 const { AgentDockWatcher, BACKGROUND_INTERVAL_MS, FOCUSED_INTERVAL_MS, SNAPSHOT_REFRESH_MS, UNFOCUSED_INTERVAL_MS } =
 	watcherModule as WatcherModule
-const { dockItemHead } = projectionModule as typeof import('../app/src/agent-dock/spool-projection.ts')
+type ProjectionModule = typeof import('../app/src/agent-dock/spool-projection.ts')
+const { dockItemHead, dockSpoolSnapshot } = projectionModule as ProjectionModule
 
 const fixture = okenaFixture
 
@@ -276,6 +277,47 @@ test('spooled item heads carry tool names and counts, never dialog tool_input', 
 		ask('AskUserQuestion', { questions: [{ question: 'Deploy to acme.example?', options: [{ label: 'a' }] }] }),
 	)
 	assert.equal(question, 'AskUserQuestion · 1 question · 1 opts')
+})
+
+test('spooled sessions keep only when the last message was read and whether it was seen; no text, uuid or reply', () => {
+	const health = { state: 'ok' as const, since: 1, lastObservedAt: 1 }
+	const snapshot: AgentDockSnapshot = {
+		generatedAt: 5,
+		source: health,
+		sources: { okena: health },
+		items: [],
+		sessions: [
+			{
+				key: 'p:t',
+				profile: 'p',
+				terminalId: 't',
+				project: 'helm',
+				name: 'dock',
+				source: 'okena',
+				status: 'idle',
+				since: 1,
+				observedAt: 1,
+				subagents: 0,
+				queuedPrompts: 0,
+				prLinks: [],
+				hasTranscript: true,
+				hooksAttached: true,
+				channelAttached: false,
+				lastMessage: { uuid: 'a-secret-uuid', text: 'Deployed with token hunter2', at: 3, seen: true },
+				reply: {
+					action: 'reply',
+					status: 'failed',
+					at: 4,
+					detail: 'Okena said: hunter2',
+					assistantUuid: 'a-secret-uuid',
+				},
+			},
+		],
+	}
+	const spooled = dockSpoolSnapshot(snapshot, [], 6, 1)
+	assert.deepEqual(spooled.sessions[0]?.lastMessage, { at: 3, seen: true })
+	const text = JSON.stringify(spooled)
+	for (const secret of ['hunter2', 'a-secret-uuid', '"reply"']) assert.equal(text.includes(secret), false, secret)
 })
 
 test('source down emits one health event; ack refuses open asks; cadence follows visibility and focus', async () => {

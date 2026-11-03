@@ -22,3 +22,19 @@ export function oneLine(text: string, max: number): string {
 	const controls = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g
 	return clip(text.replace(controls, ' ').replace(/\s+/g, ' ').trim(), max)
 }
+
+/** Bidi overrides/isolates and marks: they could reorder text where it is shown. */
+const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
+
+/**
+ * The first non-empty line of agent text as a one-line excerpt: C0/C1 controls and bidi
+ * controls stripped, whitespace collapsed, bounded with an ellipsis. '' when nothing is left.
+ */
+export function excerptLine(text: string, max: number): string {
+	const line = text
+		.replace(BIDI, '')
+		.split(/\r\n|[\n\r\u2028\u2029]/)
+		.map(part => oneLine(part, max * 4))
+		.find(part => part !== '')
+	return line ? clip(line, max) : ''
+}
