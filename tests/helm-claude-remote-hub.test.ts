@@ -296,6 +296,27 @@ test('filters: internal-fork SubagentStop and <task-notification> prompts; real 
 	)
 	assert.deepEqual(session(core).running_subagents, [], 'a background task is no subagent')
 	assert.equal(session(core).background_tasks, 1, 'Stop while a background task runs')
+	assert.equal(session(core).background_shells, 0, 'an untyped task is no shell')
+	// Claude lists background subagents there too: SubagentStart counts those, never twice.
+	core.event(REF, PID, T0 + 4, ev('SubagentStart', { prompt_id: 'p1', agent_id: 'g2', agent_type: 'Explore' }))
+	core.event(
+		REF,
+		PID,
+		T0 + 4,
+		ev('Stop', {
+			prompt_id: 'p1',
+			background_tasks: [
+				{ id: 'g2', type: 'subagent' },
+				{ id: 'b1', type: 'shell' },
+				{ id: 'w1', type: 'workflow' },
+			],
+		}),
+	)
+	assert.equal(session(core).running_subagents.length, 1)
+	assert.equal(session(core).background_tasks, 2, 'shell + workflow; the subagent is not a background task')
+	assert.equal(session(core).background_shells, 1)
+	core.event(REF, PID, T0 + 4, ev('SubagentStop', { prompt_id: 'p1', agent_id: 'g2', agent_type: 'Explore' }))
+	core.event(REF, PID, T0 + 4, ev('Stop', { prompt_id: 'p1', background_tasks: [{ id: 'b1' }] }))
 	core.event(
 		REF,
 		PID,

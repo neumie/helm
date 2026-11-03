@@ -206,6 +206,24 @@ test('only the fields the hub reads are sent: no tool_response; event strings cl
 		assert.equal((permissionLine?.tool_input as { content: string }).content, big, 'an allow repeats it verbatim')
 		assert.deepEqual(permissionLine?.permission_suggestions, [{ type: 'addRules' }])
 		assert.equal(permissionLine?.tool_response, undefined)
+		// A Stop's background tasks keep only their type label (the hub tells shells and subagents apart).
+		const stop = {
+			hook_event_name: 'Stop',
+			session_id: 's1',
+			background_tasks: [
+				{ id: 'b1', type: 'shell', command: 'secret', description: 'd', status: 'running' },
+				{ id: 'g1', type: 'subagent', agent_type: 'Explore' },
+				{ id: 'x1', type: '<b>odd</b>' },
+				'junk',
+			],
+		}
+		await runHook('event', socket, JSON.stringify(stop)).done
+		assert.deepEqual((lines.at(-1)?.input as Record<string, unknown>).background_tasks, [
+			{ type: 'shell' },
+			{ type: 'subagent' },
+			{},
+			{},
+		])
 	} finally {
 		await close(server)
 		cleanup()

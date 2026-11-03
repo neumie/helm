@@ -88,6 +88,8 @@ export const okenaClaudeSessionSchema = z.object({
 	 * still running. Okena panes get theirs from the transcript file (ObservedClaudeTerminal.background).
 	 */
 	background_tasks: u64.optional(),
+	/** Helm's hub only: how many of background_tasks are shells. */
+	background_shells: u64.optional(),
 	pr_links: z.array(okenaClaudePrLinkSchema).default([]),
 })
 export type OkenaClaudeSession = z.infer<typeof okenaClaudeSessionSchema>

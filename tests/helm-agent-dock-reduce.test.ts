@@ -763,7 +763,10 @@ test("Helm's hub counts background tasks itself (background_tasks), apart from s
 	assert.equal(session?.status, 'background')
 	assert.equal(session?.subagents, 0)
 	assert.equal(session?.backgroundTasks, 2)
-	assert.equal(session?.backgroundShells, 0, 'the hub cannot tell shells from other tasks')
+	assert.equal(session?.backgroundShells, 0, 'no background_shells: none claimed')
+	// The hub's shells (Stop's task types) read like Okena's; more shells than tasks never show.
+	const shells = run(seededWorking(), [[t1, poll(idle({ background_tasks: 2, background_shells: 5 }))]]).state
+	assert.equal(shells.sessions[KEY]?.session.backgroundShells, 2)
 	// A mistyped hub count fails the whole detail closed, like any other field.
 	const odd = run(seededWorking(), [[t1, poll(idle({ background_tasks: 'two' }))]]).state.sessions[KEY]?.session
 	assert.equal(odd?.status, 'unknown')

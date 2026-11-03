@@ -239,7 +239,10 @@ function backgroundOf(
 	detail: OkenaClaudeSession,
 	observed: ObservedBackgroundTasks | undefined,
 ): { tasks: number; shells: number } {
-	if (detail.background_tasks !== undefined) return { tasks: detail.background_tasks, shells: 0 }
+	if (detail.background_tasks !== undefined) {
+		const tasks = Math.min(detail.background_tasks, BACKGROUND_TASKS_MAX)
+		return { tasks, shells: Math.min(detail.background_shells ?? 0, tasks) }
+	}
 	if (!observed || !detail.session_id || observed.sessionId !== detail.session_id) return { tasks: 0, shells: 0 }
 	const tasks = Math.min(observed.tasks, BACKGROUND_TASKS_MAX)
 	return { tasks, shells: Math.min(observed.shells, tasks) }
