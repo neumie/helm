@@ -1360,8 +1360,9 @@ body.dragging {
 
 /* The edge toward the terminal: the topbar's own border, mirrored. The change of surface
  * (--chrome against the terminal) is what separates; this line only crisps it. It is laid
- * over the dock's terminal-side pixel row, above the queue row / pane. While the pane
- * holds the keys it turns accent (tmux's active border). */
+ * over the dock's terminal-side pixel row, above the queue row / pane. While the dock holds
+ * the keys — row or pane, e.g. after ⌘⇧J, which changes no layout — it turns accent (tmux's
+ * active border), so the hand-off is visible at a glance. */
 .agent-dock::before {
 	content: "";
 	position: absolute;
@@ -1380,7 +1381,7 @@ body.dragging {
 	bottom: 0;
 }
 
-.agent-dock:has(.agent-dock-pane:focus-within)::before {
+.agent-dock:focus-within::before {
 	background: var(--accent);
 }
 
@@ -1589,11 +1590,22 @@ body.dragging {
 	background: var(--fill-raised);
 }
 
-.agent-dock-entry:focus-visible,
-.agent-dock-more:focus-visible,
-.agent-dock-agents-entry:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+/* The focused entry (keyboard only: pointer use never focuses an entry) shows the selected look,
+ * never a ring; the accent edge says the dock holds the keys. */
+.agent-dock-entry:focus,
+.agent-dock-more:focus,
+.agent-dock-agents-entry:focus {
+	outline: none;
+	background: var(--fill-raised);
+}
+
+.agent-dock-entry:focus .agent-dock-entry-name {
+	color: var(--text-0);
+}
+
+.agent-dock-more:focus,
+.agent-dock-agents-entry:focus {
+	color: var(--text-1);
 }
 
 .agent-dock-entry-line {

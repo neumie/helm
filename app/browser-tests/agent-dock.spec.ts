@@ -1324,3 +1324,71 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 		'company-create-save-firm',
 	])
 })
+
+const dockEdge = (page: Page) =>
+	page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').backgroundColor)
+
+test('⌘⇧J lands in the dock from the terminal whatever the row holds: empty, connecting, Okena down', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 800 })
+	await openHarness(page)
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	const accent = await tokenColor(page, '--accent')
+	const hairline = await tokenColor(page, '--hairline')
+	const expected = {
+		empty: '.agent-dock-agents-entry',
+		down: '.agent-dock-entry',
+		// No snapshot yet: nothing to rove to, so the row itself holds the keys.
+		connecting: '.agent-dock-row',
+	} as const
+	for (const [scenario, selector] of Object.entries(expected)) {
+		await page.evaluate(name => window.__helmWorkspaceFixture?.agentDock?.emitScenario(name as 'empty'), scenario)
+		await input.focus()
+		await page.keyboard.press('Meta+Shift+KeyJ')
+		await expect(page.locator(`#agent-dock ${selector}`).first(), scenario).toBeFocused()
+		// Even a bare row holding the keys is visible: the edge toward the terminal lights.
+		await expect.poll(() => dockEdge(page), scenario).toBe(accent)
+		await page.keyboard.press('Meta+Shift+KeyJ')
+		await expect(input, scenario).toBeFocused()
+		await expect.poll(() => dockEdge(page), scenario).toBe(hairline)
+	}
+})
+
+/** Views / Agent dock focus: the production mount, ⌘⇧J pressed from the focused xterm on load. */
+const focusStory = (empty = false) =>
+	`/iframe.html?id=views-agent-dock-focus--${empty ? 'focused-empty' : 'focused'}&viewMode=story`
+
+test('keys in the dock light its edge accent at 1px; the focused entry is the selected fill, never a ring', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1280, height: 800 })
+	await page.goto(focusStory())
+	const rail = row(page)
+	const first = rail.locator('[data-row-stop]').first()
+	await expect(first).toBeFocused()
+	const accent = await tokenColor(page, '--accent')
+	const raised = await tokenColor(page, '--fill-raised')
+	const fill = (target = rail) => target.evaluate(node => getComputedStyle(node).backgroundColor)
+	await expect.poll(() => dockEdge(page)).toBe(accent)
+	expect(await page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').height)).toBe('1px')
+	expect(await first.evaluate(node => getComputedStyle(node).outlineStyle)).toBe('none')
+	await expect.poll(() => fill(first)).toBe(raised)
+	// Nothing else changes: the row keeps the one surface, ⌘⇧J stays dim.
+	expect(await fill()).toBe('rgba(0, 0, 0, 0)')
+	const dim = await tokenColor(page, '--dock-dim')
+	expect(await rail.locator('.agent-dock-kbd').evaluate(node => getComputedStyle(node).color)).toBe(dim)
+	// Roving moves the selected look with the keys.
+	await page.keyboard.press('ArrowRight')
+	await expect.poll(() => fill(first)).toBe('rgba(0, 0, 0, 0)')
+	await expect.poll(() => fill(rail.locator('[data-row-stop]').nth(1))).toBe(raised)
+	// Esc hands the keys back: the quiet hairline, no fills.
+	await page.keyboard.press('Escape')
+	await expect(page.locator('.term-holder.active .xterm-helper-textarea')).toBeFocused()
+	await expect.poll(() => dockEdge(page)).toBe(await tokenColor(page, '--hairline'))
+	await expect.poll(() => fill(rail.locator('[data-row-stop]').nth(1))).toBe('rgba(0, 0, 0, 0)')
+	// Empty queue: the Agents entry holds the keys, and the edge still says so.
+	await page.goto(focusStory(true))
+	await expect(row(page).locator('.agent-dock-agents-entry')).toBeFocused()
+	await expect.poll(() => dockEdge(page)).toBe(await tokenColor(page, '--accent'))
+})
