@@ -118,9 +118,13 @@ test('G switches the grouping from the keys and keeps them on the same agent', a
 	await page.keyboard.press('ArrowDown')
 	await page.keyboard.press('ArrowDown')
 	await expect(agent('repair-done-still-out-of-service')).toBeFocused()
+	const paneHeight = async () => (await pane.boundingBox())?.height
+	const before = await paneHeight()
 	await page.keyboard.press('g')
 	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-project')
 	await expect(agent('repair-done-still-out-of-service')).toBeFocused()
+	// Regrouping keeps the pane's height: the terminal never refits for it.
+	expect(await paneHeight()).toBe(before)
 	await expect(pane.locator('.agent-dock-foot-hints')).toContainText('g group by state')
 	await page.keyboard.press('ArrowDown')
 	await expect(agent('service-protocol-image-link')).toBeFocused()
