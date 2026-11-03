@@ -731,7 +731,7 @@ export function keepOrder(
 	return [...kept, ...items.filter(item => !known.has(item.id))]
 }
 
-/** Room around an entry's text: 16px padding each side (the fill runs edge to edge). */
+/** Room around an entry's text: the row's `--dock-inset` (16px) each side (the fill runs edge to edge). */
 export const QUEUE_ENTRY_PAD = 32
 /** The kind glyph's fixed box (`.agent-dock-glyph`): glyphs differ in width in the UI face. */
 export const QUEUE_GLYPH = 12
