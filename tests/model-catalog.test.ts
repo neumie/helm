@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildConfigDocument } from '../src/config-document.js'
 import { configSchema } from '../src/config.js'
-import { MODEL_CATALOG, modelGuidance, resolveHelperInvocation } from '../src/solver/models.js'
+import { MODEL_CATALOG, effectiveSolverModel, modelGuidance, resolveHelperInvocation } from '../src/solver/models.js'
 
 test('Astra remains curated for Codex and Pi with frontier guidance', () => {
 	assert.deepEqual(MODEL_CATALOG.codex[0], { id: 'gpt-6-astra', label: 'Astra' })
@@ -83,4 +83,14 @@ test('Pi lists OpenAI Codex and xAI models together', () => {
 	})
 	assert.match(modelGuidance('xai/grok-4.7') ?? '', /Pi is running Grok 4.7/)
 	assert.match(modelGuidance('openai-codex/gpt-6-astra') ?? '', /Pi is running GPT-6 Astra/)
+})
+
+test("config's solver.model carries over only to config's own agent", () => {
+	const solver = { agent: 'pi' as const, model: 'xai/grok-4.7' }
+	assert.equal(effectiveSolverModel('claude', undefined, solver), undefined)
+	assert.equal(effectiveSolverModel('claude', null, solver), undefined)
+	assert.equal(effectiveSolverModel('codex', undefined, solver), undefined)
+	assert.equal(effectiveSolverModel('pi', undefined, solver), 'xai/grok-4.7')
+	assert.equal(effectiveSolverModel('claude', 'claude-opus-5-5', solver), 'claude-opus-5-5')
+	assert.equal(effectiveSolverModel('claude', undefined, { agent: 'claude' }), undefined)
 })

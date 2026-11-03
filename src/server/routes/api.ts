@@ -63,6 +63,7 @@ import type { ScheduledRunService } from '../../scheduled-runs/service.js'
 import { ScheduleRevisionConflictError } from '../../scheduled-runs/store.js'
 import { solverAgentSchema } from '../../solver/agent.js'
 import type { SolverAgent } from '../../solver/agent.js'
+import { effectiveSolverModel } from '../../solver/models.js'
 import type { OneShotOptions } from '../../solver/one-shot.js'
 import { solverWorkspaceSchema } from '../../solver/workspace.js'
 import type { SolverWorkspace } from '../../solver/workspace.js'
@@ -1888,7 +1889,7 @@ export function apiRoutes({
 							mode: 'afk',
 							iterations: plannedLoop.iterations,
 							provider: plannedLoop.provider,
-							model: projectedSolvePayload?.solverModel ?? config.solver.model,
+							model: effectiveSolverModel(plannedLoop.provider, projectedSolvePayload?.solverModel, config.solver),
 							effort: projectedSolvePayload?.solverEffort,
 						},
 					})

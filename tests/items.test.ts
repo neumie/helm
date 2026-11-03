@@ -3004,6 +3004,37 @@ test('processSolveItem uses the selected agent and effort', async () => {
 	})
 })
 
+test("processSolveItem never hands config's model to another agent", async () => {
+	const piConfig = { ...config, solver: { ...config.solver, agent: 'pi' as const, model: 'xai/grok-4.7' } }
+	const cases: Array<[Record<string, string>, string | undefined]> = [
+		[{ solverAgent: 'claude' }, undefined],
+		[{ solverAgent: 'claude', solverModel: 'claude-opus-5-5' }, 'claude-opus-5-5'],
+		[{}, 'xai/grok-4.7'],
+		[{ solverAgent: 'pi' }, 'xai/grok-4.7'],
+	]
+	for (const [selection, model] of cases) {
+		await withTempDb(async db => {
+			const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-model-'))
+			const item = db.items.create({
+				kind: 'solve',
+				status: 'ready',
+				projectSlug: 'helm',
+				title: 'Run with the right model',
+				source: null,
+				baseRef: 'main',
+				payload: { kind: 'solve', prompt: 'Use selected agent.', ...selection },
+			})
+			const solver = new FakeSolveSolver(worktreeRoot)
+			try {
+				await processSolveItem(item.id, piConfig, db, provider, solver)
+				assert.equal(solver.calls[0].solverConfig.model, model, JSON.stringify(selection))
+			} finally {
+				rmSync(worktreeRoot, { recursive: true, force: true })
+			}
+		})
+	}
+})
+
 test('processSolveItem waits for source branch naming before creating a worktree', { timeout: 5_000 }, async () => {
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-wait-'))
