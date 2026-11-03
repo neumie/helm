@@ -1830,19 +1830,16 @@ body.dragging {
 	color: var(--warn);
 }
 
-/* E2: one glyph per agent, each in the same 11px box so the cluster keeps one rhythm (✻ is wide). */
+/* E2: one glyph per agent at its own width, one even gap between them. The glyphs run 3–11px wide in
+ * the UI face (· to ◐): equal boxes crowd ✻✻◐ and strand the dots, equal gaps keep one rhythm. */
 .agent-dock-agents-marks {
 	display: inline-flex;
 	align-items: baseline;
-}
-
-.agent-dock-agents-marks .agent-dock-agents-mark {
-	width: 11px;
-	text-align: center;
+	gap: 4px;
 }
 
 .agent-dock-agents-rest {
-	padding-left: 5px;
+	padding-left: 2px;
 }
 
 /* E3: glyph and count per state present, states apart like words. */
@@ -1856,7 +1853,8 @@ body.dragging {
 	gap: 4px;
 }
 
-/* E4: the word bright, the states after it dim and tight (✻2 ◐1 ·1). */
+/* E4: the word bright, the states after it tight (✻2 ◐1 ·1): glyphs toned as in the Agents pane,
+ * counts dim; a state that wants Jakub keeps --warn on both. */
 .agent-dock-agents[data-variant="E4"] .agent-dock-entry-line {
 	gap: 8px;
 }
@@ -1868,6 +1866,14 @@ body.dragging {
 
 .agent-dock-agents-states .agent-dock-agents-state {
 	gap: 1px;
+}
+
+.agent-dock-agents-count {
+	color: var(--dock-dim);
+}
+
+.agent-dock-agents-state:is([data-status="waiting"], [data-status="unknown"]) .agent-dock-agents-count {
+	color: inherit;
 }
 
 /* E5: the agents join the row's end (Okena's dot, ⌘⇧J) as one trailing group, set off from the
@@ -1887,20 +1893,23 @@ body.dragging {
 	opacity: 0;
 }
 
+/* hairline · 14 · words · 14 · dot: the open/focused fill keeps 8px either side of the words and 6px
+ * clear of the dot, so it never presses on it. */
 .agent-dock-agents[data-variant="E5"] .agent-dock-agents-entry {
-	padding: 0 8px 0 10px;
+	padding: 0 8px;
 }
 
 .agent-dock-agents[data-variant="E5"] + .agent-dock-row-end {
-	padding-left: 4px;
+	padding-left: 6px;
 }
 
 /* E6: the count, then a 3px bar with one 8px segment per agent (busy bright, idle faint, attention
- * --warn). Past AGENTS_BAR_MAX it keeps one width and thins its gaps. */
+ * --warn), 2px apart so it reads as one meter, not a dashed line. Past AGENTS_BAR_MAX it keeps one
+ * width and thins its gaps. */
 .agent-dock-agents-bar {
 	display: inline-flex;
 	align-self: center;
-	gap: 3px;
+	gap: 2px;
 	height: 3px;
 	margin-left: 5px;
 	position: relative;
@@ -1908,7 +1917,7 @@ body.dragging {
 }
 
 .agent-dock-agents-bar[data-capped="true"] {
-	width: 107px;
+	width: 98px;
 	gap: 1px;
 }
 

@@ -110,8 +110,8 @@ export function AgentsEntryLine({
 					<span className="agent-dock-agents-states">
 						{tally.states.map(state => (
 							<span key={state.status} className="agent-dock-agents-state" data-status={state.status}>
-								{state.glyph}
-								{state.count}
+								<Mark status={state.status} />
+								<span className="agent-dock-agents-count">{state.count}</span>
 							</span>
 						))}
 					</span>
@@ -142,7 +142,7 @@ export function AgentsEntryLine({
 					<span
 						className="agent-dock-agents-bar"
 						data-capped={capped ? 'true' : undefined}
-						style={capped ? undefined : { width: `${tally.marks.length * 11 - 3}px` }}
+						style={capped ? undefined : { width: `${tally.marks.length * 10 - 2}px` }}
 					>
 						{tally.marks.map((status, at) => (
 							// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional, one per agent in order.
