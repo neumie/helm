@@ -223,29 +223,42 @@ test('the empty queue never reads as all clear while a source is down or an agen
 	)
 })
 
-test('the Agents entry counts busy agents and names each in its tooltip', () => {
+test('the Agents entry counts agents, one bar mark each, names the states in words and each agent in its tooltip', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
 	const sessions = [
 		session({ status: 'working', since: T - 120_000 }),
 		session({ key: 'p1:t2', terminalId: 't2', name: 'other', status: 'background', since: T - 60_000 }),
 		session({ key: 'p1:t3', terminalId: 't3', name: 'idle one', status: 'idle', since: T - 60_000 }),
+		session({ key: 'p1:t4', terminalId: 't4', name: 'lost', status: 'unknown' }),
 	]
 	const snap = snapshot(ok, [], sessions)
 	assert.equal(busyCount(sessions), 2)
-	assert.deepEqual(agentsEntryText(snap, sessions, 0, T), {
-		text: 'agents 3 · 2 busy',
-		label: '3 agents, 2 busy. Show agents',
-		title: 'dock: working 2m\nother: background 1m\nidle one: idle 1m',
+	assert.deepEqual(agentsEntryText(snap, sessions, T), {
+		total: 4,
+		marks: ['working', 'background', 'idle', 'unknown'],
+		label: '4 agents: 1 working, 1 in background, 1 idle, 1 unknown. Show agents',
+		title: 'dock: working 2m\nother: background 1m\nidle one: idle 1m\nlost: unknown',
 	})
-	assert.equal(agentsEntryText(snap, sessions, 1, T).label, '3 agents, 2 busy, 1 unknown. Show agents')
+	// States in the pane's order, whatever the agents' order.
+	const mixed = [
+		session({ status: 'idle' }),
+		session({ key: 'p1:t2', status: 'waiting' }),
+		session({ key: 'p1:t3', status: 'unreachable' }),
+	]
+	assert.equal(
+		agentsEntryText(snapshot(ok, [], mixed), mixed, T).label,
+		'3 agents: 1 waiting on you, 1 idle, 1 frozen. Show agents',
+	)
 	const lone = [session({ status: 'idle' })]
-	assert.deepEqual(agentsEntryText(snapshot(ok, [], lone), lone, 0, T), {
-		text: 'agents 1',
-		label: '1 agent, 0 busy. Show agents',
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], lone), lone, T), {
+		total: 1,
+		marks: ['idle'],
+		label: '1 agent: 1 idle. Show agents',
 		title: 'dock: idle <1m',
 	})
-	assert.deepEqual(agentsEntryText(snapshot(ok, [], []), [], 2, T), {
-		text: 'no agents',
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], []), [], T), {
+		total: 0,
+		marks: [],
 		label: "No Claude session is connected to Okena's Claude Remote. Show agents",
 		title: "No Claude session is connected to Okena's Claude Remote",
 	})
@@ -614,7 +627,7 @@ test("a detached HEAD's commit hash is no name: the agent keeps its pane or repo
 		project: 'JVS',
 	})
 	// The same name reaches the Agents entry's tooltip.
-	assert.match(agentsEntryText(snap, [psyon], 0, T + 4 * 60_000).title, /^Psyon: working 4m$/)
+	assert.match(agentsEntryText(snap, [psyon], T + 4 * 60_000).title, /^Psyon: working 4m$/)
 
 	// Agents pane rows carry the repository they group under; meta stays a list.
 	const rows = agentRows(snap, T)
