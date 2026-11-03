@@ -112,6 +112,8 @@ export function AgentDock({
 	const focusOnOpen = useRef(false)
 	/** Keyboard focus was inside the pane when a step or ack swapped its content. */
 	const keepFocus = useRef(false)
+	/** That step came from a choice (← →): focus goes on to the new body's choices, else the pane. */
+	const keepOnChoices = useRef(false)
 	/** Index to advance to after a local ack removes the open item. */
 	const advanceFrom = useRef<number | null>(null)
 	/** An item acked from the dock: when it leaves, the pane moves on to the next waiting item. */
@@ -195,10 +197,14 @@ export function AgentDock({
 		return !active || active === host.ownerDocument.body || host.contains(active)
 	}
 
-	/** Shows another target in the pane (when open, at the same height: no refit); `focus` takes the keys like a keyboard open. */
-	const show = (next: AgentDockTarget, focus: boolean) => {
+	/**
+	 * Shows another target in the pane (when open, at the same height: no refit); `focus` takes the keys
+	 * like a keyboard open; `onChoices` keeps keys that were on a choice on the new body's choices.
+	 */
+	const show = (next: AgentDockTarget, focus: boolean, onChoices = false) => {
 		focusOnOpen.current = focus
 		keepFocus.current = focusInPane()
+		keepOnChoices.current = onChoices
 		advanceFrom.current = null
 		setTarget(next)
 	}
@@ -214,10 +220,10 @@ export function AgentDock({
 		show(next, viaKeyboard)
 	}
 
-	const step = (delta: number) => {
+	const step = (delta: number, onChoices = false) => {
 		const next = needs[openIndex + delta]
 		if (openIndex < 0 || !next) return
-		show({ type: 'item', id: next.id }, false)
+		show({ type: 'item', id: next.id }, false, onChoices)
 	}
 
 	/**
@@ -287,13 +293,21 @@ export function AgentDock({
 		paneRef.current?.focus()
 	}, [paneShown, openKey])
 
-	// A step or ack swapped the content under a focused control (or disabled it at an end): keep focus in the pane.
+	// A step or ack swapped the content under a focused control (or disabled it at an end): keep focus in the
+	// pane — on the new body's choices when the step came from a choice and it has live ones.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the shown item changes
 	useLayoutEffect(() => {
+		const onChoices = keepOnChoices.current
+		keepOnChoices.current = false
 		if (!keepFocus.current) return
 		const pane = paneRef.current
 		if (!pane) return
 		keepFocus.current = false
+		const stop = onChoices ? choiceStop(pane) : null
+		if (stop) {
+			stop.focus()
+			return
+		}
 		const active = pane.ownerDocument.activeElement
 		if (!active || !pane.contains(active) || (active as HTMLButtonElement).disabled) pane.focus()
 	}, [openKey, paneOpen])
@@ -418,9 +432,11 @@ export function AgentDock({
 		stops[next]?.focus()
 	}
 
-	// Inside the pane: ← → / ↑ ↓ step between items (from the pane itself or ‹ ›; the body
-	// region keeps ↑ ↓ for scrolling, tabs and options keep their own arrows); paging keys
-	// scroll the body; Esc closes back to the entry.
+	// Inside the pane: ← → step between items (from the pane itself, ‹ ›, the body region or a
+	// choice; the question tabs keep their own); ↑ ↓ on the pane itself go to the answers — into
+	// the body's live choices at their stop — and step items only where there are none (a turn, a
+	// receipt); ‹ › step with all four; the body region keeps ↑ ↓ for scrolling and the choices rove
+	// with them; paging keys scroll the body; Esc closes back to the entry.
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
 		// ⌘⌫ acks where Ack is offered, from anywhere in the pane; a field with text in it keeps the key
 		// for editing (delete to line start). A held key acks nothing.
@@ -456,11 +472,18 @@ export function AgentDock({
 		if (target?.type !== 'item') return
 		const horizontal = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
 		const vertical = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+		const stop = onPane && vertical ? choiceStop(pane) : null
+		if (stop) {
+			event.preventDefault()
+			stop.focus()
+			return
+		}
 		const onStepper = from.closest('.agent-dock-stepper') !== null
-		const delta = onPane || onStepper ? horizontal || vertical : from === scroller ? horizontal : 0
+		const onChoice = from.closest('.agent-dock-choice') !== null
+		const delta = onPane || onStepper ? horizontal || vertical : from === scroller || onChoice ? horizontal : 0
 		if (!delta) return
 		event.preventDefault()
-		step(delta)
+		step(delta, onChoice)
 	}
 
 	// The row's name says what it is and the state in words.
@@ -558,6 +581,13 @@ export function AgentDock({
 		</div>
 	)
 }
+
+/**
+ * The shown body's choice stop — the row a roving list would focus (last focused, else picked, else
+ * the first) — while its choices are live; null for bodies without them (turns, receipts).
+ */
+const choiceStop = (pane: HTMLElement): HTMLButtonElement | null =>
+	pane.querySelector<HTMLButtonElement>('.agent-dock-choice[tabindex="0"]:not(:disabled)')
 
 /** The pane's landmark name: what it is and whose (`Question, company-create-save-firm, crm`). */
 function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
