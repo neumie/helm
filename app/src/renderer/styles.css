@@ -2396,7 +2396,8 @@ body.dragging {
 
 /* Footer: key hints left, receipt / hint, then the decision. No rule of its own (the pane's hairline
  * toward the queue closes it).
- * The note wraps (receipts and verbatim Okena errors are read in full before acting); the footer grows and the scroll body gives way. */
+ * The note wraps (receipts and verbatim Okena errors are read in full before acting); the footer grows
+ * and the scroll body gives way. */
 .agent-dock-foot {
 	flex: none;
 	display: grid;
