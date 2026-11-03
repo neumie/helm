@@ -949,7 +949,7 @@ export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession):
 	return meta
 }
 
-/** One agent in the Agents pane, every fact it can show (the pane's layout decides which). */
+/** One agent line in the Agents pane (grouped by `repo` under its heading). */
 export interface AgentRow {
 	key: string
 	status: DockSession['status']
@@ -958,10 +958,8 @@ export interface AgentRow {
 	name: string
 	/** Okena's full pane name, for the tooltip; '' when it adds nothing. */
 	title: string
-	/** The repository (`agentRepo`); '' when unknown. */
+	/** The repository (`agentRepo`), the row's group; '' when unknown. */
 	repo: string
-	/** The repository only where it adds something: '' when the name already says it (`Psyon`, `psyon-invoice-export`). */
-	repoNote: string
 	/** Status word (`working`) and age (`4m`; '' for `frozen` / `unknown`). */
 	word: string
 	age: string
@@ -978,7 +976,6 @@ export function agentRows(snapshot: AgentDockSnapshot | null, now: number): Agen
 		const who = agentWho(snapshot, session.key)
 		const since = sessionSince(snapshot, session)
 		const { word, age } = sessionStatusParts(session, now, since)
-		const repoNote = who.project && !who.name.toLowerCase().includes(who.project.toLowerCase()) ? who.project : ''
 		return {
 			key: session.key,
 			status: session.status,
@@ -986,7 +983,6 @@ export function agentRows(snapshot: AgentDockSnapshot | null, now: number): Agen
 			name: who.name,
 			title: who.title,
 			repo: who.project,
-			repoNote,
 			word,
 			age,
 			...(session.status === 'waiting' ? { tone: agingTone(now - since) } : {}),
@@ -996,14 +992,14 @@ export function agentRows(snapshot: AgentDockSnapshot | null, now: number): Agen
 }
 
 /**
- * Agents by repository, for a grouped list: a group per repository in the order its first agent shows
- * (so the busiest repository leads), each keeping the rows' order. Agents with no known repository
- * share one '' group, last.
+ * The Agents pane's groups: one per repository in the order its first agent shows (so the busiest
+ * repository leads), each keeping the rows' order. Agents with no known repository share one ''
+ * group, last.
  */
-export function agentRepoGroups(rows: readonly AgentRow[]): Array<{ repo: string; keys: string[] }> {
-	const groups = new Map<string, string[]>()
-	for (const row of rows) groups.set(row.repo, [...(groups.get(row.repo) ?? []), row.key])
-	const named = [...groups].filter(([repo]) => repo !== '')
+export function agentRepoGroups(rows: readonly AgentRow[]): Array<{ repo: string; rows: AgentRow[] }> {
+	const groups = new Map<string, AgentRow[]>()
+	for (const row of rows) groups.set(row.repo, [...(groups.get(row.repo) ?? []), row])
 	const unplaced = groups.get('')
-	return [...named, ...(unplaced ? [['', unplaced] as const] : [])].map(([repo, keys]) => ({ repo, keys: [...keys] }))
+	groups.delete('')
+	return [...groups, ...(unplaced ? [['', unplaced] as const] : [])].map(([repo, grouped]) => ({ repo, rows: grouped }))
 }

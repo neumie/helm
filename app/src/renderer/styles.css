@@ -2490,25 +2490,57 @@ body.dragging {
 	}
 }
 
-/* Agents pane (design §3.24 Agents): one markup, three layouts under review, picked by CSS alone from the
- * story-only #agent-dock[data-agents-variant] — absent in production, which gets the calm table.
- * Every row: a 12px status-glyph box (the queue's glyph box, so glyphs sit on the 16px column), the
- * short name, the repository only where the name does not say it, the status word and age, meta. */
+/* Agents pane (design §3.24 Agents): agents grouped under dim project headings, every row a 12px
+ * status-glyph box (the queue's glyph box, so glyphs sit on the 16px column), the short name, the status
+ * word and age, meta. One grid for the whole list — groups, their lists and rows are subgrids — so the
+ * columns line up across groups, each as wide as its widest cell (never stretched across the pane),
+ * ages right-aligned. */
 .agent-dock-agent-list {
 	--agent-row: calc(24px * var(--ui-scale));
-	margin: 0;
-	padding: 0;
-	list-style: none;
+	display: grid;
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, max-content);
+	justify-content: start;
+	max-width: 100%;
 	font-variant-numeric: tabular-nums;
 }
 
+.agent-dock-agent-group,
+.agent-dock-agent-rows,
 .agent-dock-agent {
-	white-space: nowrap;
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
 }
 
-/* Repository headings exist for the by-project layout only. */
-.agent-dock-agent-group {
-	display: none;
+.agent-dock-agent-rows {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* The project heading: dim, the row's size and weight (no bold in the dock), a little air above. */
+.agent-dock-agent-group-name {
+	grid-column: 1 / -1;
+	align-content: end;
+	min-height: var(--agent-row);
+	margin: 0;
+	padding-top: 8px;
+	font: inherit;
+	color: var(--dock-dim);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.agent-dock-agent-group:first-child .agent-dock-agent-group-name {
+	padding-top: 0;
+}
+
+.agent-dock-agent {
+	align-items: baseline;
+	align-content: center;
+	min-height: var(--agent-row);
+	white-space: nowrap;
 }
 
 .agent-dock-agent-glyph {
@@ -2534,21 +2566,24 @@ body.dragging {
 .agent-dock-agent-name {
 	min-width: 0;
 	max-width: 40ch;
+	padding-left: 8px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	color: var(--text-1);
 }
 
-.agent-dock-agent-repo,
 .agent-dock-agent-meta {
 	min-width: 0;
+	padding-left: 24px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	color: var(--dock-dim);
 }
 
-/* Status words carry the state by brightness: busy and waiting read, idle and frozen recede. */
+/* Status words carry the state by brightness: busy and waiting read, idle and frozen recede. The word and
+ * the age are cells of their own (the state span only carries the color). */
 .agent-dock-agent-state {
+	display: contents;
 	color: var(--text-1);
 }
 
@@ -2565,39 +2600,6 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* A — calm table (production): glyph · name · repository · status word · age · meta, columns as wide as
- * their widest cell (never stretched across the pane), ages right-aligned so they line up. */
-.agent-dock-agent-list {
-	display: grid;
-	grid-template-columns:
-		12px minmax(0, max-content) minmax(0, max-content) max-content max-content
-		minmax(0, max-content);
-	justify-content: start;
-	max-width: 100%;
-}
-
-.agent-dock-agent {
-	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: subgrid;
-	align-items: baseline;
-	align-content: center;
-	min-height: var(--agent-row);
-}
-
-.agent-dock-agent-name {
-	padding-left: 8px;
-}
-
-.agent-dock-agent-repo,
-.agent-dock-agent-meta {
-	padding-left: 24px;
-}
-
-.agent-dock-agent-state {
-	display: contents;
-}
-
 .agent-dock-agent-word {
 	padding-left: 24px;
 }
@@ -2605,90 +2607,6 @@ body.dragging {
 .agent-dock-agent-age {
 	padding-left: 6px;
 	justify-self: end;
-}
-
-/* B — by project: dim repository headings, the rows under them on one shared grid (no repository column). */
-#agent-dock[data-agents-variant="by-project"] .agent-dock-agent-list {
-	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, max-content);
-}
-
-#agent-dock[data-agents-variant="by-project"] .agent-dock-agent {
-	order: var(--agent-group);
-}
-
-#agent-dock[data-agents-variant="by-project"] .agent-dock-agent-repo {
-	display: none;
-}
-
-#agent-dock[data-agents-variant="by-project"] .agent-dock-agent-group {
-	display: block;
-	order: var(--agent-group);
-	grid-column: 1 / -1;
-	align-content: end;
-	min-height: var(--agent-row);
-	padding-top: 8px;
-	color: var(--dock-dim);
-}
-
-#agent-dock[data-agents-variant="by-project"] .agent-dock-agent-group:first-child {
-	padding-top: 0;
-}
-
-/* C — one-liners in the queue row's language: glyph, the name bright, everything after it dim and joined
- * by " · ", no columns. */
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-list {
-	display: block;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent {
-	display: flex;
-	align-items: baseline;
-	min-height: var(--agent-row);
-	align-content: center;
-	flex-wrap: nowrap;
-	overflow: hidden;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent > * {
-	flex: none;
-	padding-left: 0;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-name {
-	flex: 0 1 auto;
-	margin-left: 8px;
-	max-width: none;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-repo:not(:empty) {
-	margin-left: 8px;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-state {
-	display: inline;
-	margin-left: 12px;
-	color: var(--dock-dim);
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-state:is([data-status="unknown"], [data-tone="warn"]) {
-	color: var(--warn);
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-state[data-tone="danger"] {
-	color: var(--danger);
-}
-
-#agent-dock[data-agents-variant="one-liners"] :is(.agent-dock-agent-word, .agent-dock-agent-age) {
-	padding-left: 0;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-meta {
-	flex: 0 1 auto;
-}
-
-#agent-dock[data-agents-variant="one-liners"] .agent-dock-agent-meta:not(:empty)::before {
-	content: " · ";
-	white-space: pre;
 }
 
 @media (prefers-reduced-motion: reduce) {

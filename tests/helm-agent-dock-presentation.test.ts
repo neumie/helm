@@ -616,19 +616,28 @@ test("a detached HEAD's commit hash is no name: the agent keeps its pane or repo
 	// The same name reaches the Agents entry's tooltip.
 	assert.match(agentsEntryText(snap, [psyon], 0, T + 4 * 60_000).title, /^Psyon: working 4m$/)
 
-	// Agents pane rows: the repository only where the name does not already say it; meta stays a list.
+	// Agents pane rows carry the repository they group under; meta stays a list.
 	const rows = agentRows(snap, T)
 	assert.deepEqual(
-		rows.map(row => [row.name, row.repoNote, row.word]),
+		rows.map(row => [row.name, row.repo, row.word]),
 		[
-			['Psyon', '', 'working'],
+			['Psyon', 'Psyon', 'working'],
 			['release-check', 'Psyon', 'idle'],
 			['repair-done-still-out-of-service', 'JVS', 'idle'],
 		],
 	)
-	assert.deepEqual(agentRepoGroups(rows), [
+	const groupKeys = (list: typeof rows) =>
+		agentRepoGroups(list).map(group => ({ repo: group.repo, keys: group.rows.map(row => row.key) }))
+	assert.deepEqual(groupKeys(rows), [
 		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
 		{ repo: 'JVS', keys: ['p:t3'] },
+	])
+	// Groups follow their first agent; agents with no known repository come last, whatever their order.
+	const unplaced = { ...rows[0], key: 'p:t0', repo: '' }
+	assert.deepEqual(groupKeys([unplaced, rows[2], ...rows.slice(0, 2)]), [
+		{ repo: 'JVS', keys: ['p:t3'] },
+		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
+		{ repo: '', keys: ['p:t0'] },
 	])
 })
 

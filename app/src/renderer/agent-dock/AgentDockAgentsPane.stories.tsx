@@ -1,30 +1,16 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useMemo } from 'react'
-import {
-	type AgentsPaneVariant,
-	type TerminalWorkspaceFixtureOptions,
-	TerminalWorkspaceFixtureView,
-} from '../terminal-workspace-fixtures'
+import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 
 /**
- * The Agents pane under review (design §3.24 Agents): the production dock under a Claude Code
- * session, the `agents-pane` day open in the Agents pane. Each layout is one story-only
- * `#agent-dock[data-agents-variant]` over the same markup — production sets none (the calm table).
- * Every layout names the detached-HEAD Psyon checkout `Psyon` (never its commit hash) and drops
- * the branch column.
+ * The Agents pane (design §3.24 Agents): the production dock under a Claude Code session, the
+ * `agents-pane` day open in the Agents pane — agents grouped under dim project headings (Psyon, vault,
+ * JVS), the detached-HEAD Psyon checkout named `Psyon` (never its commit hash), no branch column.
  */
-function AgentsPaneView({ variant }: { variant: AgentsPaneVariant }) {
+function AgentsPaneView() {
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
-		() => ({
-			agentDock: {
-				scenario: 'agents-pane',
-				position: 'bottom',
-				output: 'claude-code',
-				open: 'agents',
-				agentsVariant: variant,
-			},
-		}),
-		[variant],
+		() => ({ agentDock: { scenario: 'agents-pane', position: 'bottom', output: 'claude-code', open: 'agents' } }),
+		[],
 	)
 	return <TerminalWorkspaceFixtureView options={options} />
 }
@@ -43,26 +29,16 @@ const viewport = (width: number, height: number) => ({
 	},
 })
 
-const WIDE = viewport(1400, 820)
-const NARROW = viewport(900, 820)
-
 const meta: Meta<typeof AgentsPaneView> = {
 	title: 'Views/Agent dock agents pane',
 	component: AgentsPaneView,
 	parameters: { layout: 'fullscreen' },
-	argTypes: { variant: { control: 'inline-radio', options: ['table', 'by-project', 'one-liners'] } },
 }
 
 export default meta
 type Story = StoryObj<typeof AgentsPaneView>
 
-/** A: one aligned grid — glyph, name, repository (only where the name does not say it), status, age, meta. */
-export const ACalmTable: Story = { name: 'A calm table', ...WIDE, args: { variant: 'table' } }
-/** B: rows grouped under dim repository headings (Psyon, JVS, vault); no repository column. */
-export const BByProject: Story = { name: 'B by project', ...WIDE, args: { variant: 'by-project' } }
-/** C: one quiet line per agent in the queue row's language; the name bright, the rest dim. */
-export const COneLiners: Story = { name: 'C one-liners', ...WIDE, args: { variant: 'one-liners' } }
-
-export const ACalmTableNarrow: Story = { name: 'A calm table 900', ...NARROW, args: { variant: 'table' } }
-export const BByProjectNarrow: Story = { name: 'B by project 900', ...NARROW, args: { variant: 'by-project' } }
-export const COneLinersNarrow: Story = { name: 'C one-liners 900', ...NARROW, args: { variant: 'one-liners' } }
+/** Agents by project: glyph, short name, status word and right-aligned age, meta on one grid across groups. */
+export const AgentsPane: Story = { name: 'Agents pane', ...viewport(1400, 820) }
+/** The same at 900px wide. */
+export const AgentsPaneNarrow: Story = { name: 'Agents pane 900', ...viewport(900, 820) }

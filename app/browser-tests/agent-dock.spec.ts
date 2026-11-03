@@ -1552,6 +1552,12 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 		'company-create-save-firm #2',
 		'company-create-save-firm',
 	])
+	// Grouped by project, groups in the order of their first agent; each heading names its agents' list.
+	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['crm-billing', 'crm-mobile', 'crm'])
+	await expect(pane.getByRole('list', { name: 'crm', exact: true }).getByRole('listitem')).toHaveText([
+		/company-create-save-firm #2/,
+		/company-create-save-firm(?! #)/,
+	])
 })
 
 const dockEdge = (page: Page) =>
