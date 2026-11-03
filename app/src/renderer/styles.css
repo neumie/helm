@@ -797,6 +797,13 @@ body.group-dragging .tab-group-toggle {
  * (Views/Topbar background terminals). "Viewing" = a parked terminal is shown in the pane, which is
  * exactly when #bg-current is unhidden. Drag affordances keep precedence. data-bg-preview pins
  * hover/focus for the static matrix only. */
+/* Story harness parity: headless Chromium resolves the UA button font (-webkit-small-control) to Arial,
+ * while the app's macOS Chromium resolves it to system-ui. Pin the UI face so every column (Today
+ * included) renders the name in the same face as the strip's tab labels. */
+[data-bg-active-variant] #bg-toggle {
+	font-family: inherit;
+}
+
 [data-bg-active-variant] #bg-toggle[data-bg-preview~="hover"]:not(.drag-ready, .drag-over) {
 	background: var(--fill-subtle);
 	color: var(--text-0);
@@ -856,6 +863,7 @@ body.group-dragging .tab-group-toggle {
 	font-family: inherit;
 	font-size: 13px;
 	font-weight: 400;
+	line-height: normal; /* the tab label's line box (not .bg-current's 1.4), so the name shares the strip's baseline */
 }
 
 [data-bg-active-variant="tab"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-count {
@@ -865,6 +873,11 @@ body.group-dragging .tab-group-toggle {
 	font-family: "SF Mono", Menlo, ui-monospace, monospace;
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	/* .tab-number's own nudge: 11px mono centered beside 13px text sits high; drop it onto the name baseline. */
+	line-height: 1;
+	position: relative;
+	top: 1px;
 }
 
 /* B4 rail: a quiet fill plus a 2px --accent rail under the control — "this is what the pane

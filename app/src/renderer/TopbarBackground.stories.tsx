@@ -76,7 +76,7 @@ function LiveTopbar({ variant, state, theme }: LiveProps) {
 		[state, theme],
 	)
 	return (
-		<div data-bg-active-variant={variant === 'today' ? undefined : variant}>
+		<div data-bg-active-variant={variant}>
 			<TerminalWorkspaceFixtureView options={options} />
 		</div>
 	)
