@@ -378,7 +378,8 @@ export function AgentDock({
 				if (error !== null) done(next => next.set(item.id, error))
 				// A refusal or failure keeps the pane on the item for another try. An answer sent with the keys
 				// in the dock, pane still on it, moves on to the next waiting item (or back to the terminal);
-				// any other success hands the keys back to the terminal, unless Jakub already moved on elsewhere.
+				// any other success hands the keys back to the terminal, unless Jakub already moved on elsewhere
+				// (another app or terminal, or another item in the pane while this one was sending).
 				if (!result.ok || !keysStayed()) return
 				const shown = targetRef.current
 				if (fromDock && shown?.type === 'item' && shown.id === item.id) {
@@ -388,7 +389,7 @@ export function AgentDock({
 						item.id,
 						items.findIndex(entry => entry.id === item.id),
 					)
-				} else focusTerminal?.()
+				} else if (!focusInPane()) focusTerminal?.()
 			})
 	}
 

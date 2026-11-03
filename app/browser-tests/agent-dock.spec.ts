@@ -1226,6 +1226,23 @@ test('a reply sent from the pane opens the next waiting item, keys in its pane',
 	expect(await terminalWrites(page)).toBe(0)
 })
 
+test('stepping to another item while a reply sends: the answer coming back leaves the keys there', async ({ page }) => {
+	const { input, pane, rail } = await openByKeyboard(page, 3)
+	const turn = rail.locator('.agent-dock-entry[data-kind="turn"]')
+	await page.keyboard.type('Yes, push it')
+	await page.keyboard.press('Meta+Enter')
+	await expect(turn).toContainText('Sending…')
+	await expect(pane).toBeFocused()
+	// Jakub moves on by himself before main answers: ← to the permission.
+	await page.keyboard.press('ArrowLeft')
+	await expect(pane).toContainText('2/3')
+	await expect(turn).toContainText('✓ replied')
+	// The answer came back: neither moved on again nor handed to the terminal; the keys stay in the pane.
+	await expect(pane).toContainText('2/3')
+	await expect(pane).toBeFocused()
+	await expect(input).not.toBeFocused()
+})
+
 test('after the last waiting item, an ack or a reply closes the pane and the terminal has the keys', async ({
 	page,
 }) => {
