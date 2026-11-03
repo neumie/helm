@@ -9,7 +9,7 @@
 // last FIRST_READ_BYTES (a task started before that window is not seen: no
 // claim); each later read takes only what was appended, and an append larger
 // than READ_MAX_BYTES starts over from a fresh window. Anything unreadable
-// reports nothing, never a guess. A missing file is looked up again at most
+// reports nothing, never a guess. A missing or unreadable file is looked up again at most
 // every LOCATE_RETRY_MS.
 
 import { constants } from 'node:fs'
@@ -80,8 +80,10 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 			try {
 				if (!(await this.read(tail, sessionId, options.cwd, options.now))) return undefined
 			} catch {
-				// Unreadable now: no claim this tick; the next read starts from a fresh window.
+				// Unreadable now: no claim; looked up again (fresh window) after LOCATE_RETRY_MS, not
+				// every tick (a scan of the projects folder each poll for a file it cannot read).
 				tail.path = undefined
+				tail.missedAt = options.now
 				tail.offset = 0
 				tail.tasks = emptyBackgroundTasks()
 				return undefined

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -20,8 +20,13 @@ type BackgroundTaskState = import('../app/src/agent-dock/background-tasks.ts').B
 type OkenaClaudeClient = import('../app/src/agent-dock/okena-claude-source.ts').OkenaClaudeClient
 type BackgroundTaskObserver = import('../app/src/agent-dock/claude-transcript-tail.ts').BackgroundTaskObserver
 
-const { BACKGROUND_TASKS_MAX, applyBackgroundLine, backgroundTaskCounts, emptyBackgroundTasks } =
-	backgroundModule as BackgroundModule
+const {
+	BACKGROUND_TASKS_MAX,
+	BACKGROUND_TASK_MAX_AGE_MS,
+	applyBackgroundLine,
+	backgroundTaskCounts,
+	emptyBackgroundTasks,
+} = backgroundModule as BackgroundModule
 const { ClaudeTranscriptTail, FIRST_READ_BYTES, READ_MAX_BYTES, claudeProjectDir } = tailModule as TailModule
 const { BACKGROUND_BUSY_READ_MS, OkenaClaudeSource } = sourceModule as SourceModule
 const { createAgentDockState, reduce, agentDockSnapshot } = reduceModule as ReduceModule
@@ -201,6 +206,43 @@ test('state is bounded', () => {
 	assert.equal(applyBackgroundLine(state, '{"type":"assistant","message":{}}'), state)
 })
 
+test('an end that is never written does not keep the agent background forever', () => {
+	// Real transcripts held workflows with no notification 74 h later (claude restarted under the
+	// same session id): every task stops counting BACKGROUND_TASK_MAX_AGE_MS after its start.
+	const state = scan([bashStart('bstale001'), workflowStart('wstale001')])
+	assert.deepEqual(counts(state, T0 + BACKGROUND_TASK_MAX_AGE_MS - 1), { tasks: 2, shells: 1 })
+	assert.deepEqual(counts(state, T0 + BACKGROUND_TASK_MAX_AGE_MS), { tasks: 0, shells: 0 })
+	// A persistent monitor too.
+	const monitor = scan([monitorStart('mpersist2', 60_000, true)])
+	assert.deepEqual(counts(monitor, T0 + BACKGROUND_TASK_MAX_AGE_MS), { tasks: 0, shells: 0 })
+	// A start without a timestamp could never age out: it claims nothing.
+	const untimed = JSON.parse(bashStart('bnotime01')) as Json
+	assert.deepEqual(counts(scan([JSON.stringify({ ...untimed, timestamp: undefined })])), { tasks: 0, shells: 0 })
+	// Aged-out tasks make room under the cap for new starts.
+	const later = new Date(T0 + BACKGROUND_TASK_MAX_AGE_MS).toISOString()
+	const full = scan(Array.from({ length: BACKGROUND_TASKS_MAX }, (_, index) => bashStart(`bfull${index}`)))
+	const fresh = scan([bashStart('bfresh001', { timestamp: later })], full)
+	assert.deepEqual(counts(fresh, T0 + BACKGROUND_TASK_MAX_AGE_MS), { tasks: 1, shells: 1 })
+})
+
+test('a new claude process (another version on its records) drops the old process tasks', () => {
+	const v1 = { version: '2.1.301' }
+	const running = scan([bashStart('bold00001', v1), workflowStart('wold00001')])
+	assert.deepEqual(counts(running), { tasks: 2, shells: 1 })
+	// Same version: nothing changes, and the line is not even parsed (same state object).
+	const same = JSON.stringify({ type: 'assistant', isSidechain: false, message: {}, version: '2.1.301' })
+	assert.equal(applyBackgroundLine(running, same), running)
+	// A sidechain record of another version does not count as the main thread.
+	const side = JSON.stringify({ type: 'assistant', isSidechain: true, message: {}, version: '2.1.310' })
+	assert.deepEqual(counts(scan([side], running)), { tasks: 2, shells: 1 })
+	// Claude resumed under a newer version: the old shells and workflows are gone.
+	const resumed = JSON.stringify({ type: 'assistant', isSidechain: false, message: {}, version: '2.1.310' })
+	const after = scan([resumed], running)
+	assert.deepEqual(counts(after), { tasks: 0, shells: 0 })
+	// The new process's own tasks count again.
+	assert.deepEqual(counts(scan([bashStart('bnew00001', { version: '2.1.310' })], after)), { tasks: 1, shells: 1 })
+})
+
 // ---------------------------------------------------------------------------
 // The file tail
 // ---------------------------------------------------------------------------
@@ -284,6 +326,22 @@ test('the tail finds a session outside its cwd folder, and fails closed when it 
 		assert.equal(await missing.observe('../../etc/passwd', { refresh: true, now: T0 }), undefined)
 		assert.equal(await missing.observe('', { refresh: true, now: T0 }), undefined)
 	} finally {
+		cleanup()
+	}
+})
+
+test('an unreadable transcript claims nothing and is not looked up again every tick', async () => {
+	const { root, file, cleanup } = claudeRoot()
+	try {
+		writeFileSync(file, lines(bashStart('bperm0001')))
+		chmodSync(file, 0o000)
+		const tail = new ClaudeTranscriptTail([root])
+		assert.equal(await tail.observe(SID, { cwd: CWD, refresh: true, now: T0 }), undefined)
+		chmodSync(file, 0o600)
+		assert.equal(await tail.observe(SID, { cwd: CWD, refresh: true, now: T0 + 1_000 }), undefined)
+		assert.equal((await tail.observe(SID, { cwd: CWD, refresh: true, now: T0 + 61_000 }))?.shells, 1)
+	} finally {
+		chmodSync(file, 0o600)
 		cleanup()
 	}
 })
