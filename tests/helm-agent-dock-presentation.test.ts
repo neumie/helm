@@ -57,6 +57,8 @@ const {
 	planApproveModeText,
 	sourceBlockedNote,
 	canAnswer,
+	canAck,
+	nextWaiting,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -599,6 +601,33 @@ test('an open pane keeps entries in their slots: answered items stay put, new on
 	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)], [])), [5])
 	// No pane: the snapshot's own order.
 	assert.deepEqual(ids(keepOrder(null, [item(5), item(3)])), [5, 3])
+})
+
+test('Ack is offered for turns, orphaned and unconfirmed items; never for an open, sending or resolved one', () => {
+	const item = (kind: DockItem['kind'], state: DockItem['state']) => ({ id: 1, kind, state }) as DockItem
+	assert.equal(canAck(item('turn', 'open')), true)
+	assert.equal(canAck(item('turn', 'unconfirmed')), true)
+	assert.equal(canAck(item('ask', 'orphaned')), true)
+	assert.equal(canAck(item('ask', 'unconfirmed')), true)
+	assert.equal(canAck(item('ask', 'open')), false)
+	assert.equal(canAck(item('ask', 'sending')), false)
+	assert.equal(canAck(item('turn', 'sending')), false)
+	assert.equal(canAck(item('turn', 'resolved')), false)
+})
+
+test('after an ack or answer the pane moves on to the next item still waiting, in queue order, wrapping', () => {
+	const item = (id: number, state: DockItem['state'] = 'open') => ({ id, state }) as DockItem
+	const queue = [item(3), item(5, 'resolved'), item(7), item(9, 'unconfirmed'), item(11)]
+	// Answered #7 (still shown with its receipt): the next open one after it.
+	assert.equal(nextWaiting(queue, 7, 2)?.id, 11)
+	// Answered the last one: round to the front, skipping lingering and unconfirmed entries.
+	assert.equal(nextWaiting(queue, 11, 4)?.id, 3)
+	// Acked #7 left the queue: `at` is where it sat, so the entry now there comes first.
+	const acked = queue.filter(entry => entry.id !== 7)
+	assert.equal(nextWaiting(acked, 7, 2)?.id, 11)
+	// The handled item itself never counts, even while its state still reads open.
+	assert.equal(nextWaiting([item(3), item(5, 'resolved')], 3, 0), undefined)
+	assert.equal(nextWaiting([], 3, 0), undefined)
 })
 
 test('kind and status glyphs are single terminal cells', () => {

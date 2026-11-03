@@ -1,6 +1,6 @@
 // Agent dock pane keys (design §3.24): the pane-level key handler a body binds while it is
-// mounted, and the predicates it is built from (digits pick, ⌘Enter / Enter submit, a stray
-// typed key disarms). Typing in a field never picks or submits through these.
+// mounted, and the predicates it is built from (digits pick, ⌘Enter / Enter submit, ⌘⌫ acks, a
+// stray typed key disarms). Typing in a field never picks or submits through these.
 import { type KeyboardEvent, type MutableRefObject, useLayoutEffect, useRef } from 'react'
 
 /** The word for the submit modifier in key hints: `cmd` on macOS (Menlo draws ⌘ small), `ctrl` elsewhere. */
@@ -80,6 +80,26 @@ export function submitKeys(
 	return false
 }
 
+/**
+ * ⌘⌫ (Ctrl+Backspace off macOS): Ack, from anywhere in the pane. The caller still leaves it to a
+ * text field that has text in it (`keepsEditKey`).
+ */
+export const isAckKey = (event: KeyboardEvent<HTMLElement>, mod: DockModKey): boolean =>
+	event.key === 'Backspace' &&
+	(mod === 'cmd' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+	!event.altKey &&
+	!event.shiftKey &&
+	!event.nativeEvent.isComposing
+
+/** A text field with text in it keeps ⌘⌫ (Ctrl+Backspace) for editing; an empty one gives it to Ack. */
+export const keepsEditKey = (target: EventTarget | null): boolean => {
+	const field = target instanceof Element ? target.closest('input, textarea, [contenteditable="true"]') : null
+	if (!field) return false
+	const text =
+		field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement ? field.value : (field.textContent ?? '')
+	return text !== ''
+}
+
 export const modShortcut = (mod: DockModKey): string => (mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter')
 
 /** The go-to-dock key: as the row shows it (one notation with the hints) and as aria-keyshortcuts names it. */
@@ -88,3 +108,7 @@ export const dockShortcut = (mod: DockModKey): { label: string; aria: string } =
 
 /** The submit key as the hints show it: one notation with the row's `⌘⇧J` (`Ctrl+Enter` off macOS). */
 export const modHint = (mod: DockModKey): string => (mod === 'cmd' ? '⌘↵' : 'Ctrl+Enter')
+
+/** The Ack key: as the hints show it and as aria-keyshortcuts names it. */
+export const ackShortcut = (mod: DockModKey): { label: string; aria: string } =>
+	mod === 'cmd' ? { label: '⌘⌫', aria: 'Meta+Backspace' } : { label: 'Ctrl+Backspace', aria: 'Control+Backspace' }

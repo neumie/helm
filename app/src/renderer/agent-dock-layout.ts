@@ -178,6 +178,10 @@ export function mountAgentDock({
 			paneRoom,
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
+			// After an answer, or once nothing else waits (the dock decides; see AgentDock moveOn).
+			focusTerminal: () => {
+				if (!disposed) focusTerminal()
+			},
 			initialSent,
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
@@ -204,25 +208,27 @@ export function mountAgentDock({
 		fitActive()
 	})
 
+	/** Focus fell out of a removed element: nobody has it (it was not handed to the terminal or elsewhere). */
+	const focusDropped = (): boolean => {
+		const active = ownerDocument.activeElement
+		return !active || active === ownerDocument.body
+	}
+
 	const onAck = async (itemId: number): Promise<boolean> => {
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		const acked = await api.ack(itemId)
 		// The acked row disappears; keep keyboard focus inside the dock instead of dropping it to <body>.
-		if (!disposed && focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
+		if (!disposed && focusInDock && focusDropped()) focusDock()
 		return acked
 	}
 
-	// A successful answer hands the keyboard back to the terminal (unless Jakub already moved on elsewhere).
+	// Where the keys go after an answer (next waiting item, or back to the terminal) is the dock's call.
 	const onAct = async (itemId: number, action: DockAction): Promise<AgentDockActResult> => {
-		let result: AgentDockActResult
 		try {
-			result = await api.act({ itemId, action })
+			return await api.act({ itemId, action })
 		} catch (error) {
-			result = failedActResult(error)
+			return failedActResult(error)
 		}
-		const active = ownerDocument.activeElement
-		if (!disposed && result.ok && (!active || active === ownerDocument.body || dock.contains(active))) focusTerminal()
-		return result
 	}
 
 	const publishVisible = (): void => {
@@ -285,7 +291,8 @@ export function mountAgentDock({
 		const focusInDock = dock.contains(ownerDocument.activeElement)
 		render()
 		// A live update removed the focused row (resolved elsewhere): keep keyboard focus in the dock.
-		if (focusInDock && !dock.contains(ownerDocument.activeElement)) focusDock()
+		// (Focus the dock handed to the terminal itself, after the last waiting item, stays there.)
+		if (focusInDock && focusDropped()) focusDock()
 	})
 	publishVisible()
 	fitActive()

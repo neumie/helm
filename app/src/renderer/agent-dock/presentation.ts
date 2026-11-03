@@ -287,6 +287,33 @@ export function canAnswer(item: DockItem, snapshot: AgentDockSnapshot | null): b
 	return item.state === 'open' && itemSourceHealth(item, snapshot)?.state === 'ok'
 }
 
+/**
+ * Ack is offered for turns, orphaned and unconfirmed items; never for a resolved item or one being
+ * sent, so an open or sending ask is never ackable (the Ack button and ⌘⌫ alike).
+ */
+export function canAck(item: DockItem): boolean {
+	return (
+		item.state !== 'resolved' &&
+		item.state !== 'sending' &&
+		(item.kind === 'turn' || item.state === 'orphaned' || item.state === 'unconfirmed')
+	)
+}
+
+/**
+ * The item to move on to after Jakub acked or answered `handled` from the pane: the first one
+ * after it in queue order (wrapping round to the front) that still waits on him (`open`). `at` is
+ * where `handled` sits in `items`, or sat before an ack removed it. Undefined when nothing waits.
+ */
+export function nextWaiting(items: readonly DockItem[], handled: number, at: number): DockItem | undefined {
+	const count = items.length
+	const start = Math.max(0, at)
+	for (let step = 0; step < count; step++) {
+		const item = items[(start + step) % count]
+		if (item && item.id !== handled && item.state === 'open') return item
+	}
+	return undefined
+}
+
 export function findSession(snapshot: AgentDockSnapshot | null, key: string): DockSession | undefined {
 	return snapshot?.sessions.find(session => session.key === key)
 }
