@@ -44,7 +44,8 @@ export const DOCK_SOURCE_TEXT: Record<
 export const DOCK_SOURCE_HEALTH_STATES = ['pending', 'ok', 'down'] as const
 
 /**
- * working: busy. background: not busy but subagents still running. idle: not busy.
+ * working: busy. background: not busy but subagents or background tasks (shells, workflows,
+ * monitors) still running. idle: not busy.
  * waiting: a dialog is open. unknown: busy missing or detail unparseable/unfetched.
  * unreachable: the source itself is down (frozen row).
  */

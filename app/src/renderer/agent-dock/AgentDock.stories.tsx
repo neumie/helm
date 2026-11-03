@@ -120,6 +120,11 @@ export const OrphanedOpen: Story = { args: { scenario: 'orphaned', open: 'orphan
 
 export const AgentsOpen: Story = { args: { scenario: 'crowded', open: 'agents' } }
 
+/** Claude stopped while its stage deploy runs in a background shell: `background 2m` with "1 shell", not idle. */
+export const BackgroundShell: Story = { args: { scenario: 'background-shell', open: 'agents' } }
+/** Its turn stays readable: "ozvu se, až doběhne" plus the calm "Background work was still running." */
+export const BackgroundShellTurn: Story = { args: { scenario: 'background-shell', open: 'turn' } }
+
 /** Okena unreachable: everything is frozen, never "all clear". */
 export const SourceDown: Story = { args: { scenario: 'down' } }
 

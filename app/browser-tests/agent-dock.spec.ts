@@ -57,7 +57,8 @@ async function emitScenario(
 		| 'overflow'
 		| 'helm-terminals'
 		| 'helm-add-directories'
-		| 'single-turn',
+		| 'single-turn'
+		| 'background-shell',
 ): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
@@ -1892,4 +1893,28 @@ test('a link in the turn message opens through the external bridge on click and 
 	expect(await style('overflow-wrap')).toBe('anywhere')
 	const pane = page.locator('.agent-dock-pane-scroll')
 	expect(await pane.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+})
+
+test('an agent waiting on its background shell reads background with "1 shell", and its turn stays readable', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'background-shell')
+	// Okena says idle; the shell Claude started makes it busy in the background, never idle.
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('agents 1 · 1 busy')
+	const turn = page.locator('.agent-dock-entry[data-kind="turn"]')
+	await expect(turn).toHaveAttribute('aria-label', /^Turn ended, service-protocol-image-link in JVS, /)
+	await page.locator('.agent-dock-agents-entry').click()
+	const pane = page.locator('.agent-dock-pane')
+	const agent = pane.getByRole('listitem').filter({ hasText: 'service-protocol-image-link' })
+	await expect(agent).toContainText(/background\s*2m/)
+	await expect(agent).toContainText('1 shell')
+	await expect(agent).not.toContainText('subagent')
+	await expect(agent).not.toContainText('idle')
+	// The turn: "I'll report back when it finishes", with the calm background note.
+	await turn.click()
+	await expect(pane).toContainText('Stage deploy běží, ozvu se, až doběhne.')
+	await expect(pane.locator('.agent-dock-facts')).toContainText('Background work was still running.')
+	await expect(pane).not.toContainText('Subagents were still running.')
 })

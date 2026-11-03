@@ -294,7 +294,8 @@ test('filters: internal-fork SubagentStop and <task-notification> prompts; real 
 		T0 + 4,
 		ev('Stop', { prompt_id: 'p1', last_assistant_message: 'waiting on bg', background_tasks: [{ id: 'b1' }] }),
 	)
-	assert.equal(session(core).running_subagents.length, 1, 'Stop while a background task runs')
+	assert.deepEqual(session(core).running_subagents, [], 'a background task is no subagent')
+	assert.equal(session(core).background_tasks, 1, 'Stop while a background task runs')
 	core.event(
 		REF,
 		PID,

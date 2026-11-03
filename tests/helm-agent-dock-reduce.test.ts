@@ -99,7 +99,10 @@ const user = (uuid: string): Json => ({ kind: 'user', uuid, text: 'go on', origi
 const assistant = (uuid: string, text = 'Done.'): Json => ({ kind: 'assistant', uuid, text })
 
 let stateVersion = 2000
-function poll(detail: Json | null, opts: { transcript?: Json; version?: number } = {}): AgentDockObservation {
+function poll(
+	detail: Json | null,
+	opts: { transcript?: Json; version?: number; background?: unknown } = {},
+): AgentDockObservation {
 	stateVersion += 1
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
@@ -116,6 +119,9 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 						terminalId: TID,
 						detail: { ok: true, body: detail },
 						transcript: opts.transcript ? { ok: true, body: opts.transcript } : undefined,
+						...(opts.background !== undefined
+							? { background: opts.background as { sessionId: string; tasks: number; shells: number } }
+							: {}),
 					},
 				]
 			: [],
@@ -701,6 +707,66 @@ test('subagents still running after the turn: background status and hadBackgroun
 	assert.equal(state.sessions[KEY]?.session.subagents, 1)
 	const [turn] = itemsOf(state, 'turn')
 	assert.equal(turn?.fact.kind === 'turn' && turn.fact.hadBackground, true)
+})
+
+test('a background shell still running after the turn: background status, "1 shell" counts and hadBackground', () => {
+	const shell = { sessionId: SID, tasks: 1, shells: 1 }
+	const t1 = T0 + 1000
+	const { state } = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }), background: shell })],
+		[t1 + TURN_IDLE_MS, poll(idle(), { background: shell })],
+	])
+	const session = state.sessions[KEY]?.session
+	assert.equal(session?.status, 'background')
+	assert.equal(session?.subagents, 0)
+	assert.equal(session?.backgroundTasks, 1)
+	assert.equal(session?.backgroundShells, 1)
+	// The turn still opens (Jakub may want to read "I'll report back when it finishes").
+	const [turn] = itemsOf(state, 'turn')
+	assert.equal(turn?.state, 'open')
+	assert.equal(turn?.fact.kind === 'turn' && turn.fact.hadBackground, true)
+	// The shell ends (its notification was read): idle again, counts gone.
+	const after = reduce(
+		state,
+		poll(idle(), { background: { sessionId: SID, tasks: 0, shells: 0 } }),
+		t1 + TURN_IDLE_MS + 1500,
+	).state
+	assert.equal(after.sessions[KEY]?.session.status, 'idle')
+	assert.equal(after.sessions[KEY]?.session.backgroundTasks, 0)
+})
+
+test('background tasks fail closed: another session, an odd shape or no read claims none', () => {
+	const t1 = T0 + 1000
+	const statusWith = (background: unknown) =>
+		run(seededWorking(), [[t1, poll(idle(), { background })]]).state.sessions[KEY]?.session
+	assert.equal(statusWith({ sessionId: 'another-session', tasks: 2, shells: 2 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: -1, shells: 0 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: 1.5, shells: 0 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: '1', shells: 1 })?.status, 'idle')
+	assert.equal(statusWith(null)?.status, 'idle')
+	const none = run(seededWorking(), [[t1, poll(idle())]]).state.sessions[KEY]?.session
+	assert.equal(none?.status, 'idle')
+	assert.equal(none?.backgroundTasks, 0)
+	// Busy wins: a shell does not hide that the main agent works (the count still shows).
+	const busy = run(seededWorking(), [[t1, poll(working(), { background: { sessionId: SID, tasks: 1, shells: 1 } })]])
+		.state.sessions[KEY]?.session
+	assert.equal(busy?.status, 'working')
+	assert.equal(busy?.backgroundTasks, 1)
+	// Shells counted beyond the tasks are clamped.
+	assert.equal(statusWith({ sessionId: SID, tasks: 1, shells: 5 })?.backgroundShells, 1)
+})
+
+test("Helm's hub counts background tasks itself (background_tasks), apart from subagents", () => {
+	const t1 = T0 + 1000
+	const { state } = run(seededWorking(), [[t1, poll(idle({ background_tasks: 2 }))]])
+	const session = state.sessions[KEY]?.session
+	assert.equal(session?.status, 'background')
+	assert.equal(session?.subagents, 0)
+	assert.equal(session?.backgroundTasks, 2)
+	assert.equal(session?.backgroundShells, 0, 'the hub cannot tell shells from other tasks')
+	// A mistyped hub count fails the whole detail closed, like any other field.
+	const odd = run(seededWorking(), [[t1, poll(idle({ background_tasks: 'two' }))]]).state.sessions[KEY]?.session
+	assert.equal(odd?.status, 'unknown')
 })
 
 test('turn text is control-stripped and bounded', () => {

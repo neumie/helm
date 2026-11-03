@@ -537,8 +537,6 @@ export class ClaudeHubCore {
 		const t = this.visibleTerminal(ref)
 		const primary = t.primary && !t.primary.ended ? t.primary : undefined
 		const running = [...t.subagents.entries()].map(([agent_id, agent_type]) => ({ agent_id, agent_type }))
-		for (let index = 0; index < t.backgroundTasks; index++)
-			running.push({ agent_id: `background-${index + 1}`, agent_type: 'background task' })
 		return {
 			terminal_id: ref.terminalId,
 			...(primary ? { session_id: primary.sessionId } : {}),
@@ -555,6 +553,8 @@ export class ClaudeHubCore {
 				created_at_ms: dialog.createdAtMs,
 			})),
 			running_subagents: primary ? running : [],
+			/** Helm-only field (model.ts): the last Stop's `background_tasks`, counted apart from subagents. */
+			background_tasks: primary ? t.backgroundTasks : 0,
 			pr_links: [],
 		}
 	}

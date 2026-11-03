@@ -712,7 +712,7 @@ export function sessionStatusParts(
 	}
 }
 
-/** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
+/** Status words for an agent line: only what DockSession observed (status, since). */
 export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
 	const { word, age } = sessionStatusParts(session, now, since)
 	return age ? `${word} ${age}` : word
@@ -935,12 +935,23 @@ export function queueLayout(
 	}
 }
 
-/** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */
+/** Background tasks in the row's words: `1 shell` / `2 shells` when all are shells, else `N background task(s)`. */
+export function backgroundTasksText(session: Pick<DockSession, 'backgroundTasks' | 'backgroundShells'>): string {
+	const count = session.backgroundTasks
+	if (!(count > 0)) return ''
+	return session.backgroundShells === count
+		? `${count} shell${count === 1 ? '' : 's'}`
+		: `${count} background task${count === 1 ? '' : 's'}`
+}
+
+/** Facts for an agent row besides its status words: connection, subagents, background tasks, queue, PRs, staleness. */
 export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession): string[] {
 	const meta: string[] = []
 	if (session.status !== 'unreachable' && session.status !== 'unknown' && !session.hooksAttached)
 		meta.push('not connected')
 	if (session.subagents > 0) meta.push(`${session.subagents} subagent${session.subagents === 1 ? '' : 's'}`)
+	const background = backgroundTasksText(session)
+	if (background) meta.push(background)
 	if (session.queuedPrompts > 0) meta.push(`queued ${session.queuedPrompts}`)
 	for (const pr of session.prLinks.slice(0, 2)) meta.push(`PR #${pr.number}`)
 	const lastGood = snapshot.sources?.[session.source]?.lastObservedAt ?? snapshot.source.lastObservedAt
@@ -965,7 +976,7 @@ export interface AgentRow {
 	age: string
 	/** A waiting agent ages on its oldest ask's clock and takes that entry's tone; undefined otherwise. */
 	tone?: AgingTone
-	/** `agentRowMeta`: subagents, queued, PR #, not connected, stale. */
+	/** `agentRowMeta`: subagents, background tasks, queued, PR #, not connected, stale. */
 	meta: string[]
 }
 
