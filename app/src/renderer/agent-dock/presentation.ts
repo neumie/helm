@@ -637,36 +637,53 @@ export function sessionSince(snapshot: AgentDockSnapshot | null, session: DockSe
 	return asks.length > 0 ? Math.min(...asks.map(itemWaitingSince)) : session.since
 }
 
-/** Agents busy right now (working, or with background work only): the Agents entry and pane count them. */
+/** Agents busy right now (working, or with background work only): the Agents pane counts them. */
 export const busyCount = (sessions: readonly DockSession[]): number =>
 	sessions.filter(session => session.status === 'working' || session.status === 'background').length
 
+/** The Agents entry's states in the pane's order: busy first, then waiting on Jakub, idle, unknown, frozen. */
+const AGENTS_ENTRY_STATES: ReadonlyArray<[DockSession['status'], string]> = [
+	['working', 'working'],
+	['background', 'in background'],
+	['waiting', 'waiting on you'],
+	['idle', 'idle'],
+	['unknown', 'unknown'],
+	['unreachable', 'frozen'],
+]
+
 export interface AgentsEntryText {
-	/** The entry's own words (`agents 4 · 2 busy`; `agents 8` alone when none is busy; `no agents`). */
-	text: string
+	total: number
+	/** One status per agent in the given order: the bar's segments. */
+	marks: DockSession['status'][]
+	/** The states in words: `3 agents: 2 working, 1 idle. Show agents`. */
 	label: string
 	/** One line per agent: its name and status words. */
 	title: string
 }
 
 /**
- * The Agents entry in words. `unknown` counts agents whose state could not be read (named only while
- * items show; the entry adds its own toned `· N unknown`).
+ * The Agents entry (`3 agents` and a bar, one segment per agent, toned by status): its data, and its
+ * states in words for the label. Only what DockSession observed: never invented activity.
  */
 export function agentsEntryText(
 	snapshot: AgentDockSnapshot,
 	sessions: readonly DockSession[],
-	unknown: number,
 	now: number,
 ): AgentsEntryText {
-	if (sessions.length === 0) {
+	const total = sessions.length
+	if (total === 0) {
 		const none = noSessionText(snapshot)
-		return { text: 'no agents', label: `${none}. Show agents`, title: none }
+		return { total, marks: [], label: `${none}. Show agents`, title: none }
 	}
-	const busy = busyCount(sessions)
+	const marks = sessions.map(session => session.status)
+	const states = AGENTS_ENTRY_STATES.flatMap(([status, words]) => {
+		const count = marks.filter(mark => mark === status).length
+		return count > 0 ? [`${count} ${words}`] : []
+	})
 	return {
-		text: `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`,
-		label: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`,
+		total,
+		marks,
+		label: `${total} agent${total === 1 ? '' : 's'}: ${states.join(', ')}. Show agents`,
 		title: sessions
 			.map(
 				session =>

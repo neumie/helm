@@ -376,8 +376,9 @@ test('at a 1100px window the queue is one row: names and waits whole, each fill 
 	await expect(rail.locator('.agent-dock-more')).toHaveText(`+${8 - shown} more`)
 	await wholeNames()
 	for (const room of await tailRoom()) expect(room).toBeLessThanOrEqual(18)
-	// Nothing busy: the Agents entry says only `agents 8`.
-	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('agents 8')
+	// The Agents entry: the count, then one bar segment per agent.
+	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('8 agents')
+	await expect(rail.locator('.agent-dock-agents-seg')).toHaveCount(8)
 	const railBox = await box(page, '.agent-dock-row')
 	for (const entry of await rail.locator('.agent-dock-entry, .agent-dock-more').all()) {
 		const entryBox = await entry.boundingBox()
@@ -1469,7 +1470,7 @@ test('accessible names: the row, entries and pane say what they are; new asks ar
 	await expect(rail).toHaveAttribute('aria-keyshortcuts', 'Meta+Shift+J')
 	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute(
 		'aria-label',
-		/^\d+ agents?, \d+ busy\. Show agents$/,
+		/^\d+ agents?: \d+ [a-z ]+(, \d+ [a-z ]+)*\. Show agents$/,
 	)
 	const question = page.locator('.agent-dock-entry[aria-label^="Question,"]')
 	await expect(question).toHaveAttribute('aria-label', /^Question, \S+ in \S+, waiting \d/)
@@ -1703,7 +1704,14 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	const rail = row(page)
 	await expect(rail).not.toContainText('ClientCare')
 	await expect(page.locator('.agent-dock-entry').first()).toHaveText(/^\?\s*company-create-save-firm\s*\d+m/)
-	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('agents 4 · 2 busy')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('4 agents')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute(
+		'aria-label',
+		'4 agents: 1 working, 1 in background, 2 waiting on you. Show agents',
+	)
+	// One segment per agent in the pane's order; the two waiting on Jakub amber.
+	await expect(page.locator('.agent-dock-agents-seg')).toHaveCount(4)
+	await expect(page.locator('.agent-dock-agents-seg[data-status="waiting"]')).toHaveCount(2)
 	await expect(page.locator('.agent-dock-entry').first()).toHaveAttribute('title', /ClientCare #4182/)
 	await expect(page.locator('.agent-dock-entry').nth(1)).toHaveAttribute(
 		'aria-label',
