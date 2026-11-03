@@ -26,7 +26,7 @@ import {
 	dragThresholdExceeded,
 	groupDropInsertionIndex,
 	pointInExpandedRect,
-	pointerOnGroupHeaderEdge,
+	pointerOnGroupHeaderLeadingEdge,
 	stripDropInsertionIndex,
 	tabStripAutoScrollDelta,
 } from './tab-drag'
@@ -621,6 +621,12 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	}
 
 	let renderedStripKey: string | null = null
+	/**
+	 * A folder drag marks its section in place (group-drag/drop-placeholder). Only a
+	 * full strip rebuild clears that mark, so once the drag is over a render must not
+	 * keep an "unchanged" strip that still carries it.
+	 */
+	let groupDragMarksLive = false
 
 	function renderTabGroups(): void {
 		const byId = new Map(tabs.map(tab => [tabIdentity(tab), tab]))
@@ -631,6 +637,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const key = stripRenderKey(strip)
 		const intact =
 			key === renderedStripKey &&
+			(groupDragMarksLive || !tabsEl.querySelector('.group-drag-placeholder, .group-drop-placeholder')) &&
 			tabsEl.childElementCount === strip.length &&
 			strip.every(section =>
 				section.members.every(member => {
@@ -1849,16 +1856,14 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		drag.placementDrag?.reset()
 	}
 
-	/** The folder a strip point joins; null between units, including folder header edges. */
+	/** The folder a strip point joins; null between units, including a folder header's leading edge. */
 	function stripGroupAtPoint(x: number, y: number): string | null {
 		const hit = document.elementFromPoint(x, y)
 		const section = hit instanceof Element ? hit.closest<HTMLElement>('.tab-group-section') : null
 		const groupId = section?.dataset.groupId || null
 		const header = hit instanceof Element ? hit.closest<HTMLElement>('[data-tab-group-header]') : null
 		if (!section || !groupId || !header) return groupId
-		return pointerOnGroupHeaderEdge(x, header.getBoundingClientRect(), section.classList.contains('collapsed'))
-			? null
-			: groupId
+		return pointerOnGroupHeaderLeadingEdge(x, header.getBoundingClientRect()) ? null : groupId
 	}
 
 	function updateTabDragTarget(drag: TabPointerDrag): void {
@@ -2681,6 +2686,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 			drag.originSurface === 'strip' ? tabs.indexOf(drag.members[0] as Tab) : parked.indexOf(drag.members[0] as Tab)
 		if (!drag.placementDrag.project({ surface: drag.originSurface, index: Math.max(0, startIndex) }).ok) return
 		drag.started = true
+		groupDragMarksLive = true
 		closeTabMenu()
 		const preview = createGroupDragPreview(drag, sectionEl)
 		document.body.append(preview)
@@ -2752,6 +2758,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		const drag = groupPointerDrag
 		if (!drag) return
 		groupPointerDrag = null
+		groupDragMarksLive = false
 		removeGroupPointerListeners(drag)
 		if (drag.frame !== null) cancelAnimationFrame(drag.frame)
 		if (!drag.started) return

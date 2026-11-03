@@ -211,3 +211,63 @@ test('dragging over the strip never repaints, refits or switches the active term
 	await page.keyboard.press('Escape')
 	await expect(page.locator('.term-holder.active .xterm-rows')).toContainText('hello from the active shell')
 })
+
+test('a tab carried across collapsed folders shows exactly where a release at that point drops it', async ({
+	page,
+}) => {
+	// Reduced motion removes the FLIP so geometry is final after every move.
+	await page.emulateMedia({ reducedMotion: 'reduce' })
+	const alpha = await box(page, header(page, ALPHA))
+	const gamma = await box(page, header(page, GAMMA))
+	const y = await liftTab(page, 'api')
+	const mismatches: string[] = []
+	const xs: number[] = []
+	for (let x = alpha.x - 4; x <= gamma.x + gamma.width + 6; x += 2) xs.push(x)
+	for (const x of [...xs, ...xs.toReversed()]) {
+		await page.mouse.move(x, y)
+		const shown = await stripUnits(page)
+		const slot = await page.evaluate(() => {
+			const folder = document.querySelector('#tabs .drag-placeholder')?.closest<HTMLElement>('.tab-group-section')
+			return folder?.dataset.groupId ?? null
+		})
+		// A release re-resolves the target at the same point: it must not change what is shown.
+		await page.evaluate(
+			([clientX, clientY]) =>
+				document.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX, clientY, bubbles: true })),
+			[x, y],
+		)
+		const again = await stripUnits(page)
+		const slotAgain = await page.evaluate(() => {
+			const folder = document.querySelector('#tabs .drag-placeholder')?.closest<HTMLElement>('.tab-group-section')
+			return folder?.dataset.groupId ?? null
+		})
+		if (JSON.stringify([shown, slot]) !== JSON.stringify([again, slotAgain]))
+			mismatches.push(`${Math.round(x - alpha.x)}: ${slot ?? shown.join(',')} -> ${slotAgain ?? again.join(',')}`)
+	}
+	await page.keyboard.press('Escape')
+	await page.mouse.up()
+	expect(mismatches).toEqual([])
+})
+
+test('a folder dragged in front of collapsed folders is visible after the drop', async ({ page }) => {
+	const gamma = await box(page, header(page, GAMMA))
+	const alpha = await box(page, header(page, ALPHA))
+	const y = gamma.y + gamma.height / 2
+	await page.mouse.move(gamma.x + gamma.width / 2, y)
+	await page.mouse.down()
+	await page.mouse.move(gamma.x + gamma.width / 2 - 10, y, { steps: 2 })
+	await expect(page.locator('body')).toHaveClass(/group-dragging/)
+	await page.mouse.move(alpha.x + 2, y, { steps: 8 })
+	await page.mouse.up()
+	await expect
+		.poll(() => stripUnits(page))
+		.toEqual([`group:${GAMMA}`, `group:${ALPHA}`, `group:${BETA}`, 'active shell', 'api', `group:${DELTA}`])
+	await expect(page.locator('.tab-group-drag-preview')).toHaveCount(0)
+	await expect(page.locator('#tabs .group-drag-placeholder, #tabs .group-drop-placeholder')).toHaveCount(0)
+	await expect(header(page, GAMMA)).toBeVisible()
+	expect(
+		await page
+			.locator(`#tabs .tab-group-section[data-group-id="${GAMMA}"]`)
+			.evaluate(el => getComputedStyle(el).opacity),
+	).toBe('1')
+})

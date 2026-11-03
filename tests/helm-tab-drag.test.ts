@@ -9,7 +9,7 @@ const {
 	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
-	pointerOnGroupHeaderEdge,
+	pointerOnGroupHeaderLeadingEdge,
 	stripDropInsertionIndex,
 	tabDropInsertionIndex,
 	tabStripAutoScrollDelta,
@@ -98,20 +98,17 @@ test('magnetic background target uses a quiet expanded hit area', () => {
 	assert.equal(pointInExpandedRect(210, 45, target, 8), true)
 })
 
-test('folder header edges drop beside the folder; the middle joins it', () => {
-	const collapsed = { left: 100, width: 96 } // quarter = 24 → clamped to 16
-	assert.equal(pointerOnGroupHeaderEdge(100, collapsed, true), true)
-	assert.equal(pointerOnGroupHeaderEdge(115, collapsed, true), true)
-	assert.equal(pointerOnGroupHeaderEdge(116, collapsed, true), false)
-	assert.equal(pointerOnGroupHeaderEdge(148, collapsed, true), false)
-	assert.equal(pointerOnGroupHeaderEdge(179, collapsed, true), false)
-	assert.equal(pointerOnGroupHeaderEdge(180, collapsed, true), true)
-	// An expanded header only owns the leading edge: past it come its own members.
-	assert.equal(pointerOnGroupHeaderEdge(180, collapsed, false), false)
-	assert.equal(pointerOnGroupHeaderEdge(110, collapsed, false), true)
-	// A narrow header keeps a 6px edge on each side and a joinable middle.
+test('a folder header leading edge drops beside the folder; the rest joins it', () => {
+	const header = { left: 100, width: 96 } // quarter = 24 → clamped to 16
+	assert.equal(pointerOnGroupHeaderLeadingEdge(100, header), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(115, header), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(116, header), false)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(148, header), false)
+	// No trailing edge: a join from the left slides the header left under the pointer.
+	assert.equal(pointerOnGroupHeaderLeadingEdge(190, header), false)
+	// A narrow header keeps a 6px leading edge and a joinable rest.
 	const narrow = { left: 0, width: 20 }
-	assert.equal(pointerOnGroupHeaderEdge(5, narrow, true), true)
-	assert.equal(pointerOnGroupHeaderEdge(10, narrow, true), false)
-	assert.equal(pointerOnGroupHeaderEdge(14, narrow, true), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(5, narrow), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(6, narrow), false)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(19, narrow), false)
 })
