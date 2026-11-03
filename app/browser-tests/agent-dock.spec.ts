@@ -1213,9 +1213,79 @@ test('the active pane: focus turns the dock edge accent at 1px, never a ring box
 	expect(await page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').height)).toBe('1px')
 })
 
-test('entries sit on the 16px text column, one line each, separated by space, not rules', async ({ page }) => {
+/** Where the row's first text starts, px from #agent-dock's left edge, and how far the row or queue is scrolled. */
+interface TextColumn {
+	text: string
+	left: number
+	scrolled: number
+}
+
+declare global {
+	interface Window {
+		__dockTextColumn?: () => TextColumn | null
+		__dockFirstColumn?: TextColumn
+	}
+}
+
+/**
+ * Installs the in-page probe before the story loads: `__dockTextColumn()` reads the row's first painted text
+ * (a kind glyph counts by its 12px box, which centers glyphs of any width; any other text by its own range)
+ * and `__dockFirstColumn` keeps what the very first frame with a row showed.
+ */
+const installTextColumnProbe = () => {
+	const column = (): TextColumn | null => {
+		const dock = document.querySelector('#agent-dock')
+		const row = dock?.querySelector('.agent-dock-row')
+		if (!dock || !row) return null
+		const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, {
+			acceptNode: node =>
+				node.parentElement?.closest('.agent-dock-measure, .sr-only') || !node.textContent?.trim()
+					? NodeFilter.FILTER_REJECT
+					: NodeFilter.FILTER_ACCEPT,
+		})
+		const node = walker.nextNode()
+		if (!node?.parentElement) return null
+		const range = document.createRange()
+		range.selectNodeContents(node)
+		const glyph = node.parentElement.closest('.agent-dock-glyph')
+		const left = (glyph ?? range).getBoundingClientRect().left - dock.getBoundingClientRect().left
+		const queue = row.querySelector('.agent-dock-queue')
+		return { text: node.textContent ?? '', left, scrolled: row.scrollLeft + (queue?.scrollLeft ?? 0) }
+	}
+	window.__dockTextColumn = column
+	const first = () => {
+		const at = column()
+		if (at) window.__dockFirstColumn = at
+		else requestAnimationFrame(first)
+	}
+	requestAnimationFrame(first)
+}
+
+/** The row's text column in the next frame, after `scenario` lands when one is given (its first paint). */
+const textColumn = (page: Page, scenario?: string) =>
+	page.evaluate(
+		name =>
+			new Promise<TextColumn | null>(resolve => {
+				if (name) window.__helmWorkspaceFixture?.agentDock?.emitScenario(name as 'empty')
+				requestAnimationFrame(() => resolve(window.__dockTextColumn?.() ?? null))
+			}),
+		scenario ?? null,
+	)
+
+const expectOnColumn = (column: TextColumn | null | undefined, what: string) => {
+	expect(column, what).toBeTruthy()
+	expect(Math.abs((column?.left ?? 0) - 16), `${what}: "${column?.text}" starts at ${column?.left}px`).toBeLessThan(0.5)
+	expect(column?.scrolled, `${what}: the row is scrolled`).toBe(0)
+}
+
+test('every row text starts on the 16px column; entries one line each, separated by space, not rules', async ({
+	page,
+}) => {
+	await page.addInitScript(installTextColumnProbe)
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
+	// The very first paint, before anything measured has settled.
+	expectOnColumn(await page.evaluate(() => window.__dockFirstColumn), 'first paint')
 	await emitScenario(page, 'crowded')
 	const dock = await box(page, '#agent-dock')
 	const glyph = await box(page, '.agent-dock-queue .agent-dock-glyph')
@@ -1238,6 +1308,33 @@ test('entries sit on the 16px text column, one line each, separated by space, no
 	// The row ends in Okena's dot and ⌘⇧J on the 16px column.
 	const kbd = await box(page, '.agent-dock-kbd')
 	expect(Math.abs(dock.x + dock.width - (kbd.x + kbd.width) - 16)).toBeLessThan(1)
+
+	// Whatever the row holds — a note, the empty line, one entry, "+N more" — its first text is on the
+	// column: in the first frame after a snapshot lands (items arriving and leaving, widths not yet
+	// re-measured) and once settled, with the first entry open or focused by ⌘⇧J, at any window width.
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	const states = ['connecting', 'empty', 'down', 'single-turn', 'busy', 'crowded', 'overflow', 'real-case', 'empty']
+	for (const width of [900, 1280, 1600]) {
+		await page.setViewportSize({ width, height: 820 })
+		for (const scenario of states) {
+			expectOnColumn(await textColumn(page, scenario), `${width}px ${scenario}, first frame`)
+			await page.waitForTimeout(50)
+			expectOnColumn(await textColumn(page), `${width}px ${scenario}`)
+		}
+		await emitScenario(page, 'overflow')
+		const first = row(page).locator('.agent-dock-entry').first()
+		await first.click()
+		await expect(page.locator('.agent-dock-pane')).toBeVisible()
+		expectOnColumn(await textColumn(page), `${width}px first entry open`)
+		await first.click()
+		await expect(page.locator('.agent-dock-pane')).toHaveCount(0)
+		await input.focus()
+		await page.keyboard.press('Meta+Shift+KeyJ')
+		await expect(first).toBeFocused()
+		expectOnColumn(await textColumn(page), `${width}px first entry focused`)
+		await page.keyboard.press('Escape')
+		await expect(input).toBeFocused()
+	}
 })
 
 test('decisions: unarmed buttons are quiet keys, the note names the act, unanswerable items offer Ack only', async ({
@@ -1374,6 +1471,21 @@ test('keys in the dock light its edge accent at 1px; the focused entry is the se
 	expect(await page.locator('#agent-dock').evaluate(node => getComputedStyle(node, '::before').height)).toBe('1px')
 	expect(await first.evaluate(node => getComputedStyle(node).outlineStyle)).toBe('none')
 	await expect.poll(() => fill(first)).toBe(raised)
+	// Square cells: no highlight is rounded, and nothing between the row and the window rounds or clips it,
+	// so the one rounded corner a fill can meet is the window's own (docked at the bottom with the sidebar
+	// hidden, macOS masks the first cell with the window radius — the fill follows it exactly).
+	for (const stop of await rail.locator('[data-row-stop]').all())
+		expect(await stop.evaluate(node => getComputedStyle(node).borderRadius)).toBe('0px')
+	expect(
+		await rail.evaluate(node => {
+			const shaped: string[] = []
+			for (let at: Element | null = node; at; at = at.parentElement) {
+				const style = getComputedStyle(at)
+				if (style.borderRadius !== '0px' || style.clipPath !== 'none') shaped.push(at.id || at.className)
+			}
+			return shaped
+		}),
+	).toEqual([])
 	// Nothing else changes: the row keeps the one surface, ⌘⇧J stays dim.
 	expect(await fill()).toBe('rgba(0, 0, 0, 0)')
 	const dim = await tokenColor(page, '--dock-dim')

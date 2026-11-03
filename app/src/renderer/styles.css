@@ -1345,6 +1345,9 @@ body.dragging {
 	/* The dock's dim text: --text-2 lifted toward --text-1 so 12px meta (ages, context, hints)
 	 * reads at ≥4.5:1 on --chrome and ≥3:1 on the selected fill. */
 	--dock-dim: color-mix(in srgb, var(--text-1) 60%, var(--text-2));
+	/* The row's one text inset: every first text in the row (entry glyph, a note, the empty line) starts
+	 * on it and ⌘⇧J ends on it — the 16px column. Entries pad both sides by it (QUEUE_ENTRY_PAD = 2×). */
+	--dock-inset: 16px;
 	grid-row: 2;
 	grid-column: 1;
 	position: relative;
@@ -1431,7 +1434,7 @@ body.dragging {
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	padding: 0 16px 0 8px;
+	padding: 0 var(--dock-inset) 0 8px;
 	white-space: nowrap;
 }
 
@@ -1506,8 +1509,8 @@ body.dragging {
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
-	max-width: calc(48ch + 32px);
-	padding: 0 16px;
+	max-width: calc(48ch + 2 * var(--dock-inset));
+	padding: 0 var(--dock-inset);
 	color: var(--text-1);
 }
 
@@ -1527,7 +1530,8 @@ body.dragging {
 }
 
 /* Entries are separated by space, never rules. Cells touch and fill the row edge to edge, so the
- * selected fill has no inset; each entry's 16px padding puts every glyph on the 16px text column.
+ * selected fill has no inset; each entry's --dock-inset padding puts every glyph on the 16px text column
+ * (the queue itself adds none, so the empty line pads by the same inset).
  * Each cell is as wide as its text really sets (queueLayout), so the fill ends right after the wait. */
 .agent-dock-queue {
 	flex: 1 1 0;
@@ -1552,7 +1556,7 @@ body.dragging {
 	display: flex;
 	align-items: center;
 	min-width: 0;
-	padding: 0 8px;
+	padding: 0 var(--dock-inset);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1568,7 +1572,7 @@ body.dragging {
 	justify-content: center;
 	min-width: 0;
 	height: 28px;
-	padding: 0 16px;
+	padding: 0 var(--dock-inset);
 	border: none;
 	border-radius: 0;
 	background: transparent;
