@@ -637,36 +637,53 @@ export function sessionSince(snapshot: AgentDockSnapshot | null, session: DockSe
 	return asks.length > 0 ? Math.min(...asks.map(itemWaitingSince)) : session.since
 }
 
-/** Agents busy right now (working, or with background work only): the Agents entry and pane count them. */
+/** Agents busy right now (working, or with background work only): the Agents pane counts them. */
 export const busyCount = (sessions: readonly DockSession[]): number =>
 	sessions.filter(session => session.status === 'working' || session.status === 'background').length
 
+/** The Agents entry's states in the pane's order: busy first, then waiting on Jakub, idle, unknown, frozen. */
+const AGENTS_ENTRY_STATES: ReadonlyArray<[DockSession['status'], string]> = [
+	['working', 'working'],
+	['background', 'in background'],
+	['waiting', 'waiting on you'],
+	['idle', 'idle'],
+	['unknown', 'unknown'],
+	['unreachable', 'frozen'],
+]
+
 export interface AgentsEntryText {
-	/** The entry's own words (`agents 4 · 2 busy`; `agents 8` alone when none is busy; `no agents`). */
-	text: string
+	total: number
+	/** One status per agent in the given order: the bar's segments. */
+	marks: DockSession['status'][]
+	/** The states in words: `3 agents: 2 working, 1 idle. Show agents`. */
 	label: string
 	/** One line per agent: its name and status words. */
 	title: string
 }
 
 /**
- * The Agents entry in words. `unknown` counts agents whose state could not be read (named only while
- * items show; the entry adds its own toned `· N unknown`).
+ * The Agents entry (`3 agents` and a bar, one segment per agent, toned by status): its data, and its
+ * states in words for the label. Only what DockSession observed: never invented activity.
  */
 export function agentsEntryText(
 	snapshot: AgentDockSnapshot,
 	sessions: readonly DockSession[],
-	unknown: number,
 	now: number,
 ): AgentsEntryText {
-	if (sessions.length === 0) {
+	const total = sessions.length
+	if (total === 0) {
 		const none = noSessionText(snapshot)
-		return { text: 'no agents', label: `${none}. Show agents`, title: none }
+		return { total, marks: [], label: `${none}. Show agents`, title: none }
 	}
-	const busy = busyCount(sessions)
+	const marks = sessions.map(session => session.status)
+	const states = AGENTS_ENTRY_STATES.flatMap(([status, words]) => {
+		const count = marks.filter(mark => mark === status).length
+		return count > 0 ? [`${count} ${words}`] : []
+	})
 	return {
-		text: `agents ${sessions.length}${busy > 0 ? ` · ${busy} busy` : ''}`,
-		label: `${sessions.length} agent${sessions.length === 1 ? '' : 's'}, ${busy} busy${unknown > 0 ? `, ${unknown} unknown` : ''}. Show agents`,
+		total,
+		marks,
+		label: `${total} agent${total === 1 ? '' : 's'}: ${states.join(', ')}. Show agents`,
 		title: sessions
 			.map(
 				session =>
@@ -712,7 +729,7 @@ export function sessionStatusParts(
 	}
 }
 
-/** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
+/** Status words for an agent line: only what DockSession observed (status, since). */
 export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
 	const { word, age } = sessionStatusParts(session, now, since)
 	return age ? `${word} ${age}` : word
@@ -935,12 +952,23 @@ export function queueLayout(
 	}
 }
 
-/** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */
+/** Background tasks in the row's words: `1 shell` / `2 shells` when all are shells, else `N background task(s)`. */
+export function backgroundTasksText(session: Pick<DockSession, 'backgroundTasks' | 'backgroundShells'>): string {
+	const count = session.backgroundTasks
+	if (!(count > 0)) return ''
+	return session.backgroundShells === count
+		? `${count} shell${count === 1 ? '' : 's'}`
+		: `${count} background task${count === 1 ? '' : 's'}`
+}
+
+/** Facts for an agent row besides its status words: connection, subagents, background tasks, queue, PRs, staleness. */
 export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession): string[] {
 	const meta: string[] = []
 	if (session.status !== 'unreachable' && session.status !== 'unknown' && !session.hooksAttached)
 		meta.push('not connected')
 	if (session.subagents > 0) meta.push(`${session.subagents} subagent${session.subagents === 1 ? '' : 's'}`)
+	const background = backgroundTasksText(session)
+	if (background) meta.push(background)
 	if (session.queuedPrompts > 0) meta.push(`queued ${session.queuedPrompts}`)
 	for (const pr of session.prLinks.slice(0, 2)) meta.push(`PR #${pr.number}`)
 	const lastGood = snapshot.sources?.[session.source]?.lastObservedAt ?? snapshot.source.lastObservedAt
@@ -1144,7 +1172,7 @@ export interface AgentRow {
 	 * plan's title) while it asks, else the first line of its last assistant message. '' when none.
 	 */
 	excerpt: string
-	/** Source, place (worktree / branch / pane), PR #, subagents, queued, stale. */
+	/** Source, place (worktree / branch / pane), then `agentRowMeta`: subagents, background tasks, queued, PR #, not connected, stale. */
 	where: string[]
 	/** The live item opening this row shows; undefined: the agent detail. */
 	itemId?: number

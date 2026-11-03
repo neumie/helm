@@ -23,7 +23,6 @@ import {
 	queueLayout,
 	receiptView,
 	sourceNames,
-	unknownSessionCount,
 } from './presentation'
 import { type ArrivalKind, mostUrgent, useArrivalFlash } from './use-arrival-flash'
 
@@ -113,7 +112,6 @@ export function Queue({
 				<span>Connecting to {sourceNames(snapshot, 'pending')}…</span>
 			</div>
 		)
-	const unknown = unknownSessionCount(snapshot)
 	const whos = needs.map(item => agentWho(snapshot, item.session))
 	const openIndex = needs.findIndex(item => `item:${item.id}` === openKey)
 	// Names shorten (in the middle) before anything goes behind "+N more"; the open entry is always in the row.
@@ -195,7 +193,6 @@ export function Queue({
 			<AgentsEntry
 				snapshot={snapshot}
 				sessions={sessions}
-				unknown={needs.length > 0 ? unknown : 0}
 				now={now}
 				open={openKey === 'agents'}
 				paneId={paneId}
@@ -323,16 +320,18 @@ function MoreEntry({
 	)
 }
 
+/** Segments the Agents entry's bar draws at 8px; past this it keeps that width and thins its gaps. */
+const AGENTS_BAR_MAX = 10
+
 /**
- * The Agents entry, one quiet line after the queue (`agents 4 · 2 busy`; `agents 8` alone when none is
- * busy), and the pane lists them all. Only what DockSession observed (status, since) — never invented
- * activity. Agents whose state their source could not read while items show are named here, toned: the row
- * never reads as complete without them.
+ * The Agents entry, one quiet line after the queue: the count (`3 agents`; `no agents`), then a 3px bar,
+ * one segment per agent in the pane's order, toned by status (working bright, background --text-1, idle
+ * faint, waiting/unknown --warn), and the pane lists them all. The line is aria-hidden: the label names
+ * the states in words, the tooltip each agent. Only what DockSession observed — never invented activity.
  */
 function AgentsEntry({
 	snapshot,
 	sessions,
-	unknown,
 	now,
 	open,
 	paneId,
@@ -341,14 +340,13 @@ function AgentsEntry({
 }: {
 	snapshot: AgentDockSnapshot
 	sessions: ReturnType<typeof orderedSessions>
-	unknown: number
 	now: number
 	open: boolean
 	paneId: string
 	buttonRef(node: HTMLButtonElement | null): void
 	onOpen(viaKeyboard: boolean): void
 }) {
-	const words = agentsEntryText(snapshot, sessions, unknown, now)
+	const entry = agentsEntryText(snapshot, sessions, now)
 	return (
 		<div className="agent-dock-agents">
 			<button
@@ -359,13 +357,29 @@ function AgentsEntry({
 				data-open={String(open)}
 				aria-expanded={open}
 				aria-controls={open ? paneId : undefined}
-				aria-label={words.label}
-				title={words.title}
+				aria-label={entry.label}
+				title={entry.title}
 				onClick={event => onOpen(event.detail === 0)}
 			>
-				<span className="agent-dock-entry-line">
-					{words.text}
-					{unknown > 0 ? <span className="agent-dock-agents-unknown">· {unknown} unknown</span> : null}
+				<span className="agent-dock-entry-line" aria-hidden="true">
+					{entry.total === 0 ? (
+						<span>no agents</span>
+					) : (
+						<>
+							<span>
+								<span className="agent-dock-agents-n">{entry.total}</span> agent{entry.total === 1 ? '' : 's'}
+							</span>
+							<span
+								className="agent-dock-agents-bar"
+								data-capped={entry.marks.length > AGENTS_BAR_MAX ? 'true' : undefined}
+							>
+								{entry.marks.map((status, at) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: segments are positional, one per agent in order.
+									<span key={at} className="agent-dock-agents-seg" data-status={status} />
+								))}
+							</span>
+						</>
+					)}
 				</span>
 			</button>
 		</div>

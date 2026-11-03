@@ -97,9 +97,11 @@ export function dockSpoolSnapshot(
 		// `source` only for Helm sessions: an Okena-only spool stays byte-identical (absent = okena).
 		// The last message's text and uuid and a dock reply's receipt (its detail is source error
 		// words) stay in memory/IPC: disk gets only when the message was read and whether it was seen.
-		sessions: snapshot.sessions.map(({ source, lastMessage, reply: _reply, ...session }) => ({
+		// Background-task counts only while some run, for the same reason.
+		sessions: snapshot.sessions.map(({ source, lastMessage, reply: _reply, backgroundTasks, backgroundShells, ...session }) => ({
 			...session,
 			...(source === 'okena' ? {} : { source }),
+			...(backgroundTasks > 0 ? { backgroundTasks, backgroundShells } : {}),
 			prLinks: session.prLinks.map(link => ({ ...link })),
 			...(lastMessage ? { lastMessage: { at: lastMessage.at, seen: lastMessage.seen } } : {}),
 		})),

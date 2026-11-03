@@ -153,6 +153,14 @@ const clock = (at: number): string => {
 	return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
+/** `1 shell` / `2 shells` when every background task is a shell, else `N bg tasks` ('' for none). */
+export const backgroundChip = (tasks: number, shells: number): string =>
+	tasks <= 0
+		? ''
+		: shells === tasks
+			? `${tasks} shell${tasks === 1 ? '' : 's'}`
+			: `${tasks} bg task${tasks === 1 ? '' : 's'}`
+
 const sessionLabel = (session: SpoolSession | undefined, key: string): string =>
 	session ? `${session.project}/${session.name}` : key
 
@@ -248,6 +256,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 		const chips = [
 			`${session.status} ${ageText(now - session.since)}`,
 			session.subagents > 0 ? `bg·${session.subagents}` : '',
+			backgroundChip(session.backgroundTasks ?? 0, session.backgroundShells ?? 0),
 			session.queuedPrompts > 0 ? `queued ${session.queuedPrompts}` : '',
 			...session.prLinks.slice(0, 3).map(link => `PR #${link.number}`),
 			now - session.observedAt > 10_000 ? `stale ${ageText(now - session.observedAt)}` : '',

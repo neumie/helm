@@ -6,6 +6,7 @@
 import showAsk from '../../../../tests/fixtures/okena-claude/show-ask.json'
 import showIdle from '../../../../tests/fixtures/okena-claude/show-idle.json'
 import stateAsk from '../../../../tests/fixtures/okena-claude/state-ask.json'
+import type { ObservedBackgroundTasks } from '../../agent-dock/background-tasks'
 import {
 	ACT_CONFIRM_MS,
 	type AgentDockActRequest,
@@ -62,6 +63,12 @@ export type AgentDockScenario =
 	 * Okena pane runs Claude without hooks (not connected).
 	 */
 	| 'agents-overview'
+	/**
+	 * Jakub's report: Claude merged PR #953, started the stage deploy in a background shell, said
+	 * "ozvu se, až doběhne" and stopped 2m ago. Okena says idle; the shell makes it `background`
+	 * with "1 shell", and the turn is still there to read.
+	 */
+	| 'background-shell'
 	/** Receipt states (built by running real act observations through the reducer). */
 	| 'receipt-sending'
 	| 'receipt-unconfirmed'
@@ -220,17 +227,18 @@ const user = (uuid: string, text: string): Json => ({ kind: 'user', uuid, text, 
 /** Builds one poll; panes without a transcript this tick omit it, like the real source. */
 function poll(
 	version: number,
-	live: Array<{ pane: Pane; body: Json; transcript?: Json }>,
+	live: Array<{ pane: Pane; body: Json; transcript?: Json; background?: ObservedBackgroundTasks }>,
 ): AgentDockObservation & { type: 'poll' } {
 	return {
 		type: 'poll',
 		source: 'okena',
 		profile: PROFILE,
 		state: { ok: true, body: okenaState(version, live) },
-		terminals: live.map(({ pane, body, transcript: page }) => ({
+		terminals: live.map(({ pane, body, transcript: page, background }) => ({
 			terminalId: pane.tid,
 			detail: { ok: true, body },
 			...(page ? { transcript: { ok: true, body: page } } : {}),
+			...(background ? { background } : {}),
 		})),
 	}
 }
@@ -636,7 +644,7 @@ function overflowTimeline(now: number): { steps: Array<[number, AgentDockObserva
 	return { steps, live, version }
 }
 
-type Live = Array<{ pane: Pane; body: Json; transcript?: Json }>
+type Live = Array<{ pane: Pane; body: Json; transcript?: Json; background?: ObservedBackgroundTasks }>
 
 const PSYON = { id: 'proj-psyon', name: 'Psyon' }
 const JVS = { id: 'proj-jvs', name: 'JVS' }
@@ -996,6 +1004,36 @@ function agentsOverviewRun(now: number, start: AgentDockState): ScenarioRun {
 	}
 }
 
+/** 'background-shell': the stage deploy runs in a background shell after Claude stopped. */
+function backgroundShellTimeline(now: number): {
+	steps: Array<[number, AgentDockObservation]>
+	live: Live
+	version: number
+} {
+	const pane = agentsPanes.imageLink
+	const shell: ObservedBackgroundTasks = { sessionId: pane.sid, tasks: 1, shells: 1 }
+	const working = detail(pane, { busy: true, pr_links: [prLink(953)] })
+	const idle = { ...working, busy: false }
+	const start = transcript(
+		pane,
+		[user('image-u0', 'Mergni to a nasaď na stage.'), assistant('image-a0', 'Jdu na to.')],
+		1_000,
+		true,
+	)
+	const ended = transcript(
+		pane,
+		[assistant('image-a1', 'PR #953 je mergnutý. Stage deploy běží, ozvu se, až doběhne.')],
+		2_000,
+		false,
+	)
+	const steps: Array<[number, AgentDockObservation]> = [
+		[now - 20 * MINUTE, poll(9_001, [{ pane, body: working, transcript: start }])],
+		[now - 2 * MINUTE, poll(9_002, [{ pane, body: idle, transcript: ended, background: shell }])],
+		[now - 2 * MINUTE + TURN_IDLE_MS, poll(9_003, [{ pane, body: idle, background: shell }])],
+	]
+	return { steps, live: [{ pane, body: idle, background: shell }], version: 9_003 }
+}
+
 interface ScenarioRun {
 	state: AgentDockState
 	/** The panes as Okena last showed them (no transcript pages), for follow-up polls. */
@@ -1024,7 +1062,8 @@ const fromSource = (scenario: ScenarioRun, observation: AgentDockObservation): A
 	return { ...observation, ...(scenario.source ? { source: scenario.source } : {}), terminals }
 }
 
-const bare = (live: Live): Live => live.map(({ pane, body }) => ({ pane, body }))
+const bare = (live: Live): Live =>
+	live.map(({ pane, body, background }) => ({ pane, body, ...(background ? { background } : {}) }))
 
 function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const persisted = { version: 1 as const, nextItemId: 3, seen: { [`${PROFILE}:${panes.turn.tid}`]: 'turn-a0' } }
@@ -1073,6 +1112,10 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
 	}
 	if (name === 'agents-overview') return agentsOverviewRun(now, start)
+	if (name === 'background-shell') {
+		const timeline = backgroundShellTimeline(now)
+		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
+	}
 	if (name === 'real-case' || name === 'overflow') {
 		const timeline = name === 'real-case' ? realCaseTimeline(now) : overflowTimeline(now)
 		return { state: run(timeline.steps, start), live: bare(timeline.live), version: timeline.version }

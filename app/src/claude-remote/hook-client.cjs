@@ -30,6 +30,8 @@ const EVENT_STRING_MAX = 4096
 /** Same bound as hub-core.ts ENTRY_TEXT_MAX: a prompt or last message is cut there anyway. */
 const EVENT_TEXT_MAX = 64 * 1024
 const BACKGROUND_TASKS_MAX = 32
+/** A Stop's background task keeps only its type label ('shell', 'subagent', 'monitor', 'workflow', …). */
+const TASK_TYPE = /^[a-z][a-z0-9_ -]{0,31}$/i
 
 /** Every field the hub reads; the rest (tool_response, …) never leaves this process. */
 const EVENT_FIELDS = [
@@ -79,7 +81,9 @@ function slim(kind, input) {
 	for (const key of ['prompt', 'last_assistant_message', 'error'])
 		if (typeof out[key] === 'string' && out[key].length > EVENT_TEXT_MAX) out[key] = out[key].slice(0, EVENT_TEXT_MAX)
 	if (Array.isArray(out.background_tasks))
-		out.background_tasks = out.background_tasks.slice(0, BACKGROUND_TASKS_MAX).map(() => ({}))
+		out.background_tasks = out.background_tasks
+			.slice(0, BACKGROUND_TASKS_MAX)
+			.map(task => (task && typeof task.type === 'string' && TASK_TYPE.test(task.type) ? { type: task.type } : {}))
 	return out
 }
 

@@ -371,11 +371,11 @@ export function Choices({
 	onPick(id: string): void
 	onPoint?(id: string): void
 }) {
+	// The last focused row, per list (`keyPrefix`): another question's list starts at its own pick or first row.
 	const [current, setCurrent] = useState<string | null>(null)
+	const rowKey = (id: string) => `${keyPrefix}:${id}`
 	const stop =
-		(current !== null && rows.some(row => row.id === current) ? current : null) ??
-		rows.find(row => picked.has(row.id))?.id ??
-		rows[0]?.id
+		rows.find(row => rowKey(row.id) === current)?.id ?? rows.find(row => picked.has(row.id))?.id ?? rows[0]?.id
 	const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || !noModifiers(event)) return
 		const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.agent-dock-choice')]
@@ -408,7 +408,7 @@ export function Choices({
 				return (
 					<button
 						type="button"
-						key={`${keyPrefix}:${row.id}`}
+						key={rowKey(row.id)}
 						className="agent-dock-choice"
 						role={multi ? 'checkbox' : 'radio'}
 						data-tone={row.tone}
@@ -420,7 +420,7 @@ export function Choices({
 						onClick={() => onPick(row.id)}
 						onMouseEnter={() => onPoint?.(row.id)}
 						onFocus={() => {
-							setCurrent(row.id)
+							setCurrent(rowKey(row.id))
 							onPoint?.(row.id)
 						}}
 					>

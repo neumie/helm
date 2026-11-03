@@ -3,6 +3,7 @@
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
 import { boundText, excerptLine } from '../../../src/agent-dock/text'
+import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
 import { itemWaitingSince } from './item-order'
 import {
 	ACT_CONFIRM_MS,
@@ -240,11 +241,37 @@ const isDispatched = (item: DockItem): boolean =>
 /** The act's CAS read/POST is still running: an observed close cannot be attributed yet. */
 const isInFlight = (item: DockItem): boolean => item.state === 'sending' && item.receipt?.status === 'sending'
 
-function deriveStatus(detail: OkenaClaudeSession): DockSessionStatus {
+/** `background`: main agent idle while its subagents or background tasks (shells, workflows, monitors) still run. */
+function deriveStatus(detail: OkenaClaudeSession, backgroundTasks: number): DockSessionStatus {
 	if (detail.dialogs.length > 0) return 'waiting'
 	if (detail.busy === true) return 'working'
-	if (detail.busy === false) return detail.running_subagents.length > 0 ? 'background' : 'idle'
+	if (detail.busy === false) return detail.running_subagents.length > 0 || backgroundTasks > 0 ? 'background' : 'idle'
 	return 'unknown'
+}
+
+/**
+ * Background tasks still running for this detail: Helm's hub counts them itself
+ * (`background_tasks`), Okena panes carry what their transcript file showed for
+ * this very session. Anything else (no read, another session) claims none.
+ */
+function backgroundOf(
+	detail: OkenaClaudeSession,
+	observed: ObservedBackgroundTasks | undefined,
+): { tasks: number; shells: number } {
+	if (detail.background_tasks !== undefined) {
+		const tasks = Math.min(detail.background_tasks, BACKGROUND_TASKS_MAX)
+		return { tasks, shells: Math.min(detail.background_shells ?? 0, tasks) }
+	}
+	if (!observed || !detail.session_id || observed.sessionId !== detail.session_id) return { tasks: 0, shells: 0 }
+	const tasks = Math.min(observed.tasks, BACKGROUND_TASKS_MAX)
+	return { tasks, shells: Math.min(observed.shells, tasks) }
+}
+
+/** Observations cross a process boundary in tests and sources: an odd shape claims nothing. */
+function validBackground(value: unknown): value is ObservedBackgroundTasks {
+	const count = (n: unknown): boolean => typeof n === 'number' && Number.isInteger(n) && n >= 0
+	const v = value as Partial<ObservedBackgroundTasks> | undefined
+	return !!v && typeof v === 'object' && typeof v.sessionId === 'string' && count(v.tasks) && count(v.shells)
 }
 
 function pruneResolved(items: DockItem[], now: number): DockItem[] {
@@ -448,7 +475,11 @@ function observeTerminal(
 	draft: Draft,
 	ctx: TickContext,
 	terminalId: string,
-	observed: { detail: OkenaClaudeSession | null; transcript: OkenaClaudeTranscriptPage | null },
+	observed: {
+		detail: OkenaClaudeSession | null
+		transcript: OkenaClaudeTranscriptPage | null
+		background?: ObservedBackgroundTasks
+	},
 ): void {
 	const { now } = draft
 	const key = sessionKey(ctx.profile, terminalId)
@@ -470,6 +501,8 @@ function observeTerminal(
 			since: now,
 			observedAt: now,
 			subagents: 0,
+			backgroundTasks: 0,
+			backgroundShells: 0,
 			queuedPrompts: 0,
 			prLinks: [],
 			hasTranscript: false,
@@ -514,6 +547,9 @@ function observeTerminal(
 	}
 	record.session.sessionId = detail.session_id
 	record.session.subagents = detail.running_subagents.length
+	const background = backgroundOf(detail, observed.background)
+	record.session.backgroundTasks = background.tasks
+	record.session.backgroundShells = background.shells
 	record.session.queuedPrompts = detail.queued_prompts
 	record.session.prLinks = detail.pr_links.map(link => ({
 		number: link.number,
@@ -569,7 +605,7 @@ function observeTerminal(
 		}
 	}
 
-	const status = deriveStatus(detail)
+	const status = deriveStatus(detail, background.tasks)
 	setStatus(record, status, now)
 	if (status === 'idle' || status === 'background') record.idleSince ??= now
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
@@ -770,13 +806,21 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 	const reconnected = src.health.state === 'down' && src.health.lastObservedAt !== null
 	const regressed = src.stateVersion !== undefined && okenaState.state_version < src.stateVersion
 
-	const details = new Map<string, { detail: OkenaClaudeSession | null; transcript: OkenaClaudeTranscriptPage | null }>()
+	const details = new Map<
+		string,
+		{
+			detail: OkenaClaudeSession | null
+			transcript: OkenaClaudeTranscriptPage | null
+			background?: ObservedBackgroundTasks
+		}
+	>()
 	for (const terminal of observation.terminals) {
 		const detail = terminal.detail.ok ? parseOkenaClaudeSession(terminal.detail.body) : null
 		const transcript = terminal.transcript?.ok ? parseOkenaClaudeTranscriptPage(terminal.transcript.body) : null
 		details.set(terminal.terminalId, {
 			detail: detail?.ok ? detail.value : null,
 			transcript: transcript?.ok ? transcript.value : null,
+			...(validBackground(terminal.background) ? { background: terminal.background } : {}),
 		})
 	}
 

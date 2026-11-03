@@ -10,6 +10,7 @@
 
 import { join } from 'node:path'
 import { OkenaClient } from '../../src/extensions/okena/client'
+import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
 import type { AgentDockSnapshot } from './agent-dock/model'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
@@ -88,7 +89,7 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 		? new AgentDockWatcher({
 				dir: dockDir,
 				source: new CompositeDockSource([
-					new OkenaClaudeSource(new OkenaClient()),
+					new OkenaClaudeSource(new OkenaClient(), 'okena', new ClaudeTranscriptTail()),
 					...(claudeRemote ? [new OkenaClaudeSource(claudeRemote.hub, 'helm')] : []),
 				]),
 				publish: options.publish,

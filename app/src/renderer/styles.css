@@ -1777,14 +1777,65 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-/* Agents whose state Okena could not read: a genuine warning, so it keeps its tone. */
-.agent-dock-agents-unknown {
-	color: var(--warn);
-}
-
 .agent-dock-agents-entry:hover,
 .agent-dock-agents-entry[data-open="true"] {
 	color: var(--text-1);
+}
+
+/* The Agents entry: the count (--text-1, --text-0 open or focused) and dim word, then a 3px bar, one
+ * 8px segment per agent 2px apart so it reads as one meter, not a dashed line: working --text-0,
+ * background --text-1, idle/frozen faint, waiting/unknown --warn; never animated. Past AGENTS_BAR_MAX
+ * (10) it keeps the width of ten and thins its gaps. */
+.agent-dock-agents .agent-dock-entry-line {
+	gap: 0.3em;
+}
+
+.agent-dock-agents-n {
+	color: var(--text-1);
+	transition: color 140ms ease-out;
+}
+
+.agent-dock-agents-entry:is([data-open="true"], :focus) .agent-dock-agents-n {
+	color: var(--text-0);
+}
+
+.agent-dock-agents-bar {
+	display: inline-flex;
+	align-self: center;
+	gap: 2px;
+	height: 3px;
+	margin-left: 5px;
+	position: relative;
+	top: 1px;
+}
+
+.agent-dock-agents-bar[data-capped="true"] {
+	width: 98px;
+	gap: 1px;
+}
+
+.agent-dock-agents-seg {
+	flex: none;
+	width: 8px;
+	border-radius: 1.5px;
+	background: color-mix(in srgb, var(--text-2) 70%, transparent);
+}
+
+.agent-dock-agents-bar[data-capped="true"] .agent-dock-agents-seg {
+	flex: 1 1 0;
+	width: auto;
+}
+
+.agent-dock-agents-seg[data-status="working"] {
+	background: var(--text-0);
+}
+
+.agent-dock-agents-seg[data-status="background"] {
+	background: var(--text-1);
+}
+
+.agent-dock-agents-seg:is([data-status="waiting"], [data-status="unknown"]) {
+	background: var(--warn);
 }
 
 @keyframes agent-dock-pulse {

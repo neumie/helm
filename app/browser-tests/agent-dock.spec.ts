@@ -59,6 +59,7 @@ async function emitScenario(
 		| 'helm-add-directories'
 		| 'single-turn'
 		| 'agents-overview',
+		| 'background-shell',
 ): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
@@ -208,13 +209,17 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 	await pane.locator('.agent-dock-pane-lead').click()
 	await expect(input).toBeFocused()
 
-	// Keyboard: ← / → / ↑ / ↓ step inside a focused pane.
+	// Keyboard: ← / → step inside a focused pane; ↑ / ↓ step too where the body has no choices (the turn),
+	// while on a decision ↓ goes to its answers and ← → there keep stepping.
 	await pane.focus()
 	await page.keyboard.press('ArrowRight')
 	await expect(pane).toContainText('3/3')
 	await page.keyboard.press('ArrowUp')
 	await expect(pane).toContainText('2/3')
 	await page.keyboard.press('ArrowDown')
+	await expect(pane.getByRole('radio', { name: /Allow once/ })).toBeFocused()
+	await expect(pane).toContainText('2/3')
+	await page.keyboard.press('ArrowRight')
 	await expect(pane).toContainText('3/3')
 	await expect(pane.getByRole('button', { name: 'Next item' })).toBeDisabled()
 
@@ -373,8 +378,9 @@ test('at a 1100px window the queue is one row: names and waits whole, each fill 
 	await expect(rail.locator('.agent-dock-more')).toHaveText(`+${8 - shown} more`)
 	await wholeNames()
 	for (const room of await tailRoom()) expect(room).toBeLessThanOrEqual(18)
-	// Nothing busy: the Agents entry says only `agents 8`.
-	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('agents 8')
+	// The Agents entry: the count, then one bar segment per agent.
+	await expect(rail.locator('.agent-dock-agents-entry')).toHaveText('8 agents')
+	await expect(rail.locator('.agent-dock-agents-seg')).toHaveCount(8)
 	const railBox = await box(page, '.agent-dock-row')
 	for (const entry of await rail.locator('.agent-dock-entry, .agent-dock-more').all()) {
 		const entryBox = await entry.boundingBox()
@@ -1137,6 +1143,170 @@ test('sending from a field keeps focus in the pane, so Esc and a retry still rea
 	expect((await acts(page))[1]?.action).toEqual({ type: 'deny', message: 'stop here' })
 })
 
+/** The pane's focused element, read as the choice it is (its label), or null when focus is not on a choice. */
+const focusedChoice = (page: Page) =>
+	page.evaluate(() => {
+		const active = document.activeElement
+		return active?.classList.contains('agent-dock-choice')
+			? (active.querySelector('.agent-dock-choice-label')?.textContent ?? '')
+			: null
+	})
+
+/** The preview's label (`2 Blue`), as the preview aside shows it. */
+const previewLabel = (page: Page) =>
+	page
+		.locator('.agent-dock-pane .agent-dock-preview-label')
+		.evaluate(node => (node.textContent ?? '').replace(/^preview\s*/, '').trim())
+
+test('arrows reach the answers from a keyboard-opened question: ↓ ↑ enter the choices at their stop, the preview follows', async ({
+	page,
+}) => {
+	const { pane } = await openByKeyboard(page, 1)
+	await expect(pane).toBeFocused()
+	// ↓ from the pane enters the choices at their stop (nothing picked: the first) and never steps items.
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Red')
+	await expect(pane).toContainText('1/3')
+	await expect.poll(() => previewLabel(page)).toBe('1 Red')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Blue')
+	await expect.poll(() => previewLabel(page)).toBe('2 Blue')
+	await expect(pane.locator('.agent-dock-preview-text')).toHaveText('▇▇ blue')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Other…')
+	await page.keyboard.press('ArrowUp')
+	await expect.poll(() => focusedChoice(page)).toBe('Blue')
+	// Arrows only move focus: nothing is picked, the pane stays on the item.
+	await expect(pane.getByRole('radio', { checked: true })).toHaveCount(0)
+	await expect(pane).toContainText('1/3')
+	// Back on the pane, ↑ also returns to the choices' stop (the last one focused), never steps items.
+	await pane.focus()
+	await page.keyboard.press('ArrowUp')
+	await expect.poll(() => focusedChoice(page)).toBe('Blue')
+	await expect(pane).toContainText('1/3')
+	// Digits and Enter keep their meaning from the pane: 2 picks Blue (moving on to Size), 1 picks S, Enter submits.
+	await pane.focus()
+	await page.keyboard.press('2')
+	await page.keyboard.press('1')
+	await page.keyboard.press('Enter')
+	await expect.poll(async () => (await acts(page)).length).toBe(1)
+	expect((await acts(page))[0]?.action).toEqual({ type: 'answer', picks: [{ options: [1] }, { options: [0] }] })
+})
+
+test('a lone question opened with Enter (1/1): ↓ ↑ move through its answers', async ({ page }) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'empty')
+	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitArrival('question'))
+	const rail = row(page)
+	await expect(rail.locator('.agent-dock-entry')).toHaveCount(1)
+	await page.locator('.term-holder.active .xterm-helper-textarea').focus()
+	await page.keyboard.press('Meta+Shift+KeyJ')
+	await expect(rail.locator('[data-row-stop]').first()).toBeFocused()
+	await page.keyboard.press('Enter')
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane).toBeFocused()
+	await expect(pane).toContainText('1/1')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Den po splatnosti')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Týden po splatnosti')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Other…')
+	await page.keyboard.press('ArrowUp')
+	await page.keyboard.press('ArrowUp')
+	await expect.poll(() => focusedChoice(page)).toBe('Den po splatnosti')
+	await expect(pane.getByRole('radio', { checked: true })).toHaveCount(0)
+	await expect(pane).toContainText('1/1')
+})
+
+test('← → on a choice step items like the pane; focus lands on the next item’s choices (or the pane)', async ({
+	page,
+}) => {
+	const { pane } = await openByKeyboard(page, 1)
+	await page.keyboard.press('ArrowDown')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Blue')
+	await page.keyboard.press('ArrowRight')
+	await expect(pane).toContainText('2/3')
+	await expect.poll(() => focusedChoice(page)).toBe('Allow once')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Always allow')
+	await page.keyboard.press('ArrowLeft')
+	await expect(pane).toContainText('1/3')
+	await expect.poll(() => focusedChoice(page)).toBe('Red')
+	// The turn has no choices: stepping there leaves the keys on the pane, where ↑ ↓ step as before.
+	await page.keyboard.press('ArrowRight')
+	await page.keyboard.press('ArrowRight')
+	await expect(pane).toContainText('3/3')
+	await expect(pane).toBeFocused()
+	await page.keyboard.press('ArrowUp')
+	await expect(pane).toContainText('2/3')
+	// The question tabs keep ← → for switching questions.
+	await page.keyboard.press('ArrowLeft')
+	await expect(pane).toContainText('1/3')
+	await pane.getByRole('tab', { name: /Color/ }).focus()
+	await page.keyboard.press('ArrowRight')
+	await expect(pane.getByRole('tab', { name: /Size/ })).toHaveAttribute('aria-selected', 'true')
+	await expect(pane).toContainText('1/3')
+})
+
+test('permission and plan panes opened with Enter: ↓ ↑ move through their choices, never pick', async ({ page }) => {
+	const { pane } = await openByKeyboard(page, 2)
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Allow once')
+	await expect(pane).toContainText('2/3')
+	await page.keyboard.press('ArrowDown')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Deny')
+	// Focus only: no pick, so the deny message does not open and the submit stays disabled.
+	await expect(pane.getByRole('textbox')).toHaveCount(0)
+	await expect(pane.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
+	await pane.focus()
+	await page.keyboard.press('ArrowUp')
+	await expect.poll(() => focusedChoice(page)).toBe('Deny')
+	await expect(pane).toContainText('2/3')
+
+	await emitScenario(page, 'helm-terminals')
+	const plan = row(page).locator('.agent-dock-entry[aria-label^="Plan,"]')
+	await expect(plan).toHaveCount(1)
+	await plan.focus()
+	await page.keyboard.press('Enter')
+	await expect(pane).toBeFocused()
+	await expect(pane.locator('.agent-dock-title-kind')).toContainText('Plan')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Approve the plan')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Keep planning')
+	await page.keyboard.press('ArrowUp')
+	await expect.poll(() => focusedChoice(page)).toBe('Approve the plan')
+	await expect(pane.getByRole('radio', { checked: true })).toHaveCount(0)
+})
+
+test('moving on keeps the arrows: after ⌘⌫ or an answer the next pane takes ↓ ↑ into its choices', async ({ page }) => {
+	const { pane } = await openByKeyboard(page, 3)
+	await page.keyboard.press('Meta+Backspace')
+	// The turn was last: the pane moved on to the question with the keys.
+	await expect(pane).toContainText('1/2')
+	await expect(pane).toBeFocused()
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Red')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Blue')
+	// Answer it from the choices (Enter picks, focus follows to Size; ⌘Enter submits): the pane moves on to the permission.
+	await page.keyboard.press('Enter')
+	await expect.poll(() => focusedChoice(page)).toBe('S')
+	await page.keyboard.press('ArrowDown')
+	await page.keyboard.press('Enter')
+	await page.keyboard.press('Meta+Enter')
+	await expect(pane.locator('.agent-dock-title-kind')).toContainText('Permission')
+	await expect(pane).toBeFocused()
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Allow once')
+	await page.keyboard.press('ArrowDown')
+	await expect.poll(() => focusedChoice(page)).toBe('Always allow')
+})
+
 test('typing at a keyboard-opened turn pane starts the reply', async ({ page }) => {
 	const { pane } = await openByKeyboard(page, 3)
 	await page.keyboard.type('Ok 2')
@@ -1302,7 +1472,7 @@ test('accessible names: the row, entries and pane say what they are; new asks ar
 	await expect(rail).toHaveAttribute('aria-keyshortcuts', 'Meta+Shift+J')
 	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute(
 		'aria-label',
-		/^\d+ agents?, \d+ busy\. Show agents$/,
+		/^\d+ agents?: \d+ [a-z ]+(, \d+ [a-z ]+)*\. Show agents$/,
 	)
 	const question = page.locator('.agent-dock-entry[aria-label^="Question,"]')
 	await expect(question).toHaveAttribute('aria-label', /^Question, \S+ in \S+, waiting \d/)
@@ -1536,7 +1706,14 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	const rail = row(page)
 	await expect(rail).not.toContainText('ClientCare')
 	await expect(page.locator('.agent-dock-entry').first()).toHaveText(/^\?\s*company-create-save-firm\s*\d+m/)
-	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('agents 4 · 2 busy')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('4 agents')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute(
+		'aria-label',
+		'4 agents: 1 working, 1 in background, 2 waiting on you. Show agents',
+	)
+	// One segment per agent in the pane's order; the two waiting on Jakub amber.
+	await expect(page.locator('.agent-dock-agents-seg')).toHaveCount(4)
+	await expect(page.locator('.agent-dock-agents-seg[data-status="waiting"]')).toHaveCount(2)
 	await expect(page.locator('.agent-dock-entry').first()).toHaveAttribute('title', /ClientCare #4182/)
 	await expect(page.locator('.agent-dock-entry').nth(1)).toHaveAttribute(
 		'aria-label',
@@ -1725,4 +1902,29 @@ test('a link in the turn message opens through the external bridge on click and 
 	expect(await style('overflow-wrap')).toBe('anywhere')
 	const pane = page.locator('.agent-dock-pane-scroll')
 	expect(await pane.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+})
+
+test('an agent waiting on its background shell reads background with "1 shell", and its turn stays readable', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'background-shell')
+	// Okena says idle; the shell Claude started makes it busy in the background, never idle.
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('1 agent')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute('aria-label', /1 in background/)
+	const turn = page.locator('.agent-dock-entry[data-kind="turn"]')
+	await expect(turn).toHaveAttribute('aria-label', /^Turn ended, service-protocol-image-link in JVS, /)
+	await page.locator('.agent-dock-agents-entry').click()
+	const pane = page.locator('.agent-dock-pane')
+	const agent = pane.getByRole('listitem').filter({ hasText: 'service-protocol-image-link' })
+	await expect(agent).toContainText(/background\s*2m/)
+	await expect(agent).toContainText('1 shell')
+	await expect(agent).not.toContainText('subagent')
+	await expect(agent).not.toContainText('idle')
+	// The turn: "I'll report back when it finishes", with the calm background note.
+	await turn.click()
+	await expect(pane).toContainText('Stage deploy běží, ozvu se, až doběhne.')
+	await expect(pane.locator('.agent-dock-facts')).toContainText('Background work was still running.')
+	await expect(pane).not.toContainText('Subagents were still running.')
 })
