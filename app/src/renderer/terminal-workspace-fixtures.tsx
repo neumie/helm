@@ -64,17 +64,10 @@ export interface TerminalWorkspaceFixtureOptions {
 		open?: AgentDockOpenFixture
 		/** Story only: once the terminal is ready, press ⌘⇧J from the focused xterm (the real window-capture path). */
 		focusDock?: boolean
-		/**
-		 * Story only: which arrival-flash candidate the dock shows (`data-arrival-flash` on #agent-dock,
-		 * styles.css); omitted, the production look.
-		 */
-		arrivalFlash?: AgentDockArrivalFlash
 		/** Story only: `afterMs` after the terminal is ready, a new agent's item of `kind` arrives. */
 		arrive?: { kind: AgentDockArrivalKind; afterMs: number }
 	}
 }
-
-export type AgentDockArrivalFlash = 'tinted-cell' | 'glyph-name' | 'edge-pulse'
 
 export type AgentDockOpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
@@ -588,8 +581,6 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		const root = rootRef.current
 		if (!root) return
 		buildShell(root, options.sidebarVisibility, options.agentDock !== undefined)
-		const arrivalFlash = options.agentDock?.arrivalFlash
-		if (arrivalFlash) root.querySelector<HTMLElement>('#agent-dock')?.setAttribute('data-arrival-flash', arrivalFlash)
 		let arriveTimer: ReturnType<typeof setTimeout> | null = null
 		const fixture = createTerminalWorkspaceFixture(options)
 		// Registered before the mount so the stand-in chord never reaches the workspace or xterm.
