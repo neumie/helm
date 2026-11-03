@@ -6,19 +6,16 @@ import { agentWho, findSession, itemKindLabel, itemSourceHealth, needsYouItems, 
 const ANNOUNCE_COALESCE_MS = 2_000
 
 /**
- * Polite words for items that newly need Jakub (the queue never opens a pane by itself, so the row
- * changing is the only other signal). Only arrivals: never ticking ages or working counts. Per
- * source: its first reachable snapshot is its baseline, its items count only while it is reachable
- * (one source down never mutes another), and arrivals within ANNOUNCE_COALESCE_MS are one line.
+ * Calls `onArrive` with the items that newly need Jakub, once each. Only arrivals: never ticking
+ * ages, working counts or an item that merely re-renders. Per source: its first reachable snapshot
+ * is its baseline (nothing on first load or reload), its items count only while it is reachable (one
+ * source down never mutes another). The announcement and the entry flash share this one rule.
  */
-export function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): string {
+export function useArrivals(snapshot: AgentDockSnapshot | null, onArrive: (items: DockItem[]) => void): void {
 	const seen = useRef(new Set<number>())
 	const baselined = useRef(new Set<string>())
-	const queued = useRef<DockItem[]>([])
-	const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const latest = useRef(snapshot)
-	latest.current = snapshot
-	const [text, setText] = useState('')
+	const callback = useRef(onArrive)
+	callback.current = onArrive
 	useEffect(() => {
 		if (!snapshot) return
 		const known = seen.current
@@ -30,7 +27,21 @@ export function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): stri
 			if (baselined.current.has(sourceOf(item))) fresh.push(item)
 		}
 		for (const [id, health] of snapshotSources(snapshot)) if (health.state === 'ok') baselined.current.add(id)
-		if (fresh.length === 0) return
+		if (fresh.length > 0) callback.current(fresh)
+	}, [snapshot])
+}
+
+/**
+ * Polite words for items that newly need Jakub (the queue never opens a pane by itself, so the row
+ * changing is the only other signal), from `useArrivals`; arrivals within ANNOUNCE_COALESCE_MS are one line.
+ */
+export function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): string {
+	const queued = useRef<DockItem[]>([])
+	const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const latest = useRef(snapshot)
+	latest.current = snapshot
+	const [text, setText] = useState('')
+	useArrivals(snapshot, fresh => {
 		queued.current.push(...fresh)
 		if (timer.current !== null) return
 		timer.current = setTimeout(() => {
@@ -46,7 +57,7 @@ export function useArrivalAnnouncement(snapshot: AgentDockSnapshot | null): stri
 			const who = agentWho(latest.current, first.session)
 			setText(`${itemKindLabel(first)} from ${who.name}${who.project ? ` in ${who.project}` : ''}`)
 		}, ANNOUNCE_COALESCE_MS)
-	}, [snapshot])
+	})
 	useEffect(
 		() => () => {
 			if (timer.current !== null) clearTimeout(timer.current)

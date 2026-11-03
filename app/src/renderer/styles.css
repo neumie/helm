@@ -1674,6 +1674,125 @@ body.dragging {
 	color: var(--text-1);
 }
 
+/* Arrival flash: an entry that just arrived (the arrivals the live region announces: never on first
+ * load or reload, never for a re-render) carries data-arrival = its kind for ARRIVAL_FLASH_MS and
+ * flashes once in its kind glyph's color — --warn for an ask, --accent for a turn — fading back with
+ * ease-out over 1.4s. Color on a tint, the text or the edge only: no weight, box or ring; nothing
+ * moves or resizes and focus stays put. Arriving behind "+N more", that cell flashes instead.
+ * Three candidates, chosen per story with the story-only data-arrival-flash on #agent-dock; without
+ * it (production) the dock shows tinted-cell:
+ *   tinted-cell  the cell's full-height fill in the kind color (20%), fading out;
+ *   glyph-name   the glyph and name in the kind color, fading back to their usual tones;
+ *   edge-pulse   the terminal-side edge in the most urgent arrival's color (question > permission >
+ *                plan > turn) plus a light tint on the cell, both fading back.
+ * Reduced motion: no animation (the animations live under no-preference); the same colors hold,
+ * static, while the attribute is set. */
+.agent-dock-row [data-arrival] {
+	--arrival-color: var(--warn);
+}
+
+.agent-dock-row [data-arrival="turn"] {
+	--arrival-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	#agent-dock:not([data-arrival-flash="glyph-name"], [data-arrival-flash="edge-pulse"]) .agent-dock-row [data-arrival] {
+		animation: agent-dock-arrival-fill 1.4s ease-out 1;
+	}
+
+	#agent-dock[data-arrival-flash="glyph-name"] .agent-dock-row [data-arrival] .agent-dock-glyph {
+		animation: agent-dock-arrival-glyph 1.4s ease-out 1;
+	}
+
+	#agent-dock[data-arrival-flash="glyph-name"] .agent-dock-row [data-arrival] .agent-dock-entry-name,
+	#agent-dock[data-arrival-flash="glyph-name"] .agent-dock-more[data-arrival] .agent-dock-entry-line {
+		animation: agent-dock-arrival-text 1.4s ease-out 1;
+	}
+
+	#agent-dock[data-arrival-flash="edge-pulse"] .agent-dock-row [data-arrival] {
+		animation: agent-dock-arrival-fill-light 1.4s ease-out 1;
+	}
+
+	/* The edge takes the most urgent arrival: the ask rule comes last, so it wins over a turn. */
+	#agent-dock[data-arrival-flash="edge-pulse"]:has(.agent-dock-row [data-arrival="turn"])::before {
+		animation: agent-dock-arrival-edge-accent 1.4s ease-out 1;
+	}
+
+	#agent-dock[data-arrival-flash="edge-pulse"]:has(
+			.agent-dock-row :is([data-arrival="question"], [data-arrival="permission"], [data-arrival="plan"])
+		)::before {
+		animation: agent-dock-arrival-edge-warn 1.4s ease-out 1;
+	}
+}
+
+/* Each holds the kind color for its first ~170ms, then eases back to the element's own value. */
+@keyframes agent-dock-arrival-fill {
+	0%,
+	12% {
+		background-color: color-mix(in srgb, var(--arrival-color) 20%, transparent);
+	}
+}
+
+@keyframes agent-dock-arrival-fill-light {
+	0%,
+	12% {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+}
+
+@keyframes agent-dock-arrival-glyph {
+	0%,
+	12% {
+		color: color-mix(in srgb, var(--arrival-color) 60%, var(--text-0));
+	}
+}
+
+@keyframes agent-dock-arrival-text {
+	0%,
+	12% {
+		color: var(--arrival-color);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-warn {
+	0%,
+	12% {
+		background-color: var(--warn);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-accent {
+	0%,
+	12% {
+		background-color: var(--accent);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#agent-dock:not([data-arrival-flash="glyph-name"], [data-arrival-flash="edge-pulse"]) .agent-dock-row [data-arrival] {
+		background-color: color-mix(in srgb, var(--arrival-color) 20%, transparent);
+	}
+
+	#agent-dock[data-arrival-flash="glyph-name"] .agent-dock-row [data-arrival] .agent-dock-entry-name,
+	#agent-dock[data-arrival-flash="glyph-name"] .agent-dock-more[data-arrival] .agent-dock-entry-line {
+		color: var(--arrival-color);
+	}
+
+	#agent-dock[data-arrival-flash="edge-pulse"] .agent-dock-row [data-arrival] {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+
+	#agent-dock[data-arrival-flash="edge-pulse"]:has(.agent-dock-row [data-arrival="turn"])::before {
+		background-color: var(--accent);
+	}
+
+	#agent-dock[data-arrival-flash="edge-pulse"]:has(
+			.agent-dock-row :is([data-arrival="question"], [data-arrival="permission"], [data-arrival="plan"])
+		)::before {
+		background-color: var(--warn);
+	}
+}
+
 .agent-dock-entry-receipt[data-tone="neutral"],
 .agent-dock-receipt[data-tone="neutral"] {
 	color: var(--text-1);

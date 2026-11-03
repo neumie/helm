@@ -17,7 +17,13 @@ import {
 	type DockItem,
 	type DockSourceId,
 } from '../../agent-dock/model'
-import { type AgentDockState, agentDockSnapshot, createAgentDockState, reduce } from '../../agent-dock/reduce'
+import {
+	type AgentDockState,
+	TURN_IDLE_MS,
+	agentDockSnapshot,
+	createAgentDockState,
+	reduce,
+} from '../../agent-dock/reduce'
 import type { AgentDockApi } from '../../shared'
 
 export type AgentDockScenario =
@@ -993,6 +999,62 @@ function receiptRun(name: AgentDockScenario, now: number, scenario: ScenarioRun)
 	return scenario
 }
 
+/** What `emitArrival` brings in: a new agent's ask of that kind, or its finished turn. */
+export type AgentDockArrivalKind = 'question' | 'permission' | 'plan' | 'turn'
+
+/** The agent each arrival comes from (numbered past the first, so every arrival is a new pane). */
+function arrivalPane(kind: AgentDockArrivalKind, n: number): Pane {
+	const branch = {
+		question: 'feat/invoice-reminders',
+		permission: 'chore/rotate-stage-keys',
+		plan: 'feat/contact-import',
+		turn: 'fix/pdf-export-fonts',
+	}[kind]
+	return {
+		tid: `term-arrive-${n}`,
+		sid: `sess-arrive-${n}`,
+		// A project of its own: Okena reports the git branch per project.
+		projectId: `proj-arrive-${n}`,
+		project: 'crm-billing',
+		name: `ClientCare #${4200 + n}`,
+		branch: n > 1 ? `${branch}-${n}` : branch,
+	}
+}
+
+/** The pane as Okena shows it once the arriving item is up (at `at`). */
+function arrivalBody(kind: AgentDockArrivalKind, pane: Pane, n: number, at: number): Json {
+	const prefix = String(recordedDialog().id).split('-')[0]
+	const id = `${prefix}-${90 + n}`
+	if (kind === 'turn') return detail(pane, { busy: false })
+	const dialog =
+		kind === 'question'
+			? {
+					id,
+					tool_name: 'AskUserQuestion',
+					tool_input: {
+						questions: [
+							{
+								header: 'Reminder',
+								question: 'Kdy poslat první upomínku k neuhrazené faktuře?',
+								multiSelect: false,
+								options: [
+									{ label: 'Den po splatnosti', description: 'Hned následující pracovní den.' },
+									{ label: 'Týden po splatnosti', description: 'Dá klientovi čas na pomalou platbu.' },
+								],
+							},
+						],
+					},
+				}
+			: kind === 'plan'
+				? { id, tool_name: 'ExitPlanMode', tool_input: { plan: '1. Parse the CSV\n2. Upsert contacts by IČO' } }
+				: {
+						id,
+						tool_name: 'Bash',
+						tool_input: { command: 'npm run keys:rotate -- --env stage', description: 'Rotate the stage API keys' },
+					}
+	return detail(pane, { busy: true, dialogs: [{ ...dialog, permission_suggestions: [], created_at_ms: at }] })
+}
+
 /** How the in-memory act behaves (browser tests switch it; stories use the default). */
 export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
 
@@ -1006,6 +1068,12 @@ export interface AgentDockFixture {
 	sent(): ReadonlyMap<number, DockAction>
 	/** Replaces the reducer state with a scenario and pushes its snapshot through the production subscription. */
 	emitScenario(name: AgentDockScenario): void
+	/**
+	 * A new agent's item arrives in the current scenario, through the real reducer: the pane is first
+	 * seen working, then asks (one poll later) or ends its turn (and stays idle past TURN_IDLE_MS). One
+	 * snapshot is pushed, with the new item.
+	 */
+	emitArrival(kind: AgentDockArrivalKind): void
 	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
 	setActMode(mode: AgentDockActMode): void
 	listenerCount(): number
@@ -1024,6 +1092,7 @@ export function createAgentDockFixture(
 	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [] }
 	let scenario: ScenarioRun | null = initial ? scenarioRun(initial, clock()) : null
 	let mode: AgentDockActMode = 'confirm'
+	let arrivals = 0
 	const push = () => {
 		if (!scenario) return
 		const snapshot = agentDockSnapshot(scenario.state, clock())
@@ -1093,6 +1162,36 @@ export function createAgentDockFixture(
 		},
 		emitScenario(name) {
 			scenario = scenarioRun(name, clock())
+			push()
+		},
+		emitArrival(kind) {
+			if (!scenario) return
+			const current = scenario
+			const at = clock()
+			const n = ++arrivals
+			const pane = arrivalPane(kind, n)
+			const step = (live: Live, stamp = at) => {
+				current.version += 1
+				current.state = reduce(current.state, fromSource(current, poll(current.version, live)), stamp).state
+			}
+			step([
+				...current.live,
+				{ pane, body: detail(pane, { busy: true }), transcript: seedPage(pane, `${pane.tid}-a0`) },
+			])
+			const body = arrivalBody(kind, pane, n, at)
+			const page =
+				kind === 'turn'
+					? transcript(
+							pane,
+							[assistant(`${pane.tid}-a1`, 'Hotovo. Fonty v PDF exportu se teď vkládají celé.\n\nMám otevřít PR?')],
+							2_000,
+							false,
+						)
+					: undefined
+			step([...current.live, { pane, body, ...(page ? { transcript: page } : {}) }])
+			current.live = [...current.live, { pane, body }]
+			// A turn counts once the pane stayed idle TURN_IDLE_MS (Storybook only: stamped ahead of the wall clock).
+			if (kind === 'turn') step(current.live, at + TURN_IDLE_MS + 1)
 			push()
 		},
 		setActMode(next) {

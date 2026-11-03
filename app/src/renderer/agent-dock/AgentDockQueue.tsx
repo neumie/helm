@@ -25,6 +25,7 @@ import {
 	sourceNames,
 	unknownSessionCount,
 } from './presentation'
+import { type ArrivalKind, mostUrgent, useArrivalFlash } from './use-arrival-flash'
 
 /** What a pane shows: one item, or the Agents list. */
 export type AgentDockTarget = { type: 'item'; id: number } | { type: 'agents' }
@@ -86,6 +87,7 @@ export function Queue({
 	const [meter, setMeter] = useState<HTMLSpanElement | null>(null)
 	const [room, setRoom] = useState(0)
 	const measure = useTextWidth(sentinel, meter)
+	const arrivals = useArrivalFlash(snapshot)
 	useLayoutEffect(() => {
 		if (!list) return
 		const update = () => {
@@ -163,6 +165,7 @@ export function Queue({
 									who={who}
 									shownName={name}
 									now={now}
+									arrival={arrivals.get(item.id)}
 									open={openKey === `item:${item.id}`}
 									paneId={paneId}
 									buttonRef={register(`item:${item.id}`)}
@@ -177,6 +180,7 @@ export function Queue({
 						<MoreEntry
 							items={hidden}
 							snapshot={snapshot}
+							arrival={mostUrgent(hidden.map(item => arrivals.get(item.id)))}
 							open={openHidden !== undefined}
 							paneId={paneId}
 							buttonRef={register('more')}
@@ -204,13 +208,15 @@ export function Queue({
 
 /**
  * One item, one quiet line: the kind glyph (its tone is the kind), the agent's short name, then the
- * wait (toned only once it is genuinely old) or, once answered from the dock, the receipt.
+ * wait (toned only once it is genuinely old) or, once answered from the dock, the receipt. Just after
+ * it arrives it carries `data-arrival` (its kind) and flashes once in the kind's color (styles.css).
  */
 function Entry({
 	item,
 	who,
 	shownName,
 	now,
+	arrival,
 	open,
 	paneId,
 	buttonRef,
@@ -221,6 +227,8 @@ function Entry({
 	/** The name as the entry has room for it (cut in the middle); its label and tooltip keep it whole. */
 	shownName: string
 	now: number
+	/** Set for ARRIVAL_FLASH_MS after the item arrived. */
+	arrival: ArrivalKind | undefined
 	open: boolean
 	paneId: string
 	buttonRef(node: HTMLButtonElement | null): void
@@ -241,6 +249,7 @@ function Entry({
 			data-item-id={item.id}
 			data-state={item.state}
 			data-receipt={receipt?.tone}
+			data-arrival={arrival}
 			data-open={String(open)}
 			aria-expanded={open}
 			aria-controls={open ? paneId : undefined}
@@ -274,11 +283,12 @@ function Entry({
 
 /**
  * The items the row has no room for, as one quiet cell. It opens the first of them (‹ › then step
- * through the rest) and stands in for whichever of them is open.
+ * through the rest) and stands in for whichever of them is open, and flashes for one that arrives there.
  */
 function MoreEntry({
 	items,
 	snapshot,
+	arrival,
 	open,
 	paneId,
 	buttonRef,
@@ -286,6 +296,8 @@ function MoreEntry({
 }: {
 	items: DockItem[]
 	snapshot: AgentDockSnapshot
+	/** The most urgent kind among them that just arrived. */
+	arrival: ArrivalKind | undefined
 	open: boolean
 	paneId: string
 	buttonRef(node: HTMLButtonElement | null): void
@@ -298,6 +310,7 @@ function MoreEntry({
 			type="button"
 			className="agent-dock-more"
 			data-row-stop=""
+			data-arrival={arrival}
 			data-open={String(open)}
 			aria-expanded={open}
 			aria-controls={open ? paneId : undefined}
