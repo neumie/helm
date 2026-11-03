@@ -39,9 +39,10 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 	useKeys(keys, event => {
 		const keyed = submitKeys(event, { bareEnter: false, submit: send })
 		if (keyed) return true
-		// A turn has no choices: a key typed at the pane starts the reply.
+		// A turn has no choices: a key typed at the pane starts the reply (not on a message link: it keeps its keys).
 		const field = replyRef.current
-		if (!live || !field || !isPrintable(event)) return false
+		const onLink = event.target instanceof Element && event.target.closest('.agent-dock-md a') !== null
+		if (!live || !field || onLink || !isPrintable(event)) return false
 		field.focus({ preventScroll: true })
 		setText(text + event.key)
 		return true

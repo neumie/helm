@@ -58,9 +58,12 @@ export type AgentDockScenario =
 
 type Json = Record<string, unknown>
 
-/** A real Claude Code turn ending (Czech, Markdown, cut mid-sentence by the excerpt bound), verbatim. */
+/** A real Claude Code turn ending (Czech, Markdown, cut mid-sentence by the excerpt bound), verbatim, plus
+ * the line of another real ending with a bare URL (the dock opens it in the browser). */
 export const TURN_MARKDOWN_TEXT = [
 	'**Původní problém:** jeden klient s vadným e-mailem (např. `jmeno@emailcz`) → SmartEmailing odmítne celou hromadnou kampaň. Worker pak spadl s chybou 500 a admin ukázal jen „Nepodařilo se odeslat kampaň." Nebylo poznat, kdo za to může.',
+	'',
+	'Hotovo, na stejném odkazu: https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy',
 	'',
 	'**1. Kontrola e-mailů před odesláním**',
 	'- Nová fce `isValidEmailAddress` v `lib/src/utils/email.ts`. Kontrola je záměrně volná, chytá jen adresy, které SmartEmailing stejně odmítne:',

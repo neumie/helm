@@ -63,7 +63,7 @@ function html(node: unknown): string {
 	assert.ok(!('dangerouslySetInnerHTML' in element.props), 'no raw HTML')
 	const attributes = Object.entries(element.props)
 		.filter(([name]) => name !== 'children')
-		.map(([name, value]) => ` ${name}="${String(value)}"`)
+		.map(([name, value]) => (typeof value === 'function' ? ` ${name}={fn}` : ` ${name}="${String(value)}"`))
 		.join('')
 	return `<${tag}${attributes}>${html(element.props.children)}</${tag}>`
 }
@@ -123,16 +123,69 @@ const remoteProfile = {
 	tableClassName: 'remote-table',
 } as const
 
-test('dock: links are their text, images their alt text, tables their source; Remote keeps anchors', () => {
-	const source =
-		'[docs](https://example.com) [bad](javascript:alert(1)) ![shot](https://x/y.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |'
+test('dock: images are their alt text, tables their source; Remote keeps anchors, notes and tables', () => {
+	const source = '![shot](https://x/y.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |'
 	const dock = html(turnMessage(source))
-	assert.doesNotMatch(dock, /<a |<img|<table/)
-	assert.match(dock, /<p>docs bad shot<\/p><pre>\| a \| b \|\n\|---\|---\|\n\| 1 \| 2 \|<\/pre>/)
+	assert.doesNotMatch(dock, /<img|<table/)
+	assert.match(dock, /<p>shot<\/p><pre>\| a \| b \|\n\|---\|---\|\n\| 1 \| 2 \|<\/pre>/)
 	const remote = html(renderSafeMarkdown(source, remoteProfile))
-	assert.match(remote, /<a href="https:\/\/example\.com\/" target="_blank" rel="noopener noreferrer">docs<\/a> bad/)
 	assert.match(remote, /<span className="remote-image-note">Image: shot<\/span>/)
 	assert.match(remote, /<div className="remote-table"><table>/)
+})
+
+const LINKS =
+	'Hotovo, na stejném odkazu: https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy. [docs](https://example.com/a) <http://example.org/b>\n\n' +
+	'[js](javascript:alert(1)) [file](file:///etc/passwd) <mailto:a@b.cz> [data](data:text/html,x) [creds](https://u:p@example.com/)'
+
+test('dock: http(s) links (bare, Markdown, autolink) are anchors that open through the bridge, never navigate', () => {
+	const opened: string[] = []
+	const node = turnMessage(LINKS, href => opened.push(href))
+	assert.equal(
+		html(node),
+		'<div className="agent-dock-md">' +
+			'<p>Hotovo, na stejném odkazu: ' +
+			'<a href="https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy" onClick={fn} onAuxClick={fn}>https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy</a>. ' +
+			'<a href="https://example.com/a" onClick={fn} onAuxClick={fn}>docs</a> ' +
+			'<a href="http://example.org/b" onClick={fn} onAuxClick={fn}>http://example.org/b</a></p>' +
+			'<p>js file mailto:a@b.cz data creds</p>' +
+			'</div>',
+	)
+	// Activation (a click, or Enter on the focused anchor, which clicks it) prevents the navigation.
+	const anchors: Element[] = []
+	const collect = (value: unknown): void => {
+		if (Array.isArray(value)) for (const child of value) collect(child)
+		else if (value && typeof value === 'object' && 'props' in value) {
+			const element = value as Element
+			if (element.type === 'a') anchors.push(element)
+			collect(element.props.children)
+		}
+	}
+	collect(node)
+	let prevented = 0
+	const event = { preventDefault: () => prevented++ }
+	for (const anchor of anchors) {
+		;(anchor.props.onClick as (event: unknown) => void)(event)
+		;(anchor.props.onAuxClick as (event: unknown) => void)(event)
+	}
+	assert.deepEqual(opened, [
+		'https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy',
+		'https://example.com/a',
+		'http://example.org/b',
+	])
+	assert.equal(prevented, 6)
+})
+
+test('Remote: links stay new-tab anchors with the same scheme allowlist, no click handler', () => {
+	assert.equal(
+		html(renderSafeMarkdown(LINKS, remoteProfile)),
+		'<div className="remote-markdown">' +
+			'<p>Hotovo, na stejném odkazu: ' +
+			'<a href="https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy" target="_blank" rel="noopener noreferrer">https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy</a>. ' +
+			'<a href="https://example.com/a" target="_blank" rel="noopener noreferrer">docs</a> ' +
+			'<a href="http://example.org/b" target="_blank" rel="noopener noreferrer">http://example.org/b</a></p>' +
+			'<p>js file mailto:a@b.cz data creds</p>' +
+			'</div>',
+	)
 })
 
 test('bounds: the dock keeps plainAgentText’s 2 KiB cut and control/bidi strip; the renderer its 8 KiB', () => {

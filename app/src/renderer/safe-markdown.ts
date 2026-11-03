@@ -2,7 +2,7 @@
 // dock's turn message. Marked only lexes; nothing it produces is ever rendered as HTML: every token
 // maps to an allowlisted element or to inert text, and raw HTML tokens stay literal text.
 import { Lexer, type MarkedToken, type Token, type Tokens } from 'marked'
-import { Fragment, type ReactNode, createElement } from 'react'
+import { Fragment, type MouseEvent, type ReactNode, createElement } from 'react'
 
 /** Input bound in UTF-16 units; longer text is cut before lexing. */
 export const MARKDOWN_TEXT_MAX = 8192
@@ -16,8 +16,11 @@ export interface SafeMarkdownProfile {
 	className: string
 	/** The wrapper's class when lexing fails and the bounded text renders as one plain text node. */
 	plainClassName: string
-	/** Credential-free absolute http(s) links: an anchor opening a new tab, or just their text. */
-	links: 'anchor' | 'text'
+	/**
+	 * Credential-free absolute http(s) links: an anchor opening a new tab, just their text, or an anchor
+	 * whose activation (click, Enter) never navigates and hands the URL to `open` instead.
+	 */
+	links: 'anchor' | 'text' | { open(href: string): void }
 	/** Images are never fetched: a note span of this class (`Image: alt`), or null for the alt text alone. */
 	imageNoteClassName: string | null
 	/** GFM tables: a `table` in a `div` of this class, or null for their Markdown source in a `pre`. */
@@ -125,8 +128,27 @@ export function renderSafeMarkdown(text: string, profile: SafeMarkdownProfile): 
 					)
 					break
 				case 'link': {
-					const href = profile.links === 'anchor' ? safeHref(token.href) : undefined
-					node = href ? createElement('a', { href, target: '_blank', rel: 'noopener noreferrer' }, children) : children
+					const { links } = profile
+					const href = links === 'text' ? undefined : safeHref(token.href)
+					if (!href || links === 'text') node = children
+					else if (links === 'anchor')
+						node = createElement('a', { href, target: '_blank', rel: 'noopener noreferrer' }, children)
+					else {
+						const { open } = links
+						node = createElement(
+							'a',
+							{
+								href,
+								// The renderer never follows it: no navigation, no new window (middle click).
+								onClick: (event: MouseEvent) => {
+									event.preventDefault()
+									open(href)
+								},
+								onAuxClick: (event: MouseEvent) => event.preventDefault(),
+							},
+							children,
+						)
+					}
 					break
 				}
 				case 'image': {

@@ -1509,3 +1509,51 @@ test('a turn message renders as quiet Markdown: nested lists, mono code, emphasi
 	expect(step).toBeGreaterThan(12)
 	expect(step).toBeLessThan(28)
 })
+
+test('a link in the turn message opens through the external bridge on click and Enter, never in the renderer', async ({
+	page,
+}) => {
+	await page.goto('/iframe.html?id=views-agent-dock-turn-message--markdown&viewMode=story')
+	const url = 'https://claude.ai/artifact/MC5AvBgNCPmVLe7UrHeQmy'
+	const link = page.locator('.agent-dock-pane .agent-dock-md a')
+	await expect(link).toHaveCount(1)
+	await expect(link).toHaveText(url)
+	await expect(link).toHaveAttribute('href', url)
+	// The harness wires no window.helm; stand in the external bridge the production preload exposes.
+	await page.evaluate(() => {
+		const opened: string[] = []
+		;(window as unknown as { __opened: string[] }).__opened = opened
+		window.helm = {
+			external: {
+				open: async (href: string) => {
+					opened.push(href)
+					return true
+				},
+			},
+		} as unknown as typeof window.helm
+	})
+	const opened = () => page.evaluate(() => (window as unknown as { __opened: string[] }).__opened)
+	const before = page.url()
+	let popups = 0
+	page.on('popup', () => popups++)
+	await link.click()
+	await link.click({ button: 'middle' })
+	expect(await opened()).toEqual([url])
+	await link.focus()
+	await page.keyboard.press('Enter')
+	expect(await opened()).toEqual([url, url])
+	// A typed key on the link stays with it: the reply does not start.
+	await page.keyboard.press('x')
+	await expect(link).toBeFocused()
+	await expect(page.locator('.agent-dock-pane textarea[aria-label="Reply"]')).toHaveValue('')
+	expect(page.url()).toBe(before)
+	expect(popups).toBe(0)
+	// Helm's prose link, wrapping anywhere so a long URL never widens the pane.
+	const style = (name: string) =>
+		link.evaluate((node, property) => getComputedStyle(node).getPropertyValue(property), name)
+	expect(await style('color')).toBe(await tokenColor(page, '--accent'))
+	expect(await style('text-decoration-line')).toBe('underline')
+	expect(await style('overflow-wrap')).toBe('anywhere')
+	const pane = page.locator('.agent-dock-pane-scroll')
+	expect(await pane.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true)
+})

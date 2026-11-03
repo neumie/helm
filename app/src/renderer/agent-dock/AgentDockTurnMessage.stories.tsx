@@ -6,7 +6,8 @@ import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } fr
  * The turn pane's last message as quiet Markdown (design §3.24 Turn): Claude's real ending
  * (`TURN_MARKDOWN_TEXT`: bold leads, nested lists, inline code, cut mid-sentence by the excerpt bound)
  * in the production dock under a Claude Code session, the pane open, at 1280×800. No weight anywhere:
- * the body is --text-1, bold and headings --text-0; list markers dim, code in mono with no box.
+ * the body is --text-1, bold and headings --text-0; list markers dim, code in mono with no box. Its bare
+ * URL is a link (Helm's prose link) that opens in the browser.
  */
 function AgentDockTurnMessageView() {
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
