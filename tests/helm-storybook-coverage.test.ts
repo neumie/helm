@@ -16,6 +16,7 @@ const storyCoverage = [
 	['app/src/renderer/sidebar/EmptyState.stories.tsx', 'Primitives/Empty state'],
 	['app/src/renderer/TerminalWorkspace.stories.tsx', 'Views/Terminal workspace'],
 	['app/src/renderer/TabNumbers.stories.tsx', 'Views/Tab numbers'],
+	['app/src/renderer/TopbarBackground.stories.tsx', 'Views/Topbar background terminals'],
 	['app/src/renderer/sidebar/FlatGroup.stories.tsx', 'Compositions/Flat group'],
 	['app/src/renderer/sidebar/Disclosure.stories.tsx', 'Compositions/Disclosure group'],
 	['app/src/renderer/sidebar/ActivityIndicator.stories.tsx', 'Primitives/Activity indicator'],

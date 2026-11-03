@@ -792,6 +792,113 @@ body.group-dragging .tab-group-toggle {
 	font-variant-numeric: tabular-nums;
 }
 
+/* ---------- STORY ONLY: active-state candidates for the toggle while it names a shown terminal ----------
+ * Nothing in the app sets data-bg-active-variant, so production stays as above until one is picked
+ * (Views/Topbar background terminals). "Viewing" = a parked terminal is shown in the pane, which is
+ * exactly when #bg-current is unhidden. Drag affordances keep precedence. data-bg-preview pins
+ * hover/focus for the static matrix only. */
+[data-bg-active-variant] #bg-toggle[data-bg-preview~="hover"]:not(.drag-ready, .drag-over) {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+
+[data-bg-active-variant] #bg-toggle[data-bg-preview~="focus"] {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* B1 fill: the active tab's (and the dock's open entry's) selected fill; name reads --text-0. */
+[data-bg-active-variant="fill"] #bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+
+[data-bg-active-variant="fill"]
+	#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over):is(
+		:hover,
+		[data-bg-preview~="hover"],
+		[aria-expanded="true"]
+	) {
+	background: var(--fill-strong);
+}
+
+[data-bg-active-variant="fill"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-current {
+	color: var(--text-0);
+}
+
+/* B2 accent: no fill; icon + name take --accent, the count stays neutral. Hover and the
+ * open dialog keep the production fill-subtle under the accent. */
+[data-bg-active-variant="accent"] #bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over),
+[data-bg-active-variant="accent"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-current {
+	color: var(--accent);
+}
+
+/* B3 tab-like: while a parked terminal is shown, the toggle IS its tab (the strip already has no
+ * active tab then): active-tab fill, tab type for the name, the count drops to a dim tab-number. */
+[data-bg-active-variant="tab"] #bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) {
+	padding: 0 8px 0 10px;
+	background: var(--fill-raised);
+	color: var(--text-1);
+}
+
+[data-bg-active-variant="tab"]
+	#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over):is(
+		:hover,
+		[data-bg-preview~="hover"],
+		[aria-expanded="true"]
+	) {
+	color: var(--text-0);
+}
+
+[data-bg-active-variant="tab"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-current {
+	max-width: 180px;
+	color: var(--text-0);
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 400;
+}
+
+[data-bg-active-variant="tab"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-count {
+	padding: 0;
+	background: none;
+	color: var(--text-2);
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 400;
+}
+
+/* B4 rail: a quiet fill plus a 2px --accent rail under the control — "this is what the pane
+ * shows", like a selected segment, without turning the whole control into a tab. */
+[data-bg-active-variant="rail"] #bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) {
+	position: relative;
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+
+[data-bg-active-variant="rail"] #bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over)::after {
+	position: absolute;
+	right: 8px;
+	bottom: 0;
+	left: 8px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+	content: "";
+}
+
+[data-bg-active-variant="rail"]
+	#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over):is(
+		:hover,
+		[data-bg-preview~="hover"],
+		[aria-expanded="true"]
+	) {
+	background: var(--fill-raised);
+}
+
+[data-bg-active-variant="rail"] #bg-toggle:has(> .bg-current:not([hidden])) .bg-current {
+	color: var(--text-0);
+}
+
 #bg-popover {
 	top: calc(100% + 5px);
 	display: flex;
