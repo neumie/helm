@@ -12,7 +12,7 @@ import type { AgentsLayout } from './presentation'
  * roving list: ↑ ↓ move, Enter or a click opens the agent's item, else its detail.
  *
  * The header says each source's health (`Okena ● · Helm terminals ●`) and switches the grouping
- * (`group state project`, or G): by state (default) or by project, stored per Helm profile.
+ * (`group state project`, or G): by state (default) or by project, stored in renderer storage (per Helm userData, like the dock position).
  */
 function AgentsPaneView({
 	layout,

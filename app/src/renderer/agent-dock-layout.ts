@@ -20,9 +20,10 @@ export const AGENT_DOCK_STORAGE = {
 } as const
 
 /**
- * One presentation preference in renderer storage (this Helm profile's userData). Every mounted dock
- * subscribes and re-lays out live. A choice made while storage is unavailable still applies for this
- * session; another Helm window's change arrives as a `storage` event.
+ * One presentation preference in renderer storage (Helm's userData, shared by its app profiles: no
+ * per-profile partition). Every mounted dock subscribes and re-lays out live. A choice made while
+ * storage is unavailable still applies for this session; another Helm window's change arrives as a
+ * `storage` event.
  */
 function storedPreference<T extends string>(key: string, read: (raw: string | null) => T) {
 	let chosen: T | null = null
