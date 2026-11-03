@@ -1048,3 +1048,55 @@ test('a new Claude session in the pane drops the old reply receipt', () => {
 	]).state
 	assert.equal(sessionOf(sent, at + 1000)?.reply, undefined)
 })
+
+test('a settled agent-detail reply (landed, refused, failed) clears once the agent says something new', () => {
+	const { state, at } = readPane()
+	for (const outcome of [
+		{ status: 'refused', reason: 'changed', detail: 'The agent said something new; check it again.' },
+		{ status: 'failed', detail: 'bridge unavailable' },
+	] as const) {
+		const settled = run(state, [
+			[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+			[at + 100, { type: 'prompt.result', session: KEY, outcome }],
+			// The same message again: the receipt stays.
+			[at + 1000, poll(idle())],
+		]).state
+		assert.equal(sessionOf(settled, at + 1000)?.reply?.status, outcome.status)
+		const moved = reduce(
+			settled,
+			poll(idle(), { transcript: page([assistant('b-new', 'Něco nového.')], { cursor: 1_600_000 }) }),
+			at + 2000,
+		).state
+		assert.equal(sessionOf(moved, at + 2000)?.lastMessage?.uuid, 'b-new')
+		assert.equal(sessionOf(moved, at + 2000)?.reply, undefined, outcome.status)
+	}
+	// Landed (✓ replied), then the agent answers: the receipt goes with the message it answered.
+	const landed = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 2000, poll(working(), { transcript: page([user('u-dock')], { cursor: 1_500_000 }) })],
+	]).state
+	assert.equal(sessionOf(landed, at + 2000)?.reply?.status, 'confirmed')
+	const answered = reduce(
+		landed,
+		poll(idle(), { transcript: page([assistant('b-answer', 'Hotovo.')], { cursor: 1_600_000 }) }),
+		at + 5000,
+	).state
+	assert.equal(sessionOf(answered, at + 5000)?.reply, undefined)
+})
+
+test('a reply naming an older message than the last one never moves seen back (no turn for an acked message)', () => {
+	const { state, at } = readPane()
+	// Jakub has seen ASSISTANT_UUID; the renderer's (stale) live read still shows an older uuid.
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: 'older-uuid' }, at).state
+	assert.equal(sending.seen[KEY], ASSISTANT_UUID)
+	assert.equal(sessionOf(sending, at)?.lastMessage?.seen, true)
+	const refused = run(sending, [
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+		],
+		[at + 100 + TURN_IDLE_MS + 1000, poll(idle())],
+	]).state
+	assert.deepEqual(itemsOf(refused, 'turn'), [])
+})

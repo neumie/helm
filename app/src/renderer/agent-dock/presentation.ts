@@ -1303,7 +1303,8 @@ export function sessionReplyView(session: DockSession | undefined, now: number):
 
 /**
  * Why the agent detail cannot take a reply right now, or null when it can: the agent owes Jakub
- * an item (answer it there), works (its next stop is the time), is unreadable, or its source is down.
+ * an item (answer it there), a reply is still in flight, it works (its next stop is the time), is
+ * unreadable, or its source is down. An unconfirmed reply does not block another.
  */
 export function agentReplyBlocked(
 	snapshot: AgentDockSnapshot | null,
@@ -1321,7 +1322,9 @@ export function agentReplyBlocked(
 		case 'reply-waiting':
 			return 'Answer its open item first'
 		case 'sending':
-			return 'A reply is on its way'
+			// Unconfirmed never clears on its own while the agent stays put: Jakub may check the terminal
+			// and reply again (the CAS refuses if the first reply did land).
+			return session.reply?.status === 'unconfirmed' ? null : 'A reply is on its way'
 		case 'working':
 			return 'Working: reply once it stops'
 		default:

@@ -98,6 +98,12 @@ export const PANE_MAX_HEIGHT = 480
 /** However little room is left, the pane keeps its rule, a few body rows and its footer. */
 const PANE_FLOOR = 120
 
+/** An agent-detail reply's local error, while the agent's last message is still the one it answered. */
+const promptError = (
+	error: { text: string; uuid?: string } | undefined,
+	lastUuid: string | undefined,
+): string | null => (error && error.uuid === lastUuid ? error.text : null)
+
 const targetKey = (target: AgentDockTarget | null): string | null =>
 	target === null
 		? null
@@ -165,7 +171,7 @@ export function AgentDock({
 	const returnTo = useRef<string | null>(initialOpen?.type === 'agent' ? initialOpen.key : null)
 	/** Agent-detail replies awaiting main's answer, and words main could not record, by session key. */
 	const [prompting, setPrompting] = useState<ReadonlySet<string>>(new Set())
-	const [promptErrors, setPromptErrors] = useState<ReadonlyMap<string, string>>(new Map())
+	const [promptErrors, setPromptErrors] = useState<ReadonlyMap<string, { text: string; uuid?: string }>>(new Map())
 	/** Re-render clock for answered entries that linger with their receipt. */
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
@@ -487,7 +493,7 @@ export function AgentDock({
 	const prompt = (key: string, request: Omit<AgentDockPromptRequest, 'session'>): Promise<AgentDockActResult> => {
 		if (!onPrompt || prompting.has(key))
 			return Promise.resolve({ ok: false, outcome: { status: 'refused', reason: 'in_flight', detail: '' } })
-		const edit = (patch: (next: Map<string, string>) => void) =>
+		const edit = (patch: (next: Map<string, { text: string; uuid?: string }>) => void) =>
 			setPromptErrors(prev => {
 				const next = new Map(prev)
 				patch(next)
@@ -509,7 +515,11 @@ export function AgentDock({
 					return next
 				})
 				const error = actErrorText(result.outcome)
-				if (error !== null) edit(next => next.set(key, error))
+				// Tied to the message it answered: once the agent says something new it no longer applies.
+				if (error !== null)
+					edit(next =>
+						next.set(key, { text: error, ...(request.assistantUuid ? { uuid: request.assistantUuid } : {}) }),
+					)
 				return result
 			})
 	}
@@ -674,7 +684,7 @@ export function AgentDock({
 					keys={detailKeys}
 					drafts={drafts}
 					submitting={prompting.has(agentRow.key)}
-					localError={promptErrors.get(agentRow.key) ?? null}
+					localError={promptError(promptErrors.get(agentRow.key), agentSession.lastMessage?.uuid)}
 					readMessage={readMessage}
 					canPrompt={onPrompt !== undefined}
 					onStep={stepAgent}

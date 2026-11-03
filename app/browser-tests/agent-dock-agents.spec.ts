@@ -198,3 +198,48 @@ test('a click on a row opens the agent without taking the keys from the terminal
 	await expect(input).toBeFocused()
 	expect(await terminalWrites(page)).toBe(0)
 })
+
+test('a live update that moves the focused agent to another group keeps the keys on that agent', async ({ page }) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await page.goto(harness)
+	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
+	// The by-state layout re-mounts a row whose standing changes (a new group).
+	await page.evaluate(() => {
+		const dock = document.querySelector<HTMLElement>('#agent-dock')
+		if (dock) dock.dataset.agentsVariant = 'by-state'
+		window.__helmWorkspaceFixture?.agentDock?.emitScenario('agents-overview')
+	})
+	const pane = page.locator('.agent-dock-pane')
+	const agent = (name: string) =>
+		pane.locator('.agent-dock-agent').filter({ has: page.locator('.agent-dock-agent-name', { hasText: name }) })
+	await page.locator('.term-holder.active .xterm-helper-textarea').focus()
+	await page.keyboard.press('Meta+Shift+KeyJ')
+	await page.keyboard.press('End')
+	await page.keyboard.press('Enter')
+	await agent('repair-done-still-out-of-service').focus()
+	await expect(agent('repair-done-still-out-of-service')).toHaveAttribute('data-standing', 'reply-waiting')
+	// Its turn is acked elsewhere: the agent moves from Reply waiting to Read.
+	await page.evaluate(async () => {
+		const fixture = window.__helmWorkspaceFixture?.agentDock
+		if (!fixture) return
+		let latest: import('../src/agent-dock/model').AgentDockSnapshot | null = null
+		const off = fixture.api.onSnapshot(next => {
+			latest = next
+		})
+		off()
+		const snap = latest as import('../src/agent-dock/model').AgentDockSnapshot | null
+		const turn = snap?.items.find(item => item.kind === 'turn' && item.state === 'open')
+		if (turn) await fixture.api.ack(turn.id)
+	})
+	await expect(agent('repair-done-still-out-of-service')).toHaveAttribute('data-standing', 'read')
+	await expect(agent('repair-done-still-out-of-service')).toBeFocused()
+})
+
+test('at 900px the agent detail still says where the agent runs', async ({ page }) => {
+	await page.setViewportSize({ width: 900, height: 820 })
+	await page.goto('/iframe.html?id=views-agent-dock-agents-pane--agent-detail-narrow&viewMode=story')
+	const pane = page.locator('.agent-dock-pane')
+	await expect(pane).toHaveAttribute('aria-label', 'Agent, service-protocol-image-link, JVS')
+	await expect(pane.locator('.agent-dock-title-where')).toBeVisible()
+	await expect(pane.locator('.agent-dock-title-where')).toHaveText('Okena · worktree · PR #953')
+})

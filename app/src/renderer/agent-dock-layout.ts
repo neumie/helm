@@ -128,11 +128,15 @@ export function mountAgentDock({
 	dock.classList.add('agent-dock')
 	const reactRoot = createRoot(view)
 
-	/** Keyboard home inside the dock: an open pane, else the open or first entry/Agents entry, else the row. */
+	/**
+	 * Keyboard home inside the dock: an open pane (the Agents pane: its current row, so a live reorder
+	 * that re-mounted the focused row keeps Jakub on that agent), else the open or first entry/Agents
+	 * entry, else the row.
+	 */
 	const focusDock = (): void => {
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
 		if (pane) {
-			pane.focus()
+			;(pane.querySelector<HTMLElement>('.agent-dock-agent[tabindex="0"]') ?? pane).focus()
 			return
 		}
 		const row = dock.querySelector<HTMLElement>('.agent-dock-row')

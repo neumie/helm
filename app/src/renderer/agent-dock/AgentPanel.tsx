@@ -166,7 +166,8 @@ export function AgentPanel({
 					{row.word}
 					{row.age ? ` ${row.age}` : ''}
 				</span>
-				<span className="agent-dock-title-project">{row.where.join(' · ')}</span>
+				{/* Where it runs stays at any width (item panes drop their project context below 640px). */}
+				<span className="agent-dock-title-project agent-dock-title-where">{row.where.join(' · ')}</span>
 			</Header>
 			<ScrollBody label="Last message">
 				<div className="agent-dock-message">

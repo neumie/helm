@@ -538,6 +538,14 @@ function observeTerminal(
 			now,
 		)
 		const newest = record.tail.lastAssistant?.uuid
+		// A settled agent-detail reply (landed, refused, failed) says nothing about a newer message.
+		const settled = record.session.reply
+		if (
+			settled &&
+			newest !== orphanAnchor &&
+			(settled.status === 'confirmed' || settled.status === 'refused' || settled.status === 'failed')
+		)
+			record.session.reply = undefined
 		for (const item of liveTurns) {
 			// An act still in flight cannot be attributed yet; the settle check below picks it up.
 			if (isInFlight(item)) continue
@@ -895,7 +903,9 @@ function reducePromptSending(draft: Draft, key: SessionKey, assistantUuid: strin
 		at: draft.now,
 		...(assistantUuid ? { assistantUuid } : {}),
 	}
-	if (assistantUuid) draft.state.seen[key] = assistantUuid
+	// Only the message the reducer holds as the last one: an older uuid (a stale live read) never
+	// moves `seen` back, which would reopen a turn Jakub already acked.
+	if (assistantUuid && record.tail.lastAssistant?.uuid === assistantUuid) draft.state.seen[key] = assistantUuid
 }
 
 function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutcome): void {

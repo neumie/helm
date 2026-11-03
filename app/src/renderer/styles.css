@@ -1914,7 +1914,7 @@ body.dragging {
 }
 
 @container agent-dock-pane (max-width: 640px) {
-	.agent-dock-title-project {
+	.agent-dock-title-project:not(.agent-dock-title-where) {
 		display: none;
 	}
 }

@@ -976,6 +976,11 @@ test('agent detail reply: receipts like a turn reply; blocked while it owes, wor
 	assert.equal(agentReplyBlocked(snap, okena, 'reply-waiting'), 'Answer its open item first')
 	assert.equal(agentReplyBlocked(snap, okena, 'working'), 'Working: reply once it stops')
 	assert.equal(agentReplyBlocked(snap, okena, 'sending'), 'A reply is on its way')
+	// An unconfirmed reply never clears while the agent stays put: it does not block another (the CAS guards it).
+	const replied = (status: 'sent' | 'unconfirmed') =>
+		session({ source: 'okena', reply: { action: 'reply', status, at: T } })
+	assert.equal(agentReplyBlocked(snap, replied('unconfirmed'), 'sending'), null)
+	assert.equal(agentReplyBlocked(snap, replied('sent'), 'sending'), 'A reply is on its way')
 	assert.equal(agentReplyBlocked(snap, okena, 'unknown'), 'State unknown: reply in the terminal')
 	assert.match(
 		agentReplyBlocked(snapshot({ state: 'down', since: T, lastObservedAt: T, detail: 'x' } as never), okena, 'read') ??
