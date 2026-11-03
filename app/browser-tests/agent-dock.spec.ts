@@ -1910,7 +1910,8 @@ test('an agent waiting on its background shell reads background with "1 shell", 
 	await openHarness(page)
 	await emitScenario(page, 'background-shell')
 	// Okena says idle; the shell Claude started makes it busy in the background, never idle.
-	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('agents 1 · 1 busy')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveText('1 agent')
+	await expect(page.locator('.agent-dock-agents-entry')).toHaveAttribute('aria-label', /1 in background/)
 	const turn = page.locator('.agent-dock-entry[data-kind="turn"]')
 	await expect(turn).toHaveAttribute('aria-label', /^Turn ended, service-protocol-image-link in JVS, /)
 	await page.locator('.agent-dock-agents-entry').click()
