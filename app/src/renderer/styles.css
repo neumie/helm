@@ -2560,22 +2560,36 @@ body.dragging {
 	}
 }
 
-/* Agents pane (design §3.24 Agents): agents grouped under dim project headings, every row a 12px
- * status-glyph box (the queue's glyph box, so glyphs sit on the 16px column), the short name, the status
- * word and age, meta. One grid for the whole list — groups, their lists and rows are subgrids — so the
- * columns line up across groups, each as wide as its widest cell (never stretched across the pane),
- * ages right-aligned. */
+/* Agents pane (design §3.24 Agents): every agent's state relative to Jakub. One grid for the whole
+ * list — groups, their lists, items and row buttons are subgrids — so columns line up across headings.
+ * Every row is a button (one roving tab stop): its glyph sits in the queue's 12px box on the 16px column,
+ * its fill (hover --fill-subtle, focused --fill-raised, never a ring) reaches 8px past the text either
+ * side with the choices' 6px radius. All cells are always rendered; the layout places or hides them:
+ *   two-lines       glyph · name · state · age · where (flex); the excerpt dim on a second line under the name
+ *   excerpt-column  glyph · name · state · age · excerpt (flex, cut) · where
+ *   by-state        glyph · name · project · state · age · excerpt (flex, cut) · where; the group is the
+ *                   state, so the word shows only where it says more (question, not connected, frozen) */
 .agent-dock-agent-list {
 	--agent-row: calc(24px * var(--ui-scale));
 	display: grid;
-	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, max-content);
-	justify-content: start;
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr);
 	max-width: 100%;
 	font-variant-numeric: tabular-nums;
 }
 
+.agent-dock-agent-list[data-layout="excerpt-column"] {
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr) minmax(0, max-content);
+}
+
+.agent-dock-agent-list[data-layout="by-state"] {
+	grid-template-columns:
+		12px minmax(0, max-content) minmax(0, max-content) max-content max-content minmax(0, 1fr)
+		minmax(0, max-content);
+}
+
 .agent-dock-agent-group,
 .agent-dock-agent-rows,
+.agent-dock-agent-item,
 .agent-dock-agent {
 	grid-column: 1 / -1;
 	display: grid;
@@ -2588,7 +2602,7 @@ body.dragging {
 	list-style: none;
 }
 
-/* The project heading: dim, the row's size and weight (no bold in the dock), a little air above. */
+/* The group heading: dim, the row's size and weight (no bold in the dock), a little air above. */
 .agent-dock-agent-group-name {
 	grid-column: 1 / -1;
 	align-content: end;
@@ -2607,76 +2621,242 @@ body.dragging {
 }
 
 .agent-dock-agent {
+	position: relative;
+	isolation: isolate;
 	align-items: baseline;
 	align-content: center;
 	min-height: var(--agent-row);
+	padding: 0;
+	border: none;
+	background: transparent;
 	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+}
+
+.agent-dock-agent::before {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: 0 -8px;
+	border-radius: 6px;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-agent:hover::before {
+	background: var(--fill-subtle);
+}
+
+/* The focused row (keyboard only: pointer use never focuses one) shows the selected look, never a ring. */
+.agent-dock-agent:focus {
+	outline: none;
+}
+
+.agent-dock-agent:focus::before {
+	background: var(--fill-raised);
+}
+
+.agent-dock-agent:focus .agent-dock-agent-name {
+	color: var(--text-0);
+}
+
+.agent-dock-agent > * {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .agent-dock-agent-glyph {
+	grid-column: 1;
 	width: 12px;
 	text-align: center;
 	font-size: var(--dock-prose-fs);
 	color: var(--dock-dim);
 }
 
-.agent-dock-agent-glyph[data-status="working"] {
+/* Glyph tones: the queue's kind colors while the agent owes Jakub (amber ask, blue turn), else its status. */
+.agent-dock-agent-glyph:is(
+		[data-tone="ask"],
+		[data-tone="orphaned"],
+		[data-tone="unconfirmed"],
+		[data-tone="unknown"]
+	) {
+	color: var(--warn);
+}
+
+.agent-dock-agent-glyph[data-tone="turn"] {
+	color: var(--accent);
+}
+
+.agent-dock-agent-glyph[data-tone="working"] {
 	color: var(--text-0);
 	animation: agent-dock-pulse 1.6s ease-in-out infinite;
 }
 
-.agent-dock-agent-glyph[data-status="background"] {
+.agent-dock-agent-glyph:is([data-tone="background"], [data-tone="sending"]) {
 	color: var(--text-1);
-}
-
-.agent-dock-agent-glyph:is([data-status="waiting"], [data-status="unknown"]) {
-	color: var(--warn);
 }
 
 .agent-dock-agent-name {
-	min-width: 0;
-	max-width: 40ch;
+	grid-column: 2;
+	max-width: 36ch;
 	padding-left: 8px;
-	overflow: hidden;
-	text-overflow: ellipsis;
 	color: var(--text-1);
 }
 
-.agent-dock-agent-meta {
-	min-width: 0;
-	padding-left: 24px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	color: var(--dock-dim);
-}
-
-/* Status words carry the state by brightness: busy and waiting read, idle and frozen recede. The word and
- * the age are cells of their own (the state span only carries the color). */
-.agent-dock-agent-state {
-	display: contents;
-	color: var(--text-1);
-}
-
-.agent-dock-agent-state:is([data-status="idle"], [data-status="unreachable"]) {
-	color: var(--dock-dim);
-}
-
-/* A waiting agent ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
-.agent-dock-agent-state:is([data-status="unknown"], [data-tone="warn"]) {
-	color: var(--warn);
-}
-
-.agent-dock-agent-state[data-tone="danger"] {
-	color: var(--danger);
-}
-
+/* State words carry the state by brightness: owed, sending and busy read; read, idle and frozen recede. */
 .agent-dock-agent-word {
+	grid-column: 3;
 	padding-left: 24px;
+	color: var(--text-1);
 }
 
 .agent-dock-agent-age {
-	padding-left: 6px;
+	grid-column: 4;
 	justify-self: end;
+	padding-left: 6px;
+	color: var(--text-1);
+}
+
+.agent-dock-agent:is([data-standing="read"], [data-standing="idle"]) :is(.agent-dock-agent-word, .agent-dock-agent-age),
+.agent-dock-agent[data-status="unreachable"] .agent-dock-agent-word {
+	color: var(--dock-dim);
+}
+
+/* Waiting on Jakub ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
+.agent-dock-agent:is([data-standing="unknown"], [data-tone="warn"]):not([data-status="unreachable"])
+	:is(.agent-dock-agent-word, .agent-dock-agent-age) {
+	color: var(--warn);
+}
+
+.agent-dock-agent[data-tone="danger"] :is(.agent-dock-agent-word, .agent-dock-agent-age) {
+	color: var(--danger);
+}
+
+.agent-dock-agent-project,
+.agent-dock-agent-where,
+.agent-dock-agent-excerpt {
+	color: var(--dock-dim);
+}
+
+.agent-dock-agent-project {
+	display: none;
+}
+
+.agent-dock-agent-where {
+	grid-column: 5;
+	padding-left: 24px;
+}
+
+.agent-dock-agent-excerpt {
+	grid-column: 2 / -1;
+	grid-row: 2;
+	padding-left: 8px;
+	max-width: 100ch;
+}
+
+.agent-dock-agent-excerpt:empty {
+	display: none;
+}
+
+/* two-lines: the excerpt is the row's second line, under the name; the row grows to fit both. */
+.agent-dock-agent-list[data-layout="two-lines"] .agent-dock-agent {
+	grid-template-rows: var(--dock-lh) auto;
+	padding: 3px 0;
+}
+
+/* excerpt-column and by-state: one line; the excerpt takes what is left and is cut, where follows. */
+.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-excerpt {
+	grid-column: 5;
+	grid-row: 1;
+	max-width: none;
+	padding-left: 24px;
+}
+
+.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+	grid-column: 6;
+	max-width: 40ch;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
+	display: block;
+	grid-column: 3;
+	max-width: 16ch;
+	padding-left: 24px;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-word {
+	grid-column: 4;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-age {
+	grid-column: 5;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-excerpt {
+	grid-column: 6;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-where {
+	grid-column: 7;
+}
+
+/* The heading already says it: the word only where it says more. */
+.agent-dock-agent-list[data-layout="by-state"]
+	.agent-dock-agent:is(
+		[data-standing="reply-waiting"],
+		[data-standing="working"],
+		[data-standing="background"],
+		[data-standing="read"],
+		[data-standing="idle"],
+		[data-word="unknown"]
+	)
+	.agent-dock-agent-word {
+	visibility: hidden;
+}
+
+/* Narrow panes keep the excerpt readable: names cut sooner, and in the one-line layouts where gives
+ * way first (it stays in the row's accessible name and the agent's detail). */
+@container agent-dock-pane (max-width: 960px) {
+	.agent-dock-agent-name {
+		max-width: 26ch;
+	}
+
+	.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+		max-width: 20ch;
+	}
+}
+
+@container agent-dock-pane (max-width: 720px) {
+	.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+		display: none;
+	}
+}
+
+/* The agent detail's header: the name as its kind (13px, --text-0), the state words and where dim. */
+.agent-dock-title-state {
+	flex: none;
+	color: var(--text-1);
+}
+
+.agent-dock-title-state:is([data-standing="read"], [data-standing="idle"]) {
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-state[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-title-state[data-tone="danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-title-kind .agent-dock-agent-glyph {
+	flex: none;
+}
+
+.agent-dock-message-text[data-quiet="true"] {
+	color: var(--dock-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

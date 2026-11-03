@@ -61,6 +61,17 @@ const {
 	canAnswer,
 	canAck,
 	nextWaiting,
+	agentStanding,
+	agentPlace,
+	agentRowLabel,
+	agentStateGroups,
+	agentsSummary,
+	agentOverview,
+	agentsLayout,
+	agentReplyBlocked,
+	excerptPlainLine,
+	sessionReplyView,
+	REPLY_RECEIPT_MS,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -758,4 +769,217 @@ test('sources are words in the existing slots: health tooltip, down note, blocke
 	assert.equal(sourceBlockedNote(okenaItem, split), null)
 	assert.equal(canAnswer(helmItem, split), false)
 	assert.equal(sourceBlockedNote(helmItem, split), 'Helm terminals unreachable: answer in the terminal')
+})
+
+// ---------------------------------------------------------------------------
+// Agents overview (design §3.24 Agents)
+// ---------------------------------------------------------------------------
+
+const OK = { state: 'ok' as const, since: T, lastObservedAt: T }
+const message = (text: string, seen = false) => ({ uuid: 'm1', text, at: T - 1_000, seen })
+const standingOf = (items: DockItem[], s: DockSession, now = T + 60_000) => {
+	const view = agentStanding(snapshot(OK, items, [s]), s, now)
+	return [view.standing, view.word, view.glyph] as const
+}
+
+test('agent standing: asks need you (question / permission / plan), an open turn is a reply waiting', () => {
+	assert.deepEqual(standingOf([askItem()], session({ status: 'waiting' })), [
+		'needs-you',
+		'question',
+		kindGlyph(askItem()),
+	])
+	const bash = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T - 60_000 } })
+	assert.equal(standingOf([bash], session({ status: 'waiting' }))[1], 'permission')
+	const plan = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'ExitPlanMode', input: {}, createdAtMs: T } })
+	assert.equal(standingOf([plan], session({ status: 'waiting' }))[1], 'plan')
+	// An orphaned ask still needs him; an ask beats a turn on the same agent.
+	assert.equal(standingOf([askItem({ state: 'orphaned' })], session())[0], 'needs-you')
+	assert.deepEqual(standingOf([turnItem(), bash], session())[0], 'needs-you')
+	assert.deepEqual(standingOf([turnItem()], session()), ['reply-waiting', 'reply waiting', kindGlyph(turnItem())])
+	// Ages and tones like the queue entry: asks from their oldest wait, turns cap at amber.
+	const view = agentStanding(snapshot(OK, [askItem()], [session()]), session(), T + 3 * 60 * 60_000)
+	assert.equal(view.since, T - 60_000)
+	assert.equal(view.tone, 'danger')
+	assert.equal(view.label, 'needs you: question')
+	assert.equal(view.item?.id, 7)
+	assert.equal(agentStanding(snapshot(OK, [turnItem()], [session()]), session(), T + 5 * 60 * 60_000).tone, 'warn')
+	// Resolved items owe nothing.
+	assert.equal(standingOf([turnItem({ state: 'resolved' })], session())[0], 'idle')
+})
+
+test('agent standing: sending / sent / unconfirmed from an item or a reply from the agent detail', () => {
+	const receipt = (status: 'sending' | 'sent' | 'unconfirmed') => ({ action: 'reply' as const, status, at: T })
+	assert.deepEqual(standingOf([turnItem({ state: 'sending', receipt: receipt('sending') })], session()), [
+		'sending',
+		'sending',
+		'↵',
+	])
+	assert.equal(
+		standingOf([turnItem({ state: 'unconfirmed', receipt: receipt('unconfirmed') })], session())[1],
+		'sent, unconfirmed',
+	)
+	assert.equal(standingOf([], session({ reply: receipt('sending') }))[1], 'sending')
+	assert.equal(standingOf([], session({ reply: receipt('sent') }))[1], 'sent')
+	const unconfirmed = agentStanding(
+		snapshot(OK, [], [session({ reply: receipt('unconfirmed') })]),
+		session({ reply: receipt('unconfirmed') }),
+		T,
+	)
+	assert.deepEqual([unconfirmed.word, unconfirmed.tone], ['sent, unconfirmed', 'warn'])
+	// A landed or refused reply is history: the status speaks again.
+	assert.equal(
+		standingOf([], session({ status: 'working', reply: { action: 'reply', status: 'confirmed', at: T } }))[0],
+		'working',
+	)
+})
+
+test('agent standing: working, background, read (seen), idle (unseen), frozen, unknown, not connected', () => {
+	assert.deepEqual(standingOf([], session({ status: 'working' })), ['working', 'working', '✻'])
+	assert.deepEqual(standingOf([], session({ status: 'background' })), ['background', 'background', '◐'])
+	assert.deepEqual(standingOf([], session({ status: 'waiting' })), ['needs-you', 'waiting', '?'])
+	assert.deepEqual(standingOf([], session({ lastMessage: message('Done.', true) })), ['read', 'read', '✓'])
+	assert.deepEqual(standingOf([], session({ lastMessage: message('Done.') })), ['idle', 'idle', '·'])
+	assert.deepEqual(standingOf([], session()), ['idle', 'idle', '·'])
+	assert.deepEqual(standingOf([], session({ status: 'unreachable' })), ['unknown', 'frozen', '▪'])
+	assert.deepEqual(standingOf([], session({ status: 'unknown' })), ['unknown', 'unknown', '¿'])
+	assert.deepEqual(standingOf([], session({ status: 'unknown', hooksAttached: false })), [
+		'unknown',
+		'not connected',
+		'¿',
+	])
+	assert.equal(
+		agentStanding(snapshot(OK, [], [session({ status: 'unreachable' })]), session({ status: 'unreachable' }), T).since,
+		null,
+	)
+})
+
+test('agent place: worktree, branch, detached hash, else a pane name that is not the agent name', () => {
+	assert.equal(agentPlace(session({ repo: 'JVS', branch: 'feat/x' }), 'x'), 'worktree')
+	assert.equal(agentPlace(session({ branch: 'main' }), 'helm'), 'main')
+	assert.equal(agentPlace(session({ branch: 'd1aee9df12345678' }), 'helm'), 'detached d1aee9df')
+	assert.equal(agentPlace(session({ name: 'Fix the login' }), 'helm'), 'Fix the login')
+	assert.equal(agentPlace(session({ name: 'dock' }), 'dock'), '')
+})
+
+test('excerpts: the first line as quiet plain text, Markdown marks dropped, controls and bidi stripped, bounded', () => {
+	assert.equal(
+		excerptPlainLine('## **Done** — see [the PR](https://x/1) and `npm test`'),
+		'Done — see the PR and npm test',
+	)
+	assert.equal(excerptPlainLine('- first item'), 'first item')
+	assert.equal(excerptPlainLine('> quoted'), 'quoted')
+	assert.equal(excerptPlainLine(`a${String.fromCharCode(0x202e)}b${String.fromCharCode(7)}c`), 'abc')
+	assert.equal(excerptPlainLine('x'.repeat(500), 40).length, 40)
+	assert.equal(excerptPlainLine(undefined), '')
+})
+
+test('agent rows: needs you, reply waiting, sending, working, background, read, idle, unknown; longest wait first', () => {
+	const at = (key: string, overrides: Partial<DockSession>) =>
+		session({ key, terminalId: key.slice(3), name: key.slice(3), ...overrides })
+	const sessions = [
+		at('p1:read', { lastMessage: message('All tests pass.', true), since: T - 5_000 }),
+		at('p1:idle', { lastMessage: message('**Shipped** it'), since: T - 4_000 }),
+		at('p1:work', { status: 'working', since: T - 3_000, project: 'crm' }),
+		at('p1:bg', { status: 'background', since: T - 2_000 }),
+		at('p1:gone', { status: 'unreachable' }),
+		at('p1:ask', { status: 'waiting' }),
+		at('p1:ask2', { status: 'waiting' }),
+		at('p1:turn', {}),
+		at('p1:send', { reply: { action: 'reply', status: 'sending', at: T } }),
+	]
+	const items = [
+		askItem({
+			id: 1,
+			session: 'p1:ask',
+			fact: { kind: 'ask', dialogId: 'a', tool: 'Bash', input: { command: 'ls' }, createdAtMs: T - 1_000 },
+		}),
+		askItem({
+			id: 2,
+			session: 'p1:ask2',
+			fact: { kind: 'ask', dialogId: 'b', tool: 'Bash', input: { command: 'pwd' }, createdAtMs: T - 9_000 },
+		}),
+		turnItem({ id: 3, session: 'p1:turn' }),
+	]
+	const snap = snapshot(OK, items, sessions)
+	const rows = agentRows(snap, T + 60_000)
+	assert.deepEqual(
+		rows.map(row => row.name),
+		['ask2', 'ask', 'turn', 'send', 'work', 'bg', 'read', 'idle', 'gone'],
+	)
+	const byName = new Map(rows.map(row => [row.name, row]))
+	assert.equal(byName.get('ask')?.itemId, 1)
+	assert.equal(byName.get('read')?.itemId, undefined)
+	assert.equal(byName.get('read')?.excerpt, 'All tests pass.')
+	assert.equal(byName.get('idle')?.excerpt, 'Shipped it')
+	assert.equal(byName.get('ask')?.excerpt, entryGist(items[0] as DockItem))
+	assert.deepEqual(byName.get('work')?.where, ['Okena'])
+	assert.equal(agentRowLabel(byName.get('ask2') as never), 'ask2, needs you: permission 1m, Okena')
+	assert.equal(agentsSummary(rows), '9 agents · 3 need you · 3 busy')
+	assert.equal(agentsSummary(rows.slice(-1)), '1 agent')
+	assert.deepEqual(
+		agentStateGroups(rows).map(group => [group.heading, group.rows.length]),
+		[
+			['Needs you', 2],
+			['Reply waiting', 1],
+			['Sending', 1],
+			['Working', 1],
+			['Background', 1],
+			['Read', 1],
+			['Idle', 1],
+			['Unknown', 1],
+		],
+	)
+	// By project: groups in the order of their most urgent agent (helm's asks lead; crm only works).
+	assert.deepEqual(
+		agentOverview(snap, T + 60_000, 'two-lines').map(group => [group.heading, group.rows.length]),
+		[
+			['helm', 8],
+			['crm', 1],
+		],
+	)
+	assert.equal(agentOverview(snap, T + 60_000, 'by-state')[0]?.id, 'state:needs-you')
+	assert.deepEqual(agentOverview(null, T, 'two-lines'), [])
+	assert.equal(agentsLayout('by-state'), 'by-state')
+	assert.equal(agentsLayout('nonsense'), 'two-lines')
+	assert.equal(agentsLayout(undefined), 'two-lines')
+})
+
+test('agent detail reply: receipts like a turn reply; blocked while it owes, works or its source is down', () => {
+	const reply = (status: 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed', extra = {}) =>
+		session({ reply: { action: 'reply', status, at: T, ...extra } })
+	assert.equal(sessionReplyView(session(), T), null)
+	assert.deepEqual(sessionReplyView(reply('sending'), T), { text: 'Sending…', tone: 'neutral' })
+	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'queued' }), T), {
+		text: 'Sending… (queued until the agent is free)',
+		tone: 'neutral',
+	})
+	assert.deepEqual(sessionReplyView(reply('unconfirmed'), T), { text: 'sent, unconfirmed', tone: 'warn' })
+	assert.deepEqual(sessionReplyView(reply('confirmed'), T + 1_000), { text: '✓ replied', tone: 'success' })
+	assert.equal(sessionReplyView(reply('confirmed'), T + REPLY_RECEIPT_MS), null)
+	assert.deepEqual(sessionReplyView(reply('refused', { reason: 'gone' }), T), {
+		text: 'refused: already answered elsewhere',
+		tone: 'danger',
+	})
+	assert.deepEqual(sessionReplyView(reply('refused', { reason: 'changed', detail: 'It moved on.' }), T), {
+		text: 'refused: It moved on.',
+		tone: 'danger',
+	})
+	assert.deepEqual(sessionReplyView(reply('failed', { detail: 'socket hang up' }), T), {
+		text: 'socket hang up',
+		tone: 'danger',
+	})
+
+	const snap = snapshot(OK)
+	const okena = session({ source: 'okena' })
+	for (const standing of ['read', 'idle', 'background'] as const)
+		assert.equal(agentReplyBlocked(snap, okena, standing), null)
+	assert.equal(agentReplyBlocked(snap, okena, 'reply-waiting'), 'Answer its open item first')
+	assert.equal(agentReplyBlocked(snap, okena, 'working'), 'Working: reply once it stops')
+	assert.equal(agentReplyBlocked(snap, okena, 'sending'), 'A reply is on its way')
+	assert.equal(agentReplyBlocked(snap, okena, 'unknown'), 'State unknown: reply in the terminal')
+	assert.match(
+		agentReplyBlocked(snapshot({ state: 'down', since: T, lastObservedAt: T, detail: 'x' } as never), okena, 'read') ??
+			'',
+		/unreachable: reply in the terminal$/,
+	)
 })

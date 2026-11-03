@@ -57,7 +57,8 @@ async function emitScenario(
 		| 'overflow'
 		| 'helm-terminals'
 		| 'helm-add-directories'
-		| 'single-turn',
+		| 'single-turn'
+		| 'agents-overview',
 ): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
@@ -1548,18 +1549,18 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	await expect(pane.locator('.agent-dock-title-text')).not.toContainText('ClientCare')
 	await expect(pane).toHaveAttribute('aria-label', 'Turn ended, repeated-android-camera-permission, crm-mobile')
 	await page.locator('.agent-dock-agents-entry').click()
-	// Busy first, then waiting; every agent by its short name.
+	// Needs you first (the longest wait leads), then reply waiting, then working; every agent by its short name.
 	await expect(pane.locator('.agent-dock-agent-name')).toHaveText([
-		'isdoc-export',
-		'repeated-android-camera-permission',
-		'company-create-save-firm #2',
 		'company-create-save-firm',
+		'company-create-save-firm #2',
+		'repeated-android-camera-permission',
+		'isdoc-export',
 	])
-	// Grouped by project, groups in the order of their first agent; each heading names its agents' list.
-	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['crm-billing', 'crm-mobile', 'crm'])
+	// Grouped by project, groups in the order of their most urgent agent; each heading names its agents' list.
+	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['crm', 'crm-mobile', 'crm-billing'])
 	await expect(pane.getByRole('list', { name: 'crm', exact: true }).getByRole('listitem')).toHaveText([
-		/company-create-save-firm #2/,
 		/company-create-save-firm(?! #)/,
+		/company-create-save-firm #2/,
 	])
 })
 

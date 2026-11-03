@@ -128,6 +128,23 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				if (!watcher) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
 				return watcher.act(request)
 			})
+			// Replies from the agent detail (no item): same gate, same CAS discipline (watcher.prompt).
+			ipc.handle(AGENT_DOCK_IPC.prompt, async (event, request, profileToken) => {
+				if (!options.acceptsIpc(event.sender, profileToken))
+					return {
+						ok: false,
+						outcome: { status: 'failed', detail: 'This window cannot answer for the current profile.' },
+					}
+				if (!watcher) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
+				return watcher.prompt(request)
+			})
+			// The agent detail's full last message: read-only, but transcript text, so the same gate.
+			ipc.handle(AGENT_DOCK_IPC.message, async (event, session, profileToken) => {
+				if (!options.acceptsIpc(event.sender, profileToken))
+					return { ok: false, detail: 'This window cannot read for the current profile.' }
+				if (!watcher) return { ok: false, detail: 'The agent dock is off in this run.' }
+				return watcher.readMessage(session)
+			})
 		},
 		// The hub listens first so the dock's first Helm poll finds it.
 		start: () => void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => void watcher?.start()),

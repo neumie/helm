@@ -37,9 +37,11 @@ import {
 	writePrivateFileAtomic,
 } from '../../../src/agent-dock/spool'
 import { REFUSAL_TEXT } from './act'
+import type { DockPromptExpect } from './composite-source'
 import {
 	type AgentDockActResult,
 	type AgentDockEvent,
+	type AgentDockMessageResult,
 	type AgentDockObservation,
 	type AgentDockSnapshot,
 	type DockActOutcome,
@@ -49,6 +51,7 @@ import {
 	type DockSourceId,
 	agentDockPersistedSchema,
 	parseAgentDockActRequest,
+	parseAgentDockPromptRequest,
 } from './model'
 import { type AgentDockState, agentDockPersisted, agentDockSnapshot, createAgentDockState, reduce } from './reduce'
 import { contentDigest, dockEventLine, dockSpoolItem, dockSpoolSnapshot, pruneLedger } from './spool-projection'
@@ -76,6 +79,10 @@ export interface AgentDockObservationSource {
 	observe(state: AgentDockState, now: number): Promise<AgentDockObservation[]>
 	/** CAS read + source write for one dock answer. Absent = the dock cannot answer. */
 	act?(target: AgentDockTarget, item: DockItem, action: DockAction): Promise<DockActOutcome>
+	/** CAS read + prompt POST for a reply from the agent detail (no item). */
+	prompt?(target: AgentDockTarget, expect: DockPromptExpect, text: string): Promise<DockActOutcome>
+	/** The pane's last assistant message, read live (agent detail). */
+	readMessage?(target: AgentDockTarget): Promise<AgentDockMessageResult>
 	/** Read this pane's transcript every tick until `until` (a dock reply waits to be seen). */
 	expedite?(target: AgentDockTarget, until: number): void
 }
@@ -238,6 +245,75 @@ export class AgentDockWatcher {
 		// See it land as soon as possible.
 		this.poke()
 		return { ok: outcome.status === 'sent', outcome }
+	}
+
+	/**
+	 * A reply from the agent detail to an agent that owes Jakub nothing (renderer IPC input,
+	 * validated here). Like act(): preconditions → `prompt.sending` (published) → source CAS read
+	 * + prompt POST → the session's reply receipt. An agent with a live item is answered through
+	 * that item instead. Resolves; never throws.
+	 */
+	async prompt(request: unknown): Promise<AgentDockActResult> {
+		const refused = (reason: DockRefusalReason, detail = REFUSAL_TEXT[reason]): AgentDockActResult => ({
+			ok: false,
+			outcome: { status: 'refused', reason, detail },
+		})
+		const parsed = parseAgentDockPromptRequest(request)
+		if (!parsed.ok) return refused('invalid', parsed.error)
+		const { session: key, sessionId, assistantUuid, text } = parsed.value
+		if (this.stopped) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock stopped.' } }
+		if (this.acting) return refused('in_flight')
+		const session = this.state.sessions[key]?.session
+		if (!session) return refused('gone', DOCK_SOURCE_TEXT[dockSourceOfSessionKey(key)].notListed)
+		if (this.state.sources[session.source]?.health.state !== 'ok')
+			return refused('source_down', DOCK_SOURCE_TEXT[session.source].sourceDown)
+		if (this.state.items.some(item => item.session === key && item.state !== 'resolved'))
+			return refused('not_open', 'The agent has an open item; answer it there.')
+		if (session.reply?.status === 'sending') return refused('in_flight')
+		const source = this.options.source
+		if (!source.prompt) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot reply.' } }
+		const target: AgentDockTarget = { source: session.source, profile: session.profile, terminalId: session.terminalId }
+		const expect = { ...(sessionId ? { sessionId } : {}), ...(assistantUuid ? { assistantUuid } : {}) }
+
+		this.acting = true
+		let outcome: DockActOutcome
+		try {
+			this.apply({ type: 'prompt.sending', session: key, ...(assistantUuid ? { assistantUuid } : {}) })
+			this.publish(true)
+			try {
+				outcome = await source.prompt(target, expect, text)
+			} catch (error) {
+				outcome = { status: 'failed', detail: errorMessage(error) }
+			}
+			this.apply({ type: 'prompt.result', session: key, outcome })
+			if (outcome.status === 'sent') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
+			this.publish(true)
+			await this.flush()
+		} finally {
+			this.acting = false
+		}
+		this.poke()
+		return { ok: outcome.status === 'sent', outcome }
+	}
+
+	/** The agent's last message, read live through its source (agent detail). Never throws. */
+	async readMessage(key: unknown): Promise<AgentDockMessageResult> {
+		if (typeof key !== 'string' || key.length === 0 || key.length > 512) return { ok: false, detail: 'invalid agent' }
+		const session = this.state.sessions[key]?.session
+		if (!session) return { ok: false, detail: DOCK_SOURCE_TEXT[dockSourceOfSessionKey(key)].notListed }
+		if (this.state.sources[session.source]?.health.state !== 'ok')
+			return { ok: false, detail: `${DOCK_SOURCE_TEXT[session.source].label} is unreachable.` }
+		const source = this.options.source
+		if (!source.readMessage) return { ok: false, detail: 'This Helm build cannot read messages.' }
+		try {
+			return await source.readMessage({
+				source: session.source,
+				profile: session.profile,
+				terminalId: session.terminalId,
+			})
+		} catch (error) {
+			return { ok: false, detail: errorMessage(error) }
+		}
 	}
 
 	snapshot(): AgentDockSnapshot {

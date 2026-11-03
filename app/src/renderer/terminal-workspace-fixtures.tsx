@@ -23,7 +23,7 @@ import {
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import type { AgentDockPosition, AgentsLayout } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
@@ -66,6 +66,13 @@ export interface TerminalWorkspaceFixtureOptions {
 		focusDock?: boolean
 		/** Story only: `afterMs` after the terminal is ready, a new agent's item of `kind` arrives. */
 		arrive?: { kind: AgentDockArrivalKind; afterMs: number }
+		/**
+		 * Story only (Views / Agent dock agents pane): the Agents pane layout under review, written as
+		 * `#agent-dock[data-agents-variant]` before the dock mounts; production never sets it (`two-lines`).
+		 */
+		agentsVariant?: AgentsLayout
+		/** Story only, with `open: 'agents'`: then click this agent's row (by its short name), like a pointer would. */
+		openAgent?: string
 	}
 }
 
@@ -597,8 +604,10 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', position } = options.agentDock
+			const { scenario = 'busy', position, agentsVariant } = options.agentDock
 			if (position) agentDockPosition.set(position)
+			const dockHost = root.querySelector<HTMLElement>('#agent-dock')
+			if (dockHost && agentsVariant) dockHost.dataset.agentsVariant = agentsVariant
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
@@ -659,9 +668,19 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 				requestAnimationFrame(() => {
 					if (unmounted) return
 					// A pointer click (detail 1): the pane opens and xterm keeps focus.
-					root
-						.querySelector(AGENT_DOCK_OPEN_SELECTOR[open])
-						?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					const click = (node: Element | null | undefined) =>
+						node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					click(root.querySelector(AGENT_DOCK_OPEN_SELECTOR[open]))
+					const agent = options.agentDock?.openAgent
+					if (open === 'agents' && agent)
+						requestAnimationFrame(() => {
+							if (unmounted) return
+							click(
+								[...root.querySelectorAll<HTMLElement>('.agent-dock-agent')].find(
+									row => row.querySelector('.agent-dock-agent-name')?.textContent === agent,
+								),
+							)
+						})
 				})
 		})
 		return () => {

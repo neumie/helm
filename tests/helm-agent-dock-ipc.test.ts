@@ -59,11 +59,17 @@ function dockIn(root: string, enabled: boolean) {
 	return { dock, channels, call }
 }
 
-test('agent dock IPC: the three dock channels are registered and refuse a foreign window or a stale profile token', async () => {
+test('agent dock IPC: the five dock channels are registered and refuse a foreign window or a stale profile token', async () => {
 	const root = mkdtempSync('/tmp/hcr-ipc-')
 	const { dock, channels, call } = dockIn(root, true)
 	try {
-		assert.deepEqual([...channels.keys()].sort(), ['agent-dock:ack', 'agent-dock:act', 'agent-dock:set-visible'])
+		assert.deepEqual([...channels.keys()].sort(), [
+			'agent-dock:ack',
+			'agent-dock:act',
+			'agent-dock:message',
+			'agent-dock:prompt',
+			'agent-dock:set-visible',
+		])
 		const request = { itemId: 1, rev: 1, action: { type: 'approve' } }
 		for (const [sender, token] of [
 			[{ id: 'other-window' }, TOKEN],
@@ -72,10 +78,19 @@ test('agent dock IPC: the three dock channels are registered and refuse a foreig
 		] as const) {
 			assert.deepEqual(await call('agent-dock:act', sender, request, token), DENIED)
 			assert.equal(await call('agent-dock:ack', sender, 1, token), false)
+			assert.deepEqual(await call('agent-dock:prompt', sender, { session: 'p:t', text: 'hi' }, token), DENIED)
+			assert.deepEqual(await call('agent-dock:message', sender, 'p:t', token), {
+				ok: false,
+				detail: 'This window cannot read for the current profile.',
+			})
 		}
 		// Through the gate, the watcher decides (here: an invalid request, not the gate's refusal).
 		const reached = (await call('agent-dock:act', WINDOW, { nope: true }, TOKEN)) as { outcome: { status: string } }
 		assert.equal(reached.outcome.status, 'refused')
+		const prompted = (await call('agent-dock:prompt', WINDOW, { nope: true }, TOKEN)) as { outcome: { status: string } }
+		assert.equal(prompted.outcome.status, 'refused')
+		const read = (await call('agent-dock:message', WINDOW, 'no such session', TOKEN)) as { ok: boolean }
+		assert.equal(read.ok, false)
 		for (const itemId of [0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1])
 			assert.equal(await call('agent-dock:ack', WINDOW, itemId, TOKEN), false, String(itemId))
 	} finally {
@@ -94,6 +109,14 @@ test('agent dock IPC: off in this run, act says so (after the gate) and nothing 
 			outcome: { status: 'failed', detail: 'The agent dock is off in this run.' },
 		})
 		assert.equal(await call('agent-dock:ack', WINDOW, 1, TOKEN), false)
+		assert.deepEqual(await call('agent-dock:prompt', WINDOW, {}, TOKEN), {
+			ok: false,
+			outcome: { status: 'failed', detail: 'The agent dock is off in this run.' },
+		})
+		assert.deepEqual(await call('agent-dock:message', WINDOW, 'p:t', TOKEN), {
+			ok: false,
+			detail: 'The agent dock is off in this run.',
+		})
 		call('agent-dock:set-visible', WINDOW, true, TOKEN)
 		assert.deepEqual(dock.terminalEnvironment({ PATH: '/bin', HELM_CLAUDE_REMOTE_TOKEN: 'stale' }, 't1'), {
 			PATH: '/bin',
@@ -110,7 +133,7 @@ test('main gates the dock channels on the session IPC gate and the main window; 
 		main,
 		/acceptsIpc: \(sender, profileToken\) => sessionIpcGate\.allows\(profileToken\) && sender === mainWindow\?\.webContents/,
 	)
-	for (const channel of ['setVisible', 'ack', 'act']) {
+	for (const channel of ['setVisible', 'ack', 'act', 'prompt', 'message']) {
 		const start = preload.indexOf(`AGENT_DOCK_CHANNELS.${channel},`)
 		assert.notEqual(start, -1, channel)
 		assert.ok(preload.slice(start, start + 120).includes('sessionProfileToken'), channel)

@@ -129,34 +129,7 @@ export function ItemHeader({
 				.join('\n')}
 			end={
 				<>
-					<span className="agent-dock-stepper">
-						<button
-							type="button"
-							className="agent-dock-title-btn"
-							aria-label="Previous item"
-							disabled={index <= 0}
-							onClick={() => onStep(-1)}
-						>
-							‹
-						</button>
-						<span className="agent-dock-step-count" aria-live="polite">
-							<span aria-hidden="true">
-								{index + 1}/{total}
-							</span>
-							<span className="sr-only">
-								Item {index + 1} of {total}
-							</span>
-						</span>
-						<button
-							type="button"
-							className="agent-dock-title-btn"
-							aria-label="Next item"
-							disabled={index >= total - 1}
-							onClick={() => onStep(1)}
-						>
-							›
-						</button>
-					</span>
+					<Stepper index={index} total={total} noun="item" onStep={onStep} />
 					<CloseKey onClose={onClose} />
 				</>
 			}
@@ -167,6 +140,52 @@ export function ItemHeader({
 			</span>
 			{context ? <span className="agent-dock-title-context">{context}</span> : null}
 		</Header>
+	)
+}
+
+/** ‹ 1/3 ›: steps through the queue's items (or the Agents pane's agents); the count is live for screen readers. */
+export function Stepper({
+	index,
+	total,
+	noun,
+	onStep,
+}: {
+	index: number
+	total: number
+	/** `item` / `agent`: the buttons' names (`Previous item`) and the count's words (`Item 1 of 3`). */
+	noun: string
+	onStep(delta: number): void
+}) {
+	const Noun = noun.charAt(0).toUpperCase() + noun.slice(1)
+	return (
+		<span className="agent-dock-stepper">
+			<button
+				type="button"
+				className="agent-dock-title-btn"
+				aria-label={`Previous ${noun}`}
+				disabled={index <= 0}
+				onClick={() => onStep(-1)}
+			>
+				‹
+			</button>
+			<span className="agent-dock-step-count" aria-live="polite">
+				<span aria-hidden="true">
+					{index + 1}/{total}
+				</span>
+				<span className="sr-only">
+					{Noun} {index + 1} of {total}
+				</span>
+			</span>
+			<button
+				type="button"
+				className="agent-dock-title-btn"
+				aria-label={`Next ${noun}`}
+				disabled={index >= total - 1}
+				onClick={() => onStep(1)}
+			>
+				›
+			</button>
+		</span>
 	)
 }
 

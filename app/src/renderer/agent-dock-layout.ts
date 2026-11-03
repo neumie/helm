@@ -1,11 +1,17 @@
 import { createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
+import type {
+	AgentDockActResult,
+	AgentDockMessageResult,
+	AgentDockPromptRequest,
+	AgentDockSnapshot,
+	DockAction,
+} from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
-import { type AgentDockPosition, failedActResult } from './agent-dock/presentation'
+import { type AgentDockPosition, agentsLayout, failedActResult } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -175,6 +181,10 @@ export function mountAgentDock({
 			handle,
 			onAck,
 			onAct,
+			onPrompt,
+			readMessage,
+			// Story-only review attribute (`data-agents-variant`); production sets none: `two-lines`.
+			agentsLayout: agentsLayout(dock.dataset.agentsVariant),
 			paneRoom,
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
@@ -228,6 +238,22 @@ export function mountAgentDock({
 			return await api.act({ itemId, action })
 		} catch (error) {
 			return failedActResult(error)
+		}
+	}
+
+	const onPrompt = async (request: AgentDockPromptRequest): Promise<AgentDockActResult> => {
+		try {
+			return await api.prompt(request)
+		} catch (error) {
+			return failedActResult(error)
+		}
+	}
+
+	const readMessage = async (session: string): Promise<AgentDockMessageResult> => {
+		try {
+			return await api.lastMessage(session)
+		} catch (error) {
+			return { ok: false, detail: error instanceof Error ? error.message : String(error) }
 		}
 	}
 

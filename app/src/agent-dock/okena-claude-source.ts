@@ -16,17 +16,30 @@
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
+import { boundText } from '../../../src/agent-dock/text'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
-import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
+import {
+	type DockCheck,
+	askStillOpen,
+	dockActBody,
+	dockPostFailure,
+	errorDetail,
+	promptText,
+	sessionStillIdle,
+	turnStillWaiting,
+} from './act'
 import type { DockPane, DockSource } from './composite-source'
 import {
+	type AgentDockMessageResult,
 	type AgentDockObservation,
+	DOCK_LIVE_MESSAGE_MAX,
 	type DockActOutcome,
 	type DockAction,
 	type DockItem,
 	type DockSourceId,
 	type ObservedClaudeTerminal,
 	type OkenaClaudeSession,
+	type OkenaClaudeTranscriptPage,
 	type OkenaFetch,
 	type OkenaPromptDelivery,
 	okenaClaudeCandidates,
@@ -138,23 +151,12 @@ export class OkenaClaudeSource implements DockSource {
 		const built = dockActBody(item, action, this.id)
 		if (!built.ok) return { status: 'refused', reason: built.reason, detail: built.detail }
 		const client = this.client.forProfile(target.profile)
-		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }
-		let fresh: OkenaClaudeSession
-		try {
-			const parsed = parseOkenaClaudeSession(await client.getClaudeSession(target.terminalId, opts))
-			if (!parsed.ok) return { status: 'failed', detail: parsed.error }
-			fresh = parsed.value
-		} catch (error) {
-			if ((error as { status?: unknown }).status === 404)
-				return { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.text.label}.` }
-			return { status: 'failed', detail: errorDetail(error) }
-		}
-		if (fresh.terminal_id !== target.terminalId)
-			return { status: 'failed', detail: `${this.text.label} answered for another pane.` }
+		const fresh = await this.freshSession(client, target)
+		if (!fresh.ok) return fresh.outcome
 
 		const request = built.body
 		if (request.kind === 'decision') {
-			const check = askStillOpen(item, fresh)
+			const check = askStillOpen(item, fresh.session)
 			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 			if (!client.postClaudeDialogDecision)
 				return { status: 'failed', detail: `This ${this.text.label} client cannot answer dialogs.` }
@@ -167,8 +169,78 @@ export class OkenaClaudeSource implements DockSource {
 				return dockPostFailure(error, true, this.text.label)
 			}
 		}
+		const page = await this.freshTail(client, target)
+		return this.sendPrompt(client, target, turnStillWaiting(item, fresh.session, page), request.body.text)
+	}
 
-		let page = null
+	/**
+	 * A reply from the agent detail (the agent owes Jakub nothing): the same CAS as a turn reply,
+	 * against the message Jakub read (`expect`), then the same prompt POST. Never throws.
+	 */
+	async prompt(
+		target: DockPane,
+		expect: { sessionId?: string; assistantUuid?: string },
+		text: string,
+	): Promise<DockActOutcome> {
+		const body = promptText(text)
+		if (body === null) return { status: 'refused', reason: 'invalid', detail: 'The reply is empty.' }
+		const client = this.client.forProfile(target.profile)
+		const fresh = await this.freshSession(client, target)
+		if (!fresh.ok) return fresh.outcome
+		const page = await this.freshTail(client, target)
+		return this.sendPrompt(client, target, sessionStillIdle(expect, fresh.session, page), body)
+	}
+
+	/** The pane's last assistant message, read live (the agent detail; `helm dock show` reads turns the same way). */
+	async readMessage(target: DockPane): Promise<AgentDockMessageResult> {
+		const client = this.client.forProfile(target.profile)
+		let page: OkenaClaudeTranscriptPage
+		try {
+			const parsed = parseOkenaClaudeTranscriptPage(
+				await client.getClaudeTranscript(
+					target.terminalId,
+					{},
+					{ maxBytes: OKENA_TRANSCRIPT_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS },
+				),
+			)
+			if (!parsed.ok) return { ok: false, detail: parsed.error }
+			page = parsed.value
+		} catch (error) {
+			return { ok: false, detail: errorDetail(error) }
+		}
+		let last: { uuid: string; text: string } | undefined
+		for (const entry of page.entries) if (entry.kind === 'assistant') last = entry
+		return {
+			ok: true,
+			...(page.session_id ? { sessionId: page.session_id } : {}),
+			...(last ? { message: { uuid: last.uuid, text: boundText(last.text, DOCK_LIVE_MESSAGE_MAX) } } : {}),
+		}
+	}
+
+	/** The CAS read every act starts with: the pane as the source shows it right now. */
+	private async freshSession(
+		client: OkenaClaudeClient,
+		target: DockPane,
+	): Promise<{ ok: true; session: OkenaClaudeSession } | { ok: false; outcome: DockActOutcome }> {
+		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }
+		try {
+			const parsed = parseOkenaClaudeSession(await client.getClaudeSession(target.terminalId, opts))
+			if (!parsed.ok) return { ok: false, outcome: { status: 'failed', detail: parsed.error } }
+			if (parsed.value.terminal_id !== target.terminalId)
+				return { ok: false, outcome: { status: 'failed', detail: `${this.text.label} answered for another pane.` } }
+			return { ok: true, session: parsed.value }
+		} catch (error) {
+			if ((error as { status?: unknown }).status === 404)
+				return {
+					ok: false,
+					outcome: { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.text.label}.` },
+				}
+			return { ok: false, outcome: { status: 'failed', detail: errorDetail(error) } }
+		}
+	}
+
+	/** A fresh first (reset) transcript page: the tail a reply's CAS checks; null when unreadable. */
+	private async freshTail(client: OkenaClaudeClient, target: DockPane): Promise<OkenaClaudeTranscriptPage | null> {
 		try {
 			const parsed = parseOkenaClaudeTranscriptPage(
 				await client.getClaudeTranscript(
@@ -180,16 +252,24 @@ export class OkenaClaudeSource implements DockSource {
 					},
 				),
 			)
-			page = parsed.ok ? parsed.value : null
+			return parsed.ok ? parsed.value : null
 		} catch {
-			page = null
+			return null
 		}
-		const check = turnStillWaiting(item, fresh, page)
+	}
+
+	/** The prompt POST once its CAS passed. */
+	private async sendPrompt(
+		client: OkenaClaudeClient,
+		target: DockPane,
+		check: DockCheck,
+		text: string,
+	): Promise<DockActOutcome> {
 		if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 		if (!client.postClaudePrompt)
 			return { status: 'failed', detail: `This ${this.text.label} client cannot send prompts.` }
 		try {
-			const response = await client.postClaudePrompt(target.terminalId, request.body.text, {
+			const response = await client.postClaudePrompt(target.terminalId, text, {
 				timeoutMs: OKENA_ACT_TIMEOUT_MS,
 			})
 			const delivery = (response as { delivery?: unknown } | null)?.delivery

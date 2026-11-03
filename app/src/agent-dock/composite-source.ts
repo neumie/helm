@@ -5,7 +5,14 @@
 // other. Acts and expedites route by the session's source.
 
 import { errorDetail } from './act'
-import type { AgentDockObservation, DockActOutcome, DockAction, DockItem, DockSourceId } from './model'
+import type {
+	AgentDockMessageResult,
+	AgentDockObservation,
+	DockActOutcome,
+	DockAction,
+	DockItem,
+	DockSourceId,
+} from './model'
 import type { AgentDockState } from './reduce'
 import type { AgentDockObservationSource, AgentDockTarget } from './watcher'
 
@@ -18,7 +25,17 @@ export interface DockSource {
 	/** One poll, tagged `source: id`. */
 	observe(state: AgentDockState, now: number): Promise<AgentDockObservation>
 	act?(pane: DockPane, item: DockItem, action: DockAction): Promise<DockActOutcome>
+	/** A reply from the agent detail (no item), behind the same CAS as a turn reply. */
+	prompt?(pane: DockPane, expect: DockPromptExpect, text: string): Promise<DockActOutcome>
+	/** The pane's last assistant message, read live. */
+	readMessage?(pane: DockPane): Promise<AgentDockMessageResult>
 	expedite?(pane: DockPane, until: number): void
+}
+
+/** What Jakub saw when he replied from the agent detail (the reply's CAS checks the pane still shows it). */
+export interface DockPromptExpect {
+	sessionId?: string
+	assistantUuid?: string
 }
 
 export class CompositeDockSource implements AgentDockObservationSource {
@@ -48,6 +65,18 @@ export class CompositeDockSource implements AgentDockObservationSource {
 		const source = this.route(target)
 		if (!source?.act) return { status: 'failed', detail: 'This source cannot answer from the dock.' }
 		return source.act({ profile: target.profile, terminalId: target.terminalId }, item, action)
+	}
+
+	async prompt(target: AgentDockTarget, expect: DockPromptExpect, text: string): Promise<DockActOutcome> {
+		const source = this.route(target)
+		if (!source?.prompt) return { status: 'failed', detail: 'This source cannot send replies from the dock.' }
+		return source.prompt({ profile: target.profile, terminalId: target.terminalId }, expect, text)
+	}
+
+	async readMessage(target: AgentDockTarget): Promise<AgentDockMessageResult> {
+		const source = this.route(target)
+		if (!source?.readMessage) return { ok: false, detail: 'This source cannot read messages.' }
+		return source.readMessage({ profile: target.profile, terminalId: target.terminalId })
 	}
 
 	expedite(target: AgentDockTarget, until: number): void {

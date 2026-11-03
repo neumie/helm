@@ -21,7 +21,8 @@ type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockOb
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type DockAction = import('../app/src/agent-dock/model.ts').DockAction
 
-const { askStillOpen, dockActBody, dockPostFailure, turnStillWaiting } = actModule as ActModule
+const { askStillOpen, dockActBody, dockPostFailure, promptText, sessionStillIdle, turnStillWaiting } =
+	actModule as ActModule
 const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
 const {
 	ACT_CONFIRM_MS,
@@ -680,6 +681,28 @@ test('turn CAS: idle, same session, last assistant unchanged, nobody replied', (
 	assert.equal(reason(turnStillWaiting(turn, fresh, tail([assistant('a1'), user('u9')]))), 'gone')
 	assert.equal(reason(turnStillWaiting(turn, session(idle({ busy: false, session_id: 'other' })), null)), 'gone')
 	assert.equal(reason(turnStillWaiting(turn, fresh, null)), 'changed')
+})
+
+test('agent detail CAS: idle, same session, the message Jakub read is still the last, nobody replied', () => {
+	const tail = (entries: Json[]) => {
+		const parsed = parseOkenaClaudeTranscriptPage(page(entries, 400, true))
+		assert.ok(parsed.ok)
+		return parsed.value
+	}
+	const fresh = session(idle({ busy: false }))
+	const reason = (check: unknown) => (check as { reason?: string }).reason
+	const read = { sessionId: SID, assistantUuid: 'a1' }
+	assert.deepEqual(sessionStillIdle(read, fresh, tail([user('u0'), assistant('a1')])), { ok: true })
+	assert.equal(reason(sessionStillIdle(read, fresh, tail([assistant('a1'), assistant('a2')]))), 'changed')
+	assert.equal(reason(sessionStillIdle(read, fresh, tail([assistant('a1'), user('u9')]))), 'gone')
+	assert.equal(reason(sessionStillIdle(read, session(idle({ busy: true })), tail([assistant('a1')]))), 'busy')
+	assert.equal(reason(sessionStillIdle({ sessionId: 'other' }, fresh, tail([]))), 'gone')
+	// Nothing read yet (no message stored): any message since refuses, so Jakub never answers unseen text.
+	assert.deepEqual(sessionStillIdle({ sessionId: SID }, fresh, tail([])), { ok: true })
+	assert.equal(reason(sessionStillIdle({ sessionId: SID }, fresh, tail([assistant('a1')]))), 'changed')
+	assert.equal(promptText('Ano.\n\n'), 'Ano.')
+	assert.equal(promptText('  \n\t'), null)
+	assert.equal(promptText('  indented'), '  indented')
 })
 
 test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {

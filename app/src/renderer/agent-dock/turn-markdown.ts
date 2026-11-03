@@ -22,8 +22,11 @@ const turnProfile = (open: (href: string) => void): SafeMarkdownProfile => ({
 
 const TURN_MARKDOWN = turnProfile(openInBrowser)
 
-/** The message as Markdown elements, or null when it has no text (the pane then shows the headline). */
-export function turnMessage(text: unknown, open?: (href: string) => void): ReactNode {
-	const clean = plainAgentText(text)
+/**
+ * The message as Markdown elements, or null when it has no text (the pane then shows the headline).
+ * `max` bounds it (default: the turn excerpt's 2 KiB; the agent detail's live read is longer).
+ */
+export function turnMessage(text: unknown, open?: (href: string) => void, max?: number): ReactNode {
+	const clean = plainAgentText(text, max)
 	return clean.trim() === '' ? null : renderSafeMarkdown(clean, open ? turnProfile(open) : TURN_MARKDOWN)
 }
