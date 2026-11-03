@@ -9,25 +9,14 @@ import {
 } from './terminal-workspace-fixtures'
 
 /**
- * The topbar's Background terminals toggle while a parked terminal is shown in the pane: today it
- * only names it ("okena"); four candidate active looks. Each variant is the production CSS under a
- * story-only `data-bg-active-variant` ancestor, so the app stays unchanged until one is picked.
- *
- * "Open" in code: `activeTab?.parked` (a background terminal shown in the main area, opened from the
- * dialog's row) unhides #bg-current. The dialog itself is `aria-expanded="true"`, which already has
- * production's pressed look (fill-subtle). While a parked terminal is shown, no strip tab is active.
+ * The topbar's Background terminals control (§3.18 "Strip control"). While a parked terminal is
+ * shown in the pane (`activeTab?.parked` unhides #bg-current), the strip has no active tab, so the
+ * control takes the active tab's look: tab padding, --fill-raised, the name in 13px tab type, the
+ * count as a dim tab-number. Closed it is the quiet ghost button with the count chip. The dialog
+ * is `aria-expanded="true"`; drag affordances (.drag-ready/.drag-over) keep precedence.
  */
 
-type Variant = 'today' | 'fill' | 'accent' | 'tab' | 'rail'
 type LiveState = 'closed' | 'viewing' | 'viewing-long' | 'dialog' | 'dialog-closed'
-
-const VARIANTS: ReadonlyArray<{ id: Variant; label: string; note: string }> = [
-	{ id: 'today', label: 'Today', note: 'production: name only' },
-	{ id: 'fill', label: 'B1 fill', note: 'active-tab fill, --text-0' },
-	{ id: 'accent', label: 'B2 accent', note: 'icon + name --accent' },
-	{ id: 'tab', label: 'B3 tab-like', note: 'the toggle is the tab' },
-	{ id: 'rail', label: 'B4 rail', note: 'quiet fill + accent rail' },
-]
 
 const SHORT_NAME = 'okena'
 const LONG_NAME = 'claude · terminal placement refactor and background groups'
@@ -56,13 +45,13 @@ function liveSessions(): RestoredSession[] {
 }
 
 interface LiveProps {
-	variant: Variant
+	/** closed: a strip tab is active · viewing: a parked terminal is shown · dialog: + dialog open. */
 	state: LiveState
 	theme: keyof typeof THEME_PRESETS
 }
 
 /** The real mount (one workspace): the dialog opens, its row shows the terminal, like a pointer. */
-function LiveTopbar({ variant, state, theme }: LiveProps) {
+function LiveTopbar({ state, theme }: LiveProps) {
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({
 			sessions: liveSessions(),
@@ -75,14 +64,10 @@ function LiveTopbar({ variant, state, theme }: LiveProps) {
 		}),
 		[state, theme],
 	)
-	return (
-		<div data-bg-active-variant={variant}>
-			<TerminalWorkspaceFixtureView options={options} />
-		</div>
-	)
+	return <TerminalWorkspaceFixtureView options={options} />
 }
 
-// ---------- static matrix (every variant × state side by side, no terminals mounted) ----------
+// ---------- states grid (every state side by side in both themes, no terminals mounted) ----------
 
 type CellState =
 	| 'closed'
@@ -105,12 +90,13 @@ const CELL_STATES: ReadonlyArray<{ id: CellState; note: string }> = [
 	{ id: 'viewing-dialog', note: 'Viewing · dialog open' },
 ]
 
+const THEMES: ReadonlyArray<keyof typeof THEME_PRESETS> = ['helm', 'high-contrast']
+
 const CELL_WIDTH = 300
 
-/** One topbar right end: a strip tab, the drag gutter, and the production #bg-root markup. */
+/** One topbar right end: the drag gutter and the production #bg-root markup in a given state. */
 function ToggleCell({ state }: { state: CellState }) {
 	const hostRef = useRef<HTMLDivElement>(null)
-	const viewing = state.startsWith('viewing')
 	useEffect(() => {
 		const host = hostRef.current
 		if (!host) return
@@ -119,7 +105,7 @@ function ToggleCell({ state }: { state: CellState }) {
 		const current = bgRoot.querySelector<HTMLElement>('#bg-current')
 		const count = bgRoot.querySelector<HTMLElement>('#bg-count')
 		if (!toggle || !current || !count) return
-		const name = state === 'viewing-long' ? LONG_NAME : viewing ? SHORT_NAME : null
+		const name = state === 'viewing-long' ? LONG_NAME : state.startsWith('viewing') ? SHORT_NAME : null
 		toggle.hidden = false
 		toggle.tabIndex = -1
 		current.hidden = name === null
@@ -131,7 +117,7 @@ function ToggleCell({ state }: { state: CellState }) {
 		if (preview) toggle.dataset.bgPreview = preview
 		host.replaceChildren(bgRoot)
 		return () => host.replaceChildren()
-	}, [state, viewing])
+	}, [state])
 	return (
 		<div
 			className="topbar-right"
@@ -142,15 +128,6 @@ function ToggleCell({ state }: { state: CellState }) {
 				borderBottom: '1px solid var(--hairline)',
 			}}
 		>
-			<div className="tab-strip-controls">
-				{/* While a parked terminal is shown, the strip has no active tab (activate() only marks strip tabs). */}
-				<div className={`tab${viewing ? '' : ' active'}`}>
-					<span className="tab-label">helm</span>
-					<span className="tab-close" aria-hidden="true">
-						×
-					</span>
-				</div>
-			</div>
 			<div className="topbar-drag-space" />
 			<div ref={hostRef} style={{ display: 'contents' }} />
 		</div>
@@ -181,36 +158,27 @@ function themeStyle(theme: keyof typeof THEME_PRESETS): CSSProperties {
 	} as CSSProperties
 }
 
-function MatrixSection({ theme }: { theme: keyof typeof THEME_PRESETS }) {
+function ThemeColumn({ theme }: { theme: keyof typeof THEME_PRESETS }) {
 	return (
-		<section data-matrix-theme={theme} style={themeStyle(theme)}>
+		<section data-states-theme={theme} style={themeStyle(theme)}>
 			<div style={{ marginBottom: 12 }}>
 				<Label strong>{THEME_PRESETS[theme]?.name ?? theme}</Label>
 			</div>
 			<div
 				style={{
 					display: 'grid',
-					gridTemplateColumns: `150px repeat(${VARIANTS.length}, ${CELL_WIDTH}px)`,
+					gridTemplateColumns: `150px ${CELL_WIDTH}px`,
 					columnGap: 12,
 					rowGap: 8,
 					alignItems: 'center',
 				}}
 			>
-				<div />
-				{VARIANTS.map(variant => (
-					<div key={variant.id}>
-						<Label strong>{variant.label}</Label>
-						<Label>{variant.note}</Label>
-					</div>
-				))}
 				{CELL_STATES.map(state => (
 					<div key={state.id} style={{ display: 'contents' }}>
 						<Label>{state.note}</Label>
-						{VARIANTS.map(variant => (
-							<div key={variant.id} data-bg-active-variant={variant.id} data-cell={`${variant.id}-${state.id}`}>
-								<ToggleCell state={state.id} />
-							</div>
-						))}
+						<div data-cell={state.id}>
+							<ToggleCell state={state.id} />
+						</div>
 					</div>
 				))}
 			</div>
@@ -218,12 +186,13 @@ function MatrixSection({ theme }: { theme: keyof typeof THEME_PRESETS }) {
 	)
 }
 
-/** Variants (columns) × states (rows) in both shipped themes; each cell is the topbar's right end. */
-function MatrixView() {
+/** Every state (closed, hover, dialog, short/long name, keyboard focus) in Helm and High contrast. */
+function StatesView() {
 	return (
-		<div style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, background: 'var(--hairline)' }}>
-			<MatrixSection theme="helm" />
-			<MatrixSection theme="high-contrast" />
+		<div style={{ display: 'inline-flex', gap: 1, background: 'var(--hairline)' }}>
+			{THEMES.map(theme => (
+				<ThemeColumn key={theme} theme={theme} />
+			))}
 		</div>
 	)
 }
@@ -237,36 +206,23 @@ const meta: Meta<typeof LiveTopbar> = {
 		viewport: { options: { helm1280: { name: 'Helm 1280×800', styles: { width: '1280px', height: '800px' } } } },
 	},
 	argTypes: {
-		variant: { control: 'inline-radio', options: VARIANTS.map(variant => variant.id) },
 		state: {
 			control: 'inline-radio',
 			options: ['closed', 'viewing', 'viewing-long', 'dialog', 'dialog-closed'] satisfies LiveState[],
 		},
 		theme: { control: 'inline-radio', options: Object.keys(THEME_PRESETS) },
 	},
-	args: { variant: 'today', state: 'viewing', theme: 'helm' },
+	args: { state: 'viewing', theme: 'helm' },
 }
 
 export default meta
 type Story = StoryObj<typeof LiveTopbar>
 
-/** Production today: "okena" is named, but the control looks like any idle button. */
-export const Today: Story = { args: { variant: 'today' } }
+/** The real workspace with a parked terminal shown in the pane; switch state/theme from the controls. */
+export const BackgroundTerminals: Story = { name: 'Background terminals' }
 
-/** B1: the active tab's --fill-raised (the dock's open entry uses the same), name --text-0; hover/dialog step to --fill-strong. */
-export const B1Fill: Story = { name: 'B1 fill', args: { variant: 'fill' } }
-
-/** B2: no fill; icon and name in --accent, the count stays neutral; hover/dialog add production's fill-subtle. */
-export const B2Accent: Story = { name: 'B2 accent', args: { variant: 'accent' } }
-
-/** B3: the toggle becomes the shown terminal's tab: active-tab fill, 13px tab type, the count as a dim tab-number. */
-export const B3TabLike: Story = { name: 'B3 tab-like', args: { variant: 'tab' } }
-
-/** B4: quiet --fill-subtle plus a 2px --accent rail along the bottom edge; hover/dialog step to --fill-raised. */
-export const B4Rail: Story = { name: 'B4 rail', args: { variant: 'rail' } }
-
-/** Every variant × state (closed, hover, dialog, short/long name, keyboard focus) in Helm and High contrast. */
-export const Matrix: Story = {
-	render: () => <MatrixView />,
+/** Every state of the control in Helm and High contrast. */
+export const States: Story = {
+	render: () => <StatesView />,
 	parameters: { controls: { disable: true } },
 }
