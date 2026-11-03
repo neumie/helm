@@ -61,6 +61,8 @@ export interface TerminalWorkspaceFixtureOptions {
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
+		/** Story only: once the terminal is ready, press ⌘⇧J from the focused xterm (the real window-capture path). */
+		focusDock?: boolean
 	}
 }
 
@@ -627,6 +629,22 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					options.agentDock.output === 'claude-code' ? CLAUDE_CODE_TERMINAL_TEXT : AGENT_DOCK_TERMINAL_TEXT,
 				)
 			}
+			if (options.agentDock?.focusDock)
+				requestAnimationFrame(() => {
+					if (unmounted) return
+					// Jakub's path: keys in the terminal, then ⌘⇧J (the dock's window-capture listener).
+					root.querySelector<HTMLElement>('.term-holder.active .xterm-helper-textarea')?.focus({ preventScroll: true })
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'J',
+							code: 'KeyJ',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+							cancelable: true,
+						}),
+					)
+				})
 			const open = options.agentDock?.open
 			if (open)
 				requestAnimationFrame(() => {
