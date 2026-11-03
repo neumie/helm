@@ -2,11 +2,22 @@
 // where it stands with Jakub — needs you, reply waiting, sending, working, background, read, idle,
 // unknown — with where it runs and the first line of what it last said. Rows are one roving list:
 // ↑ ↓ Home End move, Enter / Space (or a click) opens the agent (its open item, else its detail).
-import { type KeyboardEvent, type MutableRefObject, useId } from 'react'
+// The header says each source's health and switches the grouping (state / project, `G`).
+import { type KeyboardEvent, type MutableRefObject, useId, useLayoutEffect, useRef } from 'react'
 import type { AgentDockSnapshot } from '../../agent-dock/model'
 import { CloseKey, Footer, Header, Hint, ScrollBody, closeHints } from './pane-chrome'
-import { type DetailKeys, noModifiers, useKeys } from './pane-keys'
-import { type AgentRow, type AgentsLayout, agentOverview, agentRowLabel, agentsSummary } from './presentation'
+import { type DetailKeys, isTextField, noModifiers, useKeys } from './pane-keys'
+import {
+	AGENTS_LAYOUTS,
+	AGENTS_LAYOUT_WORDS,
+	type AgentRow,
+	type AgentsLayout,
+	agentOverview,
+	agentRowLabel,
+	agentsSummary,
+	otherAgentsLayout,
+	sourceHealthViews,
+} from './presentation'
 
 const ROW = '.agent-dock-agent'
 
@@ -31,10 +42,9 @@ function roveRows(list: HTMLElement, from: Element | null, key: string): boolean
 }
 
 /**
- * The overview in one of three layouts (story-only `#agent-dock[data-agents-variant]`, production
- * `two-lines` until Jakub picks): `two-lines` and `excerpt-column` group by project (dim `<h3>` per
- * repository, groups led by their most urgent agent), `by-state` groups by standing. One grid for the
- * whole list (groups, lists, rows are subgrids), so columns line up across headings.
+ * The overview grouped by Jakub's setting: `by-state` (dim `<h3>` per standing, most urgent first)
+ * or `by-project` (one per repository, groups led by their most urgent agent). One grid for the whole
+ * list (groups, lists, rows are subgrids), so columns line up across headings.
  *
  * Each row is a button in a list item (one tab stop: roving tabindex) named by who, the state in
  * words and where (`crm-sync, needs you: question 12m, Okena, worktree`), described by its excerpt.
@@ -45,6 +55,7 @@ export function AgentsDetail({
 	layout,
 	current,
 	keys,
+	onLayout,
 	onCurrent,
 	onOpen,
 	onClose,
@@ -52,6 +63,8 @@ export function AgentsDetail({
 	snapshot: AgentDockSnapshot | null
 	now: number
 	layout: AgentsLayout
+	/** Jakub switched the grouping (header switch or `G`). */
+	onLayout(layout: AgentsLayout): void
 	/** The row that holds the list's tab stop (the last one focused or opened); null = the first. */
 	current: string | null
 	keys: MutableRefObject<DetailKeys | null>
@@ -63,9 +76,30 @@ export function AgentsDetail({
 	const rows = groups.flatMap(group => group.rows)
 	const stop = rows.some(row => row.key === current) ? current : (rows[0]?.key ?? null)
 	const idBase = useId()
+	/** The grouping changed while a row had the keys: its button re-mounts in its new group, keep them on it. */
+	const refocusRow = useRef(false)
+	const listRef = useRef<HTMLDivElement>(null)
 
-	// From the pane itself (⌘⇧J lands there): ↑ ↓ Home End go into the list.
+	const switchLayout = (next: AgentsLayout) => {
+		if (next === layout) return
+		const active = listRef.current?.ownerDocument.activeElement
+		refocusRow.current = !!active && !!listRef.current?.contains(active)
+		onLayout(next)
+	}
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: runs when the grouping changes
+	useLayoutEffect(() => {
+		if (!refocusRow.current) return
+		refocusRow.current = false
+		listRef.current?.querySelector<HTMLElement>(`${ROW}[tabindex="0"]`)?.focus()
+	}, [layout])
+
+	// From the pane itself (⌘⇧J lands there): ↑ ↓ Home End go into the list. G (anywhere in the pane) switches the grouping.
 	useKeys(keys, event => {
+		if (event.key.toLowerCase() === 'g' && noModifiers(event) && !event.shiftKey && !isTextField(event.target)) {
+			if (!event.repeat) switchLayout(otherAgentsLayout(layout))
+			return true
+		}
 		if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !noModifiers(event)) return false
 		if (event.target !== event.currentTarget) return false
 		const list = event.currentTarget.querySelector<HTMLElement>('.agent-dock-agent-list')
@@ -89,12 +123,20 @@ export function AgentsDetail({
 
 	return (
 		<>
-			<Header end={<CloseKey onClose={onClose} />}>
+			<Header
+				end={
+					<>
+						<SourceHealth snapshot={snapshot} />
+						<GroupSwitch layout={layout} onLayout={switchLayout} />
+						<CloseKey onClose={onClose} />
+					</>
+				}
+			>
 				<span className="agent-dock-title-kind">Agents</span>
 				<span className="agent-dock-title-project">{agentsSummary(rows)}</span>
 			</Header>
 			<ScrollBody label="Agent list">
-				<div className="agent-dock-agent-list" data-layout={layout} onKeyDown={onListKey}>
+				<div ref={listRef} className="agent-dock-agent-list" data-layout={layout} onKeyDown={onListKey}>
 					{groups.map((group, index) => {
 						const headingId = `${idBase}-group-${index}`
 						return (
@@ -125,12 +167,69 @@ export function AgentsDetail({
 					<>
 						<Hint keys="↑↓">move</Hint>
 						<Hint keys="↵">open</Hint>
+						<Hint keys="g">group by {AGENTS_LAYOUT_WORDS[otherAgentsLayout(layout)]}</Hint>
 						{closeHints}
 					</>
 				}
 				note={null}
 			/>
 		</>
+	)
+}
+
+/**
+ * Each source on its own, `Okena ● · Helm terminals ●`: the dot in the old row health's tones (ok
+ * green, connecting neutral, unreachable red), the state in words as its tooltip and accessible name
+ * (`Okena unreachable since 16:20`). Below 640px only the dots show; their names stay for screen readers.
+ */
+function SourceHealth({ snapshot }: { snapshot: AgentDockSnapshot | null }) {
+	const sources = sourceHealthViews(snapshot)
+	return (
+		<fieldset className="agent-dock-sources" aria-label="Sources">
+			{sources.map(source => (
+				<span
+					key={source.id}
+					className="agent-dock-source"
+					data-source={source.id}
+					data-tone={source.tone}
+					role="img"
+					aria-label={source.words}
+					title={source.words}
+				>
+					<span className="agent-dock-source-name" aria-hidden="true">
+						{source.name}
+					</span>
+					<span className="agent-dock-dot" aria-hidden="true" />
+				</span>
+			))}
+		</fieldset>
+	)
+}
+
+/**
+ * `group state project`: two dim words, the active one `--text-0` and underlined like the question
+ * tabs (no fill, no box). Pressed buttons in a named group (a fieldset); `G` switches from anywhere in the pane.
+ */
+function GroupSwitch({ layout, onLayout }: { layout: AgentsLayout; onLayout(layout: AgentsLayout): void }) {
+	return (
+		<fieldset className="agent-dock-group-switch" aria-label="Group agents by">
+			<span className="agent-dock-group-switch-label" aria-hidden="true">
+				group
+			</span>
+			{AGENTS_LAYOUTS.map(option => (
+				<button
+					key={option}
+					type="button"
+					className="agent-dock-group-option"
+					aria-pressed={option === layout}
+					aria-keyshortcuts="G"
+					title={`Group agents by ${AGENTS_LAYOUT_WORDS[option]} (G)`}
+					onClick={() => onLayout(option)}
+				>
+					{AGENTS_LAYOUT_WORDS[option]}
+				</button>
+			))}
+		</fieldset>
 	)
 }
 

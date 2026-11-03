@@ -1,32 +1,40 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useMemo } from 'react'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
+import type { AgentDockScenario } from './agent-dock-fixtures'
 import type { AgentsLayout } from './presentation'
 
 /**
  * The Agents overview (design §3.24 Agents): the production dock under a Claude Code session, the
  * `agents-overview` day open in the Agents pane — every agent's state relative to Jakub (question,
- * permission, plan, reply waiting 45m, working with subagents, background in a Helm terminal, read,
- * unknown, not connected), where it runs, and the first line of what it last said. Rows are a roving
- * list: ↑ ↓ move, Enter or a click opens the agent's item, else its detail.
+ * permission, plan, reply waiting 45m, working with subagents, a background shell in a Helm terminal,
+ * read, unknown, not connected), where it runs, and the first line of what it last said. Rows are a
+ * roving list: ↑ ↓ move, Enter or a click opens the agent's item, else its detail.
  *
- * Layouts under review, one story-only `#agent-dock[data-agents-variant]` each over the same data and
- * keys (production: `two-lines` until Jakub picks): V1 two lines, V2 one line with an excerpt column,
- * V3 grouped by state.
+ * The header says each source's health (`Okena ● · Helm terminals ●`) and switches the grouping
+ * (`group state project`, or G): by state (default) or by project, stored per Helm profile.
  */
-function AgentsPaneView({ variant, openAgent }: { variant: AgentsLayout; openAgent?: string }) {
+function AgentsPaneView({
+	layout,
+	scenario = 'agents-overview',
+	openAgent,
+}: {
+	layout: AgentsLayout
+	scenario?: AgentDockScenario
+	openAgent?: string
+}) {
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({
 			agentDock: {
-				scenario: 'agents-overview',
+				scenario,
 				position: 'bottom',
 				output: 'claude-code',
 				open: 'agents',
-				agentsVariant: variant,
+				agentsLayout: layout,
 				...(openAgent ? { openAgent } : {}),
 			},
 		}),
-		[variant, openAgent],
+		[layout, scenario, openAgent],
 	)
 	return <TerminalWorkspaceFixtureView options={options} />
 }
@@ -47,32 +55,49 @@ const viewport = (width: number, height: number) => ({
 
 const WIDE = viewport(1400, 820)
 const NARROW = viewport(900, 820)
+const PHONE = viewport(600, 820)
 
 const meta: Meta<typeof AgentsPaneView> = {
 	title: 'Views/Agent dock agents pane',
 	component: AgentsPaneView,
 	parameters: { layout: 'fullscreen' },
-	args: { variant: 'two-lines' },
-	argTypes: { variant: { control: 'inline-radio', options: ['two-lines', 'excerpt-column', 'by-state'] } },
+	args: { layout: 'by-state' },
+	argTypes: { layout: { control: 'inline-radio', options: ['by-state', 'by-project'] } },
 }
 
 export default meta
 type Story = StoryObj<typeof AgentsPaneView>
 
-/** V1 two lines: by project; glyph · name · state · age · where, then the excerpt dim under the name. */
-export const V1TwoLines: Story = { name: 'V1 two lines', ...WIDE, args: { variant: 'two-lines' } }
-/** V2 one line: by project; glyph · name · state · age · excerpt (flexible, cut) · where. */
-export const V2ExcerptColumn: Story = { name: 'V2 excerpt column', ...WIDE, args: { variant: 'excerpt-column' } }
-/** V3 by state: Needs you / Reply waiting / Working / Background / Read / Unknown; the project a dim column. */
-export const V3ByState: Story = { name: 'V3 by state', ...WIDE, args: { variant: 'by-state' } }
+/** By state (default): Needs you / Reply waiting / Working / Background / Read / Unknown; the project a dim column. */
+export const ByState: Story = { name: 'By state', ...WIDE, args: { layout: 'by-state' } }
+/** By project: one dim heading per repository, led by its most urgent agent; the excerpt a flexible column. */
+export const ByProject: Story = { name: 'By project', ...WIDE, args: { layout: 'by-project' } }
 
-export const V1TwoLinesNarrow: Story = { name: 'V1 two lines 900', ...NARROW, args: { variant: 'two-lines' } }
-export const V2ExcerptColumnNarrow: Story = {
-	name: 'V2 excerpt column 900',
-	...NARROW,
-	args: { variant: 'excerpt-column' },
+export const ByStateNarrow: Story = { name: 'By state 900', ...NARROW, args: { layout: 'by-state' } }
+export const ByProjectNarrow: Story = { name: 'By project 900', ...NARROW, args: { layout: 'by-project' } }
+
+/**
+ * Each source's health in the header: both connected (green dots), Okena unreachable (red, its agents
+ * frozen; the row keeps its `! Okena unreachable` note), Helm terminals still connecting (neutral).
+ * The words are each dot's tooltip and accessible name.
+ */
+export const SourcesConnected: Story = { name: 'Sources: both connected', ...WIDE, args: { layout: 'by-state' } }
+export const SourcesOkenaDown: Story = {
+	name: 'Sources: Okena down',
+	...WIDE,
+	args: { layout: 'by-state', scenario: 'agents-okena-down' },
 }
-export const V3ByStateNarrow: Story = { name: 'V3 by state 900', ...NARROW, args: { variant: 'by-state' } }
+export const SourcesHelmConnecting: Story = {
+	name: 'Sources: Helm connecting',
+	...WIDE,
+	args: { layout: 'by-state', scenario: 'agents-helm-connecting' },
+}
+/** Below 640px the header keeps only the dots (their words stay their names). */
+export const SourcesOkenaDownNarrow: Story = {
+	name: 'Sources: Okena down 600',
+	...PHONE,
+	args: { layout: 'by-state', scenario: 'agents-okena-down' },
+}
 
 /**
  * An agent's detail: the read JVS worktree opened from the list (a click): its state and where in
@@ -82,10 +107,10 @@ export const V3ByStateNarrow: Story = { name: 'V3 by state 900', ...NARROW, args
 export const AgentDetail: Story = {
 	name: 'Agent detail',
 	...WIDE,
-	args: { variant: 'two-lines', openAgent: 'service-protocol-image-link' },
+	args: { layout: 'by-state', openAgent: 'service-protocol-image-link' },
 }
 export const AgentDetailNarrow: Story = {
 	name: 'Agent detail 900',
 	...NARROW,
-	args: { variant: 'two-lines', openAgent: 'service-protocol-image-link' },
+	args: { layout: 'by-state', openAgent: 'service-protocol-image-link' },
 }

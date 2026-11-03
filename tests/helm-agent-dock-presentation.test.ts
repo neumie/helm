@@ -69,6 +69,9 @@ const {
 	agentsSummary,
 	agentOverview,
 	agentsLayout,
+	otherAgentsLayout,
+	sourceHealthViews,
+	formatClock,
 	agentReplyBlocked,
 	excerptPlainLine,
 	sessionReplyView,
@@ -805,6 +808,26 @@ test('sources are words in the existing slots: health tooltip, down note, blocke
 	assert.equal(sourceBlockedNote(helmItem, split), 'Helm terminals unreachable: answer in the terminal')
 })
 
+test('the Agents pane header lists each observed source on its own: dot tone and state in words', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const down = { state: 'down' as const, since: T, lastObservedAt: T - 60_000, detail: 'ECONNREFUSED' }
+	const pending = { state: 'pending' as const, since: T, lastObservedAt: null }
+	const view = (snap: AgentDockSnapshot | null) =>
+		sourceHealthViews(snap).map(({ id, tone, words }) => [id, tone, words])
+	// Before any snapshot: Okena connecting.
+	assert.deepEqual(view(null), [['okena', 'neutral', 'Okena connecting…']])
+	// Only observed sources show (no Helm hub: no Helm entry), in a fixed order.
+	assert.deepEqual(view(snapshot(ok)), [['okena', 'success', 'Okena connected']])
+	assert.deepEqual(view({ ...snapshot(down), sources: { helm: pending, okena: down } }), [
+		['okena', 'danger', `Okena unreachable since ${formatClock(T)}`],
+		['helm', 'neutral', 'Helm terminals connecting…'],
+	])
+	assert.deepEqual(view({ ...snapshot(ok), sources: { okena: ok, helm: ok } }), [
+		['okena', 'success', 'Okena connected'],
+		['helm', 'success', 'Helm terminals connected'],
+	])
+})
+
 // ---------------------------------------------------------------------------
 // Agents overview (design §3.24 Agents)
 // ---------------------------------------------------------------------------
@@ -830,6 +853,13 @@ test('agent standing: asks need you (question / permission / plan), an open turn
 	assert.equal(standingOf([askItem({ state: 'orphaned' })], session())[0], 'needs-you')
 	assert.deepEqual(standingOf([turnItem(), bash], session())[0], 'needs-you')
 	assert.deepEqual(standingOf([turnItem()], session()), ['reply-waiting', 'reply waiting', kindGlyph(turnItem())])
+	// Its background shell still runs ("I'll report back"): background, still opening that turn.
+	assert.deepEqual(standingOf([turnItem()], session({ status: 'background' })), ['background', 'background', '◐'])
+	assert.equal(
+		agentStanding(snapshot(OK, [turnItem()], [session({ status: 'background' })]), session({ status: 'background' }), T)
+			.item?.id,
+		8,
+	)
 	// Ages and tones like the queue entry: asks from their oldest wait, turns cap at amber.
 	const view = agentStanding(snapshot(OK, [askItem()], [session()]), session(), T + 3 * 60 * 60_000)
 	assert.equal(view.since, T - 60_000)
@@ -965,17 +995,20 @@ test('agent rows: needs you, reply waiting, sending, working, background, read, 
 	)
 	// By project: groups in the order of their most urgent agent (helm's asks lead; crm only works).
 	assert.deepEqual(
-		agentOverview(snap, T + 60_000, 'two-lines').map(group => [group.heading, group.rows.length]),
+		agentOverview(snap, T + 60_000, 'by-project').map(group => [group.heading, group.rows.length]),
 		[
 			['helm', 8],
 			['crm', 1],
 		],
 	)
 	assert.equal(agentOverview(snap, T + 60_000, 'by-state')[0]?.id, 'state:needs-you')
-	assert.deepEqual(agentOverview(null, T, 'two-lines'), [])
-	assert.equal(agentsLayout('by-state'), 'by-state')
-	assert.equal(agentsLayout('nonsense'), 'two-lines')
-	assert.equal(agentsLayout(undefined), 'two-lines')
+	assert.deepEqual(agentOverview(null, T, 'by-project'), [])
+	// Jakub's stored grouping: by project or by state; anything else (an old variant, junk) is by state.
+	assert.equal(agentsLayout('by-project'), 'by-project')
+	assert.equal(agentsLayout('two-lines'), 'by-state')
+	assert.equal(agentsLayout(undefined), 'by-state')
+	assert.equal(otherAgentsLayout('by-state'), 'by-project')
+	assert.equal(otherAgentsLayout('by-project'), 'by-state')
 })
 
 test('agent detail reply: receipts like a turn reply; blocked while it owes, works or its source is down', () => {

@@ -14,7 +14,7 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import { agentDockAgentsLayout, agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
@@ -66,11 +66,8 @@ export interface TerminalWorkspaceFixtureOptions {
 		focusDock?: boolean
 		/** Story only: `afterMs` after the terminal is ready, a new agent's item of `kind` arrives. */
 		arrive?: { kind: AgentDockArrivalKind; afterMs: number }
-		/**
-		 * Story only (Views / Agent dock agents pane): the Agents pane layout under review, written as
-		 * `#agent-dock[data-agents-variant]` before the dock mounts; production never sets it (`two-lines`).
-		 */
-		agentsVariant?: AgentsLayout
+		/** The Agents pane's grouping, stored like Jakub's switch before the dock mounts (else the stored one). */
+		agentsLayout?: AgentsLayout
 		/** Story only, with `open: 'agents'`: then click this agent's row (by its short name), like a pointer would. */
 		openAgent?: string
 	}
@@ -604,10 +601,9 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', position, agentsVariant } = options.agentDock
+			const { scenario = 'busy', position, agentsLayout } = options.agentDock
 			if (position) agentDockPosition.set(position)
-			const dockHost = root.querySelector<HTMLElement>('#agent-dock')
-			if (dockHost && agentsVariant) dockHost.dataset.agentsVariant = agentsVariant
+			if (agentsLayout) agentDockAgentsLayout.set(agentsLayout)
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set

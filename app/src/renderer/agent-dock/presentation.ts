@@ -507,6 +507,40 @@ export interface AgentDockHealth {
 	text: string
 }
 
+/** One source's health for the Agents pane header: its name, the dot's tone, the state in words. */
+export interface SourceHealthView {
+	id: DockSourceId
+	name: string
+	state: AgentDockSourceHealth['state']
+	tone: AgentDockHealth['tone']
+	/** `Okena connected`, `Okena unreachable since 16:20`, `Helm terminals connecting…`. */
+	words: string
+}
+
+/**
+ * Each source's health on its own (`snapshot.sources`, in DOCK_SOURCE_IDS order). A source the dock
+ * never observed (not configured, e.g. no Helm hub) is not listed: the snapshot knows nothing of it,
+ * and saying "not configured" would be a claim it cannot back. Before any snapshot: Okena connecting.
+ */
+export function sourceHealthViews(snapshot: AgentDockSnapshot | null): SourceHealthView[] {
+	const entries: Array<[DockSourceId, AgentDockSourceHealth]> = snapshot
+		? snapshotSources(snapshot)
+		: [['okena', { state: 'pending', since: 0, lastObservedAt: null }]]
+	return entries.map(([id, health]) => {
+		const name = DOCK_SOURCE_TEXT[id].label
+		if (health.state === 'ok') return { id, name, state: health.state, tone: 'success', words: `${name} connected` }
+		if (health.state === 'down')
+			return {
+				id,
+				name,
+				state: health.state,
+				tone: 'danger',
+				words: `${name} unreachable since ${formatClock(health.since)}`,
+			}
+		return { id, name, state: health.state, tone: 'neutral', words: `${name} connecting…` }
+	})
+}
+
 export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth {
 	if (!snapshot || snapshot.source.state === 'pending')
 		return { tone: 'neutral', text: `${sourceNames(snapshot, 'pending')} connecting…` }
@@ -999,7 +1033,7 @@ export const AGENT_STANDINGS = [
 ] as const
 export type AgentStanding = (typeof AGENT_STANDINGS)[number]
 
-/** Group headings when the overview groups by standing (layout `by-state`). */
+/** Group headings when the overview groups by standing (`by-state`). */
 export const STANDING_HEADINGS: Record<AgentStanding, string> = {
 	'needs-you': 'Needs you',
 	'reply-waiting': 'Reply waiting',
@@ -1061,6 +1095,19 @@ export function agentStanding(
 		}
 	}
 	const turn = owed.find(item => item.kind === 'turn')
+	// Its background work (shells, subagents) still runs: it said it will report back, so it reads
+	// background, not a reply waiting; opening it still shows that turn.
+	if (turn && session.status === 'background')
+		return {
+			standing: 'background',
+			word: 'background',
+			label: 'background',
+			since: session.since,
+			tone: 'none',
+			glyph: '◐',
+			glyphTone: 'background',
+			item: turn,
+		}
 	if (turn)
 		return {
 			standing: 'reply-waiting',
@@ -1265,17 +1312,24 @@ export function agentRepoGroups(rows: readonly AgentRow[]): Array<{ repo: string
 }
 
 /**
- * The Agents pane layouts under review (story-only `#agent-dock[data-agents-variant]`; production
- * `two-lines` until Jakub picks): `two-lines` (by project, the excerpt on a second dim line),
- * `excerpt-column` (by project, one line, the excerpt as a flexible column), `by-state` (grouped by
- * where each agent stands with Jakub, the project as a dim column).
+ * How the Agents pane groups its rows, Jakub's setting (a text switch in its header, `G`; kept in
+ * renderer storage): `by-state` (default: grouped by where each agent stands with him, so what needs
+ * him comes first; the project a dim column) or `by-project` (grouped by repository, the most urgent
+ * agent leading). Both are one line per agent with the excerpt as a flexible column.
  */
-export const AGENTS_LAYOUTS = ['two-lines', 'excerpt-column', 'by-state'] as const
+export const AGENTS_LAYOUTS = ['by-state', 'by-project'] as const
 export type AgentsLayout = (typeof AGENTS_LAYOUTS)[number]
 
-/** A layout name from untrusted input (a data attribute), else the production default. */
+/** The switch's words, in its order. */
+export const AGENTS_LAYOUT_WORDS: Record<AgentsLayout, string> = { 'by-state': 'state', 'by-project': 'project' }
+
+/** A grouping from untrusted input (stored setting), else the default `by-state`. */
 export const agentsLayout = (value: unknown): AgentsLayout =>
-	AGENTS_LAYOUTS.find(layout => layout === value) ?? 'two-lines'
+	AGENTS_LAYOUTS.find(layout => layout === value) ?? 'by-state'
+
+/** The other grouping (`G` toggles). */
+export const otherAgentsLayout = (layout: AgentsLayout): AgentsLayout =>
+	layout === 'by-state' ? 'by-project' : 'by-state'
 
 /** The Agents pane's groups in display order: by project (most urgent agent first), or by standing. */
 export function agentOverview(

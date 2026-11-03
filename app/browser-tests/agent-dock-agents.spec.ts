@@ -8,8 +8,9 @@ declare global {
 }
 
 // The Agents overview (design §3.24 Agents) on the `agents-overview` day: every agent's state
-// relative to Jakub, where it runs, the first line of what it said; rows open the agent's item or
-// its detail (full last message, reply).
+// relative to Jakub, where it runs, the first line of what it said, grouped by state (default) or
+// project (header switch, G, stored); each source's health in the header; rows open the agent's
+// item or its detail (full last message, reply).
 
 const harness = '/iframe.html?id=views-terminal-workspace--agent-dock-harness&viewMode=story'
 
@@ -46,7 +47,7 @@ const fixtureCalls = (page: Page) =>
 	})
 const terminalWrites = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.length)
 
-test('every agent, where it stands with Jakub: needs you first, grouped by project, where it runs, its last line', async ({
+test('every agent, where it stands with Jakub: grouped by state first, then by project, where it runs, its last line', async ({
 	page,
 }) => {
 	const { input, rail, pane, agents } = await openOverview(page)
@@ -55,6 +56,26 @@ test('every agent, where it stands with Jakub: needs you first, grouped by proje
 	// A pointer opens the overview without taking the keys from the terminal.
 	await expect(input).toBeFocused()
 	await expect(pane.locator('.agent-dock-title-project').first()).toHaveText('9 agents · 4 need you · 2 busy')
+	// Default: by state, what needs Jakub first.
+	const options = pane.getByRole('group', { name: 'Group agents by' }).getByRole('button')
+	await expect(options).toHaveText(['state', 'project'])
+	await expect(options.first()).toHaveAttribute('aria-pressed', 'true')
+	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-state')
+	await expect(pane.getByRole('heading', { level: 3 })).toHaveText([
+		'Needs you',
+		'Reply waiting',
+		'Working',
+		'Background',
+		'Read',
+		'Unknown',
+	])
+	await expect(pane.getByRole('list', { name: 'Needs you', exact: true }).getByRole('listitem')).toHaveCount(3)
+
+	// The switch (a pointer): by project, the most urgent agent leading each repository.
+	await options.nth(1).click()
+	await expect(input).toBeFocused()
+	await expect(options.nth(1)).toHaveAttribute('aria-pressed', 'true')
+	await expect(options.first()).toHaveAttribute('aria-pressed', 'false')
 	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['Psyon', 'JVS', 'vault'])
 	// Each row's name: who, the state in words and its age, then where.
 	await expect(agents).toHaveCount(9)
@@ -67,7 +88,7 @@ test('every agent, where it stands with Jakub: needs you first, grouped by proje
 		'repair-done-still-out-of-service, reply waiting 45m, Okena, worktree, PR #956, PR #484',
 		'service-protocol-image-link, read 25m, Okena, worktree, PR #953',
 		'rental-calendar-overlap, unknown, Okena, worktree, stale 2m',
-		'inbox-triage, background 9m, Helm terminal, main, 1 subagent',
+		'inbox-triage, background 9m, Helm terminal, main, 1 shell',
 		'notes, not connected, Okena, main',
 	])
 	// One tab stop: the first row.
@@ -81,31 +102,99 @@ test('every agent, where it stands with Jakub: needs you first, grouped by proje
 	// Waiting on Jakub ages like the queue: a turn 45m old is amber.
 	await expect(agents.nth(4)).toHaveAttribute('data-tone', 'warn')
 
+	// The grouping is stored: a fresh dock (reload) opens by project.
+	await page.reload()
+	const again = await openOverview(page)
+	await again.rail.locator('.agent-dock-agents-entry').click()
+	await expect(again.pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-project')
+
 	expect(await terminalWrites(page)).toBe(0)
 })
 
-test('the by-state layout (story-only, pending a pick) groups the same rows by standing, most urgent first', async ({
+test('G switches the grouping from the keys and keeps them on the same agent', async ({ page }) => {
+	const { pane, agents, agent } = await openOverviewByKeys(page)
+	await expect(pane.locator('.agent-dock-foot-hints')).toContainText('g group by project')
+	await page.keyboard.press('ArrowDown')
+	await page.keyboard.press('ArrowDown')
+	await page.keyboard.press('ArrowDown')
+	await expect(agent('repair-done-still-out-of-service')).toBeFocused()
+	await page.keyboard.press('g')
+	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-project')
+	await expect(agent('repair-done-still-out-of-service')).toBeFocused()
+	await expect(pane.locator('.agent-dock-foot-hints')).toContainText('g group by state')
+	await page.keyboard.press('ArrowDown')
+	await expect(agent('service-protocol-image-link')).toBeFocused()
+	await page.keyboard.press('Shift+G')
+	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-project')
+	await page.keyboard.press('g')
+	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-state')
+	await expect(agent('service-protocol-image-link')).toBeFocused()
+	await expect(agents).toHaveCount(9)
+	// The switch is reachable by Tab too: pressed buttons in a named group.
+	const project = pane.getByRole('button', { name: 'project' })
+	await project.focus()
+	await page.keyboard.press('Enter')
+	await expect(project).toHaveAttribute('aria-pressed', 'true')
+	await expect(project).toBeFocused()
+	expect(await terminalWrites(page)).toBe(0)
+})
+
+test('the header says each source on its own; the row keeps no dot', async ({ page }) => {
+	const { rail, pane } = await openOverview(page)
+	await rail.locator('.agent-dock-agents-entry').click()
+	const sources = pane.getByRole('group', { name: 'Sources' }).getByRole('img')
+	await expect(sources).toHaveCount(2)
+	await expect(sources.nth(0)).toHaveAccessibleName('Okena connected')
+	await expect(sources.nth(1)).toHaveAccessibleName('Helm terminals connected')
+	await expect(sources.nth(0)).toHaveAttribute('data-tone', 'success')
+	await expect(pane.locator('.agent-dock-sources')).toHaveText(/Okena\s*·?\s*Helm terminals/)
+	await expect(rail.locator('.agent-dock-dot')).toHaveCount(0)
+
+	// Okena down: its dot red with since when; Helm's stays green; the row keeps its note.
+	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitScenario('agents-okena-down'))
+	await expect(sources.nth(0)).toHaveAttribute('data-tone', 'danger')
+	await expect(sources.nth(0)).toHaveAccessibleName(/^Okena unreachable since \d\d:\d\d$/)
+	await expect(sources.nth(0)).toHaveAttribute('title', /^Okena unreachable since /)
+	await expect(sources.nth(1)).toHaveAttribute('data-tone', 'success')
+	await expect(rail).toContainText('Okena unreachable')
+
+	// Helm's hub not answered yet: neutral, "connecting…"; Okena's agents stay.
+	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitScenario('agents-helm-connecting'))
+	await expect(sources.nth(1)).toHaveAccessibleName('Helm terminals connecting…')
+	await expect(sources.nth(1)).toHaveAttribute('data-tone', 'neutral')
+	await expect(sources.nth(0)).toHaveAccessibleName('Okena connected')
+
+	// Narrow: only the dots, their words still their names.
+	await page.setViewportSize({ width: 600, height: 820 })
+	await expect(pane.locator('.agent-dock-source-name').first()).toBeHidden()
+	await expect(pane.locator('.agent-dock-source .agent-dock-dot')).toHaveCount(2)
+	await expect(pane.locator('.agent-dock-source .agent-dock-dot').first()).toBeVisible()
+	await expect(sources.nth(1)).toHaveAccessibleName('Helm terminals connecting…')
+})
+
+test('an agent whose background shell still runs reads background with "1 shell" and opens its turn', async ({
 	page,
 }) => {
-	await page.setViewportSize({ width: 1400, height: 820 })
-	await page.goto('/iframe.html?id=views-agent-dock-agents-pane--v-3-by-state&viewMode=story')
-	const pane = page.locator('.agent-dock-pane')
-	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-state')
-	await expect(pane.getByRole('heading', { level: 3 })).toHaveText([
-		'Needs you',
-		'Reply waiting',
-		'Working',
-		'Background',
-		'Read',
-		'Unknown',
-	])
-	await expect(pane.getByRole('list', { name: 'Needs you', exact: true }).getByRole('listitem')).toHaveCount(3)
+	const { rail, pane, agent } = await openOverview(page)
+	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitScenario('background-shell'))
+	await rail.locator('.agent-dock-agents-entry').click()
+	const row = agent('service-protocol-image-link')
+	await expect(row).toHaveAttribute('data-standing', 'background')
+	await expect(row).toHaveAttribute('aria-label', /^service-protocol-image-link, background 2m, Okena, .*1 shell/)
+	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['Background'])
+	await row.click()
+	await expect(pane).toHaveAttribute('aria-label', /^Turn ended, service-protocol-image-link/)
+	await expect(pane.locator('.agent-dock-facts')).toContainText('Background work was still running.')
 })
 
 test('rows are one roving list: ↑ ↓ Home End move, Enter opens the item or the agent detail, Esc goes back to its row', async ({
 	page,
 }) => {
 	const { pane, agents, agent } = await openOverviewByKeys(page)
+	// By project (G): the order below is the project grouping's.
+	await page.keyboard.press('g')
+	await expect(pane.locator('.agent-dock-agent-list')).toHaveAttribute('data-layout', 'by-project')
+	await expect(agents.first()).toBeFocused()
 	await page.keyboard.press('ArrowDown')
 	await expect(agents.nth(1)).toBeFocused()
 	await expect(agents.nth(1)).toHaveAttribute('tabindex', '0')
@@ -203,12 +292,8 @@ test('a live update that moves the focused agent to another group keeps the keys
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await page.goto(harness)
 	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
-	// The by-state layout re-mounts a row whose standing changes (a new group).
-	await page.evaluate(() => {
-		const dock = document.querySelector<HTMLElement>('#agent-dock')
-		if (dock) dock.dataset.agentsVariant = 'by-state'
-		window.__helmWorkspaceFixture?.agentDock?.emitScenario('agents-overview')
-	})
+	// By state (the default) re-mounts a row whose standing changes (a new group).
+	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitScenario('agents-overview'))
 	const pane = page.locator('.agent-dock-pane')
 	const agent = (name: string) =>
 		pane.locator('.agent-dock-agent').filter({ has: page.locator('.agent-dock-agent-name', { hasText: name }) })

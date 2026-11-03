@@ -11,45 +11,43 @@ import type {
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
-import { type AgentDockPosition, agentsLayout, failedActResult } from './agent-dock/presentation'
+import { type AgentDockPosition, type AgentsLayout, agentsLayout, failedActResult } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
 	position: 'helm.agentDock.position',
+	agentsLayout: 'helm.agentDock.agentsLayout',
 } as const
 
-const readPosition = (raw: string | null): AgentDockPosition => (raw === 'top' ? 'top' : 'bottom')
-
 /**
- * The dock's place relative to the terminals, chosen in Settings → Appearance (never on the
- * queue row). Every mounted dock subscribes and re-lays out live. A choice made while storage is
- * unavailable still applies for this session; another Helm window's change arrives as a
- * `storage` event.
+ * One presentation preference in renderer storage (this Helm profile's userData). Every mounted dock
+ * subscribes and re-lays out live. A choice made while storage is unavailable still applies for this
+ * session; another Helm window's change arrives as a `storage` event.
  */
-export const agentDockPosition = (() => {
-	let chosen: AgentDockPosition | null = null
+function storedPreference<T extends string>(key: string, read: (raw: string | null) => T) {
+	let chosen: T | null = null
 	const listeners = new Set<() => void>()
 	const notify = (): void => {
 		for (const listener of listeners) listener()
 	}
 	const onStorage = (event: StorageEvent): void => {
-		if (event.key !== AGENT_DOCK_STORAGE.position && event.key !== null) return
+		if (event.key !== key && event.key !== null) return
 		chosen = null
 		notify()
 	}
 	return {
-		get(): AgentDockPosition {
+		get(): T {
 			if (chosen) return chosen
 			try {
-				return readPosition(globalThis.localStorage.getItem(AGENT_DOCK_STORAGE.position))
+				return read(globalThis.localStorage.getItem(key))
 			} catch {
-				return 'bottom'
+				return read(null)
 			}
 		},
-		set(position: AgentDockPosition): void {
-			chosen = position
+		set(value: T): void {
+			chosen = value
 			try {
-				globalThis.localStorage.setItem(AGENT_DOCK_STORAGE.position, position)
+				globalThis.localStorage.setItem(key, value)
 			} catch {
 				// Presentation still works when storage is unavailable.
 			}
@@ -64,7 +62,15 @@ export const agentDockPosition = (() => {
 			}
 		},
 	}
-})()
+}
+
+/** The dock's place relative to the terminals, chosen in Settings → Appearance (never on the queue row). */
+export const agentDockPosition = storedPreference<AgentDockPosition>(AGENT_DOCK_STORAGE.position, raw =>
+	raw === 'top' ? 'top' : 'bottom',
+)
+
+/** How the Agents pane groups its rows, switched in its header (`G`); default `by-state`. */
+export const agentDockAgentsLayout = storedPreference<AgentsLayout>(AGENT_DOCK_STORAGE.agentsLayout, agentsLayout)
 
 /** Re-render waits/ages in the queue while nothing else changes. */
 const AGE_TICK_MS = 30_000
@@ -187,8 +193,8 @@ export function mountAgentDock({
 			onAct,
 			onPrompt,
 			readMessage,
-			// Story-only review attribute (`data-agents-variant`); production sets none: `two-lines`.
-			agentsLayout: agentsLayout(dock.dataset.agentsVariant),
+			agentsLayout: agentDockAgentsLayout.get(),
+			onAgentsLayout: agentDockAgentsLayout.set,
 			paneRoom,
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
@@ -212,6 +218,9 @@ export function mountAgentDock({
 		focusTerminal()
 		flushSync(() => handle.current?.closePane())
 	}
+
+	// The Agents pane's grouping changed (here or in another window): only the list re-renders.
+	const unsubscribeAgentsLayout = agentDockAgentsLayout.subscribe(render)
 
 	// Settings → Appearance moved the dock: the terminal row changes height, so refit xterm.
 	const unsubscribePosition = agentDockPosition.subscribe(() => {
@@ -334,6 +343,7 @@ export function mountAgentDock({
 			disposed = true
 			unsubscribe()
 			unsubscribePosition()
+			unsubscribeAgentsLayout()
 			publishVisible()
 			rightObserver.disconnect()
 			ownerWindow.clearInterval(ageTimer)

@@ -58,7 +58,7 @@ async function emitScenario(
 		| 'helm-terminals'
 		| 'helm-add-directories'
 		| 'single-turn'
-		| 'agents-overview',
+		| 'agents-overview'
 		| 'background-shell',
 ): Promise<void> {
 	await page.evaluate(scenario => {
@@ -141,7 +141,9 @@ test('dock sits below the terminals by default: one 28px queue row, whatever arr
 	// Never "all clear" while Okena is down.
 	await emitScenario(page, 'down')
 	await expect(rail).toContainText('Okena unreachable')
-	await expect(rail.locator('.agent-dock-health')).toContainText('Okena unreachable since')
+	// No health dot in the row (it lives in the Agents pane header); the outage stays in the row's words.
+	await expect(rail.locator('.agent-dock-dot')).toHaveCount(0)
+	await expect(rail).toHaveAttribute('aria-label', /Okena unreachable since/)
 	await expect(rail).not.toContainText('Nothing needs you')
 	await expect(rail).toHaveAttribute('aria-label', /State unknown|need you/)
 	expect((await rail.boundingBox())?.height).toBe(28)
@@ -1608,7 +1610,7 @@ test('every row text starts on the 16px column; entries one line each, separated
 	expect(await page.locator('.agent-dock-agents').evaluate(node => getComputedStyle(node, '::before').content)).toBe(
 		'none',
 	)
-	// The row ends in Okena's dot and ⌘⇧J on the 16px column.
+	// The row ends in ⌘⇧J on the 16px column.
 	const kbd = await box(page, '.agent-dock-kbd')
 	expect(Math.abs(dock.x + dock.width - (kbd.x + kbd.width) - 16)).toBeLessThan(1)
 
@@ -1726,15 +1728,17 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	await expect(pane.locator('.agent-dock-title-text')).not.toContainText('ClientCare')
 	await expect(pane).toHaveAttribute('aria-label', 'Turn ended, repeated-android-camera-permission, crm-mobile')
 	await page.locator('.agent-dock-agents-entry').click()
-	// Needs you first (the longest wait leads), then reply waiting, then working; every agent by its short name.
+	// Needs you first (the longest wait leads), then working, then background (its turn ended with
+	// subagents still running); every agent by its short name.
 	await expect(pane.locator('.agent-dock-agent-name')).toHaveText([
 		'company-create-save-firm',
 		'company-create-save-firm #2',
-		'repeated-android-camera-permission',
 		'isdoc-export',
+		'repeated-android-camera-permission',
 	])
 	// Grouped by project, groups in the order of their most urgent agent; each heading names its agents' list.
-	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['crm', 'crm-mobile', 'crm-billing'])
+	await pane.getByRole('button', { name: 'project' }).click()
+	await expect(pane.getByRole('heading', { level: 3 })).toHaveText(['crm', 'crm-billing', 'crm-mobile'])
 	await expect(pane.getByRole('list', { name: 'crm', exact: true }).getByRole('listitem')).toHaveText([
 		/company-create-save-firm(?! #)/,
 		/company-create-save-firm #2/,

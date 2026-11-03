@@ -1,7 +1,7 @@
 // Agent dock body (design §3.24): one --chrome surface below (or above) the terminal,
 // like the topbar mirrored. Two bands: the 28px queue row — one quiet line per item
 // that owes Jakub something (glyph, short name, wait), "+N more" when they do not fit,
-// then the Agents entry, the sources' health dot and ⌘⇧J — and, when an entry is opened, a pane
+// then the Agents entry and ⌘⇧J — and, when an entry is opened, a pane
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
 // happens in the pane and the receipt shows in place; entries keep their
@@ -42,7 +42,6 @@ import {
 	agentWho,
 	canAck,
 	canAnswer,
-	dockHealth,
 	dockLabel,
 	failedActResult,
 	findSession,
@@ -78,8 +77,10 @@ export interface AgentDockProps {
 	onPrompt?(request: AgentDockPromptRequest): Promise<AgentDockActResult>
 	/** The agent detail's full last message, read live through the agent's source. */
 	readMessage?(session: string): Promise<AgentDockMessageResult>
-	/** The Agents pane layout (story-only `#agent-dock[data-agents-variant]`); default `two-lines`. */
+	/** How the Agents pane groups its rows (Jakub's stored setting); default `by-state`. */
 	agentsLayout?: AgentsLayout
+	/** Jakub switched the grouping in the Agents pane header (or with `G`): store it. */
+	onAgentsLayout?(layout: AgentsLayout): void
 	/** Most px the pane may take so the terminal keeps its rows (the layout measures #right); null = no limit known. */
 	paneRoom?: () => number | null
 	/** After the pane opens or closes: the terminal row changed height once, refit it. */
@@ -123,7 +124,8 @@ export function AgentDock({
 	onAct,
 	onPrompt,
 	readMessage,
-	agentsLayout = 'two-lines',
+	agentsLayout = 'by-state',
+	onAgentsLayout,
 	paneRoom,
 	onPaneChange,
 	focusTerminal,
@@ -169,6 +171,13 @@ export function AgentDock({
 	const [agentCurrent, setAgentCurrent] = useState<string | null>(
 		initialOpen?.type === 'agent' ? initialOpen.key : null,
 	)
+	/** The Agents pane's grouping: the stored setting, switched in its header (stored through onAgentsLayout). */
+	const [layout, setLayout] = useState<AgentsLayout>(agentsLayout)
+	useLayoutEffect(() => setLayout(agentsLayout), [agentsLayout])
+	const chooseLayout = (next: AgentsLayout) => {
+		setLayout(next)
+		onAgentsLayout?.(next)
+	}
 	/** Opened from the Agents pane (an agent's detail or its item): Esc goes back to that row. */
 	const returnTo = useRef<string | null>(initialOpen?.type === 'agent' ? initialOpen.key : null)
 	/** Agent-detail replies awaiting main's answer, and words main could not record, by session key. */
@@ -178,7 +187,6 @@ export function AgentDock({
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
 
-	const health = dockHealth(snapshot)
 	const announcement = useArrivalAnnouncement(snapshot)
 	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
@@ -198,7 +206,7 @@ export function AgentDock({
 		liveItem ?? (target?.type === 'item' && shownItem.current?.id === target.id ? shownItem.current : undefined)
 	shownItem.current = openItem
 	// The Agents pane's order (its layout's groups, flattened): ‹ › in an agent's detail follow it.
-	const overview = agentOverview(snapshot, clock, agentsLayout)
+	const overview = agentOverview(snapshot, clock, layout)
 	const agentOrder = overview.flatMap(group => group.rows)
 	const agentIndex = target?.type === 'agent' ? agentOrder.findIndex(row => row.key === target.key) : -1
 	const agentRow: AgentRow | undefined = agentOrder[agentIndex]
@@ -639,13 +647,9 @@ export function AgentDock({
 				register={register}
 				onOpen={open}
 			/>
-			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
-			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
+			{/* The row ends in the key that goes to the dock. Each source's health is in the Agents pane
+			    header; an outage stays in the row as its lead note (down, connecting) and its name. */}
 			<span className="agent-dock-row-end">
-				<span className="agent-dock-health" data-tone={health.tone} title={health.text}>
-					<span className="agent-dock-dot" aria-hidden="true" />
-					{health.tone === 'success' ? null : <span className="agent-dock-health-text">{health.text}</span>}
-				</span>
 				<kbd className="agent-dock-kbd" title={`Go to the agent dock (${shortcut.label})`}>
 					{shortcut.label}
 				</kbd>
@@ -719,7 +723,8 @@ export function AgentDock({
 				<AgentsDetail
 					snapshot={snapshot}
 					now={clock}
-					layout={agentsLayout}
+					layout={layout}
+					onLayout={chooseLayout}
 					current={agentCurrent}
 					keys={detailKeys}
 					onCurrent={setAgentCurrent}

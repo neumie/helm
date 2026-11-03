@@ -24,6 +24,7 @@ import {
 	type AgentDockState,
 	TURN_IDLE_MS,
 	agentDockSnapshot,
+	aggregateSourceHealth,
 	createAgentDockState,
 	reduce,
 } from '../../agent-dock/reduce'
@@ -58,11 +59,18 @@ export type AgentDockScenario =
 	/**
 	 * The Agents overview (every state relative to Jakub), through the real reducer: a question
 	 * (12m), a permission (3m) and a plan (25m) need him; a JVS worktree's reply has waited 45m (with
-	 * PRs); Psyon's detached checkout works with 4 subagents; a Helm-terminal agent runs background
-	 * work; another JVS worktree's turn was read (acked) 15m ago; one pane's detail is unreadable; one
+	 * PRs); Psyon's detached checkout works with 4 subagents; a Helm-terminal agent runs a background
+	 * shell (`1 shell`); another JVS worktree's turn was read (acked) 15m ago; one pane's detail is unreadable; one
 	 * Okena pane runs Claude without hooks (not connected).
 	 */
 	| 'agents-overview'
+	/** `agents-overview` with Okena unreachable since 2 minutes ago: its agents freeze, Helm's stays live. */
+	| 'agents-okena-down'
+	/**
+	 * `agents-overview` (3 minutes earlier) before Helm's hub first answers: Okena connected with its
+	 * agents, Helm terminals still connecting (no Helm agent yet).
+	 */
+	| 'agents-helm-connecting'
 	/**
 	 * Jakub's report: Claude merged PR #953, started the stage deploy in a background shell, said
 	 * "ozvu se, až doběhne" and stopped 2m ago. Okena says idle; the shell makes it `background`
@@ -860,8 +868,11 @@ export const OVERVIEW_MESSAGES = {
 	helm: 'Třídím inbox: 12 poznámek, 3 k archivaci.\n\nNa pozadí běží přepočet odkazů.',
 } as const
 
-/** The Agents overview's day, through the real reducer: Okena polls and Helm's hub polls, interleaved. */
-function agentsOverviewRun(now: number, start: AgentDockState): ScenarioRun {
+/**
+ * The Agents overview's day, through the real reducer: Okena polls and Helm's hub polls, interleaved.
+ * `withHelm: false` leaves Helm's hub out (its agent never shows).
+ */
+function agentsOverviewRun(now: number, start: AgentDockState, withHelm = true): ScenarioRun {
 	const p = overviewPanes
 	const m = OVERVIEW_MESSAGES
 	const prefix = String(recordedDialog().id).split('-')[0]
@@ -958,6 +969,7 @@ function agentsOverviewRun(now: number, start: AgentDockState): ScenarioRun {
 	}
 	let helmVersion = 0
 	const helm = (at: number, body: Json, page?: Json) => {
+		if (!withHelm) return
 		state = reduce(
 			state,
 			{
@@ -968,9 +980,8 @@ function agentsOverviewRun(now: number, start: AgentDockState): ScenarioRun {
 			at,
 		).state
 	}
-	const helmBackground = idle(p.helm, {
-		running_subagents: [{ agent_id: 'background-1', agent_type: 'background task' }],
-	})
+	// Helm's hub counts the Stop hook's background tasks: one shell (the link recount) still runs.
+	const helmBackground = idle(p.helm, { background_tasks: 1, background_shells: 1 })
 
 	okena(now - 60 * MINUTE)
 	helm(now - 60 * MINUTE + 1_000, busy(p.helm), seed(p.helm, 'helm-a0', m.helm))
@@ -999,9 +1010,28 @@ function agentsOverviewRun(now: number, start: AgentDockState): ScenarioRun {
 		state,
 		live,
 		version,
-		helmLive: [{ pane: p.helm, body: helmBackground }],
+		...(withHelm ? { helmLive: [{ pane: p.helm, body: helmBackground }] } : {}),
 		unreadable: [p.calendar.tid],
 	}
+}
+
+/** 'agents-okena-down' / 'agents-helm-connecting': the overview's day with one source not answering. */
+function agentsSourceHealthRun(
+	name: 'agents-okena-down' | 'agents-helm-connecting',
+	now: number,
+	start: AgentDockState,
+): ScenarioRun {
+	if (name === 'agents-okena-down') {
+		const run = agentsOverviewRun(now - 3 * MINUTE, start)
+		return { ...run, state: reduce(run.state, down('connect ECONNREFUSED'), now - 2 * MINUTE).state }
+	}
+	// Helm's hub registered but has not answered yet: the shape of its first poll still on its way.
+	const run = agentsOverviewRun(now, start, false)
+	const sources: AgentDockState['sources'] = {
+		...run.state.sources,
+		helm: { seeded: false, epoch: 0, health: { state: 'pending', since: now - 20_000, lastObservedAt: null } },
+	}
+	return { ...run, state: { ...run.state, sources, source: aggregateSourceHealth(sources, run.state.source) } }
 }
 
 /** 'background-shell': the stage deploy runs in a background shell after Claude stopped. */
@@ -1112,6 +1142,7 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
 	}
 	if (name === 'agents-overview') return agentsOverviewRun(now, start)
+	if (name === 'agents-okena-down' || name === 'agents-helm-connecting') return agentsSourceHealthRun(name, now, start)
 	if (name === 'background-shell') {
 		const timeline = backgroundShellTimeline(now)
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }

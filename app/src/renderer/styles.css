@@ -1427,7 +1427,7 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* The row's end: Okena's health, then the key that goes to the dock; its text ends on the 16px column. */
+/* The row's end: the key that goes to the dock; its text ends on the 16px column. */
 .agent-dock-row-end {
 	flex: none;
 	display: flex;
@@ -1445,42 +1445,7 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-.agent-dock-health {
-	flex: 0 1 auto;
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 6px;
-	color: var(--text-1);
-}
-
-.agent-dock-health-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.agent-dock-health[data-tone="danger"] {
-	color: var(--danger);
-}
-
-.agent-dock-dot {
-	flex: none;
-	width: 6px;
-	height: 6px;
-	border-radius: 999px;
-	background: var(--neutral);
-}
-
-.agent-dock-health[data-tone="success"] .agent-dock-dot {
-	background: var(--success);
-}
-
-.agent-dock-health[data-tone="danger"] .agent-dock-dot {
-	background: var(--danger);
-}
-
-/* ---------- queue row: one line per entry, then agents, Okena's dot and ⌘⇧J ---------- */
+/* ---------- queue row: one line per entry, then agents and ⌘⇧J ---------- */
 
 /* One 28px band whatever it holds, with or without a pane, so arriving items never refit xterm. */
 .agent-dock-row {
@@ -1764,7 +1729,7 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* Agents: one dim line after the entries (no rule), before Okena's dot. */
+/* Agents: one dim line after the entries (no rule), before ⌘⇧J. */
 .agent-dock-agents {
 	flex: none;
 	display: flex;
@@ -1964,8 +1929,96 @@ body.dragging {
 	padding: 0 8px;
 }
 
+/* Agents pane header end: each source's health (`Okena ● · Helm terminals ●`, dim names, the dot in
+ * its tone), then the grouping switch (`group state project`): dim words, the active one --text-0 and
+ * underlined like the question tabs — no fill, no box. */
+.agent-dock-sources,
+.agent-dock-group-switch {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	color: var(--dock-dim);
+}
+
+.agent-dock-sources {
+	gap: 8px;
+	margin-right: 16px;
+}
+
+.agent-dock-source {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.agent-dock-source + .agent-dock-source::before {
+	content: "·";
+	margin-right: 2px;
+}
+
+.agent-dock-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--neutral);
+}
+
+.agent-dock-source[data-tone="success"] .agent-dock-dot {
+	background: var(--success);
+}
+
+.agent-dock-source[data-tone="danger"] .agent-dock-dot {
+	background: var(--danger);
+}
+
+.agent-dock-source[data-tone="danger"] .agent-dock-source-name {
+	color: var(--danger);
+}
+
+.agent-dock-group-switch {
+	gap: calc(1ch - 8px);
+	margin-right: 4px;
+}
+
+.agent-dock-group-switch-label {
+	margin-right: 4px;
+}
+
+.agent-dock-group-option {
+	height: 24px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--dock-dim);
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+
+.agent-dock-group-option:hover {
+	color: var(--text-1);
+}
+
+.agent-dock-group-option[aria-pressed="true"] {
+	color: var(--text-0);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+}
+
+.agent-dock-group-option:focus-visible {
+	outline-offset: 0;
+}
+
 @container agent-dock-pane (max-width: 640px) {
-	.agent-dock-title-project:not(.agent-dock-title-where) {
+	.agent-dock-title-project:not(.agent-dock-title-where),
+	.agent-dock-source-name,
+	.agent-dock-source + .agent-dock-source::before,
+	.agent-dock-group-switch-label {
 		display: none;
 	}
 }
@@ -2615,21 +2668,16 @@ body.dragging {
  * list — groups, their lists, items and row buttons are subgrids — so columns line up across headings.
  * Every row is a button (one roving tab stop): its glyph sits in the queue's 12px box on the 16px column,
  * its fill (hover --fill-subtle, focused --fill-raised, never a ring) reaches 8px past the text either
- * side with the choices' 6px radius. All cells are always rendered; the layout places or hides them:
- *   two-lines       glyph · name · state · age · where (flex); the excerpt dim on a second line under the name
- *   excerpt-column  glyph · name · state · age · excerpt (flex, cut) · where
- *   by-state        glyph · name · project · state · age · excerpt (flex, cut) · where; the group is the
- *                   state, so the word shows only where it says more (question, not connected, frozen) */
+ * side with the choices' 6px radius. All cells are always rendered; the grouping places or hides them:
+ *   by-project  glyph · name · state · age · excerpt (flex, cut) · where
+ *   by-state    glyph · name · project · state · age · excerpt (flex, cut) · where; the group is the
+ *               state, so the word shows only where it says more (question, not connected, frozen) */
 .agent-dock-agent-list {
 	--agent-row: calc(24px * var(--ui-scale));
 	display: grid;
-	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr);
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr) minmax(0, max-content);
 	max-width: 100%;
 	font-variant-numeric: tabular-nums;
-}
-
-.agent-dock-agent-list[data-layout="excerpt-column"] {
-	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr) minmax(0, max-content);
 }
 
 .agent-dock-agent-list[data-layout="by-state"] {
@@ -2712,6 +2760,7 @@ body.dragging {
 }
 
 .agent-dock-agent > * {
+	grid-row: 1;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -2794,37 +2843,17 @@ body.dragging {
 	display: none;
 }
 
+.agent-dock-agent-excerpt,
 .agent-dock-agent-where {
-	grid-column: 5;
 	padding-left: 24px;
 }
 
+/* One line: the excerpt takes what is left and is cut, where follows. */
 .agent-dock-agent-excerpt {
-	grid-column: 2 / -1;
-	grid-row: 2;
-	padding-left: 8px;
-	max-width: 100ch;
-}
-
-.agent-dock-agent-excerpt:empty {
-	display: none;
-}
-
-/* two-lines: the excerpt is the row's second line, under the name; the row grows to fit both. */
-.agent-dock-agent-list[data-layout="two-lines"] .agent-dock-agent {
-	grid-template-rows: var(--dock-lh) auto;
-	padding: 3px 0;
-}
-
-/* excerpt-column and by-state: one line; the excerpt takes what is left and is cut, where follows. */
-.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-excerpt {
 	grid-column: 5;
-	grid-row: 1;
-	max-width: none;
-	padding-left: 24px;
 }
 
-.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+.agent-dock-agent-where {
 	grid-column: 6;
 	max-width: 40ch;
 }
@@ -2866,20 +2895,37 @@ body.dragging {
 	visibility: hidden;
 }
 
-/* Narrow panes keep the excerpt readable: names cut sooner, and in the one-line layouts where gives
- * way first (it stays in the row's accessible name and the agent's detail). */
+/* Narrow panes keep the excerpt readable: names cut sooner, and where gives way first (it stays in
+ * the row's accessible name and the agent's detail). */
 @container agent-dock-pane (max-width: 960px) {
 	.agent-dock-agent-name {
 		max-width: 26ch;
 	}
 
-	.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+	.agent-dock-agent-where {
 		max-width: 20ch;
 	}
 }
 
 @container agent-dock-pane (max-width: 720px) {
-	.agent-dock-agent-list:not([data-layout="two-lines"]) .agent-dock-agent-where {
+	.agent-dock-agent-where {
+		display: none;
+	}
+}
+
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-agent-name {
+		max-width: 20ch;
+	}
+
+	.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
+		max-width: 10ch;
+	}
+}
+
+/* Very narrow: the project column goes too (the row's tooltip still names it). */
+@container agent-dock-pane (max-width: 480px) {
+	.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
 		display: none;
 	}
 }
