@@ -202,7 +202,21 @@ test('seed: open dialog becomes an item silently; health ok emits nothing', () =
 	assert.equal(state.sessions[KEY]?.session.name, 'dock-test')
 	assert.equal(state.sessions[KEY]?.session.projectId, 'proj-1')
 	assert.equal(state.sessions[KEY]?.session.channelAttached, false)
+	assert.equal(state.sessions[KEY]?.session.repo, undefined)
 	assert.equal(state.source.state, 'ok')
+})
+
+test("a worktree pane's repo is its parent project's name (Okena worktree_info)", () => {
+	const observation = poll(idle())
+	const body = (observation as { state: { body: Json } }).state.body
+	const [project] = body.projects as Json[]
+	body.projects = [
+		{ ...project, name: 'fix/repair-done', worktree_info: { parent_project_id: 'proj-jvs' } },
+		{ id: 'proj-jvs', name: 'JVS', path: '/repo/crane-rental', terminal_names: {} },
+	]
+	const { state } = run(createAgentDockState(null, T0), [[T0, observation]])
+	assert.equal(state.sessions[KEY]?.session.project, 'fix/repair-done')
+	assert.equal(state.sessions[KEY]?.session.repo, 'JVS')
 })
 
 test("ask facts keep Claude's permission_suggestions verbatim, and only when Okena sent some", () => {

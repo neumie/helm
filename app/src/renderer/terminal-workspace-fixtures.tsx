@@ -63,8 +63,16 @@ export interface TerminalWorkspaceFixtureOptions {
 		open?: AgentDockOpenFixture
 		/** Story only: once the terminal is ready, press ⌘⇧J from the focused xterm (the real window-capture path). */
 		focusDock?: boolean
+		/**
+		 * Story only (Views / Agent dock agents pane): the Agents pane layout under review, written as
+		 * `#agent-dock[data-agents-variant]` for CSS alone; production never sets it (the calm table).
+		 */
+		agentsVariant?: AgentsPaneVariant
 	}
 }
+
+/** Agents pane layouts under review: A calm table (production's), B by project, C one-liners. */
+export type AgentsPaneVariant = 'table' | 'by-project' | 'one-liners'
 
 export type AgentDockOpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
 
@@ -593,8 +601,10 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
 		if (options.agentDock) {
-			const { scenario = 'busy', position } = options.agentDock
+			const { scenario = 'busy', position, agentsVariant } = options.agentDock
 			if (position) agentDockPosition.set(position)
+			const dockHost = root.querySelector<HTMLElement>('#agent-dock')
+			if (dockHost && agentsVariant) dockHost.dataset.agentsVariant = agentsVariant
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set

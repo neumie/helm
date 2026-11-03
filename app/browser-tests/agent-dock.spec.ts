@@ -1546,7 +1546,7 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	await expect(pane).toHaveAttribute('aria-label', 'Turn ended, repeated-android-camera-permission, crm-mobile')
 	await page.locator('.agent-dock-agents-entry').click()
 	// Busy first, then waiting; every agent by its short name.
-	await expect(pane.locator('.agent-dock-td-name')).toHaveText([
+	await expect(pane.locator('.agent-dock-agent-name')).toHaveText([
 		'isdoc-export',
 		'repeated-android-camera-permission',
 		'company-create-save-firm #2',
