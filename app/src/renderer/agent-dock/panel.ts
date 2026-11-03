@@ -37,6 +37,8 @@ export interface PanelProps {
 	blockedNote: string | null
 	receipt: ReactNode
 	ack: ReactNode
+	/** The `⌘⌫ ack` key hint, or null where Ack is not offered; it goes before `esc close`. */
+	ackHint: ReactNode
 	warnings: ReactNode
 	keys: MutableRefObject<DetailKeys | null>
 	drafts: DockDrafts

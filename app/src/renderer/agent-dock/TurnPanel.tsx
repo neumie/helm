@@ -19,6 +19,7 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 		blockedNote,
 		receipt,
 		ack,
+		ackHint,
 		warnings,
 		keys,
 		drafts,
@@ -91,10 +92,14 @@ export function TurnPanel(panel: PanelProps & { session: DockSession | undefined
 			<Footer
 				hints={
 					!answerable ? (
-						closeHints
+						<>
+							{ackHint}
+							{closeHints}
+						</>
 					) : (
 						<>
 							<Hint keys={modHint(mod)}>send</Hint>
+							{ackHint}
 							<Hint keys="esc">close</Hint>
 						</>
 					)

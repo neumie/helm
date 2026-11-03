@@ -23,12 +23,13 @@ import type { AgentDockActResult, AgentDockSnapshot, DockAction, DockItem } from
 import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
 import { AgentsDetail } from './AgentsDetail'
-import { type DetailKeys, type DockModKey, dockShortcut } from './pane-keys'
+import { type DetailKeys, type DockModKey, dockShortcut, isAckKey, keepsEditKey } from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
 	actErrorText,
 	agentWho,
+	canAck,
 	canAnswer,
 	dockHealth,
 	dockLabel,
@@ -37,6 +38,7 @@ import {
 	itemKindLabel,
 	keepOrder,
 	nextLingerExpiry,
+	nextWaiting,
 	queueItems,
 	sourceBlockedNote,
 } from './presentation'
@@ -65,6 +67,8 @@ export interface AgentDockProps {
 	paneRoom?: () => number | null
 	/** After the pane opens or closes: the terminal row changed height once, refit it. */
 	onPaneChange?(open: boolean): void
+	/** Hand the keys back to the active terminal (after an answer, or once nothing else waits). */
+	focusTerminal?(): void
 	/** Review fixtures only: the pane to show on first render. */
 	initialOpen?: AgentDockTarget | null
 	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
@@ -90,6 +94,7 @@ export function AgentDock({
 	onAct,
 	paneRoom,
 	onPaneChange,
+	focusTerminal,
 	initialOpen = null,
 	initialSent,
 }: AgentDockProps) {
@@ -109,6 +114,8 @@ export function AgentDock({
 	const keepFocus = useRef(false)
 	/** Index to advance to after a local ack removes the open item. */
 	const advanceFrom = useRef<number | null>(null)
+	/** An item acked from the dock: when it leaves, the pane moves on to the next waiting item. */
+	const movingOn = useRef<number | null>(null)
 	const [pending, setPending] = useState<ReadonlySet<number>>(new Set())
 	const [refused, setRefused] = useState<ReadonlySet<number>>(new Set())
 	/** Acts awaiting main's answer (the button shows Sending… even before the snapshot does). */
@@ -134,9 +141,19 @@ export function AgentDock({
 	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
 	const needs = keepOrder(target ? order.current : null, queueItems(snapshot, clock), snapshot?.items ?? [])
 	order.current = target ? needs.map(item => item.id) : null
+	/** The entries as last rendered, for an answer that comes back later. */
+	const needsRef = useRef(needs)
+	needsRef.current = needs
 	const openKey = targetKey(target)
 	const openIndex = target?.type === 'item' ? needs.findIndex(item => item.id === target.id) : -1
-	const openItem = openIndex >= 0 ? needs[openIndex] : undefined
+	const liveItem = openIndex >= 0 ? needs[openIndex] : undefined
+	// An open item that just left (a local ack, or the snapshot dropped it) is still shown for the one
+	// commit before the layout effect below replaces or closes it, so the pane never unmounts in
+	// between: moving on is a step (same height, no terminal refit), never a close and reopen.
+	const shownItem = useRef<DockItem | undefined>(undefined)
+	const openItem =
+		liveItem ?? (target?.type === 'item' && shownItem.current?.id === target.id ? shownItem.current : undefined)
+	shownItem.current = openItem
 	const paneOpen = target?.type === 'agents' || openItem !== undefined
 	const paneShown = paneOpen && paneHeight !== null
 	const room = paneOpen ? (paneRoom?.() ?? null) : null
@@ -165,28 +182,57 @@ export function AgentDock({
 		const pane = paneRef.current
 		return !!pane && pane.contains(pane.ownerDocument.activeElement)
 	}
+	/** Keyboard focus is in the dock (row or pane). */
+	const focusInDock = () => {
+		const host = hostRef.current
+		return !!host && host.contains(host.ownerDocument.activeElement)
+	}
+	/** Focus is still where an act left it (the dock, or dropped to <body>): Jakub has not moved on elsewhere. */
+	const keysStayed = () => {
+		const host = hostRef.current
+		if (!host) return false
+		const active = host.ownerDocument.activeElement
+		return !active || active === host.ownerDocument.body || host.contains(active)
+	}
+
+	/** Shows another target in the pane (when open, at the same height: no refit); `focus` takes the keys like a keyboard open. */
+	const show = (next: AgentDockTarget, focus: boolean) => {
+		focusOnOpen.current = focus
+		keepFocus.current = focusInPane()
+		advanceFrom.current = null
+		setTarget(next)
+	}
 
 	const open = (next: AgentDockTarget, viaKeyboard: boolean) => {
-		const key = targetKey(next)
-		if (key === openKey) {
+		if (targetKey(next) === openKey) {
 			// Enter/Space on the open entry goes to its pane (confirming never deselects); a click closes it.
 			if (viaKeyboard) paneRef.current?.focus()
 			else close(false)
 			return
 		}
-		focusOnOpen.current = viaKeyboard
-		keepFocus.current = paneOpen && focusInPane()
-		advanceFrom.current = null
 		// Another entry while the pane is open swaps its content at the same height (no refit).
-		setTarget(next)
+		show(next, viaKeyboard)
 	}
 
 	const step = (delta: number) => {
 		const next = needs[openIndex + delta]
 		if (openIndex < 0 || !next) return
-		advanceFrom.current = null
-		keepFocus.current = focusInPane()
-		setTarget({ type: 'item', id: next.id })
+		show({ type: 'item', id: next.id }, false)
+	}
+
+	/**
+	 * Jakub acked or answered `handled` from the dock: open the next item that still waits on him,
+	 * keys in its pane (a step: the pane keeps its height); when nothing waits, the keys go back to
+	 * the terminal first and the pane closes (one refit). `at` is where `handled` sits (or sat) in `items`.
+	 */
+	const moveOn = (items: readonly DockItem[], handled: number, at: number) => {
+		const next = nextWaiting(items, handled, at)
+		if (next) {
+			show({ type: 'item', id: next.id }, true)
+			return
+		}
+		focusTerminal?.()
+		close(false)
 	}
 
 	// An entry that just got its answer lingers RECEIPT_LINGER_MS with "✓ answered"; re-render when it should go.
@@ -204,15 +250,25 @@ export function AgentDock({
 		for (const id of sent.keys()) if (!ids.has(id)) sent.delete(id)
 	}, [snapshot, sent])
 
-	// The open item went away (a local ack, or the snapshot no longer has it): after an ack show the next one, otherwise close.
-	useEffect(() => {
-		if (target?.type !== 'item' || openItem) return
+	// The open item went away (a local ack, or the snapshot no longer has it): after an ack from the dock
+	// move on to the next waiting item (or close back to the terminal); after a pointer ack show the next
+	// entry; otherwise close.
+	// Before paint, so the left item never shows a frame.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: moveOn and keysStayed read refs only
+	useLayoutEffect(() => {
+		if (target?.type !== 'item' || liveItem) return
 		const from = advanceFrom.current
+		const handled = movingOn.current
 		advanceFrom.current = null
+		movingOn.current = null
+		if (handled === target.id && from !== null && keysStayed()) {
+			moveOn(needs, handled, from)
+			return
+		}
 		const next = from === null ? undefined : (needs[Math.min(from, needs.length - 1)] ?? undefined)
 		if (next) setTarget({ type: 'item', id: next.id })
 		else close(false)
-	}, [target, openItem, needs, close])
+	}, [target, liveItem, needs, close])
 
 	// The pane's height is decided once, before the first paint: the opened item's natural
 	// height within [PANE_MIN_HEIGHT, PANE_MAX_HEIGHT]. Stepping and answering keep it (the body
@@ -264,6 +320,8 @@ export function AgentDock({
 
 	const ack = (itemId: number) => {
 		advanceFrom.current = needs.findIndex(item => item.id === itemId)
+		// Acked with the keys in the dock: once the item leaves, the pane moves on (see moveOn).
+		movingOn.current = focusInDock() ? itemId : null
 		keepFocus.current = focusInPane()
 		setPending(prev => new Set(prev).add(itemId))
 		void onAck(itemId)
@@ -271,6 +329,7 @@ export function AgentDock({
 			.then(acked => {
 				if (!acked) {
 					advanceFrom.current = null
+					movingOn.current = null
 					keepFocus.current = false
 				}
 				setPending(prev => {
@@ -297,6 +356,7 @@ export function AgentDock({
 			})
 		done(next => next.delete(item.id))
 		sent.set(item.id, action)
+		const fromDock = focusInDock()
 		// Sending disables the control that sent (choice, field, button); focus left on it would drop to
 		// <body>, out of the pane's keys. The pane itself keeps Esc and a retry's ⌘Enter.
 		const pane = paneRef.current
@@ -316,6 +376,19 @@ export function AgentDock({
 				// Refusals/failures main recorded on the item show from the snapshot; keep the words for the rest.
 				const error = actErrorText(result.outcome)
 				if (error !== null) done(next => next.set(item.id, error))
+				// A refusal or failure keeps the pane on the item for another try. An answer sent with the keys
+				// in the dock, pane still on it, moves on to the next waiting item (or back to the terminal);
+				// any other success hands the keys back to the terminal, unless Jakub already moved on elsewhere.
+				if (!result.ok || !keysStayed()) return
+				const shown = targetRef.current
+				if (fromDock && shown?.type === 'item' && shown.id === item.id) {
+					const items = needsRef.current
+					moveOn(
+						items,
+						item.id,
+						items.findIndex(entry => entry.id === item.id),
+					)
+				} else focusTerminal?.()
 			})
 	}
 
@@ -348,7 +421,15 @@ export function AgentDock({
 	// region keeps ↑ ↓ for scrolling, tabs and options keep their own arrows); paging keys
 	// scroll the body; Esc closes back to the entry.
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
-		// The shown body first: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field).
+		// ⌘⌫ acks where Ack is offered, from anywhere in the pane; a field with text in it keeps the key
+		// for editing (delete to line start). A held key acks nothing.
+		if (isAckKey(event, mod) && !keepsEditKey(event.target)) {
+			if (!openItem || !canAck(openItem)) return
+			event.preventDefault()
+			if (!event.repeat && !pending.has(openItem.id)) ack(openItem.id)
+			return
+		}
+		// The shown body: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field).
 		if (detailKeys.current?.(event)) {
 			event.preventDefault()
 			return
@@ -434,7 +515,7 @@ export function AgentDock({
 					session={findSession(snapshot, openItem.session)}
 					who={agentWho(snapshot, openItem.session)}
 					now={clock}
-					index={openIndex}
+					index={Math.max(0, openIndex)}
 					total={needs.length}
 					pending={pending.has(openItem.id)}
 					refused={refused.has(openItem.id)}

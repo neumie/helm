@@ -73,6 +73,7 @@ export function AskPanel({
 	blockedNote,
 	receipt,
 	ack,
+	ackHint,
 	warnings,
 	keys,
 	drafts,
@@ -348,7 +349,19 @@ export function AskPanel({
 					) : null}
 				</div>
 			</div>
-			<Footer hints={!answerable ? closeHints : pickHints(rows.length, mod)} note={note}>
+			<Footer
+				hints={
+					!answerable ? (
+						<>
+							{ackHint}
+							{closeHints}
+						</>
+					) : (
+						pickHints(rows.length, mod, ackHint)
+					)
+				}
+				note={note}
+			>
 				{ack}
 				<SubmitActions
 					decidable={decidable}

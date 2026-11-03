@@ -17,12 +17,13 @@ import type { DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { AskPanel } from './AskPanel'
 import { PermissionPanel, PlanPanel } from './DecisionPanels'
 import { TurnPanel } from './TurnPanel'
-import { ItemHeader, Key, Receipt, Warn } from './pane-chrome'
-import type { DetailKeys, DockModKey } from './pane-keys'
+import { Hint, ItemHeader, Key, Receipt, Warn } from './pane-chrome'
+import { type DetailKeys, type DockModKey, ackShortcut } from './pane-keys'
 import type { DockDrafts, PanelProps } from './panel'
 import {
 	type AgentWho,
 	askQuestions,
+	canAck,
 	planApproveModeText,
 	receiptView,
 	resolutionLabel,
@@ -76,10 +77,17 @@ export function ItemDetail({
 }) {
 	const orphaned = item.state === 'orphaned'
 	const resolved = item.state === 'resolved'
-	const ackable =
-		!resolved && (item.kind === 'turn' || orphaned || item.state === 'unconfirmed') && item.state !== 'sending'
+	const ackKey = ackShortcut(mod)
+	const ackable = canAck(item)
 	const ack = ackable ? (
-		<Key tone="quiet" busy={pending} onClick={onAck} ariaLabel={`Ack item ${item.id}`}>
+		<Key
+			tone="quiet"
+			busy={pending}
+			onClick={onAck}
+			ariaLabel={`Ack item ${item.id}`}
+			keyShortcuts={ackKey.aria}
+			title={`Ack (${ackKey.label})`}
+		>
 			Ack
 		</Key>
 	) : null
@@ -128,6 +136,7 @@ export function ItemDetail({
 		blockedNote: orphaned ? `Answer in the terminal (${sourceName} lost this dialog)` : canAct ? null : blockedNote,
 		receipt,
 		ack,
+		ackHint: ackable ? <Hint keys={ackKey.label}>ack</Hint> : null,
 		warnings,
 		keys,
 		drafts,

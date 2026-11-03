@@ -79,6 +79,7 @@ function DecisionPanel({
 		blockedNote,
 		receipt,
 		ack,
+		ackHint,
 		warnings,
 		keys,
 		drafts,
@@ -139,14 +140,18 @@ function DecisionPanel({
 	})
 	const note = receipt ?? blockedNote ?? choice?.ready ?? hint
 	const hints = !answerable ? (
-		closeHints
+		<>
+			{ackHint}
+			{closeHints}
+		</>
 	) : denying ? (
 		<>
 			<Hint keys={modHint(mod)}>{denyVerb}</Hint>
+			{ackHint}
 			<Hint keys="esc">close</Hint>
 		</>
 	) : (
-		pickHints(choices.length, mod)
+		pickHints(choices.length, mod, ackHint)
 	)
 	return (
 		<>

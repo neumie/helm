@@ -211,6 +211,7 @@ export function Key({
 	busy,
 	ariaLabel,
 	keyShortcuts,
+	title,
 	onClick,
 	children,
 }: {
@@ -219,6 +220,8 @@ export function Key({
 	busy?: boolean
 	ariaLabel?: string
 	keyShortcuts?: string
+	/** Tooltip, e.g. the key that does the same (`Ack (⌘⌫)`). */
+	title?: string
 	onClick(): void
 	children: string
 }) {
@@ -231,6 +234,7 @@ export function Key({
 			busy={busy}
 			ariaLabel={ariaLabel}
 			ariaKeyShortcuts={keyShortcuts}
+			title={title}
 			onClick={onClick}
 		>
 			{children}
@@ -300,12 +304,14 @@ export function Warn({ children }: { children: ReactNode }) {
 
 export const closeHints = <Hint keys="esc">close</Hint>
 
-export const pickHints = (count: number, mod: DockModKey) => (
+/** Hints read in the order the keys act: pick, submit (send), ack, close. */
+export const pickHints = (count: number, mod: DockModKey, ackHint: ReactNode = null) => (
 	<>
 		<Hint keys={count > 1 ? `1–${count}` : '1'} pick>
 			pick
 		</Hint>
 		<Hint keys={modHint(mod)}>submit</Hint>
+		{ackHint}
 		<Hint keys="esc">close</Hint>
 	</>
 )
