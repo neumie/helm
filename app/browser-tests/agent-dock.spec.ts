@@ -809,11 +809,14 @@ test('the dock is one --chrome surface, its edge the topbar border mirrored; no 
 	// Same surface and line as the topbar: the dock is the topbar, mirrored.
 	expect(await background(page, '#agent-dock')).toBe(await background(page, '#topbar'))
 	const topbarEdge = await page.locator('#topbar').evaluate(node => getComputedStyle(node).borderBottomColor)
-	const edge = await dock.evaluate(node => {
-		const style = getComputedStyle(node, '::before')
-		return { color: style.backgroundColor, height: style.height }
-	})
-	expect(edge).toEqual({ color: topbarEdge, height: '1px' })
+	// The items just arrived: their edge pulse ends first (agent-dock-arrival.spec.ts), then the edge is the line.
+	await expect(page.locator('#agent-dock [data-arrival]')).toHaveCount(0)
+	const edge = () =>
+		dock.evaluate(node => {
+			const style = getComputedStyle(node, '::before')
+			return { color: style.backgroundColor, height: style.height }
+		})
+	await expect.poll(edge).toEqual({ color: topbarEdge, height: '1px' })
 	// The pane and the queue row sit on that one surface (no fills of their own).
 	for (const part of ['.agent-dock-pane', '.agent-dock-row'])
 		expect(await background(page, part)).toBe('rgba(0, 0, 0, 0)')

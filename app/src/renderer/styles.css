@@ -1674,6 +1674,76 @@ body.dragging {
 	color: var(--text-1);
 }
 
+/* Arrival flash ("edge pulse"): an entry that just arrived (the arrivals the live region announces:
+ * never on first load or reload, never for a re-render) carries data-arrival = its kind for
+ * ARRIVAL_FLASH_MS. The dock's 1px terminal-side edge takes the full color of the most urgent arrival
+ * (question > permission > plan > turn: --warn for an ask, --accent for a turn) and the arriving
+ * cell a 10% tint of its own kind; both hold for ~170ms, then ease back over the rest of 1.4s. Color
+ * only: no weight, box or ring; nothing moves or resizes and focus stays put. Arriving behind
+ * "+N more", that cell takes the tint. The pulse beats the ⌘⇧J focus edge while it runs (an
+ * animation outranks the cascade) and eases back into whatever the edge is now: --accent while the
+ * dock holds the keys, --hairline otherwise. Reduced motion: no animation (the animations live under
+ * no-preference); the same colors hold, static, while the attribute is set. */
+.agent-dock-row [data-arrival] {
+	--arrival-color: var(--warn);
+}
+
+.agent-dock-row [data-arrival="turn"] {
+	--arrival-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.agent-dock-row [data-arrival] {
+		animation: agent-dock-arrival-fill 1.4s ease-out 1;
+	}
+
+	/* The edge takes the most urgent arrival: the ask rule comes last, so it wins over a turn. */
+	.agent-dock:has(.agent-dock-row [data-arrival="turn"])::before {
+		animation: agent-dock-arrival-edge-accent 1.4s ease-out 1;
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before {
+		animation: agent-dock-arrival-edge-warn 1.4s ease-out 1;
+	}
+}
+
+/* Each holds the kind color for its first ~170ms, then eases back to the element's own value. */
+@keyframes agent-dock-arrival-fill {
+	0%,
+	12% {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-warn {
+	0%,
+	12% {
+		background-color: var(--warn);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-accent {
+	0%,
+	12% {
+		background-color: var(--accent);
+	}
+}
+
+/* Static, so these outrank .agent-dock:focus-within::before by specificity. */
+@media (prefers-reduced-motion: reduce) {
+	.agent-dock-row [data-arrival] {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival="turn"])::before {
+		background-color: var(--accent);
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before {
+		background-color: var(--warn);
+	}
+}
+
 .agent-dock-entry-receipt[data-tone="neutral"],
 .agent-dock-receipt[data-tone="neutral"] {
 	color: var(--text-1);
