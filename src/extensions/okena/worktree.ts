@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import type { SolverWorkspace } from '../../solver/workspace.js'
-import { phaseError } from '../../util/errors.js'
+import { errorPhase, phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { sameFilesystemPath } from '../../util/path-identity.js'
 import {
@@ -171,6 +171,10 @@ export async function createOkenaWorktreeForBranch(
 	options: { waitTimeoutMs?: number } = {},
 ): Promise<CreateWorktreeResponse> {
 	const waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WORKTREE_READY_TIMEOUT_MS
+	const createBranch = !(await branchExists())
+	// One budget for the whole create, including the opposite-mode retry: a
+	// slow failure must not restart the clock and double the bounded wait.
+	const waitSignal = AbortSignal.timeout(waitTimeoutMs)
 	let waitSupported = true
 	const create = async (createBranch: boolean): Promise<CreateWorktreeResponse> => {
 		const payload = {
@@ -181,10 +185,7 @@ export async function createOkenaWorktreeForBranch(
 		}
 		if (waitSupported) {
 			try {
-				return await client.action<CreateWorktreeResponse>(
-					{ ...payload, wait: true },
-					{ signal: AbortSignal.timeout(waitTimeoutMs) },
-				)
+				return await client.action<CreateWorktreeResponse>({ ...payload, wait: true }, { signal: waitSignal })
 			} catch (err) {
 				if (!rejectsWaitFlag(err)) throw err
 				waitSupported = false
@@ -192,18 +193,17 @@ export async function createOkenaWorktreeForBranch(
 		}
 		return client.action<CreateWorktreeResponse>(payload)
 	}
+	// A timed-out wait may still finish in Okena; creating again would race it.
+	const notReady = () =>
+		phaseError(
+			'worktree',
+			`Okena worktree for ${branchName} was not ready after ${Math.round(waitTimeoutMs / 1000)}s. Wait for it to appear in Okena, then press Start again.`,
+		)
 
-	const createBranch = !(await branchExists())
 	try {
 		return await create(createBranch)
 	} catch (firstErr) {
-		// A timed-out wait may still finish in Okena; creating again would race it.
-		if (isTimeout(firstErr)) {
-			throw phaseError(
-				'worktree',
-				`Okena worktree for ${branchName} was not ready after ${Math.round(waitTimeoutMs / 1000)}s. Wait for it to appear in Okena, then press Start again.`,
-			)
-		}
+		if (isTimeout(firstErr)) throw notReady()
 		log.warn(
 			'okena',
 			`create_branch=${createBranch} failed: ${firstErr instanceof Error ? firstErr.message : firstErr}`,
@@ -211,7 +211,12 @@ export async function createOkenaWorktreeForBranch(
 		// The branch can appear/disappear between the preflight and Okena's git
 		// call. Retry the opposite mode for that race, but avoid an expected first
 		// failure in the normal "branch already exists" path.
-		return create(!createBranch)
+		try {
+			return await create(!createBranch)
+		} catch (retryErr) {
+			if (isTimeout(retryErr)) throw notReady()
+			throw retryErr
+		}
 	}
 }
 
@@ -362,6 +367,8 @@ export class OkenaWorktreeManager {
 				{ waitTimeoutMs: this.readyTimeoutMs() },
 			)
 		} catch (err) {
+			// Already a user-facing worktree-phase message (e.g. the bounded wait).
+			if (errorPhase(err) === 'worktree') throw err
 			throw phaseError('worktree', `Okena worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
 

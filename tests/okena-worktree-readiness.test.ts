@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { configSchema } from '../src/config.js'
-import type { OkenaClient, OkenaLayoutNode, OkenaState } from '../src/extensions/okena/client.js'
+import {
+	OkenaClient,
+	type OkenaLayoutNode,
+	type OkenaState,
+	waitForShellOutput,
+} from '../src/extensions/okena/client.js'
 import { OkenaSolver } from '../src/extensions/okena/solver.js'
-import { OkenaWorktreeManager } from '../src/extensions/okena/worktree.js'
+import { OkenaWorktreeManager, createOkenaWorktreeForBranch } from '../src/extensions/okena/worktree.js'
 import { PlanWorkspace } from '../src/plan/workspace.js'
 import { errorPhase } from '../src/util/errors.js'
 
@@ -301,6 +306,126 @@ test('OkenaSolver launches the agent exactly once in the new worktree terminal o
 			false,
 			'the worktree terminal Okena spawned is used; no second pane is created',
 		)
+	} finally {
+		cleanup(repoPath)
+	}
+})
+
+test('a create_worktree wait that times out on the opposite-mode retry still fails with the bounded message', async () => {
+	const calls: Array<{ createBranch: unknown; startedAt: number }> = []
+	const startedAt = Date.now()
+	const client = {
+		action: async (payload: Record<string, unknown>, opts: { signal?: AbortSignal } = {}) => {
+			calls.push({ createBranch: payload.create_branch, startedAt: Date.now() - startedAt })
+			if (calls.length === 1) {
+				// Branch appeared between the preflight and Okena's git call.
+				await new Promise(resolve => setTimeout(resolve, 30))
+				throw new Error('Okena action failed (400): {"error":"fatal: a branch named \'feat/race\' already exists"}')
+			}
+			// The retry's checkout never finishes inside the budget.
+			return new Promise((_, reject) => {
+				const signal = opts.signal
+				if (!signal) return reject(new Error('wait request sent without a timeout signal'))
+				signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+			})
+		},
+	} as unknown as OkenaClient
+	await assert.rejects(
+		createOkenaWorktreeForBranch(client, 'parent-project', 'feat/race', async () => false, { waitTimeoutMs: 80 }),
+		err => {
+			assert(err instanceof Error)
+			assert.equal(errorPhase(err), 'worktree')
+			assert.notEqual(err.name, 'AbortError', 'a timeout must not be classified as a user cancellation')
+			assert.match(err.message, /feat\/race was not ready after/)
+			return true
+		},
+	)
+	assert.deepEqual(
+		calls.map(call => call.createBranch),
+		[true, false],
+	)
+	assert.ok(Date.now() - startedAt < 160, 'the retry shares the first attempt budget instead of restarting it')
+})
+
+test('a fresh terminal waits for the shell to draw its prompt before ctrl_c and the agent command', async () => {
+	const screens = ['', '', 'jakub@mac feat-x %']
+	const sent: string[] = []
+	const client = new OkenaClient('/nonexistent/okena-config')
+	;(client as unknown as { action: (payload: Record<string, unknown>) => Promise<unknown> }).action = async payload => {
+		sent.push(payload.action as string)
+		if (payload.action === 'read_content') return { content: screens.shift() ?? 'jakub@mac feat-x %' }
+		return {}
+	}
+	await client.runCommand('wt-terminal', 'claude', { freshTerminal: true })
+	assert.deepEqual(sent, ['read_content', 'read_content', 'read_content', 'send_special_key', 'run_command'])
+})
+
+test('shell readiness wait is bounded and tolerates unreadable terminals', async () => {
+	let clock = 0
+	let reads = 0
+	const ready = await waitForShellOutput(
+		{
+			action: async () => {
+				reads++
+				if (reads % 2) throw new Error('terminal not found')
+				return { content: '   \n  ' }
+			},
+		} as unknown as Pick<OkenaClient, 'action'>,
+		'wt-terminal',
+		{
+			timeoutMs: 2_000,
+			pollMs: 250,
+			now: () => clock,
+			sleep: async ms => {
+				clock += ms
+			},
+		},
+	)
+	assert.equal(ready, false)
+	assert.ok(clock >= 2_000 && clock <= 2_250, `bounded wait, waited ${clock}ms`)
+
+	const aborted = new AbortController()
+	aborted.abort()
+	await assert.rejects(
+		waitForShellOutput({ action: async () => ({ content: '' }) } as unknown as Pick<OkenaClient, 'action'>, 't', {
+			signal: aborted.signal,
+		}),
+		/cancel/i,
+	)
+})
+
+test('Start surfaces a create_worktree wait timeout as the bounded worktree message, not a wrapped abort', async () => {
+	const repoPath = initRepo('helm-okena-wait-timeout-')
+	const creates: Record<string, unknown>[] = []
+	const client = {
+		getState: async (): Promise<OkenaState> => ({
+			projects: [{ id: 'parent-project', name: 'Repo', path: repoPath, layout: null }],
+		}),
+		action: async (payload: Record<string, unknown>, opts: { signal?: AbortSignal } = {}) => {
+			if (payload.action !== 'create_worktree') return {}
+			creates.push(payload)
+			return new Promise((_, reject) => {
+				if (opts.signal?.aborted) return reject(opts.signal.reason)
+				opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true })
+			})
+		},
+	} as unknown as OkenaClient
+	try {
+		await assert.rejects(
+			new OkenaWorktreeManager(client, { readyTimeoutMs: 60 }).ensureWorktreeProject(
+				repoPath,
+				'main',
+				'feat/slow-checkout',
+				undefined,
+			),
+			err => {
+				assert(err instanceof Error)
+				assert.equal(errorPhase(err), 'worktree')
+				assert.match(err.message, /^Okena worktree for feat\/slow-checkout was not ready after 0s\./)
+				return true
+			},
+		)
+		assert.equal(creates.length, 1, 'a timed-out wait never re-sends create')
 	} finally {
 		cleanup(repoPath)
 	}
