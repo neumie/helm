@@ -234,6 +234,7 @@ test('Okena worktree creation reuses an existing branch without a noisy create a
 			project_id: 'parent-project',
 			branch: 'feat/existing',
 			create_branch: false,
+			wait: true,
 		},
 	])
 })

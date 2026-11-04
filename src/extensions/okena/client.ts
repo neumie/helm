@@ -190,11 +190,12 @@ export class OkenaClient {
 		return send(fresh)
 	}
 
-	async action<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+	async action<T = unknown>(payload: Record<string, unknown>, opts: { signal?: AbortSignal } = {}): Promise<T> {
 		const res = await this.authorizedFetch('/v1/actions', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
+			...(opts.signal ? { signal: opts.signal } : {}),
 		})
 
 		if (!res.ok) {
@@ -223,6 +224,11 @@ export class OkenaClient {
 		const signal = opts?.signal
 		if (signal?.aborted) throw taskCancelled()
 		if (opts?.freshTerminal) {
+			// A just-spawned shell may still be sourcing its rc files (seconds under
+			// load, e.g. while Okena's on_worktree_create hook runs). ctrl_c then
+			// aborts the rc mid-way — PATH entries such as ~/.local/bin go missing and
+			// the agent command is "not found". Wait for the first prompt to draw.
+			await waitForShellOutput(this, terminalId, { signal })
 			await delay(FRESH_TERMINAL_SETTLE_MS, undefined, { signal })
 			if (signal?.aborted) throw taskCancelled()
 			try {
@@ -413,6 +419,8 @@ export interface OkenaState {
 		terminal_names?: Record<string, string>
 		git_status?: { branch?: string | null } | null
 		worktree_info?: { parent_project_id: string } | null
+		/** Optimistic `create_worktree` still checking out; no PTY is spawned yet. */
+		is_creating?: boolean
 	}>
 }
 
@@ -475,6 +483,43 @@ function requestEndpoint(
 		if (init.body) req.write(init.body)
 		req.end()
 	})
+}
+
+const SHELL_OUTPUT_TIMEOUT_MS = 20_000
+const SHELL_OUTPUT_POLL_MS = 250
+
+/**
+ * Best-effort readiness for a fresh Okena terminal: poll `read_content` until the
+ * screen shows anything (the shell drew its prompt, so rc sourcing finished).
+ * Okena has no shell-readiness API and a blank screen reads as "". Bounded: on
+ * timeout (or a terminal Okena cannot read) the caller proceeds as before.
+ * Returns whether output was seen.
+ */
+export async function waitForShellOutput(
+	client: Pick<OkenaClient, 'action'>,
+	terminalId: string,
+	opts: {
+		signal?: AbortSignal
+		timeoutMs?: number
+		pollMs?: number
+		sleep?: (ms: number, signal?: AbortSignal) => Promise<unknown>
+		now?: () => number
+	} = {},
+): Promise<boolean> {
+	const now = opts.now ?? Date.now
+	const sleep = opts.sleep ?? ((ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }))
+	const deadline = now() + (opts.timeoutMs ?? SHELL_OUTPUT_TIMEOUT_MS)
+	for (;;) {
+		if (opts.signal?.aborted) throw taskCancelled()
+		try {
+			const res = await client.action<{ content?: string }>({ action: 'read_content', terminal_id: terminalId })
+			if ((res?.content ?? '').trim() !== '') return true
+		} catch {
+			// Not registered yet, or unreadable: keep polling until the bound.
+		}
+		if (now() >= deadline) return false
+		await sleep(opts.pollMs ?? SHELL_OUTPUT_POLL_MS, opts.signal)
+	}
 }
 
 // How long to let a freshly-created/auto okena terminal settle before typing the
