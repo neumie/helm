@@ -163,6 +163,7 @@ export function AgentsDetail({
 				</div>
 			</ScrollBody>
 			<Footer
+				scrollHint={false}
 				hints={
 					<>
 						<Hint keys="↑↓">move</Hint>

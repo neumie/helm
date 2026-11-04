@@ -4,7 +4,7 @@
 import { type KeyboardEvent, type ReactNode, type Ref, type RefObject, useLayoutEffect, useRef, useState } from 'react'
 import type { DockItem } from '../../agent-dock/model'
 import { Btn, type ButtonTone } from '../button'
-import { type DockModKey, modHint, modShortcut, noModifiers } from './pane-keys'
+import { type DockModKey, choiceStop, modHint, modShortcut, noModifiers, overflows } from './pane-keys'
 import {
 	type AgentWho,
 	type ReceiptView,
@@ -207,14 +207,50 @@ export function Hint({ keys, pick, children }: { keys: string; pick?: boolean; c
 }
 
 /**
+ * While the pane's body overflows, the keys that scroll it: `↑↓` where ↑ ↓ do (no live choices), else
+ * `⇞⇟` (the Page keys; ↑ ↓ go to the choices); null while it fits or `on` is false.
+ */
+function useScrollHint(ref: RefObject<HTMLElement | null>, on: boolean): string | null {
+	const [hint, setHint] = useState<string | null>(null)
+	useLayoutEffect(() => {
+		const pane = on ? ref.current?.closest<HTMLElement>('.agent-dock-pane') : null
+		const body = pane?.querySelector<HTMLElement>('.agent-dock-pane-scroll')
+		if (!pane || !body) {
+			setHint(null)
+			return
+		}
+		const update = () => setHint(!overflows(body) ? null : choiceStop(pane) ? '⇞⇟' : '↑↓')
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(body)
+		for (const child of body.children) observer.observe(child)
+		return () => observer.disconnect()
+	})
+	return hint
+}
+
+/**
  * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule of its own: the
  * pane's one hairline toward the queue closes it. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
- * and show only while the pane holds focus, since only then do the keys reach it.
+ * and show only while the pane holds focus, since only then do the keys reach it. A quiet scroll hint
+ * leads them while the body overflows (`scrollHint`; the Agents list roves instead).
  */
-export function Footer({ hints, note, children }: { hints: ReactNode; note: ReactNode; children?: ReactNode }) {
+export function Footer({
+	hints,
+	note,
+	scrollHint = true,
+	children,
+}: { hints: ReactNode; note: ReactNode; scrollHint?: boolean; children?: ReactNode }) {
+	const ref = useRef<HTMLElement>(null)
+	const scroll = useScrollHint(ref, scrollHint)
 	return (
-		<footer className="agent-dock-foot">
+		<footer ref={ref} className="agent-dock-foot">
 			<span className="agent-dock-foot-hints" aria-hidden="true">
+				{scroll ? (
+					<span className="agent-dock-hint" data-scroll="">
+						<kbd>{scroll}</kbd> scroll
+					</span>
+				) : null}
 				{hints}
 			</span>
 			<span className="agent-dock-foot-note">{note}</span>

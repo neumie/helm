@@ -2634,9 +2634,11 @@ body.dragging {
 	letter-spacing: 0.04em;
 }
 
-/* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid. */
+/* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid.
+ * A field with text keeps ↑ ↓ and the Page keys for editing, so the scroll hint steps back too. */
 .agent-dock-pane:not(:focus-within) .agent-dock-foot-hints,
-.agent-dock-pane:has(.agent-dock-input:focus) .agent-dock-hint[data-pick] {
+.agent-dock-pane:has(.agent-dock-input:focus) .agent-dock-hint[data-pick],
+.agent-dock-pane:has(.agent-dock-input:focus:not(:placeholder-shown)) .agent-dock-hint[data-scroll] {
 	visibility: hidden;
 }
 

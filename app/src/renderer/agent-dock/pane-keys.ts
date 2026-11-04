@@ -112,3 +112,64 @@ export const modHint = (mod: DockModKey): string => (mod === 'cmd' ? '⌘↵' : 
 /** The Ack key: as the hints show it and as aria-keyshortcuts names it. */
 export const ackShortcut = (mod: DockModKey): { label: string; aria: string } =>
 	mod === 'cmd' ? { label: '⌘⌫', aria: 'Meta+Backspace' } : { label: 'Ctrl+Backspace', aria: 'Control+Backspace' }
+
+/**
+ * The shown body's choice stop — the row a roving list would focus (last focused, else picked, else
+ * the first) — while its choices are live; null for bodies without them (turns, receipts).
+ */
+export const choiceStop = (pane: HTMLElement): HTMLButtonElement | null =>
+	pane.querySelector<HTMLButtonElement>('.agent-dock-choice[tabindex="0"]:not(:disabled)')
+
+/** The pane body clips its content, so there is something to scroll. */
+export const overflows = (body: HTMLElement): boolean => body.scrollHeight > body.clientHeight + 1
+
+/** What a key asks of the pane's scroll body. */
+export type BodyScroll = 'line-up' | 'line-down' | 'page-up' | 'page-down' | 'top' | 'bottom'
+
+const emptyField = (field: Element): boolean =>
+	field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement
+		? field.value === ''
+		: (field.textContent ?? '') === ''
+
+/**
+ * The scroll a key asks of the pane's body from where it was pressed, or null when the key keeps its
+ * own meaning. `scrolls`: the body overflows; `choices`: it has live choices (↑ ↓ go to them instead).
+ * - The pane, its body, a message link, ‹ ›, esc and the footer keys: Page keys and Space / Shift+Space
+ *   page, Home / End jump, ↑ ↓ scroll a line step (only while the body overflows with no live choices,
+ *   else they step items as before). A button keeps Space (and everything) while the body fits; Enter
+ *   always presses it.
+ * - A choice or question tab keeps its arrows, Home / End and Space; Page keys page from it.
+ * - A text field keeps its keys while it has text; an empty one (nothing to edit) gives Page keys and,
+ *   with no live choices, ↑ ↓ to the body. Space types.
+ */
+export function bodyScrollKey(
+	event: KeyboardEvent<HTMLElement>,
+	{ scrolls, choices }: { scrolls: boolean; choices: boolean },
+): BodyScroll | null {
+	if (!noModifiers(event) || event.nativeEvent.isComposing) return null
+	const { key, shiftKey: shift } = event
+	const page: BodyScroll | null = key === 'PageDown' ? 'page-down' : key === 'PageUp' ? 'page-up' : null
+	const line: BodyScroll | null =
+		scrolls && !choices ? (key === 'ArrowDown' ? 'line-down' : key === 'ArrowUp' ? 'line-up' : null) : null
+	const target = event.target instanceof Element ? event.target : null
+	if (!target) return null
+	const field = target.closest('input, textarea, [contenteditable="true"]')
+	if (field) return shift || !emptyField(field) ? null : (page ?? line)
+	if (target.closest('.agent-dock-choice, [role="tab"]')) return shift ? null : page
+	if (target.closest('button') && !scrolls) return null
+	if (key === ' ') return shift ? 'page-up' : 'page-down'
+	if (shift) return null
+	return page ?? (key === 'Home' ? 'top' : key === 'End' ? 'bottom' : line)
+}
+
+/** Scrolls the body (instantly, focus untouched): a line step is three lines, a page its height less 32px. */
+export function scrollBody(body: HTMLElement, how: BodyScroll): void {
+	const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight)
+	const line = Math.round(3 * (Number.isFinite(lineHeight) ? lineHeight : 18))
+	const page = Math.max(16, body.clientHeight - 32)
+	if (how === 'top') body.scrollTop = 0
+	else if (how === 'bottom') body.scrollTop = body.scrollHeight
+	else if (how === 'line-up') body.scrollTop -= line
+	else if (how === 'line-down') body.scrollTop += line
+	else body.scrollTop += how === 'page-up' ? -page : page
+}
