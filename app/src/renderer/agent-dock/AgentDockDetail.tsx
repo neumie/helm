@@ -16,7 +16,7 @@ import type { MutableRefObject, ReactNode } from 'react'
 import type { DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { AskPanel } from './AskPanel'
 import { PermissionPanel, PlanPanel } from './DecisionPanels'
-import { RevealButton, RevealHint, type RevealView, RevealWhere } from './RevealTerminal'
+import { type RevealView, RevealWhere } from './RevealTerminal'
 import { TurnPanel } from './TurnPanel'
 import { Hint, ItemHeader, Key, Receipt, Warn } from './pane-chrome'
 import { type DetailKeys, type DockModKey, ackShortcut } from './pane-keys'
@@ -73,7 +73,7 @@ export function ItemDetail({
 	keys: MutableRefObject<DetailKeys | null>
 	drafts: DockDrafts
 	mod: DockModKey
-	/** "Show terminal" for the item's agent (its look per `affordance`), or null when nothing can be shown. */
+	/** "Show terminal" for the item's agent (the header's where link), or null when nothing can be shown. */
 	reveal: RevealView | null
 	/** A reveal that failed (or could not raise Okena): a quiet line in the footer, ahead of the receipt. */
 	revealNote: string | null
@@ -144,21 +144,8 @@ export function ItemDetail({
 		mod,
 		blockedNote: orphaned ? `Answer in the terminal (${sourceName} lost this dialog)` : canAct ? null : blockedNote,
 		receipt,
-		// The footer's quiet keys left of the submit: Show terminal (variant `button`), then Ack.
-		ack:
-			reveal || ack ? (
-				<>
-					<RevealButton view={reveal} />
-					{ack}
-				</>
-			) : null,
-		ackHint:
-			reveal || ackable ? (
-				<>
-					{ackable ? <Hint keys={ackKey.label}>ack</Hint> : null}
-					<RevealHint view={reveal} />
-				</>
-			) : null,
+		ack,
+		ackHint: ackable ? <Hint keys={ackKey.label}>ack</Hint> : null,
 		warnings,
 		keys,
 		drafts,

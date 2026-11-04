@@ -11,7 +11,7 @@ import type {
 } from '../agent-dock/model'
 import type { DockRevealTarget } from '../agent-dock/reveal'
 import type { AgentDockApi } from '../shared'
-import { AgentDock, type AgentDockHandle, type RevealAffordance } from './agent-dock/AgentDock'
+import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
 import {
 	type AgentDockPosition,
@@ -130,7 +130,6 @@ export function mountAgentDock({
 	platform,
 	focusTerminal: focusTerminalOverride,
 	revealTerminal,
-	revealAffordance,
 	now = Date.now,
 	initialSent,
 }: {
@@ -146,8 +145,6 @@ export function mountAgentDock({
 	 * (MountedTerminalWorkspace.revealTerminal). Absent: Helm-terminal agents offer no reveal.
 	 */
 	revealTerminal?: (sessionId: string) => boolean
-	/** Review fixtures only: which reveal affordance the panes show (production: the footer button). */
-	revealAffordance?: RevealAffordance
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
@@ -248,7 +245,6 @@ export function mountAgentDock({
 			initialSent,
 			onReveal,
 			canReveal: (target: DockRevealTarget) => target.kind === 'okena' || revealTerminal !== undefined,
-			...(revealAffordance ? { revealAffordance } : {}),
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))

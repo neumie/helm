@@ -15,7 +15,6 @@ import type {
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
 import { agentDockAgentsLayout, agentDockPaneHeight, agentDockPosition, mountAgentDock } from './agent-dock-layout'
-import type { RevealAffordance } from './agent-dock/RevealTerminal'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
@@ -84,8 +83,6 @@ export interface TerminalWorkspaceFixtureOptions {
 		paneHeight?: number
 		/** Story only, with `open`: pins the pane edge's hover or drag look (the pointer cannot be pinned). */
 		resizeLook?: 'hover' | 'drag'
-		/** Story only: the "Show terminal" affordance's look (production: the footer button). */
-		revealAffordance?: RevealAffordance
 		/** Story only: what "Show in Okena" answers (default: focused and raised). */
 		revealMode?: AgentDockRevealMode
 		/** Story only, with `open`: then the pane takes the keys (its key hints show), as after ⌘⇧J. */
@@ -655,7 +652,6 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
 					revealTerminal: sessionId => workspace.revealTerminal(sessionId),
-					...(options.agentDock?.revealAffordance ? { revealAffordance: options.agentDock.revealAffordance } : {}),
 				})
 			})
 		}

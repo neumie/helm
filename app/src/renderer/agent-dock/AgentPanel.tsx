@@ -12,7 +12,7 @@ import type {
 	AgentDockSnapshot,
 	DockSession,
 } from '../../agent-dock/model'
-import { RevealButton, RevealHint, type RevealView, RevealWhere } from './RevealTerminal'
+import { type RevealView, RevealWhere } from './RevealTerminal'
 import { CloseKey, Footer, Header, Hint, Key, PromptField, Receipt, ScrollBody, Stepper } from './pane-chrome'
 import { type DetailKeys, type DockModKey, isPrintable, modHint, modShortcut, submitKeys, useKeys } from './pane-keys'
 import { type DockDrafts, useDraft } from './panel'
@@ -61,7 +61,7 @@ export function AgentPanel({
 	readMessage?: (session: string) => Promise<AgentDockMessageResult>
 	/** This build can reply from the dock at all. */
 	canPrompt: boolean
-	/** "Show terminal" for this agent (its look per `affordance`), or null when nothing can be shown. */
+	/** "Show terminal" for this agent (its where line leads with the link), or null when nothing can be shown. */
 	reveal: RevealView | null
 	/** A reveal that failed (or could not raise Okena): a quiet line in the footer, ahead of the receipt. */
 	revealNote: string | null
@@ -175,9 +175,9 @@ export function AgentPanel({
 					{row.word}
 					{row.age ? ` ${row.age}` : ''}
 				</span>
-				{/* Where it runs stays at any width (item panes drop their project context below 640px). Reveal
-				    variant `where`: its source leads as the link to the agent's terminal. */}
-				{reveal?.affordance === 'where' ? (
+				{/* Where it runs stays at any width (item panes drop their project context below 640px). With a
+				    terminal to show, its source leads as the link to it. */}
+				{reveal ? (
 					<span className="agent-dock-title-project agent-dock-title-where">
 						<RevealWhere view={reveal} withName={false} />
 						{row.where.length > 1 ? ` · ${row.where.slice(1).join(' · ')}` : ''}
@@ -228,13 +228,11 @@ export function AgentPanel({
 						) : replyable ? (
 							<Hint keys={modHint(mod)}>send</Hint>
 						) : null}
-						<RevealHint view={reveal} />
 						<Hint keys="esc">back</Hint>
 					</>
 				}
 				note={note}
 			>
-				<RevealButton view={reveal} />
 				{row.itemId !== undefined ? (
 					<Key tone="primary" onClick={openItem}>
 						{openLabel}

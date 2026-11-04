@@ -118,15 +118,13 @@ test('a long turn opened with Enter scrolls by keys from the pane: ↑ ↓ lines
 	expect(await pane.boundingBox()).toEqual(placed)
 	expect(await xtermRows(page)).toBe(rows)
 	// The footer says so, quietly, while the body overflows.
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(
-		/^↑↓ scroll\s*⌘↵ send\s*⌘⌫ ack\s*⌘O terminal\s*esc close$/,
-	)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^↑↓ scroll\s*⌘↵ send\s*⌘⌫ ack\s*esc close$/)
 	// ← → still step items.
 	await page.keyboard.press('ArrowLeft')
 	await expect(pane.locator('.agent-dock-step-count')).toContainText('1/2')
 	await expect(pane).toBeFocused()
 	// The short turn fits: no scroll hint, and ↓ ↑ step items as before.
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*⌘O terminal\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*esc close$/)
 	await page.keyboard.press('ArrowDown')
 	await expect(pane.locator('.agent-dock-step-count')).toContainText('2/2')
 })
@@ -298,7 +296,7 @@ test('a turn a few px past the locked pane height, every line in view, still ste
 	// The case under test: the body scrolls by a few px, yet every line is in view.
 	expect(clip.clipped).toBeGreaterThan(1)
 	expect(clip.inView).toBe(true)
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*⌘O terminal\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*esc close$/)
 	await page.keyboard.press('ArrowUp')
 	await expect(pane.locator('.agent-dock-step-count')).toContainText('4/5')
 	await expect(pane).toBeFocused()

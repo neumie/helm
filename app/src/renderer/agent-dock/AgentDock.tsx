@@ -36,7 +36,7 @@ import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
 import { AgentPanel, agentDraftKey } from './AgentPanel'
 import { AgentsDetail } from './AgentsDetail'
-import type { RevealAffordance, RevealView } from './RevealTerminal'
+import type { RevealView } from './RevealTerminal'
 import {
 	type DetailKeys,
 	type DockModKey,
@@ -77,7 +77,7 @@ import {
 } from './presentation'
 import { useArrivalAnnouncement } from './use-arrival-announcement'
 
-export type { AgentDockTarget, RevealAffordance }
+export type { AgentDockTarget }
 
 /** What the layout may ask of a mounted dock (⌘⇧J pressed inside it). */
 export interface AgentDockHandle {
@@ -124,14 +124,12 @@ export interface AgentDockProps {
 	/** Hand the keys back to the active terminal (after an answer, or once nothing else waits). */
 	focusTerminal?(): void
 	/**
-	 * "Show terminal" (⌘O, or the affordance): bring up the terminal the shown agent runs in — an Okena
-	 * pane (main focuses it and raises Okena) or a Helm terminal (its tab, pulsed). Absent: no affordance.
+	 * "Show terminal" (⌘O, or the header's where link): bring up the terminal the shown agent runs in — an
+	 * Okena pane (main focuses it and raises Okena) or a Helm terminal (its tab, pulsed). Absent: no link.
 	 */
 	onReveal?(target: DockRevealTarget): Promise<AgentDockRevealResult>
 	/** Whether this mount can show a target (a Helm terminal needs the workspace); default: every one. */
 	canReveal?(target: DockRevealTarget): boolean
-	/** Review fixtures only: the reveal affordance's look (Jakub's pick pending; production: `button`). */
-	revealAffordance?: RevealAffordance
 	/** Review fixtures only: the pane to show on first render. */
 	initialOpen?: AgentDockTarget | null
 	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
@@ -218,7 +216,6 @@ export function AgentDock({
 	focusTerminal,
 	onReveal,
 	canReveal,
-	revealAffordance = 'button',
 	initialOpen = null,
 	initialSent,
 }: AgentDockProps) {
@@ -941,7 +938,6 @@ export function AgentDock({
 		revealTarget && shownSession
 			? {
 					target: revealTarget,
-					affordance: revealAffordance,
 					mod,
 					busy: revealing === revealTarget.session,
 					name: agentWho(snapshot, shownSession.key).name,

@@ -115,7 +115,7 @@ export function ItemHeader({
 	now: number
 	index: number
 	total: number
-	/** After the context: where the agent runs, as a link to its terminal (reveal variant `where`). */
+	/** After the context: where the agent runs, as a link to its terminal ("Show terminal", ⌘O). */
 	where?: ReactNode
 	onStep(delta: number): void
 	onClose(): void

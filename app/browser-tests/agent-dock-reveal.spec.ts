@@ -7,8 +7,8 @@ declare global {
 	}
 }
 
-// "Show terminal" (design §3.24): from an item's pane or an agent's detail, ⌘O or the footer key
-// brings up the agent's terminal. Okena agents go through main (agent-dock:reveal, here the fixture
+// "Show terminal" (design §3.24): from an item's pane or an agent's detail, ⌘O or the header's where
+// link (`Okena ↗ name`) brings up the agent's terminal. Okena agents go through main (agent-dock:reveal, here the fixture
 // api); a Helm terminal's agent switches this window to its tab, focused, its frame pulsed. The pane
 // stays open; a failure is a quiet footer line, never a dialog.
 
@@ -35,28 +35,38 @@ const reveals = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixtur
 const setRevealMode = (page: Page, mode: 'shown' | 'not-raised' | 'gone' | 'unreachable') =>
 	page.evaluate(next => window.__helmWorkspaceFixture?.agentDock?.setRevealMode(next), mode)
 
-test('Okena agent: "Show in Okena" by pointer and ⌘O (pane, reply field) asks main for that pane; the pane stays', async ({
+test('Okena agent: the header link by pointer and ⌘O (pane, reply field) asks main for that pane; the pane stays', async ({
 	page,
 }) => {
 	const { pane, turn, question, note } = await openDay(page, 'reveal-okena')
 	await turn.click()
-	const show = pane.getByRole('button', { name: 'Show in Okena' })
+	// The where text after the kind, named for VoiceOver by the act and whose terminal.
+	const show = pane.getByRole('button', { name: 'Show in Okena, service-date-and-people' })
 	await expect(show).toBeVisible()
+	await expect(show).toHaveText(/^Okena ↗ service-date-and-people$/)
 	await expect(show).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
 	await expect(show).toHaveAttribute('title', 'Show in Okena (⌘O)')
 	await expect(pane).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
-	// Left of Ack and Send, in that order.
-	await expect(pane.locator('.agent-dock-foot-actions .agent-dock-key')).toHaveText(['Show in Okena', 'Ack', 'Send'])
+	await expect(pane.locator('.agent-dock-title-text')).toHaveText(
+		/^\S*\s*Turn ended\s*Okena ↗ service-date-and-people\s*⌘O$/,
+	)
+	// The footer stays as it was: no reveal key, no reveal hint.
+	await expect(pane.locator('.agent-dock-foot-actions .agent-dock-key')).toHaveText(['Ack', 'Send'])
+	// The `⌘O` hint shows only while the pane holds the keys, like the footer's.
+	const hint = pane.locator('.agent-dock-title-hint')
+	await expect(hint).toHaveAttribute('aria-hidden', 'true')
+	await expect(hint).toHaveCSS('visibility', 'hidden')
 	await show.click()
 	await expect.poll(() => reveals(page)).toEqual(['storybook:term-crane-sdp'])
 	await expect(pane).toBeVisible()
 	await expect(note).toHaveText('')
-	// One reveal at a time: the key shows busy until main answers.
+	// One reveal at a time: the link is disabled until main answers.
 	await expect(show).toBeEnabled()
 
-	// ⌘O from the pane itself (the keys there), and the hint says so.
+	// ⌘O from the pane itself (the keys there): the hint shows, the footer row lists no ⌘O.
 	await pane.focus()
-	await expect(pane.locator('.agent-dock-foot-hints')).toContainText('⌘O terminal')
+	await expect(hint).toHaveCSS('visibility', 'visible')
+	await expect(pane.locator('.agent-dock-foot-hints')).not.toContainText('⌘O')
 	await page.keyboard.press('Meta+O')
 	await expect.poll(() => reveals(page)).toEqual(['storybook:term-crane-sdp', 'storybook:term-crane-sdp'])
 	await expect(show).toBeEnabled()
@@ -83,34 +93,43 @@ test('Okena agent: "Show in Okena" by pointer and ⌘O (pane, reply field) asks 
 	await expect(pane).toBeVisible()
 })
 
-test('Okena agent detail (Agents → an agent that owes nothing): ⌘O shows its pane', async ({ page }) => {
+test('Okena agent detail (Agents → an agent that owes nothing): `Okena ↗` leads its where line; ⌘O shows its pane', async ({
+	page,
+}) => {
 	const { rail, pane } = await openDay(page, 'reveal-okena')
 	await rail.locator('.agent-dock-agents-entry').click()
 	await pane
 		.locator('.agent-dock-agent')
 		.filter({ has: page.locator('.agent-dock-agent-name', { hasText: 'rental-pricing' }) })
 		.click()
-	await expect(pane.getByRole('button', { name: 'Show in Okena' })).toBeVisible()
+	const show = pane.getByRole('button', { name: 'Show in Okena, rental-pricing' })
+	await expect(show).toBeVisible()
+	await expect(show).toHaveText(/^Okena ↗$/)
+	await expect(pane.locator('.agent-dock-title-where')).toHaveText(/^Okena ↗\s*⌘O · /)
+	await expect(pane.locator('.agent-dock-foot').getByRole('button', { name: /Okena/ })).toHaveCount(0)
 	await pane.focus()
 	await page.keyboard.press('Meta+O')
 	await expect.poll(() => reveals(page)).toEqual(['storybook:term-crane-pricing'])
 	// The Agents list itself offers nothing to show.
 	await page.keyboard.press('Escape')
-	await expect(pane.getByRole('button', { name: 'Show in Okena' })).toHaveCount(0)
+	await expect(pane.locator('.agent-dock-reveal-link')).toHaveCount(0)
 	await pane.focus()
 	await page.keyboard.press('Meta+O')
 	await page.waitForTimeout(300)
 	expect(await reveals(page)).toHaveLength(1)
 })
 
-test('Helm terminal agent: "Show terminal" switches to its tab, focuses it and pulses its frame once; main is not asked', async ({
+test('Helm terminal agent: `Terminal ↗` switches to its tab, focuses it and pulses its frame once; main is not asked', async ({
 	page,
 }) => {
 	const { pane, turn, question } = await openDay(page, 'reveal-helm')
 	const compile = page.getByRole('tab', { name: /compile/i })
 	await expect(compile).toHaveAttribute('aria-selected', 'false')
 	await turn.click()
-	await pane.getByRole('button', { name: 'Show terminal' }).click()
+	const show = pane.getByRole('button', { name: /^Show terminal, / })
+	await expect(show).toHaveText(/^Terminal ↗ /)
+	await expect(show).toHaveAttribute('title', 'Show terminal (⌘O)')
+	await show.click()
 	await expect(compile).toHaveAttribute('aria-selected', 'true')
 	const holder = page.locator('.term-holder.active')
 	await expect(holder).toHaveAttribute('data-reveal', '')
@@ -155,16 +174,6 @@ test('a failed reveal leaves a quiet footer line, no dialog; a focused-but-not-r
 	await expect(note).not.toContainText('unreachable')
 
 	await setRevealMode(page, 'not-raised')
-	await pane.getByRole('button', { name: 'Show in Okena' }).click()
+	await pane.locator('.agent-dock-reveal-link').click()
 	await expect(note).toHaveText('Focused in Okena; Helm could not bring Okena to the front.')
-})
-
-test('variant `where` (story): the header link names the act and whose terminal for VoiceOver', async ({ page }) => {
-	await page.setViewportSize({ width: 1280, height: 800 })
-	await page.goto('/iframe.html?id=views-agent-dock-reveal-terminal--where-turn-okena&viewMode=story')
-	const link = page.locator('.agent-dock-reveal-link')
-	await expect(link).toBeVisible()
-	await expect(link).toHaveAccessibleName('Show in Okena, service-date-and-people')
-	await expect(link).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
-	await expect(link).toHaveText(/Okena ↗ service-date-and-people/)
 })
