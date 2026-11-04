@@ -24,6 +24,7 @@ const {
 	NUDGE_DEBOUNCE_MS,
 	NUDGE_MIN_GAP_MS,
 	SETTLE_EPSILON_MS,
+	RECONCILE_INTERVAL_MS,
 	UNFOCUSED_INTERVAL_MS,
 } = watcherModule as WatcherModule
 const { TURN_IDLE_MS, TURN_RESUMED_MS } = reduceModule as typeof import('../app/src/agent-dock/reduce.ts')
@@ -102,7 +103,7 @@ class ScriptedSource {
 	}
 }
 
-function harness() {
+function harness(push?: { healthy(): boolean }) {
 	const dir = mkdtempSync(join(tmpdir(), 'hdc-'))
 	const clock = { now: T0 }
 	const timers = new FakeTimers()
@@ -116,6 +117,7 @@ function harness() {
 		now: () => clock.now,
 		log: () => {},
 		timers,
+		push,
 	})
 	/** Fires the pending `ms` timer at the current clock and waits for its tick to re-arm the cadence timer. */
 	const fireTick = async (ms: number, observation?: AgentDockObservation) => {
@@ -166,6 +168,48 @@ test('settle timer: the tick lands at idle edge + TURN_IDLE_MS (+epsilon) and op
 		assert.equal(opened?.state, 'open')
 		assert.equal(opened?.openedAt, edge + TURN_IDLE_MS + SETTLE_EPSILON_MS)
 		assert.deepEqual(h.timers.delays(), [BACKGROUND_INTERVAL_MS], 'all idle, dock hidden: back to 5 s')
+	} finally {
+		h.cleanup()
+	}
+})
+
+test('stream up: a busy→idle flip that pushes nothing still opens the turn at idle edge + TURN_IDLE_MS', async () => {
+	// Okena's Stop hook flips busy without bumping state_version, so nothing is pushed: the
+	// active 1 s cadence must see the idle edge, and the settle tick must open the turn.
+	const h = harness({ healthy: () => true })
+	try {
+		await h.watcher.start()
+		await h.fireTick(0, poll(idle(), page([assistant('a0')], 1000, true)))
+		assert.deepEqual(h.timers.delays(), [RECONCILE_INTERVAL_MS], 'idle, stream up: reconciliation only')
+
+		// A push (e.g. the lifecycle OSC) shows the agent at work: 1 s from now on.
+		h.watcher.poke()
+		await h.fireTick(0, poll(working()))
+		assert.deepEqual(h.timers.delays(), [ACTIVE_INTERVAL_MS], 'busy: 1 s although the stream is up')
+
+		const edge = T0 + 20_000
+		h.clock.now = edge - 400
+		await h.fireTick(ACTIVE_INTERVAL_MS, poll(working()))
+		h.clock.now = edge + 600
+		await h.fireTick(ACTIVE_INTERVAL_MS, poll(idle(), page([assistant('b1')], 1100)))
+		assert.deepEqual(h.timers.delays(), [ACTIVE_INTERVAL_MS], 'held turn: still 1 s')
+		const turn = () => h.watcher.snapshot().items.find(item => item.kind === 'turn')
+		// Cadence ticks (1 s) until the gate passes, the last one shortened to the settle deadline.
+		for (let guard = 0; !turn() && guard < 20; guard++) {
+			const [next] = h.timers.delays() as [number]
+			assert.ok(next <= ACTIVE_INTERVAL_MS, `held turn: never a slower tick (${next} ms)`)
+			h.clock.now += next
+			await h.fireTick(next, poll(idle()))
+		}
+		const idleSeen = edge + 600
+		assert.equal(turn()?.state, 'open')
+		assert.ok((turn()?.openedAt ?? 0) >= idleSeen + TURN_IDLE_MS, 'the 8 s idle gate holds')
+		assert.ok(
+			(turn()?.openedAt ?? 0) <= idleSeen + TURN_IDLE_MS + SETTLE_EPSILON_MS,
+			'opened right at the gate deadline',
+		)
+		assert.ok((turn()?.openedAt ?? 0) - edge <= ACTIVE_INTERVAL_MS + TURN_IDLE_MS + SETTLE_EPSILON_MS, '≤ ~9 s')
+		assert.deepEqual(h.timers.delays(), [RECONCILE_INTERVAL_MS], 'all idle again: back to reconciliation')
 	} finally {
 		h.cleanup()
 	}

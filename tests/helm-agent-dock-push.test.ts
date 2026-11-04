@@ -571,6 +571,21 @@ test('push coverage: only when every Claude pane reports a lifecycle and the sta
 	await source.observe(createAgentDockState(null, 0), 2_000)
 	assert.equal(source.pushCovered(), false, 'a pane without a lifecycle flips busy unseen by the stream')
 
+	for (const lifecycle of ['working', 'blocked']) {
+		okena.state = { ...base, projects: [project({ [TID]: { lifecycle } })] }
+		await source.observe(createAgentDockState(null, 0), 2_500)
+		assert.equal(
+			source.pushCovered(),
+			false,
+			`${lifecycle}: Okena's busy hook may still be in flight, and its flip bumps no state_version`,
+		)
+	}
+	for (const lifecycle of ['idle', 'error']) {
+		okena.state = { ...base, projects: [project({ [TID]: { lifecycle } })] }
+		await source.observe(createAgentDockState(null, 0), 2_600)
+		assert.equal(source.pushCovered(), true, `${lifecycle}: at rest`)
+	}
+
 	okena.state = { ...base, projects: [project({ [TID]: { lifecycle: 42 } })] }
 	await source.observe(createAgentDockState(null, 0), 3_000)
 	assert.equal(source.pushCovered(), false, 'malformed status = absent, and the state still parses')

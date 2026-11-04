@@ -130,10 +130,13 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
+/** Okena's busy lifecycles (claude_remote hub.rs `lifecycle_is_busy`). */
+const OKENA_BUSY_LIFECYCLES = new Set(['working', 'blocked'])
+
 export class OkenaClaudeSource implements DockSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
-	/** The last observation listed every Claude pane with a lifecycle (pushCovered). */
+	/** The last observation listed every Claude pane with a resting lifecycle (pushCovered). */
 	private covered = false
 
 	/** How this source names itself in act failures and poll errors (DOCK_SOURCE_TEXT). */
@@ -307,6 +310,11 @@ export class OkenaClaudeSource implements DockSource {
 	 * (`terminal_agent_status`, the OSC from the okena-lifecycle hooks, which bumps
 	 * state_version on working/idle/done). A pane without one flips busy unseen by the
 	 * stream (Okena's own busy hook does not bump it), so the dock keeps polling.
+	 * A pane whose lifecycle says `working`/`blocked` is not covered either: a busy pane
+	 * already ticks at the active rate, so this only matters when the lifecycle OSC
+	 * landed but Okena's busy hook has not yet (a separate hook process, late under
+	 * load): the busy flip that follows bumps nothing, and a turn whose busy stretch the
+	 * dock never saw would skip the idle gate. Polling sees it within one interval.
 	 */
 	pushCovered(): boolean {
 		return this.covered
@@ -354,7 +362,10 @@ export class OkenaClaudeSource implements DockSource {
 		for (const key of this.reads.keys()) if (!listed.has(key)) this.reads.delete(key)
 		this.covered =
 			all.length === candidates.length &&
-			candidates.every(terminalId => okenaAgentLifecycle(parsedState.value, terminalId) !== undefined)
+			candidates.every(terminalId => {
+				const lifecycle = okenaAgentLifecycle(parsedState.value, terminalId)
+				return lifecycle !== undefined && !OKENA_BUSY_LIFECYCLES.has(lifecycle)
+			})
 		return { type: 'poll', source, profile, state: stateFetch, terminals }
 	}
 
