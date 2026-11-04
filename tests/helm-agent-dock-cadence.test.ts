@@ -341,3 +341,226 @@ test('hub changes notify listeners synchronously; a throwing listener breaks not
 	core.shutdown()
 	assert.equal(calls, 1)
 })
+
+test('nudge: a change after a tick that began inside the debounce window still gets its own tick', async () => {
+	const h = harness()
+	try {
+		await h.watcher.start()
+		await h.fireTick(0, poll(idle(), page([assistant('a0')], 1000, true)))
+		h.clock.now += 2_000
+		// Change 1 (e.g. PreToolUse flips the agent busy) arms the debounced nudge…
+		h.watcher.nudge()
+		// …a cadence tick begins first and reads change 1…
+		h.clock.now += 30
+		await h.fireTick(BACKGROUND_INTERVAL_MS, poll(idle()))
+		assert.equal(h.source.observed, 2)
+		// …then change 2 (the PermissionRequest dialog) lands after that tick read the hub.
+		h.clock.now += 30
+		h.watcher.nudge()
+		h.clock.now = Math.max(h.clock.now, T0 + 2_000 + NUDGE_DEBOUNCE_MS)
+		const pending = [...h.timers.pending.values()].filter(timer => timer.ms === NUDGE_DEBOUNCE_MS)
+		assert.equal(pending.length, 1)
+		h.timers.fire(NUDGE_DEBOUNCE_MS)
+		// Still inside the min gap of the tick at +30: the nudge waits out the rest of it, then ticks.
+		for (let i = 0; i < 3 && !h.timers.delays().includes(0); i++) {
+			const gap = h.timers.delays().find(ms => ms !== BACKGROUND_INTERVAL_MS && ms !== ACTIVE_INTERVAL_MS)
+			assert.ok(gap !== undefined, `change 2 keeps a pending tick (pending: ${h.timers.delays().join(', ')})`)
+			h.clock.now += gap
+			h.timers.fire(gap)
+		}
+		assert.ok(h.timers.delays().includes(0), 'change 2 ticks')
+		assert.ok(h.clock.now - (T0 + 2_030) >= NUDGE_MIN_GAP_MS, 'and not sooner than the min gap after the last tick')
+		await h.fireTick(0, poll(idle()))
+		assert.equal(h.source.observed, 3)
+	} finally {
+		h.cleanup()
+	}
+})
+
+/** Virtual-time run: hub changes at `changes` (ms offsets), instantaneous ticks; returns tick start offsets. */
+async function simulate(changes: number[], endMs: number, busy = false): Promise<number[]> {
+	const h = harness()
+	const starts: number[] = []
+	const base = T0 + 10_000
+	const source = h.source as unknown as { observe: () => Promise<AgentDockObservation[]> }
+	let first = true
+	source.observe = async () => {
+		starts.push(h.clock.now - base)
+		const observation = first
+			? poll(busy ? working() : idle(), page([assistant('a0')], 1000, true))
+			: poll(busy ? working() : idle())
+		first = false
+		return [observation]
+	}
+	const due = new Map<number, number>()
+	const timers = h.timers
+	const originalSet = timers.setTimeout
+	timers.setTimeout = (run, ms) => {
+		const id = originalSet(run, ms) as number
+		due.set(id, h.clock.now + ms)
+		return id
+	}
+	const watcher = h.watcher as unknown as { inFlight: boolean }
+	const settle = async () => {
+		for (let i = 0; i < 200 && watcher.inFlight; i++) await new Promise(resolve => setTimeout(resolve, 1))
+		await h.watcher.drain()
+	}
+	try {
+		h.clock.now = base
+		await h.watcher.start()
+		const queue = [...changes].sort((a, b) => a - b)
+		for (;;) {
+			let nextId: number | undefined
+			let nextAt = Number.POSITIVE_INFINITY
+			for (const [id] of timers.pending) {
+				const at = due.get(id) ?? Number.POSITIVE_INFINITY
+				if (at < nextAt) {
+					nextAt = at
+					nextId = id
+				}
+			}
+			const change = queue[0]
+			if (change !== undefined && base + change <= nextAt) {
+				queue.shift()
+				h.clock.now = base + change
+				h.watcher.nudge()
+				continue
+			}
+			if (nextId === undefined || nextAt > base + endMs) break
+			h.clock.now = nextAt
+			const timer = timers.pending.get(nextId)
+			timers.pending.delete(nextId)
+			timer?.run()
+			await settle()
+		}
+		return starts
+	} finally {
+		h.cleanup()
+	}
+}
+
+test('storm: a flood of hub changes is at most one tick per NUDGE_MIN_GAP_MS, and every change is read within it', async () => {
+	const changes = Array.from({ length: 1000 }, (_, i) => 1_000 + i * 10) // every 10 ms for 10 s
+	const starts = await simulate(changes, 12_000)
+	const flood = starts.filter(at => at >= 1_000 && at <= 11_000)
+	assert.ok(flood.length <= 10_000 / NUDGE_MIN_GAP_MS + 2, `${flood.length} ticks in the 10 s flood`)
+	for (let i = 1; i < starts.length; i++)
+		assert.ok(
+			(starts[i] as number) - (starts[i - 1] as number) >= NUDGE_MIN_GAP_MS || starts[i - 1] === 0,
+			`ticks ${starts[i - 1]} → ${starts[i]} closer than the min gap`,
+		)
+	for (const change of changes) {
+		const read = starts.find(at => at > change)
+		assert.ok(read !== undefined && read - change <= NUDGE_MIN_GAP_MS, `change at ${change} read at ${read}`)
+	}
+})
+
+test('storm: random change bursts never lose a change and never tick faster than the min gap', async () => {
+	let seed = 42
+	const random = () => {
+		seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+		return seed / 2_147_483_648
+	}
+	for (let round = 0; round < 5; round++) {
+		const changes: number[] = []
+		let at = 500
+		while (at < 20_000) {
+			at += random() < 0.2 ? Math.floor(random() * 3_000) : Math.floor(random() * 120)
+			changes.push(at)
+		}
+		const starts = await simulate(changes, 25_000, round % 2 === 1)
+		for (let i = 2; i < starts.length; i++)
+			assert.ok(
+				(starts[i] as number) - (starts[i - 1] as number) >= NUDGE_MIN_GAP_MS - 1,
+				`round ${round}: ${starts[i - 1]} → ${starts[i]}`,
+			)
+		for (const change of changes) {
+			const read = starts.find(start => start > change)
+			assert.ok(
+				read !== undefined && read - change <= NUDGE_MIN_GAP_MS,
+				`round ${round}: change at ${change} read at ${read}`,
+			)
+		}
+	}
+})
+
+test('settle timer: a held turn whose pane vanishes, or whose source goes down, leaves no settle tick behind', async () => {
+	for (const ending of ['vanished', 'down'] as const) {
+		const h = harness()
+		try {
+			await h.watcher.start()
+			await h.fireTick(0, poll(working(), page([assistant('a0')], 1000, true)))
+			h.clock.now = T0 + 1000
+			await h.fireTick(ACTIVE_INTERVAL_MS, poll(idle(), page([assistant('b1')], 1100)))
+			h.clock.now = T0 + 7_000
+			await h.fireTick(ACTIVE_INTERVAL_MS, poll(idle()))
+			assert.deepEqual(h.timers.delays(), [ACTIVE_INTERVAL_MS])
+			h.clock.now = T0 + 8_000
+			const gone: AgentDockObservation =
+				ending === 'vanished'
+					? { ...(poll(idle()) as Extract<AgentDockObservation, { type: 'poll' }>), terminals: [] }
+					: {
+							type: 'poll',
+							source: 'okena',
+							profile: PROFILE,
+							state: { ok: false, error: 'connect ENOENT' },
+							terminals: [],
+						}
+			if (gone.type === 'poll' && ending === 'vanished' && gone.state.ok) (gone.state.body as Json).claude_sessions = []
+			await h.fireTick(ACTIVE_INTERVAL_MS, gone)
+			assert.deepEqual(
+				h.timers.delays(),
+				[BACKGROUND_INTERVAL_MS],
+				`${ending}: back to the idle cadence, no settle timer`,
+			)
+			assert.equal(h.watcher.interval(), BACKGROUND_INTERVAL_MS, `${ending}: a down Okena is not polled faster`)
+			h.watcher.stop()
+			assert.deepEqual(h.timers.delays(), [], `${ending}: stop() leaves no timer`)
+			assert.equal(h.watcher.snapshot().items.filter(item => item.kind === 'turn').length, 0)
+		} finally {
+			h.cleanup()
+		}
+	}
+})
+
+test('stop() during an in-flight tick arms nothing when it finishes', async () => {
+	const h = harness()
+	try {
+		await h.watcher.start()
+		let release: () => void = () => {}
+		h.source.hold = new Promise(resolve => {
+			release = resolve
+		})
+		h.source.queue.push(poll(working(), page([assistant('a0')], 1000, true)))
+		h.timers.fire(0)
+		await until(() => h.source.observed === 1, 'tick started')
+		h.watcher.nudge()
+		h.watcher.poke()
+		h.watcher.stop()
+		release()
+		await new Promise(resolve => setTimeout(resolve, 30))
+		await h.watcher.drain()
+		assert.deepEqual(h.timers.delays(), [])
+	} finally {
+		h.cleanup()
+	}
+})
+
+test('nudge: a wall clock set back never parks the nudge past the min gap', async () => {
+	const h = harness()
+	try {
+		await h.watcher.start()
+		await h.fireTick(0, poll(idle(), page([assistant('a0')], 1000, true)))
+		h.clock.now -= 60 * 60 * 1000 // NTP / manual clock change: an hour back
+		h.watcher.nudge()
+		const nudgeDelay = h.timers.delays().find(ms => ms !== BACKGROUND_INTERVAL_MS)
+		assert.ok(nudgeDelay !== undefined && nudgeDelay <= NUDGE_MIN_GAP_MS, `nudge delay ${nudgeDelay}`)
+		h.clock.now += nudgeDelay
+		h.timers.fire(nudgeDelay)
+		assert.deepEqual(h.timers.delays(), [0], 'the change ticks')
+		await h.fireTick(0, poll(idle()))
+		assert.equal(h.source.observed, 2)
+	} finally {
+		h.cleanup()
+	}
+})

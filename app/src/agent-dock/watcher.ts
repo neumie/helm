@@ -13,7 +13,7 @@
 //     busy edge + TURN_RESUMED_MS), plus SETTLE_EPSILON_MS;
 //   - nudge(): a source pushed a change (Helm's hub): one tick NUDGE_DEBOUNCE_MS
 //     later (at least NUDGE_MIN_GAP_MS after the last tick began); a burst is one
-//     tick, and a tick that began after the change already covers it.
+//     tick, and a tick that began after the burst's latest change already covers it.
 // One timer, re-armed after every tick; ticks never overlap (a poke during a
 // tick runs one more right after it).
 //
@@ -168,6 +168,8 @@ export class AgentDockWatcher {
 	/** Ticks begun so far, and when the last one began (nudge coalescing). */
 	private tickStarts = 0
 	private lastTickAt = Number.NEGATIVE_INFINITY
+	/** `tickStarts` when the latest nudge came: a tick numbered past it read that change. */
+	private nudgeMark = 0
 	private pendingDiagnostics: string[] = []
 	private readonly timers: WatcherTimers
 	private io: Promise<void> = Promise.resolve()
@@ -251,14 +253,25 @@ export class AgentDockWatcher {
 	 * began after the change (it already read it). Cheap and synchronous (hub hot path).
 	 */
 	nudge(): void {
-		if (!this.started || this.stopped || this.nudgeTimer !== null) return
-		const requested = this.tickStarts
-		const delay = Math.max(NUDGE_DEBOUNCE_MS, this.lastTickAt + NUDGE_MIN_GAP_MS - this.now())
+		if (!this.started || this.stopped) return
+		// Every change moves the mark, also one coalesced into a pending nudge: a tick that
+		// began between two changes covers only the first.
+		this.nudgeMark = this.tickStarts
+		if (this.nudgeTimer === null) this.armNudge(NUDGE_DEBOUNCE_MS)
+	}
+
+	private armNudge(minDelay: number): void {
+		// Clamped: a wall clock set back must not park the nudge (and every change coalesced into it).
+		const delay = Math.min(NUDGE_MIN_GAP_MS, Math.max(minDelay, this.lastTickAt + NUDGE_MIN_GAP_MS - this.now()))
 		this.nudgeTimer = this.timers.setTimeout(() => {
 			this.nudgeTimer = null
-			// A tick that began after the change read it; one already running when it came may not have (poke reruns).
-			if (this.tickStarts > requested) return
-			this.poke()
+			if (this.stopped) return
+			// A tick that began after the latest change read it; one already running when it came may not have (poke reruns).
+			if (this.tickStarts > this.nudgeMark) return
+			// A tick began after an earlier change in the burst: wait out its min gap first.
+			const sinceTick = this.now() - this.lastTickAt
+			if (sinceTick >= 0 && sinceTick < NUDGE_MIN_GAP_MS) this.armNudge(0)
+			else this.poke()
 		}, delay)
 	}
 
