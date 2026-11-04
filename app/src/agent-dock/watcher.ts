@@ -1,24 +1,37 @@
 // Agent dock watcher (Electron main side, but no Electron import: main.ts
 // injects publish/focus so this stays unit-testable under node --test).
 //
-// Cadence: 1.5 s while some renderer shows the dock AND Helm is focused, 5 s
-// while shown but unfocused, and a 5 s background tick while hidden. The
-// background tick is deliberate: `helm dock watch` (the dispatcher's event
-// stream) must still get events while the dock is collapsed, and one GET
-// /v1/state + per-pane detail every 5 s is cheap. Ticks never overlap.
+// Cadence follows the agents, not the window: 1 s while some agent is active
+// (main agent busy/working, a dialog open, a turn held by the idle gate, a dock
+// answer waiting to be observed: agentDockActive), else 1.5 s while the dock is
+// shown AND Helm is focused, else 5 s (shown but unfocused, or hidden). Hidden
+// still ticks on purpose: `helm dock watch` (the dispatcher's event stream) must
+// get events while the dock is collapsed, and one GET /v1/state + per-pane
+// detail is cheap. On top of the cadence:
+//   - settle timer: the next tick is never later than the moment a turn can be
+//     decided without new data (agentDockNextDeadline: idle edge + TURN_IDLE_MS,
+//     busy edge + TURN_RESUMED_MS), plus SETTLE_EPSILON_MS;
+//   - nudge(): a source pushed a change (Helm's hub): one tick NUDGE_DEBOUNCE_MS
+//     later (at least NUDGE_MIN_GAP_MS after the last tick began); a burst is one
+//     tick, and a tick that began after the burst's latest change already covers it.
+// One timer, re-armed after every tick; ticks never overlap (a poke during a
+// tick runs one more right after it).
 //
 // Disk (`<userData>/agent-dock`, 0700; files 0600, atomic replace; shapes from
 // spool-projection.ts):
 //   state.json     counters (item id, event seq), seen assistant uuids, 24 h resolved ledger (heads only)
 //   snapshot.json  spool view for the CLI; rewritten on change or every SNAPSHOT_REFRESH_MS
 //   events.ndjson  appended events, ≤300-char lines, monotonic seq, rotated per local day
+//   turn-gate.ndjson  diagnostics: turns the idle gate held back that never opened
+//                  (`turn.gated`: session key, durations, why). Not a dispatcher event;
+//                  rotated to turn-gate.1.ndjson past DIAGNOSTICS_MAX_BYTES.
 // Transcript text, dialog `tool_input` and dock answer text never reach disk
 // (receipts keep only the action kind and status). Transcript cursors
 // are intentionally NOT persisted: the reducer's restart seed needs a fresh
 // first page to learn each pane's last assistant message (a restored cursor
 // would skip it and lose "turn finished while Helm was closed").
 
-import { rename } from 'node:fs/promises'
+import { rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { dockSourceOfSessionKey } from '../../../src/agent-dock/claude-hub-wire'
@@ -53,13 +66,47 @@ import {
 	parseAgentDockActRequest,
 	parseAgentDockPromptRequest,
 } from './model'
-import { type AgentDockState, agentDockPersisted, agentDockSnapshot, createAgentDockState, reduce } from './reduce'
+import {
+	type AgentDockState,
+	type DockTurnGated,
+	agentDockActive,
+	agentDockNextDeadline,
+	agentDockPersisted,
+	agentDockSnapshot,
+	createAgentDockState,
+	reduce,
+} from './reduce'
 import { contentDigest, dockEventLine, dockSpoolItem, dockSpoolSnapshot, pruneLedger } from './spool-projection'
 
+/** Some agent is active (agentDockActive), whatever the window does. */
+export const ACTIVE_INTERVAL_MS = 1_000
 export const FOCUSED_INTERVAL_MS = 1_500
 export const UNFOCUSED_INTERVAL_MS = 5_000
 export const BACKGROUND_INTERVAL_MS = 5_000
 export const SNAPSHOT_REFRESH_MS = 10_000
+/** A pushed change (nudge) ticks this much later, so a burst of hook events is one tick. */
+export const NUDGE_DEBOUNCE_MS = 100
+/** …and never sooner than this after the previous tick began (bounds ticks under a flapping source). */
+export const NUDGE_MIN_GAP_MS = 250
+/** The settle tick lands this much past the deadline (the reducer's clock reads a little later than the source's). */
+export const SETTLE_EPSILON_MS = 25
+export const DIAGNOSTICS_FILE = 'turn-gate.ndjson'
+export const DIAGNOSTICS_MAX_BYTES = 1024 * 1024
+
+/** The timer surface the scheduler uses (tests inject a fake). */
+export interface WatcherTimers {
+	setTimeout(run: () => void, ms: number): unknown
+	clearTimeout(handle: unknown): void
+}
+
+const realTimers: WatcherTimers = {
+	setTimeout: (run, ms) => {
+		const handle = setTimeout(run, ms)
+		handle.unref?.()
+		return handle
+	},
+	clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
 
 const watcherStateSchema = agentDockPersistedSchema.extend({
 	nextSeq: z.number().int().positive().default(1),
@@ -100,6 +147,7 @@ export interface AgentDockWatcherOptions {
 	now?: () => number
 	pid?: number
 	log?: (message: string) => void
+	timers?: WatcherTimers
 }
 
 export class AgentDockWatcher {
@@ -113,7 +161,17 @@ export class AgentDockWatcher {
 	private inFlight = false
 	/** A dock act is running: ticks wait so no observation lands between its CAS read and its POST result. */
 	private acting = false
-	private timer: ReturnType<typeof setTimeout> | null = null
+	private timer: unknown = null
+	private nudgeTimer: unknown = null
+	/** A poke arrived while a tick ran: run one more right after it. */
+	private rerun = false
+	/** Ticks begun so far, and when the last one began (nudge coalescing). */
+	private tickStarts = 0
+	private lastTickAt = Number.NEGATIVE_INFINITY
+	/** `tickStarts` when the latest nudge came: a tick numbered past it read that change. */
+	private nudgeMark = 0
+	private pendingDiagnostics: string[] = []
+	private readonly timers: WatcherTimers
 	private io: Promise<void> = Promise.resolve()
 	private pendingLines: string[] = []
 	private lastPersisted = ''
@@ -128,6 +186,7 @@ export class AgentDockWatcher {
 	constructor(private readonly options: AgentDockWatcherOptions) {
 		this.now = options.now ?? Date.now
 		this.pid = options.pid ?? process.pid
+		this.timers = options.timers ?? realTimers
 		this.state = createAgentDockState(null, this.now())
 	}
 
@@ -165,8 +224,10 @@ export class AgentDockWatcher {
 
 	stop(): void {
 		this.stopped = true
-		if (this.timer) clearTimeout(this.timer)
+		if (this.timer !== null) this.timers.clearTimeout(this.timer)
+		if (this.nudgeTimer !== null) this.timers.clearTimeout(this.nudgeTimer)
 		this.timer = null
+		this.nudgeTimer = null
 	}
 
 	/** Some renderer shows (true) or hid (false) the dock. Showing pushes the current snapshot right away. */
@@ -179,9 +240,39 @@ export class AgentDockWatcher {
 		}
 	}
 
-	/** Re-evaluate cadence now (window focus changed, dock shown). */
+	/** Tick now (window focus changed, dock shown, a dock act finished). During a tick: one more right after it. */
 	poke(): void {
-		if (this.started && !this.stopped && !this.inFlight) this.schedule(0)
+		if (!this.started || this.stopped) return
+		if (this.inFlight) this.rerun = true
+		else this.schedule(0)
+	}
+
+	/**
+	 * A source changed (Helm's hub bumped its state): tick soon, whatever the window does.
+	 * Debounced and coalesced: one pending nudge at a time, and none at all when a tick
+	 * began after the change (it already read it). Cheap and synchronous (hub hot path).
+	 */
+	nudge(): void {
+		if (!this.started || this.stopped) return
+		// Every change moves the mark, also one coalesced into a pending nudge: a tick that
+		// began between two changes covers only the first.
+		this.nudgeMark = this.tickStarts
+		if (this.nudgeTimer === null) this.armNudge(NUDGE_DEBOUNCE_MS)
+	}
+
+	private armNudge(minDelay: number): void {
+		// Clamped: a wall clock set back must not park the nudge (and every change coalesced into it).
+		const delay = Math.min(NUDGE_MIN_GAP_MS, Math.max(minDelay, this.lastTickAt + NUDGE_MIN_GAP_MS - this.now()))
+		this.nudgeTimer = this.timers.setTimeout(() => {
+			this.nudgeTimer = null
+			if (this.stopped) return
+			// A tick that began after the latest change read it; one already running when it came may not have (poke reruns).
+			if (this.tickStarts > this.nudgeMark) return
+			// A tick began after an earlier change in the burst: wait out its min gap first.
+			const sinceTick = this.now() - this.lastTickAt
+			if (sinceTick >= 0 && sinceTick < NUDGE_MIN_GAP_MS) this.armNudge(0)
+			else this.poke()
+		}, delay)
 	}
 
 	/** Jakub acked an item. Resolves true when it was resolved (turns and orphaned asks only). */
@@ -320,16 +411,28 @@ export class AgentDockWatcher {
 		return agentDockSnapshot(this.state, this.now())
 	}
 
-	/** Current tick interval (exported behavior for tests). */
+	/** Current cadence interval (exported behavior for tests). */
 	interval(): number {
+		if (agentDockActive(this.state)) return ACTIVE_INTERVAL_MS
 		if (!this.visible) return BACKGROUND_INTERVAL_MS
 		return this.options.isFocused() ? FOCUSED_INTERVAL_MS : UNFOCUSED_INTERVAL_MS
+	}
+
+	/** Delay to the next tick: the cadence, or sooner when a turn can be decided (settle timer). */
+	nextDelay(): number {
+		const now = this.now()
+		const cadence = this.interval()
+		const deadline = agentDockNextDeadline(this.state, now)
+		if (deadline === undefined) return cadence
+		return Math.min(cadence, deadline - now + SETTLE_EPSILON_MS)
 	}
 
 	/** One poll + spool write. Public for tests; the scheduler calls it. */
 	async tick(): Promise<void> {
 		if (this.inFlight || this.stopped || this.acting) return
 		this.inFlight = true
+		this.tickStarts += 1
+		this.lastTickAt = this.now()
 		try {
 			const observed = await this.options.source.observe(this.state, this.now())
 			if (this.stopped) return
@@ -351,20 +454,22 @@ export class AgentDockWatcher {
 
 	private schedule(delay: number): void {
 		if (this.stopped) return
-		if (this.timer) clearTimeout(this.timer)
-		this.timer = setTimeout(() => {
+		if (this.timer !== null) this.timers.clearTimeout(this.timer)
+		this.timer = this.timers.setTimeout(() => {
 			this.timer = null
 			void this.tick().finally(() => {
-				if (!this.timer) this.schedule(this.interval())
+				const rerun = this.rerun
+				this.rerun = false
+				if (this.timer === null) this.schedule(rerun ? 0 : this.nextDelay())
 			})
 		}, delay)
-		this.timer.unref?.()
 	}
 
 	private apply(observation: AgentDockObservation): AgentDockEvent[] {
 		const now = this.now()
-		const { state, events } = reduce(this.state, observation, now)
+		const { state, events, diagnostics } = reduce(this.state, observation, now)
 		this.state = state
+		for (const entry of diagnostics) this.pendingDiagnostics.push(diagnosticLine(entry))
 		if (events.length > 0) {
 			const sessions = Object.values(state.sessions).map(entry => entry.session)
 			for (const event of events) this.pendingLines.push(dockEventLine(event, this.nextSeq++, state.items, sessions))
@@ -406,6 +511,16 @@ export class AgentDockWatcher {
 			const lines = this.pendingLines.splice(0)
 			await rotateSpoolEvents(dir, now)
 			await appendPrivateText(join(dir, SPOOL_EVENTS_FILE), `${lines.join('\n')}\n`)
+		}
+		if (this.pendingDiagnostics.length > 0) {
+			const lines = this.pendingDiagnostics.splice(0)
+			const path = join(dir, DIAGNOSTICS_FILE)
+			const size = await stat(path).then(
+				info => info.size,
+				() => 0,
+			)
+			if (size >= DIAGNOSTICS_MAX_BYTES) await rename(path, join(dir, DIAGNOSTICS_ROTATED_FILE))
+			await appendPrivateText(path, `${lines.join('\n')}\n`)
 		}
 		const persisted: WatcherPersisted = {
 			...agentDockPersisted(this.state),
@@ -449,6 +564,20 @@ export class AgentDockWatcher {
 		this.lastLog = message
 		;(this.options.log ?? (text => console.warn(`[helm] agent dock: ${text}`)))(message)
 	}
+}
+
+const DIAGNOSTICS_ROTATED_FILE = 'turn-gate.1.ndjson'
+
+/** One turn-gate diagnostics line (session key and durations only, never transcript text). */
+function diagnosticLine(entry: DockTurnGated): string {
+	return JSON.stringify({
+		t: entry.t,
+		at: entry.at,
+		session: entry.session.slice(0, 160),
+		idleMs: entry.idleMs,
+		seenIdleMs: entry.seenIdleMs,
+		by: entry.by,
+	})
 }
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 300)

@@ -23,7 +23,9 @@ const {
 	TURN_IDLE_MS,
 	TURN_RESUMED_MS,
 	TURN_TEXT_MAX,
+	agentDockActive,
 	agentDockAwaitingReply,
+	agentDockNextDeadline,
 	agentDockPersisted,
 	agentDockSnapshot,
 	agentDockTranscriptRequest,
@@ -444,6 +446,91 @@ test('a quick resume inside the idle window opens nothing', () => {
 	])
 	assert.deepEqual(events, [])
 	assert.equal(state.items.length, 0)
+})
+
+// --- idle gate: settle deadline, activity, diagnostics -------------------------
+
+test('a turn held by the idle gate sets the settle deadline at its idle edge + TURN_IDLE_MS and keeps the dock active', () => {
+	const t1 = T0 + 1000
+	const adopted = run(createAgentDockState(null, T0), [
+		[T0, poll(idle(), { transcript: fullLog() })],
+		[T0 + 500, poll(idle())],
+	]).state
+	assert.equal(agentDockActive(adopted), false, 'idle at an adopted message: nothing to watch closely')
+	assert.equal(agentDockNextDeadline(adopted, T0 + 500), undefined)
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1', 'PR ready?')], { cursor: 1_300_000 }) }),
+		t1,
+	)
+	assert.deepEqual(held.events, [])
+	assert.deepEqual(held.diagnostics, [])
+	assert.equal(held.state.sessions[KEY]?.gateCandidate?.uuid, 'b1')
+	assert.equal(agentDockNextDeadline(held.state, t1), t1 + TURN_IDLE_MS)
+	assert.equal(agentDockActive(held.state), true)
+	// Still held a tick later: same deadline; a past deadline is never returned (no tick storm).
+	const later = reduce(held.state, poll(idle()), t1 + 3000)
+	assert.equal(agentDockNextDeadline(later.state, t1 + 3000), t1 + TURN_IDLE_MS)
+	assert.equal(agentDockNextDeadline(later.state, t1 + TURN_IDLE_MS), undefined)
+	const opened = reduce(later.state, poll(idle()), t1 + TURN_IDLE_MS)
+	assert.equal(opened.events[0]?.t, 'item.opened')
+	assert.equal(opened.state.sessions[KEY]?.gateCandidate, undefined)
+	assert.deepEqual(opened.diagnostics, [])
+	assert.equal(agentDockNextDeadline(opened.state, t1 + TURN_IDLE_MS), undefined)
+	assert.equal(agentDockActive(opened.state), false, 'an open turn on an idle pane needs no fast cadence')
+})
+
+test('a live turn on a busy pane sets the settle deadline at the busy edge + TURN_RESUMED_MS', () => {
+	const { state, at } = withOpenTurn()
+	const busy = reduce(state, poll(working()), at + 2000)
+	assert.equal(agentDockNextDeadline(busy.state, at + 2000), at + 2000 + TURN_RESUMED_MS)
+	assert.equal(agentDockActive(busy.state), true)
+	const closed = reduce(busy.state, poll(working()), at + 2000 + TURN_RESUMED_MS)
+	assert.equal(itemsOf(closed.state, 'turn')[0]?.resolution?.by, 'superseded')
+	assert.equal(agentDockNextDeadline(closed.state, at + 2000 + TURN_RESUMED_MS), undefined)
+})
+
+test('a quick resume logs the suppressed turn (turn.gated) with its idle stretch', () => {
+	const t1 = T0 + 1000
+	const held = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) })],
+		[t1 + 2000, poll(idle())],
+	]).state
+	const resumed = reduce(held, poll(working(), { transcript: page([user('u1')], { cursor: 1_310_000 }) }), t1 + 3000)
+	assert.deepEqual(resumed.events, [])
+	assert.deepEqual(resumed.diagnostics, [
+		{ t: 'turn.gated', at: t1 + 3000, session: KEY, idleMs: 3000, seenIdleMs: 2000, by: 'working' },
+	])
+	assert.equal(resumed.state.sessions[KEY]?.gateCandidate, undefined)
+	// Logged once: the stretch is over.
+	assert.deepEqual(reduce(resumed.state, poll(working()), t1 + 4000).diagnostics, [])
+})
+
+test('the gate log names a dialog, a newer message and an observation gap (silent) apart', () => {
+	const t1 = T0 + 1000
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) }),
+		t1,
+	).state
+	assert.equal(reduce(held, poll(ask()), t1 + 1000).diagnostics[0]?.by, 'waiting')
+	const newer = reduce(held, poll(idle(), { transcript: page([assistant('b2')], { cursor: 1_310_000 }) }), t1 + 1000)
+	assert.equal(newer.diagnostics[0]?.by, 'superseded')
+	assert.equal(newer.state.sessions[KEY]?.gateCandidate?.uuid, 'b2', 'the newer message is held in the same stretch')
+	const gap = reduce(held, poll(working()), t1 + 20_000)
+	assert.deepEqual(gap.diagnostics, [], 'a broken stretch is no evidence of a quick resume')
+	const unreadable = reduce(held, poll(idle({ busy: 'yes' })), t1 + 1000)
+	assert.deepEqual(unreadable.diagnostics, [])
+	assert.equal(unreadable.state.sessions[KEY]?.gateCandidate, undefined)
+})
+
+test('activity: a busy or dialog pane is active; a down source is not', () => {
+	const working1 = reduce(createAgentDockState(null, T0), poll(working(), { transcript: fullLog() }), T0)
+	assert.equal(agentDockActive(working1.state), true)
+	const asking = reduce(working1.state, poll(ask()), T0 + 1000)
+	assert.equal(agentDockActive(asking.state), true)
+	const gone = reduce(working1.state, down(), T0 + 1000)
+	assert.equal(agentDockActive(gone.state), false, 'a frozen row of a down source does not speed up polling')
 })
 
 function withOpenTurn(): { state: AgentDockState; at: number } {

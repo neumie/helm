@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { request } from 'node:http'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -32,6 +32,67 @@ interface OkenaCredentials {
 	endpoint: OkenaEndpoint
 }
 
+/** How long a `kill(pid, 0)` liveness answer for remote.json's pid is reused. */
+export const OKENA_PID_CHECK_MS = 3_000
+
+/**
+ * Okena's small JSON config files (profiles.json, cli.json, remote.json, workspace.json),
+ * parsed once per file version: every request (the agent dock polls several per second)
+ * re-reads them only when their mtime, size or inode moved (an atomic replace changes the
+ * inode). A missing file or invalid JSON throws exactly like `JSON.parse(readFileSync(…))`.
+ * Shared by every OkenaClient (forProfile() makes one per poll).
+ */
+export class OkenaConfigCache {
+	private readonly files = new Map<string, { version: string; value: unknown; error?: unknown }>()
+	private readonly pids = new Map<number, { alive: boolean; at: number }>()
+
+	constructor(
+		private readonly now: () => number = Date.now,
+		private readonly alive: (pid: number) => boolean = pidAlive,
+	) {}
+
+	/** Parsed JSON of `path` (callers must not mutate it). Throws when missing or invalid. */
+	readJson<T>(path: string): T {
+		const info = statSync(path)
+		const version = `${info.mtimeMs}:${info.size}:${info.ino}`
+		const cached = this.files.get(path)
+		if (cached?.version === version) {
+			if (cached.error !== undefined) throw cached.error
+			return cached.value as T
+		}
+		try {
+			const value = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+			this.files.set(path, { version, value })
+			return value as T
+		} catch (error) {
+			this.files.set(path, { version, value: undefined, error })
+			throw error
+		}
+	}
+
+	/** `kill(pid, 0)`, answered from cache for OKENA_PID_CHECK_MS. */
+	isProcessAlive(pid: number): boolean {
+		const now = this.now()
+		const cached = this.pids.get(pid)
+		if (cached && now - cached.at < OKENA_PID_CHECK_MS) return cached.alive
+		const alive = this.alive(pid)
+		if (this.pids.size > 64) this.pids.clear()
+		this.pids.set(pid, { alive, at: now })
+		return alive
+	}
+}
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+const sharedConfigCache = new OkenaConfigCache()
+
 const EXPIRED_TOKEN_HINT =
 	'Okena CLI token expired or invalid. Re-register with the Okena binary’s `state` command, then retry this action; Helm reloads the token automatically.'
 
@@ -41,6 +102,7 @@ export class OkenaClient {
 	constructor(
 		baseDir?: string,
 		private readonly profileId?: string,
+		private readonly config: OkenaConfigCache = sharedConfigCache,
 	) {
 		this.baseDir =
 			baseDir ??
@@ -58,7 +120,7 @@ export class OkenaClient {
 	forProject(repoPath: string): OkenaClient {
 		const profilesPath = join(this.baseDir, 'profiles.json')
 		try {
-			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const profiles = this.config.readJson<ProfilesConfig>(profilesPath)
 			const ids = [
 				this.profileId,
 				profiles.last_used,
@@ -68,9 +130,9 @@ export class OkenaClient {
 			for (const id of new Set(ids.filter((value): value is string => Boolean(value)))) {
 				const workspacePath = join(this.baseDir, 'profiles', id, 'workspace.json')
 				if (!existsSync(workspacePath)) continue
-				const workspace: { projects?: Array<{ path?: string }> } = JSON.parse(readFileSync(workspacePath, 'utf-8'))
+				const workspace = this.config.readJson<{ projects?: Array<{ path?: string }> }>(workspacePath)
 				if (workspace.projects?.some(project => project.path === repoPath)) {
-					return new OkenaClient(this.baseDir, id)
+					return new OkenaClient(this.baseDir, id, this.config)
 				}
 			}
 		} catch {
@@ -82,7 +144,7 @@ export class OkenaClient {
 
 	/** Pin subsequent requests to one Okena profile id (e.g. a value from activeProfileId()). */
 	forProfile(profileId: string): OkenaClient {
-		return new OkenaClient(this.baseDir, profileId)
+		return new OkenaClient(this.baseDir, profileId, this.config)
 	}
 
 	/**
@@ -94,7 +156,7 @@ export class OkenaClient {
 		const profilesPath = join(this.baseDir, 'profiles.json')
 		if (!existsSync(profilesPath)) return null
 		try {
-			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const profiles = this.config.readJson<ProfilesConfig>(profilesPath)
 			return profiles.last_used ?? profiles.default_profile ?? null
 		} catch {
 			return null
@@ -128,7 +190,7 @@ export class OkenaClient {
 
 		let token: string
 		try {
-			const cli: CliConfig = JSON.parse(readFileSync(cliPath, 'utf-8'))
+			const cli = this.config.readJson<CliConfig>(cliPath)
 			token = cli.token
 		} catch {
 			return null
@@ -138,8 +200,8 @@ export class OkenaClient {
 		if (!existsSync(remotePath)) return null
 
 		try {
-			const remote: RemoteConfig = JSON.parse(readFileSync(remotePath, 'utf-8'))
-			if (remote.pid && !this.isProcessAlive(remote.pid)) return null
+			const remote = this.config.readJson<RemoteConfig>(remotePath)
+			if (remote.pid && !this.config.isProcessAlive(remote.pid)) return null
 			const localEndpoint = remote.local_endpoint
 			const endpoint: OkenaEndpoint =
 				localEndpoint?.kind === 'unix_socket' && localEndpoint.path
@@ -148,15 +210,6 @@ export class OkenaClient {
 			return { token, endpoint }
 		} catch {
 			return null
-		}
-	}
-
-	private isProcessAlive(pid: number): boolean {
-		try {
-			process.kill(pid, 0)
-			return true
-		} catch {
-			return false
 		}
 	}
 

@@ -225,6 +225,11 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		this.core.terminalOpened(ref)
 	}
 
+	/** Every visible hub change (hook event, dialog, prompt): the dock watcher's push trigger. */
+	onChange(listener: () => void): () => void {
+		return this.core.onChange(listener)
+	}
+
 	// -------------------------------------------------------------------------
 	// OkenaClaudeClient (the dock reads and acts through this)
 	// -------------------------------------------------------------------------
