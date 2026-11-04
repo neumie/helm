@@ -1871,6 +1871,35 @@ body.dragging {
 	border-top: 1px solid var(--hairline);
 }
 
+/* The pane's terminal-side edge is Jakub's to drag (§3.24 Pane height): a 6px target centered on the
+ * dock's 1px edge, invisible at rest, above the terminal's well padding and the pane's top (bottom) px.
+ * Hovered or dragged, that edge turns --accent — the focus edge's token — and 2px while dragging.
+ * Later than the arrival rules, so a hovered edge wins over an arrival's (same specificity). */
+.agent-dock-resize {
+	position: absolute;
+	z-index: 3;
+	top: -3px;
+	right: 0;
+	left: 0;
+	height: 6px;
+	cursor: row-resize;
+	touch-action: none;
+}
+
+.agent-dock-resize[data-position="top"] {
+	top: auto;
+	bottom: -3px;
+}
+
+.agent-dock:has(.agent-dock-resize:hover)::before,
+.agent-dock:has(.agent-dock-resize[data-resize])::before {
+	background: var(--accent);
+}
+
+.agent-dock:has(.agent-dock-resize[data-resize="drag"])::before {
+	height: 2px;
+}
+
 /* Header: a plain row on the surface — kind glyph (the one colored mark) and kind, then the question's
  * context dim (the queue's selected fill says whose); ‹ 1/3 › and esc dim on the right. No rule. */
 .agent-dock-title {

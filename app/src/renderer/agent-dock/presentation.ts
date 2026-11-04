@@ -1433,3 +1433,28 @@ export function paneMaxHeight(right: number): number {
 export function paneFitHeight(natural: number, max: number = PANE_MAX_HEIGHT): number {
 	return Math.min(max, Math.max(PANE_MIN_HEIGHT, Math.ceil(natural)))
 }
+
+/** However little room is left, the pane keeps its rule, a few body rows and its footer (shown height floor). */
+export const PANE_FLOOR = 120
+
+/**
+ * The heights Jakub may drag the pane's terminal-side edge to: [PANE_MIN_HEIGHT, `room`] — the room that
+ * keeps the terminal its rows, which may exceed the share cap the pane opens with. Keeping the rows wins
+ * over the minimum (a short window); the floor still holds. No room known: up to PANE_MAX_HEIGHT.
+ */
+export function paneResizeBounds(room: number | null): { min: number; max: number } {
+	const max = Math.max(PANE_FLOOR, Math.floor(room ?? PANE_MAX_HEIGHT))
+	return { min: Math.min(PANE_MIN_HEIGHT, max), max }
+}
+
+/** `height` within `bounds`, in whole px. */
+export function clampPaneHeight(height: number, bounds: { min: number; max: number }): number {
+	return Math.min(bounds.max, Math.max(bounds.min, Math.round(height)))
+}
+
+/** Jakub's stored pane height, or null (automatic sizing) for anything absent or not a sane px value. */
+export function storedPaneHeight(raw: string | null): number | null {
+	if (raw === null || !/^\d{1,5}$/.test(raw.trim())) return null
+	const height = Number(raw.trim())
+	return height >= PANE_FLOOR && height <= 20_000 ? height : null
+}
