@@ -108,7 +108,7 @@ export function ItemDetail({
 	) : localError ? (
 		<Receipt view={{ text: localError, tone: 'danger' }} />
 	) : resolved ? (
-		// Closed elsewhere while the pane showed it: it stays until Jakub closes the pane, saying how it went.
+		// Closed elsewhere while the pane showed it: it stays until Jakub steps off it or closes the pane, saying how it went.
 		<Receipt view={{ text: resolutionLabel(item), tone: 'neutral' }} />
 	) : null
 	const warnings = (

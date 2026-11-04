@@ -223,7 +223,7 @@ export function AgentDock({
 	const growMax = useRef<number | undefined>(undefined)
 	/** Bumped when growable is re-armed, so the content watch restarts its settle time. */
 	const [settle, setSettle] = useState(0)
-	/** Entry order while the pane is open: answered entries keep their slot until it closes. */
+	/** Entry order while the pane is open: entries keep their order; only the open one outlives its answer. */
 	const order = useRef<number[] | null>(null)
 	const focusOnOpen = useRef(false)
 	/** Keyboard focus was inside the pane when a step or ack swapped its content. */
