@@ -179,7 +179,7 @@ export function AgentPanel({
 				    terminal to show, its source leads as the link to it. */}
 				{reveal ? (
 					<span className="agent-dock-title-project agent-dock-title-where">
-						<RevealWhere view={reveal} withName={false} />
+						<RevealWhere view={reveal} />
 						{row.where.length > 1 ? ` · ${row.where.slice(1).join(' · ')}` : ''}
 					</span>
 				) : (

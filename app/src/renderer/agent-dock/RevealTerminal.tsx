@@ -1,7 +1,7 @@
 // "Show terminal" (design §3.24): from an item's pane or an agent's detail, bring up the terminal the
 // agent runs in — an Okena pane (Okena focuses it, Helm raises the app) or a Helm terminal (its tab,
 // focused, frame pulsed). One mechanism (AgentDock `reveal`, ⌘O from anywhere in the pane); its look is
-// the header's where text as a link-like token, `Okena ↗ service-date-and-people` after the kind (an
+// the header's where text as a link-like token, a bare `Okena ↗` after the kind (an
 // item pane) or `Okena ↗` leading the agent detail's where line, with a dim `⌘O` after it while the
 // pane holds the keys (stories: Views / Agent dock reveal terminal).
 import type { DockRevealTarget } from '../../agent-dock/reveal'
@@ -22,12 +22,12 @@ export interface RevealView {
 const sourceWord = (target: DockRevealTarget): string => (target.kind === 'okena' ? 'Okena' : 'Terminal')
 
 /**
- * The header's where text as a link to the agent's terminal: `Okena ↗ name` (an item pane) or
- * `Okena ↗` leading the agent detail's where line (`withName` false); its key hint follows while the
+ * The header's where text as a link to the agent's terminal: a bare `Okena ↗` / `Terminal ↗` (Jakub: no
+ * agent name in the link), in an item pane or leading the agent detail's where line; its key hint follows while the
  * pane holds the keys, dim and bare like the row's ⌘⇧J (aria-hidden; the link carries
  * aria-keyshortcuts).
  */
-export function RevealWhere({ view, withName = true }: { view: RevealView | null; withName?: boolean }) {
+export function RevealWhere({ view }: { view: RevealView | null }) {
 	if (!view) return null
 	const key = revealShortcut(view.mod)
 	return (
@@ -43,7 +43,6 @@ export function RevealWhere({ view, withName = true }: { view: RevealView | null
 				onClick={view.onReveal}
 			>
 				{sourceWord(view.target)} <span aria-hidden="true">↗</span>
-				{withName ? ` ${view.name}` : ''}
 			</button>
 			<span className="agent-dock-title-hint" aria-hidden="true">
 				<kbd data-face={key.label.startsWith('⌘') ? 'symbols' : undefined}>{key.label}</kbd>

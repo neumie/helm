@@ -169,11 +169,9 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 	await expect(input).toBeFocused()
 	await expect(pane).toContainText('1/3')
 	// The header says what (kind + question context) with ‹ 1/3 ›, then whose terminal as the where link
-	// (`Okena ↗ name`, ⌘O); the id and the clock are its tooltip.
+	// (`Okena ↗`, ⌘O); the id and the clock are its tooltip.
 	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /asked \d\d:\d\d · waiting /)
-	await expect(pane.locator('.agent-dock-title-text')).toHaveText(
-		/^\?\s*Question\s*2 questions\s*Okena ↗ agent-dock\s*⌘O$/,
-	)
+	await expect(pane.locator('.agent-dock-title-text')).toHaveText(/^\?\s*Question\s*2 questions\s*Okena ↗\s*⌘O$/)
 	await expect(pane.locator('.agent-dock-title')).not.toContainText(/#\d|asked|waiting/)
 	// Verbatim AskUserQuestion content, plain text; previews in monospace; nothing submits until every question has an answer.
 	await expect(pane).toContainText('Barva?')

@@ -15,8 +15,8 @@ import type { AgentDockRevealMode, AgentDockScenario } from './agent-dock-fixtur
  * stays open. A failure (Okena unreachable, the terminal gone) is a quiet line in the footer, never a
  * dialog.
  *
- * The look: the header's where text as a link-like token after the kind — `Okena ↗ service-date-and-people`
- * (`Terminal ↗ …` for a Helm terminal); in the agent detail `Okena ↗` leads its where line — with a dim
+ * The look: the header's where text as a link-like token after the kind — `Okena ↗`
+ * (`Terminal ↗` for a Helm terminal; no agent name in the link); in the agent detail `Okena ↗` leads its where line — with a dim
  * `⌘O` after it while the pane holds the keys (the `… keys` stories, as after ⌘⇧J).
  */
 function RevealView({
@@ -73,13 +73,13 @@ const meta: Meta<typeof RevealView> = {
 export default meta
 type Story = StoryObj<typeof RevealView>
 
-/** Jakub's report: the turn pane of an Okena agent, `Okena ↗ service-date-and-people` after the kind. */
+/** Jakub's report: the turn pane of an Okena agent, `Okena ↗` after the kind. */
 export const TurnOkena: Story = { name: 'Turn · Okena', ...WIDE }
 /** The same with the keys in the pane: a dim `⌘O` follows the link. */
 export const TurnOkenaKeys: Story = { name: 'Turn · Okena · keys', ...WIDE, args: { focusPane: true } }
 /** A question: its context first, then the link. */
 export const QuestionOkena: Story = { name: 'Question · Okena', ...WIDE, args: { open: 'question' } }
-/** A Helm terminal's agent: `Terminal ↗ name` (its tab in this window). */
+/** A Helm terminal's agent: `Terminal ↗` (its tab in this window). */
 export const TurnHelm: Story = {
 	name: 'Turn · Helm terminal · keys',
 	...WIDE,

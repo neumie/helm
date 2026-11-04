@@ -8,7 +8,7 @@ declare global {
 }
 
 // "Show terminal" (design §3.24): from an item's pane or an agent's detail, ⌘O or the header's where
-// link (`Okena ↗ name`) brings up the agent's terminal. Okena agents go through main (agent-dock:reveal, here the fixture
+// link (`Okena ↗`) brings up the agent's terminal. Okena agents go through main (agent-dock:reveal, here the fixture
 // api); a Helm terminal's agent switches this window to its tab, focused, its frame pulsed. The pane
 // stays open; a failure is a quiet footer line, never a dialog.
 
@@ -43,13 +43,11 @@ test('Okena agent: the header link by pointer and ⌘O (pane, reply field) asks 
 	// The where text after the kind, named for VoiceOver by the act and whose terminal.
 	const show = pane.getByRole('button', { name: 'Show in Okena, service-date-and-people' })
 	await expect(show).toBeVisible()
-	await expect(show).toHaveText(/^Okena ↗ service-date-and-people$/)
+	await expect(show).toHaveText(/^Okena ↗$/)
 	await expect(show).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
 	await expect(show).toHaveAttribute('title', 'Show in Okena (⌘O)')
 	await expect(pane).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
-	await expect(pane.locator('.agent-dock-title-text')).toHaveText(
-		/^\S*\s*Turn ended\s*Okena ↗ service-date-and-people\s*⌘O$/,
-	)
+	await expect(pane.locator('.agent-dock-title-text')).toHaveText(/^\S*\s*Turn ended\s*Okena ↗\s*⌘O$/)
 	// The footer stays as it was: no reveal key, no reveal hint.
 	await expect(pane.locator('.agent-dock-foot-actions .agent-dock-key')).toHaveText(['Ack', 'Send'])
 	// The `⌘O` hint shows only while the pane holds the keys, like the footer's.
@@ -127,7 +125,7 @@ test('Helm terminal agent: `Terminal ↗` switches to its tab, focuses it and pu
 	await expect(compile).toHaveAttribute('aria-selected', 'false')
 	await turn.click()
 	const show = pane.getByRole('button', { name: /^Show terminal, / })
-	await expect(show).toHaveText(/^Terminal ↗ /)
+	await expect(show).toHaveText(/^Terminal ↗$/)
 	await expect(show).toHaveAttribute('title', 'Show terminal (⌘O)')
 	await show.click()
 	await expect(compile).toHaveAttribute('aria-selected', 'true')
