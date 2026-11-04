@@ -42,6 +42,12 @@ export type AgentDockScenario =
 	/** `single-turn` whose last message is Claude's Markdown (`TURN_MARKDOWN_TEXT`): bold, nested lists, code. */
 	| 'markdown-turn'
 	/**
+	 * Jakub's report: a turn whose Markdown (headings, code blocks, lists) runs past the pane's
+	 * height. Two finished turns: `ios-release` (short, 10m ago) first, then `ios-sync` (the long one,
+	 * 1m ago) — ack the first from the dock and the pane moves on to the long one at 1/1.
+	 */
+	| 'long-turn'
+	/**
 	 * Jakub's real day: three items whose panes carry long ClientCare task titles. Two sessions share
 	 * the worktree branch `fix/company-create-save-firm` (a question and a permission), one turn ended on
 	 * `fix/repeated-android-camera-permission` with subagents still running; four agents, two busy.
@@ -115,6 +121,44 @@ export const TURN_MARKDOWN_TEXT = [
 	'**2. Když SmartEmailing odmítne nebo neodpoví**',
 	'- Odpověď 4xx znamená jisté odmítnutí, nic neodešlo. Worker vrátí 502 `smartEmailingRejected` a důvod od SmartEmailingu.',
 	'- Odpověď 5xx, výpadek spojení nebo nečitelná odpověď → 502 `smartEmailingUnconfirmed`. Kampaň mohla odejít, admin',
+].join('\n')
+
+/** `long-turn`'s message: what overflowed the pane in Jakub's report (headings, code blocks, lists; under the 2 KiB excerpt). */
+export const LONG_TURN_TEXT = [
+	'## Shrnutí',
+	'Sync na iOS teď běží na pozadí a po návratu do appky se dorovná.',
+	'',
+	'### Co se změnilo',
+	'- `SyncScheduler` plánuje `BGAppRefreshTask` každých 15 minut.',
+	'- Konflikty řeší `mergeByUpdatedAt`, novější záznam vyhrává.',
+	'- Offline změny čekají ve frontě a odešlou se po připojení.',
+	'',
+	'```swift',
+	'BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: nil) { task in',
+	'    scheduler.run(task as! BGAppRefreshTask)',
+	'}',
+	'```',
+	'',
+	'### Testy',
+	'1. Unit testy na merge: 14 nových, všechny zelené.',
+	'2. UI test: přepnutí do pozadí a zpět, data se dorovnají.',
+	'3. Ručně na iPhonu 15: airplane mode, úprava, připojení.',
+	'',
+	'```sh',
+	'xcodebuild test -scheme Quip -destination "platform=iOS Simulator,name=iPhone 15"',
+	'```',
+	'',
+	'### Soubory',
+	'- `Sources/Sync/SyncScheduler.swift` — nové plánování na pozadí.',
+	'- `Sources/Sync/Merge.swift` — `mergeByUpdatedAt` a jeho testy.',
+	'- `Sources/Sync/OutboxQueue.swift` — fronta offline změn.',
+	'- `Info.plist` — `BGTaskSchedulerPermittedIdentifiers`.',
+	'',
+	'### Otevřené otázky',
+	'- Interval 15 minut je minimum, iOS ho stejně může natáhnout.',
+	'- Chceš notifikaci po dokončení syncu, nebo jen tichý badge?',
+	'',
+	'PR #212 je připravený. Mám ho mergnout?',
 ].join('\n')
 
 const PROFILE = 'storybook'
@@ -472,6 +516,62 @@ const realPanes = {
 
 const seedPage = (pane: Pane, uuid: string): Json =>
 	transcript(pane, [user(`${uuid}-u`, 'Start.'), assistant(uuid, 'Working on it.')], 1_000, true)
+
+/** `long-turn` (see AgentDockScenario), through the real reducer. */
+function longTurnRun(now: number, start: AgentDockState): ScenarioRun {
+	const working = (pane: Pane) => detail(pane, { busy: true })
+	const idle = (pane: Pane) => ({ ...working(pane), busy: false })
+	const said = (pane: Pane, uuid: string, text: string) => transcript(pane, [assistant(uuid, text)], 2_000, false)
+	const steps: Array<[number, AgentDockObservation]> = [
+		[
+			now - 30 * MINUTE,
+			poll(6_001, [
+				{ pane: panes.release, body: working(panes.release), transcript: seedPage(panes.release, 'release-a0') },
+				{ pane: panes.turn, body: working(panes.turn), transcript: seedPage(panes.turn, 'turn-a0') },
+			]),
+		],
+		[
+			now - 10 * MINUTE,
+			poll(6_002, [
+				{
+					pane: panes.release,
+					body: idle(panes.release),
+					transcript: said(panes.release, 'release-a1', 'Build 4127 je na TestFlightu. Zkusíš ho?'),
+				},
+				{ pane: panes.turn, body: working(panes.turn) },
+			]),
+		],
+		[
+			now - 10 * MINUTE + 9_000,
+			poll(6_003, [
+				{ pane: panes.release, body: idle(panes.release) },
+				{ pane: panes.turn, body: working(panes.turn) },
+			]),
+		],
+		[
+			now - MINUTE,
+			poll(6_004, [
+				{ pane: panes.release, body: idle(panes.release) },
+				{ pane: panes.turn, body: idle(panes.turn), transcript: said(panes.turn, 'turn-a1', LONG_TURN_TEXT) },
+			]),
+		],
+		[
+			now - MINUTE + 9_000,
+			poll(6_005, [
+				{ pane: panes.release, body: idle(panes.release) },
+				{ pane: panes.turn, body: idle(panes.turn) },
+			]),
+		],
+	]
+	return {
+		state: run(steps, start),
+		live: [
+			{ pane: panes.release, body: idle(panes.release) },
+			{ pane: panes.turn, body: idle(panes.turn) },
+		],
+		version: 6_005,
+	}
+}
 
 /** Jakub's real case (see AgentDockScenario 'real-case'), through the real reducer. */
 function realCaseTimeline(now: number): { steps: Array<[number, AgentDockObservation]>; live: Live; version: number } {
@@ -1137,6 +1237,7 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		]
 		return { state: run(steps, start), live: [{ pane: panes.turn, body: idle }], version: 5_003 }
 	}
+	if (name === 'long-turn') return longTurnRun(now, start)
 	if (name === 'agents-pane') {
 		const timeline = agentsPaneTimeline(now)
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }

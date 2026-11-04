@@ -31,7 +31,17 @@ import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
 import { AgentPanel, agentDraftKey } from './AgentPanel'
 import { AgentsDetail } from './AgentsDetail'
-import { type DetailKeys, type DockModKey, dockShortcut, isAckKey, keepsEditKey } from './pane-keys'
+import {
+	type DetailKeys,
+	type DockModKey,
+	bodyScrollKey,
+	choiceStop,
+	dockShortcut,
+	isAckKey,
+	keepsEditKey,
+	overflows,
+	scrollBody,
+} from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
 import {
 	type AgentDockPosition,
@@ -573,9 +583,11 @@ export function AgentDock({
 
 	// Inside the pane: ← → step between items (from the pane itself, ‹ ›, the body region or a
 	// choice; the question tabs keep their own); ↑ ↓ on the pane itself go to the answers — into
-	// the body's live choices at their stop — and step items only where there are none (a turn, a
-	// receipt); ‹ › step with all four; the body region keeps ↑ ↓ for scrolling and the choices rove
-	// with them; paging keys scroll the body; Esc closes back to the entry.
+	// the body's live choices at their stop. Without live choices (a turn, an agent, a receipt) a body
+	// that overflows takes ↑ ↓ as a line scroll from the pane, its body, ‹ ›, the footer keys and an
+	// empty Reply; one that fits lets them step items (‹ › step with all four). Page keys, Space and
+	// Home / End scroll the body from anywhere but a field with text (see bodyScrollKey); the choices
+	// rove with ↑ ↓. Esc closes back to the entry.
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
 		// ⌘⌫ acks where Ack is offered, from anywhere in the pane; a field with text in it keeps the key
 		// for editing (delete to line start). A held key acks nothing.
@@ -600,15 +612,21 @@ export function AgentDock({
 		const scroller = pane.querySelector<HTMLElement>('.agent-dock-pane-scroll')
 		const from = event.target as Element
 		const onPane = from === pane
-		if (onPane && scroller && ['PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) {
+		const reading = target?.type === 'item' || target?.type === 'agent'
+		// The Agents list roves its own rows: only the pane itself pages it.
+		const how = !scroller
+			? null
+			: reading
+				? bodyScrollKey(event, { scrolls: overflows(scroller), choices: choiceStop(pane) !== null })
+				: onPane
+					? bodyScrollKey(event, { scrolls: false, choices: true })
+					: null
+		if (scroller && how) {
 			event.preventDefault()
-			const page = Math.max(16, scroller.clientHeight - 32)
-			if (event.key === 'Home') scroller.scrollTop = 0
-			else if (event.key === 'End') scroller.scrollTop = scroller.scrollHeight
-			else scroller.scrollTop += event.key === 'PageUp' || (event.key === ' ' && event.shiftKey) ? -page : page
+			scrollBody(scroller, how)
 			return
 		}
-		if (target?.type !== 'item' && target?.type !== 'agent') return
+		if (!reading) return
 		const horizontal = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0
 		const vertical = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
 		const stop = onPane && vertical ? choiceStop(pane) : null
@@ -754,13 +772,6 @@ export function AgentDock({
 		</div>
 	)
 }
-
-/**
- * The shown body's choice stop — the row a roving list would focus (last focused, else picked, else
- * the first) — while its choices are live; null for bodies without them (turns, receipts).
- */
-const choiceStop = (pane: HTMLElement): HTMLButtonElement | null =>
-	pane.querySelector<HTMLButtonElement>('.agent-dock-choice[tabindex="0"]:not(:disabled)')
 
 /** The pane's landmark name: what it is and whose (`Question, company-create-save-firm, crm`). */
 function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
