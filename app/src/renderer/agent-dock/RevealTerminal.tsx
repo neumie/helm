@@ -83,6 +83,8 @@ export function RevealWhere({ view, withName = true }: { view: RevealView | null
 			<button
 				type="button"
 				className="agent-dock-reveal-link"
+				// VoiceOver: the act and whose terminal, not the bare token ("Okena service-date-and-people").
+				aria-label={`${revealLabel(view.target)}, ${view.name}`}
 				aria-keyshortcuts={key.aria}
 				title={revealTitle(view)}
 				disabled={view.busy}

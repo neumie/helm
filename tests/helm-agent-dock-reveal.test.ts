@@ -17,8 +17,15 @@ import { OkenaClient } from '../src/extensions/okena/client.js'
 type RevealModule = typeof import('../app/src/agent-dock/reveal.ts')
 type OkenaRevealClient = import('../app/src/agent-dock/reveal.ts').OkenaRevealClient
 type DockSession = import('../app/src/agent-dock/model.ts').DockSession
-const { dockRevealTarget, okenaFocusAction, parseRevealSession, revealLabel, revealOkenaTerminal, REVEAL_TEXT } =
-	revealModule as RevealModule
+const {
+	dockRevealTarget,
+	focusRefusal,
+	okenaFocusAction,
+	parseRevealSession,
+	revealLabel,
+	revealOkenaTerminal,
+	REVEAL_TEXT,
+} = revealModule as RevealModule
 const { createAgentDockMain } = dockMainModule as typeof import('../app/src/agent-dock-main.ts')
 const { HOOK_FILE, PRELOAD_FILE } = runtimeModule as typeof import('../app/src/claude-remote/runtime.ts')
 
@@ -208,10 +215,24 @@ test('reveal (main): gone, unreachable, refused focus, Helm keys and junk never 
 	const parsed = await revealOkenaTerminal('default:term-1', { client: malformed.client, activate: never })
 	assert.equal(parsed.ok, false)
 	assert.match((parsed as { detail: string }).detail, /^Okena is unreachable: invalid \/v1\/state/)
-	const refused = fakeOkena({ actionError: new Error('Okena action failed (400): terminal not found: term-1') })
+	// Okena refuses with `400 {"error":"…"}`: a pane closed between the layout read and the POST is gone;
+	// any other reason is shown bare (never the JSON), a transport error verbatim.
+	const closed = fakeOkena({
+		actionError: new Error('Okena action failed (400): {"error":"terminal not found: term-1"}'),
+	})
+	assert.deepEqual(await revealOkenaTerminal('default:term-1', { client: closed.client, activate: never }), {
+		ok: false,
+		detail: REVEAL_TEXT.gone,
+	})
+	const refused = fakeOkena({ actionError: new Error('Okena action failed (500): {"error":"bridge unavailable"}') })
 	assert.deepEqual(await revealOkenaTerminal('default:term-1', { client: refused.client, activate: never }), {
 		ok: false,
-		detail: 'Okena did not focus the terminal: Okena action failed (400): terminal not found: term-1',
+		detail: 'Okena did not focus the terminal: bridge unavailable',
+	})
+	const aborted = fakeOkena({ actionError: new Error('The operation was aborted due to timeout') })
+	assert.deepEqual(await revealOkenaTerminal('default:term-1', { client: aborted.client, activate: never }), {
+		ok: false,
+		detail: 'Okena did not focus the terminal: The operation was aborted due to timeout',
 	})
 	for (const key of ['helm:work:sess-1', 'junk', 7]) {
 		const { client, calls } = fakeOkena()
@@ -266,6 +287,57 @@ test('reveal (main) through the real OkenaClient: GET /v1/state then the exact P
 		await new Promise<void>(resolve => server.close(() => resolve()))
 		rmSync(root, { recursive: true, force: true })
 	}
+})
+
+test("reveal (main) through the real OkenaClient: Okena's 400 refusal reads as gone, nothing raised", async () => {
+	const root = mkdtempSync(join(tmpdir(), 'hr-'))
+	const socketPath = join(root, 'okena.sock')
+	const baseDir = join(root, 'config')
+	mkdirSync(join(baseDir, 'profiles', 'default'), { recursive: true })
+	writeFileSync(join(baseDir, 'profiles.json'), JSON.stringify({ last_used: 'default' }))
+	writeFileSync(join(baseDir, 'profiles', 'default', 'cli.json'), JSON.stringify({ token: 'tok', token_id: 'id' }))
+	writeFileSync(
+		join(baseDir, 'profiles', 'default', 'remote.json'),
+		JSON.stringify({ pid: process.pid, port: 1, local_endpoint: { kind: 'unix_socket', path: socketPath } }),
+	)
+	// As okena-remote-server's post_actions answers ActionResult::Err.
+	const server: Server = createServer((request, response) => {
+		request.resume()
+		request.on('end', () => {
+			if (request.url === '/v1/state') {
+				response.writeHead(200, { 'Content-Type': 'application/json' })
+				response.end(JSON.stringify(okenaState()))
+				return
+			}
+			response.writeHead(400, { 'Content-Type': 'application/json' })
+			response.end(JSON.stringify({ error: 'terminal not found: term-1' }))
+		})
+	})
+	await new Promise<void>(resolve => server.listen(socketPath, resolve))
+	let raised = 0
+	try {
+		const result = await revealOkenaTerminal('default:term-1', {
+			client: new OkenaClient(baseDir),
+			activate: async () => {
+				raised++
+				return true
+			},
+		})
+		assert.deepEqual(result, { ok: false, detail: REVEAL_TEXT.gone })
+		assert.equal(raised, 0)
+	} finally {
+		await new Promise<void>(resolve => server.close(() => resolve()))
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('focusRefusal: Okena JSON error bodies are unwrapped; not-found reads as gone', () => {
+	assert.equal(focusRefusal(new Error('Okena action failed (400): {"error":"project not found: p"}')), REVEAL_TEXT.gone)
+	assert.equal(
+		focusRefusal(new Error('Okena action failed (400): {"oops"')),
+		'Okena did not focus the terminal: Okena action failed (400): {"oops"',
+	)
+	assert.equal(focusRefusal('weird'), 'Okena did not focus the terminal: weird')
 })
 
 const WINDOW = { id: 'main-window' }

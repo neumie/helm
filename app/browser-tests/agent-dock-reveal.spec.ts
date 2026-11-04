@@ -158,3 +158,13 @@ test('a failed reveal leaves a quiet footer line, no dialog; a focused-but-not-r
 	await pane.getByRole('button', { name: 'Show in Okena' }).click()
 	await expect(note).toHaveText('Focused in Okena; Helm could not bring Okena to the front.')
 })
+
+test('variant `where` (story): the header link names the act and whose terminal for VoiceOver', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 })
+	await page.goto('/iframe.html?id=views-agent-dock-reveal-terminal--where-turn-okena&viewMode=story')
+	const link = page.locator('.agent-dock-reveal-link')
+	await expect(link).toBeVisible()
+	await expect(link).toHaveAccessibleName('Show in Okena, service-date-and-people')
+	await expect(link).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
+	await expect(link).toHaveText(/Okena ↗ service-date-and-people/)
+})

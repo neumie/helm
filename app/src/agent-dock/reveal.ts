@@ -61,6 +61,28 @@ export function parseRevealSession(key: unknown): { profile: string; terminalId:
 	return { profile: key.slice(0, at), terminalId: key.slice(at + 1) }
 }
 
+/**
+ * The footer's words for a refused `focus_terminal`. Okena answers a refusal `400 {"error":"…"}`
+ * (OkenaClient: `Okena action failed (400): {"error":"terminal not found: <id>"}`): a terminal closed
+ * between the layout read and the POST reads as gone; any other reason is shown bare, not as JSON.
+ */
+export function focusRefusal(error: unknown): string {
+	const detail = errorDetail(error)
+	const body = /^Okena action failed \(\d+\): (\{.*\})$/.exec(detail)?.[1]
+	let reason = detail
+	if (body) {
+		try {
+			const parsed: unknown = JSON.parse(body)
+			const said = (parsed as { error?: unknown } | null)?.error
+			if (typeof said === 'string' && said.trim()) reason = said.trim()
+		} catch {
+			// Not JSON after all: keep the whole line.
+		}
+	}
+	if (/\b(terminal|project) not found\b/i.test(reason)) return REVEAL_TEXT.gone
+	return `${REVEAL_TEXT.notFocused}: ${reason}`
+}
+
 /** The OkenaClient surface a reveal uses (structural, so tests inject a double). */
 export interface OkenaRevealClient {
 	forProfile(profileId: string): OkenaRevealClient
@@ -107,7 +129,7 @@ export async function revealOkenaTerminal(sessionKey: unknown, deps: OkenaReveal
 			signal: AbortSignal.timeout(REVEAL_FOCUS_TIMEOUT_MS),
 		})
 	} catch (error) {
-		return { ok: false, detail: `${REVEAL_TEXT.notFocused}: ${errorDetail(error)}` }
+		return { ok: false, detail: focusRefusal(error) }
 	}
 	return { ok: true, activated: await deps.activate().catch(() => false) }
 }
