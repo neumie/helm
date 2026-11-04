@@ -431,7 +431,8 @@ export function AgentDock({
 		onPaneChange?.(paneShown)
 	}, [paneShown])
 
-	// A pointer press outside the pane and the entries closes it (terminal clicks included).
+	// A pointer press outside the pane, the entries and the terminals closes it. A click in a terminal
+	// keeps the pane open (Jakub reads the pane while typing; the layout already hands the keys to xterm).
 	useEffect(() => {
 		if (!paneOpen) return
 		const doc = hostRef.current?.ownerDocument
@@ -440,6 +441,7 @@ export function AgentDock({
 			const node = event.target as Node
 			if (paneRef.current?.contains(node)) return
 			for (const anchor of anchors.current.values()) if (anchor.contains(node)) return
+			if (node instanceof Element && node.closest('#terms')) return
 			close(false)
 		}
 		doc.addEventListener('pointerdown', onPointer, true)
