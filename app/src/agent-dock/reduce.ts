@@ -4,6 +4,7 @@
 
 import { boundText, excerptLine } from '../../../src/agent-dock/text'
 import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
+import { SLOWEST_INTERVAL_MS } from './cadence'
 import { itemWaitingSince } from './item-order'
 import {
 	ACT_CONFIRM_MS,
@@ -46,8 +47,11 @@ export const TURN_RESUMED_MS = 8_000
 /**
  * Two observations further apart than this do not make one continuous idle/busy stretch
  * (Helm asleep, Okena down, the pane unlisted or unreadable in between): both restart.
+ * Three times the watcher's slowest interval (15 s reconciliation with a healthy push
+ * channel → 45 s), so a stretch observed only by reconciliation ticks (each one a little
+ * late under load) is never restarted, while a real sleep or outage still is.
  */
-export const OBSERVATION_GAP_MS = 15_000
+export const OBSERVATION_GAP_MS = 3 * SLOWEST_INTERVAL_MS
 /** Turn excerpt bound (memory only). */
 export const TURN_TEXT_MAX = 2_048
 /** Resolved items are kept for dedupe (and a receipt's linger), bounded by age and count. */

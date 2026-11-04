@@ -1,21 +1,28 @@
 // Agent dock watcher (Electron main side, but no Electron import: main.ts
 // injects publish/focus so this stays unit-testable under node --test).
 //
-// Cadence follows the agents, not the window: 1 s while some agent is active
-// (main agent busy/working, a dialog open, a turn held by the idle gate, a dock
-// answer waiting to be observed: agentDockActive), else 1.5 s while the dock is
-// shown AND Helm is focused, else 5 s (shown but unfocused, or hidden). Hidden
-// still ticks on purpose: `helm dock watch` (the dispatcher's event stream) must
-// get events while the dock is collapsed, and one GET /v1/state + per-pane
-// detail is cheap. On top of the cadence:
+// Cadence follows the agents, not the window (intervals in cadence.ts): 1 s while
+// some agent is active (main agent busy/working, a dialog open, a turn held by the
+// idle gate, a dock answer waiting to be observed: agentDockActive). Otherwise, with
+// a healthy push channel (Okena's /v1/stream connected and covering every Okena
+// pane, okena-stream.ts), a 15 s reconciliation; without one 1.5 s while the dock is
+// shown AND Helm is focused, else 5 s (shown but unfocused, or hidden). Hidden still
+// ticks on purpose: `helm dock watch` (the dispatcher's event stream) must get
+// events while the dock is collapsed. The active 1 s stays even with the stream up:
+// Okena's `busy` flip from a hook alone does not bump state_version (only the
+// lifecycle OSC from a separate hook pipeline does, and may land first), and a
+// reply typed in the terminal shows only in the transcript (REPLY_READ_MS).
+// On top of the cadence:
 //   - settle timer: the next tick is never later than the moment a turn can be
 //     decided without new data (agentDockNextDeadline: idle edge + TURN_IDLE_MS,
 //     busy edge + TURN_RESUMED_MS), plus SETTLE_EPSILON_MS;
-//   - nudge(): a source pushed a change (Helm's hub): one tick NUDGE_DEBOUNCE_MS
-//     later (at least NUDGE_MIN_GAP_MS after the last tick began); a burst is one
-//     tick, and a tick that began after the burst's latest change already covers it.
+//   - nudge(): a source pushed a change (Helm's hub, Okena's stream): one tick
+//     NUDGE_DEBOUNCE_MS later (at least NUDGE_MIN_GAP_MS after the last tick began);
+//     a burst is one tick, and a tick that began after the burst's latest change
+//     already covers it.
 // One timer, re-armed after every tick; ticks never overlap (a poke during a
-// tick runs one more right after it).
+// tick runs one more right after it). After every tick the push channel syncs
+// (follows Okena's active profile and daemon).
 //
 // Disk (`<userData>/agent-dock`, 0700; files 0600, atomic replace; shapes from
 // spool-projection.ts):
@@ -50,6 +57,13 @@ import {
 	writePrivateFileAtomic,
 } from '../../../src/agent-dock/spool'
 import { REFUSAL_TEXT } from './act'
+import {
+	ACTIVE_INTERVAL_MS,
+	BACKGROUND_INTERVAL_MS,
+	FOCUSED_INTERVAL_MS,
+	RECONCILE_INTERVAL_MS,
+	UNFOCUSED_INTERVAL_MS,
+} from './cadence'
 import type { DockPromptExpect } from './composite-source'
 import {
 	type AgentDockActResult,
@@ -78,11 +92,13 @@ import {
 } from './reduce'
 import { contentDigest, dockEventLine, dockSpoolItem, dockSpoolSnapshot, pruneLedger } from './spool-projection'
 
-/** Some agent is active (agentDockActive), whatever the window does. */
-export const ACTIVE_INTERVAL_MS = 1_000
-export const FOCUSED_INTERVAL_MS = 1_500
-export const UNFOCUSED_INTERVAL_MS = 5_000
-export const BACKGROUND_INTERVAL_MS = 5_000
+export {
+	ACTIVE_INTERVAL_MS,
+	BACKGROUND_INTERVAL_MS,
+	FOCUSED_INTERVAL_MS,
+	RECONCILE_INTERVAL_MS,
+	UNFOCUSED_INTERVAL_MS,
+} from './cadence'
 export const SNAPSHOT_REFRESH_MS = 10_000
 /** A pushed change (nudge) ticks this much later, so a burst of hook events is one tick. */
 export const NUDGE_DEBOUNCE_MS = 100
@@ -99,7 +115,8 @@ export interface WatcherTimers {
 	clearTimeout(handle: unknown): void
 }
 
-const realTimers: WatcherTimers = {
+/** Node timers, unref'd (they never keep Electron main alive). */
+export const realTimers: WatcherTimers = {
 	setTimeout: (run, ms) => {
 		const handle = setTimeout(run, ms)
 		handle.unref?.()
@@ -134,6 +151,16 @@ export interface AgentDockObservationSource {
 	expedite?(target: AgentDockTarget, until: number): void
 }
 
+/**
+ * A source's push channel (okena-stream.ts). While healthy, every change the sources make
+ * reaches nudge(), so idle ticks relax to RECONCILE_INTERVAL_MS.
+ */
+export interface AgentDockPushChannel {
+	healthy(): boolean
+	/** After every tick: follow the source's target (profile switch, daemon restart). Cheap; never throws. */
+	sync?(): void
+}
+
 /** How long after a sent dock reply the source keeps reading that pane's transcript. */
 export const ACT_EXPEDITE_MS = 20_000
 
@@ -148,6 +175,8 @@ export interface AgentDockWatcherOptions {
 	pid?: number
 	log?: (message: string) => void
 	timers?: WatcherTimers
+	/** Absent: no push channel, the polling cadence only. */
+	push?: AgentDockPushChannel
 }
 
 export class AgentDockWatcher {
@@ -414,6 +443,7 @@ export class AgentDockWatcher {
 	/** Current cadence interval (exported behavior for tests). */
 	interval(): number {
 		if (agentDockActive(this.state)) return ACTIVE_INTERVAL_MS
+		if (this.pushHealthy()) return RECONCILE_INTERVAL_MS
 		if (!this.visible) return BACKGROUND_INTERVAL_MS
 		return this.options.isFocused() ? FOCUSED_INTERVAL_MS : UNFOCUSED_INTERVAL_MS
 	}
@@ -444,6 +474,20 @@ export class AgentDockWatcher {
 			this.warn(`tick failed: ${errorMessage(error)}`)
 		} finally {
 			this.inFlight = false
+		}
+		if (this.stopped) return
+		try {
+			this.options.push?.sync?.()
+		} catch (error) {
+			this.warn(`push channel sync failed: ${errorMessage(error)}`)
+		}
+	}
+
+	private pushHealthy(): boolean {
+		try {
+			return this.options.push?.healthy() === true
+		} catch {
+			return false
 		}
 	}
 

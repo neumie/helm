@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, powerMonitor, screen, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
@@ -3072,6 +3072,9 @@ void app.whenReady().then(async () => {
 	if (launchPolicy.scheduledResidency) void scheduledResidency.start()
 	createWindow()
 	agentDock.start()
+	// After sleep or a locked screen the Okena stream may be half-open: reconnect and sweep now.
+	powerMonitor.on('resume', () => agentDock.resume())
+	powerMonitor.on('unlock-screen', () => agentDock.resume())
 	if (sideBySideLaunch) app.dock?.setBadge('dev')
 	if (launchPolicy.documentReviewControl) {
 		reviewControlStart = documentReviewControl.start().catch(() => {

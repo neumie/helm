@@ -435,6 +435,35 @@ async function spoolWithItems(dir: string, now: number): Promise<void> {
 	watcher.stop()
 }
 
+test("helm dock ls: stale means missing from the source's last good poll, not 10 s on the clock", async () => {
+	const root = tempDir()
+	const dir = join(root, 'agent-dock')
+	try {
+		const now = Date.now()
+		await spoolWithItems(dir, now)
+		const snapshot = JSON.parse(readFileSync(join(dir, 'snapshot.json'), 'utf8')) as SpoolSnapshot
+		const ls = async (sessionObservedAt: number, lastObservedAt: number) => {
+			const health = { state: 'ok' as const, since: now - 60_000, lastObservedAt }
+			const body = {
+				...snapshot,
+				source: health,
+				sources: { okena: health },
+				sessions: snapshot.sessions.map(session => ({ ...session, observedAt: sessionObservedAt })),
+			}
+			writeFileSync(join(dir, 'snapshot.json'), JSON.stringify(body))
+			const out = capture()
+			assert.equal(await runDockCli(['ls', '--dir', dir], { ...out.deps, now: () => now }), 0)
+			return out.out.join('\n')
+		}
+		// Idle fleet with Okena's stream up: polled 14 s ago, every session in that poll.
+		assert.doesNotMatch(await ls(now - 14_000, now - 14_000), /stale/)
+		// A session the last good poll no longer saw.
+		assert.match(await ls(now - 30_000, now - 14_000), /stale 16s/)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('helm dock ls/show read the snapshot; exit 4 when Okena is down, 5 when Helm is not running', async () => {
 	const root = tempDir()
 	const dir = join(root, 'agent-dock')
