@@ -11,7 +11,13 @@ import type {
 import type { AgentDockApi } from '../shared'
 import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
-import { type AgentDockPosition, type AgentsLayout, agentsLayout, failedActResult } from './agent-dock/presentation'
+import {
+	type AgentDockPosition,
+	type AgentsLayout,
+	agentsLayout,
+	failedActResult,
+	paneMaxHeight,
+} from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
@@ -91,8 +97,8 @@ export interface MountedAgentDock {
  * Agent dock presentation inside `main#right`, next to `#terms` (below by default).
  * It renders main-pushed snapshots; Jakub acks and answers through `api` (main
  * runs every Okena effect behind a fresh CAS read). The queue row is always shown at
- * one fixed height, so arriving items never refit xterm; only opening or closing a
- * pane changes the dock's height (fixed while it is open): the terminal row shrinks
+ * one fixed height, so arriving items never refit xterm; only opening, closing or (once,
+ * never shrinking) growing a pane changes the dock's height: the terminal row shrinks
  * through the grid, so xterm refits once per change. Nothing floats over the terminal.
  */
 export function mountAgentDock({
@@ -153,8 +159,9 @@ export function mountAgentDock({
 		;(stop ?? row)?.focus()
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
-	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding.
-	const paneRoom = (): number | null => {
+	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding; and the most a
+	// pane may open (or grow) to within it — a share of #right (paneMaxHeight).
+	const paneRoom = (): { room: number; max: number } | null => {
 		const total = right.clientHeight
 		if (total <= 0) return null
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
@@ -162,7 +169,8 @@ export function mountAgentDock({
 		const row =
 			terms.querySelector('.term-holder.active .xterm-rows > div')?.getBoundingClientRect().height ||
 			FALLBACK_ROW_HEIGHT
-		return Math.floor(total - rest - PANE_KEEPS_ROWS * row - WELL_PADDING)
+		const room = Math.floor(total - rest - PANE_KEEPS_ROWS * row - WELL_PADDING)
+		return { room, max: paneMaxHeight(total, room) }
 	}
 	const focusTerminal = (): void => {
 		if (focusTerminalOverride) {

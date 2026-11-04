@@ -1413,3 +1413,22 @@ export function agentReplyBlocked(
 			return 'State unknown: reply in the terminal'
 	}
 }
+
+/**
+ * Pane height (design §3.24): the shown content's natural height within [PANE_MIN_HEIGHT, the cap].
+ * The cap is PANE_MAX_SHARE of `#right` (terminal row + dock), never below PANE_MAX_HEIGHT, and never
+ * more than the room that leaves the terminal its rows (`paneRoom` in agent-dock-layout.ts).
+ */
+export const PANE_MIN_HEIGHT = 216
+export const PANE_MAX_HEIGHT = 480
+export const PANE_MAX_SHARE = 0.6
+
+/** Most px a pane may be opened (or grown) to in a `#right` of `right` px with `room` px left for it. */
+export function paneMaxHeight(right: number, room: number): number {
+	return Math.min(room, Math.max(PANE_MAX_HEIGHT, Math.floor(right * PANE_MAX_SHARE)))
+}
+
+/** The height a pane takes for content `natural` px tall under `max` (no room known: PANE_MAX_HEIGHT). */
+export function paneFitHeight(natural: number, max: number = PANE_MAX_HEIGHT): number {
+	return Math.min(max, Math.max(PANE_MIN_HEIGHT, Math.ceil(natural)))
+}

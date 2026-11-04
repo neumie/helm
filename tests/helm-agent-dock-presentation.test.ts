@@ -76,6 +76,11 @@ const {
 	excerptPlainLine,
 	sessionReplyView,
 	REPLY_RECEIPT_MS,
+	PANE_MAX_HEIGHT,
+	PANE_MAX_SHARE,
+	PANE_MIN_HEIGHT,
+	paneFitHeight,
+	paneMaxHeight,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -1054,4 +1059,24 @@ test('agent detail reply: receipts like a turn reply; blocked while it owes, wor
 			'',
 		/unreachable: reply in the terminal$/,
 	)
+})
+
+test('pane height: natural height within [216, cap]; the cap is 60% of #right, never under 480, never past the room', () => {
+	assert.equal(PANE_MIN_HEIGHT, 216)
+	assert.equal(PANE_MAX_HEIGHT, 480)
+	assert.equal(PANE_MAX_SHARE, 0.6)
+	// 1400×900 (#right 862, room 662): the share wins over the old 480.
+	assert.equal(paneMaxHeight(862, 662), 517)
+	// 1512×982 (#right 944, room 744).
+	assert.equal(paneMaxHeight(944, 744), 566)
+	// 1400×700 (#right 662): 60% is 397, so 480, then the room that keeps 8 terminal rows.
+	assert.equal(paneMaxHeight(662, 462), 462)
+	assert.equal(paneMaxHeight(700, 520), 480)
+	// A long message opens at the cap; a short one stays at the minimum; no room known: 480.
+	assert.equal(paneFitHeight(713, 517), 517)
+	assert.equal(paneFitHeight(150, 517), 216)
+	assert.equal(paneFitHeight(300.2, 517), 301)
+	assert.equal(paneFitHeight(713), 480)
+	// Less room than the minimum: the room (the dock floors it at render).
+	assert.equal(paneFitHeight(713, 180), 180)
 })
