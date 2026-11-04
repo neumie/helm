@@ -698,21 +698,27 @@ test("a detached HEAD's commit hash is no name: the agent keeps its pane or repo
 	])
 })
 
-test('an open pane keeps entries in their slots: answered items stay put, new ones join the end', () => {
+test('an open pane keeps the queue order; only the open entry outlives its answer, the rest leave at once', () => {
 	const item = (id: number, state: DockItem['state'] = 'open') => ({ id, state }) as DockItem
 	const ids = (items: DockItem[]) => items.map(entry => entry.id)
-	// The snapshot moves the answered #3 behind the open ones; the frozen order keeps it first.
+	// The snapshot moves the answered #3 (still lingering with its receipt) behind the open ones; the order keeps it first.
 	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7), item(3, 'resolved')])), [3, 5, 7])
 	// New items append, gone ones leave.
 	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(9), item(3, 'resolved')])), [3, 5, 9])
-	// An entry that left the queue meanwhile (its receipt stopped lingering, answered in the terminal)
-	// keeps its slot from the snapshot until the pane closes; acked ones and ones the snapshot dropped leave.
-	const done = (id: number, by: 'dock' | 'outside' | 'acked') =>
+	const done = (id: number, by: 'dock' | 'outside' | 'replied' | 'superseded' | 'acked') =>
 		({ id, state: 'resolved', resolution: { at: T, by } }) as DockItem
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'dock')])), [3, 5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], [done(5, 'outside')])), [3, 5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'acked')])), [5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)], [])), [5])
+	// The open entry answered elsewhere (or its receipt stopped lingering) keeps its slot from the snapshot
+	// until Jakub moves off it: the pane shows how it closed and never closes by itself.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], done(3, 'dock'))), [3, 5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], done(5, 'replied'))), [3, 5, 7])
+	// Any other entry that no longer needs Jakub leaves at once, pane open or not (the bug: a pane left
+	// open for an hour piled up every turn he had replied to in the terminal, "1/16").
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], item(3))), [3, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7, 9], [item(9)], done(5, 'superseded'))), [5, 9])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)])), [5, 7])
+	// Acked ones and ones the snapshot dropped always leave, the open one too.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], done(3, 'acked'))), [5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)])), [5])
 	// No pane: the snapshot's own order.
 	assert.deepEqual(ids(keepOrder(null, [item(5), item(3)])), [5, 3])
 })

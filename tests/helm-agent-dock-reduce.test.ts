@@ -490,6 +490,52 @@ test('a newer turn supersedes the open one', () => {
 	assert.equal(itemsOf(final, 'turn').find(item => item.state === 'open')?.key, `turn:${SID}:b2`)
 })
 
+test('a long day in one pane: every answered turn and question closes, never more than one live turn', () => {
+	// The shape behind "things I already answered stay in the dock" (#179–#187, one pane over an hour):
+	// replies typed in the terminal (read, or only seen as busy), background wakes, a question
+	// answered in the terminal. Each closes in the reducer, so the queue (live items) holds only the
+	// latest unanswered turn; the snapshot keeps the rest as RECENT (`helm dock ls --all`) only.
+	let state = seededWorking()
+	let at = T0 + 1000
+	let cursor = 1_300_000
+	const step = (detail: Json, entries?: Json[], wait = 1000) => {
+		at += wait
+		cursor += 10_000
+		state = reduce(state, poll(detail, entries ? { transcript: page(entries, { cursor }) } : {}), at).state
+		const live = agentDockSnapshot(state, at).items.filter(item => item.state !== 'resolved')
+		assert.ok(live.filter(item => item.kind === 'turn').length <= 1, `one live turn at most (${at - T0} ms)`)
+		return live
+	}
+	const settle = () => step(idle(), undefined, TURN_IDLE_MS)
+	const liveKeys = (live: DockItem[]) => live.map(item => item.key)
+
+	step(idle(), [assistant('t1')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t1`])
+	// Replied in the terminal, the reply read while the agent works.
+	assert.deepEqual(step(working(), [user('u1')]), [])
+	step(idle(), [assistant('t2')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t2`])
+	// Replied in the terminal, the reply not read until the agent is long busy.
+	step(working())
+	assert.deepEqual(step(working(), undefined, TURN_RESUMED_MS), [])
+	step(idle(), [user('u2'), assistant('t3')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t3`])
+	// A background wake says something new while the pane stays idle: the new turn replaces the old one.
+	assert.deepEqual(liveKeys(step(idle(), [assistant('t4')])), [`turn:${SID}:t4`])
+	// A question raised and answered in the terminal.
+	step(working(), [user('u4')])
+	assert.equal(step(ask()).filter(item => item.kind === 'ask').length, 1)
+	assert.deepEqual(step(working()), [])
+	step(idle(), [assistant('t5')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t5`])
+
+	const closed = state.items
+		.filter(item => item.state === 'resolved')
+		.sort((a, b) => a.id - b.id)
+		.map(item => `${item.kind}:${item.resolution?.by}`)
+	assert.deepEqual(closed, ['turn:replied', 'turn:superseded', 'turn:superseded', 'turn:replied', 'ask:outside'])
+})
+
 // --- the agent moved on (Jakub replied in the terminal, or it woke by itself) ----
 
 const RESET_ENTRIES = LOG_RESET_REPLY.entries as Json[]

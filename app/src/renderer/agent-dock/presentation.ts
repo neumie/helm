@@ -813,24 +813,20 @@ export function statusGlyph(status: DockSession['status']): string {
 }
 
 /**
- * Queue order while a pane is open: entries already shown keep their slot (an
- * answered item does not jump behind the open ones while its receipt shows), new
- * ones join at the end. An entry that left the queue meanwhile (its receipt's
- * linger ran out, it was answered in the terminal) stays in its slot from `held`
- * — the snapshot's items — until the pane closes, so nothing shifts and the open
- * pane never closes by itself; only what Jakub acked, or what the snapshot no
- * longer has at all, leaves. `order` null = the snapshot's own order.
+ * Queue order while a pane is open: entries still in the queue keep their order (an answered
+ * item does not jump behind the open ones while its receipt shows), new ones join at the end.
+ * Whatever no longer needs Jakub leaves at once, pane or not (answered or replied in the
+ * terminal, the agent moved on, a receipt whose linger ran out) — except the entry open in
+ * the pane: it stays in its slot from `open` (its snapshot copy, which shows how it closed)
+ * until Jakub steps to another entry or closes the pane, so the pane never closes by itself
+ * under his reading. Acked items and ones the snapshot no longer has always leave.
+ * `order` null = the snapshot's own order.
  */
-export function keepOrder(
-	order: readonly number[] | null,
-	items: readonly DockItem[],
-	held: readonly DockItem[] = [],
-): DockItem[] {
+export function keepOrder(order: readonly number[] | null, items: readonly DockItem[], open?: DockItem): DockItem[] {
 	if (!order) return [...items]
 	const byId = new Map(items.map(item => [item.id, item]))
-	const heldById = new Map(held.map(item => [item.id, item]))
 	const kept = order.flatMap(id => {
-		const item = byId.get(id) ?? heldById.get(id)
+		const item = byId.get(id) ?? (open?.id === id ? open : undefined)
 		return item && item.resolution?.by !== 'acked' ? [item] : []
 	})
 	const known = new Set(order)

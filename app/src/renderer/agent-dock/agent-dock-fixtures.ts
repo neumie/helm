@@ -1312,10 +1312,10 @@ const paneOfKey = (key: string): Pane | undefined =>
 const paneOf = (item: DockItem): Pane | undefined => paneOfKey(item.session)
 
 /**
- * The next Okena poll after Jakub's dock answer landed: the dialog is gone from its
- * pane, or (a reply) the pane is busy and the transcript shows the user entry.
+ * The next Okena poll after Jakub's answer landed (from the dock, or typed in the terminal): the
+ * dialog is gone from its pane, or (a reply) the pane is busy and the transcript shows the user entry.
  */
-function landedPoll(scenario: ScenarioRun, item: DockItem): AgentDockObservation {
+function landedPoll(scenario: ScenarioRun, item: DockItem, reply = '(reply from the dock)'): AgentDockObservation {
 	const pane = paneOf(item)
 	scenario.version += 1
 	const live: Live = scenario.live.map(entry => {
@@ -1328,12 +1328,7 @@ function landedPoll(scenario: ScenarioRun, item: DockItem): AgentDockObservation
 		return {
 			pane: entry.pane,
 			body: { ...entry.body, busy: true },
-			transcript: transcript(
-				entry.pane,
-				[user(`dock-${item.id}`, '(reply from the dock)')],
-				9_000 + scenario.version,
-				false,
-			),
+			transcript: transcript(entry.pane, [user(`reply-${item.id}`, reply)], 9_000 + scenario.version, false),
 		}
 	})
 	scenario.live = bare(live)
@@ -1511,6 +1506,11 @@ export interface AgentDockFixture {
 	 * snapshot is pushed, with the new item.
 	 */
 	emitArrival(kind: AgentDockArrivalKind): void
+	/**
+	 * Jakub answers an item in its terminal, not from the dock: the next poll shows its dialog gone
+	 * (an ask: answered in terminal) or the pane working on his reply after the turn (replied in terminal).
+	 */
+	emitAnsweredInTerminal(itemId: number): void
 	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
 	setActMode(mode: AgentDockActMode): void
 	listenerCount(): number
@@ -1668,6 +1668,12 @@ export function createAgentDockFixture(
 			// A turn counts once the pane stayed idle TURN_IDLE_MS (Storybook only: stamped ahead of the wall clock).
 			if (kind === 'turn') step(current.live, at + TURN_IDLE_MS + 1)
 			push()
+		},
+		emitAnsweredInTerminal(itemId) {
+			const current = scenario
+			const item = current?.state.items.find(candidate => candidate.id === itemId)
+			if (!current || !item) return
+			apply(landedPoll(current, item, '(typed in the terminal)'))
 		},
 		setActMode(next) {
 			mode = next

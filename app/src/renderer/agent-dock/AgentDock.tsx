@@ -5,7 +5,8 @@
 // split off the terminal in-flow: the terminal row shrinks and refits once, nothing
 // ever floats over its text. The row is the same with or without a pane. Answering
 // happens in the pane and the receipt shows in place; entries keep their
-// slots while the pane is open. Layout, focus return and ⌘⇧J belong to
+// order while the pane is open, and the open entry stays until Jakub leaves
+// it, while anything answered elsewhere leaves. Layout, focus return and ⌘⇧J belong to
 // agent-dock-layout.ts. Agent text is untrusted and always rendered as plain React
 // text (never markup), bounded and control-stripped.
 
@@ -222,7 +223,7 @@ export function AgentDock({
 	const growMax = useRef<number | undefined>(undefined)
 	/** Bumped when growable is re-armed, so the content watch restarts its settle time. */
 	const [settle, setSettle] = useState(0)
-	/** Entry order while the pane is open: answered entries keep their slot until it closes. */
+	/** Entry order while the pane is open: entries keep their order; only the open one outlives its answer. */
 	const order = useRef<number[] | null>(null)
 	const focusOnOpen = useRef(false)
 	/** Keyboard focus was inside the pane when a step or ack swapped its content. */
@@ -269,9 +270,15 @@ export function AgentDock({
 	const clock = Math.max(now, lingerNow)
 
 	const announcement = useArrivalAnnouncement(snapshot)
-	// While a pane is open every entry keeps its slot — even one whose receipt stopped lingering or
-	// that was answered in the terminal — so the pane never closes (and the PTY never refits) by itself.
-	const needs = keepOrder(target ? order.current : null, queueItems(snapshot, clock), snapshot?.items ?? [])
+	// While a pane is open the entries keep their order, and the open one keeps its slot even once it
+	// no longer needs Jakub (answered in the terminal, the agent moved on, its receipt stopped
+	// lingering), so the pane never closes (and the PTY never refits) by itself. Every other entry
+	// that no longer needs him leaves the row at once.
+	const needs = keepOrder(
+		target ? order.current : null,
+		queueItems(snapshot, clock),
+		target?.type === 'item' ? snapshot?.items.find(item => item.id === target.id) : undefined,
+	)
 	order.current = target ? needs.map(item => item.id) : null
 	/** The entries as last rendered, for an answer that comes back later. */
 	const needsRef = useRef(needs)
