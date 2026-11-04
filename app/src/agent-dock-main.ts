@@ -108,6 +108,8 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				isFocused: options.isFocused,
 			})
 		: null
+	// Helm terminals push: a hub change ticks the dock within ~100 ms, focused or not (watcher.nudge).
+	if (watcher && claudeRemote) claudeRemote.hub.onChange(() => watcher.nudge())
 
 	return {
 		terminalEnvironment: (env, sessionId) =>

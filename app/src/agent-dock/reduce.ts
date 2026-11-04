@@ -79,6 +79,12 @@ export interface AgentDockSessionRecord {
 	 * its original `endedAt`, so its waiting age is not reset by the round trip.
 	 */
 	resumedTurn?: { key: string; endedAt: number }
+	/**
+	 * A turn the idle gate holds back: the pane is idle at an unseen message, but not yet for
+	 * TURN_IDLE_MS. Memory only; drives the settle tick (agentDockNextDeadline), the fast
+	 * cadence (agentDockActive) and the gate diagnostics (`turn.gated`) when it never opens.
+	 */
+	gateCandidate?: { uuid: string; idleSince: number; lastIdleAt: number }
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
@@ -109,9 +115,27 @@ export interface AgentDockState {
 	seen: Record<SessionKey, string>
 }
 
+/**
+ * A turn the idle gate suppressed: the pane was idle at an unseen message, then resumed
+ * (`working`/`waiting`), said something newer (`superseded`) or got a user entry (`replied`)
+ * before TURN_IDLE_MS. `idleMs` is the stretch up to the observation that ended it (an upper
+ * bound), `seenIdleMs` up to the last idle observation (a lower bound). Diagnostics only:
+ * never an item or a dispatcher event (the watcher writes these to their own file).
+ */
+export interface DockTurnGated {
+	t: 'turn.gated'
+	at: number
+	session: SessionKey
+	idleMs: number
+	seenIdleMs: number
+	by: 'working' | 'waiting' | 'superseded' | 'replied'
+}
+
 export interface AgentDockReduction {
 	state: AgentDockState
 	events: AgentDockEvent[]
+	/** Gate diagnostics (see DockTurnGated); empty for most reductions. */
+	diagnostics: DockTurnGated[]
 }
 
 export function createAgentDockState(persisted?: AgentDockPersisted | null, now = 0): AgentDockState {
@@ -286,6 +310,7 @@ function pruneResolved(items: DockItem[], now: number): DockItem[] {
 /** Mutable working copy for one reduction; `prev` is never touched. */
 class Draft {
 	readonly events: AgentDockEvent[] = []
+	readonly diagnostics: DockTurnGated[] = []
 	readonly state: AgentDockState
 
 	constructor(
@@ -526,11 +551,13 @@ function observeTerminal(
 		setStatus(record, 'unknown', now)
 		record.idleSince = undefined
 		record.busySince = undefined
+		record.gateCandidate = undefined
 		return
 	}
 	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
 		record.idleSince = undefined
 		record.busySince = undefined
+		record.gateCandidate = undefined
 	}
 	// Last observed before a source restart/reconnect (epoch already bumped for this tick).
 	const restarted = existing !== undefined && existing.epoch !== src.epoch
@@ -543,6 +570,7 @@ function observeTerminal(
 		record.idleSince = undefined
 		record.busySince = undefined
 		record.resumedTurn = undefined
+		record.gateCandidate = undefined
 		record.session.reply = undefined
 	}
 	record.session.sessionId = detail.session_id
@@ -631,7 +659,39 @@ function observeTerminal(
 	}
 
 	reconcileAsks(draft, record, key, detail, restarted, ctx.seedTick)
+	settleGateCandidate(draft, record, key, status)
 	maybeOpenTurn(draft, record, key, detail, status)
+}
+
+/**
+ * The gate's held-back turn after this observation: still held (same idle stretch, same
+ * message, no user entry) it stays; otherwise it ended without opening, and a resume, a newer
+ * message or a reply logs `turn.gated` (a broken stretch was already dropped silently).
+ */
+function settleGateCandidate(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	status: DockSessionStatus,
+): void {
+	const candidate = record.gateCandidate
+	if (!candidate) return
+	let by: DockTurnGated['by'] | undefined
+	if (record.idleSince === undefined) by = status === 'waiting' ? 'waiting' : 'working'
+	else if (record.idleSince !== candidate.idleSince) by = undefined
+	else if (record.tail.lastAssistant?.uuid !== candidate.uuid) by = 'superseded'
+	else if (record.tail.userAfterLastAssistant) by = 'replied'
+	else return
+	record.gateCandidate = undefined
+	if (!by) return
+	draft.diagnostics.push({
+		t: 'turn.gated',
+		at: draft.now,
+		session: key,
+		idleMs: draft.now - candidate.idleSince,
+		seenIdleMs: candidate.lastIdleAt - candidate.idleSince,
+		by,
+	})
 }
 
 /**
@@ -739,6 +799,8 @@ function maybeOpenTurn(
 	const { now } = draft
 	const last = record.tail.lastAssistant
 	const tailKnown = detail.has_transcript && record.tail.cursor !== undefined
+	// Re-derived on every observation: only the gate branch below holds a turn back.
+	record.gateCandidate = undefined
 	// Silent seed adoption covers only what already existed when Helm first saw the pane
 	// AND only while the pane has stayed idle since. Nothing to adopt (no transcript at the
 	// seed tick) or any busy/dialog observation in between means a later turn is new.
@@ -758,6 +820,11 @@ function maybeOpenTurn(
 			return
 		}
 	} else if (record.idleSince === undefined || now - record.idleSince < TURN_IDLE_MS) {
+		// Held back by the gate: remember it, so the watcher ticks again right when it can open.
+		const itemKey = `turn:${detail.session_id ?? key}:${last.uuid}`
+		const opens = last.uuid !== seen && (!draft.hasKey(itemKey) || record.resumedTurn?.key === itemKey)
+		if (opens && record.idleSince !== undefined)
+			record.gateCandidate = { uuid: last.uuid, idleSince: record.idleSince, lastIdleAt: now }
 		return
 	}
 	if (last.uuid === seen) return
@@ -873,6 +940,7 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
  */
 function unobserved(draft: Draft, key: SessionKey, record: AgentDockSessionRecord): void {
 	record.dialogIds = undefined
+	record.gateCandidate = undefined
 	const live = draft.liveItems(key)
 	for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
 	if (live.length === 0) delete draft.state.sessions[key]
@@ -1009,5 +1077,55 @@ export function reduce(prev: AgentDockState, observation: AgentDockObservation, 
 	}
 	draft.state.source = aggregateSourceHealth(draft.state.sources, draft.state.source)
 	draft.state.items = pruneResolved(draft.state.items, now)
-	return { state: draft.state, events: draft.events }
+	return { state: draft.state, events: draft.events, diagnostics: draft.diagnostics }
+}
+
+/** Sessions of a source that answered its last poll (down/pending sources freeze their rows). */
+function observedRecords(state: AgentDockState): AgentDockSessionRecord[] {
+	return Object.values(state.sessions).filter(record => state.sources[record.session.source]?.health.state === 'ok')
+}
+
+/**
+ * Whether some agent is doing something the dock should see within a second (watcher cadence):
+ * main agent busy or working, a dialog open, a turn held by the idle gate, or a dock answer
+ * or agent-detail reply sent and waiting to be observed.
+ */
+export function agentDockActive(state: AgentDockState): boolean {
+	for (const record of observedRecords(state)) {
+		const status = record.session.status
+		if (status === 'working' || status === 'waiting') return true
+		if (record.busySince !== undefined || (record.dialogIds?.length ?? 0) > 0) return true
+		if (record.gateCandidate && (status === 'idle' || status === 'background')) return true
+		if (record.session.reply?.status === 'sent') return true
+	}
+	return state.items.some(item => isLive(item) && item.receipt?.status === 'sent')
+}
+
+/**
+ * The earliest time after `now` at which a poll decides a turn without new source data: a
+ * held turn passing TURN_IDLE_MS, or a live turn's busy stretch passing TURN_RESUMED_MS. The
+ * watcher ticks right then (settle timer) instead of on its next cadence tick.
+ */
+export function agentDockNextDeadline(state: AgentDockState, now: number): number | undefined {
+	let next: number | undefined
+	const consider = (at: number) => {
+		if (at > now && (next === undefined || at < next)) next = at
+	}
+	for (const record of observedRecords(state)) {
+		if (record.gateCandidate && record.idleSince === record.gateCandidate.idleSince)
+			consider(record.gateCandidate.idleSince + TURN_IDLE_MS)
+		if (
+			record.busySince !== undefined &&
+			state.items.some(
+				item =>
+					item.session === record.session.key &&
+					item.fact.kind === 'turn' &&
+					isLive(item) &&
+					!isDispatched(item) &&
+					!isInFlight(item),
+			)
+		)
+			consider(record.busySince + TURN_RESUMED_MS)
+	}
+	return next
 }

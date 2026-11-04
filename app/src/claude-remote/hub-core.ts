@@ -211,8 +211,18 @@ export class ClaudeHubCore {
 	private assistantCounter = 0
 	/** Bumped on every visible change (Okena `state_version`). */
 	stateVersion = 1
+	private readonly changeListeners = new Set<() => void>()
 
 	constructor(private readonly options: HubCoreOptions) {}
+
+	/**
+	 * Called synchronously after every `stateVersion` bump (the dock watcher's nudge: it only
+	 * arms a timer). A throwing listener never breaks the hook path. Returns the unsubscribe.
+	 */
+	onChange(listener: () => void): () => void {
+		this.changeListeners.add(listener)
+		return () => this.changeListeners.delete(listener)
+	}
 
 	// -------------------------------------------------------------------------
 	// Inputs
@@ -595,6 +605,13 @@ export class ClaudeHubCore {
 
 	private changed(): void {
 		this.stateVersion += 1
+		for (const listener of this.changeListeners) {
+			try {
+				listener()
+			} catch {
+				// A listener's failure is its own; the hub's state is already updated.
+			}
+		}
 	}
 
 	private terminal(ref: TerminalRef): TerminalState {
