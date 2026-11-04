@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import type { SolverWorkspace } from '../../solver/workspace.js'
@@ -14,12 +15,30 @@ import {
 	withRepoLock,
 	worktreeRegistrationForBranch,
 } from '../../worktree/manager.js'
-import type { OkenaClient, OkenaLayoutNode } from './client.js'
+import type { OkenaClient, OkenaLayoutNode, OkenaState } from './client.js'
 
 interface CreateWorktreeResponse {
 	project_id: string
-	terminal_id: string | null
+	/** Absent while `pending`: the optimistic row has no PTY yet. */
+	terminal_id?: string | null
 	path: string
+	/**
+	 * Okena answers `create_worktree` optimistically unless asked to `wait`: the
+	 * row exists but the background `git worktree add` (and its terminal) does not yet.
+	 */
+	pending?: boolean
+}
+
+/** How long Start waits for an Okena worktree checkout + terminal before failing. */
+const DEFAULT_WORKTREE_READY_TIMEOUT_MS = 3 * 60 * 1000
+const DEFAULT_WORKTREE_READY_POLL_MS = 500
+
+export interface OkenaWorktreeReadinessOptions {
+	/** Bound on waiting for a created worktree to be checked out with a live terminal. */
+	readyTimeoutMs?: number
+	readyPollMs?: number
+	sleep?: (ms: number) => Promise<unknown>
+	now?: () => number
 }
 
 interface RegisterWorktreeResponse {
@@ -129,21 +148,62 @@ export async function prepareExistingOkenaBranch(
 	})
 }
 
+/** Okena daemons before 0.36 lack `wait` and deny unknown action fields. */
+function rejectsWaitFlag(err: unknown): boolean {
+	return /unknown field\W+wait\b/.test(err instanceof Error ? err.message : String(err))
+}
+
+function isTimeout(err: unknown): boolean {
+	return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+}
+
+/**
+ * Ask Okena to create the worktree and answer only once its checkout exists and
+ * its terminal runs (`wait: true`). An Okena that predates `wait` rejects the
+ * field before doing anything, so the request is resent without it; that reply
+ * may be optimistic (`pending: true`) and the caller must await readiness.
+ */
 export async function createOkenaWorktreeForBranch(
 	client: OkenaClient,
 	projectId: string,
 	branchName: string,
 	branchExists: () => Promise<boolean>,
+	options: { waitTimeoutMs?: number } = {},
 ): Promise<CreateWorktreeResponse> {
-	const createBranch = !(await branchExists())
-	try {
-		return await client.action<CreateWorktreeResponse>({
+	const waitTimeoutMs = options.waitTimeoutMs ?? DEFAULT_WORKTREE_READY_TIMEOUT_MS
+	let waitSupported = true
+	const create = async (createBranch: boolean): Promise<CreateWorktreeResponse> => {
+		const payload = {
 			action: 'create_worktree',
 			project_id: projectId,
 			branch: branchName,
 			create_branch: createBranch,
-		})
+		}
+		if (waitSupported) {
+			try {
+				return await client.action<CreateWorktreeResponse>(
+					{ ...payload, wait: true },
+					{ signal: AbortSignal.timeout(waitTimeoutMs) },
+				)
+			} catch (err) {
+				if (!rejectsWaitFlag(err)) throw err
+				waitSupported = false
+			}
+		}
+		return client.action<CreateWorktreeResponse>(payload)
+	}
+
+	const createBranch = !(await branchExists())
+	try {
+		return await create(createBranch)
 	} catch (firstErr) {
+		// A timed-out wait may still finish in Okena; creating again would race it.
+		if (isTimeout(firstErr)) {
+			throw phaseError(
+				'worktree',
+				`Okena worktree for ${branchName} was not ready after ${Math.round(waitTimeoutMs / 1000)}s. Wait for it to appear in Okena, then press Start again.`,
+			)
+		}
 		log.warn(
 			'okena',
 			`create_branch=${createBranch} failed: ${firstErr instanceof Error ? firstErr.message : firstErr}`,
@@ -151,17 +211,15 @@ export async function createOkenaWorktreeForBranch(
 		// The branch can appear/disappear between the preflight and Okena's git
 		// call. Retry the opposite mode for that race, but avoid an expected first
 		// failure in the normal "branch already exists" path.
-		return client.action<CreateWorktreeResponse>({
-			action: 'create_worktree',
-			project_id: projectId,
-			branch: branchName,
-			create_branch: !createBranch,
-		})
+		return create(!createBranch)
 	}
 }
 
 export class OkenaWorktreeManager {
-	constructor(private readonly client: OkenaClient) {}
+	constructor(
+		private readonly client: OkenaClient,
+		private readonly readiness: OkenaWorktreeReadinessOptions = {},
+	) {}
 
 	/**
 	 * Add a terminal to a worktree window that already has one (e.g. starting a
@@ -293,26 +351,93 @@ export class OkenaWorktreeManager {
 
 		await this.ensureBaseBranchReady(repoPath, baseBranch)
 		log.info('okena', `Creating worktree for branch: ${branchName}`)
+		const readyDeadline = this.now() + this.readyTimeoutMs()
 		let wt: CreateWorktreeResponse
 		try {
-			wt = await createOkenaWorktreeForBranch(this.client, okenaProject.id, branchName, () =>
-				prepareExistingOkenaBranch(repoPath, branchName),
+			wt = await createOkenaWorktreeForBranch(
+				this.client,
+				okenaProject.id,
+				branchName,
+				() => prepareExistingOkenaBranch(repoPath, branchName),
+				{ waitTimeoutMs: this.readyTimeoutMs() },
 			)
 		} catch (err) {
 			throw phaseError('worktree', `Okena worktree creation failed: ${err instanceof Error ? err.message : err}`)
 		}
 
 		const worktreePath = wt.path
-		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		const wtProjectId =
 			wt.project_id ??
 			state.projects.find(p => p.path === worktreePath)?.id ??
 			(await this.client.getState()).projects.find(p => p.path === worktreePath)?.id
 		if (!wtProjectId) throw phaseError('worktree', 'Worktree project ID could not be resolved')
 
+		// An optimistic reply names a path that is not checked out yet and a row
+		// with no terminal. Validating it now fails the first Start, and typing
+		// into a not-yet-spawned pane loses the command.
+		let autoTerminalId = wt.terminal_id ?? null
+		if (wt.pending === true) {
+			autoTerminalId = await this.awaitWorktreeReady(wtProjectId, worktreePath, branchName, readyDeadline)
+		}
+
+		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		log.success('okena', `Worktree at ${worktreePath}`)
 		await excludeHelmFiles(worktreePath)
-		return { worktreePath, wtProjectId, autoTerminalId: wt.terminal_id }
+		return { worktreePath, wtProjectId, autoTerminalId }
+	}
+
+	private readyTimeoutMs(): number {
+		return this.readiness.readyTimeoutMs ?? DEFAULT_WORKTREE_READY_TIMEOUT_MS
+	}
+
+	private now(): number {
+		return (this.readiness.now ?? Date.now)()
+	}
+
+	/**
+	 * Poll Okena until an optimistically created worktree row is checked out
+	 * (`is_creating` cleared, path on disk). Okena spawns the row's terminals in
+	 * the same step, so the first live terminal is returned when there is one.
+	 * Fails with a `worktree`-phase error when Okena rolls the row back or the
+	 * bounded deadline passes.
+	 */
+	private async awaitWorktreeReady(
+		wtProjectId: string,
+		worktreePath: string,
+		branchName: string,
+		deadline: number,
+	): Promise<string | null> {
+		const pollMs = this.readiness.readyPollMs ?? DEFAULT_WORKTREE_READY_POLL_MS
+		const sleep = this.readiness.sleep ?? delay
+		log.info('okena', `Waiting for Okena to finish creating worktree ${worktreePath}`)
+		for (;;) {
+			let project: OkenaState['projects'][number] | undefined
+			let observed = false
+			try {
+				project = (await this.client.getState()).projects.find(p => p.id === wtProjectId)
+				observed = true
+			} catch (err) {
+				log.warn('okena', `Could not read Okena state while waiting for ${worktreePath}`, {
+					error: err instanceof Error ? err.message : String(err),
+				})
+			}
+			if (observed && !project) {
+				throw phaseError(
+					'worktree',
+					`Okena rolled back the worktree for ${branchName} (${worktreePath}); see Okena's error toast, then press Start again.`,
+				)
+			}
+			if (project && !project.is_creating && existsSync(worktreePath)) {
+				return liveTerminalIds(project.layout)[0] ?? null
+			}
+			if (this.now() >= deadline) {
+				throw phaseError(
+					'worktree',
+					`Okena worktree for ${branchName} was not ready after ${Math.round(this.readyTimeoutMs() / 1000)}s (checkout or terminal still pending at ${worktreePath}). Wait for it to appear in Okena, then press Start again.`,
+				)
+			}
+			await sleep(pollMs)
+		}
 	}
 
 	private async ensureExistingWorktreeProject(
@@ -320,12 +445,17 @@ export class OkenaWorktreeManager {
 		branchName: string,
 		worktreePath: string,
 	): Promise<EnsuredOkenaWorktree> {
-		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		const { state, okenaProject } = await this.findOkenaProject(repoPath)
 		const wtProject = state.projects.find(
 			project =>
 				project.worktree_info?.parent_project_id === okenaProject.id && sameFilesystemPath(project.path, worktreePath),
 		)
+		// A Start that lands while an earlier optimistic create is still checking
+		// out must wait for it: the row has no PTY yet and Git's view is partial.
+		if (wtProject?.is_creating) {
+			await this.awaitWorktreeReady(wtProject.id, wtProject.path, branchName, this.now() + this.readyTimeoutMs())
+		}
+		await assertWorkspaceReuse(repoPath, branchName, worktreePath)
 		if (wtProject) {
 			await excludeHelmFiles(worktreePath)
 			return { worktreePath, wtProjectId: wtProject.id, autoTerminalId: null }

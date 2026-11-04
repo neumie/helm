@@ -190,11 +190,12 @@ export class OkenaClient {
 		return send(fresh)
 	}
 
-	async action<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+	async action<T = unknown>(payload: Record<string, unknown>, opts: { signal?: AbortSignal } = {}): Promise<T> {
 		const res = await this.authorizedFetch('/v1/actions', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
+			...(opts.signal ? { signal: opts.signal } : {}),
 		})
 
 		if (!res.ok) {
@@ -413,6 +414,8 @@ export interface OkenaState {
 		terminal_names?: Record<string, string>
 		git_status?: { branch?: string | null } | null
 		worktree_info?: { parent_project_id: string } | null
+		/** Optimistic `create_worktree` still checking out; no PTY is spawned yet. */
+		is_creating?: boolean
 	}>
 }
 

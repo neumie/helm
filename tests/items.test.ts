@@ -5839,6 +5839,7 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 		const retrySuccess = commands.createSolveItem({ title: 'Retry succeeds', projectSlug: 'helm', prompt: 'retry' })
 		commands.startItem(retrySuccess.id)
 		commands.failItem(retrySuccess.id, 'failed once', 'solve')
+		const processed: string[] = []
 
 		const routeQueue = {
 			...queue,
@@ -5851,6 +5852,7 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 				id === invalidRetry.id ? { ok: false as const, reason: 'not_retryable' as const } : { ok: true as const },
 			processOneItem: (id: string) => {
 				assert.equal(solvePayload(db, id).solverModel, 'claude-fable-5')
+				processed.push(id)
 				commands.startItem(id)
 				return true
 			},
@@ -5896,6 +5898,11 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 		assert.equal(startedRes.status, 200)
 		assert.equal(retriedRes.status, 200)
 		assert.equal(db.items.get(startSuccess.id)?.status, 'running')
+		// A second Start press on the running session must not launch another agent.
+		const secondPress = await api.request(`/items/${startSuccess.id}/start`, postSelection)
+		assert.equal(secondPress.status, 400)
+		assert.match(((await secondPress.json()) as { error: string }).error, /not ready to start/)
+		assert.deepEqual(processed, [startSuccess.id])
 		assert.equal(db.items.get(retrySuccess.id)?.status, 'ready')
 		assert.deepEqual(solvePayload(db, startSuccess.id), {
 			kind: 'solve',
