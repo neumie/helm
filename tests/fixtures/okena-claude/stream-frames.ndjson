@@ -1,0 +1,5 @@
+{"type":"auth_ok"}
+{"type":"usage_changed","usage":{"providers":[]}}
+{"type":"system_stats_changed","stats":{"cpu_usage":34.83471,"memory_used_bytes":25349390336,"memory_total_bytes":34359738368}}
+{"type":"state_changed","state_version":3358}
+{"type":"system_stats_changed","stats":{"cpu_usage":20.189308,"memory_used_bytes":25340706816,"memory_total_bytes":34359738368}}

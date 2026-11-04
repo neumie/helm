@@ -227,6 +227,13 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 		? [...(perSource.okena ? [healthLine(okena.label, perSource.okena)] : []), healthLine(helm.label, perSource.helm)]
 		: [healthLine(okena.label, source)]
 	const sessionOf = (key: string) => snapshot.sessions.find(session => session.key === key)
+	// Like the dock: stale = missing from its source's last good poll by >10 s. Measured against
+	// the poll, not the clock: with Okena's stream up an idle fleet is polled only every 15 s.
+	const staleText = (session: SpoolSession) => {
+		const lastGood = (perSource[sourceOf(session, session.key)] ?? source).lastObservedAt
+		const behind = lastGood === null ? 0 : lastGood - session.observedAt
+		return behind > 10_000 ? `stale ${ageText(behind)}` : ''
+	}
 	const itemLine = (item: SpoolItem) => {
 		const state = item.state === 'resolved' ? `resolved:${item.resolution?.by ?? '?'}` : item.state
 		const age = ageText(now - (item.resolution?.at ?? item.openedAt))
@@ -259,7 +266,7 @@ async function runLs(dir: string, flags: Set<string>, deps: DockCliDeps): Promis
 			backgroundChip(session.backgroundTasks ?? 0, session.backgroundShells ?? 0),
 			session.queuedPrompts > 0 ? `queued ${session.queuedPrompts}` : '',
 			...session.prLinks.slice(0, 3).map(link => `PR #${link.number}`),
-			now - session.observedAt > 10_000 ? `stale ${ageText(now - session.observedAt)}` : '',
+			staleText(session),
 		].filter(Boolean)
 		const where = `${sessionLabel(session, session.key)}${sourceOf(session, session.key) === 'helm' ? ' (Helm)' : ''}`
 		lines.push(`  ${where}  ${chips.join('  ')}`)

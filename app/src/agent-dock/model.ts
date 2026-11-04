@@ -42,6 +42,16 @@ const okenaProjectSchema = z.object({
 	git_status: z.object({ branch: z.string().nullish() }).nullish(),
 	/** Present when the project is a git worktree Okena made from another project (its repository). */
 	worktree_info: z.object({ parent_project_id: z.string() }).nullish(),
+	/**
+	 * Agent status a pane reports about itself (OSC 7501 records, else OSC 9001; e.g. the okena-lifecycle Claude Code
+	 * hooks): only `lifecycle` is read, as a push-coverage hint (OkenaClaudeSource.pushCovered).
+	 * A change bumps state_version, so `/v1/stream` carries it. Optional and never fatal:
+	 * malformed = absent (the dock then keeps polling).
+	 */
+	terminal_agent_status: z
+		.record(z.string(), z.object({ lifecycle: z.string().max(32) }))
+		.optional()
+		.catch(undefined),
 })
 
 /** `GET /v1/state`, only the fields the dock reads. Empty maps are omitted by the server. */
@@ -164,6 +174,15 @@ function layoutHasTerminal(node: unknown, terminalId: string, depth = 0): boolea
 /** Project whose layout shows a terminal as a pane: the only terminals Okena's `focus_terminal` can focus. */
 export function okenaLayoutProject(state: OkenaState, terminalId: string): OkenaProject | undefined {
 	return state.projects.find(project => layoutHasTerminal(project.layout, terminalId))
+}
+
+/** The agent-status lifecycle a pane reports (`working`, `blocked`, `done`, `idle`, `error`, …), if any. */
+export function okenaAgentLifecycle(state: OkenaState, terminalId: string): string | undefined {
+	for (const project of state.projects) {
+		const status = project.terminal_agent_status?.[terminalId]
+		if (status) return status.lifecycle
+	}
+	return undefined
 }
 
 /** Project owning a terminal: layout pane first, then `terminal_names` (hook/service terminals). */

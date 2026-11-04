@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import cadenceModule from '../app/src/agent-dock/cadence.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import { okenaFixture } from './helpers/agent-dock'
@@ -20,6 +21,7 @@ const {
 	sessionKey,
 } = modelModule as ModelModule
 const {
+	OBSERVATION_GAP_MS,
 	TURN_IDLE_MS,
 	TURN_RESUMED_MS,
 	TURN_TEXT_MAX,
@@ -32,6 +34,8 @@ const {
 	createAgentDockState,
 	reduce,
 } = reduceModule as ReduceModule
+type CadenceModule = typeof import('../app/src/agent-dock/cadence.ts')
+const { RECONCILE_INTERVAL_MS, SLOWEST_INTERVAL_MS } = cadenceModule as CadenceModule
 
 const fixture = okenaFixture
 
@@ -517,11 +521,30 @@ test('the gate log names a dialog, a newer message and an observation gap (silen
 	const newer = reduce(held, poll(idle(), { transcript: page([assistant('b2')], { cursor: 1_310_000 }) }), t1 + 1000)
 	assert.equal(newer.diagnostics[0]?.by, 'superseded')
 	assert.equal(newer.state.sessions[KEY]?.gateCandidate?.uuid, 'b2', 'the newer message is held in the same stretch')
-	const gap = reduce(held, poll(working()), t1 + 20_000)
+	const gap = reduce(held, poll(working()), t1 + OBSERVATION_GAP_MS + 1_000)
 	assert.deepEqual(gap.diagnostics, [], 'a broken stretch is no evidence of a quick resume')
 	const unreadable = reduce(held, poll(idle({ busy: 'yes' })), t1 + 1000)
 	assert.deepEqual(unreadable.diagnostics, [])
 	assert.equal(unreadable.state.sessions[KEY]?.gateCandidate, undefined)
+})
+
+test('observation gap: scaled to the slowest tick, so reconciliation ticks keep one stretch', () => {
+	assert.ok(OBSERVATION_GAP_MS > 2.5 * SLOWEST_INTERVAL_MS, 'gap > 2.5× the slowest interval')
+	assert.equal(SLOWEST_INTERVAL_MS, RECONCILE_INTERVAL_MS)
+	const t1 = T0 + 1000
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) }),
+		t1,
+	).state
+	// The stream is up and nothing is active: the next tick is a (slightly late) reconciliation.
+	const late = reduce(held, poll(idle()), t1 + RECONCILE_INTERVAL_MS + 2_000).state
+	assert.equal(itemsOf(late, 'turn')[0]?.state, 'open', 'the idle stretch held across a 17 s tick')
+	// A real outage (or sleep) still breaks it: no turn from an unobserved stretch.
+	const after = t1 + OBSERVATION_GAP_MS + 1
+	const broken = reduce(held, poll(idle()), after).state
+	assert.equal(itemsOf(broken, 'turn').length, 0)
+	assert.equal(broken.sessions[KEY]?.gateCandidate?.idleSince, after, 'the stretch restarts at the new observation')
 })
 
 test('activity: a busy or dialog pane is active; a down source is not', () => {

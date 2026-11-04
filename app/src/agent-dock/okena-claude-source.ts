@@ -47,6 +47,7 @@ import {
 	type OkenaClaudeTranscriptPage,
 	type OkenaFetch,
 	type OkenaPromptDelivery,
+	okenaAgentLifecycle,
 	okenaClaudeCandidates,
 	okenaTerminalProject,
 	parseOkenaClaudeSession,
@@ -129,9 +130,14 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
+/** Okena's busy lifecycles (claude_remote hub.rs `lifecycle_is_busy`). */
+const OKENA_BUSY_LIFECYCLES = new Set(['working', 'blocked'])
+
 export class OkenaClaudeSource implements DockSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
+	/** The last observation listed every Claude pane with a resting lifecycle (pushCovered). */
+	private covered = false
 
 	/** How this source names itself in act failures and poll errors (DOCK_SOURCE_TEXT). */
 	private readonly text: (typeof DOCK_SOURCE_TEXT)[DockSourceId]
@@ -298,8 +304,25 @@ export class OkenaClaudeSource implements DockSource {
 		}
 	}
 
+	/**
+	 * Whether Okena's /v1/stream would carry every change the last observation could see:
+	 * the state read succeeded and every listed Claude pane reports an agent lifecycle
+	 * (`terminal_agent_status`, the OSC from the okena-lifecycle hooks, which bumps
+	 * state_version on working/idle/done). A pane without one flips busy unseen by the
+	 * stream (Okena's own busy hook does not bump it), so the dock keeps polling.
+	 * A pane whose lifecycle says `working`/`blocked` is not covered either: a busy pane
+	 * already ticks at the active rate, so this only matters when the lifecycle OSC
+	 * landed but Okena's busy hook has not yet (a separate hook process, late under
+	 * load): the busy flip that follows bumps nothing, and a turn whose busy stretch the
+	 * dock never saw would skip the idle gate. Polling sees it within one interval.
+	 */
+	pushCovered(): boolean {
+		return this.covered
+	}
+
 	/** One poll observation. Never throws: transport failures become `OkenaFetch` errors. */
 	async observe(state: AgentDockState, now: number): Promise<AgentDockObservation> {
+		this.covered = false
 		const source = this.id
 		const profile = this.client.activeProfileId()
 		if (!profile) {
@@ -323,7 +346,8 @@ export class OkenaClaudeSource implements DockSource {
 		if (!parsedState.ok)
 			return { type: 'poll', source, profile, state: { ok: false, error: parsedState.error }, terminals: [] }
 
-		const candidates = okenaClaudeCandidates(parsedState.value).slice(0, MAX_CLAUDE_TERMINALS)
+		const all = okenaClaudeCandidates(parsedState.value)
+		const candidates = all.slice(0, MAX_CLAUDE_TERMINALS)
 		const terminals = await mapLimited(candidates, READ_CONCURRENCY, terminalId =>
 			this.observeTerminal(
 				client,
@@ -336,6 +360,12 @@ export class OkenaClaudeSource implements DockSource {
 		)
 		const listed = new Set(candidates.map(terminalId => sessionKey(profile, terminalId)))
 		for (const key of this.reads.keys()) if (!listed.has(key)) this.reads.delete(key)
+		this.covered =
+			all.length === candidates.length &&
+			candidates.every(terminalId => {
+				const lifecycle = okenaAgentLifecycle(parsedState.value, terminalId)
+				return lifecycle !== undefined && !OKENA_BUSY_LIFECYCLES.has(lifecycle)
+			})
 		return { type: 'poll', source, profile, state: stateFetch, terminals }
 	}
 

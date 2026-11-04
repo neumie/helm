@@ -3,7 +3,9 @@
 // <userData>/agent-dock for `helm dock`. Claude in Helm terminals (same launch
 // policy as the dock): Helm's hub for the top-level `claude` of every new Helm
 // terminal (preload + --settings hooks → <socket root>/claude-remote.sock) is the
-// dock's second source.
+// dock's second source. Both push: the hub's onChange and Okena's /v1/stream
+// (okena-stream.ts) nudge the watcher, and while the stream is up and covers
+// every Okena pane, idle ticks relax to a 15 s reconciliation.
 //
 // No Electron import: main injects the pty, quarantine, registry and window
 // callbacks (they read main-local state), so this module stays testable under node.
@@ -15,6 +17,7 @@ import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
 import type { AgentDockSnapshot } from './agent-dock/model'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
+import { OkenaStreamSubscription } from './agent-dock/okena-stream'
 import { type OkenaRevealDeps, revealOkenaTerminal } from './agent-dock/reveal'
 import { AgentDockWatcher } from './agent-dock/watcher'
 import type { TerminalRef } from './claude-remote/hub-core'
@@ -62,6 +65,8 @@ export interface AgentDockMain {
 	/** Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone. */
 	terminalClosed(ref: TerminalRef): void
 	poke(): void
+	/** The Mac woke or unlocked (powerMonitor resume / unlock-screen): reconnect Okena's stream and sweep. */
+	resume(): void
 	setVisible(visible: boolean): void
 	registerIpc(ipc: AgentDockIpc): void
 	/** Never blocks startup: an absent Okena is just a "source down" dock. */
@@ -97,19 +102,35 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 		client: options.reveal?.client ?? new OkenaClient(),
 		activate: options.reveal?.activate ?? (() => activateOkenaApp({ timeoutMs: 2_000 })),
 	}
-	const watcher = options.enabled
+	const okenaClient = new OkenaClient()
+	const okenaSource = new OkenaClaudeSource(okenaClient, 'okena', new ClaudeTranscriptTail())
+	let watcher: AgentDockWatcher | null = null
+	// Okena pushes: a state_changed ticks the dock within ~100 ms (watcher.nudge). One socket, to the
+	// profile the Okena source observes; Helm counts as an Okena client (see okena-stream.ts).
+	const okenaStream = options.enabled
+		? new OkenaStreamSubscription({
+				client: okenaClient,
+				onChange: () => watcher?.nudge(),
+				log: message => console.warn(`[helm] agent dock: ${message}`),
+			})
+		: null
+	watcher = options.enabled
 		? new AgentDockWatcher({
 				dir: dockDir,
 				source: new CompositeDockSource([
-					new OkenaClaudeSource(new OkenaClient(), 'okena', new ClaudeTranscriptTail()),
+					okenaSource,
 					...(claudeRemote ? [new OkenaClaudeSource(claudeRemote.hub, 'helm')] : []),
 				]),
 				publish: options.publish,
 				isFocused: options.isFocused,
+				// Helm's hub always pushes (in process); Okena only while its stream is up and every pane reports a lifecycle.
+				push: okenaStream
+					? { healthy: () => okenaStream.healthy() && okenaSource.pushCovered(), sync: () => okenaStream.sync() }
+					: undefined,
 			})
 		: null
 	// Helm terminals push: a hub change ticks the dock within ~100 ms, focused or not (watcher.nudge).
-	if (watcher && claudeRemote) claudeRemote.hub.onChange(() => watcher.nudge())
+	if (watcher && claudeRemote) claudeRemote.hub.onChange(() => watcher?.nudge())
 
 	return {
 		terminalEnvironment: (env, sessionId) =>
@@ -121,6 +142,10 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				: claudeRemoteTerminalEnvironment(env, null, null),
 		terminalClosed: ref => claudeRemote?.hub.terminalClosed(ref),
 		poke: () => watcher?.poke(),
+		resume: () => {
+			okenaStream?.resume()
+			watcher?.nudge()
+		},
 		setVisible: visible => watcher?.setVisible(visible),
 		registerIpc: ipc => {
 			// Main renderer only, current profile token last (like the other session channels).
@@ -169,8 +194,13 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 			})
 		},
 		// The hub listens first so the dock's first Helm poll finds it.
-		start: () => void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => void watcher?.start()),
+		start: () =>
+			void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => {
+				void watcher?.start()
+				okenaStream?.start()
+			}),
 		stop: () => {
+			okenaStream?.stop()
 			watcher?.stop()
 			claudeRemote?.stop()
 		},
