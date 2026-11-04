@@ -1333,7 +1333,7 @@ test('⌘⌫ acks a turn from the pane: the hint shows, the pane opens the next 
 	const ackButton = pane.getByRole('button', { name: `Ack item ${turnId}` })
 	await expect(ackButton).toHaveAttribute('aria-keyshortcuts', 'Meta+Backspace')
 	await expect(ackButton).toHaveAttribute('title', 'Ack (⌘⌫)')
-	// Moving on is a step: the pane stays mounted at its height, so the terminal never refits in between.
+	// Moving on keeps the pane mounted (never a close and reopen); it may only grow once to the next item.
 	const rows = await xtermRows(page)
 	const placed = await box(page, '.agent-dock-pane')
 	await page.evaluate(() => {
@@ -1356,8 +1356,15 @@ test('⌘⌫ acks a turn from the pane: the hint shows, the pane opens the next 
 	expect(
 		await page.evaluate(() => (window as unknown as { __paneRemovals: { removed: number } }).__paneRemovals.removed),
 	).toBe(0)
-	expect(await box(page, '.agent-dock-pane')).toEqual(placed)
-	expect(await xtermRows(page)).toBe(rows)
+	// The question is taller than the turn: the pane grew to it (never shrinks), at most one refit.
+	const moved = await box(page, '.agent-dock-pane')
+	expect(moved.height).toBeGreaterThanOrEqual(placed.height)
+	expect(moved.y + moved.height).toBe(placed.y + placed.height)
+	expect(await xtermRows(page)).toBeLessThanOrEqual(rows)
+	// ‹ › from here keep that height.
+	await pane.getByRole('button', { name: 'Next item' }).click()
+	await expect(pane).toContainText('2/2')
+	expect(await box(page, '.agent-dock-pane')).toEqual(moved)
 })
 
 test('⌘⌫ in a reply with text deletes it; in the empty reply it acks', async ({ page }) => {

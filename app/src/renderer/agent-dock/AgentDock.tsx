@@ -59,6 +59,7 @@ import {
 	keepOrder,
 	nextLingerExpiry,
 	nextWaiting,
+	paneFitHeight,
 	queueItems,
 	sourceBlockedNote,
 } from './presentation'
@@ -91,9 +92,12 @@ export interface AgentDockProps {
 	agentsLayout?: AgentsLayout
 	/** Jakub switched the grouping in the Agents pane header (or with `G`): store it. */
 	onAgentsLayout?(layout: AgentsLayout): void
-	/** Most px the pane may take so the terminal keeps its rows (the layout measures #right); null = no limit known. */
-	paneRoom?: () => number | null
-	/** After the pane opens or closes: the terminal row changed height once, refit it. */
+	/**
+	 * The layout's measure of #right: `room`, the most px the pane may take on screen so the terminal keeps
+	 * its rows, and `max`, the most it may open or grow to (a share of #right); null = not known.
+	 */
+	paneRoom?: () => PaneRoom | null
+	/** After the pane opens, grows or closes: the terminal row changed height once, refit it. */
 	onPaneChange?(open: boolean): void
 	/** Hand the keys back to the active terminal (after an answer, or once nothing else waits). */
 	focusTerminal?(): void
@@ -103,11 +107,29 @@ export interface AgentDockProps {
 	initialSent?: ReadonlyMap<number, DockAction>
 }
 
-/** The pane's height is set once when it opens (its first item's natural height, within these) and kept while it stays open. */
-export const PANE_MIN_HEIGHT = 216
-export const PANE_MAX_HEIGHT = 480
+export interface PaneRoom {
+	room: number
+	max: number
+}
+
 /** However little room is left, the pane keeps its rule, a few body rows and its footer. */
 const PANE_FLOOR = 120
+/**
+ * After the pane opens, or moves on to another item because the shown one left, its content may still
+ * grow for this long (an agent's full message read live, a late snapshot): the pane grows to it once.
+ */
+const PANE_SETTLE_MS = 1_500
+
+/**
+ * What the shown content would take unclipped: the pane's height plus what its scrolling parts (the
+ * body, the choices block) hide. A pane not yet sized has nothing hidden: its own height.
+ */
+function naturalHeight(pane: HTMLElement): number {
+	let hidden = 0
+	for (const part of pane.querySelectorAll<HTMLElement>('.agent-dock-pane-scroll, .agent-dock-pane-fixed'))
+		hidden += Math.max(0, part.scrollHeight - part.clientHeight)
+	return pane.offsetHeight + hidden
+}
 
 /** An agent-detail reply's local error, while the agent's last message is still the one it answered. */
 const promptError = (
@@ -149,8 +171,19 @@ export function AgentDock({
 	const [target, setTarget] = useState<AgentDockTarget | null>(initialOpen)
 	const targetRef = useRef(target)
 	targetRef.current = target
-	/** Natural height of the first item the pane showed; null until measured (and while closed). */
+	/** The pane's height: the opened content's natural height, within its bounds; null until measured (and while closed). */
 	const [paneHeight, setPaneHeight] = useState<number | null>(null)
+	const paneHeightRef = useRef(paneHeight)
+	paneHeightRef.current = paneHeight
+	/**
+	 * The shown content may still raise the pane's height once (never lower it): from an open, or a move-on
+	 * to another item because the shown one left, until it grows, Jakub types or steps, or PANE_SETTLE_MS.
+	 */
+	const growable = useRef(false)
+	/** The most it may grow to: the layout's max when it was armed (a window resized meanwhile grows nothing). */
+	const growMax = useRef<number | undefined>(undefined)
+	/** Bumped when growable is re-armed, so the content watch restarts its settle time. */
+	const [settle, setSettle] = useState(0)
 	/** Entry order while the pane is open: answered entries keep their slot until it closes. */
 	const order = useRef<number[] | null>(null)
 	const focusOnOpen = useRef(false)
@@ -224,9 +257,28 @@ export function AgentDock({
 	const paneOpen =
 		target?.type === 'agents' || (agentRow !== undefined && agentSession !== undefined) || openItem !== undefined
 	const paneShown = paneOpen && paneHeight !== null
-	const room = paneOpen ? (paneRoom?.() ?? null) : null
+	const room = paneOpen ? (paneRoom?.()?.room ?? null) : null
+	// A window that shrinks below the pane clamps it; grown back, the pane returns to its height.
 	const height =
 		paneHeight === null ? undefined : Math.max(PANE_FLOOR, Math.min(paneHeight, room ?? Number.POSITIVE_INFINITY))
+	/** Lets the shown content raise the pane's height once, up to the layout's max now (see growable). */
+	const armGrowth = (rearm: boolean) => {
+		growable.current = true
+		growMax.current = paneRoom?.()?.max
+		if (rearm) setSettle(count => count + 1)
+	}
+	/** Grows the pane to its content once, while growable; never shrinks it. */
+	const growToContent = () => {
+		const pane = paneRef.current
+		const current = paneHeightRef.current
+		if (!growable.current || !pane || current === null) return
+		// Within the max it was armed with and the max now (a shrunk window).
+		const caps = [growMax.current, paneRoom?.()?.max].filter(cap => cap !== undefined)
+		const next = paneFitHeight(naturalHeight(pane), caps.length > 0 ? Math.min(...caps) : undefined)
+		if (next <= current + 1) return
+		growable.current = false
+		setPaneHeight(next)
+	}
 
 	const close = useCallback((refocus: boolean) => {
 		const shown = targetRef.current
@@ -235,6 +287,7 @@ export function AgentDock({
 		returnTo.current = null
 		focusOnOpen.current = false
 		keepFocus.current = false
+		growable.current = false
 		setTarget(null)
 		setPaneHeight(null)
 		// An item past the queue's "+N more" cell has no entry of its own: that cell stands in for it.
@@ -267,14 +320,18 @@ export function AgentDock({
 	}
 
 	/**
-	 * Shows another target in the pane (when open, at the same height: no refit); `focus` takes the keys
+	 * Shows another target in the pane (when open, at the same height unless `grow`); `focus` takes the keys
 	 * like a keyboard open; `onChoices` keeps keys that were on a choice on the new body's choices.
+	 * `grow`: the shown content was replaced, not stepped from (a move-on, an agent or item opened from
+	 * the Agents list), so the pane may grow to the new content once (see growable).
 	 */
-	const show = (next: AgentDockTarget, focus: boolean, onChoices = false) => {
+	const show = (next: AgentDockTarget, focus: boolean, onChoices = false, grow = false) => {
 		focusOnOpen.current = focus
 		keepFocus.current = focusInPane()
 		keepOnChoices.current = onChoices
 		advanceFrom.current = null
+		growable.current = false
+		if (grow) armGrowth(true)
 		setTarget(next)
 	}
 
@@ -308,7 +365,12 @@ export function AgentDock({
 	const openAgent = (row: AgentRow, viaKeyboard: boolean) => {
 		setAgentCurrent(row.key)
 		returnTo.current = row.key
-		show(row.itemId !== undefined ? { type: 'item', id: row.itemId } : { type: 'agent', key: row.key }, viaKeyboard)
+		show(
+			row.itemId !== undefined ? { type: 'item', id: row.itemId } : { type: 'agent', key: row.key },
+			viaKeyboard,
+			false,
+			true,
+		)
 	}
 
 	/** ‹ › in an agent's detail: the previous / next agent in the Agents pane's order. */
@@ -342,7 +404,7 @@ export function AgentDock({
 	const moveOn = (items: readonly DockItem[], handled: number, at: number) => {
 		const next = nextWaiting(items, handled, at)
 		if (next) {
-			show({ type: 'item', id: next.id }, true)
+			show({ type: 'item', id: next.id }, true, false, true)
 			return
 		}
 		focusTerminal?.()
@@ -380,18 +442,55 @@ export function AgentDock({
 			return
 		}
 		const next = from === null ? undefined : (needs[Math.min(from, needs.length - 1)] ?? undefined)
-		if (next) setTarget({ type: 'item', id: next.id })
-		else close(false)
+		if (next) {
+			// The shown item left: the next one replaces it, and the pane may grow to it.
+			armGrowth(true)
+			setTarget({ type: 'item', id: next.id })
+		} else close(false)
 	}, [target, liveItem, needs, close])
 
-	// The pane's height is decided once, before the first paint: the opened item's natural
-	// height within [PANE_MIN_HEIGHT, PANE_MAX_HEIGHT]. Stepping and answering keep it (the body
-	// scrolls), so the terminal refits once on open and once on close and ‹ › never move.
+	// The pane's height is decided before the first paint: the opened content's natural height within
+	// [PANE_MIN_HEIGHT, the layout's max]. Content that replaces it without a step (a move-on after an
+	// ack or answer, an agent or item opened from the Agents list) may grow it once here, before paint;
+	// content that arrives later (an agent's full message) once below. It never shrinks while open, and
+	// ‹ › stepping keeps it (the body scrolls), so ‹ › never move and the terminal refits once on open,
+	// at most once per growth, and once on close.
 	useLayoutEffect(() => {
-		if (!paneOpen || paneHeight !== null) return
-		const natural = paneRef.current?.offsetHeight ?? 0
-		setPaneHeight(Math.min(PANE_MAX_HEIGHT, Math.max(PANE_MIN_HEIGHT, Math.ceil(natural))))
+		const pane = paneRef.current
+		if (!paneOpen || !pane) return
+		if (paneHeight !== null) {
+			growToContent()
+			return
+		}
+		armGrowth(false)
+		setPaneHeight(paneFitHeight(naturalHeight(pane), growMax.current))
 	})
+
+	// While growable, content that arrives in the pane after its commit (a body's own state, e.g. the
+	// agent detail's live message) grows the pane to it; the chance ends after PANE_SETTLE_MS.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-armed per open or move-on (settle)
+	useEffect(() => {
+		const pane = paneRef.current
+		const view = pane?.ownerDocument.defaultView
+		if (!paneShown || !pane || !view || !growable.current) return
+		const watch = new view.MutationObserver(growToContent)
+		watch.observe(pane, { childList: true, subtree: true, characterData: true })
+		const settled = () => {
+			growable.current = false
+		}
+		const timer = view.setTimeout(settled, PANE_SETTLE_MS)
+		// Jakub typing anywhere (a pointer-opened pane leaves the keys in the terminal) or scrolling the
+		// body ends the chance: a growth then would resize the PTY under his keys or move what he reads.
+		// Capture, so it runs before a key that moves on (⌘⌫, an answer) re-arms it.
+		view.addEventListener('keydown', settled, true)
+		pane.addEventListener('wheel', settled, { passive: true })
+		return () => {
+			watch.disconnect()
+			view.clearTimeout(timer)
+			view.removeEventListener('keydown', settled, true)
+			pane.removeEventListener('wheel', settled)
+		}
+	}, [paneShown, settle])
 
 	// Keyboard-opened panes take focus (the Agents pane: its current row); pointer use never does (the
 	// layout keeps xterm focused).
@@ -426,10 +525,10 @@ export function AgentDock({
 		if (!active || !pane.contains(active) || (active as HTMLButtonElement).disabled) pane.focus()
 	}, [openKey, paneOpen])
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: report open/close edges only
+	// biome-ignore lint/correctness/useExhaustiveDependencies: report open, growth and close only
 	useEffect(() => {
 		onPaneChange?.(paneShown)
-	}, [paneShown])
+	}, [paneShown, paneHeight])
 
 	// A pointer press outside the pane, the entries and the terminals closes it. A click in a terminal
 	// keeps the pane open (Jakub reads the pane while typing; the layout already hands the keys to xterm).
@@ -591,6 +690,8 @@ export function AgentDock({
 	// Home / End scroll the body from anywhere but a field with text (see bodyScrollKey); the choices
 	// rove with ↑ ↓. Esc closes back to the entry.
 	const onPaneKey = (event: KeyboardEvent<HTMLElement>) => {
+		// Jakub is reading or typing: the pane keeps its height from here (a reply growing never resizes it).
+		growable.current = false
 		// ⌘⌫ acks where Ack is offered, from anywhere in the pane; a field with text in it keeps the key
 		// for editing (delete to line start). A held key acks nothing.
 		if (isAckKey(event, mod) && !keepsEditKey(event.target)) {
@@ -736,7 +837,7 @@ export function AgentDock({
 					canPrompt={onPrompt !== undefined}
 					onStep={stepAgent}
 					onClose={leavePane}
-					onOpenItem={itemId => show({ type: 'item', id: itemId }, focusInPane())}
+					onOpenItem={itemId => show({ type: 'item', id: itemId }, focusInPane(), false, true)}
 					onPrompt={request => prompt(agentRow.key, request)}
 				/>
 			) : (
