@@ -13,6 +13,8 @@ interface CliConfig {
 interface RemoteConfig {
 	port: number
 	pid: number
+	/** The daemon's lifetime belongs to the Okena desktop app (it quits with it, idle-exits without clients). */
+	ui_owned?: boolean
 	local_endpoint?: {
 		kind?: string
 		path?: string
@@ -25,11 +27,25 @@ interface ProfilesConfig {
 	profiles?: Array<{ id: string }>
 }
 
-type OkenaEndpoint = { kind: 'unixSocket'; socketPath: string } | { kind: 'http'; baseUrl: string }
+export type OkenaEndpoint = { kind: 'unixSocket'; socketPath: string } | { kind: 'http'; baseUrl: string }
 
 interface OkenaCredentials {
 	token: string
 	endpoint: OkenaEndpoint
+	/** remote.json `pid` (0 when absent). */
+	pid: number
+	uiOwned: boolean
+}
+
+/** Where `/v1/stream` is for this client's profile (stream.ts), as remote.json/cli.json say right now. */
+export interface OkenaStreamTarget {
+	endpoint: OkenaEndpoint
+	/** Only sent on TCP (a unix-socket peer is trusted without one). */
+	token: string
+	/** The daemon's pid (remote.json; 0 when absent): a restarted daemon is a new target. */
+	pid: number
+	/** remote.json `ui_owned`: a connected stream keeps such a daemon alive (see agent-dock okena-stream.ts). */
+	uiOwned: boolean
 }
 
 /** How long a `kill(pid, 0)` liveness answer for remote.json's pid is reused. */
@@ -207,10 +223,21 @@ export class OkenaClient {
 				localEndpoint?.kind === 'unix_socket' && localEndpoint.path
 					? { kind: 'unixSocket', socketPath: localEndpoint.path }
 					: { kind: 'http', baseUrl: `http://127.0.0.1:${remote.port}` }
-			return { token, endpoint }
+			return {
+				token,
+				endpoint,
+				pid: Number.isSafeInteger(remote.pid) ? remote.pid : 0,
+				uiOwned: remote.ui_owned === true,
+			}
 		} catch {
 			return null
 		}
+	}
+
+	/** The live daemon's stream endpoint for this profile, or null when Okena is not configured or not running. */
+	streamTarget(): OkenaStreamTarget | null {
+		const creds = this.loadCredentials()
+		return creds ? { endpoint: creds.endpoint, token: creds.token, pid: creds.pid, uiOwned: creds.uiOwned } : null
 	}
 
 	async isAvailable(): Promise<boolean> {
