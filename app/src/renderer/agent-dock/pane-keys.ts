@@ -120,8 +120,15 @@ export const ackShortcut = (mod: DockModKey): { label: string; aria: string } =>
 export const choiceStop = (pane: HTMLElement): HTMLButtonElement | null =>
 	pane.querySelector<HTMLButtonElement>('.agent-dock-choice[tabindex="0"]:not(:disabled)')
 
-/** The pane body clips its content, so there is something to scroll. */
-export const overflows = (body: HTMLElement): boolean => body.scrollHeight > body.clientHeight + 1
+/**
+ * The pane body clips its content, so there is something to read below or above. Only its bottom
+ * padding cut off (a body a few px past its locked height, every line in view) does not count: ↑ ↓
+ * would scroll by nothing visible instead of stepping items, and the scroll hint would promise more.
+ */
+export const overflows = (body: HTMLElement): boolean => {
+	const padding = Number.parseFloat(getComputedStyle(body).paddingBottom)
+	return body.scrollHeight - body.clientHeight > (Number.isFinite(padding) ? padding : 0) + 1
+}
 
 /** What a key asks of the pane's scroll body. */
 export type BodyScroll = 'line-up' | 'line-down' | 'page-up' | 'page-down' | 'top' | 'bottom'

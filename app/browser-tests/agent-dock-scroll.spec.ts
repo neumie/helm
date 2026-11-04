@@ -21,7 +21,7 @@ async function openHarness(page: Page, height = 820): Promise<void> {
 	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
 }
 
-async function emitScenario(page: Page, name: 'long-turn' | 'helm-terminals'): Promise<void> {
+async function emitScenario(page: Page, name: 'long-turn' | 'helm-terminals' | 'crowded'): Promise<void> {
 	await page.evaluate(scenario => {
 		const dock = window.__helmWorkspaceFixture?.agentDock
 		if (!dock) throw new Error('Missing agent-dock fixture')
@@ -270,4 +270,34 @@ test('a long plan: ↓ still goes to its choices; Page keys scroll it from the p
 	const previous = pane.getByRole('button', { name: 'Previous item' })
 	await previous.focus()
 	await expectPageKeys(page, previous)
+})
+
+test('a turn a few px past the locked pane height, every line in view, still steps with ↑ ↓ and shows no scroll hint', async ({
+	page,
+}) => {
+	// `crowded` 4/5 fixes the pane's height; 5/5 is a little taller, so only the body's bottom padding
+	// is cut off: there is nothing to read below, and ↑ must not turn into a 3px scroll.
+	await openHarness(page)
+	await emitScenario(page, 'crowded')
+	await terminal(page).focus()
+	await page.keyboard.press('Meta+Shift+KeyJ')
+	await row(page).locator('.agent-dock-entry[aria-label^="Turn ended"]').first().focus()
+	await page.keyboard.press('Enter')
+	const pane = paneOf(page)
+	await expect(pane).toBeFocused()
+	await expect(pane.locator('.agent-dock-step-count')).toContainText('4/5')
+	await page.keyboard.press('ArrowDown')
+	await expect(pane.locator('.agent-dock-step-count')).toContainText('5/5')
+	const clip = await bodyOf(page).evaluate(node => {
+		const bottom = node.getBoundingClientRect().bottom
+		const content = Math.max(...[...node.querySelectorAll('*')].map(child => child.getBoundingClientRect().bottom))
+		return { clipped: node.scrollHeight - node.clientHeight, inView: content <= bottom + 1 }
+	})
+	// The case under test: the body scrolls by a few px, yet every line is in view.
+	expect(clip.clipped).toBeGreaterThan(1)
+	expect(clip.inView).toBe(true)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*esc close$/)
+	await page.keyboard.press('ArrowUp')
+	await expect(pane.locator('.agent-dock-step-count')).toContainText('4/5')
+	await expect(pane).toBeFocused()
 })
