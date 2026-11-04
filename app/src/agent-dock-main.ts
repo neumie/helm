@@ -9,11 +9,13 @@
 // callbacks (they read main-local state), so this module stays testable under node.
 
 import { join } from 'node:path'
+import { activateOkenaApp } from '../../src/extensions/okena/activate'
 import { OkenaClient } from '../../src/extensions/okena/client'
 import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
 import type { AgentDockSnapshot } from './agent-dock/model'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
+import { type OkenaRevealDeps, revealOkenaTerminal } from './agent-dock/reveal'
 import { AgentDockWatcher } from './agent-dock/watcher'
 import type { TerminalRef } from './claude-remote/hub-core'
 import { type ClaudeRemote, createClaudeRemote } from './claude-remote/runtime'
@@ -41,6 +43,11 @@ export interface AgentDockMainOptions {
 	isFocused(): boolean
 	/** The dock channels' gate: current profile token AND the main window's renderer. */
 	acceptsIpc(sender: unknown, profileToken: unknown): boolean
+	/**
+	 * "Show in Okena" (agent-dock:reveal): the Okena client it focuses through and how it raises the app.
+	 * Defaults: a fresh OkenaClient and `activateOkenaApp` (System Events, macOS). Tests inject doubles.
+	 */
+	reveal?: Partial<OkenaRevealDeps>
 }
 
 /** The slice of Electron's ipcMain the dock registers on. */
@@ -84,6 +91,11 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				`[helm] Claude in Helm terminals unavailable: ${error instanceof Error ? error.message : String(error)}`,
 			)
 		}
+	}
+	// osascript's cold start can pass the item opener's 500 ms under load; the dock waits a little longer.
+	const reveal: OkenaRevealDeps = {
+		client: options.reveal?.client ?? new OkenaClient(),
+		activate: options.reveal?.activate ?? (() => activateOkenaApp({ timeoutMs: 2_000 })),
 	}
 	const watcher = options.enabled
 		? new AgentDockWatcher({
@@ -145,6 +157,13 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 					return { ok: false, detail: 'This window cannot read for the current profile.' }
 				if (!watcher) return { ok: false, detail: 'The agent dock is off in this run.' }
 				return watcher.readMessage(session)
+			})
+			// "Show in Okena": focus only (never terminal input), but it moves Jakub's Okena: the same gate.
+			ipc.handle(AGENT_DOCK_IPC.reveal, async (event, session, profileToken) => {
+				if (!options.acceptsIpc(event.sender, profileToken))
+					return { ok: false, detail: 'This window cannot show terminals for the current profile.' }
+				if (!watcher) return { ok: false, detail: 'The agent dock is off in this run.' }
+				return revealOkenaTerminal(session, reveal)
 			})
 		},
 		// The hub listens first so the dock's first Helm poll finds it.

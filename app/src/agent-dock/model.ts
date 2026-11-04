@@ -161,6 +161,11 @@ function layoutHasTerminal(node: unknown, terminalId: string, depth = 0): boolea
 	)
 }
 
+/** Project whose layout shows a terminal as a pane: the only terminals Okena's `focus_terminal` can focus. */
+export function okenaLayoutProject(state: OkenaState, terminalId: string): OkenaProject | undefined {
+	return state.projects.find(project => layoutHasTerminal(project.layout, terminalId))
+}
+
 /** Project owning a terminal: layout pane first, then `terminal_names` (hook/service terminals). */
 export function okenaTerminalProject(state: OkenaState, terminalId: string): OkenaProject | undefined {
 	return (
@@ -450,6 +455,12 @@ export type AgentDockMessageResult =
 			sessionId?: string
 	  }
 	| { ok: false; detail: string }
+
+/**
+ * "Show terminal" from the dock (agent-dock:reveal, Okena panes only; Helm terminals are shown by the
+ * window itself). `activated`: Helm also brought the Okena app to the front (best effort, macOS).
+ */
+export type AgentDockRevealResult = { ok: true; activated: boolean } | { ok: false; detail: string }
 
 /** Deterministic JSON (sorted object keys) for comparing Okena dialog inputs across reads. */
 export function stableJson(value: unknown, depth = 0): string {

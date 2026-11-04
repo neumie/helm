@@ -5,6 +5,7 @@ import type {
 	AgentDockActResult,
 	AgentDockMessageResult,
 	AgentDockPromptRequest,
+	AgentDockRevealResult,
 	AgentDockSnapshot,
 } from './agent-dock/model'
 import type {
@@ -411,6 +412,8 @@ export interface NavApi {
  * - prompt: renderer → main `invoke(AgentDockPromptRequest)`; a reply from the agent detail to an agent with no open
  *   item, behind the same CAS as a turn reply; its receipt arrives on the session (`DockSession.reply`).
  * - message: renderer → main `invoke(sessionKey)`; the agent's last assistant message, read live through its source.
+ * - reveal: renderer → main `invoke(sessionKey)`; "Show in Okena": main re-reads Okena's layout, focuses the agent's
+ *   pane (`focus_terminal`) and raises the Okena app. Okena panes only (the window shows Helm terminals itself).
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
 export const AGENT_DOCK_IPC = {
@@ -420,6 +423,7 @@ export const AGENT_DOCK_IPC = {
 	act: 'agent-dock:act',
 	prompt: 'agent-dock:prompt',
 	message: 'agent-dock:message',
+	reveal: 'agent-dock:reveal',
 } as const
 
 /** Agent dock (Okena + Helm-terminal Claude sessions): read the queue, ack, and answer from the pane. No control socket yet. */
@@ -435,6 +439,8 @@ export interface AgentDockApi {
 	prompt(request: AgentDockPromptRequest): Promise<AgentDockActResult>
 	/** The agent's full last message, read live through its source (memory only). */
 	lastMessage(session: string): Promise<AgentDockMessageResult>
+	/** Show an Okena agent's terminal: focus its pane in Okena and raise the app. Never rejects for a refusal. */
+	reveal(session: string): Promise<AgentDockRevealResult>
 }
 
 export interface RunContextWindowApi {

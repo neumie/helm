@@ -19,6 +19,7 @@ import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
 	type AgentDockFixture,
+	type AgentDockRevealMode,
 	type AgentDockScenario,
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
@@ -82,6 +83,12 @@ export interface TerminalWorkspaceFixtureOptions {
 		paneHeight?: number
 		/** Story only, with `open`: pins the pane edge's hover or drag look (the pointer cannot be pinned). */
 		resizeLook?: 'hover' | 'drag'
+		/** Story only: what "Show in Okena" answers (default: focused and raised). */
+		revealMode?: AgentDockRevealMode
+		/** Story only, with `open`: then the pane takes the keys (its key hints show), as after ⌘⇧J. */
+		focusPane?: boolean
+		/** Story only, with `open`: then press ⌘O in the pane, like Jakub's keys would (the pane takes focus first). */
+		reveal?: boolean
 	}
 }
 
@@ -632,6 +639,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 				restorePaneHeight = () => agentDockPaneHeight.set(stored)
 			}
 			const dockFixture = createAgentDockFixture(scenario)
+			if (options.agentDock.revealMode) dockFixture.setRevealMode(options.agentDock.revealMode)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
 			// Mount after this effect's commit, as production mounts outside any React render.
@@ -643,6 +651,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
+					revealTerminal: sessionId => workspace.revealTerminal(sessionId),
 				})
 			})
 		}
@@ -730,6 +739,26 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 								),
 							)
 						})
+					const reveal = options.agentDock?.reveal
+					if (reveal || options.agentDock?.focusPane)
+						// Two frames: the pane (and an agent's detail) is open; its keys take ⌘O.
+						requestAnimationFrame(() =>
+							requestAnimationFrame(() => {
+								const pane = root.querySelector<HTMLElement>('.agent-dock-pane')
+								if (unmounted || !pane) return
+								pane.focus({ preventScroll: true })
+								if (reveal)
+									pane.dispatchEvent(
+										new KeyboardEvent('keydown', {
+											key: 'o',
+											code: 'KeyO',
+											metaKey: true,
+											bubbles: true,
+											cancelable: true,
+										}),
+									)
+							}),
+						)
 				})
 		})
 		return () => {

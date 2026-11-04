@@ -12,6 +12,7 @@ import type {
 	AgentDockSnapshot,
 	DockSession,
 } from '../../agent-dock/model'
+import { type RevealView, RevealWhere } from './RevealTerminal'
 import { CloseKey, Footer, Header, Hint, Key, PromptField, Receipt, ScrollBody, Stepper } from './pane-chrome'
 import { type DetailKeys, type DockModKey, isPrintable, modHint, modShortcut, submitKeys, useKeys } from './pane-keys'
 import { type DockDrafts, useDraft } from './panel'
@@ -37,6 +38,8 @@ export function AgentPanel({
 	localError,
 	readMessage,
 	canPrompt,
+	reveal,
+	revealNote,
 	onStep,
 	onClose,
 	onOpenItem,
@@ -58,6 +61,10 @@ export function AgentPanel({
 	readMessage?: (session: string) => Promise<AgentDockMessageResult>
 	/** This build can reply from the dock at all. */
 	canPrompt: boolean
+	/** "Show terminal" for this agent (its where line leads with the link), or null when nothing can be shown. */
+	reveal: RevealView | null
+	/** A reveal that failed (or could not raise Okena): a quiet line in the footer, ahead of the receipt. */
+	revealNote: string | null
 	onStep(delta: number): void
 	onClose(): void
 	onOpenItem(itemId: number): void
@@ -127,7 +134,9 @@ export function AgentPanel({
 	})
 
 	const receipt = sessionReplyView(session, now)
-	const note = receipt ? (
+	const note = revealNote ? (
+		<Receipt view={{ text: revealNote, tone: 'neutral' }} />
+	) : receipt ? (
 		<Receipt view={receipt} />
 	) : localError ? (
 		<Receipt view={{ text: localError, tone: 'danger' }} />
@@ -166,8 +175,16 @@ export function AgentPanel({
 					{row.word}
 					{row.age ? ` ${row.age}` : ''}
 				</span>
-				{/* Where it runs stays at any width (item panes drop their project context below 640px). */}
-				<span className="agent-dock-title-project agent-dock-title-where">{row.where.join(' · ')}</span>
+				{/* Where it runs stays at any width (item panes drop their project context below 640px). With a
+				    terminal to show, its source leads as the link to it. */}
+				{reveal ? (
+					<span className="agent-dock-title-project agent-dock-title-where">
+						<RevealWhere view={reveal} />
+						{row.where.length > 1 ? ` · ${row.where.slice(1).join(' · ')}` : ''}
+					</span>
+				) : (
+					<span className="agent-dock-title-project agent-dock-title-where">{row.where.join(' · ')}</span>
+				)}
 			</Header>
 			<ScrollBody label="Last message">
 				<div className="agent-dock-message">

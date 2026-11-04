@@ -91,6 +91,21 @@ export const isAckKey = (event: KeyboardEvent<HTMLElement>, mod: DockModKey): bo
 	!event.shiftKey &&
 	!event.nativeEvent.isComposing
 
+/**
+ * ⌘O (Ctrl+O off macOS): show the agent's terminal ("open in terminal"), from anywhere in the pane,
+ * text fields included (O edits nothing with the modifier). By key or by code, so any layout has it.
+ */
+export const isRevealKey = (event: KeyboardEvent<HTMLElement>, mod: DockModKey): boolean =>
+	(event.key.toLowerCase() === 'o' || event.code === 'KeyO') &&
+	(mod === 'cmd' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+	!event.altKey &&
+	!event.shiftKey &&
+	!event.nativeEvent.isComposing
+
+/** The reveal key: as the hints show it and as aria-keyshortcuts names it. */
+export const revealShortcut = (mod: DockModKey): { label: string; aria: string } =>
+	mod === 'cmd' ? { label: '⌘O', aria: 'Meta+O' } : { label: 'Ctrl+O', aria: 'Control+O' }
+
 /** A text field with text in it keeps ⌘⌫ (Ctrl+Backspace) for editing; an empty one gives it to Ack. */
 export const keepsEditKey = (target: EventTarget | null): boolean => {
 	const field = target instanceof Element ? target.closest('input, textarea, [contenteditable="true"]') : null

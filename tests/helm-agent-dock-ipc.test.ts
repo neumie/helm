@@ -59,7 +59,7 @@ function dockIn(root: string, enabled: boolean) {
 	return { dock, channels, call }
 }
 
-test('agent dock IPC: the five dock channels are registered and refuse a foreign window or a stale profile token', async () => {
+test('agent dock IPC: the six dock channels are registered and refuse a foreign window or a stale profile token', async () => {
 	const root = mkdtempSync('/tmp/hcr-ipc-')
 	const { dock, channels, call } = dockIn(root, true)
 	try {
@@ -68,6 +68,7 @@ test('agent dock IPC: the five dock channels are registered and refuse a foreign
 			'agent-dock:act',
 			'agent-dock:message',
 			'agent-dock:prompt',
+			'agent-dock:reveal',
 			'agent-dock:set-visible',
 		])
 		const request = { itemId: 1, rev: 1, action: { type: 'approve' } }
@@ -133,7 +134,7 @@ test('main gates the dock channels on the session IPC gate and the main window; 
 		main,
 		/acceptsIpc: \(sender, profileToken\) => sessionIpcGate\.allows\(profileToken\) && sender === mainWindow\?\.webContents/,
 	)
-	for (const channel of ['setVisible', 'ack', 'act', 'prompt', 'message']) {
+	for (const channel of ['setVisible', 'ack', 'act', 'prompt', 'message', 'reveal']) {
 		const start = preload.indexOf(`AGENT_DOCK_CHANNELS.${channel},`)
 		assert.notEqual(start, -1, channel)
 		assert.ok(preload.slice(start, start + 120).includes('sessionProfileToken'), channel)

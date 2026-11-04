@@ -14,6 +14,7 @@ import {
 	type AgentDockMessageResult,
 	type AgentDockObservation,
 	type AgentDockPromptRequest,
+	type AgentDockRevealResult,
 	type AgentDockSnapshot,
 	type DockActOutcome,
 	type DockAction,
@@ -99,6 +100,19 @@ export type AgentDockScenario =
 	 * only apply rule suggestions, so that pane offers Allow once and Deny, no "Always allow".
 	 */
 	| 'helm-add-directories'
+	/**
+	 * Jakub's report (a "Turn ended" pane for `service-date-and-people`, PR #960): "Show terminal" from an
+	 * item pane or an agent's detail. A turn on `fix/service-date-and-people` that ended 2m ago and a
+	 * question on `fix/rental-calendar-export` (4m), and `rental-pricing` working (no item: its Agents row
+	 * opens the agent detail), all Okena worktrees of crane-rental.
+	 */
+	| 'reveal-okena'
+	/**
+	 * `reveal-okena` running in Helm's own terminals (source `helm`): the turn's pane is the workspace
+	 * fixture's `compile` session, the question's its `tests` and the working agent's `logs`, so "Show terminal" switches
+	 * to a real tab and pulses its frame.
+	 */
+	| 'reveal-helm'
 
 type Json = Record<string, unknown>
 
@@ -516,6 +530,107 @@ const realPanes = {
 
 const seedPage = (pane: Pane, uuid: string): Json =>
 	transcript(pane, [user(`${uuid}-u`, 'Start.'), assistant(uuid, 'Working on it.')], 1_000, true)
+
+const CRANE = { id: 'proj-crane', name: 'crane-rental' }
+
+/** 'reveal-okena' / 'reveal-helm' (see AgentDockScenario), through the real reducer. */
+function revealRun(now: number, start: AgentDockState, source: DockSourceId): ScenarioRun {
+	const helm = source === 'helm'
+	const turnPane: Pane = {
+		tid: helm ? 'compile' : 'term-crane-sdp',
+		sid: 'sess-crane-sdp',
+		projectId: 'proj-crane-sdp',
+		project: 'fix/service-date-and-people',
+		name: 'Servisní protokol: datum servisu a přítomné osoby (ClientCare #4302)',
+		branch: 'fix/service-date-and-people',
+		parent: CRANE,
+	}
+	const askPane: Pane = {
+		tid: helm ? 'tests' : 'term-crane-export',
+		sid: 'sess-crane-export',
+		projectId: 'proj-crane-export',
+		project: 'fix/rental-calendar-export',
+		name: 'Export kalendáře pronájmů do iCal (ClientCare #4310)',
+		branch: 'fix/rental-calendar-export',
+		parent: CRANE,
+	}
+	// Owes Jakub nothing (working, PR open): its Agents row opens its detail, not an item.
+	const workPane: Pane = {
+		tid: helm ? 'logs' : 'term-crane-pricing',
+		sid: 'sess-crane-pricing',
+		projectId: 'proj-crane-pricing',
+		project: 'feat/rental-pricing',
+		name: 'Ceník pronájmu podle délky (ClientCare #4288)',
+		branch: 'feat/rental-pricing',
+		parent: CRANE,
+	}
+	const working = detail(workPane, { busy: true, pr_links: [prLink(957)] })
+	const turnWorking = detail(turnPane, { busy: true, pr_links: [prLink(960)] })
+	const turnIdle = { ...turnWorking, busy: false }
+	const askWorking = detail(askPane, { busy: true })
+	const askOpen = detail(askPane, {
+		busy: true,
+		dialogs: [{ ...recordedDialog(), created_at_ms: now - 4 * MINUTE }],
+	})
+	const ended = transcript(
+		turnPane,
+		[
+			assistant(
+				'sdp-a1',
+				'Hotovo. Servisní protokol teď ukládá datum servisu a přítomné osoby a obojí se propíše do PDF.\n\n- Datum servisu se předvyplní dnešním dnem a jde změnit.\n- Osoby se vybírají ze seznamu kontaktů zákazníka.\n\nPR #960 čeká na review.',
+			),
+		],
+		2_000,
+		false,
+	)
+	const steps: Array<[number, AgentDockObservation]> = [
+		[
+			now - 20 * MINUTE,
+			poll(7_001, [
+				{ pane: turnPane, body: turnWorking, transcript: seedPage(turnPane, 'sdp-a0') },
+				{ pane: askPane, body: askWorking, transcript: seedPage(askPane, 'export-a0') },
+				{ pane: workPane, body: working, transcript: seedPage(workPane, 'pricing-a0') },
+			]),
+		],
+		[
+			now - 4 * MINUTE,
+			poll(7_002, [
+				{ pane: turnPane, body: turnWorking },
+				{ pane: askPane, body: askOpen },
+				{ pane: workPane, body: working },
+			]),
+		],
+		[
+			now - 2 * MINUTE,
+			poll(7_003, [
+				{ pane: turnPane, body: turnIdle, transcript: ended },
+				{ pane: askPane, body: askOpen },
+				{ pane: workPane, body: working },
+			]),
+		],
+		[
+			now - 2 * MINUTE + TURN_IDLE_MS + 1_000,
+			poll(7_004, [
+				{ pane: turnPane, body: turnIdle },
+				{ pane: askPane, body: askOpen },
+				{ pane: workPane, body: working },
+			]),
+		],
+	]
+	const live: Live = [
+		{ pane: turnPane, body: turnIdle },
+		{ pane: askPane, body: askOpen },
+		{ pane: workPane, body: working },
+	]
+	if (!helm) return { state: run(steps, start), live, version: 7_004 }
+	const helmSteps: Array<[number, AgentDockObservation]> = steps.map(([at, observation]) => [
+		at,
+		{ ...observation, source: 'helm' } as AgentDockObservation,
+	])
+	// Okena answers too (nothing of its own open), so both sources read connected.
+	helmSteps.push([now - 1_000, { ...poll(1, []), profile: 'okena-storybook', source: 'okena' }])
+	return { state: run(helmSteps, start), live, version: 7_004, source: 'helm' }
+}
 
 /** `long-turn` (see AgentDockScenario), through the real reducer. */
 function longTurnRun(now: number, start: AgentDockState): ScenarioRun {
@@ -1238,6 +1353,8 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 		return { state: run(steps, start), live: [{ pane: panes.turn, body: idle }], version: 5_003 }
 	}
 	if (name === 'long-turn') return longTurnRun(now, start)
+	if (name === 'reveal-okena') return revealRun(now, start, 'okena')
+	if (name === 'reveal-helm') return revealRun(now, start, 'helm')
 	if (name === 'agents-pane') {
 		const timeline = agentsPaneTimeline(now)
 		return { state: run(timeline.steps, start), live: timeline.live, version: timeline.version }
@@ -1484,6 +1601,19 @@ function arrivalBody(kind: AgentDockArrivalKind, pane: Pane, n: number, at: numb
 /** How the in-memory act behaves (browser tests switch it; stories use the default). */
 export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
 
+/**
+ * What the next "Show in Okena" does: focus and raise Okena (default), focus without raising it,
+ * find the terminal gone, or find Okena unreachable (main's words, `reveal.ts` REVEAL_TEXT).
+ */
+export type AgentDockRevealMode = 'shown' | 'not-raised' | 'gone' | 'unreachable'
+
+const REVEAL_MODE_RESULT: Record<AgentDockRevealMode, AgentDockRevealResult> = {
+	shown: { ok: true, activated: true },
+	'not-raised': { ok: true, activated: false },
+	gone: { ok: false, detail: "The agent's terminal is no longer open in Okena." },
+	unreachable: { ok: false, detail: 'Okena is unreachable: connect ECONNREFUSED 127.0.0.1:19100' },
+}
+
 /** Pause between the fixture act's steps, so Sending… is visible. */
 export const FIXTURE_ACT_STEP_MS = 250
 
@@ -1495,6 +1625,8 @@ export interface AgentDockFixture {
 		acts: AgentDockActRequest[]
 		prompts: AgentDockPromptRequest[]
 		reads: string[]
+		/** Session keys "Show in Okena" asked main to show (Helm terminals never reach the api). */
+		reveals: string[]
 	}
 	/** Answers the current scenario already sent from the dock (the receipt stories), for AgentDock's initialSent. */
 	sent(): ReadonlyMap<number, DockAction>
@@ -1513,6 +1645,8 @@ export interface AgentDockFixture {
 	emitAnsweredInTerminal(itemId: number): void
 	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
 	setActMode(mode: AgentDockActMode): void
+	/** What the next "Show in Okena" answers. */
+	setRevealMode(mode: AgentDockRevealMode): void
 	listenerCount(): number
 }
 
@@ -1526,9 +1660,10 @@ export function createAgentDockFixture(
 	clock: () => number = Date.now,
 ): AgentDockFixture {
 	const listeners = new Set<(snapshot: AgentDockSnapshot) => void>()
-	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [], prompts: [], reads: [] }
+	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [], prompts: [], reads: [], reveals: [] }
 	let scenario: ScenarioRun | null = initial ? scenarioRun(initial, clock()) : null
 	let mode: AgentDockActMode = 'confirm'
+	let revealMode: AgentDockRevealMode = 'shown'
 	let arrivals = 0
 	const push = () => {
 		if (!scenario) return
@@ -1634,6 +1769,12 @@ export function createAgentDockFixture(
 					...(last ? { message: { uuid: last.uuid, text: last.text } } : {}),
 				}
 			},
+			// Main's "Show in Okena": the call is recorded; the answer follows setRevealMode after a beat.
+			async reveal(session): Promise<AgentDockRevealResult> {
+				calls.reveals.push(session)
+				await wait(FIXTURE_ACT_STEP_MS)
+				return structuredClone(REVEAL_MODE_RESULT[revealMode])
+			},
 		},
 		emitScenario(name) {
 			scenario = scenarioRun(name, clock())
@@ -1677,6 +1818,9 @@ export function createAgentDockFixture(
 		},
 		setActMode(next) {
 			mode = next
+		},
+		setRevealMode(next) {
+			revealMode = next
 		},
 		sent: () => scenario?.sent ?? new Map(),
 		listenerCount: () => listeners.size,

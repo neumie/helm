@@ -5,6 +5,7 @@ import type {
 	AgentDockActResult,
 	AgentDockMessageResult,
 	AgentDockPromptRequest,
+	AgentDockRevealResult,
 	AgentDockSnapshot,
 } from './agent-dock/model'
 import type {
@@ -100,6 +101,7 @@ const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
 	act: 'agent-dock:act',
 	prompt: 'agent-dock:prompt',
 	message: 'agent-dock:message',
+	reveal: 'agent-dock:reveal',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -336,6 +338,8 @@ const api: HelmApi = {
 			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.prompt, request, sessionProfileToken) as Promise<AgentDockActResult>,
 		lastMessage: (session: string) =>
 			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.message, session, sessionProfileToken) as Promise<AgentDockMessageResult>,
+		reveal: (session: string) =>
+			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.reveal, session, sessionProfileToken) as Promise<AgentDockRevealResult>,
 	} satisfies AgentDockApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

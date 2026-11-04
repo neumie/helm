@@ -25,14 +25,18 @@ import type {
 	AgentDockActResult,
 	AgentDockMessageResult,
 	AgentDockPromptRequest,
+	AgentDockRevealResult,
 	AgentDockSnapshot,
 	DockAction,
 	DockItem,
+	DockSession,
 } from '../../agent-dock/model'
+import { type DockRevealTarget, dockRevealTarget } from '../../agent-dock/reveal'
 import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
 import { AgentPanel, agentDraftKey } from './AgentPanel'
 import { AgentsDetail } from './AgentsDetail'
+import type { RevealView } from './RevealTerminal'
 import {
 	type DetailKeys,
 	type DockModKey,
@@ -40,9 +44,11 @@ import {
 	choiceStop,
 	dockShortcut,
 	isAckKey,
+	isRevealKey,
 	isTextField,
 	keepsEditKey,
 	overflows,
+	revealShortcut,
 	scrollBody,
 } from './pane-keys'
 import { type DockDrafts, draftKeys } from './panel'
@@ -117,6 +123,13 @@ export interface AgentDockProps {
 	onPaneChange?(open: boolean): void
 	/** Hand the keys back to the active terminal (after an answer, or once nothing else waits). */
 	focusTerminal?(): void
+	/**
+	 * "Show terminal" (⌘O, or the header's where link): bring up the terminal the shown agent runs in — an
+	 * Okena pane (main focuses it and raises Okena) or a Helm terminal (its tab, pulsed). Absent: no link.
+	 */
+	onReveal?(target: DockRevealTarget): Promise<AgentDockRevealResult>
+	/** Whether this mount can show a target (a Helm terminal needs the workspace); default: every one. */
+	canReveal?(target: DockRevealTarget): boolean
 	/** Review fixtures only: the pane to show on first render. */
 	initialOpen?: AgentDockTarget | null
 	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
@@ -143,6 +156,12 @@ interface PaneDrag {
 	/** `commit` stores the height, `cancel` (Esc) goes back to `from`, `drop` (the pane went away) just stops. */
 	finish(how: 'commit' | 'cancel' | 'drop'): void
 }
+
+/** How long a reveal's footer note stays (it never blocks anything; the next reveal replaces it). */
+export const REVEAL_NOTE_MS = 8_000
+
+/** Okena focused the pane but Helm could not bring the app forward (osascript refused or timed out). */
+const REVEAL_NOT_RAISED = 'Focused in Okena; Helm could not bring Okena to the front.'
 
 /** ⌥↑ / ⌥↓ step when the terminal's row height is not known. */
 const NUDGE_FALLBACK = 19
@@ -195,6 +214,8 @@ export function AgentDock({
 	onUserHeight,
 	onPaneChange,
 	focusTerminal,
+	onReveal,
+	canReveal,
 	initialOpen = null,
 	initialSent,
 }: AgentDockProps) {
@@ -265,6 +286,9 @@ export function AgentDock({
 	/** Agent-detail replies awaiting main's answer, and words main could not record, by session key. */
 	const [prompting, setPrompting] = useState<ReadonlySet<string>>(new Set())
 	const [promptErrors, setPromptErrors] = useState<ReadonlyMap<string, { text: string; uuid?: string }>>(new Map())
+	/** A reveal on its way (session key), and the quiet note a failed one leaves in the footer, by session key. */
+	const [revealing, setRevealing] = useState<string | null>(null)
+	const [revealNote, setRevealNote] = useState<{ session: string; text: string } | null>(null)
 	/** Re-render clock for answered entries that linger with their receipt. */
 	const [lingerNow, setLingerNow] = useState(0)
 	const clock = Math.max(now, lingerNow)
@@ -301,6 +325,14 @@ export function AgentDock({
 	const agentSession = agentRow ? findSession(snapshot, agentRow.key) : undefined
 	const paneOpen =
 		target?.type === 'agents' || (agentRow !== undefined && agentSession !== undefined) || openItem !== undefined
+	/** The agent whose terminal ⌘O shows: the open item's, else the open agent detail's. */
+	const shownSession: DockSession | undefined = openItem
+		? findSession(snapshot, openItem.session)
+		: target?.type === 'agent'
+			? agentSession
+			: undefined
+	const shownReveal = onReveal ? dockRevealTarget(shownSession) : null
+	const revealTarget = shownReveal && (canReveal?.(shownReveal) ?? true) ? shownReveal : null
 	const paneShown = paneOpen && paneHeight !== null
 	const room = paneOpen ? (paneRoom?.()?.room ?? null) : null
 	/** The height kept: Jakub's dragged one when he set it, else the automatic one; null until measured. */
@@ -872,6 +904,48 @@ export function AgentDock({
 			})
 	}
 
+	/**
+	 * Show the agent's terminal. The pane stays open (the keys go to Okena, or to the revealed Helm
+	 * terminal); a failure leaves a quiet note in the footer, never a dialog.
+	 */
+	const reveal = (next: DockRevealTarget) => {
+		if (!onReveal || revealing !== null) return
+		setRevealing(next.session)
+		setRevealNote(null)
+		void onReveal(next)
+			.catch(
+				(error: unknown): AgentDockRevealResult => ({
+					ok: false,
+					detail: error instanceof Error ? error.message : String(error),
+				}),
+			)
+			.then(result => {
+				setRevealing(null)
+				const text = !result.ok ? result.detail : result.activated ? null : REVEAL_NOT_RAISED
+				if (text) setRevealNote({ session: next.session, text })
+			})
+	}
+
+	// A reveal's note is a passing word: it goes after REVEAL_NOTE_MS.
+	useEffect(() => {
+		if (!revealNote) return
+		const timer = setTimeout(() => setRevealNote(null), REVEAL_NOTE_MS)
+		return () => clearTimeout(timer)
+	}, [revealNote])
+
+	/** The shown pane's reveal, as its body offers it (null: nothing to show). */
+	const revealView: RevealView | null =
+		revealTarget && shownSession
+			? {
+					target: revealTarget,
+					mod,
+					busy: revealing === revealTarget.session,
+					name: agentWho(snapshot, shownSession.key).name,
+					onReveal: () => reveal(revealTarget),
+				}
+			: null
+	const shownRevealNote = revealNote && revealNote.session === shownSession?.key ? revealNote.text : null
+
 	const register = (key: string) => (node: HTMLButtonElement | null) => {
 		if (node) anchors.current.set(key, node)
 		else anchors.current.delete(key)
@@ -913,6 +987,13 @@ export function AgentDock({
 			if (!openItem || !canAck(openItem)) return
 			event.preventDefault()
 			if (!event.repeat && !pending.has(openItem.id)) ack(openItem.id)
+			return
+		}
+		// ⌘O shows the agent's terminal, from anywhere in the pane (fields too: O edits nothing with ⌘).
+		if (isRevealKey(event, mod)) {
+			if (!revealTarget || target?.type === 'agents') return
+			event.preventDefault()
+			if (!event.repeat) reveal(revealTarget)
 			return
 		}
 		// ⌥↑ / ⌥↓ move the pane's terminal-side edge a row (a text field keeps them for its caret).
@@ -1020,6 +1101,7 @@ export function AgentDock({
 						? `Agent, ${agentRow.name}${agentRow.repo ? `, ${agentRow.repo}` : ''}`
 						: 'Agents'
 			}
+			aria-keyshortcuts={revealView ? revealShortcut(mod).aria : undefined}
 			style={height === undefined ? undefined : { height }}
 			onKeyDown={onPaneKey}
 		>
@@ -1042,6 +1124,8 @@ export function AgentDock({
 					keys={detailKeys}
 					drafts={drafts}
 					mod={mod}
+					reveal={revealView}
+					revealNote={shownRevealNote}
 					onStep={step}
 					onClose={leavePane}
 					onAck={() => ack(openItem.id)}
@@ -1063,6 +1147,8 @@ export function AgentDock({
 					localError={promptError(promptErrors.get(agentRow.key), agentSession.lastMessage?.uuid)}
 					readMessage={readMessage}
 					canPrompt={onPrompt !== undefined}
+					reveal={revealView}
+					revealNote={shownRevealNote}
 					onStep={stepAgent}
 					onClose={leavePane}
 					onOpenItem={itemId => show({ type: 'item', id: itemId }, focusInPane(), false, true)}

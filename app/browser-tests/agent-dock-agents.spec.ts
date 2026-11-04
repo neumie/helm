@@ -222,7 +222,8 @@ test('rows are one roving list: ↑ ↓ Home End move, Enter opens the item or t
 	await expect(pane).toHaveAttribute('aria-label', 'Agent, service-protocol-image-link, JVS')
 	await expect(pane).toBeFocused()
 	await expect(pane.locator('.agent-dock-title-state')).toHaveText('read 25m')
-	await expect(pane.locator('.agent-dock-title-project').first()).toHaveText('Okena · worktree · PR #953')
+	// Its source leads as the link to its terminal (⌘O; the key hint is aria-hidden).
+	await expect(pane.locator('.agent-dock-title-project').first()).toHaveText(/^Okena ↗\s*⌘O · worktree · PR #953$/)
 	await expect(pane.locator('.agent-dock-md')).toContainText('Testy prošly; čeká to na review.')
 	await expect(pane.locator('.agent-dock-md strong, .agent-dock-md code').first()).toBeVisible()
 	expect((await fixtureCalls(page)).reads).toEqual(['storybook:term-jvs-image'])
@@ -330,5 +331,6 @@ test('at 900px the agent detail still says where the agent runs', async ({ page 
 	const pane = page.locator('.agent-dock-pane')
 	await expect(pane).toHaveAttribute('aria-label', 'Agent, service-protocol-image-link, JVS')
 	await expect(pane.locator('.agent-dock-title-where')).toBeVisible()
-	await expect(pane.locator('.agent-dock-title-where')).toHaveText('Okena · worktree · PR #953')
+	await expect(pane.locator('.agent-dock-title-where')).toHaveText(/^Okena ↗\s*⌘O · worktree · PR #953$/)
+	await expect(pane.locator('.agent-dock-reveal-link')).toBeVisible()
 })

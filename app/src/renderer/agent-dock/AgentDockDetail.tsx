@@ -16,6 +16,7 @@ import type { MutableRefObject, ReactNode } from 'react'
 import type { DockAction, DockItem, DockSession } from '../../agent-dock/model'
 import { AskPanel } from './AskPanel'
 import { PermissionPanel, PlanPanel } from './DecisionPanels'
+import { type RevealView, RevealWhere } from './RevealTerminal'
 import { TurnPanel } from './TurnPanel'
 import { Hint, ItemHeader, Key, Receipt, Warn } from './pane-chrome'
 import { type DetailKeys, type DockModKey, ackShortcut } from './pane-keys'
@@ -47,6 +48,8 @@ export function ItemDetail({
 	keys,
 	drafts,
 	mod,
+	reveal,
+	revealNote,
 	onStep,
 	onClose,
 	onAck,
@@ -70,6 +73,10 @@ export function ItemDetail({
 	keys: MutableRefObject<DetailKeys | null>
 	drafts: DockDrafts
 	mod: DockModKey
+	/** "Show terminal" for the item's agent (the header's where link), or null when nothing can be shown. */
+	reveal: RevealView | null
+	/** A reveal that failed (or could not raise Okena): a quiet line in the footer, ahead of the receipt. */
+	revealNote: string | null
 	onStep(delta: number): void
 	onClose(): void
 	onAck(): void
@@ -93,7 +100,9 @@ export function ItemDetail({
 	) : null
 	const sourceName = session?.source === 'helm' ? "Helm's Claude hub" : 'Okena'
 	const view = receiptView(item)
-	const receipt = view ? (
+	const receipt = revealNote ? (
+		<Receipt view={{ text: revealNote, tone: 'neutral' }} />
+	) : view ? (
 		<Receipt
 			view={view}
 			detail={
@@ -152,7 +161,16 @@ export function ItemDetail({
 	else body = <PermissionPanel key={item.id} {...panel} session={session} />
 	return (
 		<>
-			<ItemHeader item={item} who={who} now={now} index={index} total={total} onStep={onStep} onClose={onClose} />
+			<ItemHeader
+				item={item}
+				who={who}
+				now={now}
+				index={index}
+				total={total}
+				where={<RevealWhere view={reveal} />}
+				onStep={onStep}
+				onClose={onClose}
+			/>
 			{body}
 		</>
 	)

@@ -106,6 +106,7 @@ export function ItemHeader({
 	now,
 	index,
 	total,
+	where = null,
 	onStep,
 	onClose,
 }: {
@@ -114,6 +115,8 @@ export function ItemHeader({
 	now: number
 	index: number
 	total: number
+	/** After the context: where the agent runs, as a link to its terminal ("Show terminal", ⌘O). */
+	where?: ReactNode
 	onStep(delta: number): void
 	onClose(): void
 }) {
@@ -139,6 +142,7 @@ export function ItemHeader({
 				{kind}
 			</span>
 			{context ? <span className="agent-dock-title-context">{context}</span> : null}
+			{where}
 		</Header>
 	)
 }
