@@ -363,6 +363,12 @@ export function AgentDock({
 		}
 		const onMove = (move: PointerEvent) => {
 			if (move.pointerId !== state.pointerId) return
+			// No button held: the release went elsewhere (another app, a lost pointerup) — the drag ended at
+			// the height shown; it never follows a hovering pointer.
+			if ((move.buttons & 1) === 0) {
+				state.finish('commit')
+				return
+			}
 			const next = clampPaneHeight(state.from + sign * (move.clientY - state.startY), limits)
 			if (next === state.height) return
 			state.moved = true
@@ -377,6 +383,8 @@ export function AgentDock({
 		const onCancel = (cancel: PointerEvent) => {
 			if (cancel.pointerId === state.pointerId) state.finish('cancel')
 		}
+		// Helm lost the pointer without a release (window blur mid-drag, capture lost): the drag ends where it is.
+		const onLost = () => state.finish('commit')
 		// Esc while dragging: back to the height it started at (the key goes nowhere else).
 		const onKey = (key: globalThis.KeyboardEvent) => {
 			if (key.key !== 'Escape') return
@@ -384,6 +392,7 @@ export function AgentDock({
 			key.stopImmediatePropagation()
 			state.finish('cancel')
 		}
+		let done = false
 		const state: PaneDrag = {
 			pointerId: event.pointerId,
 			startY: event.clientY,
@@ -392,10 +401,14 @@ export function AgentDock({
 			moved: false,
 			frame: 0,
 			finish(how) {
+				if (done) return
+				done = true
 				view.removeEventListener('pointermove', onMove, true)
 				view.removeEventListener('pointerup', onUp, true)
 				view.removeEventListener('pointercancel', onCancel, true)
 				view.removeEventListener('keydown', onKey, true)
+				view.removeEventListener('blur', onLost)
+				edge.removeEventListener('lostpointercapture', onLost)
 				if (state.frame) view.cancelAnimationFrame(state.frame)
 				state.frame = 0
 				if (drag.current === state) drag.current = null
@@ -428,6 +441,8 @@ export function AgentDock({
 		view.addEventListener('pointerup', onUp, true)
 		view.addEventListener('pointercancel', onCancel, true)
 		view.addEventListener('keydown', onKey, true)
+		view.addEventListener('blur', onLost)
+		edge.addEventListener('lostpointercapture', onLost)
 	}
 
 	/** Double-click on the edge: back to automatic sizing — the shown content's natural height, stored height cleared. */

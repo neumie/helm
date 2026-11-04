@@ -344,3 +344,47 @@ test('text selection in the pane still works and resizes nothing', async ({ page
 	expect(await paneHeight(page)).toBe(before)
 	expect(await stored(page)).toBeNull()
 })
+
+test('a drag whose release Helm never sees ends where it is: blur, a buttonless move, lost capture', async ({
+	page,
+}) => {
+	await openHarness(page, 1400, 900)
+	await openShort(page)
+	// Window blur mid-drag (⌘⇥ with the button held): the drag ends at the height shown, nothing follows.
+	const at = await pressEdge(page)
+	await page.mouse.move(at.x, at.y - 100, { steps: 4 })
+	await expect.poll(() => paneHeight(page)).toBe(PANE_MIN_HEIGHT + 100)
+	await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+	await expect.poll(() => stored(page)).toBe(String(PANE_MIN_HEIGHT + 100))
+	await page.mouse.move(at.x, at.y - 250, { steps: 4 })
+	await page.mouse.up()
+	expect(await paneHeight(page)).toBe(PANE_MIN_HEIGHT + 100)
+	// The pointerup went elsewhere: the next move has no button held — the pane never follows a hover.
+	const y = await edgeOf(page).evaluate(node => node.getBoundingClientRect().top + 3)
+	await page.evaluate(top => {
+		const edge = document.querySelector('.agent-dock-resize') as HTMLElement
+		const init = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, clientX: 300 }
+		edge.dispatchEvent(new PointerEvent('pointerdown', { ...init, clientY: top, button: 0, buttons: 1 }))
+		edge.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: top - 40, buttons: 1 }))
+		edge.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: top - 200, buttons: 0 }))
+		edge.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: top - 220, buttons: 1 }))
+	}, y)
+	await expect.poll(() => paneHeight(page)).toBe(PANE_MIN_HEIGHT + 140)
+	expect(await stored(page)).toBe(String(PANE_MIN_HEIGHT + 140))
+	// Capture lost without a release: same.
+	const top = await edgeOf(page).evaluate(node => node.getBoundingClientRect().top + 3)
+	await page.evaluate(top => {
+		const edge = document.querySelector('.agent-dock-resize') as HTMLElement
+		const init = { bubbles: true, cancelable: true, pointerId: 8, pointerType: 'mouse', isPrimary: true, clientX: 300 }
+		edge.dispatchEvent(new PointerEvent('pointerdown', { ...init, clientY: top, button: 0, buttons: 1 }))
+		edge.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: top + 60, buttons: 1 }))
+		edge.dispatchEvent(new PointerEvent('lostpointercapture', init))
+		edge.dispatchEvent(new PointerEvent('pointermove', { ...init, clientY: top + 120, buttons: 1 }))
+	}, top)
+	await expect.poll(() => paneHeight(page)).toBe(PANE_MIN_HEIGHT + 80)
+	expect(await stored(page)).toBe(String(PANE_MIN_HEIGHT + 80))
+	await expect(terminal(page)).toBeFocused()
+	// Nothing is left holding the pane: a press outside closes it as ever.
+	await page.mouse.click(5, 5)
+	await expect(paneOf(page)).toHaveCount(0)
+})
