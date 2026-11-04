@@ -19,12 +19,23 @@ declare global {
 const harness = '/iframe.html?id=views-terminal-workspace--agent-dock-harness&viewMode=story'
 const KEEPS_ROWS = 8
 
-async function openLongTurn(page: Page, width: number, height: number): Promise<void> {
+/** `readDelayMs`: the agent detail's live message (Okena's last message) arrives this late. */
+async function openLongTurn(page: Page, width: number, height: number, readDelayMs = 0): Promise<void> {
 	await page.setViewportSize({ width, height })
 	await page.goto(harness)
 	await expect(page.locator('.term-holder.active .xterm-screen')).toBeVisible()
 	await expect(page.locator('#agent-dock .agent-dock-row')).toBeVisible()
-	await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitScenario('long-turn'))
+	await page.evaluate(delay => {
+		const api = window.__helmWorkspaceFixture?.agentDock?.api
+		if (api && delay > 0) {
+			const read = api.lastMessage.bind(api)
+			api.lastMessage = async session => {
+				await new Promise(resolve => setTimeout(resolve, delay))
+				return read(session)
+			}
+		}
+		window.__helmWorkspaceFixture?.agentDock?.emitScenario('long-turn')
+	}, readDelayMs)
 	await expect(row(page).locator('.agent-dock-entry')).toHaveCount(2)
 	await expect.poll(() => xtermRows(page)).toBeGreaterThan(0)
 	// Every terminal-row height change from here: the observer's first report, then one per refit.
@@ -178,6 +189,48 @@ test('an agent detail opened from the Agents list grows once to its live message
 	expect(await paneHeight(page)).toBe(cap)
 	// Open, the one growth.
 	expect(await termHeights(page)).toHaveLength(3)
+})
+
+test('typing in the terminal ends the growth chance: a late message never resizes the PTY under the keys', async ({
+	page,
+}) => {
+	// A pointer-opened pane leaves the keys in the terminal; the agent's message is read late (900ms).
+	await openLongTurn(page, 1400, 900, 900)
+	await page.evaluate(async () => {
+		const dock = window.__helmWorkspaceFixture?.agentDock
+		const ids = [...document.querySelectorAll('.agent-dock-entry[data-item-id]')].map(node =>
+			Number(node.getAttribute('data-item-id')),
+		)
+		for (const id of ids) await dock?.api.ack(id)
+	})
+	await expect(row(page).locator('.agent-dock-entry')).toHaveCount(0)
+	await row(page).locator('.agent-dock-agents-entry').click()
+	const pane = paneOf(page)
+	await pane
+		.locator('.agent-dock-agent')
+		.filter({ has: page.locator('.agent-dock-agent-name', { hasText: 'ios-sync' }) })
+		.click()
+	await expect(terminal(page)).toBeFocused()
+	const before = await paneHeight(page)
+	await page.keyboard.type('ls')
+	await expect(pane.locator('.agent-dock-md')).toContainText('Otevřené otázky')
+	await page.waitForTimeout(200)
+	// The message came in after Jakub typed: the pane keeps its height (the body scrolls), no refit.
+	expect(await paneHeight(page)).toBe(before)
+	expect(await termHeights(page)).toHaveLength(2)
+})
+
+test('a pane opened in a window too short for it gets its height back when the window grows', async ({ page }) => {
+	await openLongTurn(page, 900, 560)
+	await longEntry(page).click()
+	await expect(paneOf(page).locator('.agent-dock-step-count')).toContainText('2/2')
+	await expect.poll(() => xtermRows(page)).toBe(KEEPS_ROWS)
+	const clamped = await paneHeight(page)
+	expect(clamped).toBeLessThan(480)
+	await page.setViewportSize({ width: 1400, height: 900 })
+	// The height it was given at open (60% of a 522px #right is under 480, so 480), no longer clamped.
+	await expect.poll(() => paneHeight(page)).toBe(480)
+	await expect.poll(() => xtermRows(page)).toBeGreaterThan(KEEPS_ROWS)
 })
 
 test('a short window: the room that keeps 8 terminal rows caps the pane', async ({ page }) => {

@@ -159,8 +159,8 @@ export function mountAgentDock({
 		;(stop ?? row)?.focus()
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
-	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding; and the most a
-	// pane may open (or grow) to within it — a share of #right (paneMaxHeight).
+	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding (it clamps the pane
+	// on screen); and the most a pane may open (or grow) to — a share of #right (paneMaxHeight).
 	const paneRoom = (): { room: number; max: number } | null => {
 		const total = right.clientHeight
 		if (total <= 0) return null
@@ -170,7 +170,7 @@ export function mountAgentDock({
 			terms.querySelector('.term-holder.active .xterm-rows > div')?.getBoundingClientRect().height ||
 			FALLBACK_ROW_HEIGHT
 		const room = Math.floor(total - rest - PANE_KEEPS_ROWS * row - WELL_PADDING)
-		return { room, max: paneMaxHeight(total, room) }
+		return { room, max: paneMaxHeight(total) }
 	}
 	const focusTerminal = (): void => {
 		if (focusTerminalOverride) {

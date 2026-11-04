@@ -93,8 +93,8 @@ export interface AgentDockProps {
 	/** Jakub switched the grouping in the Agents pane header (or with `G`): store it. */
 	onAgentsLayout?(layout: AgentsLayout): void
 	/**
-	 * The layout's measure of #right: `room`, the most px the pane may take so the terminal keeps its rows,
-	 * and `max`, the most it may open or grow to (a share of #right, within `room`); null = not known.
+	 * The layout's measure of #right: `room`, the most px the pane may take on screen so the terminal keeps
+	 * its rows, and `max`, the most it may open or grow to (a share of #right); null = not known.
 	 */
 	paneRoom?: () => PaneRoom | null
 	/** After the pane opens, grows or closes: the terminal row changed height once, refit it. */
@@ -272,7 +272,7 @@ export function AgentDock({
 		const pane = paneRef.current
 		const current = paneHeightRef.current
 		if (!growable.current || !pane || current === null) return
-		// Within the max it was armed with and the room now (a shrunk window).
+		// Within the max it was armed with and the max now (a shrunk window).
 		const caps = [growMax.current, paneRoom?.()?.max].filter(cap => cap !== undefined)
 		const next = paneFitHeight(naturalHeight(pane), caps.length > 0 ? Math.min(...caps) : undefined)
 		if (next <= current + 1) return
@@ -475,12 +475,20 @@ export function AgentDock({
 		if (!paneShown || !pane || !view || !growable.current) return
 		const watch = new view.MutationObserver(growToContent)
 		watch.observe(pane, { childList: true, subtree: true, characterData: true })
-		const timer = view.setTimeout(() => {
+		const settled = () => {
 			growable.current = false
-		}, PANE_SETTLE_MS)
+		}
+		const timer = view.setTimeout(settled, PANE_SETTLE_MS)
+		// Jakub typing anywhere (a pointer-opened pane leaves the keys in the terminal) or scrolling the
+		// body ends the chance: a growth then would resize the PTY under his keys or move what he reads.
+		// Capture, so it runs before a key that moves on (⌘⌫, an answer) re-arms it.
+		view.addEventListener('keydown', settled, true)
+		pane.addEventListener('wheel', settled, { passive: true })
 		return () => {
 			watch.disconnect()
 			view.clearTimeout(timer)
+			view.removeEventListener('keydown', settled, true)
+			pane.removeEventListener('wheel', settled)
 		}
 	}, [paneShown, settle])
 
