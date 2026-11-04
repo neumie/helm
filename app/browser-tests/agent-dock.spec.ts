@@ -249,11 +249,16 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 	await expect(input).toBeFocused()
 	await expect(rail).toBeVisible()
 
-	// A click in the terminal closes an open pane.
+	// A click in the terminal keeps an open pane and gives the terminal the keys; a click elsewhere closes it.
 	await rail.locator('.agent-dock-agents-entry').click()
 	await expect(pane).toContainText('Agents')
 	await expect(input).toBeFocused()
+	const rowsWithPane = await xtermRows(page)
 	await page.locator('.term-holder.active .xterm-screen').click({ position: { x: 40, y: 40 } })
+	await expect(input).toBeFocused()
+	await expect(pane).toContainText('Agents')
+	expect(await xtermRows(page)).toBe(rowsWithPane)
+	await page.locator('#topbar-drag-space').click()
 	await expect(pane).toHaveCount(0)
 	expect(await page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.length)).toBe(0)
 })
