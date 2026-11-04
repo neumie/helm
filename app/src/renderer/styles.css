@@ -1103,6 +1103,44 @@ body.dragging {
 	display: block;
 }
 
+/* "Show terminal" from the agent dock (design §3.24): the revealed terminal's frame takes one accent
+ * pulse in the dock's arrival language — a 2px --accent ring inside the frame and a 6% tint over the
+ * text hold ~170ms, then ease out over the rest of 1.4s (REVEAL_PULSE_MS). Color only: nothing moves or
+ * resizes, pointer events pass through, the terminal keeps the keys. Reduced motion: no animation; the
+ * ring holds, static, while data-reveal is set. */
+.term-holder[data-reveal]::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 9;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.term-holder[data-reveal]::after {
+		animation: term-reveal-pulse 1.4s ease-out 1 forwards;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.term-holder[data-reveal]::after {
+		box-shadow: inset 0 0 0 2px var(--accent);
+	}
+}
+
+@keyframes term-reveal-pulse {
+	0%,
+	12% {
+		box-shadow: inset 0 0 0 2px var(--accent);
+		background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+	}
+
+	100% {
+		box-shadow: inset 0 0 0 2px transparent;
+		background-color: transparent;
+	}
+}
+
 /* xterm mounts HERE, not in .term-holder: FitAddon measures the computed width
  * of xterm's parent element, which under border-box includes that element's
  * own padding — mounting into the padded holder overcounts columns by 16px and
@@ -1995,6 +2033,62 @@ body.dragging {
 	padding: 0 8px;
 }
 
+/* "Show terminal", variant `where` (stories only until Jakub picks): the header's where text as a quiet
+ * link — dim words with a faint underline, --text-0 and a full underline under the pointer — then the
+ * `⌘O` hint while the pane holds the keys. */
+.agent-dock-reveal-where {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.agent-dock-reveal-link {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: var(--text-1);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+	text-underline-offset: 3px;
+	cursor: pointer;
+	transition: color 140ms ease-out, text-decoration-color 140ms ease-out;
+}
+
+.agent-dock-reveal-link:hover:not(:disabled) {
+	color: var(--text-0);
+	text-decoration-color: currentColor;
+}
+
+.agent-dock-reveal-link:disabled {
+	cursor: default;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-hint {
+	flex: none;
+	font: inherit;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-hint kbd {
+	font: inherit;
+}
+
+.agent-dock-title-hint kbd[data-face="symbols"] {
+	letter-spacing: 0.04em;
+}
+
+.agent-dock-pane:not(:focus-within) .agent-dock-title-hint {
+	visibility: hidden;
+}
+
 /* Agents pane header end: each source's health (`Okena ● · Helm terminals ●`, dim names, the dot in
  * its tone), then the grouping switch (`group state project`): dim words, the active one --text-0 and
  * underlined like the question tabs — no fill, no box. */
@@ -2663,12 +2757,47 @@ body.dragging {
 	letter-spacing: 0.04em;
 }
 
+/* "Show terminal", variant `hint` (stories only until Jakub picks): the `⌘O terminal` hint is the only
+ * affordance, so it stays shown without focus and takes a click (a pointer target; the hint row is
+ * aria-hidden, the pane's ⌘O serves the keys). Dim like its row; --text-0 under the pointer. */
+.agent-dock-reveal-hint {
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+	visibility: visible;
+	transition: color 140ms ease-out;
+}
+
+.agent-dock-reveal-hint:hover:not(:disabled),
+.agent-dock-reveal-hint:hover:not(:disabled) kbd {
+	color: var(--text-0);
+}
+
+.agent-dock-reveal-hint:disabled {
+	cursor: default;
+}
+
 /* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid.
  * A field with text keeps ↑ ↓ and the Page keys for editing, so the scroll hint steps back too. */
 .agent-dock-pane:not(:focus-within) .agent-dock-foot-hints,
 .agent-dock-pane:has(.agent-dock-input:focus) .agent-dock-hint[data-pick],
 .agent-dock-pane:has(.agent-dock-input:focus:not(:placeholder-shown)) .agent-dock-hint[data-scroll] {
 	visibility: hidden;
+}
+
+.agent-dock-pane .agent-dock-foot-hints .agent-dock-reveal-hint {
+	visibility: visible;
+}
+
+/* Without the keys, the hint row holds only that hint: it leads the row instead of floating in the
+ * hidden hints' places. */
+.agent-dock-pane:not(:focus-within)
+	.agent-dock-foot-hints:has(.agent-dock-reveal-hint)
+	> :not(.agent-dock-reveal-hint) {
+	display: none;
 }
 
 .agent-dock-foot-note {

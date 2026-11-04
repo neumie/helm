@@ -1,14 +1,12 @@
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
-import { promisify } from 'node:util'
 import type { ProjectConfig } from '../../config.js'
 import type { SolverWorkspace } from '../../solver/workspace.js'
 import { worktreePathForBranch } from '../../worktree/manager.js'
+import { activateOkenaApp } from './activate.js'
 import { OkenaClient, type OkenaLayoutNode, type OkenaState, okenaClientForProject } from './client.js'
 import { OkenaWorktreeManager, inspectOkenaBranchSource } from './worktree.js'
 
-const execFileAsync = promisify(execFile)
 const FOCUS_RETRY_DELAYS_MS = [0, 100, 250]
 const TERMINAL_READY_DELAYS_MS = [0, 100, 250, 500]
 
@@ -222,20 +220,6 @@ export async function inspectItemOkenaWorkspace(
 	return { state: 'create', label: 'Create branch & workspace', detail: branchName, branchName }
 }
 
-async function activateOkenaApp(): Promise<boolean> {
-	if (process.platform !== 'darwin') return false
-	try {
-		await execFileAsync(
-			'osascript',
-			['-e', 'tell application "System Events" to set frontmost of first process whose name is "okena" to true'],
-			{ timeout: 500 },
-		)
-		return true
-	} catch {
-		return false
-	}
-}
-
 /**
  * Resolve an Item workspace into Okena, focus its live layout pane, and
  * best-effort raise the native app. Focus is strictly control-plane only: never
@@ -322,6 +306,6 @@ export async function openItemInOkena(
 	const focus = await focusTerminal(client, projectId, terminalId)
 	terminalId = focus.terminalId
 
-	const activated = await (deps.activateApp ?? activateOkenaApp)()
+	const activated = await (deps.activateApp ?? (() => activateOkenaApp()))()
 	return { worktreePath, projectId, terminalId, createdWorkspace, focused: focus.focused, notified: false, activated }
 }

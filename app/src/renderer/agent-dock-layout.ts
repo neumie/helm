@@ -5,11 +5,13 @@ import type {
 	AgentDockActResult,
 	AgentDockMessageResult,
 	AgentDockPromptRequest,
+	AgentDockRevealResult,
 	AgentDockSnapshot,
 	DockAction,
 } from '../agent-dock/model'
+import type { DockRevealTarget } from '../agent-dock/reveal'
 import type { AgentDockApi } from '../shared'
-import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
+import { AgentDock, type AgentDockHandle, type RevealAffordance } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/pane-keys'
 import {
 	type AgentDockPosition,
@@ -127,6 +129,8 @@ export function mountAgentDock({
 	api,
 	platform,
 	focusTerminal: focusTerminalOverride,
+	revealTerminal,
+	revealAffordance,
 	now = Date.now,
 	initialSent,
 }: {
@@ -137,6 +141,13 @@ export function mountAgentDock({
 	platform?: string
 	/** Defaults to the active xterm's input. */
 	focusTerminal?: () => void
+	/**
+	 * Shows a Helm terminal from the dock ("Show terminal"): its tab, focused, frame pulsed
+	 * (MountedTerminalWorkspace.revealTerminal). Absent: Helm-terminal agents offer no reveal.
+	 */
+	revealTerminal?: (sessionId: string) => boolean
+	/** Review fixtures only: which reveal affordance the panes show (production: the footer button). */
+	revealAffordance?: RevealAffordance
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
@@ -235,6 +246,9 @@ export function mountAgentDock({
 				if (!disposed) focusTerminal()
 			},
 			initialSent,
+			onReveal,
+			canReveal: (target: DockRevealTarget) => target.kind === 'okena' || revealTerminal !== undefined,
+			...(revealAffordance ? { revealAffordance } : {}),
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))
@@ -300,6 +314,19 @@ export function mountAgentDock({
 	const readMessage = async (session: string): Promise<AgentDockMessageResult> => {
 		try {
 			return await api.lastMessage(session)
+		} catch (error) {
+			return { ok: false, detail: error instanceof Error ? error.message : String(error) }
+		}
+	}
+
+	// "Show in Okena" goes through main (focus + raise the app); a Helm terminal is this window's own tab.
+	const onReveal = async (target: DockRevealTarget): Promise<AgentDockRevealResult> => {
+		if (target.kind === 'helm')
+			return revealTerminal?.(target.terminalId)
+				? { ok: true, activated: true }
+				: { ok: false, detail: 'This terminal is not open in this window.' }
+		try {
+			return await api.reveal(target.session)
 		} catch (error) {
 			return { ok: false, detail: error instanceof Error ? error.message : String(error) }
 		}

@@ -628,7 +628,7 @@ test('answering a question from the pane: 1-9 pick, Enter submits, Sending… th
 	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /· answered \d\d:\d\d$/)
 	// Resolved: the receipt is the footer; no decision button and no key hints that would do nothing.
 	await expect(pane.getByRole('button', { name: 'Submit answers' })).toHaveCount(0)
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText('esc close')
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘O terminal\s*esc close$/)
 	// While the pane is open the answer keeps its slot and the pane stays, past the receipt's linger:
 	// nothing Jakub did would explain the terminal resizing under his typing.
 	const rows = await xtermRows(page)
@@ -1083,7 +1083,7 @@ test('footer key hints show only while the pane holds focus (pointer use leaves 
 	await expect(pane).toBeVisible()
 	await pane.focus()
 	expect(await hintsShown(page)).toBe('visible')
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^1–3 pick\s*⌘↵ submit\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^1–3 pick\s*⌘↵ submit\s*⌘O terminal\s*esc close$/)
 	// Screen readers get the keys from aria-keyshortcuts, not the hint text.
 	await expect(pane.locator('.agent-dock-foot-hints')).toHaveAttribute('aria-hidden', 'true')
 	await expect(pane.getByRole('button', { name: 'Submit answers' })).toHaveAttribute('aria-keyshortcuts', 'Meta+Enter')
@@ -1182,7 +1182,7 @@ test('deny: the field is one line, keeps the command in view, and its hint is th
 	await expect(message).toBeFocused()
 	await expect(pane.locator('.agent-dock-command')).toBeInViewport({ ratio: 1 })
 	expect(await pane.locator('.agent-dock-pane-scroll').evaluate(node => node.scrollTop)).toBe(0)
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ deny\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ deny\s*⌘O terminal\s*esc close$/)
 	await page.keyboard.type('stop here')
 	await page.keyboard.press('Enter')
 	expect(await acts(page)).toEqual([])
@@ -1387,7 +1387,7 @@ test('⌘⌫ acks a turn from the pane: the hint shows, the pane opens the next 
 	const { pane, rail } = await openByKeyboard(page, 3)
 	const turn = rail.locator('.agent-dock-entry[data-kind="turn"]')
 	const turnId = Number(await turn.getAttribute('data-item-id'))
-	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*esc close$/)
+	await expect(pane.locator('.agent-dock-foot-hints')).toHaveText(/^⌘↵ send\s*⌘⌫ ack\s*⌘O terminal\s*esc close$/)
 	const ackButton = pane.getByRole('button', { name: `Ack item ${turnId}` })
 	await expect(ackButton).toHaveAttribute('aria-keyshortcuts', 'Meta+Backspace')
 	await expect(ackButton).toHaveAttribute('title', 'Ack (⌘⌫)')
@@ -1730,8 +1730,8 @@ test('decisions: unarmed buttons are quiet keys, the note names the act, unanswe
 	await emitScenario(page, 'orphaned')
 	await page.locator('.agent-dock-entry[data-tone="orphaned"]').click()
 	const foot = page.locator('.agent-dock-pane .agent-dock-foot-actions')
-	await expect(foot.getByRole('button')).toHaveCount(1)
-	await expect(foot.getByRole('button')).toHaveText('Ack')
+	// Ack, and "Show in Okena": the agent may still wait in its terminal.
+	await expect(foot.getByRole('button')).toHaveText(['Show in Okena', 'Ack'])
 })
 
 test('the receipt says what was sent and the sent picks stay shown; a failure keeps them armed', async ({ page }) => {

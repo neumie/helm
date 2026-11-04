@@ -88,7 +88,16 @@ export interface MountedTerminalWorkspace {
 	dispose(): void
 	/** Divider bootstrap uses this existing terminal-fit seam after drag release. */
 	fitActive(): void
+	/**
+	 * The agent dock's "Show terminal": bring up the tab holding this session (a background one opens
+	 * in place, still in the background list), focus it, and pulse its frame once. False when no live
+	 * tab here holds it (another profile, closed, mid-transfer).
+	 */
+	revealTerminal(sessionId: string): boolean
 }
+
+/** How long a revealed terminal's frame carries `data-reveal` (the CSS pulse runs inside it). */
+export const REVEAL_PULSE_MS = 1_400
 
 export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): MountedTerminalWorkspace {
 	const { root, helm } = options
@@ -1425,6 +1434,29 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		requestAnimationFrame(() => {
 			if (!disposed) fitActive()
 		})
+	}
+
+	const revealTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
+	/** One accent pulse on a terminal's frame (restarted when it is already pulsing). */
+	function pulseFrame(holder: HTMLElement): void {
+		clearTimeout(revealTimers.get(holder))
+		delete holder.dataset.reveal
+		// Restart the animation: the attribute's removal has to reach style before it returns.
+		void holder.offsetWidth
+		holder.dataset.reveal = ''
+		revealTimers.set(
+			holder,
+			setTimeout(() => delete holder.dataset.reveal, REVEAL_PULSE_MS),
+		)
+	}
+
+	function revealTerminal(sessionId: string): boolean {
+		const tab = [...tabs, ...parked].find(candidate => candidate.sessionId === sessionId && !candidate.closed)
+		if (!tab || tab.transferring) return false
+		if (parked.includes(tab)) openParked(tab)
+		else activate(tab)
+		pulseFrame(tab.holder)
+		return true
 	}
 
 	// A completion that arrived while Helm was behind another app remains unseen
@@ -4095,6 +4127,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	return {
 		ready,
 		fitActive,
+		revealTerminal,
 		dispose() {
 			if (disposed) return
 			disposed = true
