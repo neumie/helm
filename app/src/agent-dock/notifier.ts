@@ -11,14 +11,21 @@
 //   - burst: NOTIFY_BURST_MIN agents or more within NOTIFY_BURST_MS share one summary
 //     ("3 agents need you") that replaces their own notifications;
 //   - turns: at most one per agent per NOTIFY_TURN_COOLDOWN_MS, and silent (Claude Code's own Stop
-//     hook already plays a sound); asks are never cooled down and play the default sound;
+//     hook already plays a sound); asks are never cooled down and play the default sound. A cooled-down
+//     turn that supersedes its agent's notified item in the same update (reduce.ts closes the older turn
+//     as it opens the next) takes that notification over without a new banner: the agent still waits,
+//     so its notification must not close;
+//   - an ask re-listed under a new dialog id (Okena's hub restarted; reduce.ts orphans the old item
+//     and opens a new one with the same tool and input, within NOTIFY_RELIST_MS) is not new: no
+//     notification, and the old item's notification now points at the new item. Each orphan stands
+//     for one re-listing only, so a later identical ask of the same agent is new again;
 //   - an item that no longer waits (answered, acked, closed) closes its notification;
 //   - click: focus Helm and open the dock on the item, else on the next one waiting, else nothing;
 //   - the badge counts what the queue row shows (every item not resolved), on every update;
 //     `idleBadge` ('dev' for side-by-side instances) stands in for 0.
 
 import { agentWho, askQuestions, itemKindLabel, plainAgentLine } from '../renderer/agent-dock/presentation'
-import type { AgentDockSnapshot, DockItem } from './model'
+import { type AgentDockSnapshot, type DockItem, stableJson } from './model'
 
 /** Opens closer together than this count as one burst. */
 export const NOTIFY_BURST_MS = 2_000
@@ -28,6 +35,11 @@ export const NOTIFY_BURST_MIN = 3
 export const NOTIFY_TURN_COOLDOWN_MS = 30_000
 /** Body bound (characters, one line). */
 export const NOTIFY_BODY_MAX = 140
+/**
+ * An ask opened this soon after an identical ask of the same agent was orphaned is that ask re-listed by
+ * a restarted hub (waiting hooks retry for 120 s: hook-client.cjs RECONNECT_WINDOW_MS).
+ */
+export const NOTIFY_RELIST_MS = 120_000
 /** Item ids remembered as notified (or deliberately skipped); oldest dropped beyond this. */
 const NOTIFIED_MAX = 500
 
@@ -71,7 +83,8 @@ export interface AgentDockNotifierOptions {
 /** One shown notification: an agent's (its one item) or a burst summary (every item in it). */
 interface LiveNotice {
 	handle: AgentDockNoticeHandle
-	items: number[]
+	/** Its items still waiting, with their agent (session key). */
+	items: Array<{ id: number; session: string }>
 }
 
 const SUMMARY = '\0summary'
@@ -79,6 +92,29 @@ const SUMMARY = '\0summary'
 /** An item still owes Jakub something a notification would point at (not answered, acked or closed). */
 const waiting = (item: DockItem | undefined): item is DockItem =>
 	item !== undefined && (item.state === 'open' || item.state === 'orphaned')
+
+/**
+ * The orphaned ask `item` re-lists (same agent, tool and input, orphaned at most NOTIFY_RELIST_MS
+ * before it opened, under the dialog id of a restarted hub), skipping orphans already matched.
+ */
+function relistedFrom(snapshot: AgentDockSnapshot, item: DockItem, used: ReadonlySet<number>): DockItem | undefined {
+	if (item.fact.kind !== 'ask') return undefined
+	const { tool, input } = item.fact
+	const shape = stableJson(input)
+	return snapshot.items.find(
+		other =>
+			other.id !== item.id &&
+			!used.has(other.id) &&
+			other.state === 'orphaned' &&
+			other.session === item.session &&
+			other.orphanedAt !== undefined &&
+			item.openedAt - other.orphanedAt >= 0 &&
+			item.openedAt - other.orphanedAt <= NOTIFY_RELIST_MS &&
+			other.fact.kind === 'ask' &&
+			other.fact.tool === tool &&
+			stableJson(other.fact.input) === shape,
+	)
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -140,6 +176,8 @@ export class AgentDockNotifier {
 	private readonly live = new Map<string, LiveNotice>()
 	/** Items already notified or deliberately skipped (insertion order = age). */
 	private readonly handled = new Set<number>()
+	/** Orphans already matched to their re-listing (relistedFrom); forgotten once out of the snapshot. */
+	private relisted = new Set<number>()
 	/** Last turn notification per session (cooldown). */
 	private readonly lastTurnAt = new Map<string, number>()
 	/** Notified opens inside the current burst window. */
@@ -169,25 +207,41 @@ export class AgentDockNotifier {
 		this.snapshot = snapshot
 		const byId = new Map(snapshot.items.map(item => [item.id, item]))
 		this.setBadge(snapshot.items.filter(item => item.state !== 'resolved').length)
-		// Close what no longer waits: an agent's notice with its item, a summary once all of its items.
-		for (const [key, notice] of [...this.live]) {
-			const still = notice.items.filter(id => waiting(byId.get(id)))
-			if (still.length === 0) this.close(key)
-			else notice.items = still
-		}
+		if (this.relisted.size > 0) this.relisted = new Set([...this.relisted].filter(id => byId.has(id)))
 		for (const id of update.replayed) this.remember(id)
-		const fresh = update.opened
+		const opened = update.opened
 			.filter(id => !this.handled.has(id))
 			.map(id => byId.get(id))
 			.filter((item): item is DockItem => item?.state === 'open')
-		for (const item of fresh) this.remember(item.id)
-		if (fresh.length === 0 || !this.enabled || this.foreground()) return
+		for (const item of opened) this.remember(item.id)
 		const now = this.now()
-		const due = fresh.filter(item => {
-			if (item.kind !== 'turn') return true
+		const cooling = (item: DockItem): boolean => {
+			if (item.kind !== 'turn') return false
 			const last = this.lastTurnAt.get(item.session)
-			if (last !== undefined && now - last >= 0 && now - last < NOTIFY_TURN_COOLDOWN_MS) return false
-			this.lastTurnAt.set(item.session, now)
+			return last !== undefined && now - last >= 0 && now - last < NOTIFY_TURN_COOLDOWN_MS
+		}
+		const fresh = opened.filter(item => {
+			// A re-listed ask is the old one under a new id: its notification follows it, nothing new shows.
+			const old = relistedFrom(snapshot, item, this.relisted)
+			if (old) {
+				this.relisted.add(old.id)
+				this.retarget(entry => entry.id === old.id, item)
+				return false
+			}
+			// A cooled-down turn takes over its agent's notified item that stopped waiting (superseded).
+			if (cooling(item)) this.retarget(entry => entry.session === item.session && !waiting(byId.get(entry.id)), item)
+			return true
+		})
+		// Close what no longer waits: an agent's notice with its item, a summary once all of its items.
+		for (const [key, notice] of [...this.live]) {
+			const still = notice.items.filter(entry => waiting(byId.get(entry.id)))
+			if (still.length === 0) this.close(key)
+			else notice.items = still
+		}
+		if (fresh.length === 0 || !this.enabled || this.foreground()) return
+		const due = fresh.filter(item => {
+			if (cooling(item)) return false
+			if (item.kind === 'turn') this.lastTurnAt.set(item.session, now)
 			return true
 		})
 		if (due.length === 0) return
@@ -208,6 +262,17 @@ export class AgentDockNotifier {
 		for (const item of newest.values()) this.showItem(snapshot, item)
 	}
 
+	/** The first notified item matching `from` (in any shown notification) is now `item`: its click and close follow it. */
+	private retarget(from: (entry: { id: number; session: string }) => boolean, item: DockItem): void {
+		for (const notice of this.live.values()) {
+			const entry = notice.items.find(from)
+			if (!entry) continue
+			entry.id = item.id
+			entry.session = item.session
+			return
+		}
+	}
+
 	/** Closes every shown notification (Helm quits). */
 	dispose(): void {
 		for (const key of [...this.live.keys()]) this.close(key)
@@ -215,17 +280,21 @@ export class AgentDockNotifier {
 
 	private showItem(snapshot: AgentDockSnapshot, item: DockItem): void {
 		this.close(item.session)
-		const handle = this.display(itemNotice(snapshot, item), () => this.clicked(item.session, [item.id]))
-		if (handle) this.live.set(item.session, { handle, items: [item.id] })
+		const items = [{ id: item.id, session: item.session }]
+		const handle = this.display(itemNotice(snapshot, item), () => this.clicked(item.session, items))
+		if (handle) this.live.set(item.session, { handle, items })
 	}
 
 	/** The burst's items (and a summary's still waiting) in one notification; their own ones close. */
 	private showSummary(snapshot: AgentDockSnapshot, byId: Map<number, DockItem>, sound: boolean): void {
-		const ids = new Set([...(this.live.get(SUMMARY)?.items ?? []), ...this.recent.map(entry => entry.id)])
+		const ids = new Set([
+			...(this.live.get(SUMMARY)?.items ?? []).map(entry => entry.id),
+			...this.recent.map(entry => entry.id),
+		])
 		for (const entry of this.recent) {
 			const own = this.live.get(entry.session)
 			if (own) {
-				for (const id of own.items) ids.add(id)
+				for (const item of own.items) ids.add(item.id)
 				this.close(entry.session)
 			}
 		}
@@ -234,20 +303,21 @@ export class AgentDockNotifier {
 		if (items.length === 0) return
 		// Queue order (the snapshot's): a click opens the most urgent one first.
 		const ordered = snapshot.items.filter(item => items.includes(item))
-		const orderedIds = ordered.map(item => item.id)
-		const handle = this.display(summaryNotice(snapshot, ordered, sound), () => this.clicked(SUMMARY, orderedIds))
-		if (handle) this.live.set(SUMMARY, { handle, items: orderedIds })
+		const entries = ordered.map(item => ({ id: item.id, session: item.session }))
+		const handle = this.display(summaryNotice(snapshot, ordered, sound), () => this.clicked(SUMMARY, entries))
+		if (handle) this.live.set(SUMMARY, { handle, items: entries })
 	}
 
 	/**
 	 * A click: the notice is gone; Helm opens the dock on the first of its items still waiting, else on
 	 * the next item waiting at all, else just comes forward.
 	 */
-	private clicked(key: string, items: readonly number[]): void {
+	private clicked(key: string, items: ReadonlyArray<{ id: number }>): void {
 		const notice = this.live.get(key)
-		if (notice?.items.every(id => items.includes(id))) this.live.delete(key)
+		if (notice?.items.every(entry => items.includes(entry))) this.live.delete(key)
 		const queue = (this.snapshot?.items ?? []).filter(waiting)
-		const target = items.map(id => queue.find(item => item.id === id)).find(item => item !== undefined) ?? queue[0]
+		const target =
+			items.map(entry => queue.find(item => item.id === entry.id)).find(item => item !== undefined) ?? queue[0]
 		try {
 			this.options.openItem(target?.id ?? null)
 		} catch (error) {

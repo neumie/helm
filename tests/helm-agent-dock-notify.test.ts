@@ -25,10 +25,17 @@ type DockSession = import('../app/src/agent-dock/model.ts').DockSession
 type AgentDockNotice = import('../app/src/agent-dock/notifier.ts').AgentDockNotice
 type AgentDockUpdate = import('../app/src/agent-dock/notifier.ts').AgentDockUpdate
 
-const { AgentDockNotifier, NOTIFY_BODY_MAX, NOTIFY_BURST_MS, NOTIFY_TURN_COOLDOWN_MS, itemNotice, noticeBody } =
-	notifierModule as NotifierModule
+const {
+	AgentDockNotifier,
+	NOTIFY_BODY_MAX,
+	NOTIFY_BURST_MS,
+	NOTIFY_RELIST_MS,
+	NOTIFY_TURN_COOLDOWN_MS,
+	itemNotice,
+	noticeBody,
+} = notifierModule as NotifierModule
 const { agentDockNotifyOptions } = notifyMainModule as NotifyMainModule
-const { AgentDockWatcher } = watcherModule as WatcherModule
+const { AgentDockWatcher, SEED_REPLAY_GRACE_MS } = watcherModule as WatcherModule
 const { createAgentDockMain } = dockMainModule as DockMainModule
 const { HOOK_FILE, PRELOAD_FILE } = runtimeModule as RuntimeModule
 
@@ -230,6 +237,11 @@ test('notifier: turns cool down per agent for NOTIFY_TURN_COOLDOWN_MS; asks neve
 	r.clock.now += 10_000
 	r.notifier.update(update([turn(2, 'p:t1')], [2]))
 	assert.equal(r.shown.length, 1, 'second turn of the same agent within the cooldown')
+	// Turn 2 superseded turn 1 in the same update: the agent still waits, so its one notification stays
+	// (no new banner) and now stands for turn 2.
+	assert.equal(r.live().length, 1, "the superseded turn does not take the agent's notification with it")
+	r.live()[0]?.click()
+	assert.deepEqual(r.opened, [2])
 	r.notifier.update(update([turn(3, 'p:t2')], [3]))
 	assert.equal(r.shown.length, 2, 'another agent is not cooled down')
 	r.notifier.update(update([ask(4, 'p:t1')], [4]))
@@ -239,6 +251,37 @@ test('notifier: turns cool down per agent for NOTIFY_TURN_COOLDOWN_MS; asks neve
 	r.clock.now += NOTIFY_TURN_COOLDOWN_MS
 	r.notifier.update(update([turn(6, 'p:t1')], [6]))
 	assert.equal(r.shown.length, 5, 'after the cooldown a turn notifies again')
+})
+
+test('notifier: an ask re-listed under a new dialog id (Okena hub restart) never notifies again; its notification follows it', () => {
+	const r = rig()
+	const bash = (id: number, at = T0) => ({
+		...ask(id, 'p:t1', 'Bash', { command: 'npm test', description: 'tests' }),
+		openedAt: at,
+	})
+	const orphan = (id: number, at: number) => ({ ...bash(id), state: 'orphaned' as const, orphanedAt: at })
+	r.notifier.update(update([bash(1)], [1]))
+	assert.equal(r.shown.length, 1)
+	// The reducer orphans the old item and opens the same dialog under the new hub's id (same or a later tick).
+	r.notifier.update(update([orphan(1, T0 + 5_000), bash(2, T0 + 6_000)], [2]))
+	assert.equal(r.shown.length, 1, 'no second notification for the same waiting dialog')
+	assert.equal(r.live().length, 1)
+	// Answered: its notification closes although the orphan lingers.
+	r.notifier.update(update([orphan(1, T0 + 5_000)]))
+	assert.equal(r.live().length, 0)
+	// Each orphan stands for one re-listing: the agent asking the same command again later is new.
+	r.notifier.update(update([orphan(1, T0 + 5_000), bash(3, T0 + 9_000)], [3]))
+	assert.equal(r.shown.length, 2)
+	// So is an identical ask long after an orphan appeared.
+	const s2 = rig()
+	s2.notifier.update(update([orphan(1, T0), bash(2, T0 + NOTIFY_RELIST_MS + 1)], [2]))
+	assert.equal(s2.shown.length, 1)
+	// A click on a re-listed notification opens the live item, not the orphan.
+	const c = rig()
+	c.notifier.update(update([bash(1)], [1]))
+	c.notifier.update(update([orphan(1, T0 + 1_000), bash(2, T0 + 1_000)], [2]))
+	c.live()[0]?.click()
+	assert.deepEqual(c.opened, [2])
 })
 
 test('notifier: three agents within NOTIFY_BURST_MS share one summary that replaces their own', () => {
@@ -405,7 +448,7 @@ function watched(dir: string) {
 		await watcher.tick()
 		await watcher.drain()
 	}
-	return { watcher, step, updates }
+	return { watcher, step, updates, clock }
 }
 
 const ids = (updates: AgentDockUpdate[], key: 'opened' | 'replayed') => updates.flatMap(entry => entry[key])
@@ -413,10 +456,11 @@ const ids = (updates: AgentDockUpdate[], key: 'opened' | 'replayed') => updates.
 test('watcher observe: reports every tick (dock hidden), asks after the seed tick are live', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'hdn-'))
 	try {
-		const { watcher, step, updates } = watched(join(root, 'agent-dock'))
+		const { watcher, step, updates, clock } = watched(join(root, 'agent-dock'))
 		await watcher.load()
 		await step(pollAsk('4b4eb160-4')) // seed: the open ask is adopted silently (no event at all)
 		await step(pollIdle(false))
+		clock.now += SEED_REPLAY_GRACE_MS
 		await step(pollAsk('4b4eb160-5')) // a new dialog: live
 		assert.equal(updates.length, 3, 'one report per tick while the dock is hidden')
 		assert.deepEqual(ids(updates, 'replayed'), [])
@@ -424,6 +468,25 @@ test('watcher observe: reports every tick (dock hidden), asks after the seed tic
 		const item = updates.at(-1)?.snapshot.items.find(entry => entry.state === 'open')
 		assert.equal(item?.id, ids(updates, 'opened')[0])
 		assert.equal(item?.kind, 'ask')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('watcher observe: asks re-registered by hooks reconnecting to a restarted Helm hub (just after the seed tick) are replays', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'hdn-'))
+	try {
+		const { watcher, step, updates, clock } = watched(join(root, 'agent-dock'))
+		await watcher.load()
+		await step(pollIdle(false)) // seed tick: the new hub lists no dialog yet
+		await step(pollAsk('5c5fc271-1')) // a waiting hook reconnected (≤500 ms retry) and asked again
+		assert.deepEqual(ids(updates, 'opened'), [])
+		assert.equal(ids(updates, 'replayed').length, 1)
+		await step(pollIdle(false))
+		clock.now += SEED_REPLAY_GRACE_MS
+		await step(pollAsk('5c5fc271-2')) // well after the seed: a new ask
+		assert.equal(ids(updates, 'opened').length, 1)
+		assert.equal(ids(updates, 'replayed').length, 1)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

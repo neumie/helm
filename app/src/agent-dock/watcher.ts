@@ -165,6 +165,15 @@ export interface AgentDockPushChannel {
 /** How long after a sent dock reply the source keeps reading that pane's transcript. */
 export const ACT_EXPEDITE_MS = 20_000
 
+/**
+ * After a source's seed tick, opens count as replays for this long (observe() `replayed`: never
+ * notified). Helm's hub starts empty with every Helm launch, and the permission hooks still waiting
+ * from the previous run reconnect to it within RECONNECT_DELAY_MS (hook-client.cjs, 500 ms) of it
+ * listening, i.e. just after the seed tick: their dialogs are asks Jakub was already told about,
+ * not new ones. Generous for a loaded machine.
+ */
+export const SEED_REPLAY_GRACE_MS = 5_000
+
 export interface AgentDockWatcherOptions {
 	/** `<userData>/agent-dock`. */
 	dir: string
@@ -218,6 +227,8 @@ export class AgentDockWatcher {
 	/** Items opened since the last observe() report: live, and replayed by a seed tick or restart adoption. */
 	private opened: number[] = []
 	private replayed: number[] = []
+	/** When each source's seed tick landed (SEED_REPLAY_GRACE_MS). */
+	private readonly seededAt = new Map<DockSourceId, number>()
 	private readonly now: () => number
 	private readonly pid: number
 
@@ -412,6 +423,7 @@ export class AgentDockWatcher {
 		try {
 			this.apply({ type: 'prompt.sending', session: key, ...(assistantUuid ? { assistantUuid } : {}) })
 			this.publish(true)
+			this.report()
 			try {
 				outcome = await source.prompt(target, expect, text)
 			} catch (error) {
@@ -420,6 +432,7 @@ export class AgentDockWatcher {
 			this.apply({ type: 'prompt.result', session: key, outcome })
 			if (outcome.status === 'sent') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
 			this.publish(true)
+			this.report()
 			await this.flush()
 		} finally {
 			this.acting = false
@@ -527,9 +540,15 @@ export class AgentDockWatcher {
 		const replay = this.replayScope(observation)
 		const { state, events, diagnostics } = reduce(this.state, observation, now)
 		this.state = state
+		if (
+			observation.type === 'poll' &&
+			state.sources[observation.source]?.seeded &&
+			!this.seededAt.has(observation.source)
+		)
+			this.seededAt.set(observation.source, now)
 		for (const event of events) {
 			if (event.t !== 'item.opened') continue
-			// After its seed tick a source opens asks only for dialogs it had not listed: always live.
+			// Past its seed grace a source opens asks only for dialogs it had not listed: always live.
 			if (replay === 'all' || (event.kind === 'turn' && replay?.has(event.session))) this.replayed.push(event.id)
 			else this.opened.push(event.id)
 		}
@@ -547,12 +566,16 @@ export class AgentDockWatcher {
 
 	/**
 	 * Which items a poll may open only as replays (state the reducer already knew, or a turn that ended
-	 * while Helm was closed): all of a source's first successful poll (its seed tick), else the turns of
-	 * panes still awaiting their seed adoption (reduce.ts `seedPending`). Null: anything it opens is live.
+	 * while Helm was closed): all of a source's first successful poll (its seed tick) and of the
+	 * SEED_REPLAY_GRACE_MS after it (asks re-registered by hooks reconnecting to a restarted Helm hub),
+	 * else the turns of panes still awaiting their seed adoption (reduce.ts `seedPending`). Null: anything
+	 * it opens is live.
 	 */
 	private replayScope(observation: AgentDockObservation): 'all' | Set<string> | null {
 		if (observation.type !== 'poll') return null
 		if (!this.state.sources[observation.source]?.seeded) return 'all'
+		const seededAt = this.seededAt.get(observation.source)
+		if (seededAt !== undefined && this.now() - seededAt < SEED_REPLAY_GRACE_MS) return 'all'
 		const pending = new Set<string>()
 		for (const [key, record] of Object.entries(this.state.sessions))
 			if (record.seedPending && record.session.source === observation.source) pending.add(key)
