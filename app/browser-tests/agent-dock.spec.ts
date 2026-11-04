@@ -899,6 +899,53 @@ test('an answered entry keeps its slot while the pane is open; the receipt shows
 	await expect.poll(indexOf).toBe(2)
 })
 
+async function answerInTerminal(page: Page, itemId: number): Promise<void> {
+	await page.evaluate(id => {
+		const dock = window.__helmWorkspaceFixture?.agentDock
+		if (!dock) throw new Error('Missing agent-dock fixture')
+		dock.emitAnsweredInTerminal(id)
+	}, itemId)
+}
+
+test('what Jakub answered in the terminal leaves the row while the pane is open; the open entry stays until he moves off it', async ({
+	page,
+}) => {
+	const { rail, pane } = await openItem(page, 1)
+	const entries = rail.locator('.agent-dock-entry')
+	const question = rail.locator('.agent-dock-entry[aria-label^="Question,"]')
+	const permission = rail.locator('.agent-dock-entry[aria-label^="Permission,"]')
+	const turn = rail.locator('.agent-dock-entry[data-kind="turn"]')
+	const idOf = async (entry: typeof question) => Number(await entry.getAttribute('data-item-id'))
+	const [questionId, turnId] = [await idOf(question), await idOf(turn)]
+	await expect(entries).toHaveCount(3)
+	const rows = await xtermRows(page)
+
+	// The turn is replied to in its terminal: it leaves the row at once, the pane stays on the question.
+	await answerInTerminal(page, turnId)
+	await expect(turn).toHaveCount(0)
+	await expect(entries).toHaveCount(2)
+	await expect(pane).toContainText('1/2')
+	await expect(rail).toHaveAttribute('aria-label', /^Agent dock, 2 need you/)
+
+	// The open question is answered in its terminal: not yanked mid-read, it keeps its slot and the pane says how it closed.
+	await answerInTerminal(page, questionId)
+	await expect(question).toHaveAttribute('data-state', 'resolved')
+	await expect(pane.locator('.agent-dock-receipt')).toContainText('answered in terminal')
+	await expect(pane).toContainText('1/2')
+	await expect(rail).toHaveAttribute('aria-label', /^Agent dock, 1 needs you/)
+
+	// Moving on to the permission lets it go; the pane stayed open throughout and never refit the terminal.
+	await pane.getByRole('button', { name: 'Next item' }).click()
+	await expect(question).toHaveCount(0)
+	await expect(entries).toHaveCount(1)
+	await expect(permission).toHaveAttribute('data-open', 'true')
+	await expect(pane).toContainText('1/1')
+	expect(await xtermRows(page)).toBe(rows)
+	await pane.getByRole('button', { name: 'Close details' }).click()
+	await expect(pane).toHaveCount(0)
+	await expect(entries).toHaveCount(1)
+})
+
 test('the pane never floats over terminal rows: in-flow, one refit on open and one on close', async ({ page }) => {
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
