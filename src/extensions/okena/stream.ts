@@ -95,6 +95,8 @@ export interface OkenaStreamOptions {
 	connectTimeoutMs?: number
 	silenceMs?: number
 	maxFrameBytes?: number
+	/** Clock for the silence watchdog (tests). */
+	now?: () => number
 }
 
 export interface OkenaStreamSocket {
@@ -110,6 +112,7 @@ export function openOkenaStream(
 ): OkenaStreamSocket {
 	const maxFrame = options.maxFrameBytes ?? OKENA_STREAM_MAX_FRAME_BYTES
 	const silenceMs = options.silenceMs ?? OKENA_STREAM_SILENCE_MS
+	const now = options.now ?? Date.now
 	const key = randomBytes(16).toString('base64')
 	let socket: Socket | null = null
 	let ended = false
@@ -120,7 +123,7 @@ export function openOkenaStream(
 	let fragments: Buffer[] = []
 	let fragmentBytes = 0
 	let fragmentOpcode = 0
-	let lastDataAt = Date.now()
+	let lastDataAt = now()
 	let pinged = false
 	let watchdog: ReturnType<typeof setInterval> | null = null
 	let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -215,19 +218,28 @@ export function openOkenaStream(
 		upgraded.on('data', chunk => onData(chunk))
 		upgraded.on('error', error => finish(`stream error: ${error.message}`, pendingEnd))
 		upgraded.once('close', () => finish(closing ?? 'connection closed by Okena', pendingEnd))
-		lastDataAt = Date.now()
+		lastDataAt = now()
 		// Quiet for half the silence window: a protocol ping (any reply is data); silent for all of it: dead.
-		watchdog = setInterval(
-			() => {
-				const quiet = Date.now() - lastDataAt
-				if (quiet >= silenceMs) closeWith(1000, 'stream silent')
-				else if (quiet >= silenceMs / 2 && !pinged) {
-					pinged = true
-					send(0x9, Buffer.alloc(0))
-				}
-			},
-			Math.max(10, Math.floor(silenceMs / 4)),
-		)
+		const checkMs = Math.max(10, Math.floor(silenceMs / 4))
+		let checkedAt = lastDataAt
+		watchdog = setInterval(() => {
+			const at = now()
+			const late = at - checkedAt
+			checkedAt = at
+			// A check this late means Helm (or the Mac) was suspended, Okena with it: the
+			// silence is ours, not the stream's. Start a fresh window (ping, then close).
+			if (late > silenceMs / 2 + checkMs) {
+				lastDataAt = at
+				pinged = false
+				return
+			}
+			const quiet = at - lastDataAt
+			if (quiet >= silenceMs) closeWith(1000, 'stream silent')
+			else if (quiet >= silenceMs / 2 && !pinged) {
+				pinged = true
+				send(0x9, Buffer.alloc(0))
+			}
+		}, checkMs)
 		watchdog.unref?.()
 		if (endpoint.kind === 'http' && target.token)
 			send(0x1, Buffer.from(JSON.stringify({ type: 'auth', token: target.token })))
@@ -237,7 +249,7 @@ export function openOkenaStream(
 
 	function onData(chunk: Buffer): void {
 		if (ended) return
-		lastDataAt = Date.now()
+		lastDataAt = now()
 		pinged = false
 		buffer = buffer.length === 0 ? chunk : Buffer.concat([buffer, chunk])
 		for (;;) {

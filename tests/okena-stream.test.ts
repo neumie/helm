@@ -230,6 +230,33 @@ test('silence: a quiet stream is pinged; one that answers stays, one that never 
 	}
 })
 
+test('silence: a suspension (sleep) is not silence; a stream still dead after it is closed', async () => {
+	const where = socketDir()
+	const server = await FakeOkenaStreamServer.listen(where.path)
+	let offset = 0
+	const now = () => Date.now() + offset
+	try {
+		const alive = connect({ endpoint: { kind: 'unixSocket', socketPath: where.path } }, { silenceMs: 120, now })
+		await until(() => alive.opened === 1, 'open')
+		// The Mac slept 10 minutes: the next watchdog check comes that late, Okena slept too.
+		offset += 600_000
+		await new Promise(resolve => setTimeout(resolve, 400))
+		assert.deepEqual(alive.ends, [], 'a healthy stream survives the wake (pings answered)')
+		alive.socket.close()
+		await until(() => alive.ends.length === 1, 'closed')
+
+		server.options.answerPings = false
+		const dead = connect({ endpoint: { kind: 'unixSocket', socketPath: where.path } }, { silenceMs: 120, now })
+		await until(() => dead.opened === 1, 'open')
+		offset += 600_000
+		await until(() => dead.ends.length === 1, 'silent close after a fresh window', 2_000)
+		assert.equal(dead.ends[0]?.reason, 'stream silent')
+	} finally {
+		await server.close()
+		where.cleanup()
+	}
+})
+
 test('a daemon that dies mid-stream ends it as closed by Okena', async () => {
 	const where = socketDir()
 	const server = await FakeOkenaStreamServer.listen(where.path)
