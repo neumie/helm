@@ -931,11 +931,22 @@ test('the pane never floats over terminal rows: in-flow, one refit on open and o
 			if (style.visibility === 'hidden') return false
 			// Screen-reader-only text is clipped to nothing; it paints no pixel over the terminal.
 			if (node.classList.contains('sr-only')) return false
+			// The pane's resize edge: a transparent hit zone, 3px into the well's padding (checked below).
+			if (node.classList.contains('agent-dock-resize')) return false
 			const rect = node.getBoundingClientRect()
 			return rect.width > 0 && rect.height > 0 && rect.bottom > terms.top + 0.5 && rect.top < terms.bottom - 0.5
 		}).length
 	})
 	expect(overlays).toBe(0)
+	const edge = await page.locator('.agent-dock-resize').evaluate(node => ({
+		paint: getComputedStyle(node).backgroundColor,
+		into: Math.max(
+			0,
+			(document.querySelector('#terms') as HTMLElement).getBoundingClientRect().bottom -
+				node.getBoundingClientRect().top,
+		),
+	}))
+	expect(edge).toEqual({ paint: 'rgba(0, 0, 0, 0)', into: 3 })
 	for (let at = 1; at < 5; at++) await pane.getByRole('button', { name: 'Next item' }).click()
 	await expect(pane).toContainText('5/5')
 	await pane.getByRole('button', { name: 'Previous item' }).click()

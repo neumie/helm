@@ -79,8 +79,12 @@ const {
 	PANE_MAX_HEIGHT,
 	PANE_MAX_SHARE,
 	PANE_MIN_HEIGHT,
+	PANE_FLOOR,
+	clampPaneHeight,
 	paneFitHeight,
 	paneMaxHeight,
+	paneResizeBounds,
+	storedPaneHeight,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -1077,4 +1081,25 @@ test('pane height: natural height within [216, cap]; the cap is 60% of #right, n
 	assert.equal(paneFitHeight(150, 517), 216)
 	assert.equal(paneFitHeight(300.2, 517), 301)
 	assert.equal(paneFitHeight(713), 480)
+})
+
+test('pane resize: Jakub drags within [216, the room that keeps the terminal rows], past the share cap', () => {
+	// 1400×900: the room (8 rows kept) is above the 517 share cap: a drag may go past it.
+	assert.deepEqual(paneResizeBounds(640), { min: 216, max: 640 })
+	assert.equal(clampPaneHeight(700, paneResizeBounds(640)), 640)
+	assert.equal(clampPaneHeight(100, paneResizeBounds(640)), 216)
+	assert.equal(clampPaneHeight(500.4, paneResizeBounds(640)), 500)
+	// A short window: keeping the rows wins over the minimum, the floor still holds.
+	assert.deepEqual(paneResizeBounds(180), { min: 180, max: 180 })
+	assert.deepEqual(paneResizeBounds(40), { min: PANE_FLOOR, max: PANE_FLOOR })
+	// No room known: the old 480.
+	assert.deepEqual(paneResizeBounds(null), { min: 216, max: 480 })
+})
+
+test('stored pane height: whole px from the floor up, anything else is automatic sizing', () => {
+	assert.equal(storedPaneHeight('500'), 500)
+	assert.equal(storedPaneHeight(' 360 '), 360)
+	assert.equal(storedPaneHeight(String(PANE_FLOOR)), PANE_FLOOR)
+	for (const raw of [null, '', 'auto', '-400', '12.5', '1e3', '99', '90000', 'NaN'])
+		assert.equal(storedPaneHeight(raw), null, String(raw))
 })

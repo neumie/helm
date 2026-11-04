@@ -17,12 +17,14 @@ import {
 	agentsLayout,
 	failedActResult,
 	paneMaxHeight,
+	storedPaneHeight,
 } from './agent-dock/presentation'
 
 /** Renderer-only presentation preferences (never placement, session or process state). */
 export const AGENT_DOCK_STORAGE = {
 	position: 'helm.agentDock.position',
 	agentsLayout: 'helm.agentDock.agentsLayout',
+	paneHeight: 'helm.agentDock.paneHeight',
 } as const
 
 /**
@@ -31,8 +33,13 @@ export const AGENT_DOCK_STORAGE = {
  * storage is unavailable still applies for this session; another Helm window's change arrives as a
  * `storage` event.
  */
-function storedPreference<T extends string>(key: string, read: (raw: string | null) => T) {
-	let chosen: T | null = null
+function storedPreference<T>(
+	key: string,
+	read: (raw: string | null) => T,
+	/** What to store for a value; null removes the key (back to the default). */
+	write: (value: T) => string | null = String,
+) {
+	let chosen: { value: T } | null = null
 	const listeners = new Set<() => void>()
 	const notify = (): void => {
 		for (const listener of listeners) listener()
@@ -44,7 +51,7 @@ function storedPreference<T extends string>(key: string, read: (raw: string | nu
 	}
 	return {
 		get(): T {
-			if (chosen) return chosen
+			if (chosen) return chosen.value
 			try {
 				return read(globalThis.localStorage.getItem(key))
 			} catch {
@@ -52,9 +59,11 @@ function storedPreference<T extends string>(key: string, read: (raw: string | nu
 			}
 		},
 		set(value: T): void {
-			chosen = value
+			chosen = { value }
+			const raw = write(value)
 			try {
-				globalThis.localStorage.setItem(key, value)
+				if (raw === null) globalThis.localStorage.removeItem(key)
+				else globalThis.localStorage.setItem(key, raw)
 			} catch {
 				// Presentation still works when storage is unavailable.
 			}
@@ -79,6 +88,16 @@ export const agentDockPosition = storedPreference<AgentDockPosition>(AGENT_DOCK_
 /** How the Agents pane groups its rows, switched in its header (`G`); default `by-state`. */
 export const agentDockAgentsLayout = storedPreference<AgentsLayout>(AGENT_DOCK_STORAGE.agentsLayout, agentsLayout)
 
+/**
+ * The pane height Jakub dragged its terminal-side edge to (px), or null: automatic sizing. Once set it is
+ * the height of every open pane (clamped on screen to the room); a double-click on the edge clears it.
+ */
+export const agentDockPaneHeight = storedPreference<number | null>(
+	AGENT_DOCK_STORAGE.paneHeight,
+	storedPaneHeight,
+	height => (height === null ? null : String(Math.round(height))),
+)
+
 /** Re-render waits/ages in the queue while nothing else changes. */
 const AGE_TICK_MS = 30_000
 /** xterm cell height at the default 13px font (design §2.2) until a row has rendered. */
@@ -98,8 +117,9 @@ export interface MountedAgentDock {
  * It renders main-pushed snapshots; Jakub acks and answers through `api` (main
  * runs every Okena effect behind a fresh CAS read). The queue row is always shown at
  * one fixed height, so arriving items never refit xterm; only opening, closing or (once,
- * never shrinking) growing a pane changes the dock's height: the terminal row shrinks
- * through the grid, so xterm refits once per change. Nothing floats over the terminal.
+ * never shrinking) growing a pane, or Jakub dragging its edge, changes the dock's height: the
+ * terminal row shrinks through the grid, so xterm refits once per change (a drag: at most once
+ * per frame, then once on release). Nothing floats over the terminal.
  */
 export function mountAgentDock({
 	root,
@@ -160,8 +180,9 @@ export function mountAgentDock({
 	}
 	// Room for a pane, read only while one is open (render), never on the pty:data path: #right
 	// minus the queue row, minus PANE_KEEPS_ROWS terminal rows and the well padding (it clamps the pane
-	// on screen); and the most a pane may open (or grow) to — a share of #right (paneMaxHeight).
-	const paneRoom = (): { room: number; max: number } | null => {
+	// on screen and bounds a drag of its edge); the most a pane may open (or grow) to — a share of #right
+	// (paneMaxHeight); and one terminal row's height (the ⌥↑ / ⌥↓ nudge step).
+	const paneRoom = (): { room: number; max: number; row: number } | null => {
 		const total = right.clientHeight
 		if (total <= 0) return null
 		const pane = dock.querySelector<HTMLElement>('.agent-dock-pane')
@@ -170,7 +191,7 @@ export function mountAgentDock({
 			terms.querySelector('.term-holder.active .xterm-rows > div')?.getBoundingClientRect().height ||
 			FALLBACK_ROW_HEIGHT
 		const room = Math.floor(total - rest - PANE_KEEPS_ROWS * row - WELL_PADDING)
-		return { room, max: paneMaxHeight(total) }
+		return { room, max: paneMaxHeight(total), row }
 	}
 	const focusTerminal = (): void => {
 		if (focusTerminalOverride) {
@@ -205,7 +226,9 @@ export function mountAgentDock({
 			agentsLayout: agentDockAgentsLayout.get(),
 			onAgentsLayout: agentDockAgentsLayout.set,
 			paneRoom,
-			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
+			userHeight: agentDockPaneHeight.get(),
+			onUserHeight: agentDockPaneHeight.set,
+			// The pane is in-flow: opening, closing or resizing it changes the terminal row; refit now.
 			onPaneChange: () => fitActive(),
 			// After an answer, or once nothing else waits (the dock decides; see AgentDock moveOn).
 			focusTerminal: () => {
@@ -230,6 +253,9 @@ export function mountAgentDock({
 
 	// The Agents pane's grouping changed (here or in another window): only the list re-renders.
 	const unsubscribeAgentsLayout = agentDockAgentsLayout.subscribe(render)
+	// Jakub dragged the pane's edge (here or in another window) or reset it: the open pane takes the
+	// height; the dock refits xterm once for it (AgentDock onPaneChange).
+	const unsubscribePaneHeight = agentDockPaneHeight.subscribe(render)
 
 	// Settings → Appearance moved the dock: the terminal row changes height, so refit xterm.
 	const unsubscribePosition = agentDockPosition.subscribe(() => {
@@ -303,16 +329,18 @@ export function mountAgentDock({
 		event.preventDefault()
 		focusTerminal()
 	}
-	// Pointer use never steals terminal focus: buttons act without taking focus, and any
-	// other click returns focus to the terminal unless it left a text selection to copy.
+	// Pointer use never steals terminal focus: buttons and the pane's resize edge act without taking
+	// focus (a drag leaves it where it was), and any other click returns focus to the terminal unless
+	// it left a text selection to copy.
 	const onDockMouseDown = (event: MouseEvent): void => {
 		restoreTerminal = terms.contains(ownerDocument.activeElement)
-		if ((event.target as Element | null)?.closest?.('button')) event.preventDefault()
+		if ((event.target as Element | null)?.closest?.('button, .agent-dock-resize')) event.preventDefault()
 	}
 	const onDockClick = (event: MouseEvent): void => {
 		const restore = restoreTerminal
 		restoreTerminal = false
 		if (event.detail === 0 || !restore) return
+		if ((event.target as Element | null)?.closest?.('.agent-dock-resize')) return
 		// Clicking into an answer field means "type here": the field keeps focus.
 		if ((event.target as Element | null)?.closest?.('input, textarea, label, [contenteditable="true"]')) return
 		// Picking "Other…" / "Deny" moves focus into the field it reveals; leave it there.
@@ -353,6 +381,7 @@ export function mountAgentDock({
 			unsubscribe()
 			unsubscribePosition()
 			unsubscribeAgentsLayout()
+			unsubscribePaneHeight()
 			publishVisible()
 			rightObserver.disconnect()
 			ownerWindow.clearInterval(ageTimer)

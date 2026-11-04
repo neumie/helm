@@ -14,7 +14,7 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { agentDockAgentsLayout, agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import { agentDockAgentsLayout, agentDockPaneHeight, agentDockPosition, mountAgentDock } from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
@@ -75,6 +75,13 @@ export interface TerminalWorkspaceFixtureOptions {
 		agentsLayout?: AgentsLayout
 		/** Story only, with `open: 'agents'`: then click this agent's row (by its short name), like a pointer would. */
 		openAgent?: string
+		/**
+		 * Story only: Jakub's dragged pane height, stored before the dock mounts; the height stored before is
+		 * put back on unmount, so it never leaks into other stories.
+		 */
+		paneHeight?: number
+		/** Story only, with `open`: pins the pane edge's hover or drag look (the pointer cannot be pinned). */
+		resizeLook?: 'hover' | 'drag'
 	}
 }
 
@@ -614,10 +621,16 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			: null
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
+		let restorePaneHeight = () => {}
 		if (options.agentDock) {
-			const { scenario = 'busy', position, agentsLayout } = options.agentDock
+			const { scenario = 'busy', position, agentsLayout, paneHeight } = options.agentDock
 			if (position) agentDockPosition.set(position)
 			if (agentsLayout) agentDockAgentsLayout.set(agentsLayout)
+			if (paneHeight !== undefined) {
+				const stored = agentDockPaneHeight.get()
+				agentDockPaneHeight.set(paneHeight)
+				restorePaneHeight = () => agentDockPaneHeight.set(stored)
+			}
 			const dockFixture = createAgentDockFixture(scenario)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
@@ -637,6 +650,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			unmounted = true
 			disposeRelay()
 			agentDockLayout?.dispose()
+			restorePaneHeight()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 			theme?.restore()
@@ -694,6 +708,18 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					const click = (node: Element | null | undefined) =>
 						node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
 					click(root.querySelector(AGENT_DOCK_OPEN_SELECTOR[open]))
+					const look = options.agentDock?.resizeLook
+					if (look) {
+						// The pane sizes before paint; its edge is there within a frame or two.
+						let frames = 0
+						const pin = () => {
+							if (unmounted) return
+							const edge = root.querySelector<HTMLElement>('.agent-dock-resize')
+							if (edge) edge.dataset.resize = look
+							else if (++frames < 60) requestAnimationFrame(pin)
+						}
+						requestAnimationFrame(pin)
+					}
 					const agent = options.agentDock?.openAgent
 					if (open === 'agents' && agent)
 						requestAnimationFrame(() => {
@@ -711,6 +737,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			if (arriveTimer !== null) clearTimeout(arriveTimer)
 			disposeRelay()
 			agentDockLayout?.dispose()
+			restorePaneHeight()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 			theme?.restore()

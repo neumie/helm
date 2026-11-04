@@ -12,6 +12,7 @@
 import {
 	type KeyboardEvent,
 	type MutableRefObject,
+	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
 	useId,
@@ -38,6 +39,7 @@ import {
 	choiceStop,
 	dockShortcut,
 	isAckKey,
+	isTextField,
 	keepsEditKey,
 	overflows,
 	scrollBody,
@@ -47,11 +49,13 @@ import {
 	type AgentDockPosition,
 	type AgentRow,
 	type AgentsLayout,
+	PANE_FLOOR,
 	actErrorText,
 	agentOverview,
 	agentWho,
 	canAck,
 	canAnswer,
+	clampPaneHeight,
 	dockLabel,
 	failedActResult,
 	findSession,
@@ -60,6 +64,7 @@ import {
 	nextLingerExpiry,
 	nextWaiting,
 	paneFitHeight,
+	paneResizeBounds,
 	queueItems,
 	sourceBlockedNote,
 } from './presentation'
@@ -97,7 +102,17 @@ export interface AgentDockProps {
 	 * its rows, and `max`, the most it may open or grow to (a share of #right); null = not known.
 	 */
 	paneRoom?: () => PaneRoom | null
-	/** After the pane opens, grows or closes: the terminal row changed height once, refit it. */
+	/**
+	 * The height Jakub dragged the pane's edge to (his stored setting), or null: automatic sizing. Set, it
+	 * is every open pane's height (no fit to content, no growth), clamped on screen to the room.
+	 */
+	userHeight?: number | null
+	/** Jakub released a drag of the pane's edge (or nudged it with ⌥↑ ⌥↓): store it; null resets to automatic. */
+	onUserHeight?(height: number | null): void
+	/**
+	 * After the pane opens, grows, closes or is resized: the terminal row changed height, refit it (a drag
+	 * calls it at most once per animation frame, then once on release).
+	 */
 	onPaneChange?(open: boolean): void
 	/** Hand the keys back to the active terminal (after an answer, or once nothing else waits). */
 	focusTerminal?(): void
@@ -110,10 +125,26 @@ export interface AgentDockProps {
 export interface PaneRoom {
 	room: number
 	max: number
+	/** One terminal row's height (px): the ⌥↑ ⌥↓ nudge step. */
+	row?: number
 }
 
-/** However little room is left, the pane keeps its rule, a few body rows and its footer. */
-const PANE_FLOOR = 120
+/** A drag of the pane's terminal-side edge in progress (pointer, not React state: it sets the height directly). */
+interface PaneDrag {
+	pointerId: number
+	startY: number
+	/** The height shown when it started (Esc goes back to it). */
+	from: number
+	height: number
+	moved: boolean
+	/** The pending animation frame that refits the terminal (0: none). */
+	frame: number
+	/** `commit` stores the height, `cancel` (Esc) goes back to `from`, `drop` (the pane went away) just stops. */
+	finish(how: 'commit' | 'cancel' | 'drop'): void
+}
+
+/** ⌥↑ / ⌥↓ step when the terminal's row height is not known. */
+const NUDGE_FALLBACK = 19
 /**
  * After the pane opens, or moves on to another item because the shown one left, its content may still
  * grow for this long (an agent's full message read live, a late snapshot): the pane grows to it once.
@@ -159,6 +190,8 @@ export function AgentDock({
 	agentsLayout = 'by-state',
 	onAgentsLayout,
 	paneRoom,
+	userHeight = null,
+	onUserHeight,
 	onPaneChange,
 	focusTerminal,
 	initialOpen = null,
@@ -175,6 +208,11 @@ export function AgentDock({
 	const [paneHeight, setPaneHeight] = useState<number | null>(null)
 	const paneHeightRef = useRef(paneHeight)
 	paneHeightRef.current = paneHeight
+	const userHeightRef = useRef(userHeight)
+	userHeightRef.current = userHeight
+	/** The pane's terminal-side edge (the drag target) and a drag of it in progress. */
+	const resizeRef = useRef<HTMLDivElement>(null)
+	const drag = useRef<PaneDrag | null>(null)
 	/**
 	 * The shown content may still raise the pane's height once (never lower it): from an open, or a move-on
 	 * to another item because the shown one left, until it grows, Jakub types or steps, or PANE_SETTLE_MS.
@@ -258,26 +296,180 @@ export function AgentDock({
 		target?.type === 'agents' || (agentRow !== undefined && agentSession !== undefined) || openItem !== undefined
 	const paneShown = paneOpen && paneHeight !== null
 	const room = paneOpen ? (paneRoom?.()?.room ?? null) : null
-	// A window that shrinks below the pane clamps it; grown back, the pane returns to its height.
+	/** The height kept: Jakub's dragged one when he set it, else the automatic one; null until measured. */
+	const kept = paneHeight === null ? null : (userHeight ?? paneHeight)
+	// A window that shrinks below the pane clamps it; grown back, the pane returns to its height. A drag in
+	// progress sets the height itself (a re-render meanwhile keeps it).
 	const height =
-		paneHeight === null ? undefined : Math.max(PANE_FLOOR, Math.min(paneHeight, room ?? Number.POSITIVE_INFINITY))
+		kept === null
+			? undefined
+			: (drag.current?.height ?? Math.max(PANE_FLOOR, Math.min(kept, room ?? Number.POSITIVE_INFINITY)))
+	const bounds = paneResizeBounds(room)
 	/** Lets the shown content raise the pane's height once, up to the layout's max now (see growable). */
 	const armGrowth = (rearm: boolean) => {
 		growable.current = true
 		growMax.current = paneRoom?.()?.max
 		if (rearm) setSettle(count => count + 1)
 	}
-	/** Grows the pane to its content once, while growable; never shrinks it. */
+	/** Grows the pane to its content once, while growable; never shrinks it (nor a height Jakub chose). */
 	const growToContent = () => {
 		const pane = paneRef.current
 		const current = paneHeightRef.current
 		if (!growable.current || !pane || current === null) return
+		if (userHeightRef.current !== null || drag.current) {
+			growable.current = false
+			return
+		}
 		// Within the max it was armed with and the max now (a shrunk window).
 		const caps = [growMax.current, paneRoom?.()?.max].filter(cap => cap !== undefined)
 		const next = paneFitHeight(naturalHeight(pane), caps.length > 0 ? Math.min(...caps) : undefined)
 		if (next <= current + 1) return
 		growable.current = false
 		setPaneHeight(next)
+	}
+
+	/** Re-renders once a drag ends, so React's height and aria value agree with what the drag set. */
+	const [, setDragEnded] = useState(0)
+	/** Jakub's height for the pane from now on: stored by the layout (one refit follows from `kept`). */
+	const chooseHeight = (next: number | null) => {
+		growable.current = false
+		if (onUserHeight) onUserHeight(next)
+		else if (next !== null) setPaneHeight(next)
+	}
+
+	/**
+	 * Jakub pressed the pane's terminal-side edge: its height follows the pointer within
+	 * [PANE_MIN_HEIGHT, the room that keeps the terminal's rows] (past the share cap it opens with). The
+	 * terminal refits at most once per animation frame meanwhile and once on release; Esc goes back to
+	 * where it started. Focus never moves (the press takes no focus, see onEdgeMouseDown).
+	 */
+	const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+		const pane = paneRef.current
+		const edge = event.currentTarget
+		const view = edge.ownerDocument.defaultView
+		if (event.button !== 0 || drag.current || !pane || !view) return
+		growable.current = false
+		const limits = paneResizeBounds(paneRoom?.()?.room ?? null)
+		const from = Math.round(pane.getBoundingClientRect().height)
+		// Below the terminal the edge is the pane's top (up = taller); above it, its bottom (down = taller).
+		const sign = position === 'bottom' ? -1 : 1
+		const show = (next: number) => {
+			pane.style.height = `${next}px`
+			edge.setAttribute('aria-valuenow', String(next))
+		}
+		const refit = () => {
+			state.frame = 0
+			onPaneChange?.(true)
+		}
+		const onMove = (move: PointerEvent) => {
+			if (move.pointerId !== state.pointerId) return
+			// No button held: the release went elsewhere (another app, a lost pointerup) — the drag ended at
+			// the height shown; it never follows a hovering pointer.
+			if ((move.buttons & 1) === 0) {
+				state.finish('commit')
+				return
+			}
+			const next = clampPaneHeight(state.from + sign * (move.clientY - state.startY), limits)
+			if (next === state.height) return
+			state.moved = true
+			state.height = next
+			show(next)
+			// Each refit may resize the PTY: never more than once per frame while the edge moves.
+			if (!state.frame) state.frame = view.requestAnimationFrame(refit)
+		}
+		const onUp = (up: PointerEvent) => {
+			if (up.pointerId === state.pointerId) state.finish('commit')
+		}
+		const onCancel = (cancel: PointerEvent) => {
+			if (cancel.pointerId === state.pointerId) state.finish('cancel')
+		}
+		// Helm lost the pointer without a release (window blur mid-drag, capture lost): the drag ends where it is.
+		const onLost = () => state.finish('commit')
+		// Esc while dragging: back to the height it started at (the key goes nowhere else).
+		const onKey = (key: globalThis.KeyboardEvent) => {
+			if (key.key !== 'Escape') return
+			key.preventDefault()
+			key.stopImmediatePropagation()
+			state.finish('cancel')
+		}
+		let done = false
+		const state: PaneDrag = {
+			pointerId: event.pointerId,
+			startY: event.clientY,
+			from,
+			height: from,
+			moved: false,
+			frame: 0,
+			finish(how) {
+				if (done) return
+				done = true
+				view.removeEventListener('pointermove', onMove, true)
+				view.removeEventListener('pointerup', onUp, true)
+				view.removeEventListener('pointercancel', onCancel, true)
+				view.removeEventListener('keydown', onKey, true)
+				view.removeEventListener('blur', onLost)
+				edge.removeEventListener('lostpointercapture', onLost)
+				if (state.frame) view.cancelAnimationFrame(state.frame)
+				state.frame = 0
+				if (drag.current === state) drag.current = null
+				delete edge.dataset.resize
+				try {
+					if (edge.hasPointerCapture(state.pointerId)) edge.releasePointerCapture(state.pointerId)
+				} catch {
+					// The pointer is gone already.
+				}
+				if (how === 'drop' || !state.moved) return
+				setDragEnded(count => count + 1)
+				if (how === 'cancel') {
+					show(state.from)
+					onPaneChange?.(true)
+					return
+				}
+				// The height kept does not change (dragged back to it): no store refit follows, refit here.
+				if (state.height === (userHeightRef.current ?? paneHeightRef.current)) onPaneChange?.(true)
+				else chooseHeight(state.height)
+			},
+		}
+		drag.current = state
+		edge.dataset.resize = 'drag'
+		try {
+			edge.setPointerCapture(event.pointerId)
+		} catch {
+			// A synthetic or already-released pointer: the window listeners still follow it.
+		}
+		view.addEventListener('pointermove', onMove, true)
+		view.addEventListener('pointerup', onUp, true)
+		view.addEventListener('pointercancel', onCancel, true)
+		view.addEventListener('keydown', onKey, true)
+		view.addEventListener('blur', onLost)
+		edge.addEventListener('lostpointercapture', onLost)
+	}
+
+	/** Double-click on the edge: back to automatic sizing — the shown content's natural height, stored height cleared. */
+	const resetHeight = () => {
+		const pane = paneRef.current
+		if (!pane || drag.current) return
+		const shown = pane.style.height
+		pane.style.height = ''
+		const natural = naturalHeight(pane)
+		pane.style.height = shown
+		growable.current = false
+		setPaneHeight(paneFitHeight(natural, paneRoom?.()?.max))
+		if (userHeightRef.current !== null) onUserHeight?.(null)
+	}
+
+	/** ⌥↑ / ⌥↓ from the pane: move its terminal-side edge by one terminal row, like a drag. */
+	const nudgeHeight = (direction: -1 | 1) => {
+		const pane = paneRef.current
+		if (!pane || drag.current) return
+		const measure = paneRoom?.()
+		const from = Math.round(pane.getBoundingClientRect().height)
+		const sign = position === 'bottom' ? -1 : 1
+		const next = clampPaneHeight(
+			from + sign * direction * (measure?.row ?? NUDGE_FALLBACK),
+			paneResizeBounds(measure?.room ?? null),
+		)
+		if (next !== from) chooseHeight(next)
 	}
 
 	const close = useCallback((refocus: boolean) => {
@@ -288,6 +480,7 @@ export function AgentDock({
 		focusOnOpen.current = false
 		keepFocus.current = false
 		growable.current = false
+		drag.current?.finish('drop')
 		setTarget(null)
 		setPaneHeight(null)
 		// An item past the queue's "+N more" cell has no entry of its own: that cell stands in for it.
@@ -462,6 +655,12 @@ export function AgentDock({
 			growToContent()
 			return
 		}
+		// Jakub's dragged height, when he set one: no fit to the content, no growth.
+		if (userHeightRef.current !== null) {
+			growable.current = false
+			setPaneHeight(userHeightRef.current)
+			return
+		}
 		armGrowth(false)
 		setPaneHeight(paneFitHeight(naturalHeight(pane), growMax.current))
 	})
@@ -525,10 +724,18 @@ export function AgentDock({
 		if (!active || !pane.contains(active) || (active as HTMLButtonElement).disabled) pane.focus()
 	}, [openKey, paneOpen])
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: report open, growth and close only
+	// The height kept changed (open, growth, Jakub's drag released or reset, another window's) or the pane
+	// closed: one refit. A drag's own frames refit through it directly (see startResize).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: report open, height changes and close only
 	useEffect(() => {
 		onPaneChange?.(paneShown)
-	}, [paneShown, paneHeight])
+	}, [paneShown, kept])
+
+	// The pane went away mid-drag (closed by a key, or its content left): the drag just stops.
+	useEffect(() => {
+		if (!paneShown) drag.current?.finish('drop')
+	}, [paneShown])
+	useEffect(() => () => drag.current?.finish('drop'), [])
 
 	// A pointer press outside the pane, the entries and the terminals closes it. A click in a terminal
 	// keeps the pane open (Jakub reads the pane while typing; the layout already hands the keys to xterm).
@@ -538,6 +745,7 @@ export function AgentDock({
 		if (!doc) return
 		const onPointer = (event: PointerEvent) => {
 			const node = event.target as Node
+			if (drag.current || resizeRef.current?.contains(node)) return
 			if (paneRef.current?.contains(node)) return
 			for (const anchor of anchors.current.values()) if (anchor.contains(node)) return
 			if (node instanceof Element && node.closest('#terms')) return
@@ -700,6 +908,19 @@ export function AgentDock({
 			if (!event.repeat && !pending.has(openItem.id)) ack(openItem.id)
 			return
 		}
+		// ⌥↑ / ⌥↓ move the pane's terminal-side edge a row (a text field keeps them for its caret).
+		if (
+			(event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+			event.altKey &&
+			!event.metaKey &&
+			!event.ctrlKey &&
+			!event.shiftKey &&
+			!isTextField(event.target)
+		) {
+			event.preventDefault()
+			nudgeHeight(event.key === 'ArrowUp' ? -1 : 1)
+			return
+		}
 		// The shown body: 1–9 pick options, ⌘Enter / Enter submit (never while typing in a field).
 		if (detailKeys.current?.(event)) {
 			event.preventDefault()
@@ -856,6 +1077,35 @@ export function AgentDock({
 		</section>
 	) : null
 
+	// The pane's terminal-side edge: a 6px drag target centered on the dock's 1px edge, nothing visible at
+	// rest. Not a tab stop (tabIndex -1, and a press takes no focus): from the pane ⌥↑ ⌥↓ move it, and ↑ ↓
+	// do on the edge itself when assistive tech focuses it.
+	const edge =
+		paneShown && height !== undefined ? (
+			<div
+				ref={resizeRef}
+				className="agent-dock-resize"
+				data-position={position}
+				role="separator"
+				aria-orientation="horizontal"
+				aria-label="Resize agent pane"
+				aria-controls={paneId}
+				aria-valuenow={height}
+				aria-valuemin={bounds.min}
+				aria-valuemax={bounds.max}
+				title="Drag to resize · double-click for automatic height"
+				tabIndex={-1}
+				onKeyDown={event => {
+					if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+					event.preventDefault()
+					nudgeHeight(event.key === 'ArrowUp' ? -1 : 1)
+				}}
+				onPointerDown={startResize}
+				onMouseDown={onEdgeMouseDown}
+				onDoubleClick={resetHeight}
+			/>
+		) : null
+
 	return (
 		<div ref={hostRef} className="agent-dock-host">
 			<span className="sr-only" aria-live="polite">
@@ -872,9 +1122,13 @@ export function AgentDock({
 					{row}
 				</>
 			)}
+			{edge}
 		</div>
 	)
 }
+
+/** A press on the pane's edge takes no focus and starts no text selection (pointer use never steals focus). */
+const onEdgeMouseDown = (event: { preventDefault(): void }) => event.preventDefault()
 
 /** The pane's landmark name: what it is and whose (`Question, company-create-save-firm, crm`). */
 function paneLabel(item: DockItem, snapshot: AgentDockSnapshot): string {
