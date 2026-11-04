@@ -27,6 +27,7 @@ export const AGENT_DOCK_STORAGE = {
 	position: 'helm.agentDock.position',
 	agentsLayout: 'helm.agentDock.agentsLayout',
 	paneHeight: 'helm.agentDock.paneHeight',
+	notify: 'helm.agentDock.notify',
 } as const
 
 /**
@@ -99,6 +100,19 @@ export const agentDockPaneHeight = storedPreference<number | null>(
 	storedPaneHeight,
 	height => (height === null ? null : String(Math.round(height))),
 )
+
+/**
+ * Settings → Appearance → Agent dock → "Notify when Helm is in the background" (default on). Main shows
+ * the notifications (agent-dock/notifier.ts); every mounted dock reports the value to it.
+ */
+export const agentDockNotify = storedPreference<boolean>(
+	AGENT_DOCK_STORAGE.notify,
+	raw => raw !== 'off',
+	on => (on ? null : 'off'),
+)
+
+/** A notification click arrived before the snapshot that has its item: wait this long for one, then open the next waiting item. */
+const OPEN_ITEM_WAIT_MS = 1_500
 
 /** Re-render waits/ages in the queue while nothing else changes. */
 const AGE_TICK_MS = 30_000
@@ -266,6 +280,34 @@ export function mountAgentDock({
 	// Jakub dragged the pane's edge (here or in another window) or reset it: the open pane takes the
 	// height; the dock refits xterm once for it (AgentDock onPaneChange).
 	const unsubscribePaneHeight = agentDockPaneHeight.subscribe(render)
+	// Main decides on notifications; it hears Jakub's setting now and on every change.
+	const reportNotify = (): void => {
+		if (!disposed) api.setNotify(agentDockNotify.get())
+	}
+	const unsubscribeNotify = agentDockNotify.subscribe(reportNotify)
+
+	/**
+	 * A dock notification was clicked (main brought the window forward): open the pane on its item. Main's
+	 * snapshot may still be on its way (the dock was not shown meanwhile): wait for it, then fall back to
+	 * the next waiting item.
+	 */
+	let pendingOpen: { itemId: number; timer: number } | null = null
+	const settleOpen = (fallback: boolean): void => {
+		if (!pendingOpen) return
+		const opened = handle.current?.openItem(pendingOpen.itemId, fallback) ?? false
+		if (!opened && !fallback) return
+		ownerWindow.clearTimeout(pendingOpen.timer)
+		pendingOpen = null
+	}
+	const onOpenItem = (itemId: number | null): void => {
+		if (pendingOpen) ownerWindow.clearTimeout(pendingOpen.timer)
+		pendingOpen = null
+		// Null: nothing waits any more (main's view); the window just came forward.
+		if (disposed || itemId === null) return
+		pendingOpen = { itemId, timer: ownerWindow.setTimeout(() => settleOpen(true), OPEN_ITEM_WAIT_MS) }
+		settleOpen(false)
+	}
+	const unsubscribeOpenItem = api.onOpenItem(onOpenItem)
 
 	// Settings → Appearance moved the dock: the terminal row changes height, so refit xterm.
 	const unsubscribePosition = agentDockPosition.subscribe(() => {
@@ -392,8 +434,10 @@ export function mountAgentDock({
 		// A live update removed the focused row (resolved elsewhere): keep keyboard focus in the dock.
 		// (Focus the dock handed to the terminal itself, after the last waiting item, stays there.)
 		if (focusInDock && focusDropped()) focusDock()
+		settleOpen(false)
 	})
 	publishVisible()
+	reportNotify()
 	fitActive()
 
 	return {
@@ -405,6 +449,10 @@ export function mountAgentDock({
 			unsubscribePosition()
 			unsubscribeAgentsLayout()
 			unsubscribePaneHeight()
+			unsubscribeNotify()
+			unsubscribeOpenItem()
+			if (pendingOpen) ownerWindow.clearTimeout(pendingOpen.timer)
+			pendingOpen = null
 			publishVisible()
 			rightObserver.disconnect()
 			ownerWindow.clearInterval(ageTimer)

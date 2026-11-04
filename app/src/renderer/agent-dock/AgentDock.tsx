@@ -83,6 +83,12 @@ export type { AgentDockTarget }
 export interface AgentDockHandle {
 	/** Close an open pane (no focus move: the layout hands focus back to the terminal first). */
 	closePane(): void
+	/**
+	 * A dock notification was clicked: open the pane on this item, keys in it. False when the item is not
+	 * (or no longer) waiting in the shown snapshot; with `fallback` the pane then opens on the first item
+	 * still waiting instead, if any (true when it opened something).
+	 */
+	openItem(itemId: number | null, fallback: boolean): boolean
 }
 
 export interface AgentDockProps {
@@ -526,9 +532,14 @@ export function AgentDock({
 		if (refocus && key) queueMicrotask(() => (anchors.current.get(key) ?? anchors.current.get('more'))?.focus())
 	}, [])
 
+	/** The handle's openItem, re-bound every render (it reads this render's entries). */
+	const openItemRef = useRef<AgentDockHandle['openItem']>(() => false)
 	useEffect(() => {
 		if (!handle) return
-		handle.current = { closePane: () => close(false) }
+		handle.current = {
+			closePane: () => close(false),
+			openItem: (itemId, fallback) => openItemRef.current(itemId, fallback),
+		}
 		return () => {
 			handle.current = null
 		}
@@ -585,6 +596,18 @@ export function AgentDock({
 		}
 		// Another entry while the pane is open swaps its content at the same height (no refit).
 		show(next, viaKeyboard)
+	}
+
+	openItemRef.current = (itemId, fallback) => {
+		const waiting = needsRef.current.filter(item => item.state !== 'resolved')
+		const item =
+			(itemId === null ? undefined : waiting.find(candidate => candidate.id === itemId)) ??
+			(fallback ? waiting[0] : undefined)
+		if (!item) return false
+		returnTo.current = null
+		// Like a keyboard open: the keys go to the pane (Jakub came to answer it). Replacing other content may grow it.
+		show({ type: 'item', id: item.id }, true, false, true)
+		return true
 	}
 
 	const step = (delta: number, onChoices = false) => {

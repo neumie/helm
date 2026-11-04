@@ -16,6 +16,7 @@ import { OkenaClient } from '../../src/extensions/okena/client'
 import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
 import type { AgentDockSnapshot } from './agent-dock/model'
+import { AgentDockNotifier, type AgentDockNotifierOptions, type AgentDockUpdate } from './agent-dock/notifier'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
 import { OkenaStreamSubscription } from './agent-dock/okena-stream'
 import { type OkenaRevealDeps, revealOkenaTerminal } from './agent-dock/reveal'
@@ -51,6 +52,11 @@ export interface AgentDockMainOptions {
 	 * Defaults: a fresh OkenaClient and `activateOkenaApp` (System Events, macOS). Tests inject doubles.
 	 */
 	reveal?: Partial<OkenaRevealDeps>
+	/**
+	 * Background notifications and the Dock badge (agent-dock/notifier.ts; main builds them from
+	 * Electron's Notification and app.dock in agent-dock-notify-main.ts). Absent: neither.
+	 */
+	notify?: AgentDockNotifierOptions
 }
 
 /** The slice of Electron's ipcMain the dock registers on. */
@@ -69,6 +75,8 @@ export interface AgentDockMain {
 	resume(): void
 	setVisible(visible: boolean): void
 	registerIpc(ipc: AgentDockIpc): void
+	/** The notifications setting as main holds it (default on until the renderer reports Jakub's). */
+	notificationsEnabled(): boolean
 	/** Never blocks startup: an absent Okena is just a "source down" dock. */
 	start(): void
 	stop(): void
@@ -105,6 +113,8 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 	const okenaClient = new OkenaClient()
 	const okenaSource = new OkenaClaudeSource(okenaClient, 'okena', new ClaudeTranscriptTail())
 	let watcher: AgentDockWatcher | null = null
+	// Notifications follow the watcher (it runs in main, also with the dock hidden or the window in the background).
+	const notifier = options.enabled && options.notify ? new AgentDockNotifier(options.notify) : null
 	// Okena pushes: a state_changed ticks the dock within ~100 ms (watcher.nudge). One socket, to the
 	// profile the Okena source observes; Helm counts as an Okena client (see okena-stream.ts).
 	const okenaStream = options.enabled
@@ -123,6 +133,7 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				]),
 				publish: options.publish,
 				isFocused: options.isFocused,
+				...(notifier ? { observe: (update: AgentDockUpdate) => notifier.update(update) } : {}),
 				// Helm's hub always pushes (in process); Okena only while its stream is up and every pane reports a lifecycle.
 				push: okenaStream
 					? { healthy: () => okenaStream.healthy() && okenaSource.pushCovered(), sync: () => okenaStream.sync() }
@@ -152,6 +163,11 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 			ipc.on(AGENT_DOCK_IPC.setVisible, (event, visible, profileToken) => {
 				if (!options.acceptsIpc(event.sender, profileToken)) return
 				watcher?.setVisible(visible === true)
+			})
+			// Settings → Appearance → "Notify when Helm is in the background" (a renderer preference main obeys).
+			ipc.on(AGENT_DOCK_IPC.setNotify, (event, enabled, profileToken) => {
+				if (!options.acceptsIpc(event.sender, profileToken) || typeof enabled !== 'boolean') return
+				notifier?.setEnabled(enabled)
 			})
 			ipc.handle(AGENT_DOCK_IPC.ack, async (event, itemId, profileToken) => {
 				if (!options.acceptsIpc(event.sender, profileToken)) return false
@@ -199,9 +215,11 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				void watcher?.start()
 				okenaStream?.start()
 			}),
+		notificationsEnabled: () => notifier?.isEnabled() ?? false,
 		stop: () => {
 			okenaStream?.stop()
 			watcher?.stop()
+			notifier?.dispose()
 			claudeRemote?.stop()
 		},
 	}

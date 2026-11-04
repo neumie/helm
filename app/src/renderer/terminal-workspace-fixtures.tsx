@@ -14,7 +14,13 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { agentDockAgentsLayout, agentDockPaneHeight, agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import {
+	agentDockAgentsLayout,
+	agentDockNotify,
+	agentDockPaneHeight,
+	agentDockPosition,
+	mountAgentDock,
+} from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockArrivalKind,
@@ -125,6 +131,8 @@ export interface TerminalWorkspaceFixture {
 	agentDock?: AgentDockFixture
 	/** Present only with `agentDock`: the same position write Settings → Appearance makes. */
 	setAgentDockPosition?(position: AgentDockPosition): void
+	/** Present only with `agentDock`: the same notifications write Settings → Appearance makes. */
+	setAgentDockNotify?(on: boolean): void
 	/** Emits raw PTY output through the production terminal write path. */
 	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
@@ -642,6 +650,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			if (options.agentDock.revealMode) dockFixture.setRevealMode(options.agentDock.revealMode)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
+			fixture.setAgentDockNotify = agentDockNotify.set
 			// Mount after this effect's commit, as production mounts outside any React render.
 			queueMicrotask(() => {
 				if (unmounted) return

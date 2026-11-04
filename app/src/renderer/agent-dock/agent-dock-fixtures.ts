@@ -1627,6 +1627,8 @@ export interface AgentDockFixture {
 		reads: string[]
 		/** Session keys "Show in Okena" asked main to show (Helm terminals never reach the api). */
 		reveals: string[]
+		/** Every "Notify when Helm is in the background" value the dock reported to main. */
+		notify: boolean[]
 	}
 	/** Answers the current scenario already sent from the dock (the receipt stories), for AgentDock's initialSent. */
 	sent(): ReadonlyMap<number, DockAction>
@@ -1647,6 +1649,8 @@ export interface AgentDockFixture {
 	setActMode(mode: AgentDockActMode): void
 	/** What the next "Show in Okena" answers. */
 	setRevealMode(mode: AgentDockRevealMode): void
+	/** Main's half of a clicked dock notification: the window came forward; open the pane on this item. */
+	emitNotificationClick(itemId: number | null): void
 	listenerCount(): number
 }
 
@@ -1660,7 +1664,16 @@ export function createAgentDockFixture(
 	clock: () => number = Date.now,
 ): AgentDockFixture {
 	const listeners = new Set<(snapshot: AgentDockSnapshot) => void>()
-	const calls: AgentDockFixture['calls'] = { visible: [], acks: [], acts: [], prompts: [], reads: [], reveals: [] }
+	const calls: AgentDockFixture['calls'] = {
+		visible: [],
+		acks: [],
+		acts: [],
+		prompts: [],
+		reads: [],
+		reveals: [],
+		notify: [],
+	}
+	const openListeners = new Set<(itemId: number | null) => void>()
 	let scenario: ScenarioRun | null = initial ? scenarioRun(initial, clock()) : null
 	let mode: AgentDockActMode = 'confirm'
 	let revealMode: AgentDockRevealMode = 'shown'
@@ -1693,6 +1706,13 @@ export function createAgentDockFixture(
 			},
 			setVisible(visible) {
 				calls.visible.push(visible)
+			},
+			setNotify(enabled) {
+				calls.notify.push(enabled)
+			},
+			onOpenItem(listener) {
+				openListeners.add(listener)
+				return () => openListeners.delete(listener)
 			},
 			async ack(itemId) {
 				calls.acks.push(itemId)
@@ -1775,6 +1795,9 @@ export function createAgentDockFixture(
 				await wait(FIXTURE_ACT_STEP_MS)
 				return structuredClone(REVEAL_MODE_RESULT[revealMode])
 			},
+		},
+		emitNotificationClick(itemId) {
+			for (const listener of openListeners) listener(itemId)
 		},
 		emitScenario(name) {
 			scenario = scenarioRun(name, clock())

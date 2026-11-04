@@ -9,7 +9,7 @@ declare global {
 }
 
 const harness = '/iframe.html?id=views-terminal-workspace--agent-dock-harness&viewMode=story'
-const PREFERENCES = ['helm.agentDock.position']
+const PREFERENCES = ['helm.agentDock.position', 'helm.agentDock.notify']
 
 async function openHarness(page: Page): Promise<void> {
 	// Every test runs in a fresh browser context: storage starts empty, the dock at its default position.
@@ -2002,4 +2002,73 @@ test('an agent waiting on its background shell reads background with "1 shell", 
 	await expect(pane).toContainText('Stage deploy běží, ozvu se, až doběhne.')
 	await expect(pane.locator('.agent-dock-facts')).toContainText('Background work was still running.')
 	await expect(pane).not.toContainText('Subagents were still running.')
+})
+
+test('Settings → Appearance switches background notifications (default on) and persists the choice', async ({
+	page,
+}) => {
+	await page.goto('/iframe.html?id=views-sidebar--appearance&viewMode=story')
+	await page.evaluate(keys => {
+		for (const key of keys) localStorage.removeItem(key)
+	}, PREFERENCES)
+	await page.reload()
+	const toggle = page.getByRole('switch', { name: 'Notify when Helm is in the background' })
+	await expect(toggle).toHaveAttribute('aria-checked', 'true')
+	await toggle.click()
+	await expect(toggle).toHaveAttribute('aria-checked', 'false')
+	expect(await page.evaluate(() => localStorage.getItem('helm.agentDock.notify'))).toBe('off')
+	await page.reload()
+	await expect(page.getByRole('switch', { name: 'Notify when Helm is in the background' })).toHaveAttribute(
+		'aria-checked',
+		'false',
+	)
+	await page.getByRole('switch', { name: 'Notify when Helm is in the background' }).click()
+	expect(await page.evaluate(() => localStorage.getItem('helm.agentDock.notify'))).toBeNull()
+})
+
+async function clickNotification(page: Page, itemId: number | null): Promise<void> {
+	await page.evaluate(id => {
+		const dock = window.__helmWorkspaceFixture?.agentDock
+		if (!dock) throw new Error('Missing agent-dock fixture')
+		dock.emitNotificationClick(id)
+	}, itemId)
+}
+
+const notifyCalls = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.calls.notify ?? [])
+
+test('the dock tells main the notifications setting at mount and on every change', async ({ page }) => {
+	await openHarness(page)
+	await expect.poll(() => notifyCalls(page)).toEqual([true])
+	await page.evaluate(() => window.__helmWorkspaceFixture?.setAgentDockNotify?.(false))
+	await expect.poll(() => notifyCalls(page)).toEqual([true, false])
+	await page.evaluate(() => window.__helmWorkspaceFixture?.setAgentDockNotify?.(true))
+	await expect.poll(() => notifyCalls(page)).toEqual([true, false, true])
+})
+
+test('a clicked dock notification opens the pane on its item with the keys in it; a gone item opens the next waiting one', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1400, height: 820 })
+	await openHarness(page)
+	await emitScenario(page, 'busy')
+	const pane = page.locator('.agent-dock-pane')
+	// Null: nothing waited any more when main handled the click; the window only came forward.
+	await clickNotification(page, null)
+	await page.waitForTimeout(200)
+	await expect(pane).toHaveCount(0)
+
+	const turnId = Number(await row(page).locator('.agent-dock-entry[data-kind="turn"]').getAttribute('data-item-id'))
+	await clickNotification(page, turnId)
+	await expect(pane).toBeVisible()
+	await expect(row(page).locator('.agent-dock-entry[data-open="true"]')).toHaveAttribute('data-item-id', String(turnId))
+	expect(await pane.evaluate(node => node.contains(document.activeElement))).toBe(true)
+	await expectPaneBesideTerminal(page)
+
+	// An item that is gone by the time the window shows: after a short wait for main's snapshot, the next waiting one.
+	await page.keyboard.press('Escape')
+	await expect(pane).toHaveCount(0)
+	const firstId = await row(page).locator('.agent-dock-entry').first().getAttribute('data-item-id')
+	await clickNotification(page, 999_999)
+	await expect(row(page).locator('.agent-dock-entry[data-open="true"]')).toHaveAttribute('data-item-id', firstId ?? '')
+	await expect(pane).toBeVisible()
 })

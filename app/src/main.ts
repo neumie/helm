@@ -10,6 +10,7 @@ import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
 import { createAgentDockMain } from './agent-dock-main'
+import { agentDockNotifyOptions } from './agent-dock-notify-main'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { createReviewControl } from './document-review/control'
@@ -296,6 +297,16 @@ const agentDock = createAgentDockMain({
 		sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
 	isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
 	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
+	// Background notifications + the Dock badge (agent-dock/notifier.ts): only where the dock runs (startupPolicy).
+	notify: agentDockNotifyOptions({
+		Notification,
+		dock: app.dock,
+		mainWindow: () => mainWindow,
+		focusAndRestore: () => focusAndRestoreMainWindow(),
+		sendOpenItem: itemId =>
+			sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.openItem, itemId, sessionProfileToken()),
+		idleBadge: sideBySideLaunch ? 'dev' : '',
+	}),
 })
 /**
  * Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone.
@@ -3046,13 +3057,7 @@ void app.whenReady().then(async () => {
 					onClick: listener => native.on('click', listener),
 				}
 			},
-			focusAndRestore: () => {
-				const win = mainWindow
-				if (!win || win.isDestroyed()) return
-				if (win.isMinimized()) win.restore()
-				win.show()
-				win.focus()
-			},
+			focusAndRestore: () => focusAndRestoreMainWindow(),
 			activateProfile: async profileId => {
 				const result = await activateProfile(profileId)
 				return result.data !== undefined && sessionProfileId === profileId
@@ -3105,6 +3110,15 @@ void app.whenReady().then(async () => {
 		})
 	}
 })
+
+/** A notification click: the main window forward, restored if minimized, shown if hidden. */
+function focusAndRestoreMainWindow(): void {
+	const win = mainWindow
+	if (!win || win.isDestroyed()) return
+	if (win.isMinimized()) win.restore()
+	win.show()
+	win.focus()
+}
 
 app.on('window-all-closed', () => {
 	killAllPtyClients()

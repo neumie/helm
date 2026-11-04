@@ -80,6 +80,7 @@ import {
 	parseAgentDockActRequest,
 	parseAgentDockPromptRequest,
 } from './model'
+import type { AgentDockUpdate } from './notifier'
 import {
 	type AgentDockState,
 	type DockTurnGated,
@@ -177,6 +178,11 @@ export interface AgentDockWatcherOptions {
 	timers?: WatcherTimers
 	/** Absent: no push channel, the polling cadence only. */
 	push?: AgentDockPushChannel
+	/**
+	 * After every tick, ack and act step, shown or hidden: the snapshot and the items it newly opened,
+	 * split into live opens and seed/restart replays (notifier.ts: notifications and the Dock badge).
+	 */
+	observe?(update: AgentDockUpdate): void
 }
 
 export class AgentDockWatcher {
@@ -209,6 +215,9 @@ export class AgentDockWatcher {
 	private lastPublishedDigest = ''
 	private lastPublishAt = 0
 	private lastLog = ''
+	/** Items opened since the last observe() report: live, and replayed by a seed tick or restart adoption. */
+	private opened: number[] = []
+	private replayed: number[] = []
 	private readonly now: () => number
 	private readonly pid: number
 
@@ -310,6 +319,7 @@ export class AgentDockWatcher {
 		const events = this.apply({ type: 'ack', itemId })
 		const acked = events.some(event => event.t === 'item.resolved' && event.id === itemId)
 		this.publish(true)
+		this.report()
 		await this.flush()
 		return acked
 	}
@@ -350,6 +360,7 @@ export class AgentDockWatcher {
 				...(action.type === 'allow' && action.always ? { always: true } : {}),
 			})
 			this.publish(true)
+			this.report()
 			try {
 				outcome = await source.act(target, item, action)
 			} catch (error) {
@@ -358,6 +369,7 @@ export class AgentDockWatcher {
 			this.apply({ type: 'act.result', itemId, outcome })
 			if (outcome.status === 'sent' && action.type === 'prompt') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
 			this.publish(true)
+			this.report()
 			await this.flush()
 		} finally {
 			this.acting = false
@@ -469,6 +481,7 @@ export class AgentDockWatcher {
 			for (const observation of observed) this.apply(observation)
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
+			this.report()
 			await this.flush()
 		} catch (error) {
 			this.warn(`tick failed: ${errorMessage(error)}`)
@@ -511,8 +524,15 @@ export class AgentDockWatcher {
 
 	private apply(observation: AgentDockObservation): AgentDockEvent[] {
 		const now = this.now()
+		const replay = this.replayScope(observation)
 		const { state, events, diagnostics } = reduce(this.state, observation, now)
 		this.state = state
+		for (const event of events) {
+			if (event.t !== 'item.opened') continue
+			// After its seed tick a source opens asks only for dialogs it had not listed: always live.
+			if (replay === 'all' || (event.kind === 'turn' && replay?.has(event.session))) this.replayed.push(event.id)
+			else this.opened.push(event.id)
+		}
 		for (const entry of diagnostics) this.pendingDiagnostics.push(diagnosticLine(entry))
 		if (events.length > 0) {
 			const sessions = Object.values(state.sessions).map(entry => entry.session)
@@ -523,6 +543,33 @@ export class AgentDockWatcher {
 			this.ledger = pruneLedger([...byId.values()], now)
 		}
 		return events
+	}
+
+	/**
+	 * Which items a poll may open only as replays (state the reducer already knew, or a turn that ended
+	 * while Helm was closed): all of a source's first successful poll (its seed tick), else the turns of
+	 * panes still awaiting their seed adoption (reduce.ts `seedPending`). Null: anything it opens is live.
+	 */
+	private replayScope(observation: AgentDockObservation): 'all' | Set<string> | null {
+		if (observation.type !== 'poll') return null
+		if (!this.state.sources[observation.source]?.seeded) return 'all'
+		const pending = new Set<string>()
+		for (const [key, record] of Object.entries(this.state.sessions))
+			if (record.seedPending && record.session.source === observation.source) pending.add(key)
+		return pending.size > 0 ? pending : null
+	}
+
+	/** Tells observe() what changed (every tick, also hidden: the badge and notifications work without the dock shown). */
+	private report(): void {
+		const opened = this.opened.splice(0)
+		const replayed = this.replayed.splice(0)
+		const observe = this.options.observe
+		if (!observe) return
+		try {
+			observe({ snapshot: this.snapshot(), opened, replayed })
+		} catch (error) {
+			this.warn(`observer failed: ${errorMessage(error)}`)
+		}
 	}
 
 	private publish(force: boolean): void {
