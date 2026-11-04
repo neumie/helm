@@ -59,7 +59,7 @@ function dockIn(root: string, enabled: boolean) {
 	return { dock, channels, call }
 }
 
-test('agent dock IPC: the six dock channels are registered and refuse a foreign window or a stale profile token', async () => {
+test('agent dock IPC: the seven dock channels are registered and refuse a foreign window or a stale profile token', async () => {
 	const root = mkdtempSync('/tmp/hcr-ipc-')
 	const { dock, channels, call } = dockIn(root, true)
 	try {
@@ -69,6 +69,7 @@ test('agent dock IPC: the six dock channels are registered and refuse a foreign 
 			'agent-dock:message',
 			'agent-dock:prompt',
 			'agent-dock:reveal',
+			'agent-dock:set-notify',
 			'agent-dock:set-visible',
 		])
 		const request = { itemId: 1, rev: 1, action: { type: 'approve' } }

@@ -414,6 +414,10 @@ export interface NavApi {
  * - message: renderer → main `invoke(sessionKey)`; the agent's last assistant message, read live through its source.
  * - reveal: renderer → main `invoke(sessionKey)`; "Show in Okena": main re-reads Okena's layout, focuses the agent's
  *   pane (`focus_terminal`) and raises the Okena app. Okena panes only (the window shows Helm terminals itself).
+ * - setNotify: renderer → main `send(boolean)`; Settings → Appearance "Notify when Helm is in the background"
+ *   (agent-dock/notifier.ts; main's default is on until the renderer reports).
+ * - openItem: main → renderer push `(itemId | null, profileToken)` after Jakub clicked a dock notification: open the
+ *   pane on that item, else on the next one waiting.
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
 export const AGENT_DOCK_IPC = {
@@ -424,6 +428,8 @@ export const AGENT_DOCK_IPC = {
 	prompt: 'agent-dock:prompt',
 	message: 'agent-dock:message',
 	reveal: 'agent-dock:reveal',
+	setNotify: 'agent-dock:set-notify',
+	openItem: 'agent-dock:open-item',
 } as const
 
 /** Agent dock (Okena + Helm-terminal Claude sessions): read the queue, ack, and answer from the pane. No control socket yet. */
@@ -441,6 +447,10 @@ export interface AgentDockApi {
 	lastMessage(session: string): Promise<AgentDockMessageResult>
 	/** Show an Okena agent's terminal: focus its pane in Okena and raise the app. Never rejects for a refusal. */
 	reveal(session: string): Promise<AgentDockRevealResult>
+	/** Settings → Appearance: notify when Helm is in the background (main shows the notifications). */
+	setNotify(enabled: boolean): void
+	/** Main: Jakub clicked a dock notification; open the pane on this item (null: nothing to open). Returns unsubscribe. */
+	onOpenItem(listener: (itemId: number | null) => void): () => void
 }
 
 export interface RunContextWindowApi {

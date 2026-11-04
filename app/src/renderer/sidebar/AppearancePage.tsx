@@ -1,14 +1,14 @@
 // Settings → Appearance (docs/design-system.md §2.8): theme picker, text
 // sizing, per-token color wells for the terminal palette + UI accent, and the
-// agent dock's position (§3.24). Every control live-applies through its store;
-// persistence is localStorage ('helm.appearance', 'helm.agentDock.position') +
-// theme files in <userData>/themes.
+// agent dock's position and background notifications (§3.24). Every control
+// live-applies through its store; persistence is localStorage ('helm.appearance',
+// 'helm.agentDock.position', 'helm.agentDock.notify') + theme files in <userData>/themes.
 
 import { useEffect, useSyncExternalStore } from 'react'
-import { agentDockPosition } from '../agent-dock-layout'
+import { agentDockNotify, agentDockPosition } from '../agent-dock-layout'
 import type { AgentDockPosition } from '../agent-dock/presentation'
 import { TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, UI_SCALES, appearance } from '../appearance'
-import { Btn, Card, FieldLabel, PushHeader, Segmented, SelectInput } from './ui'
+import { Btn, Card, FieldLabel, PushHeader, Segmented, SelectInput, Toggle } from './ui'
 
 const TERM_WELLS: ReadonlyArray<{ token: string; label: string }> = [
 	{ token: '--term-bg', label: 'Background' },
@@ -74,6 +74,7 @@ function Swatch({
 export function AppearancePage({ onBack }: { onBack: () => void }) {
 	const snap = useSyncExternalStore(appearance.subscribe, appearance.getSnapshot)
 	const dockPosition = useSyncExternalStore(agentDockPosition.subscribe, agentDockPosition.get)
+	const dockNotify = useSyncExternalStore(agentDockNotify.subscribe, agentDockNotify.get)
 	// Pick up theme files dropped into <userData>/themes since startup.
 	useEffect(() => {
 		void appearance.refreshThemes()
@@ -165,6 +166,20 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 							options={DOCK_POSITIONS}
 							value={dockPosition}
 							onChange={value => agentDockPosition.set(value)}
+						/>
+					</div>
+					<div className="toggle-row">
+						<div>
+							<div className="toggle-label">Notify when Helm is in the background</div>
+							<p className="meta-text">
+								A macOS notification when an agent asks or ends its turn while Helm is not in front. The Dock icon
+								always counts what waits.
+							</p>
+						</div>
+						<Toggle
+							label="Notify when Helm is in the background"
+							value={dockNotify}
+							onChange={value => agentDockNotify.set(value)}
 						/>
 					</div>
 				</Card>

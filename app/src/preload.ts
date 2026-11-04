@@ -102,6 +102,8 @@ const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
 	prompt: 'agent-dock:prompt',
 	message: 'agent-dock:message',
 	reveal: 'agent-dock:reveal',
+	setNotify: 'agent-dock:set-notify',
+	openItem: 'agent-dock:open-item',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -340,6 +342,13 @@ const api: HelmApi = {
 			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.message, session, sessionProfileToken) as Promise<AgentDockMessageResult>,
 		reveal: (session: string) =>
 			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.reveal, session, sessionProfileToken) as Promise<AgentDockRevealResult>,
+		setNotify: enabled => ipcRenderer.send(AGENT_DOCK_CHANNELS.setNotify, enabled === true, sessionProfileToken),
+		onOpenItem: listener =>
+			subscribe<[unknown, string]>(AGENT_DOCK_CHANNELS.openItem, (itemId, profileToken) => {
+				if (profileToken !== sessionProfileToken) return
+				if (itemId === null || (typeof itemId === 'number' && Number.isSafeInteger(itemId) && itemId > 0))
+					listener(itemId)
+			}),
 	} satisfies AgentDockApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),
