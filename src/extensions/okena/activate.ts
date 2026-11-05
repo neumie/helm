@@ -143,11 +143,12 @@ export function osascriptFailure(via: OkenaRaiseVia, error: unknown, ms: number)
 	// errAEEventNotPermitted: Automation (Privacy & Security → Automation → … → System Events).
 	if (code === -1743 || /not authori[sz]ed to send apple events/i.test(text))
 		return { ...base, outcome: 'denied', permission: 'automation' }
-	// errAEEventWouldRequireUserConsent / "assistive access": Accessibility.
-	if (code === -1719 || code === -25211 || /assistive access|accessibility/i.test(text))
+	// "… is not allowed assistive access" (-1719 on older macOS, -25211 now): Accessibility.
+	if (code === -25211 || /assistive access|accessibility/i.test(text))
 		return { ...base, outcome: 'denied', permission: 'accessibility' }
-	// errAENoSuchObject / procNotFound: no such process (any more).
-	if (code === -1728 || code === -600) return { ...base, outcome: 'not-running' }
+	// errAEIllegalIndex ("Can’t get process 1 whose unix id = …. Invalid index.", -1719 without the
+	// assistive-access words: the pid or name matched nothing), errAENoSuchObject, procNotFound: Okena gone.
+	if (code === -1719 || code === -1728 || code === -600) return { ...base, outcome: 'not-running' }
 	return { ...base, outcome: 'failed' }
 }
 

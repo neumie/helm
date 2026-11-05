@@ -148,6 +148,18 @@ test('raiseOkenaApp: -1743 from System Events reads as denied Automation; never 
 	const timeout = fakeRun(['{"outcome":"refused","pid":7}', Object.assign(new Error('x'), { killed: true })])
 	const timedOut = await raiseOkenaApp({ platform: 'darwin', run: timeout.run })
 	assert.equal(!timedOut.ok && timedOut.reason, 'timeout')
+	// Okena quit between the two strategies: System Events' -1719 "Invalid index" is "gone", not a denial.
+	const quit = fakeRun([
+		'{"outcome":"refused","pid":7}',
+		osascriptError(
+			'execution error: System Events got an error: Can’t get process 1 whose unix id = 7. Invalid index. (-1719)',
+		),
+	])
+	const quitResult = await raiseOkenaApp({ platform: 'darwin', run: quit.run })
+	assert.deepEqual(!quitResult.ok && { reason: quitResult.reason, permission: quitResult.permission }, {
+		reason: 'not-running',
+		permission: undefined,
+	})
 	const nothing = fakeRun([])
 	assert.deepEqual(await raiseOkenaApp({ platform: 'linux', run: nothing.run }), {
 		ok: false,
@@ -172,6 +184,21 @@ test('osascriptFailure: error numbers and words map to Automation, Accessibility
 		],
 	)
 	assert.equal(at('execution error: System Events got an error: Can’t get process 1. (-1728)').outcome, 'not-running')
+	// System Events' real answer for a pid (or name) that matches nothing is -1719 "Invalid index":
+	// Okena gone, never an Accessibility denial (that would put the wrong fix in the footer).
+	assert.deepEqual(
+		at(
+			'40:88: execution error: System Events got an error: Can’t get process 1 whose unix id = 999999. Invalid index. (-1719)',
+		),
+		{
+			via: 'system-events',
+			outcome: 'not-running',
+			ms: 5,
+			code: -1719,
+			detail:
+				'40:88: execution error: System Events got an error: Can’t get process 1 whose unix id = 999999. Invalid index. (-1719)',
+		},
+	)
 	assert.deepEqual(at('execution error: something else (-2700)'), {
 		via: 'system-events',
 		outcome: 'failed',
