@@ -17,6 +17,7 @@ import {
 	type DockActOutcome,
 	type DockActionKind,
 	type DockItem,
+	type DockRefusalReason,
 	type DockResolutionBy,
 	type DockSession,
 	type DockSessionStatus,
@@ -268,6 +269,13 @@ const isDispatched = (item: DockItem): boolean =>
 	(item.receipt?.status === 'sent' || item.receipt?.status === 'unconfirmed')
 /** The act's CAS read/POST is still running: an observed close cannot be attributed yet. */
 const isInFlight = (item: DockItem): boolean => item.state === 'sending' && item.receipt?.status === 'sending'
+
+/**
+ * A refusal that only said the agent was not free (working, a dialog open, or its state unknown):
+ * once the agent is seen idle again it no longer holds, so it is dropped (see observeTerminal).
+ */
+const refusedNotFree = (receipt: { status: string; reason?: DockRefusalReason } | undefined): boolean =>
+	receipt?.status === 'refused' && (receipt.reason === 'busy' || receipt.reason === 'untracked')
 
 /** `background`: main agent idle while its subagents or background tasks (shells, workflows, monitors) still run. */
 function deriveStatus(detail: OkenaClaudeSession, backgroundTasks: number): DockSessionStatus {
@@ -643,6 +651,12 @@ function observeTerminal(
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
 	if (detail.busy === true) record.busySince ??= now
 	else record.busySince = undefined
+	// "Check it again": seen idle now, a reply refused as busy/untracked can simply be sent again,
+	// so the pane and its strip entry stop reading as refused (the refusal stays while it holds).
+	if (status === 'idle' || status === 'background') {
+		for (const item of live()) if (item.state === 'open' && refusedNotFree(item.receipt)) item.receipt = undefined
+		if (refusedNotFree(record.session.reply)) record.session.reply = undefined
+	}
 	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
 	for (const item of live()) {
 		if (item.fact.kind !== 'turn' || !isDispatched(item)) continue

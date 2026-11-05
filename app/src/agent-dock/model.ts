@@ -388,7 +388,14 @@ export type DockActOutcome =
 	| { status: 'refused'; reason: DockRefusalReason; detail: string }
 	| { status: 'failed'; detail: string }
 
-export type AgentDockActResult = { ok: true; outcome: DockActOutcome } | { ok: false; outcome: DockActOutcome }
+/**
+ * `recorded`: main put the outcome on the item's receipt (or the session's reply), so the snapshot
+ * shows it, and drops it once it no longer holds (a busy/untracked refusal, the agent seen idle
+ * again); the renderer keeps its own copy only of outcomes main did not record.
+ */
+export type AgentDockActResult =
+	| { ok: true; outcome: DockActOutcome; recorded?: boolean }
+	| { ok: false; outcome: DockActOutcome; recorded?: boolean }
 
 export type DockReceiptStatus = (typeof DOCK_RECEIPT_STATUSES)[number]
 

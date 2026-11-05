@@ -24,6 +24,12 @@ export const DOCK_SOURCE_TEXT: Record<
 		sourceDown: string
 		/** Poll error while the source has no active profile / is not listening. */
 		notRunning: string
+		/**
+		 * Reply refusal when the fresh read cannot say whether the agent is free (busy unknown): the
+		 * source lost the agent's state (Okena forgets idle panes across a daemon restart until their
+		 * next hook) and would not type into the pane either.
+		 */
+		untracked: string
 	}
 > = {
 	okena: {
@@ -31,12 +37,14 @@ export const DOCK_SOURCE_TEXT: Record<
 		notListed: 'The agent is no longer listed by Okena.',
 		sourceDown: 'Okena is unreachable; answer in the terminal',
 		notRunning: 'Okena not configured or not running',
+		untracked: 'Okena lost track of this agent (Okena restarted?); reply in its terminal',
 	},
 	helm: {
 		label: 'Helm terminals',
 		notListed: 'The agent is no longer listed in Helm terminals.',
 		sourceDown: 'Helm terminals are unreachable; answer in the terminal',
 		notRunning: "Helm's Claude hub is not listening",
+		untracked: "Helm's Claude hub lost track of this agent; reply in its terminal",
 	},
 }
 
@@ -73,6 +81,8 @@ export const DOCK_RECEIPT_STATUSES = ['sending', 'sent', 'unconfirmed', 'confirm
  * question, its options or the turn changed since it was shown. busy: the agent is
  * working again; a reply would be queued behind work Jakub has not seen. not_open:
  * not answerable from the dock now (sending, unconfirmed, orphaned, resolved).
+ * untracked: the source cannot tell whether the agent is free (busy unknown, e.g. Okena
+ * restarted while the agent idled); never typed into, and never called "working".
  */
 export const DOCK_REFUSAL_REASONS = [
 	'gone',
@@ -83,6 +93,7 @@ export const DOCK_REFUSAL_REASONS = [
 	'invalid',
 	'source_down',
 	'in_flight',
+	'untracked',
 ] as const
 
 /** Bound for an agent's last-message excerpt (`DockSession.lastMessage.text`): one line. */

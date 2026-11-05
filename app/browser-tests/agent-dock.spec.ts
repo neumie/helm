@@ -68,7 +68,7 @@ async function emitScenario(
 	}, name)
 }
 
-type ActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
+type ActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error' | 'busy' | 'untracked'
 
 async function setActMode(page: Page, mode: ActMode): Promise<void> {
 	await page.evaluate(next => {
@@ -778,6 +778,41 @@ test('reply to a finished turn: unconfirmed turns amber and stays ackable', asyn
 	await expect(pane).toContainText('sent, unconfirmed')
 	await pane.getByRole('button', { name: `Ack item ${itemId}` }).click()
 	await expect(entry).toHaveCount(0)
+})
+
+test('a reply refused while Okena lost the agent says so, keeps the draft, and clears once the agent is seen idle', async ({
+	page,
+}) => {
+	const { pane, rail } = await openItem(page, 3)
+	const entry = rail.locator('.agent-dock-entry[data-kind="turn"]')
+	const itemId = Number(await entry.getAttribute('data-item-id'))
+	const reply = pane.getByRole('textbox', { name: 'Reply' })
+	const send = pane.getByRole('button', { name: 'Send', exact: true })
+	const draft = 'když nemá středisko, napiš to tam'
+	for (const [mode, words] of [
+		['untracked', 'refused: Okena lost track of this agent (Okena restarted?); reply in its terminal'],
+		['busy', 'refused: the agent is working again; check it again'],
+	] as const) {
+		await setActMode(page, mode)
+		await reply.fill(draft)
+		await send.click()
+		await expect(pane.locator('.agent-dock-receipt')).toHaveText(words)
+		await expect(entry).toContainText(words)
+		await expect(entry).toHaveAttribute('data-state', 'open')
+		// Nothing was typed; the draft stays for the next try.
+		await expect(reply).toHaveValue(draft)
+		await expect(send).toBeEnabled()
+		// The next poll sees the agent idle at the same message: the refusal no longer holds anywhere.
+		await page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.emitPoll())
+		await expect(pane.locator('.agent-dock-receipt')).toHaveCount(0)
+		await expect(entry).not.toContainText('refused')
+		await expect(reply).toHaveValue(draft)
+	}
+	await setActMode(page, 'confirm')
+	await send.click()
+	await expect(entry).toContainText('✓ replied')
+	expect((await acts(page)).map(act => act.itemId)).toEqual([itemId, itemId, itemId])
+	expect(await terminalWrites(page)).toBe(0)
 })
 
 test('an Okena error shows verbatim, the item stays open and can be answered again', async ({ page }) => {

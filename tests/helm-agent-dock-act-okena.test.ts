@@ -215,7 +215,7 @@ test('answer: CAS read, then POST the ApiClaudeDecision answer body; the closed 
 			itemId: ask.id,
 			action: { type: 'answer', picks: [{ options: [1] }, { options: [0] }] },
 		})
-		assert.deepEqual(result, { ok: true, outcome: { status: 'sent' } })
+		assert.deepEqual(result, { ok: true, outcome: { status: 'sent' }, recorded: true })
 		// Fresh session read (CAS) before the POST.
 		assert.deepEqual(h.okena.gets.slice(gets), [`/v1/claude/terminals/${TID}`])
 		assert.deepEqual(h.okena.posts, [
@@ -327,6 +327,7 @@ test('Okena errors: 500 is a verbatim failure (item reopens); 404 on the dialog 
 				status: 'failed',
 				detail: `Okena POST ${DIALOG_PATH(ASK_DIALOG.id as string)} failed (500): bridge unavailable`,
 			},
+			recorded: true,
 		})
 		assert.equal(h.item().state, 'open')
 		assert.equal(h.item().receipt?.status, 'failed')
@@ -365,7 +366,7 @@ test('reply: idle turn → CAS (transcript tail) → POST /prompt {text}; the us
 			itemId: turn.id,
 			action: { type: 'prompt', text: 'Ano, pokračuj s merge.\n' },
 		})
-		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' } })
+		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' }, recorded: true })
 		assert.deepEqual(h.okena.gets.slice(gets), [
 			`/v1/claude/terminals/${TID}`,
 			`/v1/claude/terminals/${TID}/transcript`,
@@ -411,6 +412,49 @@ test('reply refused when someone already answered in the terminal; prompt errors
 		h.okena.entries.push({ kind: 'user', uuid: 'u-b', text: 'typed in the pane', origin: 'terminal' })
 		const refused = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
 		assert.equal(refused.outcome.status === 'refused' && refused.outcome.reason, 'gone')
+		assert.equal(h.okena.posts.length, 1)
+	} finally {
+		await h.done()
+	}
+})
+
+test('reply while Okena cannot say if the agent is busy (restarted daemon): refused as untracked, nothing typed; seen idle again, it sends', async () => {
+	const h = await harness(okena => {
+		okena.detail = { ...structuredClone(SHOW_IDLE), busy: true }
+		okena.entries = [{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' }]
+	})
+	try {
+		await h.tick()
+		h.okena.entries.push({ kind: 'assistant', uuid: 'a-1', text: 'Done.' })
+		h.okena.detail = { ...h.okena.detail, busy: false }
+		h.okena.version++
+		await h.tick()
+		await h.tick(TURN_IDLE_MS)
+		const turn = h.item('turn')
+
+		// Okena restarted: the idle pane has no hooks and no lifecycle yet, so `busy` is missing.
+		const { busy: _busy, session_id: _sid, ...forgotten } = h.okena.detail
+		h.okena.detail = { ...forgotten, has_transcript: false, hooks_attached: false }
+		h.okena.version++
+		const refused = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
+		assert.deepEqual(refused.outcome, {
+			status: 'refused',
+			reason: 'untracked',
+			detail: 'Okena lost track of this agent (Okena restarted?); reply in its terminal',
+		})
+		assert.equal(refused.recorded, true)
+		assert.deepEqual(h.okena.posts, [])
+		assert.equal(h.item('turn').state, 'open')
+		assert.equal(h.item('turn').receipt?.reason, 'untracked')
+
+		// Okena hears from the pane again and it is idle at the same message: the refusal no longer holds.
+		h.okena.detail = { ...structuredClone(SHOW_IDLE), busy: false }
+		h.okena.version++
+		await h.tick()
+		assert.equal(h.item('turn').state, 'open')
+		assert.equal(h.item('turn').receipt, undefined)
+		const sent = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
+		assert.equal(sent.outcome.status, 'sent')
 		assert.equal(h.okena.posts.length, 1)
 	} finally {
 		await h.done()
@@ -466,7 +510,7 @@ test('agent detail: the full last message read live; a reply only once its turn 
 			assistantUuid: 'a-1',
 			text: 'Díky, pusť to.\n',
 		})
-		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' } })
+		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' }, recorded: true })
 		assert.deepEqual(h.okena.posts.at(-1)?.body, { text: 'Díky, pusť to.' })
 		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.status, 'sent')
 		// Okena typed it (the fake adds the user entry and goes busy): the expedited read confirms it.

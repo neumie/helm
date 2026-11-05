@@ -387,7 +387,7 @@ export class AgentDockWatcher {
 		}
 		// See it land as soon as possible.
 		this.poke()
-		return { ok: outcome.status === 'sent', outcome }
+		return { ok: outcome.status === 'sent', outcome, recorded: true }
 	}
 
 	/**
@@ -438,7 +438,7 @@ export class AgentDockWatcher {
 			this.acting = false
 		}
 		this.poke()
-		return { ok: outcome.status === 'sent', outcome }
+		return { ok: outcome.status === 'sent', outcome, recorded: true }
 	}
 
 	/** The agent's last message, read live through its source (agent detail). Never throws. */

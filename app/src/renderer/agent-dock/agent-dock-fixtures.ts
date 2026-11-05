@@ -3,9 +3,11 @@
 // foundation reducer, never hand-written DockItems. Production code must not
 // import this module: it pulls the reducer (and zod) into the bundle.
 
+import { DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary'
 import showAsk from '../../../../tests/fixtures/okena-claude/show-ask.json'
 import showIdle from '../../../../tests/fixtures/okena-claude/show-idle.json'
 import stateAsk from '../../../../tests/fixtures/okena-claude/state-ask.json'
+import { REFUSAL_TEXT } from '../../agent-dock/act'
 import type { ObservedBackgroundTasks } from '../../agent-dock/background-tasks'
 import {
 	ACT_CONFIRM_MS,
@@ -1598,8 +1600,12 @@ function arrivalBody(kind: AgentDockArrivalKind, pane: Pane, n: number, at: numb
 	return detail(pane, { busy: true, dialogs: [{ ...dialog, permission_suggestions: [], created_at_ms: at }] })
 }
 
-/** How the in-memory act behaves (browser tests switch it; stories use the default). */
-export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
+/**
+ * How the in-memory act behaves (browser tests switch it; stories use the default). `busy` / `untracked`:
+ * the CAS read found the agent working / Okena unable to say (after an Okena restart); nothing is
+ * observed until the test emits the next poll (emitPoll).
+ */
+export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error' | 'busy' | 'untracked'
 
 /**
  * What the next "Show in Okena" does: focus and raise Okena (default), focus without raising it,
@@ -1645,8 +1651,13 @@ export interface AgentDockFixture {
 	 * (an ask: answered in terminal) or the pane working on his reply after the turn (replied in terminal).
 	 */
 	emitAnsweredInTerminal(itemId: number): void
-	/** What the next acts do: land and get observed (default), never get observed, refused (answered elsewhere), or fail. */
+	/**
+	 * What the next acts do: land and get observed (default), never get observed, refused (answered
+	 * elsewhere, the agent working, its state unknown), or fail.
+	 */
 	setActMode(mode: AgentDockActMode): void
+	/** The next Okena poll, nothing changed: every pane as it was (an idle turn's agent is still idle). */
+	emitPoll(): void
 	/** What the next "Show in Okena" answers. */
 	setRevealMode(mode: AgentDockRevealMode): void
 	/** Main's half of a clicked dock notification: the window came forward; open the pane on this item. */
@@ -1744,12 +1755,15 @@ export function createAgentDockFixture(
 					}
 				} else if (mode === 'refused')
 					outcome = { status: 'refused', reason: 'gone', detail: 'already answered elsewhere' }
+				else if (mode === 'busy') outcome = { status: 'refused', reason: 'busy', detail: REFUSAL_TEXT.busy }
+				else if (mode === 'untracked')
+					outcome = { status: 'refused', reason: 'untracked', detail: DOCK_SOURCE_TEXT.okena.untracked }
 				else outcome = { status: 'sent', ...(item.kind === 'turn' ? { delivery: 'pty' as const } : {}) }
 				apply({ type: 'act.result', itemId: item.id, outcome })
 				if (mode === 'confirm' || mode === 'refused') later(() => apply(landedPoll(current, item)))
 				// Not observed: the next poll comes after the confirmation window.
 				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
-				return { ok: outcome.status === 'sent', outcome }
+				return { ok: outcome.status === 'sent', outcome, recorded: true }
 			},
 			// A reply from the agent detail: the same act observations main would apply, then the landing poll.
 			async prompt(request): Promise<AgentDockActResult> {
@@ -1771,11 +1785,15 @@ export function createAgentDockFixture(
 							}
 						: mode === 'refused'
 							? { status: 'refused', reason: 'changed', detail: 'The agent said something new; check it again.' }
-							: { status: 'sent', delivery: 'pty' }
+							: mode === 'busy'
+								? { status: 'refused', reason: 'busy', detail: REFUSAL_TEXT.busy }
+								: mode === 'untracked'
+									? { status: 'refused', reason: 'untracked', detail: DOCK_SOURCE_TEXT.okena.untracked }
+									: { status: 'sent', delivery: 'pty' }
 				apply({ type: 'prompt.result', session: request.session, outcome })
 				if (mode === 'confirm') later(() => apply(promptLandedPoll(current, request.session)))
 				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
-				return { ok: outcome.status === 'sent', outcome }
+				return { ok: outcome.status === 'sent', outcome, recorded: true }
 			},
 			// The live read: what the reducer last read for the pane (its full text, in memory).
 			async lastMessage(session): Promise<AgentDockMessageResult> {
@@ -1841,6 +1859,9 @@ export function createAgentDockFixture(
 		},
 		setActMode(next) {
 			mode = next
+		},
+		emitPoll() {
+			if (scenario) apply(samePoll(scenario))
 		},
 		setRevealMode(next) {
 			revealMode = next

@@ -9,6 +9,7 @@ import modelModule from '../app/src/agent-dock/model.ts'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import presentationModule from '../app/src/renderer/agent-dock/presentation.ts'
+import { DOCK_SOURCE_TEXT } from '../src/agent-dock/dock-vocabulary.js'
 import { OKENA_NOT_CONFIGURED, OkenaClient, OkenaHttpError } from '../src/extensions/okena/client.js'
 import { okenaFixture } from './helpers/agent-dock'
 
@@ -703,6 +704,76 @@ test('agent detail CAS: idle, same session, the message Jakub read is still the 
 	assert.equal(promptText('Ano.\n\n'), 'Ano.')
 	assert.equal(promptText('  \n\t'), null)
 	assert.equal(promptText('  indented'), '  indented')
+})
+
+/**
+ * An idle Claude pane as Okena shows it right after its daemon restarted (live, 2026-11-05: Okena
+ * 0.36.1 restarted at 10:29:55Z; the idle `udrzba-demo` pane read like this until its next hook):
+ * no hooks, no lifecycle, so no `busy`, no session id and no transcript.
+ */
+const forgotten = (): Json => {
+	const { busy: _busy, session_id: _sid, ...rest } = idle()
+	return { ...rest, has_transcript: false, hooks_attached: false, running_subagents: [], pr_links: [] }
+}
+
+test('reply CAS: busy unknown (Okena lost the pane across a restart) is untracked, never "working again"', () => {
+	const turn = only(turnOpen().state, 'turn')
+	const fresh = session(forgotten())
+	assert.equal(fresh.busy, undefined)
+	for (const check of [
+		turnStillWaiting(turn, fresh, null),
+		sessionStillIdle({ sessionId: SID, assistantUuid: 'a1' }, fresh, null),
+	]) {
+		assert.deepEqual(check, { ok: false, reason: 'untracked', detail: DOCK_SOURCE_TEXT.okena.untracked })
+		assert.doesNotMatch((check as { detail: string }).detail, /working/)
+	}
+	assert.deepEqual(turnStillWaiting(turn, fresh, null, 'helm'), {
+		ok: false,
+		reason: 'untracked',
+		detail: DOCK_SOURCE_TEXT.helm.untracked,
+	})
+	// Known busy still refuses as working; known idle with the same tail still passes.
+	const working = turnStillWaiting(turn, session(idle({ busy: true })), null)
+	assert.equal((working as { reason?: string }).reason, 'busy')
+	const tail = parseOkenaClaudeTranscriptPage(page([assistant('a1')], 400, true))
+	assert.ok(tail.ok)
+	assert.deepEqual(turnStillWaiting(turn, session(idle({ busy: false })), tail.value), { ok: true })
+})
+
+test('"check it again": a busy/untracked refusal holds while the agent is not seen idle, then clears; a resend goes', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	const refusedAs = (reason: 'busy' | 'untracked' | 'changed') =>
+		drive(
+			[
+				[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+				[
+					T0 + 20_500,
+					{ type: 'act.result', itemId: turn.id, outcome: { status: 'refused', reason, detail: 'refused' } },
+				],
+			],
+			open,
+		).state
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = refusedAs(reason)
+		assert.equal(only(refused, 'turn').receipt?.reason, reason)
+		// Okena still cannot say (the restarted daemon has not heard from the pane): the refusal holds.
+		const unknown = drive([[T0 + 21_000, poll(forgotten())]], refused).state
+		const held = only(unknown, 'turn')
+		assert.equal(held.state, 'open')
+		assert.equal(receiptView(held)?.text, 'refused: refused')
+		// Seen idle with the same turn: it reads as the open turn again, and a resend is taken.
+		const seen = drive([[T0 + 22_000, poll(idle({ busy: false }))]], unknown).state
+		const cleared = only(seen, 'turn')
+		assert.equal(cleared.state, 'open')
+		assert.equal(cleared.receipt, undefined)
+		assert.equal(receiptView(cleared), null)
+		const again = drive([[T0 + 23_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }]], seen).state
+		assert.equal(only(again, 'turn').state, 'sending')
+	}
+	// Any other refusal is not about the agent being free: it stays until the item moves on.
+	const changed = drive([[T0 + 22_000, poll(idle({ busy: false }))]], refusedAs('changed')).state
+	assert.equal(only(changed, 'turn').receipt?.reason, 'changed')
 })
 
 test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {

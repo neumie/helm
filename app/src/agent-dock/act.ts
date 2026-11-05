@@ -67,6 +67,7 @@ export const REFUSAL_TEXT: Record<DockRefusalReason, string> = {
 	invalid: 'the answer is incomplete',
 	source_down: DOCK_SOURCE_TEXT.okena.sourceDown,
 	in_flight: 'another answer is still being sent',
+	untracked: "can't tell whether the agent is free; reply in its terminal",
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -203,26 +204,31 @@ export function turnStillWaiting(
 	item: DockItem,
 	fresh: OkenaClaudeSession,
 	page: OkenaClaudeTranscriptPage | null,
+	source: DockSourceId = 'okena',
 ): DockCheck {
 	if (item.fact.kind !== 'turn') return refuse('invalid', 'Not a turn.')
 	const fact: DockTurnFact = item.fact
-	return sessionStillIdle({ sessionId: fact.sessionId, assistantUuid: fact.assistantUuid }, fresh, page)
+	return sessionStillIdle({ sessionId: fact.sessionId, assistantUuid: fact.assistantUuid }, fresh, page, source)
 }
 
 /**
  * CAS for a reply to an agent (a turn's, or one from the agent detail with no item): the same
  * Claude session Jakub saw, idle with no dialog, and the transcript tail still ends at the
  * message he read (`assistantUuid`; with none, at no assistant message) with no user entry after it.
+ * Busy unknown (`busy` missing: the source lost the pane's state, as Okena does for an idle agent
+ * across a daemon restart) is never sent, and refused as `untracked`, not as "working again".
  */
 export function sessionStillIdle(
 	expect: { sessionId?: string; assistantUuid?: string },
 	fresh: OkenaClaudeSession,
 	page: OkenaClaudeTranscriptPage | null,
+	source: DockSourceId = 'okena',
 ): DockCheck {
 	if (expect.sessionId && fresh.session_id && expect.sessionId !== fresh.session_id)
 		return refuse('gone', 'A new Claude session started in this pane.')
 	if (fresh.dialogs.length > 0) return refuse('busy', 'The agent opened a dialog; answer that first.')
-	if (fresh.busy !== false) return refuse('busy', REFUSAL_TEXT.busy)
+	if (fresh.busy === true) return refuse('busy', REFUSAL_TEXT.busy)
+	if (fresh.busy !== false) return refuse('untracked', DOCK_SOURCE_TEXT[source].untracked)
 	if (!page) return refuse('changed', 'The transcript could not be read; check the terminal.')
 	if (expect.sessionId && page.session_id && page.session_id !== expect.sessionId)
 		return refuse('gone', 'A new Claude session started in this pane.')
