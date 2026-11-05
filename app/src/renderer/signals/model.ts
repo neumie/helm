@@ -391,10 +391,20 @@ function agentHintTitle(match: AgentMatch): string {
 	}
 }
 
-/** Header context: `3 need you · 2 managed` (routed threads no longer count as needing him). */
-export function signalsSummary(sections: SignalSections, now: number): string {
+/**
+ * Header context: `3 need you · 2 managed` (routed threads no longer count as needing him). An empty
+ * Needs you says `nothing needs you` only when a snapshot arrived and every source that is on answered
+ * (`allSourcesOk`); `sources: null` (no snapshot yet) or a source that is down says `nothing listed`
+ * instead, never an all-clear.
+ */
+export function signalsSummary(
+	sections: SignalSections,
+	now: number,
+	sources: readonly SignalSourceHealth[] | null,
+): string {
 	const fresh = sections.needs.filter(thread => !routedReceipt(thread, now)).length
-	const parts = [fresh === 0 ? 'nothing needs you' : `${fresh} need${fresh === 1 ? 's' : ''} you`]
+	const empty = sources !== null && allSourcesOk(sources) ? 'nothing needs you' : 'nothing listed'
+	const parts = [fresh === 0 ? empty : `${fresh} need${fresh === 1 ? 's' : ''} you`]
 	if (sections.managed.length > 0) parts.push(`${sections.managed.length} managed`)
 	return parts.join(' · ')
 }

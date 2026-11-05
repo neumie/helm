@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import { mountAgentDock } from './agent-dock-layout'
 import { appearance } from './appearance'
-import { focusActiveTerminal, mountLeftColumn, mountSignalsShortcut } from './left-column'
+import { focusActiveTerminal, mountDeepLinkReveal, mountLeftColumn, mountSignalsShortcut } from './left-column'
 import { mountSidebarLayout } from './sidebar-layout'
 import { mountSidebar } from './sidebar/SidebarRoot'
 import { mountSignals } from './signals/Signals'
@@ -68,6 +68,13 @@ mountSignalsShortcut({
 	column,
 	showColumn: () => layout.show(),
 	focusTerminal: () => focusActiveTerminal(document),
+})
+// helm://item/<id> lands in the task sidebar: the column switches to Tasks and shows, so a deep
+// link never opens behind Signals (the sidebar's own listener resets its stack to list → detail).
+mountDeepLinkReveal({
+	onOpenItem: listener => window.helm.nav.onOpenItem(listener),
+	column,
+	showColumn: () => layout.show(),
 })
 
 // Read-only Okena Claude agent dock. An older preload without the bridge leaves

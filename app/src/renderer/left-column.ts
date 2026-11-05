@@ -180,3 +180,48 @@ export function focusActiveTerminal(root: Document | HTMLElement): void {
 	const holder = input.closest<HTMLElement>('.term-holder.active')
 	if (holder && holder.scrollTop !== 0) holder.scrollTop = 0
 }
+
+/** The parts of a Document the task-sidebar ownership check reads (root tests pass fakes). */
+export interface LeftColumnDocument {
+	getElementById(id: string): { hidden: boolean; contains(node: unknown): boolean } | null
+}
+
+/**
+ * Whether a task-sidebar navigation input (Esc = back, the nav:go back/forward channel, mouse back
+ * buttons) belongs to the task sidebar: never while Signals holds the column (`#left-tasks` hidden),
+ * so the hidden task stack never pops behind Signals. `target` is the key event's target (omitted
+ * for inputs with no target: the nav:go channel, mouse buttons); with a target it must sit inside
+ * `#left`, and inside `#left-tasks` when the column is split. A host without `#left-tasks` (an older
+ * preload, stories mounting the sidebar alone) keeps the old rule.
+ */
+export function taskSidebarOwnsNavigation(
+	doc: LeftColumnDocument,
+	target?: { closest(selector: string): unknown } | null,
+): boolean {
+	if (target !== undefined && (!target || !target.closest('#left'))) return false
+	const host = doc.getElementById('left-tasks')
+	if (!host) return true
+	if (host.hidden) return false
+	return target === undefined || host.contains(target)
+}
+
+/**
+ * A helm:// deep link (main's nav:open-item) is an absolute destination in the task sidebar: switch
+ * the column to Tasks and show it, so the link never lands in a hidden sidebar behind Signals. The
+ * task sidebar's own listener resets its stack; the order of the two listeners does not matter.
+ */
+export function mountDeepLinkReveal({
+	onOpenItem,
+	column,
+	showColumn,
+}: {
+	onOpenItem(listener: (itemId: string) => void): () => void
+	column: Pick<MountedLeftColumn, 'setMode'>
+	/** Shows the column when it is hidden (sidebar-layout). */
+	showColumn(): void
+}): () => void {
+	return onOpenItem(() => {
+		column.setMode('tasks')
+		showColumn()
+	})
+}

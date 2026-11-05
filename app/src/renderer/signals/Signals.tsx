@@ -59,6 +59,36 @@ export interface SignalsColumnProps {
 
 export type SignalsFlow = { type: 'send' | 'new-agent'; id: number } | null
 
+/** What a flow's attempt (the dock prompt / the Okena start) came back with. */
+export type RouteAttempt =
+	| { failed: string }
+	| {
+			agent: string
+			how: 'sent' | 'started'
+			/** Note once the receipt is saved. */
+			done: string
+			/** Note when the effect happened but the receipt could not be saved. */
+			unsaved(error: string): string
+	  }
+
+/**
+ * One routing effect (`p` send / `n` start), owned by the column rather than the flow: Esc or the
+ * thread leaving the snapshot may close the flow while it runs, and the late success still saves its
+ * receipt (`service.routed`) and lands in the column's note. One at a time: no double submit.
+ */
+export interface RouteJob {
+	id: number
+	type: 'send' | 'new-agent'
+	/** `Starting agent…`: the footer says `… (still running)` once the flow is closed. */
+	label: string
+	attempt(): Promise<RouteAttempt>
+	/** The flow instance that submitted it is still mounted: a failure goes back to it. */
+	flowAlive(): boolean
+}
+
+/** The column's route runner: resolves with a failure note for a still-mounted flow, else null. */
+export type RouteRunner = (job: RouteJob) => Promise<string | null>
+
 /** Daemon threads, with the threads an action just returned laid over them until a newer push. */
 function mergeThreads(threads: readonly SignalThread[], overrides: ReadonlyMap<number, SignalThread>): SignalThread[] {
 	if (overrides.size === 0) return [...threads]
@@ -217,6 +247,11 @@ export function SignalsColumn({
 	const sectionRef = useRef<HTMLElement>(null)
 	const busy = useRef(false)
 	const alive = useRef(true)
+	// The routing effect in flight (ref: synchronous single flight; state: footer and flow busy).
+	const routingRef = useRef<RouteJob | null>(null)
+	const [routing, setRouting] = useState<RouteJob | null>(null)
+	const flowRef = useRef<SignalsFlow>(flow)
+	flowRef.current = flow
 
 	useEffect(() => {
 		alive.current = true
@@ -262,6 +297,47 @@ export function SignalsColumn({
 			refocus()
 		},
 		[refocus],
+	)
+
+	const route: RouteRunner = useCallback(
+		async job => {
+			if (routingRef.current) return `${routingRef.current.label} (still running)`
+			routingRef.current = job
+			setRouting(job)
+			// Success closes the flow showing this thread (whichever instance it is); focus returns to the list.
+			const finish = (message: string): void => {
+				const open = flowRef.current
+				if (open && open.id === job.id && open.type === job.type) closeFlow(message)
+				else setNote(message)
+			}
+			try {
+				let outcome: RouteAttempt
+				try {
+					outcome = await job.attempt()
+				} catch (error) {
+					outcome = { failed: `Failed: ${error instanceof Error ? error.message : String(error)}` }
+				}
+				if (!alive.current) return null
+				if ('failed' in outcome) {
+					if (job.flowAlive()) return outcome.failed
+					setNote(outcome.failed)
+					return null
+				}
+				const routed = await service.routed(job.id, { agent: outcome.agent, how: outcome.how })
+				if (!alive.current) return null
+				if (routed.error !== undefined) {
+					finish(outcome.unsaved(routed.error))
+					return null
+				}
+				applyThread(routed.data)
+				finish(outcome.done)
+				return null
+			} finally {
+				routingRef.current = null
+				if (alive.current) setRouting(null)
+			}
+		},
+		[service, applyThread, closeFlow],
 	)
 
 	const run = async (task: () => Promise<void>): Promise<void> => {
@@ -333,6 +409,9 @@ export function SignalsColumn({
 		if (event.key === 'Escape') {
 			if (!onLeave) return
 			event.preventDefault()
+			// The task sidebar sharing this column treats a window-level Esc as Back (SidebarRoot): this
+			// one is Signals' own and must not pop the hidden task stack.
+			event.stopPropagation()
 			onLeave()
 			return
 		}
@@ -360,21 +439,30 @@ export function SignalsColumn({
 					<SendFlow
 						thread={flowThread}
 						snapshot={snapshot}
-						service={service}
 						dock={dock}
 						mod={mod}
+						routing={routing}
+						onRoute={route}
 						onClose={closeFlow}
-						onRouted={applyThread}
 					/>
 				) : (
-					<NewAgentFlow thread={flowThread} service={service} mod={mod} onClose={closeFlow} onRouted={applyThread} />
+					<NewAgentFlow
+						thread={flowThread}
+						service={service}
+						mod={mod}
+						routing={routing}
+						onRoute={route}
+						onClose={closeFlow}
+					/>
 				)
 			) : (
 				<>
 					<header className="signals-title">
 						<span className="signals-title-text">
 							<span className="signals-title-kind">Signals</span>
-							<span className="signals-title-context">{signalsSummary(sections, now)}</span>
+							<span className="signals-title-context">
+								{signalsSummary(sections, now, bridge.snapshot ? sources : null)}
+							</span>
 						</span>
 						<IconBtn label="Show tasks" className="signals-show-tasks" onClick={onShowTasks}>
 							{GLYPH.menu}
@@ -407,7 +495,7 @@ export function SignalsColumn({
 									))
 								: null}
 						</span>
-						<output className="signals-note">{note}</output>
+						<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
 						{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
 						{health.map(line => (
 							<span key={line} className="signals-health">
@@ -555,24 +643,25 @@ function PromptField({ value, onChange }: { value: string; onChange(value: strin
 function SendFlow({
 	thread,
 	snapshot,
-	service,
 	dock,
 	mod,
+	routing,
+	onRoute,
 	onClose,
-	onRouted,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
-	service: SignalsService
 	dock: DockService
 	mod: 'cmd' | 'ctrl'
+	/** The column's routing effect in flight (this flow's or an earlier one's). */
+	routing: RouteJob | null
+	onRoute: RouteRunner
 	onClose(message?: string | null): void
-	onRouted(thread: SignalThread): void
 }) {
 	const matches = useMemo(() => matchAgents(thread, snapshot), [thread, snapshot])
 	const [picked, setPicked] = useState<string | null>(() => matches[defaultAgentPick(matches)]?.session.key ?? null)
 	const [text, setText] = useState(() => sendPrompt(thread))
-	const [sending, setSending] = useState(false)
+	const sending = routing !== null
 	const [note, setNote] = useState<string | null>(null)
 	const alive = useRef(true)
 	useEffect(
@@ -593,7 +682,10 @@ function SendFlow({
 		setNote(null)
 	}
 	const send = async (): Promise<void> => {
-		if (sending) return
+		if (routing) {
+			setNote(`${routing.label} (still running)`)
+			return
+		}
 		if (!match) {
 			setNote(matches.length === 0 ? 'No agent is running. n starts a new one' : 'Pick an agent first')
 			return
@@ -606,33 +698,37 @@ function SendFlow({
 			setNote('The prompt is empty')
 			return
 		}
-		setSending(true)
 		setNote(null)
-		const result = await dock.prompt({
+		const name = match.name
+		const request = {
 			session: match.session.key,
 			...(match.session.sessionId ? { sessionId: match.session.sessionId } : {}),
 			...(match.session.lastMessage ? { assistantUuid: match.session.lastMessage.uuid } : {}),
 			text,
+		}
+		const failed = await onRoute({
+			id: thread.id,
+			type: 'send',
+			label: `Sending to ${name}…`,
+			flowAlive: () => alive.current,
+			attempt: async () => {
+				const outcome = (await dock.prompt(request)).outcome
+				if (outcome.status !== 'sent')
+					return {
+						failed:
+							outcome.status === 'unconfirmed'
+								? `Not confirmed: ${outcome.detail}. Check ${name} before sending again`
+								: `Not sent: ${outcome.detail}`,
+					}
+				return {
+					agent: name,
+					how: 'sent',
+					done: `Sent ${thread.ref} to ${name}`,
+					unsaved: error => `Sent to ${name}; the receipt was not saved: ${error}`,
+				}
+			},
 		})
-		if (!alive.current) return
-		const outcome = result.outcome
-		if (outcome.status !== 'sent') {
-			setSending(false)
-			setNote(
-				outcome.status === 'unconfirmed'
-					? `Not confirmed: ${outcome.detail}. Check ${match.name} before sending again`
-					: `Not sent: ${outcome.detail}`,
-			)
-			return
-		}
-		const routed = await service.routed(thread.id, { agent: match.name, how: 'sent' })
-		if (!alive.current) return
-		if (routed.error !== undefined) {
-			onClose(`Sent to ${match.name}; the receipt was not saved: ${routed.error}`)
-			return
-		}
-		onRouted(routed.data)
-		onClose(`Sent ${thread.ref} to ${match.name}`)
+		if (failed !== null && alive.current) setNote(failed)
 	}
 	return (
 		<div
@@ -667,7 +763,7 @@ function SendFlow({
 					<Hint keys="esc">back</Hint>
 				</span>
 				<output className="signals-note">
-					{note ?? (match ? `Typed into ${match.name}’s terminal as its next prompt` : '')}
+					{note ?? (routing ? routing.label : match ? `Typed into ${match.name}’s terminal as its next prompt` : '')}
 				</output>
 				<span className="signals-foot-actions">
 					<Btn
@@ -696,20 +792,23 @@ function NewAgentFlow({
 	thread,
 	service,
 	mod,
+	routing,
+	onRoute,
 	onClose,
-	onRouted,
 }: {
 	thread: SignalThread
 	service: SignalsService
 	mod: 'cmd' | 'ctrl'
+	/** The column's routing effect in flight (this flow's or an earlier one's). */
+	routing: RouteJob | null
+	onRoute: RouteRunner
 	onClose(message?: string | null): void
-	onRouted(thread: SignalThread): void
 }) {
 	const [projects, setProjects] = useState<ProjectsState>({ status: 'loading' })
 	const [picked, setPicked] = useState<string | null>(null)
 	const [branch, setBranch] = useState(() => suggestBranch(thread))
 	const [text, setText] = useState(() => newAgentPrompt(thread))
-	const [starting, setStarting] = useState(false)
+	const starting = routing !== null
 	const [note, setNote] = useState<string | null>(null)
 	const alive = useRef(true)
 	useEffect(
@@ -743,7 +842,10 @@ function NewAgentFlow({
 		setNote(null)
 	}
 	const start = async (): Promise<void> => {
-		if (starting) return
+		if (routing) {
+			setNote(`${routing.label} (still running)`)
+			return
+		}
 		if (!project) {
 			setNote(list.length === 0 ? 'No Okena project to start in' : 'Pick a project first')
 			return
@@ -757,30 +859,26 @@ function NewAgentFlow({
 			setNote('The prompt is empty')
 			return
 		}
-		setStarting(true)
 		setNote(null)
-		const result = await service.newAgent({
-			signalId: thread.id,
-			projectId: project.id,
-			branch: name,
-			agent: 'claude',
-			prompt: text,
+		const request = { signalId: thread.id, projectId: project.id, branch: name, agent: 'claude' as const, prompt: text }
+		const failed = await onRoute({
+			id: thread.id,
+			type: 'new-agent',
+			label: 'Starting agent…',
+			flowAlive: () => alive.current,
+			attempt: async () => {
+				const result = await service.newAgent(request)
+				if (result.error !== undefined) return { failed: `Not started: ${result.error}` }
+				const agent = result.data.agentName
+				return {
+					agent,
+					how: 'started',
+					done: `Started claude in ${agent} with ${thread.ref}`,
+					unsaved: error => `Started claude in ${agent}; the receipt was not saved: ${error}`,
+				}
+			},
 		})
-		if (!alive.current) return
-		if (result.error !== undefined) {
-			setStarting(false)
-			setNote(`Not started: ${result.error}`)
-			return
-		}
-		const agent = result.data.agentName
-		const routed = await service.routed(thread.id, { agent, how: 'started' })
-		if (!alive.current) return
-		if (routed.error !== undefined) {
-			onClose(`Started claude in ${agent}; the receipt was not saved: ${routed.error}`)
-			return
-		}
-		onRouted(routed.data)
-		onClose(`Started claude in ${agent} with ${thread.ref}`)
+		if (failed !== null && alive.current) setNote(failed)
 	}
 	return (
 		<div
@@ -855,7 +953,12 @@ function NewAgentFlow({
 					<Hint keys="esc">back</Hint>
 				</span>
 				<output className="signals-note">
-					{note ?? (project ? `Creates the worktree in ${project.name} and starts claude there` : '')}
+					{note ??
+						(routing
+							? routing.label
+							: project
+								? `Creates the worktree in ${project.name} and starts claude there`
+								: '')}
 				</output>
 				<span className="signals-foot-actions">
 					<Btn

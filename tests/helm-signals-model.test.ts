@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import leftColumnModule from '../app/src/renderer/left-column.ts'
 import modelModule from '../app/src/renderer/signals/model.ts'
 
 type SignalThread = import('../app/src/shared-helm.ts').SignalThread
@@ -32,6 +33,7 @@ const {
 	suggestBranch,
 	threadActions,
 } = modelModule
+const { mountDeepLinkReveal, taskSidebarOwnsNavigation } = leftColumnModule
 
 const MINUTE = 60_000
 const NOW = new Date(2026, 10, 5, 14, 30).getTime() // Thursday 5 Nov 2026, 14:30 local
@@ -277,8 +279,91 @@ test('summary counts what still needs Jakub', () => {
 		],
 		NOW,
 	)
-	assert.equal(signalsSummary(sections, NOW), '1 needs you · 1 managed')
-	assert.equal(signalsSummary(signalSections([], NOW), NOW), 'nothing needs you')
+	const ok: SignalSourceHealth[] = [
+		{ source: 'github', status: 'ok', detail: null, lastPollAt: null, lastOkAt: null },
+		{ source: 'mail', status: 'disabled', detail: null, lastPollAt: null, lastOkAt: null },
+	]
+	assert.equal(signalsSummary(sections, NOW, ok), '1 needs you · 1 managed')
+	assert.equal(signalsSummary(signalSections([], NOW), NOW, ok), 'nothing needs you')
+})
+
+test('summary never says nothing needs you without a snapshot or while a source is down', () => {
+	const empty = signalSections([], NOW)
+	const health = (github: SignalSourceHealth['status'], mail: SignalSourceHealth['status']): SignalSourceHealth[] => [
+		{ source: 'github', status: github, detail: null, lastPollAt: null, lastOkAt: null },
+		{ source: 'mail', status: mail, detail: null, lastPollAt: null, lastOkAt: null },
+	]
+	// No snapshot yet.
+	assert.equal(signalsSummary(empty, NOW, null), 'nothing listed')
+	assert.equal(signalsSummary(empty, NOW, []), 'nothing listed')
+	// A source failed or needs permission.
+	assert.equal(signalsSummary(empty, NOW, health('error', 'ok')), 'nothing listed')
+	assert.equal(signalsSummary(empty, NOW, health('ok', 'needs_permission')), 'nothing listed')
+	assert.equal(signalsSummary(empty, NOW, health('unavailable', 'disabled')), 'nothing listed')
+	// Both off: nothing answered.
+	assert.equal(signalsSummary(empty, NOW, health('disabled', 'disabled')), 'nothing listed')
+	// Managed threads still count while a source is down.
+	assert.equal(
+		signalsSummary(signalSections([thread({ id: 3, owner: 'managed' })], NOW), NOW, health('error', 'ok')),
+		'nothing listed · 1 managed',
+	)
+	assert.equal(signalsSummary(empty, NOW, health('ok', 'ok')), 'nothing needs you')
+})
+
+/** A fake column host for the task-sidebar ownership check (root tests have no DOM). */
+function fakeColumn(split: { tasksHidden: boolean } | null) {
+	const inside = new Set<object>()
+	const node = (where: 'tasks' | 'signals' | 'terminal') => {
+		const target = { closest: (selector: string) => (selector === '#left' && where !== 'terminal' ? {} : null) }
+		if (where === 'tasks') inside.add(target)
+		return target
+	}
+	const doc = {
+		getElementById: (id: string) =>
+			id === 'left-tasks' && split
+				? { hidden: split.tasksHidden, contains: (target: unknown) => inside.has(target as object) }
+				: null,
+	}
+	return { doc, node }
+}
+
+test('task-sidebar navigation (Esc, back/forward) never acts while Signals holds the column', () => {
+	// Signals shown: neither an Esc from Signals nor the nav:go channel pops the hidden task stack.
+	const signals = fakeColumn({ tasksHidden: true })
+	assert.equal(taskSidebarOwnsNavigation(signals.doc, signals.node('signals')), false)
+	assert.equal(taskSidebarOwnsNavigation(signals.doc), false)
+	// Tasks shown: unchanged — inside the task host yes, the terminal or the Signals host no.
+	const tasks = fakeColumn({ tasksHidden: false })
+	assert.equal(taskSidebarOwnsNavigation(tasks.doc, tasks.node('tasks')), true)
+	assert.equal(taskSidebarOwnsNavigation(tasks.doc, tasks.node('signals')), false)
+	assert.equal(taskSidebarOwnsNavigation(tasks.doc, tasks.node('terminal')), false)
+	assert.equal(taskSidebarOwnsNavigation(tasks.doc), true)
+	// No split column (an older preload, stories mounting the sidebar alone): the old `#left` rule.
+	const legacy = fakeColumn(null)
+	assert.equal(taskSidebarOwnsNavigation(legacy.doc, legacy.node('signals')), true)
+	assert.equal(taskSidebarOwnsNavigation(legacy.doc, legacy.node('terminal')), false)
+	assert.equal(taskSidebarOwnsNavigation(legacy.doc, null), false)
+	assert.equal(taskSidebarOwnsNavigation(legacy.doc), true)
+})
+
+test('a helm:// deep link switches the column to Tasks and shows it', () => {
+	let deliver: ((itemId: string) => void) | null = null
+	const effects: string[] = []
+	const dispose = mountDeepLinkReveal({
+		onOpenItem: listener => {
+			deliver = listener
+			return () => {
+				deliver = null
+			}
+		},
+		column: { setMode: mode => effects.push(`mode:${mode}`) },
+		showColumn: () => effects.push('show'),
+	})
+	assert.deepEqual(effects, [])
+	;(deliver as ((itemId: string) => void) | null)?.('item-7')
+	assert.deepEqual(effects, ['mode:tasks', 'show'])
+	dispose()
+	assert.equal(deliver, null)
 })
 
 test('source health: one line per source that is on and not ok, never an all-clear', () => {

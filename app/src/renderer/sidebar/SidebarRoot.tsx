@@ -13,6 +13,7 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import './sidebar.css'
 import type { HelmSnapshot } from '../../shared-helm'
+import { taskSidebarOwnsNavigation } from '../left-column'
 import { showToast } from '../toast'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
@@ -257,7 +258,8 @@ export function SidebarRoot() {
 	useEffect(
 		() =>
 			window.helm.nav.onGo(direction => {
-				if (newItemSubmittingRef.current) return
+				// Signals holds the column: the hidden task stack must not move behind it.
+				if (newItemSubmittingRef.current || !taskSidebarOwnsNavigation(document)) return
 				if (direction === 'back') {
 					if (swipeControl.current?.interceptNativeNav()) return
 					pop()
@@ -271,7 +273,7 @@ export function SidebarRoot() {
 		const onMouseUp = (event: MouseEvent) => {
 			if (event.button !== 3 && event.button !== 4) return
 			event.preventDefault()
-			if (newItemSubmittingRef.current) return
+			if (newItemSubmittingRef.current || !taskSidebarOwnsNavigation(document)) return
 			if (event.button === 3) pop()
 			else goForward()
 		}
@@ -280,13 +282,14 @@ export function SidebarRoot() {
 	}, [pop, goForward])
 
 	// Esc = back (§4) — only when the event came from inside the pane, never
-	// from the terminal, and not from a typing context. Menus and sheets
-	// intercept Esc in the capture phase before this bubble listener runs.
+	// from the terminal or the Signals surface sharing the column (§3.25), and
+	// not from a typing context. Menus and sheets intercept Esc in the capture
+	// phase before this bubble listener runs.
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape' || newItemSubmittingRef.current) return
 			const target = event.target as HTMLElement | null
-			if (!target || !target.closest('#left')) return
+			if (!target || !taskSidebarOwnsNavigation(document, target)) return
 			const top = navRef.current.stack[navRef.current.stack.length - 1]
 			if (target.matches('input, textarea, select') && top?.kind !== 'new-item') return
 			event.preventDefault()

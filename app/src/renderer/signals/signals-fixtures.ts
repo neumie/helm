@@ -368,10 +368,17 @@ export interface SignalsFixtureCalls {
 	newAgents: SignalNewAgentRequest[]
 }
 
+/** The routing effects a browser test can hold in flight (`newAgent`: the Okena start, `prompt`: the dock send). */
+export type SignalsHeldEffect = 'newAgent' | 'prompt'
+
 export interface SignalsFixture {
 	service: SignalsService
 	dock: DockService
 	calls: SignalsFixtureCalls
+	/** Browser tests only: later calls of this effect wait (recorded at once) until `release`. */
+	hold(effect: SignalsHeldEffect): void
+	/** Lets every waiting call of this effect finish, and stops holding it. */
+	release(effect: SignalsHeldEffect): void
 }
 
 export interface SignalsFixtureOptions {
@@ -407,6 +414,22 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		prompts: [],
 		okenaProjects: [],
 		newAgents: [],
+	}
+	const held = new Map<SignalsHeldEffect, { wait: Promise<void>; release(): void }>()
+	const hold = (effect: SignalsHeldEffect): void => {
+		if (held.has(effect)) return
+		let release = (): void => undefined
+		const wait = new Promise<void>(resolve => {
+			release = resolve
+		})
+		held.set(effect, { wait, release })
+	}
+	const release = (effect: SignalsHeldEffect): void => {
+		held.get(effect)?.release()
+		held.delete(effect)
+	}
+	const gate = async (effect: SignalsHeldEffect): Promise<void> => {
+		await held.get(effect)?.wait
 	}
 	const change = (id: number, apply: (entry: SignalThread, at: string) => SignalThread) => {
 		const current = threads.find(entry => entry.id === id)
@@ -466,6 +489,7 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		},
 		async newAgent(request) {
 			calls.newAgents.push(request)
+			await gate('newAgent')
 			return { data: { terminalId: 't-new', sessionId: 'session-new', agentName: request.branch } }
 		},
 	}
@@ -475,8 +499,9 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		subscribe: () => () => undefined,
 		async prompt(request) {
 			calls.prompts.push(request)
+			await gate('prompt')
 			return { ok: true, outcome: { status: 'sent', delivery: 'pty' } }
 		},
 	}
-	return { service, dock, calls }
+	return { service, dock, calls, hold, release }
 }
