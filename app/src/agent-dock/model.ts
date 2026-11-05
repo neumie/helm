@@ -388,7 +388,15 @@ export type DockActOutcome =
 	| { status: 'refused'; reason: DockRefusalReason; detail: string }
 	| { status: 'failed'; detail: string }
 
-export type AgentDockActResult = { ok: true; outcome: DockActOutcome } | { ok: false; outcome: DockActOutcome }
+/**
+ * `recorded`: main put the outcome on the item's receipt (or the session's reply), so the snapshot
+ * shows it, and drops it once it no longer holds (a busy/untracked refusal, the agent seen idle
+ * again); the renderer keeps its own copy only of outcomes main did not record (a precondition
+ * refusal, or a result the reducer dropped because the item or session moved on meanwhile).
+ */
+export type AgentDockActResult =
+	| { ok: true; outcome: DockActOutcome; recorded?: boolean }
+	| { ok: false; outcome: DockActOutcome; recorded?: boolean }
 
 export type DockReceiptStatus = (typeof DOCK_RECEIPT_STATUSES)[number]
 
@@ -561,8 +569,20 @@ export interface ObservedClaudeTerminal {
 }
 
 export type AgentDockObservation =
-	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. */
-	| { type: 'poll'; source: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
+	/**
+	 * One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates.
+	 * `readFrom`: when the tick's reads began (the watcher stamps it). A dock answer refused after
+	 * that (a tick in flight while Jakub sent) was checked against newer data than this poll's, so
+	 * this poll never drops that refusal as no longer holding.
+	 */
+	| {
+			type: 'poll'
+			source: DockSourceId
+			profile: string
+			state: OkenaFetch
+			terminals: ObservedClaudeTerminal[]
+			readFrom?: number
+	  }
 	/** Jakub acked an item in the dock. */
 	| { type: 'ack'; itemId: number }
 	/** Jakub answered from the dock; main is about to run the CAS read and the Okena POST. */

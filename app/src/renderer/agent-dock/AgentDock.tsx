@@ -872,8 +872,9 @@ export function AgentDock({
 					next.delete(item.id)
 					return next
 				})
-				// Refusals/failures main recorded on the item show from the snapshot; keep the words for the rest.
-				const error = actErrorText(result.outcome)
+				// Refusals/failures main recorded on the item show from the snapshot (and leave it once they no
+				// longer hold: a busy refusal, the agent seen idle again); keep the words only for the rest.
+				const error = result.recorded ? null : actErrorText(result.outcome)
 				if (error !== null) done(next => next.set(item.id, error))
 				// A refusal or failure keeps the pane on the item for another try. An answer sent with the keys
 				// in the dock, pane still on it, moves on to the next waiting item (or back to the terminal);
@@ -917,7 +918,8 @@ export function AgentDock({
 					next.delete(key)
 					return next
 				})
-				const error = actErrorText(result.outcome)
+				// Main records its outcomes on the session's reply (the snapshot shows them); keep the rest.
+				const error = result.recorded ? null : actErrorText(result.outcome)
 				// Tied to the message it answered: once the agent says something new it no longer applies.
 				if (error !== null)
 					edit(next =>

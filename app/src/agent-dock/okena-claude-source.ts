@@ -190,7 +190,7 @@ export class OkenaClaudeSource implements DockSource {
 			}
 		}
 		const page = await this.freshTail(client, target)
-		return this.sendPrompt(client, target, turnStillWaiting(item, fresh.session, page), request.body.text)
+		return this.sendPrompt(client, target, turnStillWaiting(item, fresh.session, page, this.id), request.body.text)
 	}
 
 	/**
@@ -208,7 +208,7 @@ export class OkenaClaudeSource implements DockSource {
 		const fresh = await this.freshSession(client, target)
 		if (!fresh.ok) return fresh.outcome
 		const page = await this.freshTail(client, target)
-		return this.sendPrompt(client, target, sessionStillIdle(expect, fresh.session, page), body)
+		return this.sendPrompt(client, target, sessionStillIdle(expect, fresh.session, page, this.id), body)
 	}
 
 	/** The pane's last assistant message, read live (the agent detail; `helm dock show` reads turns the same way). */
