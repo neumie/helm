@@ -2240,7 +2240,7 @@ body.dragging {
 .agent-dock-md,
 .agent-dock-warn,
 .agent-dock-input,
-.agent-dock-facts {
+.agent-dock-facts > * {
 	font-size: var(--dock-prose-fs);
 	line-height: var(--dock-prose-lh);
 }
@@ -2708,11 +2708,16 @@ body.dragging {
 	outline-offset: 2px;
 }
 
+/* Facts under the message (PR #s, notes) start on its text column. That column is the ● gutter's 2ch
+ * measured in the dock's 12px (as Reply's > gutter is), so the row keeps 12px and pads by it; its facts
+ * read at 13/20. A 2ch margin at 13px sat 1.3px right of the paragraph above (Jakub: "křivý"). */
 .agent-dock-facts {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 4px 16px;
-	margin: 8px 0 0 2ch;
+	margin: 8px 0 0;
+	padding-left: 2ch;
+	font-size: var(--dock-fs);
 	color: var(--dock-dim);
 }
 
