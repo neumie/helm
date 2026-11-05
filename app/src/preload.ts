@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
-import type { AgentDockActRequest, AgentDockActResult, AgentDockSnapshot } from './agent-dock/model'
+import type {
+	AgentDockActRequest,
+	AgentDockActResult,
+	AgentDockMessageResult,
+	AgentDockPromptRequest,
+	AgentDockRevealResult,
+	AgentDockSnapshot,
+} from './agent-dock/model'
 import type {
 	AGENT_DOCK_IPC,
 	AgentDockApi,
@@ -92,6 +99,11 @@ const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
 	setVisible: 'agent-dock:set-visible',
 	ack: 'agent-dock:ack',
 	act: 'agent-dock:act',
+	prompt: 'agent-dock:prompt',
+	message: 'agent-dock:message',
+	reveal: 'agent-dock:reveal',
+	setNotify: 'agent-dock:set-notify',
+	openItem: 'agent-dock:open-item',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -324,6 +336,19 @@ const api: HelmApi = {
 		ack: itemId => ipcRenderer.invoke(AGENT_DOCK_CHANNELS.ack, itemId, sessionProfileToken) as Promise<boolean>,
 		act: (request: AgentDockActRequest) =>
 			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.act, request, sessionProfileToken) as Promise<AgentDockActResult>,
+		prompt: (request: AgentDockPromptRequest) =>
+			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.prompt, request, sessionProfileToken) as Promise<AgentDockActResult>,
+		lastMessage: (session: string) =>
+			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.message, session, sessionProfileToken) as Promise<AgentDockMessageResult>,
+		reveal: (session: string) =>
+			ipcRenderer.invoke(AGENT_DOCK_CHANNELS.reveal, session, sessionProfileToken) as Promise<AgentDockRevealResult>,
+		setNotify: enabled => ipcRenderer.send(AGENT_DOCK_CHANNELS.setNotify, enabled === true, sessionProfileToken),
+		onOpenItem: listener =>
+			subscribe<[unknown, string]>(AGENT_DOCK_CHANNELS.openItem, (itemId, profileToken) => {
+				if (profileToken !== sessionProfileToken) return
+				if (itemId === null || (typeof itemId === 'number' && Number.isSafeInteger(itemId) && itemId > 0))
+					listener(itemId)
+			}),
 	} satisfies AgentDockApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
+import cadenceModule from '../app/src/agent-dock/cadence.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
+import { okenaFixture } from './helpers/agent-dock'
 
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
@@ -19,20 +21,23 @@ const {
 	sessionKey,
 } = modelModule as ModelModule
 const {
+	OBSERVATION_GAP_MS,
 	TURN_IDLE_MS,
 	TURN_RESUMED_MS,
 	TURN_TEXT_MAX,
+	agentDockActive,
 	agentDockAwaitingReply,
+	agentDockNextDeadline,
 	agentDockPersisted,
 	agentDockSnapshot,
 	agentDockTranscriptRequest,
 	createAgentDockState,
 	reduce,
 } = reduceModule as ReduceModule
+type CadenceModule = typeof import('../app/src/agent-dock/cadence.ts')
+const { RECONCILE_INTERVAL_MS, SLOWEST_INTERVAL_MS } = cadenceModule as CadenceModule
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const SHOW_ASK = fixture('show-ask.json')
@@ -100,11 +105,15 @@ const user = (uuid: string): Json => ({ kind: 'user', uuid, text: 'go on', origi
 const assistant = (uuid: string, text = 'Done.'): Json => ({ kind: 'assistant', uuid, text })
 
 let stateVersion = 2000
-function poll(detail: Json | null, opts: { transcript?: Json; version?: number } = {}): AgentDockObservation {
+function poll(
+	detail: Json | null,
+	opts: { transcript?: Json; version?: number; background?: unknown } = {},
+): AgentDockObservation {
 	stateVersion += 1
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: {
 			ok: true,
@@ -116,6 +125,9 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 						terminalId: TID,
 						detail: { ok: true, body: detail },
 						transcript: opts.transcript ? { ok: true, body: opts.transcript } : undefined,
+						...(opts.background !== undefined
+							? { background: opts.background as { sessionId: string; tasks: number; shells: number } }
+							: {}),
 					},
 				]
 			: [],
@@ -123,6 +135,7 @@ function poll(detail: Json | null, opts: { transcript?: Json; version?: number }
 }
 const down = (error = 'connect ECONNREFUSED'): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error },
 	terminals: [],
@@ -201,7 +214,21 @@ test('seed: open dialog becomes an item silently; health ok emits nothing', () =
 	assert.equal(state.sessions[KEY]?.session.name, 'dock-test')
 	assert.equal(state.sessions[KEY]?.session.projectId, 'proj-1')
 	assert.equal(state.sessions[KEY]?.session.channelAttached, false)
+	assert.equal(state.sessions[KEY]?.session.repo, undefined)
 	assert.equal(state.source.state, 'ok')
+})
+
+test("a worktree pane's repo is its parent project's name (Okena worktree_info)", () => {
+	const observation = poll(idle())
+	const body = (observation as { state: { body: Json } }).state.body
+	const [project] = body.projects as Json[]
+	body.projects = [
+		{ ...project, name: 'fix/repair-done', worktree_info: { parent_project_id: 'proj-jvs' } },
+		{ id: 'proj-jvs', name: 'JVS', path: '/repo/crane-rental', terminal_names: {} },
+	]
+	const { state } = run(createAgentDockState(null, T0), [[T0, observation]])
+	assert.equal(state.sessions[KEY]?.session.project, 'fix/repair-done')
+	assert.equal(state.sessions[KEY]?.session.repo, 'JVS')
 })
 
 test("ask facts keep Claude's permission_suggestions verbatim, and only when Okena sent some", () => {
@@ -302,7 +329,7 @@ test('ask opens on dialog appear and resolves outside when it vanishes', () => {
 	assert.equal(opened.events[0]?.t === 'item.opened' && opened.events[0].kind, 'ask')
 	const vanished = reduce(opened.state, poll(idle()), T0 + 2000)
 	assert.deepEqual(vanished.events, [{ t: 'item.resolved', at: T0 + 2000, id: 1, by: 'outside' }])
-	// The same dialog id never reopens (dedupe key retained in Recent).
+	// The same dialog id never reopens (the resolved item keeps its dedupe key).
 	assert.equal(reduce(vanished.state, poll(ask()), T0 + 3000).events.length, 0)
 })
 
@@ -425,6 +452,110 @@ test('a quick resume inside the idle window opens nothing', () => {
 	assert.equal(state.items.length, 0)
 })
 
+// --- idle gate: settle deadline, activity, diagnostics -------------------------
+
+test('a turn held by the idle gate sets the settle deadline at its idle edge + TURN_IDLE_MS and keeps the dock active', () => {
+	const t1 = T0 + 1000
+	const adopted = run(createAgentDockState(null, T0), [
+		[T0, poll(idle(), { transcript: fullLog() })],
+		[T0 + 500, poll(idle())],
+	]).state
+	assert.equal(agentDockActive(adopted), false, 'idle at an adopted message: nothing to watch closely')
+	assert.equal(agentDockNextDeadline(adopted, T0 + 500), undefined)
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1', 'PR ready?')], { cursor: 1_300_000 }) }),
+		t1,
+	)
+	assert.deepEqual(held.events, [])
+	assert.deepEqual(held.diagnostics, [])
+	assert.equal(held.state.sessions[KEY]?.gateCandidate?.uuid, 'b1')
+	assert.equal(agentDockNextDeadline(held.state, t1), t1 + TURN_IDLE_MS)
+	assert.equal(agentDockActive(held.state), true)
+	// Still held a tick later: same deadline; a past deadline is never returned (no tick storm).
+	const later = reduce(held.state, poll(idle()), t1 + 3000)
+	assert.equal(agentDockNextDeadline(later.state, t1 + 3000), t1 + TURN_IDLE_MS)
+	assert.equal(agentDockNextDeadline(later.state, t1 + TURN_IDLE_MS), undefined)
+	const opened = reduce(later.state, poll(idle()), t1 + TURN_IDLE_MS)
+	assert.equal(opened.events[0]?.t, 'item.opened')
+	assert.equal(opened.state.sessions[KEY]?.gateCandidate, undefined)
+	assert.deepEqual(opened.diagnostics, [])
+	assert.equal(agentDockNextDeadline(opened.state, t1 + TURN_IDLE_MS), undefined)
+	assert.equal(agentDockActive(opened.state), false, 'an open turn on an idle pane needs no fast cadence')
+})
+
+test('a live turn on a busy pane sets the settle deadline at the busy edge + TURN_RESUMED_MS', () => {
+	const { state, at } = withOpenTurn()
+	const busy = reduce(state, poll(working()), at + 2000)
+	assert.equal(agentDockNextDeadline(busy.state, at + 2000), at + 2000 + TURN_RESUMED_MS)
+	assert.equal(agentDockActive(busy.state), true)
+	const closed = reduce(busy.state, poll(working()), at + 2000 + TURN_RESUMED_MS)
+	assert.equal(itemsOf(closed.state, 'turn')[0]?.resolution?.by, 'superseded')
+	assert.equal(agentDockNextDeadline(closed.state, at + 2000 + TURN_RESUMED_MS), undefined)
+})
+
+test('a quick resume logs the suppressed turn (turn.gated) with its idle stretch', () => {
+	const t1 = T0 + 1000
+	const held = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) })],
+		[t1 + 2000, poll(idle())],
+	]).state
+	const resumed = reduce(held, poll(working(), { transcript: page([user('u1')], { cursor: 1_310_000 }) }), t1 + 3000)
+	assert.deepEqual(resumed.events, [])
+	assert.deepEqual(resumed.diagnostics, [
+		{ t: 'turn.gated', at: t1 + 3000, session: KEY, idleMs: 3000, seenIdleMs: 2000, by: 'working' },
+	])
+	assert.equal(resumed.state.sessions[KEY]?.gateCandidate, undefined)
+	// Logged once: the stretch is over.
+	assert.deepEqual(reduce(resumed.state, poll(working()), t1 + 4000).diagnostics, [])
+})
+
+test('the gate log names a dialog, a newer message and an observation gap (silent) apart', () => {
+	const t1 = T0 + 1000
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) }),
+		t1,
+	).state
+	assert.equal(reduce(held, poll(ask()), t1 + 1000).diagnostics[0]?.by, 'waiting')
+	const newer = reduce(held, poll(idle(), { transcript: page([assistant('b2')], { cursor: 1_310_000 }) }), t1 + 1000)
+	assert.equal(newer.diagnostics[0]?.by, 'superseded')
+	assert.equal(newer.state.sessions[KEY]?.gateCandidate?.uuid, 'b2', 'the newer message is held in the same stretch')
+	const gap = reduce(held, poll(working()), t1 + OBSERVATION_GAP_MS + 1_000)
+	assert.deepEqual(gap.diagnostics, [], 'a broken stretch is no evidence of a quick resume')
+	const unreadable = reduce(held, poll(idle({ busy: 'yes' })), t1 + 1000)
+	assert.deepEqual(unreadable.diagnostics, [])
+	assert.equal(unreadable.state.sessions[KEY]?.gateCandidate, undefined)
+})
+
+test('observation gap: scaled to the slowest tick, so reconciliation ticks keep one stretch', () => {
+	assert.ok(OBSERVATION_GAP_MS > 2.5 * SLOWEST_INTERVAL_MS, 'gap > 2.5× the slowest interval')
+	assert.equal(SLOWEST_INTERVAL_MS, RECONCILE_INTERVAL_MS)
+	const t1 = T0 + 1000
+	const held = reduce(
+		seededWorking(),
+		poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }) }),
+		t1,
+	).state
+	// The stream is up and nothing is active: the next tick is a (slightly late) reconciliation.
+	const late = reduce(held, poll(idle()), t1 + RECONCILE_INTERVAL_MS + 2_000).state
+	assert.equal(itemsOf(late, 'turn')[0]?.state, 'open', 'the idle stretch held across a 17 s tick')
+	// A real outage (or sleep) still breaks it: no turn from an unobserved stretch.
+	const after = t1 + OBSERVATION_GAP_MS + 1
+	const broken = reduce(held, poll(idle()), after).state
+	assert.equal(itemsOf(broken, 'turn').length, 0)
+	assert.equal(broken.sessions[KEY]?.gateCandidate?.idleSince, after, 'the stretch restarts at the new observation')
+})
+
+test('activity: a busy or dialog pane is active; a down source is not', () => {
+	const working1 = reduce(createAgentDockState(null, T0), poll(working(), { transcript: fullLog() }), T0)
+	assert.equal(agentDockActive(working1.state), true)
+	const asking = reduce(working1.state, poll(ask()), T0 + 1000)
+	assert.equal(agentDockActive(asking.state), true)
+	const gone = reduce(working1.state, down(), T0 + 1000)
+	assert.equal(agentDockActive(gone.state), false, 'a frozen row of a down source does not speed up polling')
+})
+
 function withOpenTurn(): { state: AgentDockState; at: number } {
 	const t1 = T0 + 1000
 	const { state } = run(seededWorking(), [
@@ -469,6 +600,52 @@ test('a newer turn supersedes the open one', () => {
 	assert.equal(itemsOf(final, 'turn').find(item => item.state === 'open')?.key, `turn:${SID}:b2`)
 })
 
+test('a long day in one pane: every answered turn and question closes, never more than one live turn', () => {
+	// The shape behind "things I already answered stay in the dock" (#179–#187, one pane over an hour):
+	// replies typed in the terminal (read, or only seen as busy), background wakes, a question
+	// answered in the terminal. Each closes in the reducer, so the queue (live items) holds only the
+	// latest unanswered turn; the snapshot keeps the rest as RECENT (`helm dock ls --all`) only.
+	let state = seededWorking()
+	let at = T0 + 1000
+	let cursor = 1_300_000
+	const step = (detail: Json, entries?: Json[], wait = 1000) => {
+		at += wait
+		cursor += 10_000
+		state = reduce(state, poll(detail, entries ? { transcript: page(entries, { cursor }) } : {}), at).state
+		const live = agentDockSnapshot(state, at).items.filter(item => item.state !== 'resolved')
+		assert.ok(live.filter(item => item.kind === 'turn').length <= 1, `one live turn at most (${at - T0} ms)`)
+		return live
+	}
+	const settle = () => step(idle(), undefined, TURN_IDLE_MS)
+	const liveKeys = (live: DockItem[]) => live.map(item => item.key)
+
+	step(idle(), [assistant('t1')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t1`])
+	// Replied in the terminal, the reply read while the agent works.
+	assert.deepEqual(step(working(), [user('u1')]), [])
+	step(idle(), [assistant('t2')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t2`])
+	// Replied in the terminal, the reply not read until the agent is long busy.
+	step(working())
+	assert.deepEqual(step(working(), undefined, TURN_RESUMED_MS), [])
+	step(idle(), [user('u2'), assistant('t3')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t3`])
+	// A background wake says something new while the pane stays idle: the new turn replaces the old one.
+	assert.deepEqual(liveKeys(step(idle(), [assistant('t4')])), [`turn:${SID}:t4`])
+	// A question raised and answered in the terminal.
+	step(working(), [user('u4')])
+	assert.equal(step(ask()).filter(item => item.kind === 'ask').length, 1)
+	assert.deepEqual(step(working()), [])
+	step(idle(), [assistant('t5')])
+	assert.deepEqual(liveKeys(settle()), [`turn:${SID}:t5`])
+
+	const closed = state.items
+		.filter(item => item.state === 'resolved')
+		.sort((a, b) => a.id - b.id)
+		.map(item => `${item.kind}:${item.resolution?.by}`)
+	assert.deepEqual(closed, ['turn:replied', 'turn:superseded', 'turn:superseded', 'turn:replied', 'ask:outside'])
+})
+
 // --- the agent moved on (Jakub replied in the terminal, or it woke by itself) ----
 
 const RESET_ENTRIES = LOG_RESET_REPLY.entries as Json[]
@@ -501,7 +678,6 @@ test('real shape: a terminal reply never read while the agent works closes the t
 	])
 	assert.deepEqual(early.events, [])
 	assert.equal(itemsOf(early.state, 'turn')[0]?.state, 'open')
-	assert.equal(itemsOf(early.state, 'turn')[0]?.rev, 1)
 
 	const late = reduce(early.state, poll(working()), at + 1500 + TURN_RESUMED_MS)
 	assert.deepEqual(late.events, [{ t: 'item.resolved', at: at + 1500 + TURN_RESUMED_MS, id: 1, by: 'superseded' }])
@@ -689,6 +865,69 @@ test('subagents still running after the turn: background status and hadBackgroun
 	assert.equal(turn?.fact.kind === 'turn' && turn.fact.hadBackground, true)
 })
 
+test('a background shell still running after the turn: background status, "1 shell" counts and hadBackground', () => {
+	const shell = { sessionId: SID, tasks: 1, shells: 1 }
+	const t1 = T0 + 1000
+	const { state } = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1')], { cursor: 1_300_000 }), background: shell })],
+		[t1 + TURN_IDLE_MS, poll(idle(), { background: shell })],
+	])
+	const session = state.sessions[KEY]?.session
+	assert.equal(session?.status, 'background')
+	assert.equal(session?.subagents, 0)
+	assert.equal(session?.backgroundTasks, 1)
+	assert.equal(session?.backgroundShells, 1)
+	// The turn still opens (Jakub may want to read "I'll report back when it finishes").
+	const [turn] = itemsOf(state, 'turn')
+	assert.equal(turn?.state, 'open')
+	assert.equal(turn?.fact.kind === 'turn' && turn.fact.hadBackground, true)
+	// The shell ends (its notification was read): idle again, counts gone.
+	const after = reduce(
+		state,
+		poll(idle(), { background: { sessionId: SID, tasks: 0, shells: 0 } }),
+		t1 + TURN_IDLE_MS + 1500,
+	).state
+	assert.equal(after.sessions[KEY]?.session.status, 'idle')
+	assert.equal(after.sessions[KEY]?.session.backgroundTasks, 0)
+})
+
+test('background tasks fail closed: another session, an odd shape or no read claims none', () => {
+	const t1 = T0 + 1000
+	const statusWith = (background: unknown) =>
+		run(seededWorking(), [[t1, poll(idle(), { background })]]).state.sessions[KEY]?.session
+	assert.equal(statusWith({ sessionId: 'another-session', tasks: 2, shells: 2 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: -1, shells: 0 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: 1.5, shells: 0 })?.status, 'idle')
+	assert.equal(statusWith({ sessionId: SID, tasks: '1', shells: 1 })?.status, 'idle')
+	assert.equal(statusWith(null)?.status, 'idle')
+	const none = run(seededWorking(), [[t1, poll(idle())]]).state.sessions[KEY]?.session
+	assert.equal(none?.status, 'idle')
+	assert.equal(none?.backgroundTasks, 0)
+	// Busy wins: a shell does not hide that the main agent works (the count still shows).
+	const busy = run(seededWorking(), [[t1, poll(working(), { background: { sessionId: SID, tasks: 1, shells: 1 } })]])
+		.state.sessions[KEY]?.session
+	assert.equal(busy?.status, 'working')
+	assert.equal(busy?.backgroundTasks, 1)
+	// Shells counted beyond the tasks are clamped.
+	assert.equal(statusWith({ sessionId: SID, tasks: 1, shells: 5 })?.backgroundShells, 1)
+})
+
+test("Helm's hub counts background tasks itself (background_tasks), apart from subagents", () => {
+	const t1 = T0 + 1000
+	const { state } = run(seededWorking(), [[t1, poll(idle({ background_tasks: 2 }))]])
+	const session = state.sessions[KEY]?.session
+	assert.equal(session?.status, 'background')
+	assert.equal(session?.subagents, 0)
+	assert.equal(session?.backgroundTasks, 2)
+	assert.equal(session?.backgroundShells, 0, 'no background_shells: none claimed')
+	// The hub's shells (Stop's task types) read like Okena's; more shells than tasks never show.
+	const shells = run(seededWorking(), [[t1, poll(idle({ background_tasks: 2, background_shells: 5 }))]]).state
+	assert.equal(shells.sessions[KEY]?.session.backgroundShells, 2)
+	// A mistyped hub count fails the whole detail closed, like any other field.
+	const odd = run(seededWorking(), [[t1, poll(idle({ background_tasks: 'two' }))]]).state.sessions[KEY]?.session
+	assert.equal(odd?.status, 'unknown')
+})
+
 test('turn text is control-stripped and bounded', () => {
 	const t1 = T0 + 1000
 	const long = `\u001b[31mred\u0007 ${'x'.repeat(TURN_TEXT_MAX * 2)}`
@@ -813,4 +1052,276 @@ test('snapshot orders open asks, orphaned, open turns, then recent; persistence 
 	assert.deepEqual(restored.sources, {})
 	assert.equal(restored.items.length, 0)
 	assert.equal(restored.nextItemId, withAsks.nextItemId)
+})
+
+// --- profile switch -----------------------------------------------------------
+
+for (const [source, profileA, profileB] of [
+	['okena', 'p1', 'p2'],
+	['helm', 'helm:work', 'helm:home'],
+] as const) {
+	const pollAs = (profile: string, detail: Json | null): AgentDockObservation => ({
+		...poll(detail),
+		source,
+		profile,
+	})
+
+	test(`${source}: a profile switch orphans the old profile's open asks instead of freezing them`, () => {
+		const keyA = sessionKey(profileA, TID)
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 600_000, pollAs(profileB, null)],
+		])
+		const item = itemsOf(state, 'ask')[0]
+		assert.equal(item?.state, 'orphaned')
+		assert.equal(state.sessions[keyA]?.session.status, 'unknown')
+		// Nothing resolves from not being observed: the agent may still wait there.
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned'],
+		)
+		// Jakub can clear it; an open ask could not be acked.
+		const acked = reduce(state, { type: 'ack', itemId: item?.id ?? 0 }, T0 + 600_001)
+		assert.equal(acked.state.items[0]?.resolution?.by, 'acked')
+		// Nothing live any more: the next poll of the other profile drops the row.
+		assert.equal(reduce(acked.state, pollAs(profileB, null), T0 + 601_500).state.sessions[keyA], undefined)
+	})
+
+	test(`${source}: switching back with the dialog still listed reopens the ask`, () => {
+		const { state, events } = run(createAgentDockState(null, T0), [
+			[T0, pollAs(profileA, ask())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, pollAs(profileA, ask())],
+		])
+		const items = itemsOf(state, 'ask')
+		assert.equal(items.length, 1)
+		assert.equal(items[0]?.state, 'open')
+		assert.equal(items[0]?.orphanedAt, undefined)
+		assert.equal(state.sessions[sessionKey(profileA, TID)]?.session.status, 'waiting')
+		assert.deepEqual(
+			events.map(event => event.t),
+			['item.orphaned', 'item.reopened'],
+		)
+	})
+
+	test(`${source}: transcript activity never closes an orphaned ask whose dialog is listed again`, () => {
+		const withPage = (profile: string, transcript: Json): AgentDockObservation => ({
+			...poll(ask(), { transcript }),
+			source,
+			profile,
+		})
+		const { state } = run(createAgentDockState(null, T0), [
+			[T0, withPage(profileA, fullLog())],
+			[T0 + 1_500, pollAs(profileB, null)],
+			[T0 + 3_000, withPage(profileA, page([assistant('after-switch')], { cursor: 999_999 }))],
+		])
+		assert.deepEqual(
+			itemsOf(state, 'ask').map(item => item.state),
+			['open'],
+		)
+	})
+}
+
+// --- boundary -------------------------------------------------------------------
+
+test('the dock core never imports terminal output, pty or screen code', () => {
+	const app = new URL('../app/src/', import.meta.url)
+	const files = [
+		...readdirSync(new URL('agent-dock/', app))
+			.filter(name => name.endsWith('.ts'))
+			.map(name => new URL(`agent-dock/${name}`, app)),
+		new URL('claude-remote/hub-core.ts', app),
+		new URL('claude-remote/hub.ts', app),
+	]
+	const forbidden = /node-pty|xterm|session-buffer|pty-host|\/pty\b|\/sessions?\//
+	for (const bad of ['node-pty', '@xterm/headless', '../session-buffer', './pty-host', '../sessions/registry'])
+		assert.match(bad, forbidden)
+	for (const file of files) {
+		const source = readFileSync(file, 'utf8')
+		const specifiers = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)].map(
+			match => match[1] ?? match[2] ?? '',
+		)
+		for (const specifier of specifiers)
+			assert.doesNotMatch(
+				specifier,
+				forbidden,
+				`${file.pathname}: AGENTS.md: the dock never infers agent state from terminal output/screen/pty liveness`,
+			)
+	}
+})
+
+// --- Agents overview: last message and replies from the agent detail -------------
+
+const sessionOf = (state: AgentDockState, at: number) => agentDockSnapshot(state, at).sessions[0]
+
+test('the snapshot carries the last message as a bounded, sanitized first line; acking marks it seen', () => {
+	const t1 = T0 + 1000
+	const esc = String.fromCharCode(0x1b)
+	const rlo = String.fromCharCode(0x202e)
+	const text = `\n\n  ${esc}[31m**Hotovo**${rlo} ${'x'.repeat(400)}\nsecond line`
+	const { state } = run(seededWorking(), [
+		[t1, poll(idle(), { transcript: page([assistant('b1', text)], { cursor: 1_300_000 }) })],
+	])
+	const last = sessionOf(state, t1)?.lastMessage
+	assert.equal(last?.uuid, 'b1')
+	assert.equal(last?.at, t1)
+	assert.equal(last?.seen, false)
+	assert.ok((last?.text.length ?? 0) <= 160)
+	assert.ok(last?.text.startsWith('[31m**Hotovo** xxx'), last?.text)
+	assert.ok(last?.text.endsWith('…'))
+	assert.ok(!last?.text.includes(esc) && !last?.text.includes(rlo) && !last?.text.includes('\n'))
+
+	// The turn opens, Jakub acks it: the same message now reads as seen.
+	const opened = reduce(state, poll(idle()), t1 + TURN_IDLE_MS).state
+	const turn = itemsOf(opened, 'turn')[0]
+	assert.ok(turn)
+	const acked = reduce(opened, { type: 'ack', itemId: turn.id }, t1 + TURN_IDLE_MS + 1000).state
+	assert.equal(sessionOf(acked, t1 + TURN_IDLE_MS + 1000)?.lastMessage?.seen, true)
+
+	// A reset page re-reading the same message keeps when Helm first read it.
+	const reread = reduce(
+		acked,
+		poll(idle(), { transcript: page([user('u0'), assistant('b1', text)], { cursor: 1_400_000, reset: true }) }),
+		t1 + 60_000,
+	).state
+	assert.equal(sessionOf(reread, t1 + 60_000)?.lastMessage?.at, t1)
+})
+
+test('a first-ever idle pane adopts its last message as seen (read), with its excerpt', () => {
+	const { state } = run(createAgentDockState(null, T0), [[T0, poll(idle(), { transcript: fullLog() })]])
+	const last = sessionOf(state, T0)?.lastMessage
+	assert.equal(last?.uuid, ASSISTANT_UUID)
+	assert.equal(last?.seen, true)
+	assert.ok(last?.text)
+})
+
+/** An idle pane whose last message Jakub has read (adopted at Helm's first look). */
+function readPane(): { state: AgentDockState; at: number } {
+	const { state } = run(createAgentDockState(null, T0), [[T0, poll(idle(), { transcript: fullLog() })]])
+	return { state, at: T0 + 1000 }
+}
+
+test('a reply from the agent detail: sending → sent → confirmed once its user entry follows the message', () => {
+	const { state, at } = readPane()
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }, at)
+	assert.deepEqual(sending.events, [])
+	assert.equal(sessionOf(sending.state, at)?.reply?.status, 'sending')
+	assert.equal(sessionOf(sending.state, at)?.reply?.assistantUuid, ASSISTANT_UUID)
+	const sent = reduce(
+		sending.state,
+		{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'pty' } },
+		at + 100,
+	).state
+	assert.deepEqual(
+		{ ...sessionOf(sent, at + 100)?.reply },
+		{
+			action: 'prompt',
+			status: 'sent',
+			at: at + 100,
+			sentAt: at + 100,
+			delivery: 'pty',
+			assistantUuid: ASSISTANT_UUID,
+		},
+	)
+	// The pane works on it and its transcript shows the reply after the message Jakub read.
+	const landed = reduce(
+		sent,
+		poll(working(), { transcript: page([user('u-dock')], { cursor: 1_500_000 }) }),
+		at + 2000,
+	).state
+	assert.equal(sessionOf(landed, at + 2000)?.reply?.status, 'confirmed')
+	// No item was ever opened for it.
+	assert.deepEqual(landed.items, [])
+})
+
+test('a reply from the agent detail goes unconfirmed after 10 s unseen; refusals keep their reason', () => {
+	const { state, at } = readPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 10_200, poll(idle())],
+	]).state
+	assert.equal(sessionOf(sent, at + 10_200)?.reply?.status, 'unconfirmed')
+
+	const refused = run(state, [
+		[at, { type: 'prompt.sending', session: KEY }],
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+		],
+	]).state
+	assert.deepEqual(
+		{ ...sessionOf(refused, at + 100)?.reply },
+		{ action: 'prompt', status: 'refused', at: at + 100, reason: 'changed', detail: 'new' },
+	)
+	// A result for a reply that is not sending, or for an unknown pane, changes nothing.
+	assert.deepEqual(
+		reduce(refused, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }, at + 200).state.sessions[KEY]
+			?.session.reply?.status,
+		'refused',
+	)
+	assert.deepEqual(reduce(state, { type: 'prompt.sending', session: 'p1:nope' }, at).state.sessions, state.sessions)
+})
+
+test('a new Claude session in the pane drops the old reply receipt', () => {
+	const { state, at } = readPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 1000, poll(idle({ session_id: 'another-session' }))],
+	]).state
+	assert.equal(sessionOf(sent, at + 1000)?.reply, undefined)
+})
+
+test('a settled agent-detail reply (landed, refused, failed) clears once the agent says something new', () => {
+	const { state, at } = readPane()
+	for (const outcome of [
+		{ status: 'refused', reason: 'changed', detail: 'The agent said something new; check it again.' },
+		{ status: 'failed', detail: 'bridge unavailable' },
+	] as const) {
+		const settled = run(state, [
+			[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+			[at + 100, { type: 'prompt.result', session: KEY, outcome }],
+			// The same message again: the receipt stays.
+			[at + 1000, poll(idle())],
+		]).state
+		assert.equal(sessionOf(settled, at + 1000)?.reply?.status, outcome.status)
+		const moved = reduce(
+			settled,
+			poll(idle(), { transcript: page([assistant('b-new', 'Něco nového.')], { cursor: 1_600_000 }) }),
+			at + 2000,
+		).state
+		assert.equal(sessionOf(moved, at + 2000)?.lastMessage?.uuid, 'b-new')
+		assert.equal(sessionOf(moved, at + 2000)?.reply, undefined, outcome.status)
+	}
+	// Landed (✓ replied), then the agent answers: the receipt goes with the message it answered.
+	const landed = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: ASSISTANT_UUID }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent' } }],
+		[at + 2000, poll(working(), { transcript: page([user('u-dock')], { cursor: 1_500_000 }) })],
+	]).state
+	assert.equal(sessionOf(landed, at + 2000)?.reply?.status, 'confirmed')
+	const answered = reduce(
+		landed,
+		poll(idle(), { transcript: page([assistant('b-answer', 'Hotovo.')], { cursor: 1_600_000 }) }),
+		at + 5000,
+	).state
+	assert.equal(sessionOf(answered, at + 5000)?.reply, undefined)
+})
+
+test('a reply naming an older message than the last one never moves seen back (no turn for an acked message)', () => {
+	const { state, at } = readPane()
+	// Jakub has seen ASSISTANT_UUID; the renderer's (stale) live read still shows an older uuid.
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: 'older-uuid' }, at).state
+	assert.equal(sending.seen[KEY], ASSISTANT_UUID)
+	assert.equal(sessionOf(sending, at)?.lastMessage?.seen, true)
+	const refused = run(sending, [
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+		],
+		[at + 100 + TURN_IDLE_MS + 1000, poll(idle())],
+	]).state
+	assert.deepEqual(itemsOf(refused, 'turn'), [])
 })

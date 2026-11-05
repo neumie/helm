@@ -13,6 +13,7 @@ import { PlanWorkspace } from '../plan/workspace.js'
 import type { TaskProvider } from '../providers/provider.js'
 import { assertAgentBudget } from '../solver/agent-adapter.js'
 import type { SolverAgent } from '../solver/agent.js'
+import { effectiveSolverModel } from '../solver/models.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 import type { SpawnerName } from '../spawner/registry.js'
 import type { PlanningSessionResult, Spawner } from '../spawner/spawner.js'
@@ -309,7 +310,7 @@ export class PlanningApplication {
 					solverConfig: {
 						...this.config.solver,
 						agent,
-						model: input.solverModel ?? this.config.solver.model,
+						model: effectiveSolverModel(agent, input.solverModel, this.config.solver),
 						workspace: workspaceMode,
 					},
 					existingWorktreePath,

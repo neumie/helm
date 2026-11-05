@@ -1,16 +1,15 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useMemo, useState } from 'react'
 import type { AgentDockSnapshot, DockItem } from '../../agent-dock/model'
+import type { AgentDockOpenFixture as OpenFixture } from '../terminal-workspace-fixtures'
 import { AgentDock, type AgentDockTarget } from './AgentDock'
 import { type AgentDockScenario, createAgentDockFixture } from './agent-dock-fixtures'
-import { type AgentDockPosition, cardKindLabel, railItems } from './presentation'
-
-type OpenFixture = 'question' | 'permission' | 'plan' | 'turn' | 'orphaned' | 'agents'
+import { type AgentDockPosition, itemKindLabel, queueItems } from './presentation'
 
 const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boolean> = {
-	question: item => cardKindLabel(item) === 'Question',
-	permission: item => cardKindLabel(item) === 'Permission',
-	plan: item => cardKindLabel(item) === 'Plan',
+	question: item => itemKindLabel(item) === 'Question',
+	permission: item => itemKindLabel(item) === 'Permission',
+	plan: item => itemKindLabel(item) === 'Plan',
 	turn: item => item.kind === 'turn',
 	orphaned: item => item.state === 'orphaned',
 }
@@ -18,7 +17,7 @@ const OPEN_MATCH: Record<Exclude<OpenFixture, 'agents'>, (item: DockItem) => boo
 function resolveOpen(snapshot: AgentDockSnapshot, open: OpenFixture | undefined): AgentDockTarget | null {
 	if (!open) return null
 	if (open === 'agents') return { type: 'agents' }
-	const item = railItems(snapshot, Date.now()).find(OPEN_MATCH[open])
+	const item = queueItems(snapshot, Date.now()).find(OPEN_MATCH[open])
 	return item ? { type: 'item', id: item.id } : null
 }
 
@@ -52,11 +51,11 @@ function AgentDockFixtureView({
 							snapshot={snapshot}
 							now={Date.now()}
 							position={position}
-							shortcutLabel="⌘⇧J"
+							mod="cmd"
 							initialOpen={snapshot ? resolveOpen(snapshot, open) : null}
 							initialSent={fixture.sent()}
 							onAck={fixture.api.ack}
-							onAct={(itemId, rev, action) => fixture.api.act({ itemId, rev, action })}
+							onAct={(itemId, action) => fixture.api.act({ itemId, action })}
 						/>
 					) : null}
 				</div>
@@ -78,11 +77,17 @@ type Story = StoryObj<typeof AgentDockFixtureView>
 /** The 28px queue row, no pane: two asks (one past 2h, one past 30m), an unchecked turn, the Agents entry. */
 export const Queue: Story = { args: { scenario: 'busy' } }
 
-/** Claude in Helm terminals beside Okena: the same row; the health tooltip reads "Okena · Helm terminals". */
+/** Claude in Helm terminals beside Okena: the same row; the Agents pane header lists "Okena · Helm terminals". */
 export const HelmTerminals: Story = { args: { scenario: 'helm-terminals' } }
 
 /** A plan from a Helm terminal: Approve also switches the agent to accept edits (said in its description). */
 export const HelmPlanOpen: Story = { args: { scenario: 'helm-terminals', open: 'plan' } }
+
+/**
+ * A permission from a Helm terminal whose suggestions include `addDirectories`: Helm's hub applies
+ * rule suggestions only, so the pane offers Allow once and Deny, no "Always allow" (Okena would).
+ */
+export const HelmPermissionAddDirectories: Story = { args: { scenario: 'helm-add-directories', open: 'permission' } }
 
 /** Five items: plan approval and a second turn join, still one row. */
 export const FiveItems: Story = { args: { scenario: 'crowded' } }
@@ -96,6 +101,12 @@ export const PermissionOpen: Story = { args: { scenario: 'crowded', open: 'permi
 export const PlanOpen: Story = { args: { scenario: 'crowded', open: 'plan' } }
 
 export const TurnOpen: Story = { args: { scenario: 'crowded', open: 'turn' } }
+
+/**
+ * A turn whose session has four PRs: the facts row under the message starts on the message's text
+ * column (the same left edge as the paragraph and Reply's placeholder), its links evenly spaced.
+ */
+export const TurnPrLinks: Story = { args: { scenario: 'pr-links-turn', open: 'turn' } }
 
 /**
  * Jakub's real case: long ClientCare task titles behind short branch names — two sessions on
@@ -114,6 +125,11 @@ export const Overflow: Story = { args: { scenario: 'overflow' } }
 export const OrphanedOpen: Story = { args: { scenario: 'orphaned', open: 'orphaned' } }
 
 export const AgentsOpen: Story = { args: { scenario: 'crowded', open: 'agents' } }
+
+/** Claude stopped while its stage deploy runs in a background shell: `background 2m` with "1 shell", not idle. */
+export const BackgroundShell: Story = { args: { scenario: 'background-shell', open: 'agents' } }
+/** Its turn stays readable: "ozvu se, až doběhne" plus the calm "Background work was still running." */
+export const BackgroundShellTurn: Story = { args: { scenario: 'background-shell', open: 'turn' } }
 
 /** Okena unreachable: everything is frozen, never "all clear". */
 export const SourceDown: Story = { args: { scenario: 'down' } }
@@ -143,4 +159,4 @@ export const ReceiptRefused: Story = { args: { scenario: 'receipt-refused', open
 export const ReceiptFailed: Story = { args: { scenario: 'receipt-failed', open: 'question' } }
 
 /** Receipt states on the entries with no pane open. */
-export const ReceiptCards: Story = { args: { scenario: 'receipt-unconfirmed' } }
+export const ReceiptEntries: Story = { args: { scenario: 'receipt-unconfirmed' } }

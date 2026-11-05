@@ -4,8 +4,10 @@
 // through plainAgentText and renders as React text, never markup.
 
 import type {
+	AgentDockActResult,
 	AgentDockSnapshot,
 	AgentDockSourceHealth,
+	DockActOutcome,
 	DockAction,
 	DockItem,
 	DockReceipt,
@@ -13,8 +15,11 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
-import { planApproveMode } from '../../agent-dock/review'
+import { DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
+import { itemWaitingSince } from '../../agent-dock/item-order'
+import { alwaysAllowLabels, alwaysAllowRulesOnly, planApproveMode } from '../../agent-dock/review'
 
+export { itemWaitingSince } from '../../agent-dock/item-order'
 export { alwaysAllowLabels, permissionReview, planReview } from '../../agent-dock/review'
 
 export type AgentDockPosition = 'top' | 'bottom'
@@ -24,11 +29,11 @@ export type AgingTone = 'none' | 'warn' | 'danger'
 export const AGING_WARN_MS = 30 * 60_000
 export const AGING_DANGER_MS = 2 * 60 * 60_000
 /** A session whose last detail read lags the last good /v1/state by this much renders stale. */
-export const SESSION_STALE_MS = 10_000
+const SESSION_STALE_MS = 10_000
 /** Bounds for agent text the dock renders (turn excerpts are already ≤2 KiB from the reducer). */
-export const AGENT_TEXT_MAX = 2_048
-export const TOOL_INPUT_TEXT_MAX = 4_096
-export const PREVIEW_TEXT_MAX = 2_048
+const AGENT_TEXT_MAX = 2_048
+const TOOL_INPUT_TEXT_MAX = 4_096
+const PREVIEW_TEXT_MAX = 2_048
 
 // C0/C1 controls except tab/newline, plus bidi overrides/isolates that could reorder rendered text.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
@@ -77,13 +82,6 @@ export function agingTone(ms: number): AgingTone {
 	return 'none'
 }
 
-/** When the item started owing Jakub: the dialog's own timestamp, else when the turn ended, else first observed. */
-export function itemWaitingSince(item: DockItem): number {
-	if (item.fact.kind === 'ask' && item.fact.createdAtMs > 0) return Math.min(item.fact.createdAtMs, item.openedAt)
-	if (item.fact.kind === 'turn') return item.fact.endedAt
-	return item.openedAt
-}
-
 /** Items that need Jakub, in the snapshot's order (open asks, orphaned, open turns). */
 export function needsYouItems(snapshot: AgentDockSnapshot | null): DockItem[] {
 	return snapshot?.items.filter(item => item.state !== 'resolved') ?? []
@@ -108,7 +106,7 @@ export function lingeringItems(snapshot: AgentDockSnapshot | null, now: number):
 }
 
 /** Entries in queue order: everything that needs Jakub, then answers still showing their receipt. */
-export function railItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
+export function queueItems(snapshot: AgentDockSnapshot | null, now: number): DockItem[] {
 	const lingering = lingeringItems(snapshot, now)
 	return [...needsYouItems(snapshot), ...lingering.sort((a, b) => a.id - b.id)]
 }
@@ -119,24 +117,30 @@ export function nextLingerExpiry(snapshot: AgentDockSnapshot | null, now: number
 	return ends.length > 0 ? Math.min(...ends) : null
 }
 
-/** Mirrors model.ts DOCK_RISKY_PROMPT (the renderer may not value-import the zod model); a test keeps them equal. */
-export const RISKY_PROMPT = /deploy|prod|secret|push|merge/i
-
-/** The first risky word in a reply ("deploy"), or null. */
-export function riskyWord(text: string): string | null {
-	return RISKY_PROMPT.exec(text)?.[0]?.toLowerCase() ?? null
-}
-
 export type ReceiptTone = 'neutral' | 'warn' | 'success' | 'danger'
 
 export interface ReceiptView {
 	text: string
 	tone: ReceiptTone
-	/** Still in flight (Sending…). */
-	busy: boolean
 }
 
 const REFUSED_GONE = 'refused: already answered elsewhere'
+
+/**
+ * Words for an act main refused or could not run, kept on the pane when main did not record them on
+ * the item (bad request, IPC failure); null for any other outcome.
+ */
+export function actErrorText(outcome: DockActOutcome): string | null {
+	if (outcome.status === 'refused')
+		return outcome.reason === 'gone' ? REFUSED_GONE : `refused: ${plainAgentText(outcome.detail, 200)}`
+	if (outcome.status === 'failed') return plainAgentText(outcome.detail, 300)
+	return null
+}
+
+/** An act that threw before main answered (IPC failure), as the result main would have sent. */
+export function failedActResult(error: unknown): AgentDockActResult {
+	return { ok: false, outcome: { status: 'failed', detail: error instanceof Error ? error.message : String(error) } }
+}
 
 function doneText(item: DockItem, receipt: DockReceipt): string {
 	const plan = item.fact.kind === 'ask' && item.fact.tool === 'ExitPlanMode'
@@ -165,20 +169,31 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	const receipt = item.receipt
 	if (!receipt) return null
 	if (item.state === 'resolved' && item.resolution?.by === 'dock')
-		return { text: doneText(item, receipt), tone: 'success', busy: false }
+		return { text: doneText(item, receipt), tone: 'success' }
 	if (receipt.status === 'refused')
 		return {
 			text: receipt.reason === 'gone' ? REFUSED_GONE : `refused: ${plainAgentLine(receipt.detail ?? '', 200)}`,
 			tone: 'danger',
-			busy: false,
 		}
 	if (receipt.status === 'failed')
-		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger', busy: false }
+		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger' }
 	if (item.state === 'resolved') return null
-	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral', busy: true }
+	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral' }
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
-		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn', busy: false }
+		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn' }
 	return null
+}
+
+/**
+ * The "Always allow" choice's labels for this ask, for a session of `source` (null or [] = no such
+ * choice). Helm terminals take rule suggestions only (review.ts alwaysAllowRulesOnly); main refuses
+ * the same (act.ts).
+ */
+export function alwaysAllowChoice(item: DockItem, source: DockSourceId | undefined): string[] | null {
+	if (item.fact.kind !== 'ask') return null
+	return alwaysAllowLabels(item.fact.suggestions, item.fact.suggestionsTruncated === true, {
+		rulesOnly: alwaysAllowRulesOnly(source ?? 'okena'),
+	})
 }
 
 /**
@@ -214,16 +229,11 @@ export function sentSummary(item: DockItem, action: DockAction): string | null {
 // Sources (Okena Claude Remote, Helm's own Claude hub for Helm terminals)
 // ---------------------------------------------------------------------------
 
-/** Words for a source (mirrors model.ts DOCK_SOURCE_LABEL; the renderer imports model types only). */
-export const SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
-const SOURCE_ORDER: DockSourceId[] = ['okena', 'helm']
-
-/** Sources in the snapshot with their health; an older snapshot without `sources` is Okena alone. */
 /** Each source's own health in display order (an old single-source snapshot reads as Okena). */
 export function snapshotSources(snapshot: AgentDockSnapshot): Array<[DockSourceId, AgentDockSourceHealth]> {
 	const sources = snapshot.sources
 	if (!sources || Object.keys(sources).length === 0) return [['okena', snapshot.source]]
-	return SOURCE_ORDER.flatMap(id => {
+	return DOCK_SOURCE_IDS.flatMap(id => {
 		const health = sources[id]
 		return health ? [[id, health] as [DockSourceId, AgentDockSourceHealth]] : []
 	})
@@ -234,8 +244,13 @@ export function sourceNames(snapshot: AgentDockSnapshot | null, state?: AgentDoc
 	const all = snapshot ? snapshotSources(snapshot) : []
 	const names = all
 		.filter(([, health]) => state === undefined || health.state === state)
-		.map(([id]) => SOURCE_LABEL[id])
-	const list = names.length > 0 ? names : all.length > 0 ? all.map(([id]) => SOURCE_LABEL[id]) : [SOURCE_LABEL.okena]
+		.map(([id]) => DOCK_SOURCE_TEXT[id].label)
+	const list =
+		names.length > 0
+			? names
+			: all.length > 0
+				? all.map(([id]) => DOCK_SOURCE_TEXT[id].label)
+				: [DOCK_SOURCE_TEXT.okena.label]
 	return list.length === 1 ? (list[0] as string) : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`
 }
 
@@ -247,12 +262,12 @@ export function noSessionText(snapshot: AgentDockSnapshot | null): string {
 		: `No Claude session is connected to ${names}`
 }
 
-/** The health of the source that observes this item's session (answering is gated on it). */
 /** True once at least one source has answered: the queue can show what it knows while another source connects. */
 export function anySourceOk(snapshot: AgentDockSnapshot | null): boolean {
 	return snapshot !== null && snapshotSources(snapshot).some(([, health]) => health.state === 'ok')
 }
 
+/** The health of the source that observes this item's session (answering is gated on it). */
 export function itemSourceHealth(item: DockItem, snapshot: AgentDockSnapshot | null): AgentDockSourceHealth | null {
 	if (!snapshot) return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
@@ -264,7 +279,7 @@ export function sourceBlockedNote(item: DockItem, snapshot: AgentDockSnapshot | 
 	const health = itemSourceHealth(item, snapshot)
 	if (!snapshot || health?.state === 'ok') return null
 	const source = findSession(snapshot, item.session)?.source ?? 'okena'
-	return `${SOURCE_LABEL[source]} unreachable: answer in the terminal`
+	return `${DOCK_SOURCE_TEXT[source].label} unreachable: answer in the terminal`
 }
 
 /** Answer controls are live only for an open item while its source is reachable. */
@@ -272,8 +287,31 @@ export function canAnswer(item: DockItem, snapshot: AgentDockSnapshot | null): b
 	return item.state === 'open' && itemSourceHealth(item, snapshot)?.state === 'ok'
 }
 
-export function recentItems(snapshot: AgentDockSnapshot | null, limit: number): DockItem[] {
-	return (snapshot?.items.filter(item => item.state === 'resolved') ?? []).slice(0, limit)
+/**
+ * Ack is offered for turns, orphaned and unconfirmed items; never for a resolved item or one being
+ * sent, so an open or sending ask is never ackable (the Ack button and ⌘⌫ alike).
+ */
+export function canAck(item: DockItem): boolean {
+	return (
+		item.state !== 'resolved' &&
+		item.state !== 'sending' &&
+		(item.kind === 'turn' || item.state === 'orphaned' || item.state === 'unconfirmed')
+	)
+}
+
+/**
+ * The item to move on to after Jakub acked or answered `handled` from the pane: the first one
+ * after it in queue order (wrapping round to the front) that still waits on him (`open`). `at` is
+ * where `handled` sits in `items`, or sat before an ack removed it. Undefined when nothing waits.
+ */
+export function nextWaiting(items: readonly DockItem[], handled: number, at: number): DockItem | undefined {
+	const count = items.length
+	const start = Math.max(0, at)
+	for (let step = 0; step < count; step++) {
+		const item = items[(start + step) % count]
+		if (item && item.id !== handled && item.state === 'open') return item
+	}
+	return undefined
 }
 
 export function findSession(snapshot: AgentDockSnapshot | null, key: string): DockSession | undefined {
@@ -288,19 +326,45 @@ export function findSession(snapshot: AgentDockSnapshot | null, key: string): Do
 const BRANCH_TYPE_PREFIX = /^(?:fix|feat|chore|refactor|docs|test|perf|build|ci|style|wip|hotfix|release)\//
 /** Branches that say nothing about the work in them: the agent keeps its terminal name instead. */
 const DEFAULT_BRANCHES = new Set(['main', 'master', 'develop', 'trunk'])
+/** A detached HEAD: Okena reports the commit hash as the "branch" (`d1aee9df`), which says nothing about the work either. */
+const COMMIT_HASH = /^[0-9a-f]{7,40}$/i
 
-/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a bare prefix). */
+/** Says nothing about the work: no branch, a default branch, or a detached HEAD's commit hash. */
+const anonymousBranch = (line: string): boolean => line === '' || DEFAULT_BRANCHES.has(line) || COMMIT_HASH.test(line)
+
+/** A branch without its leading type prefix; '' when nothing identifying is left (no branch, a default branch, a commit hash, a bare prefix). */
 export function branchShortName(branch: unknown): string {
 	const line = plainAgentLine(branch, 120)
-	if (DEFAULT_BRANCHES.has(line)) return ''
+	if (anonymousBranch(line)) return ''
 	return line.replace(BRANCH_TYPE_PREFIX, '')
 }
 
 const terminalName = (key: string): string => `terminal ${plainAgentLine(key.slice(key.lastIndexOf(':') + 1), 8)}`
 
-/** The name before duplicates are numbered: the short branch, else Okena's pane name, else the terminal. */
+/**
+ * The repository an agent works in: Okena's parent project of a worktree (`repo`, `JVS`), else the
+ * pane's own project (a main checkout, `Psyon`). '' when the reducer could not place the pane.
+ */
+export function agentRepo(session: DockSession): string {
+	const repo = plainAgentLine(session.repo || session.project, 48)
+	return repo === 'unknown project' ? '' : repo
+}
+
+/**
+ * Okena's pane name, unless it is only an anonymous branch: Okena names an unnamed pane after its
+ * project's branch (`d1aee9df`, `main`), which says nothing about the work.
+ */
+function paneName(session: DockSession): string {
+	const name = plainAgentLine(session.name, 64)
+	return anonymousBranch(name) ? '' : name
+}
+
+/**
+ * The name before duplicates are numbered: the short branch, else Okena's pane name, else the
+ * repository (a main checkout on a default branch or a detached HEAD reads `Psyon`), else the terminal.
+ */
 function baseAgentName(session: DockSession): string {
-	return branchShortName(session.branch) || plainAgentLine(session.name, 64) || terminalName(session.key)
+	return branchShortName(session.branch) || paneName(session) || agentRepo(session) || terminalName(session.key)
 }
 
 /**
@@ -323,8 +387,9 @@ export function agentNames(sessions: readonly DockSession[]): Map<string, string
 export interface AgentWho {
 	/** The short name (`company-create-save-firm #2`): queue, Agents table, labels, announcements. */
 	name: string
-	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
+	/** Okena's full pane name (often the task title); a tooltip and the item header's dim task title, never the queue. '' when it adds nothing. */
 	title: string
+	/** The repository (`agentRepo`: `JVS` for a JVS worktree, never the worktree's branch-named project). */
 	project: string
 }
 
@@ -333,8 +398,8 @@ export function agentWho(snapshot: AgentDockSnapshot | null, key: string): Agent
 	const session = findSession(snapshot, key)
 	if (!session) return { name: terminalName(key), title: '', project: '' }
 	const name = agentNames(snapshot?.sessions ?? []).get(key) ?? baseAgentName(session)
-	const full = plainAgentLine(session.name, 200)
-	return { name, title: full && full !== name ? full : '', project: plainAgentLine(session.project, 48) }
+	const full = paneName(session) ? plainAgentLine(session.name, 200) : ''
+	return { name, title: full && full !== name ? full : '', project: agentRepo(session) }
 }
 
 export interface AskOption {
@@ -385,19 +450,8 @@ export function askQuestions(input: unknown): AskQuestion[] | null {
 }
 
 /** ExitPlanMode plan text, when Okena included a plan file. */
-export function planText(input: unknown): string | null {
+function planText(input: unknown): string | null {
 	return isRecord(input) && typeof input.plan === 'string' ? plainAgentText(input.plan, TOOL_INPUT_TEXT_MAX) : null
-}
-
-/** Any other tool input as bounded pretty JSON, rendered verbatim in a monospace block. */
-export function toolInputText(input: unknown, max = TOOL_INPUT_TEXT_MAX): string {
-	let text: string
-	try {
-		text = typeof input === 'string' ? input : (JSON.stringify(input, null, 2) ?? '')
-	} catch {
-		text = ''
-	}
-	return plainAgentText(text, max)
 }
 
 /** One-line summary of what the item is about. */
@@ -446,11 +500,45 @@ export function unknownSessionCount(snapshot: AgentDockSnapshot | null): number 
 	return snapshot.sessions.filter(session => session.status === 'unknown').length
 }
 
-export const unknownAgentsText = (count: number): string => `State unknown for ${count} agent${count === 1 ? '' : 's'}`
+const unknownAgentsText = (count: number): string => `State unknown for ${count} agent${count === 1 ? '' : 's'}`
 
 export interface AgentDockHealth {
 	tone: 'success' | 'danger' | 'neutral'
 	text: string
+}
+
+/** One source's health for the Agents pane header: its name, the dot's tone, the state in words. */
+export interface SourceHealthView {
+	id: DockSourceId
+	name: string
+	state: AgentDockSourceHealth['state']
+	tone: AgentDockHealth['tone']
+	/** `Okena connected`, `Okena unreachable since 16:20`, `Helm terminals connecting…`. */
+	words: string
+}
+
+/**
+ * Each source's health on its own (`snapshot.sources`, in DOCK_SOURCE_IDS order). A source the dock
+ * never observed (not configured, e.g. no Helm hub) is not listed: the snapshot knows nothing of it,
+ * and saying "not configured" would be a claim it cannot back. Before any snapshot: Okena connecting.
+ */
+export function sourceHealthViews(snapshot: AgentDockSnapshot | null): SourceHealthView[] {
+	const entries: Array<[DockSourceId, AgentDockSourceHealth]> = snapshot
+		? snapshotSources(snapshot)
+		: [['okena', { state: 'pending', since: 0, lastObservedAt: null }]]
+	return entries.map(([id, health]) => {
+		const name = DOCK_SOURCE_TEXT[id].label
+		if (health.state === 'ok') return { id, name, state: health.state, tone: 'success', words: `${name} connected` }
+		if (health.state === 'down')
+			return {
+				id,
+				name,
+				state: health.state,
+				tone: 'danger',
+				words: `${name} unreachable since ${formatClock(health.since)}`,
+			}
+		return { id, name, state: health.state, tone: 'neutral', words: `${name} connecting…` }
+	})
 }
 
 export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth {
@@ -464,39 +552,23 @@ export function dockHealth(snapshot: AgentDockSnapshot | null): AgentDockHealth 
 	return {
 		tone: 'success',
 		text: snapshotSources(snapshot)
-			.map(([id]) => SOURCE_LABEL[id])
+			.map(([id]) => DOCK_SOURCE_TEXT[id].label)
 			.join(' · '),
 	}
 }
 
-export interface AgentDockSummary {
-	needCount: number
-	/** Listed agents whose state could not be read (see unknownSessionCount). */
-	unknownCount: number
-	/** Text for the needs slot; never "all clear" unless Okena is reachable and every agent was read. */
-	needsText: string
-	needsTone: 'none' | 'warn'
-	oldestText: string | null
-	oldestTone: AgingTone
-	health: AgentDockHealth
-}
-
-export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): AgentDockSummary {
+/**
+ * The queue row's accessible name: what needs Jakub, how long the oldest has waited and the sources'
+ * health, in words (`Agent dock, 3 need you, oldest 2h16m, Okena`). Never "all clear" unless the
+ * source is reachable and every listed agent was read.
+ */
+export function dockLabel(snapshot: AgentDockSnapshot | null, now: number): string {
 	const needs = needsYouItems(snapshot)
-	const health = dockHealth(snapshot)
 	const source = snapshot?.source.state ?? 'pending'
-	const oldestOf = (items: readonly DockItem[]) =>
-		items.reduce<number | null>((min, item) => {
-			const since = itemWaitingSince(item)
-			return min === null || since < min ? since : min
-		}, null)
-	const oldest = oldestOf(needs)
-	// Red means "an agent is stuck waiting on you": only blocking asks escalate past amber.
-	const oldestAsk = oldestOf(needs.filter(item => item.kind === 'ask'))
-	const askTone = oldestAsk === null ? 'none' : agingTone(now - oldestAsk)
-	const turnTone = oldest === null ? 'none' : agingTone(now - oldest)
-	const oldestTone: AgingTone =
-		askTone === 'danger' ? 'danger' : askTone === 'warn' || turnTone !== 'none' ? 'warn' : 'none'
+	const oldest = needs.reduce<number | null>((min, item) => {
+		const since = itemWaitingSince(item)
+		return min === null || since < min ? since : min
+	}, null)
 	const unknown = unknownSessionCount(snapshot)
 	let needsText: string
 	if (needs.length > 0)
@@ -505,15 +577,8 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
 	else if (source === 'ok') needsText = 'Nothing needs you'
 	else if (source === 'down') needsText = 'State unknown'
 	else needsText = `Waiting for ${sourceNames(snapshot, 'pending')}`
-	return {
-		needCount: needs.length,
-		unknownCount: unknown,
-		needsText,
-		needsTone: needs.length > 0 || unknown > 0 ? 'warn' : 'none',
-		oldestText: oldest === null ? null : `oldest ${formatAge(now - oldest)}`,
-		oldestTone,
-		health,
-	}
+	const oldestText = oldest === null ? '' : `, oldest ${formatAge(now - oldest)}`
+	return `Agent dock, ${needsText}${oldestText}, ${dockHealth(snapshot).text}`
 }
 
 // ---------------------------------------------------------------------------
@@ -524,12 +589,12 @@ export function dockSummary(snapshot: AgentDockSnapshot | null, now: number): Ag
  * Kind tone for the glyph: amber ask and orphan, blue unchecked turn, green answered from the dock,
  * quiet closed elsewhere. It never ages: how long it has waited is the age text's tone alone.
  */
-export type CardTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
+export type EntryTone = 'ask' | 'orphaned' | 'turn' | 'done' | 'closed'
 
 /** Answered from the dock (the only resolution that earns the green ✓). */
 const answeredHere = (item: DockItem): boolean => item.state === 'resolved' && item.resolution?.by === 'dock'
 
-export function cardTone(item: DockItem): CardTone {
+export function entryTone(item: DockItem): EntryTone {
 	if (item.state === 'resolved') return answeredHere(item) ? 'done' : 'closed'
 	if (item.state === 'orphaned') return 'orphaned'
 	return item.kind === 'turn' ? 'turn' : 'ask'
@@ -543,7 +608,7 @@ export function itemAgeTone(item: DockItem, now: number): AgingTone {
 }
 
 /** Short kind for entries and the pane header: Question / Plan / Permission / Turn ended / Orphaned …. */
-export function cardKindLabel(item: DockItem): string {
+export function itemKindLabel(item: DockItem): string {
 	if (item.fact.kind === 'turn') return 'Turn ended'
 	const base =
 		item.fact.tool === 'AskUserQuestion' ? 'Question' : item.fact.tool === 'ExitPlanMode' ? 'Plan' : 'Permission'
@@ -568,12 +633,12 @@ export function itemTimeLine(item: DockItem, now: number): { stamp: string; wait
 }
 
 /** A permission dialog's shell command, when its tool input carries one. */
-export function commandOf(input: unknown): string | null {
+function commandOf(input: unknown): string | null {
 	return isRecord(input) && typeof input.command === 'string' ? plainAgentText(input.command, 1_024) : null
 }
 
 /** The part of a turn that is about Jakub: its last paragraph (questions and handoffs land there). */
-export function turnGist(text: string): string {
+function turnGist(text: string): string {
 	const paragraphs = plainAgentText(text)
 		.split(/\n\s*\n/)
 		.map(part => part.trim())
@@ -582,7 +647,7 @@ export function turnGist(text: string): string {
 }
 
 /** Entry gist: the question, the plan's title, the command, or the turn's last paragraph. */
-export function cardGist(item: DockItem): string {
+export function entryGist(item: DockItem): string {
 	if (item.fact.kind === 'turn') return turnGist(item.fact.text) || 'Agent finished its turn'
 	const { tool, input } = item.fact
 	if (tool === 'ExitPlanMode') {
@@ -606,23 +671,102 @@ export function sessionSince(snapshot: AgentDockSnapshot | null, session: DockSe
 	return asks.length > 0 ? Math.min(...asks.map(itemWaitingSince)) : session.since
 }
 
-/** Status words for an agent line: only what DockSession observed (status, since, subagents, queue). */
-export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
-	const age = formatAge(now - since)
+/** Agents busy right now (working, or with background work only): the Agents pane counts them. */
+export const busyCount = (sessions: readonly DockSession[]): number =>
+	sessions.filter(session => session.status === 'working' || session.status === 'background').length
+
+/** The Agents entry's states in the pane's order: busy first, then waiting on Jakub, idle, unknown, frozen. */
+const AGENTS_ENTRY_STATES: ReadonlyArray<[DockSession['status'], string]> = [
+	['working', 'working'],
+	['background', 'in background'],
+	['waiting', 'waiting on you'],
+	['idle', 'idle'],
+	['unknown', 'unknown'],
+	['unreachable', 'frozen'],
+]
+
+export interface AgentsEntryText {
+	total: number
+	/** One status per agent in the given order: the bar's segments. */
+	marks: DockSession['status'][]
+	/** The states in words: `3 agents: 2 working, 1 idle. Show agents`. */
+	label: string
+	/** One line per agent: its name and status words. */
+	title: string
+}
+
+/**
+ * The Agents entry (`3 agents` and a bar, one segment per agent, toned by status): its data, and its
+ * states in words for the label. Only what DockSession observed: never invented activity.
+ */
+export function agentsEntryText(
+	snapshot: AgentDockSnapshot,
+	sessions: readonly DockSession[],
+	now: number,
+): AgentsEntryText {
+	const total = sessions.length
+	if (total === 0) {
+		const none = noSessionText(snapshot)
+		return { total, marks: [], label: `${none}. Show agents`, title: none }
+	}
+	const marks = sessions.map(session => session.status)
+	const states = AGENTS_ENTRY_STATES.flatMap(([status, words]) => {
+		const count = marks.filter(mark => mark === status).length
+		return count > 0 ? [`${count} ${words}`] : []
+	})
+	return {
+		total,
+		marks,
+		label: `${total} agent${total === 1 ? '' : 's'}: ${states.join(', ')}. Show agents`,
+		title: sessions
+			.map(
+				session =>
+					`${agentWho(snapshot, session.key).name}: ${sessionStatusText(session, now, sessionSince(snapshot, session))}`,
+			)
+			.join('\n'),
+	}
+}
+
+/**
+ * The empty queue's one line: never "Nothing needs you" unless every source is reachable and every
+ * listed agent was read.
+ */
+export function emptyQueueText(snapshot: AgentDockSnapshot): string {
+	const source = snapshot.source.state
+	if (source === 'pending') return `Waiting for ${sourceNames(snapshot, 'pending')}`
+	if (source !== 'ok') {
+		const down = sourceNames(snapshot, 'down')
+		return `${down} ${down === 'Okena' ? 'is' : 'are'} unreachable, so open questions cannot be seen`
+	}
+	const unknown = unknownSessionCount(snapshot)
+	if (unknown > 0)
+		return `${unknownAgentsText(unknown)}: ${sourceNames(snapshot)} did not return readable detail, so their open questions cannot be seen`
+	return 'Nothing needs you'
+}
+
+/** Status words for an agent line, as its word and its age ('' for `frozen` / `unknown`): only what DockSession observed. */
+export function sessionStatusParts(
+	session: DockSession,
+	now: number,
+	since = session.since,
+): { word: string; age: string } {
 	switch (session.status) {
 		case 'working':
-			return `working ${age}`
 		case 'background':
-			return `background ${age}`
 		case 'waiting':
-			return `waiting ${age}`
 		case 'idle':
-			return `idle ${age}`
+			return { word: session.status, age: formatAge(now - since) }
 		case 'unreachable':
-			return 'frozen'
+			return { word: 'frozen', age: '' }
 		default:
-			return 'unknown'
+			return { word: 'unknown', age: '' }
 	}
+}
+
+/** Status words for an agent line: only what DockSession observed (status, since). */
+export function sessionStatusText(session: DockSession, now: number, since = session.since): string {
+	const { word, age } = sessionStatusParts(session, now, since)
+	return age ? `${word} ${age}` : word
 }
 
 const STATUS_ORDER: Record<DockSession['status'], number> = {
@@ -641,7 +785,7 @@ export function orderedSessions(snapshot: AgentDockSnapshot | null): DockSession
 	)
 }
 
-/** Kind glyph: what the agent wants, in one terminal character (all in Menlo; tone carries urgency). */
+/** Kind glyph: what the agent wants, in one character (its tone carries the kind). */
 export function kindGlyph(item: DockItem): string {
 	if (answeredHere(item)) return '✓'
 	if (item.fact.kind === 'turn') return '↵'
@@ -650,7 +794,7 @@ export function kindGlyph(item: DockItem): string {
 	return '$'
 }
 
-/** Agent status glyph for the Agents entry and pane (all in Menlo). */
+/** Agent status glyph for the Agents pane table. */
 export function statusGlyph(status: DockSession['status']): string {
 	switch (status) {
 		case 'working':
@@ -669,31 +813,27 @@ export function statusGlyph(status: DockSession['status']): string {
 }
 
 /**
- * Queue order while a pane is open: entries already shown keep their slot (an
- * answered item does not jump behind the open ones while its receipt shows), new
- * ones join at the end. An entry that left the queue meanwhile (its receipt's
- * linger ran out, it was answered in the terminal) stays in its slot from `held`
- * — the snapshot's items — until the pane closes, so nothing shifts and the open
- * pane never closes by itself; only what Jakub acked, or what the snapshot no
- * longer has at all, leaves. `order` null = the snapshot's own order.
+ * Queue order while a pane is open: entries still in the queue keep their order (an answered
+ * item does not jump behind the open ones while its receipt shows), new ones join at the end.
+ * Whatever no longer needs Jakub leaves at once, pane or not (answered or replied in the
+ * terminal, the agent moved on, a receipt whose linger ran out) — except the entry open in
+ * the pane: it stays in its slot from `open` (its snapshot copy, which shows how it closed)
+ * until Jakub steps to another entry or closes the pane, so the pane never closes by itself
+ * under his reading. Acked items and ones the snapshot no longer has always leave.
+ * `order` null = the snapshot's own order.
  */
-export function keepOrder(
-	order: readonly number[] | null,
-	items: readonly DockItem[],
-	held: readonly DockItem[] = [],
-): DockItem[] {
+export function keepOrder(order: readonly number[] | null, items: readonly DockItem[], open?: DockItem): DockItem[] {
 	if (!order) return [...items]
 	const byId = new Map(items.map(item => [item.id, item]))
-	const heldById = new Map(held.map(item => [item.id, item]))
 	const kept = order.flatMap(id => {
-		const item = byId.get(id) ?? heldById.get(id)
+		const item = byId.get(id) ?? (open?.id === id ? open : undefined)
 		return item && item.resolution?.by !== 'acked' ? [item] : []
 	})
 	const known = new Set(order)
 	return [...kept, ...items.filter(item => !known.has(item.id))]
 }
 
-/** Room around an entry's text: 16px padding each side (the fill runs edge to edge). */
+/** Room around an entry's text: the row's `--dock-inset` (16px) each side (the fill runs edge to edge). */
 export const QUEUE_ENTRY_PAD = 32
 /** The kind glyph's fixed box (`.agent-dock-glyph`): glyphs differ in width in the UI face. */
 export const QUEUE_GLYPH = 12
@@ -842,16 +982,475 @@ export function queueLayout(
 	}
 }
 
-/** Facts for an agent row besides its status words: connection, subagents, queue, PRs, staleness. */
+/** Background tasks in the row's words: `1 shell` / `2 shells` when all are shells, else `N background task(s)`. */
+export function backgroundTasksText(session: Pick<DockSession, 'backgroundTasks' | 'backgroundShells'>): string {
+	const count = session.backgroundTasks
+	if (!(count > 0)) return ''
+	return session.backgroundShells === count
+		? `${count} shell${count === 1 ? '' : 's'}`
+		: `${count} background task${count === 1 ? '' : 's'}`
+}
+
+/** Facts for an agent row besides its status words: connection, subagents, background tasks, queue, PRs, staleness. */
 export function agentRowMeta(snapshot: AgentDockSnapshot, session: DockSession): string[] {
 	const meta: string[] = []
 	if (session.status !== 'unreachable' && session.status !== 'unknown' && !session.hooksAttached)
 		meta.push('not connected')
 	if (session.subagents > 0) meta.push(`${session.subagents} subagent${session.subagents === 1 ? '' : 's'}`)
+	const background = backgroundTasksText(session)
+	if (background) meta.push(background)
 	if (session.queuedPrompts > 0) meta.push(`queued ${session.queuedPrompts}`)
 	for (const pr of session.prLinks.slice(0, 2)) meta.push(`PR #${pr.number}`)
-	const lastGood = snapshot.sources?.[session.source ?? 'okena']?.lastObservedAt ?? snapshot.source.lastObservedAt
+	const lastGood = snapshot.sources?.[session.source]?.lastObservedAt ?? snapshot.source.lastObservedAt
 	if (lastGood !== null && session.status !== 'unreachable' && lastGood - session.observedAt > SESSION_STALE_MS)
 		meta.push(`stale ${staleAge(lastGood - session.observedAt)}`)
 	return meta
+}
+
+// ---------------------------------------------------------------------------
+// Agents overview (design §3.24 Agents): every agent's state relative to Jakub.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where an agent stands with Jakub, most urgent first: an open ask (question, permission, plan),
+ * an unchecked turn (reply waiting), Jakub's answer on its way (sending), then working, background
+ * (subagents only), read (idle, its last message seen: acked, adopted, or replied to), idle (its last
+ * message not seen yet, or none read), unknown (unreadable, frozen, not connected).
+ */
+export const AGENT_STANDINGS = [
+	'needs-you',
+	'reply-waiting',
+	'sending',
+	'working',
+	'background',
+	'read',
+	'idle',
+	'unknown',
+] as const
+export type AgentStanding = (typeof AGENT_STANDINGS)[number]
+
+/** Group headings when the overview groups by standing (`by-state`). */
+export const STANDING_HEADINGS: Record<AgentStanding, string> = {
+	'needs-you': 'Needs you',
+	'reply-waiting': 'Reply waiting',
+	sending: 'Sending',
+	working: 'Working',
+	background: 'Background',
+	read: 'Read',
+	idle: 'Idle',
+	unknown: 'Unknown',
+}
+
+export interface AgentStandingView {
+	standing: AgentStanding
+	/** The state in the row's words: `question`, `reply waiting`, `sent, unconfirmed`, `working`, `read`, `frozen`. */
+	word: string
+	/** The same for screen readers, with what it means for Jakub (`needs you: question`). */
+	label: string
+	/** Where its age counts from; null = no age (unknown, frozen). */
+	since: number | null
+	/** Waiting on Jakub ages like its queue entry (--warn past 30m, --danger past 2h; turns cap at warn). */
+	tone: AgingTone
+	glyph: string
+	/** The glyph's color, by the queue's kind tones (`ask`, `orphaned`, `turn`) or the agent's status. */
+	glyphTone: string
+	/** The live item opening this agent shows (its most urgent one); undefined when it owes Jakub nothing. */
+	item?: DockItem
+}
+
+const askWord = (item: DockItem): string =>
+	item.fact.kind === 'ask'
+		? item.fact.tool === 'AskUserQuestion'
+			? 'question'
+			: item.fact.tool === 'ExitPlanMode'
+				? 'plan'
+				: 'permission'
+		: 'reply waiting'
+
+/** An agent's state relative to Jakub, from the snapshot only (its items, status, last message, reply). */
+export function agentStanding(
+	snapshot: AgentDockSnapshot | null,
+	session: DockSession,
+	now: number,
+): AgentStandingView {
+	const live = (snapshot?.items ?? []).filter(item => item.session === session.key && item.state !== 'resolved')
+	const owed = live.filter(item => item.state === 'open' || item.state === 'orphaned')
+	const ask = owed.find(item => item.kind === 'ask')
+	if (ask) {
+		const since = Math.min(...owed.filter(item => item.kind === 'ask').map(itemWaitingSince))
+		const word = askWord(ask)
+		return {
+			standing: 'needs-you',
+			word,
+			label: `needs you: ${word}`,
+			since,
+			tone: agingTone(now - since),
+			glyph: kindGlyph(ask),
+			glyphTone: entryTone(ask),
+			item: ask,
+		}
+	}
+	const turn = owed.find(item => item.kind === 'turn')
+	// Its background work (shells, subagents) still runs: it said it will report back, so it reads
+	// background, not a reply waiting; opening it still shows that turn.
+	if (turn && session.status === 'background')
+		return {
+			standing: 'background',
+			word: 'background',
+			label: 'background',
+			since: session.since,
+			tone: 'none',
+			glyph: '◐',
+			glyphTone: 'background',
+			item: turn,
+		}
+	if (turn)
+		return {
+			standing: 'reply-waiting',
+			word: 'reply waiting',
+			label: 'reply waiting',
+			since: itemWaitingSince(turn),
+			tone: itemAgeTone(turn, now),
+			glyph: kindGlyph(turn),
+			glyphTone: entryTone(turn),
+			item: turn,
+		}
+	const answering = live.find(item => item.state === 'sending' || item.state === 'unconfirmed')
+	const reply = session.reply
+	const replyLive = reply && (reply.status === 'sending' || reply.status === 'sent' || reply.status === 'unconfirmed')
+	if (answering || replyLive) {
+		const unconfirmed = answering ? answering.state === 'unconfirmed' : reply?.status === 'unconfirmed'
+		const word = unconfirmed
+			? 'sent, unconfirmed'
+			: (answering?.receipt?.status ?? reply?.status) === 'sending'
+				? 'sending'
+				: 'sent'
+		return {
+			standing: 'sending',
+			word,
+			label: word,
+			since: answering?.receipt?.at ?? reply?.at ?? session.since,
+			tone: unconfirmed ? 'warn' : 'none',
+			glyph: '↵',
+			glyphTone: unconfirmed ? 'unconfirmed' : 'sending',
+			...(answering ? { item: answering } : {}),
+		}
+	}
+	const plain = (standing: AgentStanding, word: string, glyph: string, since: number | null = session.since) => ({
+		standing,
+		word,
+		label: word,
+		since,
+		tone: 'none' as const,
+		glyph,
+		glyphTone: standing,
+	})
+	switch (session.status) {
+		case 'working':
+			return plain('working', 'working', '✻')
+		case 'background':
+			return plain('background', 'background', '◐')
+		// A dialog Helm has no item for yet (the first look at a pane): it still asks.
+		case 'waiting':
+			return { ...plain('needs-you', 'waiting', '?'), label: 'needs you: waiting', glyphTone: 'ask' }
+		case 'idle':
+			return session.lastMessage?.seen ? plain('read', 'read', '✓') : plain('idle', 'idle', '·')
+		case 'unreachable':
+			return { ...plain('unknown', 'frozen', '▪', null), glyphTone: 'frozen' }
+		default:
+			return plain('unknown', session.hooksAttached ? 'unknown' : 'not connected', '¿', null)
+	}
+}
+
+const SOURCE_PLACE: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminal' }
+
+/**
+ * A message's first line as quiet plain text for a one-line excerpt: Claude writes Markdown, so a
+ * leading heading, quote or list marker, emphasis and code marks and link targets are dropped.
+ */
+export function excerptPlainLine(text: unknown, max = 160): string {
+	const line = plainAgentLine(text, max * 2)
+		.replace(/^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, '')
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/\*\*|__|`/g, '')
+	return plainAgentLine(line, max)
+}
+
+/**
+ * Where the agent runs, beyond its name: a worktree (its name is the branch), else the checkout's
+ * branch (`main`, `detached d1aee9df`, a feature branch), else Okena's pane name when the name is
+ * not it already. '' when nothing adds to the name.
+ */
+export function agentPlace(session: DockSession, name: string): string {
+	if (session.repo) return 'worktree'
+	const branch = plainAgentLine(session.branch, 80)
+	if (branch) return COMMIT_HASH.test(branch) ? `detached ${branch.slice(0, 8)}` : branch
+	const pane = paneName(session)
+	return pane && pane !== name ? plainAgentLine(pane, 64) : ''
+}
+
+/** One agent in the Agents overview. */
+export interface AgentRow {
+	key: string
+	standing: AgentStanding
+	/** The session status the reducer observed (working, idle, …): the glyph's pulse. */
+	status: DockSession['status']
+	glyph: string
+	glyphTone: string
+	/** The short name (`agentWho`). */
+	name: string
+	/** Okena's full pane name, for the tooltip; '' when it adds nothing. */
+	title: string
+	/** The repository (`agentRepo`), the row's project group; '' when unknown. */
+	repo: string
+	/** State words (`question`, `reply waiting`, `read`) and age (`12m`; '' when none). */
+	word: string
+	/** `word` for screen readers (`needs you: question`). */
+	label: string
+	age: string
+	/** Waiting on Jakub: the aging tone of its queue entry; `none` otherwise. */
+	tone: AgingTone
+	/**
+	 * One line about what the agent last said: the open ask's gist (the question, the command, the
+	 * plan's title) while it asks, else the first line of its last assistant message. '' when none.
+	 */
+	excerpt: string
+	/** Source, place (worktree / branch / pane), then `agentRowMeta`: subagents, background tasks, queued, PR #, not connected, stale. */
+	where: string[]
+	/** The live item opening this row shows; undefined: the agent detail. */
+	itemId?: number
+	/** When its current state began (sorting). */
+	since: number
+}
+
+/** The Agents overview's rows, most urgent first (AGENT_STANDINGS), then the longest wait / newest change. */
+export function agentRows(snapshot: AgentDockSnapshot | null, now: number): AgentRow[] {
+	if (!snapshot) return []
+	const names = agentNames(snapshot.sessions)
+	const rank = (standing: AgentStanding) => AGENT_STANDINGS.indexOf(standing)
+	return snapshot.sessions
+		.map((session): AgentRow => {
+			const who = agentWho(snapshot, session.key)
+			const name = names.get(session.key) ?? who.name
+			const view = agentStanding(snapshot, session, now)
+			const place = agentPlace(session, name)
+			const meta = agentRowMeta(snapshot, session).filter(part => part !== view.word)
+			const excerpt =
+				view.standing === 'needs-you' && view.item
+					? entryGist(view.item)
+					: excerptPlainLine(session.lastMessage?.text ?? '')
+			return {
+				key: session.key,
+				standing: view.standing,
+				status: session.status,
+				glyph: view.glyph,
+				glyphTone: view.glyphTone,
+				name,
+				title: who.title,
+				repo: who.project,
+				word: view.word,
+				label: view.label,
+				age: view.since === null ? '' : formatAge(now - view.since),
+				tone: view.tone,
+				excerpt,
+				where: [SOURCE_PLACE[session.source] ?? 'Okena', ...(place ? [place] : []), ...meta],
+				...(view.item ? { itemId: view.item.id } : {}),
+				since: view.since ?? session.since,
+			}
+		})
+		.sort((a, b) => {
+			const byRank = rank(a.standing) - rank(b.standing)
+			if (byRank !== 0) return byRank
+			// Waiting on Jakub: the longest wait first. Everything else: the newest change first.
+			const waiting = a.standing === 'needs-you' || a.standing === 'reply-waiting'
+			return (waiting ? a.since - b.since : b.since - a.since) || a.name.localeCompare(b.name)
+		})
+}
+
+/** A row's accessible name: who, the state in words and its age, then where (`crm-sync, needs you: question 12m, Okena, worktree`). */
+export function agentRowLabel(row: AgentRow): string {
+	return [row.name, `${row.label}${row.age ? ` ${row.age}` : ''}`, ...row.where].join(', ')
+}
+
+/** The overview grouped by standing (layout `by-state`): one group per standing present, most urgent first. */
+export function agentStateGroups(
+	rows: readonly AgentRow[],
+): Array<{ standing: AgentStanding; heading: string; rows: AgentRow[] }> {
+	return AGENT_STANDINGS.flatMap(standing => {
+		const grouped = rows.filter(row => row.standing === standing)
+		return grouped.length > 0 ? [{ standing, heading: STANDING_HEADINGS[standing], rows: grouped }] : []
+	})
+}
+
+/** The Agents pane header's counts in words (`7 agents · 2 need you · 3 busy`). */
+export function agentsSummary(rows: readonly AgentRow[]): string {
+	const count = (standings: AgentStanding[]) => rows.filter(row => standings.includes(row.standing)).length
+	const needs = count(['needs-you', 'reply-waiting'])
+	const busy = count(['working', 'background', 'sending'])
+	return [
+		`${rows.length} agent${rows.length === 1 ? '' : 's'}`,
+		...(needs > 0 ? [`${needs} need${needs === 1 ? 's' : ''} you`] : []),
+		...(busy > 0 ? [`${busy} busy`] : []),
+	].join(' · ')
+}
+
+/**
+ * The Agents pane's groups: one per repository in the order its first agent shows (so the busiest
+ * repository leads), each keeping the rows' order. Agents with no known repository share one ''
+ * group, last.
+ */
+export function agentRepoGroups(rows: readonly AgentRow[]): Array<{ repo: string; rows: AgentRow[] }> {
+	const groups = new Map<string, AgentRow[]>()
+	for (const row of rows) groups.set(row.repo, [...(groups.get(row.repo) ?? []), row])
+	const unplaced = groups.get('')
+	groups.delete('')
+	return [...groups, ...(unplaced ? [['', unplaced] as const] : [])].map(([repo, grouped]) => ({ repo, rows: grouped }))
+}
+
+/**
+ * How the Agents pane groups its rows, Jakub's setting (a text switch in its header, `G`; kept in
+ * renderer storage): `by-state` (default: grouped by where each agent stands with him, so what needs
+ * him comes first; the project a dim column) or `by-project` (grouped by repository, the most urgent
+ * agent leading). Both are one line per agent with the excerpt as a flexible column.
+ */
+export const AGENTS_LAYOUTS = ['by-state', 'by-project'] as const
+export type AgentsLayout = (typeof AGENTS_LAYOUTS)[number]
+
+/** The switch's words, in its order. */
+export const AGENTS_LAYOUT_WORDS: Record<AgentsLayout, string> = { 'by-state': 'state', 'by-project': 'project' }
+
+/** A grouping from untrusted input (stored setting), else the default `by-state`. */
+export const agentsLayout = (value: unknown): AgentsLayout =>
+	AGENTS_LAYOUTS.find(layout => layout === value) ?? 'by-state'
+
+/** The other grouping (`G` toggles). */
+export const otherAgentsLayout = (layout: AgentsLayout): AgentsLayout =>
+	layout === 'by-state' ? 'by-project' : 'by-state'
+
+/** The Agents pane's groups in display order: by project (most urgent agent first), or by standing. */
+export function agentOverview(
+	snapshot: AgentDockSnapshot | null,
+	now: number,
+	layout: AgentsLayout,
+): Array<{ id: string; heading: string; rows: AgentRow[] }> {
+	const rows = agentRows(snapshot, now)
+	if (layout === 'by-state')
+		return agentStateGroups(rows).map(group => ({
+			id: `state:${group.standing}`,
+			heading: group.heading,
+			rows: group.rows,
+		}))
+	return agentRepoGroups(rows).map(group => ({
+		id: `repo:${group.repo}`,
+		heading: group.repo || 'No project',
+		rows: group.rows,
+	}))
+}
+
+/** How long a landed reply from the agent detail keeps its `✓ replied` receipt. */
+export const REPLY_RECEIPT_MS = 60_000
+
+/**
+ * The receipt of Jakub's reply from the agent detail (`DockSession.reply`), like an item's: Sending…
+ * → ✓ replied (observed) / sent, unconfirmed (amber after 10 s) / refused / the verbatim error. Null
+ * with no reply, or once a landed one is older than REPLY_RECEIPT_MS.
+ */
+export function sessionReplyView(session: DockSession | undefined, now: number): ReceiptView | null {
+	const reply = session?.reply
+	if (!reply) return null
+	switch (reply.status) {
+		case 'sending':
+		case 'sent':
+			return { text: `Sending…${deliveryNote(reply)}`, tone: 'neutral' }
+		case 'unconfirmed':
+			return { text: `sent, unconfirmed${deliveryNote(reply)}`, tone: 'warn' }
+		case 'confirmed':
+			return now - reply.at < REPLY_RECEIPT_MS ? { text: '✓ replied', tone: 'success' } : null
+		case 'refused':
+			return {
+				text:
+					reply.reason === 'gone'
+						? 'refused: already answered elsewhere'
+						: `refused: ${plainAgentLine(reply.detail ?? '', 200)}`,
+				tone: 'danger',
+			}
+		default:
+			return { text: plainAgentLine(reply.detail ?? 'failed', 300) || 'failed', tone: 'danger' }
+	}
+}
+
+/**
+ * Why the agent detail cannot take a reply right now, or null when it can: the agent owes Jakub
+ * an item (answer it there), a reply is still in flight, it works (its next stop is the time), is
+ * unreadable, or its source is down. An unconfirmed reply does not block another.
+ */
+export function agentReplyBlocked(
+	snapshot: AgentDockSnapshot | null,
+	session: DockSession,
+	standing: AgentStanding,
+): string | null {
+	const health = snapshot?.sources?.[session.source] ?? (session.source === 'okena' ? snapshot?.source : undefined)
+	if (health?.state !== 'ok') return `${DOCK_SOURCE_TEXT[session.source].label} unreachable: reply in the terminal`
+	switch (standing) {
+		case 'read':
+		case 'idle':
+		case 'background':
+			return null
+		case 'needs-you':
+		case 'reply-waiting':
+			return 'Answer its open item first'
+		case 'sending':
+			// Unconfirmed never clears on its own while the agent stays put: Jakub may check the terminal
+			// and reply again (the CAS refuses if the first reply did land).
+			return session.reply?.status === 'unconfirmed' ? null : 'A reply is on its way'
+		case 'working':
+			return 'Working: reply once it stops'
+		default:
+			return 'State unknown: reply in the terminal'
+	}
+}
+
+/**
+ * Pane height (design §3.24): the shown content's natural height within [PANE_MIN_HEIGHT, the cap].
+ * The cap is PANE_MAX_SHARE of `#right` (terminal row + dock), never below PANE_MAX_HEIGHT. The room
+ * that leaves the terminal its rows (`paneRoom` in agent-dock-layout.ts) clamps only the height shown,
+ * never the height kept, so a window grown back gives the pane its height again.
+ */
+export const PANE_MIN_HEIGHT = 216
+export const PANE_MAX_HEIGHT = 480
+export const PANE_MAX_SHARE = 0.6
+
+/** Most px a pane may be opened (or grown) to in a `#right` of `right` px (the room clamps it on screen). */
+export function paneMaxHeight(right: number): number {
+	return Math.max(PANE_MAX_HEIGHT, Math.floor(right * PANE_MAX_SHARE))
+}
+
+/** The height a pane takes for content `natural` px tall under `max` (no room known: PANE_MAX_HEIGHT). */
+export function paneFitHeight(natural: number, max: number = PANE_MAX_HEIGHT): number {
+	return Math.min(max, Math.max(PANE_MIN_HEIGHT, Math.ceil(natural)))
+}
+
+/** However little room is left, the pane keeps its rule, a few body rows and its footer (shown height floor). */
+export const PANE_FLOOR = 120
+
+/**
+ * The heights Jakub may drag the pane's terminal-side edge to: [PANE_MIN_HEIGHT, `room`] — the room that
+ * keeps the terminal its rows, which may exceed the share cap the pane opens with. Keeping the rows wins
+ * over the minimum (a short window); the floor still holds. No room known: up to PANE_MAX_HEIGHT.
+ */
+export function paneResizeBounds(room: number | null): { min: number; max: number } {
+	const max = Math.max(PANE_FLOOR, Math.floor(room ?? PANE_MAX_HEIGHT))
+	return { min: Math.min(PANE_MIN_HEIGHT, max), max }
+}
+
+/** `height` within `bounds`, in whole px. */
+export function clampPaneHeight(height: number, bounds: { min: number; max: number }): number {
+	return Math.min(bounds.max, Math.max(bounds.min, Math.round(height)))
+}
+
+/** Jakub's stored pane height, or null (automatic sizing) for anything absent or not a sane px value. */
+export function storedPaneHeight(raw: string | null): number | null {
+	if (raw === null || !/^\d{1,5}$/.test(raw.trim())) return null
+	const height = Number(raw.trim())
+	return height >= PANE_FLOOR && height <= 20_000 ? height : null
 }

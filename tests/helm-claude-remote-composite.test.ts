@@ -2,7 +2,7 @@
 // state (one source down never freezes the other), act routing by session
 // source, the spool's per-source map, CLI routing and dispatcher registration.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import compositeModule from '../app/src/agent-dock/composite-source.ts'
@@ -12,6 +12,7 @@ import hubModule from '../app/src/claude-remote/hub.ts'
 import tokenModule from '../app/src/claude-remote/token.ts'
 import { readSpoolSnapshot } from '../src/agent-dock/spool.js'
 import { registerDispatcher, runDockCli } from '../src/cli/dock.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
@@ -24,8 +25,7 @@ const { HelmClaudeHub } = hubModule as typeof import('../app/src/claude-remote/h
 const { claudeHubTokens } = tokenModule as typeof import('../app/src/claude-remote/token.ts')
 
 type Json = Record<string, unknown>
-const fixture = (name: string) =>
-	JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as Json
+const fixture = okenaFixture<Json>
 const STATE_ASK = fixture('state-ask.json')
 const SHOW_ASK = { ...fixture('show-ask.json'), channel_attached: false }
 const LOG_FULL = fixture('log-full.json')
@@ -33,12 +33,14 @@ const TID = SHOW_ASK.terminal_id as string
 const OKENA_PROFILE = 'okena-profile'
 const okenaAsk = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: OKENA_PROFILE,
 	state: { ok: true, body: STATE_ASK },
 	terminals: [{ terminalId: TID, detail: { ok: true, body: SHOW_ASK }, transcript: { ok: true, body: LOG_FULL } }],
 })
 const okenaDown = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: OKENA_PROFILE,
 	state: { ok: false, error: 'connect ENOENT' },
 	terminals: [],
@@ -71,19 +73,14 @@ async function harness() {
 	const okenaQueue: AgentDockObservation[] = []
 	const okenaActs: string[] = []
 	const okena = {
+		id: 'okena' as const,
 		observe: async () => okenaQueue.shift() ?? okenaDown(),
 		act: async (target: { profile: string; terminalId: string }) => {
 			okenaActs.push(`${target.profile}:${target.terminalId}`)
 			return { status: 'sent' as const }
 		},
 	}
-	const source = new CompositeDockSource([
-		{ id: 'okena', source: okena },
-		{
-			id: 'helm',
-			source: new OkenaClaudeSource(hub, { name: 'Helm terminals', notRunning: "Helm's Claude hub is not listening" }),
-		},
-	])
+	const source = new CompositeDockSource([okena, new OkenaClaudeSource(hub, 'helm')])
 	const watcher = new AgentDockWatcher({
 		dir,
 		source,
@@ -157,7 +154,6 @@ test('Okena down freezes only Okena: Helm terminals keep updating and answering;
 
 		const refused = await h.watcher.act({
 			itemId: okenaAskItem.id,
-			rev: okenaAskItem.rev,
 			action: { type: 'answer', picks: [{ options: [0] }] },
 		})
 		assert.deepEqual(refused.outcome, {
@@ -171,7 +167,6 @@ test('Okena down freezes only Okena: Helm terminals keep updating and answering;
 		assert.equal(live.id, helmAskItem.id)
 		const sent = await h.watcher.act({
 			itemId: live.id,
-			rev: live.rev,
 			action: { type: 'answer', picks: [{ options: [0] }] },
 		})
 		assert.equal(sent.ok, true, JSON.stringify(sent))
@@ -204,24 +199,20 @@ test('composite: a throwing source becomes its own down poll; acts route by sess
 	const composite = new CompositeDockSource([
 		{
 			id: 'okena',
-			source: {
-				observe: async () => {
-					throw new Error('boom')
-				},
-				act: async () => {
-					acts.push('okena')
-					return { status: 'sent' as const }
-				},
+			observe: async () => {
+				throw new Error('boom')
+			},
+			act: async () => {
+				acts.push('okena')
+				return { status: 'sent' as const }
 			},
 		},
 		{
 			id: 'helm',
-			source: {
-				observe: async () => okenaDown(),
-				act: async target => {
-					acts.push(`helm:${target.terminalId}`)
-					return { status: 'sent' as const }
-				},
+			observe: async () => ({ ...okenaDown(), source: 'helm' as const }),
+			act: async target => {
+				acts.push(`helm:${target.terminalId}`)
+				return { status: 'sent' as const }
 			},
 		},
 	])

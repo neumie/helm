@@ -2,21 +2,17 @@ import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, screen, shell } from 'electron'
+import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, powerMonitor, screen, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { readLocalControlToken } from '../../src/auth/local-control'
-import { OkenaClient } from '../../src/extensions/okena/client'
 import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
-import { CompositeDockSource } from './agent-dock/composite-source'
-import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
-import { AgentDockWatcher } from './agent-dock/watcher'
+import { createAgentDockMain } from './agent-dock-main'
+import { agentDockNotifyOptions } from './agent-dock-notify-main'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
-import { type ClaudeRemote, createClaudeRemote } from './claude-remote/runtime'
-import { claudeRemoteTerminalEnvironment } from './claude-remote/token'
 import { createReviewControl } from './document-review/control'
 import { DocumentReviewWindows } from './document-review/window'
 import { parseExternalHttpUrl } from './external-url'
@@ -266,80 +262,59 @@ const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneratio
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
 const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
-// Okena Claude agent dock (read-only slice 1): main polls Okena's structured
-// Claude Remote API and spools to <userData>/agent-dock for `helm dock`.
-// Harness runs (screenshot, attestation, custom/tmp userData) never poll the
-// operator's live Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev
-// instances do by default); HELM_AGENT_DOCK=0 disables it. See startupPolicy().
-// Claude in Helm terminals (same policy as the dock): Helm's own hub for the
-// top-level `claude` of every new Helm terminal (preload + --settings hooks →
-// <socket root>/claude-remote.sock). It is the dock's second source.
-let claudeRemote: ClaudeRemote | null = null
-if (launchPolicy.agentDock) {
-	try {
-		claudeRemote = createClaudeRemote({
-			socketRoot: sessions.socketNamespaceRoot(),
-			distDir: __dirname,
-			userDataDir: app.getPath('userData'),
-			agentDockDir: path.join(app.getPath('userData'), 'agent-dock'),
-			electronPath: process.execPath,
-			activeProfileId: () => sessionProfileId,
-			writeAttached: (ref, data) => {
-				if (ref.profileId !== sessionProfileId) return false
-				for (const entry of ptys.values()) {
-					if (entry.sessionId !== ref.terminalId || entry.backing !== 'ordinary') continue
-					if (!ordinarySessionAllowed(ref.terminalId) || terminalTransferMain?.isSessionBusy(ref.terminalId))
-						return false
-					entry.proc.write(data)
-					return true
-				}
-				return false
-			},
-			dtachSocket: ref => {
-				if (!sessions.isValidSessionProfileId(ref.profileId)) return null
-				if (terminalTransferMain?.isSessionBusy(ref.terminalId)) return null
-				return sessions.socketPathForProfile(ref.profileId, ref.terminalId)
-			},
-			dtachBinary: () => sessions.resolveDtachBinary(),
-			terminalName: ref =>
-				ref.profileId === sessionProfileId ? getSessionSupport()?.registry.get(ref.terminalId)?.customName : undefined,
-		})
-	} catch (error) {
-		console.warn(
-			`[helm] Claude in Helm terminals unavailable: ${error instanceof Error ? error.message : String(error)}`,
-		)
-	}
-}
-/** Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone. */
-const claudeTerminalClosed = (sessionId: string) =>
-	claudeRemote?.hub.terminalClosed({ profileId: sessionProfileId, terminalId: sessionId })
-/** Both spawn sites: the hub's preload/socket/token for this dtach terminal (inherited ones always dropped). */
-const claudeTerminalEnvironment = (env: Record<string, string>, sessionId: string | null): Record<string, string> =>
-	claudeRemote
-		? claudeRemote.environment(env, sessionId ? { profileId: sessionProfileId, terminalId: sessionId } : null)
-		: claudeRemoteTerminalEnvironment(env, null, null)
-const agentDockWatcher = launchPolicy.agentDock
-	? new AgentDockWatcher({
-			dir: path.join(app.getPath('userData'), 'agent-dock'),
-			source: new CompositeDockSource([
-				{ id: 'okena', source: new OkenaClaudeSource(new OkenaClient()) },
-				...(claudeRemote
-					? [
-							{
-								id: 'helm' as const,
-								source: new OkenaClaudeSource(claudeRemote.hub, {
-									name: 'Helm terminals',
-									notRunning: "Helm's Claude hub is not listening",
-								}),
-							},
-						]
-					: []),
-			]),
-			publish: snapshot =>
-				sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
-			isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
-		})
-	: null
+// Agent dock + Claude in Helm terminals (agent-dock-main.ts). Harness runs
+// (screenshot, attestation, custom/tmp userData) never poll the operator's live
+// Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev instances do by
+// default); HELM_AGENT_DOCK=0 disables it. See startupPolicy().
+const agentDock = createAgentDockMain({
+	enabled: launchPolicy.agentDock,
+	socketRoot: sessions.socketNamespaceRoot(),
+	distDir: __dirname,
+	userDataDir: app.getPath('userData'),
+	electronPath: process.execPath,
+	activeProfileId: () => sessionProfileId,
+	writeAttached: (ref, data) => {
+		if (ref.profileId !== sessionProfileId) return false
+		for (const entry of ptys.values()) {
+			if (entry.sessionId !== ref.terminalId || entry.backing !== 'ordinary') continue
+			if (!ordinarySessionAllowed(ref.terminalId) || terminalTransferMain?.isSessionBusy(ref.terminalId)) return false
+			entry.proc.write(data)
+			return true
+		}
+		return false
+	},
+	// Null (409 "not reachable") for a quarantined session too: writeAttached's false must not fall through to a push.
+	dtachSocket: ref => {
+		if (!sessions.isValidSessionProfileId(ref.profileId)) return null
+		if (!ordinarySessionAllowed(ref.terminalId, ref.profileId)) return null
+		if (terminalTransferMain?.isSessionBusy(ref.terminalId)) return null
+		return sessions.socketPathForProfile(ref.profileId, ref.terminalId)
+	},
+	dtachBinary: () => sessions.resolveDtachBinary(),
+	terminalName: ref =>
+		ref.profileId === sessionProfileId ? getSessionSupport()?.registry.get(ref.terminalId)?.customName : undefined,
+	publish: snapshot =>
+		sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.snapshot, snapshot, sessionProfileToken()),
+	isFocused: () => mainWindow !== null && !mainWindow.isDestroyed() && mainWindow.isFocused(),
+	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
+	// Background notifications + the Dock badge (agent-dock/notifier.ts): only where the dock runs (startupPolicy).
+	notify: agentDockNotifyOptions({
+		Notification,
+		dock: app.dock,
+		mainWindow: () => mainWindow,
+		focusAndRestore: () => focusAndRestoreMainWindow(),
+		sendOpenItem: itemId =>
+			sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.openItem, itemId, sessionProfileToken()),
+		idleBadge: sideBySideLaunch ? 'dev' : '',
+	}),
+})
+/**
+ * Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone.
+ * `profileId` is the terminal's owner, captured before the asynchronous kill/reap (a profile
+ * switch can land in between).
+ */
+const claudeTerminalClosed = (sessionId: string, profileId: string) =>
+	agentDock.terminalClosed({ profileId, terminalId: sessionId })
 // Transfer preflight is narrower than ordinary terminal IPC: it also requires
 // the current main renderer. A future move must add the controller's complete
 // snapshot/detach/attach capability hand-off before any move channel exists.
@@ -735,13 +710,14 @@ const graceCloseSupports = new Map<string, SessionSupport | null>()
 const graceCloser = new sessions.GraceCloser(sessions.closeGraceMs(), undefined, sessionId => {
 	if (!ordinarySessionAllowed(sessionId)) return null
 	const support = graceCloseSupports.get(sessionId) ?? null
+	const profileId = sessionProfileId
 	graceCloseSupports.delete(sessionId)
 	// Capture storage before the asynchronous kill. Namespace/crash cleanup may
 	// clear the map, but cannot discard this admitted finalizer's ownership.
 	return () => {
 		support?.registry.remove(sessionId)
 		support?.buffers.remove(sessionId)
-		claudeTerminalClosed(sessionId)
+		claudeTerminalClosed(sessionId, profileId)
 	}
 })
 
@@ -788,10 +764,7 @@ const warmTerminals = new TerminalWarmPool({
 			cols: 120,
 			rows: 40,
 			cwd,
-			env: claudeTerminalEnvironment(
-				remoteTerminalEnvironment(shellEnv(), { sessionId, registryFile: support.registry.filePath }),
-				sessionId,
-			),
+			env: terminalEnv(sessionId, support),
 		})
 		warmPtyBySession.set(sessionId, proc)
 		return { sessionId, proc: wrapWarmProcess(proc) }
@@ -1063,11 +1036,11 @@ function createWindow(): BrowserWindow {
 		return { action: 'deny' }
 	})
 	if (sideBySideLaunch) markSideBySideWindow(win)
-	win.on('focus', () => agentDockWatcher?.poke())
+	win.on('focus', () => agentDock.poke())
 	// A reloading/crashed renderer no longer shows the dock; the new one re-announces it.
-	win.webContents.on('did-start-loading', () => agentDockWatcher?.setVisible(false))
+	win.webContents.on('did-start-loading', () => agentDock.setVisible(false))
 	win.webContents.on('render-process-gone', (_event, details) => {
-		agentDockWatcher?.setVisible(false)
+		agentDock.setVisible(false)
 		if (screenshotPath || profileSwitchAttestationMode) return
 		const recovering = rendererCrashRecovery.recover(win.webContents, details)
 		console.error(
@@ -1077,7 +1050,7 @@ function createWindow(): BrowserWindow {
 		)
 	})
 	win.on('closed', () => {
-		agentDockWatcher?.setVisible(false)
+		agentDock.setVisible(false)
 		cancelShortcutRecorder()
 		if (mainWindow === win) mainWindow = null
 		killAllPtyClients()
@@ -1718,6 +1691,12 @@ function shellEnv(): Record<string, string> {
 	return env
 }
 
+/** Both ordinary spawn sites: scrubbed shell env, Helm terminal identity and (dtach terminals) the Claude hub's. */
+function terminalEnv(sessionId: string | null, support: SessionSupport | null): Record<string, string> {
+	const identity = sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null
+	return agentDock.terminalEnvironment(remoteTerminalEnvironment(shellEnv(), identity), identity?.sessionId ?? null)
+}
+
 const scheduledOpenAcks = new Map<number, { resolve(opened: boolean): void; timer: NodeJS.Timeout }>()
 
 /** Main-to-current-renderer open, fenced by both sender and profile token. */
@@ -1899,26 +1878,7 @@ ipcMain.handle(
 	},
 )
 
-// Agent dock: main renderer only, current profile token last (like the other session channels).
-ipcMain.on(AGENT_DOCK_IPC.setVisible, (event, visible: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return
-	agentDockWatcher?.setVisible(visible === true)
-})
-
-ipcMain.handle(AGENT_DOCK_IPC.ack, async (event, itemId: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
-	if (typeof itemId !== 'number' || !Number.isSafeInteger(itemId) || itemId <= 0) return false
-	return (await agentDockWatcher?.ack(itemId)) ?? false
-})
-
-// Dock answers: same gate as ack; the watcher validates the request and runs the Okena CAS read + POST.
-ipcMain.handle(AGENT_DOCK_IPC.act, async (event, request: unknown, profileToken: unknown) => {
-	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents)
-		return { ok: false, outcome: { status: 'failed', detail: 'This window cannot answer for the current profile.' } }
-	if (!agentDockWatcher)
-		return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
-	return agentDockWatcher.act(request)
-})
+agentDock.registerIpc(ipcMain)
 
 ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
@@ -2171,7 +2131,7 @@ function publishOrdinaryPty(
 				if (dead && ordinarySessionAllowed(sid, owningProfile)) {
 					support.registry.remove(sid)
 					support.buffers.remove(sid)
-					claudeTerminalClosed(sid)
+					claudeTerminalClosed(sid, owningProfile)
 				}
 			})
 		}
@@ -2247,13 +2207,7 @@ ipcMain.handle('pty:spawn', (event, args: SpawnArgs) => {
 		// cwd is main-owned. The renderer can select it only through the OS folder
 		// picker above and can never smuggle an arbitrary path into pty:spawn.
 		cwd,
-		env: claudeTerminalEnvironment(
-			remoteTerminalEnvironment(
-				shellEnv(),
-				sessionId && support ? { sessionId, registryFile: support.registry.filePath } : null,
-			),
-			sessionId && support ? sessionId : null,
-		),
+		env: terminalEnv(sessionId, support),
 	})
 	if (!restoring) warmTerminals.ensure()
 	return publishOrdinaryPty(event, args, proc, sessionId, owningProfile, support)
@@ -2307,12 +2261,13 @@ ipcMain.on('pty:kill', (_event, id: number, profileToken: unknown) => {
 	if (entry.sessionId && entry.backing !== 'run-owned') {
 		const sid = entry.sessionId
 		const support = getSessionSupport()
+		const profileId = sessionProfileId
 		graceCloser.undo(sid) // a hard kill supersedes any pending grace timer
 		graceCloseSupports.delete(sid)
 		void sessions.killSession(sid).then(() => {
 			support?.registry.remove(sid)
 			support?.buffers.remove(sid)
-			claudeTerminalClosed(sid)
+			claudeTerminalClosed(sid, profileId)
 		})
 	}
 	try {
@@ -3102,13 +3057,7 @@ void app.whenReady().then(async () => {
 					onClick: listener => native.on('click', listener),
 				}
 			},
-			focusAndRestore: () => {
-				const win = mainWindow
-				if (!win || win.isDestroyed()) return
-				if (win.isMinimized()) win.restore()
-				win.show()
-				win.focus()
-			},
+			focusAndRestore: () => focusAndRestoreMainWindow(),
 			activateProfile: async profileId => {
 				const result = await activateProfile(profileId)
 				return result.data !== undefined && sessionProfileId === profileId
@@ -3127,9 +3076,10 @@ void app.whenReady().then(async () => {
 	// side-by-side dev instances leave the lease to the operator's Helm.
 	if (launchPolicy.scheduledResidency) void scheduledResidency.start()
 	createWindow()
-	// Never blocks startup: an absent Okena is just a "source down" dock. The hub
-	// listens first so the dock's first Helm poll finds it.
-	void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => void agentDockWatcher?.start())
+	agentDock.start()
+	// After sleep or a locked screen the Okena stream may be half-open: reconnect and sweep now.
+	powerMonitor.on('resume', () => agentDock.resume())
+	powerMonitor.on('unlock-screen', () => agentDock.resume())
 	if (sideBySideLaunch) app.dock?.setBadge('dev')
 	if (launchPolicy.documentReviewControl) {
 		reviewControlStart = documentReviewControl.start().catch(() => {
@@ -3160,6 +3110,15 @@ void app.whenReady().then(async () => {
 		})
 	}
 })
+
+/** A notification click: the main window forward, restored if minimized, shown if hidden. */
+function focusAndRestoreMainWindow(): void {
+	const win = mainWindow
+	if (!win || win.isDestroyed()) return
+	if (win.isMinimized()) win.restore()
+	win.show()
+	win.focus()
+}
 
 app.on('window-all-closed', () => {
 	killAllPtyClients()
@@ -3280,8 +3239,7 @@ app.on('before-quit', event => {
 
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
-	agentDockWatcher?.stop()
-	claudeRemote?.stop()
+	agentDock.stop()
 	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
 	// shutdown always follows the final resident lease attempt. Release the
 	// provider watch first so a quit does not leave ClientCare polling on.

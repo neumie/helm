@@ -9,6 +9,7 @@ const {
 	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
+	pointerOnGroupHeaderLeadingEdge,
 	stripDropInsertionIndex,
 	tabDropInsertionIndex,
 	tabStripAutoScrollDelta,
@@ -95,4 +96,19 @@ test('magnetic background target uses a quiet expanded hit area', () => {
 	assert.equal(pointInExpandedRect(194, 20, target, 8), true)
 	assert.equal(pointInExpandedRect(190, 20, target, 8), false)
 	assert.equal(pointInExpandedRect(210, 45, target, 8), true)
+})
+
+test('a folder header leading edge drops beside the folder; the rest joins it', () => {
+	const header = { left: 100, width: 96 } // quarter = 24 → clamped to 16
+	assert.equal(pointerOnGroupHeaderLeadingEdge(100, header), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(115, header), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(116, header), false)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(148, header), false)
+	// No trailing edge: a join from the left slides the header left under the pointer.
+	assert.equal(pointerOnGroupHeaderLeadingEdge(190, header), false)
+	// A narrow header keeps a 6px leading edge and a joinable rest.
+	const narrow = { left: 0, width: 20 }
+	assert.equal(pointerOnGroupHeaderLeadingEdge(5, narrow), true)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(6, narrow), false)
+	assert.equal(pointerOnGroupHeaderLeadingEdge(19, narrow), false)
 })

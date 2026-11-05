@@ -20,7 +20,7 @@ Commands:
   ingest   File a self-contained task (email, note, …) into a project
   edit     Iterate on a document with your running agent (helm edit FILE)
   review   Legacy advanced document-connection commands
-  dock     Agent dock: Okena Claude sessions that need you (watch/ls/show)
+  dock     Agent dock: Claude sessions (Okena, Helm terminals) that need you (watch/ls/show)
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]

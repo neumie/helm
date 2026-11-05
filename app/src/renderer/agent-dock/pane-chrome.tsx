@@ -1,0 +1,572 @@
+// Agent dock pane chrome (design §3.24): the pieces every pane body is built from — the scroll
+// body with its fades, the plain header row (kind glyph, kind, context, whose; ‹ 1/3 › and esc), key
+// hints and the footer, key-style decisions, receipts, warnings and the numbered choice rows.
+import { type KeyboardEvent, type ReactNode, type Ref, type RefObject, useLayoutEffect, useRef, useState } from 'react'
+import type { DockItem } from '../../agent-dock/model'
+import { Btn, type ButtonTone } from '../button'
+import { type DockModKey, choiceStop, modHint, modShortcut, noModifiers, overflows } from './pane-keys'
+import {
+	type AgentWho,
+	type ReceiptView,
+	askQuestions,
+	entryTone,
+	itemKindLabel,
+	itemTimeLine,
+	kindGlyph,
+	plainAgentLine,
+} from './presentation'
+
+/**
+ * Marks a scroll box's clipped edges for the fades (`data-more` below, `data-more-above` above) and
+ * reports whether it scrolls at all.
+ */
+export function useScrollEdges(ref: RefObject<HTMLElement | null>): boolean {
+	const [scrollable, setScrollable] = useState(false)
+	useLayoutEffect(() => {
+		const node = ref.current
+		if (!node) return
+		const update = () => {
+			const below = String(node.scrollTop + node.clientHeight < node.scrollHeight - 1)
+			const above = String(node.scrollTop > 1)
+			if (node.dataset.more !== below) node.dataset.more = below
+			if (node.dataset.moreAbove !== above) node.dataset.moreAbove = above
+			setScrollable(node.scrollHeight > node.clientHeight + 1)
+		}
+		update()
+		node.addEventListener('scroll', update, { passive: true })
+		const observer = new ResizeObserver(update)
+		observer.observe(node)
+		for (const child of node.children) observer.observe(child)
+		return () => {
+			node.removeEventListener('scroll', update)
+			observer.disconnect()
+		}
+	})
+	return scrollable
+}
+
+/**
+ * The pane body (`role=region`, named after what it holds). It is a tab stop only while it clips
+ * content, so keyboard users can scroll it (↑ ↓, Page keys); a body that fits is no dead stop.
+ */
+export function ScrollBody({ label, children }: { label: string; children: ReactNode }) {
+	const ref = useRef<HTMLElement>(null)
+	const scrollable = useScrollEdges(ref)
+	return (
+		<section ref={ref} className="agent-dock-pane-scroll" tabIndex={scrollable ? 0 : -1} aria-label={label}>
+			{children}
+		</section>
+	)
+}
+
+/**
+ * The pane's header: a plain row on the dock's surface (no rule): what and whose on the left, the
+ * stepper and esc on the right. `title` is the full context (task title, exact time) for its tooltip.
+ */
+export function Header({ children, end, title }: { children: ReactNode; end: ReactNode; title?: string }) {
+	return (
+		<header className="agent-dock-title">
+			<span className="agent-dock-title-text" title={title}>
+				{children}
+			</span>
+			<span className="agent-dock-title-end">{end}</span>
+		</header>
+	)
+}
+
+export function CloseKey({ onClose }: { onClose(): void }) {
+	return (
+		<button
+			type="button"
+			className="agent-dock-title-btn agent-dock-title-close"
+			aria-label="Close details"
+			aria-keyshortcuts="Escape"
+			onClick={onClose}
+		>
+			esc
+		</button>
+	)
+}
+
+/**
+ * Kind glyph: the one colored mark of a queue entry and the pane header (its kind's tone, never its
+ * age), in a fixed box so names line up.
+ */
+export function KindGlyph({ item }: { item: DockItem }) {
+	return (
+		<span className="agent-dock-glyph" data-tone={entryTone(item)} aria-hidden="true">
+			{kindGlyph(item)}
+		</span>
+	)
+}
+
+const Sep = ({ mark = '·' }: { mark?: string }) => (
+	<span className="agent-dock-title-sep" aria-hidden="true">
+		{mark}
+	</span>
+)
+
+/** Narrower than this, the task title would be a stub (`Mobilní a…`): it drops whole instead. */
+const TASK_TITLE_MIN_PX = 120
+
+/**
+ * Drops the item header's task title (`data-dropped`) while the row leaves it less than
+ * `TASK_TITLE_MIN_PX` of text (or less than all of a shorter title); its tooltip keeps it. The room is
+ * what the row's other parts leave at their natural widths, so it reads the same with the title shown or
+ * dropped, and the agent's name only truncates once the title is gone.
+ */
+function useTaskTitleRoom(ref: RefObject<HTMLElement | null>, title: string) {
+	// The title's full width and its `—` lead, read while it is laid out (not dropped, nor hidden under a
+	// 640px pane): a dropped one measures nothing.
+	const natural = useRef({ title: '', width: 0, lead: 0 })
+	useLayoutEffect(() => {
+		const task = ref.current
+		const row = task?.parentElement
+		if (!task || !row) return
+		const update = () => {
+			const text = task.lastElementChild
+			if (text instanceof HTMLElement && text.scrollWidth > 0)
+				natural.current = {
+					title,
+					width: text.scrollWidth,
+					lead: text.getBoundingClientRect().left - task.getBoundingClientRect().left,
+				}
+			const gap = Number.parseFloat(getComputedStyle(row).columnGap) || 0
+			let others = 0
+			for (const part of row.children) {
+				if (part === task || !(part instanceof HTMLElement)) continue
+				others += Math.max(part.getBoundingClientRect().width, part.scrollWidth) + gap
+			}
+			const known = natural.current.title === title
+			const lead = known ? natural.current.lead : Number.parseFloat(getComputedStyle(task).fontSize) + gap
+			const room = row.clientWidth - others - lead
+			const need = known ? Math.min(TASK_TITLE_MIN_PX, natural.current.width) : TASK_TITLE_MIN_PX
+			const drop = room < need - 0.5
+			if ((task.dataset.dropped !== undefined) !== drop) {
+				if (drop) task.dataset.dropped = ''
+				else delete task.dataset.dropped
+			}
+		}
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(row)
+		return () => observer.disconnect()
+	})
+}
+
+/**
+ * The item pane's header (design: Jakub 2026-11-05): what, then whose, then the task —
+ * `↵ Turn ended · Psyon · fakturoid-digisign-errors — <task title>   Okena ↗ ⌘O … ‹ 1/3 › esc`. The kind
+ * glyph and kind, the question's context dim (capped), the project dim (capped), the agent's short name,
+ * then Okena's full pane name dim, then where. The task title gives way first and drops whole below a
+ * readable width (`useTaskTitleRoom`; always under a 640px pane), then the name truncates; each part
+ * ellipsizes with its full text as its tooltip, and the row's tooltip carries whose, the task title and when.
+ */
+export function ItemHeader({
+	item,
+	who,
+	now,
+	index,
+	total,
+	where = null,
+	onStep,
+	onClose,
+}: {
+	item: DockItem
+	who: AgentWho
+	now: number
+	index: number
+	total: number
+	/** After whose: where the agent runs, as a link to its terminal ("Show terminal", ⌘O). */
+	where?: ReactNode
+	onStep(delta: number): void
+	onClose(): void
+}) {
+	const time = itemTimeLine(item, now)
+	const kind = itemKindLabel(item)
+	const context = headerContext(item)
+	const taskRef = useRef<HTMLSpanElement>(null)
+	useTaskTitleRoom(taskRef, who.title)
+	return (
+		<Header
+			title={[
+				[who.project, who.name].filter(Boolean).join(' · '),
+				who.title,
+				`${kind} #${item.id} · ${time.stamp} · ${time.waited}`,
+			]
+				.filter(Boolean)
+				.join('\n')}
+			end={
+				<>
+					<Stepper index={index} total={total} noun="item" onStep={onStep} />
+					<CloseKey onClose={onClose} />
+				</>
+			}
+		>
+			<span className="agent-dock-title-kind">
+				<KindGlyph item={item} />
+				{kind}
+			</span>
+			{context ? (
+				<span className="agent-dock-title-context" title={context}>
+					{context}
+				</span>
+			) : null}
+			{who.project ? (
+				<>
+					<Sep />
+					<span className="agent-dock-title-who-project" title={who.project}>
+						{who.project}
+					</span>
+				</>
+			) : null}
+			<Sep />
+			<span className="agent-dock-title-who-name" title={who.name}>
+				{who.name}
+			</span>
+			{who.title ? (
+				<span ref={taskRef} className="agent-dock-title-task">
+					<Sep mark="—" />
+					<span className="agent-dock-title-task-text" title={who.title}>
+						{who.title}
+					</span>
+				</span>
+			) : null}
+			{where}
+		</Header>
+	)
+}
+
+/** ‹ 1/3 ›: steps through the queue's items (or the Agents pane's agents); the count is live for screen readers. */
+export function Stepper({
+	index,
+	total,
+	noun,
+	onStep,
+}: {
+	index: number
+	total: number
+	/** `item` / `agent`: the buttons' names (`Previous item`) and the count's words (`Item 1 of 3`). */
+	noun: string
+	onStep(delta: number): void
+}) {
+	const Noun = noun.charAt(0).toUpperCase() + noun.slice(1)
+	return (
+		<span className="agent-dock-stepper">
+			<button
+				type="button"
+				className="agent-dock-title-btn"
+				aria-label={`Previous ${noun}`}
+				disabled={index <= 0}
+				onClick={() => onStep(-1)}
+			>
+				‹
+			</button>
+			<span className="agent-dock-step-count" aria-live="polite">
+				<span aria-hidden="true">
+					{index + 1}/{total}
+				</span>
+				<span className="sr-only">
+					{Noun} {index + 1} of {total}
+				</span>
+			</span>
+			<button
+				type="button"
+				className="agent-dock-title-btn"
+				aria-label={`Next ${noun}`}
+				disabled={index >= total - 1}
+				onClick={() => onStep(1)}
+			>
+				›
+			</button>
+		</span>
+	)
+}
+
+/** Header context after the kind: a single question's short header, or how many questions. */
+function headerContext(item: DockItem): string | null {
+	if (item.fact.kind !== 'ask' || item.fact.tool !== 'AskUserQuestion') return null
+	const questions = askQuestions(item.fact.input) ?? []
+	if (questions.length > 1) return `${questions.length} questions`
+	return questions[0]?.header ? plainAgentLine(questions[0].header, 64) : null
+}
+
+export function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children: ReactNode }) {
+	return (
+		<span className="agent-dock-hint" data-pick={pick ? '' : undefined}>
+			{/* Modifier symbols get the row's ⌘⇧J spacing. */}
+			<kbd data-face={keys.startsWith('⌘') ? 'symbols' : undefined}>{keys}</kbd> {children}
+		</span>
+	)
+}
+
+/**
+ * While the pane's body overflows, the keys that scroll it: `↑↓` where ↑ ↓ do (no live choices), else
+ * `⇞⇟` (the Page keys; ↑ ↓ go to the choices); null while it fits or `on` is false.
+ */
+function useScrollHint(ref: RefObject<HTMLElement | null>, on: boolean): string | null {
+	const [hint, setHint] = useState<string | null>(null)
+	useLayoutEffect(() => {
+		const pane = on ? ref.current?.closest<HTMLElement>('.agent-dock-pane') : null
+		const body = pane?.querySelector<HTMLElement>('.agent-dock-pane-scroll')
+		if (!pane || !body) {
+			setHint(null)
+			return
+		}
+		const update = () => setHint(!overflows(body) ? null : choiceStop(pane) ? '⇞⇟' : '↑↓')
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(body)
+		for (const child of body.children) observer.observe(child)
+		return () => observer.disconnect()
+	})
+	return hint
+}
+
+/**
+ * Footer: key hints left, then the receipt / hint in words, then the decisions. No rule of its own: the
+ * pane's one hairline toward the queue closes it. The hints are for sighted keyboard use only (the controls carry aria-keyshortcuts)
+ * and show only while the pane holds focus, since only then do the keys reach it. A quiet scroll hint
+ * leads them while the body overflows (`scrollHint`; the Agents list roves instead).
+ */
+export function Footer({
+	hints,
+	note,
+	scrollHint = true,
+	children,
+}: { hints: ReactNode; note: ReactNode; scrollHint?: boolean; children?: ReactNode }) {
+	const ref = useRef<HTMLElement>(null)
+	const scroll = useScrollHint(ref, scrollHint)
+	return (
+		<footer ref={ref} className="agent-dock-foot">
+			<span className="agent-dock-foot-hints" aria-hidden="true">
+				{scroll ? (
+					<span className="agent-dock-hint" data-scroll="">
+						<kbd>{scroll}</kbd> scroll
+					</span>
+				) : null}
+				{hints}
+			</span>
+			<span className="agent-dock-foot-note">{note}</span>
+			{children ? <span className="agent-dock-foot-actions">{children}</span> : null}
+		</footer>
+	)
+}
+
+/** A footer decision: the shared button in the dock's typeface (its key is in the footer hints). */
+export function Key({
+	tone,
+	disabled,
+	busy,
+	ariaLabel,
+	keyShortcuts,
+	title,
+	onClick,
+	children,
+}: {
+	tone: ButtonTone
+	disabled?: boolean
+	busy?: boolean
+	ariaLabel?: string
+	keyShortcuts?: string
+	/** Tooltip, e.g. the key that does the same (`Ack (⌘⌫)`). */
+	title?: string
+	onClick(): void
+	children: string
+}) {
+	return (
+		<Btn
+			tone={tone}
+			sm
+			className="agent-dock-key"
+			disabled={disabled}
+			busy={busy}
+			ariaLabel={ariaLabel}
+			ariaKeyShortcuts={keyShortcuts}
+			title={title}
+			onClick={onClick}
+		>
+			{children}
+		</Btn>
+	)
+}
+
+/** The footer's submit: nothing while the item cannot be decided here; otherwise the primary key (⌘Enter). */
+export function SubmitActions({
+	decidable,
+	disabled,
+	busy,
+	mod,
+	tone = 'primary',
+	label,
+	onSubmit,
+}: {
+	decidable: boolean
+	disabled: boolean
+	busy: boolean
+	mod: DockModKey
+	tone?: ButtonTone
+	label: string
+	onSubmit(): void
+}) {
+	if (!decidable) return null
+	return (
+		<Key tone={tone} disabled={disabled} busy={busy} keyShortcuts={modShortcut(mod)} onClick={onSubmit}>
+			{label}
+		</Key>
+	)
+}
+
+/** The `>` prompt a free-text field sits in (an Other… answer, a deny message, a reply). */
+export function PromptField({ children }: { children: ReactNode }) {
+	return (
+		// biome-ignore lint/a11y/noLabelWithoutControl: the field (input or textarea) is the children
+		<label className="agent-dock-prompt">
+			<span className="agent-dock-prompt-mark" aria-hidden="true">
+				&gt;
+			</span>
+			{children}
+		</label>
+	)
+}
+
+/** A receipt, and what was sent when the pane knows it (`✓ answered · Blue, M`). */
+export function Receipt({ view, detail = null }: { view: ReceiptView; detail?: string | null }) {
+	return (
+		<output className="agent-dock-receipt" data-tone={view.tone}>
+			{view.text}
+			{detail ? <span className="agent-dock-receipt-detail"> · {detail}</span> : null}
+		</output>
+	)
+}
+
+export function Warn({ children }: { children: ReactNode }) {
+	return (
+		<p className="agent-dock-warn">
+			<span className="agent-dock-warn-mark" aria-hidden="true">
+				!
+			</span>
+			<span>{children}</span>
+		</p>
+	)
+}
+
+export const closeHints = <Hint keys="esc">close</Hint>
+
+/** Hints read in the order the keys act: pick, submit (send), ack, close. */
+export const pickHints = (count: number, mod: DockModKey, ackHint: ReactNode = null) => (
+	<>
+		<Hint keys={count > 1 ? `1–${count}` : '1'} pick>
+			pick
+		</Hint>
+		<Hint keys={modHint(mod)}>submit</Hint>
+		{ackHint}
+		<Hint keys="esc">close</Hint>
+	</>
+)
+
+export interface ChoiceRow {
+	id: string
+	label: ReactNode
+	description?: ReactNode
+	tone?: 'danger'
+}
+
+/**
+ * Numbered rows like Claude Code's own list: cursor, number, label, aligned description. One tab
+ * stop (roving): ↑ ↓ Home End move focus only — a pick auto-advances single-select questions, so
+ * arrows never pick. Radio rows for one answer, checkboxes for several.
+ */
+export function Choices({
+	rows,
+	picked,
+	multi,
+	live,
+	labelledBy,
+	label,
+	keyPrefix = '',
+	groupRef,
+	onPick,
+	onPoint,
+}: {
+	rows: ChoiceRow[]
+	picked: ReadonlySet<string>
+	multi?: boolean
+	live: boolean
+	labelledBy?: string
+	label?: string
+	/** Rows are keyed per question so a pick that moves on never leaves focus on an unseen option. */
+	keyPrefix?: string
+	groupRef?: Ref<HTMLDivElement>
+	onPick(id: string): void
+	onPoint?(id: string): void
+}) {
+	// The last focused row, per list (`keyPrefix`): another question's list starts at its own pick or first row.
+	const [current, setCurrent] = useState<string | null>(null)
+	const rowKey = (id: string) => `${keyPrefix}:${id}`
+	const stop =
+		rows.find(row => rowKey(row.id) === current)?.id ?? rows.find(row => picked.has(row.id))?.id ?? rows[0]?.id
+	const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || !noModifiers(event)) return
+		const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('.agent-dock-choice')]
+		const at = buttons.indexOf(event.target as HTMLButtonElement)
+		if (at < 0) return
+		event.preventDefault()
+		event.stopPropagation()
+		const last = buttons.length - 1
+		const next =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? last
+					: Math.max(0, Math.min(last, at + (event.key === 'ArrowDown' ? 1 : -1)))
+		buttons[next]?.focus()
+	}
+	return (
+		<div
+			ref={groupRef}
+			className="agent-dock-choices"
+			role={multi ? 'group' : 'radiogroup'}
+			aria-labelledby={labelledBy}
+			aria-label={labelledBy ? undefined : label}
+			aria-keyshortcuts={rows.map((_, at) => at + 1).join(' ')}
+			data-multi={String(multi === true)}
+			onKeyDown={onKeyDown}
+		>
+			{rows.map((row, at) => {
+				const on = picked.has(row.id)
+				return (
+					<button
+						type="button"
+						key={rowKey(row.id)}
+						className="agent-dock-choice"
+						role={multi ? 'checkbox' : 'radio'}
+						data-tone={row.tone}
+						aria-checked={on}
+						// The description keeps to one line: the whole of it is the row's tooltip.
+						title={typeof row.description === 'string' ? row.description : undefined}
+						tabIndex={row.id === stop ? 0 : -1}
+						disabled={!live}
+						onClick={() => onPick(row.id)}
+						onMouseEnter={() => onPoint?.(row.id)}
+						onFocus={() => {
+							setCurrent(rowKey(row.id))
+							onPoint?.(row.id)
+						}}
+					>
+						{/* The mark is drawn (a dot, or a box for several); aria-checked says it. */}
+						<span className="agent-dock-choice-cursor" data-on={String(on)} aria-hidden="true" />
+						<span className="agent-dock-choice-n">{at + 1}</span>{' '}
+						<span className="agent-dock-choice-label">{row.label}</span>
+						{row.description ? (
+							<>
+								{' '}
+								<span className="agent-dock-choice-description">{row.description}</span>
+							</>
+						) : null}
+					</button>
+				)
+			})}
+		</div>
+	)
+}

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { request } from 'node:http'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -13,6 +13,8 @@ interface CliConfig {
 interface RemoteConfig {
 	port: number
 	pid: number
+	/** The daemon's lifetime belongs to the Okena desktop app (it quits with it, idle-exits without clients). */
+	ui_owned?: boolean
 	local_endpoint?: {
 		kind?: string
 		path?: string
@@ -25,12 +27,87 @@ interface ProfilesConfig {
 	profiles?: Array<{ id: string }>
 }
 
-type OkenaEndpoint = { kind: 'unixSocket'; socketPath: string } | { kind: 'http'; baseUrl: string }
+export type OkenaEndpoint = { kind: 'unixSocket'; socketPath: string } | { kind: 'http'; baseUrl: string }
 
 interface OkenaCredentials {
 	token: string
 	endpoint: OkenaEndpoint
+	/** remote.json `pid` (0 when absent). */
+	pid: number
+	uiOwned: boolean
 }
+
+/** Where `/v1/stream` is for this client's profile (stream.ts), as remote.json/cli.json say right now. */
+export interface OkenaStreamTarget {
+	endpoint: OkenaEndpoint
+	/** Only sent on TCP (a unix-socket peer is trusted without one). */
+	token: string
+	/** The daemon's pid (remote.json; 0 when absent): a restarted daemon is a new target. */
+	pid: number
+	/** remote.json `ui_owned`: a connected stream keeps such a daemon alive (see agent-dock okena-stream.ts). */
+	uiOwned: boolean
+}
+
+/** How long a `kill(pid, 0)` liveness answer for remote.json's pid is reused. */
+export const OKENA_PID_CHECK_MS = 3_000
+
+/**
+ * Okena's small JSON config files (profiles.json, cli.json, remote.json, workspace.json),
+ * parsed once per file version: every request (the agent dock polls several per second)
+ * re-reads them only when their mtime, size or inode moved (an atomic replace changes the
+ * inode). A missing file or invalid JSON throws exactly like `JSON.parse(readFileSync(…))`.
+ * Shared by every OkenaClient (forProfile() makes one per poll).
+ */
+export class OkenaConfigCache {
+	private readonly files = new Map<string, { version: string; value: unknown; error?: unknown }>()
+	private readonly pids = new Map<number, { alive: boolean; at: number }>()
+
+	constructor(
+		private readonly now: () => number = Date.now,
+		private readonly alive: (pid: number) => boolean = pidAlive,
+	) {}
+
+	/** Parsed JSON of `path` (callers must not mutate it). Throws when missing or invalid. */
+	readJson<T>(path: string): T {
+		const info = statSync(path)
+		const version = `${info.mtimeMs}:${info.size}:${info.ino}`
+		const cached = this.files.get(path)
+		if (cached?.version === version) {
+			if (cached.error !== undefined) throw cached.error
+			return cached.value as T
+		}
+		try {
+			const value = JSON.parse(readFileSync(path, 'utf-8')) as unknown
+			this.files.set(path, { version, value })
+			return value as T
+		} catch (error) {
+			this.files.set(path, { version, value: undefined, error })
+			throw error
+		}
+	}
+
+	/** `kill(pid, 0)`, answered from cache for OKENA_PID_CHECK_MS. */
+	isProcessAlive(pid: number): boolean {
+		const now = this.now()
+		const cached = this.pids.get(pid)
+		if (cached && now - cached.at < OKENA_PID_CHECK_MS) return cached.alive
+		const alive = this.alive(pid)
+		if (this.pids.size > 64) this.pids.clear()
+		this.pids.set(pid, { alive, at: now })
+		return alive
+	}
+}
+
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0)
+		return true
+	} catch {
+		return false
+	}
+}
+
+const sharedConfigCache = new OkenaConfigCache()
 
 const EXPIRED_TOKEN_HINT =
 	'Okena CLI token expired or invalid. Re-register with the Okena binary’s `state` command, then retry this action; Helm reloads the token automatically.'
@@ -41,6 +118,7 @@ export class OkenaClient {
 	constructor(
 		baseDir?: string,
 		private readonly profileId?: string,
+		private readonly config: OkenaConfigCache = sharedConfigCache,
 	) {
 		this.baseDir =
 			baseDir ??
@@ -58,7 +136,7 @@ export class OkenaClient {
 	forProject(repoPath: string): OkenaClient {
 		const profilesPath = join(this.baseDir, 'profiles.json')
 		try {
-			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const profiles = this.config.readJson<ProfilesConfig>(profilesPath)
 			const ids = [
 				this.profileId,
 				profiles.last_used,
@@ -68,9 +146,9 @@ export class OkenaClient {
 			for (const id of new Set(ids.filter((value): value is string => Boolean(value)))) {
 				const workspacePath = join(this.baseDir, 'profiles', id, 'workspace.json')
 				if (!existsSync(workspacePath)) continue
-				const workspace: { projects?: Array<{ path?: string }> } = JSON.parse(readFileSync(workspacePath, 'utf-8'))
+				const workspace = this.config.readJson<{ projects?: Array<{ path?: string }> }>(workspacePath)
 				if (workspace.projects?.some(project => project.path === repoPath)) {
-					return new OkenaClient(this.baseDir, id)
+					return new OkenaClient(this.baseDir, id, this.config)
 				}
 			}
 		} catch {
@@ -82,7 +160,7 @@ export class OkenaClient {
 
 	/** Pin subsequent requests to one Okena profile id (e.g. a value from activeProfileId()). */
 	forProfile(profileId: string): OkenaClient {
-		return new OkenaClient(this.baseDir, profileId)
+		return new OkenaClient(this.baseDir, profileId, this.config)
 	}
 
 	/**
@@ -94,7 +172,7 @@ export class OkenaClient {
 		const profilesPath = join(this.baseDir, 'profiles.json')
 		if (!existsSync(profilesPath)) return null
 		try {
-			const profiles: ProfilesConfig = JSON.parse(readFileSync(profilesPath, 'utf-8'))
+			const profiles = this.config.readJson<ProfilesConfig>(profilesPath)
 			return profiles.last_used ?? profiles.default_profile ?? null
 		} catch {
 			return null
@@ -128,7 +206,7 @@ export class OkenaClient {
 
 		let token: string
 		try {
-			const cli: CliConfig = JSON.parse(readFileSync(cliPath, 'utf-8'))
+			const cli = this.config.readJson<CliConfig>(cliPath)
 			token = cli.token
 		} catch {
 			return null
@@ -138,26 +216,28 @@ export class OkenaClient {
 		if (!existsSync(remotePath)) return null
 
 		try {
-			const remote: RemoteConfig = JSON.parse(readFileSync(remotePath, 'utf-8'))
-			if (remote.pid && !this.isProcessAlive(remote.pid)) return null
+			const remote = this.config.readJson<RemoteConfig>(remotePath)
+			if (remote.pid && !this.config.isProcessAlive(remote.pid)) return null
 			const localEndpoint = remote.local_endpoint
 			const endpoint: OkenaEndpoint =
 				localEndpoint?.kind === 'unix_socket' && localEndpoint.path
 					? { kind: 'unixSocket', socketPath: localEndpoint.path }
 					: { kind: 'http', baseUrl: `http://127.0.0.1:${remote.port}` }
-			return { token, endpoint }
+			return {
+				token,
+				endpoint,
+				pid: Number.isSafeInteger(remote.pid) ? remote.pid : 0,
+				uiOwned: remote.ui_owned === true,
+			}
 		} catch {
 			return null
 		}
 	}
 
-	private isProcessAlive(pid: number): boolean {
-		try {
-			process.kill(pid, 0)
-			return true
-		} catch {
-			return false
-		}
+	/** The live daemon's stream endpoint for this profile, or null when Okena is not configured or not running. */
+	streamTarget(): OkenaStreamTarget | null {
+		const creds = this.loadCredentials()
+		return creds ? { endpoint: creds.endpoint, token: creds.token, pid: creds.pid, uiOwned: creds.uiOwned } : null
 	}
 
 	async isAvailable(): Promise<boolean> {
@@ -173,7 +253,7 @@ export class OkenaClient {
 
 	private async authorizedFetch(path: string, init: RequestInit = {}, maxBytes?: number): Promise<Response> {
 		const creds = this.loadCredentials()
-		if (!creds) throw new Error('Okena not configured')
+		if (!creds) throw Object.assign(new Error('Okena not configured'), { code: OKENA_NOT_CONFIGURED })
 
 		const send = (c: OkenaCredentials) => {
 			const headers = new Headers(init.headers)
@@ -190,11 +270,12 @@ export class OkenaClient {
 		return send(fresh)
 	}
 
-	async action<T = unknown>(payload: Record<string, unknown>): Promise<T> {
+	async action<T = unknown>(payload: Record<string, unknown>, opts: { signal?: AbortSignal } = {}): Promise<T> {
 		const res = await this.authorizedFetch('/v1/actions', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload),
+			...(opts.signal ? { signal: opts.signal } : {}),
 		})
 
 		if (!res.ok) {
@@ -223,6 +304,11 @@ export class OkenaClient {
 		const signal = opts?.signal
 		if (signal?.aborted) throw taskCancelled()
 		if (opts?.freshTerminal) {
+			// A just-spawned shell may still be sourcing its rc files (seconds under
+			// load, e.g. while Okena's on_worktree_create hook runs). ctrl_c then
+			// aborts the rc mid-way — PATH entries such as ~/.local/bin go missing and
+			// the agent command is "not found". Wait for the first prompt to draw.
+			await waitForShellOutput(this, terminalId, { signal })
 			await delay(FRESH_TERMINAL_SETTLE_MS, undefined, { signal })
 			if (signal?.aborted) throw taskCancelled()
 			try {
@@ -241,49 +327,47 @@ export class OkenaClient {
 	 * on transport failure, timeout, non-2xx status, oversized body or invalid
 	 * JSON; the caller validates the shape.
 	 */
-	async getJson(path: string, opts: OkenaReadOptions = {}): Promise<unknown> {
-		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
-		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
-		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
-		const route = path.split('?')[0]
-		const res = await this.authorizedFetch(path, { method: 'GET', signal }, maxBytes)
-		const text = await readBoundedText(res, maxBytes)
-		if (!res.ok) {
-			if (res.status === 401) throw new OkenaHttpError(`Okena GET ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena GET ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
-		}
-		try {
-			return JSON.parse(text) as unknown
-		} catch {
-			throw new Error(`Okena GET ${route} returned invalid JSON`)
-		}
+	getJson(path: string, opts: OkenaReadOptions = {}): Promise<unknown> {
+		return this.requestJson('GET', path, undefined, opts)
 	}
 
 	/**
 	 * Bounded JSON POST to an Okena route (agent-dock answers). Throws OkenaHttpError
 	 * with the status and Okena's verbatim plain-text reason on non-2xx; a timeout
-	 * surfaces as a `TimeoutError`/`AbortError` (the request may have landed).
+	 * surfaces as a `TimeoutError`/`AbortError` (the request may have landed). An
+	 * empty 2xx body is null.
 	 */
-	async postJson(path: string, body: unknown, opts: OkenaReadOptions = {}): Promise<unknown> {
+	postJson(path: string, body: unknown, opts: OkenaReadOptions = {}): Promise<unknown> {
+		return this.requestJson('POST', path, body, opts)
+	}
+
+	private async requestJson(
+		method: 'GET' | 'POST',
+		path: string,
+		body: unknown,
+		opts: OkenaReadOptions,
+	): Promise<unknown> {
 		const maxBytes = opts.maxBytes ?? OKENA_READ_MAX_BYTES
 		const timeout = AbortSignal.timeout(opts.timeoutMs ?? OKENA_READ_TIMEOUT_MS)
 		const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout
 		const route = path.split('?')[0]
-		const res = await this.authorizedFetch(
-			path,
-			{ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal },
-			maxBytes,
-		)
+		const init: RequestInit =
+			method === 'POST'
+				? { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }
+				: { method, signal }
+		const res = await this.authorizedFetch(path, init, maxBytes)
 		const text = await readBoundedText(res, maxBytes)
 		if (!res.ok) {
-			if (res.status === 401) throw new OkenaHttpError(`Okena POST ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
-			throw new OkenaHttpError(`Okena POST ${route} failed (${res.status}): ${text.slice(0, 200)}`, res.status)
+			if (res.status === 401)
+				throw new OkenaHttpError(`Okena ${method} ${route} failed (401): ${EXPIRED_TOKEN_HINT}`, 401)
+			const reason = text.slice(0, 200)
+			throw new OkenaHttpError(`Okena ${method} ${route} failed (${res.status}): ${reason}`, res.status, reason)
 		}
-		if (!text.trim()) return null
+		if (method === 'POST' && !text.trim()) return null
 		try {
 			return JSON.parse(text) as unknown
 		} catch {
-			throw new Error(`Okena POST ${route} returned invalid JSON`)
+			throw new Error(`Okena ${method} ${route} returned invalid JSON`)
 		}
 	}
 
@@ -325,7 +409,7 @@ export class OkenaClient {
 	 */
 	getClaudeTranscript(
 		terminalId: string,
-		query: { cursor?: number; sessionId?: string; agentId?: string } = {},
+		query: { cursor?: number; sessionId?: string } = {},
 		opts?: OkenaReadOptions,
 	): Promise<unknown> {
 		const params = new URLSearchParams()
@@ -333,7 +417,6 @@ export class OkenaClient {
 			params.set('cursor', String(query.cursor))
 			params.set('session_id', query.sessionId)
 		}
-		if (query.agentId) params.set('agent_id', query.agentId)
 		const search = params.size > 0 ? `?${params.toString()}` : ''
 		return this.getJson(`/v1/claude/terminals/${encodeURIComponent(terminalId)}/transcript${search}`, opts)
 	}
@@ -348,11 +431,15 @@ export class OkenaClient {
 	}
 }
 
-/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason. */
+/** `code` of the error a request throws when no Okena profile/credentials resolve (nothing was sent). */
+export const OKENA_NOT_CONFIGURED = 'OKENA_NOT_CONFIGURED'
+
+/** A non-2xx Okena answer; `message` keeps Okena's verbatim reason, `reason` the reason alone (its first 200 chars). */
 export class OkenaHttpError extends Error {
 	constructor(
 		message: string,
 		readonly status: number,
+		readonly reason?: string,
 	) {
 		super(message)
 		this.name = 'OkenaHttpError'
@@ -412,6 +499,8 @@ export interface OkenaState {
 		terminal_names?: Record<string, string>
 		git_status?: { branch?: string | null } | null
 		worktree_info?: { parent_project_id: string } | null
+		/** Optimistic `create_worktree` still checking out; no PTY is spawned yet. */
+		is_creating?: boolean
 	}>
 }
 
@@ -474,6 +563,43 @@ function requestEndpoint(
 		if (init.body) req.write(init.body)
 		req.end()
 	})
+}
+
+const SHELL_OUTPUT_TIMEOUT_MS = 20_000
+const SHELL_OUTPUT_POLL_MS = 250
+
+/**
+ * Best-effort readiness for a fresh Okena terminal: poll `read_content` until the
+ * screen shows anything (the shell drew its prompt, so rc sourcing finished).
+ * Okena has no shell-readiness API and a blank screen reads as "". Bounded: on
+ * timeout (or a terminal Okena cannot read) the caller proceeds as before.
+ * Returns whether output was seen.
+ */
+export async function waitForShellOutput(
+	client: Pick<OkenaClient, 'action'>,
+	terminalId: string,
+	opts: {
+		signal?: AbortSignal
+		timeoutMs?: number
+		pollMs?: number
+		sleep?: (ms: number, signal?: AbortSignal) => Promise<unknown>
+		now?: () => number
+	} = {},
+): Promise<boolean> {
+	const now = opts.now ?? Date.now
+	const sleep = opts.sleep ?? ((ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }))
+	const deadline = now() + (opts.timeoutMs ?? SHELL_OUTPUT_TIMEOUT_MS)
+	for (;;) {
+		if (opts.signal?.aborted) throw taskCancelled()
+		try {
+			const res = await client.action<{ content?: string }>({ action: 'read_content', terminal_id: terminalId })
+			if ((res?.content ?? '').trim() !== '') return true
+		} catch {
+			// Not registered yet, or unreadable: keep polling until the bound.
+		}
+		if (now() >= deadline) return false
+		await sleep(opts.pollMs ?? SHELL_OUTPUT_POLL_MS, opts.signal)
+	}
 }
 
 // How long to let a freshly-created/auto okena terminal settle before typing the

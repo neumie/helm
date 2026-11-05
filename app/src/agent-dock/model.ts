@@ -1,12 +1,28 @@
 // Agent dock contract: Okena Claude Remote wire schemas (zod, fail closed) plus
 // the dock's own session/item/snapshot types. Pure: no IO, no Electron. Main
-// (watcher), the renderer (`import type` only) and the CLI share this file.
+// (watcher, sources, act) and the renderer (`import type` only) share this file;
+// the CLI and the spool share only src/agent-dock/ (dock-vocabulary.ts, spool.ts).
 //
 // Items open and close only from observed Okena facts, Jakub's ack, or an
-// answer Jakub sent from the dock that Okena then shows taking effect (slice 2).
+// answer Jakub sent from the dock that Okena then shows taking effect.
 // Never infer agent state from screen contents (AGENTS.md).
 
 import { z } from 'zod'
+import type {
+	DOCK_ACTION_KINDS,
+	DOCK_ITEM_KINDS,
+	DOCK_ITEM_STATES,
+	DOCK_PROMPT_DELIVERIES,
+	DOCK_RECEIPT_STATUSES,
+	DOCK_REFUSAL_REASONS,
+	DOCK_RESOLUTION_BY,
+	DOCK_SESSION_STATUSES,
+	DOCK_SOURCE_HEALTH_STATES,
+	DockSourceId,
+} from '../../../src/agent-dock/dock-vocabulary'
+import type { ObservedBackgroundTasks } from './background-tasks'
+
+export type { DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 
 // ---------------------------------------------------------------------------
 // Okena wire schemas (okena f67bbf7b: okena-core/src/{api,claude_remote}.rs).
@@ -24,6 +40,18 @@ const okenaProjectSchema = z.object({
 	layout: z.unknown().optional(),
 	terminal_names: z.record(z.string(), z.string()).optional(),
 	git_status: z.object({ branch: z.string().nullish() }).nullish(),
+	/** Present when the project is a git worktree Okena made from another project (its repository). */
+	worktree_info: z.object({ parent_project_id: z.string() }).nullish(),
+	/**
+	 * Agent status a pane reports about itself (OSC 7501 records, else OSC 9001; e.g. the okena-lifecycle Claude Code
+	 * hooks): only `lifecycle` is read, as a push-coverage hint (OkenaClaudeSource.pushCovered).
+	 * A change bumps state_version, so `/v1/stream` carries it. Optional and never fatal:
+	 * malformed = absent (the dock then keeps polling).
+	 */
+	terminal_agent_status: z
+		.record(z.string(), z.object({ lifecycle: z.string().max(32) }))
+		.optional()
+		.catch(undefined),
 })
 
 /** `GET /v1/state`, only the fields the dock reads. Empty maps are omitted by the server. */
@@ -46,7 +74,7 @@ export const okenaClaudeDialogSchema = z.object({
 })
 export type OkenaClaudeDialog = z.infer<typeof okenaClaudeDialogSchema>
 
-export const okenaClaudePrLinkSchema = z.object({
+const okenaClaudePrLinkSchema = z.object({
 	number: u64,
 	url: z.string().url(),
 	repository: z.string(),
@@ -65,6 +93,13 @@ export const okenaClaudeSessionSchema = z.object({
 	queued_prompts: u64,
 	dialogs: z.array(okenaClaudeDialogSchema),
 	running_subagents: z.array(z.object({ agent_id: z.string(), agent_type: z.string() })).default([]),
+	/**
+	 * Helm's own hub only (Okena never sends it): background tasks the Stop hook listed as
+	 * still running. Okena panes get theirs from the transcript file (ObservedClaudeTerminal.background).
+	 */
+	background_tasks: u64.optional(),
+	/** Helm's hub only: how many of background_tasks are shells. */
+	background_shells: u64.optional(),
 	pr_links: z.array(okenaClaudePrLinkSchema).default([]),
 })
 export type OkenaClaudeSession = z.infer<typeof okenaClaudeSessionSchema>
@@ -136,6 +171,20 @@ function layoutHasTerminal(node: unknown, terminalId: string, depth = 0): boolea
 	)
 }
 
+/** Project whose layout shows a terminal as a pane: the only terminals Okena's `focus_terminal` can focus. */
+export function okenaLayoutProject(state: OkenaState, terminalId: string): OkenaProject | undefined {
+	return state.projects.find(project => layoutHasTerminal(project.layout, terminalId))
+}
+
+/** The agent-status lifecycle a pane reports (`working`, `blocked`, `done`, `idle`, `error`, …), if any. */
+export function okenaAgentLifecycle(state: OkenaState, terminalId: string): string | undefined {
+	for (const project of state.projects) {
+		const status = project.terminal_agent_status?.[terminalId]
+		if (status) return status.lifecycle
+	}
+	return undefined
+}
+
 /** Project owning a terminal: layout pane first, then `terminal_names` (hook/service terminals). */
 export function okenaTerminalProject(state: OkenaState, terminalId: string): OkenaProject | undefined {
 	return (
@@ -159,23 +208,11 @@ export type SessionKey = string
 
 export const sessionKey = (profile: string, terminalId: string): SessionKey => `${profile}:${terminalId}`
 
-/**
- * Where a dock session is observed: Okena Claude Remote (`okena`) or Helm's own
- * Claude hub for Claude Code in Helm terminals (`helm`; profile `helm:<profileId>`,
- * so its keys are `helm:<profileId>:<dtach session id>`). Both speak the same
- * Okena-shaped wire; the reducer keeps epoch/seed/health per source.
- */
-export type DockSourceId = 'okena' | 'helm'
-export const DOCK_SOURCES: readonly DockSourceId[] = ['okena', 'helm']
-/** Words for a source in dock/CLI text. */
-export const DOCK_SOURCE_LABEL: Record<DockSourceId, string> = { okena: 'Okena', helm: 'Helm terminals' }
+// Word lists (sources, statuses, states, reasons, …) live in
+// src/agent-dock/dock-vocabulary.ts, shared with the spool schemas and the renderer.
 
-/**
- * working: busy. background: not busy but subagents still running. idle: not busy.
- * waiting: an Okena dialog is open. unknown: busy missing or detail unparseable/unfetched.
- * unreachable: Okena itself is down (frozen row).
- */
-export type DockSessionStatus = 'working' | 'background' | 'idle' | 'waiting' | 'unknown' | 'unreachable'
+/** See DOCK_SESSION_STATUSES. */
+export type DockSessionStatus = (typeof DOCK_SESSION_STATUSES)[number]
 
 export interface DockPrLink {
 	number: number
@@ -185,13 +222,19 @@ export interface DockPrLink {
 
 export interface DockSession {
 	key: SessionKey
-	/** Which source observes it (absent in snapshots from before Helm terminals were observed = okena). */
+	/** Which source observes it (Okena's Claude Remote, or Helm's own hub for Helm terminals). */
 	source: DockSourceId
 	profile: string
 	terminalId: string
 	/** For Okena `focus_terminal`; absent when the pane is not in any project layout. */
 	projectId?: string
 	project: string
+	/**
+	 * The repository's Okena project name when the pane's project is a worktree of it
+	 * (`worktree_info.parent_project_id`; `project` is then the worktree, usually named after its branch).
+	 * Absent otherwise: `project` is the repository itself.
+	 */
+	repo?: string
 	/** Okena's name for the pane (its terminal name, else the project's branch, else `terminal <id>`). */
 	name: string
 	/** The project's git branch as Okena reports it (`fix/company-create-save-firm`); the dock's short agent names come from it. */
@@ -204,23 +247,51 @@ export interface DockSession {
 	/** Last successful detail fetch (ms); rows older than ~10 s render stale. */
 	observedAt: number
 	subagents: number
+	/** Background tasks the main agent started that have not ended (shells, workflows, monitors; not subagents). */
+	backgroundTasks: number
+	/** How many of `backgroundTasks` are shells (Bash `run_in_background`); 0 when the source cannot tell. */
+	backgroundShells: number
 	queuedPrompts: number
 	prLinks: DockPrLink[]
 	hasTranscript: boolean
 	hooksAttached: boolean
 	channelAttached: boolean
+	/**
+	 * The agent's last assistant message as the reducer last read it (transcript tail), as a
+	 * bounded one-line excerpt. Absent until a transcript page showed one. Memory/IPC only:
+	 * the spool keeps only `at`/`seen`, never the text.
+	 */
+	lastMessage?: DockLastMessage
+	/**
+	 * Jakub's last reply sent from the agent detail (no item: the agent owed him nothing), and how
+	 * it went. Never carries the reply text. Memory/IPC only.
+	 */
+	reply?: DockSessionReply
 }
 
-export type DockItemKind = 'ask' | 'turn'
-/**
- * open: owes Jakub. sending: Jakub answered from the dock; Helm is sending it or
- * waiting to see it land. unconfirmed: Okena took it but Helm has not seen the
- * dialog close / a user entry within ACT_CONFIRM_MS (amber; stays until observed
- * or acked). orphaned: sticky until transcript activity or ack.
- */
-export type DockItemState = 'open' | 'sending' | 'unconfirmed' | 'orphaned' | 'resolved'
-/** `dock`: Jakub's dock answer, observed taking effect. */
-export type DockResolutionBy = 'outside' | 'replied' | 'superseded' | 'session_ended' | 'acked' | 'dock'
+export { DOCK_EXCERPT_MAX, DOCK_LIVE_MESSAGE_MAX } from '../../../src/agent-dock/dock-vocabulary'
+
+export interface DockLastMessage {
+	/** Transcript uuid of the assistant entry: the reply CAS checks the agent still stops at it. */
+	uuid: string
+	/** First non-empty line, control/bidi-stripped, at most DOCK_EXCERPT_MAX (dock-vocabulary.ts). */
+	text: string
+	/** When Helm first read this message (ms); transcripts carry no time of their own. */
+	at: number
+	/** Jakub has seen it: acked (its turn item), adopted at Helm's first look, or replied to from the dock. */
+	seen: boolean
+}
+
+export interface DockSessionReply extends DockReceipt {
+	/** The message Jakub replied to (its uuid), when he saw one. */
+	assistantUuid?: string
+}
+
+export type DockItemKind = (typeof DOCK_ITEM_KINDS)[number]
+/** See DOCK_ITEM_STATES. */
+export type DockItemState = (typeof DOCK_ITEM_STATES)[number]
+/** See DOCK_RESOLUTION_BY. */
+export type DockResolutionBy = (typeof DOCK_RESOLUTION_BY)[number]
 
 export interface DockAskFact {
 	kind: 'ask'
@@ -241,8 +312,6 @@ export interface DockAskFact {
 	createdAtMs: number
 }
 
-export { PERMISSION_SUGGESTIONS_MAX } from './review'
-
 export interface DockTurnFact {
 	kind: 'turn'
 	sessionId?: string
@@ -250,7 +319,7 @@ export interface DockTurnFact {
 	/** Last assistant message, bounded to TURN_TEXT_MAX and control-stripped. Memory only, never persisted. */
 	text: string
 	endedAt: number
-	/** Subagents were still running when the turn ended. */
+	/** Subagents or background tasks were still running when the turn ended (status `background`). */
 	hadBackground: boolean
 }
 
@@ -268,11 +337,6 @@ export interface DockItem {
 	key: string
 	kind: DockItemKind
 	session: SessionKey
-	/**
-	 * Fact version for the act CAS; acts carry the rev they saw. Starts at 1 and nothing bumps it
-	 * today: a turn whose agent moves on closes (`superseded`/`replied`) instead of changing in place.
-	 */
-	rev: number
 	openedAt: number
 	fact: DockItemFact
 	state: DockItemState
@@ -283,12 +347,12 @@ export interface DockItem {
 }
 
 // ---------------------------------------------------------------------------
-// Dock actions (slice 2): Jakub answers from a card. Main re-reads Okena (CAS)
+// Dock actions: Jakub answers from the dock. Main re-reads Okena (CAS)
 // before every effect; answer text lives only in this request and the one
 // Okena POST built from it, never in state, events or disk.
 // ---------------------------------------------------------------------------
 
-export type DockActionKind = 'answer' | 'allow' | 'deny' | 'prompt'
+export type DockActionKind = (typeof DOCK_ACTION_KINDS)[number]
 
 /** One AskUserQuestion answer, by position: picked option indexes (several only for multiSelect) and/or Other text. */
 export interface DockAnswerPick {
@@ -297,40 +361,24 @@ export interface DockAnswerPick {
 }
 
 export type DockAction =
-	/**
-	 * AskUserQuestion: one pick per question, in tool_input order. Main maps them to Okena's `{question: label}`.
-	 * `confirmed` is required when any Other text matches DOCK_RISKY_PROMPT.
-	 */
-	| { type: 'answer'; picks: DockAnswerPick[]; confirmed?: boolean }
+	/** AskUserQuestion: one pick per question, in tool_input order. Main maps them to Okena's `{question: label}`. */
+	| { type: 'answer'; picks: DockAnswerPick[] }
 	/** Permission allow / ExitPlanMode approve. `always` only when Claude sent permission_suggestions. */
 	| { type: 'allow'; always?: boolean }
-	/** Permission deny / ExitPlanMode keep planning; the message goes to the agent (`confirmed` as for prompts). */
-	| { type: 'deny'; message?: string; confirmed?: boolean }
-	/** Reply to a finished turn. `confirmed` is required when the text matches DOCK_RISKY_PROMPT. */
-	| { type: 'prompt'; text: string; confirmed?: boolean }
+	/** Permission deny / ExitPlanMode keep planning; the message goes to the agent. */
+	| { type: 'deny'; message?: string }
+	/** Reply to a finished turn. */
+	| { type: 'prompt'; text: string }
 
 export interface AgentDockActRequest {
 	itemId: number
-	/** The item rev the renderer showed; a different current rev refuses the act. */
-	rev?: number
 	action: DockAction
 }
 
-export type DockRefusalReason =
-	/** The dialog/turn is no longer there: answered elsewhere. */
-	| 'gone'
-	/** The question, its options or the turn changed since it was shown. */
-	| 'changed'
-	/** The agent is working again; a reply would be queued behind work Jakub has not seen. */
-	| 'busy'
-	/** Not answerable from the dock now (sending, unconfirmed, orphaned, resolved). */
-	| 'not_open'
-	| 'unknown_item'
-	| 'invalid'
-	| 'source_down'
-	| 'in_flight'
+/** See DOCK_REFUSAL_REASONS. */
+export type DockRefusalReason = (typeof DOCK_REFUSAL_REASONS)[number]
 
-export type OkenaPromptDelivery = 'channel' | 'pty' | 'queued'
+export type OkenaPromptDelivery = (typeof DOCK_PROMPT_DELIVERIES)[number]
 
 /** What one act did (main → reducer and → renderer). `detail` is verbatim Okena/transport text, never answer text. */
 export type DockActOutcome =
@@ -340,9 +388,17 @@ export type DockActOutcome =
 	| { status: 'refused'; reason: DockRefusalReason; detail: string }
 	| { status: 'failed'; detail: string }
 
-export type AgentDockActResult = { ok: true; outcome: DockActOutcome } | { ok: false; outcome: DockActOutcome }
+/**
+ * `recorded`: main put the outcome on the item's receipt (or the session's reply), so the snapshot
+ * shows it, and drops it once it no longer holds (a busy/untracked refusal, the agent seen idle
+ * again); the renderer keeps its own copy only of outcomes main did not record (a precondition
+ * refusal, or a result the reducer dropped because the item or session moved on meanwhile).
+ */
+export type AgentDockActResult =
+	| { ok: true; outcome: DockActOutcome; recorded?: boolean }
+	| { ok: false; outcome: DockActOutcome; recorded?: boolean }
 
-export type DockReceiptStatus = 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed'
+export type DockReceiptStatus = (typeof DOCK_RECEIPT_STATUSES)[number]
 
 export interface DockReceipt {
 	action: DockActionKind
@@ -361,8 +417,6 @@ export interface DockReceipt {
 
 /** Okena accepted an answer but Helm has not observed it this long: unconfirmed (amber). */
 export const ACT_CONFIRM_MS = 10_000
-/** Free text to the agent (replies, deny messages, Other answers) that mentions these needs a second, explicit confirmation (renderer) and `confirmed` (main). */
-export const DOCK_RISKY_PROMPT = /deploy|prod|secret|push|merge/i
 /** Okena refuses prompts over 64 KiB (`MAX_PROMPT_BYTES`); Helm bounds by UTF-16 units under that. */
 export const DOCK_PROMPT_MAX = 16_384
 export const DOCK_MESSAGE_MAX = 4_096
@@ -376,30 +430,15 @@ const dockAnswerPickSchema = z
 	.strict()
 
 const dockActionSchema = z.discriminatedUnion('type', [
-	z
-		.object({
-			type: z.literal('answer'),
-			picks: z.array(dockAnswerPickSchema).min(1).max(16),
-			confirmed: z.boolean().optional(),
-		})
-		.strict(),
+	z.object({ type: z.literal('answer'), picks: z.array(dockAnswerPickSchema).min(1).max(16) }).strict(),
 	z.object({ type: z.literal('allow'), always: z.boolean().optional() }).strict(),
-	z
-		.object({
-			type: z.literal('deny'),
-			message: z.string().max(DOCK_MESSAGE_MAX).optional(),
-			confirmed: z.boolean().optional(),
-		})
-		.strict(),
-	z
-		.object({ type: z.literal('prompt'), text: z.string().max(DOCK_PROMPT_MAX), confirmed: z.boolean().optional() })
-		.strict(),
+	z.object({ type: z.literal('deny'), message: z.string().max(DOCK_MESSAGE_MAX).optional() }).strict(),
+	z.object({ type: z.literal('prompt'), text: z.string().max(DOCK_PROMPT_MAX) }).strict(),
 ])
 
 export const agentDockActRequestSchema = z
 	.object({
 		itemId: z.number().int().positive().safe(),
-		rev: z.number().int().positive().safe().optional(),
 		action: dockActionSchema,
 	})
 	.strict()
@@ -407,6 +446,50 @@ export const agentDockActRequestSchema = z
 /** Main-side validation of a renderer act request (IPC input is untrusted). */
 export const parseAgentDockActRequest = (body: unknown): ParseResult<AgentDockActRequest> =>
 	parseWith(agentDockActRequestSchema, 'act request', body)
+
+/**
+ * A reply to an agent that owes Jakub nothing (no open item), sent from the agent detail.
+ * Main re-reads the pane (CAS): same Claude session, idle with no dialog, and its transcript
+ * still ends at `assistantUuid` (the message Jakub read) with no user entry after it.
+ */
+export interface AgentDockPromptRequest {
+	session: SessionKey
+	/** The Claude conversation Jakub saw; a new one in the pane refuses. */
+	sessionId?: string
+	/** The last message Jakub saw; absent when he saw none. */
+	assistantUuid?: string
+	text: string
+}
+
+export const agentDockPromptRequestSchema = z
+	.object({
+		session: z.string().min(1).max(512),
+		sessionId: z.string().min(1).max(512).optional(),
+		assistantUuid: z.string().min(1).max(512).optional(),
+		text: z.string().max(DOCK_PROMPT_MAX),
+	})
+	.strict()
+
+export const parseAgentDockPromptRequest = (body: unknown): ParseResult<AgentDockPromptRequest> =>
+	parseWith(agentDockPromptRequestSchema, 'prompt request', body)
+
+/** The agent's last message, read live through its source for the agent detail (`helm dock show` does the same). */
+export type AgentDockMessageResult =
+	| {
+			ok: true
+			/** Absent when the transcript has no assistant entry yet. */
+			message?: { uuid: string; text: string }
+			sessionId?: string
+	  }
+	| { ok: false; detail: string }
+
+/**
+ * "Show terminal" from the dock (agent-dock:reveal, Okena panes only; Helm terminals are shown by the
+ * window itself). `activated`: Helm also brought the Okena app to the front (best effort, macOS);
+ * `note`: when it did not, what to say instead of the plain "could not bring Okena to the front"
+ * (how to allow a blocked permission, once per run).
+ */
+export type AgentDockRevealResult = { ok: true; activated: boolean; note?: string } | { ok: false; detail: string }
 
 /** Deterministic JSON (sorted object keys) for comparing Okena dialog inputs across reads. */
 export function stableJson(value: unknown, depth = 0): string {
@@ -423,7 +506,7 @@ export function stableJson(value: unknown, depth = 0): string {
 	return JSON.stringify(value) ?? 'null'
 }
 
-export type AgentDockSourceState = 'pending' | 'ok' | 'down'
+export type AgentDockSourceState = (typeof DOCK_SOURCE_HEALTH_STATES)[number]
 
 /** Okena reachability. `pending` = never polled yet; the UI must not show "all clear" for it. */
 export interface AgentDockSourceHealth {
@@ -457,6 +540,8 @@ export type AgentDockEvent =
 	| { t: 'item.opened'; at: number; id: number; kind: DockItemKind; session: SessionKey; key: string }
 	| { t: 'item.resolved'; at: number; id: number; by: DockResolutionBy }
 	| { t: 'item.orphaned'; at: number; id: number }
+	/** An orphaned ask's dialog is listed again: it owes Jakub again. */
+	| { t: 'item.reopened'; at: number; id: number }
 	| { t: 'source.health'; at: number; state: 'ok' | 'down'; source?: DockSourceId; detail?: string }
 	/** A dock answer's end state. Never carries answer text or Okena error text (disk). */
 	| {
@@ -481,21 +566,41 @@ export interface ObservedClaudeTerminal {
 	detail: OkenaFetch
 	/** Present only when the source fetched the transcript this tick (see agentDockTranscriptRequest). */
 	transcript?: OkenaFetch
+	/** Background tasks from the session's own transcript file (Okena panes); absent = unknown, no claim. */
+	background?: ObservedBackgroundTasks
 }
 
 export type AgentDockObservation =
-	/** One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates. Absent source = okena. */
-	| { type: 'poll'; source?: DockSourceId; profile: string; state: OkenaFetch; terminals: ObservedClaudeTerminal[] }
+	/**
+	 * One tick of one source: `/v1/state` plus details for (ideally all) okenaClaudeCandidates.
+	 * `readFrom`: when the tick's reads began (the watcher stamps it). A dock answer refused after
+	 * that (a tick in flight while Jakub sent) was checked against newer data than this poll's, so
+	 * this poll never drops that refusal as no longer holding.
+	 */
+	| {
+			type: 'poll'
+			source: DockSourceId
+			profile: string
+			state: OkenaFetch
+			terminals: ObservedClaudeTerminal[]
+			readFrom?: number
+	  }
 	/** Jakub acked an item in the dock. */
 	| { type: 'ack'; itemId: number }
 	/** Jakub answered from the dock; main is about to run the CAS read and the Okena POST. */
 	| { type: 'act.sending'; itemId: number; action: DockActionKind; always?: boolean }
 	/** How that act went. */
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
+	/** Jakub replied from the agent detail (no item); main is about to run the CAS read and the POST. */
+	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string }
+	/** How that reply went. */
+	| { type: 'prompt.result'; session: SessionKey; outcome: DockActOutcome }
 
 // ---------------------------------------------------------------------------
-// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids only.
-// Items, turn text and dialog input are never written to disk in slice 1.
+// Persistence (`<userData>/agent-dock/state.json`): counter + seen uuids (the
+// watcher adds its event seq and the resolved-item ledger).
+// Turn text and dialog input are never written to disk; see spool.ts for what
+// snapshot.json and events.ndjson hold.
 // ---------------------------------------------------------------------------
 
 export const agentDockPersistedSchema = z.object({

@@ -71,6 +71,8 @@ export const EXCLUDED_SESSIONS_MAX = 64
 const DIALOGS_MAX = 32
 const SUBAGENTS_MAX = 64
 const LIFELINES_MAX = 8
+/** Terminals Helm closed whose late hooks are still ignored (dtach ids are random, never reused). */
+const CLOSED_TERMINALS_MAX = 256
 /** Event strings longer than this are cut by the hook client (hook-client.cjs EVENT_STRING_MAX). */
 export const EVENT_STRING_MAX = 4096
 /** A reply the hub typed blocks a second one until its UserPromptSubmit, at most this long. */
@@ -117,7 +119,10 @@ interface TerminalState {
 	endedSessions: string[]
 	dialogs: Dialog[]
 	subagents: Map<string, string>
+	/** The last Stop's in-flight background tasks besides subagents (those are `subagents`). */
 	backgroundTasks: number
+	/** How many of backgroundTasks are shells. */
+	backgroundShells: number
 	entries: Entry[]
 	nextSeq: number
 	typingUntil?: number
@@ -130,8 +135,7 @@ interface TerminalState {
 export interface HubCoreOptions {
 	/** Dialog id prefix, new per hub start (the reducer orphans asks across a prefix change). */
 	prefix: string
-	/** Sessions to hide entirely (the dispatcher's own). */
-	excluded?: Iterable<string>
+	/** The hidden (dispatcher) session ids changed: persist them. */
 	onExcludedChange?(ids: string[]): void
 	/** Display name of a Helm terminal (its tab name), if any. */
 	terminalName?(ref: TerminalRef): string | undefined
@@ -200,18 +204,24 @@ function sameCall(fullRequested: unknown, clippedRan: unknown): boolean {
 
 export class ClaudeHubCore {
 	private readonly terminals = new Map<string, TerminalState>()
-	private readonly excluded: string[]
+	/** Keys of terminals Helm closed: late input for them must not bring a session back. */
+	private readonly closedTerminals: string[] = []
+	private readonly excluded: string[] = []
 	private dialogCounter = 0
 	private assistantCounter = 0
 	/** Bumped on every visible change (Okena `state_version`). */
 	stateVersion = 1
+	private readonly changeListeners = new Set<() => void>()
 
-	constructor(private readonly options: HubCoreOptions) {
-		this.excluded = [...(options.excluded ?? [])].slice(-EXCLUDED_SESSIONS_MAX)
-	}
+	constructor(private readonly options: HubCoreOptions) {}
 
-	get prefix(): string {
-		return this.options.prefix
+	/**
+	 * Called synchronously after every `stateVersion` bump (the dock watcher's nudge: it only
+	 * arms a timer). A throwing listener never breaks the hook path. Returns the unsubscribe.
+	 */
+	onChange(listener: () => void): () => void {
+		this.changeListeners.add(listener)
+		return () => this.changeListeners.delete(listener)
 	}
 
 	// -------------------------------------------------------------------------
@@ -226,6 +236,7 @@ export class ClaudeHubCore {
 		if (!name || !sessionId) return
 		// Claude's internal forks: a SubagentStop with an empty agent_type after almost every turn.
 		if ((name === 'SubagentStop' || name === 'SubagentStart') && str(input.agent_type) === undefined) return
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		if (name === 'SessionStart') {
 			this.sessionStart(t, pid, sessionId, input, at)
@@ -278,7 +289,7 @@ export class ClaudeHubCore {
 		if (!isRecord(input)) return leave()
 		const sessionId = str(input.session_id)
 		const toolName = str(input.tool_name)
-		if (!sessionId || !toolName) return leave()
+		if (!sessionId || !toolName || this.isClosed(ref)) return leave()
 		const t = this.terminal(ref)
 		if (!this.accepts(t, pid, sessionId, at, input) || this.isExcluded(sessionId)) return leave()
 		if (t.dialogs.length >= DIALOGS_MAX) return leave()
@@ -312,6 +323,7 @@ export class ClaudeHubCore {
 
 	/** The preload saw this terminal's interactive claude start without hooks (user --settings). */
 	degraded(ref: TerminalRef, pid: number, reason: string, cwd: string | undefined, at: number): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		// The token is in the agent's tool env: a tool child cannot knock out a primary whose claude still runs.
 		const primary = t.primary
@@ -326,6 +338,7 @@ export class ClaudeHubCore {
 
 	/** The preload of claude `pid` in this terminal opened its lifeline. */
 	attached(ref: TerminalRef, pid: number): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		if (!t.lifelines.has(pid) && t.lifelines.size >= LIFELINES_MAX) return
 		t.lifelines.set(pid, (t.lifelines.get(pid) ?? 0) + 1)
@@ -342,6 +355,11 @@ export class ClaudeHubCore {
 		}
 		t.lifelines.delete(pid)
 		if (t.primary && !t.primary.ended && t.primary.pid === pid) this.sessionEnd(t)
+		else if (t.primary === undefined && t.degraded?.pid === pid) {
+			// The hookless claude exited: its "no hooks" entry goes with it.
+			t.degraded = undefined
+			this.changed()
+		}
 	}
 
 	/** Helm quits: forget everything WITHOUT answering waiting hooks (they reconnect to the next hub). */
@@ -351,13 +369,23 @@ export class ClaudeHubCore {
 		this.changed()
 	}
 
-	/** Helm's own terminal lifecycle: the dtach session is gone (structured, not inferred). */
+	/**
+	 * Helm's own terminal lifecycle: the dtach session is gone (structured, not inferred). Hooks
+	 * the dying claude sent before its SIGHUP can arrive after this; they are ignored from now on.
+	 */
 	terminalClosed(ref: TerminalRef): void {
+		pushBounded(this.closedTerminals, terminalKey(ref), CLOSED_TERMINALS_MAX)
 		const t = this.terminals.get(terminalKey(ref))
 		if (!t) return
 		this.releaseAll(t)
 		this.terminals.delete(terminalKey(ref))
 		this.changed()
+	}
+
+	/** Helm gave this terminal a fresh environment (spawn): it may report again. */
+	terminalOpened(ref: TerminalRef): void {
+		const index = this.closedTerminals.indexOf(terminalKey(ref))
+		if (index !== -1) this.closedTerminals.splice(index, 1)
 	}
 
 	/** A transcript `[Request interrupted by user…]` marker (structured: Claude wrote it). */
@@ -379,6 +407,7 @@ export class ClaudeHubCore {
 	 * the id waits for it.
 	 */
 	registerDispatcher(ref: TerminalRef, sessionId: string): void {
+		if (this.isClosed(ref)) return
 		const t = this.terminal(ref)
 		const primary = t.primary
 		if (primary && !primary.ended) {
@@ -388,7 +417,12 @@ export class ClaudeHubCore {
 		t.pendingDispatcher = sessionId
 	}
 
-	/** Hide a session entirely (the dispatcher's own; persisted ids are loaded through here). */
+	/** The persisted hidden ids, at hub start (no change to report: they came from the file). */
+	loadExcluded(ids: Iterable<string>): void {
+		for (const id of ids) pushBounded(this.excluded, id, EXCLUDED_SESSIONS_MAX)
+	}
+
+	/** Hide a session entirely (the dispatcher's own). */
 	exclude(sessionId: string): void {
 		if (this.excluded.includes(sessionId)) return
 		pushBounded(this.excluded, sessionId, EXCLUDED_SESSIONS_MAX)
@@ -400,10 +434,6 @@ export class ClaudeHubCore {
 
 	isExcluded(sessionId: string | undefined): boolean {
 		return sessionId !== undefined && this.excluded.includes(sessionId)
-	}
-
-	excludedSessions(): string[] {
-		return [...this.excluded]
 	}
 
 	/** Jakub's dock answer: encode it and hand it to the waiting hook. */
@@ -520,8 +550,6 @@ export class ClaudeHubCore {
 		const t = this.visibleTerminal(ref)
 		const primary = t.primary && !t.primary.ended ? t.primary : undefined
 		const running = [...t.subagents.entries()].map(([agent_id, agent_type]) => ({ agent_id, agent_type }))
-		for (let index = 0; index < t.backgroundTasks; index++)
-			running.push({ agent_id: `background-${index + 1}`, agent_type: 'background task' })
 		return {
 			terminal_id: ref.terminalId,
 			...(primary ? { session_id: primary.sessionId } : {}),
@@ -538,6 +566,9 @@ export class ClaudeHubCore {
 				created_at_ms: dialog.createdAtMs,
 			})),
 			running_subagents: primary ? running : [],
+			/** Helm-only field (model.ts): the last Stop's `background_tasks`, counted apart from subagents. */
+			background_tasks: primary ? t.backgroundTasks : 0,
+			background_shells: primary ? t.backgroundShells : 0,
 			pr_links: [],
 		}
 	}
@@ -568,16 +599,19 @@ export class ClaudeHubCore {
 		}
 	}
 
-	terminalRefs(): TerminalRef[] {
-		return [...this.terminals.values()].map(t => t.ref)
-	}
-
 	// -------------------------------------------------------------------------
 	// Internals
 	// -------------------------------------------------------------------------
 
 	private changed(): void {
 		this.stateVersion += 1
+		for (const listener of this.changeListeners) {
+			try {
+				listener()
+			} catch {
+				// A listener's failure is its own; the hub's state is already updated.
+			}
+		}
 	}
 
 	private terminal(ref: TerminalRef): TerminalState {
@@ -591,6 +625,7 @@ export class ClaudeHubCore {
 				dialogs: [],
 				subagents: new Map(),
 				backgroundTasks: 0,
+				backgroundShells: 0,
 				entries: [],
 				nextSeq: 1,
 				lifelines: new Map(),
@@ -598,6 +633,10 @@ export class ClaudeHubCore {
 			this.terminals.set(key, t)
 		}
 		return t
+	}
+
+	private isClosed(ref: TerminalRef): boolean {
+		return this.closedTerminals.includes(terminalKey(ref))
 	}
 
 	private listed(t: TerminalState): boolean {
@@ -662,6 +701,7 @@ export class ClaudeHubCore {
 		t.finished = []
 		t.subagents.clear()
 		t.backgroundTasks = 0
+		t.backgroundShells = 0
 		t.entries = []
 		t.typingUntil = undefined
 	}
@@ -703,6 +743,7 @@ export class ClaudeHubCore {
 		t.activePrompt = undefined
 		t.subagents.clear()
 		t.backgroundTasks = 0
+		t.backgroundShells = 0
 		this.changed()
 	}
 
@@ -758,6 +799,8 @@ export class ClaudeHubCore {
 		}
 		const user: Entry = { seq: 0, kind: 'user', uuid, text: bounded(prompt) }
 		const ordered = [...t.entries.slice(0, answer), user, ...t.entries.slice(answer)]
+		// Skip one seq: every cursor handed out so far (<= nextSeq) is then below the new first seq.
+		t.nextSeq += 1
 		t.entries = ordered.map(entry => ({ ...entry, seq: t.nextSeq++ })).slice(-ENTRIES_MAX)
 	}
 
@@ -780,7 +823,12 @@ export class ClaudeHubCore {
 		const newer =
 			active?.id !== undefined && promptId !== undefined && active.id !== promptId && !this.isFinished(t, active.id)
 		if (!newer) this.idle(t)
-		t.backgroundTasks = Array.isArray(input.background_tasks) ? Math.min(input.background_tasks.length, 32) : 0
+		// Claude lists background subagents there too; SubagentStart/Stop count those (`subagents`).
+		const tasks = (Array.isArray(input.background_tasks) ? input.background_tasks.slice(0, 32) : []).map(task =>
+			task && typeof task === 'object' ? (task as { type?: unknown }).type : undefined,
+		)
+		t.backgroundTasks = tasks.filter(type => type !== 'subagent').length
+		t.backgroundShells = tasks.filter(type => type === 'shell').length
 		const message = typeof input.last_assistant_message === 'string' ? input.last_assistant_message : ''
 		const text =
 			name === 'StopFailure'

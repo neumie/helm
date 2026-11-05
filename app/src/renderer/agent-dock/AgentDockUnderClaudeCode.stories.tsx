@@ -39,7 +39,7 @@ function AgentDockClaudeCodeView({
 }
 
 const meta: Meta<typeof AgentDockClaudeCodeView> = {
-	title: 'Views/Agent dock divider',
+	title: 'Views/Agent dock under Claude Code',
 	component: AgentDockClaudeCodeView,
 	parameters: { layout: 'fullscreen' },
 	args: { scenario: 'single-turn', state: 'turn', position: 'bottom', theme: 'helm' },
@@ -62,11 +62,11 @@ export const ClaudeCodeSession: Story = {}
  * `fix/company-create-save-firm` read `company-create-save-firm` and `company-create-save-firm #2`;
  * the turn on `fix/repeated-android-camera-permission` reads `repeated-android-camera-permission`.
  *
- * Collapsed (no pane): the one 28px row — every entry `glyph name age`, then `agents 4 · 2 busy`,
- * Okena's dot and ⌘⇧J. No summary row; clicking an entry opens it.
+ * Collapsed (no pane): the one 28px row — every entry `glyph name age`, then `4 agents` with its bar
+ * and ⌘⇧J. No summary row; clicking an entry opens it.
  */
 export const RealCaseCollapsed: Story = { args: { scenario: 'real-case', state: 'collapsed' } }
-/** The question pane: the header names the kind and the question (`IČO`), ‹ 1/3 ›; the row's fill says whose. */
+/** The question pane: the header names the kind and the question (`IČO`), then whose, ‹ 1/3 ›. */
 export const RealCaseQuestion: Story = { args: { scenario: 'real-case', state: 'question' } }
 export const RealCasePermission: Story = { args: { scenario: 'real-case', state: 'permission' } }
 /** The turn pane: the task title is the header's tooltip, never in the queue. */

@@ -21,6 +21,7 @@ import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 import { ProviderUnavailableError, type TaskContext, type TaskProvider } from '../providers/provider.js'
 import { assertAgentBudget } from '../solver/agent-adapter.js'
+import { effectiveSolverModel } from '../solver/models.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
@@ -321,7 +322,7 @@ export async function processSolveItem(
 		const solverConfig = {
 			...config.solver,
 			agent: selectedAgent ?? config.solver.agent,
-			model: selectedModel ?? config.solver.model,
+			model: effectiveSolverModel(selectedAgent ?? config.solver.agent, selectedModel, config.solver),
 			workspace: workspaceMode,
 		}
 
@@ -479,7 +480,11 @@ export async function processLoopItem(
 			? {
 					...storedLoopPayload,
 					provider: item.payload.solverAgent ?? config.solver.agent,
-					model: item.payload.solverModel ?? config.solver.model,
+					model: effectiveSolverModel(
+						item.payload.solverAgent ?? config.solver.agent,
+						item.payload.solverModel,
+						config.solver,
+					),
 					effort: item.payload.solverEffort,
 				}
 			: storedLoopPayload
@@ -568,7 +573,7 @@ export async function processLoopItem(
 		log.info('worker', 'Starting almanac loop with effective Item selection', {
 			itemId,
 			provider: loopProvider,
-			model: loopPayload.model ?? config.solver.model ?? 'default',
+			model: effectiveSolverModel(loopProvider, loopPayload.model, config.solver) ?? 'default',
 			effort: loopPayload.effort ?? 'default',
 			workspace: workspaceMode,
 		})

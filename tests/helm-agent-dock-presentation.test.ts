@@ -12,15 +12,22 @@ const {
 	AGING_DANGER_MS,
 	AGING_WARN_MS,
 	agentRowMeta,
+	backgroundTasksText,
 	agingTone,
+	alwaysAllowChoice,
 	alwaysAllowLabels,
 	askQuestions,
 	permissionReview,
 	planReview,
-	cardGist,
-	cardKindLabel,
-	cardTone,
-	dockSummary,
+	entryGist,
+	itemKindLabel,
+	entryTone,
+	dockLabel,
+	emptyQueueText,
+	agentsEntryText,
+	busyCount,
+	actErrorText,
+	failedActResult,
 	itemAgeTone,
 	itemTimeLine,
 	entryWidth,
@@ -35,6 +42,8 @@ const {
 	QUEUE_NAME_MIN,
 	shortenName,
 	agentNames,
+	agentRepoGroups,
+	agentRows,
 	agentWho,
 	branchShortName,
 	statusGlyph,
@@ -46,12 +55,36 @@ const {
 	resolutionLabel,
 	sentSummary,
 	sessionSince,
-	toolInputText,
 	dockHealth,
 	noSessionText,
 	planApproveModeText,
 	sourceBlockedNote,
 	canAnswer,
+	canAck,
+	nextWaiting,
+	agentStanding,
+	agentPlace,
+	agentRowLabel,
+	agentStateGroups,
+	agentsSummary,
+	agentOverview,
+	agentsLayout,
+	otherAgentsLayout,
+	sourceHealthViews,
+	formatClock,
+	agentReplyBlocked,
+	excerptPlainLine,
+	sessionReplyView,
+	REPLY_RECEIPT_MS,
+	PANE_MAX_HEIGHT,
+	PANE_MAX_SHARE,
+	PANE_MIN_HEIGHT,
+	PANE_FLOOR,
+	clampPaneHeight,
+	paneFitHeight,
+	paneMaxHeight,
+	paneResizeBounds,
+	storedPaneHeight,
 } = presentationModule as PresentationModule
 
 const SHOW_ASK = JSON.parse(
@@ -72,6 +105,8 @@ function session(overrides: Partial<DockSession> = {}): DockSession {
 		since: T,
 		observedAt: T,
 		subagents: 0,
+		backgroundTasks: 0,
+		backgroundShells: 0,
 		queuedPrompts: 0,
 		prLinks: [],
 		hasTranscript: true,
@@ -123,7 +158,6 @@ test('agent text is control- and bidi-stripped, bounded, and never markup', () =
 	assert.equal(plainAgentText('x'.repeat(10), 5), 'xxxx…')
 	assert.equal(plainAgentText(`${'x'.repeat(3)}😀tail`, 5), 'xxx…')
 	assert.equal(plainAgentLine('  two\n\nlines  '), 'two lines')
-	assert.equal(toolInputText({ command: 'ls' }), '{\n  "command": "ls"\n}')
 })
 
 test('ages and aging tones follow the 30 m / 2 h escalation', () => {
@@ -154,47 +188,119 @@ test('recorded AskUserQuestion input renders every question and preview verbatim
 	)
 })
 
-test('summary never reads as all clear unless Okena is reachable', () => {
-	const ok = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T)
-	assert.equal(ok.needsText, 'Nothing needs you')
-	const down = dockSummary(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T)
-	assert.equal(down.needsText, 'State unknown')
-	assert.match(down.health.text, /^Okena unreachable since \d\d:\d\d$/)
-	assert.equal(dockSummary(null, T).needsText, 'Waiting for Okena')
-	assert.equal(dockSummary(null, T).health.text, 'Okena connecting…')
+test('the row label never reads as all clear unless Okena is reachable', () => {
+	assert.equal(
+		dockLabel(snapshot({ state: 'ok', since: T, lastObservedAt: T }), T),
+		'Agent dock, Nothing needs you, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot({ state: 'down', since: T, lastObservedAt: T - 1_000 }), T),
+		/^Agent dock, State unknown, Okena unreachable since \d\d:\d\d$/,
+	)
+	assert.equal(dockLabel(null, T), 'Agent dock, Waiting for Okena, Okena connecting…')
+	assert.equal(dockHealth(null).text, 'Okena connecting…')
 })
 
-test('summary never reads as all clear while a listed agent is unreadable', () => {
+test('the row label never reads as all clear while a listed agent is unreadable', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
-	const blind = dockSummary(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T)
-	assert.equal(blind.needsText, 'State unknown for 1 agent')
-	assert.equal(blind.needsTone, 'warn')
-	assert.equal(blind.unknownCount, 1)
-	const mixed = dockSummary(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T)
-	assert.equal(mixed.needsText, '1 needs you · 1 unknown')
+	assert.equal(
+		dockLabel(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })]), T),
+		'Agent dock, State unknown for 1 agent, Okena',
+	)
+	assert.match(
+		dockLabel(snapshot(ok, [turnItem()], [session({ status: 'unknown' })]), T),
+		/^Agent dock, 1 needs you · 1 unknown, oldest [^,]+, Okena$/,
+	)
 })
 
-test('summary aging: only blocking asks turn red; old unchecked turns cap at amber', () => {
+test('the row label counts needs and ages the oldest; it names no item', () => {
 	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
 	const oldTurn = turnItem({ openedAt: T - 3 * 60 * 60_000 })
 	if (oldTurn.fact.kind === 'turn') oldTurn.fact.endedAt = T - 3 * 60 * 60_000
-	const turnsOnly = dockSummary(snapshot(ok, [oldTurn]), T)
-	assert.equal(turnsOnly.oldestText, 'oldest 3h')
-	assert.equal(turnsOnly.oldestTone, 'warn')
+	assert.equal(dockLabel(snapshot(ok, [oldTurn]), T), 'Agent dock, 1 needs you, oldest 3h, Okena')
+	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
+	assert.equal(
+		dockLabel(snapshot(ok, items, [session({ status: 'waiting' })]), T),
+		'Agent dock, 2 need you, oldest 3h, Okena',
+	)
 })
 
-test('summary counts needs and ages the oldest; the summary names no item', () => {
-	const items = [askItem({ openedAt: T - 3 * 60 * 60_000 }), turnItem({ openedAt: T - 1_000 })]
-	const summary = dockSummary(
-		snapshot({ state: 'ok', since: T, lastObservedAt: T }, items, [session({ status: 'waiting' })]),
-		T,
+test('the empty queue never reads as all clear while a source is down or an agent is unreadable', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	assert.equal(emptyQueueText(snapshot(ok)), 'Nothing needs you')
+	assert.equal(emptyQueueText(snapshot({ state: 'pending', since: T, lastObservedAt: null })), 'Waiting for Okena')
+	assert.equal(
+		emptyQueueText(snapshot({ state: 'down', since: T, lastObservedAt: T })),
+		'Okena is unreachable, so open questions cannot be seen',
 	)
-	assert.equal(summary.needsText, '2 need you')
-	assert.equal(summary.oldestText, 'oldest 3h')
-	assert.equal(summary.oldestTone, 'danger')
-	assert.ok(!('head' in summary))
-	const turnsOnly = dockSummary(snapshot({ state: 'ok', since: T, lastObservedAt: T }, [turnItem()]), T)
-	assert.equal(turnsOnly.needsText, '1 needs you')
+	assert.equal(
+		emptyQueueText({
+			...snapshot({ state: 'down', since: T, lastObservedAt: T }),
+			sources: {
+				okena: { state: 'down', since: T, lastObservedAt: T },
+				helm: { state: 'down', since: T, lastObservedAt: T },
+			},
+		}),
+		'Okena and Helm terminals are unreachable, so open questions cannot be seen',
+	)
+	assert.equal(
+		emptyQueueText(snapshot(ok, [], [session({ status: 'unknown' }), session({ key: 'p:t2' })])),
+		'State unknown for 1 agent: Okena did not return readable detail, so their open questions cannot be seen',
+	)
+})
+
+test('the Agents entry counts agents, one bar mark each, names the states in words and each agent in its tooltip', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const sessions = [
+		session({ status: 'working', since: T - 120_000 }),
+		session({ key: 'p1:t2', terminalId: 't2', name: 'other', status: 'background', since: T - 60_000 }),
+		session({ key: 'p1:t3', terminalId: 't3', name: 'idle one', status: 'idle', since: T - 60_000 }),
+		session({ key: 'p1:t4', terminalId: 't4', name: 'lost', status: 'unknown' }),
+	]
+	const snap = snapshot(ok, [], sessions)
+	assert.equal(busyCount(sessions), 2)
+	assert.deepEqual(agentsEntryText(snap, sessions, T), {
+		total: 4,
+		marks: ['working', 'background', 'idle', 'unknown'],
+		label: '4 agents: 1 working, 1 in background, 1 idle, 1 unknown. Show agents',
+		title: 'dock: working 2m\nother: background 1m\nidle one: idle 1m\nlost: unknown',
+	})
+	// States in the pane's order, whatever the agents' order.
+	const mixed = [
+		session({ status: 'idle' }),
+		session({ key: 'p1:t2', status: 'waiting' }),
+		session({ key: 'p1:t3', status: 'unreachable' }),
+	]
+	assert.equal(
+		agentsEntryText(snapshot(ok, [], mixed), mixed, T).label,
+		'3 agents: 1 waiting on you, 1 idle, 1 frozen. Show agents',
+	)
+	const lone = [session({ status: 'idle' })]
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], lone), lone, T), {
+		total: 1,
+		marks: ['idle'],
+		label: '1 agent: 1 idle. Show agents',
+		title: 'dock: idle <1m',
+	})
+	assert.deepEqual(agentsEntryText(snapshot(ok, [], []), [], T), {
+		total: 0,
+		marks: [],
+		label: "No Claude session is connected to Okena's Claude Remote. Show agents",
+		title: "No Claude session is connected to Okena's Claude Remote",
+	})
+})
+
+test('act errors kept on the pane: refusals and failures in words, bounded; nothing for the rest', () => {
+	assert.equal(actErrorText({ status: 'refused', reason: 'gone', detail: 'x' }), 'refused: already answered elsewhere')
+	assert.equal(actErrorText({ status: 'refused', reason: 'busy', detail: 'agent\u0007 busy' }), 'refused: agent busy')
+	assert.equal(actErrorText({ status: 'failed', detail: 'x'.repeat(400) }), `${'x'.repeat(299)}…`)
+	assert.equal(actErrorText({ status: 'sent' }), null)
+	assert.equal(actErrorText({ status: 'unconfirmed', detail: 'timeout' }), null)
+	assert.deepEqual(failedActResult(new Error('IPC closed')), {
+		ok: false,
+		outcome: { status: 'failed', detail: 'IPC closed' },
+	})
+	assert.deepEqual(failedActResult('nope'), { ok: false, outcome: { status: 'failed', detail: 'nope' } })
 })
 
 test('agent rows: a waiting agent ages from its oldest open ask (as its entry does); row meta, stale', () => {
@@ -228,14 +334,14 @@ test('resolution labels say how the item closed', () => {
 test('card tone and age: the glyph keeps its kind tone, only the age turns red (asks past 2h), turns cap at amber', () => {
 	const now = T + 3 * 60 * 60_000
 	const oldAsk = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T } })
-	assert.equal(cardTone(oldAsk), 'ask')
-	assert.equal(cardTone(askItem({ state: 'orphaned' })), 'orphaned')
+	assert.equal(entryTone(oldAsk), 'ask')
+	assert.equal(entryTone(askItem({ state: 'orphaned' })), 'orphaned')
 	const oldTurn = turnItem()
-	assert.equal(cardTone(oldTurn), 'turn')
+	assert.equal(entryTone(oldTurn), 'turn')
 	assert.equal(itemAgeTone(oldTurn, now), 'warn')
 	assert.equal(itemAgeTone(oldAsk, now), 'danger')
-	assert.equal(cardKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
-	assert.equal(cardKindLabel(oldAsk), 'Permission')
+	assert.equal(itemKindLabel(askItem({ state: 'orphaned' })), 'Orphaned question')
+	assert.equal(itemKindLabel(oldAsk), 'Permission')
 	// Once answered (or on its way) the wait stops ageing: no red "waiting" next to a ✓.
 	const answered = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'dock' } } as DockItem
 	assert.equal(itemAgeTone(answered, now), 'none')
@@ -244,8 +350,8 @@ test('card tone and age: the glyph keeps its kind tone, only the age turns red (
 	assert.equal(itemTimeLine({ ...oldAsk, state: 'sending' } as DockItem, now).waited, 'sending')
 	const elsewhere = { ...oldAsk, state: 'resolved', resolution: { at: now, by: 'outside' } } as DockItem
 	assert.match(itemTimeLine(elsewhere, now).waited, /^closed \d\d:\d\d$/)
-	assert.equal(cardTone(answered), 'done')
-	assert.equal(cardTone(elsewhere), 'closed')
+	assert.equal(entryTone(answered), 'done')
+	assert.equal(entryTone(elsewhere), 'closed')
 })
 
 test("card gist: the turn's last paragraph, the plan title, the command", () => {
@@ -258,7 +364,7 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			hadBackground: false,
 		},
 	})
-	assert.equal(cardGist(turn), 'Can you confirm the stage secret?')
+	assert.equal(entryGist(turn), 'Can you confirm the stage secret?')
 	const plan = askItem({
 		fact: {
 			kind: 'ask',
@@ -268,11 +374,11 @@ test("card gist: the turn's last paragraph, the plan title, the command", () => 
 			createdAtMs: T,
 		},
 	})
-	assert.equal(cardGist(plan), 'Export ISDOC')
+	assert.equal(entryGist(plan), 'Export ISDOC')
 	const bash = askItem({
 		fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: { command: 'git push\u202e' }, createdAtMs: T },
 	})
-	assert.equal(cardGist(bash), 'Bash: git push')
+	assert.equal(entryGist(bash), 'Bash: git push')
 	assert.deepEqual(itemTimeLine(turn, T + 6 * 60_000).waited, 'idle 6m')
 	assert.match(itemTimeLine(bash, T).stamp, /^asked \d\d:\d\d$/)
 })
@@ -301,6 +407,25 @@ test('"Always allow" wording comes only from Claude\'s permission_suggestions, a
 		assert.equal(alwaysAllowLabels([rule, hidden]), null, JSON.stringify(hidden))
 	assert.equal(alwaysAllowLabels(Array.from({ length: 9 }, () => rule)), null, 'more than the cap')
 	assert.equal(alwaysAllowLabels([rule], true), null, 'Okena sent more than were kept')
+})
+
+test('"Always allow" for a Helm terminal takes rule suggestions only (its hub cannot apply addDirectories)', () => {
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow' }
+	const dirs = { type: 'addDirectories', directories: ['/tmp/out'], destination: 'session' }
+	assert.deepEqual(alwaysAllowLabels([rule], false, { rulesOnly: true }), ['Bash(ls)'])
+	assert.equal(alwaysAllowLabels([dirs], false, { rulesOnly: true }), null)
+	assert.equal(alwaysAllowLabels([rule, dirs], false, { rulesOnly: true }), null)
+	const permission = (suggestions: unknown[]) =>
+		askItem({
+			fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: { command: 'ls' }, suggestions, createdAtMs: T },
+		})
+	assert.equal(alwaysAllowChoice(permission([dirs]), 'helm'), null)
+	assert.equal(alwaysAllowChoice(permission([rule, dirs]), 'helm'), null)
+	assert.deepEqual(alwaysAllowChoice(permission([rule]), 'helm'), ['Bash(ls)'])
+	// Okena applies addDirectories: unchanged there (and for a session without a source).
+	assert.deepEqual(alwaysAllowChoice(permission([dirs]), 'okena'), ['/tmp/out'])
+	assert.deepEqual(alwaysAllowChoice(permission([rule, dirs]), undefined), ['Bash(ls)', '/tmp/out'])
+	assert.equal(alwaysAllowChoice(turnItem(), 'okena'), null)
 })
 
 test('permission review: every tool_input field shows; anything cut or stripped needs the terminal', () => {
@@ -342,6 +467,24 @@ test('agent lines show only observed facts', () => {
 	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T })
 	assert.deepEqual(agentRowMeta(snap, busy), ['3 subagents', 'queued 1'])
 	assert.deepEqual(agentRowMeta(snap, session({ hooksAttached: false })), ['not connected'])
+})
+
+test('background tasks read like subagents: "1 shell", "2 shells", else "N background tasks"', () => {
+	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T })
+	const shell = session({ status: 'background', since: T - 2 * 60_000, backgroundTasks: 1, backgroundShells: 1 })
+	assert.equal(sessionStatusText(shell, T), 'background 2m')
+	assert.deepEqual(agentRowMeta(snap, shell), ['1 shell'])
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 2, backgroundShells: 2 })), ['2 shells'])
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 2, backgroundShells: 1 })), ['2 background tasks'])
+	// Helm's hub counts without kinds: never called shells.
+	assert.deepEqual(agentRowMeta(snap, session({ backgroundTasks: 1, backgroundShells: 0 })), ['1 background task'])
+	assert.deepEqual(
+		agentRowMeta(snap, session({ subagents: 2, backgroundTasks: 1, backgroundShells: 1, queuedPrompts: 1 })),
+		['2 subagents', '1 shell', 'queued 1'],
+	)
+	assert.equal(backgroundTasksText(session()), '')
+	// A background shell makes the agent count as busy, like subagents.
+	assert.equal(busyCount([shell, session()]), 1)
 })
 
 test("queue names shorten in the middle, keeping a twin's #N", () => {
@@ -500,23 +643,111 @@ test('short agent names: the branch without its type prefix, numbered when two a
 	assert.deepEqual(agentWho(snap, 'p:abcdef0123'), { name: 'terminal abcdef0…', title: '', project: '' })
 })
 
-test('an open pane keeps entries in their slots: answered items stay put, new ones join the end', () => {
+test("a detached HEAD's commit hash is no name: the agent keeps its pane or repository name", () => {
+	// 7–40 hex characters say nothing about the work, like a default branch.
+	for (const hash of ['d1aee9df', 'D1AEE9D', 'a'.repeat(40), '3610328']) assert.equal(branchShortName(hash), '', hash)
+	for (const branch of ['d1aee9', 'a'.repeat(41), 'd1aee9dg', 'fix/d1aee9df'])
+		assert.notEqual(branchShortName(branch), '', branch)
+
+	// Psyon's main checkout on a detached HEAD: Okena names the unnamed pane after the hash, so the
+	// agent reads as its project, everywhere agentWho is used (queue, header, Agents pane, labels).
+	const psyon = session({ key: 'p:t1', project: 'Psyon', name: 'd1aee9df', branch: 'd1aee9df', status: 'working' })
+	// A named pane on a detached HEAD keeps its pane name.
+	const named = session({ key: 'p:t2', project: 'Psyon', name: 'release-check', branch: '3610328' })
+	// A JVS worktree: Okena's project is named after the branch; the repository is its parent project.
+	const repair = session({
+		key: 'p:t3',
+		project: 'fix/repair-done-still-out-of-service',
+		repo: 'JVS',
+		name: '[Echo] Kubo, tady bude chybka.',
+		branch: 'fix/repair-done-still-out-of-service',
+	})
+	const snap = snapshot({ state: 'ok', since: T, lastObservedAt: T }, [], [psyon, named, repair])
+	assert.deepEqual(agentWho(snap, 'p:t1'), { name: 'Psyon', title: '', project: 'Psyon' })
+	assert.deepEqual(agentWho(snap, 'p:t2'), { name: 'release-check', title: '', project: 'Psyon' })
+	assert.deepEqual(agentWho(snap, 'p:t3'), {
+		name: 'repair-done-still-out-of-service',
+		title: '[Echo] Kubo, tady bude chybka.',
+		project: 'JVS',
+	})
+	// The same name reaches the Agents entry's tooltip.
+	assert.match(agentsEntryText(snap, [psyon], T + 4 * 60_000).title, /^Psyon: working 4m$/)
+
+	// Agents pane rows carry the repository they group under; meta stays a list.
+	const rows = agentRows(snap, T)
+	assert.deepEqual(
+		rows.map(row => [row.name, row.repo, row.word]),
+		[
+			['Psyon', 'Psyon', 'working'],
+			['release-check', 'Psyon', 'idle'],
+			['repair-done-still-out-of-service', 'JVS', 'idle'],
+		],
+	)
+	const groupKeys = (list: typeof rows) =>
+		agentRepoGroups(list).map(group => ({ repo: group.repo, keys: group.rows.map(row => row.key) }))
+	assert.deepEqual(groupKeys(rows), [
+		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
+		{ repo: 'JVS', keys: ['p:t3'] },
+	])
+	// Groups follow their first agent; agents with no known repository come last, whatever their order.
+	const unplaced = { ...rows[0], key: 'p:t0', repo: '' }
+	assert.deepEqual(groupKeys([unplaced, rows[2], ...rows.slice(0, 2)]), [
+		{ repo: 'JVS', keys: ['p:t3'] },
+		{ repo: 'Psyon', keys: ['p:t1', 'p:t2'] },
+		{ repo: '', keys: ['p:t0'] },
+	])
+})
+
+test('an open pane keeps the queue order; only the open entry outlives its answer, the rest leave at once', () => {
 	const item = (id: number, state: DockItem['state'] = 'open') => ({ id, state }) as DockItem
 	const ids = (items: DockItem[]) => items.map(entry => entry.id)
-	// The snapshot moves the answered #3 behind the open ones; the frozen order keeps it first.
+	// The snapshot moves the answered #3 (still lingering with its receipt) behind the open ones; the order keeps it first.
 	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7), item(3, 'resolved')])), [3, 5, 7])
 	// New items append, gone ones leave.
 	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(9), item(3, 'resolved')])), [3, 5, 9])
-	// An entry that left the queue meanwhile (its receipt stopped lingering, answered in the terminal)
-	// keeps its slot from the snapshot until the pane closes; acked ones and ones the snapshot dropped leave.
-	const done = (id: number, by: 'dock' | 'outside' | 'acked') =>
+	const done = (id: number, by: 'dock' | 'outside' | 'replied' | 'superseded' | 'acked') =>
 		({ id, state: 'resolved', resolution: { at: T, by } }) as DockItem
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'dock')])), [3, 5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], [done(5, 'outside')])), [3, 5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], [done(3, 'acked')])), [5, 7])
-	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)], [])), [5])
+	// The open entry answered elsewhere (or its receipt stopped lingering) keeps its slot from the snapshot
+	// until Jakub moves off it: the pane shows how it closed and never closes by itself.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], done(3, 'dock'))), [3, 5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], done(5, 'replied'))), [3, 5, 7])
+	// Any other entry that no longer needs Jakub leaves at once, pane open or not (the bug: a pane left
+	// open for an hour piled up every turn he had replied to in the terminal, "1/16").
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(3), item(7)], item(3))), [3, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7, 9], [item(9)], done(5, 'superseded'))), [5, 9])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)])), [5, 7])
+	// Acked ones and ones the snapshot dropped always leave, the open one too.
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5), item(7)], done(3, 'acked'))), [5, 7])
+	assert.deepEqual(ids(keepOrder([3, 5, 7], [item(5)])), [5])
 	// No pane: the snapshot's own order.
 	assert.deepEqual(ids(keepOrder(null, [item(5), item(3)])), [5, 3])
+})
+
+test('Ack is offered for turns, orphaned and unconfirmed items; never for an open, sending or resolved one', () => {
+	const item = (kind: DockItem['kind'], state: DockItem['state']) => ({ id: 1, kind, state }) as DockItem
+	assert.equal(canAck(item('turn', 'open')), true)
+	assert.equal(canAck(item('turn', 'unconfirmed')), true)
+	assert.equal(canAck(item('ask', 'orphaned')), true)
+	assert.equal(canAck(item('ask', 'unconfirmed')), true)
+	assert.equal(canAck(item('ask', 'open')), false)
+	assert.equal(canAck(item('ask', 'sending')), false)
+	assert.equal(canAck(item('turn', 'sending')), false)
+	assert.equal(canAck(item('turn', 'resolved')), false)
+})
+
+test('after an ack or answer the pane moves on to the next item still waiting, in queue order, wrapping', () => {
+	const item = (id: number, state: DockItem['state'] = 'open') => ({ id, state }) as DockItem
+	const queue = [item(3), item(5, 'resolved'), item(7), item(9, 'unconfirmed'), item(11)]
+	// Answered #7 (still shown with its receipt): the next open one after it.
+	assert.equal(nextWaiting(queue, 7, 2)?.id, 11)
+	// Answered the last one: round to the front, skipping lingering and unconfirmed entries.
+	assert.equal(nextWaiting(queue, 11, 4)?.id, 3)
+	// Acked #7 left the queue: `at` is where it sat, so the entry now there comes first.
+	const acked = queue.filter(entry => entry.id !== 7)
+	assert.equal(nextWaiting(acked, 7, 2)?.id, 11)
+	// The handled item itself never counts, even while its state still reads open.
+	assert.equal(nextWaiting([item(3), item(5, 'resolved')], 3, 0), undefined)
+	assert.equal(nextWaiting([], 3, 0), undefined)
 })
 
 test('kind and status glyphs are single terminal cells', () => {
@@ -590,4 +821,291 @@ test('sources are words in the existing slots: health tooltip, down note, blocke
 	assert.equal(sourceBlockedNote(okenaItem, split), null)
 	assert.equal(canAnswer(helmItem, split), false)
 	assert.equal(sourceBlockedNote(helmItem, split), 'Helm terminals unreachable: answer in the terminal')
+})
+
+test('the Agents pane header lists each observed source on its own: dot tone and state in words', () => {
+	const ok = { state: 'ok' as const, since: T, lastObservedAt: T }
+	const down = { state: 'down' as const, since: T, lastObservedAt: T - 60_000, detail: 'ECONNREFUSED' }
+	const pending = { state: 'pending' as const, since: T, lastObservedAt: null }
+	const view = (snap: AgentDockSnapshot | null) =>
+		sourceHealthViews(snap).map(({ id, tone, words }) => [id, tone, words])
+	// Before any snapshot: Okena connecting.
+	assert.deepEqual(view(null), [['okena', 'neutral', 'Okena connecting…']])
+	// Only observed sources show (no Helm hub: no Helm entry), in a fixed order.
+	assert.deepEqual(view(snapshot(ok)), [['okena', 'success', 'Okena connected']])
+	assert.deepEqual(view({ ...snapshot(down), sources: { helm: pending, okena: down } }), [
+		['okena', 'danger', `Okena unreachable since ${formatClock(T)}`],
+		['helm', 'neutral', 'Helm terminals connecting…'],
+	])
+	assert.deepEqual(view({ ...snapshot(ok), sources: { okena: ok, helm: ok } }), [
+		['okena', 'success', 'Okena connected'],
+		['helm', 'success', 'Helm terminals connected'],
+	])
+})
+
+// ---------------------------------------------------------------------------
+// Agents overview (design §3.24 Agents)
+// ---------------------------------------------------------------------------
+
+const OK = { state: 'ok' as const, since: T, lastObservedAt: T }
+const message = (text: string, seen = false) => ({ uuid: 'm1', text, at: T - 1_000, seen })
+const standingOf = (items: DockItem[], s: DockSession, now = T + 60_000) => {
+	const view = agentStanding(snapshot(OK, items, [s]), s, now)
+	return [view.standing, view.word, view.glyph] as const
+}
+
+test('agent standing: asks need you (question / permission / plan), an open turn is a reply waiting', () => {
+	assert.deepEqual(standingOf([askItem()], session({ status: 'waiting' })), [
+		'needs-you',
+		'question',
+		kindGlyph(askItem()),
+	])
+	const bash = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'Bash', input: {}, createdAtMs: T - 60_000 } })
+	assert.equal(standingOf([bash], session({ status: 'waiting' }))[1], 'permission')
+	const plan = askItem({ fact: { kind: 'ask', dialogId: 'd', tool: 'ExitPlanMode', input: {}, createdAtMs: T } })
+	assert.equal(standingOf([plan], session({ status: 'waiting' }))[1], 'plan')
+	// An orphaned ask still needs him; an ask beats a turn on the same agent.
+	assert.equal(standingOf([askItem({ state: 'orphaned' })], session())[0], 'needs-you')
+	assert.deepEqual(standingOf([turnItem(), bash], session())[0], 'needs-you')
+	assert.deepEqual(standingOf([turnItem()], session()), ['reply-waiting', 'reply waiting', kindGlyph(turnItem())])
+	// Its background shell still runs ("I'll report back"): background, still opening that turn.
+	assert.deepEqual(standingOf([turnItem()], session({ status: 'background' })), ['background', 'background', '◐'])
+	assert.equal(
+		agentStanding(snapshot(OK, [turnItem()], [session({ status: 'background' })]), session({ status: 'background' }), T)
+			.item?.id,
+		8,
+	)
+	// Ages and tones like the queue entry: asks from their oldest wait, turns cap at amber.
+	const view = agentStanding(snapshot(OK, [askItem()], [session()]), session(), T + 3 * 60 * 60_000)
+	assert.equal(view.since, T - 60_000)
+	assert.equal(view.tone, 'danger')
+	assert.equal(view.label, 'needs you: question')
+	assert.equal(view.item?.id, 7)
+	assert.equal(agentStanding(snapshot(OK, [turnItem()], [session()]), session(), T + 5 * 60 * 60_000).tone, 'warn')
+	// Resolved items owe nothing.
+	assert.equal(standingOf([turnItem({ state: 'resolved' })], session())[0], 'idle')
+})
+
+test('agent standing: sending / sent / unconfirmed from an item or a reply from the agent detail', () => {
+	const receipt = (status: 'sending' | 'sent' | 'unconfirmed') => ({ action: 'reply' as const, status, at: T })
+	assert.deepEqual(standingOf([turnItem({ state: 'sending', receipt: receipt('sending') })], session()), [
+		'sending',
+		'sending',
+		'↵',
+	])
+	assert.equal(
+		standingOf([turnItem({ state: 'unconfirmed', receipt: receipt('unconfirmed') })], session())[1],
+		'sent, unconfirmed',
+	)
+	assert.equal(standingOf([], session({ reply: receipt('sending') }))[1], 'sending')
+	assert.equal(standingOf([], session({ reply: receipt('sent') }))[1], 'sent')
+	const unconfirmed = agentStanding(
+		snapshot(OK, [], [session({ reply: receipt('unconfirmed') })]),
+		session({ reply: receipt('unconfirmed') }),
+		T,
+	)
+	assert.deepEqual([unconfirmed.word, unconfirmed.tone], ['sent, unconfirmed', 'warn'])
+	// A landed or refused reply is history: the status speaks again.
+	assert.equal(
+		standingOf([], session({ status: 'working', reply: { action: 'reply', status: 'confirmed', at: T } }))[0],
+		'working',
+	)
+})
+
+test('agent standing: working, background, read (seen), idle (unseen), frozen, unknown, not connected', () => {
+	assert.deepEqual(standingOf([], session({ status: 'working' })), ['working', 'working', '✻'])
+	assert.deepEqual(standingOf([], session({ status: 'background' })), ['background', 'background', '◐'])
+	assert.deepEqual(standingOf([], session({ status: 'waiting' })), ['needs-you', 'waiting', '?'])
+	assert.deepEqual(standingOf([], session({ lastMessage: message('Done.', true) })), ['read', 'read', '✓'])
+	assert.deepEqual(standingOf([], session({ lastMessage: message('Done.') })), ['idle', 'idle', '·'])
+	assert.deepEqual(standingOf([], session()), ['idle', 'idle', '·'])
+	assert.deepEqual(standingOf([], session({ status: 'unreachable' })), ['unknown', 'frozen', '▪'])
+	assert.deepEqual(standingOf([], session({ status: 'unknown' })), ['unknown', 'unknown', '¿'])
+	assert.deepEqual(standingOf([], session({ status: 'unknown', hooksAttached: false })), [
+		'unknown',
+		'not connected',
+		'¿',
+	])
+	assert.equal(
+		agentStanding(snapshot(OK, [], [session({ status: 'unreachable' })]), session({ status: 'unreachable' }), T).since,
+		null,
+	)
+})
+
+test('agent place: worktree, branch, detached hash, else a pane name that is not the agent name', () => {
+	assert.equal(agentPlace(session({ repo: 'JVS', branch: 'feat/x' }), 'x'), 'worktree')
+	assert.equal(agentPlace(session({ branch: 'main' }), 'helm'), 'main')
+	assert.equal(agentPlace(session({ branch: 'd1aee9df12345678' }), 'helm'), 'detached d1aee9df')
+	assert.equal(agentPlace(session({ name: 'Fix the login' }), 'helm'), 'Fix the login')
+	assert.equal(agentPlace(session({ name: 'dock' }), 'dock'), '')
+})
+
+test('excerpts: the first line as quiet plain text, Markdown marks dropped, controls and bidi stripped, bounded', () => {
+	assert.equal(
+		excerptPlainLine('## **Done** — see [the PR](https://x/1) and `npm test`'),
+		'Done — see the PR and npm test',
+	)
+	assert.equal(excerptPlainLine('- first item'), 'first item')
+	assert.equal(excerptPlainLine('> quoted'), 'quoted')
+	assert.equal(excerptPlainLine(`a${String.fromCharCode(0x202e)}b${String.fromCharCode(7)}c`), 'abc')
+	assert.equal(excerptPlainLine('x'.repeat(500), 40).length, 40)
+	assert.equal(excerptPlainLine(undefined), '')
+})
+
+test('agent rows: needs you, reply waiting, sending, working, background, read, idle, unknown; longest wait first', () => {
+	const at = (key: string, overrides: Partial<DockSession>) =>
+		session({ key, terminalId: key.slice(3), name: key.slice(3), ...overrides })
+	const sessions = [
+		at('p1:read', { lastMessage: message('All tests pass.', true), since: T - 5_000 }),
+		at('p1:idle', { lastMessage: message('**Shipped** it'), since: T - 4_000 }),
+		at('p1:work', { status: 'working', since: T - 3_000, project: 'crm' }),
+		at('p1:bg', { status: 'background', since: T - 2_000 }),
+		at('p1:gone', { status: 'unreachable' }),
+		at('p1:ask', { status: 'waiting' }),
+		at('p1:ask2', { status: 'waiting' }),
+		at('p1:turn', {}),
+		at('p1:send', { reply: { action: 'reply', status: 'sending', at: T } }),
+	]
+	const items = [
+		askItem({
+			id: 1,
+			session: 'p1:ask',
+			fact: { kind: 'ask', dialogId: 'a', tool: 'Bash', input: { command: 'ls' }, createdAtMs: T - 1_000 },
+		}),
+		askItem({
+			id: 2,
+			session: 'p1:ask2',
+			fact: { kind: 'ask', dialogId: 'b', tool: 'Bash', input: { command: 'pwd' }, createdAtMs: T - 9_000 },
+		}),
+		turnItem({ id: 3, session: 'p1:turn' }),
+	]
+	const snap = snapshot(OK, items, sessions)
+	const rows = agentRows(snap, T + 60_000)
+	assert.deepEqual(
+		rows.map(row => row.name),
+		['ask2', 'ask', 'turn', 'send', 'work', 'bg', 'read', 'idle', 'gone'],
+	)
+	const byName = new Map(rows.map(row => [row.name, row]))
+	assert.equal(byName.get('ask')?.itemId, 1)
+	assert.equal(byName.get('read')?.itemId, undefined)
+	assert.equal(byName.get('read')?.excerpt, 'All tests pass.')
+	assert.equal(byName.get('idle')?.excerpt, 'Shipped it')
+	assert.equal(byName.get('ask')?.excerpt, entryGist(items[0] as DockItem))
+	assert.deepEqual(byName.get('work')?.where, ['Okena'])
+	assert.equal(agentRowLabel(byName.get('ask2') as never), 'ask2, needs you: permission 1m, Okena')
+	assert.equal(agentsSummary(rows), '9 agents · 3 need you · 3 busy')
+	assert.equal(agentsSummary(rows.slice(-1)), '1 agent')
+	assert.deepEqual(
+		agentStateGroups(rows).map(group => [group.heading, group.rows.length]),
+		[
+			['Needs you', 2],
+			['Reply waiting', 1],
+			['Sending', 1],
+			['Working', 1],
+			['Background', 1],
+			['Read', 1],
+			['Idle', 1],
+			['Unknown', 1],
+		],
+	)
+	// By project: groups in the order of their most urgent agent (helm's asks lead; crm only works).
+	assert.deepEqual(
+		agentOverview(snap, T + 60_000, 'by-project').map(group => [group.heading, group.rows.length]),
+		[
+			['helm', 8],
+			['crm', 1],
+		],
+	)
+	assert.equal(agentOverview(snap, T + 60_000, 'by-state')[0]?.id, 'state:needs-you')
+	assert.deepEqual(agentOverview(null, T, 'by-project'), [])
+	// Jakub's stored grouping: by project or by state; anything else (an old variant, junk) is by state.
+	assert.equal(agentsLayout('by-project'), 'by-project')
+	assert.equal(agentsLayout('two-lines'), 'by-state')
+	assert.equal(agentsLayout(undefined), 'by-state')
+	assert.equal(otherAgentsLayout('by-state'), 'by-project')
+	assert.equal(otherAgentsLayout('by-project'), 'by-state')
+})
+
+test('agent detail reply: receipts like a turn reply; blocked while it owes, works or its source is down', () => {
+	const reply = (status: 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed', extra = {}) =>
+		session({ reply: { action: 'reply', status, at: T, ...extra } })
+	assert.equal(sessionReplyView(session(), T), null)
+	assert.deepEqual(sessionReplyView(reply('sending'), T), { text: 'Sending…', tone: 'neutral' })
+	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'queued' }), T), {
+		text: 'Sending… (queued until the agent is free)',
+		tone: 'neutral',
+	})
+	assert.deepEqual(sessionReplyView(reply('unconfirmed'), T), { text: 'sent, unconfirmed', tone: 'warn' })
+	assert.deepEqual(sessionReplyView(reply('confirmed'), T + 1_000), { text: '✓ replied', tone: 'success' })
+	assert.equal(sessionReplyView(reply('confirmed'), T + REPLY_RECEIPT_MS), null)
+	assert.deepEqual(sessionReplyView(reply('refused', { reason: 'gone' }), T), {
+		text: 'refused: already answered elsewhere',
+		tone: 'danger',
+	})
+	assert.deepEqual(sessionReplyView(reply('refused', { reason: 'changed', detail: 'It moved on.' }), T), {
+		text: 'refused: It moved on.',
+		tone: 'danger',
+	})
+	assert.deepEqual(sessionReplyView(reply('failed', { detail: 'socket hang up' }), T), {
+		text: 'socket hang up',
+		tone: 'danger',
+	})
+
+	const snap = snapshot(OK)
+	const okena = session({ source: 'okena' })
+	for (const standing of ['read', 'idle', 'background'] as const)
+		assert.equal(agentReplyBlocked(snap, okena, standing), null)
+	assert.equal(agentReplyBlocked(snap, okena, 'reply-waiting'), 'Answer its open item first')
+	assert.equal(agentReplyBlocked(snap, okena, 'working'), 'Working: reply once it stops')
+	assert.equal(agentReplyBlocked(snap, okena, 'sending'), 'A reply is on its way')
+	// An unconfirmed reply never clears while the agent stays put: it does not block another (the CAS guards it).
+	const replied = (status: 'sent' | 'unconfirmed') =>
+		session({ source: 'okena', reply: { action: 'reply', status, at: T } })
+	assert.equal(agentReplyBlocked(snap, replied('unconfirmed'), 'sending'), null)
+	assert.equal(agentReplyBlocked(snap, replied('sent'), 'sending'), 'A reply is on its way')
+	assert.equal(agentReplyBlocked(snap, okena, 'unknown'), 'State unknown: reply in the terminal')
+	assert.match(
+		agentReplyBlocked(snapshot({ state: 'down', since: T, lastObservedAt: T, detail: 'x' } as never), okena, 'read') ??
+			'',
+		/unreachable: reply in the terminal$/,
+	)
+})
+
+test('pane height: natural height within [216, cap]; the cap is 60% of #right, never under 480', () => {
+	assert.equal(PANE_MIN_HEIGHT, 216)
+	assert.equal(PANE_MAX_HEIGHT, 480)
+	assert.equal(PANE_MAX_SHARE, 0.6)
+	// 1400×900 (#right 862): the share wins over the old 480.
+	assert.equal(paneMaxHeight(862), 517)
+	// 1512×982 (#right 944).
+	assert.equal(paneMaxHeight(944), 566)
+	// 1400×700 (#right 662): 60% is 397, so 480 (the room that keeps 8 terminal rows clamps it on screen,
+	// never the height kept, so a window grown back gives it back).
+	assert.equal(paneMaxHeight(662), 480)
+	// A long message opens at the cap; a short one stays at the minimum; no cap known: 480.
+	assert.equal(paneFitHeight(713, 517), 517)
+	assert.equal(paneFitHeight(150, 517), 216)
+	assert.equal(paneFitHeight(300.2, 517), 301)
+	assert.equal(paneFitHeight(713), 480)
+})
+
+test('pane resize: Jakub drags within [216, the room that keeps the terminal rows], past the share cap', () => {
+	// 1400×900: the room (8 rows kept) is above the 517 share cap: a drag may go past it.
+	assert.deepEqual(paneResizeBounds(640), { min: 216, max: 640 })
+	assert.equal(clampPaneHeight(700, paneResizeBounds(640)), 640)
+	assert.equal(clampPaneHeight(100, paneResizeBounds(640)), 216)
+	assert.equal(clampPaneHeight(500.4, paneResizeBounds(640)), 500)
+	// A short window: keeping the rows wins over the minimum, the floor still holds.
+	assert.deepEqual(paneResizeBounds(180), { min: 180, max: 180 })
+	assert.deepEqual(paneResizeBounds(40), { min: PANE_FLOOR, max: PANE_FLOOR })
+	// No room known: the old 480.
+	assert.deepEqual(paneResizeBounds(null), { min: 216, max: 480 })
+})
+
+test('stored pane height: whole px from the floor up, anything else is automatic sizing', () => {
+	assert.equal(storedPaneHeight('500'), 500)
+	assert.equal(storedPaneHeight(' 360 '), 360)
+	assert.equal(storedPaneHeight(String(PANE_FLOOR)), PANE_FLOOR)
+	for (const raw of [null, '', 'auto', '-400', '12.5', '1e3', '99', '90000', 'NaN'])
+		assert.equal(storedPaneHeight(raw), null, String(raw))
 })

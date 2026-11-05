@@ -2,6 +2,10 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
+import { boundText, excerptLine } from '../../../src/agent-dock/text'
+import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
+import { SLOWEST_INTERVAL_MS } from './cadence'
+import { itemWaitingSince } from './item-order'
 import {
 	ACT_CONFIRM_MS,
 	type AgentDockEvent,
@@ -9,9 +13,11 @@ import {
 	type AgentDockPersisted,
 	type AgentDockSnapshot,
 	type AgentDockSourceHealth,
+	DOCK_EXCERPT_MAX,
 	type DockActOutcome,
 	type DockActionKind,
 	type DockItem,
+	type DockRefusalReason,
 	type DockResolutionBy,
 	type DockSession,
 	type DockSessionStatus,
@@ -20,7 +26,6 @@ import {
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
 	type OkenaState,
-	PERMISSION_SUGGESTIONS_MAX,
 	type SessionKey,
 	okenaClaudeCandidates,
 	okenaDialogPrefix,
@@ -30,6 +35,8 @@ import {
 	parseOkenaState,
 	sessionKey,
 } from './model'
+import { PERMISSION_SUGGESTIONS_MAX } from './review'
+import { dialogAnsweredInTranscript, validToolCalls } from './tool-calls'
 
 /** A session must stay idle this long before an unchecked turn opens (filters quick resumes). */
 export const TURN_IDLE_MS = 8_000
@@ -42,18 +49,22 @@ export const TURN_RESUMED_MS = 8_000
 /**
  * Two observations further apart than this do not make one continuous idle/busy stretch
  * (Helm asleep, Okena down, the pane unlisted or unreadable in between): both restart.
+ * Three times the watcher's slowest interval (15 s reconciliation with a healthy push
+ * channel → 45 s), so a stretch observed only by reconciliation ticks (each one a little
+ * late under load) is never restarted, while a real sleep or outage still is.
  */
-export const OBSERVATION_GAP_MS = 15_000
+export const OBSERVATION_GAP_MS = 3 * SLOWEST_INTERVAL_MS
 /** Turn excerpt bound (memory only). */
 export const TURN_TEXT_MAX = 2_048
-/** Resolved items are kept for the Recent lane and dedupe, bounded by age and count. */
+/** Resolved items are kept for dedupe (and a receipt's linger), bounded by age and count. */
 export const RESOLVED_RETENTION_MS = 24 * 60 * 60 * 1000
 export const RESOLVED_MAX = 50
 
 interface TranscriptTail {
 	sessionId?: string
 	cursor?: number
-	lastAssistant?: { uuid: string; text: string }
+	/** `at`: when Helm first read it; `excerpt`: its bounded first line (DockSession.lastMessage). */
+	lastAssistant?: { uuid: string; text: string; at: number; excerpt: string }
 	/** A user entry was seen after lastAssistant (any origin). */
 	userAfterLastAssistant: boolean
 }
@@ -74,15 +85,28 @@ export interface AgentDockSessionRecord {
 	 * its original `endedAt`, so its waiting age is not reset by the round trip.
 	 */
 	resumedTurn?: { key: string; endedAt: number }
+	/**
+	 * A turn the idle gate holds back: the pane is idle at an unseen message, but not yet for
+	 * TURN_IDLE_MS. Memory only; drives the settle tick (agentDockNextDeadline), the fast
+	 * cadence (agentDockActive) and the gate diagnostics (`turn.gated`) when it never opens.
+	 */
+	gateCandidate?: { uuid: string; idleSince: number; lastIdleAt: number }
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
 	/** Dialog ids the last successful detail read showed open. */
 	dialogIds?: string[]
+	/**
+	 * Listed dialogs of this session the transcript file once proved answered in the terminal
+	 * (tool-calls.ts). The proof sticks to the dialog id (Okena never reuses one): a long turn
+	 * pushes the call out of the tail's list, or the file is unreadable for a tick, while Okena
+	 * keeps listing the dialog until Stop. Pruned to what Okena still lists. Memory only.
+	 */
+	answeredDialogs?: { sessionId: string; ids: string[] }
 }
 
 /** Per-source observation state: each source seeds, restarts and goes down on its own. */
-export interface AgentDockSourceState {
+export interface SourceObservationState {
 	/** False until the source's first successful `/v1/state`; that tick is its seed. */
 	seeded: boolean
 	/** Bumped on reconnect after down, `state_version` regression, or dialog-prefix change. */
@@ -95,7 +119,7 @@ export interface AgentDockSourceState {
 export interface AgentDockState {
 	nextItemId: number
 	/** Sources observed so far (a source appears with its first poll). */
-	sources: Partial<Record<DockSourceId, AgentDockSourceState>>
+	sources: Partial<Record<DockSourceId, SourceObservationState>>
 	/** All sources together (see AgentDockSnapshot.source); recomputed after every reduction. */
 	source: AgentDockSourceHealth
 	sessions: Record<SessionKey, AgentDockSessionRecord>
@@ -104,9 +128,27 @@ export interface AgentDockState {
 	seen: Record<SessionKey, string>
 }
 
+/**
+ * A turn the idle gate suppressed: the pane was idle at an unseen message, then resumed
+ * (`working`/`waiting`), said something newer (`superseded`) or got a user entry (`replied`)
+ * before TURN_IDLE_MS. `idleMs` is the stretch up to the observation that ended it (an upper
+ * bound), `seenIdleMs` up to the last idle observation (a lower bound). Diagnostics only:
+ * never an item or a dispatcher event (the watcher writes these to their own file).
+ */
+export interface DockTurnGated {
+	t: 'turn.gated'
+	at: number
+	session: SessionKey
+	idleMs: number
+	seenIdleMs: number
+	by: 'working' | 'waiting' | 'superseded' | 'replied'
+}
+
 export interface AgentDockReduction {
 	state: AgentDockState
 	events: AgentDockEvent[]
+	/** Gate diagnostics (see DockTurnGated); empty for most reductions. */
+	diagnostics: DockTurnGated[]
 }
 
 export function createAgentDockState(persisted?: AgentDockPersisted | null, now = 0): AgentDockState {
@@ -143,18 +185,7 @@ export function agentDockAwaitingReply(state: AgentDockState, profile: string, t
 	return state.items.some(item => item.session === key && item.kind === 'turn' && isLive(item))
 }
 
-/**
- * When the item started owing Jakub (same rule as the renderer's itemWaitingSince,
- * which cannot value-import this module): the dialog's own timestamp, else when the
- * turn ended, else first observed. Live items sort oldest-waiting first on this.
- */
-function waitingSince(item: DockItem): number {
-	if (item.fact.kind === 'ask' && item.fact.createdAtMs > 0) return Math.min(item.fact.createdAtMs, item.openedAt)
-	if (item.fact.kind === 'turn') return item.fact.endedAt
-	return item.openedAt
-}
-
-/** Sending/unconfirmed items keep their place, so a card never jumps while its answer lands. */
+/** Sending/unconfirmed items keep their place, so an entry never jumps while its answer lands. */
 const ITEM_ORDER: Record<string, number> = {
 	'open:ask': 0,
 	'sending:ask': 0,
@@ -172,10 +203,27 @@ export function agentDockSnapshot(state: AgentDockState, now: number): AgentDock
 		const byRank = rank(a) - rank(b)
 		if (byRank !== 0) return byRank
 		if (a.state === 'resolved') return (b.resolution?.at ?? 0) - (a.resolution?.at ?? 0) || b.id - a.id
-		return waitingSince(a) - waitingSince(b) || a.id - b.id
+		return itemWaitingSince(a) - itemWaitingSince(b) || a.id - b.id
 	})
 	const sessions = Object.values(state.sessions)
-		.map(record => ({ ...record.session, prLinks: [...record.session.prLinks] }))
+		.map((record): DockSession => {
+			const last = record.tail.lastAssistant
+			return {
+				...record.session,
+				prLinks: [...record.session.prLinks],
+				...(record.session.reply ? { reply: { ...record.session.reply } } : {}),
+				...(last
+					? {
+							lastMessage: {
+								uuid: last.uuid,
+								text: last.excerpt,
+								at: last.at,
+								seen: state.seen[record.session.key] === last.uuid,
+							},
+						}
+					: {}),
+			}
+		})
 		.sort((a, b) => a.project.localeCompare(b.project) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key))
 	const sources: AgentDockSnapshot['sources'] = {}
 	for (const [id, entry] of Object.entries(state.sources)) if (entry) sources[id as DockSourceId] = { ...entry.health }
@@ -222,17 +270,6 @@ export function aggregateSourceHealth(
 	return { state: 'ok', since: Math.max(...all.map(health => health.since)), lastObservedAt: lastSeen(all) }
 }
 
-/** Strip C0/C1 controls except tab/newline, then bound by UTF-16 length without splitting a surrogate pair. */
-export function boundAgentText(text: string, max = TURN_TEXT_MAX): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
-	const clean = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-	if (clean.length <= max) return clean
-	let end = max - 1
-	const code = clean.charCodeAt(end - 1)
-	if (code >= 0xd800 && code <= 0xdbff) end -= 1
-	return `${clean.slice(0, end)}…`
-}
-
 const isLive = (item: DockItem): boolean => item.state !== 'resolved'
 /** Okena accepted Jakub's dock answer (sent, maybe unconfirmed): the next observed close is his. */
 const isDispatched = (item: DockItem): boolean =>
@@ -241,11 +278,90 @@ const isDispatched = (item: DockItem): boolean =>
 /** The act's CAS read/POST is still running: an observed close cannot be attributed yet. */
 const isInFlight = (item: DockItem): boolean => item.state === 'sending' && item.receipt?.status === 'sending'
 
-function deriveStatus(detail: OkenaClaudeSession): DockSessionStatus {
+/**
+ * A refusal that only said the agent was not free (working, a dialog open, or its state unknown):
+ * once the agent is seen idle again it no longer holds, so it is dropped (see observeTerminal).
+ */
+const refusedNotFree = (
+	receipt: { status: string; reason?: DockRefusalReason; at: number } | undefined,
+	readFrom: number | undefined,
+): boolean =>
+	receipt?.status === 'refused' &&
+	(receipt.reason === 'busy' || receipt.reason === 'untracked') &&
+	// A poll whose reads began before the refusal saw older data than the refusing check did.
+	(readFrom === undefined || receipt.at <= readFrom)
+
+/** `background`: main agent idle while its subagents or background tasks (shells, workflows, monitors) still run. */
+function deriveStatus(detail: OkenaClaudeSession, backgroundTasks: number): DockSessionStatus {
 	if (detail.dialogs.length > 0) return 'waiting'
 	if (detail.busy === true) return 'working'
-	if (detail.busy === false) return detail.running_subagents.length > 0 ? 'background' : 'idle'
+	if (detail.busy === false) return detail.running_subagents.length > 0 || backgroundTasks > 0 ? 'background' : 'idle'
 	return 'unknown'
+}
+
+/**
+ * Background tasks still running for this detail: Helm's hub counts them itself
+ * (`background_tasks`), Okena panes carry what their transcript file showed for
+ * this very session. Anything else (no read, another session) claims none.
+ */
+function backgroundOf(
+	detail: OkenaClaudeSession,
+	observed: ObservedBackgroundTasks | undefined,
+): { tasks: number; shells: number } {
+	if (detail.background_tasks !== undefined) {
+		const tasks = Math.min(detail.background_tasks, BACKGROUND_TASKS_MAX)
+		return { tasks, shells: Math.min(detail.background_shells ?? 0, tasks) }
+	}
+	if (!observed || !detail.session_id || observed.sessionId !== detail.session_id) return { tasks: 0, shells: 0 }
+	const tasks = Math.min(observed.tasks, BACKGROUND_TASKS_MAX)
+	return { tasks, shells: Math.min(observed.shells, tasks) }
+}
+
+/** Observations cross a process boundary in tests and sources: an odd shape claims nothing. */
+function validBackground(value: unknown): value is ObservedBackgroundTasks {
+	const count = (n: unknown): boolean => typeof n === 'number' && Number.isInteger(n) && n >= 0
+	const v = value as Partial<ObservedBackgroundTasks> | undefined
+	return !!v && typeof v === 'object' && typeof v.sessionId === 'string' && count(v.tasks) && count(v.shells)
+}
+
+/** A valid observation; tool calls of an odd shape are dropped (no answered-dialog claim). */
+function sanitizeBackground(value: ObservedBackgroundTasks): ObservedBackgroundTasks {
+	if (value.calls === undefined || validToolCalls(value.calls)) return value
+	const { calls: _dropped, ...rest } = value
+	return rest
+}
+
+/**
+ * The detail without the dialogs this session's own transcript file proves already answered in
+ * the terminal (tool-calls.ts): Okena keeps such a dialog listed until the turn's Stop when the
+ * terminal answer changed the tool input (AskUserQuestion `answers`). Treated exactly like a
+ * dialog Okena dropped: its ask closes `outside`, none opens for it, and the pane is not
+ * `waiting`. Only calls read for this very session count; a dialog proven once stays proven
+ * (`record.answeredDialogs`). A permission while subagents or a background workflow run is never
+ * claimed: a subagent may have raised it for a call identical to the main agent's (Okena forgets
+ * its running subagents when it restarts; the transcript still shows the workflow).
+ */
+function withoutAnsweredDialogs(
+	record: AgentDockSessionRecord,
+	detail: OkenaClaudeSession,
+	background: ObservedBackgroundTasks | undefined,
+): OkenaClaudeSession {
+	const sessionId = detail.session_id
+	const sticky = sessionId && record.answeredDialogs?.sessionId === sessionId ? record.answeredDialogs.ids : []
+	const observed = sessionId && background?.sessionId === sessionId ? background : undefined
+	const calls = observed?.calls ?? []
+	const subagents = detail.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+	const answered = new Set(
+		detail.dialogs
+			.filter(
+				dialog =>
+					sticky.includes(dialog.id) || (calls.length > 0 && dialogAnsweredInTranscript(dialog, calls, subagents)),
+			)
+			.map(dialog => dialog.id),
+	)
+	record.answeredDialogs = sessionId && answered.size > 0 ? { sessionId, ids: [...answered] } : undefined
+	if (answered.size === 0) return detail
+	return { ...detail, dialogs: detail.dialogs.filter(dialog => !answered.has(dialog.id)) }
 }
 
 function pruneResolved(items: DockItem[], now: number): DockItem[] {
@@ -260,6 +376,7 @@ function pruneResolved(items: DockItem[], now: number): DockItem[] {
 /** Mutable working copy for one reduction; `prev` is never touched. */
 class Draft {
 	readonly events: AgentDockEvent[] = []
+	readonly diagnostics: DockTurnGated[] = []
 	readonly state: AgentDockState
 
 	constructor(
@@ -330,8 +447,15 @@ class Draft {
 		this.events.push({ t: 'item.orphaned', at: this.now, id: item.id })
 	}
 
-	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state' | 'rev'>, silent: boolean): DockItem {
-		const opened: DockItem = { ...item, id: this.state.nextItemId++, rev: 1, openedAt: this.now, state: 'open' }
+	reopen(item: DockItem): void {
+		if (item.state !== 'orphaned') return
+		item.state = 'open'
+		item.orphanedAt = undefined
+		this.events.push({ t: 'item.reopened', at: this.now, id: item.id })
+	}
+
+	open(item: Omit<DockItem, 'id' | 'openedAt' | 'state'>, silent: boolean): DockItem {
+		const opened: DockItem = { ...item, id: this.state.nextItemId++, openedAt: this.now, state: 'open' }
 		this.state.items.push(opened)
 		if (!silent) {
 			this.events.push({
@@ -355,7 +479,7 @@ class Draft {
 	}
 
 	/** The observation state of `id`, created pending on its first poll. */
-	src(id: DockSourceId): AgentDockSourceState {
+	src(id: DockSourceId): SourceObservationState {
 		let entry = this.state.sources[id]
 		if (!entry) {
 			entry = { seeded: false, epoch: 0, health: { state: 'pending', since: this.now, lastObservedAt: null } }
@@ -397,7 +521,9 @@ function applyTranscript(
 	record: AgentDockSessionRecord,
 	page: OkenaClaudeTranscriptPage,
 	liveTurnUuids: Set<string>,
+	now: number,
 ): { repliedTurns: Set<string>; activity: boolean } {
+	const before = record.tail.lastAssistant
 	const tail: TranscriptTail = page.reset ? { userAfterLastAssistant: false } : { ...record.tail }
 	// On a continuation every live turn's uuid is already behind the cursor.
 	const passed = new Set(page.reset ? [] : liveTurnUuids)
@@ -405,7 +531,15 @@ function applyTranscript(
 	let activity = false
 	for (const entry of page.entries) {
 		if (entry.kind === 'assistant') {
-			tail.lastAssistant = { uuid: entry.uuid, text: entry.text }
+			// A reset page re-reads messages Helm already knows: they keep when it first read them.
+			const known =
+				before?.uuid === entry.uuid ? before : tail.lastAssistant?.uuid === entry.uuid ? tail.lastAssistant : null
+			tail.lastAssistant = {
+				uuid: entry.uuid,
+				text: entry.text,
+				at: known?.at ?? now,
+				excerpt: excerptLine(entry.text, DOCK_EXCERPT_MAX),
+			}
 			tail.userAfterLastAssistant = false
 			if (liveTurnUuids.has(entry.uuid)) passed.add(entry.uuid)
 			if (!page.reset) activity = true
@@ -426,13 +560,19 @@ interface TickContext {
 	profile: string
 	state: OkenaState
 	seedTick: boolean
+	/** When this poll's reads began (see the poll observation's `readFrom`). */
+	readFrom?: number
 }
 
 function observeTerminal(
 	draft: Draft,
 	ctx: TickContext,
 	terminalId: string,
-	observed: { detail: OkenaClaudeSession | null; transcript: OkenaClaudeTranscriptPage | null },
+	observed: {
+		detail: OkenaClaudeSession | null
+		transcript: OkenaClaudeTranscriptPage | null
+		background?: ObservedBackgroundTasks
+	},
 ): void {
 	const { now } = draft
 	const key = sessionKey(ctx.profile, terminalId)
@@ -454,6 +594,8 @@ function observeTerminal(
 			since: now,
 			observedAt: now,
 			subagents: 0,
+			backgroundTasks: 0,
+			backgroundShells: 0,
 			queuedPrompts: 0,
 			prLinks: [],
 			hasTranscript: false,
@@ -464,22 +606,27 @@ function observeTerminal(
 	draft.state.sessions[key] = record
 	record.session.projectId = project?.id
 	record.session.project = project?.name ?? 'unknown project'
+	const parentId = project?.worktree_info?.parent_project_id
+	record.session.repo = (parentId && ctx.state.projects.find(p => p.id === parentId)?.name) || undefined
 	record.session.name =
 		project?.terminal_names?.[terminalId] ?? project?.git_status?.branch ?? `terminal ${terminalId.slice(0, 8)}`
 	record.session.branch = project?.git_status?.branch || undefined
 
-	const detail = observed.detail
-	if (!detail || detail.terminal_id !== terminalId) {
+	const raw = observed.detail
+	if (!raw || raw.terminal_id !== terminalId) {
 		// Fail closed: no fact, so nothing opens or closes for this session, and the
 		// idle/busy stretch is broken (it may have changed unseen in between).
 		setStatus(record, 'unknown', now)
 		record.idleSince = undefined
 		record.busySince = undefined
+		record.gateCandidate = undefined
 		return
 	}
+	const detail = withoutAnsweredDialogs(record, raw, observed.background)
 	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
 		record.idleSince = undefined
 		record.busySince = undefined
+		record.gateCandidate = undefined
 	}
 	// Last observed before a source restart/reconnect (epoch already bumped for this tick).
 	const restarted = existing !== undefined && existing.epoch !== src.epoch
@@ -492,9 +639,14 @@ function observeTerminal(
 		record.idleSince = undefined
 		record.busySince = undefined
 		record.resumedTurn = undefined
+		record.gateCandidate = undefined
+		record.session.reply = undefined
 	}
 	record.session.sessionId = detail.session_id
 	record.session.subagents = detail.running_subagents.length
+	const background = backgroundOf(detail, observed.background)
+	record.session.backgroundTasks = background.tasks
+	record.session.backgroundShells = background.shells
 	record.session.queuedPrompts = detail.queued_prompts
 	record.session.prLinks = detail.pr_links.map(link => ({
 		number: link.number,
@@ -516,8 +668,17 @@ function observeTerminal(
 			record,
 			page,
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
+			now,
 		)
 		const newest = record.tail.lastAssistant?.uuid
+		// A settled agent-detail reply (landed, refused, failed) says nothing about a newer message.
+		const settled = record.session.reply
+		if (
+			settled &&
+			newest !== orphanAnchor &&
+			(settled.status === 'confirmed' || settled.status === 'refused' || settled.status === 'failed')
+		)
+			record.session.reply = undefined
 		for (const item of liveTurns) {
 			// An act still in flight cannot be attributed yet; the settle check below picks it up.
 			if (isInFlight(item)) continue
@@ -532,22 +693,35 @@ function observeTerminal(
 		// Unknown anchor (tail never read) proves nothing; a reset page alone is not new activity.
 		const progressed = activity || (orphanAnchor !== undefined && record.tail.lastAssistant?.uuid !== orphanAnchor)
 		if (progressed) {
-			for (const item of live()) if (item.state === 'orphaned') draft.resolve(item, 'outside')
+			// An orphaned ask whose dialog is listed right now is still waiting (it reopens below).
+			const open = new Set(detail.dialogs.map(dialog => dialog.id))
+			for (const item of live()) {
+				if (item.state !== 'orphaned' || (item.fact.kind === 'ask' && open.has(item.fact.dialogId))) continue
+				draft.resolve(item, 'outside')
+			}
 		}
 	}
 
-	const status = deriveStatus(detail)
+	const status = deriveStatus(detail, background.tasks)
 	setStatus(record, status, now)
 	if (status === 'idle' || status === 'background') record.idleSince ??= now
 	else if (status === 'working' || status === 'waiting') record.idleSince = undefined
 	if (detail.busy === true) record.busySince ??= now
 	else record.busySince = undefined
+	// "Check it again": seen idle now, a reply refused as busy/untracked can simply be sent again,
+	// so the pane and its strip entry stop reading as refused (the refusal stays while it holds).
+	if (status === 'idle' || status === 'background') {
+		for (const item of live())
+			if (item.state === 'open' && refusedNotFree(item.receipt, ctx.readFrom)) item.receipt = undefined
+		if (refusedNotFree(record.session.reply, ctx.readFrom)) record.session.reply = undefined
+	}
 	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
 	for (const item of live()) {
 		if (item.fact.kind !== 'turn' || !isDispatched(item)) continue
 		if (record.tail.lastAssistant?.uuid === item.fact.assistantUuid && record.tail.userAfterLastAssistant)
 			draft.confirm(item)
 	}
+	confirmSessionReply(record, now)
 	// A turn means "the agent waits for you". Main agent busy past a short debounce, it plainly
 	// does not (Jakub typed in the terminal and the entry was not read yet, or a background task
 	// woke it): close it. A dock reply being sent or confirmed keeps its item until its own entry
@@ -560,18 +734,85 @@ function observeTerminal(
 		}
 	}
 
-	// Asks: one item per Okena dialog; vanished → answered elsewhere, or orphaned across a restart.
+	reconcileAsks(draft, record, key, detail, restarted, ctx.seedTick)
+	settleGateCandidate(draft, record, key, status)
+	maybeOpenTurn(draft, record, key, detail, status)
+}
+
+/**
+ * The gate's held-back turn after this observation: still held (same idle stretch, same
+ * message, no user entry) it stays; otherwise it ended without opening, and a resume, a newer
+ * message or a reply logs `turn.gated` (a broken stretch was already dropped silently).
+ */
+function settleGateCandidate(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	status: DockSessionStatus,
+): void {
+	const candidate = record.gateCandidate
+	if (!candidate) return
+	let by: DockTurnGated['by'] | undefined
+	if (record.idleSince === undefined) by = status === 'waiting' ? 'waiting' : 'working'
+	else if (record.idleSince !== candidate.idleSince) by = undefined
+	else if (record.tail.lastAssistant?.uuid !== candidate.uuid) by = 'superseded'
+	else if (record.tail.userAfterLastAssistant) by = 'replied'
+	else return
+	record.gateCandidate = undefined
+	if (!by) return
+	draft.diagnostics.push({
+		t: 'turn.gated',
+		at: draft.now,
+		session: key,
+		idleMs: draft.now - candidate.idleSince,
+		seenIdleMs: candidate.lastIdleAt - candidate.idleSince,
+		by,
+	})
+}
+
+/**
+ * A reply sent from the agent detail (no item) lands once the transcript shows a user entry
+ * after the message Jakub replied to, or the agent already said something after it.
+ */
+function confirmSessionReply(record: AgentDockSessionRecord, now: number): void {
+	const reply = record.session.reply
+	if (!reply || (reply.status !== 'sent' && reply.status !== 'unconfirmed')) return
+	const last = record.tail.lastAssistant?.uuid
+	const landed =
+		reply.assistantUuid === undefined
+			? record.tail.userAfterLastAssistant
+			: last !== undefined && (last !== reply.assistantUuid || record.tail.userAfterLastAssistant)
+	if (landed) record.session.reply = { ...reply, status: 'confirmed', at: now }
+}
+
+/**
+ * Asks: one item per dialog; vanished → answered elsewhere (or Jakub's dock answer
+ * landing), or orphaned across a source restart.
+ */
+function reconcileAsks(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	detail: OkenaClaudeSession,
+	restarted: boolean,
+	seedTick: boolean,
+): void {
+	const { now } = draft
+	const src = draft.src(record.session.source)
 	record.dialogIds = detail.dialogs.map(dialog => dialog.id)
 	const present = new Set<string>()
 	for (const dialog of detail.dialogs) {
 		const itemKey = `ask:${key}:${dialog.id}`
 		present.add(itemKey)
 		if (draft.hasKey(itemKey)) {
+			const item = draft.state.items.find(candidate => candidate.key === itemKey)
+			// Orphaned while its profile was not polled (or across a reconnect), and the source
+			// lists the same dialog again: the agent still waits, so it owes Jakub again.
+			if (item?.state === 'orphaned') draft.reopen(item)
 			// Okena removes the dialog before acting on a decision, so an unconfirmed
 			// answer whose dialog is still open well after it was sent never landed:
 			// the agent still waits, so the item owes Jakub again.
-			const item = draft.state.items.find(candidate => candidate.key === itemKey)
-			if (
+			else if (
 				item?.state === 'unconfirmed' &&
 				item.receipt?.status === 'unconfirmed' &&
 				now - item.receipt.at >= ACT_CONFIRM_MS
@@ -606,10 +847,10 @@ function observeTerminal(
 					createdAtMs: dialog.created_at_ms,
 				},
 			},
-			ctx.seedTick,
+			seedTick,
 		)
 	}
-	for (const item of live()) {
+	for (const item of draft.liveItems(key)) {
 		if (item.fact.kind !== 'ask' || present.has(item.key) || isInFlight(item)) continue
 		// Okena took Jakub's decision (decide() removes the dialog first): its close is his answer.
 		if (isDispatched(item)) {
@@ -621,10 +862,21 @@ function observeTerminal(
 		if (restarted || (hub !== undefined && okenaDialogPrefix(item.fact.dialogId) !== hub)) draft.orphan(item)
 		else draft.resolve(item, 'outside')
 	}
+}
 
-	// Turns: the transcript's last assistant message, after a stable idle stretch.
+/** Turns: the transcript's last assistant message opens one, after a stable idle stretch. */
+function maybeOpenTurn(
+	draft: Draft,
+	record: AgentDockSessionRecord,
+	key: SessionKey,
+	detail: OkenaClaudeSession,
+	status: DockSessionStatus,
+): void {
+	const { now } = draft
 	const last = record.tail.lastAssistant
 	const tailKnown = detail.has_transcript && record.tail.cursor !== undefined
+	// Re-derived on every observation: only the gate branch below holds a turn back.
+	record.gateCandidate = undefined
 	// Silent seed adoption covers only what already existed when Helm first saw the pane
 	// AND only while the pane has stayed idle since. Nothing to adopt (no transcript at the
 	// seed tick) or any busy/dialog observation in between means a later turn is new.
@@ -644,6 +896,11 @@ function observeTerminal(
 			return
 		}
 	} else if (record.idleSince === undefined || now - record.idleSince < TURN_IDLE_MS) {
+		// Held back by the gate: remember it, so the watcher ticks again right when it can open.
+		const itemKey = `turn:${detail.session_id ?? key}:${last.uuid}`
+		const opens = last.uuid !== seen && (!draft.hasKey(itemKey) || record.resumedTurn?.key === itemKey)
+		if (opens && record.idleSince !== undefined)
+			record.gateCandidate = { uuid: last.uuid, idleSince: record.idleSince, lastIdleAt: now }
 		return
 	}
 	if (last.uuid === seen) return
@@ -653,7 +910,8 @@ function observeTerminal(
 	const resumed = record.resumedTurn?.key === itemKey ? record.resumedTurn : undefined
 	if (draft.hasKey(itemKey) && resumed === undefined) return
 	record.resumedTurn = undefined
-	for (const item of live()) if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
+	for (const item of draft.liveItems(key))
+		if (item.fact.kind === 'turn' && !isInFlight(item)) draft.close(item, 'superseded')
 	draft.open(
 		{
 			key: itemKey,
@@ -663,7 +921,7 @@ function observeTerminal(
 				kind: 'turn',
 				sessionId: detail.session_id,
 				assistantUuid: last.uuid,
-				text: boundAgentText(last.text),
+				text: boundText(last.text, TURN_TEXT_MAX),
 				endedAt: resumed?.endedAt ?? record.idleSince ?? now,
 				hadBackground: status === 'background',
 			},
@@ -674,7 +932,7 @@ function observeTerminal(
 
 function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { type: 'poll' }>): void {
 	const { now } = draft
-	const id: DockSourceId = observation.source ?? 'okena'
+	const id = observation.source
 	if (!observation.state.ok) {
 		sourceDown(draft, id, observation.state.error)
 		return
@@ -691,13 +949,21 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 	const reconnected = src.health.state === 'down' && src.health.lastObservedAt !== null
 	const regressed = src.stateVersion !== undefined && okenaState.state_version < src.stateVersion
 
-	const details = new Map<string, { detail: OkenaClaudeSession | null; transcript: OkenaClaudeTranscriptPage | null }>()
+	const details = new Map<
+		string,
+		{
+			detail: OkenaClaudeSession | null
+			transcript: OkenaClaudeTranscriptPage | null
+			background?: ObservedBackgroundTasks
+		}
+	>()
 	for (const terminal of observation.terminals) {
 		const detail = terminal.detail.ok ? parseOkenaClaudeSession(terminal.detail.body) : null
 		const transcript = terminal.transcript?.ok ? parseOkenaClaudeTranscriptPage(terminal.transcript.body) : null
 		details.set(terminal.terminalId, {
 			detail: detail?.ok ? detail.value : null,
 			transcript: transcript?.ok ? transcript.value : null,
+			...(validBackground(terminal.background) ? { background: sanitizeBackground(terminal.background) } : {}),
 		})
 	}
 
@@ -714,7 +980,13 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 	src.stateVersion = okenaState.state_version
 	src.seeded = true
 
-	const ctx: TickContext = { source: id, profile: observation.profile, state: okenaState, seedTick }
+	const ctx: TickContext = {
+		source: id,
+		profile: observation.profile,
+		state: okenaState,
+		seedTick,
+		...(observation.readFrom !== undefined ? { readFrom: observation.readFrom } : {}),
+	}
 	const candidates = okenaClaudeCandidates(okenaState)
 	for (const terminalId of candidates) {
 		observeTerminal(draft, ctx, terminalId, details.get(terminalId) ?? { detail: null, transcript: null })
@@ -722,21 +994,39 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 
 	const listed = new Set(candidates.map(terminalId => sessionKey(observation.profile, terminalId)))
 	for (const [key, record] of Object.entries(draft.state.sessions)) {
-		if (record.session.source !== id || record.session.profile !== observation.profile || listed.has(key)) continue
-		const live = draft.liveItems(key)
+		if (record.session.source !== id) continue
+		// Another profile is polled now (Okena `last_used` changed, Helm switched its session
+		// profile): its agent may still run there, it is just not observed.
+		if (record.session.profile !== observation.profile) {
+			unobserved(draft, key, record)
+			continue
+		}
+		if (listed.has(key)) continue
 		if (record.epoch === src.epoch) {
 			// Gone within one source epoch: SessionEnd or pane closed.
-			for (const item of live) draft.resolve(item, 'session_ended')
+			for (const item of draft.liveItems(key)) draft.resolve(item, 'session_ended')
 			delete draft.state.sessions[key]
 			continue
 		}
-		// Last seen before a restart/reconnect: may not be relisted until its next step. Never resolve from absence.
+		// Last seen before a restart/reconnect: may not be relisted until its next step.
 		// Its dialog ids died with the old hub.
-		record.dialogIds = undefined
-		for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
-		if (live.length === 0) delete draft.state.sessions[key]
-		else setStatus(record, 'unknown', now)
+		unobserved(draft, key, record)
 	}
+}
+
+/**
+ * A session the source no longer shows (another profile is polled, or it was last seen
+ * before a restart/reconnect). Never resolve from absence: open asks orphan (ackable, and
+ * they reopen if the same dialog is listed again), turns stay, and the row reads unknown
+ * until it is seen again (or goes once nothing is live).
+ */
+function unobserved(draft: Draft, key: SessionKey, record: AgentDockSessionRecord): void {
+	record.dialogIds = undefined
+	record.gateCandidate = undefined
+	const live = draft.liveItems(key)
+	for (const item of live) if (item.fact.kind === 'ask') draft.orphan(item)
+	if (live.length === 0) delete draft.state.sessions[key]
+	else setStatus(record, 'unknown', draft.now)
 }
 
 function reduceAck(draft: Draft, itemId: number): void {
@@ -797,8 +1087,53 @@ function reduceActResult(draft: Draft, itemId: number, outcome: DockActOutcome):
 	draft.outcome(item, outcome.status)
 }
 
+/** Jakub replied from the agent detail: the reply is on its way (the message he read counts as seen). */
+function reducePromptSending(draft: Draft, key: SessionKey, assistantUuid: string | undefined): void {
+	const record = draft.state.sessions[key]
+	if (!record) return
+	record.session.reply = {
+		action: 'prompt',
+		status: 'sending',
+		at: draft.now,
+		...(assistantUuid ? { assistantUuid } : {}),
+	}
+	// Only the message the reducer holds as the last one: an older uuid (a stale live read) never
+	// moves `seen` back, which would reopen a turn Jakub already acked.
+	if (assistantUuid && record.tail.lastAssistant?.uuid === assistantUuid) draft.state.seen[key] = assistantUuid
+}
+
+function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutcome): void {
+	const record = draft.state.sessions[key]
+	const reply = record?.session.reply
+	if (!record || reply?.status !== 'sending') return
+	const { now } = draft
+	if (outcome.status === 'sent')
+		record.session.reply = {
+			...reply,
+			status: 'sent',
+			at: now,
+			sentAt: now,
+			...(outcome.delivery ? { delivery: outcome.delivery } : {}),
+		}
+	else if (outcome.status === 'unconfirmed')
+		record.session.reply = { ...reply, status: 'unconfirmed', at: now, sentAt: now, detail: outcome.detail }
+	else
+		record.session.reply = {
+			...reply,
+			status: outcome.status,
+			at: now,
+			detail: outcome.detail,
+			...(outcome.status === 'refused' ? { reason: outcome.reason } : {}),
+		}
+}
+
 /** Sent but not observed for ACT_CONFIRM_MS: amber "sent, unconfirmed" until observed or acked. */
 function expireUnconfirmed(draft: Draft): void {
+	for (const record of Object.values(draft.state.sessions)) {
+		const reply = record.session.reply
+		if (reply?.status !== 'sent' || reply.sentAt === undefined || draft.now - reply.sentAt < ACT_CONFIRM_MS) continue
+		record.session.reply = { ...reply, status: 'unconfirmed', at: draft.now }
+	}
 	for (const item of draft.state.items) {
 		const receipt = item.receipt
 		if (item.state !== 'sending' || receipt?.status !== 'sent' || receipt.sentAt === undefined) continue
@@ -815,11 +1150,64 @@ export function reduce(prev: AgentDockState, observation: AgentDockObservation, 
 	else if (observation.type === 'act.sending')
 		reduceActSending(draft, observation.itemId, observation.action, observation.always)
 	else if (observation.type === 'act.result') reduceActResult(draft, observation.itemId, observation.outcome)
+	else if (observation.type === 'prompt.sending')
+		reducePromptSending(draft, observation.session, observation.assistantUuid)
+	else if (observation.type === 'prompt.result') reducePromptResult(draft, observation.session, observation.outcome)
 	else {
 		reducePoll(draft, observation)
 		expireUnconfirmed(draft)
 	}
 	draft.state.source = aggregateSourceHealth(draft.state.sources, draft.state.source)
 	draft.state.items = pruneResolved(draft.state.items, now)
-	return { state: draft.state, events: draft.events }
+	return { state: draft.state, events: draft.events, diagnostics: draft.diagnostics }
+}
+
+/** Sessions of a source that answered its last poll (down/pending sources freeze their rows). */
+function observedRecords(state: AgentDockState): AgentDockSessionRecord[] {
+	return Object.values(state.sessions).filter(record => state.sources[record.session.source]?.health.state === 'ok')
+}
+
+/**
+ * Whether some agent is doing something the dock should see within a second (watcher cadence):
+ * main agent busy or working, a dialog open, a turn held by the idle gate, or a dock answer
+ * or agent-detail reply sent and waiting to be observed.
+ */
+export function agentDockActive(state: AgentDockState): boolean {
+	for (const record of observedRecords(state)) {
+		const status = record.session.status
+		if (status === 'working' || status === 'waiting') return true
+		if (record.busySince !== undefined || (record.dialogIds?.length ?? 0) > 0) return true
+		if (record.gateCandidate && (status === 'idle' || status === 'background')) return true
+		if (record.session.reply?.status === 'sent') return true
+	}
+	return state.items.some(item => isLive(item) && item.receipt?.status === 'sent')
+}
+
+/**
+ * The earliest time after `now` at which a poll decides a turn without new source data: a
+ * held turn passing TURN_IDLE_MS, or a live turn's busy stretch passing TURN_RESUMED_MS. The
+ * watcher ticks right then (settle timer) instead of on its next cadence tick.
+ */
+export function agentDockNextDeadline(state: AgentDockState, now: number): number | undefined {
+	let next: number | undefined
+	const consider = (at: number) => {
+		if (at > now && (next === undefined || at < next)) next = at
+	}
+	for (const record of observedRecords(state)) {
+		if (record.gateCandidate && record.idleSince === record.gateCandidate.idleSince)
+			consider(record.gateCandidate.idleSince + TURN_IDLE_MS)
+		if (
+			record.busySince !== undefined &&
+			state.items.some(
+				item =>
+					item.session === record.session.key &&
+					item.fact.kind === 'turn' &&
+					isLive(item) &&
+					!isDispatched(item) &&
+					!isInFlight(item),
+			)
+		)
+			consider(record.busySince + TURN_RESUMED_MS)
+	}
+	return next
 }

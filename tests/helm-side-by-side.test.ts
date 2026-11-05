@@ -255,7 +255,7 @@ test('main.ts routes every singleton effect through the startup policy', () => {
 	assert.match(main, /if \(launchPolicy\.scheduledAttentionNotifier\) scheduledAttentionNotifier\?\.start\(\)/)
 	assert.match(main, /if \(launchPolicy\.scheduledAttention\) \{\s*scheduledAdoption = new/)
 	assert.match(main, /if \(launchPolicy\.scheduledAttention\) \{\s*scheduledAttentionNotifier = new/)
-	assert.match(main, /const agentDockWatcher = launchPolicy\.agentDock/)
+	assert.match(main, /const agentDock = createAgentDockMain\(\{\n\tenabled: launchPolicy\.agentDock,/)
 	assert.match(main, /title: launchPolicy\.windowTitle/)
 	assert.match(main, /sideBySideRequested\(process\.env\) \? \{ readOnly:/)
 	assert.match(main, /'remote-pairing:pair'[^\n]*\n\tif \(!launchPolicy\.remotePairingWrites\)/)

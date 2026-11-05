@@ -1,7 +1,7 @@
 // Agent dock source: one read-only Okena Claude Remote observation per tick,
 // through Helm's existing OkenaClient (profile/token/endpoint resolution).
 // Structured API only; never screen contents (AGENTS.md). Observation is
-// GET-only; the only writes are `act()` (slice 2), each behind a fresh CAS read:
+// GET-only; the only writes are `act()`, each behind a fresh CAS read:
 // dialog decision POST or prompt POST (see act.ts for the exact Okena bodies).
 //
 // Per tick:
@@ -13,26 +13,52 @@
 //      idle (catches anything written after the edge read), and every
 //      REPLY_READ_MS while a busy pane still has a live turn item (Jakub typed
 //      the reply in the terminal: its user entry closes the turn).
+//   4. Background tasks (Okena only, `background` observer): what the session's own
+//      JSONL appended, every tick while the main agent is idle or a dialog is listed and
+//      every BACKGROUND_BUSY_READ_MS while busy otherwise (keeps each read small). Okena's
+//      transcript page hides the task notifications that end them, and the main agent's
+//      tool calls prove a listed dialog already answered (claude-transcript-tail.ts).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
+import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
+import { boundText } from '../../../src/agent-dock/text'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
-import { askStillOpen, dockActBody, dockPostFailure, errorDetail, turnStillWaiting } from './act'
 import {
+	type DockCheck,
+	REFUSAL_TEXT,
+	askStillOpen,
+	dockActBody,
+	dockPostFailure,
+	errorDetail,
+	promptText,
+	sessionStillIdle,
+	turnStillWaiting,
+} from './act'
+import type { BackgroundTaskObserver } from './claude-transcript-tail'
+import type { DockPane, DockSource } from './composite-source'
+import {
+	type AgentDockMessageResult,
 	type AgentDockObservation,
+	DOCK_LIVE_MESSAGE_MAX,
 	type DockActOutcome,
 	type DockAction,
 	type DockItem,
+	type DockSourceId,
 	type ObservedClaudeTerminal,
 	type OkenaClaudeSession,
+	type OkenaClaudeTranscriptPage,
 	type OkenaFetch,
 	type OkenaPromptDelivery,
+	okenaAgentLifecycle,
 	okenaClaudeCandidates,
+	okenaTerminalProject,
 	parseOkenaClaudeSession,
 	parseOkenaClaudeTranscriptPage,
 	parseOkenaState,
 	sessionKey,
 } from './model'
 import { type AgentDockState, TURN_IDLE_MS, agentDockAwaitingReply, agentDockTranscriptRequest } from './reduce'
+import { dialogAnsweredInTranscript, validToolCalls } from './tool-calls'
 
 export const OKENA_STATE_MAX_BYTES = 4 * 1024 * 1024
 export const OKENA_SESSION_MAX_BYTES = 2 * 1024 * 1024
@@ -42,13 +68,13 @@ export const OKENA_READ_TIMEOUT_MS = 3_000
 export const TRANSCRIPT_SWEEP_MS = 15_000
 /** While a busy pane has a live turn item, re-read its transcript this often (continuation pages are small). */
 export const REPLY_READ_MS = 2_000
+/** While the main agent is busy its background tasks do not change its status: tail its transcript this often. */
+export const BACKGROUND_BUSY_READ_MS = 5_000
 /** Fan-out bound per tick; more panes than this are left unobserved (status unknown). */
 export const MAX_CLAUDE_TERMINALS = 64
 const READ_CONCURRENCY = 6
 /** The CAS read + POST of one act. Okena types a prompt into the pane before it answers, so give it room. */
 export const OKENA_ACT_TIMEOUT_MS = 15_000
-/** After a dock reply, read the transcript every tick (even while busy) this long, to see the user entry land. */
-export const EXPEDITE_MS = 20_000
 
 /** The OkenaClient surface the source uses (structural, so tests inject a double). */
 export interface OkenaClaudeClient {
@@ -61,7 +87,7 @@ export interface OkenaClaudeClient {
 		query?: { cursor?: number; sessionId?: string },
 		opts?: OkenaReadOptions,
 	): Promise<unknown>
-	/** Act routes (slice 2); a read-only double may omit them and the dock then cannot answer. */
+	/** Act routes; a read-only double may omit them and the dock then cannot answer. */
 	postClaudeDialogDecision?(
 		terminalId: string,
 		dialogId: string,
@@ -69,12 +95,6 @@ export interface OkenaClaudeClient {
 		opts?: OkenaReadOptions,
 	): Promise<void>
 	postClaudePrompt?(terminalId: string, text: string, opts?: OkenaReadOptions): Promise<unknown>
-}
-
-/** The pane an act targets. */
-export interface DockActTarget {
-	profile: string
-	terminalId: string
 }
 
 export interface TerminalReadState {
@@ -88,16 +108,15 @@ export interface TerminalReadState {
 	edgeAt?: number
 	/** Read the transcript every tick until then (a dock reply is waiting to be seen). */
 	expediteUntil?: number
+	/** Last background-task read of the session's transcript file. */
+	backgroundAt?: number
 }
-
-const errorText = (error: unknown): string =>
-	(error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300)
 
 async function capture(read: () => Promise<unknown>): Promise<OkenaFetch> {
 	try {
 		return { ok: true, body: await read() }
 	} catch (error) {
-		return { ok: false, error: errorText(error) }
+		return { ok: false, error: errorDetail(error) }
 	}
 }
 
@@ -114,30 +133,32 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: 
 	return results
 }
 
-/** How a source names itself in refusals and errors (the Helm hub reuses this class). */
-export interface OkenaClaudeSourceLabels {
-	/** "Okena" / "Helm terminals" in act failures (matches the dock's source wording). */
-	name: string
-	/** Poll error while the client has no active profile. */
-	notRunning: string
-}
+/** Okena's busy lifecycles (claude_remote hub.rs `lifecycle_is_busy`). */
+const OKENA_BUSY_LIFECYCLES = new Set(['working', 'blocked'])
 
-export const OKENA_SOURCE_LABELS: OkenaClaudeSourceLabels = {
-	name: 'Okena',
-	notRunning: 'Okena not configured or not running',
-}
-
-export class OkenaClaudeSource {
+export class OkenaClaudeSource implements DockSource {
 	private readonly reads = new Map<string, TerminalReadState>()
 	private lastProfile: string | null = null
+	/** The last observation listed every Claude pane with a resting lifecycle (pushCovered). */
+	private covered = false
 
+	/** How this source names itself in act failures and poll errors (DOCK_SOURCE_TEXT). */
+	private readonly text: (typeof DOCK_SOURCE_TEXT)[DockSourceId]
+
+	/**
+	 * `id`: which dock source this client is (Okena, or Helm's own hub, which reuses this class).
+	 * `background`: reads background tasks from transcript files (Okena; the hub counts its own).
+	 */
 	constructor(
 		private readonly client: OkenaClaudeClient,
-		private readonly labels: OkenaClaudeSourceLabels = OKENA_SOURCE_LABELS,
-	) {}
+		readonly id: DockSourceId = 'okena',
+		private readonly background?: BackgroundTaskObserver,
+	) {
+		this.text = DOCK_SOURCE_TEXT[id]
+	}
 
 	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
-	expedite(target: DockActTarget, until: number): void {
+	expedite(target: DockPane, until: number): void {
 		const key = sessionKey(target.profile, target.terminalId)
 		const read = this.reads.get(key)
 		if (read) read.expediteUntil = until
@@ -149,41 +170,123 @@ export class OkenaClaudeSource {
 	 * The fresh read must match what Jakub saw (dialog id + verbatim input, or the
 	 * idle turn's last assistant uuid); otherwise nothing is sent.
 	 */
-	async act(target: DockActTarget, item: DockItem, action: DockAction): Promise<DockActOutcome> {
-		const built = dockActBody(item, action)
+	async act(target: DockPane, item: DockItem, action: DockAction): Promise<DockActOutcome> {
+		const built = dockActBody(item, action, this.id)
 		if (!built.ok) return { status: 'refused', reason: built.reason, detail: built.detail }
 		const client = this.client.forProfile(target.profile)
-		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }
-		let fresh: OkenaClaudeSession
-		try {
-			const parsed = parseOkenaClaudeSession(await client.getClaudeSession(target.terminalId, opts))
-			if (!parsed.ok) return { status: 'failed', detail: parsed.error }
-			fresh = parsed.value
-		} catch (error) {
-			if ((error as { status?: unknown }).status === 404)
-				return { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.labels.name}.` }
-			return { status: 'failed', detail: errorDetail(error) }
-		}
-		if (fresh.terminal_id !== target.terminalId)
-			return { status: 'failed', detail: `${this.labels.name} answered for another pane.` }
+		const fresh = await this.freshSession(client, target)
+		if (!fresh.ok) return fresh.outcome
 
 		const request = built.body
 		if (request.kind === 'decision') {
-			const check = askStillOpen(item, fresh)
+			const check = askStillOpen(item, fresh.session)
 			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
+			// Okena may still list a dialog Jakub already answered in the terminal (tool-calls.ts):
+			// its hook still waits, so a decision now would answer a call that already ran.
+			if (await this.answeredInTerminal(fresh.session, request.dialogId))
+				return { status: 'refused', reason: 'gone', detail: REFUSAL_TEXT.gone }
 			if (!client.postClaudeDialogDecision)
-				return { status: 'failed', detail: `This ${this.labels.name} client cannot answer dialogs.` }
+				return { status: 'failed', detail: `This ${this.text.label} client cannot answer dialogs.` }
 			try {
 				await client.postClaudeDialogDecision(target.terminalId, request.dialogId, request.body, {
 					timeoutMs: OKENA_ACT_TIMEOUT_MS,
 				})
 				return { status: 'sent' }
 			} catch (error) {
-				return dockPostFailure(error, true, this.labels.name)
+				return dockPostFailure(error, true, this.text.label)
 			}
 		}
+		const page = await this.freshTail(client, target)
+		return this.sendPrompt(client, target, turnStillWaiting(item, fresh.session, page, this.id), request.body.text)
+	}
 
-		let page = null
+	/**
+	 * A reply from the agent detail (the agent owes Jakub nothing): the same CAS as a turn reply,
+	 * against the message Jakub read (`expect`), then the same prompt POST. Never throws.
+	 */
+	async prompt(
+		target: DockPane,
+		expect: { sessionId?: string; assistantUuid?: string },
+		text: string,
+	): Promise<DockActOutcome> {
+		const body = promptText(text)
+		if (body === null) return { status: 'refused', reason: 'invalid', detail: 'The reply is empty.' }
+		const client = this.client.forProfile(target.profile)
+		const fresh = await this.freshSession(client, target)
+		if (!fresh.ok) return fresh.outcome
+		const page = await this.freshTail(client, target)
+		return this.sendPrompt(client, target, sessionStillIdle(expect, fresh.session, page, this.id), body)
+	}
+
+	/** The pane's last assistant message, read live (the agent detail; `helm dock show` reads turns the same way). */
+	async readMessage(target: DockPane): Promise<AgentDockMessageResult> {
+		const client = this.client.forProfile(target.profile)
+		let page: OkenaClaudeTranscriptPage
+		try {
+			const parsed = parseOkenaClaudeTranscriptPage(
+				await client.getClaudeTranscript(
+					target.terminalId,
+					{},
+					{ maxBytes: OKENA_TRANSCRIPT_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS },
+				),
+			)
+			if (!parsed.ok) return { ok: false, detail: parsed.error }
+			page = parsed.value
+		} catch (error) {
+			return { ok: false, detail: errorDetail(error) }
+		}
+		let last: { uuid: string; text: string } | undefined
+		for (const entry of page.entries) if (entry.kind === 'assistant') last = entry
+		return {
+			ok: true,
+			...(page.session_id ? { sessionId: page.session_id } : {}),
+			...(last ? { message: { uuid: last.uuid, text: boundText(last.text, DOCK_LIVE_MESSAGE_MAX) } } : {}),
+		}
+	}
+
+	/**
+	 * Whether the session's own transcript file, read now, proves this listed dialog already
+	 * answered in the terminal. Unreadable or no observer (Helm's hub releases its own): false.
+	 */
+	private async answeredInTerminal(session: OkenaClaudeSession, dialogId: string): Promise<boolean> {
+		const dialog = session.dialogs.find(entry => entry.id === dialogId)
+		if (!this.background || !dialog || !session.session_id) return false
+		try {
+			const observed = await this.background.observe(session.session_id, { refresh: true, now: Date.now() })
+			const calls = observed?.sessionId === session.session_id ? observed.calls : undefined
+			// Subagents or a background workflow running: a permission may be a subagent's (reduce.ts).
+			const subagents =
+				session.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+			return validToolCalls(calls) && dialogAnsweredInTranscript(dialog, calls, subagents)
+		} catch {
+			return false
+		}
+	}
+
+	/** The CAS read every act starts with: the pane as the source shows it right now. */
+	private async freshSession(
+		client: OkenaClaudeClient,
+		target: DockPane,
+	): Promise<{ ok: true; session: OkenaClaudeSession } | { ok: false; outcome: DockActOutcome }> {
+		const opts = { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }
+		try {
+			const parsed = parseOkenaClaudeSession(await client.getClaudeSession(target.terminalId, opts))
+			if (!parsed.ok) return { ok: false, outcome: { status: 'failed', detail: parsed.error } }
+			if (parsed.value.terminal_id !== target.terminalId)
+				return { ok: false, outcome: { status: 'failed', detail: `${this.text.label} answered for another pane.` } }
+			return { ok: true, session: parsed.value }
+		} catch (error) {
+			if ((error as { status?: unknown }).status === 404)
+				return {
+					ok: false,
+					outcome: { status: 'refused', reason: 'gone', detail: `The pane is no longer in ${this.text.label}.` },
+				}
+			return { ok: false, outcome: { status: 'failed', detail: errorDetail(error) } }
+		}
+	}
+
+	/** A fresh first (reset) transcript page: the tail a reply's CAS checks; null when unreadable. */
+	private async freshTail(client: OkenaClaudeClient, target: DockPane): Promise<OkenaClaudeTranscriptPage | null> {
 		try {
 			const parsed = parseOkenaClaudeTranscriptPage(
 				await client.getClaudeTranscript(
@@ -195,16 +298,24 @@ export class OkenaClaudeSource {
 					},
 				),
 			)
-			page = parsed.ok ? parsed.value : null
+			return parsed.ok ? parsed.value : null
 		} catch {
-			page = null
+			return null
 		}
-		const check = turnStillWaiting(item, fresh, page)
+	}
+
+	/** The prompt POST once its CAS passed. */
+	private async sendPrompt(
+		client: OkenaClaudeClient,
+		target: DockPane,
+		check: DockCheck,
+		text: string,
+	): Promise<DockActOutcome> {
 		if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
 		if (!client.postClaudePrompt)
-			return { status: 'failed', detail: `This ${this.labels.name} client cannot send prompts.` }
+			return { status: 'failed', detail: `This ${this.text.label} client cannot send prompts.` }
 		try {
-			const response = await client.postClaudePrompt(target.terminalId, request.body.text, {
+			const response = await client.postClaudePrompt(target.terminalId, text, {
 				timeoutMs: OKENA_ACT_TIMEOUT_MS,
 			})
 			const delivery = (response as { delivery?: unknown } | null)?.delivery
@@ -215,18 +326,37 @@ export class OkenaClaudeSource {
 					: {}),
 			}
 		} catch (error) {
-			return dockPostFailure(error, false, this.labels.name)
+			return dockPostFailure(error, false, this.text.label)
 		}
+	}
+
+	/**
+	 * Whether Okena's /v1/stream would carry every change the last observation could see:
+	 * the state read succeeded and every listed Claude pane reports an agent lifecycle
+	 * (`terminal_agent_status`, the OSC from the okena-lifecycle hooks, which bumps
+	 * state_version on working/idle/done). A pane without one flips busy unseen by the
+	 * stream (Okena's own busy hook does not bump it), so the dock keeps polling.
+	 * A pane whose lifecycle says `working`/`blocked` is not covered either: a busy pane
+	 * already ticks at the active rate, so this only matters when the lifecycle OSC
+	 * landed but Okena's busy hook has not yet (a separate hook process, late under
+	 * load): the busy flip that follows bumps nothing, and a turn whose busy stretch the
+	 * dock never saw would skip the idle gate. Polling sees it within one interval.
+	 */
+	pushCovered(): boolean {
+		return this.covered
 	}
 
 	/** One poll observation. Never throws: transport failures become `OkenaFetch` errors. */
 	async observe(state: AgentDockState, now: number): Promise<AgentDockObservation> {
+		this.covered = false
+		const source = this.id
 		const profile = this.client.activeProfileId()
 		if (!profile) {
 			return {
 				type: 'poll',
+				source,
 				profile: this.lastProfile ?? 'unknown',
-				state: { ok: false, error: this.labels.notRunning },
+				state: { ok: false, error: this.text.notRunning },
 				terminals: [],
 			}
 		}
@@ -237,17 +367,32 @@ export class OkenaClaudeSource {
 		const stateFetch = await capture(() =>
 			client.getStateJson({ maxBytes: OKENA_STATE_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }),
 		)
-		if (!stateFetch.ok) return { type: 'poll', profile, state: stateFetch, terminals: [] }
+		if (!stateFetch.ok) return { type: 'poll', source, profile, state: stateFetch, terminals: [] }
 		const parsedState = parseOkenaState(stateFetch.body)
-		if (!parsedState.ok) return { type: 'poll', profile, state: { ok: false, error: parsedState.error }, terminals: [] }
+		if (!parsedState.ok)
+			return { type: 'poll', source, profile, state: { ok: false, error: parsedState.error }, terminals: [] }
 
-		const candidates = okenaClaudeCandidates(parsedState.value).slice(0, MAX_CLAUDE_TERMINALS)
+		const all = okenaClaudeCandidates(parsedState.value)
+		const candidates = all.slice(0, MAX_CLAUDE_TERMINALS)
 		const terminals = await mapLimited(candidates, READ_CONCURRENCY, terminalId =>
-			this.observeTerminal(client, state, profile, terminalId, now),
+			this.observeTerminal(
+				client,
+				state,
+				profile,
+				terminalId,
+				now,
+				okenaTerminalProject(parsedState.value, terminalId)?.path,
+			),
 		)
 		const listed = new Set(candidates.map(terminalId => sessionKey(profile, terminalId)))
 		for (const key of this.reads.keys()) if (!listed.has(key)) this.reads.delete(key)
-		return { type: 'poll', profile, state: stateFetch, terminals }
+		this.covered =
+			all.length === candidates.length &&
+			candidates.every(terminalId => {
+				const lifecycle = okenaAgentLifecycle(parsedState.value, terminalId)
+				return lifecycle !== undefined && !OKENA_BUSY_LIFECYCLES.has(lifecycle)
+			})
+		return { type: 'poll', source, profile, state: stateFetch, terminals }
 	}
 
 	private async observeTerminal(
@@ -256,6 +401,7 @@ export class OkenaClaudeSource {
 		profile: string,
 		terminalId: string,
 		now: number,
+		cwd?: string,
 	): Promise<ObservedClaudeTerminal> {
 		const detail = await capture(() =>
 			client.getClaudeSession(terminalId, { maxBytes: OKENA_SESSION_MAX_BYTES, timeoutMs: OKENA_READ_TIMEOUT_MS }),
@@ -271,15 +417,33 @@ export class OkenaClaudeSource {
 		const want = transcriptWanted(read, parsed.value, request, now, agentDockAwaitingReply(state, profile, terminalId))
 		const expedited = read?.expediteUntil !== undefined && now < read.expediteUntil && parsed.value.has_transcript
 		const doRead = want.read || expedited
+		const sessionId = parsed.value.session_id
+		const backgroundDue =
+			this.background !== undefined &&
+			sessionId !== undefined &&
+			(parsed.value.busy !== true ||
+				// A listed dialog while busy may be one already answered in the terminal (tool-calls.ts):
+				// its proof is read every tick, so the ask closes within one tick of the answer.
+				parsed.value.dialogs.length > 0 ||
+				read?.backgroundAt === undefined ||
+				read.sessionId !== sessionId ||
+				now - read.backgroundAt >= BACKGROUND_BUSY_READ_MS)
 		this.reads.set(key, {
 			busy: parsed.value.busy,
 			dialogs: parsed.value.dialogs.length,
-			sessionId: parsed.value.session_id,
+			sessionId,
 			readAt: doRead ? now : read?.readAt,
 			edgeAt: want.edgeAt,
 			...(expedited ? { expediteUntil: read?.expediteUntil } : {}),
+			...(backgroundDue
+				? { backgroundAt: now }
+				: read?.backgroundAt !== undefined
+					? { backgroundAt: read.backgroundAt }
+					: {}),
 		})
-		if (!doRead) return { terminalId, detail }
+		const background = await this.observeBackground(sessionId, cwd, backgroundDue, now)
+		const withBackground = background ? { background } : {}
+		if (!doRead) return { terminalId, detail, ...withBackground }
 		// A cursor is only honoured with the session it came from; a new session starts with a reset page.
 		const query = request.sessionId === parsed.value.session_id ? request : {}
 		const transcript = await capture(() =>
@@ -288,7 +452,22 @@ export class OkenaClaudeSource {
 				timeoutMs: OKENA_READ_TIMEOUT_MS,
 			}),
 		)
-		return { terminalId, detail, transcript }
+		return { terminalId, detail, transcript, ...withBackground }
+	}
+
+	/** The session's background tasks; never throws (unreadable = no claim). */
+	private async observeBackground(
+		sessionId: string | undefined,
+		cwd: string | undefined,
+		refresh: boolean,
+		now: number,
+	): Promise<ObservedClaudeTerminal['background']> {
+		if (!this.background || sessionId === undefined) return undefined
+		try {
+			return await this.background.observe(sessionId, { cwd, refresh, now })
+		} catch {
+			return undefined
+		}
 	}
 }
 

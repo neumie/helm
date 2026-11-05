@@ -6,6 +6,7 @@ import type { DB } from '../db/client.js'
 import type { ProfileRuntime } from '../profiles/store.js'
 import type { Drainer } from '../queue/drainer.js'
 import { buildInteractiveAgentInvocation } from '../solver/agent-adapter.js'
+import { effectiveSolverModel } from '../solver/models.js'
 import { log } from '../util/logger.js'
 import { type AttentionAdoptionGrant, AttentionAdoptionGrantManager } from './adoption-grants.js'
 import {
@@ -683,9 +684,7 @@ export class ScheduledRunService {
 				{
 					...this.config.solver,
 					agent: run.definitionSnapshot.agent,
-					model:
-						run.definitionSnapshot.model ??
-						(run.definitionSnapshot.agent === this.config.solver.agent ? this.config.solver.model : undefined),
+					model: effectiveSolverModel(run.definitionSnapshot.agent, run.definitionSnapshot.model, this.config.solver),
 				},
 				run.definitionSnapshot.effort,
 			)

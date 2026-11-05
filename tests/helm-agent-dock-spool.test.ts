@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
@@ -14,6 +15,7 @@ import { appendFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import projectionModule from '../app/src/agent-dock/spool-projection.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
 import {
 	MAX_EVENT_LINE,
@@ -24,25 +26,21 @@ import {
 	localDay,
 	readSpoolEvents,
 	readSpoolSnapshot,
+	writePrivateFileAtomic,
 } from '../src/agent-dock/spool.js'
 import { EXIT_HELM_DOWN, EXIT_SOURCE_DOWN, runDockCli } from '../src/cli/dock.js'
+import { okenaFixture, until } from './helpers/agent-dock'
 
 type WatcherModule = typeof import('../app/src/agent-dock/watcher.ts')
 type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockObservation
 type AgentDockSnapshot = import('../app/src/agent-dock/model.ts').AgentDockSnapshot
 
-const {
-	AgentDockWatcher,
-	BACKGROUND_INTERVAL_MS,
-	FOCUSED_INTERVAL_MS,
-	SNAPSHOT_REFRESH_MS,
-	UNFOCUSED_INTERVAL_MS,
-	dockItemHead,
-} = watcherModule as WatcherModule
+const { AgentDockWatcher, BACKGROUND_INTERVAL_MS, FOCUSED_INTERVAL_MS, SNAPSHOT_REFRESH_MS, UNFOCUSED_INTERVAL_MS } =
+	watcherModule as WatcherModule
+type ProjectionModule = typeof import('../app/src/agent-dock/spool-projection.ts')
+const { dockItemHead, dockSpoolSnapshot } = projectionModule as ProjectionModule
 
-function fixture<T = Record<string, unknown>>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture
 
 type Json = Record<string, unknown>
 const STATE_ASK = fixture('state-ask.json')
@@ -63,6 +61,7 @@ const QUESTION_TEXT = 'Barva?' // the first question in the dialog's tool_input
 
 const pollAsk = (dialogId = '4b4eb160-4'): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: true, body: STATE_ASK },
 	terminals: [
@@ -81,12 +80,14 @@ const pollAsk = (dialogId = '4b4eb160-4'): AgentDockObservation => ({
 })
 const pollIdle = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: true, body: { ...STATE_ASK, claude_dialogs: {} } },
 	terminals: [{ terminalId: TID, detail: { ok: true, body: SHOW_IDLE } }],
 })
 const pollDown = (): AgentDockObservation => ({
 	type: 'poll',
+	source: 'okena',
 	profile: PROFILE,
 	state: { ok: false, error: 'Okena not configured or not running' },
 	terminals: [],
@@ -94,10 +95,10 @@ const pollDown = (): AgentDockObservation => ({
 
 class ScriptedSource {
 	queue: AgentDockObservation[] = []
-	async observe(): Promise<AgentDockObservation> {
+	async observe(): Promise<AgentDockObservation[]> {
 		const next = this.queue.shift()
 		if (!next) throw new Error('no scripted observation')
-		return next
+		return [next]
 	}
 }
 
@@ -278,6 +279,47 @@ test('spooled item heads carry tool names and counts, never dialog tool_input', 
 	assert.equal(question, 'AskUserQuestion · 1 question · 1 opts')
 })
 
+test('spooled sessions keep only when the last message was read and whether it was seen; no text, uuid or reply', () => {
+	const health = { state: 'ok' as const, since: 1, lastObservedAt: 1 }
+	const snapshot: AgentDockSnapshot = {
+		generatedAt: 5,
+		source: health,
+		sources: { okena: health },
+		items: [],
+		sessions: [
+			{
+				key: 'p:t',
+				profile: 'p',
+				terminalId: 't',
+				project: 'helm',
+				name: 'dock',
+				source: 'okena',
+				status: 'idle',
+				since: 1,
+				observedAt: 1,
+				subagents: 0,
+				queuedPrompts: 0,
+				prLinks: [],
+				hasTranscript: true,
+				hooksAttached: true,
+				channelAttached: false,
+				lastMessage: { uuid: 'a-secret-uuid', text: 'Deployed with token hunter2', at: 3, seen: true },
+				reply: {
+					action: 'reply',
+					status: 'failed',
+					at: 4,
+					detail: 'Okena said: hunter2',
+					assistantUuid: 'a-secret-uuid',
+				},
+			},
+		],
+	}
+	const spooled = dockSpoolSnapshot(snapshot, [], 6, 1)
+	assert.deepEqual(spooled.sessions[0]?.lastMessage, { at: 3, seen: true })
+	const text = JSON.stringify(spooled)
+	for (const secret of ['hunter2', 'a-secret-uuid', '"reply"']) assert.equal(text.includes(secret), false, secret)
+})
+
 test('source down emits one health event; ack refuses open asks; cadence follows visibility and focus', async () => {
 	const root = tempDir()
 	const dir = join(root, 'agent-dock')
@@ -353,6 +395,26 @@ test('event lines stay within 300 chars and spool dir defaults match Electron us
 	assert.equal(defaultAgentDockDir({ HELM_AGENT_DOCK_DIR: '/tmp/d' }, 'darwin', '/Users/x'), '/tmp/d')
 })
 
+test('a failed atomic write leaves no temp file behind (write and rename failures alike)', async () => {
+	const dir = tempDir()
+	try {
+		// The write itself fails (stands in for ENOSPC/EIO): the partial temp file must go too.
+		await assert.rejects(writePrivateFileAtomic(join(dir, 'state.json'), 42 as unknown as string))
+		// The rename fails (the target is a non-empty directory).
+		const blocked = join(dir, 'snapshot.json')
+		mkdirSync(join(blocked, 'child'), { recursive: true })
+		await assert.rejects(writePrivateFileAtomic(blocked, '{}'))
+		assert.deepEqual(
+			readdirSync(dir).filter(name => name.endsWith('.tmp')),
+			[],
+		)
+		await writePrivateFileAtomic(join(dir, 'state.json'), '{"ok":true}')
+		assert.equal(readFileSync(join(dir, 'state.json'), 'utf8'), '{"ok":true}')
+	} finally {
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -372,6 +434,35 @@ async function spoolWithItems(dir: string, now: number): Promise<void> {
 	clock.now = now
 	watcher.stop()
 }
+
+test("helm dock ls: stale means missing from the source's last good poll, not 10 s on the clock", async () => {
+	const root = tempDir()
+	const dir = join(root, 'agent-dock')
+	try {
+		const now = Date.now()
+		await spoolWithItems(dir, now)
+		const snapshot = JSON.parse(readFileSync(join(dir, 'snapshot.json'), 'utf8')) as SpoolSnapshot
+		const ls = async (sessionObservedAt: number, lastObservedAt: number) => {
+			const health = { state: 'ok' as const, since: now - 60_000, lastObservedAt }
+			const body = {
+				...snapshot,
+				source: health,
+				sources: { okena: health },
+				sessions: snapshot.sessions.map(session => ({ ...session, observedAt: sessionObservedAt })),
+			}
+			writeFileSync(join(dir, 'snapshot.json'), JSON.stringify(body))
+			const out = capture()
+			assert.equal(await runDockCli(['ls', '--dir', dir], { ...out.deps, now: () => now }), 0)
+			return out.out.join('\n')
+		}
+		// Idle fleet with Okena's stream up: polled 14 s ago, every session in that poll.
+		assert.doesNotMatch(await ls(now - 14_000, now - 14_000), /stale/)
+		// A session the last good poll no longer saw.
+		assert.match(await ls(now - 30_000, now - 14_000), /stale 16s/)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
 
 test('helm dock ls/show read the snapshot; exit 4 when Okena is down, 5 when Helm is not running', async () => {
 	const root = tempDir()
@@ -447,14 +538,6 @@ test('helm dock ls/show read the snapshot; exit 4 when Okena is down, 5 when Hel
 	}
 })
 
-async function until(check: () => boolean, label: string): Promise<void> {
-	const deadline = Date.now() + 3_000
-	while (!check()) {
-		if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`)
-		await new Promise(resolve => setTimeout(resolve, 5))
-	}
-}
-
 test('helm dock watch: catchup, missed events after the cursor, follow, rotation without loss or duplicates', async () => {
 	const root = tempDir()
 	const dir = join(root, 'agent-dock')
@@ -517,6 +600,51 @@ test('helm dock watch: catchup, missed events after the cursor, follow, rotation
 		assert.equal(await second, 0)
 		assert.equal(again.length, 1)
 		assert.equal(JSON.parse(again[0] ?? '{}').t, 'catchup')
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('helm dock show bounds live turn text without splitting a surrogate pair', async () => {
+	const root = tempDir()
+	const dir = join(root, 'agent-dock')
+	try {
+		const now = Date.now()
+		mkdirSync(dir, { recursive: true, mode: 0o700 })
+		const snapshot: SpoolSnapshot = {
+			version: 1,
+			pid: process.pid,
+			writtenAt: now,
+			generatedAt: now,
+			source: { state: 'ok', since: now, lastObservedAt: now },
+			sessions: [],
+			items: [
+				{
+					id: 1,
+					key: 'turn:p:t1:u1',
+					kind: 'turn',
+					state: 'open',
+					session: 'p:t1',
+					openedAt: now,
+					head: 'Turn ended',
+					assistantUuid: 'u1',
+					endedAt: now,
+					hadBackground: false,
+				},
+			],
+		}
+		writeFileSync(join(dir, 'snapshot.json'), JSON.stringify(snapshot))
+		// The emoji's high surrogate sits exactly at the 2048-unit cut.
+		const text = `${'a'.repeat(2046)}😀 and more`
+		const okena = () => ({
+			getClaudeSession: async () => ({ dialogs: [] }),
+			getClaudeTranscript: async () => ({ entries: [{ kind: 'assistant', uuid: 'u1', text }] }),
+		})
+		const show = capture()
+		assert.equal(await runDockCli(['show', '1', '--json', '--dir', dir], { ...show.deps, now: () => now, okena }), 0)
+		const live = JSON.parse(show.out[0] ?? '{}').live as { text: string }
+		assert.equal(live.text, `${'a'.repeat(2046)}…`)
+		assert.doesNotMatch(live.text, /[\ud800-\udbff](?![\udc00-\udfff])/)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

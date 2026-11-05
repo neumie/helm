@@ -40,6 +40,7 @@ if (agentDock)
 		fitActive: () => workspace.fitActive(),
 		api: agentDock,
 		platform: window.helm.platform,
+		revealTerminal: sessionId => workspace.revealTerminal(sessionId),
 	})
 
 // Profile activation reloads this renderer after its bridge fence and buffer

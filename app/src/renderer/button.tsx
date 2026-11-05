@@ -32,6 +32,7 @@ export function Btn({
 	ariaCurrent,
 	ariaDisabled,
 	ariaKeyShortcuts,
+	title,
 	type = 'button',
 	ref,
 }: {
@@ -52,6 +53,8 @@ export function Btn({
 	ariaDisabled?: boolean
 	/** Keys that trigger this action from elsewhere (e.g. "Meta+Enter"), for assistive tech. */
 	ariaKeyShortcuts?: string
+	/** Tooltip (e.g. the key that does the same). */
+	title?: string
 	type?: 'button' | 'submit' | 'reset'
 	/** Destination for focus restoration after an async or disappearing action. */
 	ref?: Ref<HTMLButtonElement>
@@ -68,6 +71,7 @@ export function Btn({
 			aria-current={ariaCurrent}
 			aria-disabled={ariaDisabled}
 			aria-keyshortcuts={ariaKeyShortcuts}
+			title={title}
 			onClick={event => {
 				if (ariaDisabled) {
 					event.preventDefault()

@@ -37,6 +37,22 @@ export function stripDropInsertionIndex(pointerX: number, tabs: readonly Horizon
 	return index === -1 ? tabs.length : index
 }
 
+const GROUP_EDGE_MIN_PX = 6
+const GROUP_EDGE_MAX_PX = 16
+
+/**
+ * Whether a pointer over a folder header sits in its leading "beside, not into"
+ * edge: the first quarter (6–16px) of any header drops before the folder, the
+ * rest joins it. Only the leading edge: joining a folder from its left lifts the
+ * dragged slot out in front of it, so the header slides left under the pointer.
+ * A trailing "after" edge would then sit under the pointer and undo the join on
+ * the next move. "After" is the next unit's leading edge, the gap, or its left half.
+ */
+export function pointerOnGroupHeaderLeadingEdge(pointerX: number, header: HorizontalRect): boolean {
+	const edge = Math.min(GROUP_EDGE_MAX_PX, Math.max(GROUP_EDGE_MIN_PX, header.width / 4))
+	return pointerX < header.left + edge
+}
+
 const AUTO_SCROLL_EDGE_PX = 28
 const AUTO_SCROLL_STEP_PX = 12
 
@@ -106,6 +122,7 @@ export default {
 	insertBlockAtUnitIndex,
 	moveToInsertionIndex,
 	pointInExpandedRect,
+	pointerOnGroupHeaderLeadingEdge,
 	stripDropInsertionIndex,
 	tabDropInsertionIndex,
 	tabStripAutoScrollDelta,

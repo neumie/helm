@@ -3004,6 +3004,37 @@ test('processSolveItem uses the selected agent and effort', async () => {
 	})
 })
 
+test("processSolveItem never hands config's model to another agent", async () => {
+	const piConfig = { ...config, solver: { ...config.solver, agent: 'pi' as const, model: 'xai/grok-4.7' } }
+	const cases: Array<[Record<string, string>, string | undefined]> = [
+		[{ solverAgent: 'claude' }, undefined],
+		[{ solverAgent: 'claude', solverModel: 'claude-opus-5-5' }, 'claude-opus-5-5'],
+		[{}, 'xai/grok-4.7'],
+		[{ solverAgent: 'pi' }, 'xai/grok-4.7'],
+	]
+	for (const [selection, model] of cases) {
+		await withTempDb(async db => {
+			const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-model-'))
+			const item = db.items.create({
+				kind: 'solve',
+				status: 'ready',
+				projectSlug: 'helm',
+				title: 'Run with the right model',
+				source: null,
+				baseRef: 'main',
+				payload: { kind: 'solve', prompt: 'Use selected agent.', ...selection },
+			})
+			const solver = new FakeSolveSolver(worktreeRoot)
+			try {
+				await processSolveItem(item.id, piConfig, db, provider, solver)
+				assert.equal(solver.calls[0].solverConfig.model, model, JSON.stringify(selection))
+			} finally {
+				rmSync(worktreeRoot, { recursive: true, force: true })
+			}
+		})
+	}
+})
+
 test('processSolveItem waits for source branch naming before creating a worktree', { timeout: 5_000 }, async () => {
 	await withTempDb(async db => {
 		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-source-branch-wait-'))
@@ -5808,6 +5839,7 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 		const retrySuccess = commands.createSolveItem({ title: 'Retry succeeds', projectSlug: 'helm', prompt: 'retry' })
 		commands.startItem(retrySuccess.id)
 		commands.failItem(retrySuccess.id, 'failed once', 'solve')
+		const processed: string[] = []
 
 		const routeQueue = {
 			...queue,
@@ -5820,6 +5852,7 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 				id === invalidRetry.id ? { ok: false as const, reason: 'not_retryable' as const } : { ok: true as const },
 			processOneItem: (id: string) => {
 				assert.equal(solvePayload(db, id).solverModel, 'claude-fable-5')
+				processed.push(id)
 				commands.startItem(id)
 				return true
 			},
@@ -5865,6 +5898,11 @@ test('server admission preflight rejects unavailable starts and invalid retries 
 		assert.equal(startedRes.status, 200)
 		assert.equal(retriedRes.status, 200)
 		assert.equal(db.items.get(startSuccess.id)?.status, 'running')
+		// A second Start press on the running session must not launch another agent.
+		const secondPress = await api.request(`/items/${startSuccess.id}/start`, postSelection)
+		assert.equal(secondPress.status, 400)
+		assert.match(((await secondPress.json()) as { error: string }).error, /not ready to start/)
+		assert.deepEqual(processed, [startSuccess.id])
 		assert.equal(db.items.get(retrySuccess.id)?.status, 'ready')
 		assert.deepEqual(solvePayload(db, startSuccess.id), {
 			kind: 'solve',

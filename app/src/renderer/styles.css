@@ -108,7 +108,8 @@ body {
 }
 
 button:focus-visible,
-.tab:focus-visible {
+.tab:focus-visible,
+#bg-toggle[data-bg-preview~="focus"] {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
@@ -381,7 +382,8 @@ button:focus-visible,
 /* Author display rules override the HTML hidden state unless this explicit
  * rule wins. Collapse keeps terminal DOM mounted while hiding every member. */
 .tab-group-members[hidden],
-.bg-group-members[hidden] {
+.bg-group-members[hidden],
+.tab[hidden] {
 	display: none;
 }
 
@@ -732,11 +734,14 @@ body.group-dragging .tab-group-toggle {
 	border-radius: 6px;
 	background: none;
 	color: var(--text-2);
+	font-family: inherit; /* a <button> otherwise takes the UA control font, not the app face */
 	cursor: pointer;
 	transition: transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
 }
 
+/* data-bg-preview pins hover/focus for the Storybook states grid only; the app never sets it. */
 #bg-toggle:hover,
+#bg-toggle[data-bg-preview~="hover"],
 #bg-toggle[aria-expanded="true"],
 #bg-toggle.drag-over {
 	background: var(--fill-subtle);
@@ -763,15 +768,15 @@ body.group-dragging .tab-group-toggle {
 	color: currentColor;
 }
 
-/* Names the parked terminal currently shown in the pane. It remains quiet
- * utility context and truncates before it can crowd the draggable titlebar. */
+/* Names the parked terminal currently shown in the pane (visible only then) in the
+ * tab label's type, truncating at the tab's width so it never crowds the draggable titlebar. */
 .bg-current {
-	max-width: min(160px, 25vw);
+	max-width: 180px;
 	overflow: hidden;
-	color: var(--text-1);
-	font-size: calc(12px * var(--ui-scale));
-	font-weight: 500;
-	line-height: 1.4;
+	color: var(--text-0);
+	font-size: 13px;
+	font-weight: 400;
+	line-height: normal; /* the tab label's line box, so the name shares the strip's baseline */
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -790,6 +795,38 @@ body.group-dragging .tab-group-toggle {
 	font-weight: 700;
 	line-height: 1.4;
 	font-variant-numeric: tabular-nums;
+}
+
+/* Viewing: a parked terminal is shown in the pane (#bg-current is unhidden). The strip has no
+ * active tab then, so the control takes the active tab's look and stands in as that terminal's
+ * tab: tab padding, --fill-raised, the name in tab type, the count as a dim tab-number. Drag
+ * affordances (.drag-ready/.drag-over) keep precedence. */
+#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) {
+	padding: 0 8px 0 10px;
+	background: var(--fill-raised);
+	color: var(--text-1);
+}
+
+#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over):is(
+		:hover,
+		[data-bg-preview~="hover"],
+		[aria-expanded="true"]
+	) {
+	color: var(--text-0);
+}
+
+#bg-toggle:has(> .bg-current:not([hidden])) .bg-count {
+	padding: 0;
+	background: none;
+	color: var(--text-2);
+	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	/* .tab-number's nudge: 11px mono centered beside 13px text sits high; drop it onto the name baseline. */
+	line-height: 1;
+	position: relative;
+	top: 1px;
 }
 
 #bg-popover {
@@ -1064,6 +1101,44 @@ body.dragging {
 
 .term-holder.active {
 	display: block;
+}
+
+/* "Show terminal" from the agent dock (design §3.24): the revealed terminal's frame takes one accent
+ * pulse in the dock's arrival language — a 2px --accent ring inside the frame and a 6% tint over the
+ * text hold ~170ms, then ease out over the rest of 1.4s (REVEAL_PULSE_MS). Color only: nothing moves or
+ * resizes, pointer events pass through, the terminal keeps the keys. Reduced motion: no animation; the
+ * ring holds, static, while data-reveal is set. */
+.term-holder[data-reveal]::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 9;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.term-holder[data-reveal]::after {
+		animation: term-reveal-pulse 1.4s ease-out 1 forwards;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.term-holder[data-reveal]::after {
+		box-shadow: inset 0 0 0 2px var(--accent);
+	}
+}
+
+@keyframes term-reveal-pulse {
+	0%,
+	12% {
+		box-shadow: inset 0 0 0 2px var(--accent);
+		background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+	}
+
+	100% {
+		box-shadow: inset 0 0 0 2px transparent;
+		background-color: transparent;
+	}
 }
 
 /* xterm mounts HERE, not in .term-holder: FitAddon measures the computed width
@@ -1345,6 +1420,9 @@ body.dragging {
 	/* The dock's dim text: --text-2 lifted toward --text-1 so 12px meta (ages, context, hints)
 	 * reads at ≥4.5:1 on --chrome and ≥3:1 on the selected fill. */
 	--dock-dim: color-mix(in srgb, var(--text-1) 60%, var(--text-2));
+	/* The row's one text inset: every first text in the row (entry glyph, a note, the empty line) starts
+	 * on it and ⌘⇧J ends on it — the 16px column. Entries pad both sides by it (QUEUE_ENTRY_PAD = 2×). */
+	--dock-inset: 16px;
 	grid-row: 2;
 	grid-column: 1;
 	position: relative;
@@ -1360,8 +1438,9 @@ body.dragging {
 
 /* The edge toward the terminal: the topbar's own border, mirrored. The change of surface
  * (--chrome against the terminal) is what separates; this line only crisps it. It is laid
- * over the dock's terminal-side pixel row, above the queue row / pane. While the pane
- * holds the keys it turns accent (tmux's active border). */
+ * over the dock's terminal-side pixel row, above the queue row / pane. While the dock holds
+ * the keys — row or pane, e.g. after ⌘⇧J, which changes no layout — it turns accent (tmux's
+ * active border), so the hand-off is visible at a glance. */
 .agent-dock::before {
 	content: "";
 	position: absolute;
@@ -1380,7 +1459,7 @@ body.dragging {
 	bottom: 0;
 }
 
-.agent-dock:has(.agent-dock-pane:focus-within)::before {
+.agent-dock:focus-within::before {
 	background: var(--accent);
 }
 
@@ -1423,14 +1502,14 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* The row's end: Okena's health, then the key that goes to the dock; its text ends on the 16px column. */
+/* The row's end: the key that goes to the dock; its text ends on the 16px column. */
 .agent-dock-row-end {
 	flex: none;
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	padding: 0 16px 0 8px;
+	padding: 0 var(--dock-inset) 0 8px;
 	white-space: nowrap;
 }
 
@@ -1441,45 +1520,10 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-.agent-dock-health {
-	flex: 0 1 auto;
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 6px;
-	color: var(--text-1);
-}
-
-.agent-dock-health-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.agent-dock-health[data-tone="danger"] {
-	color: var(--danger);
-}
-
-.agent-dock-dot {
-	flex: none;
-	width: 6px;
-	height: 6px;
-	border-radius: 999px;
-	background: var(--neutral);
-}
-
-.agent-dock-health[data-tone="success"] .agent-dock-dot {
-	background: var(--success);
-}
-
-.agent-dock-health[data-tone="danger"] .agent-dock-dot {
-	background: var(--danger);
-}
-
-/* ---------- queue row: one line per entry, then agents, Okena's dot and ⌘⇧J ---------- */
+/* ---------- queue row: one line per entry, then agents and ⌘⇧J ---------- */
 
 /* One 28px band whatever it holds, with or without a pane, so arriving items never refit xterm. */
-.agent-dock-rail {
+.agent-dock-row {
 	position: relative;
 	flex: none;
 	display: flex;
@@ -1501,32 +1545,33 @@ body.dragging {
 }
 
 /* Okena down / connecting: one quiet line in the row, like the entries beside it. */
-.agent-dock-rail-note {
+.agent-dock-row-note {
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
-	max-width: calc(48ch + 32px);
-	padding: 0 16px;
+	max-width: calc(48ch + 2 * var(--dock-inset));
+	padding: 0 var(--dock-inset);
 	color: var(--text-1);
 }
 
-.agent-dock-rail-note > span {
+.agent-dock-row-note > span {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.agent-dock-rail-note[data-tone="warn"] .agent-dock-rail-note-mark {
+.agent-dock-row-note[data-tone="warn"] .agent-dock-row-note-mark {
 	color: var(--warn);
 }
 
-.agent-dock-rail > .agent-dock-rail-note:only-of-type {
+.agent-dock-row > .agent-dock-row-note:only-of-type {
 	flex: 1 1 auto;
 	max-width: none;
 }
 
 /* Entries are separated by space, never rules. Cells touch and fill the row edge to edge, so the
- * selected fill has no inset; each entry's 16px padding puts every glyph on the 16px text column.
+ * selected fill has no inset; each entry's --dock-inset padding puts every glyph on the 16px text column
+ * (the queue itself adds none, so the empty line pads by the same inset).
  * Each cell is as wide as its text really sets (queueLayout), so the fill ends right after the wait. */
 .agent-dock-queue {
 	flex: 1 1 0;
@@ -1541,10 +1586,6 @@ body.dragging {
 	list-style: none;
 }
 
-.agent-dock-rail-note + .agent-dock-queue {
-	padding-left: 0;
-}
-
 .agent-dock-queue-slot {
 	flex: 0 0 auto;
 	display: flex;
@@ -1555,7 +1596,7 @@ body.dragging {
 	display: flex;
 	align-items: center;
 	min-width: 0;
-	padding: 0 8px;
+	padding: 0 var(--dock-inset);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -1571,7 +1612,7 @@ body.dragging {
 	justify-content: center;
 	min-width: 0;
 	height: 28px;
-	padding: 0 16px;
+	padding: 0 var(--dock-inset);
 	border: none;
 	border-radius: 0;
 	background: transparent;
@@ -1593,11 +1634,22 @@ body.dragging {
 	background: var(--fill-raised);
 }
 
-.agent-dock-entry:focus-visible,
-.agent-dock-more:focus-visible,
-.agent-dock-agents-entry:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+/* The focused entry (keyboard only: pointer use never focuses an entry) shows the selected look,
+ * never a ring; the accent edge says the dock holds the keys. */
+.agent-dock-entry:focus,
+.agent-dock-more:focus,
+.agent-dock-agents-entry:focus {
+	outline: none;
+	background: var(--fill-raised);
+}
+
+.agent-dock-entry:focus .agent-dock-entry-name {
+	color: var(--text-0);
+}
+
+.agent-dock-more:focus,
+.agent-dock-agents-entry:focus {
+	color: var(--text-1);
 }
 
 .agent-dock-entry-line {
@@ -1662,6 +1714,76 @@ body.dragging {
 	color: var(--text-1);
 }
 
+/* Arrival flash ("edge pulse"): an entry that just arrived (the arrivals the live region announces:
+ * never on first load or reload, never for a re-render) carries data-arrival = its kind for
+ * ARRIVAL_FLASH_MS. The dock's 1px terminal-side edge takes the full color of the most urgent arrival
+ * (question > permission > plan > turn: --warn for an ask, --accent for a turn) and the arriving
+ * cell a 10% tint of its own kind; both hold for ~170ms, then ease back over the rest of 1.4s. Color
+ * only: no weight, box or ring; nothing moves or resizes and focus stays put. Arriving behind
+ * "+N more", that cell takes the tint. The pulse beats the ⌘⇧J focus edge while it runs (an
+ * animation outranks the cascade) and eases back into whatever the edge is now: --accent while the
+ * dock holds the keys, --hairline otherwise. Reduced motion: no animation (the animations live under
+ * no-preference); the same colors hold, static, while the attribute is set. */
+.agent-dock-row [data-arrival] {
+	--arrival-color: var(--warn);
+}
+
+.agent-dock-row [data-arrival="turn"] {
+	--arrival-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.agent-dock-row [data-arrival] {
+		animation: agent-dock-arrival-fill 1.4s ease-out 1;
+	}
+
+	/* The edge takes the most urgent arrival: the ask rule comes last, so it wins over a turn. */
+	.agent-dock:has(.agent-dock-row [data-arrival="turn"])::before {
+		animation: agent-dock-arrival-edge-accent 1.4s ease-out 1;
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before {
+		animation: agent-dock-arrival-edge-warn 1.4s ease-out 1;
+	}
+}
+
+/* Each holds the kind color for its first ~170ms, then eases back to the element's own value. */
+@keyframes agent-dock-arrival-fill {
+	0%,
+	12% {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-warn {
+	0%,
+	12% {
+		background-color: var(--warn);
+	}
+}
+
+@keyframes agent-dock-arrival-edge-accent {
+	0%,
+	12% {
+		background-color: var(--accent);
+	}
+}
+
+/* Static, so these outrank .agent-dock:focus-within::before by specificity. */
+@media (prefers-reduced-motion: reduce) {
+	.agent-dock-row [data-arrival] {
+		background-color: color-mix(in srgb, var(--arrival-color) 10%, transparent);
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival="turn"])::before {
+		background-color: var(--accent);
+	}
+
+	.agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before {
+		background-color: var(--warn);
+	}
+}
+
 .agent-dock-entry-receipt[data-tone="neutral"],
 .agent-dock-receipt[data-tone="neutral"] {
 	color: var(--text-1);
@@ -1682,7 +1804,7 @@ body.dragging {
 	color: var(--danger);
 }
 
-/* Agents: one dim line after the entries (no rule), before Okena's dot. */
+/* Agents: one dim line after the entries (no rule), before ⌘⇧J. */
 .agent-dock-agents {
 	flex: none;
 	display: flex;
@@ -1695,36 +1817,65 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-/* Agents whose state Okena could not read: a genuine warning, so it keeps its tone. */
-.agent-dock-agents-unknown {
-	color: var(--warn);
-}
-
 .agent-dock-agents-entry:hover,
 .agent-dock-agents-entry[data-open="true"] {
 	color: var(--text-1);
 }
 
-/* Agent status glyphs (Agents pane). */
-.agent-dock-status {
-	flex: none;
-	width: 1ch;
-	text-align: center;
-	color: var(--dock-dim);
+/* The Agents entry: the count (--text-1, --text-0 open or focused) and dim word, then a 3px bar, one
+ * 8px segment per agent 2px apart so it reads as one meter, not a dashed line: working --text-0,
+ * background --text-1, idle/frozen faint, waiting/unknown --warn; never animated. Past AGENTS_BAR_MAX
+ * (10) it keeps the width of ten and thins its gaps. */
+.agent-dock-agents .agent-dock-entry-line {
+	gap: 0.3em;
 }
 
-.agent-dock-status[data-status="working"] {
-	color: var(--text-0);
-	animation: agent-dock-pulse 1.6s ease-in-out infinite;
-}
-
-.agent-dock-status[data-status="background"] {
+.agent-dock-agents-n {
 	color: var(--text-1);
+	transition: color 140ms ease-out;
 }
 
-.agent-dock-status[data-status="waiting"],
-.agent-dock-status[data-status="unknown"] {
-	color: var(--warn);
+.agent-dock-agents-entry:is([data-open="true"], :focus) .agent-dock-agents-n {
+	color: var(--text-0);
+}
+
+.agent-dock-agents-bar {
+	display: inline-flex;
+	align-self: center;
+	gap: 2px;
+	height: 3px;
+	margin-left: 5px;
+	position: relative;
+	top: 1px;
+}
+
+.agent-dock-agents-bar[data-capped="true"] {
+	width: 98px;
+	gap: 1px;
+}
+
+.agent-dock-agents-seg {
+	flex: none;
+	width: 8px;
+	border-radius: 1.5px;
+	background: color-mix(in srgb, var(--text-2) 70%, transparent);
+}
+
+.agent-dock-agents-bar[data-capped="true"] .agent-dock-agents-seg {
+	flex: 1 1 0;
+	width: auto;
+}
+
+.agent-dock-agents-seg[data-status="working"] {
+	background: var(--text-0);
+}
+
+.agent-dock-agents-seg[data-status="background"] {
+	background: var(--text-1);
+}
+
+.agent-dock-agents-seg:is([data-status="waiting"], [data-status="unknown"]) {
+	background: var(--warn);
 }
 
 @keyframes agent-dock-pulse {
@@ -1758,8 +1909,37 @@ body.dragging {
 	border-top: 1px solid var(--hairline);
 }
 
+/* The pane's terminal-side edge is Jakub's to drag (§3.24 Pane height): a 6px target centered on the
+ * dock's 1px edge, invisible at rest, above the terminal's well padding and the pane's top (bottom) px.
+ * Hovered or dragged, that edge turns --accent — the focus edge's token — and 2px while dragging.
+ * Later than the arrival rules, so a hovered edge wins over an arrival's (same specificity). */
+.agent-dock-resize {
+	position: absolute;
+	z-index: 3;
+	top: -3px;
+	right: 0;
+	left: 0;
+	height: 6px;
+	cursor: row-resize;
+	touch-action: none;
+}
+
+.agent-dock-resize[data-position="top"] {
+	top: auto;
+	bottom: -3px;
+}
+
+.agent-dock:has(.agent-dock-resize:hover)::before,
+.agent-dock:has(.agent-dock-resize[data-resize])::before {
+	background: var(--accent);
+}
+
+.agent-dock:has(.agent-dock-resize[data-resize="drag"])::before {
+	height: 2px;
+}
+
 /* Header: a plain row on the surface — kind glyph (the one colored mark) and kind, then the question's
- * context dim (the queue's selected fill says whose); ‹ 1/3 › and esc dim on the right. No rule. */
+ * context dim; an item's then whose and its task title (below); ‹ 1/3 › and esc dim on the right. No rule. */
 .agent-dock-title {
 	flex: none;
 	display: flex;
@@ -1798,6 +1978,12 @@ body.dragging {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	color: var(--dock-dim);
+}
+
+/* A question's short header keeps its size up to a cap; whose and the task title give way before it. */
+.agent-dock-title-context {
+	flex: none;
+	max-width: 20ch;
 }
 
 .agent-dock-title-end {
@@ -1853,8 +2039,211 @@ body.dragging {
 	padding: 0 8px;
 }
 
+/* "Show terminal" (design §3.24): the header's where text as a quiet link — --text-1 words with a faint
+ * underline, --text-0 and a full underline under the pointer — then the bare `⌘O` hint, dim like the
+ * row's ⌘⇧J, while the pane holds the keys (visibility, so nothing shifts). */
+.agent-dock-reveal-where {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.agent-dock-reveal-link {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: var(--text-1);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+	text-underline-offset: 3px;
+	cursor: pointer;
+	transition: color 140ms ease-out, text-decoration-color 140ms ease-out;
+}
+
+.agent-dock-reveal-link:hover:not(:disabled) {
+	color: var(--text-0);
+	text-decoration-color: currentColor;
+}
+
+.agent-dock-reveal-link:disabled {
+	cursor: default;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-hint {
+	flex: none;
+	font: inherit;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-hint kbd {
+	font: inherit;
+}
+
+.agent-dock-title-hint kbd[data-face="symbols"] {
+	letter-spacing: 0.04em;
+}
+
+.agent-dock-pane:not(:focus-within) .agent-dock-title-hint {
+	visibility: hidden;
+}
+
+/* The item header's whose (design: Jakub 2026-11-05): after the kind and the question's context, one flat
+ * row of parts on the header's 8px gap — `· Psyon · fakturoid-digisign-errors — <task title>`: the project
+ * dim, the agent's short name --text-1, the `·` `—` separators dim, the task title dim. Each ellipsizes
+ * with its full text as its tooltip; the kind and the where link never shrink. */
+.agent-dock-title-text > .agent-dock-reveal-where {
+	flex: none;
+}
+
+.agent-dock-title-sep {
+	flex: none;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-who-project,
+.agent-dock-title-who-name,
+.agent-dock-title-task-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The project keeps its short size up to a cap, like the question's context. */
+.agent-dock-title-who-project {
+	flex: none;
+	max-width: 20ch;
+	color: var(--dock-dim);
+}
+
+/* The task title gives way first and the name only after it is gone: their weights are a million apart
+ * so no sub-pixel share of the shrink reaches the name (any share would ellipsize it). */
+.agent-dock-title-who-name {
+	flex: 0 1 auto;
+	min-width: 6ch;
+	color: var(--text-1);
+}
+
+.agent-dock-title-task {
+	flex: 0 1000000 auto;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dock-dim);
+}
+
+/* Too little room for a readable title (`useTaskTitleRoom`), and always under a 640px pane: none, never a
+ * stub; the tooltips keep it. */
+.agent-dock-title-task[data-dropped] {
+	display: none;
+}
+
 @container agent-dock-pane (max-width: 640px) {
-	.agent-dock-title-project {
+	.agent-dock-title-task {
+		display: none;
+	}
+}
+
+/* Agents pane header end: each source's health (`Okena ● · Helm terminals ●`, dim names, the dot in
+ * its tone), then the grouping switch (`group state project`): dim words, the active one --text-0 and
+ * underlined like the question tabs — no fill, no box. */
+.agent-dock-sources,
+.agent-dock-group-switch {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	color: var(--dock-dim);
+}
+
+.agent-dock-sources {
+	gap: 8px;
+	margin-right: 16px;
+}
+
+.agent-dock-source {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.agent-dock-source + .agent-dock-source::before {
+	content: "·";
+	margin-right: 2px;
+}
+
+.agent-dock-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--neutral);
+}
+
+.agent-dock-source[data-tone="success"] .agent-dock-dot {
+	background: var(--success);
+}
+
+.agent-dock-source[data-tone="danger"] .agent-dock-dot {
+	background: var(--danger);
+}
+
+.agent-dock-source[data-tone="danger"] .agent-dock-source-name {
+	color: var(--danger);
+}
+
+.agent-dock-group-switch {
+	gap: calc(1ch - 8px);
+	margin-right: 4px;
+}
+
+.agent-dock-group-switch-label {
+	margin-right: 4px;
+}
+
+.agent-dock-group-option {
+	height: 24px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--dock-dim);
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+
+.agent-dock-group-option:hover {
+	color: var(--text-1);
+}
+
+.agent-dock-group-option[aria-pressed="true"] {
+	color: var(--text-0);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+}
+
+.agent-dock-group-option:focus-visible {
+	outline-offset: 0;
+}
+
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-title-project:not(.agent-dock-title-where),
+	.agent-dock-source-name,
+	.agent-dock-source + .agent-dock-source::before,
+	.agent-dock-group-switch-label {
 		display: none;
 	}
 }
@@ -1912,11 +2301,11 @@ body.dragging {
 /* What is read is 13/20: questions, turn messages, warnings, fields. */
 .agent-dock-question,
 .agent-dock-pane-lead,
-.agent-dock-pane-label,
 .agent-dock-message-text,
+.agent-dock-md,
 .agent-dock-warn,
 .agent-dock-input,
-.agent-dock-facts {
+.agent-dock-facts > * {
 	font-size: var(--dock-prose-fs);
 	line-height: var(--dock-prose-lh);
 }
@@ -1963,10 +2352,6 @@ body.dragging {
 	grid-template-columns: 2ch minmax(0, 1fr);
 	margin: 8px 0;
 	color: var(--warn);
-}
-
-.agent-dock-warn-mark {
-	color: inherit;
 }
 
 /* Question tabs: `1 Color  ✓ Size`, terminal-style — the shown one bright and underlined, the rest
@@ -2287,11 +2672,117 @@ body.dragging {
 	overflow-wrap: anywhere;
 }
 
+/* The message as Markdown (turn-markdown.ts → safe-markdown.ts: explicit elements, never HTML).
+ * By the dock's rules: no weight anywhere; emphasis (bold, headings) is --text-0 against the
+ * --text-1 body, list markers dim, inline code and code blocks in mono with no box. Compact rhythm on
+ * the 13/20 reading text: 8px between blocks, 2px between list items (and after a list's lead line),
+ * one 18px step per list level. */
+.agent-dock-md {
+	min-width: 0;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-md-plain {
+	white-space: pre-wrap;
+}
+
+.agent-dock-md :where(p, h3, h4, h5, h6, ul, ol, pre, blockquote) {
+	margin: 0;
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: 400;
+	white-space: pre-line;
+}
+
+/* Blocks 8px apart, but a paragraph's own list (`Lead:` then `- item`) follows it at the item pitch. */
+.agent-dock-md > * + *,
+.agent-dock-md blockquote > * + * {
+	margin-top: 8px;
+}
+
+.agent-dock-md p + :is(ul, ol) {
+	margin-top: 2px;
+}
+
+.agent-dock-md :is(strong, h3, h4, h5, h6) {
+	color: var(--text-0);
+	font-weight: 400;
+}
+
+.agent-dock-md :is(ul, ol) {
+	padding-left: 18px;
+	white-space: normal;
+}
+
+.agent-dock-md li {
+	padding-left: 2px;
+	white-space: pre-line;
+}
+
+.agent-dock-md li + li,
+.agent-dock-md li > :is(ul, ol),
+.agent-dock-md li > p + * {
+	margin-top: 2px;
+}
+
+.agent-dock-md li::marker {
+	color: var(--dock-dim);
+}
+
+.agent-dock-md code {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: normal;
+}
+
+.agent-dock-md pre {
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: normal;
+	white-space: pre-wrap;
+}
+
+.agent-dock-md pre code {
+	font-size: inherit;
+}
+
+.agent-dock-md blockquote {
+	padding-left: 18px;
+	color: var(--dock-dim);
+}
+
+.agent-dock-md hr {
+	height: 0;
+	margin: 8px 0 0;
+	border: 0;
+}
+
+/* http(s) links open in the browser (turn-markdown.ts). The dock has no link style of its own: Helm's
+ * prose link (`.review-prose a`, document-review.css) and its focus ring; long URLs wrap in the pane. */
+.agent-dock-md a {
+	color: var(--accent);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	overflow-wrap: anywhere;
+}
+
+.agent-dock-md a:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Facts under the message (PR #s, notes) start on its text column. That column is the ● gutter's 2ch
+ * measured in the dock's 12px (as Reply's > gutter is), so the row keeps 12px and pads by it; its facts
+ * read at 13/20. A 2ch margin at 13px sat 1.3px right of the paragraph above (Jakub: "křivý"). */
 .agent-dock-facts {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 4px 16px;
-	margin: 8px 0 0 2ch;
+	margin: 8px 0 0;
+	padding-left: 2ch;
+	font-size: var(--dock-fs);
 	color: var(--dock-dim);
 }
 
@@ -2301,8 +2792,8 @@ body.dragging {
 
 /* Footer: key hints left, receipt / hint, then the decision. No rule of its own (the pane's hairline
  * toward the queue closes it).
- * The note wraps (receipts, verbatim Okena errors and the risky-word question are read in full before
- * acting); the footer grows and the scroll body gives way. */
+ * The note wraps (receipts and verbatim Okena errors are read in full before acting); the footer grows
+ * and the scroll body gives way. */
 .agent-dock-foot {
 	flex: none;
 	display: grid;
@@ -2336,9 +2827,11 @@ body.dragging {
 	letter-spacing: 0.04em;
 }
 
-/* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid. */
+/* Key hints only while the keys reach the pane (it holds focus); visibility keeps the footer's grid.
+ * A field with text keeps ↑ ↓ and the Page keys for editing, so the scroll hint steps back too. */
 .agent-dock-pane:not(:focus-within) .agent-dock-foot-hints,
-.agent-dock-pane:has(.agent-dock-input:focus) .agent-dock-hint[data-pick] {
+.agent-dock-pane:has(.agent-dock-input:focus) .agent-dock-hint[data-pick],
+.agent-dock-pane:has(.agent-dock-input:focus:not(:placeholder-shown)) .agent-dock-hint[data-scroll] {
 	visibility: hidden;
 }
 
@@ -2361,10 +2854,6 @@ body.dragging {
 	display: flex;
 	gap: 8px;
 	white-space: nowrap;
-}
-
-.agent-dock-confirm {
-	color: var(--warn);
 }
 
 /* What was sent, after the receipt word: plain text, not the receipt's tone. */
@@ -2407,71 +2896,300 @@ body.dragging {
 	}
 }
 
-/* Agents: a table of observed facts, then Recent. */
-.agent-dock-table {
+/* Agents pane (design §3.24 Agents): every agent's state relative to Jakub. One grid for the whole
+ * list — groups, their lists, items and row buttons are subgrids — so columns line up across headings.
+ * Every row is a button (one roving tab stop): its glyph sits in the queue's 12px box on the 16px column,
+ * its fill (hover --fill-subtle, focused --fill-raised, never a ring) reaches 8px past the text either
+ * side with the choices' 6px radius. All cells are always rendered; the grouping places or hides them:
+ *   by-project  glyph · name · state · age · excerpt (flex, cut) · where
+ *   by-state    glyph · name · project · state · age · excerpt (flex, cut) · where; the group is the
+ *               state, so the word shows only where it says more (question, not connected, frozen) */
+.agent-dock-agent-list {
+	--agent-row: calc(24px * var(--ui-scale));
 	display: grid;
-	grid-template-columns: 1ch repeat(4, minmax(0, max-content));
-	column-gap: 2ch;
-	margin: 4px 0 0;
+	grid-template-columns: 12px minmax(0, max-content) max-content max-content minmax(0, 1fr) minmax(0, max-content);
+	max-width: 100%;
+	font-variant-numeric: tabular-nums;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] {
+	grid-template-columns:
+		12px minmax(0, max-content) minmax(0, max-content) max-content max-content minmax(0, 1fr)
+		minmax(0, max-content);
+}
+
+.agent-dock-agent-group,
+.agent-dock-agent-rows,
+.agent-dock-agent-item,
+.agent-dock-agent {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+}
+
+.agent-dock-agent-rows {
+	margin: 0;
 	padding: 0;
 	list-style: none;
 }
 
-.agent-dock-tr {
+/* The group heading: dim, the row's size and weight (no bold in the dock), a little air above. */
+.agent-dock-agent-group-name {
 	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: subgrid;
-	align-items: baseline;
-	align-content: center;
-	min-height: 24px;
+	align-content: end;
+	min-height: var(--agent-row);
+	margin: 0;
+	padding-top: 8px;
+	font: inherit;
+	color: var(--dock-dim);
 	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
-.agent-dock-tr > * {
+.agent-dock-agent-group:first-child .agent-dock-agent-group-name {
+	padding-top: 0;
+}
+
+.agent-dock-agent {
+	position: relative;
+	isolation: isolate;
+	align-items: baseline;
+	align-content: center;
+	min-height: var(--agent-row);
+	padding: 0;
+	border: none;
+	background: transparent;
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+}
+
+.agent-dock-agent::before {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	inset: 0 -8px;
+	border-radius: 6px;
+	transition: background-color 140ms ease-out;
+}
+
+.agent-dock-agent:hover::before {
+	background: var(--fill-subtle);
+}
+
+/* The focused row (keyboard only: pointer use never focuses one) shows the selected look, never a ring. */
+.agent-dock-agent:focus {
+	outline: none;
+}
+
+.agent-dock-agent:focus::before {
+	background: var(--fill-raised);
+}
+
+.agent-dock-agent:focus .agent-dock-agent-name {
+	color: var(--text-0);
+}
+
+.agent-dock-agent > * {
+	grid-row: 1;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
 
-.agent-dock-td-name {
-	color: var(--text-0);
-}
-
-.agent-dock-td-name[data-dim="true"] {
-	color: var(--text-1);
-}
-
-.agent-dock-td-project,
-.agent-dock-td-meta {
+.agent-dock-agent-glyph {
+	grid-column: 1;
+	width: 12px;
+	text-align: center;
+	font-size: var(--dock-prose-fs);
 	color: var(--dock-dim);
 }
 
-.agent-dock-td-status {
-	color: var(--text-1);
-}
-
-.agent-dock-td-status[data-status="working"] {
-	color: var(--text-0);
-}
-
-.agent-dock-td-status[data-status="unknown"],
-.agent-dock-td-status[data-tone="warn"] {
+/* Glyph tones: the queue's kind colors while the agent owes Jakub (amber ask, blue turn), else its status. */
+.agent-dock-agent-glyph:is(
+		[data-tone="ask"],
+		[data-tone="orphaned"],
+		[data-tone="unconfirmed"],
+		[data-tone="unknown"]
+	) {
 	color: var(--warn);
 }
 
-/* A waiting agent ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
-.agent-dock-td-status[data-tone="danger"] {
+.agent-dock-agent-glyph[data-tone="turn"] {
+	color: var(--accent);
+}
+
+.agent-dock-agent-glyph[data-tone="working"] {
+	color: var(--text-0);
+	animation: agent-dock-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-dock-agent-glyph:is([data-tone="background"], [data-tone="sending"]) {
+	color: var(--text-1);
+}
+
+.agent-dock-agent-name {
+	grid-column: 2;
+	max-width: 36ch;
+	padding-left: 8px;
+	color: var(--text-1);
+}
+
+/* State words carry the state by brightness: owed, sending and busy read; read, idle and frozen recede. */
+.agent-dock-agent-word {
+	grid-column: 3;
+	padding-left: 24px;
+	color: var(--text-1);
+}
+
+.agent-dock-agent-age {
+	grid-column: 4;
+	justify-self: end;
+	padding-left: 6px;
+	color: var(--text-1);
+}
+
+.agent-dock-agent:is([data-standing="read"], [data-standing="idle"]) :is(.agent-dock-agent-word, .agent-dock-agent-age),
+.agent-dock-agent[data-status="unreachable"] .agent-dock-agent-word {
+	color: var(--dock-dim);
+}
+
+/* Waiting on Jakub ages on its entry's clock: --text-1, then --warn past 30m, --danger past 2h. */
+.agent-dock-agent:is([data-standing="unknown"], [data-tone="warn"]):not([data-status="unreachable"])
+	:is(.agent-dock-agent-word, .agent-dock-agent-age) {
+	color: var(--warn);
+}
+
+.agent-dock-agent[data-tone="danger"] :is(.agent-dock-agent-word, .agent-dock-agent-age) {
 	color: var(--danger);
 }
 
-.agent-dock-subhead {
-	margin: 16px 0 4px;
-	font: inherit;
+.agent-dock-agent-project,
+.agent-dock-agent-where,
+.agent-dock-agent-excerpt {
+	color: var(--dock-dim);
+}
+
+.agent-dock-agent-project {
+	display: none;
+}
+
+.agent-dock-agent-excerpt,
+.agent-dock-agent-where {
+	padding-left: 24px;
+}
+
+/* One line: the excerpt takes what is left and is cut, where follows. */
+.agent-dock-agent-excerpt {
+	grid-column: 5;
+}
+
+.agent-dock-agent-where {
+	grid-column: 6;
+	max-width: 40ch;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
+	display: block;
+	grid-column: 3;
+	max-width: 16ch;
+	padding-left: 24px;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-word {
+	grid-column: 4;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-age {
+	grid-column: 5;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-excerpt {
+	grid-column: 6;
+}
+
+.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-where {
+	grid-column: 7;
+}
+
+/* The heading already says it: the word only where it says more. */
+.agent-dock-agent-list[data-layout="by-state"]
+	.agent-dock-agent:is(
+		[data-standing="reply-waiting"],
+		[data-standing="working"],
+		[data-standing="background"],
+		[data-standing="read"],
+		[data-standing="idle"],
+		[data-word="unknown"]
+	)
+	.agent-dock-agent-word {
+	visibility: hidden;
+}
+
+/* Narrow panes keep the excerpt readable: names cut sooner, and where gives way first (it stays in
+ * the row's accessible name and the agent's detail). */
+@container agent-dock-pane (max-width: 960px) {
+	.agent-dock-agent-name {
+		max-width: 26ch;
+	}
+
+	.agent-dock-agent-where {
+		max-width: 20ch;
+	}
+}
+
+@container agent-dock-pane (max-width: 720px) {
+	.agent-dock-agent-where {
+		display: none;
+	}
+}
+
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-agent-name {
+		max-width: 20ch;
+	}
+
+	.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
+		max-width: 10ch;
+	}
+}
+
+/* Very narrow: the project column goes too (the row's tooltip still names it). */
+@container agent-dock-pane (max-width: 480px) {
+	.agent-dock-agent-list[data-layout="by-state"] .agent-dock-agent-project {
+		display: none;
+	}
+}
+
+/* The agent detail's header: the name as its kind (13px, --text-0), the state words and where dim. */
+.agent-dock-title-state {
+	flex: none;
+	color: var(--text-1);
+}
+
+.agent-dock-title-state:is([data-standing="read"], [data-standing="idle"]) {
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-state[data-tone="warn"] {
+	color: var(--warn);
+}
+
+.agent-dock-title-state[data-tone="danger"] {
+	color: var(--danger);
+}
+
+.agent-dock-title-kind .agent-dock-agent-glyph {
+	flex: none;
+}
+
+.agent-dock-message-text[data-quiet="true"] {
 	color: var(--dock-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.agent-dock-status {
+	.agent-dock-agent-glyph {
 		animation: none;
 	}
 }

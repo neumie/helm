@@ -61,6 +61,20 @@ export function agentForModel(model: string | undefined): SolverAgent | undefine
 	return undefined
 }
 
+/**
+ * The model a run of `agent` uses when the Item picked none: config's
+ * `solver.model` belongs to config's `solver.agent`, so it only carries over to
+ * that agent. Another agent runs its own CLI default (never `claude --model xai/…`).
+ */
+export function effectiveSolverModel(
+	agent: SolverAgent,
+	selectedModel: string | null | undefined,
+	solver: { agent: SolverAgent; model?: string },
+): string | undefined {
+	if (selectedModel) return selectedModel
+	return agent === solver.agent ? solver.model : undefined
+}
+
 /** Default model for the cheap AI-helper one-shots (naming/triage). */
 export function defaultHelperModel(agent: SolverAgent | undefined): string {
 	switch (agent) {

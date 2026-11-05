@@ -2,7 +2,7 @@
 // pending lifetime, filters, out-of-order events, exclusion) and the socket hub
 // as the dock's OkenaClaudeClient (OkenaClaudeSource + reducer + act unchanged).
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,6 +12,7 @@ import reduceModule from '../app/src/agent-dock/reduce.ts'
 import coreModule from '../app/src/claude-remote/hub-core.ts'
 import hubModule from '../app/src/claude-remote/hub.ts'
 import tokenModule from '../app/src/claude-remote/token.ts'
+import { until } from './helpers/agent-dock'
 
 type CoreModule = typeof import('../app/src/claude-remote/hub-core.ts')
 type HubModule = typeof import('../app/src/claude-remote/hub.ts')
@@ -166,6 +167,40 @@ test('terminal lifecycle: Helm closing the terminal releases its hooks and drops
 	assert.throws(() => core.session(REF), { status: 404 })
 })
 
+test('a closed terminal stays closed: late hooks of its dying claude never bring a session back', () => {
+	const core = started()
+	core.attached(REF, PID)
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'go' }))
+	core.terminalClosed(REF)
+	const sessions = () => (core.stateJson('work') as { claude_sessions: string[] }).claude_sessions
+	// Sent before the SIGHUP, processed after Helm's close.
+	core.event(REF, PID, T0 + 2, ev('PostToolUseFailure', { prompt_id: 'p1', tool_name: 'Bash', tool_input: {} }))
+	core.event(REF, PID, T0 + 3, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'late' }))
+	core.attached(REF, PID)
+	core.degraded(REF, PID, 'user_settings', '/repo/x', T0 + 4)
+	core.registerDispatcher(REF, SID)
+	assert.deepEqual(sessions(), [])
+	const late = hook()
+	assert.equal(
+		core.permission(
+			REF,
+			PID,
+			T0 + 5,
+			ev('PermissionRequest', { prompt_id: 'p1', tool_name: 'Bash', tool_input: {} }),
+			late,
+		),
+		null,
+	)
+	assert.deepEqual(late.outputs, [{}], 'left to the terminal at once')
+	core.detached(REF, PID)
+	assert.deepEqual(sessions(), [])
+	assert.throws(() => core.session(REF), { status: 404 })
+	// Helm spawning that terminal again (fresh environment) lets it report again.
+	core.terminalOpened(REF)
+	core.event(REF, 300, T0 + 6, ev('SessionStart', { session_id: 'sess-new', source: 'startup' }))
+	assert.deepEqual(sessions(), ['term1'])
+})
+
 test('degraded (user --settings): listed, not connected, state unknown; a SessionStart clears it', () => {
 	const core = new ClaudeHubCore({ prefix: 'cc33' })
 	core.degraded(REF, 300, 'user_settings', '/repo/x', T0)
@@ -176,6 +211,19 @@ test('degraded (user --settings): listed, not connected, state unknown; a Sessio
 	assert.equal(view.has_transcript, false)
 	core.event(REF, 301, T0 + 1, ev('SessionStart', { source: 'startup' }))
 	assert.equal(session(core).hooks_attached, true)
+})
+
+test('degraded: its claude exiting (the preload lifeline closes) drops the entry; another pid’s close does not', () => {
+	const core = new ClaudeHubCore({ prefix: 'cc34' })
+	const sessions = () => (core.stateJson('work') as { claude_sessions: string[] }).claude_sessions
+	core.attached(REF, 300)
+	core.degraded(REF, 300, 'user_settings', '/repo/x', T0)
+	core.attached(REF, 999)
+	core.detached(REF, 999)
+	assert.deepEqual(sessions(), ['term1'])
+	core.detached(REF, 300)
+	assert.deepEqual(sessions(), [])
+	assert.throws(() => core.session(REF), { status: 404 })
 })
 
 // ---------------------------------------------------------------------------
@@ -246,7 +294,29 @@ test('filters: internal-fork SubagentStop and <task-notification> prompts; real 
 		T0 + 4,
 		ev('Stop', { prompt_id: 'p1', last_assistant_message: 'waiting on bg', background_tasks: [{ id: 'b1' }] }),
 	)
-	assert.equal(session(core).running_subagents.length, 1, 'Stop while a background task runs')
+	assert.deepEqual(session(core).running_subagents, [], 'a background task is no subagent')
+	assert.equal(session(core).background_tasks, 1, 'Stop while a background task runs')
+	assert.equal(session(core).background_shells, 0, 'an untyped task is no shell')
+	// Claude lists background subagents there too: SubagentStart counts those, never twice.
+	core.event(REF, PID, T0 + 4, ev('SubagentStart', { prompt_id: 'p1', agent_id: 'g2', agent_type: 'Explore' }))
+	core.event(
+		REF,
+		PID,
+		T0 + 4,
+		ev('Stop', {
+			prompt_id: 'p1',
+			background_tasks: [
+				{ id: 'g2', type: 'subagent' },
+				{ id: 'b1', type: 'shell' },
+				{ id: 'w1', type: 'workflow' },
+			],
+		}),
+	)
+	assert.equal(session(core).running_subagents.length, 1)
+	assert.equal(session(core).background_tasks, 2, 'shell + workflow; the subagent is not a background task')
+	assert.equal(session(core).background_shells, 1)
+	core.event(REF, PID, T0 + 4, ev('SubagentStop', { prompt_id: 'p1', agent_id: 'g2', agent_type: 'Explore' }))
+	core.event(REF, PID, T0 + 4, ev('Stop', { prompt_id: 'p1', background_tasks: [{ id: 'b1' }] }))
 	core.event(
 		REF,
 		PID,
@@ -575,6 +645,24 @@ test('Stop before its UserPromptSubmit: the user entry still lands BEFORE the an
 	assert.equal((core.transcript(REF, {}) as { entries: unknown[] }).entries.length, 4)
 })
 
+test('renumbered entries: a reader whose cursor was taken after the early Stop also gets a reset page, not a replay', () => {
+	const core = started()
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p0', prompt: 'first' }))
+	core.event(REF, PID, T0 + 2, ev('Stop', { prompt_id: 'p0', last_assistant_message: 'one' }))
+	core.event(REF, PID, T0 + 4, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'two' }))
+	const read = core.transcript(REF, {}) as { cursor: number }
+	core.event(REF, PID, T0 + 3, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'reply' }))
+	const page = core.transcript(REF, { cursor: read.cursor, sessionId: SID }) as {
+		reset: boolean
+		entries: Array<{ kind: string; text: string }>
+	}
+	assert.equal(page.reset, true)
+	assert.deepEqual(
+		page.entries.map(entry => `${entry.kind}:${entry.text}`),
+		['user:first', 'assistant:one', 'user:reply', 'assistant:two'],
+	)
+})
+
 test('a very late UserPromptSubmit does not release a newer prompt’s dialog', () => {
 	const core = started()
 	const newer = hook()
@@ -858,12 +946,12 @@ test('socket: a bad token is answered {} (permission) or ignored (event); the ow
 test('end to end: AskUserQuestion → dock ask item → act answer reaches the waiting hook; Stop → turn → reply typed', async () => {
 	const f = await hubFixture()
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			const reduced = reduce(state, { ...observation, source: 'helm' }, at)
+			const reduced = reduce(state, observation, at)
 			state = reduced.state
 			return reduced.events
 		}
@@ -886,7 +974,10 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			},
 			true,
 		)
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() => (f.hub.core.session(REF) as { dialogs: unknown[] }).dialogs.length === 1,
+			'the waiting hook’s dialog',
+		)
 		const events = await tick(T0 + 2000)
 		const ask = state.items.find(item => item.kind === 'ask')
 		assert.ok(ask, JSON.stringify(events))
@@ -931,7 +1022,10 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			text: 'again',
 		})
 		assert.equal(again.status, 'failed')
-		assert.match(again.status === 'failed' ? again.detail : '', /^Helm terminals refused the reply \(409\)/)
+		assert.equal(
+			again.status === 'failed' ? again.detail : '',
+			'Helm terminals refused the reply (409): A reply is still being typed.',
+		)
 
 		// claude killed (-9) in the terminal: its lifeline closes, nothing is typed into the shell left behind.
 		await f.event(ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'thanks' }))
@@ -958,12 +1052,12 @@ test('hub: a Helm-terminal session gets its cwd’s branch (read once per BRANCH
 		},
 	})
 	try {
-		const source = new OkenaClaudeSource(f.hub, { name: 'Helm terminals', notRunning: 'hub down' })
+		const source = new OkenaClaudeSource(f.hub, 'helm')
 		let state = createAgentDockState(null, T0)
 		const tick = async (at: number) => {
 			f.setNow(at)
 			const observation = await source.observe(state, at)
-			state = reduce(state, { ...observation, source: 'helm' }, at).state
+			state = reduce(state, observation, at).state
 		}
 		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
 		await tick(T0 + 1000)
@@ -1016,7 +1110,12 @@ test('socket: owner read route, dispatcher registration (persisted), degraded no
 		assert.equal((f.hub.core.session(REF) as { busy?: boolean }).busy, false)
 
 		await send(f.hub.socketPath, { v: 1, t: 'dispatcher', token: f.token, session_id: SID })
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() =>
+				existsSync(join(f.dir, 'excluded.json')) &&
+				(f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.length === 0,
+			'dispatcher persisted',
+		)
 		assert.deepEqual((await f.hub.getStateJson()) as { claude_sessions: string[] }, {
 			...(f.hub.core.stateJson('work') as object),
 			claude_sessions: [],
@@ -1033,10 +1132,42 @@ test('socket: owner read route, dispatcher registration (persisted), degraded no
 			reason: 'user_settings',
 			cwd: '/repo/y',
 		})
-		await new Promise(resolve => setTimeout(resolve, 30))
+		await until(
+			() => (f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.includes('term2'),
+			'degraded registered',
+		)
 		assert.deepEqual((f.hub.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions, ['term2'])
 	} finally {
 		f.cleanup()
+	}
+})
+
+test('persisted dispatcher ids: loaded without rewriting the file or bumping the state; new ones are written in order', async () => {
+	const dir = mkdtempSync('/tmp/hcr-hub-')
+	const excludedFile = join(dir, 'excluded.json')
+	writeFileSync(excludedFile, JSON.stringify({ version: 1, sessions: ['s1', 's2', 's3'] }))
+	const hub = new HelmClaudeHub({
+		socketPath: join(dir, 'hub.sock'),
+		tokens: claudeHubTokens(Buffer.alloc(32, 9)),
+		activeProfileId: () => 'work',
+		deliver: async () => 'pty',
+		excludedFile,
+		now: () => T0,
+		log: () => {},
+	})
+	try {
+		const before = hub.core.stateVersion
+		assert.equal(await hub.start(), true)
+		assert.equal(hub.core.stateVersion, before)
+		assert.ok(['s1', 's2', 's3'].every(id => hub.core.isExcluded(id)))
+		for (const id of ['s4', 's5', 's6']) hub.core.exclude(id)
+		const saved = () => JSON.parse(readFileSync(excludedFile, 'utf8')).sessions as string[]
+		await until(() => saved().length === 6, 'the latest list on disk')
+		await new Promise(resolve => setTimeout(resolve, 50))
+		assert.deepEqual(saved(), ['s1', 's2', 's3', 's4', 's5', 's6'])
+	} finally {
+		hub.stop()
+		rmSync(dir, { recursive: true, force: true })
 	}
 })
 
@@ -1076,12 +1207,55 @@ test('socket: a connection without a request line is dropped; Helm quitting leav
 			},
 			true,
 		)
+		await until(
+			() => (hub.core.session(REF) as { dialogs: unknown[] }).dialogs.length === 1,
+			'the waiting hook’s dialog',
+		)
+		// Past the 100 ms first-line timeout: the long-poll is still held.
 		await new Promise(resolve => setTimeout(resolve, 150))
 		assert.equal(session(hub.core).dialogs.length, 1, 'a long-poll outlives the first-line timeout')
 		hub.stop()
 		assert.equal(await waiting, '', 'closed without an answer: the hook client asks the next hub')
 	} finally {
 		hub.stop()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test('socket: a second hub on a live hub’s socket stays off, and stopping it leaves that hub’s socket alone', async () => {
+	const dir = mkdtempSync('/tmp/hcr-hub-')
+	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
+	const options = {
+		socketPath: join(dir, 'hub.sock'),
+		tokens,
+		activeProfileId: () => 'work',
+		deliver: async () => 'pty' as const,
+		now: () => T0,
+		log: () => {},
+	}
+	const first = new HelmClaudeHub(options)
+	const second = new HelmClaudeHub(options)
+	try {
+		assert.equal(await first.start(), true)
+		assert.equal(await second.start(), false, 'another process answers there')
+		second.stop()
+		await new Promise(resolve => setTimeout(resolve, 20))
+		assert.ok(existsSync(options.socketPath), 'the live hub’s socket is still there')
+		await send(options.socketPath, {
+			v: 1,
+			t: 'event',
+			token: tokens.mint(REF),
+			pid: PID,
+			at: T0,
+			input: ev('SessionStart'),
+		})
+		await until(
+			() => (first.core.stateJson('work') as { claude_sessions: string[] }).claude_sessions.includes('term1'),
+			'the live hub still hears hooks',
+		)
+	} finally {
+		second.stop()
+		first.stop()
 		rmSync(dir, { recursive: true, force: true })
 	}
 })

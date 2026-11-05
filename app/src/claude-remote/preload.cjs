@@ -14,7 +14,8 @@
 // that claude), a one-line "no hooks" notice when the user's own --settings wins,
 // and a lifeline: one connection to the hub held open for this claude's life
 // (close-on-exec, so the kernel closes it on any exit, kill -9 included; the hub
-// then ends the session and never types a reply into what is left in the pty).
+// then ends the session, or drops the "no hooks" entry, and never types a reply
+// into what is left in the pty).
 //
 // Plain CommonJS with no imports at load time: it runs inside every Bun program
 // in the terminal, so it must never throw and never block.
@@ -234,12 +235,16 @@ function run() {
 		if (plan.action === 'inject') {
 			process.argv.splice(0, process.argv.length, ...plan.argv)
 			holdLifeline(process.env[ENV_SOCKET], process.env[ENV_TOKEN], process.pid)
-			if (process.env.HELM_CLAUDE_REMOTE_DEBUG === '1')
-				process.stderr.write(`helm-claude-remote: argv ${JSON.stringify(process.argv)}\n`)
 			return
 		}
 		if (!plan.inClaude) return
-		if (plan.degraded && process.env[ENV_SOCKET] && process.env[ENV_TOKEN]) reportDegraded(process.env, plan.degraded)
+		const socket = process.env[ENV_SOCKET]
+		const token = process.env[ENV_TOKEN]
+		if (plan.degraded && socket && token) {
+			reportDegraded(process.env, plan.degraded)
+			// Its close (this claude exiting) ends the "no hooks" entry.
+			holdLifeline(socket, token, process.pid)
+		}
 		for (const key of REMOTE_ENV) delete process.env[key]
 	} catch {
 		// A failing preload would break every Bun program in the terminal.

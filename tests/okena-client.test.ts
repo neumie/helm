@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { OkenaClient } from '../src/extensions/okena/client.js'
+import { OKENA_PID_CHECK_MS, OkenaClient, OkenaConfigCache } from '../src/extensions/okena/client.js'
 
 const TOKEN = 'local-cli-token'
 
@@ -163,6 +163,85 @@ test('OkenaClient rejects a truncated Unix-socket response instead of hanging', 
 
 	try {
 		await assert.rejects(new OkenaClient(baseDir).getState(), /response aborted|socket hang up|ECONNRESET/)
+	} finally {
+		await close(server)
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('OkenaConfigCache re-reads a config file only when its mtime/size/inode moves', () => {
+	const root = mkdtempSync(join(tmpdir(), 'hoc-'))
+	try {
+		const path = join(root, 'cli.json')
+		writeFileSync(path, JSON.stringify({ token: 'one', token_id: 'a' }))
+		const cache = new OkenaConfigCache()
+		const first = cache.readJson<{ token: string }>(path)
+		assert.equal(first.token, 'one')
+		assert.equal(cache.readJson(path), first, 'unchanged file: the parsed value is reused')
+
+		// Same size, same content length, new mtime: re-read.
+		writeFileSync(path, JSON.stringify({ token: 'two', token_id: 'a' }))
+		utimesSync(path, new Date(), new Date(Date.now() + 5_000))
+		assert.equal(cache.readJson<{ token: string }>(path).token, 'two')
+
+		// Invalid JSON throws (like JSON.parse) and keeps throwing until the file changes.
+		writeFileSync(path, '{"token":')
+		utimesSync(path, new Date(), new Date(Date.now() + 10_000))
+		assert.throws(() => cache.readJson(path), SyntaxError)
+		assert.throws(() => cache.readJson(path), SyntaxError)
+		writeFileSync(path, JSON.stringify({ token: 'three', token_id: 'a' }))
+		utimesSync(path, new Date(), new Date(Date.now() + 15_000))
+		assert.equal(cache.readJson<{ token: string }>(path).token, 'three')
+
+		rmSync(path)
+		assert.throws(() => cache.readJson(path), /ENOENT/)
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
+test('OkenaConfigCache checks remote.json pid liveness at most every OKENA_PID_CHECK_MS', () => {
+	const clock = { now: 1_000 }
+	const checks: number[] = []
+	let alive = true
+	const cache = new OkenaConfigCache(
+		() => clock.now,
+		pid => {
+			checks.push(pid)
+			return alive
+		},
+	)
+	assert.equal(cache.isProcessAlive(42), true)
+	alive = false
+	clock.now += OKENA_PID_CHECK_MS - 1
+	assert.equal(cache.isProcessAlive(42), true, 'cached')
+	assert.deepEqual(checks, [42])
+	clock.now += 1
+	assert.equal(cache.isProcessAlive(42), false)
+	assert.equal(cache.isProcessAlive(43), false)
+	assert.deepEqual(checks, [42, 42, 43])
+})
+
+test('OkenaClient picks up a rotated token through its config cache', async () => {
+	const root = mkdtempSync(join(tmpdir(), 'hor-'))
+	const socketPath = join(root, 'okena.sock')
+	const seen: Array<string | undefined> = []
+	const server = createServer((request, response) => {
+		seen.push(request.headers.authorization)
+		response.writeHead(200, { 'Content-Type': 'application/json' })
+		response.end(JSON.stringify({ state_version: 1 }))
+	})
+	const baseDir = writeProfile(root, { port: 1, local_endpoint: { kind: 'unix_socket', path: socketPath } })
+	await listen(server, socketPath)
+	try {
+		const client = new OkenaClient(baseDir, undefined, new OkenaConfigCache())
+		await client.getStateJson()
+		await client.forProfile('default').getStateJson()
+		const cliPath = join(baseDir, 'profiles', 'default', 'cli.json')
+		writeFileSync(cliPath, JSON.stringify({ token: 'rotated-token', token_id: 'token-id' }))
+		utimesSync(cliPath, new Date(), new Date(Date.now() + 5_000))
+		await client.getStateJson()
+		assert.deepEqual(seen, [`Bearer ${TOKEN}`, `Bearer ${TOKEN}`, 'Bearer rotated-token'])
 	} finally {
 		await close(server)
 		rmSync(root, { recursive: true, force: true })

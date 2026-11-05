@@ -226,7 +226,10 @@ export function createClaudeRemote(options: ClaudeRemoteOptions): ClaudeRemote {
 		hub,
 		runtime,
 		// A terminal gets the preload only while its file is there (a missing one breaks every Bun program).
-		environment: (env, ref) => claudeRemoteTerminalEnvironment(env, ref, runtime && ensureFiles() ? runtime : null),
+		environment: (env, ref) => {
+			if (ref) hub.terminalOpened(ref)
+			return claudeRemoteTerminalEnvironment(env, ref, runtime && ensureFiles() ? runtime : null)
+		},
 		start: async () => {
 			// Never listen in a socket root another user could have prepared.
 			if (!rootPrivate) return false

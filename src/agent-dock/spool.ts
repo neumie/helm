@@ -1,4 +1,4 @@
-// Agent dock file spool (slice 1, read-only transport): Helm main writes it,
+// Agent dock file spool (read-only transport): Helm main writes it,
 // `helm dock` reads it. Lives in root `src/` so both the Electron main bundle
 // (`app/src/agent-dock/watcher.ts`) and the CLI (`src/cli/dock.ts`) share one
 // contract. Pure Node, no Electron.
@@ -22,6 +22,19 @@ import { chmod, lstat, mkdir, open, readdir, rename, rm } from 'node:fs/promises
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
+import {
+	DOCK_ACTION_KINDS,
+	DOCK_ITEM_KINDS,
+	DOCK_ITEM_STATES,
+	DOCK_PROMPT_DELIVERIES,
+	DOCK_RECEIPT_STATUSES,
+	DOCK_REFUSAL_REASONS,
+	DOCK_RESOLUTION_BY,
+	DOCK_SESSION_STATUSES,
+	DOCK_SOURCE_HEALTH_STATES,
+	DOCK_SOURCE_IDS,
+} from './dock-vocabulary.js'
+import { oneLine } from './text.js'
 
 export const AGENT_DOCK_DIR_ENV = 'HELM_AGENT_DOCK_DIR'
 export const SPOOL_STATE_FILE = 'state.json'
@@ -66,7 +79,7 @@ export function defaultAgentDockDir(
 const ms = z.number().finite().nonnegative()
 
 /** Okena Claude Remote or Helm's own Claude hub (Claude Code in Helm terminals). */
-export const spoolSourceIdSchema = z.enum(['okena', 'helm'])
+export const spoolSourceIdSchema = z.enum(DOCK_SOURCE_IDS)
 export type SpoolSourceId = z.infer<typeof spoolSourceIdSchema>
 
 export const spoolSessionSchema = z.object({
@@ -77,45 +90,50 @@ export const spoolSessionSchema = z.object({
 	terminalId: z.string(),
 	projectId: z.string().optional(),
 	project: z.string(),
+	repo: z.string().optional(),
 	name: z.string(),
 	branch: z.string().optional(),
 	sessionId: z.string().optional(),
-	status: z.enum(['working', 'background', 'idle', 'waiting', 'unknown', 'unreachable']),
+	status: z.enum(DOCK_SESSION_STATUSES),
 	since: ms,
 	observedAt: ms,
 	subagents: z.number().int().nonnegative(),
+	/** Background tasks (shells, workflows, monitors) still running; absent = none (and in older spools). */
+	backgroundTasks: z.number().int().nonnegative().optional(),
+	/** How many of backgroundTasks are shells; written with it. */
+	backgroundShells: z.number().int().nonnegative().optional(),
 	queuedPrompts: z.number().int().nonnegative(),
 	prLinks: z.array(z.object({ number: z.number().int(), url: z.string(), repository: z.string() })),
 	hasTranscript: z.boolean(),
 	hooksAttached: z.boolean(),
 	channelAttached: z.boolean(),
+	/** When Helm read the agent's last message and whether Jakub has seen it. Never its text. */
+	lastMessage: z.object({ at: ms, seen: z.boolean() }).optional(),
 })
 export type SpoolSession = z.infer<typeof spoolSessionSchema>
 
 export const spoolResolutionSchema = z.object({
 	at: ms,
-	by: z.enum(['outside', 'replied', 'superseded', 'session_ended', 'acked', 'dock']),
+	by: z.enum(DOCK_RESOLUTION_BY),
 })
 
-/** A dock answer's kind and status (slice 2). Never the answer or Okena's error words. */
+/** A dock answer's kind and status. Never the answer or Okena's error words. */
 export const spoolReceiptSchema = z.object({
-	action: z.enum(['answer', 'allow', 'deny', 'prompt']),
-	status: z.enum(['sending', 'sent', 'unconfirmed', 'confirmed', 'refused', 'failed']),
+	action: z.enum(DOCK_ACTION_KINDS),
+	status: z.enum(DOCK_RECEIPT_STATUSES),
 	at: ms,
 	always: z.boolean().optional(),
-	delivery: z.enum(['channel', 'pty', 'queued']).optional(),
-	reason: z
-		.enum(['gone', 'changed', 'busy', 'not_open', 'unknown_item', 'invalid', 'source_down', 'in_flight'])
-		.optional(),
+	delivery: z.enum(DOCK_PROMPT_DELIVERIES).optional(),
+	reason: z.enum(DOCK_REFUSAL_REASONS).optional(),
 })
 
 export const spoolItemSchema = z.object({
 	id: z.number().int().positive(),
 	key: z.string(),
-	kind: z.enum(['ask', 'turn']),
-	state: z.enum(['open', 'sending', 'unconfirmed', 'orphaned', 'resolved']),
+	kind: z.enum(DOCK_ITEM_KINDS),
+	state: z.enum(DOCK_ITEM_STATES),
 	session: z.string(),
-	/** Absent in slice-1 spools. */
+	/** Written by older Helm builds (always 1); read, never written. */
 	rev: z.number().int().positive().optional(),
 	openedAt: ms,
 	orphanedAt: ms.optional(),
@@ -136,7 +154,7 @@ export const spoolItemSchema = z.object({
 export type SpoolItem = z.infer<typeof spoolItemSchema>
 
 const spoolHealthSchema = z.object({
-	state: z.enum(['pending', 'ok', 'down']),
+	state: z.enum(DOCK_SOURCE_HEALTH_STATES),
 	since: ms,
 	lastObservedAt: ms.nullable(),
 	detail: z.string().optional(),
@@ -162,20 +180,8 @@ export const spoolEventSchema = z.object({ seq: z.number().int().positive(), t: 
 export type SpoolEvent = z.infer<typeof spoolEventSchema>
 
 // ---------------------------------------------------------------------------
-// Text helpers
+// Event lines
 // ---------------------------------------------------------------------------
-
-/** One line: controls/newlines collapsed to spaces, bounded with an ellipsis. */
-export function oneLine(text: string, max: number): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: collapsing controls is the point
-	const controls = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g
-	const flat = text.replace(controls, ' ').replace(/\s+/g, ' ').trim()
-	if (flat.length <= max) return flat
-	let end = max - 1
-	const code = flat.charCodeAt(end - 1)
-	if (code >= 0xd800 && code <= 0xdbff) end -= 1
-	return `${flat.slice(0, end)}…`
-}
 
 /** Local calendar day `YYYY-MM-DD` (rotation boundary). */
 export function localDay(at: number): string {
@@ -220,20 +226,21 @@ export async function ensurePrivateDir(dir: string): Promise<void> {
 	if ((stat.mode & 0o077) !== 0) await chmod(dir, 0o700)
 }
 
-/** Atomic 0600 replace: temp file in the same directory, fsync, rename. */
+/** Atomic 0600 replace: temp file in the same directory, fsync, rename. A failed write never leaves its temp file behind. */
 export async function writePrivateFileAtomic(path: string, data: string): Promise<void> {
 	const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
+	// O_EXCL: a failed open created nothing to clean up.
 	const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
 	try {
-		await file.writeFile(data)
-		await file.sync()
-	} finally {
-		await file.close()
-	}
-	try {
+		try {
+			await file.writeFile(data)
+			await file.sync()
+		} finally {
+			await file.close()
+		}
 		await rename(temp, path)
 	} catch (error) {
-		await rm(temp, { force: true })
+		await rm(temp, { force: true }).catch(() => {})
 		throw error
 	}
 }

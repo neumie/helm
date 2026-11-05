@@ -14,15 +14,23 @@ import type {
 } from '../shared'
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
-import { agentDockPosition, mountAgentDock } from './agent-dock-layout'
+import {
+	agentDockAgentsLayout,
+	agentDockNotify,
+	agentDockPaneHeight,
+	agentDockPosition,
+	mountAgentDock,
+} from './agent-dock-layout'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
+	type AgentDockArrivalKind,
 	type AgentDockFixture,
+	type AgentDockRevealMode,
 	type AgentDockScenario,
 	CLAUDE_CODE_TERMINAL_TEXT,
 	createAgentDockFixture,
 } from './agent-dock/agent-dock-fixtures'
-import type { AgentDockPosition } from './agent-dock/presentation'
+import type { AgentDockPosition, AgentsLayout } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
@@ -30,8 +38,13 @@ import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTermina
 export interface TerminalWorkspaceFixtureOptions {
 	sessions?: RestoredSession[]
 	groups?: TabGroup[]
-	/** Opens the production Background dialog after hydration. */
+	/** Opens the production Background dialog after hydration (after `viewBackground`, when both are set). */
 	openBackground?: boolean
+	/**
+	 * Story only: after hydration, shows this parked session in the main area through its
+	 * Background-dialog row (a pointer click on "Open and keep in background").
+	 */
+	viewBackground?: string
 	/** Exposed only by the dedicated browser harness for bridge-effect assertions. */
 	expose?: boolean
 	/** Opt-in task-sidebar layout proof; default terminal workloads stay unchanged. */
@@ -43,7 +56,7 @@ export interface TerminalWorkspaceFixtureOptions {
 	 */
 	relayPrimaryDigits?: boolean
 	/**
-	 * Review only: renders under a bundled preset (tokens on :root + the matching xterm theme)
+	 * Story only: renders under a bundled preset (tokens on :root + the matching xterm theme)
 	 * without touching the persisted appearance; omitted keeps the production appearance.
 	 */
 	theme?: keyof typeof THEME_PRESETS
@@ -61,6 +74,27 @@ export interface TerminalWorkspaceFixtureOptions {
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
+		/** Story only: once the terminal is ready, press ⌘⇧J from the focused xterm (the real window-capture path). */
+		focusDock?: boolean
+		/** Story only: `afterMs` after the terminal is ready, a new agent's item of `kind` arrives. */
+		arrive?: { kind: AgentDockArrivalKind; afterMs: number }
+		/** The Agents pane's grouping, stored like Jakub's switch before the dock mounts (else the stored one). */
+		agentsLayout?: AgentsLayout
+		/** Story only, with `open: 'agents'`: then click this agent's row (by its short name), like a pointer would. */
+		openAgent?: string
+		/**
+		 * Story only: Jakub's dragged pane height, stored before the dock mounts; the height stored before is
+		 * put back on unmount, so it never leaks into other stories.
+		 */
+		paneHeight?: number
+		/** Story only, with `open`: pins the pane edge's hover or drag look (the pointer cannot be pinned). */
+		resizeLook?: 'hover' | 'drag'
+		/** Story only: what "Show in Okena" answers (default: focused and raised). */
+		revealMode?: AgentDockRevealMode
+		/** Story only, with `open`: then the pane takes the keys (its key hints show), as after ⌘⇧J. */
+		focusPane?: boolean
+		/** Story only, with `open`: then press ⌘O in the pane, like Jakub's keys would (the pane takes focus first). */
+		reveal?: boolean
 	}
 }
 
@@ -97,6 +131,8 @@ export interface TerminalWorkspaceFixture {
 	agentDock?: AgentDockFixture
 	/** Present only with `agentDock`: the same position write Settings → Appearance makes. */
 	setAgentDockPosition?(position: AgentDockPosition): void
+	/** Present only with `agentDock`: the same notifications write Settings → Appearance makes. */
+	setAgentDockNotify?(on: boolean): void
 	/** Emits raw PTY output through the production terminal write path. */
 	emitData(sessionId: string, data: string): void
 	emitExit(sessionId: string, code: number): void
@@ -125,24 +161,11 @@ function shellNode<K extends keyof HTMLElementTagNameMap>(
 	return node
 }
 
-/** Builds only the static production shell; mountTerminalWorkspace renders terminal UI. */
-function buildShell(root: HTMLElement, sidebarVisibility = false, agentDock = false): void {
-	root.replaceChildren()
-	const header = shellNode('header', 'topbar')
-	const chrome = shellNode('div', undefined, 'topbar-left')
-	chrome.setAttribute('aria-hidden', 'true')
-	const strip = shellNode('div', 'tab-strip-region', 'topbar-right')
-	strip.dataset.testid = 'tab-strip-region'
-	const controls = shellNode('div', undefined, 'tab-strip-controls')
-	controls.append(shellNode('div', 'tabs'))
-	const newTab = shellNode('button', 'new-tab')
-	newTab.type = 'button'
-	newTab.title = 'New terminal'
-	newTab.setAttribute('aria-label', 'New terminal')
-	newTab.textContent = '+'
-	controls.append(newTab)
-	const dragSpace = shellNode('div', 'topbar-drag-space', 'topbar-drag-space')
-	dragSpace.setAttribute('aria-hidden', 'true')
+/**
+ * The static #bg-root markup from index.html (toggle: icon, current name, count; hidden popover).
+ * Exported so stories can lay several toggles side by side without mounting a workspace each.
+ */
+export function backgroundRootNode(): HTMLDivElement {
 	const bgRoot = shellNode('div', 'bg-root')
 	const toggle = shellNode('button', 'bg-toggle')
 	toggle.type = 'button'
@@ -159,7 +182,7 @@ function buildShell(root: HTMLElement, sidebarVisibility = false, agentDock = fa
 	svg.setAttribute('fill', 'currentColor')
 	svg.setAttribute('aria-hidden', 'true')
 	for (const d of [
-		'M7 1a.75.75 0 0 1 .75.75V6h-1.5V1.75A.75.75 0 0 1 7 1ZM6.25 6v2.94L5.03 7.72a.75.75 0 0 0-1.06 1.06l2.5 2.5a.75.75 0 0 0 1.06 0l2.5-2.5a.75.75 0 1 0-1.06-1.06L7.75 8.94V6H10a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 0-2-2V8a2 2 0 0 1 2-2h2.25Z',
+		'M7 1a.75.75 0 0 1 .75.75V6h-1.5V1.75A.75.75 0 0 1 7 1ZM6.25 6v2.94L5.03 7.72a.75.75 0 0 0-1.06 1.06l2.5 2.5a.75.75 0 0 0 1.06 0l2.5-2.5a.75.75 0 1 0-1.06-1.06L7.75 8.94V6H10a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.25Z',
 		'M4.268 14A2 2 0 0 0 6 15h6a2 2 0 0 0 2-2v-3a2 2 0 0 0-1-1.732V11a3 3 0 0 1-3 3H4.268Z',
 	]) {
 		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
@@ -179,6 +202,28 @@ function buildShell(root: HTMLElement, sidebarVisibility = false, agentDock = fa
 	popoverHeader.textContent = 'Background terminals'
 	popover.append(popoverHeader, shellNode('div', 'bg-rows'))
 	bgRoot.append(toggle, popover)
+	return bgRoot
+}
+
+/** Builds only the static production shell; mountTerminalWorkspace renders terminal UI. */
+function buildShell(root: HTMLElement, sidebarVisibility = false, agentDock = false): void {
+	root.replaceChildren()
+	const header = shellNode('header', 'topbar')
+	const chrome = shellNode('div', undefined, 'topbar-left')
+	chrome.setAttribute('aria-hidden', 'true')
+	const strip = shellNode('div', 'tab-strip-region', 'topbar-right')
+	strip.dataset.testid = 'tab-strip-region'
+	const controls = shellNode('div', undefined, 'tab-strip-controls')
+	controls.append(shellNode('div', 'tabs'))
+	const newTab = shellNode('button', 'new-tab')
+	newTab.type = 'button'
+	newTab.title = 'New terminal'
+	newTab.setAttribute('aria-label', 'New terminal')
+	newTab.textContent = '+'
+	controls.append(newTab)
+	const dragSpace = shellNode('div', 'topbar-drag-space', 'topbar-drag-space')
+	dragSpace.setAttribute('aria-hidden', 'true')
+	const bgRoot = backgroundRootNode()
 	strip.append(controls, dragSpace, bgRoot)
 	header.append(chrome, strip)
 	const content = shellNode('div', 'content')
@@ -540,7 +585,7 @@ export function createTerminalWorkspaceFixture(
 }
 
 /**
- * Review-only preset: its tokens go on :root (inline, as appearance.ts applies them) and
+ * Story-only preset: its tokens go on :root (inline, as appearance.ts applies them) and
  * xterm gets the matching theme through the workspace's appearance seam; nothing persists.
  * `restore` puts back whatever inline tokens were there before.
  */
@@ -576,6 +621,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		const root = rootRef.current
 		if (!root) return
 		buildShell(root, options.sidebarVisibility, options.agentDock !== undefined)
+		let arriveTimer: ReturnType<typeof setTimeout> | null = null
 		const fixture = createTerminalWorkspaceFixture(options)
 		// Registered before the mount so the stand-in chord never reaches the workspace or xterm.
 		const disposeRelay = options.relayPrimaryDigits ? relayPrimaryDigits() : () => {}
@@ -590,12 +636,21 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			: null
 		let agentDockLayout: { dispose(): void } | null = null
 		let unmounted = false
+		let restorePaneHeight = () => {}
 		if (options.agentDock) {
-			const { scenario = 'busy', position } = options.agentDock
+			const { scenario = 'busy', position, agentsLayout, paneHeight } = options.agentDock
 			if (position) agentDockPosition.set(position)
+			if (agentsLayout) agentDockAgentsLayout.set(agentsLayout)
+			if (paneHeight !== undefined) {
+				const stored = agentDockPaneHeight.get()
+				agentDockPaneHeight.set(paneHeight)
+				restorePaneHeight = () => agentDockPaneHeight.set(stored)
+			}
 			const dockFixture = createAgentDockFixture(scenario)
+			if (options.agentDock.revealMode) dockFixture.setRevealMode(options.agentDock.revealMode)
 			fixture.agentDock = dockFixture
 			fixture.setAgentDockPosition = agentDockPosition.set
+			fixture.setAgentDockNotify = agentDockNotify.set
 			// Mount after this effect's commit, as production mounts outside any React render.
 			queueMicrotask(() => {
 				if (unmounted) return
@@ -605,6 +660,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
+					revealTerminal: sessionId => workspace.revealTerminal(sessionId),
 				})
 			})
 		}
@@ -612,6 +668,7 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 			unmounted = true
 			disposeRelay()
 			agentDockLayout?.dispose()
+			restorePaneHeight()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 			theme?.restore()
@@ -619,7 +676,20 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 		if (options.expose)
 			(window as Window & { __helmWorkspaceFixture?: TerminalWorkspaceFixture }).__helmWorkspaceFixture = fixture
 		void workspace.ready.then(() => {
-			if (options.openBackground) (root.querySelector('#bg-toggle') as HTMLButtonElement | null)?.click()
+			const toggle = root.querySelector<HTMLButtonElement>('#bg-toggle')
+			const viewed = options.viewBackground
+			if (viewed && toggle) {
+				toggle.click()
+				root.querySelector<HTMLElement>(`.bg-row[data-tab-id="${CSS.escape(viewed)}"] .bg-open`)?.click()
+				// The open is a placement commit: wait until the toggle names the shown terminal.
+				const current = root.querySelector<HTMLElement>('#bg-current')
+				const reopen = () => {
+					if (unmounted) return
+					if (current?.hidden) requestAnimationFrame(reopen)
+					else if (options.openBackground) toggle.click()
+				}
+				reopen()
+			} else if (options.openBackground) toggle?.click()
 			if (options.agentDock?.output) {
 				// The default fixture's active tab is the 'shell' session.
 				fixture.emitData(
@@ -627,20 +697,85 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					options.agentDock.output === 'claude-code' ? CLAUDE_CODE_TERMINAL_TEXT : AGENT_DOCK_TERMINAL_TEXT,
 				)
 			}
+			if (options.agentDock?.focusDock)
+				requestAnimationFrame(() => {
+					if (unmounted) return
+					// Jakub's path: keys in the terminal, then ⌘⇧J (the dock's window-capture listener).
+					root.querySelector<HTMLElement>('.term-holder.active .xterm-helper-textarea')?.focus({ preventScroll: true })
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'J',
+							code: 'KeyJ',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+							cancelable: true,
+						}),
+					)
+				})
+			const arrive = options.agentDock?.arrive
+			if (arrive)
+				arriveTimer = setTimeout(() => {
+					if (!unmounted) fixture.agentDock?.emitArrival(arrive.kind)
+				}, arrive.afterMs)
 			const open = options.agentDock?.open
 			if (open)
 				requestAnimationFrame(() => {
 					if (unmounted) return
 					// A pointer click (detail 1): the pane opens and xterm keeps focus.
-					root
-						.querySelector(AGENT_DOCK_OPEN_SELECTOR[open])
-						?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					const click = (node: Element | null | undefined) =>
+						node?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+					click(root.querySelector(AGENT_DOCK_OPEN_SELECTOR[open]))
+					const look = options.agentDock?.resizeLook
+					if (look) {
+						// The pane sizes before paint; its edge is there within a frame or two.
+						let frames = 0
+						const pin = () => {
+							if (unmounted) return
+							const edge = root.querySelector<HTMLElement>('.agent-dock-resize')
+							if (edge) edge.dataset.resize = look
+							else if (++frames < 60) requestAnimationFrame(pin)
+						}
+						requestAnimationFrame(pin)
+					}
+					const agent = options.agentDock?.openAgent
+					if (open === 'agents' && agent)
+						requestAnimationFrame(() => {
+							if (unmounted) return
+							click(
+								[...root.querySelectorAll<HTMLElement>('.agent-dock-agent')].find(
+									row => row.querySelector('.agent-dock-agent-name')?.textContent === agent,
+								),
+							)
+						})
+					const reveal = options.agentDock?.reveal
+					if (reveal || options.agentDock?.focusPane)
+						// Two frames: the pane (and an agent's detail) is open; its keys take ⌘O.
+						requestAnimationFrame(() =>
+							requestAnimationFrame(() => {
+								const pane = root.querySelector<HTMLElement>('.agent-dock-pane')
+								if (unmounted || !pane) return
+								pane.focus({ preventScroll: true })
+								if (reveal)
+									pane.dispatchEvent(
+										new KeyboardEvent('keydown', {
+											key: 'o',
+											code: 'KeyO',
+											metaKey: true,
+											bubbles: true,
+											cancelable: true,
+										}),
+									)
+							}),
+						)
 				})
 		})
 		return () => {
 			unmounted = true
+			if (arriveTimer !== null) clearTimeout(arriveTimer)
 			disposeRelay()
 			agentDockLayout?.dispose()
+			restorePaneHeight()
 			sidebarLayout?.dispose()
 			workspace.dispose()
 			theme?.restore()

@@ -1,14 +1,17 @@
-// Agent dock slice 2: answering from a card. Pure pieces only (reducer act
+// Agent dock: answering from the dock. Pure pieces only (reducer act
 // lifecycle, CAS checks, Okena bodies, presentation receipts); the HTTP path
 // against a fake Okena lives in helm-agent-dock-act-okena.test.ts.
 
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import actModule from '../app/src/agent-dock/act.ts'
 import modelModule from '../app/src/agent-dock/model.ts'
+import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import presentationModule from '../app/src/renderer/agent-dock/presentation.ts'
+import { DOCK_SOURCE_TEXT } from '../src/agent-dock/dock-vocabulary.js'
+import { OKENA_NOT_CONFIGURED, OkenaClient, OkenaHttpError } from '../src/extensions/okena/client.js'
+import { okenaFixture } from './helpers/agent-dock'
 
 type ActModule = typeof import('../app/src/agent-dock/act.ts')
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
@@ -19,10 +22,11 @@ type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockOb
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type DockAction = import('../app/src/agent-dock/model.ts').DockAction
 
-const { askStillOpen, dockActBody, dockPostFailure, turnStillWaiting } = actModule as ActModule
+const { askStillOpen, dockActBody, dockPostFailure, promptText, sessionStillIdle, turnStillWaiting } =
+	actModule as ActModule
+const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
 const {
 	ACT_CONFIRM_MS,
-	DOCK_RISKY_PROMPT,
 	parseAgentDockActRequest,
 	parseOkenaClaudeSession,
 	parseOkenaClaudeTranscriptPage,
@@ -30,13 +34,10 @@ const {
 	stableJson,
 } = modelModule as ModelModule
 const { TURN_IDLE_MS, TURN_RESUMED_MS, createAgentDockState, reduce } = reduceModule as ReduceModule
-const { RISKY_PROMPT, lingeringItems, railItems, receiptView, riskyWord, RECEIPT_LINGER_MS } =
-	presentationModule as PresentationModule
+const { lingeringItems, queueItems, receiptView, RECEIPT_LINGER_MS } = presentationModule as PresentationModule
 
 type Json = Record<string, unknown>
-function fixture<T = Json>(name: string): T {
-	return JSON.parse(readFileSync(new URL(`./fixtures/okena-claude/${name}`, import.meta.url), 'utf8')) as T
-}
+const fixture = okenaFixture<Json>
 const SHOW_ASK = fixture('show-ask.json')
 const SHOW_IDLE = fixture('show-idle.json')
 const STATE_ASK = fixture('state-ask.json')
@@ -74,6 +75,7 @@ function poll(detail: Json | null, transcript?: Json): AgentDockObservation {
 	const dialogs = (detail?.dialogs as Json[] | undefined)?.length
 	return {
 		type: 'poll',
+		source: 'okena',
 		profile: PROFILE,
 		state: {
 			ok: true,
@@ -139,7 +141,6 @@ const ANSWER: DockAction = { type: 'answer', picks: [{ options: [1] }, { options
 test('dock answer: sending → sent → dialog closes → resolved by dock with a confirmed receipt', () => {
 	const { state: seeded } = askOpen()
 	const item = only(seeded)
-	assert.equal(item.rev, 1)
 	const { state, events } = drive(
 		[
 			[T0 + 1_000, { type: 'act.sending', itemId: item.id, action: 'answer' }],
@@ -219,7 +220,7 @@ test('sent but not observed for 10 s: unconfirmed (event once); still open later
 	} as AgentDockState
 	const acked = reduce(restarted, { type: 'ack', itemId: item.id }, T0 + 21_000).state
 	assert.equal(only(acked).resolution?.by, 'acked')
-	// He dismissed it himself: it leaves the rail at once (no lingering receipt).
+	// He dismissed it himself: it leaves the queue at once (no lingering receipt).
 	assert.deepEqual(
 		lingeringItems({ generatedAt: T0, source: acked.source, sessions: [], items: acked.items }, T0 + 21_000),
 		[],
@@ -257,11 +258,11 @@ test('a refused act returns the item to open with its receipt; the close that fo
 	const closed = drive([[T0 + 2_000, poll(ask({ dialogs: [] }))]], state).state
 	assert.equal(only(closed).resolution?.by, 'outside')
 	assert.equal(only(closed).receipt?.status, 'refused')
-	// The renderer keeps it on the rail a moment with the refusal.
+	// The renderer keeps it in the queue a moment with the refusal.
 	const snapshot = { generatedAt: T0 + 2_500, source: closed.source, sessions: [], items: closed.items }
 	assert.equal(lingeringItems(snapshot, T0 + 2_500).length, 1)
 	assert.equal(receiptView(only(closed))?.text, 'refused: already answered elsewhere')
-	assert.equal(railItems(snapshot, T0 + 2_000 + RECEIPT_LINGER_MS).length, 0)
+	assert.equal(queueItems(snapshot, T0 + 2_000 + RECEIPT_LINGER_MS).length, 0)
 })
 
 test('a failed act keeps the verbatim error, reopens the item, and a retry can send again', () => {
@@ -348,9 +349,8 @@ test('a reply read mid-flight is attributed once the POST answers (tail flag sur
 	assert.equal(only(after, 'turn').resolution?.by, 'dock')
 })
 
-test('the agent working again closes an undispatched turn instead of bumping its rev', () => {
+test('the agent working again closes an undispatched turn instead of changing it in place', () => {
 	const { state: open } = turnOpen()
-	const turn = only(open, 'turn')
 	const { state, events } = drive(
 		[
 			[T0 + 30_000, poll(idle({ busy: true }))],
@@ -358,7 +358,6 @@ test('the agent working again closes an undispatched turn instead of bumping its
 		],
 		open,
 	)
-	assert.equal(only(state, 'turn').rev, turn.rev)
 	assert.equal(only(state, 'turn').resolution?.by, 'superseded')
 	assert.deepEqual(
 		events.map(event => event.t),
@@ -504,7 +503,7 @@ test('permission and plan decisions: allow once / always (only with suggestions)
 	}
 	assert.deepEqual(decision({ type: 'allow' }), { decision: 'allow', always: false })
 	assert.deepEqual(decision({ type: 'allow', always: true }), { decision: 'allow', always: true })
-	assert.deepEqual(decision({ type: 'deny', message: '  use deploy:preview ', confirmed: true }), {
+	assert.deepEqual(decision({ type: 'deny', message: '  use deploy:preview ' }), {
 		decision: 'deny',
 		message: 'use deploy:preview',
 	})
@@ -551,6 +550,50 @@ test('always allow is refused unless the dock could show every suggestion Okena 
 	assert.equal((askStillOpen(many, freshDialog(eight)) as { reason?: string }).reason, 'changed')
 })
 
+test('Helm terminals: always allow with an addDirectories suggestion is refused before any request; Okena sends it', async () => {
+	const dirs = { type: 'addDirectories', directories: ['/repo/other'], destination: 'session' }
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow' }
+	const detail = (suggestions: unknown[]) =>
+		ask({ dialogs: [permissionDialog({ permission_suggestions: suggestions })] })
+	const item = (suggestions: unknown[]) => only(drive([[T0, poll(detail(suggestions))]]).state)
+	const always: DockAction = { type: 'allow', always: true }
+	assert.equal(dockActBody(item([dirs]), always).ok, true, 'Okena (the default source)')
+	assert.equal(dockActBody(item([dirs]), always, 'okena').ok, true)
+	const refused = dockActBody(item([dirs]), always, 'helm')
+	assert.equal(refused.ok === false && refused.reason, 'invalid')
+	assert.equal(dockActBody(item([rule, dirs]), always, 'helm').ok, false, 'one directory spoils the set')
+	assert.equal(dockActBody(item([rule]), always, 'helm').ok, true, 'rules alone still work')
+	assert.equal(dockActBody(item([dirs]), { type: 'allow' }, 'helm').ok, true, 'allow once applies no suggestion')
+
+	// Through the source: the Helm one never reads or POSTs; the Okena one answers as before.
+	const calls: string[] = []
+	const client = (suggestions: unknown[]) => {
+		const self = {
+			activeProfileId: () => PROFILE,
+			forProfile: () => self,
+			getStateJson: async () => clone(STATE_ASK),
+			getClaudeSession: async () => {
+				calls.push('read')
+				return detail(suggestions)
+			},
+			getClaudeTranscript: async () => page([], 0, true),
+			postClaudeDialogDecision: async (_terminal: string, dialog: string, body: unknown) => {
+				calls.push(`post ${dialog} ${JSON.stringify(body)}`)
+				return {}
+			},
+			postClaudePrompt: async () => ({ delivery: 'pty' }),
+		}
+		return self
+	}
+	const target = { profile: PROFILE, terminalId: TID }
+	const helm = await new OkenaClaudeSource(client([dirs]), 'helm').act(target, item([dirs]), always)
+	assert.equal(helm.status === 'refused' && helm.reason, 'invalid')
+	assert.deepEqual(calls, [], 'no read, no POST')
+	const okena = await new OkenaClaudeSource(client([dirs]), 'okena').act(target, item([dirs]), always)
+	assert.deepEqual(okena, { status: 'sent' })
+	assert.deepEqual(calls, ['read', `post ${DIALOG_ID.split('-')[0]}-9 {"decision":"allow","always":true}`])
+})
+
 test('allow is refused when the dock could not show the whole tool input', () => {
 	const withInput = (toolInput: unknown) =>
 		only(drive([[T0, poll(ask({ dialogs: [permissionDialog({ tool_input: toolInput })] }))]]).state)
@@ -568,38 +611,30 @@ test('allow is refused when the dock could not show the whole tool input', () =>
 	}
 })
 
-test('free text to the agent needs the same risky-word confirmation everywhere', () => {
+test('free text to the agent goes as typed: no word in it needs a second step', () => {
 	const permission = only(drive([[T0, poll(ask({ dialogs: [permissionDialog()] }))]]).state)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main and deploy' }).ok, false)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main', confirmed: true }).ok, true)
-	assert.equal(dockActBody(permission, { type: 'deny', message: 'use the preview' }).ok, true)
+	assert.equal(dockActBody(permission, { type: 'deny', message: 'just push to main and deploy' }).ok, true)
 	const question = only(askOpen().state)
-	const other = (text: string, confirmed?: boolean): DockAction => ({
+	const other = (text: string): DockAction => ({
 		type: 'answer',
 		picks: [{ options: [], other: text }, { options: [0] }],
-		...(confirmed ? { confirmed } : {}),
 	})
-	assert.equal(dockActBody(question, other('merge it to prod')).ok, false)
-	assert.equal(dockActBody(question, other('merge it to prod', true)).ok, true)
-	assert.equal(dockActBody(question, other('zelená')).ok, true)
+	assert.equal(dockActBody(question, other('merge it to prod')).ok, true)
+	const turn = only(turnOpen().state, 'turn')
+	assert.deepEqual(dockActBody(turn, { type: 'prompt', text: 'Secret je nastavený, deploy to production.' }), {
+		ok: true,
+		body: { kind: 'prompt', body: { text: 'Secret je nastavený, deploy to production.' } },
+	})
 })
 
-test('replies: trailing whitespace trimmed, blank refused, risky words need confirmed', () => {
+test('replies: trailing whitespace trimmed, blank refused', () => {
 	const turn = only(turnOpen().state, 'turn')
 	assert.deepEqual(dockActBody(turn, { type: 'prompt', text: 'Ano, pokračuj.\n\n' }), {
 		ok: true,
 		body: { kind: 'prompt', body: { text: 'Ano, pokračuj.' } },
 	})
 	assert.equal(dockActBody(turn, { type: 'prompt', text: '  \n' }).ok, false)
-	const risky = dockActBody(turn, { type: 'prompt', text: 'Secret je nastavený, deployni stage.' })
-	assert.equal(risky.ok, false)
-	assert.equal(dockActBody(turn, { type: 'prompt', text: 'git push it', confirmed: true }).ok, true)
 	assert.equal(dockActBody(turn, { type: 'answer', picks: [] }).ok, false)
-	// The renderer's copy of the risky pattern is the model's.
-	assert.equal(RISKY_PROMPT.source, DOCK_RISKY_PROMPT.source)
-	assert.equal(RISKY_PROMPT.flags, DOCK_RISKY_PROMPT.flags)
-	assert.equal(riskyWord('Ship it to PROD now'), 'prod')
-	assert.equal(riskyWord('Looks good'), null)
 })
 
 // ---------------------------------------------------------------------------
@@ -649,12 +684,204 @@ test('turn CAS: idle, same session, last assistant unchanged, nobody replied', (
 	assert.equal(reason(turnStillWaiting(turn, fresh, null)), 'changed')
 })
 
+test('agent detail CAS: idle, same session, the message Jakub read is still the last, nobody replied', () => {
+	const tail = (entries: Json[]) => {
+		const parsed = parseOkenaClaudeTranscriptPage(page(entries, 400, true))
+		assert.ok(parsed.ok)
+		return parsed.value
+	}
+	const fresh = session(idle({ busy: false }))
+	const reason = (check: unknown) => (check as { reason?: string }).reason
+	const read = { sessionId: SID, assistantUuid: 'a1' }
+	assert.deepEqual(sessionStillIdle(read, fresh, tail([user('u0'), assistant('a1')])), { ok: true })
+	assert.equal(reason(sessionStillIdle(read, fresh, tail([assistant('a1'), assistant('a2')]))), 'changed')
+	assert.equal(reason(sessionStillIdle(read, fresh, tail([assistant('a1'), user('u9')]))), 'gone')
+	assert.equal(reason(sessionStillIdle(read, session(idle({ busy: true })), tail([assistant('a1')]))), 'busy')
+	assert.equal(reason(sessionStillIdle({ sessionId: 'other' }, fresh, tail([]))), 'gone')
+	// Nothing read yet (no message stored): any message since refuses, so Jakub never answers unseen text.
+	assert.deepEqual(sessionStillIdle({ sessionId: SID }, fresh, tail([])), { ok: true })
+	assert.equal(reason(sessionStillIdle({ sessionId: SID }, fresh, tail([assistant('a1')]))), 'changed')
+	assert.equal(promptText('Ano.\n\n'), 'Ano.')
+	assert.equal(promptText('  \n\t'), null)
+	assert.equal(promptText('  indented'), '  indented')
+})
+
+/**
+ * An idle Claude pane as Okena shows it right after its daemon restarted (live, 2026-11-05: Okena
+ * 0.36.1 restarted at 10:29:55Z; the idle `udrzba-demo` pane read like this until its next hook):
+ * no hooks, no lifecycle, so no `busy`, no session id and no transcript.
+ */
+const forgotten = (): Json => {
+	const { busy: _busy, session_id: _sid, ...rest } = idle()
+	return { ...rest, has_transcript: false, hooks_attached: false, running_subagents: [], pr_links: [] }
+}
+
+test('reply CAS: busy unknown (Okena lost the pane across a restart) is untracked, never "working again"', () => {
+	const turn = only(turnOpen().state, 'turn')
+	const fresh = session(forgotten())
+	assert.equal(fresh.busy, undefined)
+	for (const check of [
+		turnStillWaiting(turn, fresh, null),
+		sessionStillIdle({ sessionId: SID, assistantUuid: 'a1' }, fresh, null),
+	]) {
+		assert.deepEqual(check, { ok: false, reason: 'untracked', detail: DOCK_SOURCE_TEXT.okena.untracked })
+		assert.doesNotMatch((check as { detail: string }).detail, /working/)
+	}
+	assert.deepEqual(turnStillWaiting(turn, fresh, null, 'helm'), {
+		ok: false,
+		reason: 'untracked',
+		detail: DOCK_SOURCE_TEXT.helm.untracked,
+	})
+	// Known busy still refuses as working; known idle with the same tail still passes.
+	const working = turnStillWaiting(turn, session(idle({ busy: true })), null)
+	assert.equal((working as { reason?: string }).reason, 'busy')
+	const tail = parseOkenaClaudeTranscriptPage(page([assistant('a1')], 400, true))
+	assert.ok(tail.ok)
+	assert.deepEqual(turnStillWaiting(turn, session(idle({ busy: false })), tail.value), { ok: true })
+})
+
+test('"check it again": a busy/untracked refusal holds while the agent is not seen idle, then clears; a resend goes', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	const refusedAs = (reason: 'busy' | 'untracked' | 'changed') =>
+		drive(
+			[
+				[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+				[
+					T0 + 20_500,
+					{ type: 'act.result', itemId: turn.id, outcome: { status: 'refused', reason, detail: 'refused' } },
+				],
+			],
+			open,
+		).state
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = refusedAs(reason)
+		assert.equal(only(refused, 'turn').receipt?.reason, reason)
+		// Okena still cannot say (the restarted daemon has not heard from the pane): the refusal holds.
+		const unknown = drive([[T0 + 21_000, poll(forgotten())]], refused).state
+		const held = only(unknown, 'turn')
+		assert.equal(held.state, 'open')
+		assert.equal(receiptView(held)?.text, 'refused: refused')
+		// Seen idle with the same turn: it reads as the open turn again, and a resend is taken.
+		const seen = drive([[T0 + 22_000, poll(idle({ busy: false }))]], unknown).state
+		const cleared = only(seen, 'turn')
+		assert.equal(cleared.state, 'open')
+		assert.equal(cleared.receipt, undefined)
+		assert.equal(receiptView(cleared), null)
+		const again = drive([[T0 + 23_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }]], seen).state
+		assert.equal(only(again, 'turn').state, 'sending')
+	}
+	// Any other refusal is not about the agent being free: it stays until the item moves on.
+	const changed = drive([[T0 + 22_000, poll(idle({ busy: false }))]], refusedAs('changed')).state
+	assert.equal(only(changed, 'turn').receipt?.reason, 'changed')
+})
+
+test('reply CAS: idle with background work (subagent, shell, hub task count) is free; any dialog or busy is not', () => {
+	const turn = only(turnOpen().state, 'turn')
+	const parsed = parseOkenaClaudeTranscriptPage(page([assistant('a1')], 400, true))
+	assert.ok(parsed.ok)
+	const tail = parsed.value
+	const reason = (check: unknown) => (check as { reason?: string }).reason
+	const subagent = { agent_id: 'sub-1', agent_type: 'general-purpose' }
+	// Main agent idle while a background subagent / shell runs: Claude takes the prompt, so the dock sends.
+	for (const free of [
+		idle({ busy: false, running_subagents: [subagent] }),
+		idle({ busy: false, background_tasks: 2, background_shells: 1 }),
+	]) {
+		assert.deepEqual(turnStillWaiting(turn, session(free), tail), { ok: true })
+		assert.deepEqual(turnStillWaiting(turn, session(free), tail, 'helm'), { ok: true })
+	}
+	// A background subagent's permission dialog would swallow the typed text: refused, never typed.
+	assert.equal(
+		reason(
+			turnStillWaiting(turn, session(idle({ busy: false, running_subagents: [subagent], dialogs: [DIALOG] })), tail),
+		),
+		'busy',
+	)
+	// Main agent mid-turn (a tool call running) with or without a subagent: working, Okena or Helm.
+	for (const source of ['okena', 'helm'] as const) {
+		assert.equal(reason(turnStillWaiting(turn, session(idle({ busy: true })), tail, source)), 'busy')
+		assert.equal(
+			reason(turnStillWaiting(turn, session(idle({ busy: true, running_subagents: [subagent] })), tail, source)),
+			'busy',
+		)
+		assert.equal(reason(turnStillWaiting(turn, session(forgotten()), tail, source)), 'untracked')
+	}
+})
+
+test('"check it again" only on data newer than the refusal: a poll read before it never clears it', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = drive(
+			[
+				[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+				[
+					T0 + 20_500,
+					{ type: 'act.result', itemId: turn.id, outcome: { status: 'refused', reason, detail: 'refused' } },
+				],
+			],
+			open,
+		).state
+		// A tick in flight while Jakub sent: its reads (idle) began before the check that refused.
+		const stale = drive([[T0 + 21_000, { ...poll(idle({ busy: false })), readFrom: T0 + 19_900 }]], refused).state
+		assert.equal(only(stale, 'turn').receipt?.reason, reason)
+		assert.equal(receiptView(only(stale, 'turn'))?.text, 'refused: refused')
+		// The next tick read after the refusal: it no longer holds.
+		const fresh = drive([[T0 + 22_000, { ...poll(idle({ busy: false })), readFrom: T0 + 21_500 }]], stale).state
+		assert.equal(only(fresh, 'turn').receipt, undefined)
+		assert.equal(only(fresh, 'turn').state, 'open')
+	}
+})
+
+test('agent detail: a busy/untracked reply refusal clears once the agent is seen idle (not on older reads)', () => {
+	// The turn acked: the agent owes Jakub nothing, replies go from its detail (the session's reply).
+	const { state: open } = turnOpen()
+	const acked = drive([[T0 + 15_000, { type: 'ack', itemId: only(open, 'turn').id }]], open).state
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = drive(
+			[
+				[T0 + 20_000, { type: 'prompt.sending', session: KEY, assistantUuid: 'a1' }],
+				[T0 + 20_500, { type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason, detail: 'no' } }],
+			],
+			acked,
+		).state
+		assert.equal(refused.sessions[KEY]?.session.reply?.reason, reason)
+		// Not seen idle (busy, or Okena unable to say), or read before the refusal: it holds.
+		const held = drive(
+			[
+				[T0 + 21_000, poll(idle({ busy: true }))],
+				[T0 + 22_000, poll(forgotten())],
+				[T0 + 23_000, { ...poll(idle({ busy: false })), readFrom: T0 + 20_100 }],
+			],
+			refused,
+		).state
+		assert.equal(held.sessions[KEY]?.session.reply?.reason, reason)
+		const cleared = drive([[T0 + 24_000, { ...poll(idle({ busy: false })), readFrom: T0 + 23_500 }]], held).state
+		assert.equal(cleared.sessions[KEY]?.session.reply, undefined)
+	}
+	// A reply refused for another reason (the agent said something new) is not about being free: it stays.
+	const changed = drive(
+		[
+			[T0 + 20_000, { type: 'prompt.sending', session: KEY, assistantUuid: 'a1' }],
+			[
+				T0 + 20_500,
+				{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+			],
+			[T0 + 21_000, poll(idle({ busy: false }))],
+		],
+		acked,
+	).state
+	assert.equal(changed.sessions[KEY]?.session.reply?.reason, 'changed')
+})
+
 test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {
 	// Live: native Claude Code runs as its version (`2.1.314`), so Okena's foreground probe misses it and
 	// `POST …/prompt` answers 409 while the channel is off. Nothing was typed; the receipt must say what to do.
-	const noSession = Object.assign(
-		new Error('Okena POST /v1/claude/terminals/a6714847/prompt failed (409): No Claude session detected in this pane'),
-		{ status: 409 },
+	const noSession = new OkenaHttpError(
+		'Okena POST /v1/claude/terminals/a6714847/prompt failed (409): No Claude session detected in this pane',
+		409,
+		'No Claude session detected in this pane',
 	)
 	const outcome = dockPostFailure(noSession, false)
 	assert.equal(outcome.status, 'failed')
@@ -662,26 +889,39 @@ test('a reply Okena cannot type (409, no Claude detected in the pane) says to re
 	assert.equal(detail, 'Okena refused the reply (409): No Claude session detected in this pane. Reply in the terminal.')
 	assert.doesNotMatch(detail, /\/v1\/claude\/terminals/)
 	// Busy (hooks detached) is also Okena saying "not now", not a transport fault.
-	const busy = Object.assign(
-		new Error(
-			"Okena POST /v1/claude/terminals/t/prompt failed (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
-		),
-		{ status: 409 },
+	const busy = new OkenaHttpError(
+		"Okena POST /v1/claude/terminals/t/prompt failed (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
+		409,
+		"Claude is busy and Okena's hooks are not attached; try again when it finishes",
 	)
 	assert.deepEqual(dockPostFailure(busy, false), {
 		status: 'failed',
 		detail:
 			"Okena refused the reply (409): Claude is busy and Okena's hooks are not attached; try again when it finishes",
 	})
+	// Helm's hub carries its reason the same way (`status` + `reason`); whitespace collapses like the detail.
+	const hubBusy = Object.assign(new Error('Helm Claude hub (409): A reply is  still being typed.\n'), {
+		status: 409,
+		reason: 'A reply is  still being typed.\n',
+	})
+	assert.deepEqual(dockPostFailure(hubBusy, false, 'Helm terminals'), {
+		status: 'failed',
+		detail: 'Helm terminals refused the reply (409): A reply is still being typed.',
+	})
+	// No reason on the error: the whole detail stands in for it.
+	assert.deepEqual(dockPostFailure(Object.assign(new Error('conflict'), { status: 409 }), false), {
+		status: 'failed',
+		detail: 'Okena refused the reply (409): conflict',
+	})
 	// Dialog POSTs keep their verbatim detail.
-	const dialogConflict = Object.assign(new Error('Okena POST /x failed (409): nope'), { status: 409 })
+	const dialogConflict = new OkenaHttpError('Okena POST /x failed (409): nope', 409, 'nope')
 	assert.deepEqual(dockPostFailure(dialogConflict, true), {
 		status: 'failed',
 		detail: 'Okena POST /x failed (409): nope',
 	})
 })
 
-test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed; else verbatim failure', () => {
+test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed; else verbatim failure', async () => {
 	const notFound = Object.assign(new Error('Okena POST /x failed (404): dialog is no longer open'), { status: 404 })
 	assert.deepEqual(dockPostFailure(notFound, true), {
 		status: 'refused',
@@ -698,7 +938,14 @@ test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed
 	})
 	const fetchRefused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } })
 	assert.equal(dockPostFailure(fetchRefused, true).status, 'failed')
-	assert.equal(dockPostFailure(new Error('Okena not configured'), true).status, 'failed')
+	// No Okena profile/credentials: the client throws before sending anything (coded, not matched by its words).
+	const unconfigured = await new OkenaClient('/nonexistent/okena-config').postClaudePrompt('t', 'hi').then(
+		() => null,
+		(error: unknown) => error,
+	)
+	assert.equal((unconfigured as { code?: unknown }).code, OKENA_NOT_CONFIGURED)
+	assert.deepEqual(dockPostFailure(unconfigured, true), { status: 'failed', detail: 'Okena not configured' })
+	assert.equal(dockPostFailure(new Error('Okena not configured'), true).status, 'unconfirmed')
 	assert.equal(dockPostFailure(Object.assign(new Error('failed (500): x'), { status: 500 }), true).status, 'failed')
 	// After the request went out, anything without an Okena status may have landed: unconfirmed, never "failed".
 	for (const error of [
@@ -711,8 +958,8 @@ test('POST failures: 404 on a dialog = answered elsewhere; timeout = unconfirmed
 })
 
 test('act requests are strictly validated (IPC input is untrusted)', () => {
-	assert.ok(parseAgentDockActRequest({ itemId: 3, rev: 1, action: ANSWER }).ok)
-	assert.ok(parseAgentDockActRequest({ itemId: 3, action: { type: 'prompt', text: 'ok', confirmed: true } }).ok)
+	assert.ok(parseAgentDockActRequest({ itemId: 3, action: ANSWER }).ok)
+	assert.ok(parseAgentDockActRequest({ itemId: 3, action: { type: 'prompt', text: 'deploy it' } }).ok)
 	for (const bad of [
 		null,
 		{ itemId: 0, action: ANSWER },
@@ -722,6 +969,11 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 		{ itemId: 3, action: { type: 'shell', command: 'rm' } },
 		{ itemId: 3, action: { type: 'prompt', text: 'x'.repeat(20_000) } },
 		{ itemId: 3, action: ANSWER, sneaky: true },
+		{ itemId: 3, rev: 1, action: ANSWER },
+		// No second confirmation exists: a leftover `confirmed` is an unknown key.
+		{ itemId: 3, action: { type: 'prompt', text: 'deploy it', confirmed: true } },
+		{ itemId: 3, action: { type: 'deny', message: 'push it', confirmed: true } },
+		{ itemId: 3, action: { ...ANSWER, confirmed: true } },
 	])
 		assert.equal(parseAgentDockActRequest(bad).ok, false, JSON.stringify(bad)?.slice(0, 80))
 })
@@ -729,7 +981,7 @@ test('act requests are strictly validated (IPC input is untrusted)', () => {
 test('receipt words: Sending… / ✓ answered / allowed / approved / denied / replied', () => {
 	const item = only(askOpen().state)
 	const sending = reduce(askOpen().state, { type: 'act.sending', itemId: item.id, action: 'answer' }, T0 + 1).state
-	assert.deepEqual(receiptView(only(sending)), { text: 'Sending…', tone: 'neutral', busy: true })
+	assert.deepEqual(receiptView(only(sending)), { text: 'Sending…', tone: 'neutral' })
 	const words = (tool: string, action: 'allow' | 'deny' | 'prompt', always = false) =>
 		receiptView({
 			...item,

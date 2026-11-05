@@ -1,4 +1,4 @@
-// Agent dock acts (slice 2): pure validation, Okena request bodies and the
+// Agent dock acts: pure validation, Okena request bodies and the
 // compare-and-set checks main runs on a FRESH Okena read before every effect.
 // No IO here; okena-claude-source.ts performs the reads/POSTs, reduce.ts owns
 // the item lifecycle. Answer text only passes through: it is never returned in
@@ -14,8 +14,8 @@
 //     → 200 {"delivery":"channel"|"pty"|"queued"} | 400 empty/too long | 409 busy/no session
 // (the same bodies `okena claude answer` / `okena claude prompt` send).
 
+import { DOCK_SOURCE_TEXT, type DockSourceId } from '../../../src/agent-dock/dock-vocabulary'
 import {
-	DOCK_RISKY_PROMPT,
 	type DockActOutcome,
 	type DockAction,
 	type DockAskFact,
@@ -25,10 +25,15 @@ import {
 	type OkenaClaudeEntry,
 	type OkenaClaudeSession,
 	type OkenaClaudeTranscriptPage,
-	PERMISSION_SUGGESTIONS_MAX,
 	stableJson,
 } from './model'
-import { alwaysAllowLabels, permissionReview, planReview } from './review'
+import {
+	PERMISSION_SUGGESTIONS_MAX,
+	alwaysAllowLabels,
+	alwaysAllowRulesOnly,
+	permissionReview,
+	planReview,
+} from './review'
 
 /** `ApiClaudeDecision` as Okena deserializes it (no other fields: deny_unknown_fields). */
 export type OkenaClaudeDecision =
@@ -60,8 +65,9 @@ export const REFUSAL_TEXT: Record<DockRefusalReason, string> = {
 	not_open: 'not open for an answer right now',
 	unknown_item: 'this item is gone',
 	invalid: 'the answer is incomplete',
-	source_down: 'Okena is unreachable; answer in the terminal',
+	source_down: DOCK_SOURCE_TEXT.okena.sourceDown,
 	in_flight: 'another answer is still being sent',
+	untracked: "can't tell whether the agent is free; reply in its terminal",
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -89,26 +95,25 @@ function rawQuestions(input: unknown): RawQuestion[] | null {
 
 const clean = (text: string | undefined): string => (text ?? '').trim()
 
-const riskyDetail = (what: string): string => `This ${what} mentions deploy/prod/secret/push/merge; confirm it first.`
-
 /**
  * Validates an action against the item's fact and builds the Okena body.
- * Pure; uses only the item's own (verbatim) fact. Refusals never echo answer text.
+ * Pure; uses only the item's own (verbatim) fact and the `source` that will answer it.
+ * Refusals never echo answer text.
  */
 export function dockActBody(
 	item: DockItem,
 	action: DockAction,
+	source: DockSourceId = 'okena',
 ): { ok: true; body: DockActRequestBody } | { ok: false; reason: DockRefusalReason; detail: string } {
 	const fact = item.fact
 	if (fact.kind === 'turn') {
 		if (action.type !== 'prompt') return refuse('invalid', 'A finished turn takes a reply.')
-		const text = action.text.replace(/\s+$/u, '')
-		if (!text.trim()) return refuse('invalid', 'The reply is empty.')
-		if (DOCK_RISKY_PROMPT.test(text) && action.confirmed !== true) return refuse('invalid', riskyDetail('reply'))
+		const text = promptText(action.text)
+		if (text === null) return refuse('invalid', 'The reply is empty.')
 		return { ok: true, body: { kind: 'prompt', body: { text } } }
 	}
 	if (action.type === 'prompt') return refuse('invalid', 'An open dialog takes an answer, not a reply.')
-	const decision = askDecision(fact, action)
+	const decision = askDecision(fact, action, source)
 	if (!decision.ok) return decision
 	return { ok: true, body: { kind: 'decision', dialogId: fact.dialogId, body: decision.body } }
 }
@@ -116,6 +121,7 @@ export function dockActBody(
 function askDecision(
 	fact: DockAskFact,
 	action: Exclude<DockAction, { type: 'prompt' }>,
+	source: DockSourceId,
 ): { ok: true; body: OkenaClaudeDecision } | { ok: false; reason: DockRefusalReason; detail: string } {
 	if (fact.tool === 'AskUserQuestion') {
 		if (action.type !== 'answer') return refuse('invalid', 'This question takes answers.')
@@ -124,12 +130,10 @@ function askDecision(
 		if (action.picks.length !== questions.length) return refuse('invalid', 'Answer every question first.')
 		// A Map, then fromEntries: a question literally named "__proto__" stays an own key.
 		const answers = new Map<string, string>()
-		let riskyOther = false
 		for (const [index, question] of questions.entries()) {
 			const pick = action.picks[index]
 			if (!pick) return refuse('invalid', 'Answer every question first.')
 			const other = clean(pick.other)
-			if (other && DOCK_RISKY_PROMPT.test(other)) riskyOther = true
 			const options = [...new Set(pick.options)]
 			if (options.length === 0 && !other) return refuse('invalid', `Answer question ${index + 1} first.`)
 			if (!question.multiSelect && options.length + (other ? 1 : 0) > 1)
@@ -146,22 +150,22 @@ function askDecision(
 			// Okena: "Multi-select answers are comma-separated labels".
 			answers.set(question.question, labels.join(', '))
 		}
-		if (riskyOther && action.confirmed !== true) return refuse('invalid', riskyDetail('answer'))
 		return { ok: true, body: { decision: 'answer', answers: Object.fromEntries(answers) } }
 	}
 	if (action.type === 'answer') return refuse('invalid', 'This dialog takes allow or deny.')
 	if (action.type === 'deny') {
 		const message = clean(action.message)
-		if (message && DOCK_RISKY_PROMPT.test(message) && action.confirmed !== true)
-			return refuse('invalid', riskyDetail('message'))
 		return { ok: true, body: message ? { decision: 'deny', message } : { decision: 'deny' } }
 	}
 	if (action.always === true) {
 		if (fact.tool === 'ExitPlanMode') return refuse('invalid', 'A plan is approved once.')
-		// Okena applies EVERY suggestion: refuse unless the dock could show each one verbatim.
-		const labels = alwaysAllowLabels(fact.suggestions, fact.suggestionsTruncated === true)
+		// The source applies EVERY suggestion: refuse unless the dock could show each one verbatim
+		// (and, for Helm's hub, unless each is a rule: it cannot apply addDirectories).
+		const labels = alwaysAllowLabels(fact.suggestions, fact.suggestionsTruncated === true, {
+			rulesOnly: alwaysAllowRulesOnly(source),
+		})
 		if (labels === null)
-			return refuse('invalid', 'Claude suggested rules the dock cannot show; answer in the terminal.')
+			return refuse('invalid', 'Claude suggested rules the dock cannot always allow; answer in the terminal.')
 		if (labels.length === 0) return refuse('invalid', 'Claude suggested no rule to always allow.')
 	}
 	// Okena allows with the full original tool_input: refuse unless the dock showed all of it.
@@ -200,15 +204,33 @@ export function turnStillWaiting(
 	item: DockItem,
 	fresh: OkenaClaudeSession,
 	page: OkenaClaudeTranscriptPage | null,
+	source: DockSourceId = 'okena',
 ): DockCheck {
 	if (item.fact.kind !== 'turn') return refuse('invalid', 'Not a turn.')
 	const fact: DockTurnFact = item.fact
-	if (fact.sessionId && fresh.session_id && fact.sessionId !== fresh.session_id)
+	return sessionStillIdle({ sessionId: fact.sessionId, assistantUuid: fact.assistantUuid }, fresh, page, source)
+}
+
+/**
+ * CAS for a reply to an agent (a turn's, or one from the agent detail with no item): the same
+ * Claude session Jakub saw, idle with no dialog, and the transcript tail still ends at the
+ * message he read (`assistantUuid`; with none, at no assistant message) with no user entry after it.
+ * Busy unknown (`busy` missing: the source lost the pane's state, as Okena does for an idle agent
+ * across a daemon restart) is never sent, and refused as `untracked`, not as "working again".
+ */
+export function sessionStillIdle(
+	expect: { sessionId?: string; assistantUuid?: string },
+	fresh: OkenaClaudeSession,
+	page: OkenaClaudeTranscriptPage | null,
+	source: DockSourceId = 'okena',
+): DockCheck {
+	if (expect.sessionId && fresh.session_id && expect.sessionId !== fresh.session_id)
 		return refuse('gone', 'A new Claude session started in this pane.')
 	if (fresh.dialogs.length > 0) return refuse('busy', 'The agent opened a dialog; answer that first.')
-	if (fresh.busy !== false) return refuse('busy', REFUSAL_TEXT.busy)
+	if (fresh.busy === true) return refuse('busy', REFUSAL_TEXT.busy)
+	if (fresh.busy !== false) return refuse('untracked', DOCK_SOURCE_TEXT[source].untracked)
 	if (!page) return refuse('changed', 'The transcript could not be read; check the terminal.')
-	if (fact.sessionId && page.session_id && page.session_id !== fact.sessionId)
+	if (expect.sessionId && page.session_id && page.session_id !== expect.sessionId)
 		return refuse('gone', 'A new Claude session started in this pane.')
 	let last: OkenaClaudeEntry | undefined
 	let userAfter = false
@@ -218,14 +240,26 @@ export function turnStillWaiting(
 			userAfter = false
 		} else if (entry.kind === 'user') userAfter = true
 	}
-	if (!last) return refuse('changed', 'The turn is no longer in the transcript tail; check the terminal.')
-	if (last.uuid !== fact.assistantUuid) return refuse('changed', 'The agent said something new; check it again.')
+	if (expect.assistantUuid === undefined) {
+		if (last) return refuse('changed', 'The agent said something new; check it again.')
+	} else {
+		if (!last) return refuse('changed', 'The turn is no longer in the transcript tail; check the terminal.')
+		if (last.uuid !== expect.assistantUuid) return refuse('changed', 'The agent said something new; check it again.')
+	}
 	if (userAfter) return refuse('gone', 'Someone already replied in the terminal.')
 	return { ok: true }
 }
 
+/** A reply's text as it is sent: trailing whitespace dropped; null when nothing is left. */
+export function promptText(text: string): string | null {
+	const trimmed = text.replace(/\s+$/u, '')
+	return trimmed.trim() ? trimmed : null
+}
+
 /** Errors that prove the request never reached Okena (nothing to confirm). */
 const NOT_SENT_CODES = new Set([
+	/** OkenaClient OKENA_NOT_CONFIGURED: no profile/credentials, nothing was sent. */
+	'OKENA_NOT_CONFIGURED',
 	'ECONNREFUSED',
 	'ENOENT',
 	'ENOTDIR',
@@ -249,28 +283,33 @@ function errorCode(error: unknown): string | undefined {
  * sent nothing. Every other transport error (timeout, reset, hang-up, a bad body
  * after a 200) may have landed: unconfirmed, so the next poll can confirm it.
  */
-export function dockPostFailure(error: unknown, dialog: boolean, source = 'Okena'): DockActOutcome {
+export function dockPostFailure(
+	error: unknown,
+	dialog: boolean,
+	source = DOCK_SOURCE_TEXT.okena.label,
+): DockActOutcome {
 	const detail = errorDetail(error)
 	const status = (error as { status?: unknown } | null)?.status
 	if (typeof status === 'number') {
 		if (dialog && status === 404) return { status: 'refused', reason: 'gone', detail }
-		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(detail, source) }
+		if (!dialog && status === 409) return { status: 'failed', detail: promptConflictDetail(error, detail, source) }
 		return { status: 'failed', detail }
 	}
 	const code = errorCode(error)
-	if ((code !== undefined && NOT_SENT_CODES.has(code)) || /^Okena not configured/.test(detail))
-		return { status: 'failed', detail }
+	if (code !== undefined && NOT_SENT_CODES.has(code)) return { status: 'failed', detail }
 	return { status: 'unconfirmed', detail: `No answer from ${source}: ${detail}` }
 }
 
 /**
  * A 409 on `POST …/prompt` is Okena refusing to type (nothing was sent). Drop the
- * route (terminal id noise) and keep Okena's reason verbatim. "No Claude session detected"
+ * route (terminal id noise) and keep Okena's reason verbatim: both transports put it
+ * on the error as `reason` (OkenaHttpError, Helm hub). "No Claude session detected"
  * also happens when Okena's foreground probe misses a running native `claude`
  * (its process name is the version, e.g. `2.1.314`), so say where to reply instead.
  */
-function promptConflictDetail(detail: string, source: string): string {
-	const reason = /(?:failed |Helm Claude hub )\(409\): (.*)$/.exec(detail)?.[1]?.trim() || detail
+function promptConflictDetail(error: unknown, detail: string, source: string): string {
+	const own = (error as { reason?: unknown } | null)?.reason
+	const reason = (typeof own === 'string' ? own.replace(/\s+/g, ' ').trim() : '') || detail
 	if (!/No Claude session detected/i.test(reason)) return `${source} refused the reply (409): ${reason}`
 	return `${source} refused the reply (409): ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Reply in the terminal.`
 }
