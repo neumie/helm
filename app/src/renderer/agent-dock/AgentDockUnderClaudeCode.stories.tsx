@@ -66,7 +66,7 @@ export const ClaudeCodeSession: Story = {}
  * and ⌘⇧J. No summary row; clicking an entry opens it.
  */
 export const RealCaseCollapsed: Story = { args: { scenario: 'real-case', state: 'collapsed' } }
-/** The question pane: the header names the kind and the question (`IČO`), ‹ 1/3 ›; the row's fill says whose. */
+/** The question pane: the header names the kind and the question (`IČO`), then whose, ‹ 1/3 ›. */
 export const RealCaseQuestion: Story = { args: { scenario: 'real-case', state: 'question' } }
 export const RealCasePermission: Story = { args: { scenario: 'real-case', state: 'permission' } }
 /** The turn pane: the task title is the header's tooltip, never in the queue. */

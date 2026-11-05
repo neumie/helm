@@ -1939,7 +1939,7 @@ body.dragging {
 }
 
 /* Header: a plain row on the surface — kind glyph (the one colored mark) and kind, then the question's
- * context dim (the queue's selected fill says whose); ‹ 1/3 › and esc dim on the right. No rule. */
+ * context dim; an item's then whose and its task title (below); ‹ 1/3 › and esc dim on the right. No rule. */
 .agent-dock-title {
 	flex: none;
 	display: flex;
@@ -1978,6 +1978,12 @@ body.dragging {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	color: var(--dock-dim);
+}
+
+/* A question's short header keeps its size up to a cap; whose and the task title give way before it. */
+.agent-dock-title-context {
+	flex: none;
+	max-width: 20ch;
 }
 
 .agent-dock-title-end {
@@ -2087,6 +2093,65 @@ body.dragging {
 
 .agent-dock-pane:not(:focus-within) .agent-dock-title-hint {
 	visibility: hidden;
+}
+
+/* The item header's whose (design: Jakub 2026-11-05): after the kind and the question's context, one flat
+ * row of parts on the header's 8px gap — `· Psyon · fakturoid-digisign-errors — <task title>`: the project
+ * dim, the agent's short name --text-1, the `·` `—` separators dim, the task title dim. Each ellipsizes
+ * with its full text as its tooltip; the kind and the where link never shrink. */
+.agent-dock-title-text > .agent-dock-reveal-where {
+	flex: none;
+}
+
+.agent-dock-title-sep {
+	flex: none;
+	color: var(--dock-dim);
+}
+
+.agent-dock-title-who-project,
+.agent-dock-title-who-name,
+.agent-dock-title-task-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The project keeps its short size up to a cap, like the question's context. */
+.agent-dock-title-who-project {
+	flex: none;
+	max-width: 20ch;
+	color: var(--dock-dim);
+}
+
+/* The task title gives way first and the name only after it is gone: their weights are a million apart
+ * so no sub-pixel share of the shrink reaches the name (any share would ellipsize it). */
+.agent-dock-title-who-name {
+	flex: 0 1 auto;
+	min-width: 6ch;
+	color: var(--text-1);
+}
+
+.agent-dock-title-task {
+	flex: 0 1000000 auto;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--dock-dim);
+}
+
+/* Too little room for a readable title (`useTaskTitleRoom`), and always under a 640px pane: none, never a
+ * stub; the tooltips keep it. */
+.agent-dock-title-task[data-dropped] {
+	display: none;
+}
+
+@container agent-dock-pane (max-width: 640px) {
+	.agent-dock-title-task {
+		display: none;
+	}
 }
 
 /* Agents pane header end: each source's health (`Okena ● · Helm terminals ●`, dim names, the dot in

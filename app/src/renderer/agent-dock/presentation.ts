@@ -387,7 +387,7 @@ export function agentNames(sessions: readonly DockSession[]): Map<string, string
 export interface AgentWho {
 	/** The short name (`company-create-save-firm #2`): queue, Agents table, labels, announcements. */
 	name: string
-	/** Okena's full pane name (often the task title); a tooltip and the pane's dim context line, never the queue. '' when it adds nothing. */
+	/** Okena's full pane name (often the task title); a tooltip and the item header's dim task title, never the queue. '' when it adds nothing. */
 	title: string
 	/** The repository (`agentRepo`: `JVS` for a JVS worktree, never the worktree's branch-named project). */
 	project: string
