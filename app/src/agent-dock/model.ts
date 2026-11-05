@@ -477,9 +477,11 @@ export type AgentDockMessageResult =
 
 /**
  * "Show terminal" from the dock (agent-dock:reveal, Okena panes only; Helm terminals are shown by the
- * window itself). `activated`: Helm also brought the Okena app to the front (best effort, macOS).
+ * window itself). `activated`: Helm also brought the Okena app to the front (best effort, macOS);
+ * `note`: when it did not, what to say instead of the plain "could not bring Okena to the front"
+ * (how to allow a blocked permission, once per run).
  */
-export type AgentDockRevealResult = { ok: true; activated: boolean } | { ok: false; detail: string }
+export type AgentDockRevealResult = { ok: true; activated: boolean; note?: string } | { ok: false; detail: string }
 
 /** Deterministic JSON (sorted object keys) for comparing Okena dialog inputs across reads. */
 export function stableJson(value: unknown, depth = 0): string {

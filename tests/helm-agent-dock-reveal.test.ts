@@ -1,7 +1,7 @@
 // Agent dock "Show terminal": the reveal target a pane offers (Okena pane vs Helm terminal, nothing
 // to show), main's Okena half (fresh layout read → `focus_terminal` → app raise; exact request bodies,
-// never terminal input), its IPC channel behind the dock gate, and the app activator. Never talks to
-// a live Okena or runs osascript.
+// never terminal input) and its IPC channel behind the dock gate (the app raise itself:
+// okena-activate.test.ts). Never talks to a live Okena or runs osascript.
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
@@ -11,7 +11,6 @@ import test from 'node:test'
 import dockMainModule from '../app/src/agent-dock-main.ts'
 import revealModule from '../app/src/agent-dock/reveal.ts'
 import runtimeModule from '../app/src/claude-remote/runtime.ts'
-import { OKENA_ACTIVATE_SCRIPT, activateOkenaApp } from '../src/extensions/okena/activate.js'
 import { OkenaClient } from '../src/extensions/okena/client.js'
 
 type RevealModule = typeof import('../app/src/agent-dock/reveal.ts')
@@ -189,6 +188,23 @@ test('reveal (main): the app could not be raised — still focused, said so', as
 			activate: () => Promise.reject(new Error('osascript')),
 		}),
 		{ ok: true, activated: false },
+	)
+	// A blocked permission: the raiser's fix passes through as the footer's words (raised: no note).
+	const { client: blocked } = fakeOkena()
+	assert.deepEqual(
+		await revealOkenaTerminal('default:term-1', {
+			client: blocked,
+			activate: async () => ({ raised: false, note: REVEAL_TEXT.needsAutomation }),
+		}),
+		{ ok: true, activated: false, note: REVEAL_TEXT.needsAutomation },
+	)
+	const { client: raised } = fakeOkena()
+	assert.deepEqual(
+		await revealOkenaTerminal('default:term-1', {
+			client: raised,
+			activate: async () => ({ raised: true, note: 'x' }),
+		}),
+		{ ok: true, activated: true },
 	)
 })
 
@@ -431,38 +447,4 @@ test('agent-dock:reveal IPC: off in this run, it says so after the gate', async 
 		dock.stop()
 		rmSync(root, { recursive: true, force: true })
 	}
-})
-
-test('activateOkenaApp: System Events raises the process named okena (macOS only, bounded, never throws)', async () => {
-	const runs: Array<{ file: string; args: readonly string[]; timeout: number }> = []
-	assert.equal(
-		await activateOkenaApp({
-			platform: 'darwin',
-			timeoutMs: 2_000,
-			run: async (file, args, opts) => {
-				runs.push({ file, args, timeout: opts.timeout })
-			},
-		}),
-		true,
-	)
-	assert.deepEqual(runs, [{ file: 'osascript', args: ['-e', OKENA_ACTIVATE_SCRIPT], timeout: 2_000 }])
-	assert.match(OKENA_ACTIVATE_SCRIPT, /set frontmost of first process whose name is "okena" to true/)
-	assert.equal(
-		await activateOkenaApp({
-			platform: 'darwin',
-			run: async () => {
-				throw new Error('not authorized to send Apple events to System Events')
-			},
-		}),
-		false,
-	)
-	assert.equal(
-		await activateOkenaApp({
-			platform: 'linux',
-			run: async () => {
-				throw new Error('must not run')
-			},
-		}),
-		false,
-	)
 })

@@ -29,6 +29,7 @@ import {
 	createAgentDockState,
 	reduce,
 } from '../../agent-dock/reduce'
+import { REVEAL_TEXT } from '../../agent-dock/reveal'
 import type { AgentDockApi } from '../../shared'
 
 export type AgentDockScenario =
@@ -1608,14 +1609,16 @@ function arrivalBody(kind: AgentDockArrivalKind, pane: Pane, n: number, at: numb
 export type AgentDockActMode = 'confirm' | 'unconfirmed' | 'refused' | 'error'
 
 /**
- * What the next "Show in Okena" does: focus and raise Okena (default), focus without raising it,
- * find the terminal gone, or find Okena unreachable (main's words, `reveal.ts` REVEAL_TEXT).
+ * What the next "Show in Okena" does: focus and raise Okena (default), focus without raising it (plainly,
+ * or blocked by Automation with main's once-per-run fix), find the terminal gone, or find Okena
+ * unreachable (main's words, `reveal.ts` REVEAL_TEXT).
  */
-export type AgentDockRevealMode = 'shown' | 'not-raised' | 'gone' | 'unreachable'
+export type AgentDockRevealMode = 'shown' | 'not-raised' | 'needs-automation' | 'gone' | 'unreachable'
 
 const REVEAL_MODE_RESULT: Record<AgentDockRevealMode, AgentDockRevealResult> = {
 	shown: { ok: true, activated: true },
 	'not-raised': { ok: true, activated: false },
+	'needs-automation': { ok: true, activated: false, note: REVEAL_TEXT.needsAutomation },
 	gone: { ok: false, detail: "The agent's terminal is no longer open in Okena." },
 	unreachable: { ok: false, detail: 'Okena is unreachable: connect ECONNREFUSED 127.0.0.1:19100' },
 }

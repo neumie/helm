@@ -31,7 +31,7 @@ import type {
 	DockItem,
 	DockSession,
 } from '../../agent-dock/model'
-import { type DockRevealTarget, dockRevealTarget } from '../../agent-dock/reveal'
+import { type DockRevealTarget, REVEAL_TEXT, dockRevealTarget } from '../../agent-dock/reveal'
 import { ItemDetail } from './AgentDockDetail'
 import { type AgentDockTarget, Queue } from './AgentDockQueue'
 import { AgentPanel, agentDraftKey } from './AgentPanel'
@@ -165,9 +165,6 @@ interface PaneDrag {
 
 /** How long a reveal's footer note stays (it never blocks anything; the next reveal replaces it). */
 export const REVEAL_NOTE_MS = 8_000
-
-/** Okena focused the pane but Helm could not bring the app forward (osascript refused or timed out). */
-const REVEAL_NOT_RAISED = 'Focused in Okena; Helm could not bring Okena to the front.'
 
 /** ⌥↑ / ⌥↓ step when the terminal's row height is not known. */
 const NUDGE_FALLBACK = 19
@@ -944,7 +941,8 @@ export function AgentDock({
 			)
 			.then(result => {
 				setRevealing(null)
-				const text = !result.ok ? result.detail : result.activated ? null : REVEAL_NOT_RAISED
+				// Nothing here takes the keys back: once Okena is in front, they stay there.
+				const text = !result.ok ? result.detail : result.activated ? null : (result.note ?? REVEAL_TEXT.notRaised)
 				if (text) setRevealNote({ session: next.session, text })
 			})
 	}
