@@ -456,11 +456,21 @@ function threadNoun(thread: SignalThread): string {
 	return thread.url?.includes('/issues/') || (!thread.branch && thread.kind === 'mention') ? 'issue' : 'PR'
 }
 
+/** GitHub owner/repo + number, only when both have GitHub's own shape: the one ref trusted outside <external>. */
+const GITHUB_REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/
+function githubRef(thread: SignalThread): { repo: string; number: number } | null {
+	if (thread.source !== 'github' || !thread.repo || !GITHUB_REPO.test(thread.repo)) return null
+	if (thread.number === null || !Number.isSafeInteger(thread.number) || thread.number <= 0) return null
+	return { repo: thread.repo, number: thread.number }
+}
+
 function readInstruction(thread: SignalThread): string {
-	if (thread.source === 'github' && thread.repo && thread.number !== null) {
+	const ref = githubRef(thread)
+	if (ref) {
 		const command = threadNoun(thread) === 'issue' ? 'gh issue view' : 'gh pr view'
-		return `Read the full thread with \`${command} ${thread.number} --repo ${thread.repo} --comments\`.`
+		return `Read the full thread with \`${command} ${ref.number} --repo ${ref.repo} --comments\`.`
 	}
+	if (thread.source === 'github') return 'Read the full thread at the url above.'
 	return 'The full message is in Mail: open the link above in Mail to read it.'
 }
 
@@ -486,7 +496,18 @@ function prompt(instruction: string, thread: SignalThread): string {
 	].join('\n')
 }
 
-const where = (thread: SignalThread): string => fenced(thread.fullRef, 200)
+/**
+ * How the instruction line names the thread. Only trusted shapes leave <external>: a validated
+ * GitHub owner/repo#number, otherwise a fixed phrase. Sender names, subjects and Sentry ids stay
+ * inside the fenced block (a crafted display name must never become part of the instruction).
+ */
+const where = (thread: SignalThread): string => {
+	const ref = githubRef(thread)
+	if (ref) return `${ref.repo}#${ref.number}`
+	if (thread.kind === 'sentry') return 'the Sentry alert below'
+	if (thread.source === 'mail') return 'the mail below'
+	return 'the thread below'
+}
 
 /** `p`: the next prompt for a running agent (prefilled, editable). */
 export function sendPrompt(thread: SignalThread): string {
@@ -504,9 +525,9 @@ export function sendPrompt(thread: SignalThread): string {
 		case 'mention':
 			return prompt(`Jakub was mentioned on ${ref}. Read it and tell him what is asked of him.`, thread)
 		case 'sentry':
-			return prompt(`Sentry alert ${fenced(thread.ref, 80)}. Find the cause and fix it with a regression test.`, thread)
+			return prompt(`Find the cause of ${ref} and fix it with a regression test.`, thread)
 		default:
-			return prompt(`A mail from ${ref} needs handling. Read it and tell Jakub what it asks for.`, thread)
+			return prompt(`Read ${ref} and tell Jakub what it asks for.`, thread)
 	}
 }
 
@@ -526,12 +547,9 @@ export function newAgentPrompt(thread: SignalThread): string {
 		case 'mention':
 			return prompt(`Jakub was mentioned on ${ref}. Do what is asked and open a PR if it needs code.`, thread)
 		case 'sentry':
-			return prompt(
-				`Sentry alert ${fenced(thread.ref, 80)}. Find the cause, fix it with a regression test and open a PR.`,
-				thread,
-			)
+			return prompt(`Find the cause of ${ref}, fix it with a regression test and open a PR.`, thread)
 		default:
-			return prompt(`A mail from ${ref} asks for a change. Make it and open a PR.`, thread)
+			return prompt(`Make the change ${ref} asks for and open a PR.`, thread)
 	}
 }
 
