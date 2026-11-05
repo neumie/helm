@@ -352,6 +352,82 @@ test('--until parsing', () => {
 	assert.throws(() => buildSetBody(new Map(), new Set(), now), /set needs/)
 })
 
+test('--until rejects impossible calendar dates and times instead of rolling them over', () => {
+	const now = new Date(2026, 10, 5, 14, 30)
+	// Date.parse alone would roll 2027-02-31 over to 3 March.
+	for (const bad of [
+		'2027-02-31T09:00',
+		'2027-02-29T09:00Z',
+		'2027-13-01T09:00',
+		'2027-00-10T09:00',
+		'2027-04-31T09:00:00Z',
+		'2027-01-10T24:00',
+		'2027-01-10T09:60',
+		'2027-01-10T09:00:60Z',
+	])
+		assert.throws(() => parseUntil(bad, now), /--until must be an ISO time/, bad)
+	assert.equal(parseUntil('2028-02-29T09:00:00Z', now), '2028-02-29T09:00:00.000Z')
+	assert.equal(parseUntil('2027-01-31T23:59+01:00', now), '2027-01-31T22:59:00.000Z')
+	const run = capture(fakeDaemon(() => json({})).fetch)
+	return runSignalCli(['set', '12', '--state', 'snoozed', '--until', '2027-02-31T09:00'], run.deps).then(code => {
+		assert.equal(code, 1)
+		assert.match(run.err[0] ?? '', /--until must be an ISO time[\s\S]*Run helm signal help\.$/)
+	})
+})
+
+// ---------------------------------------------------------------------------
+// interruption and deadlines
+// ---------------------------------------------------------------------------
+
+test('Ctrl-C aborts a hung ls/show/set/note/poll request and exits 130', async () => {
+	const commands: string[][] = [['ls'], ['show', '12'], ['set', '12', '--state', 'seen'], ['note', '12', 'x'], ['poll']]
+	for (const args of commands) {
+		const daemon = fakeDaemon((_call, init) => holdUntilAbort(init))
+		const controller = new AbortController()
+		const run = capture(daemon.fetch, { signal: controller.signal })
+		const running = runSignalCli(args, run.deps)
+		await until(() => daemon.calls.length === 1, `${args[0]} request`)
+		controller.abort()
+		assert.equal(await running, 130, args.join(' '))
+		assert.deepEqual(run.err, [], args.join(' '))
+		assert.deepEqual(run.out, [], args.join(' '))
+	}
+})
+
+test('a daemon that never answers times out non-watch commands with exit 1', async () => {
+	for (const args of [['ls'], ['poll'], ['set', '12', '--owner', 'managed']]) {
+		const daemon = fakeDaemon((_call, init) => holdUntilAbort(init))
+		const run = capture(daemon.fetch, { requestTimeoutMs: 20 })
+		assert.equal(await runSignalCli(args, run.deps), 1, args.join(' '))
+		assert.match(
+			run.err[0] ?? '',
+			/^Error: The Helm daemon at http:\/\/daemon\.test:7474 did not answer .* within 20 ms/,
+		)
+	}
+})
+
+test('watch: a stuck long poll times out, reports once, and keeps watching', async () => {
+	let polls = 0
+	const daemon = fakeDaemon((call, init) => {
+		if (!call.url.includes('/events')) return json(snapshot([], okSources, 3))
+		polls++
+		if (polls <= 2) return holdUntilAbort(init)
+		if (polls === 3) return json({ events: [event(4)], seq: 4 })
+		return holdUntilAbort(init)
+	})
+	const controller = new AbortController()
+	const run = capture(daemon.fetch, { signal: controller.signal, pollMs: 5, eventsTimeoutMs: 20 })
+	const running = runSignalCli(['watch'], run.deps)
+	await until(() => run.out.some(line => line.includes('"event"')), 'event after timeouts')
+	controller.abort()
+	assert.equal(await running, 0)
+	assert.equal(run.err.length, 1, 'the same timeout is reported once')
+	assert.match(
+		run.err[0] ?? '',
+		/^signal watch: The Helm daemon .* did not answer GET \/api\/signals\/events within 20 ms/,
+	)
+})
+
 // ---------------------------------------------------------------------------
 // watch
 // ---------------------------------------------------------------------------
@@ -410,6 +486,38 @@ test('watch: catch-up, events after the cursor, owner filter, abort exits 0', as
 	controller.abort()
 	assert.equal(await running, 0)
 	assert.deepEqual(run.err, [])
+})
+
+test('watch: the cursor follows events, and jumps to page.seq only on an empty page', async () => {
+	// The daemon's page.seq may be its GLOBAL high-water mark (seqs span profiles).
+	let polls = 0
+	const daemon = fakeDaemon((call, init) => {
+		if (!call.url.includes('/events')) return json(snapshot([], okSources, 40))
+		polls++
+		if (polls === 1) return json({ events: [event(42), event(44)], seq: 99 })
+		if (polls === 2) return json({ events: [event(50)], seq: 99 })
+		if (polls === 3) return json({ events: [], seq: 120 })
+		return holdUntilAbort(init)
+	})
+	const controller = new AbortController()
+	const run = capture(daemon.fetch, { signal: controller.signal, pollMs: 5 })
+	const running = runSignalCli(['watch'], run.deps)
+	await until(() => polls >= 4, 'fourth long poll')
+	controller.abort()
+	assert.equal(await running, 0)
+	assert.deepEqual(
+		daemon.calls.filter(call => call.url.includes('/events')).map(call => new URL(call.url).searchParams.get('after')),
+		['40', '44', '50', '120'],
+	)
+	assert.deepEqual(
+		run.out.map(line => JSON.parse(line)).map(line => [line.t, line.seq]),
+		[
+			['catchup', 40],
+			['event', 42],
+			['event', 44],
+			['event', 50],
+		],
+	)
 })
 
 test('watch: daemon offline once, retries, online again, heartbeat', async () => {

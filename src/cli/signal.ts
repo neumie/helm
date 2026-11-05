@@ -61,7 +61,8 @@ Options:
   --after SEQ        watch: start after this event seq (default: now)
   --url <baseUrl>    Daemon base URL (default: $HELM_URL or http://localhost:7474)
 
-Exit codes: 0 ok, 1 usage or daemon error.
+Exit codes: 0 ok, 1 usage or daemon error (or no answer within 15 s),
+130 interrupted.
 `
 
 export const SIGNAL_HEARTBEAT_MS = 20_000
@@ -71,6 +72,10 @@ const OFFLINE_RETRY_MS = 5_000
 const EVENTS_WAIT_SECONDS = 20
 /** An empty events page faster than this (a daemon that does not hold the poll) backs off. */
 const FAST_EMPTY_MS = 1_000
+/** A non-watch request (and every watch request beyond its long-poll wait) gives up after this. */
+const REQUEST_TIMEOUT_MS = 15_000
+/** Exit code for an interrupted command (SIGINT/SIGTERM), as shells report it. */
+const EXIT_INTERRUPTED = 130
 const CATCHUP_MAX_IDS = 200
 const SHOW_LINE_MAX = 600
 
@@ -81,8 +86,12 @@ export interface SignalCliDeps {
 	/** Tests inject a fake daemon; defaults to the global fetch. */
 	fetch?: typeof fetch
 	now?: () => Date
-	/** Stops `watch` (SIGINT/SIGTERM in production). */
+	/** Interrupts every command (SIGINT/SIGTERM in production): requests abort, exit 130 (`watch` exits 0). */
 	signal?: AbortSignal
+	/** Per-request deadline (default 15 s). */
+	requestTimeoutMs?: number
+	/** `watch` long-poll deadline (default its 20 s wait + 15 s). */
+	eventsTimeoutMs?: number
 	/** `watch`: offline retry interval (default 5 s). */
 	pollMs?: number
 }
@@ -167,8 +176,15 @@ function threadId(arg: string | undefined, action: string): number {
 }
 
 const DURATION = /^\+(\d{1,4})([mhd])$/
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/
 const MINUTE = 60_000
 const DURATION_MS = { m: MINUTE, h: 60 * MINUTE, d: 24 * 60 * MINUTE } as const
+
+/** A real calendar date and wall-clock time; `Date.parse` would roll 2026-02-31 over to March. */
+function validDateTime(year: number, month: number, day: number, hour: number, minute: number, second: number) {
+	const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+	return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth && hour <= 23 && minute <= 59 && second <= 59
+}
 
 /**
  * `--until`: an ISO time (a bare date means 09:00 local that day), `+30m`/`+2h`/`+1d`, or
@@ -187,9 +203,14 @@ export function parseUntil(value: string, now: Date): string {
 		const [year, month, day] = text.split('-').map(Number) as [number, number, number]
 		const local = new Date(year, month - 1, day, 9, 0, 0, 0)
 		if (local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day) at = local
-	} else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) {
+	} else if (DATE_TIME.test(text)) {
+		const [, year, month, day, hour, minute, second] = (DATE_TIME.exec(text) ?? []).map(Number) as number[]
 		const parsed = Date.parse(text)
-		if (Number.isFinite(parsed)) at = new Date(parsed)
+		if (
+			validDateTime(year as number, month as number, day as number, hour as number, minute as number, second || 0) &&
+			Number.isFinite(parsed)
+		)
+			at = new Date(parsed)
 	}
 	if (!at || !Number.isFinite(at.getTime()))
 		throw new UsageError(`--until must be an ISO time, +30m, +2h, +1d or tomorrow (got ${oneLine(value, 60)})`)
@@ -201,15 +222,50 @@ export function parseUntil(value: string, now: Date): string {
 // Daemon access
 // ---------------------------------------------------------------------------
 
-interface Client {
-	request<T>(method: DaemonMethod, path: string, options?: Omit<DaemonRequestOptions, 'fetch'>): Promise<T>
+interface RequestOptions extends Pick<DaemonRequestOptions, 'body'> {
+	/** Overrides the request deadline (a long poll holds the request open on purpose). */
+	timeoutMs?: number
 }
 
+interface Client {
+	request<T>(method: DaemonMethod, path: string, options?: RequestOptions): Promise<T>
+}
+
+/** The daemon accepted the connection but did not answer in time (wedged, not down). */
+class DaemonTimeoutError extends Error {}
+
+const durationText = (ms: number) => (ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`)
+
+/**
+ * Every request carries `deps.signal` (Ctrl-C aborts it) and a deadline, so a wedged daemon
+ * never hangs a script forever.
+ */
 function client(url: string | undefined, deps: SignalCliDeps): Client {
 	const baseUrl = daemonBaseUrl(url, deps.env ?? process.env)
+	const timeoutMs = deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
 	return {
-		request: (method, path, options = {}) =>
-			requestDaemon(method, baseUrl, path, { ...options, ...(deps.fetch ? { fetch: deps.fetch } : {}) }),
+		async request<T>(method: DaemonMethod, path: string, options: RequestOptions = {}): Promise<T> {
+			const deadline = options.timeoutMs ?? timeoutMs
+			const timeout = new AbortController()
+			const timer = setTimeout(() => timeout.abort(), deadline)
+			timer.unref?.()
+			const signal = deps.signal ? AbortSignal.any([deps.signal, timeout.signal]) : timeout.signal
+			try {
+				return await requestDaemon<T>(method, baseUrl, path, {
+					...(options.body !== undefined ? { body: options.body } : {}),
+					signal,
+					...(deps.fetch ? { fetch: deps.fetch } : {}),
+				})
+			} catch (error) {
+				if (timeout.signal.aborted && !deps.signal?.aborted)
+					throw new DaemonTimeoutError(
+						`The Helm daemon at ${baseUrl} did not answer ${method} ${path.split('?')[0]} within ${durationText(deadline)}. Is it stuck? Check helm logs.`,
+					)
+				throw error
+			} finally {
+				clearTimeout(timer)
+			}
+		},
 	}
 }
 
@@ -576,9 +632,7 @@ async function runWatch(parsed: ParsedArgs, deps: SignalCliDeps): Promise<number
 	let snapshot: SignalsSnapshot | null = null
 	while (!snapshot && !aborted()) {
 		try {
-			snapshot = assertSnapshot(
-				await api.request<unknown>('GET', `/api/signals${owner ? `?owner=${owner}` : ''}`, { signal }),
-			)
+			snapshot = assertSnapshot(await api.request<unknown>('GET', `/api/signals${owner ? `?owner=${owner}` : ''}`))
 			await reached()
 		} catch (error) {
 			if (aborted()) return 0
@@ -604,7 +658,7 @@ async function runWatch(parsed: ParsedArgs, deps: SignalCliDeps): Promise<number
 
 	const readOwner = async (id: number): Promise<string | null> => {
 		try {
-			const thread = assertThread(await api.request<unknown>('GET', `/api/signals/${id}`, { signal }))
+			const thread = assertThread(await api.request<unknown>('GET', `/api/signals/${id}`))
 			return thread.owner
 		} catch {
 			return null
@@ -619,7 +673,7 @@ async function runWatch(parsed: ParsedArgs, deps: SignalCliDeps): Promise<number
 			const page = await api.request<SignalEventsPage>(
 				'GET',
 				`/api/signals/events?after=${seq}&wait=${EVENTS_WAIT_SECONDS}`,
-				{ signal },
+				{ timeoutMs: deps.eventsTimeoutMs ?? EVENTS_WAIT_SECONDS * 1000 + REQUEST_TIMEOUT_MS },
 			)
 			await reached()
 			const events = Array.isArray(page?.events) ? page.events : []
@@ -631,7 +685,10 @@ async function runWatch(parsed: ParsedArgs, deps: SignalCliDeps): Promise<number
 				if (owner && !(await eventMatchesOwner(event, owner, readOwner))) continue
 				await deps.out(JSON.stringify({ t: 'event', ...event }))
 			}
-			if (typeof page?.seq === 'number' && page.seq > seq) seq = page.seq
+			// The cursor is the last event read. `page.seq` may be the daemon's global high-water
+			// mark (events are per profile, seqs are not), so jump to it only on an empty page:
+			// with events, a page cut at its limit would otherwise skip the rest.
+			if (events.length === 0 && typeof page?.seq === 'number' && page.seq > seq) seq = page.seq
 		} catch (error) {
 			if (aborted()) break
 			await failed(error)
@@ -679,6 +736,8 @@ export async function runSignalCli(args: string[], deps: SignalCliDeps): Promise
 				return await runPoll(parsed, deps)
 		}
 	} catch (error) {
+		// Ctrl-C/SIGTERM: the aborted request is the interruption, not a daemon error.
+		if (deps.signal?.aborted) return EXIT_INTERRUPTED
 		const message = error instanceof Error ? error.message.slice(0, 400) : String(error)
 		deps.err(error instanceof UsageError ? `${message}\nRun helm signal help.` : `Error: ${message}`)
 		return 1
