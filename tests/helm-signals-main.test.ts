@@ -437,6 +437,14 @@ function newAgentRequest(overrides: Record<string, unknown> = {}) {
 	}
 }
 
+/** git for a branch that exists neither locally nor on origin (ls-remote --exit-code → 2). */
+function newBranchGit(args: readonly string[]) {
+	if (args[2] === 'check-ref-format') return { stdout: `${args[4]}\n`, stderr: '' }
+	if (args[2] === 'show-ref') throw Object.assign(new Error('exit 1'), { code: 1 })
+	if (args[2] === 'ls-remote') throw Object.assign(new Error('exit 2'), { code: 2 })
+	throw new Error(`unexpected git ${args.join(' ')}`)
+}
+
 test('newAgent: worktree add, then claude start with a private prompt file that is deleted afterwards', async () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-signals-main-'))
 	try {
@@ -445,10 +453,7 @@ test('newAgent: worktree add, then claude start with a private prompt file that 
 		let created = false
 		const exec: SignalsExec = async (file, args) => {
 			execs.push([file, ...args])
-			if (file === 'git') {
-				assert.deepEqual(args, ['-C', '/code/widgets', 'check-ref-format', '--branch', 'fix/widgets-7'])
-				return { stdout: 'fix/widgets-7\n', stderr: '' }
-			}
+			if (file === 'git') return newBranchGit(args)
 			if (args[0] === 'state')
 				return {
 					stdout: created
@@ -504,10 +509,23 @@ test('newAgent: worktree add, then claude start with a private prompt file that 
 			[
 				'/fake/okena state',
 				'git -C /code/widgets',
+				'git -C /code/widgets',
+				'git -C /code/widgets',
+				'git -C /code/widgets',
 				'/fake/okena worktree add',
 				'/fake/okena state',
 				'/fake/okena claude start',
 			],
+		)
+		assert.deepEqual(
+			execs.filter(call => call[0] === 'git').map(call => call.slice(1)),
+			[
+				['-C', '/code/widgets', 'check-ref-format', '--branch', 'fix/widgets-7'],
+				['-C', '/code/widgets', 'show-ref', '--verify', '--quiet', 'refs/heads/fix/widgets-7'],
+				['-C', '/code/widgets', 'show-ref', '--verify', '--quiet', 'refs/remotes/origin/fix/widgets-7'],
+				['-C', '/code/widgets', 'ls-remote', '--exit-code', '--heads', 'origin', 'refs/heads/fix/widgets-7'],
+			],
+			'a brand-new branch: absent locally and on origin, nothing is fetched or created by git',
 		)
 		assert.equal(h.calls.length, 0, 'routing is the renderer’s POST, not main’s')
 	} finally {
@@ -556,6 +574,137 @@ test('newAgent falls back to the worktree’s first terminal and still deletes t
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
+})
+
+/** A newAgent run where git answers from `refs`/`origin`; returns every exec argv. */
+async function runNewAgentWithGit(git: {
+	refs: Set<string>
+	origin: Set<string>
+	failLsRemote?: boolean
+}): Promise<{ execs: string[][]; result: unknown }> {
+	const root = mkdtempSync(join(tmpdir(), 'helm-signals-main-'))
+	try {
+		const execs: string[][] = []
+		let created = false
+		const exec: SignalsExec = async (file, args) => {
+			execs.push([file, ...args])
+			if (file === 'git') {
+				assert.equal(args[1], '/code/widgets')
+				const verb = args[2]
+				if (verb === 'check-ref-format') return { stdout: '', stderr: '' }
+				if (verb === 'show-ref') {
+					if (git.refs.has(args[5] ?? '')) return { stdout: '', stderr: '' }
+					throw Object.assign(new Error('exit 1'), { code: 1 })
+				}
+				if (verb === 'ls-remote') {
+					if (git.failLsRemote)
+						throw Object.assign(new Error('exit 128'), { code: 128, stderr: 'fatal: could not read from remote' })
+					if (git.origin.has(args[6] ?? '')) return { stdout: 'abc\trefs/heads/x\n', stderr: '' }
+					throw Object.assign(new Error('exit 2'), { code: 2 })
+				}
+				if (verb === 'fetch') {
+					const [, dst] = (args[5] ?? '').split(':')
+					git.refs.add(dst ?? '')
+					return { stdout: '', stderr: '' }
+				}
+				if (verb === 'branch') {
+					assert.ok(git.refs.has(args[5] ?? ''), 'tracks a fetched remote ref')
+					git.refs.add(`refs/heads/${args[4]}`)
+					return { stdout: '', stderr: '' }
+				}
+				throw new Error(`unexpected git ${args.join(' ')}`)
+			}
+			if (args[0] === 'state')
+				return {
+					stdout: okenaState(
+						created
+							? [
+									{
+										id: 'wt-new',
+										name: 'widgets (fix/widgets-7)',
+										path: '/code/widgets-wt/fix-widgets-7',
+										worktree_info: { parent_project_id: PARENT },
+										git_status: { branch: 'fix/widgets-7' },
+										layout: { type: 'terminal', terminal_id: NEW_TERMINAL },
+									},
+								]
+							: [],
+					),
+					stderr: '',
+				}
+			if (args[0] === 'worktree') {
+				created = true
+				return { stdout: `wt-new\t/code/widgets-wt/fix-widgets-7\t${NEW_TERMINAL}\n`, stderr: '' }
+			}
+			if (args[0] === 'claude') return { stdout: JSON.stringify({ session_id: 'sess-1' }), stderr: '' }
+			throw new Error(`unexpected exec ${file} ${args.join(' ')}`)
+		}
+		const h = harness({ exec, userDataDir: root })
+		const result = await h.main.newAgent(newAgentRequest())
+		return { execs, result }
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+}
+
+const LOCAL_REF = 'refs/heads/fix/widgets-7'
+const REMOTE_REF = 'refs/remotes/origin/fix/widgets-7'
+const OK_RESULT = { data: { terminalId: NEW_TERMINAL, sessionId: 'sess-1', agentName: 'fix/widgets-7' } }
+const gitArgs = (execs: string[][]) => execs.filter(call => call[0] === 'git').map(call => call.slice(3))
+const worktreeArgs = (execs: string[][]) => execs.find(call => call[1] === 'worktree')?.slice(1)
+
+test('newAgent hands an existing local branch to Okena as is, without --new-branch', async () => {
+	const { execs, result } = await runNewAgentWithGit({ refs: new Set([LOCAL_REF]), origin: new Set() })
+	assert.deepEqual(result, OK_RESULT)
+	assert.deepEqual(worktreeArgs(execs), ['worktree', 'add', PARENT, 'fix/widgets-7', '--wait'])
+	assert.deepEqual(gitArgs(execs), [
+		['check-ref-format', '--branch', 'fix/widgets-7'],
+		['show-ref', '--verify', '--quiet', LOCAL_REF],
+	])
+})
+
+test('newAgent makes an origin-only branch (a teammate’s PR head) a local tracking branch first', async () => {
+	// Already fetched once: refs/remotes/origin/<branch> exists, no local branch.
+	const fetched = await runNewAgentWithGit({ refs: new Set([REMOTE_REF]), origin: new Set([LOCAL_REF]) })
+	assert.deepEqual(fetched.result, OK_RESULT)
+	assert.deepEqual(gitArgs(fetched.execs), [
+		['check-ref-format', '--branch', 'fix/widgets-7'],
+		['show-ref', '--verify', '--quiet', LOCAL_REF],
+		['show-ref', '--verify', '--quiet', REMOTE_REF],
+		['fetch', '--no-tags', 'origin', `+${LOCAL_REF}:${REMOTE_REF}`],
+		['branch', '--track', 'fix/widgets-7', REMOTE_REF],
+	])
+	assert.deepEqual(worktreeArgs(fetched.execs), ['worktree', 'add', PARENT, 'fix/widgets-7', '--wait'])
+
+	// Never fetched here: origin itself is asked before anything is created.
+	const fresh = await runNewAgentWithGit({ refs: new Set(), origin: new Set([LOCAL_REF]) })
+	assert.deepEqual(fresh.result, OK_RESULT)
+	assert.deepEqual(gitArgs(fresh.execs), [
+		['check-ref-format', '--branch', 'fix/widgets-7'],
+		['show-ref', '--verify', '--quiet', LOCAL_REF],
+		['show-ref', '--verify', '--quiet', REMOTE_REF],
+		['ls-remote', '--exit-code', '--heads', 'origin', LOCAL_REF],
+		['fetch', '--no-tags', 'origin', `+${LOCAL_REF}:${REMOTE_REF}`],
+		['branch', '--track', 'fix/widgets-7', REMOTE_REF],
+	])
+	assert.deepEqual(worktreeArgs(fresh.execs), ['worktree', 'add', PARENT, 'fix/widgets-7', '--wait'])
+	assert.ok(
+		fresh.execs.every(call => !call.includes('--new-branch')),
+		'never a same-named branch from main',
+	)
+})
+
+test('newAgent passes --new-branch only when the branch is on neither side, and stops when origin cannot be asked', async () => {
+	const fresh = await runNewAgentWithGit({ refs: new Set(), origin: new Set() })
+	assert.deepEqual(fresh.result, OK_RESULT)
+	assert.deepEqual(worktreeArgs(fresh.execs), ['worktree', 'add', PARENT, 'fix/widgets-7', '--new-branch', '--wait'])
+	assert.ok(fresh.execs.every(call => call[3] !== 'fetch' && call[3] !== 'branch'))
+
+	const offline = await runNewAgentWithGit({ refs: new Set(), origin: new Set(), failLsRemote: true })
+	assert.deepEqual(offline.result, {
+		error: 'Could not check the branch on origin: fatal: could not read from remote',
+	})
+	assert.equal(worktreeArgs(offline.execs), undefined, 'no Okena write when origin is unknown')
 })
 
 test('newAgent refuses bad branches, unknown projects and other agents before any Okena write', async () => {

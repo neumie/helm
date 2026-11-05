@@ -6,7 +6,12 @@
 // No Electron import: main injects the daemon request, the IPC gate, execFile, openExternal
 // and the push, so this module stays testable under node (tests/helm-signals-main.test.ts).
 // Okena is driven only through its CLI: `okena state` (read-only) for projects, then for `n`
-// exactly `okena worktree add … --new-branch --wait` and `okena claude start … --trust`.
+// exactly `okena worktree add … [--new-branch] --wait` and `okena claude start … --trust`.
+// `--new-branch` always branches from the default branch, so it is passed only for a branch
+// that exists neither locally nor on origin. An existing local branch is handed over as is;
+// a branch only on origin (a teammate's PR head) is fetched to refs/remotes/origin/<branch>
+// and made a local tracking branch first (`git branch --track`, no checkout), never
+// recreated from main under the same name.
 
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -39,6 +44,8 @@ const OKENA_STATE_TIMEOUT_MS = 10_000
 const OKENA_WORKTREE_TIMEOUT_MS = 180_000
 const OKENA_CLAUDE_TIMEOUT_MS = 90_000
 const GIT_TIMEOUT_MS = 5_000
+/** `git ls-remote` / `git fetch` of one branch from origin (network). */
+const GIT_REMOTE_TIMEOUT_MS = 30_000
 const STDERR_MAX = 300
 const OPEN_URL_MAX = 2_048
 const BRANCH_MAX = 255
@@ -529,6 +536,9 @@ export class SignalsMain {
 			return { error: 'That is not a valid branch name.', status: 400 }
 		}
 
+		const source = await this.prepareBranch(parent.path, request.branch)
+		if (source.data === undefined) return failure(source)
+
 		const dir = join(this.options.userDataDir, 'signals')
 		const file = join(dir, `prompt-${randomUUID()}.md`)
 		try {
@@ -544,7 +554,14 @@ export class SignalsMain {
 			try {
 				;({ stdout: created } = await this.options.exec(
 					this.okenaBin,
-					['worktree', 'add', request.projectId, request.branch, '--new-branch', '--wait'],
+					[
+						'worktree',
+						'add',
+						request.projectId,
+						request.branch,
+						...(source.data === 'new' ? ['--new-branch'] : []),
+						'--wait',
+					],
 					{ timeout: OKENA_WORKTREE_TIMEOUT_MS, env: this.childEnv },
 				))
 			} catch (error) {
@@ -579,6 +596,72 @@ export class SignalsMain {
 		} finally {
 			await unlink(file).catch(() => undefined)
 		}
+	}
+
+	/** Exit 0 = the ref exists, exit 1 = it does not; anything else is a failure. */
+	private async refExists(path: string, ref: string): Promise<boolean | null> {
+		try {
+			await this.options.exec('git', ['-C', path, 'show-ref', '--verify', '--quiet', ref], {
+				timeout: GIT_TIMEOUT_MS,
+				env: this.childEnv,
+			})
+			return true
+		} catch (error) {
+			return (error as { code?: unknown })?.code === 1 ? false : null
+		}
+	}
+
+	/**
+	 * Where the worktree's branch comes from. `new` only when neither a local branch nor an
+	 * origin branch of that name exists; an origin-only branch becomes a local tracking branch
+	 * here (refs only, the checkout is untouched) so Okena adds it without `--new-branch`.
+	 * The branch name already passed `check-ref-format` and never starts with '-'.
+	 */
+	private async prepareBranch(path: string, branch: string): Promise<HelmResult<'local' | 'remote' | 'new'>> {
+		const local = await this.refExists(path, `refs/heads/${branch}`)
+		if (local === null) return { error: "Could not read the project's branches." }
+		if (local) return { data: 'local' }
+
+		const remoteRef = `refs/remotes/origin/${branch}`
+		let onOrigin = await this.refExists(path, remoteRef)
+		if (onOrigin === null) return { error: "Could not read the project's branches." }
+		if (!onOrigin) {
+			// Never fetched here (a teammate's fresh PR branch): ask origin itself.
+			try {
+				await this.options.exec(
+					'git',
+					['-C', path, 'ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${branch}`],
+					{ timeout: GIT_REMOTE_TIMEOUT_MS, env: this.childEnv },
+				)
+				onOrigin = true
+			} catch (error) {
+				// ls-remote --exit-code: 2 = no such ref; anything else = origin could not be asked.
+				if ((error as { code?: unknown })?.code !== 2)
+					return { error: execFailure('Could not check the branch on origin', error, 'Git is not installed.') }
+			}
+		}
+		if (!onOrigin) return { data: 'new' }
+
+		try {
+			await this.options.exec(
+				'git',
+				['-C', path, 'fetch', '--no-tags', 'origin', `+refs/heads/${branch}:${remoteRef}`],
+				{ timeout: GIT_REMOTE_TIMEOUT_MS, env: this.childEnv },
+			)
+		} catch (error) {
+			return { error: execFailure('Could not fetch the branch from origin', error, 'Git is not installed.') }
+		}
+		try {
+			await this.options.exec('git', ['-C', path, 'branch', '--track', branch, remoteRef], {
+				timeout: GIT_TIMEOUT_MS,
+				env: this.childEnv,
+			})
+		} catch (error) {
+			// Created meanwhile (by Jakub or Okena) is fine; anything else stops before Okena.
+			if ((await this.refExists(path, `refs/heads/${branch}`)) !== true)
+				return { error: execFailure('Could not create the local branch', error, 'Git is not installed.') }
+		}
+		return { data: 'remote' }
 	}
 }
 
