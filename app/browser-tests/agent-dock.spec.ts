@@ -982,6 +982,32 @@ test('what Jakub answered in the terminal leaves the row while the pane is open;
 	await expect(entries).toHaveCount(1)
 })
 
+test('a question answered in the terminal that Okena still lists closes as answered in terminal; nothing can be submitted for it', async ({
+	page,
+}) => {
+	const { rail, pane } = await openItem(page, 1)
+	const question = rail.locator('.agent-dock-entry[aria-label^="Question,"]')
+	const questionId = Number(await question.getAttribute('data-item-id'))
+	const submit = pane.getByRole('button', { name: 'Submit answers' })
+	// Jakub had picked answers in the dock, then answered in the terminal instead.
+	await pane.getByRole('radio', { name: /Blue/ }).click()
+	await pane.getByRole('tab', { name: /Size/ }).click()
+	await pane.getByRole('radio', { name: /^M/ }).click()
+	await expect(submit).toBeEnabled()
+
+	// Okena keeps listing the dialog (the agent works on); the transcript file shows the call answered.
+	await page.evaluate(id => {
+		const dock = window.__helmWorkspaceFixture?.agentDock
+		if (!dock) throw new Error('Missing agent-dock fixture')
+		dock.emitAnsweredInTerminalStillListed(id)
+	}, questionId)
+	await expect(question).toHaveAttribute('data-state', 'resolved')
+	await expect(pane.locator('.agent-dock-receipt')).toContainText('answered in terminal')
+	await expect(submit).toHaveCount(0)
+	await expect(rail).toHaveAttribute('aria-label', /^Agent dock, 2 need you/)
+	expect(await acts(page)).toEqual([])
+})
+
 test('the pane never floats over terminal rows: in-flow, one refit on open and one on close', async ({ page }) => {
 	await page.setViewportSize({ width: 1400, height: 820 })
 	await openHarness(page)
