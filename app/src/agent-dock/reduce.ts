@@ -36,6 +36,7 @@ import {
 	sessionKey,
 } from './model'
 import { PERMISSION_SUGGESTIONS_MAX } from './review'
+import { dialogAnsweredInTranscript, validToolCalls } from './tool-calls'
 
 /** A session must stay idle this long before an unchecked turn opens (filters quick resumes). */
 export const TURN_IDLE_MS = 8_000
@@ -95,6 +96,13 @@ export interface AgentDockSessionRecord {
 	tail: TranscriptTail
 	/** Dialog ids the last successful detail read showed open. */
 	dialogIds?: string[]
+	/**
+	 * Listed dialogs of this session the transcript file once proved answered in the terminal
+	 * (tool-calls.ts). The proof sticks to the dialog id (Okena never reuses one): a long turn
+	 * pushes the call out of the tail's list, or the file is unreadable for a tick, while Okena
+	 * keeps listing the dialog until Stop. Pruned to what Okena still lists. Memory only.
+	 */
+	answeredDialogs?: { sessionId: string; ids: string[] }
 }
 
 /** Per-source observation state: each source seeds, restarts and goes down on its own. */
@@ -314,6 +322,46 @@ function validBackground(value: unknown): value is ObservedBackgroundTasks {
 	const count = (n: unknown): boolean => typeof n === 'number' && Number.isInteger(n) && n >= 0
 	const v = value as Partial<ObservedBackgroundTasks> | undefined
 	return !!v && typeof v === 'object' && typeof v.sessionId === 'string' && count(v.tasks) && count(v.shells)
+}
+
+/** A valid observation; tool calls of an odd shape are dropped (no answered-dialog claim). */
+function sanitizeBackground(value: ObservedBackgroundTasks): ObservedBackgroundTasks {
+	if (value.calls === undefined || validToolCalls(value.calls)) return value
+	const { calls: _dropped, ...rest } = value
+	return rest
+}
+
+/**
+ * The detail without the dialogs this session's own transcript file proves already answered in
+ * the terminal (tool-calls.ts): Okena keeps such a dialog listed until the turn's Stop when the
+ * terminal answer changed the tool input (AskUserQuestion `answers`). Treated exactly like a
+ * dialog Okena dropped: its ask closes `outside`, none opens for it, and the pane is not
+ * `waiting`. Only calls read for this very session count; a dialog proven once stays proven
+ * (`record.answeredDialogs`). A permission while subagents or a background workflow run is never
+ * claimed: a subagent may have raised it for a call identical to the main agent's (Okena forgets
+ * its running subagents when it restarts; the transcript still shows the workflow).
+ */
+function withoutAnsweredDialogs(
+	record: AgentDockSessionRecord,
+	detail: OkenaClaudeSession,
+	background: ObservedBackgroundTasks | undefined,
+): OkenaClaudeSession {
+	const sessionId = detail.session_id
+	const sticky = sessionId && record.answeredDialogs?.sessionId === sessionId ? record.answeredDialogs.ids : []
+	const observed = sessionId && background?.sessionId === sessionId ? background : undefined
+	const calls = observed?.calls ?? []
+	const subagents = detail.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+	const answered = new Set(
+		detail.dialogs
+			.filter(
+				dialog =>
+					sticky.includes(dialog.id) || (calls.length > 0 && dialogAnsweredInTranscript(dialog, calls, subagents)),
+			)
+			.map(dialog => dialog.id),
+	)
+	record.answeredDialogs = sessionId && answered.size > 0 ? { sessionId, ids: [...answered] } : undefined
+	if (answered.size === 0) return detail
+	return { ...detail, dialogs: detail.dialogs.filter(dialog => !answered.has(dialog.id)) }
 }
 
 function pruneResolved(items: DockItem[], now: number): DockItem[] {
@@ -564,8 +612,8 @@ function observeTerminal(
 		project?.terminal_names?.[terminalId] ?? project?.git_status?.branch ?? `terminal ${terminalId.slice(0, 8)}`
 	record.session.branch = project?.git_status?.branch || undefined
 
-	const detail = observed.detail
-	if (!detail || detail.terminal_id !== terminalId) {
+	const raw = observed.detail
+	if (!raw || raw.terminal_id !== terminalId) {
 		// Fail closed: no fact, so nothing opens or closes for this session, and the
 		// idle/busy stretch is broken (it may have changed unseen in between).
 		setStatus(record, 'unknown', now)
@@ -574,6 +622,7 @@ function observeTerminal(
 		record.gateCandidate = undefined
 		return
 	}
+	const detail = withoutAnsweredDialogs(record, raw, observed.background)
 	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
 		record.idleSince = undefined
 		record.busySince = undefined
@@ -914,7 +963,7 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 		details.set(terminal.terminalId, {
 			detail: detail?.ok ? detail.value : null,
 			transcript: transcript?.ok ? transcript.value : null,
-			...(validBackground(terminal.background) ? { background: terminal.background } : {}),
+			...(validBackground(terminal.background) ? { background: sanitizeBackground(terminal.background) } : {}),
 		})
 	}
 

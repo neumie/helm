@@ -21,6 +21,8 @@
 // and a new claude process (the records' `version` changes) drops every task
 // the old one started. A start without a timestamp claims nothing.
 
+import type { ToolCall } from './tool-calls'
+
 export type BackgroundTaskKind = 'shell' | 'workflow' | 'monitor'
 
 export interface BackgroundTask {
@@ -44,13 +46,18 @@ export interface BackgroundTaskState {
 	version?: string
 }
 
-/** What the source reports per pane: only for `sessionId`, and only counts. */
+/** What the source reports per pane from the session's own transcript file: only for `sessionId`. */
 export interface ObservedBackgroundTasks {
 	sessionId: string
 	/** Running background tasks (shells included). */
 	tasks: number
 	/** How many of `tasks` are shells. */
 	shells: number
+	/**
+	 * The main agent's recent tool calls (tool-calls.ts), present when the read window held any:
+	 * the proof that an Okena dialog was already answered in the terminal.
+	 */
+	calls?: ToolCall[]
 }
 
 export const BACKGROUND_TASKS_MAX = 32

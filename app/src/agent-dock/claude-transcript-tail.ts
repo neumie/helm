@@ -1,7 +1,9 @@
 // Agent dock, Electron main: tails Claude Code's own JSONL transcript of a
-// session for its background tasks (background-tasks.ts). Okena's transcript
-// API hides the task notifications that end them, so the file is the only
-// structured end signal for Okena panes.
+// session for its background tasks (background-tasks.ts) and its main agent's
+// recent tool calls (tool-calls.ts). Okena's transcript API hides the task
+// notifications that end them, so the file is the only structured end signal
+// for Okena panes; its tool_use/tool_result records carry the input and the
+// times that prove an Okena dialog was already answered in the terminal.
 //
 // Bounded and fail closed: the session id must look like one (it names the
 // file), the file must resolve under a Claude config dir, be a regular file of
@@ -23,6 +25,7 @@ import {
 	backgroundTaskCounts,
 	emptyBackgroundTasks,
 } from './background-tasks'
+import { type ToolCallState, applyToolCallLine, emptyToolCalls } from './tool-calls'
 
 export const FIRST_READ_BYTES = 2 * 1024 * 1024
 export const READ_MAX_BYTES = 8 * 1024 * 1024
@@ -48,6 +51,8 @@ interface Tail {
 	missedAt?: number
 	offset: number
 	tasks: BackgroundTaskState
+	/** The main agent's recent tool calls (answered-dialog proof, tool-calls.ts). */
+	calls: ToolCallState
 	seenAt: number
 }
 
@@ -71,7 +76,7 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 		if (!SESSION_ID.test(sessionId)) return undefined
 		let tail = this.tails.get(sessionId)
 		if (!tail) {
-			tail = { offset: 0, tasks: emptyBackgroundTasks(), seenAt: options.now }
+			tail = { offset: 0, tasks: emptyBackgroundTasks(), calls: emptyToolCalls(), seenAt: options.now }
 			this.tails.set(sessionId, tail)
 			this.prune()
 		}
@@ -86,11 +91,17 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 				tail.missedAt = options.now
 				tail.offset = 0
 				tail.tasks = emptyBackgroundTasks()
+				tail.calls = emptyToolCalls()
 				return undefined
 			}
 		}
 		if (tail.path === undefined) return undefined
-		return { sessionId, ...backgroundTaskCounts(tail.tasks, options.now) }
+		const calls = tail.calls.calls
+		return {
+			sessionId,
+			...backgroundTaskCounts(tail.tasks, options.now),
+			...(calls.length > 0 ? { calls: [...calls] } : {}),
+		}
 	}
 
 	private prune(): void {
@@ -112,6 +123,7 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 			tail.missedAt = undefined
 			tail.offset = 0
 			tail.tasks = emptyBackgroundTasks()
+			tail.calls = emptyToolCalls()
 		}
 		const handle = await open(tail.path, constants.O_RDONLY | constants.O_NOFOLLOW)
 		try {
@@ -122,7 +134,10 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 			let fresh = tail.offset === 0 || info.size < tail.offset
 			if (!fresh && info.size - tail.offset > READ_MAX_BYTES) fresh = true
 			const start = fresh ? Math.max(0, info.size - FIRST_READ_BYTES) : tail.offset
-			if (fresh) tail.tasks = emptyBackgroundTasks()
+			if (fresh) {
+				tail.tasks = emptyBackgroundTasks()
+				tail.calls = emptyToolCalls()
+			}
 			const length = info.size - start
 			if (length <= 0) {
 				tail.offset = info.size
@@ -141,8 +156,14 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 			const firstLine = fresh && start > 0 ? chunk.indexOf(0x0a) + 1 : 0
 			const text = chunk.subarray(firstLine, lastNewline).toString('utf8')
 			let tasks = tail.tasks
-			for (const line of text.split('\n')) if (line) tasks = applyBackgroundLine(tasks, line)
+			let calls = tail.calls
+			for (const line of text.split('\n')) {
+				if (!line) continue
+				tasks = applyBackgroundLine(tasks, line)
+				calls = applyToolCallLine(calls, line)
+			}
 			tail.tasks = tasks
+			tail.calls = calls
 			tail.offset = start + lastNewline + 1
 			return true
 		} finally {

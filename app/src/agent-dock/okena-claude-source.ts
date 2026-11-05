@@ -14,9 +14,10 @@
 //      REPLY_READ_MS while a busy pane still has a live turn item (Jakub typed
 //      the reply in the terminal: its user entry closes the turn).
 //   4. Background tasks (Okena only, `background` observer): what the session's own
-//      JSONL appended, every tick while the main agent is idle and every
-//      BACKGROUND_BUSY_READ_MS while busy (keeps each read small). Okena's transcript
-//      page hides the task notifications that end them (claude-transcript-tail.ts).
+//      JSONL appended, every tick while the main agent is idle or a dialog is listed and
+//      every BACKGROUND_BUSY_READ_MS while busy otherwise (keeps each read small). Okena's
+//      transcript page hides the task notifications that end them, and the main agent's
+//      tool calls prove a listed dialog already answered (claude-transcript-tail.ts).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
@@ -24,6 +25,7 @@ import { boundText } from '../../../src/agent-dock/text'
 import type { OkenaReadOptions } from '../../../src/extensions/okena/client'
 import {
 	type DockCheck,
+	REFUSAL_TEXT,
 	askStillOpen,
 	dockActBody,
 	dockPostFailure,
@@ -56,6 +58,7 @@ import {
 	sessionKey,
 } from './model'
 import { type AgentDockState, TURN_IDLE_MS, agentDockAwaitingReply, agentDockTranscriptRequest } from './reduce'
+import { dialogAnsweredInTranscript, validToolCalls } from './tool-calls'
 
 export const OKENA_STATE_MAX_BYTES = 4 * 1024 * 1024
 export const OKENA_SESSION_MAX_BYTES = 2 * 1024 * 1024
@@ -178,6 +181,10 @@ export class OkenaClaudeSource implements DockSource {
 		if (request.kind === 'decision') {
 			const check = askStillOpen(item, fresh.session)
 			if (!check.ok) return { status: 'refused', reason: check.reason, detail: check.detail }
+			// Okena may still list a dialog Jakub already answered in the terminal (tool-calls.ts):
+			// its hook still waits, so a decision now would answer a call that already ran.
+			if (await this.answeredInTerminal(fresh.session, request.dialogId))
+				return { status: 'refused', reason: 'gone', detail: REFUSAL_TEXT.gone }
 			if (!client.postClaudeDialogDecision)
 				return { status: 'failed', detail: `This ${this.text.label} client cannot answer dialogs.` }
 			try {
@@ -234,6 +241,25 @@ export class OkenaClaudeSource implements DockSource {
 			ok: true,
 			...(page.session_id ? { sessionId: page.session_id } : {}),
 			...(last ? { message: { uuid: last.uuid, text: boundText(last.text, DOCK_LIVE_MESSAGE_MAX) } } : {}),
+		}
+	}
+
+	/**
+	 * Whether the session's own transcript file, read now, proves this listed dialog already
+	 * answered in the terminal. Unreadable or no observer (Helm's hub releases its own): false.
+	 */
+	private async answeredInTerminal(session: OkenaClaudeSession, dialogId: string): Promise<boolean> {
+		const dialog = session.dialogs.find(entry => entry.id === dialogId)
+		if (!this.background || !dialog || !session.session_id) return false
+		try {
+			const observed = await this.background.observe(session.session_id, { refresh: true, now: Date.now() })
+			const calls = observed?.sessionId === session.session_id ? observed.calls : undefined
+			// Subagents or a background workflow running: a permission may be a subagent's (reduce.ts).
+			const subagents =
+				session.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+			return validToolCalls(calls) && dialogAnsweredInTranscript(dialog, calls, subagents)
+		} catch {
+			return false
 		}
 	}
 
@@ -396,6 +422,9 @@ export class OkenaClaudeSource implements DockSource {
 			this.background !== undefined &&
 			sessionId !== undefined &&
 			(parsed.value.busy !== true ||
+				// A listed dialog while busy may be one already answered in the terminal (tool-calls.ts):
+				// its proof is read every tick, so the ask closes within one tick of the answer.
+				parsed.value.dialogs.length > 0 ||
 				read?.backgroundAt === undefined ||
 				read.sessionId !== sessionId ||
 				now - read.backgroundAt >= BACKGROUND_BUSY_READ_MS)

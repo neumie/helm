@@ -32,6 +32,7 @@ import {
 	reduce,
 } from '../../agent-dock/reduce'
 import { REVEAL_TEXT } from '../../agent-dock/reveal'
+import type { ToolCall } from '../../agent-dock/tool-calls'
 import type { AgentDockApi } from '../../shared'
 
 export type AgentDockScenario =
@@ -1462,6 +1463,34 @@ function landedPoll(scenario: ScenarioRun, item: DockItem, reply = '(reply from 
 }
 
 /**
+ * The next Okena poll after Jakub answered an ask in its terminal while Okena keeps listing the
+ * dialog (Okena's PostToolUse match is exact; Claude added `answers`): the agent works on, and the
+ * session's own transcript file shows the dialog's call with its result (tool-calls.ts).
+ */
+function answeredStillListedPoll(scenario: ScenarioRun, item: DockItem, at: number): AgentDockObservation {
+	const pane = paneOf(item)
+	const fact = item.fact
+	scenario.version += 1
+	const live: Live = scenario.live.map(entry => {
+		if (entry.pane !== pane || fact.kind !== 'ask') return entry
+		const call: ToolCall = {
+			id: `toolu_fixture_${item.id}`,
+			name: fact.tool,
+			input: fact.input,
+			at: fact.createdAtMs - 100,
+			resultAt: Math.max(at, fact.createdAtMs),
+		}
+		return {
+			pane: entry.pane,
+			body: { ...entry.body, busy: true },
+			background: { sessionId: entry.pane.sid, tasks: 0, shells: 0, calls: [call] },
+		}
+	})
+	scenario.live = bare(live)
+	return fromSource(scenario, poll(scenario.version, live))
+}
+
+/**
  * The next poll after a reply from the agent detail landed: the pane works on it and its transcript
  * shows the user entry after the message Jakub read.
  */
@@ -1660,6 +1689,11 @@ export interface AgentDockFixture {
 	 * (an ask: answered in terminal) or the pane working on his reply after the turn (replied in terminal).
 	 */
 	emitAnsweredInTerminal(itemId: number): void
+	/**
+	 * Jakub answers an ask in its terminal, but Okena keeps listing its dialog: the next poll shows
+	 * the dialog still there, the agent working, and the transcript file the call's result.
+	 */
+	emitAnsweredInTerminalStillListed(itemId: number): void
 	/**
 	 * What the next acts do: land and get observed (default), never get observed, refused (answered
 	 * elsewhere, the agent working, its state unknown), or fail.
@@ -1865,6 +1899,12 @@ export function createAgentDockFixture(
 			const item = current?.state.items.find(candidate => candidate.id === itemId)
 			if (!current || !item) return
 			apply(landedPoll(current, item, '(typed in the terminal)'))
+		},
+		emitAnsweredInTerminalStillListed(itemId) {
+			const current = scenario
+			const item = current?.state.items.find(candidate => candidate.id === itemId)
+			if (!current || !item) return
+			apply(answeredStillListedPoll(current, item, clock()))
 		},
 		setActMode(next) {
 			mode = next
