@@ -57,7 +57,7 @@ const scheduledRunsSchema = z
 	.default({})
 
 /** Default senders that always count as signals (Sentry alert mail), one glob per line. */
-export const DEFAULT_SIGNAL_INCLUDE_SENDERS = '*@sentry.io\n*@*.sentry.io\n*@getsentry.com'
+export const DEFAULT_SIGNAL_INCLUDE_SENDERS = '*@sentry.io\n*@*.sentry.io\n*@getsentry.com\n*@*.getsentry.com'
 
 // Signals: read-only polling of what the world wants from Jakub (GitHub via gh, Apple Mail via
 // JXA). Runs whenever enabled, independently of the task sidebar. Mail stays off by default

@@ -86,7 +86,7 @@ export const SIGNALS_PRS_QUERY = `query SignalsPrs($reviewQ: String!, $mineQ: St
   }
 }
 fragment PrHead on PullRequest {
-  id number title url isDraft headRefName updatedAt
+  id number title url isDraft headRefName createdAt updatedAt
   repository { nameWithOwner }
   author { __typename login }
 }
@@ -124,9 +124,9 @@ export const SIGNALS_MENTIONS_QUERY = `query SignalsMentions($mentionQ: String!,
     issueCount
     nodes {
       __typename
-      ... on Issue { id number title url updatedAt repository { nameWithOwner } author { __typename login }
+      ... on Issue { id number title url createdAt updatedAt repository { nameWithOwner } author { __typename login }
         comments(last: $c) { totalCount nodes { id author { __typename login } createdAt bodyText url } } }
-      ... on PullRequest { id number title url isDraft headRefName updatedAt repository { nameWithOwner } author { __typename login }
+      ... on PullRequest { id number title url isDraft headRefName createdAt updatedAt repository { nameWithOwner } author { __typename login }
         comments(last: $c) { totalCount nodes { id author { __typename login } createdAt bodyText url } } }
     }
   }

@@ -132,7 +132,7 @@ export interface SignalEvent {
 /** `GET /api/signals/events?after=<seq>&wait=<seconds>` response `data`. */
 export interface SignalEventsPage {
 	events: SignalEvent[]
-	/** Cursor to pass as `after` next time (== last event seq, or the input when empty). */
+	/** Cursor to pass as `after` next time: the last event seq, or (empty page) the global latest seq, never below the input. */
 	seq: number
 }
 

@@ -9,7 +9,10 @@
 export interface MailScriptArgs {
 	/** ISO time; only inbox messages received after it are read. */
 	since: string
-	/** Anchored, case-insensitive regex sources: senders that are candidates even when read. */
+	/**
+	 * Anchored, case-insensitive regex sources: senders that are candidates even when read. Sentry
+	 * senders (mail-filter's `isSentrySender`) are always candidates, listed here or not.
+	 */
 	include: string[]
 	/** When false every recent message is a candidate, not only unread ones. */
 	unreadOnly: boolean
@@ -62,6 +65,13 @@ function run(argv) {
 		var m = values.join(' ').match(/<([^<>\\s]+)>/);
 		return m ? m[1] : null;
 	}
+	// Mirrors mail-filter.ts isSentrySender: sentry.io, getsentry.com and their subdomains.
+	function isSentry(address) {
+		var at = address.lastIndexOf('@');
+		var domain = at === -1 ? '' : address.slice(at + 1).toLowerCase();
+		return domain === 'sentry.io' || /\.sentry\.io$/.test(domain) ||
+			domain === 'getsentry.com' || /\.getsentry\.com$/.test(domain);
+	}
 	function isBulk(h) {
 		if (h['list-id'] || h['list-unsubscribe']) return true;
 		var precedence = (h['precedence'] || []).join(' ').trim().toLowerCase();
@@ -90,7 +100,8 @@ function run(argv) {
 	for (var c = 0; c < order.length; c++) {
 		var index = order[c];
 		var sender = parseSender(senders[index]);
-		var wanted = !args.unreadOnly || !reads[index] || include.some(function (re) { return re.test(sender.address); });
+		var wanted = !args.unreadOnly || !reads[index] || isSentry(sender.address) ||
+			include.some(function (re) { return re.test(sender.address); });
 		if (!wanted) continue;
 		if (candidates.length >= args.maxCandidates) { truncated = true; break; }
 		candidates.push({ index: index, sender: sender });

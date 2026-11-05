@@ -69,7 +69,7 @@ test('review request uses the viewer event, else the latest (team) event; drafts
 	assert.equal(team?.lastActivityAt, '2026-01-01T00:07:00.000Z')
 })
 
-test('review request without timeline events falls back to updatedAt and the PR author', () => {
+test('review request without timeline events falls back to createdAt and the PR author', () => {
 	const [observation] = mapGithubSignals(
 		{
 			prs: {
@@ -81,6 +81,7 @@ test('review request without timeline events falls back to updatedAt and the PR 
 							number: 1,
 							title: 'T',
 							url: 'https://github.com/o/r/pull/1',
+							createdAt: '2026-01-01T00:00:00Z',
 							updatedAt: '2026-01-02T00:00:00Z',
 							repository: { nameWithOwner: 'o/r' },
 							author: { __typename: 'User', login: 'ivy' },
@@ -94,7 +95,7 @@ test('review request without timeline events falls back to updatedAt and the PR 
 		{ viewer: 'me-user' },
 	)
 	assert.equal(observation.head, 'review requested · ivy')
-	assert.equal(observation.lastActivityAt, '2026-01-02T00:00:00.000Z')
+	assert.equal(observation.lastActivityAt, '2026-01-01T00:00:00.000Z')
 })
 
 test('comments count only foreign activity newer than the viewer, latest review wins the head', () => {
@@ -227,7 +228,149 @@ test('mentions match only foreign comments that @-mention the viewer, issues hav
 	const docs = threads.get('github:acme/docs#31')
 	assert.equal(docs?.head, 'mentioned you')
 	assert.equal(docs?.actor, null)
-	assert.equal(docs?.lastActivityAt, '2026-01-01T00:42:00.000Z')
+	// No mentioning comment in view: fixed to the node, never its updatedAt.
+	assert.equal(docs?.lastActivityAt, '2025-12-31T08:00:00.000Z')
+	assert.equal(docs?.activityKey, 'mention:2025-12-31T08:00:00.000Z:mention:I_31')
+})
+
+// The activity key is what the store compares to decide "new again"; none of these may move it.
+test("the viewer's own activity and plain updates never move any reason's key or time", () => {
+	const issue = (extra: { updatedAt: string; comments: unknown[] }) => ({
+		__typename: 'Issue',
+		id: 'I_m',
+		number: 8,
+		title: 'Body mentions me',
+		url: 'https://github.com/o/r/issues/8',
+		createdAt: '2026-01-01T00:00:00Z',
+		repository: { nameWithOwner: 'o/r' },
+		...extra,
+		comments: { nodes: extra.comments },
+	})
+	const mention = (node: ReturnType<typeof issue>) =>
+		mapGithubSignals({ prs: null, mentions: { mentions: { nodes: [node] } } } as never, { viewer: 'me' })[0]
+	const before = mention(issue({ updatedAt: '2026-01-01T00:00:00Z', comments: [] }))
+	// Jakub replies (and @-mentions himself), someone labels it: updatedAt moves, the key must not.
+	const after = mention(
+		issue({
+			updatedAt: '2026-01-03T00:00:00Z',
+			comments: [
+				{
+					id: 'own',
+					author: { __typename: 'User', login: 'Me' },
+					createdAt: '2026-01-03T00:00:00Z',
+					bodyText: 'thanks @me',
+				},
+			],
+		}),
+	)
+	assert.equal(after.activityKey, before.activityKey)
+	assert.equal(after.lastActivityAt, before.lastActivityAt)
+	assert.equal(before.lastActivityAt, '2026-01-01T00:00:00.000Z')
+
+	// A foreign mention in view does move it.
+	const foreign = mention(
+		issue({
+			updatedAt: '2026-01-04T00:00:00Z',
+			comments: [
+				{
+					id: 'f',
+					author: { __typename: 'User', login: 'kim' },
+					createdAt: '2026-01-04T00:00:00Z',
+					bodyText: '@me look',
+				},
+			],
+		}),
+	)
+	assert.equal(foreign.lastActivityAt, '2026-01-04T00:00:00.000Z')
+
+	// Review request: the viewer asking someone else for a review (team-requested PR) is not activity.
+	const review = (events: unknown[], updatedAt: string) =>
+		mapGithubSignals(
+			{
+				prs: {
+					reviewRequested: {
+						nodes: [
+							{
+								id: 'PR_r',
+								number: 2,
+								title: 'T',
+								url: 'https://github.com/o/r/pull/2',
+								createdAt: '2026-01-01T00:00:00Z',
+								updatedAt,
+								repository: { nameWithOwner: 'o/r' },
+								author: { __typename: 'User', login: 'ann' },
+								timelineItems: { nodes: events },
+							},
+						],
+					},
+				},
+				mentions: null,
+			} as never,
+			{ viewer: 'me' },
+		)[0]
+	const team = {
+		__typename: 'ReviewRequestedEvent',
+		createdAt: '2026-01-01T01:00:00Z',
+		actor: { login: 'ann' },
+		requestedReviewer: { __typename: 'Team', slug: 'core' },
+	}
+	const reviewBefore = review([team], '2026-01-01T01:00:00Z')
+	const reviewAfter = review(
+		[
+			team,
+			{
+				__typename: 'ReviewRequestedEvent',
+				createdAt: '2026-01-02T00:00:00Z',
+				actor: { login: 'ME' },
+				requestedReviewer: { __typename: 'User', login: 'zed' },
+			},
+			{
+				__typename: 'ReviewRequestRemovedEvent',
+				createdAt: '2026-01-02T00:01:00Z',
+				requestedReviewer: { __typename: 'User', login: 'zed' },
+			},
+		],
+		'2026-01-02T00:01:00Z',
+	)
+	assert.equal(reviewAfter.activityKey, reviewBefore.activityKey)
+	assert.equal(reviewAfter.lastActivityAt, '2026-01-01T01:00:00.000Z')
+	assert.equal(reviewAfter.head, 'review requested · ann')
+
+	// Comments on Jakub's PR: his own reply ends the reason rather than moving it.
+	const mine = (comments: unknown[], updatedAt: string) =>
+		mapGithubSignals(
+			{
+				prs: {
+					mine: {
+						nodes: [
+							{
+								id: 'PR_c',
+								number: 3,
+								title: 'T',
+								url: 'https://github.com/o/r/pull/3',
+								createdAt: '2026-01-01T00:00:00Z',
+								updatedAt,
+								repository: { nameWithOwner: 'o/r' },
+								comments: { nodes: comments },
+							},
+						],
+					},
+				},
+				mentions: null,
+			} as never,
+			{ viewer: 'me' },
+		)
+	const theirs = { id: 'c1', author: { __typename: 'User', login: 'kim' }, createdAt: '2026-01-01T02:00:00Z' }
+	const commentsBefore = mine([theirs], '2026-01-01T02:00:00Z')[0]
+	const commentsLater = mine([theirs], '2026-01-05T00:00:00Z')[0]
+	assert.equal(commentsLater.activityKey, commentsBefore.activityKey)
+	assert.deepEqual(
+		mine(
+			[theirs, { id: 'c2', author: { __typename: 'User', login: 'me' }, createdAt: '2026-01-01T03:00:00Z' }],
+			'2026-01-01T03:00:00Z',
+		),
+		[],
+	)
 })
 
 test('third-party text is kept to one line', () => {
@@ -306,6 +449,9 @@ test('reader runs both read-only graphql queries with prompts disabled', async (
 		assert.equal(call.timeout, 30_000)
 		assert.ok(call.args.includes('n=20') && call.args.includes('c=5'))
 		assert.ok(!call.args.some(arg => /token|mutation/i.test(arg)))
+		// Nodes carry createdAt: the fixed fallback time for review/ci/mention reasons.
+		const query = call.args.find(arg => arg.startsWith('query=')) ?? ''
+		assert.match(query, /headRefName createdAt updatedAt/)
 	}
 	assert.ok(calls[0].args.includes(`reviewQ=${REVIEW_SEARCH}`))
 	assert.ok(calls[0].args.includes(`mineQ=${MINE_SEARCH}`))

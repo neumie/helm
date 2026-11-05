@@ -147,7 +147,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		for (;;) {
 			const events = store.events(after)
 			if (events.length > 0 || Date.now() >= deadline || abort.aborted) {
-				const page: SignalEventsPage = { events, seq: events.at(-1)?.seq ?? after }
+				const page: SignalEventsPage = { events, seq: events.at(-1)?.seq ?? Math.max(after, store.latestSeq()) }
 				return c.json({ data: page })
 			}
 			await pause(Math.min(eventPollMs, Math.max(0, deadline - Date.now())), abort)

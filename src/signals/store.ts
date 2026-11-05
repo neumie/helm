@@ -330,8 +330,12 @@ export class SignalStore {
 			}
 			if (result.complete === true) {
 				for (const row of existing.values()) {
-					if (row.active !== 1 || observations.has(row.thread_key)) continue
-					if (this.missThread(row, goneReason, at)) counts.gone += 1
+					if (observations.has(row.thread_key)) continue
+					if (row.active === 1) {
+						if (this.missThread(row, goneReason, at)) counts.gone += 1
+					} else if (this.closeReturnedGone(row, goneReason, at)) {
+						counts.gone += 1
+					}
 				}
 			}
 			this.wakeSnoozedAt(at)
@@ -415,6 +419,10 @@ export class SignalStore {
 				next.state = patch.state
 				next.closed_reason = null
 			}
+			// Jakub putting a gone thread back into new/seen himself wins over the auto-close of a
+			// complete poll: clear its miss count so `closeReturnedGone` leaves it alone.
+			const reopenedByHand =
+				patch.state !== undefined && row.active !== 1 && (next.state === 'new' || next.state === 'seen')
 			if (patch.owner !== undefined) {
 				if (!oneOf(SIGNAL_OWNERS, patch.owner)) throw new SignalInvalidError('Unknown owner')
 				next.owner = patch.owner
@@ -432,10 +440,21 @@ export class SignalStore {
 			if (!changed) return toSignalThread(row)
 			this.db
 				.prepare(
-					`UPDATE signal_threads SET state = ?, owner = ?, snoozed_until = ?, closed_reason = ?, managed_by = ?, updated_at = ?
+					`UPDATE signal_threads SET state = ?, owner = ?, snoozed_until = ?, closed_reason = ?, managed_by = ?,
+					   missed_polls = ?, updated_at = ?
 					 WHERE profile_id = ? AND id = ?`,
 				)
-				.run(next.state, next.owner, next.snoozed_until, next.closed_reason, next.managed_by, at, this.profileId, id)
+				.run(
+					next.state,
+					next.owner,
+					next.snoozed_until,
+					next.closed_reason,
+					next.managed_by,
+					reopenedByHand ? 0 : row.missed_polls,
+					at,
+					this.profileId,
+					id,
+				)
 			if (next.owner !== row.owner) {
 				this.insertEvent(id, 'owner', { owner: next.owner, from: row.owner, to: next.owner }, at)
 			}
@@ -512,10 +531,12 @@ export class SignalStore {
 		)
 	}
 
+	/**
+	 * Newest event seq across ALL profiles. `seq` is one AUTOINCREMENT shared by every profile, so a
+	 * cursor taken from this never replays another profile's older events after a profile switch.
+	 */
 	latestSeq(): number {
-		const row = this.db.prepare('SELECT MAX(seq) AS seq FROM signal_events WHERE profile_id = ?').get(this.profileId) as
-			| { seq: number | null }
-			| undefined
+		const row = this.db.prepare('SELECT MAX(seq) AS seq FROM signal_events').get() as { seq: number | null } | undefined
 		return row?.seq ?? 0
 	}
 
@@ -652,8 +673,11 @@ export class SignalStore {
 		}
 		const columns = Object.keys(update)
 		if (columns.length === 0) return false
-		// Bookkeeping alone (missed_polls, the key) does not count as a change people see.
-		const visible = columns.some(column => column !== 'missed_polls' && column !== 'activity_key')
+		// Bookkeeping alone (missed_polls, the key) does not count as a change people see. A done
+		// thread keeps its done time (`updated_at`) through head refreshes; only a state change moves it.
+		const visible =
+			state !== row.state ||
+			(row.state !== 'done' && columns.some(column => column !== 'missed_polls' && column !== 'activity_key'))
 		if (visible) update.updated_at = at
 		const assignments = Object.keys(update).map(column => `${column} = ?`)
 		this.db
@@ -679,23 +703,70 @@ export class SignalStore {
 		}
 		// Managed threads stay with their agent; only Jakub's open threads close themselves.
 		const close = row.owner === 'jakub' && (row.state === 'new' || row.state === 'seen')
+		// Going inactive alone is bookkeeping: `updated_at` (a done thread's done time) moves only on close.
 		this.db
 			.prepare(
 				`UPDATE signal_threads SET missed_polls = ?, active = 0, state = ?, closed_reason = ?, updated_at = ?
 				 WHERE profile_id = ? AND id = ?`,
 			)
-			.run(missed, close ? 'done' : row.state, close ? goneReason : row.closed_reason, at, this.profileId, row.id)
+			.run(
+				missed,
+				close ? 'done' : row.state,
+				close ? goneReason : row.closed_reason,
+				close ? at : row.updated_at,
+				this.profileId,
+				row.id,
+			)
 		this.insertEvent(row.id, 'gone', { owner: row.owner, reason: goneReason, state: close ? 'done' : row.state }, at)
 		return true
+	}
+
+	/**
+	 * A gone thread (active = 0) that came back to Jakub as new/seen — taken back from an agent — is
+	 * closed by the next complete poll that still lacks it. Not when Jakub reopened it by hand
+	 * (`update` then resets `missed_polls`).
+	 */
+	private closeReturnedGone(row: ThreadRow, goneReason: string, at: string): boolean {
+		if (row.owner !== 'jakub' || (row.state !== 'new' && row.state !== 'seen')) return false
+		if (row.missed_polls < SIGNAL_GONE_AFTER_MISSES) return false
+		this.closeGone(row, goneReason, at)
+		return true
+	}
+
+	private closeGone(row: { id: number; owner: string; state: string }, goneReason: string, at: string): void {
+		this.db
+			.prepare(
+				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, updated_at = ?
+				 WHERE profile_id = ? AND id = ?`,
+			)
+			.run(goneReason, at, this.profileId, row.id)
+		this.insertEvent(row.id, 'gone', { owner: row.owner, reason: goneReason, state: 'done', from: row.state }, at)
+	}
+
+	/** The reason of the thread's latest `gone` event, while the event log still holds it. */
+	private lastGoneReason(threadId: number): string {
+		const row = this.db
+			.prepare(
+				"SELECT detail FROM signal_events WHERE profile_id = ? AND thread_id = ? AND type = 'gone' ORDER BY seq DESC LIMIT 1",
+			)
+			.get(this.profileId, threadId) as { detail: string } | undefined
+		const reason = row ? parseDetail(row.detail).reason : null
+		return typeof reason === 'string' && reason !== '' ? reason : 'no longer reported'
 	}
 
 	private wakeSnoozedAt(at: string): number {
 		const rows = this.db
 			.prepare(
-				"SELECT id, owner FROM signal_threads WHERE profile_id = ? AND state = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?",
+				"SELECT id, owner, active FROM signal_threads WHERE profile_id = ? AND state = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?",
 			)
-			.all(this.profileId, at) as Array<{ id: number; owner: string }>
+			.all(this.profileId, at) as Array<{ id: number; owner: string; active: number }>
 		for (const row of rows) {
+			// Gone while snoozed: Jakub's thread closes instead of waking into Needs you, since no
+			// later poll would ever close it (missThread only touches active threads).
+			if (row.active !== 1 && row.owner === 'jakub') {
+				this.closeGone({ ...row, state: 'snoozed' }, this.lastGoneReason(row.id), at)
+				continue
+			}
 			this.db
 				.prepare(
 					"UPDATE signal_threads SET state = 'new', snoozed_until = NULL, updated_at = ? WHERE profile_id = ? AND id = ?",

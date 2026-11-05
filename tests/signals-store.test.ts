@@ -68,7 +68,9 @@ test('creates threads as new and Jakub-owned, dedupes by thread key, isolates pr
 		const beta = db.forProfile('beta').signals
 		assert.deepEqual(beta.list({}, T0), [])
 		assert.equal(beta.get(first.id), null)
-		assert.equal(beta.latestSeq(), 0)
+		assert.deepEqual(beta.events(0), [])
+		// The seq is one sequence shared by every profile, so the cursor is global too.
+		assert.equal(beta.latestSeq(), db.signals.latestSeq())
 		assert.throws(() => beta.update(first.id, { state: 'done' }, T0), SignalNotFoundError)
 	})
 })
@@ -376,5 +378,116 @@ test('source health defaults to disabled and remembers the last good poll', () =
 		db.signals.setSourceHealth('github', 'disabled', null, at(9), false)
 		assert.equal(db.signals.sources()[0]?.lastPollAt, at(5).toISOString())
 		assert.equal(db.forProfile('beta').signals.sources()[0]?.status, 'disabled')
+	})
+})
+
+test("a cursor taken in one profile never replays another profile's older events after a switch", () => {
+	withDb(db => {
+		const beta = db.forProfile('beta').signals
+		beta.applyPoll(poll([github(1)]), T0)
+		db.signals.applyPoll(poll([github(1), github(2), github(3)]), T0)
+		// A watcher reads beta's snapshot (cursor = latestSeq), then the active profile flips to alpha.
+		const cursor = beta.latestSeq()
+		assert.equal(cursor, db.signals.latestSeq())
+		assert.deepEqual(db.signals.events(cursor), [], 'alpha events older than the cursor are not replayed')
+		// New alpha events after the cursor still arrive.
+		const id = db.signals.getByThreadKey('github:acme/widgets#2')?.id ?? 0
+		db.signals.markSeen(id, at(1))
+		assert.deepEqual(
+			db.signals.events(cursor).map(event => event.type),
+			['state'],
+		)
+		// And beta still sees only its own.
+		assert.equal(beta.events(0).length, 1)
+	})
+})
+
+test('a gone thread that comes back to Jakub (snooze wake, take-back) closes instead of sitting in Needs you', () => {
+	withDb(db => {
+		db.signals.applyPoll(poll([github(1), github(2), github(3), github(4), github(5)]), T0)
+		const id = (n: number) => db.signals.getByThreadKey(`github:acme/widgets#${n}`)?.id ?? 0
+		db.signals.update(id(1), { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(1))
+		db.signals.update(id(2), { owner: 'managed', managedBy: 'agent-a' }, at(1))
+		db.signals.update(id(3), { owner: 'managed', managedBy: 'agent-b' }, at(1))
+		db.signals.update(id(4), { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(1))
+		db.signals.update(id(4), { owner: 'managed', managedBy: 'agent-c' }, at(1))
+		db.signals.applyPoll(poll([github(5)]), at(2))
+		db.signals.applyPoll(poll([github(5)]), at(3))
+		for (const n of [1, 2, 3, 4]) assert.equal(db.signals.get(id(n))?.active, false)
+		assert.equal(db.signals.get(id(1))?.state, 'snoozed')
+
+		// Snooze ends: Jakub's gone thread closes with its gone reason; the agent's wakes for the agent.
+		assert.equal(db.signals.wakeSnoozed(at(60)), 2)
+		const woke = db.signals.get(id(1))
+		assert.equal(woke?.state, 'done')
+		assert.equal(woke?.closedReason, 'no longer open or requested')
+		assert.equal(woke?.snoozedUntil, null)
+		assert.equal(db.signals.get(id(4))?.state, 'new')
+		assert.equal(db.signals.get(id(4))?.owner, 'managed')
+
+		// Jakub takes two gone managed threads back; for one he also says "seen" explicitly.
+		db.signals.update(id(2), { owner: 'jakub', managedBy: null }, at(61))
+		db.signals.update(id(3), { owner: 'jakub', managedBy: null, state: 'seen' }, at(61))
+		assert.equal(db.signals.get(id(2))?.state, 'new')
+		// An incomplete poll proves nothing.
+		db.signals.applyPoll(poll([], false), at(62))
+		assert.equal(db.signals.get(id(2))?.state, 'new')
+		const counts = db.signals.applyPoll(poll([github(5)]), at(63))
+		assert.equal(counts.gone, 1)
+		const taken = db.signals.get(id(2))
+		assert.equal(taken?.state, 'done')
+		assert.equal(taken?.closedReason, 'no longer open or requested')
+		assert.equal(db.signals.get(id(3))?.state, 'seen', 'an explicit state update by Jakub wins')
+		assert.equal(db.signals.list({ owner: 'jakub', states: ['new', 'seen'] }, at(63)).length, 2)
+
+		// It still reopens if GitHub reports it again with newer activity.
+		db.signals.applyPoll(
+			poll([github(2, { activityKey: 'later', lastActivityAt: at(64).toISOString() }), github(5)]),
+			at(64),
+		)
+		assert.equal(db.signals.get(id(2))?.state, 'new')
+		assert.equal(db.signals.get(id(2))?.active, true)
+	})
+})
+
+test("poll-only refreshes never move a done thread's done time", () => {
+	withDb(db => {
+		db.signals.applyPoll(poll([github(1), github(2)]), T0)
+		const id = db.signals.getByThreadKey('github:acme/widgets#1')?.id ?? 0
+		db.signals.update(id, { state: 'done' }, at(1))
+		const doneAt = at(1).toISOString()
+		const later = (days: number) => at(days * 24 * 60)
+
+		// Head refresh (same activity) on the done thread.
+		db.signals.applyPoll(poll([github(1, { head: 'review requested · someone else' }), github(2)]), later(3))
+		assert.equal(db.signals.get(id)?.head, 'review requested · someone else')
+		assert.equal(db.signals.get(id)?.updatedAt, doneAt)
+
+		// Missing, then gone: bookkeeping only.
+		db.signals.applyPoll(poll([github(2)]), later(4))
+		db.signals.applyPoll(poll([github(2)]), later(5))
+		const gone = db.signals.get(id)
+		assert.equal(gone?.active, false)
+		assert.equal(gone?.state, 'done')
+		assert.equal(gone?.updatedAt, doneAt)
+
+		// Reported again unchanged: active again, still the same done time.
+		db.signals.applyPoll(poll([github(1), github(2)]), later(6))
+		assert.equal(db.signals.get(id)?.active, true)
+		assert.equal(db.signals.get(id)?.updatedAt, doneAt)
+
+		// Eight days after Jakub dismissed it, it is no longer in the default (recent done) list.
+		assert.equal(
+			db.signals.list({}, later(8)).some(thread => thread.id === id),
+			false,
+		)
+
+		// New foreign activity is a real change: it reopens and moves updated_at.
+		db.signals.applyPoll(
+			poll([github(1, { activityKey: 'new', lastActivityAt: later(9).toISOString() }), github(2)]),
+			later(9),
+		)
+		assert.equal(db.signals.get(id)?.state, 'new')
+		assert.equal(db.signals.get(id)?.updatedAt, later(9).toISOString())
 	})
 })

@@ -485,3 +485,34 @@ test('JXA script does nothing when Mail is not running and flags truncation', ()
 	assert.equal(windowed.truncated, true)
 	assert.equal(windowed.messages.length, 1)
 })
+
+test('Sentry is always in: default globs cover md.getsentry.com, and it survives an emptied include list', async () => {
+	const { DEFAULT_SIGNAL_INCLUDE_SENDERS } = await import('../src/config.js')
+	assert.equal(matchesGlob('noreply@md.getsentry.com', parseGlobList(DEFAULT_SIGNAL_INCLUDE_SENDERS)), true)
+
+	const sentry: MailMessageHead = {
+		messageId: 'alert@md.getsentry.com',
+		subject: '[Sentry] PROJ-9 boom',
+		senderName: 'Sentry',
+		senderAddress: 'noreply@md.getsentry.com',
+		dateReceived: '2026-01-15T09:00:00.000Z',
+		read: true,
+		flagged: false,
+		bulk: true,
+		root: 'alert@md.getsentry.com',
+	}
+	const kept = filterMail([sentry], options({ includeSenders: [] }), NOW)
+	assert.deepEqual(ids(kept), ['alert@md.getsentry.com'])
+	// Still bounded by age.
+	assert.deepEqual(
+		filterMail([{ ...sentry, dateReceived: '2025-12-01T00:00:00.000Z' }], options({ includeSenders: [] }), NOW),
+		[],
+	)
+
+	// The JXA script makes a read Sentry message a candidate without any include regex.
+	const { mail, touched } = fakeMail(fakeMessages)
+	const result = runScript(mail, { ...scriptArgs, include: [] })
+	assert.ok(result.messages.some(message => message.messageId === 'alert@sentry.example'))
+	assert.ok(touched.includes('allHeaders:6'))
+	assert.ok(!touched.includes('allHeaders:5'))
+})

@@ -1,6 +1,10 @@
 // Pure GitHub → Signals mapping: the two Signals GraphQL responses (see github-source.ts) become one
 // observation per `owner/repo#N`, merging every reason (review request, foreign comments/reviews on
 // Jakub's PRs, failed CI, mentions). No IO; the store bounds and sanitizes again before persisting.
+//
+// A reason's time and id (the activity key) come only from foreign activity or from fixed facts of
+// the node (createdAt, id). Never `updatedAt`: it moves on ANY change, including Jakub's own reply,
+// a label or a push, and the store would re-notify him for it.
 
 import { oneLine } from '../agent-dock/text.js'
 import { SIGNAL_LIMITS, type SignalKind, type SignalObservation } from './contract.js'
@@ -71,6 +75,7 @@ export interface GhNode {
 	url?: string | null
 	isDraft?: boolean | null
 	headRefName?: string | null
+	createdAt?: string | null
 	updatedAt?: string | null
 	repository?: { nameWithOwner?: string | null } | null
 	author?: GhActor | null
@@ -181,8 +186,19 @@ function identity(node: GhNode): { nameWithOwner: string; number: number } | nul
 	return { nameWithOwner, number: node.number }
 }
 
+/** Fixed time of the node itself: its creation (never `updatedAt`, which moves on any change). */
+function nodeTime(node: GhNode): string {
+	return isoTime(node.createdAt) ?? new Date(0).toISOString()
+}
+
 function reviewReason(node: GhNode, viewer: string): Reason {
-	const requests = nodesOf(node.timelineItems).filter(item => isoTime(item.createdAt) !== null)
+	// Only review requests count; one the viewer made (asking someone else) is the viewer's activity.
+	const requests = nodesOf(node.timelineItems).filter(
+		item =>
+			item.__typename === 'ReviewRequestedEvent' &&
+			isoTime(item.createdAt) !== null &&
+			!sameLogin(login(item.actor), viewer),
+	)
 	const newest = (items: GhTimelineItem[]) =>
 		items.reduce<GhTimelineItem | null>(
 			(best, item) => (best === null || later(item.createdAt as string, best.createdAt as string) ? item : best),
@@ -190,14 +206,11 @@ function reviewReason(node: GhNode, viewer: string): Reason {
 		)
 	const forViewer = newest(
 		requests.filter(
-			item =>
-				item.__typename === 'ReviewRequestedEvent' &&
-				item.requestedReviewer?.__typename === 'User' &&
-				sameLogin(item.requestedReviewer.login ?? null, viewer),
+			item => item.requestedReviewer?.__typename === 'User' && sameLogin(item.requestedReviewer.login ?? null, viewer),
 		),
 	)
 	const event = forViewer ?? newest(requests)
-	const time = isoTime(event?.createdAt) ?? isoTime(node.updatedAt) ?? new Date(0).toISOString()
+	const time = isoTime(event?.createdAt) ?? nodeTime(node)
 	const actor = login(event?.actor) ?? login(node.author)
 	const head = withActor('review requested', actor) + (node.isDraft ? ' · draft' : '')
 	return { kind: 'review', time, actor, head, id: node.id ?? `${time}` }
@@ -285,7 +298,7 @@ function ciReason(node: GhNode): Reason | null {
 		.map(item => item.time)
 		.filter((time): time is string => time !== null)
 		.reduce<string | null>((max, time) => (max === null || later(time, max) ? time : max), null)
-	const time = failTime ?? isoTime(commit?.committedDate) ?? isoTime(node.updatedAt) ?? new Date(0).toISOString()
+	const time = failTime ?? isoTime(commit?.committedDate) ?? nodeTime(node)
 	const fingerprint = `ci:${commit?.oid ?? ''}:${[...names].sort().join(',')}`
 	return { kind: 'ci', time, actor: null, head, id: fingerprint }
 }
@@ -301,8 +314,9 @@ function mentionReason(node: GhNode, viewer: string): Reason {
 	}
 	if (match)
 		return { kind: 'mention', ...match, head: `mentioned by ${clean(match.actor ?? 'ghost', SIGNAL_LIMITS.actor)}` }
-	const time = isoTime(node.updatedAt) ?? new Date(0).toISOString()
-	return { kind: 'mention', time, actor: null, head: 'mentioned you', id: node.id ?? time }
+	// No mentioning comment in view (the mention is in the body, or scrolled out): a key fixed to the
+	// node, so later updates (Jakub's own reply included) never move it.
+	return { kind: 'mention', time: nodeTime(node), actor: null, head: 'mentioned you', id: `mention:${node.id ?? ''}` }
 }
 
 function accumulate(threads: Map<string, ThreadAcc>, node: GhNode, reasons: (Reason | null)[]): void {

@@ -71,7 +71,8 @@ export function filterMail(messages: MailMessageHead[], options: MailFilterOptio
 		const received = Date.parse(message.dateReceived)
 		if (!Number.isFinite(received) || received < oldest) return false
 		const address = normalizeAddress(message.senderAddress)
-		if (matchesGlob(address, options.includeSenders)) return true
+		// Sentry is always in, even when the include list was edited without it.
+		if (isSentrySender(address) || matchesGlob(address, options.includeSenders)) return true
 		if (options.unreadOnly && message.read) return false
 		if (options.excludeBulk && message.bulk) return false
 		if (matchesGlob(address, options.excludeSenders)) return false
