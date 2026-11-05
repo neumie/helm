@@ -274,8 +274,14 @@ const isInFlight = (item: DockItem): boolean => item.state === 'sending' && item
  * A refusal that only said the agent was not free (working, a dialog open, or its state unknown):
  * once the agent is seen idle again it no longer holds, so it is dropped (see observeTerminal).
  */
-const refusedNotFree = (receipt: { status: string; reason?: DockRefusalReason } | undefined): boolean =>
-	receipt?.status === 'refused' && (receipt.reason === 'busy' || receipt.reason === 'untracked')
+const refusedNotFree = (
+	receipt: { status: string; reason?: DockRefusalReason; at: number } | undefined,
+	readFrom: number | undefined,
+): boolean =>
+	receipt?.status === 'refused' &&
+	(receipt.reason === 'busy' || receipt.reason === 'untracked') &&
+	// A poll whose reads began before the refusal saw older data than the refusing check did.
+	(readFrom === undefined || receipt.at <= readFrom)
 
 /** `background`: main agent idle while its subagents or background tasks (shells, workflows, monitors) still run. */
 function deriveStatus(detail: OkenaClaudeSession, backgroundTasks: number): DockSessionStatus {
@@ -506,6 +512,8 @@ interface TickContext {
 	profile: string
 	state: OkenaState
 	seedTick: boolean
+	/** When this poll's reads began (see the poll observation's `readFrom`). */
+	readFrom?: number
 }
 
 function observeTerminal(
@@ -654,8 +662,9 @@ function observeTerminal(
 	// "Check it again": seen idle now, a reply refused as busy/untracked can simply be sent again,
 	// so the pane and its strip entry stop reading as refused (the refusal stays while it holds).
 	if (status === 'idle' || status === 'background') {
-		for (const item of live()) if (item.state === 'open' && refusedNotFree(item.receipt)) item.receipt = undefined
-		if (refusedNotFree(record.session.reply)) record.session.reply = undefined
+		for (const item of live())
+			if (item.state === 'open' && refusedNotFree(item.receipt, ctx.readFrom)) item.receipt = undefined
+		if (refusedNotFree(record.session.reply, ctx.readFrom)) record.session.reply = undefined
 	}
 	// A dock reply already sent is waiting to show up as a user entry; seeing it closes the turn.
 	for (const item of live()) {
@@ -922,7 +931,13 @@ function reducePoll(draft: Draft, observation: Extract<AgentDockObservation, { t
 	src.stateVersion = okenaState.state_version
 	src.seeded = true
 
-	const ctx: TickContext = { source: id, profile: observation.profile, state: okenaState, seedTick }
+	const ctx: TickContext = {
+		source: id,
+		profile: observation.profile,
+		state: okenaState,
+		seedTick,
+		...(observation.readFrom !== undefined ? { readFrom: observation.readFrom } : {}),
+	}
 	const candidates = okenaClaudeCandidates(okenaState)
 	for (const terminalId of candidates) {
 		observeTerminal(draft, ctx, terminalId, details.get(terminalId) ?? { detail: null, transcript: null })

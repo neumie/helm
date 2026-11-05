@@ -73,6 +73,16 @@ class FakeOkenaServer {
 	/** Next dialog POST answers with this instead of closing the dialog. */
 	dialogReply: { status: number; text: string } | null = null
 	promptReply: { status: number; text: string } | null = null
+	/**
+	 * Holds the next GET of `url` (a tick in flight): its answer is taken when the request arrives
+	 * (or `reply` instead), `reached` fires, and the response waits for `until`.
+	 */
+	hold: {
+		url: string
+		until: Promise<void>
+		reached: () => void
+		reply?: { status: number; text: string } | Json
+	} | null = null
 
 	handle = async (request: IncomingMessage, response: import('node:http').ServerResponse) => {
 		const url = request.url ?? ''
@@ -115,15 +125,17 @@ class FakeOkenaServer {
 			return plain(404, 'not found')
 		}
 		this.gets.push(url)
-		if (url === '/v1/state') {
-			const dialogs = (this.detail.dialogs as Json[]).length
-			return json({
-				...STATE_ASK,
-				state_version: this.version,
-				claude_sessions: [TID],
-				claude_dialogs: dialogs ? { [TID]: dialogs } : {},
-			})
+		const hold = this.hold?.url === url ? this.hold : null
+		if (hold) {
+			this.hold = null
+			const body = hold.reply ? null : url === '/v1/state' ? this.stateBody() : structuredClone(this.detail)
+			hold.reached()
+			await hold.until
+			if (hold.reply && typeof hold.reply.status === 'number' && typeof hold.reply.text === 'string')
+				return plain(hold.reply.status, hold.reply.text)
+			return json(hold.reply ?? body)
 		}
+		if (url === '/v1/state') return json(this.stateBody())
 		if (url === `/v1/claude/terminals/${TID}`) return json(this.detail)
 		if (url.startsWith(`/v1/claude/terminals/${TID}/transcript`)) {
 			const query = new URL(url, 'http://okena').searchParams
@@ -137,6 +149,27 @@ class FakeOkenaServer {
 			})
 		}
 		return plain(404, 'terminal not found')
+	}
+
+	stateBody(): Json {
+		const dialogs = (this.detail.dialogs as Json[]).length
+		return {
+			...STATE_ASK,
+			state_version: this.version,
+			claude_sessions: [TID],
+			claude_dialogs: dialogs ? { [TID]: dialogs } : {},
+		}
+	}
+
+	/** Holds the next GET of `url`; resolves once it arrived, with the function that answers it. */
+	holdNext(url: string, reply?: { status: number; text: string } | Json): Promise<() => void> {
+		let release = () => {}
+		const until = new Promise<void>(resolve => {
+			release = resolve
+		})
+		return new Promise(resolve => {
+			this.hold = { url, until, reached: () => resolve(release), ...(reply ? { reply } : {}) }
+		})
 	}
 }
 
@@ -456,6 +489,93 @@ test('reply while Okena cannot say if the agent is busy (restarted daemon): refu
 		const sent = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
 		assert.equal(sent.outcome.status, 'sent')
 		assert.equal(h.okena.posts.length, 1)
+	} finally {
+		await h.done()
+	}
+})
+
+/** An idle agent whose finished turn is open in the dock (last message `a-1`). */
+async function idleTurn() {
+	const h = await harness(okena => {
+		okena.detail = { ...structuredClone(SHOW_IDLE), busy: true }
+		okena.entries = [{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' }]
+	})
+	await h.tick()
+	h.okena.entries.push({ kind: 'assistant', uuid: 'a-1', text: 'Done.' })
+	h.okena.detail = { ...h.okena.detail, busy: false }
+	h.okena.version++
+	await h.tick()
+	await h.tick(TURN_IDLE_MS)
+	return h
+}
+
+test('a tick in flight while a reply is refused (the agent just went busy) never wipes the refusal with its older idle read', async () => {
+	const h = await idleTurn()
+	try {
+		const turn = h.item('turn')
+		// A tick reads the pane (idle) and is still in flight when Jakub sends.
+		const held = h.okena.holdNext(`/v1/claude/terminals/${TID}`)
+		h.clock.now += 1_000
+		const ticking = h.watcher.tick()
+		const release = await held
+		// Meanwhile the agent went to work (a background task woke it): the send's own check sees it.
+		h.okena.detail = { ...h.okena.detail, busy: true }
+		h.okena.version++
+		h.clock.now += 200
+		const refused = await h.watcher.act({ itemId: turn.id, action: { type: 'prompt', text: 'ok' } })
+		assert.deepEqual(refused.outcome, {
+			status: 'refused',
+			reason: 'busy',
+			detail: 'the agent is working again; check it again',
+		})
+		assert.equal(refused.recorded, true)
+		assert.deepEqual(h.okena.posts, [])
+		// The in-flight tick lands with what it read before the refusal: the refusal still shows.
+		release()
+		await ticking
+		await h.watcher.drain()
+		assert.equal(h.item('turn').receipt?.reason, 'busy')
+		// A fresh read that sees it idle again (same message): the refusal no longer holds.
+		h.okena.detail = { ...h.okena.detail, busy: false }
+		h.okena.version++
+		await h.tick()
+		assert.equal(h.item('turn').receipt, undefined)
+		assert.equal(h.item('turn').state, 'open')
+	} finally {
+		await h.done()
+	}
+})
+
+test('agent detail: a reply refused while its session was dropped meanwhile is not claimed as recorded', async () => {
+	const h = await idleTurn()
+	try {
+		const key = h.watcher.snapshot().sessions[0]?.key as string
+		assert.equal(await h.watcher.ack(h.item('turn').id), true)
+		// A tick in flight finds the pane no longer listed (Okena restarted and forgot the idle pane):
+		// with nothing live for it, the agent's session is dropped.
+		const held = h.okena.holdNext('/v1/state', {
+			...h.okena.stateBody(),
+			state_version: 1,
+			claude_sessions: [],
+			claude_dialogs: {},
+		})
+		h.clock.now += 1_000
+		const ticking = h.watcher.tick()
+		const release = await held
+		h.okena.detail = { ...h.okena.detail, busy: true }
+		h.okena.version++
+		const replying = h.watcher.prompt({ session: key, sessionId: SID, assistantUuid: 'a-1', text: 'ok' })
+		release()
+		await ticking
+		const refused = await replying
+		assert.equal(refused.outcome.status === 'refused' && refused.outcome.reason, 'busy')
+		assert.deepEqual(h.okena.posts, [])
+		// Main kept nothing (no session to put the reply on): the renderer must keep the words itself.
+		assert.equal(
+			h.watcher.snapshot().sessions.some(session => session.key === key),
+			false,
+		)
+		assert.equal(refused.recorded, false)
 	} finally {
 		await h.done()
 	}

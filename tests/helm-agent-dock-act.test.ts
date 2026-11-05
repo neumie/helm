@@ -776,6 +776,105 @@ test('"check it again": a busy/untracked refusal holds while the agent is not se
 	assert.equal(only(changed, 'turn').receipt?.reason, 'changed')
 })
 
+test('reply CAS: idle with background work (subagent, shell, hub task count) is free; any dialog or busy is not', () => {
+	const turn = only(turnOpen().state, 'turn')
+	const parsed = parseOkenaClaudeTranscriptPage(page([assistant('a1')], 400, true))
+	assert.ok(parsed.ok)
+	const tail = parsed.value
+	const reason = (check: unknown) => (check as { reason?: string }).reason
+	const subagent = { agent_id: 'sub-1', agent_type: 'general-purpose' }
+	// Main agent idle while a background subagent / shell runs: Claude takes the prompt, so the dock sends.
+	for (const free of [
+		idle({ busy: false, running_subagents: [subagent] }),
+		idle({ busy: false, background_tasks: 2, background_shells: 1 }),
+	]) {
+		assert.deepEqual(turnStillWaiting(turn, session(free), tail), { ok: true })
+		assert.deepEqual(turnStillWaiting(turn, session(free), tail, 'helm'), { ok: true })
+	}
+	// A background subagent's permission dialog would swallow the typed text: refused, never typed.
+	assert.equal(
+		reason(
+			turnStillWaiting(turn, session(idle({ busy: false, running_subagents: [subagent], dialogs: [DIALOG] })), tail),
+		),
+		'busy',
+	)
+	// Main agent mid-turn (a tool call running) with or without a subagent: working, Okena or Helm.
+	for (const source of ['okena', 'helm'] as const) {
+		assert.equal(reason(turnStillWaiting(turn, session(idle({ busy: true })), tail, source)), 'busy')
+		assert.equal(
+			reason(turnStillWaiting(turn, session(idle({ busy: true, running_subagents: [subagent] })), tail, source)),
+			'busy',
+		)
+		assert.equal(reason(turnStillWaiting(turn, session(forgotten()), tail, source)), 'untracked')
+	}
+})
+
+test('"check it again" only on data newer than the refusal: a poll read before it never clears it', () => {
+	const { state: open } = turnOpen()
+	const turn = only(open, 'turn')
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = drive(
+			[
+				[T0 + 20_000, { type: 'act.sending', itemId: turn.id, action: 'prompt' }],
+				[
+					T0 + 20_500,
+					{ type: 'act.result', itemId: turn.id, outcome: { status: 'refused', reason, detail: 'refused' } },
+				],
+			],
+			open,
+		).state
+		// A tick in flight while Jakub sent: its reads (idle) began before the check that refused.
+		const stale = drive([[T0 + 21_000, { ...poll(idle({ busy: false })), readFrom: T0 + 19_900 }]], refused).state
+		assert.equal(only(stale, 'turn').receipt?.reason, reason)
+		assert.equal(receiptView(only(stale, 'turn'))?.text, 'refused: refused')
+		// The next tick read after the refusal: it no longer holds.
+		const fresh = drive([[T0 + 22_000, { ...poll(idle({ busy: false })), readFrom: T0 + 21_500 }]], stale).state
+		assert.equal(only(fresh, 'turn').receipt, undefined)
+		assert.equal(only(fresh, 'turn').state, 'open')
+	}
+})
+
+test('agent detail: a busy/untracked reply refusal clears once the agent is seen idle (not on older reads)', () => {
+	// The turn acked: the agent owes Jakub nothing, replies go from its detail (the session's reply).
+	const { state: open } = turnOpen()
+	const acked = drive([[T0 + 15_000, { type: 'ack', itemId: only(open, 'turn').id }]], open).state
+	for (const reason of ['busy', 'untracked'] as const) {
+		const refused = drive(
+			[
+				[T0 + 20_000, { type: 'prompt.sending', session: KEY, assistantUuid: 'a1' }],
+				[T0 + 20_500, { type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason, detail: 'no' } }],
+			],
+			acked,
+		).state
+		assert.equal(refused.sessions[KEY]?.session.reply?.reason, reason)
+		// Not seen idle (busy, or Okena unable to say), or read before the refusal: it holds.
+		const held = drive(
+			[
+				[T0 + 21_000, poll(idle({ busy: true }))],
+				[T0 + 22_000, poll(forgotten())],
+				[T0 + 23_000, { ...poll(idle({ busy: false })), readFrom: T0 + 20_100 }],
+			],
+			refused,
+		).state
+		assert.equal(held.sessions[KEY]?.session.reply?.reason, reason)
+		const cleared = drive([[T0 + 24_000, { ...poll(idle({ busy: false })), readFrom: T0 + 23_500 }]], held).state
+		assert.equal(cleared.sessions[KEY]?.session.reply, undefined)
+	}
+	// A reply refused for another reason (the agent said something new) is not about being free: it stays.
+	const changed = drive(
+		[
+			[T0 + 20_000, { type: 'prompt.sending', session: KEY, assistantUuid: 'a1' }],
+			[
+				T0 + 20_500,
+				{ type: 'prompt.result', session: KEY, outcome: { status: 'refused', reason: 'changed', detail: 'new' } },
+			],
+			[T0 + 21_000, poll(idle({ busy: false }))],
+		],
+		acked,
+	).state
+	assert.equal(changed.sessions[KEY]?.session.reply?.reason, 'changed')
+})
+
 test('a reply Okena cannot type (409, no Claude detected in the pane) says to reply in the terminal', () => {
 	// Live: native Claude Code runs as its version (`2.1.314`), so Okena's foreground probe misses it and
 	// `POST …/prompt` answers 409 while the channel is off. Nothing was typed; the receipt must say what to do.

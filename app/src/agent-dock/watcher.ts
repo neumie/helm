@@ -363,6 +363,8 @@ export class AgentDockWatcher {
 
 		this.acting = true
 		let outcome: DockActOutcome
+		// Whether the reducer kept the outcome on the item (it drops a result for an item that moved on).
+		let recorded = false
 		try {
 			this.apply({
 				type: 'act.sending',
@@ -378,6 +380,7 @@ export class AgentDockWatcher {
 				outcome = { status: 'failed', detail: errorMessage(error) }
 			}
 			this.apply({ type: 'act.result', itemId, outcome })
+			recorded = this.state.items.find(candidate => candidate.id === itemId)?.receipt?.status === outcome.status
 			if (outcome.status === 'sent' && action.type === 'prompt') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
 			this.publish(true)
 			this.report()
@@ -387,7 +390,7 @@ export class AgentDockWatcher {
 		}
 		// See it land as soon as possible.
 		this.poke()
-		return { ok: outcome.status === 'sent', outcome, recorded: true }
+		return { ok: outcome.status === 'sent', outcome, recorded }
 	}
 
 	/**
@@ -420,6 +423,7 @@ export class AgentDockWatcher {
 
 		this.acting = true
 		let outcome: DockActOutcome
+		let recorded = false
 		try {
 			this.apply({ type: 'prompt.sending', session: key, ...(assistantUuid ? { assistantUuid } : {}) })
 			this.publish(true)
@@ -430,6 +434,8 @@ export class AgentDockWatcher {
 				outcome = { status: 'failed', detail: errorMessage(error) }
 			}
 			this.apply({ type: 'prompt.result', session: key, outcome })
+			// A session dropped meanwhile (its source went down) keeps no reply: the renderer keeps the words.
+			recorded = this.state.sessions[key]?.session.reply?.status === outcome.status
 			if (outcome.status === 'sent') source.expedite?.(target, this.now() + ACT_EXPEDITE_MS)
 			this.publish(true)
 			this.report()
@@ -438,7 +444,7 @@ export class AgentDockWatcher {
 			this.acting = false
 		}
 		this.poke()
-		return { ok: outcome.status === 'sent', outcome, recorded: true }
+		return { ok: outcome.status === 'sent', outcome, recorded }
 	}
 
 	/** The agent's last message, read live through its source (agent detail). Never throws. */
@@ -487,11 +493,14 @@ export class AgentDockWatcher {
 		if (this.inFlight || this.stopped || this.acting) return
 		this.inFlight = true
 		this.tickStarts += 1
-		this.lastTickAt = this.now()
+		const readFrom = this.now()
+		this.lastTickAt = readFrom
 		try {
-			const observed = await this.options.source.observe(this.state, this.now())
+			const observed = await this.options.source.observe(this.state, readFrom)
 			if (this.stopped) return
-			for (const observation of observed) this.apply(observation)
+			// Stamped with when its reads began: a dock answer refused meanwhile stays refused (see reduce).
+			for (const observation of observed)
+				this.apply(observation.type === 'poll' ? { ...observation, readFrom } : observation)
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
 			this.report()
