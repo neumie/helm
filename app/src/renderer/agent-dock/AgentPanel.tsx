@@ -201,7 +201,11 @@ export function AgentPanel({
 						))
 					)}
 				</div>
-				{readNote ? <p className="agent-dock-facts">{readNote}</p> : null}
+				{readNote ? (
+					<p className="agent-dock-facts">
+						<span>{readNote}</span>
+					</p>
+				) : null}
 				{row.itemId === undefined ? (
 					<PromptField>
 						<textarea

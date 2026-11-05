@@ -103,6 +103,12 @@ export const PlanOpen: Story = { args: { scenario: 'crowded', open: 'plan' } }
 export const TurnOpen: Story = { args: { scenario: 'crowded', open: 'turn' } }
 
 /**
+ * A turn whose session has four PRs: the facts row under the message starts on the message's text
+ * column (the same left edge as the paragraph and Reply's placeholder), its links evenly spaced.
+ */
+export const TurnPrLinks: Story = { args: { scenario: 'pr-links-turn', open: 'turn' } }
+
+/**
  * Jakub's real case: long ClientCare task titles behind short branch names — two sessions on
  * `fix/company-create-save-firm` (the second numbered `#2`), a turn on
  * `fix/repeated-android-camera-permission`; agents 4, 2 busy.

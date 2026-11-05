@@ -43,6 +43,11 @@ export type AgentDockScenario =
 	/** `single-turn` whose last message is Claude's Markdown (`TURN_MARKDOWN_TEXT`): bold, nested lists, code. */
 	| 'markdown-turn'
 	/**
+	 * Jakub's report ("tohle je křivý"): `single-turn` whose session has four PRs open, so the pane's
+	 * facts row (PR #166 PR #164 PR #159 PR #136) sits between the message and Reply.
+	 */
+	| 'pr-links-turn'
+	/**
 	 * Jakub's report: a turn whose Markdown (headings, code blocks, lists) runs past the pane's
 	 * height. Two finished turns: `ios-release` (short, 10m ago) first, then `ios-sync` (the long one,
 	 * 1m ago) — ack the first from the dock and the pane moves on to the long one at 1/1.
@@ -1315,8 +1320,9 @@ function scenarioRun(name: AgentDockScenario, now: number): ScenarioRun {
 	const start = createAgentDockState(persisted, now - 3 * 60 * MINUTE)
 	if (name === 'connecting') return { state: start, live: [], version: 0 }
 	if (name === 'empty') return { state: run([[now - 1_000, poll(1, [])]], start), live: [], version: 1 }
-	if (name === 'single-turn' || name === 'markdown-turn') {
-		const working = detail(panes.turn, { busy: true })
+	if (name === 'single-turn' || name === 'markdown-turn' || name === 'pr-links-turn') {
+		const prs = name === 'pr-links-turn' ? { pr_links: [166, 164, 159, 136].map(prLink) } : {}
+		const working = detail(panes.turn, { busy: true, ...prs })
 		const idle = { ...working, busy: false }
 		const page = transcript(
 			panes.turn,
