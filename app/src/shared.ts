@@ -420,6 +420,82 @@ export interface NavApi {
  *   pane on that item, else on the next one waiting.
  * Renderer → main messages carry the session profile token last, like the other preload channels.
  */
+/** Signals column IPC (main: app/src/signals-main.ts). Renderer never touches the daemon or Okena directly. */
+export const SIGNALS_IPC = {
+	/** main → renderer push of the latest SignalsBridgeState. */
+	snapshot: 'signals:snapshot',
+	/** invoke → current SignalsBridgeState (and starts pushes for this window). */
+	subscribe: 'signals:subscribe',
+	/** send(visible): the Signals column is (not) on screen; main polls the daemon only while some window shows it. */
+	setVisible: 'signals:set-visible',
+	update: 'signals:update',
+	routed: 'signals:routed',
+	open: 'signals:open',
+	okenaProjects: 'signals:okena-projects',
+	newAgent: 'signals:new-agent',
+} as const
+
+/** What main pushes: the daemon snapshot, or null with why it is unavailable. */
+export interface SignalsBridgeState {
+	snapshot: import('./shared-helm').SignalsSnapshot | null
+	/** Daemon unreachable / protocol mismatch / error text; null when snapshot is fresh. */
+	error: string | null
+	/** ms since epoch of the last successful read. */
+	at: number | null
+}
+
+/** An Okena parent project `n` can start a worktree in. */
+export interface SignalOkenaProject {
+	/** Okena project id (passed back verbatim to newAgent). */
+	id: string
+	name: string
+	/** `owner/repo` from the checkout's origin remote, when it could be read. */
+	repo: string | null
+}
+
+export interface SignalOkenaProjects {
+	projects: SignalOkenaProject[]
+	/** Project id whose origin matches the requested repo exactly once; null = Jakub picks. */
+	suggested: string | null
+}
+
+/** `n`: new worktree in an Okena project, then Claude with the prompt. */
+export interface SignalNewAgentRequest {
+	signalId: number
+	projectId: string
+	/** New or existing branch name (validated by main as a git ref name). */
+	branch: string
+	/** Only `claude` is supported in slice 1 (Okena's `claude start`). */
+	agent: 'claude'
+	prompt: string
+}
+
+export interface SignalNewAgentResult {
+	terminalId: string
+	sessionId: string | null
+	/** Display name for the routed receipt (terminal/branch). */
+	agentName: string
+}
+
+export interface SignalsApi {
+	/** Push pattern; returns unsubscribe. */
+	onSnapshot(listener: (state: SignalsBridgeState) => void): () => void
+	subscribe(): Promise<SignalsBridgeState>
+	setVisible(visible: boolean): void
+	update(
+		id: number,
+		patch: import('./shared-helm').SignalUpdate,
+	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalThread>>
+	routed(
+		id: number,
+		body: import('./shared-helm').SignalRouted,
+	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalThread>>
+	/** Opens a thread's source: https://github.com/… in the browser or message:// in Mail. */
+	open(url: string): Promise<import('./shared-helm').HelmResult<true>>
+	okenaProjects(repo: string | null): Promise<import('./shared-helm').HelmResult<SignalOkenaProjects>>
+	newAgent(request: SignalNewAgentRequest): Promise<import('./shared-helm').HelmResult<SignalNewAgentResult>>
+}
+
 export const AGENT_DOCK_IPC = {
 	snapshot: 'agent-dock:snapshot',
 	setVisible: 'agent-dock:set-visible',
@@ -498,6 +574,8 @@ export interface HelmApi {
 	agentDock: AgentDockApi
 	/** Daemon data bridge: main-process poller + HTTP command proxy (src/helm-bridge.ts). */
 	daemon: DaemonApi
+	/** Signals column: threads from the daemon, open/route actions (app/src/signals-main.ts). */
+	signals: SignalsApi
 	/** Profile management and coordinated app/daemon switching. */
 	profiles: ProfilesApi
 	/** Opens/focuses the full-size external editor for one Item. */

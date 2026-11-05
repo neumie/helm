@@ -748,3 +748,73 @@ export interface ProfilesApi {
 	restore(id: string): Promise<HelmResult<ProfileMutationResult>>
 	activate(id: string): Promise<HelmResult<ProfileActivationResult>>
 }
+
+// ---------- Signals (copy of src/signals/contract.ts; type-only, update in the same slice) ----------
+
+export type SignalSource = 'github' | 'mail'
+export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry'
+export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
+export type SignalOwner = 'jakub' | 'managed'
+export type SignalRouteHow = 'sent' | 'started'
+export type SignalSourceStatus = 'ok' | 'disabled' | 'unavailable' | 'needs_permission' | 'error'
+
+/** One thread from `GET /api/signals` (heads only; title/head are third-party data). */
+export interface SignalThread {
+	id: number
+	threadKey: string
+	source: SignalSource
+	kind: SignalKind
+	reasons: SignalKind[]
+	ref: string
+	fullRef: string
+	title: string
+	head: string
+	actor: string | null
+	url: string | null
+	repo: string | null
+	number: number | null
+	branch: string | null
+	state: SignalState
+	owner: SignalOwner
+	snoozedUntil: string | null
+	lastActivityAt: string
+	active: boolean
+	closedReason: string | null
+	note: string | null
+	noteAt: string | null
+	managedBy: string | null
+	routedAgent: string | null
+	routedHow: SignalRouteHow | null
+	routedAt: string | null
+	createdAt: string
+	updatedAt: string
+}
+
+export interface SignalSourceHealth {
+	source: SignalSource
+	status: SignalSourceStatus
+	detail: string | null
+	lastPollAt: string | null
+	lastOkAt: string | null
+}
+
+export interface SignalsSnapshot {
+	threads: SignalThread[]
+	sources: SignalSourceHealth[]
+	seq: number
+	generatedAt: string
+}
+
+/** `POST /api/signals/:id` body (any subset). */
+export interface SignalUpdate {
+	state?: SignalState
+	owner?: SignalOwner
+	snoozedUntil?: string
+	managedBy?: string | null
+}
+
+/** `POST /api/signals/:id/routed` body. */
+export interface SignalRouted {
+	agent: string
+	how: SignalRouteHow
+}
