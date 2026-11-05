@@ -9,7 +9,7 @@ const meta: Meta<typeof SignalsWorkspace> = {
 	title: 'Views/Signals/C Flows',
 	component: SignalsWorkspace,
 	parameters: { layout: 'fullscreen' },
-	args: { placement: 'pane', count: 3, paneWidth: 520 },
+	args: { placement: 'pane', count: 3, paneWidth: 480 },
 }
 
 export default meta

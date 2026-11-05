@@ -120,11 +120,20 @@ export function SignalsWorkspace({
 		// A2: the Agents pane opens from its entry (a pointer click keeps the keys with the terminal);
 		// the story then gives the pane the keys, as ⌘⇧J would, so its footer shows the row's actions.
 		let observer: MutationObserver | null = null
+		// Only the Agents list (Signals rows in it) takes these keys: never a dock item's pane, a field,
+		// or an open flow (it handles its own keys).
 		const routeKeys = (event: KeyboardEvent) => {
-			if (event.metaKey || event.ctrlKey || event.altKey) return
-			if (event.key === 'j' || event.key === 'ArrowDown') store.move(1)
-			else if (event.key === 'k' || event.key === 'ArrowUp') store.move(-1)
-			else if (/^[pnmtsdo]$/.test(event.key)) store.act(event.key)
+			if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return
+			const target = event.target as HTMLElement
+			if (target.closest('textarea, input, [data-kind="agents-flow"]')) return
+			if (!pane?.querySelector('.signals-in-agents[data-kind="agents"]')) return
+			const key = event.key
+			if (key === 'j' || key === 'ArrowDown') store.move(1)
+			else if (key === 'k' || key === 'ArrowUp') store.move(-1)
+			else if (/^[pnmtsdo]$/.test(key)) store.act(key)
+			else return
+			event.preventDefault()
+			event.stopPropagation()
 		}
 		let pane: HTMLElement | null = null
 		if (placement === 'agents') {
@@ -137,7 +146,15 @@ export function SignalsWorkspace({
 			})
 			observer.observe(root, { childList: true, subtree: true })
 		}
+		// The surface takes the keys on mount, as ⌘⇧I would, so its footer shows the row's actions.
+		const focusFrame = requestAnimationFrame(() =>
+			(
+				root.querySelector<HTMLElement>('.signals-host .signals-flow-keys') ??
+				root.querySelector<HTMLElement>('.signals-host section.signals')
+			)?.focus({ preventScroll: true }),
+		)
 		return () => {
+			cancelAnimationFrame(focusFrame)
 			observer?.disconnect()
 			pane?.removeEventListener('keydown', routeKeys)
 			for (const node of created) node.remove()

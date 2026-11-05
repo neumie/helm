@@ -49,6 +49,7 @@ const RADIOGROUP = 'radiogroup'
 const OWNER_GLYPH: Record<OwnerStatus, string> = { working: '✻', idle: '·', waiting: '?' }
 
 export function formatAgo(minutes: number): string {
+	if (minutes < 1) return 'now'
 	if (minutes < 60) return `${minutes}m`
 	const hours = Math.floor(minutes / 60)
 	const rest = minutes % 60
@@ -134,7 +135,9 @@ export function SignalRow({
 			aria-current={selected ? 'true' : undefined}
 			title={`${KIND_WORD[signal.kind]} · ${signal.fullRef}`}
 			onMouseDown={event => {
+				// Selecting gives the surface the keys (j k p n …), without scrolling or a focus ring on the row.
 				event.preventDefault()
+				event.currentTarget.closest<HTMLElement>('section.signals, .agent-dock-pane')?.focus({ preventScroll: true })
 				onSelect()
 			}}
 		>
@@ -197,13 +200,13 @@ export function SignalsSections({
 			onSelect={() => store.select(signal.id)}
 		/>
 	)
-	const closedLabel = `snoozed ${snoozed.length} · done today ${done.length + DONE_TODAY_UNLISTED}`
+	const closedLabel = `Snoozed ${snoozed.length} · done today ${done.length + DONE_TODAY_UNLISTED}`
 	return (
 		<ul className="signals-table" aria-label="Signals">
 			{sections.includes('needs') ? (
 				<>
 					<li className="signals-subhead" role="presentation">
-						needs you
+						Needs you
 					</li>
 					{needs.length > 0 ? (
 						needs.map(row)
@@ -217,7 +220,7 @@ export function SignalsSections({
 			{sections.includes('managed') ? (
 				<>
 					<li className="signals-subhead" role="presentation">
-						managed
+						Managed
 					</li>
 					{managed.length > 0 ? (
 						managed.map(row)
@@ -240,9 +243,9 @@ export function SignalsSections({
 	)
 }
 
-function Hint({ keys, children }: { keys: string; children: ReactNode }) {
+function Hint({ keys, pick, children }: { keys: string; pick?: boolean; children: ReactNode }) {
 	return (
-		<span className="signals-hint">
+		<span className="signals-hint" data-hint={pick ? 'pick' : undefined}>
 			<kbd>{keys}</kbd> {children}
 		</span>
 	)
@@ -272,16 +275,21 @@ export function SignalsNote({ store }: { store: SignalsStore }) {
 function onSurfaceKey(store: SignalsStore, event: KeyboardEvent<HTMLElement>) {
 	if (event.metaKey || event.ctrlKey || event.altKey) return
 	const target = event.target as HTMLElement
+	// In the Agents pane the pane itself holds the keys; elsewhere the surface does.
+	const surface = event.currentTarget.closest<HTMLElement>('.agent-dock-pane') ?? event.currentTarget
+	const closeFlow = () => {
+		event.preventDefault()
+		event.stopPropagation()
+		store.closeFlow()
+		// The flow unmounts with the focused field; the list keeps the keys.
+		requestAnimationFrame(() => surface.focus({ preventScroll: true }))
+	}
 	if (target.closest('textarea, input')) {
-		if (event.key === 'Escape') {
-			event.preventDefault()
-			store.closeFlow()
-		}
+		if (event.key === 'Escape') closeFlow()
 		return
 	}
 	if (event.key === 'Escape' && store.get().flow) {
-		event.preventDefault()
-		store.closeFlow()
+		closeFlow()
 		return
 	}
 	if (store.get().flow) return
@@ -375,6 +383,36 @@ function FlowHeader({
 	)
 }
 
+/** An opened flow takes the keys (Esc back, 1–N, ⌘↵), as the dock's own panes do. */
+const takeKeys = (node: HTMLDivElement | null) => node?.focus({ preventScroll: true })
+
+/** Routing closes the flow with the focused element; the list (or the Agents pane) keeps the keys. */
+function routeThenRefocus(from: Element | null, route: () => void) {
+	const surface = from?.closest<HTMLElement>('.agent-dock-pane, section.signals')
+	route()
+	requestAnimationFrame(() => surface?.focus({ preventScroll: true }))
+}
+
+/** Keys inside a flow: 1–N pick (not while typing), ⌘↵ / Ctrl+Enter acts from anywhere in it. */
+function flowKeys(count: number, onPick: (index: number) => void, onSubmit: (from: Element) => void) {
+	return (event: KeyboardEvent<HTMLElement>) => {
+		if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+			event.preventDefault()
+			event.stopPropagation()
+			onSubmit(event.currentTarget)
+			return
+		}
+		if (event.metaKey || event.ctrlKey || event.altKey) return
+		if ((event.target as HTMLElement).closest('textarea, input')) return
+		const digit = Number(event.key)
+		if (Number.isInteger(digit) && digit >= 1 && digit <= count) {
+			event.preventDefault()
+			event.stopPropagation()
+			onPick(digit - 1)
+		}
+	}
+}
+
 function AgentChoices({
 	agents,
 	picked,
@@ -429,8 +467,15 @@ function PromptField({ label, initial }: { label: string; initial: string }) {
 function SendFlow({ signal, store }: { signal: Signal; store: SignalsStore }) {
 	const [picked, setPicked] = useState(0)
 	const agent = SEND_AGENTS[picked] ?? SEND_AGENTS[0]
+	const send = (from: Element | null) =>
+		routeThenRefocus(from, () => store.route(signal.id, agent?.name ?? 'agent', 'sent'))
 	return (
-		<>
+		<div
+			ref={takeKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			onKeyDown={flowKeys(SEND_AGENTS.length, setPicked, send)}
+		>
 			<FlowHeader
 				glyph="→"
 				kind="Send to agent"
@@ -438,24 +483,32 @@ function SendFlow({ signal, store }: { signal: Signal; store: SignalsStore }) {
 				onClose={() => store.closeFlow()}
 			/>
 			<div className="signals-scroll signals-flow">
-				<span className="signals-field-label">to</span>
+				<span className="signals-field-label">To</span>
 				<AgentChoices agents={SEND_AGENTS} picked={picked} onPick={setPicked} />
-				<PromptField label="prompt" initial={SEND_PROMPT} />
+				<PromptField label="Prompt" initial={SEND_PROMPT} />
 			</div>
 			<footer className="signals-foot">
 				<span className="signals-foot-hints" aria-hidden="true">
-					<Hint keys="1–3">pick</Hint>
+					<Hint keys="1–3" pick>
+						pick
+					</Hint>
 					<Hint keys="⌘↵">send</Hint>
 					<Hint keys="esc">back</Hint>
 				</span>
 				<span className="signals-note">Typed into {agent?.name}’s terminal as its next prompt</span>
 				<span className="signals-foot-actions">
-					<Btn tone="primary" sm className="signals-key" ariaKeyShortcuts="Meta+Enter">
+					<Btn
+						tone="primary"
+						sm
+						className="signals-key"
+						ariaKeyShortcuts="Meta+Enter"
+						onClick={() => send(document.querySelector('.signals-flow-keys'))}
+					>
 						Send
 					</Btn>
 				</span>
 			</footer>
-		</>
+		</div>
 	)
 }
 
@@ -463,8 +516,15 @@ function SendFlow({ signal, store }: { signal: Signal; store: SignalsStore }) {
 function NewAgentFlow({ signal, store }: { signal: Signal; store: SignalsStore }) {
 	const [picked, setPicked] = useState(0)
 	const agent = NEW_AGENT_AGENTS[picked] ?? 'claude'
+	const start = (from: Element | null) =>
+		routeThenRefocus(from, () => store.route(signal.id, 'slots-typeerror', 'started'))
 	return (
-		<>
+		<div
+			ref={takeKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			onKeyDown={flowKeys(NEW_AGENT_AGENTS.length, setPicked, start)}
+		>
 			<FlowHeader
 				glyph="+"
 				kind="New agent in Okena"
@@ -473,16 +533,16 @@ function NewAgentFlow({ signal, store }: { signal: Signal; store: SignalsStore }
 			/>
 			<div className="signals-scroll signals-flow">
 				<dl className="signals-fields">
-					<dt>project</dt>
+					<dt>Project</dt>
 					<dd>
 						psyon-admin <span className="signals-dim">· from the Sentry project</span>
 					</dd>
-					<dt>worktree</dt>
+					<dt>Worktree</dt>
 					<dd>
 						<span className="signals-mono">fix/slots-typeerror</span>{' '}
 						<span className="signals-dim">· new, from main</span>
 					</dd>
-					<dt>agent</dt>
+					<dt>Agent</dt>
 					<dd>
 						<span className="signals-inline-choices" role={RADIOGROUP} aria-label="Agent">
 							{NEW_AGENT_AGENTS.map((name, index) => (
@@ -502,22 +562,30 @@ function NewAgentFlow({ signal, store }: { signal: Signal; store: SignalsStore }
 						</span>
 					</dd>
 				</dl>
-				<PromptField label="prompt" initial={NEW_AGENT_PROMPT} />
+				<PromptField label="Prompt" initial={NEW_AGENT_PROMPT} />
 			</div>
 			<footer className="signals-foot">
 				<span className="signals-foot-hints" aria-hidden="true">
-					<Hint keys="1–3">agent</Hint>
+					<Hint keys="1–3" pick>
+						agent
+					</Hint>
 					<Hint keys="⌘↵">start</Hint>
 					<Hint keys="esc">back</Hint>
 				</span>
 				<span className="signals-note">Creates the worktree in Okena and starts {agent} there</span>
 				<span className="signals-foot-actions">
-					<Btn tone="primary" sm className="signals-key" ariaKeyShortcuts="Meta+Enter">
+					<Btn
+						tone="primary"
+						sm
+						className="signals-key"
+						ariaKeyShortcuts="Meta+Enter"
+						onClick={() => start(document.querySelector('.signals-flow-keys'))}
+					>
 						Start agent
 					</Btn>
 				</span>
 			</footer>
-		</>
+		</div>
 	)
 }
 
@@ -597,6 +665,23 @@ export function AgentsPaneHints({ store }: { store: SignalsStore }) {
 
 /** A2: the Signals groups inside the Agents pane (no header of their own; the pane names itself Agents). */
 export function AgentsPaneSection({ store }: { store: SignalsStore }) {
+	const state = useSignals(store)
+	const flow = state.flow
+	const flowSignal = flow ? state.signals.find(signal => signal.id === flow.id) : undefined
+	if (flow && flowSignal)
+		return (
+			<div
+				className="signals signals-in-agents"
+				data-kind="agents-flow"
+				onKeyDown={event => onSurfaceKey(store, event)}
+			>
+				{flow.type === 'send' ? (
+					<SendFlow signal={flowSignal} store={store} />
+				) : (
+					<NewAgentFlow signal={flowSignal} store={store} />
+				)}
+			</div>
+		)
 	return (
 		<div className="signals signals-in-agents" data-kind="agents" onKeyDown={event => onSurfaceKey(store, event)}>
 			<SignalsSections store={store} compact />

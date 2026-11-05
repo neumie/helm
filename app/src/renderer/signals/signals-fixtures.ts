@@ -32,6 +32,8 @@ export interface Signal {
 	owner?: { status: OwnerStatus; at: string }
 	/** Needs you, after routing: the agent it was sent to and when. */
 	routed?: { agent: string; agoMinutes: number; how: 'sent' | 'started' }
+	/** While managed: `what` before the hand-over note, restored on take back. */
+	whatBefore?: string
 	/** Snoozed / done: why it left `needs you`, in words. */
 	closed?: string
 	/** CI result to render as a toned glyph inside `what` (`CI ✓`). */
@@ -251,6 +253,8 @@ export interface SignalsStore {
 	move(delta: number): void
 	act(key: string): void
 	closeFlow(): void
+	/** ⌘↵ in a flow: the thread was sent to (or started) an agent; it keeps its slot with a receipt. */
+	route(id: string, agent: string, how: 'sent' | 'started'): void
 }
 
 export function createSignalsStore(initial: Partial<SignalsState> = {}): SignalsStore {
@@ -305,6 +309,8 @@ export function createSignalsStore(initial: Partial<SignalsState> = {}): Signals
 						signals: update(signal.id, {
 							section: 'managed',
 							owner: { status: 'working', at: 'now' },
+							routed: undefined,
+							whatBefore: signal.what,
 							what: `${signal.what} · handed to the dispatcher`,
 						}),
 						note: `${signal.ref} is managed: the dispatcher and its agent handle it, you see outcomes`,
@@ -313,7 +319,12 @@ export function createSignalsStore(initial: Partial<SignalsState> = {}): Signals
 				case 't':
 					set({
 						selected: following(signal),
-						signals: update(signal.id, { section: 'needs', owner: undefined }),
+						signals: update(signal.id, {
+							section: 'needs',
+							owner: undefined,
+							what: signal.whatBefore ?? signal.what,
+							whatBefore: undefined,
+						}),
 						note: `${signal.ref} is yours again: the agent was told to stop`,
 					})
 					return
@@ -337,6 +348,15 @@ export function createSignalsStore(initial: Partial<SignalsState> = {}): Signals
 			}
 		},
 		closeFlow: () => set({ flow: null }),
+		route(id, agent, how) {
+			const signal = state.signals.find(entry => entry.id === id)
+			set({
+				flow: null,
+				selected: id,
+				signals: update(id, { routed: { agent, agoMinutes: 0, how } }),
+				note: signal ? `${how === 'sent' ? 'Sent' : 'Started'} ${agent} with ${signal.ref}` : null,
+			})
+		},
 	}
 }
 
