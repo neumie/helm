@@ -15,7 +15,6 @@ import type {
 import { effectiveShortcuts } from '../shortcuts'
 import { THEME_PRESETS } from '../theme-presets'
 import { agentDockPosition, mountAgentDock } from './agent-dock-layout'
-import type { AgentDockPreviewSlots } from './agent-dock/AgentDock'
 import {
 	AGENT_DOCK_TERMINAL_TEXT,
 	type AgentDockFixture,
@@ -62,8 +61,6 @@ export interface TerminalWorkspaceFixtureOptions {
 		position?: AgentDockPosition
 		output?: boolean | 'claude-code'
 		open?: AgentDockOpenFixture
-		/** Design-review stories only (Views / Signals): slots in the dock's row and Agents pane. */
-		preview?: AgentDockPreviewSlots
 	}
 }
 
@@ -608,7 +605,6 @@ export function TerminalWorkspaceFixtureView({ options = {} }: { options?: Termi
 					api: dockFixture.api,
 					platform: fixture.helm.platform,
 					initialSent: dockFixture.sent(),
-					...(options.agentDock?.preview ? { preview: options.agentDock.preview } : {}),
 				})
 			})
 		}

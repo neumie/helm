@@ -1556,15 +1556,10 @@ export function AgentsDetail({
 	snapshot,
 	now,
 	onClose,
-	extraSection,
-	extraHints,
 }: {
 	snapshot: AgentDockSnapshot | null
 	now: number
 	onClose(): void
-	/** Design-review stories only (AgentDockPreviewSlots). */
-	extraSection?: ReactNode
-	extraHints?: ReactNode
 }) {
 	const sessions = orderedSessions(snapshot)
 	const recent = recentItems(snapshot, RECENT_IN_PANE)
@@ -1635,10 +1630,9 @@ export function AgentsDetail({
 							</ul>
 						</section>
 					) : null}
-					{extraSection}
 				</div>
 			</ScrollBody>
-			<Footer hints={extraHints ?? closeHints} note={null} />
+			<Footer hints={closeHints} note={null} />
 		</>
 	)
 }

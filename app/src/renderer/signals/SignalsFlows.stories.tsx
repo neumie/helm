@@ -2,14 +2,13 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { SignalsWorkspace } from './SignalsWorkspace'
 
 /**
- * C — routing a thread to an agent, shown in the A1 pane (the flow body is the same in any
- * placement). Both prefill an editable prompt that fences the outside text as data.
+ * C — routing a thread to an agent, shown in the Signals column. Both prefill an editable prompt that fences the outside text as data.
  */
 const meta: Meta<typeof SignalsWorkspace> = {
 	title: 'Views/Signals/C Flows',
 	component: SignalsWorkspace,
 	parameters: { layout: 'fullscreen' },
-	args: { placement: 'pane', count: 3, paneWidth: 480 },
+	args: { count: 3 },
 }
 
 export default meta

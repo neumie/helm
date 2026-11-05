@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import type { AgentDockActResult, AgentDockSnapshot, DockAction } from '../agent-dock/model'
 import type { AgentDockApi } from '../shared'
-import { AgentDock, type AgentDockHandle, type AgentDockPreviewSlots } from './agent-dock/AgentDock'
+import { AgentDock, type AgentDockHandle } from './agent-dock/AgentDock'
 import { isTextField } from './agent-dock/AgentDockDetail'
 import type { AgentDockPosition } from './agent-dock/presentation'
 
@@ -90,7 +90,6 @@ export function mountAgentDock({
 	focusTerminal: focusTerminalOverride,
 	now = Date.now,
 	initialSent,
-	preview,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
@@ -102,8 +101,6 @@ export function mountAgentDock({
 	now?: () => number
 	/** Review fixtures only: answers the fixture already sent from the dock (receipt stories). */
 	initialSent?: ReadonlyMap<number, DockAction>
-	/** Design-review stories only (Views / Signals); production passes none. */
-	preview?: AgentDockPreviewSlots
 }): MountedAgentDock {
 	const ownerDocument = root instanceof Document ? root : root.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -183,7 +180,6 @@ export function mountAgentDock({
 			// The pane is in-flow: opening or closing it changes the terminal row once; refit now.
 			onPaneChange: () => fitActive(),
 			initialSent,
-			preview,
 		})
 		// Commit synchronously so fitActive() and focus moves measure the new layout.
 		flushSync(() => reactRoot.render(element))

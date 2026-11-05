@@ -12,7 +12,6 @@
 import {
 	type KeyboardEvent,
 	type MutableRefObject,
-	type ReactNode,
 	useCallback,
 	useEffect,
 	useId,
@@ -85,21 +84,6 @@ export interface AgentDockProps {
 	initialOpen?: AgentDockTarget | null
 	/** Review fixtures only: answers already sent from the dock (the receipt stories), by item id. */
 	initialSent?: ReadonlyMap<number, DockAction>
-	/** Design-review stories only (Views / Signals); production never passes it. */
-	preview?: AgentDockPreviewSlots
-}
-
-/**
- * Story-only slots for design variants that live in or beside the dock (Views / Signals). Every
- * slot is optional and production passes none, so the row and the Agents pane render as before.
- */
-export interface AgentDockPreviewSlots {
-	/** Rendered in the row right before the Agents entry. */
-	beforeAgents?: ReactNode
-	/** Rendered in the Agents pane's scroll body, after the agent table and Recent. */
-	agentsSection?: ReactNode
-	/** Replaces the Agents pane's footer hints (`esc close`). */
-	agentsHints?: ReactNode
 }
 
 /** The pane's height is set once when it opens (its first item's natural height, within these) and kept while it stays open. */
@@ -125,7 +109,6 @@ export function AgentDock({
 	onPaneChange,
 	initialOpen = null,
 	initialSent,
-	preview,
 }: AgentDockProps) {
 	const paneId = useId()
 	const hostRef = useRef<HTMLDivElement>(null)
@@ -451,7 +434,6 @@ export function AgentDock({
 				paneId={paneId}
 				register={register}
 				onOpen={open}
-				beforeAgents={preview?.beforeAgents}
 			/>
 			{/* The row ends in the sources' health and the key that goes to the dock. Healthy is a dot (its
 			    tooltip names the sources: "Okena", "Okena · Helm terminals"); connecting and down say so in words. */}
@@ -505,13 +487,7 @@ export function AgentDock({
 					onAct={action => act(openItem, action)}
 				/>
 			) : (
-				<AgentsDetail
-					snapshot={snapshot}
-					now={clock}
-					onClose={() => close(true)}
-					extraSection={preview?.agentsSection}
-					extraHints={preview?.agentsHints}
-				/>
+				<AgentsDetail snapshot={snapshot} now={clock} onClose={() => close(true)} />
 			)}
 		</section>
 	) : null
@@ -578,7 +554,6 @@ function Queue({
 	paneId,
 	register,
 	onOpen,
-	beforeAgents,
 }: {
 	snapshot: AgentDockSnapshot | null
 	now: number
@@ -587,7 +562,6 @@ function Queue({
 	paneId: string
 	register(key: string): (node: HTMLButtonElement | null) => void
 	onOpen(target: AgentDockTarget, viaKeyboard: boolean): void
-	beforeAgents?: ReactNode
 }) {
 	// The entries' room can mount after the first render (Connecting → data): measure it via a callback ref.
 	const [list, setList] = useState<HTMLUListElement | null>(null)
@@ -705,7 +679,6 @@ function Queue({
 					</li>
 				) : null}
 			</ul>
-			{beforeAgents}
 			<AgentsEntry
 				snapshot={snapshot}
 				sessions={sessions}
