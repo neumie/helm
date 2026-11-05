@@ -852,4 +852,67 @@ CREATE UNIQUE INDEX idx_scheduled_runs_one_active ON scheduled_runs(schedule_id)
      OR (state = 'needs_attention' AND terminal_resolved_at IS NULL);
 `,
 	},
+	{
+		// Signals: one row per external thread that wants Jakub (GitHub review requests,
+		// comments/CI on his PRs, mentions; Apple Mail). Heads only, never bodies.
+		// Append-only change log feeds `GET /api/signals/events` and `helm signal watch`;
+		// per-source poll health feeds the column footer. All profile-scoped. IF NOT EXISTS keeps
+		// replays of reconstructed older databases (migration tests) from failing on these tables.
+		version: 37,
+		sql: `
+CREATE TABLE IF NOT EXISTS signal_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id TEXT NOT NULL,
+  thread_key TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('github','mail')),
+  kind TEXT NOT NULL,
+  reasons TEXT NOT NULL DEFAULT '[]',
+  ref TEXT NOT NULL,
+  full_ref TEXT NOT NULL,
+  title TEXT NOT NULL,
+  head TEXT NOT NULL,
+  actor TEXT,
+  url TEXT,
+  repo TEXT,
+  number INTEGER,
+  branch TEXT,
+  state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','seen','snoozed','done')),
+  owner TEXT NOT NULL DEFAULT 'jakub' CHECK (owner IN ('jakub','managed')),
+  snoozed_until TEXT,
+  activity_key TEXT NOT NULL,
+  last_activity_at TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  missed_polls INTEGER NOT NULL DEFAULT 0,
+  closed_reason TEXT,
+  note TEXT,
+  note_at TEXT,
+  managed_by TEXT,
+  routed_agent TEXT,
+  routed_how TEXT,
+  routed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (profile_id, thread_key)
+);
+CREATE INDEX IF NOT EXISTS idx_signal_threads_profile_state ON signal_threads(profile_id, state, last_activity_at);
+CREATE TABLE IF NOT EXISTS signal_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id TEXT NOT NULL,
+  thread_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signal_events_profile_seq ON signal_events(profile_id, seq);
+CREATE TABLE IF NOT EXISTS signal_sources (
+  profile_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  detail TEXT,
+  last_poll_at TEXT,
+  last_ok_at TEXT,
+  PRIMARY KEY (profile_id, source)
+);
+`,
+	},
 ]

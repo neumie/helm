@@ -56,6 +56,37 @@ const scheduledRunsSchema = z
 	})
 	.default({})
 
+/** Default senders that always count as signals (Sentry alert mail), one glob per line. */
+export const DEFAULT_SIGNAL_INCLUDE_SENDERS = '*@sentry.io\n*@*.sentry.io\n*@getsentry.com'
+
+// Signals: read-only polling of what the world wants from Jakub (GitHub via gh, Apple Mail via
+// JXA). Runs whenever enabled, independently of the task sidebar. Mail stays off by default
+// because its first poll triggers the macOS Automation prompt.
+const signalsSchema = z
+	.object({
+		enabled: z.boolean().default(true),
+		github: z
+			.object({
+				enabled: z.boolean().default(true),
+				pollSeconds: z.number().int().min(30).default(120),
+				mentionDays: z.number().int().min(1).max(90).default(14),
+			})
+			.default({}),
+		mail: z
+			.object({
+				enabled: z.boolean().default(false),
+				pollSeconds: z.number().int().min(30).default(120),
+				unreadOnly: z.boolean().default(true),
+				excludeBulk: z.boolean().default(true),
+				maxAgeDays: z.number().int().min(1).max(60).default(7),
+				// One glob per line (`*` wildcard, case-insensitive, matched against the address).
+				includeSenders: z.string().max(4000).default(DEFAULT_SIGNAL_INCLUDE_SENDERS),
+				excludeSenders: z.string().max(4000).default(''),
+			})
+			.default({}),
+	})
+	.default({})
+
 export const knowledgeProviderIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 
 const absolutePrivateLocator = z
@@ -173,6 +204,7 @@ export const configSchema = z
 			})
 			.default({}),
 		scheduledRuns: scheduledRunsSchema,
+		signals: signalsSchema,
 		knowledge: knowledgeSchema.optional(),
 	})
 	.superRefine((config, ctx) => {

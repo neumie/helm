@@ -75,6 +75,7 @@ import { log } from '../../util/logger.js'
 import { sameFilesystemPath } from '../../util/path-identity.js'
 import { defaultDaemonControl, scheduleDaemonRestart } from '../restart.js'
 import type { DaemonControl } from '../restart.js'
+import { type SignalRouteDependencies, signalRoutes } from './signals.js'
 
 // Generic task ingest (e.g. an email tied to a project): a self-contained task
 // with its content captured up front (no live provider to re-poll). Attachments
@@ -107,6 +108,8 @@ export interface ProfileContext {
 	scheduled?: ScheduledRouteDependencies
 	/** Optional external context provider. Immutable evidence remains DB-owned by Helm. */
 	knowledge?: KnowledgeIntegration
+	/** Signals poller (manual poll trigger + source health); the store is always `db.signals`. */
+	signals?: SignalRouteDependencies
 }
 
 const ingestSchema = z
@@ -2259,6 +2262,9 @@ export function apiRoutes({
 		await poller.pollOnce()
 		return c.json({ data: { message: 'Poll triggered' } })
 	})
+
+	// Signals: what the world wants from Jakub. Not tied to the task sidebar watch below.
+	api.route('/signals', signalRoutes(db, profileContext?.signals))
 
 	api.post('/poll/watch', async c => {
 		const body = await c.req.json().catch(() => null)

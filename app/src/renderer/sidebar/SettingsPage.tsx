@@ -297,7 +297,7 @@ const SECTION_GROUPS: ReadonlyArray<{ label: string; ids: string[] }> = [
 	{ label: 'Execution', ids: ['run-limits', 'solver', 'execution', 'spawner'] },
 	{ label: 'AI', ids: ['ai-branch', 'ai-display', 'ai-model-guidance', 'ai-triage'] },
 	{ label: 'Automation', ids: ['scheduled-runs'] },
-	{ label: 'Integrations', ids: ['github'] },
+	{ label: 'Integrations', ids: ['github', 'signals'] },
 ]
 
 function groupedSections(sections: ConfigEditSection[]): Array<{ label: string; sections: ConfigEditSection[] }> {

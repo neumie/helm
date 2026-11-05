@@ -1,0 +1,326 @@
+{
+	"data": {
+		"viewer": { "login": "me-user" },
+		"rateLimit": { "cost": 2, "remaining": 4990, "resetAt": "2026-01-01T01:00:00Z" },
+		"reviewRequested": {
+			"issueCount": 3,
+			"nodes": [
+				{
+					"id": "PR_a",
+					"number": 12,
+					"title": "Add widget",
+					"url": "https://github.com/acme/app/pull/12",
+					"isDraft": false,
+					"headRefName": "feat/widget",
+					"updatedAt": "2026-01-01T00:10:00Z",
+					"repository": { "nameWithOwner": "Acme/App" },
+					"author": { "__typename": "User", "login": "alice" },
+					"timelineItems": {
+						"nodes": [
+							{
+								"__typename": "ReviewRequestedEvent",
+								"createdAt": "2026-01-01T00:03:00Z",
+								"actor": { "login": "alice" },
+								"requestedReviewer": { "__typename": "User", "login": "other-user" }
+							},
+							{
+								"__typename": "ReviewRequestedEvent",
+								"createdAt": "2026-01-01T00:05:00Z",
+								"actor": { "login": "alice" },
+								"requestedReviewer": { "__typename": "User", "login": "Me-User" }
+							},
+							{
+								"__typename": "ReviewRequestedEvent",
+								"createdAt": "2026-01-01T00:06:00Z",
+								"actor": { "login": "erin" },
+								"requestedReviewer": { "__typename": "Team", "slug": "core" }
+							}
+						]
+					}
+				},
+				{
+					"id": "PR_t",
+					"number": 44,
+					"title": "Team review please",
+					"url": "https://github.com/acme/infra/pull/44",
+					"isDraft": true,
+					"headRefName": "chore/team",
+					"updatedAt": "2026-01-01T00:09:00Z",
+					"repository": { "nameWithOwner": "acme/infra" },
+					"author": { "__typename": "User", "login": "frank" },
+					"timelineItems": {
+						"nodes": [
+							{
+								"__typename": "ReviewRequestedEvent",
+								"createdAt": "2026-01-01T00:07:00Z",
+								"actor": { "login": "frank" },
+								"requestedReviewer": { "__typename": "Team", "slug": "platform" }
+							}
+						]
+					}
+				},
+				{}
+			]
+		},
+		"mine": {
+			"issueCount": 4,
+			"nodes": [
+				{
+					"id": "PR_b",
+					"number": 7,
+					"title": "Fix login",
+					"url": "https://github.com/acme/api/pull/7",
+					"isDraft": false,
+					"headRefName": "fix/login",
+					"updatedAt": "2026-01-01T00:20:00Z",
+					"repository": { "nameWithOwner": "acme/api" },
+					"author": { "__typename": "User", "login": "me-user" },
+					"comments": {
+						"totalCount": 3,
+						"nodes": [
+							{
+								"id": "IC_0",
+								"author": { "__typename": "User", "login": "bob" },
+								"createdAt": "2026-01-01T00:00:30Z",
+								"bodyText": "first look",
+								"url": "https://github.com/acme/api/pull/7#issuecomment-0"
+							},
+							{
+								"id": "IC_1",
+								"author": { "__typename": "User", "login": "me-user" },
+								"createdAt": "2026-01-01T00:01:00Z",
+								"bodyText": "ready",
+								"url": "https://github.com/acme/api/pull/7#issuecomment-1"
+							},
+							{
+								"id": "IC_2",
+								"author": { "__typename": "User", "login": "bob" },
+								"createdAt": "2026-01-01T00:15:00Z",
+								"bodyText": "nit: rename",
+								"url": "https://github.com/acme/api/pull/7#issuecomment-2"
+							}
+						]
+					},
+					"reviews": {
+						"totalCount": 2,
+						"nodes": [
+							{
+								"id": "R_0",
+								"author": { "__typename": "User", "login": "carol" },
+								"state": "COMMENTED",
+								"submittedAt": "2026-01-01T00:14:00Z",
+								"bodyText": "",
+								"url": "https://github.com/acme/api/pull/7#pullrequestreview-0"
+							},
+							{
+								"id": "R_1",
+								"author": { "__typename": "User", "login": "bob" },
+								"state": "CHANGES_REQUESTED",
+								"submittedAt": "2026-01-01T00:16:00Z",
+								"bodyText": "see inline",
+								"url": "https://github.com/acme/api/pull/7#pullrequestreview-1"
+							}
+						]
+					},
+					"reviewThreads": {
+						"totalCount": 1,
+						"nodes": [
+							{
+								"isResolved": false,
+								"comments": {
+									"nodes": [
+										{
+											"id": "RC_1",
+											"author": { "__typename": "User", "login": "bob" },
+											"createdAt": "2026-01-01T00:16:00Z",
+											"bodyText": "null check",
+											"path": "src/a.ts",
+											"url": "https://github.com/acme/api/pull/7#discussion_r1"
+										}
+									]
+								}
+							}
+						]
+					},
+					"commits": {
+						"nodes": [
+							{
+								"commit": {
+									"oid": "deadbeef",
+									"committedDate": "2026-01-01T00:00:00Z",
+									"statusCheckRollup": {
+										"state": "FAILURE",
+										"contexts": {
+											"totalCount": 4,
+											"nodes": [
+												{
+													"__typename": "CheckRun",
+													"name": "build",
+													"status": "COMPLETED",
+													"conclusion": "FAILURE",
+													"completedAt": "2026-01-01T00:12:00Z",
+													"detailsUrl": "https://github.com/acme/api/actions/runs/1"
+												},
+												{
+													"__typename": "StatusContext",
+													"context": "ci/lint",
+													"state": "ERROR",
+													"createdAt": "2026-01-01T00:11:00Z",
+													"targetUrl": null
+												},
+												{
+													"__typename": "CheckRun",
+													"name": "unit",
+													"status": "COMPLETED",
+													"conclusion": "SUCCESS",
+													"completedAt": "2026-01-01T00:14:00Z",
+													"detailsUrl": "https://github.com/acme/api/actions/runs/2"
+												},
+												{
+													"__typename": "CheckRun",
+													"name": "e2e",
+													"status": "COMPLETED",
+													"conclusion": "TIMED_OUT",
+													"completedAt": "2026-01-01T00:13:00Z",
+													"detailsUrl": "https://github.com/acme/api/actions/runs/3"
+												}
+											]
+										}
+									}
+								}
+							}
+						]
+					}
+				},
+				{
+					"id": "PR_c",
+					"number": 9,
+					"title": "Quiet change",
+					"url": "https://github.com/acme/api/pull/9",
+					"isDraft": false,
+					"headRefName": "chore/quiet",
+					"updatedAt": "2026-01-01T00:21:00Z",
+					"repository": { "nameWithOwner": "acme/api" },
+					"author": { "__typename": "User", "login": "me-user" },
+					"comments": {
+						"totalCount": 2,
+						"nodes": [
+							{
+								"id": "IC_3",
+								"author": { "__typename": "User", "login": "bob" },
+								"createdAt": "2026-01-01T00:02:00Z",
+								"bodyText": "why?",
+								"url": "https://github.com/acme/api/pull/9#issuecomment-3"
+							},
+							{
+								"id": "IC_4",
+								"author": { "__typename": "User", "login": "ME-USER" },
+								"createdAt": "2026-01-01T00:04:00Z",
+								"bodyText": "because",
+								"url": "https://github.com/acme/api/pull/9#issuecomment-4"
+							}
+						]
+					},
+					"reviews": { "totalCount": 0, "nodes": [] },
+					"reviewThreads": { "totalCount": 0, "nodes": [] },
+					"commits": {
+						"nodes": [
+							{ "commit": { "oid": "c0ffee", "committedDate": "2026-01-01T00:00:00Z", "statusCheckRollup": null } }
+						]
+					}
+				},
+				{
+					"id": "PR_d",
+					"number": 3,
+					"title": "Bump deps",
+					"url": "https://github.com/acme/web/pull/3",
+					"isDraft": false,
+					"headRefName": "chore/deps",
+					"updatedAt": "2026-01-01T00:22:00Z",
+					"repository": { "nameWithOwner": "acme/web" },
+					"author": { "__typename": "User", "login": "me-user" },
+					"comments": {
+						"totalCount": 2,
+						"nodes": [
+							{
+								"id": "IC_5",
+								"author": { "__typename": "Bot", "login": "deps-bot" },
+								"createdAt": "2026-01-01T00:18:00Z",
+								"bodyText": "rebased",
+								"url": "https://github.com/acme/web/pull/3#issuecomment-5"
+							},
+							{
+								"id": "IC_6",
+								"author": null,
+								"createdAt": "2026-01-01T00:17:00Z",
+								"bodyText": "old account",
+								"url": "https://github.com/acme/web/pull/3#issuecomment-6"
+							}
+						]
+					},
+					"reviews": { "totalCount": 0, "nodes": [] },
+					"reviewThreads": { "totalCount": 0, "nodes": [] },
+					"commits": {
+						"nodes": [
+							{
+								"commit": {
+									"oid": "abc123",
+									"committedDate": "2026-01-01T00:00:00Z",
+									"statusCheckRollup": { "state": "SUCCESS", "contexts": { "totalCount": 0, "nodes": [] } }
+								}
+							}
+						]
+					}
+				},
+				{
+					"id": "PR_e",
+					"number": 4,
+					"title": "Speed up page",
+					"url": "https://github.com/acme/web/pull/4",
+					"isDraft": false,
+					"headRefName": "perf/page",
+					"updatedAt": "2026-01-01T00:31:00Z",
+					"repository": { "nameWithOwner": "acme/web" },
+					"author": { "__typename": "User", "login": "me-user" },
+					"comments": { "totalCount": 0, "nodes": [] },
+					"reviews": { "totalCount": 0, "nodes": [] },
+					"reviewThreads": { "totalCount": 0, "nodes": [] },
+					"commits": {
+						"nodes": [
+							{
+								"commit": {
+									"oid": "feed42",
+									"committedDate": "2026-01-01T00:25:00Z",
+									"statusCheckRollup": {
+										"state": "FAILURE",
+										"contexts": {
+											"totalCount": 2,
+											"nodes": [
+												{
+													"__typename": "CheckRun",
+													"name": "lint",
+													"status": "COMPLETED",
+													"conclusion": "FAILURE",
+													"completedAt": "2026-01-01T00:30:00Z",
+													"detailsUrl": "https://github.com/acme/web/actions/runs/9"
+												},
+												{
+													"__typename": "CheckRun",
+													"name": "build",
+													"status": "IN_PROGRESS",
+													"conclusion": null,
+													"completedAt": null,
+													"detailsUrl": "https://github.com/acme/web/actions/runs/10"
+												}
+											]
+										}
+									}
+								}
+							}
+						]
+					}
+				}
+			]
+		}
+	}
+}
