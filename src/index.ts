@@ -19,6 +19,9 @@ import { Drainer } from './queue/drainer.js'
 import { scheduledReporterCommand } from './scheduled-runs/reporter-command.js'
 import { ScheduledRunService } from './scheduled-runs/service.js'
 import { createApp } from './server/app.js'
+import { createGithubSignalReader } from './signals/github-source.js'
+import { createMailSignalReader } from './signals/mail-source.js'
+import { SignalsWatcher } from './signals/watcher.js'
 import { createSolver } from './solver/registry.js'
 import { createSpawner } from './spawner/registry.js'
 import { log } from './util/logger.js'
@@ -99,6 +102,12 @@ async function main() {
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
 	if (knowledge) knowledgeDelivery = new KnowledgeOutboxDrainer(db, knowledge, registeredProfileIds)
+	// Signals poll the active profile whenever enabled; not gated by the task sidebar watch.
+	const signalsWatcher = new SignalsWatcher(config, db, {
+		activeProfileId: () => profiles.activeProfile().id,
+		github: createGithubSignalReader(config),
+		mail: createMailSignalReader(config),
+	})
 	// The only resident-admission lease is daemon-memory scoped. Scheduled recovery
 	// still starts before HTTP and queue admission, even while recurrence is disabled.
 	const residentLeases = new ResidentLeaseManager()
@@ -131,6 +140,7 @@ async function main() {
 				profileIds: () => profiles.registeredProfileIds(),
 			},
 			knowledge,
+			signals: { watcher: signalsWatcher },
 		},
 		scheduledRuns,
 		watching => {
@@ -160,6 +170,7 @@ async function main() {
 	deployWatcher.start()
 	planStatusWatcher.start()
 	knowledgeDelivery?.start()
+	signalsWatcher.start()
 
 	// Graceful shutdown. Enricher/Drainer/HTTP do not yet expose a complete
 	// admission-and-drain contract, so SQLite deliberately remains open until
@@ -177,6 +188,7 @@ async function main() {
 				planStatusWatcher.stop(),
 				scheduledRuns.stop(),
 				knowledgeDelivery?.stop(),
+				signalsWatcher.stop(),
 			])
 			process.exit(0)
 		})()

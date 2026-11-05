@@ -3,6 +3,7 @@ import type * as Widget from '../../extension/src/api.js'
 // Compile-time producer/consumer compatibility. No runtime daemon/app imports.
 import type { DashboardItem, DashboardPlan, OkenaWorkspacePreview, PlanArtifact } from '../../src/items/contract.js'
 import type { PlanningResult } from '../../src/plan/application.js'
+import type * as Signals from '../../src/signals/contract.js'
 
 type Assert<T extends true> = T
 type Compatible<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -18,3 +19,8 @@ export type DetailDesktop = Assert<
 		Pick<Desktop.DashboardItem, 'planArtifacts' | 'okenaWorkspace' | 'knowledgeDeliveries' | 'knowledgeRecovery'>
 	>
 >
+
+export type SignalThreadDesktop = Assert<Compatible<Signals.SignalThread, Desktop.SignalThread>>
+export type SignalsSnapshotDesktop = Assert<Compatible<Signals.SignalsSnapshot, Desktop.SignalsSnapshot>>
+export type SignalUpdateDesktop = Assert<Compatible<Signals.SignalUpdate, Desktop.SignalUpdate>>
+export type SignalRoutedDesktop = Assert<Compatible<Signals.SignalRouted, Desktop.SignalRouted>>

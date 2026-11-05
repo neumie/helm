@@ -21,6 +21,8 @@ const storyCoverage = [
 	['app/src/renderer/sidebar/Disclosure.stories.tsx', 'Compositions/Disclosure group'],
 	['app/src/renderer/sidebar/ActivityIndicator.stories.tsx', 'Primitives/Activity indicator'],
 	['app/src/renderer/sidebar/RunContextEditor.stories.tsx', 'Views/Run context editor'],
+	['app/src/renderer/signals/SignalsColumn.stories.tsx', 'Views/Signals/Column'],
+	['app/src/renderer/signals/SignalsFlows.stories.tsx', 'Views/Signals/Flows'],
 ] as const
 
 test('Storybook discovers the whole renderer and sorts large review views first', () => {

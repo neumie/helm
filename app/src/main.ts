@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { promisify } from 'node:util'
 import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, powerMonitor, screen, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
@@ -41,6 +43,7 @@ import * as sessions from './sessions'
 import {
 	AGENT_DOCK_IPC,
 	type PiAgentStatusIntegrationSnapshot,
+	SIGNALS_IPC,
 	type TerminalPlacementCommitCommand,
 	type TerminalTransferEvent,
 } from './shared'
@@ -56,6 +59,7 @@ import {
 	sideBySideRequested,
 	startupPolicy,
 } from './side-by-side'
+import { SignalsMain, createSignalsDaemonRequest } from './signals-main'
 import { isTabGroupColor } from './tab-group-colors'
 import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './terminal-preferences'
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
@@ -315,6 +319,26 @@ const agentDock = createAgentDockMain({
  */
 const claudeTerminalClosed = (sessionId: string, profileId: string) =>
 	agentDock.terminalClosed({ profileId, terminalId: sessionId })
+// Signals column (signals-main.ts): polls the daemon only while the column is on screen;
+// opens github.com / Mail links and starts agents through the Okena CLI. A side-by-side
+// dev instance reads only: no daemon writes, no source polls, no new agents.
+const execFileAsync = promisify(execFile)
+const signalsReadOnly = sideBySideRequested(process.env)
+const signalsMain = new SignalsMain({
+	request: createSignalsDaemonRequest(
+		daemonUrl,
+		signalsReadOnly ? { readOnlyError: SIDE_BY_SIDE_READ_ONLY_ERROR } : {},
+	),
+	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
+	profileToken: () => sessionProfileToken(),
+	publish: state => sendToLiveRenderer(mainWindow?.webContents, SIGNALS_IPC.snapshot, state, sessionProfileToken()),
+	exec: (file, args, options) =>
+		execFileAsync(file, [...args], { ...options, encoding: 'utf8', maxBuffer: options.maxBuffer ?? 1024 * 1024 }),
+	openExternal: url => shell.openExternal(url),
+	userDataDir: app.getPath('userData'),
+	readOnly: signalsReadOnly,
+	readOnlyError: SIDE_BY_SIDE_READ_ONLY_ERROR,
+})
 // Transfer preflight is narrower than ordinary terminal IPC: it also requires
 // the current main renderer. A future move must add the controller's complete
 // snapshot/detach/attach capability hand-off before any move channel exists.
@@ -1037,10 +1061,15 @@ function createWindow(): BrowserWindow {
 	})
 	if (sideBySideLaunch) markSideBySideWindow(win)
 	win.on('focus', () => agentDock.poke())
-	// A reloading/crashed renderer no longer shows the dock; the new one re-announces it.
-	win.webContents.on('did-start-loading', () => agentDock.setVisible(false))
+	// A reloading/crashed renderer no longer shows the dock or Signals; the new one re-announces them
+	// (a closed window's webContents emits 'destroyed', which SignalsMain watches itself).
+	win.webContents.on('did-start-loading', () => {
+		agentDock.setVisible(false)
+		signalsMain.forget(win.webContents)
+	})
 	win.webContents.on('render-process-gone', (_event, details) => {
 		agentDock.setVisible(false)
+		signalsMain.forget(win.webContents)
 		if (screenshotPath || profileSwitchAttestationMode) return
 		const recovering = rendererCrashRecovery.recover(win.webContents, details)
 		console.error(
@@ -1879,6 +1908,7 @@ ipcMain.handle(
 )
 
 agentDock.registerIpc(ipcMain)
+signalsMain.registerIpc(ipcMain)
 
 ipcMain.handle('external:open', async (event, value: unknown, profileToken: unknown) => {
 	if (!sessionIpcGate.allows(profileToken) || event.sender !== mainWindow?.webContents) return false
@@ -3240,6 +3270,7 @@ app.on('before-quit', event => {
 app.on('will-quit', () => {
 	profileSwitchCoordinator?.stop()
 	agentDock.stop()
+	signalsMain.stop()
 	// before-quit waits for stop/revoke before re-entering app.quit, so bridge
 	// shutdown always follows the final resident lease attempt. Release the
 	// provider watch first so a quit does not leave ClientCare polling on.

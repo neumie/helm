@@ -5,6 +5,7 @@ import Database from 'better-sqlite3'
 import { ItemStore } from '../items/store.js'
 import { KnowledgeStore } from '../knowledge/store.js'
 import { ScheduleStore } from '../scheduled-runs/store.js'
+import { SignalStore } from '../signals/store.js'
 import type { PollState } from '../types.js'
 import { MIGRATIONS } from './schema.js'
 
@@ -227,6 +228,8 @@ export class DB {
 	readonly knowledge: KnowledgeStore
 	/** Profile-bound scheduled-run persistence; never use it as an Item store. */
 	readonly schedules: ScheduleStore
+	/** Profile-bound Signals threads, change log and source health. */
+	readonly signals: SignalStore
 
 	constructor(
 		dbPath?: string,
@@ -249,6 +252,7 @@ export class DB {
 		this.items = new ItemStore(this.db, () => this.profileId)
 		this.knowledge = new KnowledgeStore(this.db, () => this.profileId)
 		this.schedules = new ScheduleStore(this.db, () => this.profileId)
+		this.signals = new SignalStore(this.db, () => this.profileId)
 	}
 
 	private get profileId(): string {

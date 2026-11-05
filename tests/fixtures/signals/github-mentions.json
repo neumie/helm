@@ -1,0 +1,95 @@
+{
+	"data": {
+		"rateLimit": { "cost": 1, "remaining": 4988, "resetAt": "2026-01-01T01:00:00Z" },
+		"mentions": {
+			"issueCount": 3,
+			"nodes": [
+				{
+					"__typename": "PullRequest",
+					"id": "PR_a",
+					"number": 12,
+					"title": "Add widget",
+					"url": "https://github.com/acme/app/pull/12",
+					"isDraft": false,
+					"headRefName": "feat/widget",
+					"createdAt": "2025-12-30T00:00:00Z",
+					"updatedAt": "2026-01-01T00:10:00Z",
+					"repository": { "nameWithOwner": "acme/app" },
+					"author": { "__typename": "User", "login": "alice" },
+					"comments": {
+						"totalCount": 2,
+						"nodes": [
+							{
+								"id": "IC_10",
+								"author": { "__typename": "User", "login": "alice" },
+								"createdAt": "2026-01-01T00:02:00Z",
+								"bodyText": "@me-user can you look?",
+								"url": "https://github.com/acme/app/pull/12#issuecomment-10"
+							},
+							{
+								"id": "IC_11",
+								"author": { "__typename": "User", "login": "me-user" },
+								"createdAt": "2026-01-01T00:04:00Z",
+								"bodyText": "sure, @me-user here",
+								"url": "https://github.com/acme/app/pull/12#issuecomment-11"
+							}
+						]
+					}
+				},
+				{
+					"__typename": "Issue",
+					"id": "I_30",
+					"number": 30,
+					"title": "Crash on start",
+					"url": "https://github.com/acme/app/issues/30",
+					"createdAt": "2025-12-30T00:00:00Z",
+					"updatedAt": "2026-01-01T00:41:00Z",
+					"repository": { "nameWithOwner": "acme/app" },
+					"author": { "__typename": "User", "login": "dave" },
+					"comments": {
+						"totalCount": 2,
+						"nodes": [
+							{
+								"id": "IC_20",
+								"author": { "__typename": "User", "login": "dave" },
+								"createdAt": "2026-01-01T00:35:00Z",
+								"bodyText": "cc @Me-User please",
+								"url": "https://github.com/acme/app/issues/30#issuecomment-20"
+							},
+							{
+								"id": "IC_21",
+								"author": { "__typename": "User", "login": "gina" },
+								"createdAt": "2026-01-01T00:40:00Z",
+								"bodyText": "same here",
+								"url": "https://github.com/acme/app/issues/30#issuecomment-21"
+							}
+						]
+					}
+				},
+				{
+					"__typename": "Issue",
+					"id": "I_31",
+					"number": 31,
+					"title": "Docs typo",
+					"url": "https://github.com/acme/docs/issues/31",
+					"createdAt": "2025-12-31T08:00:00Z",
+					"updatedAt": "2026-01-01T00:42:00Z",
+					"repository": { "nameWithOwner": "acme/docs" },
+					"author": { "__typename": "User", "login": "hank" },
+					"comments": {
+						"totalCount": 1,
+						"nodes": [
+							{
+								"id": "IC_30",
+								"author": { "__typename": "User", "login": "hank" },
+								"createdAt": "2026-01-01T00:42:00Z",
+								"bodyText": "ping @me-user2 and email@me-user.example",
+								"url": "https://github.com/acme/docs/issues/31#issuecomment-30"
+							}
+						]
+					}
+				}
+			]
+		}
+	}
+}

@@ -16,7 +16,7 @@ test('scheduled migrations create profile-owned tables and release completed att
 		const raw = new Database(path)
 		assert.equal(
 			(raw.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			36,
+			37,
 		)
 		for (const table of ['scheduled_schedules', 'scheduled_runs']) {
 			assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))

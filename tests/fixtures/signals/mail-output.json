@@ -1,0 +1,139 @@
+{
+	"running": true,
+	"truncated": false,
+	"myAddresses": ["me@example.com", "Me@Work.example"],
+	"messages": [
+		{
+			"messageId": "m1@northwind.cz",
+			"subject": "Invoice question",
+			"senderName": "Klara Example",
+			"senderAddress": "klara@northwind.cz",
+			"dateReceived": "2026-01-14T08:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m1@northwind.cz"
+		},
+		{
+			"messageId": "m2@northwind.cz",
+			"subject": "Re: Invoice question",
+			"senderName": "Petr Example",
+			"senderAddress": "petr@northwind.cz",
+			"dateReceived": "2026-01-14T09:30:00.000Z",
+			"read": false,
+			"flagged": true,
+			"bulk": false,
+			"root": "m1@northwind.cz"
+		},
+		{
+			"messageId": "m3@xyz.cz",
+			"subject": "Contract draft",
+			"senderName": "Olga Example",
+			"senderAddress": "olga@mail.xyz.cz",
+			"dateReceived": "2026-01-14T07:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m3@xyz.cz"
+		},
+		{
+			"messageId": "m4@gmail.com",
+			"subject": "Dinner?",
+			"senderName": "Friend Example",
+			"senderAddress": "friend.example@gmail.com",
+			"dateReceived": "2026-01-14T06:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m4@gmail.com"
+		},
+		{
+			"messageId": "m5@news.example",
+			"subject": "Weekly digest",
+			"senderName": "News",
+			"senderAddress": "digest@news.example",
+			"dateReceived": "2026-01-14T05:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": true,
+			"root": "m5@news.example"
+		},
+		{
+			"messageId": "m6@northwind.cz",
+			"subject": "Already handled",
+			"senderName": "Klara Example",
+			"senderAddress": "klara@northwind.cz",
+			"dateReceived": "2026-01-14T04:00:00.000Z",
+			"read": true,
+			"flagged": false,
+			"bulk": false,
+			"root": "m6@northwind.cz"
+		},
+		{
+			"messageId": "m7@example.com",
+			"subject": "Re: Invoice question",
+			"senderName": "Me",
+			"senderAddress": "ME@example.com",
+			"dateReceived": "2026-01-14T10:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m1@northwind.cz"
+		},
+		{
+			"messageId": "m8@noise.example",
+			"subject": "Status ping",
+			"senderName": "Robot",
+			"senderAddress": "robot@noise.example",
+			"dateReceived": "2026-01-14T03:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m8@noise.example"
+		},
+		{
+			"messageId": "m9@old.example",
+			"subject": "Old thing",
+			"senderName": "Old Sender",
+			"senderAddress": "old@old.example",
+			"dateReceived": "2026-01-01T00:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "m9@old.example"
+		},
+		{
+			"messageId": "s1@sentry.example",
+			"subject": "[Sentry] ACME-ADMIN-3F2 - TypeError: x is undefined",
+			"senderName": "Sentry",
+			"senderAddress": "noreply@md.getsentry.com",
+			"dateReceived": "2026-01-14T02:00:00.000Z",
+			"read": true,
+			"flagged": false,
+			"bulk": true,
+			"root": "s1@sentry.example"
+		},
+		{
+			"messageId": "s2@sentry.example",
+			"subject": "Sentry: ACME-ADMIN-3F2 - TypeError: x is undefined (regression)",
+			"senderName": "Sentry",
+			"senderAddress": "alerts@acme.sentry.io",
+			"dateReceived": "2026-01-14T02:30:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": true,
+			"root": "s2@sentry.example"
+		},
+		{
+			"messageId": "s3@sentry.example",
+			"subject": "[Sentry] Weekly report",
+			"senderName": "Sentry",
+			"senderAddress": "noreply@sentry.io",
+			"dateReceived": "2026-01-14T01:00:00.000Z",
+			"read": true,
+			"flagged": false,
+			"bulk": true,
+			"root": "s3@sentry.example"
+		}
+	]
+}

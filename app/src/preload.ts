@@ -16,7 +16,13 @@ import type {
 	HelmApi,
 	PtySpawnResult,
 	RestoredSession,
+	SIGNALS_IPC,
 	ScheduledTerminalOpen,
+	SignalNewAgentRequest,
+	SignalNewAgentResult,
+	SignalOkenaProjects,
+	SignalsApi,
+	SignalsBridgeState,
 	TabGroup,
 	TabGroupActionAuthorization,
 	TerminalPlacementCommitResult,
@@ -27,7 +33,15 @@ import type {
 	ThemeListEntry,
 	UiPreview,
 } from './shared'
-import type { DaemonApi, HelmResult, HelmSnapshot, ProfilesApi } from './shared-helm'
+import type {
+	DaemonApi,
+	HelmResult,
+	HelmSnapshot,
+	ProfilesApi,
+	SignalRouted,
+	SignalThread,
+	SignalUpdate,
+} from './shared-helm'
 
 // Captured synchronously at preload time so the renderer gets the URL without an async hop.
 const { daemonUrl, sessionProfileToken } = ipcRenderer.sendSync('config:get') as {
@@ -104,6 +118,16 @@ const AGENT_DOCK_CHANNELS: typeof AGENT_DOCK_IPC = {
 	reveal: 'agent-dock:reveal',
 	setNotify: 'agent-dock:set-notify',
 	openItem: 'agent-dock:open-item',
+}
+const SIGNALS_CHANNELS: typeof SIGNALS_IPC = {
+	snapshot: 'signals:snapshot',
+	subscribe: 'signals:subscribe',
+	setVisible: 'signals:set-visible',
+	update: 'signals:update',
+	routed: 'signals:routed',
+	open: 'signals:open',
+	okenaProjects: 'signals:okena-projects',
+	newAgent: 'signals:new-agent',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -350,6 +374,19 @@ const api: HelmApi = {
 					listener(itemId)
 			}),
 	} satisfies AgentDockApi,
+	signals: {
+		onSnapshot: listener =>
+			subscribe<[SignalsBridgeState, string]>(SIGNALS_CHANNELS.snapshot, (state, profileToken) => {
+				if (profileToken === sessionProfileToken) listener(state)
+			}),
+		subscribe: () => ipcRenderer.invoke(SIGNALS_CHANNELS.subscribe, sessionProfileToken) as Promise<SignalsBridgeState>,
+		setVisible: visible => ipcRenderer.send(SIGNALS_CHANNELS.setVisible, visible === true, sessionProfileToken),
+		update: (id: number, patch: SignalUpdate) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.update, id, patch),
+		routed: (id: number, body: SignalRouted) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.routed, id, body),
+		open: (url: string) => invokeHelm<true>(SIGNALS_CHANNELS.open, url),
+		okenaProjects: (repo: string | null) => invokeHelm<SignalOkenaProjects>(SIGNALS_CHANNELS.okenaProjects, repo),
+		newAgent: (request: SignalNewAgentRequest) => invokeHelm<SignalNewAgentResult>(SIGNALS_CHANNELS.newAgent, request),
+	} satisfies SignalsApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),
 		onGo: listener =>

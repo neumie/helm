@@ -386,6 +386,47 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 				{ type: 'field', path: ['github', 'deployPollSeconds'], label: 'Deploy Poll (seconds)', input: 'number' },
 			],
 		},
+		{
+			id: 'signals',
+			title: 'Signals',
+			description:
+				'What needs you from GitHub and Apple Mail, read-only. Mail asks once for permission to read Mail (Automation).',
+			controls: [
+				{ type: 'field', path: ['signals', 'enabled'], label: 'Enable signals', input: 'boolean' },
+				{ type: 'field', path: ['signals', 'github', 'enabled'], label: 'Watch GitHub', input: 'boolean' },
+				{ type: 'field', path: ['signals', 'github', 'pollSeconds'], label: 'GitHub poll (seconds)', input: 'number' },
+				{
+					type: 'field',
+					path: ['signals', 'github', 'mentionDays'],
+					label: 'Mentions from the last (days)',
+					input: 'number',
+				},
+				{ type: 'field', path: ['signals', 'mail', 'enabled'], label: 'Watch Apple Mail', input: 'boolean' },
+				{ type: 'field', path: ['signals', 'mail', 'pollSeconds'], label: 'Mail poll (seconds)', input: 'number' },
+				{ type: 'field', path: ['signals', 'mail', 'unreadOnly'], label: 'Unread mail only', input: 'boolean' },
+				{
+					type: 'field',
+					path: ['signals', 'mail', 'excludeBulk'],
+					label: 'Skip mailing lists and bulk mail',
+					input: 'boolean',
+				},
+				{ type: 'field', path: ['signals', 'mail', 'maxAgeDays'], label: 'Mail from the last (days)', input: 'number' },
+				{
+					type: 'field',
+					path: ['signals', 'mail', 'includeSenders'],
+					label: 'Always include senders',
+					input: 'textarea',
+					placeholder: 'One address pattern per line, e.g. *@sentry.io',
+				},
+				{
+					type: 'field',
+					path: ['signals', 'mail', 'excludeSenders'],
+					label: 'Never include senders',
+					input: 'textarea',
+					placeholder: 'One address pattern per line, e.g. *@newsletter.example.com',
+				},
+			],
+		},
 	],
 })
 

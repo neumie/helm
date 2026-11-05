@@ -1,13 +1,31 @@
 import { createIconButton } from './icon-button'
+import type { LeftColumnMode } from './left-column'
 
-/** Task-pane presentation only: no session, placement or process authority. */
+/**
+ * What the column currently holds (left-column.ts). Without it the column is the task sidebar,
+ * as in hosts that mount only Tasks (fixtures, older preloads).
+ */
+export interface SidebarLayoutColumn {
+	mode(): LeftColumnMode
+	subscribe(listener: () => void): () => void
+	/** Signals is on screen: column shown, in Signals mode, and the window visible. */
+	setSignalsVisible?(visible: boolean): void
+}
+
+/**
+ * Left-column presentation only: no session, placement or process authority. The column's width and
+ * visibility are shared by both surfaces; "the task sidebar is visible" (`data-sidebar-hidden`, the
+ * `helm-sidebar-visibility` event and the daemon task watch) means the column is shown in Tasks mode.
+ */
 export function mountSidebarLayout({
 	root,
 	fitActive,
+	column,
 }: {
 	root: Document | HTMLElement
 	fitActive: () => void
-}): { dispose(): void } {
+	column?: SidebarLayoutColumn
+}): { dispose(): void; show(): void } {
 	const host = root instanceof Document ? root.documentElement : root
 	const ownerDocument = host.ownerDocument
 	const ownerWindow = ownerDocument.defaultView
@@ -33,6 +51,7 @@ export function mountSidebarLayout({
 	let preferredWidth = Number.isFinite(storedWidth) && storedWidth > 0 ? storedWidth : 340
 	let hidden = read('helm.sidebarHidden') === 'true'
 	let publishedHidden: boolean | null = null
+	let publishedSignals: boolean | null = null
 	let disposed = false
 	let stopDrag: (() => void) | null = null
 	const clamp = (width: number): number => Math.min(Math.max(width, 300), 420, Math.floor(ownerWindow.innerWidth * 0.6))
@@ -64,6 +83,13 @@ export function mountSidebarLayout({
 	chrome.append(toggle, dragSpace)
 	const properties = ['--left-width', '--sidebar-column-width', '--sidebar-divider-width', '--sidebar-header-width']
 	const previousProperties = properties.map(name => [name, host.style.getPropertyValue(name)] as const)
+	const mode = (): LeftColumnMode => column?.mode() ?? 'tasks'
+	const publishSignals = (): void => {
+		const visible = !disposed && !hidden && mode() === 'signals' && ownerDocument.visibilityState !== 'hidden'
+		if (publishedSignals === visible) return
+		publishedSignals = visible
+		column?.setSignalsVisible?.(visible)
+	}
 	const apply = (): void => {
 		const width = `${clamp(preferredWidth)}px`
 		host.style.setProperty('--left-width', width)
@@ -76,15 +102,19 @@ export function mountSidebarLayout({
 		left.inert = hidden
 		left.hidden = hidden
 		divider.hidden = hidden
-		host.dataset.sidebarHidden = hidden ? 'true' : 'false'
-		if (publishedHidden !== hidden) {
-			publishedHidden = hidden
-			ownerWindow.dispatchEvent(new CustomEvent('helm-sidebar-visibility', { detail: { hidden } }))
-			const daemon = (ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } })
-				.helm?.daemon
-			void daemon?.pollWatch?.(!hidden)?.catch(() => undefined)
+		const tasksHidden = hidden || mode() !== 'tasks'
+		host.dataset.sidebarHidden = tasksHidden ? 'true' : 'false'
+		if (publishedHidden !== tasksHidden) {
+			publishedHidden = tasksHidden
+			ownerWindow.dispatchEvent(new CustomEvent('helm-sidebar-visibility', { detail: { hidden: tasksHidden } }))
+			const daemon = (
+				ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } }
+			).helm?.daemon
+			void daemon?.pollWatch?.(!tasksHidden)?.catch(() => undefined)
 		}
-		const label = hidden ? 'Show task sidebar' : 'Hide task sidebar'
+		publishSignals()
+		const name = mode() === 'tasks' ? 'task sidebar' : 'Signals'
+		const label = hidden ? `Show ${name}` : `Hide ${name}`
 		toggle.setAttribute('aria-label', label)
 		toggle.title = label
 		toggle.setAttribute('aria-expanded', String(!hidden))
@@ -130,17 +160,27 @@ export function mountSidebarLayout({
 	toggle.addEventListener('click', onToggle)
 	divider.addEventListener('pointerdown', onDown)
 	ownerWindow.addEventListener('resize', onResize)
+	ownerDocument.addEventListener('visibilitychange', publishSignals)
+	const unsubscribeColumn = column?.subscribe(apply)
 	apply()
 	return {
+		show(): void {
+			if (disposed || !hidden) return
+			onToggle()
+		},
 		dispose(): void {
 			if (disposed) return
 			disposed = true
 			hidden = true
+			unsubscribeColumn?.()
+			ownerDocument.removeEventListener('visibilitychange', publishSignals)
+			publishSignals()
 			if (publishedHidden !== true) {
 				publishedHidden = true
 				ownerWindow.dispatchEvent(new CustomEvent('helm-sidebar-visibility', { detail: { hidden: true } }))
-				const daemon = (ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } })
-					.helm?.daemon
+				const daemon = (
+					ownerWindow as Window & { helm?: { daemon?: { pollWatch?: (watching: boolean) => Promise<unknown> } } }
+				).helm?.daemon
 				void daemon?.pollWatch?.(false)?.catch(() => undefined)
 			}
 			stopDrag?.()

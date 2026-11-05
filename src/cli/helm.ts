@@ -3,11 +3,15 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { basename } from 'node:path'
-import { parseDaemonEnvelope } from '../util/daemon-response.js'
+import { postToDaemon, resolveBaseUrl } from './daemon-http.js'
 import { runDockProcess } from './dock.js'
 import { runEditCli } from './edit.js'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
 import { runReviewCli } from './review.js'
+import { runSignalProcess } from './signal.js'
+
+// Re-exported for existing callers/tests; the helpers live in the side-effect-free daemon-http.ts.
+export { postToDaemon, resolveBaseUrl }
 
 const HELP = `Usage: helm <command>
 
@@ -21,6 +25,7 @@ Commands:
   edit     Iterate on a document with your running agent (helm edit FILE)
   review   Legacy advanced document-connection commands
   dock     Agent dock: Claude sessions (Okena, Helm terminals) that need you (watch/ls/show)
+  signal   Signals: GitHub and Mail threads that want you (ls/show/set/note/watch/poll)
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
@@ -173,38 +178,6 @@ function enumOption<T extends string>(args: string[], name: string, allowed: rea
 }
 
 /**
- * Daemon base URL: --url ?? $HELM_URL ?? $VIGIL_URL (legacy compat) ??
- * localhost:7474. No config file is read. Exported for tests.
- */
-export function resolveBaseUrl(args: string[]): string {
-	return (
-		optionValue(args, '--url') ??
-		process.env.HELM_URL ??
-		process.env.VIGIL_URL ??
-		'http://localhost:7474'
-	).replace(/\/+$/, '')
-}
-
-/** POST a JSON payload to the running daemon and unwrap its `{ data | error }` envelope. */
-export async function postToDaemon<T>(baseUrl: string, path: string, payload: unknown): Promise<T> {
-	let res: Response
-	try {
-		res = await fetch(`${baseUrl}${path}`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload),
-		})
-	} catch (err) {
-		throw new Error(
-			`Could not reach the Helm daemon at ${baseUrl} — is it running? Start it with \`helm start\`, or set --url / $HELM_URL. (${err instanceof Error ? err.message : err})`,
-		)
-	}
-	const json = parseDaemonEnvelope(res.status, await res.text()) as { data?: T; error?: unknown }
-	if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : `Request failed: HTTP ${res.status}`)
-	return json.data as T
-}
-
-/**
  * Map `helm add <kind> …` args to a POST /api/items payload. Undefined optional
  * fields drop out of the JSON, so the route's strict schema accepts the body; the
  * daemon (not the CLI) validates spawner installs and creates the rows. Kept thin
@@ -343,7 +316,8 @@ switch (command) {
 		})
 		break
 	case 'dock':
-		runDockProcess(process.argv.slice(3)).then(
+	case 'signal':
+		;(command === 'dock' ? runDockProcess : runSignalProcess)(process.argv.slice(3)).then(
 			code => {
 				process.exitCode = code
 			},
