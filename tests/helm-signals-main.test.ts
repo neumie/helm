@@ -568,7 +568,10 @@ test('newAgent falls back to the worktree’s first terminal and still deletes t
 		}
 		const h = harness({ exec, userDataDir: root })
 		const result = await h.main.newAgent(newAgentRequest())
-		assert.deepEqual(result, { error: 'Okena could not start Claude: claude did not connect [0m' })
+		assert.match(
+			String((result as { error?: string }).error),
+			/^Okena could not start Claude: claude did not connect \[0m\. The branch already existed/,
+		)
 		assert.ok(promptPath !== '')
 		assert.equal(existsSync(promptPath), false)
 	} finally {
@@ -659,9 +662,11 @@ const gitArgs = (execs: string[][]) => execs.filter(call => call[0] === 'git').m
 const worktreeArgs = (execs: string[][]) => execs.find(call => call[1] === 'worktree')?.slice(1)
 const claudeArgs = (execs: string[][]) => execs.find(call => call[1] === 'claude')?.slice(1)
 
-test('newAgent trusts the folder only for a new or local branch, never for one that came from origin', async () => {
-	const local = await runNewAgentWithGit({ refs: new Set([LOCAL_REF]), origin: new Set() })
-	assert.ok(claudeArgs(local.execs)?.includes('--trust'))
+test('newAgent trusts the folder only for a brand-new branch, never for an existing local or origin branch', async () => {
+	// A local branch may be one an earlier `n` made from a teammate's origin branch: no provenance.
+	const local = await runNewAgentWithGit({ refs: new Set([LOCAL_REF, REMOTE_REF]), origin: new Set([LOCAL_REF]) })
+	assert.deepEqual(local.result, OK_RESULT)
+	assert.ok(!claudeArgs(local.execs)?.includes('--trust'))
 	const fresh = await runNewAgentWithGit({ refs: new Set(), origin: new Set() })
 	assert.ok(claudeArgs(fresh.execs)?.includes('--trust'))
 
@@ -670,7 +675,7 @@ test('newAgent trusts the folder only for a new or local branch, never for one t
 	assert.ok(!claudeArgs(remote.execs)?.includes('--trust'), 'origin code may carry someone else’s .claude hooks')
 
 	const dialog = await runNewAgentWithGit({ refs: new Set(), origin: new Set([LOCAL_REF]), failClaude: true })
-	assert.match(String((dialog.result as { error?: string }).error), /Answer the dialog in Okena/)
+	assert.match(String((dialog.result as { error?: string }).error), /answer Claude's trust dialog in Okena/)
 })
 
 test('newAgent hands an existing local branch to Okena as is, without --new-branch', async () => {

@@ -583,10 +583,11 @@ export class SignalsMain {
 			if (!terminalId) return { error: 'Okena created the worktree, but it has no terminal.' }
 
 			let started: string
-			// Trust ("trust this folder": project hooks/settings run) only for code Jakub already had or
-			// that starts from the default branch. A branch that came from origin may carry someone
-			// else's `.claude/` hooks, so Claude shows the trust dialog and Jakub decides there.
-			const trust = source.data !== 'remote'
+			// Trust ("trust this folder": project hooks/settings run) only for a brand-new branch, which
+			// starts from the default branch. An existing branch (a PR head, or a local branch an earlier
+			// `n` made from origin) may carry someone else's `.claude/` hooks, so Claude shows the trust
+			// dialog and Jakub decides there. Where a local ref came from is not provenance.
+			const trust = source.data === 'new'
 			try {
 				;({ stdout: started } = await this.options.exec(
 					this.okenaBin,
@@ -594,12 +595,13 @@ export class SignalsMain {
 					{ timeout: OKENA_CLAUDE_TIMEOUT_MS, env: this.childEnv },
 				))
 			} catch (error) {
-				if (!trust) {
-					return {
-						error: `The worktree for ${request.branch} is ready, but Claude asks whether to trust it: the branch came from origin, so Helm did not trust it for you. Answer the dialog in Okena, then send the prompt with p.`,
-					}
+				const reason = execFailure('Okena could not start Claude', error, 'Okena is not installed.')
+				// Without --trust, `okena claude start` fails while Claude's trust dialog is shown.
+				return {
+					error: trust
+						? reason
+						: `${reason}. The branch already existed, so Helm did not trust its folder for you: answer Claude's trust dialog in Okena, then send the prompt with p.`,
 				}
-				return { error: execFailure('Okena could not start Claude', error, 'Okena is not installed.') }
 			}
 			return { data: { terminalId, sessionId: sessionIdFrom(started), agentName: request.branch } }
 		} finally {
