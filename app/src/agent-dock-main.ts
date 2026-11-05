@@ -11,13 +11,14 @@
 // callbacks (they read main-local state), so this module stays testable under node.
 
 import { join } from 'node:path'
-import { activateOkenaApp } from '../../src/extensions/okena/activate'
+import { describeOkenaRaise, raiseOkenaApp } from '../../src/extensions/okena/activate'
 import { OkenaClient } from '../../src/extensions/okena/client'
 import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
 import type { AgentDockSnapshot } from './agent-dock/model'
 import { AgentDockNotifier, type AgentDockNotifierOptions, type AgentDockUpdate } from './agent-dock/notifier'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
+import { createOkenaRaiser } from './agent-dock/okena-raise'
 import { OkenaStreamSubscription } from './agent-dock/okena-stream'
 import { type OkenaRevealDeps, revealOkenaTerminal } from './agent-dock/reveal'
 import { AgentDockWatcher } from './agent-dock/watcher'
@@ -49,7 +50,8 @@ export interface AgentDockMainOptions {
 	acceptsIpc(sender: unknown, profileToken: unknown): boolean
 	/**
 	 * "Show in Okena" (agent-dock:reveal): the Okena client it focuses through and how it raises the app.
-	 * Defaults: a fresh OkenaClient and `activateOkenaApp` (System Events, macOS). Tests inject doubles.
+	 * Defaults: a fresh OkenaClient and `raiseOkenaApp` (AppKit, then System Events; macOS) behind
+	 * createOkenaRaiser (logs each strategy, says a permission fix once). Tests inject doubles.
 	 */
 	reveal?: Partial<OkenaRevealDeps>
 	/**
@@ -105,10 +107,16 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 			)
 		}
 	}
-	// osascript's cold start can pass the item opener's 500 ms under load; the dock waits a little longer.
+	// Each strategy is bounded inside raiseOkenaApp (AppKit 1.5 s; System Events 4 s: it took ~1.7 s when it had to launch).
 	const reveal: OkenaRevealDeps = {
 		client: options.reveal?.client ?? new OkenaClient(),
-		activate: options.reveal?.activate ?? (() => activateOkenaApp({ timeoutMs: 2_000 })),
+		activate:
+			options.reveal?.activate ??
+			createOkenaRaiser({
+				raise: () => raiseOkenaApp(),
+				describe: describeOkenaRaise,
+				log: line => console.info(`[helm] agent dock: ${line}`),
+			}),
 	}
 	const okenaClient = new OkenaClient()
 	const okenaSource = new OkenaClaudeSource(okenaClient, 'okena', new ClaudeTranscriptTail())

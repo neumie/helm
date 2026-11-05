@@ -51,6 +51,14 @@ export const REVEAL_TEXT = {
 	unreachable: 'Okena is unreachable',
 	gone: "The agent's terminal is no longer open in Okena.",
 	notFocused: 'Okena did not focus the terminal',
+	/** Okena focused the pane, the app stayed behind (osascript refused, failed or timed out). */
+	notRaised: 'Focused in Okena; Helm could not bring Okena to the front.',
+	/** The first refusal for want of Automation: where to allow it (said once per run). */
+	needsAutomation:
+		'Focused in Okena, not raised: macOS blocked Helm from controlling System Events. Allow it in System Settings → Privacy & Security → Automation → Helm (a dev run: the app that started it) → System Events.',
+	/** The same for Accessibility. */
+	needsAccessibility:
+		'Focused in Okena, not raised: macOS blocked Helm. Allow it in System Settings → Privacy & Security → Accessibility → Helm (a dev run: the app that started it).',
 } as const
 
 /** `<okena profile>:<terminal id>` (profile ids may hold `:`; terminal ids never do), or null. */
@@ -90,10 +98,13 @@ export interface OkenaRevealClient {
 	action(payload: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<unknown>
 }
 
+/** A raise's answer: whether Okena is in front now, and the footer's words when it is not (default `notRaised`). */
+export type OkenaRaised = boolean | { raised: boolean; note?: string }
+
 export interface OkenaRevealDeps {
 	client: OkenaRevealClient
-	/** Raise the Okena app (activateOkenaApp); false when it could not. */
-	activate(): Promise<boolean>
+	/** Raise the Okena app (agent-dock/okena-raise.ts); false when it could not. */
+	activate(): Promise<OkenaRaised>
 }
 
 const REVEAL_READ_TIMEOUT_MS = 3_000
@@ -131,5 +142,8 @@ export async function revealOkenaTerminal(sessionKey: unknown, deps: OkenaReveal
 	} catch (error) {
 		return { ok: false, detail: focusRefusal(error) }
 	}
-	return { ok: true, activated: await deps.activate().catch(() => false) }
+	// Nothing in Helm takes focus back after this: the renderer only clears its busy state.
+	const raised: OkenaRaised = await deps.activate().catch(() => false)
+	if (typeof raised === 'boolean') return { ok: true, activated: raised }
+	return { ok: true, activated: raised.raised, ...(!raised.raised && raised.note ? { note: raised.note } : {}) }
 }

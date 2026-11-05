@@ -32,7 +32,7 @@ async function openDay(page: Page, scenario: 'reveal-okena' | 'reveal-helm') {
 }
 
 const reveals = (page: Page) => page.evaluate(() => window.__helmWorkspaceFixture?.agentDock?.calls.reveals ?? [])
-const setRevealMode = (page: Page, mode: 'shown' | 'not-raised' | 'gone' | 'unreachable') =>
+const setRevealMode = (page: Page, mode: 'shown' | 'not-raised' | 'needs-automation' | 'gone' | 'unreachable') =>
 	page.evaluate(next => window.__helmWorkspaceFixture?.agentDock?.setRevealMode(next), mode)
 
 test('Okena agent: the header link by pointer and ⌘O (pane, reply field) asks main for that pane; the pane stays', async ({
@@ -174,4 +174,63 @@ test('a failed reveal leaves a quiet footer line, no dialog; a focused-but-not-r
 	await setRevealMode(page, 'not-raised')
 	await pane.locator('.agent-dock-reveal-link').click()
 	await expect(note).toHaveText('Focused in Okena; Helm could not bring Okena to the front.')
+
+	// macOS blocked the raise for want of Automation: main's once-per-run fix replaces the plain words.
+	await setRevealMode(page, 'needs-automation')
+	await pane.focus()
+	await page.keyboard.press('Meta+O')
+	await expect(note).toHaveText(
+		'Focused in Okena, not raised: macOS blocked Helm from controlling System Events. Allow it in System Settings → Privacy & Security → Automation → Helm (a dev run: the app that started it) → System Events.',
+	)
+})
+
+test('after an Okena reveal Helm takes nothing back: no focus() on any element or the window, focus stays put', async ({
+	page,
+}) => {
+	const { pane, turn, note } = await openDay(page, 'reveal-okena')
+	await turn.click()
+	const show = pane.getByRole('button', { name: 'Show in Okena, service-date-and-people' })
+	await expect(show).toBeVisible()
+	await pane.focus()
+	// From here on every programmatic focus is counted: a refocus would hand the keys back to Helm's
+	// window (and a window.focus() would re-activate Helm on macOS) right after Okena came to the front.
+	await page.evaluate(() => {
+		const calls: string[] = []
+		;(window as unknown as { __focusCalls: string[] }).__focusCalls = calls
+		// Storybook's preview instruments `focus` as an accessor: wrap whatever it hands out.
+		const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'focus')
+		Object.defineProperty(HTMLElement.prototype, 'focus', {
+			configurable: true,
+			get(this: HTMLElement) {
+				const original = (own?.get ? own.get.call(this) : own?.value) as HTMLElement['focus']
+				return (options?: FocusOptions) => {
+					calls.push(this.className || this.tagName)
+					return original.call(this, options)
+				}
+			},
+		})
+		const windowFocus = window.focus
+		window.focus = () => {
+			calls.push('window')
+			windowFocus.call(window)
+		}
+	})
+	const focusCalls = () => page.evaluate(() => (window as unknown as { __focusCalls: string[] }).__focusCalls)
+	await page.keyboard.press('Meta+O')
+	await expect.poll(() => reveals(page)).toEqual(['storybook:term-crane-sdp'])
+	// The answer is in (the link is enabled again) and the quiet beat after it passed.
+	await expect(show).toBeEnabled()
+	await page.waitForTimeout(400)
+	expect(await focusCalls()).toEqual([])
+	await expect(pane).toBeFocused()
+	await expect(page.locator('.term-holder.active .xterm-helper-textarea')).not.toBeFocused()
+	await expect(note).toHaveText('')
+
+	// By pointer too: the link keeps the focus the click gave it; nothing moves it afterwards.
+	await show.click()
+	await expect.poll(() => reveals(page)).toHaveLength(2)
+	await expect(show).toBeEnabled()
+	await page.waitForTimeout(400)
+	expect(await focusCalls()).toEqual([])
+	await expect(page.locator('.term-holder.active .xterm-helper-textarea')).not.toBeFocused()
 })
