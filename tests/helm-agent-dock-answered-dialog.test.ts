@@ -386,3 +386,120 @@ test('answering a dialog the transcript proves answered is refused before any PO
 	})
 	assert.deepEqual(await broken.act(target, item, action), { status: 'sent' })
 })
+
+// ---------------------------------------------------------------------------
+// Review regressions: the proof sticks to its dialog id, and arrives within a tick
+// ---------------------------------------------------------------------------
+
+test('a dialog once proven answered stays answered when the evidence leaves the read window', () => {
+	let state = waitingAsk()
+	state = reduce(state, poll(detail(), observed([askCall(), askAnswer()])), ANSWER_AT + 3_000).state
+	assert.equal(agentDockSnapshot(state, ANSWER_AT + 3_000).sessions[0]?.status, 'working')
+	// A long turn: more than TOOL_CALLS_MAX calls later the question's call left the tail's list.
+	const busyLines = Array.from({ length: TOOL_CALLS_MAX }, (_, i) =>
+		toolUseLine(`toolu_w${i}`, 'Edit', { file_path: `/f${i}` }, ANSWER_AT + 10_000 + i),
+	)
+	const evicted = observed([askCall(), askAnswer(), ...busyLines])
+	assert.equal(
+		evicted.calls.some(call => call.id === 'toolu_01AJipBLNwub9BPmDUVm4PGd'),
+		false,
+	)
+	state = reduce(state, poll(detail(), evicted), ANSWER_AT + 60_000).state
+	assert.equal(agentDockSnapshot(state, ANSWER_AT + 60_000).sessions[0]?.status, 'working')
+	// The transcript file unreadable for a tick (no observation): still not waiting.
+	state = reduce(state, poll(detail()), ANSWER_AT + 61_000).state
+	assert.equal(agentDockSnapshot(state, ANSWER_AT + 61_000).sessions[0]?.status, 'working')
+	assert.equal(state.items.filter(item => item.kind === 'ask').length, 1)
+	assert.equal(state.items.find(item => item.kind === 'ask')?.state, 'resolved')
+	// Okena drops it at Stop; a later dialog with the same questions (a new id) needs its own proof.
+	state = reduce(state, poll(detail({ dialogs: [], busy: false })), ANSWER_AT + 70_000).state
+	const again = detail({
+		dialogs: [
+			{
+				id: 'cb5e65f6-2',
+				tool_name: 'AskUserQuestion',
+				tool_input: clone(QUESTIONS),
+				permission_suggestions: [],
+				created_at_ms: ANSWER_AT + 80_000,
+			},
+		],
+	})
+	state = reduce(
+		state,
+		poll(again, observed([askCall(), askAnswer(), askCall('toolu_again', ANSWER_AT + 79_900)])),
+		ANSWER_AT + 81_000,
+	).state
+	const second = state.items.find(item => item.kind === 'ask' && item.state === 'open')
+	assert.equal((second?.fact as { dialogId?: string } | undefined)?.dialogId, 'cb5e65f6-2')
+	assert.equal(agentDockSnapshot(state, ANSWER_AT + 81_000).sessions[0]?.status, 'waiting')
+})
+
+test('a permission while a background workflow runs (Okena lost its subagents) is never claimed', () => {
+	const bashInput = { command: 'npm test', description: 'Test' }
+	const bashDialog = {
+		id: DIALOG_ID,
+		tool_name: 'Bash',
+		tool_input: bashInput,
+		permission_suggestions: [],
+		created_at_ms: DIALOG_AT,
+	}
+	const lines = [toolUseLine('toolu_b', 'Bash', bashInput, CALL_AT), toolResultLine('toolu_b', 'ok', ANSWER_AT)]
+	let state = createAgentDockState(null, DIALOG_AT - 2_000)
+	state = reduce(state, poll(detail({ dialogs: [] })), DIALOG_AT - 2_000).state
+	// The transcript shows a workflow still running (Okena's running_subagents is empty after a restart).
+	state = reduce(
+		state,
+		poll(detail({ dialogs: [bashDialog] }), { ...observed(lines), tasks: 1, shells: 0 }),
+		ANSWER_AT + 1_000,
+	).state
+	assert.equal(state.items.find(item => item.kind === 'ask')?.state, 'open')
+	// Only shells in the background: the main agent's own call proves it.
+	state = reduce(
+		state,
+		poll(detail({ dialogs: [bashDialog] }), { ...observed(lines), tasks: 1, shells: 1 }),
+		ANSWER_AT + 2_000,
+	).state
+	assert.equal(state.items.find(item => item.kind === 'ask')?.state, 'resolved')
+})
+
+test('a busy pane with a listed dialog reads its transcript file every tick, not every BACKGROUND_BUSY_READ_MS', async () => {
+	const refreshes: boolean[] = []
+	const observer: BackgroundTaskObserver = {
+		async observe(sessionId, options) {
+			refreshes.push(options.refresh)
+			return { sessionId, tasks: 0, shells: 0 }
+		},
+	}
+	const source = new OkenaClaudeSource(new FakeOkena(), 'okena', observer)
+	const state = createAgentDockState(null, ANSWER_AT)
+	await source.observe(state, ANSWER_AT)
+	await source.observe(state, ANSWER_AT + 1_000)
+	await source.observe(state, ANSWER_AT + 2_000)
+	assert.deepEqual(refreshes, [true, true, true])
+})
+
+test('the act re-check never claims a permission while a background workflow runs', async () => {
+	const bashInput = { command: 'npm test', description: 'Test' }
+	const bashDetail = detail({
+		dialogs: [
+			{ id: DIALOG_ID, tool_name: 'Bash', tool_input: bashInput, permission_suggestions: [], created_at_ms: DIALOG_AT },
+		],
+	})
+	const okena = new FakeOkena()
+	okena.getClaudeSession = async () => bashDetail
+	let state = createAgentDockState(null, DIALOG_AT - 2_000)
+	state = reduce(state, poll(detail({ dialogs: [] })), DIALOG_AT - 2_000).state
+	state = reduce(state, poll(bashDetail), DIALOG_AT + 200).state
+	const item = state.items.find(entry => entry.kind === 'ask')
+	assert.ok(item)
+	const lines = [toolUseLine('toolu_b', 'Bash', bashInput, CALL_AT), toolResultLine('toolu_b', 'ok', ANSWER_AT)]
+	let tasks = 1
+	const source = new OkenaClaudeSource(okena, 'okena', {
+		observe: async sessionId => ({ sessionId, tasks, shells: 0, calls: scan(lines) }),
+	})
+	const target = { source: 'okena' as const, profile: PROFILE, terminalId: TID }
+	assert.deepEqual(await source.act(target, item, { type: 'allow' }), { status: 'sent' })
+	tasks = 0
+	assert.equal((await source.act(target, item, { type: 'allow' })).status, 'refused')
+	assert.equal(okena.posts.length, 1)
+})

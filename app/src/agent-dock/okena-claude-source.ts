@@ -14,9 +14,10 @@
 //      REPLY_READ_MS while a busy pane still has a live turn item (Jakub typed
 //      the reply in the terminal: its user entry closes the turn).
 //   4. Background tasks (Okena only, `background` observer): what the session's own
-//      JSONL appended, every tick while the main agent is idle and every
-//      BACKGROUND_BUSY_READ_MS while busy (keeps each read small). Okena's transcript
-//      page hides the task notifications that end them (claude-transcript-tail.ts).
+//      JSONL appended, every tick while the main agent is idle or a dialog is listed and
+//      every BACKGROUND_BUSY_READ_MS while busy otherwise (keeps each read small). Okena's
+//      transcript page hides the task notifications that end them, and the main agent's
+//      tool calls prove a listed dialog already answered (claude-transcript-tail.ts).
 // Every body is size-bounded by the client; the reducer zod-validates it.
 
 import { DOCK_SOURCE_TEXT } from '../../../src/agent-dock/dock-vocabulary'
@@ -253,7 +254,10 @@ export class OkenaClaudeSource implements DockSource {
 		try {
 			const observed = await this.background.observe(session.session_id, { refresh: true, now: Date.now() })
 			const calls = observed?.sessionId === session.session_id ? observed.calls : undefined
-			return validToolCalls(calls) && dialogAnsweredInTranscript(dialog, calls, session.running_subagents.length > 0)
+			// Subagents or a background workflow running: a permission may be a subagent's (reduce.ts).
+			const subagents =
+				session.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+			return validToolCalls(calls) && dialogAnsweredInTranscript(dialog, calls, subagents)
 		} catch {
 			return false
 		}
@@ -418,6 +422,9 @@ export class OkenaClaudeSource implements DockSource {
 			this.background !== undefined &&
 			sessionId !== undefined &&
 			(parsed.value.busy !== true ||
+				// A listed dialog while busy may be one already answered in the terminal (tool-calls.ts):
+				// its proof is read every tick, so the ask closes within one tick of the answer.
+				parsed.value.dialogs.length > 0 ||
 				read?.backgroundAt === undefined ||
 				read.sessionId !== sessionId ||
 				now - read.backgroundAt >= BACKGROUND_BUSY_READ_MS)

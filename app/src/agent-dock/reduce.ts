@@ -96,6 +96,13 @@ export interface AgentDockSessionRecord {
 	tail: TranscriptTail
 	/** Dialog ids the last successful detail read showed open. */
 	dialogIds?: string[]
+	/**
+	 * Listed dialogs of this session the transcript file once proved answered in the terminal
+	 * (tool-calls.ts). The proof sticks to the dialog id (Okena never reuses one): a long turn
+	 * pushes the call out of the tail's list, or the file is unreadable for a tick, while Okena
+	 * keeps listing the dialog until Stop. Pruned to what Okena still lists. Memory only.
+	 */
+	answeredDialogs?: { sessionId: string; ids: string[] }
 }
 
 /** Per-source observation state: each source seeds, restarts and goes down on its own. */
@@ -329,18 +336,32 @@ function sanitizeBackground(value: ObservedBackgroundTasks): ObservedBackgroundT
  * the terminal (tool-calls.ts): Okena keeps such a dialog listed until the turn's Stop when the
  * terminal answer changed the tool input (AskUserQuestion `answers`). Treated exactly like a
  * dialog Okena dropped: its ask closes `outside`, none opens for it, and the pane is not
- * `waiting`. Only calls read for this very session count; without them nothing is filtered.
+ * `waiting`. Only calls read for this very session count; a dialog proven once stays proven
+ * (`record.answeredDialogs`). A permission while subagents or a background workflow run is never
+ * claimed: a subagent may have raised it for a call identical to the main agent's (Okena forgets
+ * its running subagents when it restarts; the transcript still shows the workflow).
  */
 function withoutAnsweredDialogs(
+	record: AgentDockSessionRecord,
 	detail: OkenaClaudeSession,
-	observed: ObservedBackgroundTasks | undefined,
+	background: ObservedBackgroundTasks | undefined,
 ): OkenaClaudeSession {
-	const calls = observed?.calls
-	if (!calls || calls.length === 0 || detail.dialogs.length === 0) return detail
-	if (!detail.session_id || observed.sessionId !== detail.session_id) return detail
-	const subagents = detail.running_subagents.length > 0
-	const dialogs = detail.dialogs.filter(dialog => !dialogAnsweredInTranscript(dialog, calls, subagents))
-	return dialogs.length === detail.dialogs.length ? detail : { ...detail, dialogs }
+	const sessionId = detail.session_id
+	const sticky = sessionId && record.answeredDialogs?.sessionId === sessionId ? record.answeredDialogs.ids : []
+	const observed = sessionId && background?.sessionId === sessionId ? background : undefined
+	const calls = observed?.calls ?? []
+	const subagents = detail.running_subagents.length > 0 || (observed !== undefined && observed.tasks > observed.shells)
+	const answered = new Set(
+		detail.dialogs
+			.filter(
+				dialog =>
+					sticky.includes(dialog.id) || (calls.length > 0 && dialogAnsweredInTranscript(dialog, calls, subagents)),
+			)
+			.map(dialog => dialog.id),
+	)
+	record.answeredDialogs = sessionId && answered.size > 0 ? { sessionId, ids: [...answered] } : undefined
+	if (answered.size === 0) return detail
+	return { ...detail, dialogs: detail.dialogs.filter(dialog => !answered.has(dialog.id)) }
 }
 
 function pruneResolved(items: DockItem[], now: number): DockItem[] {
@@ -601,7 +622,7 @@ function observeTerminal(
 		record.gateCandidate = undefined
 		return
 	}
-	const detail = withoutAnsweredDialogs(raw, observed.background)
+	const detail = withoutAnsweredDialogs(record, raw, observed.background)
 	if (existing !== undefined && now - existing.session.observedAt > OBSERVATION_GAP_MS) {
 		record.idleSince = undefined
 		record.busySince = undefined
