@@ -40,14 +40,16 @@ test('Okena agent: the header link by pointer and ⌘O (pane, reply field) asks 
 }) => {
 	const { pane, turn, question, note } = await openDay(page, 'reveal-okena')
 	await turn.click()
-	// The where text after the kind, named for VoiceOver by the act and whose terminal.
+	// The where text after whose, named for VoiceOver by the act and whose terminal.
 	const show = pane.getByRole('button', { name: 'Show in Okena, service-date-and-people' })
 	await expect(show).toBeVisible()
 	await expect(show).toHaveText(/^Okena ↗$/)
 	await expect(show).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
 	await expect(show).toHaveAttribute('title', 'Show in Okena (⌘O)')
 	await expect(pane).toHaveAttribute('aria-keyshortcuts', 'Meta+O')
-	await expect(pane.locator('.agent-dock-title-text')).toHaveText(/^\S*\s*Turn ended\s*Okena ↗\s*⌘O$/)
+	await expect(pane.locator('.agent-dock-title-text')).toHaveText(
+		/^\S*\s*Turn ended\s*·\s*crane-rental\s*·\s*service-date-and-people\s*—\s*Servisní protokol: .*\(ClientCare #4302\)\s*Okena ↗\s*⌘O$/,
+	)
 	// The footer stays as it was: no reveal key, no reveal hint.
 	await expect(pane.locator('.agent-dock-foot-actions .agent-dock-key')).toHaveText(['Ack', 'Send'])
 	// The `⌘O` hint shows only while the pane holds the keys, like the footer's.

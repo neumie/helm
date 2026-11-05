@@ -1,5 +1,5 @@
 // Agent dock pane chrome (design §3.24): the pieces every pane body is built from — the scroll
-// body with its fades, the plain header row (kind glyph, kind, context; ‹ 1/3 › and esc), key
+// body with its fades, the plain header row (kind glyph, kind, context, whose; ‹ 1/3 › and esc), key
 // hints and the footer, key-style decisions, receipts, warnings and the numbered choice rows.
 import { type KeyboardEvent, type ReactNode, type Ref, type RefObject, useLayoutEffect, useRef, useState } from 'react'
 import type { DockItem } from '../../agent-dock/model'
@@ -100,6 +100,68 @@ export function KindGlyph({ item }: { item: DockItem }) {
 	)
 }
 
+const Sep = ({ mark = '·' }: { mark?: string }) => (
+	<span className="agent-dock-title-sep" aria-hidden="true">
+		{mark}
+	</span>
+)
+
+/** Narrower than this, the task title would be a stub (`Mobilní a…`): it drops whole instead. */
+const TASK_TITLE_MIN_PX = 120
+
+/**
+ * Drops the item header's task title (`data-dropped`) while the row leaves it less than
+ * `TASK_TITLE_MIN_PX` of text (or less than all of a shorter title); its tooltip keeps it. The room is
+ * what the row's other parts leave at their natural widths, so it reads the same with the title shown or
+ * dropped, and the agent's name only truncates once the title is gone.
+ */
+function useTaskTitleRoom(ref: RefObject<HTMLElement | null>, title: string) {
+	// The title's full width and its `—` lead, read while it is laid out (not dropped, nor hidden under a
+	// 640px pane): a dropped one measures nothing.
+	const natural = useRef({ title: '', width: 0, lead: 0 })
+	useLayoutEffect(() => {
+		const task = ref.current
+		const row = task?.parentElement
+		if (!task || !row) return
+		const update = () => {
+			const text = task.lastElementChild
+			if (text instanceof HTMLElement && text.scrollWidth > 0)
+				natural.current = {
+					title,
+					width: text.scrollWidth,
+					lead: text.getBoundingClientRect().left - task.getBoundingClientRect().left,
+				}
+			const gap = Number.parseFloat(getComputedStyle(row).columnGap) || 0
+			let others = 0
+			for (const part of row.children) {
+				if (part === task || !(part instanceof HTMLElement)) continue
+				others += Math.max(part.getBoundingClientRect().width, part.scrollWidth) + gap
+			}
+			const known = natural.current.title === title
+			const lead = known ? natural.current.lead : Number.parseFloat(getComputedStyle(task).fontSize) + gap
+			const room = row.clientWidth - others - lead
+			const need = known ? Math.min(TASK_TITLE_MIN_PX, natural.current.width) : TASK_TITLE_MIN_PX
+			const drop = room < need - 0.5
+			if ((task.dataset.dropped !== undefined) !== drop) {
+				if (drop) task.dataset.dropped = ''
+				else delete task.dataset.dropped
+			}
+		}
+		update()
+		const observer = new ResizeObserver(update)
+		observer.observe(row)
+		return () => observer.disconnect()
+	})
+}
+
+/**
+ * The item pane's header (design: Jakub 2026-11-05): what, then whose, then the task —
+ * `↵ Turn ended · Psyon · fakturoid-digisign-errors — <task title>   Okena ↗ ⌘O … ‹ 1/3 › esc`. The kind
+ * glyph and kind, the question's context dim (capped), the project dim (capped), the agent's short name,
+ * then Okena's full pane name dim, then where. The task title gives way first and drops whole below a
+ * readable width (`useTaskTitleRoom`; always under a 640px pane), then the name truncates; each part
+ * ellipsizes with its full text as its tooltip, and the row's tooltip carries whose, the task title and when.
+ */
 export function ItemHeader({
 	item,
 	who,
@@ -115,7 +177,7 @@ export function ItemHeader({
 	now: number
 	index: number
 	total: number
-	/** After the context: where the agent runs, as a link to its terminal ("Show terminal", ⌘O). */
+	/** After whose: where the agent runs, as a link to its terminal ("Show terminal", ⌘O). */
 	where?: ReactNode
 	onStep(delta: number): void
 	onClose(): void
@@ -123,11 +185,15 @@ export function ItemHeader({
 	const time = itemTimeLine(item, now)
 	const kind = itemKindLabel(item)
 	const context = headerContext(item)
-	// The queue's selected fill says whose; the header says only what (kind + question context).
-	// Whose, the task title and when are its tooltip.
+	const taskRef = useRef<HTMLSpanElement>(null)
+	useTaskTitleRoom(taskRef, who.title)
 	return (
 		<Header
-			title={[who.title || who.name, who.project, `${kind} #${item.id} · ${time.stamp} · ${time.waited}`]
+			title={[
+				[who.project, who.name].filter(Boolean).join(' · '),
+				who.title,
+				`${kind} #${item.id} · ${time.stamp} · ${time.waited}`,
+			]
 				.filter(Boolean)
 				.join('\n')}
 			end={
@@ -141,7 +207,31 @@ export function ItemHeader({
 				<KindGlyph item={item} />
 				{kind}
 			</span>
-			{context ? <span className="agent-dock-title-context">{context}</span> : null}
+			{context ? (
+				<span className="agent-dock-title-context" title={context}>
+					{context}
+				</span>
+			) : null}
+			{who.project ? (
+				<>
+					<Sep />
+					<span className="agent-dock-title-who-project" title={who.project}>
+						{who.project}
+					</span>
+				</>
+			) : null}
+			<Sep />
+			<span className="agent-dock-title-who-name" title={who.name}>
+				{who.name}
+			</span>
+			{who.title ? (
+				<span ref={taskRef} className="agent-dock-title-task">
+					<Sep mark="—" />
+					<span className="agent-dock-title-task-text" title={who.title}>
+						{who.title}
+					</span>
+				</span>
+			) : null}
 			{where}
 		</Header>
 	)

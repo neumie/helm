@@ -168,10 +168,12 @@ test('entries open a pane split off the terminal; ‹ › and arrows step; point
 	await expect(pane).toBeVisible()
 	await expect(input).toBeFocused()
 	await expect(pane).toContainText('1/3')
-	// The header says what (kind + question context) with ‹ 1/3 ›, then whose terminal as the where link
-	// (`Okena ↗`, ⌘O); the id and the clock are its tooltip.
+	// The header says what (kind + question context), then whose (project · agent), then whose terminal as
+	// the where link (`Okena ↗`, ⌘O), with ‹ 1/3 ›; the id and the clock are its tooltip.
 	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /asked \d\d:\d\d · waiting /)
-	await expect(pane.locator('.agent-dock-title-text')).toHaveText(/^\?\s*Question\s*2 questions\s*Okena ↗\s*⌘O$/)
+	await expect(pane.locator('.agent-dock-title-text')).toHaveText(
+		/^\?\s*Question\s*2 questions\s*·\s*helm\s*·\s*agent-dock\s*Okena ↗\s*⌘O$/,
+	)
 	await expect(pane.locator('.agent-dock-title')).not.toContainText(/#\d|asked|waiting/)
 	// Verbatim AskUserQuestion content, plain text; previews in monospace; nothing submits until every question has an answer.
 	await expect(pane).toContainText('Barva?')
@@ -1819,7 +1821,7 @@ test('the receipt says what was sent and the sent picks stay shown; a failure ke
 	await expect(pane.getByRole('radio', { checked: true })).toHaveAccessibleName(/Blue|M/)
 })
 
-test('one short name everywhere: the branch without its type, numbered twins, the task title only as context', async ({
+test('one short name everywhere: the branch without its type, numbered twins, the task title only as context or tooltip', async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1400, height: 900 })
@@ -1855,9 +1857,12 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 	)
 	await page.locator('.agent-dock-entry[data-kind="turn"]').click()
 	const pane = page.locator('.agent-dock-pane')
-	// The selected fill says whose; the header's tooltip carries the full task title.
+	// The header says whose by the short name, then the full task title dim after `—` (truncating first);
+	// the tooltips keep it whole.
+	await expect(pane.locator('.agent-dock-title-who-name')).toHaveText('repeated-android-camera-permission')
+	await expect(pane.locator('.agent-dock-title-who-project')).toHaveText('crm-mobile')
+	await expect(pane.locator('.agent-dock-title-task-text')).toHaveAttribute('title', /\(ClientCare #4153\)$/)
 	await expect(pane.locator('.agent-dock-title-text')).toHaveAttribute('title', /\(ClientCare #4153\)/)
-	await expect(pane.locator('.agent-dock-title-text')).not.toContainText('ClientCare')
 	await expect(pane).toHaveAttribute('aria-label', 'Turn ended, repeated-android-camera-permission, crm-mobile')
 	await page.locator('.agent-dock-agents-entry').click()
 	// Needs you first (the longest wait leads), then working, then background (its turn ended with
@@ -1875,6 +1880,55 @@ test('one short name everywhere: the branch without its type, numbered twins, th
 		/company-create-save-firm(?! #)/,
 		/company-create-save-firm #2/,
 	])
+})
+
+test('the item header task title truncates, then drops whole once it would be a stub; whose stays, the name last', async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 1200, height: 1600 })
+	await page.goto('/iframe.html?id=views-agent-dock-pane-header--normal&viewMode=story')
+	const headers = page.locator('.agent-dock-pane .agent-dock-title')
+	await expect(headers).toHaveCount(4)
+	// Psyon turn, JVS question, JVS turn (long Czech title), no project and no title.
+	await expect(headers.nth(1)).toContainText(
+		/^\?\s*Question\s*Jeřáb\s*·\s*JVS\s*·\s*mobile-project-crane-search\s*—\s*Mobilní aplikace/,
+	)
+	await expect(headers.nth(3).locator('.agent-dock-title-task')).toHaveCount(0)
+	await expect(headers.nth(3).locator('.agent-dock-title-who-project')).toHaveCount(0)
+	const widths: number[] = []
+	for (let width = 1000; width >= 560; width -= 20) {
+		await page.evaluate(next => {
+			for (const dock of document.querySelectorAll<HTMLElement>('.agent-dock')) {
+				if (dock.parentElement) dock.parentElement.style.width = `${next}px`
+			}
+			// The resize observers run before the next frame.
+			return new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
+		}, width)
+		// Each shown title gets a readable width (120px) or all of itself; a dropped one leaves the name whole.
+		const titles = await headers.evaluateAll(nodes =>
+			nodes.map(node => {
+				const text = node.querySelector<HTMLElement>('.agent-dock-title-task-text')
+				const name = node.querySelector<HTMLElement>('.agent-dock-title-who-name')
+				return {
+					shown: text ? text.getClientRects().length > 0 : null,
+					width: text ? text.getBoundingClientRect().width : 0,
+					cut: text ? text.scrollWidth > text.clientWidth : false,
+					nameCut: name ? name.scrollWidth > name.clientWidth : false,
+				}
+			}),
+		)
+		for (const title of titles) {
+			if (title.shown) {
+				expect(title.cut ? title.width : 120).toBeGreaterThanOrEqual(119.5)
+				expect(title.nameCut).toBe(false)
+			}
+		}
+		if (titles[2].shown) widths.push(width)
+	}
+	// The long JVS title shows at a roomy dock and is gone at a narrow one, never in between as a stub.
+	expect(widths[0]).toBe(1000)
+	expect(widths.at(-1)).toBeGreaterThan(640)
+	expect(widths.at(-1)).toBeLessThan(760)
 })
 
 const dockEdge = (page: Page) =>
