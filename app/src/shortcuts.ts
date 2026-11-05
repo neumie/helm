@@ -168,6 +168,9 @@ export const NATIVE_SHORTCUT_RESERVATIONS: readonly NativeShortcutReservation[] 
 	// Fixed renderer window-capture toggle (agent-dock-layout.ts); a menu or terminal binding
 	// on the same chord would swallow it or fire alongside it, so the editor must refuse it.
 	{ chord: native('KeyJ', { shift: true }), owner: 'Agent dock > Toggle' },
+	// Fixed renderer window-capture "go to Signals" (left-column.ts). macOS only: elsewhere
+	// Ctrl+Shift+I is the native DevTools toggle above.
+	{ chord: native('KeyI', { shift: true }), owner: 'Signals > Go to signals', platforms: darwinOnly },
 ]
 
 export type ShortcutConflict =

@@ -1,70 +1,107 @@
-// Story-only host for the Signals views (Views / Signals): mounts the production terminal workspace
-// through terminal-workspace-fixtures.tsx, then places the Signals column into the task sidebar's
-// column (#left). Mock data only; never imported by production.
+// Story-only host for Views / Signals: mounts the production terminal workspace through
+// terminal-workspace-fixtures.tsx, then the production left column (mountLeftColumn) with the
+// production Signals column on in-memory services (signals-fixtures.ts). The column mode is
+// in-memory too, so "Show tasks" never leaks into the next story. Never imported by production.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef } from 'react'
+import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
-import { SignalsSurface } from './Signals'
-import { type Signal, type SignalsStore, createSignalsStore, signalFixtures } from './signals-fixtures'
+import { type SignalsFlow, mountSignals } from './Signals'
+import {
+	type SignalsFixture,
+	createSignalsFixture,
+	signalSourcesFixture,
+	signalThreadFixtures,
+} from './signals-fixtures'
 
 export interface SignalsWorkspaceProps {
-	/** New signals waiting: 3 (the fixtures) or 0 (all of them routed, snoozed or done). */
-	count?: 0 | 3
-	/** Open a routing flow on its fixture thread. */
+	/** `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission. */
+	scenario?: 'column' | 'quiet' | 'source-down'
+	/** Open a routing flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert). */
 	flow?: 'send' | 'new-agent'
 }
 
-/** Every needs-you thread already handled: what a quiet afternoon looks like. */
-function quietFixtures(): Signal[] {
-	return signalFixtures().map(signal =>
-		signal.section === 'needs' ? { ...signal, section: 'done', closed: 'earlier', routed: undefined } : signal,
-	)
+declare global {
+	interface Window {
+		/** Browser tests only: the effects the story's column asked for. */
+		__signalsFixture?: SignalsFixture
+	}
 }
 
-function storeFor(count: 0 | 3, flow: SignalsWorkspaceProps['flow']): SignalsStore {
-	const signals = count === 0 ? quietFixtures() : signalFixtures()
-	if (flow === 'send')
-		return createSignalsStore({ signals, selected: 'crane-970', flow: { type: 'send', id: 'crane-970' } })
-	if (flow === 'new-agent')
-		return createSignalsStore({ signals, selected: 'psyon-sentry', flow: { type: 'new-agent', id: 'psyon-sentry' } })
-	return createSignalsStore({ signals })
+function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture {
+	const now = Date.now()
+	const threads = signalThreadFixtures(now)
+	if (scenario === 'quiet')
+		return createSignalsFixture({
+			threads: threads.map(thread =>
+				thread.owner === 'jakub' && (thread.state === 'new' || thread.state === 'seen')
+					? { ...thread, state: 'done', updatedAt: new Date(now - 30 * 60_000).toISOString() }
+					: thread,
+			),
+		})
+	if (scenario === 'source-down')
+		return createSignalsFixture({ threads, sources: signalSourcesFixture(now, 'needs_permission') })
+	return createSignalsFixture({ threads })
 }
 
-export function SignalsWorkspace({ count = 3, flow }: SignalsWorkspaceProps) {
-	const store = useMemo(() => storeFor(count, flow), [count, flow])
+const FLOW_THREAD: Record<NonNullable<SignalsWorkspaceProps['flow']>, number> = { send: 970, 'new-agent': 42 }
+
+export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
+	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
 		[],
 	)
 	const wrapRef = useRef<HTMLDivElement>(null)
-	const [main, setMain] = useState<HTMLElement | null>(null)
 
-	// The fixture builds its shell in its own effect (children's effects run first), so it exists here.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: re-place after the fixture remounts its shell (options)
+	// The fixture builds its shell in its own effect (children's effects run first), so #left exists here.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-mount after the fixture remounts its shell (options)
 	useEffect(() => {
-		const left = wrapRef.current?.querySelector<HTMLElement>('#left')
-		if (!left) return
-		const node = document.createElement('div')
-		node.className = 'signals-host'
-		left.appendChild(node)
-		setMain(node)
-		const focusFrame = requestAnimationFrame(() =>
-			(
-				node.querySelector<HTMLElement>('.signals-flow-keys') ?? node.querySelector<HTMLElement>('section.signals')
-			)?.focus({ preventScroll: true }),
-		)
+		const root = wrapRef.current
+		const left = root?.querySelector<HTMLElement>('#left')
+		if (!root || !left) return
+		window.__signalsFixture = fixture
+		const initialFlow: SignalsFlow = flow ? { type: flow, id: FLOW_THREAD[flow] } : null
+		const column = mountLeftColumn({
+			left,
+			mode: memoryLeftColumnMode('signals'),
+			mountTasks: host => {
+				host.setAttribute('aria-label', 'Tasks')
+				// A stand-in: the real task sidebar has its own Views / Sidebar stories.
+				const title = document.createElement('p')
+				title.style.cssText = 'margin: 12px 16px; color: var(--text-1)'
+				title.textContent = 'Tasks'
+				host.append(title)
+				return undefined
+			},
+			mountSignals: host =>
+				mountSignals(host, {
+					service: fixture.service,
+					dock: fixture.dock,
+					onShowTasks: () => column.setMode('tasks'),
+					onLeave: () => focusActiveTerminal(root),
+					mod: 'cmd',
+					initialFlow,
+				}),
+		})
+		const disposeShortcut = mountSignalsShortcut({
+			window,
+			platform: 'darwin',
+			column,
+			focusTerminal: () => focusActiveTerminal(root),
+		})
+		const focusFrame = requestAnimationFrame(() => column.focusSignals())
 		return () => {
 			cancelAnimationFrame(focusFrame)
-			node.remove()
-			setMain(null)
+			disposeShortcut()
+			column.dispose()
+			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, store])
+	}, [options, fixture, flow])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
 			<TerminalWorkspaceFixtureView options={options} />
-			{main ? createPortal(<SignalsSurface store={store} kind="sidebar" />, main) : null}
 		</div>
 	)
 }
