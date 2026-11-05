@@ -581,6 +581,8 @@ async function runNewAgentWithGit(git: {
 	refs: Set<string>
 	origin: Set<string>
 	failLsRemote?: boolean
+	/** `okena claude start` fails (e.g. the trust dialog is shown without --trust). */
+	failClaude?: boolean
 }): Promise<{ execs: string[][]; result: unknown }> {
 	const root = mkdtempSync(join(tmpdir(), 'helm-signals-main-'))
 	try {
@@ -636,7 +638,10 @@ async function runNewAgentWithGit(git: {
 				created = true
 				return { stdout: `wt-new\t/code/widgets-wt/fix-widgets-7\t${NEW_TERMINAL}\n`, stderr: '' }
 			}
-			if (args[0] === 'claude') return { stdout: JSON.stringify({ session_id: 'sess-1' }), stderr: '' }
+			if (args[0] === 'claude') {
+				if (git.failClaude) throw Object.assign(new Error('exit 1'), { code: 1, stderr: 'trust dialog is shown' })
+				return { stdout: JSON.stringify({ session_id: 'sess-1' }), stderr: '' }
+			}
 			throw new Error(`unexpected exec ${file} ${args.join(' ')}`)
 		}
 		const h = harness({ exec, userDataDir: root })
@@ -652,6 +657,21 @@ const REMOTE_REF = 'refs/remotes/origin/fix/widgets-7'
 const OK_RESULT = { data: { terminalId: NEW_TERMINAL, sessionId: 'sess-1', agentName: 'fix/widgets-7' } }
 const gitArgs = (execs: string[][]) => execs.filter(call => call[0] === 'git').map(call => call.slice(3))
 const worktreeArgs = (execs: string[][]) => execs.find(call => call[1] === 'worktree')?.slice(1)
+const claudeArgs = (execs: string[][]) => execs.find(call => call[1] === 'claude')?.slice(1)
+
+test('newAgent trusts the folder only for a new or local branch, never for one that came from origin', async () => {
+	const local = await runNewAgentWithGit({ refs: new Set([LOCAL_REF]), origin: new Set() })
+	assert.ok(claudeArgs(local.execs)?.includes('--trust'))
+	const fresh = await runNewAgentWithGit({ refs: new Set(), origin: new Set() })
+	assert.ok(claudeArgs(fresh.execs)?.includes('--trust'))
+
+	const remote = await runNewAgentWithGit({ refs: new Set(), origin: new Set([LOCAL_REF]) })
+	assert.deepEqual(remote.result, OK_RESULT)
+	assert.ok(!claudeArgs(remote.execs)?.includes('--trust'), 'origin code may carry someone else’s .claude hooks')
+
+	const dialog = await runNewAgentWithGit({ refs: new Set(), origin: new Set([LOCAL_REF]), failClaude: true })
+	assert.match(String((dialog.result as { error?: string }).error), /Answer the dialog in Okena/)
+})
 
 test('newAgent hands an existing local branch to Okena as is, without --new-branch', async () => {
 	const { execs, result } = await runNewAgentWithGit({ refs: new Set([LOCAL_REF]), origin: new Set() })

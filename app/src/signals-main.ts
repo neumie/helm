@@ -583,13 +583,22 @@ export class SignalsMain {
 			if (!terminalId) return { error: 'Okena created the worktree, but it has no terminal.' }
 
 			let started: string
+			// Trust ("trust this folder": project hooks/settings run) only for code Jakub already had or
+			// that starts from the default branch. A branch that came from origin may carry someone
+			// else's `.claude/` hooks, so Claude shows the trust dialog and Jakub decides there.
+			const trust = source.data !== 'remote'
 			try {
 				;({ stdout: started } = await this.options.exec(
 					this.okenaBin,
-					['claude', 'start', terminalId, '--trust', '--prompt-file', file, '--json'],
+					['claude', 'start', terminalId, ...(trust ? ['--trust'] : []), '--prompt-file', file, '--json'],
 					{ timeout: OKENA_CLAUDE_TIMEOUT_MS, env: this.childEnv },
 				))
 			} catch (error) {
+				if (!trust) {
+					return {
+						error: `The worktree for ${request.branch} is ready, but Claude asks whether to trust it: the branch came from origin, so Helm did not trust it for you. Answer the dialog in Okena, then send the prompt with p.`,
+					}
+				}
 				return { error: execFailure('Okena could not start Claude', error, 'Okena is not installed.') }
 			}
 			return { data: { terminalId, sessionId: sessionIdFrom(started), agentName: request.branch } }
