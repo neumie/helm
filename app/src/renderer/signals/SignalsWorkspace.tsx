@@ -1,7 +1,8 @@
 // Story-only host for Views / Signals: mounts the production terminal workspace through
 // terminal-workspace-fixtures.tsx, then the production left column (mountLeftColumn) with the
 // production Signals column on in-memory services (signals-fixtures.ts). The column mode is
-// in-memory too, so "Show tasks" never leaks into the next story. Never imported by production.
+// in-memory, as in production. Settings is a stand-in (the real pages have their own Views / Sidebar
+// stories). Never imported by production.
 
 import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
@@ -65,20 +66,28 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 		const column = mountLeftColumn({
 			left,
 			mode: memoryLeftColumnMode('signals'),
-			mountTasks: host => {
-				host.setAttribute('aria-label', 'Tasks')
-				// A stand-in: the real task sidebar has its own Views / Sidebar stories.
-				const title = document.createElement('p')
-				title.style.cssText = 'margin: 12px 16px; color: var(--text-1)'
-				title.textContent = 'Tasks'
-				host.append(title)
+			mountSettings: host => {
+				// A stand-in for the Settings stack: its top page heading and a Back to Signals.
+				const page = document.createElement('div')
+				page.className = 'nav-page'
+				const title = document.createElement('h2')
+				title.dataset.pageHeading = ''
+				title.tabIndex = -1
+				title.style.cssText = 'margin: 12px 16px; color: var(--text-1); font-size: 13px; font-weight: 400'
+				title.textContent = 'Settings'
+				const back = document.createElement('button')
+				back.type = 'button'
+				back.textContent = 'Back'
+				back.addEventListener('click', () => column.setMode('signals'))
+				page.append(back, title)
+				host.append(page)
 				return undefined
 			},
 			mountSignals: host =>
 				mountSignals(host, {
 					service: fixture.service,
 					dock: fixture.dock,
-					onShowTasks: () => column.setMode('tasks'),
+					onOpenSettings: () => column.setMode('settings'),
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,

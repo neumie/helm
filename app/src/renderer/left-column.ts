@@ -1,29 +1,36 @@
-// The task-sidebar column holds one of two surfaces (design §3.25): Signals (default) or the task
-// sidebar. Both stay mounted in their own child hosts; the hidden one is `hidden` + `inert`.
-// Presentation only: no session, placement or process authority, and switching never resizes the
-// column (so no terminal refit). sidebar-layout.ts owns the column's width/visibility and what
-// "the task sidebar is visible" means for the daemon watch.
+// The left column holds Signals (§3.25). The Signals header's Settings button swaps it to the
+// Settings stack (the sidebar app rooted at Settings: profiles, scheduled runs, appearance…); Back
+// from its root returns to Signals. There is no task list. Both surfaces stay mounted in their own
+// child hosts; the hidden one is `hidden` + `inert`. Presentation only: no session, placement or
+// process authority, and switching never resizes the column (so no terminal refit).
+// sidebar-layout.ts owns the column's width/visibility.
 
-import { storedPreference } from './stored-preference'
+export type LeftColumnMode = 'signals' | 'settings'
 
-export type LeftColumnMode = 'signals' | 'tasks'
+/** The retired "Left column" Appearance preference (Signals or Tasks); removed on startup. */
+export const LEGACY_LEFT_COLUMN_STORAGE = 'helm.leftColumn'
 
-export const LEFT_COLUMN_STORAGE = 'helm.leftColumn'
+/** Drops the retired preference so an old `tasks` value never lingers in storage. */
+export function clearLegacyLeftColumnPreference(storage: Pick<Storage, 'removeItem'> | null | undefined): void {
+	try {
+		storage?.removeItem(LEGACY_LEFT_COLUMN_STORAGE)
+	} catch {
+		// Storage may be unavailable; nothing reads the key any more.
+	}
+}
 
-/** Settings → Appearance → Left column, and the Signals header's "Show tasks". Default Signals. */
-export const leftColumn = storedPreference<LeftColumnMode>(LEFT_COLUMN_STORAGE, raw =>
-	raw === 'tasks' ? 'tasks' : 'signals',
-)
-
-/** What mountLeftColumn reads and writes the mode through (stories pass an in-memory one). */
+/** What mountLeftColumn reads and writes the mode through. */
 export interface LeftColumnModeSource {
 	get(): LeftColumnMode
 	set(mode: LeftColumnMode): void
 	subscribe(listener: () => void): () => void
 }
 
-/** An in-memory mode (stories): nothing persists across story loads. */
-export function memoryLeftColumnMode(initial: LeftColumnMode): LeftColumnModeSource {
+/**
+ * An in-memory mode. Production uses one too: every launch starts in Signals, and Settings is a
+ * place you visit, never a stored preference.
+ */
+export function memoryLeftColumnMode(initial: LeftColumnMode = 'signals'): LeftColumnModeSource {
 	let mode = initial
 	const listeners = new Set<() => void>()
 	return {
@@ -41,30 +48,31 @@ export function memoryLeftColumnMode(initial: LeftColumnMode): LeftColumnModeSou
 }
 
 export interface MountedLeftColumn {
-	/** The effective mode: always `tasks` when this run has no Signals surface. */
 	mode(): LeftColumnMode
 	setMode(mode: LeftColumnMode): void
 	subscribe(listener: () => void): () => void
 	/** The Signals surface takes the keys (its open flow, else its list). */
 	focusSignals(): void
-	signalsHost: HTMLElement | null
-	tasksHost: HTMLElement
+	signalsHost: HTMLElement
+	settingsHost: HTMLElement
 	dispose(): void
 }
 
-/**
- * Splits `#left` into `#left-signals` and `#left-tasks` (each fills the column) and mounts both
- * surfaces. Without `mountSignals` (an older preload with no Signals bridge) the column is Tasks only.
- */
+/** The Settings stack's top page heading (SidebarRoot marks it `data-page-heading`). */
+function focusSettings(host: HTMLElement): void {
+	host.querySelector<HTMLElement>('.nav-page:not([aria-hidden="true"]) [data-page-heading]')?.focus()
+}
+
+/** Splits `#left` into `#left-signals` and `#left-settings` (each fills the column) and mounts both. */
 export function mountLeftColumn({
 	left,
-	mountTasks,
 	mountSignals,
-	mode: source = leftColumn,
+	mountSettings,
+	mode: source = memoryLeftColumnMode('signals'),
 }: {
 	left: HTMLElement
-	mountTasks(host: HTMLElement): { dispose(): void } | undefined
-	mountSignals?: (host: HTMLElement) => { focus(): void; dispose(): void }
+	mountSignals(host: HTMLElement): { focus(): void; dispose(): void }
+	mountSettings(host: HTMLElement): { dispose(): void } | undefined
 	mode?: LeftColumnModeSource
 }): MountedLeftColumn {
 	const ownerDocument = left.ownerDocument
@@ -75,54 +83,47 @@ export function mountLeftColumn({
 		left.append(node)
 		return node
 	}
-	const signalsHost = mountSignals ? host('left-signals') : null
-	const tasksHost = host('left-tasks')
-	const tasks = mountTasks(tasksHost)
-	const signals = signalsHost && mountSignals ? mountSignals(signalsHost) : null
-	const effective = (): LeftColumnMode => (signals ? source.get() : 'tasks')
+	const signalsHost = host('left-signals')
+	const settingsHost = host('left-settings')
+	const signals = mountSignals(signalsHost)
+	const settings = mountSettings(settingsHost)
 	let shown: LeftColumnMode | null = null
 	const apply = (): void => {
-		const mode = effective()
+		const mode = source.get()
 		if (mode === shown) return
 		shown = mode
-		const hiding = mode === 'signals' ? tasksHost : signalsHost
-		const showing = mode === 'signals' ? signalsHost : tasksHost
+		const hiding = mode === 'signals' ? settingsHost : signalsHost
+		const showing = mode === 'signals' ? signalsHost : settingsHost
 		// Focus leaves the subtree being hidden first (Chromium accessibility safety); only then.
-		const hadFocus = hiding?.contains(ownerDocument.activeElement) ?? false
-		if (showing) {
-			showing.hidden = false
-			showing.inert = false
-		}
+		const hadFocus = hiding.contains(ownerDocument.activeElement)
+		showing.hidden = false
+		showing.inert = false
 		if (hadFocus) {
-			if (mode === 'signals') signals?.focus()
-			else ownerDocument.querySelector<HTMLElement>('#sidebar-toggle')?.focus()
-			if (hiding?.contains(ownerDocument.activeElement)) (ownerDocument.activeElement as HTMLElement | null)?.blur()
+			if (mode === 'signals') signals.focus()
+			else focusSettings(settingsHost)
+			if (hiding.contains(ownerDocument.activeElement)) (ownerDocument.activeElement as HTMLElement | null)?.blur()
 		}
-		if (hiding) {
-			hiding.hidden = true
-			hiding.inert = true
-		}
+		hiding.hidden = true
+		hiding.inert = true
 		left.dataset.leftColumn = mode
 	}
 	const unsubscribe = source.subscribe(apply)
 	apply()
 	return {
-		mode: effective,
-		setMode(mode) {
-			if (signals) source.set(mode)
-		},
+		mode: source.get,
+		setMode: mode => source.set(mode),
 		subscribe: source.subscribe,
 		focusSignals() {
-			signals?.focus()
+			signals.focus()
 		},
 		signalsHost,
-		tasksHost,
+		settingsHost,
 		dispose() {
 			unsubscribe()
-			signals?.dispose()
-			if (tasks) tasks.dispose()
-			signalsHost?.remove()
-			tasksHost.remove()
+			signals.dispose()
+			settings?.dispose()
+			signalsHost.remove()
+			settingsHost.remove()
 			delete left.dataset.leftColumn
 		},
 	}
@@ -130,8 +131,8 @@ export function mountLeftColumn({
 
 /**
  * ⌘⇧I (macOS; reserved in shortcuts.ts) = "go to Signals" from anywhere, including a focused xterm
- * (window capture runs before xterm's textarea): a hidden column, or one in Tasks mode, shows in
- * Signals mode, then Signals takes the keys; pressed inside Signals it hands them back to the terminal.
+ * (window capture runs before xterm's textarea): a hidden column, or one showing Settings, shows
+ * Signals, then Signals takes the keys; pressed inside Signals it hands them back to the terminal.
  */
 export function mountSignalsShortcut({
 	window: ownerWindow,
@@ -148,7 +149,7 @@ export function mountSignalsShortcut({
 	focusTerminal(): void
 }): () => void {
 	const mac = (platform ?? (/Mac/.test(ownerWindow.navigator.platform) ? 'darwin' : 'other')) === 'darwin'
-	if (!mac || !column.signalsHost) return () => undefined
+	if (!mac) return () => undefined
 	const host = column.signalsHost
 	const onKeydown = (event: KeyboardEvent): void => {
 		if (event.repeat || event.isComposing || event.code !== 'KeyI' || !event.shiftKey || event.altKey) return
@@ -181,47 +182,26 @@ export function focusActiveTerminal(root: Document | HTMLElement): void {
 	if (holder && holder.scrollTop !== 0) holder.scrollTop = 0
 }
 
-/** The parts of a Document the task-sidebar ownership check reads (root tests pass fakes). */
+/** The parts of a Document the sidebar ownership check reads (root tests pass fakes). */
 export interface LeftColumnDocument {
 	getElementById(id: string): { hidden: boolean; contains(node: unknown): boolean } | null
 }
 
 /**
- * Whether a task-sidebar navigation input (Esc = back, the nav:go back/forward channel, mouse back
- * buttons) belongs to the task sidebar: never while Signals holds the column (`#left-tasks` hidden),
- * so the hidden task stack never pops behind Signals. `target` is the key event's target (omitted
- * for inputs with no target: the nav:go channel, mouse buttons); with a target it must sit inside
- * `#left`, and inside `#left-tasks` when the column is split. A host without `#left-tasks` (an older
- * preload, stories mounting the sidebar alone) keeps the old rule.
+ * Whether a sidebar navigation input (Esc = back, the nav:go back/forward channel, mouse back
+ * buttons) belongs to the sidebar stack: never while Signals holds the column (`#left-settings`
+ * hidden), so the hidden Settings stack never moves behind Signals. `target` is the key event's
+ * target (omitted for inputs with no target: the nav:go channel, mouse buttons); with a target it
+ * must sit inside `#left`, and inside `#left-settings` when the column is split. A host without
+ * `#left-settings` (stories mounting the sidebar alone) keeps the old rule.
  */
-export function taskSidebarOwnsNavigation(
+export function sidebarOwnsNavigation(
 	doc: LeftColumnDocument,
 	target?: { closest(selector: string): unknown } | null,
 ): boolean {
 	if (target !== undefined && (!target || !target.closest('#left'))) return false
-	const host = doc.getElementById('left-tasks')
+	const host = doc.getElementById('left-settings')
 	if (!host) return true
 	if (host.hidden) return false
 	return target === undefined || host.contains(target)
-}
-
-/**
- * A helm:// deep link (main's nav:open-item) is an absolute destination in the task sidebar: switch
- * the column to Tasks and show it, so the link never lands in a hidden sidebar behind Signals. The
- * task sidebar's own listener resets its stack; the order of the two listeners does not matter.
- */
-export function mountDeepLinkReveal({
-	onOpenItem,
-	column,
-	showColumn,
-}: {
-	onOpenItem(listener: (itemId: string) => void): () => void
-	column: Pick<MountedLeftColumn, 'setMode'>
-	/** Shows the column when it is hidden (sidebar-layout). */
-	showColumn(): void
-}): () => void {
-	return onOpenItem(() => {
-		column.setMode('tasks')
-		showColumn()
-	})
 }

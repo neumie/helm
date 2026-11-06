@@ -2,8 +2,8 @@ import { createIconButton } from './icon-button'
 import type { LeftColumnMode } from './left-column'
 
 /**
- * What the column currently holds (left-column.ts). Without it the column is the task sidebar,
- * as in hosts that mount only Tasks (fixtures, older preloads).
+ * What the column currently holds (left-column.ts: Signals or Settings). Without it the column is
+ * the list-rooted task sidebar, as in hosts that mount only that (fixtures, stories).
  */
 export interface SidebarLayoutColumn {
 	mode(): LeftColumnMode
@@ -14,8 +14,9 @@ export interface SidebarLayoutColumn {
 
 /**
  * Left-column presentation only: no session, placement or process authority. The column's width and
- * visibility are shared by both surfaces; "the task sidebar is visible" (`data-sidebar-hidden`, the
- * `helm-sidebar-visibility` event and the daemon task watch) means the column is shown in Tasks mode.
+ * visibility are shared by every surface; "the task sidebar is visible" (`data-sidebar-hidden`, the
+ * `helm-sidebar-visibility` event and the daemon task watch) means a task list is on screen, which
+ * only a column-less host (fixtures, stories) has. Production's Signals/Settings column keeps it off.
  */
 export function mountSidebarLayout({
 	root,
@@ -83,7 +84,7 @@ export function mountSidebarLayout({
 	chrome.append(toggle, dragSpace)
 	const properties = ['--left-width', '--sidebar-column-width', '--sidebar-divider-width', '--sidebar-header-width']
 	const previousProperties = properties.map(name => [name, host.style.getPropertyValue(name)] as const)
-	const mode = (): LeftColumnMode => column?.mode() ?? 'tasks'
+	const mode = (): LeftColumnMode | 'tasks' => column?.mode() ?? 'tasks'
 	const publishSignals = (): void => {
 		const visible = !disposed && !hidden && mode() === 'signals' && ownerDocument.visibilityState !== 'hidden'
 		if (publishedSignals === visible) return
@@ -113,7 +114,8 @@ export function mountSidebarLayout({
 			void daemon?.pollWatch?.(!tasksHidden)?.catch(() => undefined)
 		}
 		publishSignals()
-		const name = mode() === 'tasks' ? 'task sidebar' : 'Signals'
+		const current = mode()
+		const name = current === 'tasks' ? 'task sidebar' : current === 'settings' ? 'Settings' : 'Signals'
 		const label = hidden ? `Show ${name}` : `Hide ${name}`
 		toggle.setAttribute('aria-label', label)
 		toggle.title = label

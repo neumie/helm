@@ -424,17 +424,9 @@ async function routeDestination(destination: HelmItemDestination): Promise<void>
 	) {
 		await pending
 	}
-	if (destination.profileId && destination.profileId !== appProfiles.activeProfileId()) {
-		const result = await activateProfile(destination.profileId, destination.itemId)
-		if (result.error !== undefined) {
-			void dialog.showMessageBox({
-				type: 'warning',
-				message: 'Could not open Item',
-				detail: result.error,
-			})
-		}
-		return
-	}
+	// The desktop shows no Items (the left column is Signals + Settings, §3.25), so an Item link only
+	// raises the window. It never switches the profile: that detaches every terminal and reloads the
+	// renderer for an Item nothing would show.
 	deliverOpenItem(destination.itemId)
 }
 

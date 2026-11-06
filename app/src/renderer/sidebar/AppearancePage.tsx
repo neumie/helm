@@ -1,15 +1,13 @@
 // Settings → Appearance (docs/design-system.md §2.8): theme picker, text
 // sizing, per-token color wells for the terminal palette + UI accent, and the
-// agent dock's position and background notifications (§3.24), and what the left column
-// holds (Signals or Tasks, §3.25). Every control live-applies through its store; persistence
-// is localStorage ('helm.appearance', 'helm.agentDock.position', 'helm.agentDock.notify',
-// 'helm.leftColumn') + theme files in <userData>/themes.
+// agent dock's position and background notifications (§3.24). Every control live-applies through
+// its store; persistence is localStorage ('helm.appearance', 'helm.agentDock.position',
+// 'helm.agentDock.notify') + theme files in <userData>/themes.
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { agentDockNotify, agentDockPosition } from '../agent-dock-layout'
 import type { AgentDockPosition } from '../agent-dock/presentation'
 import { TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, UI_SCALES, appearance } from '../appearance'
-import { type LeftColumnMode, leftColumn } from '../left-column'
 import { Btn, Card, FieldLabel, PushHeader, Segmented, SelectInput, Toggle } from './ui'
 
 const TERM_WELLS: ReadonlyArray<{ token: string; label: string }> = [
@@ -40,11 +38,6 @@ const ANSI_WELLS: ReadonlyArray<{ token: string; label: string }> = [
 const DOCK_POSITIONS: Array<{ value: AgentDockPosition; label: string }> = [
 	{ value: 'bottom', label: 'Bottom' },
 	{ value: 'top', label: 'Top' },
-]
-
-const LEFT_COLUMN_MODES: Array<{ value: LeftColumnMode; label: string }> = [
-	{ value: 'signals', label: 'Signals' },
-	{ value: 'tasks', label: 'Tasks' },
 ]
 
 /** <input type=color> only speaks #rrggbb; normalize what the token holds. */
@@ -82,7 +75,6 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 	const snap = useSyncExternalStore(appearance.subscribe, appearance.getSnapshot)
 	const dockPosition = useSyncExternalStore(agentDockPosition.subscribe, agentDockPosition.get)
 	const dockNotify = useSyncExternalStore(agentDockNotify.subscribe, agentDockNotify.get)
-	const columnMode = useSyncExternalStore(leftColumn.subscribe, leftColumn.get)
 	// Pick up theme files dropped into <userData>/themes since startup.
 	useEffect(() => {
 		void appearance.refreshThemes()
@@ -189,20 +181,6 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 							value={dockNotify}
 							onChange={value => agentDockNotify.set(value)}
 						/>
-					</div>
-				</Card>
-				<Card label="Left column">
-					<div className="settings-field">
-						<FieldLabel>Show</FieldLabel>
-						<Segmented
-							label="Left column"
-							options={LEFT_COLUMN_MODES}
-							value={columnMode}
-							onChange={value => leftColumn.set(value)}
-						/>
-						<p className="meta-text">
-							Signals lists what GitHub and Mail want from you. ⌘⇧I goes to Signals from anywhere.
-						</p>
 					</div>
 				</Card>
 				{/* Flush group: swatch rows sit at the flat group's exact fact pitch (§3.15). */}

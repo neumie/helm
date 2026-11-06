@@ -9,7 +9,7 @@ declare global {
 
 // Signals in the task-sidebar column (design §3.25), driven through the production column on the
 // in-memory fixture services: keys select and move threads, p/n route one to an agent, Esc and ⌘⇧I
-// hand the keys back to the terminal, "Show tasks" swaps the column without moving anything else.
+// hand the keys back to the terminal, Settings swaps the column without moving anything else.
 
 const story = (id: string) => `/iframe.html?id=${id}&viewMode=story`
 
@@ -108,7 +108,7 @@ test('Esc and ⌘⇧I hand the keys to the terminal; ⌘⇧I from the terminal c
 	await expect(view.input).toBeFocused()
 })
 
-test('Esc on the list stays with Signals: it never reaches the hidden task sidebar’s window-level Back', async ({
+test('Esc on the list stays with Signals: it never reaches the hidden Settings stack’s window-level Back', async ({
 	page,
 }) => {
 	const view = await open(page, 'views-signals-column--column')
@@ -125,16 +125,21 @@ test('Esc on the list stays with Signals: it never reaches the hidden task sideb
 	expect(await page.evaluate(() => (window as Window & { __escSeen?: string[] }).__escSeen)).toEqual([])
 })
 
-test('Show tasks swaps the column to the task sidebar without moving the terminal; ⌘⇧I swaps back', async ({
-	page,
-}) => {
+test('Settings swaps the column without moving the terminal; Back and ⌘⇧I return to Signals', async ({ page }) => {
 	const view = await open(page, 'views-signals-column--column')
 	const before = await page.locator('#terms').boundingBox()
-	await page.getByRole('button', { name: 'Show tasks' }).click()
+	await expect(page.getByRole('button', { name: 'Show tasks' })).toHaveCount(0)
+	await page.getByRole('button', { name: 'Settings' }).click()
 	await expect(page.locator('#left-signals')).toBeHidden()
-	await expect(page.locator('#left-tasks')).toBeVisible()
+	await expect(page.locator('#left-settings')).toBeVisible()
+	await expect(page.locator('#left-settings [data-page-heading]')).toBeFocused()
 	expect(await page.locator('#left-signals').evaluate(node => (node as HTMLElement).inert)).toBe(true)
 	expect(await page.locator('#terms').boundingBox()).toEqual(before)
+	await page.locator('#left-settings').getByRole('button', { name: 'Back' }).click()
+	await expect(page.locator('#left-signals')).toBeVisible()
+	await expect(page.locator('#left-settings')).toBeHidden()
+	await expect(view.signals).toBeFocused()
+	await page.getByRole('button', { name: 'Settings' }).click()
 	await view.input.focus()
 	await page.keyboard.press('Meta+Shift+KeyI')
 	await expect(page.locator('#left-signals')).toBeVisible()

@@ -7,13 +7,17 @@
 // stacked page stays mounted (scroll + state preserved); non-top pages are
 // inert. Esc pops the stack when focus is in the pane (menus/sheets handle
 // their own Esc in the capture phase first).
+//
+// Production mounts it rooted at Settings (`base: 'settings'`) as the left column's Settings
+// stack (§3.25): the task list is not shown. Back from that root calls `onExit` (back to Signals).
+// The list-rooted form remains for stories.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import './sidebar.css'
 import type { HelmSnapshot } from '../../shared-helm'
-import { taskSidebarOwnsNavigation } from '../left-column'
+import { sidebarOwnsNavigation } from '../left-column'
 import { showToast } from '../toast'
 import { AgentIntegrationsPage } from './AgentIntegrationsPage'
 import { AppearancePage } from './AppearancePage'
@@ -60,8 +64,8 @@ interface NavState {
 	phase: 'push' | 'pop' | null
 }
 
-function useNavStack() {
-	const [nav, setNav] = useState<NavState>({ stack: [{ kind: 'list' }], leaving: null, phase: null })
+function useNavStack(base: Route) {
+	const [nav, setNav] = useState<NavState>({ stack: [base], leaving: null, phase: null })
 	const timer = useRef<number | null>(null)
 	// Mirror for imperative consumers (gesture controller, forward recording).
 	const navRef = useRef(nav)
@@ -155,7 +159,22 @@ function sidebarIsVisible(): boolean {
 	return document.documentElement.dataset.sidebarHidden !== 'true'
 }
 
-export function SidebarRoot() {
+export interface SidebarRootProps {
+	/** The stack's root page: `list` (stories) or `settings` (the production left column). */
+	base?: 'list' | 'settings'
+	/** Back from the root page (the left column swaps to Signals). */
+	onExit?: () => void
+	/**
+	 * Whether the stack is on screen (the left column shows Settings). Clean Settings drop their
+	 * config draft off screen, so the next visit loads fresh config. Absent: always on screen.
+	 */
+	shown?: { get(): boolean; subscribe(listener: () => void): () => void }
+}
+
+const ALWAYS_SHOWN = { get: () => true, subscribe: () => () => undefined }
+
+export function SidebarRoot({ base = 'list', onExit, shown: shownSource = ALWAYS_SHOWN }: SidebarRootProps = {}) {
+	const shown = useSyncExternalStore(shownSource.subscribe, shownSource.get)
 	const snapshot = useHelmSnapshot()
 	const [sidebarVisible, setSidebarVisible] = useState(sidebarIsVisible)
 	useEffect(() => {
@@ -167,7 +186,18 @@ export function SidebarRoot() {
 		setSidebarVisible(sidebarIsVisible())
 		return () => window.removeEventListener('helm-sidebar-visibility', onVisibility)
 	}, [])
-	const { nav, navRef, push, pop, popInstant, goForward, reset } = useNavStack()
+	const { nav, navRef, push, pop: popPage, popInstant, goForward, reset } = useNavStack({ kind: base })
+	// Back: pop a page, or leave the root (Settings → Signals) when there is nothing to pop.
+	const onExitRef = useRef(onExit)
+	onExitRef.current = onExit
+	const pop = useCallback(() => {
+		const current = navRef.current
+		if (current.stack.length <= 1 && current.leaving === null && current.phase === null) {
+			onExitRef.current?.()
+			return
+		}
+		popPage()
+	}, [navRef, popPage])
 	const [selectedId, setSelectedId] = useState<string | null>(null)
 	const [newItemDraft, setNewItemDraft] = useState<NewItemDraft>({ title: '', prompt: '' })
 	const [runDrafts, setRunDrafts] = useState<Record<string, RunSelectionDraft>>({})
@@ -178,17 +208,25 @@ export function SidebarRoot() {
 		newItemSubmittingRef.current = submitting
 	}, [])
 
-	const settingsActive = nav.stack.some(
-		route =>
-			route.kind === 'settings' ||
-			route.kind === 'settings-section' ||
-			route.kind === 'terminal-settings' ||
-			route.kind === 'agent-integrations' ||
-			route.kind === 'remote-settings' ||
-			route.kind === 'scheduled-runs' ||
-			route.kind === 'scheduled-run-editor',
-	)
+	// Settings work the operator has not finished (unsaved edits, a save or restart in flight, a
+	// saved-but-deferred restart notice) keeps the store alive while the column shows Signals (⌘⇧I).
+	// Clean Settings drop their draft off screen, so the next visit loads fresh config.
+	const settingsPending = useRef(false)
+	const settingsActive =
+		(shown || settingsPending.current) &&
+		nav.stack.some(
+			route =>
+				route.kind === 'settings' ||
+				route.kind === 'settings-section' ||
+				route.kind === 'terminal-settings' ||
+				route.kind === 'agent-integrations' ||
+				route.kind === 'remote-settings' ||
+				route.kind === 'scheduled-runs' ||
+				route.kind === 'scheduled-run-editor',
+		)
 	const settings = useSettingsStore(settingsActive)
+	settingsPending.current =
+		settingsActive && (settings.dirty || settings.saving || settings.restarting || settings.pendingRestart !== null)
 	const schedulingConfigured = schedulingEnabledInDraft(settings.draft)
 
 	const openItem = useCallback(
@@ -218,7 +256,11 @@ export function SidebarRoot() {
 	// to the item, replacing whatever was stacked — a deep link is an absolute
 	// destination, and repeated clicks must not pile up detail pages. A newly
 	// captured Item uses the same replacement so Back never returns to its form.
-	useEffect(() => window.helm.nav.onOpenItem(openItemAbsolute), [openItemAbsolute])
+	// The Settings-rooted column shows no Items, so it ignores Item links.
+	useEffect(
+		() => (base === 'list' ? window.helm.nav.onOpenItem(openItemAbsolute) : undefined),
+		[base, openItemAbsolute],
+	)
 
 	// Two-finger swipe-back (§3.10 gestures): interactive edge-tracking pop.
 	// The controller lives outside React (inline transforms on the page
@@ -259,7 +301,7 @@ export function SidebarRoot() {
 		() =>
 			window.helm.nav.onGo(direction => {
 				// Signals holds the column: the hidden task stack must not move behind it.
-				if (newItemSubmittingRef.current || !taskSidebarOwnsNavigation(document)) return
+				if (newItemSubmittingRef.current || !sidebarOwnsNavigation(document)) return
 				if (direction === 'back') {
 					if (swipeControl.current?.interceptNativeNav()) return
 					pop()
@@ -273,7 +315,7 @@ export function SidebarRoot() {
 		const onMouseUp = (event: MouseEvent) => {
 			if (event.button !== 3 && event.button !== 4) return
 			event.preventDefault()
-			if (newItemSubmittingRef.current || !taskSidebarOwnsNavigation(document)) return
+			if (newItemSubmittingRef.current || !sidebarOwnsNavigation(document)) return
 			if (event.button === 3) pop()
 			else goForward()
 		}
@@ -289,7 +331,7 @@ export function SidebarRoot() {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape' || newItemSubmittingRef.current) return
 			const target = event.target as HTMLElement | null
-			if (!target || !taskSidebarOwnsNavigation(document, target)) return
+			if (!target || !sidebarOwnsNavigation(document, target)) return
 			const top = navRef.current.stack[navRef.current.stack.length - 1]
 			if (target.matches('input, textarea, select') && top?.kind !== 'new-item') return
 			event.preventDefault()
@@ -306,6 +348,12 @@ export function SidebarRoot() {
 	useEffect(() => {
 		if (previewDone.current) return
 		const preview: string | null = window.helm.uiPreview
+		if (base === 'settings') {
+			// Already at Settings; only Appearance goes one deeper. Item previews need the list.
+			previewDone.current = true
+			if (preview === 'appearance') reset([{ kind: 'settings' }, { kind: 'appearance' }])
+			return
+		}
 		if (preview === 'new-item') {
 			previewDone.current = true
 			openNewItem()
@@ -354,7 +402,7 @@ export function SidebarRoot() {
 			reset([{ kind: 'list' }, { kind: 'archive' }])
 			window.setTimeout(() => openItem(pick.id), PUSH_MS + 40)
 		} else if (pick) openItem(pick.id)
-	}, [snapshot, push, reset, openItem, openNewItem])
+	}, [base, snapshot, push, reset, openItem, openNewItem])
 
 	useEffect(() => {
 		// Focusing an element while its page is translated offscreen makes Chromium
@@ -467,7 +515,7 @@ export function SidebarRoot() {
 			case 'agent-integrations':
 				return <AgentIntegrationsPage onBack={pop} />
 			case 'remote-settings':
-				return <RemoteSettingsPage onBack={pop} active={isTop} />
+				return <RemoteSettingsPage onBack={pop} active={isTop && shown} />
 			case 'scheduled-runs':
 				return (
 					<ScheduledRunsPage
@@ -484,7 +532,7 @@ export function SidebarRoot() {
 							enable: () => settings.updateAndSave(['scheduledRuns', 'enabled'], true),
 							restart: settings.restartNow,
 						}}
-						active={isTop}
+						active={isTop && shown}
 						onBack={pop}
 						onOpenEditor={scheduleId => push({ kind: 'scheduled-run-editor', scheduleId })}
 					/>
@@ -551,6 +599,6 @@ function ArchiveFrame({ onBack, children }: { onBack: () => void; children: Reac
 	)
 }
 
-export function mountSidebar(container: HTMLElement): void {
-	createRoot(container).render(<SidebarRoot />)
+export function mountSidebar(container: HTMLElement, props: SidebarRootProps = {}): void {
+	createRoot(container).render(<SidebarRoot {...props} />)
 }

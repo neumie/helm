@@ -45,8 +45,8 @@ const AGE_TICK_MS = 30_000
 export interface SignalsColumnProps {
 	service: SignalsService
 	dock: DockService
-	/** The header's "Show tasks" button: switch the column to the task sidebar. */
-	onShowTasks(): void
+	/** The header's Settings button: switch the column to Settings. */
+	onOpenSettings(): void
 	/** Esc on the list: hand the keys back to the terminal. */
 	onLeave?(): void
 	/** `cmd` on macOS (⌘↵), else `ctrl`. */
@@ -230,7 +230,7 @@ function SignalsTable({
 export function SignalsColumn({
 	service,
 	dock,
-	onShowTasks,
+	onOpenSettings,
 	onLeave,
 	mod = 'cmd',
 	now: clock = Date.now,
@@ -464,8 +464,8 @@ export function SignalsColumn({
 								{signalsSummary(sections, now, bridge.snapshot ? sources : null)}
 							</span>
 						</span>
-						<IconBtn label="Show tasks" className="signals-show-tasks" onClick={onShowTasks}>
-							{GLYPH.menu}
+						<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
+							{GLYPH.settings}
 						</IconBtn>
 					</header>
 					<div className="signals-scroll">

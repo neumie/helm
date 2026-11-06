@@ -2,7 +2,13 @@ import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 import { mountAgentDock } from './agent-dock-layout'
 import { appearance } from './appearance'
-import { focusActiveTerminal, mountDeepLinkReveal, mountLeftColumn, mountSignalsShortcut } from './left-column'
+import {
+	clearLegacyLeftColumnPreference,
+	focusActiveTerminal,
+	memoryLeftColumnMode,
+	mountLeftColumn,
+	mountSignalsShortcut,
+} from './left-column'
 import { mountSidebarLayout } from './sidebar-layout'
 import { mountSidebar } from './sidebar/SidebarRoot'
 import { mountSignals } from './signals/Signals'
@@ -20,30 +26,33 @@ function el<T extends HTMLElement>(id: string): T {
 
 const leftPane = el<HTMLElement>('left')
 
-// ---------- left column: Signals (default) or the native task sidebar ----------
-// The task sidebar owns the daemon-connection signal (waiting card when
-// unreachable; silence when connected) — the topbar carries no dot/branding.
-// Both surfaces stay mounted; an older preload without the Signals bridge keeps Tasks only.
+// ---------- left column: Signals, with Settings one click away (§3.25) ----------
+// There is no task list. The Signals header's Settings button swaps the column to the sidebar
+// app rooted at Settings (profiles, scheduled runs, appearance…); Back from its root returns.
+// Every launch starts in Signals: the mode is not stored.
 
+clearLegacyLeftColumnPreference(window.localStorage)
 const signalsApi = window.helm.signals
+const columnMode = memoryLeftColumnMode('signals')
 const column = mountLeftColumn({
 	left: leftPane,
-	mountTasks: host => {
-		mountSidebar(host)
+	mode: columnMode,
+	mountSignals: host =>
+		mountSignals(host, {
+			service: createSignalsService(signalsApi),
+			dock: createDockService(window.helm.agentDock),
+			onOpenSettings: () => columnMode.set('settings'),
+			onLeave: () => focusActiveTerminal(document),
+			mod: window.helm.platform === 'darwin' ? 'cmd' : 'ctrl',
+		}),
+	mountSettings: host => {
+		mountSidebar(host, {
+			base: 'settings',
+			onExit: () => columnMode.set('signals'),
+			shown: { get: () => columnMode.get() === 'settings', subscribe: columnMode.subscribe },
+		})
 		return undefined
 	},
-	...(signalsApi
-		? {
-				mountSignals: (host: HTMLElement) =>
-					mountSignals(host, {
-						service: createSignalsService(signalsApi),
-						dock: createDockService(window.helm.agentDock),
-						onShowTasks: () => column.setMode('tasks'),
-						onLeave: () => focusActiveTerminal(document),
-						mod: window.helm.platform === 'darwin' ? 'cmd' : 'ctrl',
-					}),
-			}
-		: {}),
 })
 
 // The workspace receives the preload-captured bridge explicitly. ADR-0003's
@@ -52,14 +61,15 @@ const column = mountLeftColumn({
 const workspace = mountTerminalWorkspace({ root: document, helm: window.helm, appearance })
 
 // Width/visibility are renderer presentation preferences, never placement mutations. The daemon task
-// watch follows the task sidebar only; main polls Signals only while Signals is on screen.
+// watch follows a task list on screen, and this column has none, so it stays off; main polls Signals
+// only while Signals is on screen.
 const layout = mountSidebarLayout({
 	root: document,
 	fitActive: () => workspace.fitActive(),
 	column: {
 		mode: column.mode,
 		subscribe: column.subscribe,
-		setSignalsVisible: visible => signalsApi?.setVisible(visible),
+		setSignalsVisible: visible => signalsApi.setVisible(visible),
 	},
 })
 mountSignalsShortcut({
@@ -69,14 +79,6 @@ mountSignalsShortcut({
 	showColumn: () => layout.show(),
 	focusTerminal: () => focusActiveTerminal(document),
 })
-// helm://item/<id> lands in the task sidebar: the column switches to Tasks and shows, so a deep
-// link never opens behind Signals (the sidebar's own listener resets its stack to list → detail).
-mountDeepLinkReveal({
-	onOpenItem: listener => window.helm.nav.onOpenItem(listener),
-	column,
-	showColumn: () => layout.show(),
-})
-
 // Read-only Okena Claude agent dock. An older preload without the bridge leaves
 // #agent-dock hidden and the terminal pane full height.
 const agentDock = window.helm.agentDock
