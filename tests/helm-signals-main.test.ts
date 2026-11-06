@@ -113,7 +113,6 @@ function harness(options: { readOnly?: boolean; exec?: SignalsExec; userDataDir?
 	const main = new SignalsMain({
 		request,
 		acceptsIpc: (sender, profileToken) => sender === WINDOW && profileToken === token.value,
-		profileToken: () => token.value,
 		publish: state => published.push(state),
 		exec:
 			options.exec ??
@@ -196,7 +195,7 @@ test('polls only while visible, asks sources once per 20 s and pushes only chang
 	assert.equal(h.timers.pending.size, 0)
 })
 
-test('a destroyed or reloaded renderer stops the polling; a profile switch drops the cached state', async () => {
+test('a destroyed or reloaded renderer stops the polling; signals are global, so a profile switch keeps the cached state', async () => {
 	const h = harness()
 	let destroyed: (() => void) | null = null
 	const contents = {
@@ -218,8 +217,9 @@ test('a destroyed or reloaded renderer stops the polling; a profile switch drops
 	assert.equal(h.main.isPolling(), false)
 
 	assert.notEqual(h.main.getState().snapshot, null)
+	const before = h.main.getState()
 	h.token.value = 'other:2'
-	assert.deepEqual(h.main.getState(), { snapshot: null, error: null, at: null })
+	assert.deepEqual(h.main.getState(), before)
 })
 
 test('update and routed POST, then re-read at once; the IPC gate refuses other windows and profiles', async () => {

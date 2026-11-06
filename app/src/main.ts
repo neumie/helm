@@ -330,7 +330,6 @@ const signalsMain = new SignalsMain({
 		signalsReadOnly ? { readOnlyError: SIDE_BY_SIDE_READ_ONLY_ERROR } : {},
 	),
 	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
-	profileToken: () => sessionProfileToken(),
 	publish: state => sendToLiveRenderer(mainWindow?.webContents, SIGNALS_IPC.snapshot, state, sessionProfileToken()),
 	exec: (file, args, options) =>
 		execFileAsync(file, [...args], { ...options, encoding: 'utf8', maxBuffer: options.maxBuffer ?? 1024 * 1024 }),

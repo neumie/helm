@@ -106,7 +106,7 @@ async function data<T>(response: Response): Promise<T> {
 }
 
 function seed(db: DB, numbers: number[]) {
-	db.forProfile(db.currentProfileId()).signals.applyPoll(
+	db.signals.applyPoll(
 		{ source: 'github', observations: numbers.map(observation), complete: true, goneReason: 'gone' },
 		NOW,
 	)
@@ -235,15 +235,16 @@ test('POST /signals/poll asks the watcher', async () => {
 	})
 })
 
-test('requests read and write the active profile only', async () => {
+test('signals are global: switching the Helm profile shows and edits the same inbox', async () => {
 	await withSignalsApi(async ({ request, post, db, store }) => {
 		seed(db, [1])
 		const workId = db.signals.list({}, NOW)[0]?.id ?? 0
 		const other = store.create('Personal')
 		store.activate(other.id)
 		assert.equal(db.currentProfileId(), other.id)
-		assert.equal((await data<SignalsSnapshot>(await request('/signals'))).threads.length, 0)
-		assert.equal((await request(`/signals/${workId}`)).status, 404)
-		assert.equal((await post(`/signals/${workId}`, { state: 'done' })).status, 404)
+		assert.equal((await data<SignalsSnapshot>(await request('/signals'))).threads.length, 1)
+		assert.equal((await request(`/signals/${workId}`)).status, 200)
+		assert.equal((await post(`/signals/${workId}`, { state: 'done' })).status, 200)
+		assert.equal(db.forProfile('work').signals.get(workId)?.state, 'done')
 	})
 })

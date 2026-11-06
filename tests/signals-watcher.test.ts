@@ -100,33 +100,11 @@ function instantReader(
 }
 
 test(
-	'a tick lands in the profile that was active when it began',
-	withDb(async db => {
-		let active = 'alpha'
-		const github = gatedReader('github', ['github:acme/a#1'])
-		const watcher = new SignalsWatcher(config(), db, {
-			activeProfileId: () => active,
-			github: github.reader,
-			now: () => NOW,
-		})
-		const tick = watcher.pollOnce('github')
-		active = 'beta'
-		github.release()
-		await tick
-		assert.equal(db.forProfile('alpha').signals.list({}, NOW).length, 1)
-		assert.equal(db.forProfile('beta').signals.list({}, NOW).length, 0)
-		assert.equal(db.forProfile('alpha').signals.sources()[0]?.status, 'ok')
-		assert.equal(db.forProfile('beta').signals.sources()[0]?.status, 'disabled')
-	}),
-)
-
-test(
 	'pollOnce is single-flight per source and sources run independently',
 	withDb(async db => {
 		const github = gatedReader('github', ['github:acme/a#1'])
 		const mail = instantReader('mail', ['mail:abc'])
 		const watcher = new SignalsWatcher(config({ mail: { enabled: true } }), db, {
-			activeProfileId: () => 'alpha',
 			github: github.reader,
 			mail: mail.reader,
 			now: () => NOW,
@@ -154,7 +132,6 @@ test(
 		const mail = instantReader('mail', ['mail:abc'])
 		db.signals.setSourceHealth('github', 'ok', null, NOW, true)
 		const off = new SignalsWatcher(config({ enabled: false, mail: { enabled: true } }), db, {
-			activeProfileId: () => 'alpha',
 			github: github.reader,
 			mail: mail.reader,
 			now: () => NOW,
@@ -169,7 +146,7 @@ test(
 		)
 
 		// Mail is off by default; a missing reader counts as off too.
-		const defaults = new SignalsWatcher(config(), db, { activeProfileId: () => 'alpha', github: github.reader })
+		const defaults = new SignalsWatcher(config(), db, { github: github.reader })
 		assert.equal(defaults.isEnabled('github'), true)
 		assert.equal(defaults.isEnabled('mail'), false)
 		const stale = [
@@ -192,7 +169,6 @@ test(
 		db.signals.applyPoll(result('github', ['github:acme/a#1', 'github:acme/a#2']), NOW)
 		const partial = instantReader('github', ['github:acme/a#1'], { status: 'error', detail: 'rate limited' }, false)
 		const watcher = new SignalsWatcher(config(), db, {
-			activeProfileId: () => 'alpha',
 			github: partial.reader,
 			now: () => NOW,
 		})
@@ -211,7 +187,6 @@ test(
 			},
 		}
 		const broken = new SignalsWatcher(config(), db, {
-			activeProfileId: () => 'alpha',
 			github: throwing,
 			now: () => NOW,
 		})
@@ -225,7 +200,6 @@ test(
 	withDb(async db => {
 		const github = gatedReader('github', ['github:acme/a#1'])
 		const watcher = new SignalsWatcher(config(), db, {
-			activeProfileId: () => 'alpha',
 			github: github.reader,
 			now: () => NOW,
 		})
@@ -255,7 +229,6 @@ test(
 	withDb(async db => {
 		const github = instantReader('github', ['github:acme/a#1'])
 		const watcher = new SignalsWatcher(config(), db, {
-			activeProfileId: () => 'alpha',
 			github: github.reader,
 			now: () => NOW,
 		})

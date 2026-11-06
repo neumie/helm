@@ -228,7 +228,7 @@ export class DB {
 	readonly knowledge: KnowledgeStore
 	/** Profile-bound scheduled-run persistence; never use it as an Item store. */
 	readonly schedules: ScheduleStore
-	/** Profile-bound Signals threads, change log and source health. */
+	/** Global Signals threads, change log and source health: one inbox across every profile. */
 	readonly signals: SignalStore
 
 	constructor(
@@ -252,7 +252,7 @@ export class DB {
 		this.items = new ItemStore(this.db, () => this.profileId)
 		this.knowledge = new KnowledgeStore(this.db, () => this.profileId)
 		this.schedules = new ScheduleStore(this.db, () => this.profileId)
-		this.signals = new SignalStore(this.db, () => this.profileId)
+		this.signals = new SignalStore(this.db)
 	}
 
 	private get profileId(): string {

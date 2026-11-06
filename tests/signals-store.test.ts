@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import Database from 'better-sqlite3'
 import { DB } from '../src/db/client.js'
+import { MIGRATIONS } from '../src/db/schema.js'
 import type { SignalObservation, SignalPollResult } from '../src/signals/contract.js'
 import { SIGNAL_EVENT_RETENTION, SignalInvalidError, SignalNotFoundError } from '../src/signals/store.js'
 
@@ -46,7 +48,7 @@ function poll(observations: SignalObservation[], complete = true): SignalPollRes
 	return { source: 'github', observations, complete, goneReason: 'no longer open or requested' }
 }
 
-test('creates threads as new and Jakub-owned, dedupes by thread key, isolates profiles', () => {
+test('creates threads as new and Jakub-owned, dedupes by thread key, one inbox across profiles', () => {
 	withDb(db => {
 		const counts = db.signals.applyPoll(poll([github(1), github(1, { head: 'later duplicate' }), github(2)]), T0)
 		assert.deepEqual(counts, { created: 2, renewed: 0, gone: 0 })
@@ -65,13 +67,17 @@ test('creates threads as new and Jakub-owned, dedupes by thread key, isolates pr
 		assert.deepEqual(again, { created: 0, renewed: 0, gone: 0 })
 		assert.equal(db.signals.list({}, at(1)).length, 2)
 
+		// Signals are global: every profile view is the same inbox.
 		const beta = db.forProfile('beta').signals
-		assert.deepEqual(beta.list({}, T0), [])
-		assert.equal(beta.get(first.id), null)
-		assert.deepEqual(beta.events(0), [])
-		// The seq is one sequence shared by every profile, so the cursor is global too.
+		assert.equal(beta.list({}, T0).length, 2)
+		assert.equal(beta.get(first.id)?.threadKey, first.threadKey)
+		assert.deepEqual(beta.events(0), db.signals.events(0))
 		assert.equal(beta.latestSeq(), db.signals.latestSeq())
-		assert.throws(() => beta.update(first.id, { state: 'done' }, T0), SignalNotFoundError)
+		assert.equal(beta.update(first.id, { state: 'done' }, T0).state, 'done')
+		assert.equal(db.signals.get(first.id)?.state, 'done')
+		// The same thread seen while another profile is active is still one row.
+		assert.deepEqual(beta.applyPoll(poll([github(1), github(2)]), at(2)).created, 0)
+		assert.throws(() => db.signals.update(999_999, { state: 'done' }, T0), SignalNotFoundError)
 	})
 })
 
@@ -340,19 +346,16 @@ test('events page from a cursor and the default list hides old done threads', ()
 	})
 })
 
-test('keeps only the newest events per profile', () => {
+test('keeps only the newest events', () => {
 	withDb(db => {
 		db.signals.applyPoll(poll([github(1)]), T0)
 		const id = db.signals.getByThreadKey('github:acme/widgets#1')?.id ?? 0
-		const beta = db.forProfile('beta').signals
-		beta.applyPoll(poll([github(9)]), T0)
 		for (let index = 0; index < SIGNAL_EVENT_RETENTION + 5; index += 1) {
 			db.signals.setNote(id, `note ${index}`, T0)
 		}
 		const latest = db.signals.latestSeq()
 		const first = db.signals.events(0, 1)[0]
 		assert.equal(first?.seq, latest - SIGNAL_EVENT_RETENTION + 1)
-		assert.equal(beta.events(0).length, 1, 'pruning one profile leaves another alone')
 	})
 })
 
@@ -377,31 +380,160 @@ test('source health defaults to disabled and remembers the last good poll', () =
 		})
 		db.signals.setSourceHealth('github', 'disabled', null, at(9), false)
 		assert.equal(db.signals.sources()[0]?.lastPollAt, at(5).toISOString())
-		assert.equal(db.forProfile('beta').signals.sources()[0]?.status, 'disabled')
+		assert.equal(db.forProfile('beta').signals.sources()[0]?.status, 'disabled', 'health is global')
 	})
 })
 
-test("a cursor taken in one profile never replays another profile's older events after a switch", () => {
-	withDb(db => {
-		const beta = db.forProfile('beta').signals
-		beta.applyPoll(poll([github(1)]), T0)
-		db.signals.applyPoll(poll([github(1), github(2), github(3)]), T0)
-		// A watcher reads beta's snapshot (cursor = latestSeq), then the active profile flips to alpha.
-		const cursor = beta.latestSeq()
-		assert.equal(cursor, db.signals.latestSeq())
-		assert.deepEqual(db.signals.events(cursor), [], 'alpha events older than the cursor are not replayed')
-		// New alpha events after the cursor still arrive.
-		const id = db.signals.getByThreadKey('github:acme/widgets#2')?.id ?? 0
-		db.signals.markSeen(id, at(1))
-		assert.deepEqual(
-			db.signals.events(cursor).map(event => event.type),
-			['state'],
+test('migration 38 merges per-profile v37 rows into one global inbox without losing ids or cursors', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-signals-v38-'))
+	try {
+		const path = join(root, 'helm.db')
+		new DB(path, 'alpha').close()
+		// Rebuild the v37 per-profile tables and populate them like a daemon that ran with two profiles.
+		const raw = new Database(path)
+		const v37 = MIGRATIONS.find(migration => migration.version === 37)
+		assert.ok(v37)
+		raw.exec('DROP TABLE signal_threads; DROP TABLE signal_events; DROP TABLE signal_sources;')
+		raw.exec(v37.sql)
+		const insert = raw.prepare(
+			`INSERT INTO signal_threads (id, profile_id, thread_key, source, kind, reasons, ref, full_ref, title, head,
+			   state, owner, activity_key, last_activity_at, note, created_at, updated_at)
+			 VALUES (?, ?, ?, 'github', 'review', '["review"]', 'w#1', 'acme/w#1', 'T', 'H', ?, ?, 'k', ?, ?, ?, ?)`,
 		)
-		// And beta still sees only its own.
-		assert.equal(beta.events(0).length, 1)
-	})
-})
+		// Same thread in two profiles, same foreign activity: beta's copy is the one handed to an agent, so it wins.
+		insert.run(
+			5,
+			'alpha',
+			'github:acme/w#1',
+			'new',
+			'jakub',
+			T0.toISOString(),
+			null,
+			T0.toISOString(),
+			T0.toISOString(),
+		)
+		insert.run(
+			9,
+			'beta',
+			'github:acme/w#1',
+			'seen',
+			'managed',
+			T0.toISOString(),
+			'handled',
+			T0.toISOString(),
+			at(5).toISOString(),
+		)
+		insert.run(
+			12,
+			'alpha',
+			'github:acme/w#2',
+			'new',
+			'jakub',
+			T0.toISOString(),
+			null,
+			T0.toISOString(),
+			T0.toISOString(),
+		)
+		// Jakub closed w#3 in alpha; beta's later poll inserted a fresh `new` copy of the same activity.
+		// The handled copy wins, not the newer one.
+		insert.run(
+			20,
+			'alpha',
+			'github:acme/w#3',
+			'done',
+			'jakub',
+			T0.toISOString(),
+			null,
+			T0.toISOString(),
+			T0.toISOString(),
+		)
+		insert.run(
+			21,
+			'beta',
+			'github:acme/w#3',
+			'new',
+			'jakub',
+			T0.toISOString(),
+			null,
+			at(5).toISOString(),
+			at(5).toISOString(),
+		)
+		// w#4 was handed to an agent with a note in alpha; beta saw newer foreign activity. Beta's copy
+		// wins (that activity is real) but keeps the agent handoff and the note.
+		insert.run(
+			30,
+			'alpha',
+			'github:acme/w#4',
+			'seen',
+			'managed',
+			T0.toISOString(),
+			'agent note',
+			T0.toISOString(),
+			T0.toISOString(),
+		)
+		insert.run(
+			31,
+			'beta',
+			'github:acme/w#4',
+			'new',
+			'jakub',
+			at(3).toISOString(),
+			null,
+			at(5).toISOString(),
+			at(5).toISOString(),
+		)
+		const event = raw.prepare(
+			'INSERT INTO signal_events (seq, profile_id, thread_id, type, detail, at) VALUES (?, ?, ?, ?, ?, ?)',
+		)
+		event.run(40, 'alpha', 5, 'created', '{}', T0.toISOString())
+		event.run(41, 'beta', 9, 'owner', '{}', at(5).toISOString())
+		event.run(42, 'alpha', 12, 'created', '{}', T0.toISOString())
+		const source = raw.prepare(
+			'INSERT INTO signal_sources (profile_id, source, status, detail, last_poll_at, last_ok_at) VALUES (?, ?, ?, ?, ?, ?)',
+		)
+		source.run('alpha', 'github', 'error', 'old', T0.toISOString(), null)
+		source.run('beta', 'github', 'ok', null, at(5).toISOString(), at(5).toISOString())
+		raw.prepare('DELETE FROM schema_version WHERE version >= 38').run()
+		raw.close()
 
+		const db = new DB(path, 'alpha')
+		try {
+			const threads = db.signals.list({ includeAllDone: true }, at(6))
+			assert.deepEqual(
+				threads.map(thread => [thread.id, thread.threadKey, thread.state, thread.owner, thread.note]).sort(),
+				[
+					[12, 'github:acme/w#2', 'new', 'jakub', null],
+					[9, 'github:acme/w#1', 'seen', 'managed', 'handled'],
+					[20, 'github:acme/w#3', 'done', 'jakub', null],
+					[31, 'github:acme/w#4', 'new', 'managed', 'agent note'],
+				].sort(),
+			)
+			// Events of the dropped duplicate move to the kept row and keep their seq.
+			assert.deepEqual(
+				db.signals.events(0).map(row => [row.seq, row.threadId]),
+				[
+					[40, 9],
+					[41, 9],
+					[42, 12],
+				],
+			)
+			assert.equal(db.signals.sources()[0]?.status, 'ok')
+			// AUTOINCREMENT high-water marks survive: new ids/seqs never reuse old ones.
+			db.signals.applyPoll(poll([github(77)]), at(7))
+			assert.ok((db.signals.getByThreadKey('github:acme/widgets#77')?.id ?? 0) > 31)
+			assert.ok(db.signals.latestSeq() > 42)
+			assert.equal(
+				db.forProfile('beta').signals.list({ includeAllDone: true }, at(7)).length,
+				5,
+				'every profile sees the same inbox',
+			)
+		} finally {
+			db.close()
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
+})
 test('a gone thread that comes back to Jakub (snooze wake, take-back) closes instead of sitting in Needs you', () => {
 	withDb(db => {
 		db.signals.applyPoll(poll([github(1), github(2), github(3), github(4), github(5)]), T0)

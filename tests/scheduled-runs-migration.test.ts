@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import { DB } from '../src/db/client.js'
+import { MIGRATIONS } from '../src/db/schema.js'
 import { ScheduleCommands } from '../src/scheduled-runs/commands.js'
 
 test('scheduled migrations create profile-owned tables and release completed attention ownership from overlap', () => {
@@ -16,7 +17,7 @@ test('scheduled migrations create profile-owned tables and release completed att
 		const raw = new Database(path)
 		assert.equal(
 			(raw.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			37,
+			MIGRATIONS.at(-1)?.version,
 		)
 		for (const table of ['scheduled_schedules', 'scheduled_runs']) {
 			assert.ok(raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table))
@@ -78,6 +79,9 @@ test('migration 30 preserves populated v29 runs with null adoption state', () =>
 			DROP TABLE IF EXISTS item_knowledge_snapshots;
 			DROP TABLE IF EXISTS knowledge_chunks;
 			DROP TABLE IF EXISTS knowledge_documents;
+			DROP TABLE IF EXISTS signal_threads;
+			DROP TABLE IF EXISTS signal_events;
+			DROP TABLE IF EXISTS signal_sources;
 		`)
 		v29.prepare('DELETE FROM schema_version WHERE version >= 30').run()
 		v29.close()

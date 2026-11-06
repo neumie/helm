@@ -88,8 +88,6 @@ export interface SignalsMainOptions {
 	request: SignalsRequest
 	/** The Signals channels' gate: current profile token AND the main window's renderer. */
 	acceptsIpc(sender: unknown, profileToken: unknown): boolean
-	/** The current session profile token: a read started under another profile is dropped. */
-	profileToken(): string
 	/** Pushes SIGNALS_IPC.snapshot to the renderer (main adds the profile token). */
 	publish(state: SignalsBridgeState): void
 	exec: SignalsExec
@@ -224,8 +222,6 @@ export class SignalsMain {
 	private readonly visible = new Set<unknown>()
 	private readonly watched = new WeakSet<object>()
 	private state: SignalsBridgeState = { snapshot: null, error: null, at: null }
-	/** Profile token the cached state belongs to. */
-	private stateToken: string | null = null
 	private lastComparable = ''
 	private timer: unknown = null
 	private reading: Promise<void> | null = null
@@ -250,9 +246,8 @@ export class SignalsMain {
 		this.childEnv = childEnvironment(options.env ?? process.env)
 	}
 
-	/** Current state for this profile (an empty one after a profile switch). */
+	/** Current state. Signals are global, so a profile switch keeps it. */
 	getState(): SignalsBridgeState {
-		if (this.stateToken !== this.options.profileToken()) return { snapshot: null, error: null, at: null }
 		return this.state
 	}
 
@@ -415,18 +410,16 @@ export class SignalsMain {
 	}
 
 	private async readOnce(): Promise<void> {
-		const token = this.options.profileToken()
 		let result: HelmResult<SignalsSnapshot>
 		try {
 			result = await this.options.request<SignalsSnapshot>('GET', '/signals')
 		} catch (error) {
 			result = { error: errorText(error) }
 		}
-		// A profile switch landed while reading: this answer belongs to the old profile.
-		if (this.stopped || token !== this.options.profileToken()) return
-		const previous = this.stateToken === token ? this.state : { snapshot: null, error: null, at: null }
+		if (this.stopped) return
+		const previous = this.state
 		if (result.data !== undefined && isSnapshot(result.data)) {
-			this.setState(token, { snapshot: result.data, error: null, at: this.now() })
+			this.setState({ snapshot: result.data, error: null, at: this.now() })
 		} else {
 			const error =
 				result.data !== undefined
@@ -434,16 +427,14 @@ export class SignalsMain {
 					: result.status === undefined
 						? SIGNALS_UNREACHABLE
 						: plain(result.error)
-			this.setState(token, { snapshot: previous.snapshot, error, at: previous.at })
+			this.setState({ snapshot: previous.snapshot, error, at: previous.at })
 		}
 	}
 
-	private setState(token: string, state: SignalsBridgeState): void {
+	private setState(state: SignalsBridgeState): void {
 		this.state = state
-		this.stateToken = token
 		// generatedAt and `at` advance every read; pushing on them would push every 3 s.
 		const comparable = JSON.stringify({
-			token,
 			error: state.error,
 			snapshot: state.snapshot ? { ...state.snapshot, generatedAt: '' } : null,
 		})

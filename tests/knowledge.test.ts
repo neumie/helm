@@ -262,7 +262,7 @@ test('migrations 34-36 preserve exact evidence, block unfrozen candidates, and b
 		const after = new Database(dbPath, { readonly: true })
 		assert.equal(
 			(after.prepare('SELECT MAX(version) AS version FROM schema_version').get() as { version: number }).version,
-			37,
+			MIGRATIONS.at(-1)?.version,
 		)
 		const names = new Set(
 			(

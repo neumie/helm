@@ -915,4 +915,147 @@ CREATE TABLE IF NOT EXISTS signal_sources (
 );
 `,
 	},
+	{
+		// Signals are global, not per Helm profile: one inbox for Jakub. Rebuild the three tables
+		// without profile_id. A profile that never saw a thread inserted its own fresh `new` copy, so
+		// per thread_key the copy that saw the newest foreign activity wins, then the one handed to an
+		// agent (its CLI id keeps working), then the one Jakub handled furthest (done > snoozed > seen
+		// > new), then the latest update. A dropped copy's agent handoff, note and routing carry over
+		// when the kept row has none. Events of dropped duplicates move to the kept row with their
+		// seq, and the AUTOINCREMENT high-water marks carry over so cursors and ids never go back.
+		version: 38,
+		sql: `
+CREATE TABLE signal_threads_v38 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_key TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('github','mail')),
+  kind TEXT NOT NULL,
+  reasons TEXT NOT NULL DEFAULT '[]',
+  ref TEXT NOT NULL,
+  full_ref TEXT NOT NULL,
+  title TEXT NOT NULL,
+  head TEXT NOT NULL,
+  actor TEXT,
+  url TEXT,
+  repo TEXT,
+  number INTEGER,
+  branch TEXT,
+  state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','seen','snoozed','done')),
+  owner TEXT NOT NULL DEFAULT 'jakub' CHECK (owner IN ('jakub','managed')),
+  snoozed_until TEXT,
+  activity_key TEXT NOT NULL,
+  last_activity_at TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  missed_polls INTEGER NOT NULL DEFAULT 0,
+  closed_reason TEXT,
+  note TEXT,
+  note_at TEXT,
+  managed_by TEXT,
+  routed_agent TEXT,
+  routed_how TEXT,
+  routed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO signal_threads_v38 (
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, created_at, updated_at
+)
+SELECT
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, created_at, updated_at
+FROM signal_threads t
+WHERE t.id = (
+  SELECT t2.id FROM signal_threads t2 WHERE t2.thread_key = t.thread_key
+  ORDER BY t2.last_activity_at DESC,
+    t2.owner = 'managed' DESC,
+    CASE t2.state WHEN 'done' THEN 3 WHEN 'snoozed' THEN 2 WHEN 'seen' THEN 1 ELSE 0 END DESC,
+    t2.updated_at DESC, t2.id DESC
+  LIMIT 1
+);
+UPDATE signal_threads_v38 SET
+  owner = 'managed',
+  managed_by = (
+    SELECT d.managed_by FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.owner = 'managed'
+    ORDER BY d.updated_at DESC, d.id DESC LIMIT 1
+  )
+WHERE owner = 'jakub' AND EXISTS (
+  SELECT 1 FROM signal_threads d WHERE d.thread_key = signal_threads_v38.thread_key AND d.owner = 'managed'
+);
+UPDATE signal_threads_v38 SET
+  note = (
+    SELECT d.note FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.note IS NOT NULL
+    ORDER BY d.note_at DESC, d.id DESC LIMIT 1
+  ),
+  note_at = (
+    SELECT d.note_at FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.note IS NOT NULL
+    ORDER BY d.note_at DESC, d.id DESC LIMIT 1
+  )
+WHERE note IS NULL AND EXISTS (
+  SELECT 1 FROM signal_threads d WHERE d.thread_key = signal_threads_v38.thread_key AND d.note IS NOT NULL
+);
+UPDATE signal_threads_v38 SET
+  routed_agent = (
+    SELECT d.routed_agent FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.routed_at IS NOT NULL
+    ORDER BY d.routed_at DESC, d.id DESC LIMIT 1
+  ),
+  routed_how = (
+    SELECT d.routed_how FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.routed_at IS NOT NULL
+    ORDER BY d.routed_at DESC, d.id DESC LIMIT 1
+  ),
+  routed_at = (
+    SELECT d.routed_at FROM signal_threads d
+    WHERE d.thread_key = signal_threads_v38.thread_key AND d.routed_at IS NOT NULL
+    ORDER BY d.routed_at DESC, d.id DESC LIMIT 1
+  )
+WHERE routed_at IS NULL AND EXISTS (
+  SELECT 1 FROM signal_threads d WHERE d.thread_key = signal_threads_v38.thread_key AND d.routed_at IS NOT NULL
+);
+CREATE TABLE signal_events_v38 (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}',
+  at TEXT NOT NULL
+);
+INSERT INTO signal_events_v38 (seq, thread_id, type, detail, at)
+SELECT e.seq, k.id, e.type, e.detail, e.at
+FROM signal_events e
+JOIN signal_threads t ON t.id = e.thread_id
+JOIN signal_threads_v38 k ON k.thread_key = t.thread_key;
+CREATE TABLE signal_sources_v38 (
+  source TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  detail TEXT,
+  last_poll_at TEXT,
+  last_ok_at TEXT
+);
+INSERT INTO signal_sources_v38 (source, status, detail, last_poll_at, last_ok_at)
+SELECT source, status, detail, last_poll_at, last_ok_at
+FROM signal_sources s
+WHERE s.rowid = (
+  SELECT s2.rowid FROM signal_sources s2 WHERE s2.source = s.source
+  ORDER BY s2.last_poll_at IS NULL, s2.last_poll_at DESC LIMIT 1
+);
+DELETE FROM sqlite_sequence WHERE name IN ('signal_threads_v38', 'signal_events_v38');
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'signal_threads_v38', seq FROM sqlite_sequence WHERE name = 'signal_threads';
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'signal_events_v38', seq FROM sqlite_sequence WHERE name = 'signal_events';
+DROP TABLE signal_threads;
+DROP TABLE signal_events;
+DROP TABLE signal_sources;
+ALTER TABLE signal_threads_v38 RENAME TO signal_threads;
+ALTER TABLE signal_events_v38 RENAME TO signal_events;
+ALTER TABLE signal_sources_v38 RENAME TO signal_sources;
+CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at);
+`,
+	},
 ]

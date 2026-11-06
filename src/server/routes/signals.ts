@@ -1,7 +1,7 @@
 // Signals HTTP surface (`/api/signals/*`): the snapshot the Signals column and `helm signal`
 // read, per-thread state/owner/note/routing writes, a long-poll change feed for the dispatcher,
-// and a coalesced manual poll trigger. Mounted from api.ts; the request-scoped profile is the
-// active one (api.ts wraps every request in `db.runInProfile`).
+// and a coalesced manual poll trigger. Mounted from api.ts. Signals are global: the active Helm
+// profile never changes what these routes read or write.
 
 import { Hono } from 'hono'
 import type { Context } from 'hono'
@@ -80,8 +80,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const signalsBody = bodyLimit({ maxSize: MAX_SIGNAL_BODY_BYTES })
 	const now = deps?.now ?? (() => new Date())
 	const eventPollMs = deps?.eventPollMs ?? DEFAULT_EVENT_POLL_MS
-	// Bind the request's tenant once, so a profile switch during a long poll cannot redirect it.
-	const storeFor = (): SignalStore => db.forProfile(db.currentProfileId()).signals
+	const storeFor = (): SignalStore => db.signals
 
 	const parseBody = async <T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> => {
 		try {

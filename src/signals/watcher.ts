@@ -1,8 +1,7 @@
 // Signals poller: one independent loop per source (GitHub, Apple Mail), each single-flight with
 // its own timer. Unlike the deploy/plan observers it is NOT gated by the task sidebar watch:
-// Signals must keep working with the app closed. Each tick captures the active profile's store
-// before its first await, so a profile switch mid-tick still lands results in the profile that
-// was active when the tick began.
+// Signals must keep working with the app closed. Signals are global (one inbox for Jakub across
+// every Helm profile), so a profile switch never changes where a poll lands.
 
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
@@ -25,7 +24,6 @@ export interface SignalReader {
 }
 
 export interface SignalsWatcherDeps {
-	activeProfileId: () => string
 	github?: SignalReader
 	mail?: SignalReader
 	now?: () => Date
@@ -193,9 +191,7 @@ export class SignalsWatcher {
 	}
 
 	private async runPoll(loop: SourceLoop, signal: AbortSignal): Promise<void> {
-		// Bind the tenant before any await: a profile switch mid-tick must not redirect results.
-		const profileId = this.deps.activeProfileId()
-		const store = this.db.forProfile(profileId).signals
+		const store = this.db.signals
 		const reader = loop.reader
 		if (!this.isEnabled(loop.source) || reader === undefined) {
 			store.setSourceHealth(loop.source, 'disabled', null, this.now(), false)
@@ -216,10 +212,7 @@ export class SignalsWatcher {
 		if (read.result && read.result.source === loop.source) {
 			const counts = store.applyPoll(read.result, now)
 			if (counts.created + counts.renewed + counts.gone > 0) {
-				log.info(
-					'signals',
-					`${loop.source}: ${counts.created} new, ${counts.renewed} renewed, ${counts.gone} gone (profile ${profileId})`,
-				)
+				log.info('signals', `${loop.source}: ${counts.created} new, ${counts.renewed} renewed, ${counts.gone} gone`)
 			}
 		}
 		const { status, detail } = read.health

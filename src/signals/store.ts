@@ -1,4 +1,4 @@
-// Profile-bound Signals persistence: one row per external thread, an append-only change log
+// Global Signals persistence: one row per external thread, an append-only change log
 // and per-source poll health. Every value a poller hands in is untrusted third-party text:
 // it is control/bidi stripped and bounded here, before anything is persisted or served.
 
@@ -28,7 +28,7 @@ import {
 	type SignalUpdate,
 } from './contract.js'
 
-/** Newest events kept per profile; older ones are pruned after each write. */
+/** Newest events kept; older ones are pruned after each write. */
 export const SIGNAL_EVENT_RETENTION = 5000
 /** Upper bound of one `list` read. */
 export const SIGNAL_LIST_CAP = 300
@@ -67,7 +67,6 @@ export interface SignalApplyResult {
 
 interface ThreadRow {
 	id: number
-	profile_id: string
 	thread_key: string
 	source: string
 	kind: string
@@ -282,14 +281,8 @@ function headValues(observation: SignalObservation): Record<(typeof HEAD_COLUMNS
 }
 
 export class SignalStore {
-	constructor(
-		private readonly db: Database.Database,
-		private readonly profile: string | (() => string) = 'work',
-	) {}
-
-	private get profileId(): string {
-		return typeof this.profile === 'function' ? this.profile() : this.profile
-	}
+	/** Signals are global: one inbox for Jakub across every Helm profile (never tenant scoped). */
+	constructor(private readonly db: Database.Database) {}
 
 	transaction<T>(fn: () => T): T {
 		return this.db.transaction(fn)()
@@ -313,11 +306,10 @@ export class SignalStore {
 		return this.transaction(() => {
 			const counts: SignalApplyResult = { created: 0, renewed: 0, gone: 0 }
 			const existing = new Map(
-				(
-					this.db
-						.prepare('SELECT * FROM signal_threads WHERE profile_id = ? AND source = ?')
-						.all(this.profileId, source) as ThreadRow[]
-				).map(row => [row.thread_key, row]),
+				(this.db.prepare('SELECT * FROM signal_threads WHERE source = ?').all(source) as ThreadRow[]).map(row => [
+					row.thread_key,
+					row,
+				]),
 			)
 			for (const observation of observations.values()) {
 				const row = existing.get(observation.threadKey)
@@ -354,8 +346,8 @@ export class SignalStore {
 	}
 
 	list(filter: SignalListFilter, now: Date): SignalThread[] {
-		const where = ['profile_id = ?']
-		const params: Array<string | number> = [this.profileId]
+		const where: string[] = []
+		const params: Array<string | number> = []
 		if (filter.owner) {
 			where.push('owner = ?')
 			params.push(filter.owner)
@@ -376,7 +368,7 @@ export class SignalStore {
 		params.push(SIGNAL_LIST_CAP)
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM signal_threads WHERE ${where.join(' AND ')} ORDER BY last_activity_at DESC, id DESC LIMIT ?`,
+				`SELECT * FROM signal_threads ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY last_activity_at DESC, id DESC LIMIT ?`,
 			)
 			.all(...params) as ThreadRow[]
 		return rows.map(toSignalThread)
@@ -388,9 +380,9 @@ export class SignalStore {
 	}
 
 	getByThreadKey(threadKey: string): SignalThread | null {
-		const row = this.db
-			.prepare('SELECT * FROM signal_threads WHERE profile_id = ? AND thread_key = ?')
-			.get(this.profileId, threadKey) as ThreadRow | undefined
+		const row = this.db.prepare('SELECT * FROM signal_threads WHERE thread_key = ?').get(threadKey) as
+			| ThreadRow
+			| undefined
 		return row ? toSignalThread(row) : null
 	}
 
@@ -442,7 +434,7 @@ export class SignalStore {
 				.prepare(
 					`UPDATE signal_threads SET state = ?, owner = ?, snoozed_until = ?, closed_reason = ?, managed_by = ?,
 					   missed_polls = ?, updated_at = ?
-					 WHERE profile_id = ? AND id = ?`,
+					 WHERE id = ?`,
 				)
 				.run(
 					next.state,
@@ -452,7 +444,6 @@ export class SignalStore {
 					next.managed_by,
 					reopenedByHand ? 0 : row.missed_polls,
 					at,
-					this.profileId,
 					id,
 				)
 			if (next.owner !== row.owner) {
@@ -473,8 +464,8 @@ export class SignalStore {
 		return this.transaction(() => {
 			const row = this.requireRow(id)
 			this.db
-				.prepare('UPDATE signal_threads SET note = ?, note_at = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
-				.run(text, at, at, this.profileId, id)
+				.prepare('UPDATE signal_threads SET note = ?, note_at = ?, updated_at = ? WHERE id = ?')
+				.run(text, at, at, id)
 			this.insertEvent(id, 'note', { owner: row.owner, note: text }, at)
 			this.pruneEvents()
 			return toSignalThread(this.requireRow(id))
@@ -492,9 +483,9 @@ export class SignalStore {
 			this.db
 				.prepare(
 					`UPDATE signal_threads SET routed_agent = ?, routed_how = ?, routed_at = ?, state = ?, updated_at = ?
-					 WHERE profile_id = ? AND id = ?`,
+					 WHERE id = ?`,
 				)
-				.run(agent, routed.how, at, state, at, this.profileId, id)
+				.run(agent, routed.how, at, state, at, id)
 			this.insertEvent(id, 'routed', { owner: row.owner, agent, how: routed.how, state }, at)
 			this.pruneEvents()
 			return toSignalThread(this.requireRow(id))
@@ -507,9 +498,7 @@ export class SignalStore {
 		return this.transaction(() => {
 			const row = this.requireRow(id)
 			if (row.state !== 'new') return toSignalThread(row)
-			this.db
-				.prepare("UPDATE signal_threads SET state = 'seen', updated_at = ? WHERE profile_id = ? AND id = ?")
-				.run(at, this.profileId, id)
+			this.db.prepare("UPDATE signal_threads SET state = 'seen', updated_at = ? WHERE id = ?").run(at, id)
 			this.insertEvent(id, 'state', { owner: row.owner, from: 'new', to: 'seen' }, at)
 			this.pruneEvents()
 			return toSignalThread(this.requireRow(id))
@@ -520,10 +509,8 @@ export class SignalStore {
 		const after = Number.isSafeInteger(afterSeq) && afterSeq > 0 ? afterSeq : 0
 		const bounded = Math.max(1, Math.min(Math.trunc(limit) || 1, 1000))
 		const rows = this.db
-			.prepare(
-				'SELECT seq, thread_id, type, detail, at FROM signal_events WHERE profile_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?',
-			)
-			.all(this.profileId, after, bounded) as EventRow[]
+			.prepare('SELECT seq, thread_id, type, detail, at FROM signal_events WHERE seq > ? ORDER BY seq ASC LIMIT ?')
+			.all(after, bounded) as EventRow[]
 		return rows.flatMap(row =>
 			oneOf(SIGNAL_EVENT_TYPES, row.type)
 				? [{ seq: row.seq, threadId: row.thread_id, type: row.type, detail: parseDetail(row.detail), at: row.at }]
@@ -531,10 +518,7 @@ export class SignalStore {
 		)
 	}
 
-	/**
-	 * Newest event seq across ALL profiles. `seq` is one AUTOINCREMENT shared by every profile, so a
-	 * cursor taken from this never replays another profile's older events after a profile switch.
-	 */
+	/** Newest event seq (the cursor for `events`). */
 	latestSeq(): number {
 		const row = this.db.prepare('SELECT MAX(seq) AS seq FROM signal_events').get() as { seq: number | null } | undefined
 		return row?.seq ?? 0
@@ -555,15 +539,15 @@ export class SignalStore {
 		const polled = status === 'disabled' ? null : at
 		this.db
 			.prepare(
-				`INSERT INTO signal_sources (profile_id, source, status, detail, last_poll_at, last_ok_at)
-				 VALUES (?, ?, ?, ?, ?, ?)
-				 ON CONFLICT (profile_id, source) DO UPDATE SET
+				`INSERT INTO signal_sources (source, status, detail, last_poll_at, last_ok_at)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT (source) DO UPDATE SET
 				   status = excluded.status,
 				   detail = excluded.detail,
 				   last_poll_at = COALESCE(excluded.last_poll_at, signal_sources.last_poll_at),
 				   last_ok_at = COALESCE(excluded.last_ok_at, signal_sources.last_ok_at)`,
 			)
-			.run(this.profileId, source, status, text, polled, ok ? at : null)
+			.run(source, status, text, polled, ok ? at : null)
 	}
 
 	/** Health of every source; a source that never reported is disabled. */
@@ -571,8 +555,8 @@ export class SignalStore {
 		const rows = new Map(
 			(
 				this.db
-					.prepare('SELECT source, status, detail, last_poll_at, last_ok_at FROM signal_sources WHERE profile_id = ?')
-					.all(this.profileId) as SourceRow[]
+					.prepare('SELECT source, status, detail, last_poll_at, last_ok_at FROM signal_sources')
+					.all() as SourceRow[]
 			).map(row => [row.source, row]),
 		)
 		return SIGNAL_SOURCES.map(source => {
@@ -591,9 +575,7 @@ export class SignalStore {
 
 	private row(id: number): ThreadRow | null {
 		if (!Number.isSafeInteger(id) || id <= 0) return null
-		const row = this.db
-			.prepare('SELECT * FROM signal_threads WHERE profile_id = ? AND id = ?')
-			.get(this.profileId, id) as ThreadRow | undefined
+		const row = this.db.prepare('SELECT * FROM signal_threads WHERE id = ?').get(id) as ThreadRow | undefined
 		return row ?? null
 	}
 
@@ -608,12 +590,11 @@ export class SignalStore {
 		const info = this.db
 			.prepare(
 				`INSERT INTO signal_threads (
-				   profile_id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+				   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
 				   state, owner, activity_key, last_activity_at, active, missed_polls, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?)`,
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?)`,
 			)
 			.run(
-				this.profileId,
 				observation.threadKey,
 				observation.source,
 				heads.kind,
@@ -681,8 +662,8 @@ export class SignalStore {
 		if (visible) update.updated_at = at
 		const assignments = Object.keys(update).map(column => `${column} = ?`)
 		this.db
-			.prepare(`UPDATE signal_threads SET ${assignments.join(', ')} WHERE profile_id = ? AND id = ?`)
-			.run(...Object.values(update), this.profileId, row.id)
+			.prepare(`UPDATE signal_threads SET ${assignments.join(', ')} WHERE id = ?`)
+			.run(...Object.values(update), row.id)
 		if (newer) {
 			const detail = { owner: row.owner, kind: observation.kind, head: observation.head, state }
 			this.insertEvent(row.id, 'activity', detail, at)
@@ -696,9 +677,7 @@ export class SignalStore {
 	private missThread(row: ThreadRow, goneReason: string, at: string): boolean {
 		const missed = row.missed_polls + 1
 		if (missed < SIGNAL_GONE_AFTER_MISSES) {
-			this.db
-				.prepare('UPDATE signal_threads SET missed_polls = ? WHERE profile_id = ? AND id = ?')
-				.run(missed, this.profileId, row.id)
+			this.db.prepare('UPDATE signal_threads SET missed_polls = ? WHERE id = ?').run(missed, row.id)
 			return false
 		}
 		// Managed threads stay with their agent; only Jakub's open threads close themselves.
@@ -707,14 +686,13 @@ export class SignalStore {
 		this.db
 			.prepare(
 				`UPDATE signal_threads SET missed_polls = ?, active = 0, state = ?, closed_reason = ?, updated_at = ?
-				 WHERE profile_id = ? AND id = ?`,
+				 WHERE id = ?`,
 			)
 			.run(
 				missed,
 				close ? 'done' : row.state,
 				close ? goneReason : row.closed_reason,
 				close ? at : row.updated_at,
-				this.profileId,
 				row.id,
 			)
 		this.insertEvent(row.id, 'gone', { owner: row.owner, reason: goneReason, state: close ? 'done' : row.state }, at)
@@ -737,19 +715,17 @@ export class SignalStore {
 		this.db
 			.prepare(
 				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, updated_at = ?
-				 WHERE profile_id = ? AND id = ?`,
+				 WHERE id = ?`,
 			)
-			.run(goneReason, at, this.profileId, row.id)
+			.run(goneReason, at, row.id)
 		this.insertEvent(row.id, 'gone', { owner: row.owner, reason: goneReason, state: 'done', from: row.state }, at)
 	}
 
 	/** The reason of the thread's latest `gone` event, while the event log still holds it. */
 	private lastGoneReason(threadId: number): string {
 		const row = this.db
-			.prepare(
-				"SELECT detail FROM signal_events WHERE profile_id = ? AND thread_id = ? AND type = 'gone' ORDER BY seq DESC LIMIT 1",
-			)
-			.get(this.profileId, threadId) as { detail: string } | undefined
+			.prepare("SELECT detail FROM signal_events WHERE thread_id = ? AND type = 'gone' ORDER BY seq DESC LIMIT 1")
+			.get(threadId) as { detail: string } | undefined
 		const reason = row ? parseDetail(row.detail).reason : null
 		return typeof reason === 'string' && reason !== '' ? reason : 'no longer reported'
 	}
@@ -757,9 +733,9 @@ export class SignalStore {
 	private wakeSnoozedAt(at: string): number {
 		const rows = this.db
 			.prepare(
-				"SELECT id, owner, active FROM signal_threads WHERE profile_id = ? AND state = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?",
+				"SELECT id, owner, active FROM signal_threads WHERE state = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?",
 			)
-			.all(this.profileId, at) as Array<{ id: number; owner: string; active: number }>
+			.all(at) as Array<{ id: number; owner: string; active: number }>
 		for (const row of rows) {
 			// Gone while snoozed: Jakub's thread closes instead of waking into Needs you, since no
 			// later poll would ever close it (missThread only touches active threads).
@@ -768,10 +744,8 @@ export class SignalStore {
 				continue
 			}
 			this.db
-				.prepare(
-					"UPDATE signal_threads SET state = 'new', snoozed_until = NULL, updated_at = ? WHERE profile_id = ? AND id = ?",
-				)
-				.run(at, this.profileId, row.id)
+				.prepare("UPDATE signal_threads SET state = 'new', snoozed_until = NULL, updated_at = ? WHERE id = ?")
+				.run(at, row.id)
 			this.insertEvent(row.id, 'state', { owner: row.owner, from: 'snoozed', to: 'new' }, at)
 		}
 		return rows.length
@@ -783,15 +757,15 @@ export class SignalStore {
 			bounded[key] = typeof value === 'string' ? clean(value, SIGNAL_LIMITS.detail) : value
 		}
 		this.db
-			.prepare('INSERT INTO signal_events (profile_id, thread_id, type, detail, at) VALUES (?, ?, ?, ?, ?)')
-			.run(this.profileId, threadId, type, JSON.stringify(bounded), at)
+			.prepare('INSERT INTO signal_events (thread_id, type, detail, at) VALUES (?, ?, ?, ?)')
+			.run(threadId, type, JSON.stringify(bounded), at)
 	}
 
 	private pruneEvents(): void {
 		const floor = this.db
-			.prepare('SELECT seq FROM signal_events WHERE profile_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?')
-			.get(this.profileId, SIGNAL_EVENT_RETENTION) as { seq: number } | undefined
+			.prepare('SELECT seq FROM signal_events ORDER BY seq DESC LIMIT 1 OFFSET ?')
+			.get(SIGNAL_EVENT_RETENTION) as { seq: number } | undefined
 		if (!floor) return
-		this.db.prepare('DELETE FROM signal_events WHERE profile_id = ? AND seq <= ?').run(this.profileId, floor.seq)
+		this.db.prepare('DELETE FROM signal_events WHERE seq <= ?').run(floor.seq)
 	}
 }

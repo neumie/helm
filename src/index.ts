@@ -102,9 +102,8 @@ async function main() {
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
 	if (knowledge) knowledgeDelivery = new KnowledgeOutboxDrainer(db, knowledge, registeredProfileIds)
-	// Signals poll the active profile whenever enabled; not gated by the task sidebar watch.
+	// Signals are global (not per profile) and poll whenever enabled; not gated by the task sidebar watch.
 	const signalsWatcher = new SignalsWatcher(config, db, {
-		activeProfileId: () => profiles.activeProfile().id,
 		github: createGithubSignalReader(config),
 		mail: createMailSignalReader(config),
 	})

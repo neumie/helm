@@ -685,9 +685,9 @@ async function runWatch(parsed: ParsedArgs, deps: SignalCliDeps): Promise<number
 				if (owner && !(await eventMatchesOwner(event, owner, readOwner))) continue
 				await deps.out(JSON.stringify({ t: 'event', ...event }))
 			}
-			// The cursor is the last event read. `page.seq` may be the daemon's global high-water
-			// mark (events are per profile, seqs are not), so jump to it only on an empty page:
-			// with events, a page cut at its limit would otherwise skip the rest.
+			// The cursor is the last event read. `page.seq` is the daemon's high-water mark, so
+			// jump to it only on an empty page: with events, a page cut at its limit would
+			// otherwise skip the rest.
 			if (events.length === 0 && typeof page?.seq === 'number' && page.seq > seq) seq = page.seq
 		} catch (error) {
 			if (aborted()) break
