@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-state.js'
 import { REVIEW_WIRE_BYTES, envelopeSchema } from './protocol.js'
 import type { ReviewCommand, ReviewConnection } from './protocol.js'
+import { describeReviewFailure, refuse } from './refusal.js'
 
 export interface CallerBinding {
 	id: string
@@ -183,7 +184,8 @@ export class ReviewControlServer {
 				fail('Use one framed review command per connection.')
 				return
 			}
-			const operation = this.handle(data.subarray(0, -1), abort.signal)
+			const context = { action: 'unparsed' }
+			const operation = this.handle(data.subarray(0, -1), abort.signal, context)
 			this.active.add(operation)
 			void operation
 				.then(
@@ -193,32 +195,41 @@ export class ReviewControlServer {
 						if (encoded.length > REVIEW_WIRE_BYTES) fail('Review response exceeds its byte limit.')
 						else socket.end(encoded)
 					},
-					() =>
-						fail(
-							'Review operation unavailable. Check the connection, active profile, and document; do not replay uncertain feedback.',
-						),
+					error => {
+						// One diagnosable line per failure; never tokens, feedback or document text.
+						const { reply, log } = describeReviewFailure(error)
+						console.warn(`[helm] review: ${context.action} failed: ${log}`)
+						fail(reply)
+					},
 				)
 				.finally(() => this.active.delete(operation))
 		})
 	}
-	private async handle(bytes: Buffer, signal: AbortSignal): Promise<unknown> {
+	private async handle(bytes: Buffer, signal: AbortSignal, context: { action: string }): Promise<unknown> {
 		const message = envelopeSchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)))
-		if (this.stopping || signal.aborted || message.epoch !== this.epoch) throw new Error('Review host changed.')
+		context.action = message.command.action
+		if (this.stopping) throw refuse('Helm is closing its review host. Nothing was done.')
+		if (signal.aborted) throw refuse('The review command was cancelled before it ran.')
+		if (message.epoch !== this.epoch)
+			throw refuse(
+				'Helm restarted its review host since this handle was made. Nothing was done; open the document again.',
+			)
 		if (!message.id) {
-			if (message.owner || !equal(message.token, this.token)) throw new Error('Invalid control authority.')
+			if (message.owner || !equal(message.token, this.token))
+				throw refuse('The review discovery token is not current. Nothing was done; connect again.')
 			if (message.command.action === 'status') return { version: 1, epoch: this.epoch, ...this.backend.status() }
-			if (message.command.action !== 'connect') throw new Error('Connect first.')
+			if (message.command.action !== 'connect') throw refuse('Connect first; nothing was done.')
 			for (const binding of this.bindings.values())
 				if (binding.operations === 0 && !this.backend.current(binding)) await this.retire(binding)
 			if (this.bindings.size + this.pendingConnections >= 64 || this.pendingConnections >= 8)
-				throw new Error('Connection capacity exhausted.')
+				throw refuse('Too many review connections are open. Disconnect unused ones; nothing was done.')
 			this.pendingConnections++
 			let owner: CallerBinding | null = null
 			let published: Binding | null = null
 			try {
 				owner = await this.backend.connect(message.command)
 				if (this.stopping || signal.aborted || !this.backend.current(owner))
-					throw new Error('Connection admission changed.')
+					throw refuse('The active Helm profile changed while connecting. Nothing was opened; connect again.')
 				const binding: Binding = {
 					...owner,
 					token: randomBytes(32).toString('hex'),
@@ -237,7 +248,7 @@ export class ReviewControlServer {
 				await writePrivateJson(binding.file, descriptor)
 				await this.capture(binding.file)
 				if (this.stopping || signal.aborted || !this.backend.current(owner))
-					throw new Error('Connection admission changed.')
+					throw refuse('The active Helm profile changed while connecting. Nothing was opened; connect again.')
 				this.bindings.set(owner.id, binding)
 				return { connection: binding.file, id: owner.id, owner: owner.owner }
 			} catch (error) {
@@ -256,8 +267,10 @@ export class ReviewControlServer {
 			message.command.action === 'connect' ||
 			!this.backend.current(binding)
 		)
-			throw new Error('Connection authority expired.')
-		if (binding.operations >= 2) throw new Error('Connection already has two operations.')
+			throw refuse(
+				'Review connection unavailable: it is no longer valid (Helm restarted, the profile changed, or it was disconnected). Nothing was done; open the document again.',
+			)
+		if (binding.operations >= 2) throw refuse('This connection already has two operations running. Nothing was done.')
 		binding.operations++
 		try {
 			const value = await this.backend.command(binding, message.command, signal)

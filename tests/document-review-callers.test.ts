@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmod, lstat, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -18,6 +18,7 @@ import {
 	receiptSchema,
 	sessionSchema,
 } from '../src/document-review/protocol.js'
+import { failureCause, gitRootRefusal, isReviewRefusal } from '../src/document-review/refusal.js'
 import type { ReviewFeedback } from '../src/document-review/types.js'
 import { callerFixture } from './helpers/document-review-caller'
 const run = promisify(execFile)
@@ -239,11 +240,11 @@ test('private discovery rejects links, insecure state, foreign authority, single
 		await assert.rejects(new ReviewControlServer(f.root, f.backend).start(), /owns|EEXIST/)
 		await assert.rejects(
 			callReview({ ...discovery, token: '0'.repeat(64) }, { action: 'status' }, z.unknown()),
-			/unavailable/,
+			/discovery token is not current/,
 		)
 		await assert.rejects(
 			callReview({ ...discovery, epoch: randomUUID() }, { action: 'status' }, z.unknown()),
-			/unavailable/,
+			/Helm restarted its review host/,
 		)
 		const a = await f.connect()
 		await chmod(a.connection, 0o644)
@@ -468,4 +469,139 @@ test('malformed, oversized, multi-frame and partial wire requests admit no calle
 	} finally {
 		await f.close()
 	}
+})
+
+async function captureReviewLog<T>(work: () => Promise<T>): Promise<{ value: T; lines: string[] }> {
+	const lines: string[] = []
+	const original = console.warn
+	console.warn = (...args: unknown[]) => {
+		const line = args.map(String).join(' ')
+		if (line.startsWith('[helm] review:')) lines.push(line)
+		else original(...args)
+	}
+	try {
+		return { value: await work(), lines }
+	} finally {
+		console.warn = original
+	}
+}
+
+test('a refused open names its real cause on the wire and in one log line, with no token or document text', async () => {
+	const f = await callerFixture()
+	try {
+		const a = await f.connect('claude')
+		// The 2026-11-09 report: an agent opened `.helm-pr-969-prehled-zmen.md` and saw only the catch-all.
+		const hidden = join(f.workspace, '.helm-pr-969-prehled-zmen.md')
+		await writeFile(hidden, '# PRIVATE DOCUMENT CONTENT\n', { mode: 0o600 })
+		const refused = await captureReviewLog(() =>
+			callReview(a.authority, { action: 'open', file: hidden }, openedSchema).then(
+				() => assert.fail('a hidden file must stay refused'),
+				(error: Error) => error.message,
+			),
+		)
+		assert.match(refused.value, /\.helm-pr-969-prehled-zmen\.md is a hidden file/)
+		assert.match(refused.value, /for example helm-pr-969-prehled-zmen\.md/)
+		assert.doesNotMatch(refused.value, /do not replay/)
+		assert.equal(refused.lines.length, 1)
+		assert.match(
+			refused.lines[0] as string,
+			/^\[helm\] review: open failed: \.helm-pr-969-prehled-zmen\.md is a hidden/,
+		)
+		assert.doesNotMatch(refused.lines.join('\n'), /PRIVATE DOCUMENT CONTENT/)
+		assert.equal(f.opens(), 0)
+
+		for (const [file, reason] of [
+			[join(f.workspace, 'missing.md'), /missing\.md/],
+			[join(f.workspace, 'notes.txt'), /not a \.md, \.jsx or \.tsx file/],
+			[join(f.workspace, '.claude', 'plan.md'), /inside the hidden folder \.claude/],
+		] as const) {
+			if (file.endsWith('notes.txt')) await writeFile(file, 'x', { mode: 0o600 })
+			if (file.includes('.claude')) {
+				await run('mkdir', ['-p', dirname(file)])
+				await writeFile(file, '# x\n', { mode: 0o600 })
+			}
+			await assert.rejects(callReview(a.authority, { action: 'open', file }, openedSchema), reason)
+		}
+		const loose = join(f.workspace, 'loose.md')
+		await writeFile(loose, '# x\n', { mode: 0o666 })
+		await chmod(loose, 0o666)
+		await assert.rejects(callReview(a.authority, { action: 'open', file: loose }, openedSchema), /chmod go-w/)
+
+		// A failure that may follow an effect keeps the do-not-replay warning; the log still says why.
+		const uncertain = await captureReviewLog(() =>
+			callReview(a.authority, { action: 'ack', requestId: randomUUID() }, z.literal(true)).then(
+				() => assert.fail('an unknown request cannot be acknowledged'),
+				(error: Error) => error.message,
+			),
+		)
+		assert.match(uncertain.value, /do not replay uncertain feedback/)
+		assert.equal(uncertain.lines.length, 1)
+		assert.match(uncertain.lines[0] as string, /^\[helm\] review: ack failed: \S/)
+
+		// A stale handle after a Helm restart says so instead of the catch-all.
+		await assert.rejects(
+			callReview({ ...a.authority, epoch: randomUUID() }, { action: 'status' }, sessionSchema),
+			/Helm restarted its review host/,
+		)
+		f.fence()
+		await assert.rejects(callReview(a.authority, { action: 'status' }, sessionSchema), /no longer valid/)
+	} finally {
+		await f.close()
+	}
+})
+
+test('a malformed frame logs only field paths, never the token it carried', async () => {
+	const f = await callerFixture()
+	try {
+		const discovery = await discoverReview(f.root)
+		const frame = `${JSON.stringify({ epoch: discovery.epoch, token: discovery.token, command: { action: 'bogus', file: 'SECRET-PATH' } })}\n`
+		const notJson = `{"token":"${discovery.token}",\n`
+		const { lines } = await captureReviewLog(async () => {
+			for (const value of [frame, notJson])
+				await new Promise<void>((resolve, reject) => {
+					const socket = createConnection(discovery.socket)
+					socket.on('error', reject)
+					socket.on('data', () => {})
+					socket.on('connect', () => socket.write(value))
+					socket.on('close', () => resolve())
+				})
+		})
+		assert.equal(lines.length, 2)
+		assert.match(lines[0] as string, /^\[helm\] review: unparsed failed: malformed command \(command\.action /)
+		assert.match(lines[1] as string, /^\[helm\] review: unparsed failed: unreadable command frame$/)
+		assert.doesNotMatch(lines.join('\n'), new RegExp(`${discovery.token}|SECRET-PATH|bogus`))
+		assert.deepEqual(f.sessions.list(f.workspace), [])
+	} finally {
+		await f.close()
+	}
+})
+
+test('git and read failures keep their real cause instead of a confident wrong reason', async () => {
+	const outside = await realpath(await mkdtemp('/tmp/hca-nogit-'))
+	try {
+		const notRepo = await run('git', ['-C', outside, 'rev-parse', '--show-toplevel']).then(
+			() => assert.fail('a temp folder is not a repository'),
+			error => gitRootRefusal(error, 'prehled.md'),
+		)
+		assert.ok(isReviewRefusal(notRepo))
+		assert.equal(notRepo.message, 'prehled.md is not inside a Git repository. Review opens repository files only.')
+	} finally {
+		await rm(outside, { recursive: true, force: true })
+	}
+	const timedOut = Object.assign(new Error('Command failed: git'), { killed: true, signal: 'SIGTERM', stderr: '' })
+	assert.match(
+		gitRootRefusal(timedOut, 'spec.md').message,
+		/^Git could not find the repository of spec\.md \(timed out\)/,
+	)
+	const dubious = Object.assign(new Error('Command failed'), {
+		code: 128,
+		stderr: "fatal: detected dubious ownership in repository at '/x'\nhint: ...",
+	})
+	assert.match(
+		gitRootRefusal(dubious, 'spec.md').message,
+		/\(fatal: detected dubious ownership in repository at '\/x'\)/,
+	)
+	const denied = Object.assign(new Error("EPERM: operation not permitted, open '/x/spec.md'\nmore"), { code: 'EPERM' })
+	assert.equal(failureCause(denied), "EPERM EPERM: operation not permitted, open '/x/spec.md'")
+	assert.equal(failureCause(Object.assign(new Error('x'), { stderr: 'a\u001b[31mb' })), 'a [31mb')
 })

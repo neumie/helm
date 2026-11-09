@@ -5,6 +5,8 @@ export const EDIT_HELP = `Usage: helm edit FILE
 
 Open a Markdown, JSX or TSX file in Helm and listen for feedback in THIS
 already-running agent conversation. No agent is launched or replaced.
+FILE must be a visible file (no leading dot in its name or folders) inside
+the Git repository you run this from; scratch or temp copies are refused.
 
 Example:
   helm edit docs/plans/example/spec.md
