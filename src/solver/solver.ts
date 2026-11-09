@@ -1,4 +1,5 @@
 import type { HelmConfig, ProjectConfig } from '../config.js'
+import type { ItemOkenaTerminals } from '../items/okena-terminals.js'
 import type { SolverEffort } from '../items/schema.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { ClaudeEvent } from '../types.js'
@@ -29,6 +30,10 @@ export interface SolveParams {
 	/** Stable Item/Task id used for logs, worktree naming, and persisted run state. */
 	taskId: string
 	taskTitle: string
+	/** The Item's short display name (AI-derived, task language), if any; display-only. */
+	taskDisplayName?: string | null
+	/** This Item's terminal ownership in its own profile; Okena records its solve terminal here by id. */
+	okenaTerminals?: ItemOkenaTerminals
 	solverConfig: HelmConfig['solver']
 	/** Emit candidate-sidecar instructions only for an admitted knowledge binding. */
 	knowledgeCandidatesEnabled?: boolean

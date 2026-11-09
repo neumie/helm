@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
+import type { ItemOkenaTerminals, OkenaTerminalBinding, OkenaTerminalRole } from '../../items/okena-terminals.js'
 import type { SolverWorkspace } from '../../solver/workspace.js'
 import { errorPhase, phaseError } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
@@ -79,6 +80,100 @@ function liveTerminalIds(layout: OkenaLayoutNode | null | undefined): string[] {
 	if (!layout) return []
 	if (layout.type === 'terminal') return layout.detached || !layout.terminal_id ? [] : [layout.terminal_id]
 	return layout.children.flatMap(liveTerminalIds)
+}
+
+type OkenaProject = OkenaState['projects'][number]
+
+export interface OwnedOkenaTerminal {
+	terminalId: string
+	/** True when this call adopted a legacy `[helm:<itemId>]` terminal and stored its binding. */
+	adopted: boolean
+}
+
+/** The Okena profile a client's requests go to, when the client (or test double) can say. */
+export function okenaProfileOf(client: OkenaClient): string | null {
+	const resolve = (client as { activeProfileId?: () => string | null }).activeProfileId
+	if (typeof resolve !== 'function') return null
+	try {
+		return resolve.call(client) ?? null
+	} catch {
+		return null
+	}
+}
+
+/** A binding names `project`'s live pane, in the same Okena profile when both sides know theirs. */
+function bindingIsLive(
+	bound: OkenaTerminalBinding,
+	project: OkenaProject,
+	liveIds: ReadonlySet<string>,
+	okenaProfileId: string | null,
+): boolean {
+	if (bound.projectId !== project.id || !liveIds.has(bound.terminalId)) return false
+	return !bound.okenaProfileId || !okenaProfileId || bound.okenaProfileId === okenaProfileId
+}
+
+/**
+ * Before ids were stored, Helm named its planning terminal `… [helm:<itemId>]`
+ * and found it by that suffix. An Item with NO plan binding in this project
+ * adopts such a live terminal once: the id is stored and the name is never
+ * parsed again there.
+ */
+function adoptLegacyPlanTerminal(
+	project: OkenaProject,
+	bindings: ItemOkenaTerminals,
+	liveIds: ReadonlySet<string>,
+	okenaProfileId: string | null,
+): string | null {
+	const suffix = `[helm:${bindings.itemId}]`
+	const entry = Object.entries(project.terminal_names ?? {}).find(
+		([terminalId, name]) => liveIds.has(terminalId) && name.trimEnd().endsWith(suffix),
+	)
+	if (!entry) return null
+	const [terminalId] = entry
+	if (!bindings.record('plan', { okenaProfileId, projectId: project.id, terminalId })) return null
+	log.info('okena', 'Adopted legacy planning terminal by its name suffix', {
+		itemId: bindings.itemId,
+		projectId: project.id,
+		terminalId,
+	})
+	return terminalId
+}
+
+/** This Item's live planning terminal in `project`: its plan binding, else a one-time legacy adoption. */
+export function ownedPlanTerminal(
+	project: OkenaProject,
+	bindings: ItemOkenaTerminals,
+	okenaProfileId: string | null,
+): OwnedOkenaTerminal | null {
+	const liveIds = new Set(liveTerminalIds(project.layout))
+	const bound = bindings.get('plan', project.id)
+	if (bound) {
+		return bindingIsLive(bound, project, liveIds, okenaProfileId)
+			? { terminalId: bound.terminalId, adopted: false }
+			: null
+	}
+	const adopted = adoptLegacyPlanTerminal(project, bindings, liveIds, okenaProfileId)
+	return adopted ? { terminalId: adopted, adopted: true } : null
+}
+
+/**
+ * The live terminal this Item owns in `project`, most recently taken first
+ * (e.g. a solve terminal after its planning terminal). Null when none of its
+ * bound terminals is still a pane there.
+ */
+export function ownedLiveTerminal(
+	project: OkenaProject,
+	bindings: ItemOkenaTerminals,
+	okenaProfileId: string | null,
+): (OwnedOkenaTerminal & { role: OkenaTerminalRole }) | null {
+	const liveIds = new Set(liveTerminalIds(project.layout))
+	for (const bound of bindings.list()) {
+		if (bindingIsLive(bound, project, liveIds, okenaProfileId))
+			return { terminalId: bound.terminalId, role: bound.role, adopted: false }
+	}
+	if (bindings.get('plan', project.id)) return null
+	const adopted = adoptLegacyPlanTerminal(project, bindings, liveIds, okenaProfileId)
+	return adopted ? { terminalId: adopted, role: 'plan', adopted: true } : null
 }
 
 export type OkenaBranchSource = 'local' | 'remote' | 'new' | 'unavailable'
@@ -503,15 +598,22 @@ export class OkenaWorktreeManager {
 		}
 	}
 
-	async findPlanTerminal(wtProjectId: string, itemId: string): Promise<string | null> {
+	/**
+	 * The live planning terminal this Item owns in `wtProjectId`, by id. Identity
+	 * is the stored binding plus a check that the id is still a live pane of that
+	 * project's layout; a closed or moved terminal is not reused. Terminal names
+	 * are display-only, except that an Item with no plan binding yet adopts a
+	 * legacy `… [helm:<itemId>]` terminal once (see `ownedPlanTerminal`).
+	 */
+	async findPlanTerminal(
+		wtProjectId: string,
+		bindings: ItemOkenaTerminals | undefined,
+	): Promise<OwnedOkenaTerminal | null> {
+		if (!bindings) return null
 		const state = await this.client.getState()
-		const wtProject = state.projects.find(p => p.id === wtProjectId)
-		const liveIds = new Set(liveTerminalIds(wtProject?.layout))
-		const ownership = `[helm:${itemId}]`
-		const entry = Object.entries(wtProject?.terminal_names ?? {}).find(
-			([terminalId, name]) => liveIds.has(terminalId) && name.endsWith(ownership),
-		)
-		return entry?.[0] ?? null
+		const project = state.projects.find(p => p.id === wtProjectId)
+		if (!project) return null
+		return ownedPlanTerminal(project, bindings, okenaProfileOf(this.client))
 	}
 
 	private async findOkenaProject(repoPath: string) {

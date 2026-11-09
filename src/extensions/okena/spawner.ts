@@ -7,7 +7,8 @@ import { formatTaskContext } from '../../task-context.js'
 import { taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { OkenaClient, okenaClientForProject } from './client.js'
-import { OkenaWorktreeManager } from './worktree.js'
+import { okenaTerminalName } from './terminal-name.js'
+import { OkenaWorktreeManager, okenaProfileOf } from './worktree.js'
 
 interface CancelledPlanningWorkspace extends Error {
 	sessionMayExist: true
@@ -49,12 +50,18 @@ export class OkenaSpawner implements Spawner {
 		// Materialize captured attachments before inspecting or mutating terminals.
 		const taskContext = params.onWorktreeReady(ensured.worktreePath)
 		if (signal?.aborted) throw taskCancelled()
-		const reusedTerminal = await worktrees.findPlanTerminal(ensured.wtProjectId, params.itemId)
+		const bindings = params.okenaTerminals
+		if (!bindings)
+			log.warn('okena', 'No terminal bindings for this planning session; an open plan terminal cannot be reused')
+		const okenaProfileId = okenaProfileOf(client)
+		const owned = await worktrees.findPlanTerminal(ensured.wtProjectId, bindings)
+		const reusedTerminal = owned?.terminalId ?? null
 		if (signal?.aborted) throw taskCancelled()
 		log.info('okena', 'Resolving planning terminal', {
 			projectId: ensured.wtProjectId,
 			worktreePath: ensured.worktreePath,
 			reusedTerminal,
+			adoptedLegacyTerminal: owned?.adopted === true,
 			autoTerminalId: ensured.autoTerminalId,
 		})
 		let replacedTerminal = false
@@ -84,7 +91,7 @@ export class OkenaSpawner implements Spawner {
 		}
 		let terminalSource = 'created'
 		if (replacedTerminal) terminalSource = 'replaced-plan'
-		else if (reusedTerminal) terminalSource = 'reused-plan'
+		else if (reusedTerminal) terminalSource = owned?.adopted ? 'adopted-legacy-plan' : 'reused-plan'
 		else if (ensured.autoTerminalId) terminalSource = 'worktree-auto'
 		log.info('okena', 'Resolved planning terminal', {
 			projectId: ensured.wtProjectId,
@@ -92,15 +99,28 @@ export class OkenaSpawner implements Spawner {
 			source: terminalSource,
 		})
 
-		try {
-			await client.action({
-				action: 'rename_terminal',
-				project_id: ensured.wtProjectId,
-				terminal_id: terminalId,
-				name: `plan: ${params.taskTitle} [helm:${params.itemId}]`,
-			})
-		} catch {
-			// Non-critical
+		// Ownership is the terminal id. Record it before anything else touches the
+		// terminal, so a later Plan finds it however the pane gets renamed.
+		if (bindings && !bindings.record('plan', { okenaProfileId, projectId: ensured.wtProjectId, terminalId })) {
+			log.warn('okena', `Could not record planning terminal ${terminalId} for Item ${params.itemId}`)
+		}
+
+		const terminalName = okenaTerminalName([params.taskDisplayName, params.taskTitle], 'plan')
+		// A reused, already-bound terminal keeps whatever name it has now: the agent
+		// in it may have renamed it. Helm names only a terminal it newly takes, and
+		// a legacy `[helm:<id>]` terminal it just adopted.
+		const reusedAsIs = reusedTerminal !== null && !replacedTerminal && owned?.adopted !== true
+		if (!reusedAsIs) {
+			try {
+				await client.action({
+					action: 'rename_terminal',
+					project_id: ensured.wtProjectId,
+					terminal_id: terminalId,
+					name: terminalName,
+				})
+			} catch {
+				// Non-critical: the name is display-only.
+			}
 		}
 
 		if (signal?.aborted) throw taskCancelled()
@@ -112,7 +132,7 @@ export class OkenaSpawner implements Spawner {
 
 		const agentLabel = agentLabelFromConfig(params.solverConfig)
 		if (reusedTerminal && !replacedTerminal) {
-			// A named live plan terminal may contain a running interactive agent.
+			// A bound live plan terminal may contain a running interactive agent.
 			// An ordinary repeated Plan call reuses it without sending ctrl_c OR
 			// another shell command into the agent's input prompt. Explicit Re-plan
 			// takes the replacement path above instead.
@@ -132,11 +152,11 @@ export class OkenaSpawner implements Spawner {
 			}
 		}
 
-		let hint = `Switch to Okena -> open the project for branch ${params.branchName}. ${agentLabel} planning is running in the "plan: ${params.taskTitle}" terminal.`
+		let hint = `Switch to Okena -> open the project for branch ${params.branchName}. ${agentLabel} planning is running in the "${terminalName}" terminal.`
 		if (replacedTerminal) {
-			hint = `Switch to Okena -> ${agentLabel} planning restarted in the "plan: ${params.taskTitle}" terminal.`
+			hint = `Switch to Okena -> ${agentLabel} planning restarted in the "${terminalName}" terminal.`
 		} else if (reusedTerminal) {
-			hint = `Switch to Okena -> the existing ${agentLabel} planning session is open in the "plan: ${params.taskTitle}" terminal.`
+			hint = `Switch to Okena -> the existing ${agentLabel} planning session is open in its terminal in the project for branch ${params.branchName}.`
 		}
 		return {
 			worktreePath: ensured.worktreePath,

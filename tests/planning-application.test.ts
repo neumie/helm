@@ -118,6 +118,42 @@ async function expectLaunchFailure(
 	}
 }
 
+test("PlanningApplication hands the Spawner the Item's terminal bindings bound to the Item's profile", async () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-planning-okena-bindings-'))
+	const db = new DB(join(root, 'helm.db'))
+	const commands = new ItemCommands(db.items, config)
+	try {
+		const item = commands.createSolveItem({ title: 'bindings', projectSlug: 'helm', prompt: 'bindings' })
+		const worktree = join(root, 'wt')
+		let seen: Parameters<Spawner['startPlanningSession']>[0] | undefined
+		const spawner = new ContractSpawner(async params => {
+			seen = params
+			params.onWorktreeReady(worktree)
+			params.okenaTerminals?.record('plan', { okenaProfileId: null, projectId: 'p', terminalId: 't-plan' })
+			return { worktreePath: worktree, branchName: params.branchName, hint: 'ok' }
+		})
+		const app = new PlanningApplication(
+			config,
+			commands,
+			provider,
+			spawner,
+			async () => spawner,
+			undefined,
+			profileId => new ItemCommands(db.forProfile(profileId).items, config),
+			undefined,
+			undefined,
+			profileId => db.forProfile(profileId).okenaTerminals,
+		)
+		await app.prepare({ itemId: item.id })
+		assert.equal(seen?.okenaTerminals?.itemId, item.id)
+		assert.equal(db.forProfile(item.profileId).okenaTerminals.forItem(item.id).get('plan', 'p')?.terminalId, 't-plan')
+		assert.equal(db.forProfile('elsewhere').okenaTerminals.forItem(item.id).get('plan', 'p'), null)
+	} finally {
+		db.close()
+		rmSync(root, { recursive: true, force: true })
+	}
+})
+
 test('PlanningApplication enforces zero, double, and mismatched readiness callbacks', async () => {
 	const zero = await expectLaunchFailure(async params => ({
 		worktreePath: `/tmp/${params.itemId}-zero`,

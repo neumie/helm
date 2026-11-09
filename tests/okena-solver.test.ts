@@ -309,7 +309,7 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 					path: '/repo-wt/plan',
 					layout: { type: 'terminal', terminal_id: 'terminal-live' },
 					terminal_names: {
-						'terminal-stale': 'plan: old session',
+						'terminal-stale': 'plan: old session [helm:item-1]',
 						'terminal-live': 'shell',
 					},
 				},
@@ -317,8 +317,19 @@ test('Okena plan-terminal reuse ignores stale names outside the live layout', as
 		}),
 	} as unknown as OkenaClient
 	const manager = new OkenaWorktreeManager(client)
+	const recorded: unknown[] = []
+	const bindings = {
+		itemId: 'item-1',
+		get: () => null,
+		list: () => [],
+		record: (...args: unknown[]) => {
+			recorded.push(args)
+			return true
+		},
+	}
 
-	assert.equal(await manager.findPlanTerminal('project-1', 'item-1'), null)
+	assert.equal(await manager.findPlanTerminal('project-1', bindings), null)
+	assert.deepEqual(recorded, [])
 })
 
 test('Okena Worktree manager resolves an existing child worktree through a symlink alias', async () => {
@@ -622,7 +633,7 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 			worktreePath,
 			autoTerminalId: null,
 		}),
-		findPlanTerminal: async () => 'terminal-plan',
+		findPlanTerminal: async () => ({ terminalId: 'terminal-plan', adopted: false }),
 		createTerminal: async () => {
 			throw new Error('must not create a terminal when a live plan terminal exists')
 		},
@@ -647,14 +658,8 @@ test('OkenaSpawner does not send another command into a reused planning terminal
 
 		assert.equal(commandRuns, 0)
 		assert.match(result.hint, /existing Claude Code planning session is open/)
-		assert.deepEqual(actions, [
-			{
-				action: 'rename_terminal',
-				project_id: 'project-1',
-				terminal_id: 'terminal-plan',
-				name: 'plan: Reuse plan [helm:item-reuse]',
-			},
-		])
+		// A bound terminal keeps the name it has now: the agent in it may have renamed it.
+		assert.deepEqual(actions, [])
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })
 	}
@@ -693,6 +698,16 @@ test('OkenaSpawner keeps two Main-project planning terminals owned by their Item
 		},
 	} as unknown as OkenaClient
 	const finder = new OkenaWorktreeManager(client)
+	const recorded: Array<{ itemId: string; role: string; terminalId: string }> = []
+	const bindingsFor = (itemId: string) => ({
+		itemId,
+		get: () => null,
+		list: () => [],
+		record: (role: string, take: { terminalId: string }) => {
+			recorded.push({ itemId, role, terminalId: take.terminalId })
+			return true
+		},
+	})
 	const worktrees = {
 		ensureWorktreeProject: async () => ({ wtProjectId: 'project-main', worktreePath, autoTerminalId: null }),
 		findPlanTerminal: finder.findPlanTerminal.bind(finder),
@@ -718,12 +733,25 @@ test('OkenaSpawner keeps two Main-project planning terminals owned by their Item
 				onWorktreeReady: () => ({ title: 'Same title' }),
 				solverConfig: config.solver,
 				existingWorktreePath: worktreePath,
+				okenaTerminals: bindingsFor(itemId),
 			})
 		}
 		assert.equal(commands, 0)
 		assert.deepEqual(
 			actions.map(action => action.terminal_id),
 			['terminal-a', 'terminal-b'],
+		)
+		// Legacy `[helm:<id>]` names are adopted once by id and renamed to the short name.
+		assert.deepEqual(
+			actions.map(action => action.name),
+			['✎ Same title', '✎ Same title'],
+		)
+		assert.deepEqual(
+			recorded.filter((entry, index) => recorded.findIndex(other => other.itemId === entry.itemId) === index),
+			[
+				{ itemId: 'item-a', role: 'plan', terminalId: 'terminal-a' },
+				{ itemId: 'item-b', role: 'plan', terminalId: 'terminal-b' },
+			],
 		)
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })
@@ -749,7 +777,7 @@ test('OkenaSpawner replaces the existing agent for an explicit Re-plan without f
 			worktreePath,
 			autoTerminalId: null,
 		}),
-		findPlanTerminal: async () => 'terminal-old-plan',
+		findPlanTerminal: async () => ({ terminalId: 'terminal-old-plan', adopted: false }),
 		createTerminal: async () => 'terminal-new-plan',
 	} as unknown as OkenaWorktreeManager
 	const config = configSchema.parse({
@@ -785,7 +813,7 @@ test('OkenaSpawner replaces the existing agent for an explicit Re-plan without f
 				action: 'rename_terminal',
 				project_id: 'project-1',
 				terminal_id: 'terminal-new-plan',
-				name: 'plan: Replace plan [helm:item-replace]',
+				name: '✎ Replace plan',
 			},
 		])
 		assert.equal(

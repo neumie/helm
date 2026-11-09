@@ -28,7 +28,7 @@ for (const workspaceMode of ['main', 'worktree', undefined] as const) {
 				// Model the manager's canonical-path refusal; never reinterpret it as Main.
 				throw new Error('Worktree cannot reuse canonical checkout')
 			},
-			findPlanTerminal: async () => 'existing-plan',
+			findPlanTerminal: async () => ({ terminalId: 'existing-plan', adopted: false }),
 			createTerminal: async () => {
 				throw new Error('must reuse planning terminal')
 			},

@@ -6,6 +6,7 @@ import { buildItemExecutionContext, prepareItemExecutionContext, resolveItemSour
 import { resolveItemWorkspace } from '../items/identity.js'
 import { ensureItemWorkspaceName } from '../items/naming.js'
 import type { EnsureItemNameDeps } from '../items/naming.js'
+import type { OkenaTerminalStore } from '../items/okena-terminals.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { KnowledgeIntegration } from '../knowledge/integration.js'
 import type { KnowledgeStore } from '../knowledge/store.js'
@@ -110,6 +111,8 @@ export class PlanningApplication {
 		private readonly commandsForProfile?: (profileId: string) => ItemCommands,
 		private readonly knowledge?: KnowledgeIntegration,
 		private readonly knowledgeStoreForProfile?: (profileId: string) => KnowledgeStore,
+		/** Item → Okena terminal bindings in the Item's own profile (terminal reuse is by id). */
+		private readonly okenaTerminalsForProfile?: (profileId: string) => OkenaTerminalStore,
 	) {}
 
 	/** Synchronous first-mutation exclusion used by Start. */
@@ -132,6 +135,7 @@ export class PlanningApplication {
 		// tenant, even if profile activation changes while source/naming awaits.
 		const commands = this.commandsForProfile?.(item.profileId) ?? this.commands
 		const knowledgeStore = this.knowledge ? this.knowledgeStoreForProfile?.(item.profileId) : undefined
+		const okenaTerminals = this.okenaTerminalsForProfile?.(item.profileId).forItem(item.id)
 		if (this.knowledge && !knowledgeStore) {
 			throw new PlanningError('knowledge_unavailable', 'Project knowledge evidence store is not available')
 		}
@@ -281,6 +285,8 @@ export class PlanningApplication {
 					branchName: identity.branchName,
 					planDirName: identity.planDirName,
 					taskTitle: item.title,
+					taskDisplayName: named.displayName,
+					...(okenaTerminals ? { okenaTerminals } : {}),
 					canonicalContext,
 					knowledgeContext: planningKnowledgeContext,
 					onWorktreeReady: worktreePath => {

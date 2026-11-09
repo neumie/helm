@@ -30,6 +30,7 @@ import type { ItemEnricher } from '../../items/enricher.js'
 import { resolveItemWorkspace } from '../../items/identity.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../../items/naming.js'
 import { observeItemRun } from '../../items/observation.js'
+import type { ItemOkenaTerminals } from '../../items/okena-terminals.js'
 import {
 	MAX_RUN_CONTEXT_MARKDOWN_LENGTH,
 	RunContextConflictError,
@@ -177,6 +178,10 @@ type OkenaWorkspaceParams = {
 	baseRef: string
 	branchName: string
 	existingWorktreePath?: string
+	/** The Item's terminal bindings in its own profile; focus prefers its own live terminal by id. */
+	okenaTerminals?: ItemOkenaTerminals
+	/** Display name, then title: the short name for a legacy terminal adopted while focusing. */
+	taskNames?: ReadonlyArray<string | null | undefined>
 }
 
 type OpenItemInOkena = (params: OkenaWorkspaceParams) => Promise<OkenaOpenResult>
@@ -270,6 +275,7 @@ export function apiRoutes({
 		profileId => new ItemCommands(db.forProfile(profileId).items, config),
 		profileContext?.knowledge,
 		profileId => db.forProfile(profileId).knowledge,
+		profileId => db.forProfile(profileId).okenaTerminals,
 	)
 	const dashboardItem = async (item: ItemRecord, includeKnowledge = false) => {
 		const profileDb = db.forProfile(item.profileId)
@@ -1991,6 +1997,8 @@ export function apiRoutes({
 				baseRef: identity.baseRef,
 				branchName: identity.branchName,
 				existingWorktreePath: workspaceMode === 'main' ? undefined : identity.existingWorktreePath,
+				okenaTerminals: db.forProfile(item.profileId).okenaTerminals.forItem(item.id),
+				taskNames: [item.displayName, item.title],
 			})
 			if (opened.createdWorkspace && workspaceMode !== 'main') {
 				itemCommands.recordOkenaWorkspaceIdentity(item.id, {
