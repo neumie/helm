@@ -1,6 +1,6 @@
 # helm open — a viewer for almost anything
 
-Status: phase 1 (spec + design variants). No production code changes in this phase. D1–D11 and D13 decided by Jakub on 2026-11-09 (§ Decisions); D12 and D14 open until he picks from Storybook. The design exploration is story-only under `app/src/renderer/open-prototype/` (Storybook `Views/Helm open/…`); Jakub picks the design from there.
+Status: phase 1 (spec + design variants). No production code changes in this phase. D1–D11, D12a (window chrome: A6) and D13 decided by Jakub on 2026-11-09 (§ Decisions); D12 (multiple files) and D14 open until he picks from Storybook. The design exploration is story-only under `app/src/renderer/open-prototype/` (Storybook `Views/Helm open/…`); Jakub picks the design from there.
 
 ## Problem
 
@@ -278,7 +278,7 @@ The renderer side maps `format → () => import('./viewers/pdf')`; each viewer i
 
 ### Renderer
 
-- `app/src/renderer/document-review.tsx` becomes the viewer host: chrome (A pick), file container (B pick), the chosen format view (C), and in bound mode the existing companion/passage chat plus the new anchored feedback bubble (D).
+- `app/src/renderer/document-review.tsx` becomes the viewer host: chrome (A6, D12a), file container (B pick), the chosen format view (C), and in bound mode the existing companion/passage chat plus the new anchored feedback bubble (D).
 - Markdown and the JSX/TSX canvas move behind the registry unchanged; `DocumentReview.tsx` keeps owning their passage chat.
 - Build: the document-review entry switches from one IIFE to ESM with code splitting (`format: 'esm', splitting: true`) served by `helm-viewer:`; the base chunk must not grow by more than the chrome itself.
 
@@ -328,7 +328,7 @@ Total extra install size if everything ships: about 3.3 MB of JavaScript plus 3.
 
 All under Storybook `Views/Helm open/`, real renderers over realistic fixtures (a 3-page platform report PDF, an invoicing workbook with formulas, a 1 800-row CSV export, a failed-form screenshot, a Sentry issue JSON, a plan Markdown, a TypeScript module, a service agreement DOCX).
 
-- **A Window chrome** — three chromes (A1–A3), plus three A1 × A3 hybrids after Jakub asked for "something between A3 and A1" (A4 path then name, A5 name then path, A6 collapsing path) and a long-path comparison; each plain and bound.
+- **A Window chrome** — three chromes (A1–A3), plus three A1 × A3 hybrids after Jakub asked for "something between A3 and A1" (A4 path then name, A5 name then path, A6 collapsing path) and a long-path comparison; each plain and bound. **Picked: A6** (D12a).
 - **B Multiple files** — tabs, a window per file with a go-to-file palette, a file sidebar, and B4: a window per file and tabs together, after Jakub said "I quite like B2, but it could be B1 too. Both." (see § Windows and tabs).
 - **C Format views** — PDF, spreadsheet (XLSX + CSV), image, JSON, code, documents (Markdown, DOCX).
 - **D Feedback anchors** — PDF text selection, spreadsheet range, image region (plus JSON node and code lines).
@@ -443,7 +443,7 @@ Proposed order: S1 → S2 → S3 → S4 → S5 → S7 → S6 → S8 → S8b → 
 
 ## Decisions
 
-D1–D11 and D13: Jakub agreed with the recommendations on 2026-11-09; they are decided. D12 and D14 stay open until he picks from the Storybook variants. No production slice starts before that.
+D1–D11 and D13: Jakub agreed with the recommendations on 2026-11-09; they are decided. D12a: he picked A6 from Storybook the same day. D12 (multiple files) and D14 stay open until he picks from the Storybook variants. No production slice starts before that.
 
 | # | Decision | Options | Status |
 | --- | --- | --- | --- |
@@ -458,9 +458,10 @@ D1–D11 and D13: Jakub agreed with the recommendations on 2026-11-09; they are 
 | D9 | SheetJS source | vendor tarball pinned with integrity; `exceljs`; npm `xlsx@0.18.5` | **Decided: vendored SheetJS tarball**, pinned with integrity (npm 0.18.5 is stale with known advisories; exceljs lacks XLS/ODS). |
 | D10 | Old-host / not-reloaded-Pi compatibility | negotiate per connection (`hello` then `features`); hard version bump | **Decided: negotiate per connection** (`hello` then `features`), so an old desktop, a Pi process not yet `/reload`ed or Pi from another worktree keep working with prompt-text anchors. |
 | D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Decided: delete** `buildReviewInvocation`/`ReviewJsonLines` in S10. Still open: Plan documents → Review, decided with the task-list future. |
-| D12 | Multi-file model and window chrome | B1/B2/B3/B4, A1–A6 | **Open.** His pick from Storybook; no recommendation. On B he said "Both" (B1 + B2): B4 shows that, with Helm's own tabs because native macOS tabs are unavailable (§ Windows and tabs). |
+| D12a | Window chrome | A1–A6 | **Decided: A6** (Storybook `A Window chrome → A6 Collapsing path`). One 40px title row like A1: the folder path as A3's dim, clickable breadcrumb (each folder shows itself in Finder), then the file name. When the title row is narrower than 1000px the whole path folds into one "…" menu before the name. Actions on the right; in bound mode A1's agent button in the row toggles the conversation column. |
+| D12 | Multi-file model | B1/B2/B3/B4 | **Open: B4 or B2.** His pick from Storybook; no recommendation. On B he said "Both" (B1 + B2): B4 shows that, with Helm's own tabs because native macOS tabs are unavailable (§ Windows and tabs); B2 is a window per file with the ⌘⇧O palette and no tabs. |
 | D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Decided: workspace only** (S8) for now; widen once he wants it, because it tells the agent where files outside its project live. |
-| D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button; E5 activity line (see § Send receipt) | **Open.** On A–D he said "probably neither of them" and asked for E5, Claude Code's activity line. His pick from Storybook; no recommendation. |
+| D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button; E5 activity line (see § Send receipt) | **Open.** On A–D he said "probably neither of them" and asked for E5, Claude Code's activity line. E5 with real progress also needs his permission to read provider session files (§ E5 activity line, blockers). His pick from Storybook; no recommendation. |
 
 ## Open questions
 
