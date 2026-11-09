@@ -121,7 +121,7 @@ for (const kind of ['solve', 'plan'] as const) {
 				},
 				findPlanTerminal: async () => {
 					await effect('lookup')
-					return boundary === 'close' ? 'existing-plan' : null
+					return boundary === 'close' ? { terminalId: 'existing-plan', adopted: false } : null
 				},
 				createTerminal: async () => {
 					await effect('create')

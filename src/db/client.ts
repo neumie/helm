@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
+import { OkenaTerminalStore } from '../items/okena-terminals.js'
 import { ItemStore } from '../items/store.js'
 import { KnowledgeStore } from '../knowledge/store.js'
 import { ScheduleStore } from '../scheduled-runs/store.js'
@@ -230,6 +231,8 @@ export class DB {
 	readonly schedules: ScheduleStore
 	/** Global Signals threads, change log and source health: one inbox across every profile. */
 	readonly signals: SignalStore
+	/** Profile-bound Item → Okena terminal ownership, by terminal id (never by terminal name). */
+	readonly okenaTerminals: OkenaTerminalStore
 
 	constructor(
 		dbPath?: string,
@@ -253,6 +256,7 @@ export class DB {
 		this.knowledge = new KnowledgeStore(this.db, () => this.profileId)
 		this.schedules = new ScheduleStore(this.db, () => this.profileId)
 		this.signals = new SignalStore(this.db)
+		this.okenaTerminals = new OkenaTerminalStore(this.db, () => this.profileId)
 	}
 
 	private get profileId(): string {

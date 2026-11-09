@@ -9,7 +9,8 @@ import { phaseError, taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
 import { getCurrentBranch } from '../../worktree/manager.js'
 import { OkenaClient, okenaClientForProject } from './client.js'
-import { OkenaWorktreeManager } from './worktree.js'
+import { okenaTerminalName } from './terminal-name.js'
+import { OkenaWorktreeManager, okenaProfileOf } from './worktree.js'
 
 /** Absolute ceiling on a single okena solve, however lively the terminal looks. */
 const HARD_TIMEOUT_MS = 6 * 60 * 60 * 1000
@@ -60,15 +61,24 @@ export class OkenaSolver implements Solver {
 			throw phaseError('worktree', 'Failed to create terminal for solve')
 		}
 
+		// Ownership is the terminal id, recorded before Helm types into the pane;
+		// the name below is display-only and the agent may rename it.
+		const bindings = params.okenaTerminals
+		if (
+			bindings &&
+			!bindings.record('solve', { okenaProfileId: okenaProfileOf(client), projectId: ensured.wtProjectId, terminalId })
+		) {
+			log.warn('okena', `Could not record solve terminal ${terminalId} for Item ${params.taskId}`)
+		}
 		try {
 			await client.action({
 				action: 'rename_terminal',
 				project_id: ensured.wtProjectId,
 				terminal_id: terminalId,
-				name: taskTitle,
+				name: okenaTerminalName([params.taskDisplayName, taskTitle], 'solve'),
 			})
 		} catch {
-			// Non-critical
+			// Non-critical: the name is display-only.
 		}
 
 		if (signal?.aborted) throw taskCancelled()

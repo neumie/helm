@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ProjectConfig } from '../../config.js'
+import type { ItemOkenaTerminals } from '../../items/okena-terminals.js'
 import type { SolverWorkspace } from '../../solver/workspace.js'
 import { worktreePathForBranch } from '../../worktree/manager.js'
 import { activateOkenaApp } from './activate.js'
 import { OkenaClient, type OkenaLayoutNode, type OkenaState, okenaClientForProject } from './client.js'
-import { OkenaWorktreeManager, inspectOkenaBranchSource } from './worktree.js'
+import { okenaTerminalName } from './terminal-name.js'
+import { OkenaWorktreeManager, inspectOkenaBranchSource, okenaProfileOf, ownedLiveTerminal } from './worktree.js'
 
 const FOCUS_RETRY_DELAYS_MS = [0, 100, 250]
 const TERMINAL_READY_DELAYS_MS = [0, 100, 250, 500]
@@ -16,6 +18,13 @@ export interface OpenItemInOkenaParams {
 	baseRef: string
 	branchName: string
 	existingWorktreePath?: string
+	/**
+	 * This Item's terminal bindings in its own profile. When one of its terminals
+	 * is still a live pane, focus goes there (by id) rather than to the first pane.
+	 */
+	okenaTerminals?: ItemOkenaTerminals
+	/** Display name, then title: the short name for a legacy terminal adopted here. */
+	taskNames?: ReadonlyArray<string | null | undefined>
 }
 
 export interface OpenItemInOkenaResult {
@@ -78,11 +87,28 @@ async function liveProject(client: OkenaClient, projectId: string): Promise<Oken
 	return (await client.getState()).projects.find(project => project.id === projectId) ?? null
 }
 
-async function waitForTerminal(client: OkenaClient, projectId: string): Promise<string | null> {
+/** The pane to focus: the Item's own live terminal by id, else the project's first pane. */
+type PickTerminal = (project: OkenaProject) => string | null
+
+/** `adopted` collects legacy `[helm:<id>]` panes the picker just bound, so they can be renamed short. */
+function terminalPicker(
+	client: OkenaClient,
+	bindings: ItemOkenaTerminals | undefined,
+	adopted: Set<string>,
+): PickTerminal {
+	const okenaProfileId = okenaProfileOf(client)
+	return project => {
+		const owned = bindings ? ownedLiveTerminal(project, bindings, okenaProfileId) : null
+		if (owned?.adopted) adopted.add(owned.terminalId)
+		return owned?.terminalId || firstTerminalId(project)
+	}
+}
+
+async function waitForTerminal(client: OkenaClient, projectId: string, pick: PickTerminal): Promise<string | null> {
 	for (const retryDelay of TERMINAL_READY_DELAYS_MS) {
 		if (retryDelay > 0) await delay(retryDelay)
 		const project = await liveProject(client, projectId)
-		const terminalId = project ? firstTerminalId(project) : null
+		const terminalId = project ? pick(project) : null
 		if (terminalId) return terminalId
 	}
 	return null
@@ -92,13 +118,14 @@ async function focusTerminal(
 	client: OkenaClient,
 	projectId: string,
 	initialTerminalId: string,
+	pick: PickTerminal,
 ): Promise<{ terminalId: string; focused: boolean }> {
 	let terminalId = initialTerminalId
 	for (const retryDelay of FOCUS_RETRY_DELAYS_MS) {
 		if (retryDelay > 0) {
 			await delay(retryDelay)
 			const project = await liveProject(client, projectId)
-			terminalId = (project && firstTerminalId(project)) || terminalId
+			terminalId = (project && pick(project)) || terminalId
 		}
 		try {
 			await client.action({ action: 'focus_terminal', project_id: projectId, terminal_id: terminalId, window: 'main' })
@@ -233,6 +260,8 @@ export async function openItemInOkena(
 	const client = okenaClientForProject(deps.client ?? new OkenaClient(), params.projectConfig.repoPath)
 	if (!(await client.isAvailable())) throw new Error('Okena is not running or configured')
 	const worktrees = new OkenaWorktreeManager(client)
+	const adoptedLegacy = new Set<string>()
+	const pick = terminalPicker(client, params.okenaTerminals, adoptedLegacy)
 	const existingWorktreePath =
 		params.workspaceMode === 'worktree'
 			? params.existingWorktreePath && existsSync(params.existingWorktreePath)
@@ -257,7 +286,7 @@ export async function openItemInOkena(
 		)
 		if (existing) {
 			projectId = existing.id
-			terminalId = firstTerminalId(existing)
+			terminalId = pick(existing)
 		} else {
 			const standalone = state.projects.find(project => project.path === worktreePath)
 			if (standalone) {
@@ -281,7 +310,7 @@ export async function openItemInOkena(
 		projectId = ensured.wtProjectId
 		terminalId = ensured.autoTerminalId
 		const project = await liveProject(client, projectId)
-		terminalId ??= project ? firstTerminalId(project) : null
+		terminalId ??= project ? pick(project) : null
 	} else {
 		const ensured = await worktrees.ensureWorktreeProject(
 			params.projectConfig.repoPath,
@@ -299,11 +328,25 @@ export async function openItemInOkena(
 		}
 	}
 
-	terminalId ??= await waitForTerminal(client, projectId)
+	terminalId ??= await waitForTerminal(client, projectId, pick)
 	terminalId ??= await worktrees.createTerminal(projectId)
-	terminalId ??= await waitForTerminal(client, projectId)
+	terminalId ??= await waitForTerminal(client, projectId, pick)
 	if (!terminalId) throw new Error('Okena could not create or resolve a terminal for this Item')
-	const focus = await focusTerminal(client, projectId, terminalId)
+	// A legacy `plan: <title> [helm:<id>]` pane just adopted by id drops its long
+	// name, as Plan does on adoption. Renaming is control-plane only (no input).
+	for (const adoptedId of adoptedLegacy) {
+		try {
+			await client.action({
+				action: 'rename_terminal',
+				project_id: projectId,
+				terminal_id: adoptedId,
+				name: okenaTerminalName(params.taskNames ?? [], 'plan'),
+			})
+		} catch {
+			// Non-critical: the name is display-only.
+		}
+	}
+	const focus = await focusTerminal(client, projectId, terminalId, pick)
 	terminalId = focus.terminalId
 
 	const activated = await (deps.activateApp ?? (() => activateOkenaApp()))()

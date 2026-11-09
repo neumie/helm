@@ -1084,4 +1084,26 @@ CREATE INDEX IF NOT EXISTS idx_signal_filtered_received ON signal_filtered(recei
 CREATE INDEX IF NOT EXISTS idx_signal_filtered_identity ON signal_filtered(sender_identity);
 `,
 	},
+	{
+		// Item → Okena terminal ownership by Okena's terminal id, one row per (Item, role, Okena
+		// project): an Item planned in Main and in Worktree keeps both planning terminals. Helm used
+		// to find its planning terminal by a `[helm:<itemId>]` name suffix; agents now rename their
+		// terminals, so names are display-only. A legacy suffix is parsed once per project, when the
+		// Item has no plan binding there yet, and stored here. Profile-scoped like Items.
+		version: 40,
+		sql: `
+CREATE TABLE IF NOT EXISTS item_okena_terminals (
+  profile_id TEXT NOT NULL,
+  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('plan','solve')),
+  okena_profile_id TEXT,
+  project_id TEXT NOT NULL,
+  terminal_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (profile_id, item_id, role, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_item_okena_terminals_terminal ON item_okena_terminals(profile_id, terminal_id);
+`,
+	},
 ]

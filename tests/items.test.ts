@@ -3004,6 +3004,34 @@ test('processSolveItem uses the selected agent and effort', async () => {
 	})
 })
 
+test("processSolveItem hands the solver this Item's Okena terminal bindings in its own profile", async () => {
+	await withTempDb(async db => {
+		const worktreeRoot = mkdtempSync(join(tmpdir(), 'helm-item-okena-bindings-'))
+		const item = db.items.create({
+			kind: 'solve',
+			status: 'ready',
+			projectSlug: 'helm',
+			title: 'Bind the solve terminal',
+			source: null,
+			baseRef: 'main',
+			payload: { kind: 'solve', prompt: 'Bind it.' },
+		})
+		const solver = new FakeSolveSolver(worktreeRoot)
+
+		try {
+			await processSolveItem(item.id, config, db, provider, solver)
+
+			const bindings = solver.calls[0].okenaTerminals
+			assert.equal(bindings?.itemId, item.id)
+			assert.equal(bindings?.record('solve', { okenaProfileId: null, projectId: 'p', terminalId: 't-1' }), true)
+			assert.equal(db.forProfile(item.profileId).okenaTerminals.forItem(item.id).get('solve', 'p')?.terminalId, 't-1')
+			assert.equal(db.forProfile('elsewhere').okenaTerminals.forItem(item.id).get('solve', 'p'), null)
+		} finally {
+			rmSync(worktreeRoot, { recursive: true, force: true })
+		}
+	})
+})
+
 test("processSolveItem never hands config's model to another agent", async () => {
 	const piConfig = { ...config, solver: { ...config.solver, agent: 'pi' as const, model: 'xai/grok-4.7' } }
 	const cases: Array<[Record<string, string>, string | undefined]> = [
@@ -3615,6 +3643,9 @@ test('server opens every Item in Okena and persists a newly-created workspace wi
 			assert.equal(body.data.terminalId, 'okena-terminal-1')
 			assert.equal(body.data.hint, 'Focused in Okena')
 			assert.equal(openerCalls[0]?.workspaceMode, 'worktree')
+			// Focus prefers the Item's own terminal by id, bound to the Item's profile.
+			const bindings = openerCalls[0]?.okenaTerminals as { itemId: string } | undefined
+			assert.equal(bindings?.itemId, item.id)
 
 			const stored = commands.getItem(item.id)
 			assert.ok(stored)

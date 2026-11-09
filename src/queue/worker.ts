@@ -355,6 +355,8 @@ export async function processSolveItem(
 				canonicalContext: executionContext,
 				taskId: item.id,
 				taskTitle: item.title,
+				taskDisplayName: (commands.getItem(itemId) ?? named).displayName,
+				okenaTerminals: runDb.okenaTerminals.forItem(item.id),
 				solverConfig,
 				knowledgeCandidatesEnabled: knowledgeBinding !== null,
 				solverEffort: selectedEffort,

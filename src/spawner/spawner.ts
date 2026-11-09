@@ -1,4 +1,5 @@
 import type { HelmConfig, ProjectConfig } from '../config.js'
+import type { ItemOkenaTerminals } from '../items/okena-terminals.js'
 import type { TaskContext } from '../providers/provider.js'
 import type { SolverWorkspace } from '../solver/workspace.js'
 
@@ -9,6 +10,14 @@ export interface PlanningSessionParams {
 	branchName: string
 	planDirName: string
 	taskTitle: string
+	/** The Item's short display name (AI-derived, task language), if any; display-only. */
+	taskDisplayName?: string | null
+	/**
+	 * This Item's terminal ownership in its own profile, captured before the first
+	 * await. An Okena adapter reuses a planning terminal only through this binding
+	 * (plus a live layout check), never by the terminal's name.
+	 */
+	okenaTerminals?: ItemOkenaTerminals
 	/** Canonical, unlocalized task context; private provider evidence is separate. */
 	canonicalContext: TaskContext
 	/** Exact immutable provider bytes, written only to a gitignored Helm sidecar. */
