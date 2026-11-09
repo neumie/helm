@@ -1,56 +1,31 @@
 /*
  * Reading width — shared contract for long-form document surfaces
  * (Document Review today; the general viewer later). docs/design-system.md
- * "Reading width" owns the values.
+ * "Native document review workspace" → "Reading width" owns the values.
  *
- * Opt-in only: nothing here applies until a flow container carries
- * [data-reading-width]. Its direct children are the flow blocks; prose blocks
- * keep --reading-column, wide blocks (tables, code, figures) use
- * --reading-wide. Surfaces whose wide blocks sit inside wrappers map them with
- * their own selector onto the same two declarations (see document-review.css).
- *
- *   measure  prose at the measure, wide blocks break out to the column (A)
- *   fluid    everything fills the column up to a generous cap (B)
- *   narrow   one column at the measure (C)
- *   wide     one column at the wide cap (C, default)
- *   full     one column, no cap (C)
- *   fit      prose at the measure, wide blocks grow only as far as their content needs (D)
+ * Opt-in: nothing here applies until a flow container carries
+ * [data-reading-width]. Its direct children are the flow blocks:
+ *   - prose stays at the measure (680px, about 75–85 characters of the 15px face);
+ *   - wide blocks (tables, code, figures, or any child marked [data-reading-wide])
+ *     grow only as far as their content needs, from the measure up to the
+ *     column, never past 1280px, centered on the prose.
+ * Surfaces whose wide blocks sit inside wrappers map them with their own
+ * selector onto the same declarations (see document-review.css).
  */
 [data-reading-width] {
-	/* About 75–85 characters of the 15px reading face: today's measure. */
 	--reading-measure: calc(680px * var(--ui-scale, 1));
-	--reading-wide-max: calc(960px * var(--ui-scale, 1));
-	--reading-fluid-max: calc(1160px * var(--ui-scale, 1));
 	--reading-block-max: calc(1280px * var(--ui-scale, 1));
-	--reading-column: var(--reading-measure);
-	--reading-wide: var(--reading-column);
 	max-width: none;
 	margin-inline: auto;
 }
 [data-reading-width] > * {
-	max-width: var(--reading-column);
+	max-width: var(--reading-measure);
 	margin-inline: auto;
 }
 [data-reading-width] > :is(table, pre, figure, [data-reading-wide]) {
-	max-width: var(--reading-wide);
-}
-[data-reading-width="measure"],
-[data-reading-width="fit"] {
-	--reading-wide: var(--reading-block-max);
-}
-[data-reading-width="fluid"] {
-	--reading-column: var(--reading-fluid-max);
-}
-[data-reading-width="wide"] {
-	--reading-column: var(--reading-wide-max);
-}
-[data-reading-width="full"] {
-	--reading-column: none;
-}
-[data-reading-width="fit"] > :is(table, pre, figure, [data-reading-wide]) {
 	width: fit-content;
-	max-width: min(100%, var(--reading-wide));
-	min-width: min(100%, var(--reading-column));
+	max-width: min(100%, var(--reading-block-max));
+	min-width: min(100%, var(--reading-measure));
 }
 
 /*
@@ -64,26 +39,23 @@
 	word-break: normal;
 }
 /*
- * Code in a cell (e-mails, URLs, paths) stays whole even at a hyphen. Links
- * keep wrapping at spaces: their labels are words. Plain-text e-mails can
- * still break after a hyphen; CSS cannot tell them from prose.
+ * E-mails, URLs and paths in a cell stay whole, even at a hyphen: code spans,
+ * and plain-text addresses the renderer marks with [data-reading-token]. Only
+ * white-space stops Chromium breaking after a hyphen. Links keep wrapping at
+ * spaces: their labels are words.
  */
-[data-reading-width] :is(td, th) code {
+[data-reading-width] :is(td, th) :is(code, [data-reading-token]) {
 	white-space: nowrap;
 }
 [data-reading-width] :is(td, th) a {
 	overflow-wrap: break-word;
 }
 /*
- * Code is set in the shared mono face (--font-mono is not defined on :root, so
- * the stack is spelled out as its fallback). Inline code reads at the optical
- * size of the text around it, never a fixed smaller size; code blocks keep their own size.
+ * Code is set in the shared mono face. Inline code reads at the optical size of
+ * the text around it, never a fixed smaller size; code blocks keep their own size.
  */
-[data-reading-width] {
-	--reading-mono: var(--font-mono, "SF Mono", Menlo, ui-monospace, monospace);
-}
 [data-reading-width] :is(code, pre) {
-	font-family: var(--reading-mono);
+	font-family: var(--font-mono);
 }
 [data-reading-width] :not(pre) > code {
 	/* Mono runs wide: 0.92em matches the x-height and color weight of the text around it. */

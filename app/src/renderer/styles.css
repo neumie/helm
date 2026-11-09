@@ -79,6 +79,9 @@
 	--ansi-bright-magenta: #d5a9f0;
 	--ansi-bright-cyan: #74dcea;
 	--ansi-bright-white: #f5f6f7;
+	/* Type families (not theme tokens; docs/design-system.md §2.2) */
+	--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 	/* Layout + type scale knobs (not theme tokens) */
 	--left-width: 340px;
 	--ui-scale: 1;
@@ -101,7 +104,7 @@ body {
 body {
 	background: var(--pane);
 	color: var(--text-0);
-	font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	font-family: var(--font-ui);
 	font-size: 13px;
 	letter-spacing: -0.01em;
 	-webkit-font-smoothing: antialiased;
@@ -311,7 +314,7 @@ button:focus-visible,
 	height: 28px;
 	padding: 0 8px;
 	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(10px * var(--ui-scale));
 	font-weight: 500;
 }
@@ -496,7 +499,7 @@ body.group-dragging .tab-group-toggle {
 .tab-number {
 	flex: none;
 	color: var(--text-2);
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 400;
 	font-variant-numeric: tabular-nums;
@@ -819,7 +822,7 @@ body.group-dragging .tab-group-toggle {
 	padding: 0;
 	background: none;
 	color: var(--text-2);
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 400;
 	font-variant-numeric: tabular-nums;
@@ -1374,7 +1377,7 @@ body.dragging {
 	margin-top: 16px;
 }
 .no-terms-detail kbd {
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	padding: 1px 5px;
 	border: 1px solid var(--fill-raised);
@@ -1411,8 +1414,8 @@ body.dragging {
 }
 
 .agent-dock {
-	--dock-mono: "SF Mono", Menlo, ui-monospace, monospace;
-	--dock-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--dock-mono: var(--font-mono);
+	--dock-sans: var(--font-ui);
 	--dock-fs: calc(12px * var(--ui-scale));
 	--dock-lh: calc(18px * var(--ui-scale));
 	--dock-prose-fs: calc(13px * var(--ui-scale));
@@ -3214,8 +3217,8 @@ body.dragging {
 }
 
 .signals {
-	--dock-mono: "SF Mono", Menlo, ui-monospace, monospace;
-	--dock-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--dock-mono: var(--font-mono);
+	--dock-sans: var(--font-ui);
 	--dock-fs: calc(12px * var(--ui-scale));
 	--dock-lh: calc(18px * var(--ui-scale));
 	--dock-prose-fs: calc(13px * var(--ui-scale));

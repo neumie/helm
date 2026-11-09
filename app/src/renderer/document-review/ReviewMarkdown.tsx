@@ -17,6 +17,11 @@ function decode(value: string): string {
 	})
 }
 
+/** GFM autolink literal (`https://…`, `www.…`, `name@host`) or `<…>` autolink: the label is the address itself. */
+function autolink(token: Tokens.Link): boolean {
+	return token.raw === token.text || token.raw === `<${token.text}>`
+}
+
 /** Separate document renderer: no chat truncation, parser HTML or automatic image fetching. */
 export const ReviewMarkdown = memo(function ReviewMarkdown({
 	blocks,
@@ -119,10 +124,14 @@ export const ReviewMarkdown = memo(function ReviewMarkdown({
 					} catch {
 						/* inert */
 					}
+					// A bare or <angle> autolink (URL, www., e-mail) is one token: CSS keeps it whole in table cells.
+					const whole = autolink(token) ? { 'data-reading-token': '' } : null
 					node = safe ? (
-						<a href={safe} target="_blank" rel="noopener noreferrer">
+						<a href={safe} target="_blank" rel="noopener noreferrer" {...whole}>
 							{children}
 						</a>
+					) : whole ? (
+						<span {...whole}>{children}</span>
 					) : (
 						children
 					)

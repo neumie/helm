@@ -747,7 +747,7 @@
 .menu-item .menu-hint {
 	margin-left: auto;
 	padding-left: 16px;
-	font-family: "SF Mono", Menlo, ui-monospace, monospace;
+	font-family: var(--font-mono);
 	font-size: 11px;
 	color: var(--text-2);
 }
@@ -925,7 +925,7 @@
 }
 
 .mono {
-	font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 }
 
@@ -1199,7 +1199,7 @@ button.banner {
 	border-radius: 8px;
 	background: var(--well);
 	color: var(--text-1);
-	font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	line-height: 1.6;
 	white-space: pre-wrap;
@@ -1303,7 +1303,7 @@ button.banner {
 	align-items: center;
 	min-height: 28px;
 	padding: 4px 12px;
-	font-family: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	color: var(--accent);
 	cursor: pointer;

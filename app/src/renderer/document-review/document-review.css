@@ -174,34 +174,26 @@
 	scroll-padding-top: 20px;
 }
 .review-prose {
-	max-width: 680px;
 	margin-inline: auto;
 	font-size: calc(var(--review-reading-size) * var(--ui-scale));
 	line-height: 1.7;
 }
 /*
- * Reading width adapter (../reading-width.css, opt-in via data-reading-width):
- * Markdown wraps every flow block in .review-block, so wide blocks are found
- * through their wrapper. Images stay at the measure: Markdown review never
- * fetches them, and CSS cannot tell an image-only paragraph from a sentence
- * with an inline image, so only the caption note would widen.
+ * Reading width (../reading-width.css; the article carries data-reading-width):
+ * prose stays at the measure, tables and code grow to their content up to the
+ * column, capped at 1280px. Markdown wraps every flow block in .review-block,
+ * so wide blocks are found through their wrapper. Images stay at the measure:
+ * Markdown review never fetches them, and CSS cannot tell an image-only
+ * paragraph from a sentence with an inline image, so only the caption note
+ * would widen.
  */
-.review-prose[data-reading-width] {
-	max-width: none;
-}
 .review-prose[data-reading-width] > .review-block:has(> .review-block-text > :is(.review-table, pre)) {
-	max-width: var(--reading-wide);
-}
-.review-prose[data-reading-width="fit"] > .review-block:has(> .review-block-text > :is(.review-table, pre)) {
 	width: fit-content;
-	max-width: min(100%, var(--reading-wide));
-	min-width: min(100%, var(--reading-column));
+	max-width: min(100%, var(--reading-block-max));
+	min-width: min(100%, var(--reading-measure));
 }
 .review-prose[data-reading-width] .review-table {
 	max-width: 100%;
-}
-.review-prose[data-reading-width] code {
-	font-family: var(--reading-mono);
 }
 .review-prose h1 {
 	font-size: calc(28px * var(--ui-scale));
@@ -1090,12 +1082,25 @@ fieldset.review-intents {
 }
 
 .review-canvas {
-	max-width: 680px;
 	margin: 0 auto;
 	font-size: calc(15px * var(--ui-scale));
 	line-height: 1.7;
 	user-select: text;
 	overflow-wrap: anywhere;
+}
+/*
+ * The canvas follows the same reading width: a top-level table or code block,
+ * bare or inside its comment wrapper, fits its content between the measure and
+ * the column; everything else stays at the measure. Nested tables stay inside
+ * their own section.
+ */
+.review-canvas[data-reading-width] > .review-block:has(> .review-block-text > :is(table, pre)) {
+	width: fit-content;
+	max-width: min(100%, var(--reading-block-max));
+	min-width: min(100%, var(--reading-measure));
+}
+.review-canvas[data-reading-width] pre {
+	overflow: auto;
 }
 .review-canvas h1 {
 	font-size: calc(28px * var(--ui-scale));

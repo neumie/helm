@@ -278,7 +278,7 @@ export function DocumentCanvas({
 		return element
 	}
 	return (
-		<div ref={root} className="review-canvas" aria-label="Interactive document">
+		<div ref={root} className="review-canvas" data-reading-width="" aria-label="Interactive document">
 			{error ? (
 				<p role="alert">{error}</p>
 			) : frame ? (

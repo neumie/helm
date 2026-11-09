@@ -1,12 +1,10 @@
 /**
- * Shared harness for the Views/Document review/Content width/* design
- * variants (Storybook only). Each story is a real window width with the
- * companion visible, so the production layout code measures the actual space.
+ * Harness for Views/Document review/Content width (Storybook only). Each story
+ * is a real window width with the companion visible, so the production layout
+ * code measures the actual space.
  */
 import { useEffect, useMemo } from 'react'
-import type { ReadingWidthChoice } from '../reading-width'
 import { DocumentReview } from './DocumentReview'
-import type { ReviewContentWidth } from './DocumentReview'
 import { createReviewFixture } from './fixtures'
 
 export const CONTENT_WIDTH_WINDOWS = {
@@ -16,19 +14,13 @@ export const CONTENT_WIDTH_WINDOWS = {
 } as const
 export type ContentWidthWindow = keyof typeof CONTENT_WIDTH_WINDOWS
 
-export function ContentWidthReview({
-	contentWidth,
-	initialReadingWidth,
-}: {
-	contentWidth?: ReviewContentWidth
-	initialReadingWidth?: ReadingWidthChoice
-}) {
+export function ContentWidthReview() {
 	const fixture = useMemo(() => createReviewFixture('content-width'), [])
 	useEffect(() => () => fixture.dispose(), [fixture])
-	return <DocumentReview api={fixture.api} contentWidth={contentWidth} initialReadingWidth={initialReadingWidth} />
+	return <DocumentReview api={fixture.api} />
 }
 
-/** Story fields that open the variant in one of the three reference windows. */
+/** Story fields that open the review in one of the three reference windows. */
 export function atWindow(window: ContentWidthWindow, description: string) {
 	return {
 		name: CONTENT_WIDTH_WINDOWS[window].name,

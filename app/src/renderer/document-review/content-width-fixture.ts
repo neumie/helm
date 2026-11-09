@@ -1,9 +1,10 @@
 /**
- * Realistic Czech plan document for the Content width design variants
+ * Realistic Czech plan document for Views/Document review/Content width
  * (Storybook/Playwright only — never imported by production renderer code).
  * It mirrors the reported case: a narrow three-column table whose e-mail
  * column shredded addresses, next to prose, nested lists, a wide table,
- * long code lines and an image.
+ * long code lines and an image. E-mails and URLs appear both as code and as
+ * plain text (GFM autolinks), the way agents write them.
  */
 export const contentWidthFixtureText = `# Kontakty a notifikace pro Psyon
 
@@ -27,9 +28,9 @@ Dnes posílá Admin všechny notifikace z jedné adresy a příjemce skládá z 
 | Na co | E-mail | Role |
 | --- | --- | --- |
 | Faktury a dobropisy | \`fakturace.objednavky@psyon-consulting.cz\` | Účetní, Hlavní účetní, Správce fakturace, Controlling, Externí účetní kancelář (jen kopie) |
-| Schvalování objednávek | \`petr.vacek@neumie.dev\` | Schvalovatel, Vedoucí střediska Praha, Zástupce vedoucího střediska, Nákup |
+| Schvalování objednávek | petr.vacek@neumie.dev | Schvalovatel, Vedoucí střediska Praha, Zástupce vedoucího střediska, Nákup |
 | Upomínky po splatnosti | \`pohledavky.upominky@psyon-consulting.cz\` | Účetní, Vymáhání pohledávek, Obchodník přiřazený k zákazníkovi, Jednatel při třetí upomínce |
-| Technické chyby odesílání | \`jakub.neumann+psyon-alerts@neumie.dev\` | Vývojář, Správce systému, Pohotovost mimo pracovní dobu |
+| Technické chyby odesílání | jakub.neumann+psyon-alerts@neumie.dev | Vývojář, Správce systému, Pohotovost mimo pracovní dobu |
 | Měsíční přehled | \`management-reporting@psyon-consulting.cz\` | Jednatel, Finanční ředitel, Controlling, Vedoucí středisek Praha a Brno |
 
 Adresy v tabulce jsou skutečné tvary, které se v produkci objevují, včetně \`+\` aliasu a dlouhých doménových jmen. Každá role může mít víc lidí a jeden člověk může mít víc rolí.
@@ -39,9 +40,9 @@ Adresy v tabulce jsou skutečné tvary, které se v produkci objevují, včetně
 | Projekt | Prostředí | URL | Odpovědná osoba | Poslední nasazení | Poznámka |
 | --- | --- | --- | --- | --- | --- |
 | Admin | produkce | \`https://admin.psyon-consulting.cz/fakturace/prehled\` | Petr Vacek | 2026-11-04 14:32 | Odesílá upomínky i faktury, pozor na cron v 6:00 |
-| Admin | staging | \`https://staging-admin.psyon-consulting.cz/fakturace/prehled\` | Jakub Neumann | 2026-11-08 09:10 | Maily jdou jen do Mailpitu, ne ven |
+| Admin | staging | https://staging-admin.psyon-consulting.cz/fakturace/prehled | Jakub Neumann | 2026-11-08 09:10 | Maily jdou jen do Mailpitu, ne ven |
 | Scan | produkce | \`https://scan.psyon-consulting.cz/objednavky\` | Marie Dvořáková | 2026-10-29 17:05 | Schvalování objednávek ze skladu |
-| API | produkce | \`https://api.psyon-consulting.cz/v2/notifications/webhooks\` | Petr Vacek | 2026-11-01 11:47 | Webhook pro účetní systém Pohoda |
+| API | produkce | https://api.psyon-consulting.cz/v2/notifications/webhooks | Petr Vacek | 2026-11-01 11:47 | Webhook pro účetní systém Pohoda |
 
 ## Navrhované řešení
 

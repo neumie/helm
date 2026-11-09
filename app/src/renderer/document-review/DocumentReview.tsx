@@ -41,16 +41,6 @@ import {
 } from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
 import '../reading-width.css'
-import {
-	DEFAULT_READING_WIDTH,
-	READING_WIDTH_CHOICES,
-	type ReadingWidthChoice,
-	type ReadingWidthLayout,
-	readStoredReadingWidth,
-	readingWidthForShortcut,
-	readingWidthShortcutLabel,
-	storeReadingWidth,
-} from '../reading-width'
 import './document-review.css'
 
 const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', cli: 'Agent' }
@@ -167,42 +157,7 @@ function ChangeReview({ before, after }: { before: string; after: string }) {
 	)
 }
 
-/**
- * Content width is an opt-in design variant (Storybook only for now). Omitted,
- * the document keeps today's 680px prose cap. 'choice' adds the Narrow / Wide /
- * Full menu section and shortcuts, remembered app-wide.
- */
-export type ReviewContentWidth = Exclude<ReadingWidthLayout, ReadingWidthChoice> | 'choice'
-
-export function DocumentReview({
-	api,
-	contentWidth,
-	initialReadingWidth,
-}: {
-	api: ArchiveReviewApi
-	contentWidth?: ReviewContentWidth
-	/** Starting choice for 'choice'; otherwise the stored choice, then Wide. */
-	initialReadingWidth?: ReadingWidthChoice
-}) {
-	const [readingWidth, setReadingWidth] = useState<ReadingWidthChoice>(
-		() => initialReadingWidth ?? readStoredReadingWidth() ?? DEFAULT_READING_WIDTH,
-	)
-	const chooseReadingWidth = useCallback((value: ReadingWidthChoice) => {
-		setReadingWidth(value)
-		storeReadingWidth(value)
-	}, [])
-	useEffect(() => {
-		if (contentWidth !== 'choice') return
-		const onKey = (event: KeyboardEvent) => {
-			const value = readingWidthForShortcut(event)
-			if (!value) return
-			event.preventDefault()
-			chooseReadingWidth(value)
-		}
-		window.addEventListener('keydown', onKey)
-		return () => window.removeEventListener('keydown', onKey)
-	}, [contentWidth, chooseReadingWidth])
-	const readingLayout = contentWidth === 'choice' ? readingWidth : contentWidth
+export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const [state, setState] = useState<ArchiveReviewState | null>(null)
 	const archiveFlight = useRef<object | null>(null)
 	const [archiveSaving, setArchiveSaving] = useState(false)
@@ -2043,15 +1998,6 @@ export function DocumentReview({
 								label: draft.theme === 'dark' ? 'Light reading surface' : 'Dark reading surface',
 								onSelect: () => changeDraft(value => ({ ...value, theme: value.theme === 'dark' ? 'light' : 'dark' })),
 							},
-							...(contentWidth === 'choice'
-								? READING_WIDTH_CHOICES.map((choice, index) => ({
-										label: choice.label,
-										section: index === 0 ? 'Width' : undefined,
-										checked: readingWidth === choice.value,
-										meta: readingWidthShortcutLabel(choice.value),
-										onSelect: () => chooseReadingWidth(choice.value),
-									}))
-								: []),
 						]}
 					/>
 				</div>
@@ -2476,7 +2422,7 @@ export function DocumentReview({
 									</pre>
 								</>
 							) : canvasMode ? null : (
-								<article className="review-prose" data-reading-width={readingLayout}>
+								<article className="review-prose" data-reading-width="">
 									<ReviewMarkdown
 										blocks={model.blocks}
 										selectedStart={passage?.revision === state.document.revision ? passage.start : null}
