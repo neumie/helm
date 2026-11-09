@@ -148,9 +148,11 @@ export class ReviewDocumentObservation {
 			let parsed: ReturnType<typeof parseReviewArtifact>
 			try {
 				parsed = parseReviewArtifact(raw, format)
-			} catch {
+			} catch (error) {
+				// The parser's reason is a fixed phrase and line number, never document text.
+				const reason = (error as { reason?: unknown })?.reason
 				throw refuse(
-					`The helm-review journal at the end of ${basename(this.file)} is malformed; it was left untouched.`,
+					`The helm-review journal at the end of ${basename(this.file)} ${typeof reason === 'string' ? `cannot be read (${reason})` : 'is malformed'}; it was left untouched.`,
 				)
 			}
 			const { body: text, archive } = parsed
