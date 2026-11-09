@@ -102,8 +102,9 @@ Asks (add):
   --from NAME        Who asks, shown on the row. Default: this Okena terminal's
                      name when $OKENA_TERMINAL_ID is set, else "agent"
   --key KEY          Idempotency key: adding again with the same key updates
-                     that ask instead of filing a second one; a changed title
-                     or body makes it new again (and clears an earlier reply)
+                     that ask instead of filing a second one; a changed title,
+                     body or Okena terminal (another one, or none) makes it new
+                     again (and clears an earlier reply)
   Run from an Okena terminal, the ask remembers it: Jakub's reply is typed into
   this agent as its next prompt when it is idle, else kept on the thread (read
   it with helm signal show ID). Close the ask with helm signal done.

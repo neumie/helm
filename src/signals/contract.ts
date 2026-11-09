@@ -300,8 +300,8 @@ export type SignalRouted = z.infer<typeof signalRoutedSchema>
 
 /**
  * `POST /api/signals/asks` (`helm signal add`): create an ask, or with `key` upsert the thread
- * `agent:<key>`. A changed title or body makes it new again (and clears an earlier reply); other
- * changes (links, from, terminal) refresh it in place; identical input changes nothing.
+ * `agent:<key>`. A changed title, body or asking terminal makes it new again (and clears an earlier
+ * reply); a change of links or from refreshes it in place; identical input changes nothing.
  */
 export const signalAskSchema = z
 	.object({

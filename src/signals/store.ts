@@ -64,7 +64,8 @@ export const SIGNAL_REPLY_LINES = 40
 export const SIGNAL_ASK_CLOSED_REASON = 'closed by the agent'
 /**
  * Open (not done) agent asks at most. A new one beyond this is refused so asks can never push
- * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot; renewing a key always works.
+ * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot. Renewing or refreshing an open
+ * ask always works; reopening a done one takes a slot like a new ask.
  */
 export const SIGNAL_OPEN_ASKS_MAX = 50
 

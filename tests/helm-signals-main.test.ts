@@ -1073,6 +1073,7 @@ test('daemon requests: writes carry the local control token, reads and read-only
 			throw new Error('no token file')
 		},
 	})
-	assert.deepEqual(await noToken('POST', '/signals/3/reply', { text: 'B' }), { error: 'no token file' })
-	assert.equal(seen.length, 2, 'without the token nothing is sent')
+	assert.deepEqual(await noToken('POST', '/signals/3', { state: 'done' }), { data: { ok: true } })
+	assert.equal(seen.length, 3, 'without the token a write still goes out')
+	assert.equal(seen[2]?.headers.Authorization, undefined, 'unauthenticated: the daemon refuses only a reply')
 })

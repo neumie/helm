@@ -165,7 +165,11 @@ export function createSignalsDaemonRequest(
 		try {
 			const headers: Record<string, string> = {}
 			if (body !== undefined) headers['Content-Type'] = 'application/json'
-			if (method !== 'GET' && options.controlToken) headers.Authorization = `Bearer ${await options.controlToken()}`
+			if (method !== 'GET' && options.controlToken) {
+				// An unreadable token never blocks the other writes; only Jakub's reply is refused (401).
+				const token = await options.controlToken().catch(() => null)
+				if (token) headers.Authorization = `Bearer ${token}`
+			}
 			const res = await doFetch(`${baseUrl}/api${path}`, {
 				method,
 				headers,
