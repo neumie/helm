@@ -1,0 +1,91 @@
+/*
+ * Reading width — shared contract for long-form document surfaces
+ * (Document Review today; the general viewer later). docs/design-system.md
+ * "Reading width" owns the values.
+ *
+ * Opt-in only: nothing here applies until a flow container carries
+ * [data-reading-width]. Its direct children are the flow blocks; prose blocks
+ * keep --reading-column, wide blocks (tables, code, figures) use
+ * --reading-wide. Surfaces whose wide blocks sit inside wrappers map them with
+ * their own selector onto the same two declarations (see document-review.css).
+ *
+ *   measure  prose at the measure, wide blocks break out to the column (A)
+ *   fluid    everything fills the column up to a generous cap (B)
+ *   narrow   one column at the measure (C)
+ *   wide     one column at the wide cap (C, default)
+ *   full     one column, no cap (C)
+ *   fit      prose at the measure, wide blocks grow only as far as their content needs (D)
+ */
+[data-reading-width] {
+	/* About 75–85 characters of the 15px reading face: today's measure. */
+	--reading-measure: calc(680px * var(--ui-scale, 1));
+	--reading-wide-max: calc(960px * var(--ui-scale, 1));
+	--reading-fluid-max: calc(1160px * var(--ui-scale, 1));
+	--reading-block-max: calc(1280px * var(--ui-scale, 1));
+	--reading-column: var(--reading-measure);
+	--reading-wide: var(--reading-column);
+	max-width: none;
+	margin-inline: auto;
+}
+[data-reading-width] > * {
+	max-width: var(--reading-column);
+	margin-inline: auto;
+}
+[data-reading-width] > :is(table, pre, figure, [data-reading-wide]) {
+	max-width: var(--reading-wide);
+}
+[data-reading-width="measure"],
+[data-reading-width="fit"] {
+	--reading-wide: var(--reading-block-max);
+}
+[data-reading-width="fluid"] {
+	--reading-column: var(--reading-fluid-max);
+}
+[data-reading-width="wide"] {
+	--reading-column: var(--reading-wide-max);
+}
+[data-reading-width="full"] {
+	--reading-column: none;
+}
+[data-reading-width="fit"] > :is(table, pre, figure, [data-reading-wide]) {
+	width: fit-content;
+	max-width: min(100%, var(--reading-wide));
+	min-width: min(100%, var(--reading-column));
+}
+
+/*
+ * Tables size columns from whole tokens: an e-mail, URL or role name is never
+ * split to make a column narrower. A table wider than its block scrolls inside
+ * its own box (the surface owns overflow-x on the table wrapper).
+ */
+[data-reading-width] :is(td, th) {
+	min-width: 8em; /* border box in Chromium tables: about 80px of text at 13px */
+	overflow-wrap: break-word;
+	word-break: normal;
+}
+/*
+ * Code in a cell (e-mails, URLs, paths) stays whole even at a hyphen. Links
+ * keep wrapping at spaces: their labels are words. Plain-text e-mails can
+ * still break after a hyphen; CSS cannot tell them from prose.
+ */
+[data-reading-width] :is(td, th) code {
+	white-space: nowrap;
+}
+[data-reading-width] :is(td, th) a {
+	overflow-wrap: break-word;
+}
+/*
+ * Code is set in the shared mono face (--font-mono is not defined on :root, so
+ * the stack is spelled out as its fallback). Inline code reads at the optical
+ * size of the text around it, never a fixed smaller size; code blocks keep their own size.
+ */
+[data-reading-width] {
+	--reading-mono: var(--font-mono, "SF Mono", Menlo, ui-monospace, monospace);
+}
+[data-reading-width] :is(code, pre) {
+	font-family: var(--reading-mono);
+}
+[data-reading-width] :not(pre) > code {
+	/* Mono runs wide: 0.92em matches the x-height and color weight of the text around it. */
+	font-size: 0.92em;
+}

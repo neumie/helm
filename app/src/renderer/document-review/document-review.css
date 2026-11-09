@@ -179,6 +179,30 @@
 	font-size: calc(var(--review-reading-size) * var(--ui-scale));
 	line-height: 1.7;
 }
+/*
+ * Reading width adapter (../reading-width.css, opt-in via data-reading-width):
+ * Markdown wraps every flow block in .review-block, so wide blocks are found
+ * through their wrapper. Images stay at the measure: Markdown review never
+ * fetches them, and CSS cannot tell an image-only paragraph from a sentence
+ * with an inline image, so only the caption note would widen.
+ */
+.review-prose[data-reading-width] {
+	max-width: none;
+}
+.review-prose[data-reading-width] > .review-block:has(> .review-block-text > :is(.review-table, pre)) {
+	max-width: var(--reading-wide);
+}
+.review-prose[data-reading-width="fit"] > .review-block:has(> .review-block-text > :is(.review-table, pre)) {
+	width: fit-content;
+	max-width: min(100%, var(--reading-wide));
+	min-width: min(100%, var(--reading-column));
+}
+.review-prose[data-reading-width] .review-table {
+	max-width: 100%;
+}
+.review-prose[data-reading-width] code {
+	font-family: var(--reading-mono);
+}
 .review-prose h1 {
 	font-size: calc(28px * var(--ui-scale));
 	line-height: 1.25;
