@@ -7,7 +7,8 @@ import keybindingsModule from '../app/src/renderer/terminal-keybindings.ts'
 import shortcutsModule from '../app/src/shortcuts.ts'
 
 type KeybindingsModule = typeof import('../app/src/renderer/terminal-keybindings.ts')
-const { terminalShortcut, terminalInputShortcut } = keybindingsModule as KeybindingsModule
+const { terminalShortcut, terminalInputShortcut, shiftEnterInput, SHIFT_ENTER_INPUT } =
+	keybindingsModule as KeybindingsModule
 const { effectiveShortcuts } = shortcutsModule
 
 const commandBackspace = {
@@ -53,4 +54,44 @@ test('modified, repeating, and composing terminal aliases are not translated', (
 		input: '\x1a',
 		suppress: true,
 	})
+})
+
+const shiftEnter = { key: 'Enter', code: 'Enter', metaKey: false, ctrlKey: false, altKey: false, shiftKey: true }
+
+test('Shift+Enter sends LF once and suppresses xterm on every platform', () => {
+	const shortcuts = effectiveShortcuts()
+	assert.equal(SHIFT_ENTER_INPUT, '\n')
+	for (const platform of ['darwin', 'linux', 'win32'] as const)
+		assert.deepEqual(terminalInputShortcut(platform, shiftEnter, shortcuts), { input: '\n', suppress: true })
+	// Numpad Enter reports the same key.
+	assert.deepEqual(shiftEnterInput({ ...shiftEnter, code: 'NumpadEnter' }), { input: '\n', suppress: true })
+	// Holding Shift+Enter repeats newlines, like Enter repeats.
+	assert.deepEqual(terminalInputShortcut('darwin', { ...shiftEnter, repeat: true }, shortcuts), {
+		input: '\n',
+		suppress: true,
+	})
+})
+
+test('plain and otherwise-modified Enter keep xterm encoding', () => {
+	const shortcuts = effectiveShortcuts()
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, shiftKey: false }, shortcuts), null)
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, altKey: true }, shortcuts), null)
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, metaKey: true }, shortcuts), null)
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, ctrlKey: true }, shortcuts), null)
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, altKey: true, shiftKey: false }, shortcuts), null)
+})
+
+test('Shift+Enter during IME composition is left to the composition', () => {
+	const shortcuts = effectiveShortcuts()
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, isComposing: true }, shortcuts), null)
+	assert.equal(terminalInputShortcut('darwin', { ...shiftEnter, key: 'Process' }, shortcuts), null)
+})
+
+test('an alias on Command+Shift+Enter still works beside the newline rule', () => {
+	const shortcuts = { ...effectiveShortcuts(), sendInterrupt: [{ code: 'Enter', shift: true }] }
+	assert.deepEqual(terminalInputShortcut('darwin', { ...shiftEnter, metaKey: true }, shortcuts), {
+		input: '\x03',
+		suppress: true,
+	})
+	assert.deepEqual(terminalInputShortcut('darwin', shiftEnter, shortcuts), { input: '\n', suppress: true })
 })
