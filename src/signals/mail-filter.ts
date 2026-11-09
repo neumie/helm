@@ -4,7 +4,12 @@
 
 import { createHash } from 'node:crypto'
 import { oneLine } from '../agent-dock/text.js'
-import { SIGNAL_LIMITS, type SignalObservation } from './contract.js'
+import {
+	SIGNAL_LIMITS,
+	type SignalFilterReason,
+	type SignalFilteredObservation,
+	type SignalObservation,
+} from './contract.js'
 
 /** One message as the JXA script reports it (headers never leave the script). */
 export interface MailMessageHead {
@@ -18,10 +23,12 @@ export interface MailMessageHead {
 	read: boolean
 	flagged: boolean
 	/**
-	 * Bulk header present (mail-jxa.ts `isBulk`): List-Id / List-Unsubscribe / List-Unsubscribe-Post,
-	 * an X-Campaign* header, Precedence bulk|list|junk, Auto-Submitted other than no.
+	 * Why the headers mark it as sent to many (mail-jxa.ts `bulkReason`), else null: `newsletter`
+	 * List-Unsubscribe / List-Unsubscribe-Post, `campaign` an exact X-Campaign name, `junk`
+	 * Precedence: junk, `auto-reply` Auto-Submitted: auto-replied. Precedence bulk/list alone,
+	 * Auto-Submitted auto-generated/auto-notified and List-Id alone never count.
 	 */
-	bulk: boolean
+	bulkReason: MailBulkReason | null
 	/** Conversation root Message-ID (first References id, else In-Reply-To, else own id). */
 	root: string
 	/**
@@ -45,6 +52,15 @@ export interface MailFilterOptions {
 	/** Jakub's own addresses: his messages are never foreign activity. */
 	myAddresses: string[]
 }
+
+/** The filter reasons a header can give (every filter reason but `excluded`). */
+export const MAIL_BULK_REASONS = [
+	'newsletter',
+	'campaign',
+	'junk',
+	'auto-reply',
+] as const satisfies readonly SignalFilterReason[]
+export type MailBulkReason = (typeof MAIL_BULK_REASONS)[number]
 
 export const MAIL_GONE_REASON = 'no longer unread in the inbox'
 
@@ -147,22 +163,79 @@ function normalizeAddress(address: string): string {
 	return address.trim().toLowerCase()
 }
 
-/** Messages that want Jakub, per the configured rules. */
-export function filterMail(messages: MailMessageHead[], options: MailFilterOptions, now: Date): MailMessageHead[] {
+/** A candidate the rules kept out of Needs you, with the rule that did it. */
+export interface MailFilteredMessage {
+	message: MailMessageHead
+	reason: SignalFilterReason
+}
+
+export interface MailPartition {
+	/** Messages that want Jakub. */
+	kept: MailMessageHead[]
+	/**
+	 * Candidates kept out by a bulk header or the exclude list: what the filtered log records.
+	 * Mail that is too old, read, or Jakub's own is not a candidate and never listed.
+	 */
+	filtered: MailFilteredMessage[]
+}
+
+/** Messages that want Jakub, and the candidates the rules kept out (with why). */
+export function partitionMail(messages: MailMessageHead[], options: MailFilterOptions, now: Date): MailPartition {
 	const mine = new Set(options.myAddresses.map(normalizeAddress))
 	const oldest = now.getTime() - options.maxAgeDays * DAY_MS
-	return messages.filter(message => {
+	const kept: MailMessageHead[] = []
+	const filtered: MailFilteredMessage[] = []
+	for (const message of messages) {
 		const received = Date.parse(message.dateReceived)
-		if (!Number.isFinite(received) || received < oldest) return false
+		if (!Number.isFinite(received) || received < oldest) continue
 		const raw = normalizeAddress(message.senderAddress)
 		const address = senderIdentity(raw)
 		const matches = (globs: string[]) => matchesGlob(address, globs) || (address !== raw && matchesGlob(raw, globs))
 		// Sentry is always in, even when the include list was edited without it.
-		if (isSentrySender(address) || matches(options.includeSenders)) return true
-		if (options.unreadOnly && message.read) return false
-		if (options.excludeBulk && message.bulk) return false
-		if (matches(options.excludeSenders)) return false
-		return !mine.has(raw) && !mine.has(address)
+		if (isSentrySender(address) || matches(options.includeSenders)) {
+			kept.push(message)
+			continue
+		}
+		if (options.unreadOnly && message.read) continue
+		if (mine.has(raw) || mine.has(address)) continue
+		if (options.excludeBulk && message.bulkReason) {
+			filtered.push({ message, reason: message.bulkReason })
+			continue
+		}
+		if (matches(options.excludeSenders)) {
+			filtered.push({ message, reason: 'excluded' })
+			continue
+		}
+		kept.push(message)
+	}
+	return { kept, filtered }
+}
+
+/** Messages that want Jakub, per the configured rules. */
+export function filterMail(messages: MailMessageHead[], options: MailFilterOptions, now: Date): MailMessageHead[] {
+	return partitionMail(messages, options, now).kept
+}
+
+/** The filtered log key of a message: its normalized Message-ID. */
+export function mailMessageKey(message: Pick<MailMessageHead, 'messageId'>): string {
+	return messageIdKey(message.messageId)
+}
+
+/** Head-only filtered-log observations (sender, subject, reason, time; never a body). */
+export function mapFilteredMail(filtered: MailFilteredMessage[]): SignalFilteredObservation[] {
+	return filtered.map(({ message, reason }) => {
+		const address = normalizeAddress(message.senderAddress)
+		return {
+			messageKey: mailMessageKey(message),
+			senderName: line(message.senderName, SIGNAL_LIMITS.actor),
+			senderAddress: line(address, SIGNAL_LIMITS.fullRef),
+			senderIdentity: line(senderIdentity(address), SIGNAL_LIMITS.fullRef),
+			subject: line(message.subject, SIGNAL_LIMITS.title),
+			reason,
+			mailbox: message.mailbox ? line(message.mailbox, MAILBOX_LABEL_MAX) : null,
+			url: messageUrl(message.messageId),
+			receivedAt: new Date(Date.parse(message.dateReceived)).toISOString(),
+		}
 	})
 }
 

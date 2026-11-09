@@ -24,3 +24,5 @@ export type SignalThreadDesktop = Assert<Compatible<Signals.SignalThread, Deskto
 export type SignalsSnapshotDesktop = Assert<Compatible<Signals.SignalsSnapshot, Desktop.SignalsSnapshot>>
 export type SignalUpdateDesktop = Assert<Compatible<Signals.SignalUpdate, Desktop.SignalUpdate>>
 export type SignalRoutedDesktop = Assert<Compatible<Signals.SignalRouted, Desktop.SignalRouted>>
+export type SignalFilteredPageDesktop = Assert<Compatible<Signals.SignalFilteredPage, Desktop.SignalFilteredPage>>
+export type SignalIncludeResultDesktop = Assert<Compatible<Signals.SignalIncludeResult, Desktop.SignalIncludeResult>>

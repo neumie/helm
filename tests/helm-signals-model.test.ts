@@ -8,7 +8,13 @@ type SignalSourceHealth = import('../app/src/shared-helm.ts').SignalSourceHealth
 type AgentDockSnapshot = import('../app/src/agent-dock/model.ts').AgentDockSnapshot
 type DockSession = import('../app/src/agent-dock/model.ts').DockSession
 
+type SignalFilteredEntry = import('../app/src/shared-helm.ts').SignalFilteredEntry
+
 const {
+	filteredLine,
+	filteredRowView,
+	filteredSummary,
+	includeNote,
 	actionNote,
 	actionPatch,
 	allSourcesOk,
@@ -485,4 +491,37 @@ test('branch suggestions: PR head branch, issue number, mail subject slug', () =
 	assert.equal(slug('a'.repeat(60), 40).length, 40)
 	assert.equal(slug('word '.repeat(20), 40).endsWith('-'), false)
 	assert.equal(oneLine('a\u0000b\n\tc', 10), 'a b c')
+})
+
+test('filtered mail: the footer line, the header summary, rows by decoded sender and the include note', () => {
+	assert.equal(filteredLine(undefined), null)
+	assert.equal(filteredLine(0), null)
+	assert.equal(filteredLine(12), '12 filtered')
+	assert.equal(filteredSummary({ total: 1, retentionDays: 7 }), '1 mail kept out · last 7 days')
+	assert.equal(filteredSummary({ total: 12, retentionDays: 7 }), '12 mails kept out · last 7 days')
+
+	const entry: SignalFilteredEntry = {
+		id: 4,
+		source: 'mail',
+		senderName: '',
+		senderAddress: 'jana_at_x_cz_aa_bb@privaterelay.appleid.com',
+		senderIdentity: 'jana@x.cz',
+		subject: 'Auto: \u202eOut of office',
+		reason: 'auto-reply',
+		mailbox: 'Clientcare',
+		url: null,
+		receivedAt: new Date(NOW - 25 * MINUTE).toISOString(),
+		lastSeenAt: new Date(NOW).toISOString(),
+	}
+	const view = filteredRowView(entry, NOW)
+	assert.equal(view.ref, 'jana')
+	assert.equal(view.what, 'Clientcare · Auto: Out of office')
+	assert.equal(view.age, '25m')
+	assert.equal(view.reason, 'auto-reply')
+	assert.match(view.title, /^jana@x\.cz · Auto-Submitted: auto-replied/)
+	assert.equal(filteredRowView({ ...entry, senderName: 'Jana', subject: '' }, NOW).ref, 'Jana')
+	assert.equal(filteredRowView({ ...entry, senderName: 'Jana', subject: '' }, NOW).what, 'Clientcare · (no subject)')
+
+	assert.equal(includeNote({ address: 'jana@x.cz', added: true }), 'jana@x.cz is always shown from the next poll')
+	assert.equal(includeNote({ address: 'jana@x.cz', added: false }), 'jana@x.cz is already on the include list')
 })

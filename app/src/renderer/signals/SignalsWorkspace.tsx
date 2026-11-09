@@ -18,8 +18,8 @@ import {
 export interface SignalsWorkspaceProps {
 	/** `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission. */
 	scenario?: 'column' | 'quiet' | 'source-down'
-	/** Open a routing flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert). */
-	flow?: 'send' | 'new-agent'
+	/** Open a routing flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert), or the filtered mail list. */
+	flow?: 'send' | 'new-agent' | 'filtered'
 }
 
 declare global {
@@ -45,7 +45,7 @@ function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture
 	return createSignalsFixture({ threads })
 }
 
-const FLOW_THREAD: Record<NonNullable<SignalsWorkspaceProps['flow']>, number> = { send: 970, 'new-agent': 42 }
+const FLOW_THREAD: Record<'send' | 'new-agent', number> = { send: 970, 'new-agent': 42 }
 
 export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
@@ -62,7 +62,8 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 		const left = root?.querySelector<HTMLElement>('#left')
 		if (!root || !left) return
 		window.__signalsFixture = fixture
-		const initialFlow: SignalsFlow = flow ? { type: flow, id: FLOW_THREAD[flow] } : null
+		const initialFlow: SignalsFlow =
+			flow === 'filtered' ? { type: 'filtered' } : flow ? { type: flow, id: FLOW_THREAD[flow] } : null
 		const column = mountLeftColumn({
 			left,
 			mode: memoryLeftColumnMode('signals'),

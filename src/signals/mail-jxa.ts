@@ -10,7 +10,7 @@
 // Mail re-evaluates over the whole mailbox for every property asked). The received dates decide the
 // window first; subjects and flags are read only for mailboxes with a candidate, and raw headers
 // only for the bounded candidate set, one message by id each. Headers are reduced inside the
-// script to `bulk` + conversation `root` + Message-ID, so they never leave it. Past `budgetMs` it
+// script to `bulkReason` + conversation `root` + Message-ID, so they never leave it. Past `budgetMs` it
 // stops starting new reads and returns a partial answer (`slow`).
 //
 // Besides the inboxes it reads the extra mailboxes Jakub configured by name
@@ -128,19 +128,34 @@ function run(argv) {
 		if (!/^(?:[a-z]{2,63}|xn--[a-z0-9-]+)$/.test(labels[labels.length - 1])) return null;
 		return m[1] + '@' + labels.join('.');
 	}
-	// Header-only markers of mail sent to many. List-Unsubscribe-Post counts alone because Apple's
-	// Hide My Email relay strips List-Unsubscribe and List-Id but keeps it; X-Campaign names are
-	// exact (Mailchimp, Iterable, SmartEmailing), never a prefix. Transport fingerprints never
-	// count: Feedback-ID, X-SES-*, X-SG-*, X-Mailgun-*, X-PM-*, X-Mandrill-* and
-	// X-Auto-Response-Suppress also ride on helpdesk agents' replies (Freshdesk, Gorgias, Front,
-	// Zendesk) and on DocuSign or payment mail.
-	function isBulk(h) {
-		if (h['list-id'] || h['list-unsubscribe'] || h['list-unsubscribe-post']) return true;
-		if (h['x-campaign'] || h['x-campaignid'] || h['x-campaign-id']) return true;
-		var precedence = (h['precedence'] || []).join(' ').trim().toLowerCase();
-		if (precedence === 'bulk' || precedence === 'list' || precedence === 'junk') return true;
+	// Header-only markers of mail sent to many, narrowed so a human reply is never hidden by a
+	// header its tool adds: Jakub would rather see an occasional automated mail than miss a person.
+	// Returns the reason (contract SIGNAL_FILTER_REASONS) or null.
+	// - newsletter: List-Unsubscribe or List-Unsubscribe-Post (alone too: Apple's Hide My Email
+	//   relay strips List-Unsubscribe and List-Id but keeps List-Unsubscribe-Post).
+	// - campaign: the exact X-Campaign / X-CampaignID / X-Campaign-Id names (Mailchimp, Iterable,
+	//   SmartEmailing), never a prefix.
+	// - junk: Precedence: junk. Precedence bulk or list counts only beside a newsletter or campaign
+	//   marker, which already decides: Jira comment notifications carry Precedence: bulk alone.
+	// - auto-reply: Auto-Submitted: auto-replied (RFC 3834 vacation and out-of-office replies).
+	//   auto-generated and auto-notified never count: Zendesk and other helpdesks stamp them on
+	//   replies their agents write by hand.
+	// List-Id alone never counts (tool notifications and discussion lists carry it without an
+	// unsubscribe header). Transport fingerprints never count: Feedback-ID, X-SES-*, X-SG-*,
+	// X-Mailgun-*, X-PM-*, X-Mandrill-* and X-Auto-Response-Suppress also ride on helpdesk agents'
+	// replies (Freshdesk, Gorgias, Front, Zendesk) and on DocuSign or payment mail.
+	function token(values) {
+		return (values || []).join(' ').split(';')[0].trim().toLowerCase();
+	}
+	function bulkReason(h) {
+		if (h['list-unsubscribe'] || h['list-unsubscribe-post']) return 'newsletter';
+		if (h['x-campaign'] || h['x-campaignid'] || h['x-campaign-id']) return 'campaign';
+		if (token(h['precedence']) === 'junk') return 'junk';
 		var auto = h['auto-submitted'];
-		return !!auto && auto.join(' ').trim().toLowerCase() !== 'no';
+		for (var i = 0; auto && i < auto.length; i++) {
+			if (token([auto[i]]) === 'auto-replied') return 'auto-reply';
+		}
+		return null;
 	}
 	// Mirrors mail-filter.ts mailboxEntryMatches: the entry is the mailbox name, or
 	// "<account name or address>/<mailbox name>"; case-insensitive. account is null for local
@@ -393,7 +408,7 @@ function run(argv) {
 			dateReceived: row.date.toISOString(),
 			read: !!row.read,
 			flagged: !!row.flagged,
-			bulk: isBulk(headers),
+			bulkReason: bulkReason(headers),
 			root: firstId(headers['references']) || firstId(headers['in-reply-to']) || ownId,
 			mailbox: row.source.label,
 		});

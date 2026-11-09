@@ -11,7 +11,7 @@
 			"dateReceived": "2026-01-14T08:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m1@northwind.cz"
 		},
 		{
@@ -22,7 +22,7 @@
 			"dateReceived": "2026-01-14T09:30:00.000Z",
 			"read": false,
 			"flagged": true,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m1@northwind.cz"
 		},
 		{
@@ -33,7 +33,7 @@
 			"dateReceived": "2026-01-14T07:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m3@xyz.cz"
 		},
 		{
@@ -44,7 +44,7 @@
 			"dateReceived": "2026-01-14T06:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m4@gmail.com"
 		},
 		{
@@ -55,7 +55,7 @@
 			"dateReceived": "2026-01-14T05:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": true,
+			"bulkReason": "newsletter",
 			"root": "m5@news.example"
 		},
 		{
@@ -66,7 +66,7 @@
 			"dateReceived": "2026-01-14T04:00:00.000Z",
 			"read": true,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m6@northwind.cz"
 		},
 		{
@@ -77,7 +77,7 @@
 			"dateReceived": "2026-01-14T10:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m1@northwind.cz"
 		},
 		{
@@ -88,7 +88,7 @@
 			"dateReceived": "2026-01-14T03:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m8@noise.example"
 		},
 		{
@@ -99,7 +99,7 @@
 			"dateReceived": "2026-01-01T00:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "m9@old.example"
 		},
 		{
@@ -110,7 +110,7 @@
 			"dateReceived": "2026-01-14T02:00:00.000Z",
 			"read": true,
 			"flagged": false,
-			"bulk": true,
+			"bulkReason": "newsletter",
 			"root": "s1@sentry.example"
 		},
 		{
@@ -121,7 +121,7 @@
 			"dateReceived": "2026-01-14T02:30:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": true,
+			"bulkReason": "newsletter",
 			"root": "s2@sentry.example"
 		},
 		{
@@ -132,7 +132,7 @@
 			"dateReceived": "2026-01-14T01:00:00.000Z",
 			"read": true,
 			"flagged": false,
-			"bulk": true,
+			"bulkReason": "newsletter",
 			"root": "s3@sentry.example"
 		}
 	]

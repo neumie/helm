@@ -28,7 +28,15 @@ import {
 	type SignalOkenaProjects,
 	type SignalsBridgeState,
 } from './shared'
-import type { HelmResult, SignalRouted, SignalThread, SignalUpdate, SignalsSnapshot } from './shared-helm'
+import type {
+	HelmResult,
+	SignalFilteredPage,
+	SignalIncludeResult,
+	SignalRouted,
+	SignalThread,
+	SignalUpdate,
+	SignalsSnapshot,
+} from './shared-helm'
 
 /** While a window shows Signals: re-read every 3 s after the previous read settled. */
 export const SIGNALS_POLL_MS = 3_000
@@ -306,6 +314,27 @@ export class SignalsMain {
 		return this.write<SignalThread>(`/signals/${threadId}/routed`, body as SignalRouted)
 	}
 
+	/** The filtered mail log (heads only); read on demand while the filtered list is open. */
+	async filtered(): Promise<HelmResult<SignalFilteredPage>> {
+		let result: HelmResult<SignalFilteredPage>
+		try {
+			result = await this.options.request<SignalFilteredPage>('GET', '/signals/filtered')
+		} catch (error) {
+			result = { error: errorText(error) }
+		}
+		if (result.data !== undefined && !isFilteredPage(result.data))
+			return { error: 'Helm daemon sent an unreadable filtered list.' }
+		if (result.error !== undefined && result.status === undefined) return { error: SIGNALS_UNREACHABLE }
+		return result
+	}
+
+	/** Always show a filtered mail's sender: the daemon adds it to the include list. */
+	async include(id: unknown): Promise<HelmResult<SignalIncludeResult>> {
+		const entryId = signalId(id)
+		if (entryId === null) return { error: 'That filtered mail does not exist.', status: 400 }
+		return this.write<SignalIncludeResult>(`/signals/filtered/${entryId}/include`, {})
+	}
+
 	async open(value: unknown): Promise<HelmResult<true>> {
 		const url = signalOpenableUrl(value)
 		if (!url) return { error: 'Only GitHub and Mail links can be opened.', status: 400 }
@@ -374,6 +403,12 @@ export class SignalsMain {
 		)
 		ipc.handle(SIGNALS_IPC.newAgent, (event, request, profileToken) =>
 			this.options.acceptsIpc(event.sender, profileToken) ? this.newAgent(request) : refused('start agents'),
+		)
+		ipc.handle(SIGNALS_IPC.filtered, (event, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.filtered() : refused('read filtered mail'),
+		)
+		ipc.handle(SIGNALS_IPC.include, (event, id, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.include(id) : refused('change the include list'),
 		)
 	}
 
@@ -705,6 +740,11 @@ function parseNewAgentRequest(value: unknown): HelmResult<SignalNewAgentRequest>
 	return {
 		data: { signalId: signalIdValue, projectId: raw.projectId, branch, agent: 'claude', prompt: raw.prompt },
 	}
+}
+
+function isFilteredPage(value: unknown): value is SignalFilteredPage {
+	const page = value as Partial<SignalFilteredPage> | null
+	return !!page && Array.isArray(page.entries) && typeof page.total === 'number'
 }
 
 function isSnapshot(value: unknown): value is SignalsSnapshot {

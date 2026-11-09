@@ -4,7 +4,17 @@
 // refs are third-party data: shown as plain React text and fenced as data inside prompts.
 
 import type { AgentDockSnapshot, DockSession } from '../../agent-dock/model'
-import type { SignalKind, SignalSource, SignalSourceHealth, SignalThread, SignalUpdate } from '../../shared-helm'
+import type {
+	SignalFilterReason,
+	SignalFilteredEntry,
+	SignalFilteredPage,
+	SignalIncludeResult,
+	SignalKind,
+	SignalSource,
+	SignalSourceHealth,
+	SignalThread,
+	SignalUpdate,
+} from '../../shared-helm'
 import { agentNames, statusGlyph } from '../agent-dock/presentation'
 
 export type SignalSection = 'needs' | 'managed' | 'snoozed' | 'done'
@@ -443,6 +453,67 @@ export function allSourcesOk(sources: readonly SignalSourceHealth[]): boolean {
 		sources.some(source => source.status === 'ok') &&
 		sources.every(source => source.status === 'ok' || source.status === 'disabled')
 	)
+}
+
+// ---------- filtered mail (audit log) ----------
+
+/** The reason on a filtered row: what kept the mail out. */
+export const FILTER_REASON_WORD: Record<SignalFilterReason, string> = {
+	newsletter: 'newsletter',
+	campaign: 'campaign',
+	junk: 'junk',
+	'auto-reply': 'auto-reply',
+	excluded: 'excluded',
+}
+
+/** The rule behind a reason, for the row tooltip. */
+export const FILTER_REASON_TITLE: Record<SignalFilterReason, string> = {
+	newsletter: 'List-Unsubscribe header: sent to a list',
+	campaign: 'X-Campaign header: a marketing campaign',
+	junk: 'Precedence: junk',
+	'auto-reply': 'Auto-Submitted: auto-replied (vacation or out-of-office)',
+	excluded: 'Sender is on the exclude list in Settings › Signals',
+}
+
+/** The dim footer line (`12 filtered`), or null when nothing was filtered or the daemon cannot say. */
+export function filteredLine(count: number | undefined): string | null {
+	return typeof count === 'number' && count > 0 ? `${count} filtered` : null
+}
+
+/** The filtered list's header context: `12 mails kept out · last 7 days`. */
+export function filteredSummary(page: Pick<SignalFilteredPage, 'total' | 'retentionDays'>): string {
+	return `${page.total} mail${page.total === 1 ? '' : 's'} kept out · last ${page.retentionDays} days`
+}
+
+export interface FilteredRowView {
+	/** Sender name, else the address's local part. */
+	ref: string
+	/** Subject, with the extra mailbox in front (`Clientcare · …`). */
+	what: string
+	age: string
+	reason: string
+	title: string
+}
+
+export function filteredRowView(entry: SignalFilteredEntry, now: number): FilteredRowView {
+	// The decoded sender (a Hide My Email relay shows the real address): what `i` adds.
+	const address = oneLine(entry.senderIdentity || entry.senderAddress, 200)
+	const name = oneLine(entry.senderName, 120)
+	const subject = oneLine(entry.subject, 300) || '(no subject)'
+	const mailbox = entry.mailbox ? oneLine(entry.mailbox, 40) : ''
+	return {
+		ref: name || address.split('@')[0] || address || 'Mail',
+		what: mailbox ? `${mailbox} · ${subject}` : subject,
+		age: formatAgo(now - time(entry.receivedAt)),
+		reason: FILTER_REASON_WORD[entry.reason] ?? 'filtered',
+		title: `${name ? `${name} <${address}>` : address} · ${FILTER_REASON_TITLE[entry.reason] ?? 'Filtered'}`,
+	}
+}
+
+/** The status line after `i`. */
+export function includeNote(result: SignalIncludeResult): string {
+	const address = oneLine(result.address, 200)
+	return result.added ? `${address} is always shown from the next poll` : `${address} is already on the include list`
 }
 
 // ---------- prompts ----------

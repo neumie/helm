@@ -15,15 +15,18 @@ import {
 	isAbort,
 } from './github-source.js'
 import {
+	MAIL_BULK_REASONS,
 	type MailFilterOptions,
 	type MailMessageHead,
 	dedupeMailMessages,
-	filterMail,
 	globToRegExpSource,
 	mailGoneReason,
+	mailMessageKey,
+	mapFilteredMail,
 	mapMailThreads,
 	parseGlobList,
 	parseMailboxList,
+	partitionMail,
 } from './mail-filter.js'
 import {
 	MAIL_MAX_CANDIDATES,
@@ -57,7 +60,7 @@ const messageSchema = z.object({
 	dateReceived: z.string().datetime({ offset: true }),
 	read: z.boolean(),
 	flagged: z.boolean(),
-	bulk: z.boolean(),
+	bulkReason: z.enum(MAIL_BULK_REASONS).nullable(),
 	root: z.string(),
 	mailbox: z.string().max(200).nullable().optional(),
 })
@@ -232,10 +235,12 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 				excludeSenders: parseGlobList(settings.excludeSenders),
 				myAddresses: output.myAddresses,
 			}
+			const { kept, filtered } = partitionMail(dedupeMailMessages(messages), options, at)
 			return {
 				result: {
 					source: 'mail',
-					observations: mapMailThreads(filterMail(dedupeMailMessages(messages), options, at)),
+					observations: mapMailThreads(kept),
+					filtered: { entries: mapFilteredMail(filtered), keptKeys: kept.map(mailMessageKey) },
 					// A configured mailbox that was not read could still hold a listed thread.
 					complete: !output.truncated && !dropped && trouble.missing.length === 0 && trouble.unreadable.length === 0,
 					goneReason,

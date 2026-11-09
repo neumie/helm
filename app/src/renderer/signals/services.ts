@@ -11,7 +11,14 @@ import type {
 	SignalsApi,
 	SignalsBridgeState,
 } from '../../shared'
-import type { HelmResult, SignalRouted, SignalThread, SignalUpdate } from '../../shared-helm'
+import type {
+	HelmResult,
+	SignalFilteredPage,
+	SignalIncludeResult,
+	SignalRouted,
+	SignalThread,
+	SignalUpdate,
+} from '../../shared-helm'
 
 export interface SignalsService {
 	getState(): SignalsBridgeState
@@ -22,6 +29,10 @@ export interface SignalsService {
 	open(url: string): Promise<HelmResult<true>>
 	okenaProjects(repo: string | null): Promise<HelmResult<SignalOkenaProjects>>
 	newAgent(request: SignalNewAgentRequest): Promise<HelmResult<SignalNewAgentResult>>
+	/** Mail the rules kept out of Needs you (heads only, last 7 days). */
+	filtered(): Promise<HelmResult<SignalFilteredPage>>
+	/** Always show that filtered mail's sender. */
+	include(id: number): Promise<HelmResult<SignalIncludeResult>>
 }
 
 export interface DockService {
@@ -76,6 +87,13 @@ export function createSignalsService(api: SignalsApi): SignalsService & { dispos
 		open: guarded((url: string) => api.open(url)),
 		okenaProjects: guarded((repo: string | null) => api.okenaProjects(repo)),
 		newAgent: guarded((request: SignalNewAgentRequest) => api.newAgent(request)),
+		// An older preload without the filtered log answers like an older daemon would.
+		filtered: guarded(() =>
+			api.filtered ? api.filtered() : Promise.resolve({ error: 'This Helm cannot list filtered mail.' }),
+		),
+		include: guarded((id: number) =>
+			api.include ? api.include(id) : Promise.resolve({ error: 'This Helm cannot change the include list.' }),
+		),
 		dispose() {
 			unsubscribe()
 			listeners.clear()

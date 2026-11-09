@@ -1058,4 +1058,30 @@ ALTER TABLE signal_sources_v38 RENAME TO signal_sources;
 CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at);
 `,
 	},
+	{
+		// Signals filtered log: mail candidates the rules kept out of Needs you (a bulk header or the
+		// exclude list), heads only (sender, subject, reason, times; never a body), one row per
+		// Message-ID, kept for seven days after it was received. Global like the other Signals
+		// tables. IF NOT EXISTS keeps replays of reconstructed older databases from failing.
+		version: 39,
+		sql: `
+CREATE TABLE IF NOT EXISTS signal_filtered (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_key TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('mail')),
+  sender_name TEXT NOT NULL,
+  sender_address TEXT NOT NULL,
+  sender_identity TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  mailbox TEXT,
+  url TEXT,
+  received_at TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signal_filtered_received ON signal_filtered(received_at);
+CREATE INDEX IF NOT EXISTS idx_signal_filtered_identity ON signal_filtered(sender_identity);
+`,
+	},
 ]

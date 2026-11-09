@@ -4,7 +4,13 @@
 
 import type { AgentDockPromptRequest, AgentDockSnapshot, DockSession } from '../../agent-dock/model'
 import type { SignalNewAgentRequest, SignalOkenaProject, SignalsBridgeState } from '../../shared'
-import type { SignalSourceHealth, SignalThread, SignalUpdate, SignalsSnapshot } from '../../shared-helm'
+import type {
+	SignalFilteredEntry,
+	SignalSourceHealth,
+	SignalThread,
+	SignalUpdate,
+	SignalsSnapshot,
+} from '../../shared-helm'
 import { nextWeekdayMorning } from './model'
 import type { DockService, SignalsService } from './services'
 
@@ -351,6 +357,58 @@ export function signalsDockFixture(now = Date.now()): AgentDockSnapshot {
 	}
 }
 
+/** Mail the rules kept out (heads only), newest first. Senders are illustrative. */
+export function signalFilteredFixtures(now = Date.now()): SignalFilteredEntry[] {
+	const entry = (
+		id: number,
+		ago: number,
+		seed: Pick<SignalFilteredEntry, 'senderName' | 'senderAddress' | 'subject' | 'reason'> &
+			Partial<SignalFilteredEntry>,
+	): SignalFilteredEntry => ({
+		source: 'mail',
+		senderIdentity: seed.senderAddress,
+		mailbox: null,
+		url: `message://%3Cfiltered-${id}%40mail.example%3E`,
+		receivedAt: iso(now - ago * MINUTE),
+		lastSeenAt: iso(now - MINUTE),
+		id,
+		...seed,
+	})
+	return [
+		entry(8, 12, {
+			senderName: 'Petra Nováková',
+			senderAddress: 'petra@psyon.example',
+			subject: 'Re: Dovolená do 14. 11.',
+			reason: 'auto-reply',
+		}),
+		entry(7, 40, {
+			senderName: 'Contember',
+			senderAddress: 'news@contember.example',
+			subject: 'What shipped in October',
+			reason: 'newsletter',
+		}),
+		entry(6, 95, {
+			senderName: 'Fakturoid',
+			senderAddress: 'info@fakturoid.example',
+			subject: 'Nové funkce pro listopad',
+			reason: 'campaign',
+			mailbox: 'Clientcare',
+		}),
+		entry(5, 180, {
+			senderName: '',
+			senderAddress: 'deals@shop.example',
+			subject: 'Last chance: 40 % off',
+			reason: 'junk',
+		}),
+		entry(4, 600, {
+			senderName: 'Build bot',
+			senderAddress: 'ci@builds.example',
+			subject: 'Nightly build finished',
+			reason: 'excluded',
+		}),
+	]
+}
+
 export const OKENA_PROJECTS_FIXTURE: SignalOkenaProject[] = [
 	{ id: 'p-crane', name: 'crane-rental', repo: 'contember-external/crane-rental' },
 	{ id: 'p-okena', name: 'okena', repo: 'contember/okena' },
@@ -366,6 +424,8 @@ export interface SignalsFixtureCalls {
 	prompts: AgentDockPromptRequest[]
 	okenaProjects: Array<string | null>
 	newAgents: SignalNewAgentRequest[]
+	/** Filtered-mail ids `i` asked to always show. */
+	includes: number[]
 }
 
 /** The routing effects a browser test can hold in flight (`newAgent`: the Okena start, `prompt`: the dock send). */
@@ -387,6 +447,8 @@ export interface SignalsFixtureOptions {
 	/** null: the agent dock has not pushed a snapshot (no agent listed). */
 	dock?: AgentDockSnapshot | null
 	now?: () => number
+	/** Mail the rules kept out; default `signalFilteredFixtures`, `[]` for none. */
+	filtered?: SignalFilteredEntry[]
 }
 
 /**
@@ -398,9 +460,17 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 	const start = clock()
 	let threads = (options.threads ?? signalThreadFixtures(start)).map(entry => ({ ...entry }))
 	const sources = options.sources ?? signalSourcesFixture(start)
+	let filtered = (options.filtered ?? signalFilteredFixtures(start)).map(entry => ({ ...entry }))
+	const included: string[] = []
 	let seq = 1
 	const listeners = new Set<() => void>()
-	const snapshotOf = (): SignalsSnapshot => ({ threads, sources, seq, generatedAt: iso(clock()) })
+	const snapshotOf = (): SignalsSnapshot => ({
+		threads,
+		sources,
+		seq,
+		generatedAt: iso(clock()),
+		filteredCount: filtered.length,
+	})
 	let state: SignalsBridgeState = { snapshot: snapshotOf(), error: null, at: start }
 	const publish = (): void => {
 		seq += 1
@@ -414,6 +484,7 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		prompts: [],
 		okenaProjects: [],
 		newAgents: [],
+		includes: [],
 	}
 	const held = new Map<SignalsHeldEffect, { wait: Promise<void>; release(): void }>()
 	const hold = (effect: SignalsHeldEffect): void => {
@@ -477,6 +548,21 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		async open(url) {
 			calls.opened.push(url)
 			return { data: true }
+		},
+		async filtered() {
+			return { data: { entries: filtered.map(entry => ({ ...entry })), total: filtered.length, retentionDays: 7 } }
+		},
+		async include(id) {
+			calls.includes.push(id)
+			const entry = filtered.find(item => item.id === id)
+			if (!entry) return { error: 'Filtered mail not found', status: 404 }
+			const address = entry.senderIdentity
+			const added = !included.includes(address)
+			if (added) included.push(address)
+			// As the daemon: the sender's rows leave the log, and the next poll keeps their mail.
+			filtered = filtered.filter(item => item.senderIdentity !== address)
+			publish()
+			return { data: { address, added } }
 		},
 		async okenaProjects(repo) {
 			calls.okenaProjects.push(repo)

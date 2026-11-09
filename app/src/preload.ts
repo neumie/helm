@@ -38,6 +38,8 @@ import type {
 	HelmResult,
 	HelmSnapshot,
 	ProfilesApi,
+	SignalFilteredPage,
+	SignalIncludeResult,
 	SignalRouted,
 	SignalThread,
 	SignalUpdate,
@@ -128,6 +130,8 @@ const SIGNALS_CHANNELS: typeof SIGNALS_IPC = {
 	open: 'signals:open',
 	okenaProjects: 'signals:okena-projects',
 	newAgent: 'signals:new-agent',
+	filtered: 'signals:filtered',
+	include: 'signals:include',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -386,6 +390,8 @@ const api: HelmApi = {
 		open: (url: string) => invokeHelm<true>(SIGNALS_CHANNELS.open, url),
 		okenaProjects: (repo: string | null) => invokeHelm<SignalOkenaProjects>(SIGNALS_CHANNELS.okenaProjects, repo),
 		newAgent: (request: SignalNewAgentRequest) => invokeHelm<SignalNewAgentResult>(SIGNALS_CHANNELS.newAgent, request),
+		filtered: () => invokeHelm<SignalFilteredPage>(SIGNALS_CHANNELS.filtered),
+		include: (id: number) => invokeHelm<SignalIncludeResult>(SIGNALS_CHANNELS.include, id),
 	} satisfies SignalsApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

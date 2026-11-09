@@ -6,7 +6,7 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { DB } from '../src/db/client.js'
 import { MIGRATIONS } from '../src/db/schema.js'
-import type { SignalObservation, SignalPollResult } from '../src/signals/contract.js'
+import type { SignalFilteredObservation, SignalObservation, SignalPollResult } from '../src/signals/contract.js'
 import { SIGNAL_EVENT_RETENTION, SignalInvalidError, SignalNotFoundError } from '../src/signals/store.js'
 
 const T0 = new Date('2026-11-05T10:00:00.000Z')
@@ -621,5 +621,140 @@ test("poll-only refreshes never move a done thread's done time", () => {
 		)
 		assert.equal(db.signals.get(id)?.state, 'new')
 		assert.equal(db.signals.get(id)?.updatedAt, later(9).toISOString())
+	})
+})
+
+// ---------- filtered mail log ----------
+
+function filteredEntry(key: string, patch: Partial<SignalFilteredObservation> = {}): SignalFilteredObservation {
+	return {
+		messageKey: key,
+		senderName: 'News',
+		senderAddress: 'digest@news.example',
+		senderIdentity: 'digest@news.example',
+		subject: `Weekly ${key}`,
+		reason: 'newsletter',
+		mailbox: null,
+		url: `message://%3C${key}%3E`,
+		receivedAt: T0.toISOString(),
+		...patch,
+	}
+}
+
+function mailPoll(entries: SignalFilteredObservation[], keptKeys: string[] = [], complete = true): SignalPollResult {
+	return {
+		source: 'mail',
+		observations: [],
+		complete,
+		goneReason: 'no longer unread in the inbox',
+		filtered: { entries, keptKeys },
+	}
+}
+
+test('filtered log: heads only, upserted per message, newest first, counted in the snapshot window', () => {
+	withDb(db => {
+		const store = db.signals
+		assert.equal(store.filteredCount(T0), 0)
+		store.applyPoll(
+			mailPoll([
+				filteredEntry('A@News.example', { receivedAt: at(-30).toISOString() }),
+				filteredEntry('b@ooo.example', {
+					reason: 'auto-reply',
+					senderName: 'Petra‮',
+					senderAddress: 'Petra@Psyon.example',
+					senderIdentity: '',
+					subject: 'Out\nof office',
+					url: 'https://evil.example/x',
+					receivedAt: at(-10).toISOString(),
+				}),
+				// Not a filter reason / no key / bad time: dropped.
+				filteredEntry('c@x.example', { reason: 'spam' as never }),
+				filteredEntry('', {}),
+				filteredEntry('d@x.example', { receivedAt: 'yesterday' }),
+			]),
+			T0,
+		)
+		const page = store.listFiltered(T0)
+		assert.equal(page.total, 2)
+		assert.equal(page.retentionDays, 7)
+		assert.deepEqual(
+			page.entries.map(entry => entry.subject),
+			['Out of office', 'Weekly A@News.example'],
+		)
+		const [ooo, news] = page.entries
+		assert.equal(ooo?.senderAddress, 'petra@psyon.example')
+		assert.equal(ooo?.senderIdentity, 'petra@psyon.example')
+		assert.equal(ooo?.senderName.includes('‮'), false)
+		assert.equal(ooo?.url, null)
+		assert.equal(ooo?.reason, 'auto-reply')
+		assert.equal(news?.url, 'message://%3CA@News.example%3E')
+		assert.equal(store.getFiltered(news?.id ?? 0, T0)?.subject, 'Weekly A@News.example')
+		assert.equal(store.getFiltered(9999, T0), null)
+
+		// The same message again (an incomplete poll logs too) updates its row, never a second one.
+		store.applyPoll(mailPoll([filteredEntry('a@news.example', { subject: 'Weekly, renamed' })], [], false), at(1))
+		assert.equal(store.filteredCount(at(1)), 2)
+		assert.equal(store.getFiltered(news?.id ?? 0, at(1))?.subject, 'Weekly, renamed')
+		assert.equal(store.getFiltered(news?.id ?? 0, at(1))?.receivedAt, T0.toISOString())
+
+		// A GitHub poll never touches the log.
+		store.applyPoll({ ...poll([]), filtered: { entries: [filteredEntry('g@x.example')], keptKeys: [] } }, at(2))
+		assert.equal(store.filteredCount(at(2)), 2)
+	})
+})
+
+test('filtered log: a message the next poll keeps leaves it; rows expire after 7 days; a sender can be forgotten', () => {
+	withDb(db => {
+		const store = db.signals
+		store.applyPoll(
+			mailPoll([
+				filteredEntry('a@news.example'),
+				filteredEntry('b@news.example'),
+				filteredEntry('c@ooo.example', {
+					reason: 'auto-reply',
+					senderAddress: 'jana_at_x_cz_aa_bb@privaterelay.appleid.com',
+					senderIdentity: 'jana@x.cz',
+				}),
+				filteredEntry('old@news.example', { receivedAt: at(-8 * 24 * 60).toISOString() }),
+			]),
+			T0,
+		)
+		assert.equal(store.filteredCount(T0), 3)
+		// Kept now (an include, a changed rule): out of the log.
+		store.applyPoll(mailPoll([], ['A@News.example']), at(1))
+		assert.deepEqual(
+			store
+				.listFiltered(at(1))
+				.entries.map(entry => entry.subject)
+				.sort(),
+			['Weekly b@news.example', 'Weekly c@ooo.example'],
+		)
+		// The decoded identity and the raw relay address both name the sender.
+		assert.equal(store.forgetFilteredSender('Jana@X.cz'), 1)
+		assert.equal(store.forgetFilteredSender('nobody@x.example'), 0)
+		assert.equal(store.forgetFilteredSender('  '), 0)
+		assert.equal(store.filteredCount(at(1)), 1)
+		// Seven days after receipt it no longer counts, and the next mail poll prunes it.
+		const later = new Date(T0.getTime() + 7 * 24 * 60 * 60_000 + 60_000)
+		assert.equal(store.filteredCount(later), 0)
+		assert.equal(store.listFiltered(later).entries.length, 0)
+		assert.equal(store.filteredCount(T0), 1)
+		store.applyPoll(mailPoll([]), later)
+		// Pruned, not just hidden: even counted from T0 it is gone.
+		assert.equal(store.filteredCount(T0), 0)
+	})
+})
+
+test('filtered log is capped at 1000 rows, keeping the newest', () => {
+	withDb(db => {
+		const store = db.signals
+		const entries = Array.from({ length: 1005 }, (_, index) =>
+			filteredEntry(`m${index}@news.example`, { receivedAt: at(-index).toISOString() }),
+		)
+		store.applyPoll(mailPoll(entries), T0)
+		assert.equal(store.filteredCount(T0), 1000)
+		assert.equal(store.listFiltered(T0).entries.length, 300)
+		assert.equal(store.listFiltered(T0).entries[0]?.subject, 'Weekly m0@news.example')
+		assert.equal(store.listFiltered(T0, 5000).entries.at(-1)?.subject, 'Weekly m299@news.example')
 	})
 })

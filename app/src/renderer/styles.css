@@ -3521,7 +3521,8 @@ body.dragging {
 	display: none;
 }
 
-.signals-health {
+.signals-health,
+.signals-foot-filtered {
 	flex: 1 1 100%;
 	min-width: 0;
 	color: var(--dock-dim);
@@ -3541,8 +3542,31 @@ body.dragging {
 	letter-spacing: -0.01em;
 }
 
+/* `12 filtered`: the mail the rules kept out, one dim line that opens the filtered list. A plain
+ * text button (no fill at rest); `f` reads as a key hint while Signals holds the keys. */
+.signals-filtered {
+	min-height: 24px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: var(--dock-dim);
+	text-align: left;
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+
+.signals-filtered:hover {
+	color: var(--text-1);
+}
+
+.signals-filtered-key {
+	font: inherit;
+	color: var(--text-1);
+}
+
 /* Key hints and choice numbers show only while Signals holds the keys (§3.24). */
-.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n),
+.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-filtered-key),
 .signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
 	visibility: hidden;
 }

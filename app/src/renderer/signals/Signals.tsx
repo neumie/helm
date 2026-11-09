@@ -8,7 +8,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, 
 import { createRoot } from 'react-dom/client'
 import type { AgentDockSnapshot } from '../../agent-dock/model'
 import type { SignalOkenaProject } from '../../shared'
-import type { SignalThread } from '../../shared-helm'
+import type { SignalFilteredPage, SignalThread } from '../../shared-helm'
 import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
@@ -23,8 +23,12 @@ import {
 	allSourcesOk,
 	closedHeader,
 	defaultAgentPick,
+	filteredLine,
+	filteredRowView,
+	filteredSummary,
 	following,
 	healthLines,
+	includeNote,
 	keepSelection,
 	matchAgents,
 	newAgentPrompt,
@@ -57,7 +61,7 @@ export interface SignalsColumnProps {
 	initialFlow?: SignalsFlow
 }
 
-export type SignalsFlow = { type: 'send' | 'new-agent'; id: number } | null
+export type SignalsFlow = { type: 'send' | 'new-agent'; id: number } | { type: 'filtered' } | null
 
 /** What a flow's attempt (the dock prompt / the Okena start) came back with. */
 export type RouteAttempt =
@@ -240,7 +244,9 @@ export function SignalsColumn({
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
 	const [now, setNow] = useState(clock)
-	const [selected, setSelected] = useState<number | null>(initialSelected ?? initialFlow?.id ?? null)
+	const [selected, setSelected] = useState<number | null>(
+		initialSelected ?? (initialFlow && 'id' in initialFlow ? initialFlow.id : null),
+	)
 	const [flow, setFlow] = useState<SignalsFlow>(initialFlow)
 	const [note, setNote] = useState<string | null>(null)
 	const [overrides, setOverrides] = useState<ReadonlyMap<number, SignalThread>>(() => new Map())
@@ -267,7 +273,8 @@ export function SignalsColumn({
 	const rows = useMemo(() => orderedRows(sections), [sections])
 	const current = keepSelection(rows, selected)
 	const sources = bridge.snapshot?.sources ?? []
-	const flowThread = flow ? threads.find(thread => thread.id === flow.id) : undefined
+	const flowThread = flow && 'id' in flow ? threads.find(thread => thread.id === flow.id) : undefined
+	const filteredCount = bridge.snapshot?.filteredCount
 
 	// Keyboard moves keep the selected row in view.
 	useEffect(() => {
@@ -279,7 +286,7 @@ export function SignalsColumn({
 
 	// A flow whose thread left the snapshot closes; the list keeps the keys.
 	useEffect(() => {
-		if (flow && !flowThread) setFlow(null)
+		if (flow && 'id' in flow && !flowThread) setFlow(null)
 	}, [flow, flowThread])
 
 	const applyThread = useCallback((thread: SignalThread) => {
@@ -307,7 +314,7 @@ export function SignalsColumn({
 			// Success closes the flow showing this thread (whichever instance it is); focus returns to the list.
 			const finish = (message: string): void => {
 				const open = flowRef.current
-				if (open && open.id === job.id && open.type === job.type) closeFlow(message)
+				if (open && 'id' in open && open.id === job.id && open.type === job.type) closeFlow(message)
 				else setNote(message)
 			}
 			try {
@@ -401,6 +408,11 @@ export function SignalsColumn({
 		}
 	}
 
+	const openFiltered = (): void => {
+		setNote(null)
+		setFlow({ type: 'filtered' })
+	}
+
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
 		// An open flow handles its own keys (Esc back, digits, ⌘↵); typing never reaches the list.
 		if (flow || event.defaultPrevented) return
@@ -418,12 +430,14 @@ export function SignalsColumn({
 		if (event.key === 'j' || event.key === 'ArrowDown') move(1)
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
 		else if (/^[pnmtsdo]$/.test(event.key)) act(event.key as SignalActionKey)
+		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
 		else return
 		event.preventDefault()
 	}
 
 	const selectedThread = rows.find(thread => thread.id === current)
 	const health = healthLines(sources)
+	const filtered = filteredLine(filteredCount)
 	return (
 		<section
 			ref={sectionRef}
@@ -434,7 +448,9 @@ export function SignalsColumn({
 			tabIndex={0}
 			onKeyDown={onKeyDown}
 		>
-			{flow && flowThread ? (
+			{flow?.type === 'filtered' ? (
+				<FilteredMail service={service} count={filteredCount} now={now} onClose={closeFlow} />
+			) : flow && flowThread ? (
 				flow.type === 'send' ? (
 					<SendFlow
 						thread={flowThread}
@@ -502,6 +518,27 @@ export function SignalsColumn({
 								{line}
 							</span>
 						))}
+						{filtered ? (
+							<span className="signals-foot-filtered">
+								<button
+									type="button"
+									className="signals-filtered"
+									aria-keyshortcuts="f"
+									title="Mail the rules kept out of Needs you (last 7 days)"
+									onMouseDown={event => event.preventDefault()}
+									onClick={() => {
+										openFiltered()
+										sectionRef.current?.focus({ preventScroll: true })
+									}}
+								>
+									{filtered}
+									<span className="signals-filtered-key" aria-hidden="true">
+										{' '}
+										· <kbd>f</kbd>
+									</span>
+								</button>
+							</span>
+						) : null}
 					</footer>
 				</>
 			)}
@@ -509,17 +546,223 @@ export function SignalsColumn({
 	)
 }
 
+type FilteredState =
+	| { status: 'loading' }
+	| { status: 'error'; error: string }
+	| { status: 'ready'; page: SignalFilteredPage }
+
+/**
+ * `f` / the `12 filtered` line: the mail the rules kept out of Needs you (heads only, last 7 days),
+ * newest first, in place of the list. `i` always shows the selected row's sender from the next poll
+ * (adds its exact address to the include list), `o` opens it in Mail, Esc back.
+ */
+function FilteredMail({
+	service,
+	count,
+	now,
+	onClose,
+}: {
+	service: SignalsService
+	/** The snapshot's count: a change (a poll, an include) reloads the list. */
+	count: number | undefined
+	now: number
+	onClose(message?: string | null): void
+}) {
+	const [state, setState] = useState<FilteredState>({ status: 'loading' })
+	const [index, setIndex] = useState(0)
+	const [note, setNote] = useState<string | null>(null)
+	const [reload, setReload] = useState(0)
+	const busy = useRef(false)
+	const alive = useRef(true)
+	const scrollRef = useRef<HTMLDivElement>(null)
+
+	useEffect(() => {
+		alive.current = true
+		return () => {
+			alive.current = false
+		}
+	}, [])
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: count and reload are the reload triggers.
+	useEffect(() => {
+		let current = true
+		void service.filtered().then(result => {
+			if (!current) return
+			setState(
+				result.error !== undefined ? { status: 'error', error: result.error } : { status: 'ready', page: result.data },
+			)
+		})
+		return () => {
+			current = false
+		}
+	}, [service, count, reload])
+
+	const entries = state.status === 'ready' ? state.page.entries : []
+	const at = Math.min(index, Math.max(0, entries.length - 1))
+	const entry = entries[at]
+
+	useEffect(() => {
+		if (!entry) return
+		scrollRef.current
+			?.querySelector<HTMLElement>(`[data-filtered-id="${entry.id}"]`)
+			?.scrollIntoView?.({ block: 'nearest' })
+	}, [entry])
+
+	const run = async (task: () => Promise<void>): Promise<void> => {
+		if (busy.current) return
+		busy.current = true
+		try {
+			await task()
+		} finally {
+			busy.current = false
+		}
+	}
+
+	const include = (): void => {
+		if (!entry) return
+		void run(async () => {
+			const result = await service.include(entry.id)
+			if (!alive.current) return
+			if (result.error !== undefined) {
+				setNote(`Could not include ${filteredRowView(entry, now).ref}: ${result.error}`)
+				return
+			}
+			setNote(includeNote(result.data))
+			setReload(value => value + 1)
+		})
+	}
+
+	const open = (): void => {
+		const url = entry?.url
+		if (!url) return
+		void run(async () => {
+			const opened = await service.open(url)
+			if (!alive.current) return
+			setNote(opened.error !== undefined ? `Could not open the mail: ${opened.error}` : 'Opened in Mail')
+		})
+	}
+
+	const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+		if (event.key === 'Escape') {
+			event.preventDefault()
+			event.stopPropagation()
+			onClose()
+			return
+		}
+		if (event.metaKey || event.ctrlKey || event.altKey) return
+		const step = (delta: number): void => {
+			setIndex(Math.max(0, Math.min(entries.length - 1, at + delta)))
+			setNote(null)
+		}
+		if (event.key === 'j' || event.key === 'ArrowDown') step(1)
+		else if (event.key === 'k' || event.key === 'ArrowUp') step(-1)
+		else if (event.key === 'i') include()
+		else if (event.key === 'o') open()
+		else return
+		event.preventDefault()
+		event.stopPropagation()
+	}
+
+	const context =
+		state.status === 'ready' ? filteredSummary(state.page) : state.status === 'error' ? 'Unavailable' : 'Reading…'
+	const more = state.status === 'ready' ? state.page.total - entries.length : 0
+	return (
+		<div className="signals-flow-keys" ref={takeKeys} tabIndex={-1} onKeyDown={onKeyDown}>
+			<FlowHeader glyph="@" kind="Filtered mail" context={context} quiet onClose={() => onClose()} />
+			<div className="signals-scroll" ref={scrollRef}>
+				{state.status === 'loading' ? <p className="signals-placeholder">Reading filtered mail…</p> : null}
+				{state.status === 'error' ? <p className="signals-placeholder">{state.error}</p> : null}
+				{state.status === 'ready' ? (
+					entries.length > 0 ? (
+						<ul className="signals-table" aria-label="Filtered mail">
+							{entries.map((item, position) => {
+								const view = filteredRowView(item, now)
+								const selected = position === at
+								return (
+									<li
+										key={item.id}
+										className="signals-tr"
+										data-section="filtered"
+										data-filtered-id={item.id}
+										data-selected={selected ? 'true' : undefined}
+										aria-current={selected ? 'true' : undefined}
+										title={view.title}
+										onMouseDown={event => {
+											event.preventDefault()
+											event.currentTarget.closest<HTMLElement>('.signals-flow')?.focus({ preventScroll: true })
+											setIndex(position)
+											setNote(null)
+										}}
+									>
+										<span className="signals-edge" />
+										<span className="signals-glyph" aria-hidden="true">
+											@
+										</span>
+										<span className="signals-td-ref">{view.ref}</span>
+										<span className="signals-td-what" title={view.what}>
+											{view.what}
+										</span>
+										<span className="signals-td-age">{view.age}</span>
+										<span className="signals-td-agent" title={view.title}>
+											{view.reason}
+										</span>
+										<span className="signals-edge" />
+									</li>
+								)
+							})}
+							{more > 0 ? (
+								<li className="signals-empty" role="presentation">
+									… {more} more (helm signal ls --filtered)
+								</li>
+							) : null}
+						</ul>
+					) : (
+						<p className="signals-placeholder">Nothing was filtered in the last 7 days</p>
+					)
+				) : null}
+			</div>
+			<footer className="signals-foot">
+				<span className="signals-foot-hints" aria-hidden="true">
+					{entry ? (
+						<>
+							<Hint keys="i">always show sender</Hint>
+							{entry.url ? <Hint keys="o">open</Hint> : null}
+						</>
+					) : null}
+					<Hint keys="esc">back</Hint>
+				</span>
+				<output className="signals-note">{note}</output>
+				{entry ? (
+					<span className="signals-foot-actions">
+						<Btn sm ariaKeyShortcuts="i" onClick={include}>
+							Always show sender
+						</Btn>
+					</span>
+				) : null}
+			</footer>
+		</div>
+	)
+}
+
 function FlowHeader({
 	glyph,
 	kind,
 	context,
+	quiet,
 	onClose,
-}: { glyph: string; kind: string; context: string; onClose(): void }) {
+}: {
+	glyph: string
+	kind: string
+	context: string
+	/** A dim, untoned glyph (the filtered list: nothing there wants Jakub). */
+	quiet?: boolean
+	onClose(): void
+}) {
 	return (
 		<header className="signals-title">
 			<span className="signals-title-text">
 				<span className="signals-title-kind">
-					<span className="signals-glyph" data-kind="flow" aria-hidden="true">
+					<span className="signals-glyph" data-kind={quiet ? undefined : 'flow'} aria-hidden="true">
 						{glyph}
 					</span>
 					{kind}

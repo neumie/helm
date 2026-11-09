@@ -9,11 +9,14 @@ import { ProfileStore } from '../src/profiles/store.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 import type {
 	SignalEventsPage,
+	SignalFilteredPage,
+	SignalIncludeResult,
 	SignalObservation,
 	SignalSourceHealth,
 	SignalThread,
 	SignalsSnapshot,
 } from '../src/signals/contract.js'
+import { type IncludeSender, IncludeSenderError } from '../src/signals/include-sender.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
 
@@ -51,7 +54,10 @@ interface Harness {
 	clock: { now: Date }
 }
 
-async function withSignalsApi(run: (harness: Harness) => Promise<void>) {
+async function withSignalsApi(
+	run: (harness: Harness) => Promise<void>,
+	options: { includeSender?: IncludeSender | null } = {},
+) {
 	const root = mkdtempSync(join(tmpdir(), 'helm-signals-routes-'))
 	const store = new ProfileStore(root, ['work'])
 	const db = new DB(store.activeRuntime().dbPath, () => store.activeProfile().id)
@@ -79,6 +85,10 @@ async function withSignalsApi(run: (harness: Harness) => Promise<void>) {
 							entry.source === 'mail' ? { ...entry, status: 'disabled' as const, detail: null } : entry,
 						),
 				},
+				includeSender:
+					options.includeSender === null
+						? undefined
+						: (options.includeSender ?? (address => ({ address, added: true }))),
 				now: () => clock.now,
 				eventPollMs: 10,
 			},
@@ -247,4 +257,131 @@ test('signals are global: switching the Helm profile shows and edits the same in
 		assert.equal((await post(`/signals/${workId}`, { state: 'done' })).status, 200)
 		assert.equal(db.forProfile('work').signals.get(workId)?.state, 'done')
 	})
+})
+
+function seedFiltered(db: DB) {
+	db.signals.applyPoll(
+		{
+			source: 'mail',
+			observations: [],
+			complete: true,
+			goneReason: 'no longer unread in the inbox',
+			filtered: {
+				keptKeys: [],
+				entries: [
+					{
+						messageKey: 'ooo@psyon.example',
+						senderName: 'Petra',
+						senderAddress: 'petra_at_psyon_example_aa_bb@privaterelay.appleid.com',
+						senderIdentity: 'petra@psyon.example',
+						subject: 'Out of office',
+						reason: 'auto-reply',
+						mailbox: null,
+						url: 'message://%3Cooo%40psyon.example%3E',
+						receivedAt: new Date(NOW.getTime() - 60_000).toISOString(),
+					},
+					{
+						messageKey: 'news@news.example',
+						senderName: 'News',
+						senderAddress: 'digest@news.example',
+						senderIdentity: 'digest@news.example',
+						subject: 'Weekly',
+						reason: 'newsletter',
+						mailbox: 'Clientcare',
+						url: null,
+						receivedAt: new Date(NOW.getTime() - 120_000).toISOString(),
+					},
+				],
+			},
+		},
+		NOW,
+	)
+}
+
+test('GET /signals carries the filtered count; GET /signals/filtered lists heads newest first', async () => {
+	await withSignalsApi(async ({ request, db }) => {
+		assert.equal((await data<SignalsSnapshot>(await request('/signals'))).filteredCount, 0)
+		seedFiltered(db)
+		assert.equal((await data<SignalsSnapshot>(await request('/signals'))).filteredCount, 2)
+		const page = await data<SignalFilteredPage>(await request('/signals/filtered'))
+		assert.equal(page.total, 2)
+		assert.equal(page.retentionDays, 7)
+		assert.deepEqual(
+			page.entries.map(entry => [entry.subject, entry.reason, entry.mailbox]),
+			[
+				['Out of office', 'auto-reply', null],
+				['Weekly', 'newsletter', 'Clientcare'],
+			],
+		)
+		// `filtered` is a static path, never parsed as a thread id.
+		assert.equal((await request('/signals/filtered')).status, 200)
+	})
+})
+
+test('POST /signals/filtered/:id/include adds the decoded sender, forgets its rows and asks for a poll', async () => {
+	const included: string[] = []
+	await withSignalsApi(
+		async ({ request, post, db, pollRequests }) => {
+			seedFiltered(db)
+			const page = await data<SignalFilteredPage>(await request('/signals/filtered'))
+			const ooo = page.entries[0]
+			assert.ok(ooo)
+			const response = await post(`/signals/filtered/${ooo.id}/include`, {})
+			assert.equal(response.status, 200)
+			assert.deepEqual(await data<SignalIncludeResult>(response), { address: 'petra@psyon.example', added: true })
+			assert.deepEqual(included, ['petra@psyon.example'])
+			assert.equal(pollRequests(), 1)
+			assert.equal((await data<SignalsSnapshot>(await request('/signals'))).filteredCount, 1)
+			// Gone from the log now: 404, and nothing written.
+			assert.equal((await post(`/signals/filtered/${ooo.id}/include`, {})).status, 404)
+			assert.equal((await post('/signals/filtered/abc/include', {})).status, 400)
+			assert.equal((await post('/signals/filtered/0/include', {})).status, 400)
+			assert.equal(included.length, 1)
+		},
+		{
+			includeSender: address => {
+				included.push(address)
+				return { address, added: true }
+			},
+		},
+	)
+})
+
+test('include errors: a refused address is 400, a failed write 500, no writer 503; the row stays', async () => {
+	await withSignalsApi(
+		async ({ request, post, db, pollRequests }) => {
+			seedFiltered(db)
+			const id = (await data<SignalFilteredPage>(await request('/signals/filtered'))).entries[0]?.id ?? 0
+			const response = await post(`/signals/filtered/${id}/include`, {})
+			assert.equal(response.status, 400)
+			assert.match(((await response.json()) as { error: string }).error, /include list is full/)
+			assert.equal(pollRequests(), 0)
+			assert.equal((await data<SignalsSnapshot>(await request('/signals'))).filteredCount, 2)
+		},
+		{
+			includeSender: () => {
+				throw new IncludeSenderError('The include list is full. Remove senders in Settings › Signals first')
+			},
+		},
+	)
+	await withSignalsApi(
+		async ({ request, post, db }) => {
+			seedFiltered(db)
+			const id = (await data<SignalFilteredPage>(await request('/signals/filtered'))).entries[0]?.id ?? 0
+			assert.equal((await post(`/signals/filtered/${id}/include`, {})).status, 500)
+		},
+		{
+			includeSender: () => {
+				throw new Error('EACCES')
+			},
+		},
+	)
+	await withSignalsApi(
+		async ({ request, post, db }) => {
+			seedFiltered(db)
+			const id = (await data<SignalFilteredPage>(await request('/signals/filtered'))).entries[0]?.id ?? 0
+			assert.equal((await post(`/signals/filtered/${id}/include`, {})).status, 503)
+		},
+		{ includeSender: null },
+	)
 })

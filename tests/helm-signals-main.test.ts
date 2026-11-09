@@ -233,6 +233,8 @@ test('update and routed POST, then re-read at once; the IPC gate refuses other w
 	assert.deepEqual(
 		[...handlers.keys()].sort(),
 		[
+			'signals:filtered',
+			'signals:include',
 			'signals:new-agent',
 			'signals:okena-projects',
 			'signals:open',
@@ -282,6 +284,43 @@ test('update and routed POST, then re-read at once; the IPC gate refuses other w
 	assert.equal(refusedState.snapshot, null)
 	assert.match(refusedState.error ?? '', /cannot read Signals/)
 	h.main.stop()
+})
+
+test('filtered reads the log; include POSTs one id and re-reads; both gated; read-only runs cannot include', async () => {
+	const h = harness()
+	const page = { entries: [], total: 0, retentionDays: 7 }
+	h.respond.result = () => ({ data: page })
+	const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+	h.main.registerIpc({ on: () => undefined, handle: (channel, listener) => handlers.set(channel, listener) })
+	const filtered = handlers.get('signals:filtered')
+	const include = handlers.get('signals:include')
+	assert.ok(filtered && include)
+	assert.match(((await filtered({ sender: { id: 9 } }, TOKEN)) as { error: string }).error, /cannot read filtered mail/)
+	assert.match(((await include({ sender: WINDOW }, 3, 'old:0')) as { error: string }).error, /include list/)
+	assert.equal(h.calls.length, 0)
+
+	assert.deepEqual(await filtered({ sender: WINDOW }, TOKEN), { data: page })
+	assert.deepEqual(h.calls, [{ method: 'GET', path: '/signals/filtered' }])
+	h.respond.result = () => ({ data: { entries: 'nope' } })
+	assert.match(((await filtered({ sender: WINDOW }, TOKEN)) as { error: string }).error, /unreadable filtered list/)
+
+	h.calls.length = 0
+	assert.deepEqual(await include({ sender: WINDOW }, 3, TOKEN), { data: { id: 1 } })
+	await flush()
+	assert.deepEqual(h.calls.slice(0, 2), [
+		{ method: 'POST', path: '/signals/filtered/3/include', body: {} },
+		{ method: 'GET', path: '/signals' },
+	])
+	assert.deepEqual(await include({ sender: WINDOW }, '3; rm', TOKEN), {
+		error: 'That filtered mail does not exist.',
+		status: 400,
+	})
+	h.main.stop()
+
+	const readOnly = harness({ readOnly: true })
+	assert.deepEqual(await readOnly.main.include(3), { error: 'read-only run', status: 403 })
+	assert.equal(readOnly.calls.length, 0)
+	readOnly.main.stop()
 })
 
 test('open allows only github.com https links and Mail message ids', async () => {
