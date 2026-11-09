@@ -40,6 +40,7 @@ import type {
 	ProfilesApi,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalReply,
 	SignalRouted,
 	SignalThread,
 	SignalUpdate,
@@ -132,6 +133,8 @@ const SIGNALS_CHANNELS: typeof SIGNALS_IPC = {
 	newAgent: 'signals:new-agent',
 	filtered: 'signals:filtered',
 	include: 'signals:include',
+	reply: 'signals:reply',
+	openLink: 'signals:open-link',
 }
 
 function subscribe<Args extends unknown[]>(channel: string, listener: (...args: Args) => void): () => void {
@@ -392,6 +395,8 @@ const api: HelmApi = {
 		newAgent: (request: SignalNewAgentRequest) => invokeHelm<SignalNewAgentResult>(SIGNALS_CHANNELS.newAgent, request),
 		filtered: () => invokeHelm<SignalFilteredPage>(SIGNALS_CHANNELS.filtered),
 		include: (id: number) => invokeHelm<SignalIncludeResult>(SIGNALS_CHANNELS.include, id),
+		reply: (id: number, body: SignalReply) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.reply, id, body),
+		openLink: (id: number, index: number, url: string) => invokeHelm<true>(SIGNALS_CHANNELS.openLink, id, index, url),
 	} satisfies SignalsApi,
 	nav: {
 		onOpenItem: listener => subscribe('nav:open-item', listener),

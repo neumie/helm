@@ -2,7 +2,14 @@
 // the column's services, so stories and browser tests drive the PRODUCTION column. Nothing here
 // polls GitHub, Mail or Okena, and nothing is imported by production renderer code.
 
-import type { AgentDockPromptRequest, AgentDockSnapshot, DockSession } from '../../agent-dock/model'
+import type {
+	AgentDockActRequest,
+	AgentDockPromptRequest,
+	AgentDockSnapshot,
+	DockActOutcome,
+	DockItem,
+	DockSession,
+} from '../../agent-dock/model'
 import type { SignalNewAgentRequest, SignalOkenaProject, SignalsBridgeState } from '../../shared'
 import type {
 	SignalFilteredEntry,
@@ -45,6 +52,11 @@ function thread(seed: ThreadSeed, now: number): SignalThread {
 		routedAgent: null,
 		routedHow: null,
 		routedAt: null,
+		body: null,
+		links: [],
+		askTerminal: null,
+		reply: null,
+		replyAt: null,
 		createdAt: at,
 		updatedAt: at,
 		...rest,
@@ -237,6 +249,87 @@ export function signalThreadFixtures(now = Date.now()): SignalThread[] {
 	]
 }
 
+/** The Okena terminals agent asks came from (`$OKENA_TERMINAL_ID`): one idle agent, one working. */
+export const ASK_TERMINAL_IDLE = '5d3f8a2e-1c47-4b9e-9a06-3e7b2c8f41d0'
+export const ASK_TERMINAL_BUSY = 'c81e4f6a-27b3-4d58-b9e2-6f0a3d7c95b4'
+
+/** Storybook links an ask carries (this checkout's own stories, on the default Storybook port). */
+const STORY = 'http://127.0.0.1:6006/?path=/story/'
+
+/**
+ * Agent asks (`helm signal add`): a design pick from an idle Okena agent (three links), a yes/no
+ * from an agent with no terminal (one link), an approval from a working agent, one already answered.
+ */
+export function signalAskFixtures(now = Date.now()): SignalThread[] {
+	const ask = (seed: Omit<ThreadSeed, 'source' | 'kind' | 'head' | 'fullRef' | 'ref'> & { from?: string }) => {
+		const { from = 'agent', ...rest } = seed
+		return thread(
+			{
+				source: 'agent',
+				kind: 'ask',
+				reasons: ['ask'],
+				head: seed.title,
+				actor: from,
+				fullRef: seed.askTerminal ? `${from} · Okena terminal` : from,
+				ref: from,
+				...rest,
+			},
+			now,
+		)
+	}
+	return [
+		ask({
+			id: 501,
+			threadKey: 'agent:signals-asks/row-layout',
+			from: 'Signals asks',
+			title: 'Agent ask rows: two lines like the others, or a third with the body?',
+			body: [
+				'Two row variants for asks in Needs you, both in Storybook.',
+				'A: two lines, like GitHub and Mail; the link count on the right.',
+				"B: a dim third line with the body's first line and the link count.",
+			].join('\n'),
+			links: [
+				`${STORY}views-signals-agent-asks--title-rows`,
+				`${STORY}views-signals-agent-asks--body-line`,
+				'https://github.com/neumie/helm/pull/412',
+			],
+			askTerminal: ASK_TERMINAL_IDLE,
+			ago: 2,
+		}),
+		ask({
+			id: 502,
+			threadKey: 'agent:legacy-vigil-scheme',
+			title: 'Drop the legacy vigil:// link handler?',
+			body: 'Nothing has opened a vigil:// link since July. Yes or no is enough.',
+			links: ['https://github.com/neumie/helm/pull/409'],
+			ago: 15,
+		}),
+		ask({
+			id: 503,
+			threadKey: 'agent:okena-stream-lease/approve',
+			from: 'okena-stream-lease',
+			title: 'Approve the 60 s stream lease before I merge?',
+			links: ['https://github.com/contember/okena/pull/318'],
+			askTerminal: ASK_TERMINAL_BUSY,
+			ago: 35,
+		}),
+		ask({
+			id: 504,
+			threadKey: 'agent:signals-asks/terminal-name',
+			from: 'Signals asks',
+			title: 'Name the terminal "Signals asks"?',
+			askTerminal: ASK_TERMINAL_IDLE,
+			state: 'seen',
+			reply: 'Yes',
+			replyAt: iso(now - 40 * MINUTE),
+			routedAgent: 'signals-agent-asks',
+			routedHow: 'replied',
+			routedAt: iso(now - 40 * MINUTE),
+			ago: 45,
+		}),
+	]
+}
+
 export function signalSourcesFixture(
 	now = Date.now(),
 	mail: SignalSourceHealth['status'] = 'ok',
@@ -278,6 +371,40 @@ function session(
 		lastMessage: { uuid: `message-${partial.terminalId}`, text: 'Done.', at: now - 4 * MINUTE, seen: true },
 		...partial,
 	}
+}
+
+/** The agents asks came from: `Signals asks` idle (a reply is typed in), `okena-stream-lease` working. */
+export function signalsAskSessions(now = Date.now()): DockSession[] {
+	return [
+		session(
+			{
+				terminalId: ASK_TERMINAL_IDLE,
+				project: 'helm',
+				repo: 'helm',
+				name: 'Signals asks',
+				branch: 'feat/signals-agent-asks',
+				status: 'idle',
+				lastMessage: {
+					uuid: 'message-signals-asks',
+					text: 'Both row variants are in Storybook; the ask is in Signals.',
+					at: now - 2 * MINUTE,
+					seen: true,
+				},
+			},
+			now,
+		),
+		session(
+			{
+				terminalId: ASK_TERMINAL_BUSY,
+				project: 'okena',
+				repo: 'okena',
+				name: 'okena-stream-lease',
+				branch: 'feat/okena-stream-lease',
+				status: 'working',
+			},
+			now,
+		),
+	]
 }
 
 /** Agents the dock sees: the PR's own agent (idle), a busy one in the same repo, others. */
@@ -421,20 +548,43 @@ export interface SignalsFixtureCalls {
 	updates: Array<{ id: number; patch: SignalUpdate }>
 	routed: Array<{ id: number; agent: string; how: string }>
 	opened: string[]
+	/** Answers saved on agent asks (`service.reply`). */
+	replies: Array<{ id: number; text: string }>
+	/** Ask links opened (`service.openLink`): position, the link the column showed, the link the fake resolved. */
+	openedLinks: Array<{ id: number; index: number; shown: string; url: string | null }>
 	prompts: AgentDockPromptRequest[]
+	/** Dock item answers (`dock.act`): an ask's reply to its agent's open turn item. */
+	acts: AgentDockActRequest[]
 	okenaProjects: Array<string | null>
 	newAgents: SignalNewAgentRequest[]
 	/** Filtered-mail ids `i` asked to always show. */
 	includes: number[]
 }
 
-/** The routing effects a browser test can hold in flight (`newAgent`: the Okena start, `prompt`: the dock send). */
+/** The routing effects a browser test can hold in flight (`newAgent`: the Okena start, `prompt`: the dock send, prompt or act). */
 export type SignalsHeldEffect = 'newAgent' | 'prompt'
+
+/**
+ * Outcomes a browser test scripts for the next calls (each applies until replaced): the dock's
+ * `prompt` and `act` (default `sent`), and `service.routed` failing with this error (default it saves).
+ */
+export interface SignalsFixtureScript {
+	prompt?: DockActOutcome
+	act?: DockActOutcome
+	routedError?: string
+}
 
 export interface SignalsFixture {
 	service: SignalsService
 	dock: DockService
 	calls: SignalsFixtureCalls
+	/** Browser tests only: scripts the outcomes of later calls (merged into the current script). */
+	script(next: SignalsFixtureScript): void
+	/**
+	 * Browser tests only: the dock opens a turn item (`state` default `open`) for the session in this
+	 * Okena terminal, as it does TURN_IDLE_MS after an agent stops, and pushes. Returns its item id.
+	 */
+	openTurn(terminalId: string, state?: DockItem['state']): number
 	/** Browser tests only: later calls of this effect wait (recorded at once) until `release`. */
 	hold(effect: SignalsHeldEffect): void
 	/** Lets every waiting call of this effect finish, and stops holding it. */
@@ -481,7 +631,10 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		updates: [],
 		routed: [],
 		opened: [],
+		replies: [],
+		openedLinks: [],
 		prompts: [],
+		acts: [],
 		okenaProjects: [],
 		newAgents: [],
 		includes: [],
@@ -536,6 +689,7 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		},
 		async routed(id, body) {
 			calls.routed.push({ id, ...body })
+			if (scripted.routedError !== undefined) return { error: scripted.routedError }
 			return change(id, (entry, at) => ({
 				...entry,
 				routedAgent: body.agent,
@@ -578,16 +732,80 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			await gate('newAgent')
 			return { data: { terminalId: 't-new', sessionId: 'session-new', agentName: request.branch } }
 		},
+		async reply(id, body) {
+			calls.replies.push({ id, text: body.text })
+			const target = threads.find(entry => entry.id === id)
+			if (target && target.source !== 'agent') return { error: 'Only agent asks take a reply', status: 400 }
+			return change(id, (entry, at) => ({
+				...entry,
+				reply: body.text.trim(),
+				replyAt: at,
+				state: entry.state === 'new' ? 'seen' : entry.state,
+				updatedAt: at,
+			}))
+		},
+		async openLink(id, index, shown) {
+			// Like main: the link comes from the thread as stored, never from the renderer, and opens
+			// only while it is still the one shown.
+			const target = threads.find(entry => entry.id === id)
+			const url = target?.source === 'agent' ? (target.links[index] ?? null) : null
+			calls.openedLinks.push({ id, index, shown, url })
+			if (!url) return { error: 'That link does not exist.', status: 404 }
+			return url === shown ? { data: true } : { error: 'The links changed; look at the ask again.', status: 409 }
+		},
 	}
-	const dockSnapshot = options.dock === undefined ? signalsDockFixture(start) : options.dock
+	let dockSnapshot = options.dock === undefined ? signalsDockFixture(start) : options.dock
+	const dockListeners = new Set<() => void>()
+	let scripted: SignalsFixtureScript = {}
+	let nextItem = 900
+	const sent: DockActOutcome = { status: 'sent', delivery: 'pty' }
+	const result = (outcome: DockActOutcome) => ({ ok: outcome.status === 'sent', outcome }) as const
 	const dock: DockService = {
 		snapshot: () => dockSnapshot,
-		subscribe: () => () => undefined,
+		subscribe(listener) {
+			dockListeners.add(listener)
+			return () => dockListeners.delete(listener)
+		},
 		async prompt(request) {
 			calls.prompts.push(request)
 			await gate('prompt')
-			return { ok: true, outcome: { status: 'sent', delivery: 'pty' } }
+			return result(scripted.prompt ?? sent)
+		},
+		async act(request) {
+			calls.acts.push(request)
+			await gate('prompt')
+			return result(scripted.act ?? sent)
 		},
 	}
-	return { service, dock, calls, hold, release }
+	const script = (next: SignalsFixtureScript): void => {
+		scripted = { ...scripted, ...next }
+	}
+	const openTurn = (terminalId: string, state: DockItem['state'] = 'open'): number => {
+		const snap = dockSnapshot
+		const session = snap?.sessions.find(entry => entry.terminalId === terminalId)
+		if (!snap || !session) throw new Error(`No dock session in terminal ${terminalId}`)
+		nextItem += 1
+		const at = clock()
+		const uuid = session.lastMessage?.uuid ?? `message-${terminalId}`
+		const item: DockItem = {
+			id: nextItem,
+			key: `turn:${session.sessionId ?? session.key}:${uuid}`,
+			kind: 'turn',
+			session: session.key,
+			openedAt: at,
+			fact: {
+				kind: 'turn',
+				...(session.sessionId ? { sessionId: session.sessionId } : {}),
+				assistantUuid: uuid,
+				text: session.lastMessage?.text ?? 'Done.',
+				endedAt: at - 3_000,
+				hadBackground: false,
+			},
+			state,
+		}
+		dockSnapshot = { ...snap, generatedAt: at, items: [...snap.items, item] }
+		for (const listener of dockListeners) listener()
+		return item.id
+	}
+	return { service, dock, calls, hold, release, script, openTurn }
 }

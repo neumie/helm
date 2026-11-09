@@ -2,7 +2,12 @@
 // preload bridges (window.helm.signals, window.helm.agentDock); stories and browser tests pass
 // in-memory fakes (signals-fixtures.ts). The column never touches the daemon or Okena directly.
 
-import type { AgentDockActResult, AgentDockPromptRequest, AgentDockSnapshot } from '../../agent-dock/model'
+import type {
+	AgentDockActRequest,
+	AgentDockActResult,
+	AgentDockPromptRequest,
+	AgentDockSnapshot,
+} from '../../agent-dock/model'
 import type {
 	AgentDockApi,
 	SignalNewAgentRequest,
@@ -15,6 +20,7 @@ import type {
 	HelmResult,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalReply,
 	SignalRouted,
 	SignalThread,
 	SignalUpdate,
@@ -33,12 +39,22 @@ export interface SignalsService {
 	filtered(): Promise<HelmResult<SignalFilteredPage>>
 	/** Always show that filtered mail's sender. */
 	include(id: number): Promise<HelmResult<SignalIncludeResult>>
+	/** Saves Jakub's answer on an agent ask; typing it into the agent is the dock's `prompt`. */
+	reply(id: number, body: SignalReply): Promise<HelmResult<SignalThread>>
+	/**
+	 * Opens link `index` of an agent ask (main re-reads the thread and opens only its stored link, and
+	 * only while it is still `url`, the link shown at that position).
+	 */
+	openLink(id: number, index: number, url: string): Promise<HelmResult<true>>
 }
 
 export interface DockService {
 	snapshot(): AgentDockSnapshot | null
 	subscribe(listener: () => void): () => void
+	/** A reply to an agent that owes Jakub nothing (no live dock item): `agent-dock:prompt`. */
 	prompt(request: AgentDockPromptRequest): Promise<AgentDockActResult>
+	/** A dock item's own answer (`agent-dock:act`): a reply to its open turn item, through the turn's CAS. */
+	act(request: AgentDockActRequest): Promise<AgentDockActResult>
 }
 
 const INITIAL: SignalsBridgeState = { snapshot: null, error: null, at: null }
@@ -94,6 +110,8 @@ export function createSignalsService(api: SignalsApi): SignalsService & { dispos
 		include: guarded((id: number) =>
 			api.include ? api.include(id) : Promise.resolve({ error: 'This Helm cannot change the include list.' }),
 		),
+		reply: guarded((id: number, body: SignalReply) => api.reply(id, body)),
+		openLink: guarded((id: number, index: number, url: string) => api.openLink(id, index, url)),
 		dispose() {
 			unsubscribe()
 			listeners.clear()
@@ -123,6 +141,14 @@ export function createDockService(api: AgentDockApi | undefined): DockService & 
 			if (!api) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
 			try {
 				return await api.prompt(request)
+			} catch (error) {
+				return { ok: false, outcome: { status: 'failed', detail: failure(error).error } }
+			}
+		},
+		async act(request) {
+			if (!api) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock is off in this run.' } }
+			try {
+				return await api.act(request)
 			} catch (error) {
 				return { ok: false, outcome: { status: 'failed', detail: failure(error).error } }
 			}

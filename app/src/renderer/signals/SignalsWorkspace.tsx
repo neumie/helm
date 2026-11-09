@@ -8,18 +8,30 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
+import type { AskLayout } from './model'
 import {
 	type SignalsFixture,
 	createSignalsFixture,
+	signalAskFixtures,
 	signalSourcesFixture,
 	signalThreadFixtures,
+	signalsAskSessions,
+	signalsDockFixture,
 } from './signals-fixtures'
 
 export interface SignalsWorkspaceProps {
-	/** `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission. */
-	scenario?: 'column' | 'quiet' | 'source-down'
-	/** Open a routing flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert), or the filtered mail list. */
-	flow?: 'send' | 'new-agent' | 'filtered'
+	/**
+	 * `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission;
+	 * `asks`: agent asks on top of the column's threads, their agents in the dock.
+	 */
+	scenario?: 'column' | 'quiet' | 'source-down' | 'asks'
+	/**
+	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
+	 * and links: the `Signals asks` row-layout ask), or the filtered mail list.
+	 */
+	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered'
+	/** How agent asks read in the list. */
+	askLayout?: AskLayout
 }
 
 declare global {
@@ -42,12 +54,24 @@ function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture
 		})
 	if (scenario === 'source-down')
 		return createSignalsFixture({ threads, sources: signalSourcesFixture(now, 'needs_permission') })
+	if (scenario === 'asks') {
+		const dock = signalsDockFixture(now)
+		return createSignalsFixture({
+			threads: [...signalAskFixtures(now), ...threads],
+			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
+		})
+	}
 	return createSignalsFixture({ threads })
 }
 
-const FLOW_THREAD: Record<'send' | 'new-agent', number> = { send: 970, 'new-agent': 42 }
+const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'filtered'>, number> = {
+	send: 970,
+	'new-agent': 42,
+	reply: 501,
+	links: 501,
+}
 
-export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, askLayout = 'title' }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -91,6 +115,7 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 					onOpenSettings: () => column.setMode('settings'),
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
+					askLayout,
 					initialFlow,
 				}),
 		})
@@ -107,7 +132,7 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow])
+	}, [options, fixture, flow, askLayout])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

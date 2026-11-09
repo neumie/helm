@@ -1,6 +1,6 @@
 // Signals column (design §3.25): what the world wants from Jakub — GitHub review requests,
-// comments and failed CI on his PRs, mentions, mail (Sentry alerts arrive as mail) — in the task
-// sidebar's column. The agent dock's register (§3.24): one typeface, bright/dim instead of weight,
+// comments and failed CI on his PRs, mentions, mail (Sentry alerts arrive as mail), asks local
+// agents filed with `helm signal add` — in the task sidebar's column. The agent dock's register (§3.24): one typeface, bright/dim instead of weight,
 // color on glyphs only, no cards, no box-drawing, key hints as words. Data and effects come from
 // injected services (services.ts); row text, matching and prompts from the pure model.ts.
 
@@ -15,12 +15,16 @@ import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
 import {
 	type AgentMatch,
+	type AskLayout,
 	PICK_MAX,
+	REPLY_MAX,
 	type SignalActionKey,
 	type SignalSections,
 	actionNote,
 	actionPatch,
 	allSourcesOk,
+	askDeliveryTarget,
+	askReceipt,
 	closedHeader,
 	defaultAgentPick,
 	filteredLine,
@@ -33,6 +37,7 @@ import {
 	matchAgents,
 	newAgentPrompt,
 	orderedRows,
+	replyPrompt,
 	sendPrompt,
 	signalRowView,
 	signalSection,
@@ -56,23 +61,33 @@ export interface SignalsColumnProps {
 	/** `cmd` on macOS (⌘↵), else `ctrl`. */
 	mod?: 'cmd' | 'ctrl'
 	now?: () => number
+	/** How agent asks read in the list (Jakub picks one; default two lines like the others). */
+	askLayout?: AskLayout
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
 }
 
-export type SignalsFlow = { type: 'send' | 'new-agent'; id: number } | { type: 'filtered' } | null
+/**
+ * `send` (p), `new-agent` (n), `reply` (r on an agent ask), `links` (o on an ask with several links),
+ * `filtered` (f: the filtered mail list).
+ */
+export type SignalsFlow = { type: 'send' | 'new-agent' | 'reply' | 'links'; id: number } | { type: 'filtered' } | null
 
-/** What a flow's attempt (the dock prompt / the Okena start) came back with. */
+/** What a flow's attempt (the dock prompt / the Okena start / an answer) came back with. */
 export type RouteAttempt =
 	| { failed: string }
+	/** Done with nothing to record as routed (an answer saved but not typed into the agent). */
+	| { closed: string; thread?: SignalThread }
 	| {
 			agent: string
-			how: 'sent' | 'started'
+			how: 'sent' | 'started' | 'replied'
 			/** Note once the receipt is saved. */
 			done: string
 			/** Note when the effect happened but the receipt could not be saved. */
 			unsaved(error: string): string
+			/** The thread as the effect left it (an ask's saved answer): shown even when the receipt fails. */
+			thread?: SignalThread
 	  }
 
 /**
@@ -82,7 +97,7 @@ export type RouteAttempt =
  */
 export interface RouteJob {
 	id: number
-	type: 'send' | 'new-agent'
+	type: 'send' | 'new-agent' | 'reply'
 	/** `Starting agent…`: the footer says `… (still running)` once the flow is closed. */
 	label: string
 	attempt(): Promise<RouteAttempt>
@@ -114,16 +129,18 @@ function SignalRow({
 	thread,
 	snapshot,
 	now,
+	askLayout,
 	selected,
 	onSelect,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
+	askLayout: AskLayout
 	selected: boolean
 	onSelect(): void
 }) {
-	const view = signalRowView(thread, snapshot, now)
+	const view = signalRowView(thread, snapshot, now, askLayout)
 	const section = signalSection(thread, now) ?? 'done'
 	return (
 		<li
@@ -150,10 +167,15 @@ function SignalRow({
 			</span>
 			<span className="signals-td-age">
 				{view.receipt ? (
-					<span className="signals-receipt">
-						<span className="signals-receipt-mark" aria-hidden="true">
-							✓
-						</span>{' '}
+					// An answer only saved on the thread was not delivered: no check mark.
+					<span className="signals-receipt" data-how={view.receipt.how}>
+						{view.receipt.how === 'saved' ? null : (
+							<>
+								<span className="signals-receipt-mark" aria-hidden="true">
+									✓
+								</span>{' '}
+							</>
+						)}
 						{view.receipt.how} {view.receipt.ago}
 					</span>
 				) : (
@@ -169,6 +191,11 @@ function SignalRow({
 				) : null}
 				{view.agent}
 			</span>
+			{view.detail ? (
+				<span className="signals-td-detail" title={view.detail}>
+					{view.detail}
+				</span>
+			) : null}
 			<span className="signals-edge" />
 		</li>
 	)
@@ -178,6 +205,7 @@ function SignalsTable({
 	sections,
 	snapshot,
 	now,
+	askLayout,
 	selected,
 	quietEmpty,
 	onSelect,
@@ -185,6 +213,7 @@ function SignalsTable({
 	sections: SignalSections
 	snapshot: AgentDockSnapshot | null
 	now: number
+	askLayout: AskLayout
 	selected: number | null
 	/** Every source answered: an empty Needs you may say so. */
 	quietEmpty: boolean
@@ -196,6 +225,7 @@ function SignalsTable({
 			thread={thread}
 			snapshot={snapshot}
 			now={now}
+			askLayout={askLayout}
 			selected={selected === thread.id}
 			onSelect={() => onSelect(thread.id)}
 		/>
@@ -238,6 +268,7 @@ export function SignalsColumn({
 	onLeave,
 	mod = 'cmd',
 	now: clock = Date.now,
+	askLayout = 'title',
 	initialSelected,
 	initialFlow = null,
 }: SignalsColumnProps) {
@@ -330,9 +361,15 @@ export function SignalsColumn({
 					setNote(outcome.failed)
 					return null
 				}
+				if ('closed' in outcome) {
+					if (outcome.thread) applyThread(outcome.thread)
+					finish(outcome.closed)
+					return null
+				}
 				const routed = await service.routed(job.id, { agent: outcome.agent, how: outcome.how })
 				if (!alive.current) return null
 				if (routed.error !== undefined) {
+					if (outcome.thread) applyThread(outcome.thread)
 					finish(outcome.unsaved(routed.error))
 					return null
 				}
@@ -360,9 +397,22 @@ export function SignalsColumn({
 	const act = (key: SignalActionKey): void => {
 		const thread = rows.find(entry => entry.id === current)
 		if (!thread || !threadActions(thread, now).some(action => action.key === key)) return
-		if (key === 'p' || key === 'n') {
+		if (key === 'p' || key === 'n' || key === 'r') {
 			setNote(null)
-			setFlow({ type: key === 'p' ? 'send' : 'new-agent', id: thread.id })
+			setFlow({ type: key === 'p' ? 'send' : key === 'n' ? 'new-agent' : 'reply', id: thread.id })
+			return
+		}
+		if (key === 'o' && thread.source === 'agent') {
+			// Several links: pick one by number. One: open it at once, as `o` does for a thread's source.
+			if (thread.links.length > 1) {
+				setNote(null)
+				setFlow({ type: 'links', id: thread.id })
+				return
+			}
+			void run(async () => {
+				const failed = await openAskLink(thread, 0)
+				if (failed !== null && alive.current) setNote(failed)
+			})
 			return
 		}
 		if (key === 'o') {
@@ -398,6 +448,25 @@ export function SignalsColumn({
 		})
 	}
 
+	/**
+	 * Opens link `index` of an ask (main reads it fresh, checks it again and opens it only while it is
+	 * still the link shown here), notes it and marks a new ask seen. Resolves with the failure note,
+	 * or null once opened.
+	 */
+	const openAskLink = async (thread: SignalThread, index: number): Promise<string | null> => {
+		const shown = thread.links[index]
+		if (shown === undefined) return `${thread.ref} has no link ${index + 1}`
+		const opened = await service.openLink(thread.id, index, shown)
+		if (!alive.current) return null
+		if (opened.error !== undefined) return `Could not open link ${index + 1} of ${thread.ref}: ${opened.error}`
+		setNote(`Opened link ${index + 1} of ${thread.ref}`)
+		if (thread.state === 'new') {
+			const seen = await service.update(thread.id, { state: 'seen' })
+			if (alive.current && seen.data) applyThread(seen.data)
+		}
+		return null
+	}
+
 	const move = (delta: number): void => {
 		if (rows.length === 0) return
 		const index = rows.findIndex(thread => thread.id === current)
@@ -429,7 +498,7 @@ export function SignalsColumn({
 		}
 		if (event.key === 'j' || event.key === 'ArrowDown') move(1)
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
-		else if (/^[pnmtsdo]$/.test(event.key)) act(event.key as SignalActionKey)
+		else if (/^[pnmtsdor]$/.test(event.key)) act(event.key as SignalActionKey)
 		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
 		else return
 		event.preventDefault()
@@ -444,7 +513,7 @@ export function SignalsColumn({
 			className="signals"
 			aria-label="Signals"
 			aria-keyshortcuts={mod === 'cmd' ? 'Meta+Shift+I' : undefined}
-			// biome-ignore lint/a11y/noNoninteractiveTabindex: the surface takes the keys (j k p n m t s d o).
+			// biome-ignore lint/a11y/noNoninteractiveTabindex: the surface takes the keys (j k p n m t s d o r).
 			tabIndex={0}
 			onKeyDown={onKeyDown}
 		>
@@ -461,6 +530,20 @@ export function SignalsColumn({
 						onRoute={route}
 						onClose={closeFlow}
 					/>
+				) : flow.type === 'reply' ? (
+					<ReplyFlow
+						thread={flowThread}
+						snapshot={snapshot}
+						service={service}
+						dock={dock}
+						mod={mod}
+						now={now}
+						routing={routing}
+						onRoute={route}
+						onClose={closeFlow}
+					/>
+				) : flow.type === 'links' ? (
+					<LinksFlow thread={flowThread} onOpen={index => openAskLink(flowThread, index)} onClose={closeFlow} />
 				) : (
 					<NewAgentFlow
 						thread={flowThread}
@@ -490,6 +573,7 @@ export function SignalsColumn({
 								sections={sections}
 								snapshot={snapshot}
 								now={now}
+								askLayout={askLayout}
 								selected={current}
 								quietEmpty={allSourcesOk(sources)}
 								onSelect={id => {
@@ -1025,6 +1109,251 @@ function SendFlow({
 	)
 }
 
+/** An ask's links as plain text lines (never `<a href>`): what opens is exactly what is shown. */
+function AskLinks({ links }: { links: readonly string[] }) {
+	return (
+		<ul className="signals-ask-links" aria-label="Links">
+			{links.map((link, index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: links are positional (openLink takes the index and the link shown)
+				<li key={index} className="signals-ask-link">
+					{link}
+				</li>
+			))}
+		</ul>
+	)
+}
+
+/** The reply flow exists to be typed into: opening it puts the keys in the answer field. */
+const takeAnswerKeys = (node: HTMLDivElement | null) =>
+	(node?.querySelector<HTMLElement>('.signals-answer-input') ?? node)?.focus({ preventScroll: true })
+
+/**
+ * `r` on an agent ask: Jakub types a short answer. It is always saved on the thread first (the
+ * agent can read it with `helm signal show`); when the ask came from an Okena terminal whose agent
+ * is idle, it is also typed into that agent as its next prompt through the dock's CAS-guarded
+ * prompt path, fenced like any other prompt. Never auto-sent: only ⌘↵ or Send.
+ */
+function ReplyFlow({
+	thread,
+	snapshot,
+	service,
+	dock,
+	mod,
+	now,
+	routing,
+	onRoute,
+	onClose,
+}: {
+	thread: SignalThread
+	snapshot: AgentDockSnapshot | null
+	service: SignalsService
+	dock: DockService
+	mod: 'cmd' | 'ctrl'
+	now: number
+	/** The column's routing effect in flight (this flow's or an earlier one's). */
+	routing: RouteJob | null
+	onRoute: RouteRunner
+	onClose(message?: string | null): void
+}) {
+	const target = useMemo(() => askDeliveryTarget(thread, snapshot), [thread, snapshot])
+	// An answer saved but never delivered comes back prefilled, so sending it again is one key.
+	const [text, setText] = useState(() => (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''))
+	const [note, setNote] = useState<string | null>(null)
+	const alive = useRef(true)
+	useEffect(
+		() => () => {
+			alive.current = false
+		},
+		[],
+	)
+	const where = target
+		? target.sendable
+			? `Typed into ${target.name}’s terminal as its next prompt`
+			: target.blocked === 'item'
+				? `${target.name} has an open question in the dock; the answer is saved on the thread`
+				: `${target.name} is ${target.status}: the answer is saved on the thread`
+		: `Saved on the thread; ${thread.ref} reads it with helm signal show`
+	const send = async (): Promise<void> => {
+		if (routing) {
+			setNote(`${routing.label} (still running)`)
+			return
+		}
+		const answer = text.trim()
+		if (!answer) {
+			setNote('The answer is empty')
+			return
+		}
+		setNote(null)
+		// Decided at submit: the agent (or its open turn) as Jakub saw it; main checks it again before typing.
+		const delivery = target?.delivery ?? null
+		const deliver = target && delivery ? target : null
+		const prompt = replyPrompt(thread, answer)
+		const session = target?.session
+		const effect =
+			!session || !delivery
+				? null
+				: delivery.via === 'turn'
+					? () => dock.act({ itemId: delivery.itemId, action: { type: 'prompt', text: prompt } })
+					: () =>
+							dock.prompt({
+								session: session.key,
+								...(session.sessionId ? { sessionId: session.sessionId } : {}),
+								...(session.lastMessage ? { assistantUuid: session.lastMessage.uuid } : {}),
+								text: prompt,
+							})
+		const failed = await onRoute({
+			id: thread.id,
+			type: 'reply',
+			label: deliver ? `Replying to ${deliver.name}…` : 'Saving the answer…',
+			flowAlive: () => alive.current,
+			attempt: async () => {
+				const saved = await service.reply(thread.id, { text: answer })
+				if (saved.error !== undefined) return { failed: `Not saved: ${saved.error}` }
+				if (!deliver || !effect)
+					return { closed: `Saved on #${thread.id}. ${thread.ref} reads it with helm signal show`, thread: saved.data }
+				const outcome = (await effect()).outcome
+				if (outcome.status !== 'sent')
+					return {
+						closed:
+							outcome.status === 'unconfirmed'
+								? `Saved on #${thread.id}; delivery not confirmed: ${outcome.detail}. Check ${deliver.name} before replying again`
+								: `Saved on #${thread.id}; not delivered: ${outcome.detail}`,
+						thread: saved.data,
+					}
+				return {
+					agent: deliver.name,
+					how: 'replied',
+					done: `Replied to ${deliver.name}`,
+					unsaved: error => `Replied to ${deliver.name}; the receipt was not saved: ${error}`,
+					thread: saved.data,
+				}
+			},
+		})
+		if (failed !== null && alive.current) setNote(failed)
+	}
+	return (
+		<div
+			ref={takeAnswerKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			onKeyDown={flowKeys({ count: 0, onPick: () => undefined, onSubmit: () => void send(), onClose: () => onClose() })}
+		>
+			<FlowHeader glyph="↩" kind={`Reply to ${thread.ref}`} context={thread.title} onClose={() => onClose()} />
+			<div className="signals-scroll signals-flow">
+				<p className="signals-ask-title">{thread.title}</p>
+				{thread.body ? <p className="signals-ask-body">{thread.body}</p> : null}
+				{thread.links.length > 0 ? <AskLinks links={thread.links} /> : null}
+				<label className="signals-prompt">
+					<span className="signals-field-label">Answer</span>
+					<textarea
+						className="signals-prompt-input signals-answer-input"
+						value={text}
+						maxLength={REPLY_MAX}
+						spellCheck
+						onChange={event => setText(event.target.value)}
+					/>
+				</label>
+			</div>
+			<footer className="signals-foot">
+				<span className="signals-foot-hints" aria-hidden="true">
+					<Hint keys={submitKeys(mod)}>send</Hint>
+					<Hint keys="esc">back</Hint>
+				</span>
+				<output className="signals-note">{note ?? (routing ? routing.label : where)}</output>
+				<span className="signals-foot-actions">
+					<Btn
+						tone="primary"
+						sm
+						className="signals-key"
+						busy={routing !== null}
+						ariaKeyShortcuts={mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter'}
+						onClick={() => void send()}
+					>
+						Send
+					</Btn>
+				</span>
+			</footer>
+		</div>
+	)
+}
+
+/** `o` on an ask with several links: each shown as text; 1–9 (or a click) opens that one. */
+function LinksFlow({
+	thread,
+	onOpen,
+	onClose,
+}: {
+	thread: SignalThread
+	/** Resolves with the failure note, or null once opened. */
+	onOpen(index: number): Promise<string | null>
+	onClose(message?: string | null): void
+}) {
+	const [note, setNote] = useState<string | null>(null)
+	const opening = useRef(false)
+	const alive = useRef(true)
+	useEffect(
+		() => () => {
+			alive.current = false
+		},
+		[],
+	)
+	const open = async (index: number): Promise<void> => {
+		if (opening.current || index < 0 || index >= thread.links.length) return
+		opening.current = true
+		try {
+			const failed = await onOpen(index)
+			if (!alive.current) return
+			// Opened: back to the list, whose note already says which link opened.
+			if (failed === null) onClose()
+			else setNote(failed)
+		} finally {
+			opening.current = false
+		}
+	}
+	return (
+		<div
+			ref={takeKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			onKeyDown={flowKeys({
+				count: thread.links.length,
+				onPick: index => void open(index),
+				onSubmit: () => undefined,
+				onClose: () => onClose(),
+			})}
+		>
+			<FlowHeader glyph="↗" kind="Open a link" context={`${thread.ref} · ${thread.title}`} onClose={() => onClose()} />
+			<div className="signals-scroll signals-flow">
+				<div className="signals-choices" aria-label="Links">
+					{thread.links.map((link, index) => (
+						<button
+							// biome-ignore lint/suspicious/noArrayIndexKey: links are positional (openLink takes the index and the link shown)
+							key={index}
+							type="button"
+							className="signals-choice"
+							title={link}
+							onClick={() => void open(index)}
+						>
+							<span className="signals-choice-mark" />
+							<span className="signals-choice-label signals-ask-link">{link}</span>
+							<span className="signals-choice-n">{index < PICK_MAX ? index + 1 : ''}</span>
+						</button>
+					))}
+				</div>
+			</div>
+			<footer className="signals-foot">
+				<span className="signals-foot-hints" aria-hidden="true">
+					<Hint keys={pickRange(thread.links.length)} pick>
+						open
+					</Hint>
+					<Hint keys="esc">back</Hint>
+				</span>
+				<output className="signals-note">{note ?? 'Opens in the browser'}</output>
+			</footer>
+		</div>
+	)
+}
+
 type ProjectsState =
 	| { status: 'loading' }
 	| { status: 'error'; message: string }
@@ -1221,7 +1550,7 @@ function NewAgentFlow({
 }
 
 export interface MountedSignals {
-	/** Gives the column the keys: an open flow, else the list. */
+	/** Gives the column the keys: an open flow (a reply's answer field), else the list. */
 	focus(): void
 	dispose(): void
 }
@@ -1233,7 +1562,9 @@ export function mountSignals(host: HTMLElement, props: SignalsColumnProps): Moun
 	return {
 		focus() {
 			;(
-				host.querySelector<HTMLElement>('.signals-flow-keys') ?? host.querySelector<HTMLElement>('section.signals')
+				host.querySelector<HTMLElement>('.signals-answer-input') ??
+				host.querySelector<HTMLElement>('.signals-flow-keys') ??
+				host.querySelector<HTMLElement>('section.signals')
 			)?.focus({ preventScroll: true })
 		},
 		dispose() {

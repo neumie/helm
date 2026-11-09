@@ -437,6 +437,13 @@ export const SIGNALS_IPC = {
 	filtered: 'signals:filtered',
 	/** invoke(id) → add that filtered mail's sender to the include list. */
 	include: 'signals:include',
+	/** invoke(id, {text}) → saves Jakub's answer on an agent ask (`POST /api/signals/:id/reply`). */
+	reply: 'signals:reply',
+	/**
+	 * invoke(id, index, url) → opens link `index` of agent ask `id`, as main re-reads it from the daemon,
+	 * only while it still equals `url` (the link the renderer showed; else 409 `The links changed`).
+	 */
+	openLink: 'signals:open-link',
 } as const
 
 /** What main pushes: the daemon snapshot, or null with why it is unavailable. */
@@ -502,6 +509,16 @@ export interface SignalsApi {
 	filtered(): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalFilteredPage>>
 	/** Always show this filtered mail's sender (`signals.mail.includeSenders`, from the next poll). */
 	include(id: number): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalIncludeResult>>
+	/** Saves Jakub's answer on an agent ask (delivery to the agent is the dock's prompt path, separately). */
+	reply(
+		id: number,
+		body: import('./shared-helm').SignalReply,
+	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalThread>>
+	/**
+	 * Opens link `index` of agent ask `id`; main re-reads the thread and opens only its stored http(s)
+	 * link, and only when it is still `url` (the one shown), else 409 `The links changed; look at the ask again.`
+	 */
+	openLink(id: number, index: number, url: string): Promise<import('./shared-helm').HelmResult<true>>
 }
 
 export const AGENT_DOCK_IPC = {
