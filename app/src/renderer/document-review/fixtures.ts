@@ -8,6 +8,7 @@ import type {
 	ReviewState,
 } from '../../document-review/types'
 import { defaultReviewDraft } from '../../document-review/types'
+import { contentWidthFixtureText } from './content-width-fixture'
 
 const revision = (n: number) => n.toString(16).padStart(64, '0')
 export const reviewFixtureText = `# Collaborative specification\n\nRead the actual document, refine a passage, and keep the wider conversation beside it.\n\n## Dispatch guarantees\n\nThe selected owner must remain exact. A **rendered quote** is not a Markdown offset.\n\n| Operation | Evidence |\n| --- | --- |\n| Discuss | No file edits requested |\n| Change | Read the actual file first |\n\n\`\`\`ts\nconst sameConversation = true\n\`\`\`\n\n<img src="https://never-fetch.invalid/private.png" onerror="alert(1)">\n\n${Array.from(
@@ -67,6 +68,7 @@ export type ReviewFixtureScenario =
 	| 'passage-threads-long-light'
 	| 'passage-list'
 	| 'passage-list-light'
+	| 'content-width'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
 	const listeners = new Set<() => void>()
 	const closeListeners = new Set<() => void>()
@@ -117,6 +119,17 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 				: 'Workspace reading and conversation — an intentionally long original Pi session name'
 		session.messages = []
 	}
+	if (scenario === 'content-width') {
+		session.name = 'Claude Code · kontakty Psyon'
+		session.messages = [
+			{ id: 'cw:user', role: 'user', text: 'Projdi tabulku kontaktů a řekni, jestli nějaká role nemá příjemce.' },
+			{
+				id: 'cw:assistant',
+				role: 'assistant',
+				text: 'Role Schvalovatel má jen jednoho člověka pro středisko Praha. Pro Brno chybí úplně, takže schvalování objednávek odtud dnes tiše mizí.',
+			},
+		]
+	}
 	const draft = defaultReviewDraft()
 	draft.sessionId = scenario === 'no-agent' ? null : session.id
 	draft.theme = [
@@ -148,9 +161,17 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 	const state: ReviewState = {
 		document: {
 			id: '33333333-3333-4333-8333-333333333333',
-			name: 'spec.md',
-			relativePath: 'docs/plans/review/spec.md',
-			text: scenario.startsWith('passage-list') ? passageListText : editorial ? editorialText : reviewFixtureText,
+			name: scenario === 'content-width' ? 'kontakty-a-notifikace.md' : 'spec.md',
+			relativePath:
+				scenario === 'content-width' ? 'docs/plans/kontakty-a-notifikace/spec.md' : 'docs/plans/review/spec.md',
+			text:
+				scenario === 'content-width'
+					? contentWidthFixtureText
+					: scenario.startsWith('passage-list')
+						? passageListText
+						: editorial
+							? editorialText
+							: reviewFixtureText,
 			revision: revision(1),
 			previous: scenario === 'changes' ? reviewFixtureText.replace('A **rendered quote**', 'A rendered quote') : null,
 			error:

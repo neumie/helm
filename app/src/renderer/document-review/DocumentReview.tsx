@@ -40,6 +40,7 @@ import {
 	samePassage,
 } from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
+import '../reading-width.css'
 import './document-review.css'
 
 const providerNames = { claude: 'Claude Code', codex: 'Codex', pi: 'Pi', cli: 'Agent' }
@@ -2421,7 +2422,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 									</pre>
 								</>
 							) : canvasMode ? null : (
-								<article className="review-prose">
+								<article className="review-prose" data-reading-width="">
 									<ReviewMarkdown
 										blocks={model.blocks}
 										selectedStart={passage?.revision === state.document.revision ? passage.start : null}
