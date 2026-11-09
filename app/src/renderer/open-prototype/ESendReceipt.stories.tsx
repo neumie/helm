@@ -348,7 +348,7 @@ function ActivityStage({ frame }: { frame: ActivityFrame }) {
 	return <Stage options={spec.options} auto={spec.auto} slots={slots} />
 }
 
-/** E5: Claude Code's activity line — glyph, verb, elapsed, live tokens — under the conversation. */
+/** E5: an activity line in Claude Code's style, drawn with Helm's ActivityIndicator — verb, elapsed, live tokens — under the conversation. */
 export const E5ActivityLine: Story = {
 	name: 'E5 Activity line',
 	// Frames are switched in the story's own bar; the A–D frame control does not apply.

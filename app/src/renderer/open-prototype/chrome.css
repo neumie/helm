@@ -60,19 +60,16 @@
 	color: var(--accent);
 }
 .open-agent-working {
-	color: var(--accent);
-	animation: open-pulse 1.6s ease-in-out infinite;
+	/* §3.21: the indicator owns its grayscale motion and the reduced-motion clamp. */
+	display: inline-grid;
+	place-items: center;
+	align-self: center;
 }
 .open-agent-paused {
 	color: var(--warn);
 }
 .open-agent-disconnected {
 	color: var(--text-2);
-}
-@keyframes open-pulse {
-	50% {
-		opacity: 0.4;
-	}
 }
 
 /* Composer (shared by companion, pane, margin, bubble). */
@@ -159,6 +156,7 @@
 	line-height: 1.5;
 	color: var(--text-1);
 	display: flex;
+	align-items: center;
 	gap: 8px;
 }
 .open-thread-mark {

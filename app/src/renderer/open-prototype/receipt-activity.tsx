@@ -1,8 +1,9 @@
-// E5 — activity line under the conversation (helm open spec D14), in the style of Claude Code's own
-// "✻ Vibing… (2m 57s · ↓ 16.3k tokens)". Story-only: the phase comes from the real DocumentReview send path;
+// E5 — activity line under the conversation (helm open spec D14): Claude Code's "Vibing… (2m 57s · ↓ 16.3k
+// tokens)" idea drawn the Helm way, with the shared §3.21 ActivityIndicator in place of Claude's orange ✻. Story-only: the phase comes from the real DocumentReview send path;
 // the verb and token count come from a story-only `ActivitySource` standing in for a progress feed Helm does
 // not have yet (spec D14 feasibility note). Every field shown has a named real source or is left out.
 import { useEffect, useState } from 'react'
+import { ActivityIndicator } from '../activity-indicator'
 import type { SendReceiptSlots, SendReceiptView } from '../document-review/send-receipt-view'
 import { receiptSlots } from './receipt'
 import './receipt-activity.css'
@@ -26,9 +27,6 @@ export interface ActivitySource {
 	clockOffsetMs?: number
 }
 
-/** Claude Code's spinner frames; reduced motion keeps ✻. */
-const SPINNER = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢']
-
 function useTicker(active: boolean, ms: number): number {
 	const [tick, setTick] = useState(0)
 	useEffect(() => {
@@ -37,18 +35,6 @@ function useTicker(active: boolean, ms: number): number {
 		return () => window.clearInterval(timer)
 	}, [active, ms])
 	return tick
-}
-
-function useReducedMotion(): boolean {
-	const query = '(prefers-reduced-motion: reduce)'
-	const [reduced, setReduced] = useState(() => window.matchMedia(query).matches)
-	useEffect(() => {
-		const list = window.matchMedia(query)
-		const change = () => setReduced(list.matches)
-		list.addEventListener('change', change)
-		return () => list.removeEventListener('change', change)
-	}, [])
-	return reduced
 }
 
 /** Claude Code's spelling: 12s, 2m 57s, 1h 4m. */
@@ -89,9 +75,7 @@ function Tokens({ count }: { count: number }) {
 
 function ActivityLine({ view, source }: { view: SendReceiptView; source: ActivitySource }) {
 	const running = RUNNING.has(view.phase)
-	const reduced = useReducedMotion()
-	// Only a caller seen working spins; received means the tool has your message, not that the agent works.
-	const tick = useTicker(view.phase === 'working' && !reduced, 120)
+	// The clock; the indicator animates in CSS (§3.21), so nothing else ticks.
 	useTicker(running, 1000)
 	const offset = source.clockOffsetMs ?? 0
 	const end = (running ? Date.now() : view.phaseAt) + offset
@@ -100,51 +84,47 @@ function ActivityLine({ view, source }: { view: SendReceiptView; source: Activit
 	// A finished line keeps the last step it reached before the reply.
 	const step = view.phase === 'working' || view.phase === 'replied' ? stepAt(source, end - view.sentAt) : null
 	const tokens = step?.tokens ?? null
-	if (view.phase === 'replied')
-		return (
-			<div className="act-line act-done" data-phase="replied" title={source.origin}>
-				<span className="act-glyph" aria-hidden="true">
-					✻
-				</span>
-				<span className="act-text">
-					{bound ? `Worked for ${elapsed}` : `Replied after ${elapsed}`}
-					{tokens === null ? null : (
-						<span className="act-meta">
-							{' · '}
-							<Tokens count={tokens} />
-						</span>
-					)}
-				</span>
-			</div>
-		)
+	const replied = view.phase === 'replied'
+	const working = view.phase === 'working'
 	let verb: string
 	if (view.phase === 'sending') verb = `Sending to ${view.agent}`
 	// Without a bound source the window only knows the agent has your message, never that it works on it.
 	else if (view.phase === 'received') verb = `With ${view.agent}`
+	else if (replied) verb = bound ? 'Worked' : 'Replied'
 	else verb = step?.verb ?? 'Thinking'
-	const glyph = view.phase !== 'working' || reduced ? '✻' : (SPINNER[tick % SPINNER.length] ?? '✻')
-	// The clock and the spinner change every second; only the verb is announced, so a screen reader hears
-	// "Editing" once rather than every tick. The full line stays readable in place.
+	// One status for the whole line, mounted in every phase, whose text changes only with the phase or the verb:
+	// a screen reader hears "Editing" once, never the clock. The indicator keeps a static label of its own.
+	const status = replied ? `${view.agent} replied` : working ? `${view.agent}: ${verb}` : verb
+	const meta =
+		tokens === null ? null : (
+			<>
+				{' · '}
+				<Tokens count={tokens} />
+			</>
+		)
 	return (
-		<div className="act-line" data-phase={view.phase} title={source.origin}>
-			<span className="act-glyph" aria-hidden="true">
-				{glyph}
+		<div className={`act-line${replied ? ' act-done' : ''}`} data-phase={view.phase} title={source.origin}>
+			{/* §3.21: the indicator only while the caller is seen working, never as idle decoration. */}
+			<span className="act-slot" aria-hidden="true">
+				{working ? <ActivityIndicator label="Working" /> : null}
 			</span>
-			<span className="act-text">
-				{verb}…
-				<span className="act-meta">
-					{' ('}
-					{elapsed}
-					{tokens === null ? null : (
-						<>
-							{' · '}
-							<Tokens count={tokens} />
-						</>
-					)}
-					)
+			{replied ? (
+				<span className="act-text">
+					{bound ? `Worked for ${elapsed}` : `Replied after ${elapsed}`}
+					{meta ? <span className="act-meta">{meta}</span> : null}
 				</span>
-			</span>
-			<output className="sr-only">{verb}</output>
+			) : (
+				<span className="act-text">
+					<span className={working ? 'activity-indicator-label' : undefined}>{verb}…</span>
+					<span className="act-meta">
+						{' ('}
+						{elapsed}
+						{meta}
+						{')'}
+					</span>
+				</span>
+			)}
+			<output className="sr-only">{status}</output>
 		</div>
 	)
 }

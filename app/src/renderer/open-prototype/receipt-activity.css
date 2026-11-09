@@ -1,10 +1,10 @@
-/* E5 activity line (helm open spec D14). Story-only. Colour only on the glyph, and only while the caller is seen
-   working: Jakub asked for Claude Code's orange ✻. It borrows the terminal-group orange because the design system
-   has no activity colour; picking E5 means adding a dedicated token (and this spinner) to design-system.md. */
+/* E5 activity line (helm open spec D14). Story-only. The shared §3.21 ActivityIndicator (grayscale progress, the
+   global reduced-motion clamp) marks a caller seen working; no other colour, no new token. The slot keeps the
+   text on one edge whether or not the indicator shows. */
 .act-line {
 	display: grid;
-	grid-template-columns: 14px minmax(0, 1fr);
-	column-gap: 6px;
+	grid-template-columns: 6px minmax(0, 1fr);
+	column-gap: 8px;
 	align-items: start;
 	min-width: 0;
 	margin: 4px 0 20px;
@@ -12,16 +12,10 @@
 	line-height: 20px;
 	color: var(--text-1);
 }
-.act-glyph {
+.act-slot {
 	display: grid;
 	place-items: center;
 	height: 20px;
-	font-size: calc(13px * var(--ui-scale));
-	line-height: 1;
-	color: var(--text-2);
-}
-.act-line[data-phase="working"] .act-glyph {
-	color: var(--group-orange);
 }
 .act-text {
 	min-width: 0;

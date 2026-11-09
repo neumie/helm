@@ -1,6 +1,7 @@
 // Story-only window chrome variants for `helm open` (spec §Design variants A and B).
 // Three ways to frame one viewer window, each in plain viewing and agent-bound feedback mode.
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ActivityIndicator } from '../activity-indicator'
 import { Btn } from '../button'
 import { GLYPH, MenuButton } from '../sidebar/ui'
 import './chrome.css'
@@ -39,9 +40,16 @@ export const STATE_WORD: Record<AgentState, string> = {
 	disconnected: 'Disconnected',
 }
 
-/** Status glyph, colored by state; the word next to it carries the meaning (never color alone). */
+/** Status glyph, colored by state; the word next to it carries the meaning (never color alone). Working is the
+ * shared §3.21 ActivityIndicator (grayscale progress, D14), never a glyph of its own. */
 export function AgentGlyph({ state }: { state: AgentState }) {
-	const glyph = state === 'working' ? '✻' : state === 'disconnected' ? '¿' : state === 'paused' ? '◌' : '●'
+	if (state === 'working')
+		return (
+			<span className="open-agent-glyph open-agent-working" aria-hidden="true">
+				<ActivityIndicator label="Working" />
+			</span>
+		)
+	const glyph = state === 'disconnected' ? '¿' : state === 'paused' ? '◌' : '●'
 	return (
 		<span className={`open-agent-glyph open-agent-${state}`} aria-hidden="true">
 			{glyph}
@@ -208,9 +216,9 @@ export function ThreadEntry({ thread }: { thread: Thread }) {
 			) : thread.state === 'working' ? (
 				<p className="open-thread-working">
 					<span className="open-agent-glyph open-agent-working" aria-hidden="true">
-						✻
+						<ActivityIndicator label="Working" />
 					</span>
-					Working…
+					<span className="activity-indicator-label">Working…</span>
 				</p>
 			) : null}
 		</article>

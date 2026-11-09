@@ -81,14 +81,24 @@ test.describe('E5 activity line', () => {
 		// Visible text plus the screen-reader word: "↓ 16.3k tokens" reads as "16.3k output tokens".
 		const line = page.locator('.act-line .act-text')
 		await expect(line).toHaveText(/Editing… \(2m 5\ds · ↓ 16\.3k output tokens\)/, { timeout: 8000 })
+		// Seen working: the shared §3.21 indicator, grayscale progress. One status, mounted in every phase,
+		// carries the verb for screen readers, never the clock.
+		const indicator = page.locator('.act-line .activity-indicator')
+		const status = page.locator('.act-line output.sr-only')
+		await expect(indicator).toHaveAttribute('data-variant', 'progress')
+		await expect(status).toHaveText('Claude Code: Editing')
 		await frame(page, 'Working · Codex')
 		await expect(line).toHaveText(/Editing… \(2m 5\ds · ↓ 11\.8k output tokens\)/, { timeout: 8000 })
 		await frame(page, 'Tokens unknown')
 		// Nothing bound: elapsed only, and never a claim that the agent is working.
 		await expect(line).toHaveText(/With Claude Code… \(2m 5\ds\)/, { timeout: 8000 })
 		await expect(line).not.toContainText('tokens')
+		await expect(indicator).toHaveCount(0)
+		await expect(status).toHaveText('With Claude Code')
 		await frame(page, 'Replied')
 		await expect(line).toHaveText(/Worked for 3m \ds · ↓ 16\.3k output tokens/, { timeout: 8000 })
+		await expect(indicator).toHaveCount(0)
+		await expect(status).toHaveText('Claude Code replied')
 		await frame(page, 'Not confirmed')
 		await expect(page.getByRole('button', { name: 'I checked the outcome' })).toBeVisible({ timeout: 8000 })
 		await expect(line).toHaveCount(0)
