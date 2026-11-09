@@ -1,11 +1,19 @@
 // The read-only JXA script the Mail Signals reader runs through `osascript -l JavaScript`.
 //
 // It never launches Mail (checks `running()` first), never changes Mail state (no readStatus
-// writes, no moves) and never sends anything. Message properties are read in batches over one
-// `whose` specifier per mailbox; raw headers are read only for the bounded candidate set and are
-// reduced inside the script to `bulk` + conversation `root`, so headers never leave it.
+// writes, no moves) and never sends anything.
 //
-// Besides the unified inbox it reads the extra mailboxes Jakub configured by name
+// Speed: Mail serves one Apple event at a time and each can take seconds while it syncs, so the
+// script keeps the number of events small and each one cheap. It reads every account's own inbox
+// (never the unified Mail.inbox, which Mail evaluates across all accounts on every request) with
+// whole-list property reads (one event per property per mailbox, never a `whose` filter, which
+// Mail re-evaluates over the whole mailbox for every property asked). The received dates decide the
+// window first; subjects and flags are read only for mailboxes with a candidate, and raw headers
+// only for the bounded candidate set, one message by id each. Headers are reduced inside the
+// script to `bulk` + conversation `root` + Message-ID, so they never leave it. Past `budgetMs` it
+// stops starting new reads and returns a partial answer (`slow`).
+//
+// Besides the inboxes it reads the extra mailboxes Jakub configured by name
 // (`signals.mail.mailboxes`, e.g. a Gmail label a server-side filter files mail into). Nothing is
 // ever added implicitly: All Mail, Trash, Spam and Sent are read only when listed by name.
 
@@ -35,6 +43,8 @@ export interface MailScriptArgs {
 	 * crowds inbox mail out (`truncated` and the mailbox in `cappedMailboxes` when more).
 	 */
 	maxMailboxCandidates: number
+	/** After this many ms no new read starts; the answer is partial (`slow`, `truncated`). 0 = none. */
+	budgetMs: number
 }
 
 export const MAIL_MAX_MESSAGES = 300
@@ -44,6 +54,11 @@ export const MAIL_MAX_MAILBOX_CANDIDATES = 60
 export const MAIL_MAX_MAILBOXES = 12
 /** Bound for configured mailbox entries the reader passes on (more are ignored and reported). */
 export const MAIL_MAX_MAILBOX_ENTRIES = 20
+/**
+ * Reading budget of one poll. The osascript timeout (mail-source) leaves room above it for the
+ * one Apple event in flight when the budget runs out.
+ */
+export const MAIL_SCRIPT_BUDGET_MS = 25_000
 /** Bound for subject/sender strings the script returns (the mapper bounds again). */
 const SCRIPT_TEXT_MAX = 1000
 
@@ -89,8 +104,8 @@ function run(argv) {
 	function isSentry(address) {
 		var at = address.lastIndexOf('@');
 		var domain = at === -1 ? '' : address.slice(at + 1).toLowerCase();
-		return domain === 'sentry.io' || /\.sentry\.io$/.test(domain) ||
-			domain === 'getsentry.com' || /\.getsentry\.com$/.test(domain);
+		return domain === 'sentry.io' || /\\.sentry\\.io$/.test(domain) ||
+			domain === 'getsentry.com' || /\\.getsentry\\.com$/.test(domain);
 	}
 	// Mirrors mail-filter.ts relayedSenderAddress: the original sender behind an Apple Hide My
 	// Email relay address, else null.
@@ -152,14 +167,20 @@ function run(argv) {
 	}
 
 	var include = args.include.map(function (source) { return new RegExp(source, 'i'); });
+	var sinceMs = new Date(args.since).getTime();
+	var started = Date.now();
 	var truncated = false;
-	var since = { dateReceived: { _greaterThan: new Date(args.since) } };
-
-	// Mailboxes to read: the inbox first (it wins the Message-ID dedupe), then every mailbox whose
-	// name matches a configured entry, each once, in the order of the entries (so with both
-	// "Clientcare" and "All Mail" listed, mail in both reads as Clientcare).
-	var sources = [{ label: null, mailbox: Mail.inbox }];
-	var wantedBoxes = args.mailboxes || [];
+	// Mail answers one Apple event at a time and can take seconds per event while it syncs. Past
+	// the budget the script stops starting new reads and returns what it has (slow + truncated),
+	// so a slow Mail yields a partial poll instead of a killed one.
+	var slow = false;
+	function late() {
+		if (args.budgetMs > 0 && Date.now() - started > args.budgetMs) {
+			slow = true;
+			truncated = true;
+		}
+		return slow;
+	}
 	// Configured entries no mailbox matched / mailboxes Mail failed to list or read / mailboxes
 	// with more mail than one poll reads / matching mailboxes beyond the bound.
 	var missing = [];
@@ -169,6 +190,21 @@ function run(argv) {
 	function note(list, label) {
 		if (list.indexOf(label) === -1 && list.length < 50) list.push(label);
 	}
+
+	// Each account's own inbox, not the unified Mail.inbox: Mail evaluates the unified inbox across
+	// every account on each request, which made one poll take tens of seconds. Listing fails only
+	// when Mail cannot be read at all (no permission, Mail quit), which fails the whole read.
+	var sources = [];
+	var inboxes = Mail.inbox.mailboxes();
+	if (inboxes.length === 0) {
+		sources.push({ inbox: true, label: null, mailbox: Mail.inbox });
+	} else {
+		for (var ib = 0; ib < inboxes.length; ib++) sources.push({ inbox: true, label: null, mailbox: inboxes[ib] });
+	}
+
+	// Then every mailbox whose name matches a configured entry, each once, in the order of the
+	// entries (so with both "Clientcare" and "All Mail" listed, mail in both reads as Clientcare).
+	var wantedBoxes = args.mailboxes || [];
 	if (wantedBoxes.length > 0) {
 		var found = wantedBoxes.map(function () { return false; });
 		var matched = [];
@@ -223,115 +259,166 @@ function run(argv) {
 				note(skipped, matched[mb].label);
 				continue;
 			}
-			sources.push({ label: matched[mb].label, mailbox: matched[mb].mailbox });
+			sources.push({ inbox: false, label: matched[mb].label, mailbox: matched[mb].mailbox });
 		}
 	}
 
-	// Every message of every source window, newest first per mailbox and bounded per mailbox.
-	var all = [];
-	var seen = {};
-	for (var s = 0; s < sources.length; s++) {
-		var msgs, ids, messageIds, subjects, senders, dates, reads, flags;
-		try {
-			msgs = sources[s].mailbox.messages.whose(since);
-			ids = msgs.id();
-			messageIds = msgs.messageId();
-			subjects = msgs.subject();
-			senders = msgs.sender();
-			dates = msgs.dateReceived();
-			reads = msgs.readStatus();
-			flags = msgs.flaggedStatus();
-		} catch (error) {
-			// The inbox read failing is the whole read failing (no permission, Mail quit); one extra
-			// mailbox failing leaves the others readable.
-			if (s === 0) throw error;
-			truncated = true;
-			note(unreadable, sources[s].label);
-			continue;
-		}
-		var order = [];
-		for (var i = 0; i < ids.length; i++) if (dates[i] instanceof Date) order.push(i);
-		order.sort(function (a, b) { return dates[b].getTime() - dates[a].getTime(); });
-		if (order.length > args.maxMessages) {
-			truncated = true;
-			if (s > 0) note(capped, sources[s].label);
-		}
-		order = order.slice(0, args.maxMessages);
-		for (var o = 0; o < order.length; o++) {
-			var index = order[o];
-			// The same mail in several mailboxes (a Gmail label beside the inbox) is read once.
-			var key = idKey(messageIds[index]);
-			if (key !== '') {
-				if (seen[key]) continue;
-				seen[key] = true;
-			}
-			all.push({
-				msgs: msgs,
-				index: index,
-				label: sources[s].label,
-				id: ids[index],
-				messageId: messageIds[index],
-				subject: subjects[index],
-				sender: senders[index],
-				date: dates[index],
-				read: reads[index],
-				flagged: flags[index],
-			});
-		}
+	function sameList(a, b) {
+		if (a.length !== b.length) return false;
+		for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+		return true;
 	}
-	all.sort(function (a, b) { return b.date.getTime() - a.date.getTime(); });
-
-	// Newest first; the inbox and the extra mailboxes each fill their own candidate budget.
-	var candidates = [];
-	var inboxCount = 0;
-	var mailboxCount = 0;
-	for (var c = 0; c < all.length; c++) {
-		var entry = all[c];
-		var sender = parseSender(entry.sender);
+	function wantedSender(read, sender) {
 		var decoded = relayDecode(sender.address);
-		var wanted = !args.unreadOnly || !entry.read || isSentry(sender.address) ||
+		return !args.unreadOnly || !read || isSentry(sender.address) ||
 			(decoded !== null && isSentry(decoded)) ||
 			include.some(function (re) { return re.test(sender.address) || (decoded !== null && re.test(decoded)); });
-		if (!wanted) continue;
-		if (entry.label === null) {
-			if (inboxCount >= args.maxCandidates) { truncated = true; continue; }
-			inboxCount++;
-		} else {
-			if (mailboxCount >= args.maxMailboxCandidates) {
-				truncated = true;
-				note(capped, entry.label);
-				continue;
+	}
+	// One mailbox: whole-list reads only, one Apple event per property and never a whose()
+	// filter, which Mail re-evaluates over the whole mailbox on every property it is asked for.
+	// The received dates decide the window first, so a mailbox with nothing recent costs one
+	// event. Subjects and flags are read only when the mailbox has a candidate. Lists come in one
+	// order per request; when the mailbox changes between requests (mail arrives or leaves) the
+	// lists disagree and the mailbox is read once more. Returns null when it kept changing.
+	function readSource(source) {
+		for (var attempt = 0; attempt < 2; attempt++) {
+			var list = source.mailbox.messages;
+			var dates = list.dateReceived();
+			var window = [];
+			for (var i = 0; i < dates.length; i++) {
+				var d = dates[i];
+				if (d && typeof d.getTime === 'function' && d.getTime() > sinceMs) window.push(i);
 			}
-			mailboxCount++;
+			if (window.length === 0) return { rows: [], over: false };
+			window.sort(function (a, b) { return dates[b].getTime() - dates[a].getTime(); });
+			var over = window.length > args.maxMessages;
+			window = window.slice(0, args.maxMessages);
+			var n = dates.length;
+			var ids = list.id();
+			var reads = list.readStatus();
+			var senders = list.sender();
+			if (ids.length !== n || reads.length !== n || senders.length !== n) continue;
+			var rows = [];
+			for (var w = 0; w < window.length; w++) {
+				var index = window[w];
+				var sender = parseSender(senders[index]);
+				if (!wantedSender(reads[index], sender)) continue;
+				rows.push({ index: index, id: ids[index], date: dates[index], read: reads[index], sender: sender });
+			}
+			if (rows.length === 0) return { rows: [], over: over };
+			var subjects = list.subject();
+			var flags = list.flaggedStatus();
+			if (subjects.length !== n || flags.length !== n || !sameList(list.id(), ids)) continue;
+			for (var r = 0; r < rows.length; r++) {
+				rows[r].subject = subjects[rows[r].index];
+				rows[r].flagged = flags[rows[r].index];
+			}
+			return { rows: rows, over: over };
 		}
-		candidates.push({ entry: entry, sender: sender });
+		return null;
+	}
+	function inboxLabel(source) {
+		try {
+			return (text(source.mailbox.account.name()).slice(0, 80) || 'an account') + ' inbox';
+		} catch (error) {
+			return 'an inbox';
+		}
 	}
 
-	var messages = [];
-	for (var k = 0; k < candidates.length; k++) {
-		var at = candidates[k].entry;
+	// Candidates of every source; the inbox and the extra mailboxes each fill their own budget.
+	var inboxRows = [];
+	var mailboxRows = [];
+	var inboxesRead = 0;
+	var inboxError = null;
+	for (var s = 0; s < sources.length; s++) {
+		var source = sources[s];
+		if (!source.inbox && inboxesRead === 0 && inboxError !== null) throw inboxError;
+		if (late()) break;
+		var got;
 		try {
-			var message = at.msgs[at.index];
-			if (message.id() !== at.id) { truncated = true; continue; }
-			var headers = headerMap(message.allHeaders());
-			var ownId = text(at.messageId).replace(/^<|>$/g, '');
-			if (!ownId) { truncated = true; continue; }
-			messages.push({
-				messageId: ownId,
-				subject: text(at.subject),
-				senderName: candidates[k].sender.name,
-				senderAddress: candidates[k].sender.address,
-				dateReceived: at.date.toISOString(),
-				read: !!at.read,
-				flagged: !!at.flagged,
-				bulk: isBulk(headers),
-				root: firstId(headers['references']) || firstId(headers['in-reply-to']) || ownId,
-				mailbox: at.label,
-			});
+			got = readSource(source);
 		} catch (error) {
 			truncated = true;
+			if (source.inbox) {
+				// No inbox readable at all is the whole read failing (no permission, Mail quit).
+				if (inboxError === null) inboxError = error;
+				note(unreadable, inboxLabel(source));
+			} else {
+				note(unreadable, source.label);
+			}
+			continue;
+		}
+		if (source.inbox) inboxesRead++;
+		if (got === null) {
+			truncated = true;
+			note(unreadable, source.inbox ? inboxLabel(source) : source.label);
+			continue;
+		}
+		if (got.over) {
+			truncated = true;
+			if (!source.inbox) note(capped, source.label);
+		}
+		for (var g = 0; g < got.rows.length; g++) {
+			got.rows[g].source = source;
+			got.rows[g].order = s;
+			(source.inbox ? inboxRows : mailboxRows).push(got.rows[g]);
 		}
 	}
+	if (inboxesRead === 0 && inboxError !== null) throw inboxError;
+	function newestFirst(a, b) { return b.date.getTime() - a.date.getTime() || a.order - b.order; }
+	inboxRows.sort(newestFirst);
+	mailboxRows.sort(newestFirst);
+
+	// Headers only for candidates, one message at a time by id (stable while the mailbox changes).
+	// The same mail in several mailboxes (a Gmail label beside the inbox, one mail delivered to two
+	// accounts) is read once: the inbox copy first, then the first mailbox listed.
+	var messages = [];
+	var seen = {};
+	function take(row) {
+		var message = row.source.mailbox.messages.byId(row.id);
+		var headers = headerMap(message.allHeaders());
+		var ownId = firstId(headers['message-id']) || text(message.messageId()).trim().replace(/^<|>$/g, '');
+		if (!ownId) {
+			truncated = true;
+			return false;
+		}
+		var key = idKey(ownId);
+		if (seen[key]) return false;
+		seen[key] = true;
+		messages.push({
+			messageId: ownId,
+			subject: text(row.subject),
+			senderName: row.sender.name,
+			senderAddress: row.sender.address,
+			dateReceived: row.date.toISOString(),
+			read: !!row.read,
+			flagged: !!row.flagged,
+			bulk: isBulk(headers),
+			root: firstId(headers['references']) || firstId(headers['in-reply-to']) || ownId,
+			mailbox: row.source.label,
+		});
+		return true;
+	}
+	function takeAll(rows, max) {
+		var count = 0;
+		for (var k = 0; k < rows.length; k++) {
+			if (count >= max) {
+				truncated = true;
+				if (rows[k].source.label !== null) note(capped, rows[k].source.label);
+				continue;
+			}
+			if (late()) return;
+			try {
+				if (take(rows[k])) count++;
+			} catch (error) {
+				// Gone since the lists were read (moved, deleted).
+				truncated = true;
+			}
+		}
+	}
+	takeAll(inboxRows, args.maxCandidates);
+	takeAll(mailboxRows, args.maxMailboxCandidates);
+	messages.sort(function (a, b) { return a.dateReceived < b.dateReceived ? 1 : a.dateReceived > b.dateReceived ? -1 : 0; });
 
 	var myAddresses = [];
 	try {
@@ -343,7 +430,7 @@ function run(argv) {
 	} catch (error) {}
 
 	return JSON.stringify({
-		running: true, truncated: truncated, myAddresses: myAddresses, messages: messages,
+		running: true, truncated: truncated, slow: slow, myAddresses: myAddresses, messages: messages,
 		missingMailboxes: missing,
 		unreadableMailboxes: unreadable,
 		cappedMailboxes: capped,
