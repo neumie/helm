@@ -589,6 +589,69 @@ test('the actual native control route releases a real helm edit CLI when its win
 	}
 })
 
+test('real helm edit reports why the native host refused to open a file, and the desktop logs it once', async () => {
+	const f = await nativeFixture()
+	const host = f.module.createReviewControl(
+		{
+			windows: f.manager,
+			profileId: () => 'profile',
+			profileToken: () => 'current',
+			allowsToken: token => token === 'current',
+		},
+		join(f.root, '.helm', 'document-review'),
+	)
+	const outside = await realpath(await mkdtemp('/tmp/hr-cn-outside-'))
+	const other = await realpath(await mkdtemp('/tmp/hr-cn-other-'))
+	const lines: string[] = []
+	const original = console.warn
+	console.warn = (...args: unknown[]) => {
+		const line = args.map(String).join(' ')
+		if (line.startsWith('[helm] review:')) lines.push(line)
+		else original(...args)
+	}
+	const edit = async (file: string) => {
+		const windows = createdWindows.filter(value => !value.dead).length
+		const result = await runFile(
+			process.execPath,
+			['--import', import.meta.resolve('tsx'), resolve('src/cli/helm.ts'), 'edit', file, '--timeout', '1'],
+			{ cwd: f.root, env: { ...process.env, HOME: f.root }, timeout: 30000, maxBuffer: 1000000 },
+		).then(
+			() => assert.fail(`${file} must be refused`),
+			(error: { stderr: string }) => error.stderr,
+		)
+		assert.equal(createdWindows.filter(value => !value.dead).length, windows, 'a refusal opens no window')
+		return result
+	}
+	try {
+		await host.start()
+		// The reported case: a Claude agent kept its review notes in a `.helm-*` file in the worktree root.
+		const hidden = join(f.root, '.helm-pr-969-prehled-zmen.md')
+		await writeFile(hidden, '# PRIVATE DOCUMENT CONTENT\n', { mode: 0o600 })
+		assert.match(await edit(hidden), /\.helm-pr-969-prehled-zmen\.md is a hidden file.*helm-pr-969-prehled-zmen\.md\./s)
+		// Its scratchpad copy: no Git repository at all.
+		const scratch = join(outside, 'prehled.md')
+		await writeFile(scratch, '# x\n', { mode: 0o600 })
+		assert.match(await edit(scratch), /prehled\.md is not inside a Git repository/)
+		// A file from another repository than the one the agent runs in.
+		await runFile('git', ['init', '-q', other])
+		const foreign = join(other, 'spec.md')
+		await writeFile(foreign, '# x\n', { mode: 0o600 })
+		assert.match(await edit(foreign), /outside the connected repository/)
+		assert.match(await edit(join(f.root, 'gone.md')), /gone\.md does not exist/)
+		for (const stderr of lines) assert.doesNotMatch(stderr, /PRIVATE DOCUMENT CONTENT|[a-f0-9]{64}/)
+		const opens = lines.filter(line => line.startsWith('[helm] review: open failed: '))
+		assert.equal(opens.length, 4, lines.join('\n'))
+		assert.match(opens[0] as string, /hidden file/)
+		assert.match(opens[1] as string, /not inside a Git repository/)
+	} finally {
+		console.warn = original
+		await host.stop()
+		await rm(outside, { recursive: true, force: true })
+		await rm(other, { recursive: true, force: true })
+		await f.close()
+	}
+})
+
 test('window-bound listening ends only on actual native close; a cancelled close leaves it listening', async () => {
 	const f = await nativeFixture()
 	try {

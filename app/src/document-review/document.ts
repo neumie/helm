@@ -3,34 +3,50 @@ import { constants, watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, dirname, relative, sep } from 'node:path'
+import { refuse } from '../../../src/document-review/refusal'
 import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
 import { REVIEW_DOCUMENT_BYTES } from './types'
 import type { ReviewDocument } from './types'
 
 export const reviewRevision = (text: string) => createHash('sha256').update(text).digest('hex')
+/**
+ * Hidden names (`.helm-*`, `.git/…`) are Helm-private or tool-private evidence and never
+ * reviewable. Returns the refusal that names the hidden segment and the way out.
+ */
+export function reviewHiddenPathRefusal(relativePath: string): string | null {
+	const parts = relativePath.split(/[/\\]/)
+	const hidden = parts.findIndex(part => part.startsWith('.'))
+	if (hidden < 0) return null
+	const part = parts[hidden] as string
+	return hidden === parts.length - 1
+		? `${part} is a hidden file (its name starts with a dot); review opens visible files only. Rename it without the leading dot, for example ${part.replace(/^\.+/, '') || 'review.md'}.`
+		: `${parts[parts.length - 1]} is inside the hidden folder ${part}; review opens visible files only. Move it to a visible folder.`
+}
 export async function readReviewFile(root: string, file: string): Promise<string> {
-	if (
-		(await realpath(root)) !== root ||
-		(await realpath(dirname(file))) !== dirname(file) ||
-		!file.startsWith(`${root}${sep}`) ||
-		!/\.(md|jsx|tsx)$/i.test(file) ||
-		/(?:^|[/\\])\.[^/\\]+/.test(relative(root, file))
-	)
-		throw new Error('Choose a visible Markdown or JSX file inside the approved repository.')
+	const name = basename(file)
+	if ((await realpath(root)) !== root || (await realpath(dirname(file))) !== dirname(file))
+		throw refuse(`The path to ${name} goes through a symlink. Open its real path.`)
+	if (!file.startsWith(`${root}${sep}`)) throw refuse(`${name} is outside the approved repository.`)
+	if (!/\.(md|jsx|tsx)$/i.test(file)) throw refuse(`${name} is not a .md, .jsx or .tsx file.`)
+	const hidden = reviewHiddenPathRefusal(relative(root, file))
+	if (hidden) throw refuse(hidden)
 	const parent = await lstat(dirname(file))
-	if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error('The document folder is unavailable.')
-	const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+	if (!parent.isDirectory() || parent.isSymbolicLink()) throw refuse(`The folder of ${name} is unavailable.`)
+	const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(error => {
+		const code = (error as NodeJS.ErrnoException).code
+		if (code === 'ENOENT') throw refuse(`${name} does not exist.`)
+		if (code === 'ELOOP') throw refuse(`${name} is a symlink. Open the real file.`)
+		if (code === 'EACCES') throw refuse(`${name} is not readable by Helm.`)
+		throw error
+	})
 	try {
 		const before = await fd.stat()
-		if (
-			!before.isFile() ||
-			before.nlink !== 1 ||
-			before.size > REVIEW_DOCUMENT_BYTES ||
-			(process.getuid && before.uid !== process.getuid()) ||
-			before.mode & 0o022
-		)
-			throw new Error('Review supports regular document files up to 512 KiB; linked files are not supported.')
+		if (!before.isFile()) throw refuse(`${name} is not a regular file.`)
+		if (before.nlink !== 1) throw refuse(`${name} has more than one hard link; copy it to a new file.`)
+		if (before.size > REVIEW_DOCUMENT_BYTES) throw refuse(`${name} is larger than 512 KiB.`)
+		if (process.getuid && before.uid !== process.getuid()) throw refuse(`${name} belongs to another user.`)
+		if (before.mode & 0o022) throw refuse(`${name} is writable by group or others; run chmod go-w on it.`)
 		const bytes = Buffer.alloc(REVIEW_DOCUMENT_BYTES + 1)
 		let used = 0
 		while (used < bytes.length) {
@@ -52,8 +68,12 @@ export async function readReviewFile(root: string, file: string): Promise<string
 			(await realpath(root)) !== root ||
 			(await realpath(dirname(file))) !== dirname(file)
 		)
-			throw new Error('The file changed during reading. Try again.')
-		return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, used))
+			throw refuse(`${name} changed while it was read. Try again.`)
+		try {
+			return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, used))
+		} catch {
+			throw refuse(`${name} is not valid UTF-8 text.`)
+		}
 	} finally {
 		await fd.close()
 	}
@@ -68,6 +88,8 @@ export class ReviewDocumentObservation {
 	private again = false
 	private disposed = false
 	private snapshot: ReviewDocument
+	/** Why the last read failed, for the opener's log and CLI reason; never shown with document text. */
+	failure: unknown = null
 	constructor(
 		readonly root: string,
 		readonly file: string,
@@ -123,7 +145,15 @@ export class ReviewDocumentObservation {
 			const raw = await readReviewFile(this.root, this.file)
 			if (this.disposed) return
 			const format = /\.md$/i.test(this.file) ? 'markdown' : 'jsx'
-			const { body: text, archive } = parseReviewArtifact(raw, format)
+			let parsed: ReturnType<typeof parseReviewArtifact>
+			try {
+				parsed = parseReviewArtifact(raw, format)
+			} catch {
+				throw refuse(
+					`The helm-review journal at the end of ${basename(this.file)} is malformed; it was left untouched.`,
+				)
+			}
+			const { body: text, archive } = parsed
 			const revision = reviewRevision(text)
 			if (
 				revision === this.snapshot.revision &&
@@ -144,8 +174,10 @@ export class ReviewDocumentObservation {
 					this.snapshot.revision && revision !== this.snapshot.revision ? this.snapshot.text : this.snapshot.previous,
 				error: null,
 			}
-		} catch {
+			this.failure = null
+		} catch (error) {
 			if (this.disposed) return
+			this.failure = error
 			this.snapshot = {
 				...this.snapshot,
 				error:

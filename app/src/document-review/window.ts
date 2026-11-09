@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import { failureCause, gitRootRefusal, isReviewRefusal, refuse } from '../../../src/document-review/refusal'
 import { decodeScreenshots, discardScreenshots, stageScreenshots } from '../../../src/document-review/screenshot-files'
 import {
 	REVIEW_SCREENSHOT_DIRECTORY,
@@ -100,7 +101,7 @@ export class DocumentReviewWindows {
 	}
 	private requireAdmission(): void {
 		if (this.admissionClosed)
-			throw new Error('Review admission is closed. Recover unsaved replies before leaving this profile.')
+			throw refuse('Review admission is closed. Recover unsaved replies before leaving this profile.')
 	}
 	private requireWritable(state: WindowState): void {
 		if (state.recoveryContext)
@@ -267,10 +268,11 @@ export class DocumentReviewWindows {
 				}
 				await this.openFile(file, token as string, current)
 				return { data: true }
-			} catch {
+			} catch (error) {
 				return {
-					error:
-						'Could not open the document. Choose a visible regular Markdown or JSX file in a repository you trust.',
+					error: isReviewRefusal(error)
+						? error.message
+						: 'Could not open the document. Choose a visible regular Markdown or JSX file in a repository you trust.',
 				}
 			} finally {
 				this.opening = false
@@ -560,12 +562,14 @@ export class DocumentReviewWindows {
 			})
 			if (!current() || picked.canceled || !picked.filePaths[0]) return
 			await this.openFile(picked.filePaths[0], token, current)
-		} catch {
+		} catch (error) {
 			if (current())
 				await dialog.showMessageBox(win as BrowserWindow, {
 					type: 'warning',
 					message: 'Document review unavailable',
-					detail: 'Choose a visible regular Markdown or JSX file inside a repository you trust. No agent was started.',
+					detail: isReviewRefusal(error)
+						? `${error.message} No agent was started.`
+						: 'Choose a regular Markdown or JSX file inside a repository you trust. No agent was started.',
 				})
 		} finally {
 			this.opening = false
@@ -611,7 +615,7 @@ export class DocumentReviewWindows {
 		// Share native/menu admission: concurrent CLI opens must not create duplicate
 		// windows or race the eight-window bound before observation.start() settles.
 		this.requireAdmission()
-		if (this.opening) throw new Error('Another document is opening. Wait before opening this document.')
+		if (this.opening) throw refuse('Another document is opening. Wait before opening this document.')
 		const connected = this.sessionsFor(profileId).get(sessionId, owner)
 		const epoch = this.admissionEpoch
 		const current = () =>
@@ -620,7 +624,7 @@ export class DocumentReviewWindows {
 			!connected.retired &&
 			this.deps.allowsToken(token) &&
 			this.deps.profileId() === profileId
-		if (!current()) throw new Error('The active profile changed. Reconnect explicitly.')
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened; reconnect explicitly.')
 		this.opening = true
 		try {
 			await this.openFile(file, token, current, sessionId, connected.workspace)
@@ -643,10 +647,13 @@ export class DocumentReviewWindows {
 		expectedRoot?: string,
 	): Promise<void> {
 		const original = resolve(rawFile)
-		const stat = await lstat(original)
-		if (!current() || !stat.isFile() || stat.isSymbolicLink()) throw new Error('Not a regular document file')
+		const stat = await lstat(original).catch(() => null)
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
+		if (!stat) throw refuse(`${basename(original)} does not exist.`)
+		if (stat.isSymbolicLink()) throw refuse(`${basename(original)} is a symlink. Open the real file.`)
+		if (!stat.isFile()) throw refuse(`${basename(original)} is not a regular file.`)
 		const file = await realpath(original)
-		if (!current()) throw new Error('Profile changed')
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
 		const environment = { ...process.env, GIT_OPTIONAL_LOCKS: '0' }
 		for (const key of Object.keys(environment))
 			if (key.startsWith('GIT_') && key !== 'GIT_OPTIONAL_LOCKS') Reflect.deleteProperty(environment, key)
@@ -654,23 +661,27 @@ export class DocumentReviewWindows {
 			env: environment,
 			timeout: 5000,
 			maxBuffer: 8192,
+		}).catch(error => {
+			throw gitRootRefusal(error, basename(file))
 		})
-		if (!current()) throw new Error('Profile changed')
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
 		const root = await realpath(result.stdout.trim())
-		if (!current()) throw new Error('Profile changed')
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
 		if (
 			this.admissionClosed &&
 			!this.archives.get(this.archiveKey(this.deps.profileId(), root, file))?.archive.guarded()
 		)
-			throw new Error('Only unsaved review replies can be reopened during recovery.')
-		if (expectedRoot && root !== expectedRoot) throw new Error('The document is outside the connected repository.')
+			throw refuse('Only unsaved review replies can be reopened during recovery.')
+		if (expectedRoot && root !== expectedRoot)
+			throw refuse(
+				`${basename(file)} is in repository ${basename(root)}, outside the connected repository ${basename(expectedRoot)}. Run helm edit from that repository.`,
+			)
 		for (const state of this.windows.values())
 			if (state.token === token && state.observation.file === file) {
-				if (state.recoveryContext && sessionId)
-					throw new Error('Close the recovery window before selecting a new caller.')
+				if (state.recoveryContext && sessionId) throw refuse('Close the recovery window before selecting a new caller.')
 				if (sessionId && state.selectedSession !== sessionId) {
 					if (state.selectedSession || state.dirty || state.active.size || state.sessions.isBusy())
-						throw new Error(
+						throw refuse(
 							'This document already has a review owner or unsaved work. Close that window before opening it from another agent; nothing was rerouted.',
 						)
 					state.selectedSession = sessionId
@@ -680,9 +691,9 @@ export class DocumentReviewWindows {
 				state.window.focus()
 				return
 			}
-		if (this.windows.size >= 8) throw new Error('Close a review window before opening another.')
+		if (this.windows.size >= 8) throw refuse('Eight review windows are open. Close one before opening another.')
 		const profileId = this.deps.profileId()
-		if (!current()) throw new Error('Profile changed')
+		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
 		let drafts = this.drafts.get(profileId)
 		if (!drafts) {
 			drafts = new ReviewDraftStore(this.deps.profileDir(profileId))
@@ -691,8 +702,12 @@ export class DocumentReviewWindows {
 		const observation = new ReviewDocumentObservation(root, file, () => this.publish(profileId))
 		await observation.start()
 		if (!current() || observation.current().error) {
+			const failure = observation.failure
 			await observation.dispose()
-			throw new Error('Document unavailable')
+			if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
+			throw isReviewRefusal(failure)
+				? failure
+				: refuse(`${basename(file)} could not be read for review (${failureCause(failure)}). Nothing was opened.`)
 		}
 		await this.createWindow(observation, profileId, token, current, sessionId)
 	}
