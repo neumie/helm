@@ -1,0 +1,93 @@
+{
+	"running": true,
+	"truncated": false,
+	"myAddresses": ["me@example.com", "neumann@contember.example"],
+	"messages": [
+		{
+			"messageId": "task-1@clientcare.example",
+			"subject": "[Psyon] New task: Indikace klientů přidaných do konzilia",
+			"senderName": "ClientCare",
+			"senderAddress": "notifications@contember.dev",
+			"dateReceived": "2026-01-15T09:00:38.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "task-1@clientcare.example",
+			"mailbox": "Clientcare"
+		},
+		{
+			"messageId": "comment-7@clientcare.example",
+			"subject": "[JVS] Pavel commented on Export faktur",
+			"senderName": "ClientCare",
+			"senderAddress": "notifications@contember.dev",
+			"dateReceived": "2026-01-15T08:30:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "comment-7@clientcare.example",
+			"mailbox": "Clientcare"
+		},
+		{
+			"messageId": "comment-6@clientcare.example",
+			"subject": "[JVS] Old comment",
+			"senderName": "ClientCare",
+			"senderAddress": "notifications@contember.dev",
+			"dateReceived": "2026-01-15T08:00:00.000Z",
+			"read": true,
+			"flagged": false,
+			"bulk": false,
+			"root": "comment-6@clientcare.example",
+			"mailbox": "Clientcare"
+		},
+		{
+			"messageId": "both@northwind.cz",
+			"subject": "Contract (in the inbox and labelled)",
+			"senderName": "Klara Example",
+			"senderAddress": "klara@northwind.cz",
+			"dateReceived": "2026-01-14T10:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "both@northwind.cz",
+			"mailbox": "Clientcare"
+		},
+		{
+			"messageId": "<Both@Northwind.cz>",
+			"subject": "Contract (in the inbox and labelled)",
+			"senderName": "Klara Example",
+			"senderAddress": "klara@northwind.cz",
+			"dateReceived": "2026-01-14T10:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "both@northwind.cz",
+			"mailbox": null
+		},
+		{
+			"messageId": "news@list.example",
+			"subject": "Weekly digest",
+			"senderName": "List",
+			"senderAddress": "news@list.example",
+			"dateReceived": "2026-01-14T07:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": true,
+			"root": "news@list.example",
+			"mailbox": "Clientcare"
+		},
+		{
+			"messageId": "old@clientcare.example",
+			"subject": "[Psyon] New task: older than the window",
+			"senderName": "ClientCare",
+			"senderAddress": "notifications@contember.dev",
+			"dateReceived": "2025-12-01T07:00:00.000Z",
+			"read": false,
+			"flagged": false,
+			"bulk": false,
+			"root": "old@clientcare.example",
+			"mailbox": "Clientcare"
+		}
+	],
+	"missingMailboxes": [],
+	"unreadableMailboxes": []
+}

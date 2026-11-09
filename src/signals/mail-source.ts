@@ -15,15 +15,24 @@ import {
 	isAbort,
 } from './github-source.js'
 import {
-	MAIL_GONE_REASON,
 	type MailFilterOptions,
 	type MailMessageHead,
+	dedupeMailMessages,
 	filterMail,
 	globToRegExpSource,
+	mailGoneReason,
 	mapMailThreads,
 	parseGlobList,
+	parseMailboxList,
 } from './mail-filter.js'
-import { MAIL_MAX_CANDIDATES, MAIL_MAX_MESSAGES, mailOsascriptArgs } from './mail-jxa.js'
+import {
+	MAIL_MAX_CANDIDATES,
+	MAIL_MAX_MAILBOXES,
+	MAIL_MAX_MAILBOX_CANDIDATES,
+	MAIL_MAX_MAILBOX_ENTRIES,
+	MAIL_MAX_MESSAGES,
+	mailOsascriptArgs,
+} from './mail-jxa.js'
 import type { SignalReader } from './watcher.js'
 
 const OSASCRIPT_TIMEOUT_MS = 45_000
@@ -43,7 +52,10 @@ const messageSchema = z.object({
 	flagged: z.boolean(),
 	bulk: z.boolean(),
 	root: z.string(),
+	mailbox: z.string().max(200).nullable().optional(),
 })
+
+const mailboxNames = z.array(z.string().max(1000)).max(1000).optional()
 
 const outputSchema = z.union([
 	z.object({ running: z.literal(false) }),
@@ -51,7 +63,15 @@ const outputSchema = z.union([
 		running: z.literal(true),
 		truncated: z.boolean(),
 		myAddresses: z.array(z.string()).max(1000),
-		messages: z.array(z.unknown()).max(MAIL_MAX_CANDIDATES * 2),
+		messages: z.array(z.unknown()).max((MAIL_MAX_CANDIDATES + MAIL_MAX_MAILBOX_CANDIDATES) * 2),
+		/** Configured mailboxes no account has (a typo, a renamed label). */
+		missingMailboxes: mailboxNames,
+		/** Configured mailboxes (or mailbox lists) Mail failed to list or read this time. */
+		unreadableMailboxes: mailboxNames,
+		/** Extra mailboxes holding more mail than one poll reads (All Mail, a busy label). */
+		cappedMailboxes: mailboxNames,
+		/** Matching mailboxes beyond the bound, not read. */
+		skippedMailboxes: mailboxNames,
 	}),
 ])
 
@@ -74,6 +94,34 @@ function classifyOsascriptFailure(error: unknown): MailHealth {
 		status: 'error',
 		detail: line ? oneLine(`Mail read failed: ${line}`, SIGNAL_LIMITS.detail) : 'Mail read failed',
 	}
+}
+
+function quoted(names: string[]): string {
+	return names.map(name => `"${oneLine(name, 60)}"`).join(', ')
+}
+
+interface MailboxTrouble {
+	missing: string[]
+	unreadable: string[]
+	capped: string[]
+	skipped: string[]
+	ignored: string[]
+}
+
+/**
+ * Mailbox trouble as health: the inbox was read, so the poll still counts (as incomplete), but a
+ * configured mailbox is not fully read and the footer says so, never silently. Incomplete polls
+ * never auto-close Mail threads.
+ */
+function mailboxHealth(trouble: MailboxTrouble): MailHealth {
+	const parts: string[] = []
+	if (trouble.missing.length > 0) parts.push(`no mailbox named ${quoted(trouble.missing)}`)
+	if (trouble.unreadable.length > 0) parts.push(`could not read ${quoted(trouble.unreadable)}`)
+	if (trouble.capped.length > 0) parts.push(`more mail than one poll reads in ${quoted(trouble.capped)}`)
+	if (trouble.skipped.length > 0) parts.push(`only ${MAIL_MAX_MAILBOXES} matching mailboxes are read`)
+	if (trouble.ignored.length > 0) parts.push(`only the first ${MAIL_MAX_MAILBOX_ENTRIES} listed mailboxes are read`)
+	if (parts.length === 0) return { status: 'ok', detail: null }
+	return { status: 'error', detail: oneLine(parts.join('; '), SIGNAL_LIMITS.detail) }
 }
 
 function parseMessages(raw: unknown[]): { messages: MailMessageHead[]; dropped: boolean } {
@@ -104,16 +152,22 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 			const settings = config.signals.mail
 			const at = now()
 			const includeSenders = parseGlobList(settings.includeSenders)
+			const configuredMailboxes = parseMailboxList(settings.mailboxes)
+			const mailboxes = configuredMailboxes.slice(0, MAIL_MAX_MAILBOX_ENTRIES)
+			const ignoredMailboxes = configuredMailboxes.slice(MAIL_MAX_MAILBOX_ENTRIES)
+			const goneReason = mailGoneReason(mailboxes)
 			let stdout: string
 			try {
 				const answer = await run(
 					'osascript',
 					mailOsascriptArgs({
 						since: new Date(at.getTime() - settings.maxAgeDays * DAY_MS).toISOString(),
+						mailboxes,
 						include: includeSenders.map(globToRegExpSource),
 						unreadOnly: settings.unreadOnly,
 						maxMessages: MAIL_MAX_MESSAGES,
 						maxCandidates: MAIL_MAX_CANDIDATES,
+						maxMailboxCandidates: MAIL_MAX_MAILBOX_CANDIDATES,
 					}),
 					{ signal, timeout: OSASCRIPT_TIMEOUT_MS, maxBuffer: OSASCRIPT_MAX_BUFFER, env: process.env },
 				)
@@ -133,12 +187,19 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 			}
 			if (!output.running) {
 				return {
-					result: { source: 'mail', observations: [], complete: false, goneReason: MAIL_GONE_REASON },
+					result: { source: 'mail', observations: [], complete: false, goneReason },
 					health: { status: 'unavailable', detail: MAIL_NOT_RUNNING_DETAIL },
 				}
 			}
 
 			const { messages, dropped } = parseMessages(output.messages)
+			const trouble: MailboxTrouble = {
+				missing: output.missingMailboxes ?? [],
+				unreadable: output.unreadableMailboxes ?? [],
+				capped: output.cappedMailboxes ?? [],
+				skipped: output.skippedMailboxes ?? [],
+				ignored: ignoredMailboxes,
+			}
 			const options: MailFilterOptions = {
 				unreadOnly: settings.unreadOnly,
 				excludeBulk: settings.excludeBulk,
@@ -150,11 +211,12 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 			return {
 				result: {
 					source: 'mail',
-					observations: mapMailThreads(filterMail(messages, options, at)),
-					complete: !output.truncated && !dropped,
-					goneReason: MAIL_GONE_REASON,
+					observations: mapMailThreads(filterMail(dedupeMailMessages(messages), options, at)),
+					// A configured mailbox that was not read could still hold a listed thread.
+					complete: !output.truncated && !dropped && trouble.missing.length === 0 && trouble.unreadable.length === 0,
+					goneReason,
 				},
-				health: { status: 'ok', detail: null },
+				health: mailboxHealth(trouble),
 			}
 		},
 	}

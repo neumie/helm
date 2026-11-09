@@ -82,6 +82,11 @@ const signalsSchema = z
 				// One glob per line (`*` wildcard, case-insensitive, matched against the address).
 				includeSenders: z.string().max(4000).default(DEFAULT_SIGNAL_INCLUDE_SENDERS),
 				excludeSenders: z.string().max(4000).default(''),
+				// Extra mailboxes read besides the inbox, one per line: a mailbox name (`Clientcare`) or
+				// `<account name or address>/<mailbox name>`, case-insensitive. Nothing is implied:
+				// All Mail, Trash, Spam and Sent are read only when listed (All Mail is every message
+				// of the account, so each poll scans far more mail).
+				mailboxes: z.string().max(2000).default(''),
 			})
 			.default({}),
 	})

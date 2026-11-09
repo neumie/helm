@@ -5,16 +5,21 @@ import type { HelmConfig } from '../src/config.js'
 import type { SignalObservation } from '../src/signals/contract.js'
 import type { SignalCommandRunner } from '../src/signals/github-source.js'
 import {
+	type MailAccountIdentity,
 	type MailFilterOptions,
 	type MailMessageHead,
+	dedupeMailMessages,
 	filterMail,
 	globToRegExpSource,
 	mailFullRef,
+	mailGoneReason,
 	mailRef,
+	mailboxEntryMatches,
 	mapMailThreads,
 	matchesGlob,
 	messageUrl,
 	parseGlobList,
+	parseMailboxList,
 	relayedSenderAddress,
 	senderIdentity,
 	sentryHead,
@@ -43,6 +48,7 @@ const mailSettings = {
 	maxAgeDays: 7,
 	includeSenders: '*@sentry.io\n*@*.sentry.io\n*@getsentry.com\n*@*.getsentry.com',
 	excludeSenders: '  robot@*  \n\n',
+	mailboxes: '',
 }
 const config = { signals: { mail: mailSettings } } as unknown as HelmConfig
 
@@ -291,9 +297,40 @@ interface FakeMessage {
 	headers: string
 }
 
-/** A read-only fake of the JXA Mail object model: any property write throws. */
-function fakeMail(messages: FakeMessage[], { running = true } = {}) {
+interface FakeMailbox {
+	name: string
+	messages: FakeMessage[]
+	/** Reading its messages throws (a mailbox Mail fails to read). */
+	broken?: boolean
+}
+
+interface FakeAccount {
+	name: string
+	addresses: string[]
+	mailboxes: FakeMailbox[]
+	/** Listing its mailboxes throws (a broken or disabled account). */
+	listBroken?: boolean
+}
+
+/**
+ * A read-only fake of the JXA Mail object model: any property write throws. `messages` is the
+ * unified inbox; `accounts` and `local` hold the named mailboxes the script may resolve.
+ */
+function fakeMail(
+	messages: FakeMessage[],
+	{
+		running = true,
+		accounts = [
+			{ name: 'Personal', addresses: ['me@example.com'], mailboxes: [] },
+			{ name: 'Work', addresses: ['me@work.example', 'alias@example.com'], mailboxes: [] },
+		] as FakeAccount[],
+		local = [] as FakeMailbox[],
+	} = {},
+) {
 	const touched: string[] = []
+	const queries: unknown[] = []
+	/** Mailboxes whose messages were queried, by name (`inbox` for the unified inbox). */
+	const read: string[] = []
 	const readOnly = <T extends object>(target: T): T =>
 		new Proxy(target, {
 			set(_t, property) {
@@ -303,14 +340,26 @@ function fakeMail(messages: FakeMessage[], { running = true } = {}) {
 				throw new Error(`define ${String(property)}`)
 			},
 		})
-	const batch =
-		<K extends keyof FakeMessage>(key: K) =>
-		() => {
-			touched.push(key)
-			return messages.map(message => message[key])
-		}
-	const collection = readOnly(
-		new Proxy(
+	const indexed = <T>(target: Record<string, unknown>, item: (index: number) => T) =>
+		readOnly(
+			new Proxy(target, {
+				get(t, property) {
+					if (typeof property === 'string' && /^\d+$/.test(property)) return item(Number(property))
+					return t[property as string]
+				},
+			}),
+		)
+	const mailbox = (name: string, list: FakeMessage[], broken = false) => {
+		// The inbox keeps the plain batch names the original tests assert on.
+		const tag = name === 'inbox' ? '' : `${name}:`
+		const batch =
+			<K extends keyof FakeMessage>(key: K) =>
+			() => {
+				if (broken) throw new Error(`cannot read ${name}`)
+				touched.push(`${tag}${key}`)
+				return list.map(message => message[key])
+			}
+		const collection = indexed(
 			{
 				id: batch('id'),
 				messageId: batch('messageId'),
@@ -319,38 +368,56 @@ function fakeMail(messages: FakeMessage[], { running = true } = {}) {
 				dateReceived: batch('date'),
 				readStatus: batch('read'),
 				flaggedStatus: batch('flagged'),
-			} as Record<string, unknown>,
-			{
-				get(target, property) {
-					if (typeof property === 'string' && /^\d+$/.test(property)) {
-						const message = messages[Number(property)]
-						return readOnly({
-							id: () => message.id,
-							allHeaders: () => {
-								touched.push(`allHeaders:${message.id}`)
-								return message.headers
-							},
-						})
-					}
-					return target[property as string]
-				},
 			},
-		),
-	)
-	const queries: unknown[] = []
-	const mail = readOnly({
-		running: () => running,
-		inbox: readOnly({
+			index => {
+				const message = list[index]
+				return readOnly({
+					id: () => message.id,
+					allHeaders: () => {
+						touched.push(`allHeaders:${message.id}`)
+						return message.headers
+					},
+				})
+			},
+		)
+		return readOnly({
 			messages: readOnly({
 				whose: (query: unknown) => {
 					queries.push(query)
+					read.push(name)
 					return collection
 				},
 			}),
+		})
+	}
+	const mailboxes = (boxes: FakeMailbox[], listBroken = false) =>
+		indexed(
+			{
+				name: () => {
+					if (listBroken) throw new Error('cannot list mailboxes')
+					return boxes.map(box => box.name)
+				},
+			},
+			index => mailbox(boxes[index].name, boxes[index].messages, boxes[index].broken),
+		)
+	const accountObjects = accounts.map(account =>
+		readOnly({
+			name: () => account.name,
+			emailAddresses: () => account.addresses,
+			mailboxes: mailboxes(account.mailboxes, account.listBroken),
 		}),
-		accounts: readOnly({ emailAddresses: () => [['me@example.com'], ['me@work.example', 'alias@example.com']] }),
+	)
+	const mail = readOnly({
+		running: () => running,
+		inbox: mailbox('inbox', messages),
+		mailboxes: mailboxes(local),
+		accounts: readOnly(
+			Object.assign(() => accountObjects, {
+				emailAddresses: () => accounts.map(account => account.addresses),
+			}),
+		),
 	})
-	return { mail, touched, queries }
+	return { mail, touched, queries, read }
 }
 
 function runScript(mail: unknown, args: Parameters<typeof mailOsascriptArgs>[0]): ScriptOutput {
@@ -364,10 +431,12 @@ function runScript(mail: unknown, args: Parameters<typeof mailOsascriptArgs>[0])
 
 const scriptArgs = {
 	since: '2026-01-08T10:00:00.000Z',
+	mailboxes: [] as string[],
 	include: parseGlobList(mailSettings.includeSenders).map(globToRegExpSource),
 	unreadOnly: true,
 	maxMessages: 300,
 	maxCandidates: 60,
+	maxMailboxCandidates: 60,
 }
 
 const fakeMessages: FakeMessage[] = [
@@ -457,6 +526,7 @@ test('JXA script reads in batches, reduces headers to bulk/root and never writes
 		flagged: false,
 		bulk: false,
 		root: 'root@northwind.cz',
+		mailbox: null,
 	})
 	assert.equal(byId.get('news@list.example')?.bulk, true)
 	assert.equal(byId.get('auto@ops.example')?.bulk, true)
@@ -735,4 +805,503 @@ test('the JXA relay decoder mirrors relayedSenderAddress', () => {
 		'plain@example.com',
 	]
 	for (const sample of samples) assert.equal(decode(sample), relayedSenderAddress(sample), sample)
+})
+
+// ---------- extra mailboxes (signals.mail.mailboxes) ----------
+
+const mailboxOutput = JSON.parse(
+	readFileSync(new URL('./fixtures/signals/mail-mailboxes-output.json', import.meta.url), 'utf8'),
+) as ScriptOutput & { missingMailboxes: string[]; unreadableMailboxes: string[] }
+
+function configWith(mail: Partial<typeof mailSettings>): HelmConfig {
+	return { signals: { mail: { ...mailSettings, ...mail } } } as unknown as HelmConfig
+}
+
+test('config: signals.mail.mailboxes defaults to none, saves as one mailbox per line and has a Settings field', async () => {
+	const { configSchema } = await import('../src/config.js')
+	const { buildConfigDocument, parseConfigUpdate } = await import('../src/config-document.js')
+	const base = {
+		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'test' },
+		projects: [{ slug: 'helm', repoPath: '/repo' }],
+	}
+	const defaults = configSchema.parse(base)
+	assert.equal(defaults.signals.mail.mailboxes, '')
+
+	const mailboxes = 'Clientcare\nneumann@contember.com/Clientcare'
+	const saved = parseConfigUpdate({ ...base, signals: { mail: { mailboxes } } }, defaults)
+	assert.ok(saved.success)
+	assert.equal(saved.data.signals.mail.mailboxes, mailboxes)
+	assert.equal(configSchema.parse(JSON.parse(JSON.stringify(saved.data))).signals.mail.mailboxes, mailboxes)
+	assert.equal(
+		parseConfigUpdate({ ...base, signals: { mail: { mailboxes: ['Clientcare'] } } }, defaults).success,
+		false,
+	)
+	assert.equal(
+		parseConfigUpdate({ ...base, signals: { mail: { mailboxes: 'x'.repeat(2001) } } }, defaults).success,
+		false,
+	)
+
+	const doc = buildConfigDocument(defaults, defaults)
+	const section = doc.edit.sections.find(entry => entry.id === 'signals')
+	assert.ok(section)
+	const paths = section.controls.map(control => control.path.join('.'))
+	const field = section.controls.find(control => control.path.join('.') === 'signals.mail.mailboxes')
+	assert.ok(field && field.type === 'field')
+	assert.equal(field.input, 'textarea')
+	// Right after the sender filters, like them one per line.
+	assert.equal(paths.indexOf('signals.mail.mailboxes'), paths.indexOf('signals.mail.excludeSenders') + 1)
+})
+
+test('mailbox lists are one per line, trimmed, without blank lines or case-insensitive repeats', () => {
+	assert.deepEqual(parseMailboxList('  Clientcare \n\nclientcare\r\nneumann@contember.com/Clientcare\n  \n'), [
+		'Clientcare',
+		'neumann@contember.com/Clientcare',
+	])
+	assert.deepEqual(parseMailboxList(''), [])
+})
+
+const work: MailAccountIdentity = { name: 'Contember', addresses: ['neumann@contember.com', 'jakub@contember.com'] }
+
+test('mailbox entries match the mailbox name, optionally qualified with the account name or address', () => {
+	assert.equal(mailboxEntryMatches('Clientcare', work, 'Clientcare'), true)
+	assert.equal(mailboxEntryMatches(' CLIENTCARE ', work, 'clientcare'), true)
+	assert.equal(mailboxEntryMatches('Clientcare', null, 'Clientcare'), true)
+	assert.equal(mailboxEntryMatches('neumann@contember.com/Clientcare', work, 'Clientcare'), true)
+	assert.equal(mailboxEntryMatches('Neumann@Contember.com / clientcare', work, 'Clientcare'), true)
+	assert.equal(mailboxEntryMatches('jakub@contember.com/Clientcare', work, 'Clientcare'), true)
+	assert.equal(mailboxEntryMatches('contember/Clientcare', work, 'Clientcare'), true)
+	// Another account, another mailbox, a local mailbox, an empty entry: no.
+	assert.equal(mailboxEntryMatches('me@example.com/Clientcare', work, 'Clientcare'), false)
+	assert.equal(mailboxEntryMatches('neumann@contember.com/Clientcare', work, 'Archive'), false)
+	assert.equal(mailboxEntryMatches('neumann@contember.com/Clientcare', null, 'Clientcare'), false)
+	assert.equal(mailboxEntryMatches('/Clientcare', work, 'Clientcare'), false)
+	assert.equal(mailboxEntryMatches('', work, ''), false)
+	assert.equal(mailboxEntryMatches('Client', work, 'Clientcare'), false)
+	// The mailbox's own name, not its path.
+	assert.equal(mailboxEntryMatches('All Mail', work, 'All Mail'), true)
+	assert.equal(mailboxEntryMatches('[Gmail]/All Mail', work, 'All Mail'), false)
+})
+
+test('the JXA mailbox matcher mirrors mailboxEntryMatches', () => {
+	const start = MAIL_JXA_SCRIPT.indexOf('function mailboxMatches')
+	const end = MAIL_JXA_SCRIPT.indexOf('function idKey')
+	assert.ok(start > 0 && end > start)
+	const matches = new Function(
+		`${MAIL_JXA_SCRIPT.slice(start, end)}\nreturn mailboxMatches`,
+	)() as typeof mailboxEntryMatches
+	const entries = [
+		'Clientcare',
+		' CLIENTCARE ',
+		'neumann@contember.com/Clientcare',
+		'Neumann@Contember.com / clientcare',
+		'contember/Clientcare',
+		'me@example.com/Clientcare',
+		'/Clientcare',
+		'Clientcare/',
+		'[Gmail]/All Mail',
+		'All Mail',
+		'',
+		'a/b/c',
+	]
+	const accounts = [work, null, { name: 'a', addresses: [] }]
+	for (const entry of entries) {
+		for (const account of accounts) {
+			for (const mailbox of ['Clientcare', 'All Mail', 'b/c', '']) {
+				assert.equal(
+					matches(entry, account, mailbox),
+					mailboxEntryMatches(entry, account, mailbox),
+					`${entry} | ${account?.name} | ${mailbox}`,
+				)
+			}
+		}
+	}
+})
+
+test('the same Message-ID in several mailboxes is one message, the inbox copy first', () => {
+	const kept = dedupeMailMessages(mailboxOutput.messages)
+	assert.equal(kept.length, mailboxOutput.messages.length - 1)
+	const both = kept.filter(message => message.messageId.toLowerCase().includes('both@northwind.cz'))
+	assert.equal(both.length, 1)
+	assert.equal(both[0].mailbox, null)
+	// Without an inbox copy the first one listed stays, order kept.
+	const labelled = mailboxOutput.messages.filter(message => message.mailbox)
+	assert.deepEqual(dedupeMailMessages(labelled), labelled)
+	const twice = [labelled[0], { ...labelled[0], mailbox: 'Important' }]
+	assert.deepEqual(dedupeMailMessages(twice), [labelled[0]])
+})
+
+test('mail from an extra mailbox goes through the same filter and its row says which mailbox', () => {
+	const threads = mapMailThreads(filterMail(dedupeMailMessages(mailboxOutput.messages), options(), NOW))
+	assert.deepEqual(threads.map(thread => thread.head).sort(), [
+		'Clientcare · [JVS] Pavel commented on Export faktur',
+		'Clientcare · [Psyon] New task: Indikace klientů přidaných do konzilia',
+		'Contract (in the inbox and labelled)',
+	])
+	const task = threads.find(thread => thread.title.startsWith('[Psyon] New task'))
+	assert.ok(task)
+	assert.equal(task.kind, 'mail')
+	assert.equal(task.ref, 'Contember')
+	assert.equal(task.title, '[Psyon] New task: Indikace klientů přidaných do konzilia')
+	assert.equal(task.activityKey, 'task-1@clientcare.example')
+
+	// Read (unread-only), bulk (List-Id) and old mail stay out exactly as in the inbox; read in when asked.
+	const all = mapMailThreads(
+		filterMail(dedupeMailMessages(mailboxOutput.messages), options({ unreadOnly: false, excludeBulk: false }), NOW),
+	)
+	assert.equal(all.length, 5)
+	assert.ok(all.some(thread => thread.head === 'Clientcare · Weekly digest'))
+	assert.ok(all.some(thread => thread.head === 'Clientcare · [JVS] Old comment'))
+	// Exclude globs apply too.
+	const excluded = filterMail(mailboxOutput.messages, options({ excludeSenders: ['*@contember.dev'] }), NOW)
+	assert.ok(excluded.every(message => message.senderAddress !== 'notifications@contember.dev'))
+})
+
+test('mailbox labels are bounded, one line, and never push the head past its limit', () => {
+	const [message] = mailboxOutput.messages
+	const [thread] = mapMailThreads([
+		{ ...message, mailbox: `Label\nwith\u0007control ${'x'.repeat(200)}`, subject: 'y'.repeat(400) },
+	])
+	assert.ok(thread.head.length <= 300)
+	assert.match(thread.head, /^Label with control x+… · y+…$/)
+	const [sentry] = mapMailThreads([
+		{ ...message, senderAddress: 'noreply@md.getsentry.com', subject: '[Sentry] PROJ-9 boom', mailbox: 'Alerts' },
+	])
+	assert.equal(sentry.head, 'Alerts · PROJ-9 boom')
+	const [grouped] = mapMailThreads([
+		message,
+		{ ...message, messageId: 'reply@clientcare.example', dateReceived: '2026-01-15T09:30:00.000Z' },
+	])
+	assert.equal(grouped.head, 'Clientcare · [Psyon] New task: Indikace klientů přidaných do konzilia · 2 messages')
+})
+
+test('reader passes the configured mailboxes, dedupes them and labels their rows', async () => {
+	const { run, calls } = fakeRunner(async () => ({ stdout: JSON.stringify(mailboxOutput), stderr: '' }))
+	const reader = createMailSignalReader(
+		configWith({ mailboxes: 'Clientcare\n\nclientcare\nneumann@contember.com/Archive\n' }),
+		{
+			run,
+			now: () => NOW,
+		},
+	)
+	const { result, health } = await reader.read(new AbortController().signal)
+	assert.deepEqual(health, { status: 'ok', detail: null })
+	assert.equal(result?.complete, true)
+	assert.equal(result?.observations.length, 3)
+	assert.ok(result?.observations.some(thread => thread.head.startsWith('Clientcare · [Psyon] New task')))
+	const scriptArgs = JSON.parse(calls[0].args[calls[0].args.length - 1])
+	assert.deepEqual(scriptArgs.mailboxes, ['Clientcare', 'neumann@contember.com/Archive'])
+
+	// No mailboxes configured: none asked for.
+	const plain = fakeRunner(async () => ({ stdout: JSON.stringify(output), stderr: '' }))
+	await createMailSignalReader(config, { run: plain.run, now: () => NOW }).read(new AbortController().signal)
+	assert.deepEqual(JSON.parse(plain.calls[0].args[plain.calls[0].args.length - 1]).mailboxes, [])
+})
+
+test('a missing or unreadable mailbox keeps the poll incomplete and says so', async () => {
+	const answer = { ...mailboxOutput, missingMailboxes: ['Clientcar'], unreadableMailboxes: ['Archive'] }
+	const { run } = fakeRunner(async () => ({ stdout: JSON.stringify(answer), stderr: '' }))
+	const { result, health } = await createMailSignalReader(configWith({ mailboxes: 'Clientcar\nArchive' }), {
+		run,
+		now: () => NOW,
+	}).read(new AbortController().signal)
+	assert.equal(result?.complete, false)
+	assert.equal(result?.observations.length, 3)
+	assert.deepEqual(health, { status: 'error', detail: 'no mailbox named "Clientcar"; could not read "Archive"' })
+
+	// More entries than the bound: the rest are not read, and the footer says so.
+	const many = Array.from({ length: 22 }, (_, index) => `Box ${index}`).join('\n')
+	const capped = fakeRunner(async () => ({ stdout: JSON.stringify(mailboxOutput), stderr: '' }))
+	const read = await createMailSignalReader(configWith({ mailboxes: many }), { run: capped.run, now: () => NOW }).read(
+		new AbortController().signal,
+	)
+	assert.equal(JSON.parse(capped.calls[0].args[capped.calls[0].args.length - 1]).mailboxes.length, 20)
+	assert.deepEqual(read.health, { status: 'error', detail: 'only the first 20 listed mailboxes are read' })
+})
+
+const clientcareMessages: FakeMessage[] = [
+	{
+		id: 201,
+		messageId: 'task-1@clientcare.example',
+		subject: '[Psyon] New task: Indikace klientů přidaných do konzilia',
+		sender: 'ClientCare <notifications@contember.dev>',
+		date: new Date('2026-01-14T11:00:00Z'),
+		read: false,
+		flagged: false,
+		headers: 'Feedback-ID: 123:clientcare:contember\nMessage-ID: <task-1@clientcare.example>',
+	},
+	{
+		id: 202,
+		messageId: '<Reply@Northwind.cz>',
+		subject: 'Re: Plan (also labelled)',
+		sender: '"Petr Example" <petr@northwind.cz>',
+		date: new Date('2026-01-14T09:00:00Z'),
+		read: false,
+		flagged: false,
+		headers: 'References: <root@northwind.cz>',
+	},
+	{
+		id: 203,
+		messageId: 'read-task@clientcare.example',
+		subject: '[JVS] read already',
+		sender: 'ClientCare <notifications@contember.dev>',
+		date: new Date('2026-01-14T10:00:00Z'),
+		read: true,
+		flagged: false,
+		headers: '',
+	},
+	{
+		id: 204,
+		messageId: 'ancient@clientcare.example',
+		subject: 'outside the window',
+		sender: 'ClientCare <notifications@contember.dev>',
+		date: new Date('2025-01-01T10:00:00Z'),
+		read: false,
+		flagged: false,
+		headers: '',
+	},
+]
+
+const allMailMessages: FakeMessage[] = [
+	{ ...clientcareMessages[0], id: 301 },
+	{
+		id: 302,
+		messageId: 'archived@elsewhere.example',
+		subject: 'Only in All Mail',
+		sender: 'Someone <someone@elsewhere.example>',
+		date: new Date('2026-01-14T08:30:00Z'),
+		read: false,
+		flagged: false,
+		headers: '',
+	},
+]
+
+function gmailAccounts(clientcare = clientcareMessages, broken = false): FakeAccount[] {
+	return [
+		{ name: 'iCloud', addresses: ['me@example.com'], mailboxes: [{ name: 'Archive', messages: [] }] },
+		{
+			name: 'neumann@contember.com',
+			addresses: ['neumann@contember.com'],
+			mailboxes: [
+				{ name: 'All Mail', messages: allMailMessages },
+				{ name: 'Trash', messages: allMailMessages },
+				{ name: 'Spam', messages: allMailMessages },
+				{ name: 'Sent Mail', messages: allMailMessages },
+				{ name: 'Clientcare', messages: clientcare, broken },
+				{ name: 'INBOX', messages: [] },
+			],
+		},
+	]
+}
+
+test('JXA reads the inbox plus the listed mailboxes only, dedupes by Message-ID and labels the source', () => {
+	const { mail, read, touched, queries } = fakeMail(fakeMessages, { accounts: gmailAccounts() })
+	const result = runScript(mail, { ...scriptArgs, mailboxes: ['neumann@contember.com/clientcare'] })
+	// Never All Mail, Trash, Spam or Sent unless listed; the inbox first.
+	assert.deepEqual(read, ['inbox', 'Clientcare'])
+	assert.equal(result.truncated, false)
+	assert.deepEqual((result as unknown as { missingMailboxes: string[] }).missingMailboxes, [])
+
+	const byId = new Map(result.messages.map(message => [message.messageId, message]))
+	const task = byId.get('task-1@clientcare.example')
+	assert.ok(task)
+	assert.equal(task.mailbox, 'Clientcare')
+	assert.equal(task.bulk, false) // Feedback-ID is a transport fingerprint, never bulk.
+	// The labelled copy of an inbox message is the inbox one.
+	assert.equal(result.messages.filter(message => message.messageId.toLowerCase() === 'reply@northwind.cz').length, 1)
+	assert.equal(byId.get('reply@northwind.cz')?.mailbox, null)
+	// Same unread-only rule and window: the read one is not a candidate (no headers read).
+	assert.ok(!byId.has('read-task@clientcare.example'))
+	assert.ok(!touched.includes('allHeaders:203'))
+	assert.ok(!touched.includes('allHeaders:202'))
+	// Newest first across mailboxes.
+	const dates = result.messages.map(message => message.dateReceived)
+	assert.deepEqual(dates, [...dates].sort().reverse())
+	// One query per mailbox, all with the same window.
+	assert.equal(queries.length, 2)
+	for (const query of queries) {
+		const since = (query as { dateReceived: { _greaterThan: Date } }).dateReceived._greaterThan
+		assert.equal(since.toISOString(), scriptArgs.since)
+	}
+})
+
+test('JXA mailbox entries: unqualified names match in every account and local mailboxes; All Mail only when listed', () => {
+	const local = [
+		{ name: 'Clientcare', messages: [{ ...clientcareMessages[0], id: 401, messageId: 'local@clientcare.example' }] },
+	]
+	const unqualified = fakeMail([], { accounts: gmailAccounts(), local })
+	const result = runScript(unqualified.mail, { ...scriptArgs, mailboxes: ['CLIENTCARE'] })
+	assert.deepEqual(unqualified.read, ['inbox', 'Clientcare', 'Clientcare'])
+	const labels = new Map(result.messages.map(message => [message.messageId, message.mailbox]))
+	assert.equal(labels.get('local@clientcare.example'), 'Clientcare')
+	assert.equal(labels.get('task-1@clientcare.example'), 'Clientcare')
+
+	const explicit = fakeMail([], { accounts: gmailAccounts() })
+	const allMail = runScript(explicit.mail, { ...scriptArgs, mailboxes: ['Clientcare', 'All Mail'] })
+	// In the order of the entries, not Mail's: mail in both reads as Clientcare.
+	assert.deepEqual(explicit.read, ['inbox', 'Clientcare', 'All Mail'])
+	const task = allMail.messages.filter(message => message.messageId === 'task-1@clientcare.example')
+	assert.equal(task.length, 1)
+	assert.equal(task[0].mailbox, 'Clientcare')
+	assert.ok(
+		allMail.messages.some(
+			message => message.messageId === 'archived@elsewhere.example' && message.mailbox === 'All Mail',
+		),
+	)
+
+	// A qualified entry for another account reads nothing and is reported missing.
+	const other = fakeMail([], { accounts: gmailAccounts() })
+	const missing = runScript(other.mail, {
+		...scriptArgs,
+		mailboxes: ['me@example.com/Clientcare', 'Nope'],
+	}) as unknown as {
+		truncated: boolean
+		messages: MailMessageHead[]
+		missingMailboxes: string[]
+	}
+	assert.deepEqual(other.read, ['inbox'])
+	assert.deepEqual(missing.missingMailboxes, ['me@example.com/Clientcare', 'Nope'])
+	assert.equal(missing.truncated, false)
+})
+
+test('JXA: one unreadable mailbox leaves the rest read and is reported; the inbox failing fails the read', () => {
+	const broken = fakeMail(fakeMessages, { accounts: gmailAccounts(clientcareMessages, true) })
+	const result = runScript(broken.mail, { ...scriptArgs, mailboxes: ['Clientcare'] }) as unknown as ScriptOutput & {
+		unreadableMailboxes: string[]
+	}
+	assert.equal(result.truncated, true)
+	assert.deepEqual(result.unreadableMailboxes, ['Clientcare'])
+	assert.ok(result.messages.some(message => message.messageId === 'reply@northwind.cz'))
+
+	const { mail } = fakeMail(fakeMessages, { accounts: gmailAccounts() })
+	const failingInbox = new Proxy(mail, {
+		get(target, property) {
+			if (property === 'inbox')
+				return {
+					messages: {
+						whose: () => ({
+							id: () => {
+								throw new Error('Not authorized (-1743)')
+							},
+						}),
+					},
+				}
+			return Reflect.get(target, property)
+		},
+	})
+	assert.throws(() => runScript(failingInbox, { ...scriptArgs, mailboxes: ['Clientcare'] }), /-1743/)
+})
+
+test('JXA: the extra mailboxes are bounded per mailbox and in number', () => {
+	const many: FakeAccount[] = [
+		{
+			name: 'Work',
+			addresses: ['me@work.example'],
+			mailboxes: Array.from({ length: 15 }, (_, index) => ({
+				name: 'Clientcare',
+				messages: index === 0 ? clientcareMessages : [],
+			})),
+		},
+	]
+	const capped = fakeMail([], { accounts: many })
+	const result = runScript(capped.mail, { ...scriptArgs, mailboxes: ['Clientcare'] })
+	assert.equal(capped.read.length, 1 + 12)
+	assert.equal(result.truncated, true)
+	const reported = result as unknown as { missingMailboxes: string[]; skippedMailboxes: string[] }
+	assert.deepEqual(reported.missingMailboxes, [])
+	assert.deepEqual(reported.skippedMailboxes, ['Clientcare'])
+
+	const windowed = runScript(fakeMail([], { accounts: gmailAccounts() }).mail, {
+		...scriptArgs,
+		mailboxes: ['Clientcare'],
+		maxMessages: 1,
+	})
+	assert.equal(windowed.truncated, true)
+	assert.deepEqual(
+		windowed.messages.map(message => message.messageId),
+		['task-1@clientcare.example'],
+	)
+	assert.deepEqual((windowed as unknown as { cappedMailboxes: string[] }).cappedMailboxes, ['Clientcare'])
+	// The inbox over its window is truncated as before, but is not an extra mailbox to report.
+	const inboxWindow = runScript(fakeMail(fakeMessages, { accounts: gmailAccounts([]) }).mail, {
+		...scriptArgs,
+		mailboxes: ['Clientcare'],
+		maxMessages: 1,
+	})
+	assert.equal(inboxWindow.truncated, true)
+	assert.deepEqual((inboxWindow as unknown as { cappedMailboxes: string[] }).cappedMailboxes, [])
+})
+
+test('JXA: a busy extra mailbox has its own candidate budget and never crowds inbox mail out', () => {
+	const busy: FakeMessage[] = Array.from({ length: 5 }, (_, index) => ({
+		...clientcareMessages[0],
+		id: 500 + index,
+		messageId: `busy-${index}@clientcare.example`,
+		// Newer than every inbox message.
+		date: new Date(Date.UTC(2026, 0, 14, 20, index)),
+	}))
+	const { mail } = fakeMail(fakeMessages, { accounts: gmailAccounts(busy) })
+	const result = runScript(mail, {
+		...scriptArgs,
+		mailboxes: ['Clientcare'],
+		maxCandidates: 2,
+		maxMailboxCandidates: 3,
+	})
+	const inbox = result.messages.filter(message => message.mailbox === null)
+	const labelled = result.messages.filter(message => message.mailbox === 'Clientcare')
+	assert.deepEqual(
+		inbox.map(message => message.messageId),
+		['reply@northwind.cz', 'news@list.example'],
+	)
+	assert.equal(labelled.length, 3)
+	assert.equal(result.truncated, true)
+	assert.deepEqual((result as unknown as { cappedMailboxes: string[] }).cappedMailboxes, ['Clientcare'])
+})
+
+test('JXA: a mailbox list that fails makes unmatched entries unreadable (never missing) and is reported', () => {
+	const accounts = gmailAccounts()
+	accounts[0] = { ...accounts[0], listBroken: true }
+	const { mail, read } = fakeMail(fakeMessages, { accounts })
+	const result = runScript(mail, { ...scriptArgs, mailboxes: ['Clientcare', 'Archive'] }) as unknown as ScriptOutput & {
+		missingMailboxes: string[]
+		unreadableMailboxes: string[]
+	}
+	// The other account still lists and reads its Clientcare.
+	assert.deepEqual(read, ['inbox', 'Clientcare'])
+	assert.equal(result.truncated, true)
+	assert.deepEqual(result.missingMailboxes, [])
+	assert.deepEqual(result.unreadableMailboxes, ['iCloud mailbox list', 'Archive'])
+	assert.ok(result.messages.some(message => message.mailbox === 'Clientcare'))
+
+	// Every entry found elsewhere: the failed list is still reported, so the incomplete poll is never silent.
+	const found = runScript(fakeMail(fakeMessages, { accounts }).mail, {
+		...scriptArgs,
+		mailboxes: ['Clientcare'],
+	}) as unknown as {
+		truncated: boolean
+		unreadableMailboxes: string[]
+	}
+	assert.equal(found.truncated, true)
+	assert.deepEqual(found.unreadableMailboxes, ['iCloud mailbox list'])
+})
+
+test('reader: capped and skipped mailboxes are reported; the gone reason names the mailboxes', async () => {
+	const answer = { ...mailboxOutput, truncated: true, cappedMailboxes: ['All Mail'], skippedMailboxes: ['Archive'] }
+	const { run } = fakeRunner(async () => ({ stdout: JSON.stringify(answer), stderr: '' }))
+	const one = await createMailSignalReader(configWith({ mailboxes: 'All Mail' }), { run, now: () => NOW }).read(
+		new AbortController().signal,
+	)
+	assert.equal(one.result?.complete, false)
+	assert.deepEqual(one.health, {
+		status: 'error',
+		detail: 'more mail than one poll reads in "All Mail"; only 12 matching mailboxes are read',
+	})
+	assert.equal(one.result?.goneReason, 'no longer unread in the inbox or All Mail')
+
+	const plain = fakeRunner(async () => ({ stdout: JSON.stringify(mailboxOutput), stderr: '' }))
+	const two = await createMailSignalReader(configWith({ mailboxes: 'Clientcare\nArchive' }), {
+		run: plain.run,
+		now: () => NOW,
+	}).read(new AbortController().signal)
+	assert.equal(two.result?.goneReason, 'no longer unread in the inbox or the listed mailboxes')
+	assert.equal(mailGoneReason([]), 'no longer unread in the inbox')
 })
