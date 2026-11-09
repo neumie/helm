@@ -150,16 +150,25 @@ export function resolveOkenaBinary(env: NodeJS.ProcessEnv, home: string, exists:
  */
 export function createSignalsDaemonRequest(
 	daemonUrl: string,
-	options: { readOnlyError?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
+	options: {
+		readOnlyError?: string
+		fetch?: typeof fetch
+		timeoutMs?: number
+		/** The daemon's local control token (main only): writes carry it, so Jakub's reply is accepted. */
+		controlToken?: () => Promise<string>
+	} = {},
 ): SignalsRequest {
 	const baseUrl = daemonUrl.replace(/\/$/, '')
 	const doFetch = options.fetch ?? fetch
 	return async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<HelmResult<T>> => {
 		if (method !== 'GET' && options.readOnlyError !== undefined) return { error: options.readOnlyError, status: 403 }
 		try {
+			const headers: Record<string, string> = {}
+			if (body !== undefined) headers['Content-Type'] = 'application/json'
+			if (method !== 'GET' && options.controlToken) headers.Authorization = `Bearer ${await options.controlToken()}`
 			const res = await doFetch(`${baseUrl}/api${path}`, {
 				method,
-				headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+				headers,
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: AbortSignal.timeout(options.timeoutMs ?? SIGNALS_REQUEST_TIMEOUT_MS),
 			})

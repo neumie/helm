@@ -810,7 +810,7 @@ export class SignalStore {
 
 	/**
 	 * File an ask (`helm signal add`). With a key it upserts `agent:<key>`: a changed title or
-	 * body makes it new again (an earlier reply no longer answers it), a change of links or label
+	 * body or of the asking terminal makes it new again (an earlier reply no longer answers it), a change of links or label
 	 * refreshes it in place, identical input writes nothing. Without a key it always creates.
 	 */
 	upsertAsk(input: SignalAsk, now: Date): SignalAskResult {
@@ -824,7 +824,10 @@ export class SignalStore {
 				| undefined
 			let outcome: SignalAskOutcome
 			let id: number
-			const renews = row !== undefined && (row.title !== ask.title || (row.body ?? null) !== ask.body)
+			// A new delivery target is a new ask too: Jakub's answer must never move to another agent unseen.
+			const renews =
+				row !== undefined &&
+				(row.title !== ask.title || (row.body ?? null) !== ask.body || (row.ask_terminal ?? null) !== ask.terminal)
 			// A new ask, or a done one opened again, takes a slot; renewing an open ask does not.
 			if (!row || (renews && row.state === 'done')) {
 				const open = this.db
@@ -892,25 +895,16 @@ export class SignalStore {
 				row.links !== links ||
 				row.ref !== labels.ref ||
 				row.full_ref !== labels.full_ref ||
-				row.actor !== labels.actor ||
-				(row.ask_terminal ?? null) !== ask.terminal
+				row.actor !== labels.actor
 			) {
 				id = row.id
 				// No state change and no event; like a poll refresh, a done ask keeps its done time.
 				this.db
 					.prepare(
-						`UPDATE signal_threads SET links = ?, ref = ?, full_ref = ?, actor = ?, ask_terminal = ?, updated_at = ?
+						`UPDATE signal_threads SET links = ?, ref = ?, full_ref = ?, actor = ?, updated_at = ?
 						 WHERE id = ?`,
 					)
-					.run(
-						links,
-						labels.ref,
-						labels.full_ref,
-						labels.actor,
-						ask.terminal,
-						row.state === 'done' ? row.updated_at : at,
-						id,
-					)
+					.run(links, labels.ref, labels.full_ref, labels.actor, row.state === 'done' ? row.updated_at : at, id)
 				outcome = 'updated'
 			} else {
 				return { outcome: 'unchanged', thread: toSignalThread(row) }

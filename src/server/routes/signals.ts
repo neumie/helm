@@ -44,6 +44,12 @@ export interface SignalRouteDependencies {
 	now?: () => Date
 	/** Long-poll re-check interval; tests shorten it. */
 	eventPollMs?: number
+	/**
+	 * Whether a request carries the daemon's local control token (only Helm's main process holds
+	 * it). Jakub's reply to an ask and its `replied` receipt need it, so no agent can answer another
+	 * agent's ask in Jakub's name. Missing = refused.
+	 */
+	controlAuthorized?: (c: Context) => boolean
 }
 
 const MAX_SIGNAL_BODY_BYTES = 16 * 1024
@@ -92,6 +98,8 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const now = deps?.now ?? (() => new Date())
 	const eventPollMs = deps?.eventPollMs ?? DEFAULT_EVENT_POLL_MS
 	const storeFor = (): SignalStore => db.signals
+	const jakubOnly = (c: Context) =>
+		deps?.controlAuthorized?.(c) ? null : c.json({ error: 'Only Helm can record Jakub’s reply' }, 401)
 
 	const parseBody = async <T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> => {
 		try {
@@ -263,6 +271,10 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
 		const body = await parseBody(c, signalRoutedSchema)
 		if ('error' in body) return body.error
+		if (body.data.how === 'replied') {
+			const refused = jakubOnly(c)
+			if (refused) return refused
+		}
 		try {
 			return c.json({ data: storeFor().setRouted(id, body.data, now()) })
 		} catch (err) {
@@ -285,6 +297,8 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	routes.post('/:id/reply', signalsBody, async c => {
 		const id = signalId(c.req.param('id'))
 		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c)
+		if (refused) return refused
 		const body = await parseBody(c, signalReplySchema)
 		if ('error' in body) return body.error
 		try {

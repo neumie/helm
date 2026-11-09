@@ -814,19 +814,15 @@ test('an ask with a key upserts: created, unchanged, updated in place, renewed',
 		assert.equal(unchanged.outcome, 'unchanged')
 		assert.equal(unchanged.thread.updatedAt, T0.toISOString())
 
-		// Jakub looked at it; new links and a terminal refresh it without making it new again.
+		// Jakub looked at it; new links refresh it without making it new again.
 		db.signals.markSeen(thread.id, at(2))
 		const seq = db.signals.latestSeq()
-		const updated = db.signals.upsertAsk(
-			{ ...ask, links: [...ask.links, 'https://github.com/acme/w/pull/3'], terminal: TERMINAL },
-			at(3),
-		)
+		const updated = db.signals.upsertAsk({ ...ask, links: [...ask.links, 'https://github.com/acme/w/pull/3'] }, at(3))
 		assert.equal(updated.outcome, 'updated')
 		assert.equal(updated.thread.id, thread.id)
 		assert.equal(updated.thread.state, 'seen')
 		assert.equal(updated.thread.links.length, 2)
-		assert.equal(updated.thread.askTerminal, TERMINAL.toLowerCase())
-		assert.equal(updated.thread.fullRef, 'dispatcher · Okena terminal')
+		assert.equal(updated.thread.askTerminal, null)
 		assert.equal(updated.thread.updatedAt, at(3).toISOString())
 		assert.equal(updated.thread.lastActivityAt, T0.toISOString())
 		assert.equal(db.signals.latestSeq(), seq, 'a refresh in place writes no event')
@@ -849,9 +845,22 @@ test('an ask with a key upserts: created, unchanged, updated in place, renewed',
 		assert.equal(last?.type, 'activity')
 		assert.deepEqual(last?.detail, { owner: 'jakub', kind: 'ask', head: 'Pick a row layout', state: 'new' })
 
+		// A new asking terminal is a new delivery target: new again and the earlier reply cleared,
+		// so Jakub's answer never moves to another agent unseen.
+		db.signals.reply(thread.id, 'Variant C', at(7))
+		const moved = db.signals.upsertAsk({ ...ask, body: 'Two variants, now with a third.', terminal: TERMINAL }, at(8))
+		assert.equal(moved.outcome, 'renewed')
+		assert.equal(moved.thread.state, 'new')
+		assert.equal(moved.thread.reply, null)
+		assert.equal(moved.thread.askTerminal, TERMINAL.toLowerCase())
+		assert.equal(moved.thread.fullRef, 'dispatcher · Okena terminal')
+
 		// Done, then a changed title reopens it; a done ask refreshed in place keeps its done time.
 		db.signals.done(thread.id, undefined, at(7))
-		const doneLinks = db.signals.upsertAsk({ ...ask, body: 'Two variants, now with a third.', links: [] }, at(8))
+		const doneLinks = db.signals.upsertAsk(
+			{ ...ask, body: 'Two variants, now with a third.', terminal: TERMINAL, links: [] },
+			at(8),
+		)
 		assert.equal(doneLinks.outcome, 'updated')
 		assert.equal(doneLinks.thread.state, 'done')
 		assert.equal(doneLinks.thread.updatedAt, at(7).toISOString())

@@ -17,8 +17,14 @@ type SignalsSnapshot = import('../app/src/shared-helm.ts').SignalsSnapshot
 type SignalThread = import('../app/src/shared-helm.ts').SignalThread
 type SignalsExec = import('../app/src/signals-main.ts').SignalsExec
 type SignalsRequest = import('../app/src/signals-main.ts').SignalsRequest
-const { SignalsMain, githubRepoFromRemote, signalOpenableUrl, resolveOkenaBinary, SIGNALS_POLL_MS } =
-	signalsMainModule as SignalsMainModule
+const {
+	SignalsMain,
+	createSignalsDaemonRequest,
+	githubRepoFromRemote,
+	signalOpenableUrl,
+	resolveOkenaBinary,
+	SIGNALS_POLL_MS,
+} = signalsMainModule as SignalsMainModule
 
 const TOKEN = 'work:1'
 const WINDOW = { id: 1 }
@@ -1029,4 +1035,44 @@ test('main.ts and preload wire the Signals channels through the gated main-windo
 	assert.match(main, /signalsMain\.stop\(\)/)
 	assert.match(preload, /const SIGNALS_CHANNELS: typeof SIGNALS_IPC = \{/)
 	assert.match(preload, /\} satisfies SignalsApi,/)
+})
+
+test('daemon requests: writes carry the local control token, reads and read-only runs never do', async () => {
+	const seen: { method: string; url: string; headers: Record<string, string> }[] = []
+	const fakeFetch = (async (url: string, init: RequestInit) => {
+		seen.push({ method: init.method ?? 'GET', url, headers: { ...((init.headers as Record<string, string>) ?? {}) } })
+		return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 })
+	}) as unknown as typeof fetch
+	let reads = 0
+	const request = createSignalsDaemonRequest('http://127.0.0.1:7474/', {
+		fetch: fakeFetch,
+		controlToken: async () => {
+			reads += 1
+			return 'T'.repeat(43)
+		},
+	})
+	assert.deepEqual(await request('GET', '/signals'), { data: { ok: true } })
+	assert.deepEqual(await request('POST', '/signals/3/reply', { text: 'B' }), { data: { ok: true } })
+	assert.equal(seen[0]?.headers.Authorization, undefined)
+	assert.equal(seen[1]?.url, 'http://127.0.0.1:7474/api/signals/3/reply')
+	assert.equal(seen[1]?.headers.Authorization, `Bearer ${'T'.repeat(43)}`)
+	assert.equal(seen[1]?.headers['Content-Type'], 'application/json')
+	assert.equal(reads, 1, 'the token is read for writes only')
+
+	const readOnly = createSignalsDaemonRequest('http://127.0.0.1:7474', {
+		fetch: fakeFetch,
+		readOnlyError: 'read only',
+		controlToken: async () => 'T'.repeat(43),
+	})
+	assert.deepEqual(await readOnly('POST', '/signals/3/reply', { text: 'B' }), { error: 'read only', status: 403 })
+	assert.equal(seen.length, 2, 'a read-only run sends nothing')
+
+	const noToken = createSignalsDaemonRequest('http://127.0.0.1:7474', {
+		fetch: fakeFetch,
+		controlToken: async () => {
+			throw new Error('no token file')
+		},
+	})
+	assert.deepEqual(await noToken('POST', '/signals/3/reply', { text: 'B' }), { error: 'no token file' })
+	assert.equal(seen.length, 2, 'without the token nothing is sent')
 })

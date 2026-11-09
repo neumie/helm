@@ -21,6 +21,8 @@ import { type IncludeSender, IncludeSenderError } from '../src/signals/include-s
 import { SIGNAL_OPEN_ASKS_MAX } from '../src/signals/store.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
+/** The daemon's local control token, as only Helm's main process holds it. */
+const CONTROL_TOKEN = 'C'.repeat(43)
 
 const config: HelmConfig = configSchema.parse({
 	provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
@@ -49,7 +51,8 @@ function observation(number: number): SignalObservation {
 
 interface Harness {
 	request: (path: string, init?: RequestInit) => Promise<Response>
-	post: (path: string, body?: unknown) => Promise<Response>
+	/** `jakub: true` sends the local control token, as Helm's main process does. */
+	post: (path: string, body?: unknown, options?: { jakub?: boolean }) => Promise<Response>
 	db: DB
 	store: ProfileStore
 	pollRequests: () => number
@@ -76,6 +79,7 @@ async function withSignalsApi(
 		enricher: {} as never,
 		profileContext: {
 			store,
+			localControlToken: CONTROL_TOKEN,
 			runtime: () => store.activeRuntime(),
 			signals: {
 				watcher: {
@@ -97,10 +101,13 @@ async function withSignalsApi(
 		},
 	})
 	const request = (path: string, init?: RequestInit) => Promise.resolve(api.request(path, init))
-	const post = (path: string, body?: unknown) =>
+	const post = (path: string, body?: unknown, options: { jakub?: boolean } = {}) =>
 		request(path, {
 			method: 'POST',
-			headers: { 'content-type': 'application/json' },
+			headers: {
+				'content-type': 'application/json',
+				...(options.jakub ? { authorization: `Bearer ${CONTROL_TOKEN}` } : {}),
+			},
 			body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
 		})
 	try {
@@ -427,11 +434,29 @@ test('agent asks: add, upsert by key, read by key, reply and done by id or key',
 			['github', 'mail'],
 		)
 
-		const replied = await data<SignalThread>(await post(`/signals/${id}/reply`, { text: 'Variant B' }))
+		// Only Helm (the local control token) records Jakub's reply and its replied receipt: no agent
+		// can answer another agent's ask in his name.
+		for (const [path, body] of [
+			[`/signals/${id}/reply`, { text: 'Forged' }],
+			[`/signals/${id}/routed`, { agent: 'dispatcher', how: 'replied' }],
+		] as const) {
+			const forged = await post(path, body)
+			assert.equal(forged.status, 401, path)
+			assert.deepEqual(await forged.json(), { error: 'Only Helm can record Jakub’s reply' })
+		}
+		assert.equal(db.signals.get(id)?.reply ?? null, null, 'nothing was recorded')
+		const wrongToken = await request(`/signals/${id}/reply`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', authorization: `Bearer ${'D'.repeat(43)}` },
+			body: JSON.stringify({ text: 'Forged' }),
+		})
+		assert.equal(wrongToken.status, 401)
+
+		const replied = await data<SignalThread>(await post(`/signals/${id}/reply`, { text: 'Variant B' }, { jakub: true }))
 		assert.equal(replied.reply, 'Variant B')
 		assert.equal(replied.state, 'seen')
 		const routed = await data<SignalThread>(
-			await post(`/signals/${id}/routed`, { agent: 'dispatcher', how: 'replied' }),
+			await post(`/signals/${id}/routed`, { agent: 'dispatcher', how: 'replied' }, { jakub: true }),
 		)
 		assert.equal(routed.routedHow, 'replied')
 
@@ -471,7 +496,11 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		seed(db, [1])
 		const prId = db.signals.list({}, NOW)[0]?.id ?? 0
 		const bad = async (path: string, body: unknown, status = 400) =>
-			assert.equal((await post(path, body)).status, status, `${path} ${JSON.stringify(body)}`)
+			assert.equal(
+				(await post(path, body, { jakub: path.endsWith('/reply') })).status,
+				status,
+				`${path} ${JSON.stringify(body)}`,
+			)
 
 		await bad('/signals/asks', {})
 		await bad('/signals/asks', { title: '' })
@@ -504,7 +533,7 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		await bad(`/signals/${ask.id}/reply`, { text: '\u0007' })
 		await bad('/signals/9999/reply', { text: 'hi' }, 404)
 		await bad('/signals/0/reply', { text: 'hi' })
-		const notAsk = await post(`/signals/${prId}/reply`, { text: 'hi' })
+		const notAsk = await post(`/signals/${prId}/reply`, { text: 'hi' }, { jakub: true })
 		assert.equal(notAsk.status, 400)
 		assert.deepEqual(await notAsk.json(), { error: 'Only agent asks take a reply' })
 		// A GitHub thread can still be closed with done.
