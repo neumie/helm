@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { oneLine } from '../agent-dock/text.js'
 import { SIGNAL_LIMITS, type SignalObservation } from './contract.js'
 
-/** One inbox message as the JXA script reports it (headers never leave the script). */
+/** One message as the JXA script reports it (headers never leave the script). */
 export interface MailMessageHead {
 	/** Message-ID without angle brackets. */
 	messageId: string
@@ -24,6 +24,11 @@ export interface MailMessageHead {
 	bulk: boolean
 	/** Conversation root Message-ID (first References id, else In-Reply-To, else own id). */
 	root: string
+	/**
+	 * Name of the configured extra mailbox it was read from (`Clientcare`); null or absent for the
+	 * inbox. Shown in front of the row's head so Jakub sees where it came from.
+	 */
+	mailbox?: string | null
 }
 
 export interface MailFilterOptions {
@@ -43,7 +48,16 @@ export interface MailFilterOptions {
 
 export const MAIL_GONE_REASON = 'no longer unread in the inbox'
 
+/** Why a mail thread left on its own, naming the extra mailboxes it may have come from. */
+export function mailGoneReason(mailboxes: string[]): string {
+	if (mailboxes.length === 0) return MAIL_GONE_REASON
+	if (mailboxes.length > 1) return `${MAIL_GONE_REASON} or the listed mailboxes`
+	return `${MAIL_GONE_REASON} or ${oneLine(mailboxes[0], 60)}`
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000
+/** Bound for the mailbox label in front of a row's head. */
+const MAILBOX_LABEL_MAX = 40
 
 /** One glob per line; blank lines and surrounding whitespace ignored. */
 export function parseGlobList(text: string): string[] {
@@ -59,6 +73,70 @@ export function globToRegExpSource(glob: string): string {
 		.split('*')
 		.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 		.join('.*')}$`
+}
+
+/** Configured extra mailboxes: one per line, trimmed, blank lines and case-insensitive repeats dropped. */
+export function parseMailboxList(text: string): string[] {
+	const seen = new Set<string>()
+	const out: string[] = []
+	for (const entry of parseGlobList(text)) {
+		const key = entry.toLowerCase()
+		if (seen.has(key)) continue
+		seen.add(key)
+		out.push(entry)
+	}
+	return out
+}
+
+/** A Mail account as the mailbox matcher sees it; null for local (On My Mac) mailboxes. */
+export interface MailAccountIdentity {
+	name: string
+	addresses: string[]
+}
+
+/**
+ * Whether a configured entry names this mailbox: the mailbox name (`Clientcare`, in any account),
+ * or `<account name or address>/<mailbox name>` (`neumann@contember.com/Clientcare`). Compared
+ * case-insensitively on the mailbox's own name, not its path (`[Gmail]/All Mail` is `All Mail`).
+ * Mirrored by `mailboxMatches` in mail-jxa.ts.
+ */
+export function mailboxEntryMatches(entry: string, account: MailAccountIdentity | null, mailbox: string): boolean {
+	const wanted = entry.trim().toLowerCase()
+	const name = mailbox.trim().toLowerCase()
+	if (wanted === '' || name === '') return false
+	if (wanted === name) return true
+	if (account === null) return false
+	const slash = wanted.indexOf('/')
+	if (slash <= 0 || wanted.slice(slash + 1).trim() !== name) return false
+	const qualifier = wanted.slice(0, slash).trim()
+	return (
+		qualifier === account.name.trim().toLowerCase() ||
+		account.addresses.some(address => qualifier === address.trim().toLowerCase())
+	)
+}
+
+function messageIdKey(messageId: string): string {
+	return messageId.trim().replace(/^<|>$/g, '').toLowerCase()
+}
+
+/**
+ * One message per Message-ID: the same mail filed in several mailboxes (an inbox copy and a Gmail
+ * label) is one message. The inbox copy wins, else the first one listed.
+ */
+export function dedupeMailMessages(messages: MailMessageHead[]): MailMessageHead[] {
+	const kept = new Map<string, number>()
+	const out: MailMessageHead[] = []
+	for (const message of messages) {
+		const key = messageIdKey(message.messageId)
+		const at = kept.get(key)
+		if (at === undefined) {
+			kept.set(key, out.length)
+			out.push(message)
+		} else if (out[at].mailbox && !message.mailbox) {
+			out[at] = message
+		}
+	}
+	return out
 }
 
 export function matchesGlob(address: string, globs: string[]): boolean {
@@ -270,12 +348,16 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 		const identity = senderIdentity(address)
 		const subject = line(latest.subject, SIGNAL_LIMITS.title) || '(no subject)'
 		const count = group.messages.length
-		const head =
+		// Mail from an extra mailbox says which one (`Clientcare · [Psyon] New task: …`).
+		const label = latest.mailbox ? line(latest.mailbox, MAILBOX_LABEL_MAX) : ''
+		const room = SIGNAL_LIMITS.head - (label ? label.length + 3 : 0)
+		const what =
 			group.kind === 'sentry'
-				? line(sentryHead(latest.subject), SIGNAL_LIMITS.head) || subject
+				? line(sentryHead(latest.subject), room) || line(subject, room)
 				: count > 1
-					? `${line(latest.subject, SIGNAL_LIMITS.head - 16) || '(no subject)'} · ${count} messages`
-					: line(latest.subject, SIGNAL_LIMITS.head) || '(no subject)'
+					? `${line(latest.subject, room - 16) || '(no subject)'} · ${count} messages`
+					: line(latest.subject, room) || '(no subject)'
+		const head = label ? `${label} · ${what}` : what
 		observations.push({
 			threadKey: group.threadKey,
 			source: 'mail',

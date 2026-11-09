@@ -390,7 +390,7 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 			id: 'signals',
 			title: 'Signals',
 			description:
-				'What needs you from GitHub and Apple Mail, read-only. Mail asks once for permission to read Mail (Automation).',
+				'What needs you from GitHub and Apple Mail, read-only. Mail asks once for permission to read Mail (Automation). Mail reads the inbox plus the mailboxes you list; listing All Mail makes every poll scan all of that account’s mail.',
 			controls: [
 				{ type: 'field', path: ['signals', 'enabled'], label: 'Enable signals', input: 'boolean' },
 				{ type: 'field', path: ['signals', 'github', 'enabled'], label: 'Watch GitHub', input: 'boolean' },
@@ -424,6 +424,13 @@ const editMetadata: ConfigEditMetadata = validateEditMetadata({
 					label: 'Never include senders',
 					input: 'textarea',
 					placeholder: 'One address pattern per line, e.g. *@newsletter.example.com',
+				},
+				{
+					type: 'field',
+					path: ['signals', 'mail', 'mailboxes'],
+					label: 'Also read mailboxes',
+					input: 'textarea',
+					placeholder: 'One mailbox per line besides the inbox, e.g. Clientcare or neumann@contember.com/Clientcare',
 				},
 			],
 		},
