@@ -72,8 +72,36 @@ function run(argv) {
 		return domain === 'sentry.io' || /\.sentry\.io$/.test(domain) ||
 			domain === 'getsentry.com' || /\.getsentry\.com$/.test(domain);
 	}
+	// Mirrors mail-filter.ts relayedSenderAddress: the original sender behind an Apple Hide My
+	// Email relay address, else null.
+	function relayDecode(address) {
+		var normalized = String(address).trim().toLowerCase();
+		var at = normalized.lastIndexOf('@');
+		if (at <= 0) return null;
+		var domain = normalized.slice(at + 1);
+		if (domain !== 'privaterelay.appleid.com' && domain !== 'private.icloud.com' && domain !== 'icloud.com') {
+			return null;
+		}
+		var local = normalized.slice(0, at);
+		if (local.length > 400) return null;
+		var m = local.match(/^(.+?)_at_([a-z0-9-]+(?:_[a-z0-9-]+)+)_[a-z0-9]{6,16}_[0-9a-f]{6,16}$/);
+		if (!m) return null;
+		var labels = m[2].split('_');
+		for (var i = 0; i < labels.length; i++) {
+			if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(labels[i])) return null;
+		}
+		if (!/^(?:[a-z]{2,63}|xn--[a-z0-9-]+)$/.test(labels[labels.length - 1])) return null;
+		return m[1] + '@' + labels.join('.');
+	}
+	// Header-only markers of mail sent to many. List-Unsubscribe-Post counts alone because Apple's
+	// Hide My Email relay strips List-Unsubscribe and List-Id but keeps it; X-Campaign names are
+	// exact (Mailchimp, Iterable, SmartEmailing), never a prefix. Transport fingerprints never
+	// count: Feedback-ID, X-SES-*, X-SG-*, X-Mailgun-*, X-PM-*, X-Mandrill-* and
+	// X-Auto-Response-Suppress also ride on helpdesk agents' replies (Freshdesk, Gorgias, Front,
+	// Zendesk) and on DocuSign or payment mail.
 	function isBulk(h) {
-		if (h['list-id'] || h['list-unsubscribe']) return true;
+		if (h['list-id'] || h['list-unsubscribe'] || h['list-unsubscribe-post']) return true;
+		if (h['x-campaign'] || h['x-campaignid'] || h['x-campaign-id']) return true;
 		var precedence = (h['precedence'] || []).join(' ').trim().toLowerCase();
 		if (precedence === 'bulk' || precedence === 'list' || precedence === 'junk') return true;
 		var auto = h['auto-submitted'];
@@ -100,8 +128,10 @@ function run(argv) {
 	for (var c = 0; c < order.length; c++) {
 		var index = order[c];
 		var sender = parseSender(senders[index]);
+		var decoded = relayDecode(sender.address);
 		var wanted = !args.unreadOnly || !reads[index] || isSentry(sender.address) ||
-			include.some(function (re) { return re.test(sender.address); });
+			(decoded !== null && isSentry(decoded)) ||
+			include.some(function (re) { return re.test(sender.address) || (decoded !== null && re.test(decoded)); });
 		if (!wanted) continue;
 		if (candidates.length >= args.maxCandidates) { truncated = true; break; }
 		candidates.push({ index: index, sender: sender });

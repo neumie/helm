@@ -17,7 +17,10 @@ export interface MailMessageHead {
 	dateReceived: string
 	read: boolean
 	flagged: boolean
-	/** List-Id / List-Unsubscribe / Precedence bulk|list|junk / Auto-Submitted other than no. */
+	/**
+	 * Bulk header present (mail-jxa.ts `isBulk`): List-Id / List-Unsubscribe / List-Unsubscribe-Post,
+	 * an X-Campaign* header, Precedence bulk|list|junk, Auto-Submitted other than no.
+	 */
 	bulk: boolean
 	/** Conversation root Message-ID (first References id, else In-Reply-To, else own id). */
 	root: string
@@ -27,9 +30,12 @@ export interface MailFilterOptions {
 	unreadOnly: boolean
 	excludeBulk: boolean
 	maxAgeDays: number
-	/** Sender address globs that are always in (Sentry and friends), read or not, bulk or not. */
+	/**
+	 * Sender address globs that are always in (Sentry and friends), read or not, bulk or not. Matched
+	 * against the relay-decoded address as well as the raw one ({@link relayedSenderAddress}).
+	 */
 	includeSenders: string[]
-	/** Sender address globs that are always out (unless also included). */
+	/** Sender address globs that are always out (unless also included); raw or relay-decoded. */
 	excludeSenders: string[]
 	/** Jakub's own addresses: his messages are never foreign activity. */
 	myAddresses: string[]
@@ -70,14 +76,66 @@ export function filterMail(messages: MailMessageHead[], options: MailFilterOptio
 	return messages.filter(message => {
 		const received = Date.parse(message.dateReceived)
 		if (!Number.isFinite(received) || received < oldest) return false
-		const address = normalizeAddress(message.senderAddress)
+		const raw = normalizeAddress(message.senderAddress)
+		const address = senderIdentity(raw)
+		const matches = (globs: string[]) => matchesGlob(address, globs) || (address !== raw && matchesGlob(raw, globs))
 		// Sentry is always in, even when the include list was edited without it.
-		if (isSentrySender(address) || matchesGlob(address, options.includeSenders)) return true
+		if (isSentrySender(address) || matches(options.includeSenders)) return true
 		if (options.unreadOnly && message.read) return false
 		if (options.excludeBulk && message.bulk) return false
-		if (matchesGlob(address, options.excludeSenders)) return false
-		return !mine.has(address)
+		if (matches(options.excludeSenders)) return false
+		return !mine.has(raw) && !mine.has(address)
 	})
+}
+
+/**
+ * Apple Hide My Email (Sign in with Apple and iCloud+) rewrites every relayed sender to an address
+ * at one of these domains. Ordinary iCloud users also live on `icloud.com`, so there only the full
+ * relay grammar decodes and an undecodable address stays a person.
+ */
+const APPLE_RELAY_ONLY_DOMAINS = new Set(['privaterelay.appleid.com', 'private.icloud.com'])
+const APPLE_RELAY_DOMAINS = new Set([...APPLE_RELAY_ONLY_DOMAINS, 'icloud.com'])
+
+/**
+ * Relay local part: `<user>_at_<domain with dots as underscores>_<token>_<hex>`, e.g.
+ * `jobot_at_startupjobs_cz_pp77sqsgqd_3e707591`. The token is per relay alias (shared by senders of
+ * one domain), the hex per sender. The first `_at_` splits user from domain, so a `.at` domain
+ * stays decodable.
+ */
+const RELAY_LOCAL = /^(.+?)_at_([a-z0-9-]+(?:_[a-z0-9-]+)+)_[a-z0-9]{6,16}_[0-9a-f]{6,16}$/
+const RELAY_LOCAL_MAX = 400
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+const TOP_LABEL = /^(?:[a-z]{2,63}|xn--[a-z0-9-]+)$/
+
+/**
+ * The original sender behind an Apple Hide My Email relay address (`jobot@startupjobs.cz` for
+ * `jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com`), else null: not a relay
+ * address, or one this decoder does not understand. Mirrored by `relayDecode` in mail-jxa.ts.
+ * The From header is the sender's word either way: a decoded address earns no more trust than the
+ * same address in a plain From would.
+ */
+export function relayedSenderAddress(address: string): string | null {
+	const normalized = normalizeAddress(address)
+	const at = normalized.lastIndexOf('@')
+	if (at <= 0 || !APPLE_RELAY_DOMAINS.has(normalized.slice(at + 1))) return null
+	const local = normalized.slice(0, at)
+	if (local.length > RELAY_LOCAL_MAX) return null
+	const match = local.match(RELAY_LOCAL)
+	if (!match) return null
+	const labels = match[2].split('_')
+	if (!labels.every(label => HOST_LABEL.test(label)) || !TOP_LABEL.test(labels[labels.length - 1])) return null
+	return `${match[1]}@${labels.join('.')}`
+}
+
+/** A relay-only address (never a person's own mailbox) that did not decode. */
+function isAppleRelay(address: string): boolean {
+	return APPLE_RELAY_ONLY_DOMAINS.has(domainOf(address))
+}
+
+/** The address that identifies a sender: the relay-decoded original when there is one. */
+export function senderIdentity(address: string): string {
+	const normalized = normalizeAddress(address)
+	return relayedSenderAddress(normalized) ?? normalized
 }
 
 function domainOf(address: string): string {
@@ -132,12 +190,17 @@ const GENERIC_PROVIDERS = new Set([
 /** Second-level labels that are really part of a public suffix (`acme.co.uk`). */
 const SUFFIX_LABELS = new Set(['co', 'com', 'org', 'net', 'ac', 'gov', 'edu'])
 
-/** Short reference for a sender: organisation from the domain, or the person for webmail. */
+/**
+ * Short reference for a sender: organisation from the domain, or the person for webmail. A Hide My
+ * Email relay sender is named by its decoded original domain, else by its display name: never by
+ * the relay's own domain.
+ */
 export function mailRef(senderName: string, senderAddress: string): string {
-	const address = normalizeAddress(senderAddress)
+	const name = senderName.trim()
+	const address = senderIdentity(senderAddress)
+	if (isAppleRelay(address)) return name !== '' ? name : 'Mail'
 	const domain = domainOf(address)
 	if (domain === '' || GENERIC_PROVIDERS.has(domain)) {
-		const name = senderName.trim()
 		return name !== '' ? name : address.split('@')[0] || 'Mail'
 	}
 	const labels = domain.split('.').filter(label => label !== '')
@@ -145,6 +208,16 @@ export function mailRef(senderName: string, senderAddress: string): string {
 	if (labels.length >= 3 && SUFFIX_LABELS.has(label)) label = labels[labels.length - 3]
 	if (!label) return domain
 	return label.length <= 3 ? label.toUpperCase() : `${label[0].toUpperCase()}${label.slice(1)}`
+}
+
+/** `Name <address>` for the row tooltip; a decoded relay sender says it came through the relay. */
+export function mailFullRef(senderName: string, senderAddress: string): string {
+	const raw = normalizeAddress(senderAddress)
+	const decoded = relayedSenderAddress(raw)
+	const address = decoded ?? raw
+	const name = senderName.trim()
+	const base = name ? `${name} <${address}>` : address
+	return decoded ? `${base} via Hide My Email` : base
 }
 
 /** `message://%3Cid%3E` for the given Message-ID (with or without angle brackets). */
@@ -174,7 +247,7 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 	for (const message of messages) {
 		const root = (message.root || message.messageId).trim().replace(/^<|>$/g, '').toLowerCase()
 		let group: Omit<MailGroup, 'messages'>
-		if (isSentrySender(message.senderAddress)) {
+		if (isSentrySender(senderIdentity(message.senderAddress))) {
 			const shortId = sentryShortId(message.subject)
 			group = shortId
 				? { threadKey: `sentry:${shortId}`, kind: 'sentry', sentryId: shortId }
@@ -194,6 +267,7 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 		)
 		const address = normalizeAddress(latest.senderAddress)
 		const name = line(latest.senderName, SIGNAL_LIMITS.actor)
+		const identity = senderIdentity(address)
 		const subject = line(latest.subject, SIGNAL_LIMITS.title) || '(no subject)'
 		const count = group.messages.length
 		const head =
@@ -208,10 +282,10 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 			kind: group.kind,
 			reasons: [group.kind],
 			ref: line(group.kind === 'sentry' ? (group.sentryId ?? 'Sentry') : mailRef(name, address), SIGNAL_LIMITS.ref),
-			fullRef: line(name ? `${name} <${address}>` : address, SIGNAL_LIMITS.fullRef),
+			fullRef: line(mailFullRef(name, address), SIGNAL_LIMITS.fullRef),
 			title: subject,
 			head,
-			actor: name || address || null,
+			actor: name || identity || null,
 			url: messageUrl(latest.messageId),
 			repo: null,
 			number: null,
