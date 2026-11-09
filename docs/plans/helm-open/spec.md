@@ -328,7 +328,7 @@ Total extra install size if everything ships: about 3.3 MB of JavaScript plus 3.
 
 All under Storybook `Views/Helm open/`, real renderers over realistic fixtures (a 3-page platform report PDF, an invoicing workbook with formulas, a 1 800-row CSV export, a failed-form screenshot, a Sentry issue JSON, a plan Markdown, a TypeScript module, a service agreement DOCX).
 
-- **A Window chrome** — three chromes, each plain and bound.
+- **A Window chrome** — three chromes (A1–A3), plus three A1 × A3 hybrids after Jakub asked for "something between A3 and A1" (A4 path then name, A5 name then path, A6 collapsing path) and a long-path comparison; each plain and bound.
 - **B Multiple files** — tabs, a window per file with a go-to-file palette, a file sidebar.
 - **C Format views** — PDF, spreadsheet (XLSX + CSV), image, JSON, code, documents (Markdown, DOCX).
 - **D Feedback anchors** — PDF text selection, spreadsheet range, image region (plus JSON node and code lines).
@@ -416,7 +416,7 @@ Proposed order: S1 → S2 → S3 → S4 → S5 → S7 → S6 → S8 → S8b → 
 | D9 | SheetJS source | vendor tarball pinned with integrity; `exceljs`; npm `xlsx@0.18.5` | **Vendor tarball** (npm 0.18.5 is stale with known advisories; exceljs lacks XLS/ODS). |
 | D10 | Old-host / not-reloaded-Pi compatibility | negotiate per connection (`hello` then `features`); hard version bump | **Negotiate**, so an old desktop, a Pi process not yet `/reload`ed or Pi from another worktree keep working with prompt-text anchors. |
 | D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Delete** in S10. Plan documents → Review: decide with the task-list future. |
-| D12 | Multi-file model and window chrome | B1/B2/B3, A1/A2/A3 | His pick from Storybook; no recommendation. |
+| D12 | Multi-file model and window chrome | B1/B2/B3, A1–A6 | His pick from Storybook; no recommendation. |
 | D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Workspace only in S8**; widen once he wants it, because it tells the agent where files outside its project live. |
 | D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button (see § Send receipt) | **Open.** His pick from Storybook; no recommendation. |
 

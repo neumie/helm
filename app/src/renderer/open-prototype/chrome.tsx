@@ -32,7 +32,7 @@ export interface Thread {
 	state: 'sent' | 'replied' | 'working'
 }
 
-const STATE_WORD: Record<AgentState, string> = {
+export const STATE_WORD: Record<AgentState, string> = {
 	listening: 'Listening',
 	working: 'Working',
 	paused: 'Feedback paused',
@@ -107,7 +107,7 @@ export function FileBody({
 }
 
 /** Feedback host plus the bubble state shared by all bound variants. */
-function useFeedback(bound: boolean, initial: FeedbackAnchor | null = null) {
+export function useFeedback(bound: boolean, initial: FeedbackAnchor | null = null) {
 	const [active, setActive] = useState<FeedbackAnchor | null>(initial)
 	const [box, setBox] = useState<DOMRect | null>(null)
 	const host = useMemo<FeedbackHost | null>(
@@ -130,7 +130,7 @@ function useFeedback(bound: boolean, initial: FeedbackAnchor | null = null) {
 	return { host, active, box, clear }
 }
 
-const SAMPLE_THREADS: Thread[] = [
+export const SAMPLE_THREADS: Thread[] = [
 	{
 		id: 't1',
 		anchor: { kind: 'pdf-text', page: 1, quote: 'p95 latency fell from 412 ms to 268 ms' },
@@ -150,7 +150,7 @@ const SAMPLE_THREADS: Thread[] = [
 ]
 
 /** A composer row shared by the variants: text, intent, Send. Prototype only (no admission). */
-function Composer({ placeholder, compact }: { placeholder: string; compact?: boolean }) {
+export function Composer({ placeholder, compact }: { placeholder: string; compact?: boolean }) {
 	const [text, setText] = useState('')
 	const [intent, setIntent] = useState<'Ask' | 'Request change'>('Ask')
 	return (
@@ -188,7 +188,7 @@ function Composer({ placeholder, compact }: { placeholder: string; compact?: boo
 	)
 }
 
-function ThreadEntry({ thread }: { thread: Thread }) {
+export function ThreadEntry({ thread }: { thread: Thread }) {
 	const label = thread.anchor ? anchorLabel(thread.anchor) : { place: 'Whole file' }
 	return (
 		<article className="open-thread">
@@ -652,7 +652,7 @@ export function MultiSidebar({ files, agent = null }: { files: ViewerFile[]; age
 }
 
 /** Heroicons micro magnifying glass (MIT), 16px native. */
-function SearchGlyph() {
+export function SearchGlyph() {
 	return (
 		<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
 			<path

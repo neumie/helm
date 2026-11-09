@@ -13,6 +13,13 @@ const STORIES: { id: string; ready: string }[] = [
 	{ id: 'a-window-chrome--a-2-status-line-bound', ready: '.open-pdf-page canvas' },
 	{ id: 'a-window-chrome--a-3-breadcrumb-plain', ready: '.open-a3-crumbs' },
 	{ id: 'a-window-chrome--a-3-breadcrumb-bound', ready: '.open-pdf-page canvas' },
+	{ id: 'a-window-chrome--a-4-path-then-name-plain', ready: '.open-pdf-page canvas' },
+	{ id: 'a-window-chrome--a-4-path-then-name-bound', ready: '.open-companion' },
+	{ id: 'a-window-chrome--a-5-name-then-path-plain', ready: '.open-pdf-page canvas' },
+	{ id: 'a-window-chrome--a-5-name-then-path-bound', ready: '.open-companion' },
+	{ id: 'a-window-chrome--a-6-collapsing-plain', ready: '.open-pdf-page canvas' },
+	{ id: 'a-window-chrome--a-6-collapsing-bound', ready: '.open-companion' },
+	{ id: 'a-window-chrome--long-path-compare', ready: '.hy-compare' },
 	{ id: 'b-multiple-files--b-1-tabs', ready: '.open-tab-active' },
 	{ id: 'b-multiple-files--b-2-window-per-file', ready: '.open-palette-field' },
 	{ id: 'b-multiple-files--b-3-sidebar', ready: '.open-b3-row-active' },
@@ -70,3 +77,19 @@ for (const { id, place } of ANCHORS) {
 		expect(errors).toEqual([])
 	})
 }
+
+test('A4–A6 narrow title rows keep the name and fold the path', async ({ page }) => {
+	await page.setViewportSize({ width: 900, height: 700 })
+	await settle(page, 'a-window-chrome--long-path-compare', '.hy-compare')
+	const row = (label: string) => page.getByRole('region', { name: label })
+	for (const label of ['A4 Path, then name', 'A5 Name, then path', 'A6 Collapsing path'])
+		await expect(row(label).getByRole('heading', { name: 'platform-report-2026-10.pdf' })).toBeVisible()
+	await expect(row('A4 Path, then name').getByRole('button', { name: 'Reports', exact: true })).toBeHidden()
+	await expect(row('A4 Path, then name').getByRole('button', { name: 'October', exact: true })).toBeVisible()
+	await expect(row('A6 Collapsing path').getByRole('button', { name: 'October', exact: true })).toBeHidden()
+	await expect(row('A6 Collapsing path').getByRole('button', { name: /^Path:/ })).toBeVisible()
+	const a5 = row('A5 Name, then path').locator('.hy-a5-crumbs')
+	await expect.poll(() => a5.evaluate(node => node.getBoundingClientRect().width)).toBeLessThan(1)
+	await row('A5 Name, then path').getByRole('heading').hover()
+	await expect.poll(() => a5.evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThan(100)
+})

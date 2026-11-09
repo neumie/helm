@@ -1,0 +1,265 @@
+/* Story-only A1 × A3 hybrids (A4–A6). One 40px title row like A1; the path is A3's dim clickable folders.
+ * Tokens only. The header is a size container so "narrow" means the window, not the viewport. */
+
+.hy-head {
+	flex: 0 0 40px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	padding-right: 8px;
+	container: hyhead / inline-size;
+	-webkit-app-region: drag;
+}
+.hy-identity {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+.hy-name {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	/* The name keeps its full width while folders can still give way; it truncates only when the
+	   ext tag and the name alone no longer fit. */
+	flex: 0 0 auto;
+	max-width: calc(100% - 40px);
+}
+
+/* ---------- breadcrumb ---------- */
+
+.hy-crumbs {
+	display: flex;
+	align-items: baseline;
+	min-width: 0;
+	flex: 0 100 auto;
+	overflow: hidden;
+	-webkit-app-region: no-drag;
+}
+.hy-crumb {
+	display: inline-flex;
+	align-items: baseline;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.hy-crumb[data-last] {
+	flex: none;
+}
+.hy-folder {
+	border: none;
+	background: none;
+	padding: 2px 4px;
+	border-radius: 4px;
+	font: inherit;
+	font-size: 13px;
+	color: var(--text-2);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	max-width: 180px;
+}
+.hy-folder:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.hy-sep {
+	color: var(--text-2);
+	padding: 0 1px;
+	flex: none;
+}
+.hy-gap {
+	display: none;
+	color: var(--text-2);
+	flex: none;
+}
+.hy-gap-dots {
+	padding: 2px 4px;
+}
+/* The name sits as close to its folder as the folders sit to each other. */
+.hy-crumbs + .hy-name,
+.hy-folded + .hy-name {
+	margin-left: -4px;
+}
+
+/* A4 narrow: keep the first folder and the last two; the middle becomes one "…". */
+@container hyhead (max-width: 999px) {
+	.hy-a4-crumbs .hy-crumb[data-middle] {
+		display: none;
+	}
+	.hy-a4-crumbs .hy-gap {
+		display: inline;
+	}
+}
+
+/* ---------- A5: name first, path after ---------- */
+
+.hy-a5-crumbs {
+	margin-left: 2px;
+	max-width: 100%;
+	transition: max-width 160ms ease, opacity 160ms ease;
+}
+.hy-a5-crumbs .hy-folder {
+	font-size: 12px;
+}
+.hy-a5-crumbs .hy-sep {
+	font-size: 12px;
+}
+@container hyhead (max-width: 999px) {
+	/* Out of the way until the pointer or keyboard focus is on the name or the path. */
+	.hy-a5-crumbs {
+		max-width: 0;
+		opacity: 0;
+	}
+	.hy-a5:hover .hy-a5-crumbs,
+	.hy-a5:focus-within .hy-a5-crumbs {
+		max-width: 100%;
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.hy-a5-crumbs {
+		transition: none;
+	}
+}
+
+/* ---------- A6: full breadcrumb, folded into "…" when narrow ---------- */
+
+.hy-folded {
+	display: none;
+	align-items: baseline;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+.hy-fold-trigger {
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	align-self: center;
+}
+.hy-fold-trigger svg {
+	width: 14px;
+	height: 14px;
+}
+@container hyhead (max-width: 999px) {
+	.hy-a6-full {
+		display: none;
+	}
+	.hy-folded {
+		display: inline-flex;
+	}
+}
+
+/* ---------- actions ---------- */
+
+.hy-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+.hy-position {
+	font-size: 12px;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	padding: 0 8px;
+	white-space: nowrap;
+}
+.hy-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.hy-key:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.hy-key kbd {
+	font-family: var(--font-ui);
+	font-size: 11px;
+	color: var(--text-2);
+}
+.hy-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 8px;
+	margin-left: 4px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.hy-agent:hover,
+.hy-agent-open {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.hy-agent-state {
+	color: var(--text-2);
+}
+.hy-folder:focus-visible,
+.hy-key:focus-visible,
+.hy-agent:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* ---------- long-path comparison (story only) ---------- */
+
+.hy-compare {
+	display: flex;
+	flex-direction: column;
+	min-height: 100dvh;
+	background: var(--pane);
+	color: var(--text-0);
+	font-family: var(--font-ui);
+}
+.hy-compare-label {
+	padding: 16px 16px 6px;
+	font-size: 12px;
+	color: var(--text-2);
+}
+.hy-compare-label b {
+	font-weight: 500;
+	color: var(--text-1);
+}
+.hy-compare .open-a1-head,
+.hy-compare .open-a3-head {
+	flex: none;
+}
+.hy-compare-row {
+	height: 45px;
+	overflow: hidden;
+	border-bottom: 1px solid var(--hairline);
+}
+.hy-compare-row > .open-stage {
+	height: 400px;
+}
