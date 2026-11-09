@@ -7,7 +7,7 @@
 import type { ReviewApi, ReviewMessage, ReviewReceipt, ReviewRequest, ReviewSession } from '../../document-review/types'
 import { createReviewFixture } from '../document-review/fixtures'
 
-export type ReceiptAgent = 'claude' | 'pi' | 'cli'
+export type ReceiptAgent = 'claude' | 'codex' | 'pi' | 'cli'
 export type ReceiptOutcome = 'reply' | 'not-sent' | 'unconfirmed'
 export type ReceiptHold = 'sending' | 'received' | 'working' | null
 
@@ -26,6 +26,8 @@ export interface StagedReviewOptions {
 	unknownMs: number
 	/** Freeze the flow at this phase for a still frame. */
 	hold: ReceiptHold
+	/** E5 only: the caller is seen working (a future progress source for Claude Code / Codex). Pi always is. */
+	reportsWorking?: boolean
 }
 
 export const REALISTIC: StagedReviewOptions = {
@@ -42,6 +44,7 @@ export const REALISTIC: StagedReviewOptions = {
 const NAMES: Record<ReceiptAgent, string> = {
 	claude: 'Claude Code · helm open spec',
 	pi: 'Pi · helm open spec',
+	codex: 'Codex · helm open spec',
 	cli: 'Document conversation',
 }
 const NOT_LISTENING = 'The agent is not listening. Ask it to run helm review wait; your feedback was not sent.'
@@ -138,10 +141,11 @@ export function createStagedReviewFixture(options: StagedReviewOptions) {
 				receipts.set(request.id, { ...receipt, outcome: 'dispatched' })
 				notify()
 				if (options.hold === 'received') return
-				if (options.agent === 'pi')
+				if (options.agent === 'pi' || options.reportsWorking)
 					later(options.workMs, () => {
 						overlay.state = 'working'
-						message(`${request.id}:assistant`, 'assistant', PARTIAL)
+						// Only Pi streams its reply into the window; a tool-return caller's reply arrives whole.
+						if (options.agent === 'pi') message(`${request.id}:assistant`, 'assistant', PARTIAL)
 						notify()
 					})
 				if (options.hold === 'working') return

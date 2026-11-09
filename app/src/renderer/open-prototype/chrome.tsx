@@ -79,7 +79,7 @@ export function shortPath(path: string, max = 48): string {
 }
 
 /** Parent folder of a display path. */
-function folderOf(path: string): string {
+export function folderOf(path: string): string {
 	const index = path.lastIndexOf('/')
 	return index > 0 ? path.slice(0, index) : path
 }

@@ -23,6 +23,7 @@ const STORIES: { id: string; ready: string }[] = [
 	{ id: 'b-multiple-files--b-1-tabs', ready: '.open-tab-active' },
 	{ id: 'b-multiple-files--b-2-window-per-file', ready: '.open-palette-field' },
 	{ id: 'b-multiple-files--b-3-sidebar', ready: '.open-b3-row-active' },
+	{ id: 'b-multiple-files--b-4-windows-and-tabs', ready: '.b4-desk .open-a1-head' },
 	{ id: 'c-format-views-pdf--default', ready: '.open-pdf-page canvas' },
 	{ id: 'c-format-views-spreadsheet--workbook', ready: '.open-sheet-tabs' },
 	{ id: 'c-format-views-spreadsheet--csv', ready: '.open-format-status' },

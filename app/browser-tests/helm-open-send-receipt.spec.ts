@@ -67,3 +67,31 @@ test('a tool-return caller never shows a Working step', async ({ page }) => {
 	await expect(page.locator('.rcpt-steps .rcpt-step')).toHaveCount(3, { timeout: 8000 })
 	await expect(page.locator('.rcpt-step[data-state="now"]')).toHaveText('Replied')
 })
+
+test.describe('E5 activity line', () => {
+	test.use({ viewport: { width: 1400, height: 860 } })
+	const frame = async (page: Page, label: string) => {
+		await page.getByRole('button', { name: label, exact: true }).click()
+		await expect(page.locator('.document-review')).toBeVisible()
+	}
+	test('shows verb, elapsed and tokens only where a source exists', async ({ page }) => {
+		const errors: string[] = []
+		page.on('pageerror', error => errors.push(error.message))
+		await page.goto('/iframe.html?id=views-helm-open-e-send-receipt--e-5-activity-line&viewMode=story')
+		// Visible text plus the screen-reader word: "↓ 16.3k tokens" reads as "16.3k output tokens".
+		const line = page.locator('.act-line .act-text')
+		await expect(line).toHaveText(/Editing… \(2m 5\ds · ↓ 16\.3k output tokens\)/, { timeout: 8000 })
+		await frame(page, 'Working · Codex')
+		await expect(line).toHaveText(/Editing… \(2m 5\ds · ↓ 11\.8k output tokens\)/, { timeout: 8000 })
+		await frame(page, 'Tokens unknown')
+		// Nothing bound: elapsed only, and never a claim that the agent is working.
+		await expect(line).toHaveText(/With Claude Code… \(2m 5\ds\)/, { timeout: 8000 })
+		await expect(line).not.toContainText('tokens')
+		await frame(page, 'Replied')
+		await expect(line).toHaveText(/Worked for 3m \ds · ↓ 16\.3k output tokens/, { timeout: 8000 })
+		await frame(page, 'Not confirmed')
+		await expect(page.getByRole('button', { name: 'I checked the outcome' })).toBeVisible({ timeout: 8000 })
+		await expect(line).toHaveCount(0)
+		expect(errors).toEqual([])
+	})
+})

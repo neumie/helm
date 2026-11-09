@@ -329,12 +329,25 @@ Total extra install size if everything ships: about 3.3 MB of JavaScript plus 3.
 All under Storybook `Views/Helm open/`, real renderers over realistic fixtures (a 3-page platform report PDF, an invoicing workbook with formulas, a 1 800-row CSV export, a failed-form screenshot, a Sentry issue JSON, a plan Markdown, a TypeScript module, a service agreement DOCX).
 
 - **A Window chrome** — three chromes (A1–A3), plus three A1 × A3 hybrids after Jakub asked for "something between A3 and A1" (A4 path then name, A5 name then path, A6 collapsing path) and a long-path comparison; each plain and bound.
-- **B Multiple files** — tabs, a window per file with a go-to-file palette, a file sidebar.
+- **B Multiple files** — tabs, a window per file with a go-to-file palette, a file sidebar, and B4: a window per file and tabs together, after Jakub said "I quite like B2, but it could be B1 too. Both." (see § Windows and tabs).
 - **C Format views** — PDF, spreadsheet (XLSX + CSV), image, JSON, code, documents (Markdown, DOCX).
 - **D Feedback anchors** — PDF text selection, spreadsheet range, image region (plus JSON node and code lines).
-- **E Send receipt** — what the window says right after Send (D14, below): Today plus four variants, each with frames for sending, received, working, replied, not sent, not confirmed and a passage send.
+- **E Send receipt** — what the window says right after Send (D14, below): Today plus four variants, each with frames for sending, received, working, replied, not sent, not confirmed and a passage send; and E5, an activity line in Claude Code's style, after Jakub said "probably neither of them".
 
 Jakub picks A, B and E; C and D are proposals for the per-format behaviour and are expected to be adjusted rather than picked.
+
+### Windows and tabs (D12 note, B4)
+
+macOS native window tabbing does not work for Helm's windows, so "both" means Helm draws its own tabs. Electron 43 (installed) gives a window a native title bar only when `frame` is true **and** `titleBarStyle` stays `'default'` (internally `TitleBarStyle::kNormal`, `shell/browser/native_window.cc`), and it sets `NSWindowTabbingModeDisallowed` on every window without one, and on transparent windows (`native_window_mac.mm`, "Create a tab only if tabbing identifier is specified and window has a native title bar"). The prototype title row assumes `titleBarStyle: 'hidden'`, like the review window (`app/src/document-review/window.ts:740`), so `tabbingIdentifier`, `mergeAllWindows()`, `moveTabToNewWindow()`, the tab menu roles and the user's "Prefer tabs when opening documents" setting all do nothing. Electron declined to change this (electron#10038, closed wontfix 2020); VS Code's `window.nativeTabs` likewise forces the native title bar. Native tabs would cost the custom 40px title row, the agent button in it and `trafficLightPosition` (applied only to frameless windows), and whether a file opens as a tab would depend on a system setting.
+
+B4 (Storybook `Views/Helm open/B Multiple files → B4 Windows and tabs`, frames Windows / Merged into tabs / Window menu / Go to file ⌘⇧O):
+
+- **Files open as windows** (B2) unless Open Files as Tabs is on. Each window is a real macOS window: ⌘\` cycles, Mission Control and the Window menu list it.
+- **Tabs on demand** (B1): Window → Merge All Windows puts every viewer window into one window's tab strip, drawn in the title row; Window → Open Files as Tabs (off by default) makes new files open as tabs of the front window. A tab dragged out of the strip, or Move Tab to New Window, becomes a window again. ⌃⇥ / ⌃⇧⇥ and ⌘1–9 move between tabs.
+- **⌘⇧O over both**: tabs of this window first, then other windows, then recent files; ↵ goes there, ⌘↵ opens in a new window.
+- **Window menu**: `role: 'window'` with Helm's own submenu; both `'window'` and `'windowMenu'` make AppKit list the open windows, and `'windowMenu'` without a submenu also adds Zoom. Helm adds Go to File…, Open Files as Tabs, Show Previous/Next Tab, Move Tab to New Window, Merge All Windows.
+
+Engineering cost if B4 (or B1) is picked: tabs mean one `BaseWindow` with one `WebContentsView` per file, moved between windows on merge/drag-out. Document Review today keys its token, state and IPC check on the window's single `webContents` (`app/src/document-review/window.ts`), so that access check and the per-window state move to per-view keys; a mistake there could let one document's renderer act on another's. (The separate plain-view container with its soft cap of 32, § Behaviour, is needed for every B pick, since `DocumentReviewWindows` refuses a ninth window.) Unverified until a side-by-side build: whether AppKit adds its own tab or full-screen items once the Window menu has `role: 'window'`. D12 stays Jakub's pick.
 
 ## Send receipt (D14, open until Jakub picks)
 
@@ -374,6 +387,33 @@ All four run the real `DocumentReview` send path through an opt-in `sendReceipt`
 | **D Send button** | the Send button itself | "Sending…" → "✓ Delivered 0:12" / "Working 0:12" → back to "Send"; a quiet note above says the agent answers there. |
 
 Shared rules in every variant: "received" means the agent's waiting tool has the text, never that the model read it or edited anything; progress uses the grayscale activity indicator, colour only on the `!` (danger) and `?` (warn) glyphs, never `--success`; a refusal says "Not sent", gives the reason next to the composer instead of the top banner, and the draft stays in the editor; "Not confirmed" keeps today's panel with "I checked the outcome" and replays nothing.
+
+### E5 activity line (Storybook `E Send receipt → E5 Activity line`)
+
+Claude Code's own "✻ Vibing… (2m 57s · ↓ 16.3k tokens)", under the conversation that sent: spinner glyph (the only colour, and only while the caller is seen working; borrowed `--group-orange`, so picking E5 adds a dedicated activity token to the design system), verb, elapsed, output tokens. Frames: Received ("✻ With Claude Code… (2s)") → Working · Claude Code / Codex / Pi ("✻ Editing… (2m 57s · ↓ 16.3k tokens)") → Replied (dim "✻ Worked for 3m 5s · ↓ 16.3k tokens", kept until the next send); Tokens unknown ("✻ With Claude Code… (2m 57s)"); Not sent and Not confirmed unchanged; two live "Try it" frames. The verb is a generic word from the last tool's name (Reading, Searching, Editing, Running a command), "Thinking" while a model request is in flight; never tool input, file names or text.
+
+Where each field would really come from (checked 2026-11-09 against Claude Code 2.1.x and Codex 0.160.1):
+
+| Field | Claude Code caller | Codex caller | Pi caller |
+| --- | --- | --- | --- |
+| Elapsed | Helm's own clock from the ack. Real for every caller today. | same | same |
+| Working | Its transcript `~/.claude/projects/<launch-cwd>/<session>.jsonl`: an `api-request` record (~3.7 s before each response) or a new assistant record after delivery. | Its rollout `~/.codex/sessions/…/rollout-*.jsonl`: `task_started`, `task_complete`, `turn_aborted`. | Already reported (`working`), in process. |
+| Tokens | Sum of `message.usage.output_tokens` over distinct `message.id` since delivery. Moves in steps: each response is written whole when it ends, so a single long response (up to ~2.5 min seen) shows no movement. Counts from your message, not from the turn start like Claude's own spinner, so the numbers differ. | `token_count` events (`output_tokens` minus the value at ack). Steps every ~12 s (p50) to ~38 s (p90). Whether it includes reasoning tokens is unverified. | `AssistantMessage.usage.output` per message end; needs one new optional field on the reply report. |
+| Verb | Last `tool_use` name, mapped to a generic word (hide `mcp__server__` names). | Last function-call name, mapped the same way. | From Pi's tool events. |
+| Binding | `helm edit` sends `CLAUDE_CODE_SESSION_ID` (documented, set for Bash children) as a hint; Helm binds only after a main-thread record **after** the ack contains the exact delivered request id. | `CODEX_THREAD_ID` (set for shell children) must equal the rollout file's UUID and `session_meta.payload.id` (not `session_id`, which subagent threads share), plus the request id in the tool output; later exactly via `CODEX_TOOL_CALL_ID` once Codex ships it. | Not needed. |
+| Update latency | ~1 s Helm poll; the data itself moves per completed response (seconds to minutes). | ~1 s poll; data about every 12 s (p50), 38 s (p90). | Per message end. |
+
+Alternatives weighed: an explicit `helm edit working HANDLE` (cheap, no tokens, but depends on the agent remembering an extra tool call each time, costs a model call); Claude Code hooks (Helm's hook hub covers only Claude in Helm terminals); Okena's Claude API (`busy`, transcript) for callers in Okena panes only; Codex `PostModelRequest` hook (not in installed 0.160.1, same cadence, needs a global config edit). If E5 is picked: transcript/rollout reading would be the main path and `helm edit working` (a proposed command, not built) the fallback.
+
+Blockers and risks, whatever the source:
+
+- **Docs invariant.** Reading provider session files breaks `docs/document-review.md` line 5 ("Helm never launches, resumes, or replaces an agent for review, types into terminals, or reads/writes provider session files") and the AGENTS.md Document Review bullet ("never start/resume another agent, type into a terminal, or read/write provider sessions"); it needs Jakub's explicit yes plus updates to both. Same-user threat model only: any process of the user can append a forged record, so numbers are display-only, never authority.
+- **15-minute deadline.** Today an unconfirmed completion after 15 min clears the pending feedback, so the agent's later real `helm edit reply` is **rejected and lost**. Activity or a working report must extend that deadline first.
+- **Sequence collision.** `helm edit reply` always sends sequence 0; a working report before it would make the final reply collide or be dropped. Sequences must be monotonic across CLI processes.
+- **Provider unknown today.** `helm edit` registers as `cli` ("Agent") unless `--agent` is given, so the window cannot tell Claude Code from Codex. The CLI can pass the existing `--agent` value itself from its env (`CLAUDECODE`, `CODEX_THREAD_ID`); only the new session-hint and token fields need version negotiation (the strict wire rejects unknown fields on older hosts).
+- **Degraded callers.** Subagents, a backgrounded `helm edit` (Claude's Bash timeout defaults to 2 min, max 10 min unless `BASH_MAX_TIMEOUT_MS` is raised, below the one hour `helm edit` asks for), `/clear`, a different `CLAUDE_CONFIG_DIR`, unknown record shapes → no binding → "✻ With Claude Code… (2m 57s)", elapsed only, never "working".
+- **Format drift and size.** Both file formats are undocumented and change between versions. Codex rollouts being plain `.jsonl` while live is unverified on 0.160.1; finished local sessions are `.jsonl.zst` and may move to paginated/SQLite storage; parsers fail closed to the degraded line. Transcripts can be tens of MB: bounded appended reads (the dock's `claude-transcript-tail.ts`), O_NOFOLLOW, own uid, realpath under the provider's root; read only record types, ids, timestamps, counts and tool names.
+- **Codex sandbox.** Sandboxed Codex modes may block the `helm edit` socket connect at all (unverified; Jakub runs full access).
 
 ### What changes once Jakub picks
 
@@ -418,9 +458,9 @@ D1–D11 and D13: Jakub agreed with the recommendations on 2026-11-09; they are 
 | D9 | SheetJS source | vendor tarball pinned with integrity; `exceljs`; npm `xlsx@0.18.5` | **Decided: vendored SheetJS tarball**, pinned with integrity (npm 0.18.5 is stale with known advisories; exceljs lacks XLS/ODS). |
 | D10 | Old-host / not-reloaded-Pi compatibility | negotiate per connection (`hello` then `features`); hard version bump | **Decided: negotiate per connection** (`hello` then `features`), so an old desktop, a Pi process not yet `/reload`ed or Pi from another worktree keep working with prompt-text anchors. |
 | D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Decided: delete** `buildReviewInvocation`/`ReviewJsonLines` in S10. Still open: Plan documents → Review, decided with the task-list future. |
-| D12 | Multi-file model and window chrome | B1/B2/B3, A1–A6 | **Open.** His pick from Storybook; no recommendation. |
+| D12 | Multi-file model and window chrome | B1/B2/B3/B4, A1–A6 | **Open.** His pick from Storybook; no recommendation. On B he said "Both" (B1 + B2): B4 shows that, with Helm's own tabs because native macOS tabs are unavailable (§ Windows and tabs). |
 | D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Decided: workspace only** (S8) for now; widen once he wants it, because it tells the agent where files outside its project live. |
-| D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button (see § Send receipt) | **Open.** His pick from Storybook; no recommendation. |
+| D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button; E5 activity line (see § Send receipt) | **Open.** On A–D he said "probably neither of them" and asked for E5, Claude Code's activity line. His pick from Storybook; no recommendation. |
 
 ## Open questions
 
