@@ -332,8 +332,54 @@ All under Storybook `Views/Helm open/`, real renderers over realistic fixtures (
 - **B Multiple files** — tabs, a window per file with a go-to-file palette, a file sidebar.
 - **C Format views** — PDF, spreadsheet (XLSX + CSV), image, JSON, code, documents (Markdown, DOCX).
 - **D Feedback anchors** — PDF text selection, spreadsheet range, image region (plus JSON node and code lines).
+- **E Send receipt** — what the window says right after Send (D14, below): Today plus four variants, each with frames for sending, received, working, replied, not sent, not confirmed and a passage send.
 
-Jakub picks A and B; C and D are proposals for the per-format behaviour and are expected to be adjusted rather than picked.
+Jakub picks A, B and E; C and D are proposals for the per-format behaviour and are expected to be adjusted rather than picked.
+
+## Send receipt (D14, open until Jakub picks)
+
+Jakub reported that after Send in the review window nothing confirms the feedback went anywhere. This is about the review composer and companion, not the agent dock.
+
+### What happens today
+
+Measured with the real IPC handlers, `ReviewSessions` and a real `helm review` CLI child (Electron mocked, one machine, 2026-11-09):
+
+| Moment | When | What the window shows |
+| --- | --- | --- |
+| Click Send | 0 ms | Draft clears; the button reads "Send…" for about 10 ms. No echo of the message. |
+| Host accepts | median 10 ms (max 23 ms) | Receipt `pending`, session `waiting`, the "You" message is in the transcript. Journal append (with fsync) happens before dispatch. |
+| Agent's tool has it | about 1.5 ms after dispatch | The waiting CLI prints the feedback and acks; receipt becomes `dispatched`. The window learns it on its own refresh or the 80 ms coalesced push. |
+| Waiting for the reply | until the reply | Header "<Agent> · Waiting" and a plain line "Waiting for the connected agent's reply…" in the companion only; a passage bubble shows nothing. |
+| Agent working | Pi only | Pi reports `working` when its follow-up turn starts and streams text. `helm edit` callers (Claude Code, Codex) never report working: `edit reply` refuses `--state working`, so the window says Waiting until the final reply. |
+| Reply | when the agent answers | Assistant message; state idle and listening. `helm edit reply` launch → report applied: 237 ms (dev tsx). |
+
+So the agent has the feedback about 10 ms after the click; the problem is that nothing visible says so. `pending` and `dispatched` are never rendered: the design system (§ Document Review, "Normal pending/dispatched receipts stay internal with no success panel") and `document-review.spec.ts` lock that in.
+
+Failures today:
+
+- **Refused before any effect** (no listener, owner changed, stale revision; 0.03 ms for no listener): the draft goes back into the editor and the reason appears in the top banner, far from the composer. Copy: "The agent is not listening. Ask it to run helm review wait; your feedback was not sent."
+- **No ack within 10 s, or no completion within 15 min**: receipt `unknown`, header "Needs attention", the existing panel with "I checked the outcome"; nothing is replayed.
+- **Transport error in the preload** becomes "Helm could not confirm this operation. Do not automatically resend it." but the renderer treats it like a refusal and puts the draft back as if it was not sent (existing bug, see below).
+
+### Variants (Storybook `Views/Helm open/E Send receipt`)
+
+All four run the real `DocumentReview` send path through an opt-in `sendReceipt` prop (absent in production) against a staged host that replays the timings above. Each story has a frame switcher: Sending, Received · Claude Code, Working · Pi, Replied, Not sent, Not confirmed, Passage, and two live "Try it" frames.
+
+| Variant | Where it speaks | Shape |
+| --- | --- | --- |
+| **Today** | — | Production now, the control. |
+| **A Composer line** | one line right above the box you typed in (companion or passage bubble) | "Sending to Claude Code…" → "✓ Claude Code has it · no progress until it replies · 0:12" → (Pi) "Pi is working · 0:12" → "✓ Replied". |
+| **B Under your message** | the transcript, under your own message | Your text appears at once as a local echo; under it "✓ Delivered · Claude Code replies when it is done · 0:12" or "Pi is working". A refusal strikes the echo through. |
+| **C Header steps** | the conversation header (a compact track above the passage composer) | Sent · Received · Working · Replied, done steps ticked, the awaited one animated. Claude Code's track has no Working step because it never reports one. |
+| **D Send button** | the Send button itself | "Sending…" → "✓ Delivered 0:12" / "Working 0:12" → back to "Send"; a quiet note above says the agent answers there. |
+
+Shared rules in every variant: "received" means the agent's waiting tool has the text, never that the model read it or edited anything; progress uses the grayscale activity indicator, colour only on the `!` (danger) and `?` (warn) glyphs, never `--success`; a refusal says "Not sent", gives the reason next to the composer instead of the top banner, and the draft stays in the editor; "Not confirmed" keeps today's panel with "I checked the outcome" and replays nothing.
+
+### What changes once Jakub picks
+
+- The design-system rule that pending/dispatched stay internal and the `document-review.spec.ts` assertions that no success panel renders are rewritten for the picked variant.
+- The opt-in seam (`send-receipt-view.ts`, the `sendReceipt` slots) either becomes the production path for that one variant or is replaced by a direct implementation; the story-only staged host stays in Storybook.
+- Signals that do not exist yet and would make any variant more truthful: a `working` report from `helm edit` callers (e.g. `helm edit working HANDLE` and reply sequence ≥1), host timestamps on receipts and messages (today the window uses its own clock), and a preload result that tells "not sent" from "outcome unknown".
 
 ## Delivery slices
 
@@ -372,6 +418,7 @@ Proposed order: S1 → S2 → S3 → S4 → S5 → S7 → S6 → S8 → S8b → 
 | D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Delete** in S10. Plan documents → Review: decide with the task-list future. |
 | D12 | Multi-file model and window chrome | B1/B2/B3, A1/A2/A3 | His pick from Storybook; no recommendation. |
 | D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Workspace only in S8**; widen once he wants it, because it tells the agent where files outside its project live. |
+| D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button (see § Send receipt) | **Open.** His pick from Storybook; no recommendation. |
 
 ## Open questions
 
