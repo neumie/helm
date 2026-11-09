@@ -200,6 +200,40 @@ test('observation refresh exposes changes/deletion, preserves last readable byte
 	}
 })
 
+test('observation opens a journal followed by an editor newline and names the reason for a corrupt one', async () => {
+	const f = await fixture()
+	const observation = new ReviewDocumentObservation(f.root, f.file, () => {})
+	try {
+		const body = '# A real document\n'
+		const thread = {
+			id: '11111111-1111-4111-8111-111111111111',
+			instruction: 'Explain',
+			intent: 'discuss',
+			passage: null,
+			fields: [],
+			provider: 'pi',
+			name: 'Conversation',
+			state: 'unconfirmed',
+		}
+		const line = `<!-- helm-review:v1 ${Buffer.from(JSON.stringify({ version: 1, type: 'thread', thread })).toString('base64url')} -->`
+		await writeFile(f.file, `${body}\n${line}\n`)
+		await observation.start()
+		assert.equal(observation.current().error, null)
+		assert.equal(observation.current().text, body)
+		assert.equal(observation.current().archive?.threads.length, 1)
+		await writeFile(f.file, `${body}\n${line}\n<!-- helm-review:v1 e30= -->\n`)
+		await observation.refresh()
+		assert.ok(observation.current().error)
+		assert.match(
+			String((observation.failure as Error).message),
+			/journal at the end of spec\.md cannot be read \(the record on line 4 is not valid base64url\)/,
+		)
+	} finally {
+		await observation.dispose()
+		await f.close()
+	}
+})
+
 test('draft persistence is scope-keyed, bounded and private, and never authorizes a file', async () => {
 	const f = await fixture()
 	try {

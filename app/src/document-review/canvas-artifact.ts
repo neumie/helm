@@ -86,13 +86,32 @@ const entrySchema = z.discriminatedUnion('type', [
 		.strict(),
 	z.object({ version: z.literal(1), type: z.literal('annotations'), annotations }).strict(),
 ])
-const invalid = () =>
-	new Error('The review journal is malformed, inconsistent or exceeds its limits. No content was changed.')
-function validate(value: unknown): CanvasReviewEntry {
+/**
+ * A refused journal: corrupt (`malformed`) or valid but past a cap (`limit`). `reason` is
+ * a fixed phrase plus a line number: never document text or record bytes.
+ */
+export class ReviewJournalError extends Error {
+	override readonly name = 'ReviewJournalError'
+	constructor(
+		readonly reason: string,
+		readonly kind: 'malformed' | 'limit' = 'malformed',
+	) {
+		super(
+			`${kind === 'limit' ? 'The review journal is at its limits' : 'The review journal is malformed'}: ${reason}. No content was changed.`,
+		)
+	}
+}
+const invalid = (reason: string) => new ReviewJournalError(reason)
+const limit = (reason: string) => new ReviewJournalError(reason, 'limit')
+const badRequest = () => new Error('The review save request is invalid. No content was changed.')
+function validate(value: unknown, line?: () => number): CanvasReviewEntry {
+	const at = () => (line ? ` on line ${line()}` : '')
 	const result = entrySchema.safeParse(value)
-	if (!result.success || Buffer.byteLength(JSON.stringify(result.data)) > RECORD_BYTES) throw invalid()
+	if (!result.success) throw invalid(`the record${at()} is not a valid review entry`)
+	if (Buffer.byteLength(JSON.stringify(result.data)) > RECORD_BYTES) throw limit(`the record${at()} exceeds 256 KiB`)
 	return result.data
 }
+const HISTORY = 'its thread history is inconsistent'
 function apply(archive: CanvasReviewArchive, entry: CanvasReviewEntry): void {
 	if (entry.type === 'annotations') {
 		archive.annotations = entry.annotations
@@ -104,23 +123,23 @@ function apply(archive: CanvasReviewArchive, entry: CanvasReviewEntry): void {
 		if (existing) {
 			// The immutable start survives settlement; duplicate starts do not undo it.
 			const start = ({ state: _state, reply: _reply, detail: _detail, ...value }: CanvasReviewThread) => value
-			if (JSON.stringify(start(existing)) !== JSON.stringify(start(entry.thread))) throw invalid()
+			if (JSON.stringify(start(existing)) !== JSON.stringify(start(entry.thread))) throw invalid(HISTORY)
 			if (entry.thread.state !== 'unconfirmed' && JSON.stringify(existing) !== JSON.stringify(entry.thread))
-				throw invalid()
+				throw invalid(HISTORY)
 			return
 		}
-		if (archive.threads.length >= 64) throw invalid()
+		if (archive.threads.length >= 64) throw limit('it would have more than 64 threads')
 		archive.threads.push(entry.thread)
 		return
 	}
-	if (!existing) throw invalid()
+	if (!existing) throw invalid(HISTORY)
 	const settled = {
 		...existing,
 		state: entry.state,
 		reply: entry.reply,
 		detail: entry.detail,
 	}
-	if (existing.state !== 'unconfirmed' && JSON.stringify(existing) !== JSON.stringify(settled)) throw invalid()
+	if (existing.state !== 'unconfirmed' && JSON.stringify(existing) !== JSON.stringify(settled)) throw invalid(HISTORY)
 	Object.assign(existing, settled)
 }
 function delimiters(format: 'markdown' | 'jsx') {
@@ -128,43 +147,80 @@ function delimiters(format: 'markdown' | 'jsx') {
 		? { prefix: '\n<!-- helm-review:v1 ', reserved: '\n<!-- helm-review:', end: ' -->' }
 		: { prefix: '\n/* helm-review:v1 ', reserved: '\n/* helm-review:', end: ' */' }
 }
-function parse(
-	raw: string,
-	format: 'markdown' | 'jsx',
-): { body: string; archive: CanvasReviewArchive; count: number; journalBytes: number } {
-	if (Buffer.byteLength(raw) > FILE_BYTES) throw invalid()
+/** Start of the trailing run of ASCII spaces, tabs, CR and LF (a loop: a regex here backtracks quadratically). */
+function trailingSpace(text: string): number {
+	let index = text.length
+	while (index > 0) {
+		const code = text.charCodeAt(index - 1)
+		if (code !== 32 && code !== 9 && code !== 10 && code !== 13) break
+		index--
+	}
+	return index
+}
+type Parsed = { body: string; archive: CanvasReviewArchive; count: number; journalBytes: number; tail: string }
+function parse(raw: string, format: 'markdown' | 'jsx'): Parsed {
+	if (Buffer.byteLength(raw) > FILE_BYTES) throw limit('the file exceeds 512 KiB')
 	const { prefix, reserved, end } = delimiters(format)
+	const line = (index: number) => raw.slice(0, index).split('\n').length + 1
 	const records: CanvasReviewEntry[] = []
 	let body = raw
+	// Whitespace after the last record. Editors add a final newline (or more) on save,
+	// and may rewrite record separators as CRLF; neither is source nor corruption.
+	let tail = ''
+	let crlf = false
+	// Editor whitespace is not counted against the journal cap, so a full journal still
+	// opens after an editor adds a final newline or rewrites its separators as CRLF.
+	let spaces = 0
 	while (true) {
-		const index = body.lastIndexOf(reserved)
+		const content = body.slice(0, trailingSpace(body))
+		const index = content.lastIndexOf(reserved)
 		if (index < 0) break
-		const suffix = body.slice(index)
+		const suffix = content.slice(index)
 		// A complete marker line followed by ordinary content is source. Only the
 		// reserved trailing syntax is metadata; ambiguous partial tails are refused.
 		const closing = suffix.indexOf(end)
 		if (closing >= 0 && closing + end.length !== suffix.length) {
-			if (suffix.slice(closing + end.length).trim().length === 0) throw invalid()
+			if (suffix.slice(closing + end.length).trim().length === 0)
+				throw invalid(`the helm-review line ${line(index)} is followed by unsupported whitespace`)
 			break
 		}
-		if (!suffix.startsWith(prefix) || !suffix.endsWith(end)) throw invalid()
+		if (!suffix.startsWith(prefix) || !suffix.endsWith(end))
+			throw invalid(`the helm-review line ${line(index)} is incomplete or has an unknown version`)
 		const encoded = suffix.slice(prefix.length, -end.length)
-		if (!/^[A-Za-z0-9_-]+$/.test(encoded) || encoded.length > Math.ceil((RECORD_BYTES * 4) / 3)) throw invalid()
+		if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw invalid(`the record on line ${line(index)} is not valid base64url`)
+		// Unpadded base64url of this length decodes to at most RECORD_BYTES.
+		if (encoded.length > Math.ceil((RECORD_BYTES * 4) / 3))
+			throw limit(`the record on line ${line(index)} exceeds 256 KiB`)
 		const bytes = Buffer.from(encoded, 'base64url')
-		if (bytes.length > RECORD_BYTES || bytes.toString('base64url') !== encoded) throw invalid()
+		if (bytes.toString('base64url') !== encoded)
+			throw invalid(`the record on line ${line(index)} is not valid base64url`)
+		let value: unknown
 		try {
-			records.push(validate(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))))
+			value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
 		} catch {
-			throw invalid()
+			throw invalid(`the record on line ${line(index)} is not valid review JSON`)
 		}
-		if (records.length > RECORD_COUNT) throw invalid()
-		body = body.slice(0, index)
+		records.push(validate(value, () => line(index)))
+		if (records.length > RECORD_COUNT) throw limit('it has more than 1,024 records')
+		const space = body.slice(content.length)
+		if (records.length === 1) tail = space
+		if (space.includes('\r')) crlf = true
+		spaces += space.length
+		body = content.slice(0, index)
 	}
-	const journalBytes = Buffer.byteLength(raw.slice(body.length))
-	if (journalBytes > JOURNAL_BYTES) throw invalid()
+	// Records start with LF. Once the journal shows CRLF rewriting, the CR before the
+	// first record belongs to that separator, so the source revision survives it. An
+	// un-rewritten journal keeps the exact older parse, CR included.
+	if (crlf && body.endsWith('\r')) {
+		body = body.slice(0, -1)
+		spaces++
+	}
+	// Records and their one-LF separators only: what a Helm-written, tail-free journal measures.
+	const journalBytes = Buffer.byteLength(raw.slice(body.length)) - spaces
+	if (journalBytes > JOURNAL_BYTES) throw limit('it exceeds 384 KiB')
 	const archive: CanvasReviewArchive = { version: 1, revision: hash(raw), threads: [], annotations: [] }
 	for (const entry of records.reverse()) apply(archive, entry)
-	return { body, archive, count: records.length, journalBytes }
+	return { body, archive, count: records.length, journalBytes, tail }
 }
 /** Only a contiguous trailing journal is metadata; the exact preceding source is untouched. */
 export function parseReviewArtifact(
@@ -173,6 +229,22 @@ export function parseReviewArtifact(
 ): { body: string; archive: CanvasReviewArchive } {
 	const { body, archive } = parse(raw, format)
 	return { body, archive }
+}
+
+/**
+ * Append-only bytes for new records. Without a tail each record is `\n` + line, so the
+ * file ends at the last record exactly as older desktops require. With a tail (an
+ * editor's final newline, CRLF or blank lines) the records go on after it and the
+ * same tail is repeated, so the file keeps the ending the editor would write anyway.
+ */
+function journalAddition(format: 'markdown' | 'jsx', entries: CanvasReviewEntry[], tail: string): string {
+	if (entries.length === 0) return ''
+	const { prefix, end } = delimiters(format)
+	const lines = entries.map(
+		entry => `${prefix.slice(1)}${Buffer.from(JSON.stringify(entry)).toString('base64url')}${end}`,
+	)
+	if (!tail) return lines.map(value => `\n${value}`).join('')
+	return `${tail.endsWith('\n') ? '' : '\n'}${lines.join(tail.endsWith('\r\n') ? '\r\n' : '\n')}${tail}`
 }
 
 const writers = new Map<string, Promise<void>>()
@@ -247,9 +319,16 @@ export async function appendReviewArtifact(
 		!revision.safeParse(options.expectedSourceRevision).success ||
 		(options.expectedArchiveRevision !== undefined && !revision.safeParse(options.expectedArchiveRevision).success)
 	)
-		throw invalid()
-	if (!Array.isArray(entries) || entries.length > RECORD_COUNT) throw invalid()
-	const captured = entries.map(validate)
+		throw badRequest()
+	if (!Array.isArray(entries)) throw badRequest()
+	if (entries.length > RECORD_COUNT) throw limit('it would have more than 1,024 records')
+	const captured = entries.map(entry => {
+		try {
+			return validate(entry)
+		} catch (error) {
+			throw (error as ReviewJournalError).kind === 'limit' ? error : badRequest()
+		}
+	})
 	const previous = writers.get(file) ?? Promise.resolve()
 	let release: () => void = () => {}
 	const gate = new Promise<void>(resolve => {
@@ -273,16 +352,12 @@ export async function appendReviewArtifact(
 			(options.expectedArchiveRevision !== undefined && hash(initial.raw) !== options.expectedArchiveRevision)
 		)
 			throw new Error('The document or review history changed. Reload before saving.')
-		const { prefix, end } = delimiters(format)
-		const addition = captured
-			.map(entry => `${prefix}${Buffer.from(JSON.stringify(entry)).toString('base64url')}${end}`)
-			.join('')
-		if (
-			parsed.count + captured.length > RECORD_COUNT ||
-			parsed.journalBytes + Buffer.byteLength(addition) > JOURNAL_BYTES ||
-			Buffer.byteLength(initial.raw + addition) > FILE_BYTES
-		)
-			throw invalid()
+		const addition = journalAddition(format, captured, parsed.tail)
+		if (parsed.count + captured.length > RECORD_COUNT) throw limit('it would have more than 1,024 records')
+		// Measured as the tail-free layout, exactly as parse() counts it.
+		if (parsed.journalBytes + Buffer.byteLength(journalAddition(format, captured, '')) > JOURNAL_BYTES)
+			throw limit('it would exceed 384 KiB')
+		if (Buffer.byteLength(initial.raw + addition) > FILE_BYTES) throw limit('the file would exceed 512 KiB')
 		const result = parseReviewArtifact(initial.raw + addition, format)
 		const final = await read(fd, root, file, options)
 		if (!same(initial.stat, final.stat) || final.raw !== initial.raw)
