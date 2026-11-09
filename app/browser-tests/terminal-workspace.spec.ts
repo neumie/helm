@@ -486,6 +486,37 @@ test('terminal shortcut remaps update live and disabled aliases stop writing', a
 		.toEqual(['\u007f'])
 })
 
+test('Shift+Enter writes LF once while Enter and Option+Enter keep xterm encoding', async ({ page }) => {
+	const input = page.locator('.term-holder.active .xterm-helper-textarea')
+	await input.focus()
+	const writes = () => page.evaluate(() => window.__helmWorkspaceFixture?.calls.writes.map(write => write.data))
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Shift+Enter')
+	await expect.poll(writes).toEqual(['\n'])
+	await page.waitForTimeout(50)
+	expect(await writes()).toEqual(['\n'])
+
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Enter')
+	await expect.poll(writes).toEqual(['\r'])
+
+	await page.evaluate(() => window.__helmWorkspaceFixture?.clearWrites())
+	await page.keyboard.press('Alt+Enter')
+	await expect.poll(writes).toEqual(['\u001b\r'])
+
+	// Enter that commits an IME composition stays with the composition.
+	await page.evaluate(() => {
+		window.__helmWorkspaceFixture?.clearWrites()
+		const input = document.querySelector('.term-holder.active .xterm-helper-textarea')
+		if (!(input instanceof HTMLElement)) throw new Error('terminal input unavailable')
+		input.dispatchEvent(
+			new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', shiftKey: true, isComposing: true, bubbles: true }),
+		)
+	})
+	await page.waitForTimeout(50)
+	expect(await writes()).not.toContain('\n')
+})
+
 test('switching terminals never leaves focus inside the holder being hidden', async ({ page }) => {
 	const tabs = page.getByRole('tab')
 	await expect(tabs).toHaveCount(2)
