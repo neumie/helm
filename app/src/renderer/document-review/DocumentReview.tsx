@@ -40,6 +40,8 @@ import {
 	samePassage,
 } from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
+import { deriveSendReceipt } from './send-receipt-view'
+import type { LastSend, SendReceiptSlots } from './send-receipt-view'
 import '../reading-width.css'
 import './document-review.css'
 
@@ -157,7 +159,14 @@ function ChangeReview({ before, after }: { before: string; after: string }) {
 	)
 }
 
-export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
+export function DocumentReview({
+	api,
+	sendReceipt,
+}: {
+	api: ArchiveReviewApi
+	/** Opt-in send receipt slots (story-only design exploration, spec D14). Absent in production. */
+	sendReceipt?: SendReceiptSlots
+}) {
 	const [state, setState] = useState<ArchiveReviewState | null>(null)
 	const archiveFlight = useRef<object | null>(null)
 	const [archiveSaving, setArchiveSaving] = useState(false)
@@ -167,6 +176,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const [saveError, setSaveError] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const [receipt, setReceipt] = useState<ReviewReceipt | null>(null)
+	const [lastSend, setLastSend] = useState<LastSend | null>(null)
+	const receiptMarks = useRef(new Map<string, number>())
 	const [recovery, setRecovery] = useState<string | null>(null)
 	const [candidate, setCandidate] = useState<Candidate | null>(null)
 	const [passage, setPassageState] = useState<ReviewPassage | null>(null)
@@ -836,12 +847,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		let next = highlightPassage(state.document.text, state.document.revision, start, end, quote, 'block')
 		if (next && figure.dataset.canvasId) {
 			const attested = state.document.canvas?.blocks.find(
-				item =>
-					item.id === figure.dataset.canvasId &&
-					item.start === start &&
-					item.end === end,
+				item => item.id === figure.dataset.canvasId && item.start === start && item.end === end,
 			)
-			next = attested && next.start === attested.start && next.end === attested.end ? { ...next, canvasId: attested.id } : null
+			next =
+				attested && next.start === attested.start && next.end === attested.end
+					? { ...next, canvasId: attested.id }
+					: null
 		}
 		try {
 			if (next) validateCurrentPassage(next)
@@ -1234,6 +1245,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			phase: 'sending',
 		}
 		operation.current = pending
+		if (sendReceipt)
+			setLastSend({
+				id: pending.id,
+				text: text.trim(),
+				scope: scoped ? 'passage' : 'whole',
+				at: Date.now(),
+				failed: null,
+			})
 		setBusy(true)
 		setError(null)
 		setReceipt(null)
@@ -1276,6 +1295,10 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				operation.current = null
 				setBusy(false)
 				setError(result.error)
+				if (sendReceipt) {
+					const reason = result.error
+					setLastSend(last => (last?.id === pending.id ? { ...last, failed: reason } : last))
+				}
 				restoreShots()
 				if (scoped && passageEditor.current.token === cleared && currentPassage.current === scope)
 					writePassage(pending.text)
@@ -1616,6 +1639,23 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const activeThreads: PassageThread[] = [...passageThreads.values()]
 		.flat()
 		.filter(thread => samePassage(thread.passage, passage))
+	const receiptView = sendReceipt
+		? deriveSendReceipt({
+				last: lastSend,
+				operation: operation.current,
+				receipt,
+				session: selected,
+				agent: selected ? providerNames[selected.provider] : 'Agent',
+				marks: receiptMarks.current,
+				now: Date.now(),
+			})
+		: null
+	const receiptFor = (scope: 'whole' | 'passage') => (receiptView?.scope === scope ? receiptView : null)
+	const replacedToday = (scope: 'whole' | 'passage') => !!sendReceipt?.replacesToday && !!receiptFor(scope)
+	const receiptSlot = (slot: 'composer' | 'transcript', scope: 'whole' | 'passage') => {
+		const view = receiptFor(scope)
+		return view ? (sendReceipt?.[slot]?.(view) ?? null) : null
+	}
 	const feedback = ((receipt && ['unknown', 'rejected'].includes(receipt.outcome)) || recovery !== null) && (
 		// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner supports keyboard reading.
 		<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
@@ -1749,6 +1789,10 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		const localShots = shots.current[scope]
 		void shotVersion
 		const canSend = !!text.trim() || localShots.length > 0
+		const sendLabel = (scope: 'whole' | 'passage') => {
+			const view = receiptFor(scope)
+			return (view && sendReceipt?.sendLabel?.(view)) ?? 'Send'
+		}
 		const blockedReason = !canSend
 			? null
 			: stale
@@ -1911,7 +1955,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							void send(!!passage)
 						}}
 					>
-						Send
+						{sendLabel(scope)}
 					</Btn>
 				</div>
 			</div>
@@ -2136,7 +2180,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					)}
 				</div>
 			)}
-			{(error || saveError) && (
+			{(error || saveError) && !(sendReceipt?.replacesToday && !saveError && lastSend?.failed === error) && (
 				<div className="review-banner" role="alert">
 					<span>{saveError ?? error}</span>
 					{saveError ? (
@@ -2288,12 +2332,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								if (
 									selection?.anchorNode === started.anchor &&
 									selection.anchorOffset === started.anchorOffset &&
-								selection.focusNode === started.focus &&
-						selection.focusOffset === started.focusOffset
-					) {
-						selectFigure(event.target)
-						return
-					}
+									selection.focusNode === started.focus &&
+									selection.focusOffset === started.focusOffset
+								) {
+									selectFigure(event.target)
+									return
+								}
 								if (selection?.isCollapsed) {
 									selectFigure(event.target)
 									return
@@ -2484,16 +2528,23 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 										providerName={selected ? providerNames[selected.provider] : ''}
 										screenshots={sentShots.current}
 									/>
-									{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
-										<output className="review-working">
-											<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
-											Working…
-										</output>
-									)}
+									{receiptSlot('transcript', 'passage')}
+									{!replacedToday('passage') &&
+										selected?.state === 'working' &&
+										samePassage(operation.current?.passage ?? null, passage) && (
+											<output className="review-working">
+												<ActivityIndicator
+													variant="progress"
+													label={`${providerNames[selected.provider]} is working`}
+												/>
+												Working…
+											</output>
+										)}
 								</div>
 							</section>
 							<div className="review-passage-writing">
 								{feedbackPassage && feedback}
+								{receiptSlot('composer', 'passage')}
 								{composer(passage)}
 							</div>
 						</PassageChat>
@@ -2545,26 +2596,28 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					<header className="review-conversation-header">
 						<div className="review-conversation-title">
 							<h2 title={selected?.name}>{selected?.name ?? 'Conversation'}</h2>
-							<output className="review-meta">
-								{selected ? `${providerNames[selected.provider]} · ` : ''}
-								{!selected
-									? 'Not connected'
-									: selected.state === 'disconnected'
-										? 'Disconnected'
-										: selected.state === 'error' || selected.error || ownerBlocked
-											? 'Needs attention'
-											: selected.state === 'working'
-												? 'Working'
-												: selected.state === 'waiting'
-													? 'Waiting'
-													: selected.state === 'starting'
-														? 'Starting'
-														: selected.busy
-															? 'Busy'
-															: selected.listening
-																? 'Ready'
-																: 'Feedback paused'}
-							</output>
+							{(receiptView && sendReceipt?.header?.(receiptView)) || (
+								<output className="review-meta">
+									{selected ? `${providerNames[selected.provider]} · ` : ''}
+									{!selected
+										? 'Not connected'
+										: selected.state === 'disconnected'
+											? 'Disconnected'
+											: selected.state === 'error' || selected.error || ownerBlocked
+												? 'Needs attention'
+												: selected.state === 'working'
+													? 'Working'
+													: selected.state === 'waiting'
+														? 'Waiting'
+														: selected.state === 'starting'
+															? 'Starting'
+															: selected.busy
+																? 'Busy'
+																: selected.listening
+																	? 'Ready'
+																	: 'Feedback paused'}
+								</output>
+							)}
 						</div>
 					</header>
 					{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Conversation scroll owner needs keyboard access without focusing message text. */}
@@ -2572,13 +2625,16 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						<div className="review-chat-log">
 							<ArchivedConversation document={state.document} session={selected} />
 							<Conversation document={state.document} session={selected} screenshots={sentShots.current} />
-							{selected?.state === 'working' && !operation.current?.passage && (
+							{receiptSlot('transcript', 'whole')}
+							{!replacedToday('whole') && selected?.state === 'working' && !operation.current?.passage && (
 								<output className="review-working">
 									<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
 									Working…
 								</output>
 							)}
-							{selected?.state === 'waiting' && <output>Waiting for the connected agent’s reply…</output>}
+							{!replacedToday('whole') && !replacedToday('passage') && selected?.state === 'waiting' && (
+								<output>Waiting for the connected agent’s reply…</output>
+							)}
 							{selected?.error && (
 								<div className="review-warning" role="alert">
 									<p>{selected.error}</p>
@@ -2598,6 +2654,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					</div>
 					<div className="review-companion-bottom">
 						{(!visibleBubble || !feedbackPassage) && feedback}
+						{receiptSlot('composer', 'whole')}
 						{composer(null)}
 					</div>
 				</section>

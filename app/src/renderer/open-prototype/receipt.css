@@ -1,0 +1,126 @@
+/* Send receipt variants (helm open spec D14). Story-only. Tokens only; color on the glyph, never on the words
+   (design-system: settlement is not --success; progress is the grayscale indicator). */
+.rcpt-line {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 1fr);
+	column-gap: 6px;
+	align-items: start;
+	min-width: 0;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 18px;
+	color: var(--text-1);
+}
+.rcpt-composer {
+	margin: 0 4px 8px;
+}
+.rcpt-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.rcpt-lead {
+	color: var(--text-0);
+}
+.rcpt-rest,
+.rcpt-clock {
+	color: var(--text-2);
+}
+.rcpt-clock {
+	font-variant-numeric: tabular-nums;
+}
+.rcpt-quiet {
+	grid-template-columns: 0 minmax(0, 1fr);
+	column-gap: 0;
+}
+.rcpt-glyph {
+	display: grid;
+	place-items: center;
+	height: 18px;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 1;
+	color: var(--text-1);
+}
+.rcpt-glyph[data-mark="failed"] {
+	color: var(--danger);
+	font-weight: 700;
+}
+.rcpt-glyph[data-mark="unknown"] {
+	color: var(--warn);
+	font-weight: 700;
+}
+.rcpt-line[data-phase="replied"] .rcpt-lead {
+	color: var(--text-1);
+}
+
+/* B — status under your own message; a local echo until the host adds the real one. */
+.review-message:has(+ .rcpt-under) {
+	margin-bottom: 6px;
+}
+.rcpt-under {
+	margin: 0 0 24px;
+}
+.rcpt-echo .rcpt-under {
+	margin: 8px 0 0;
+}
+.rcpt-echo[data-phase="sending"] > div {
+	color: var(--text-1);
+}
+.rcpt-echo[data-phase="not-sent"] > div {
+	color: var(--text-2);
+	text-decoration: line-through;
+	text-decoration-color: var(--text-2);
+}
+
+/* C — step track in the conversation header (compact above the passage composer). */
+.rcpt-steps {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px 10px;
+	min-width: 0;
+	font-size: calc(11px * var(--ui-scale));
+	line-height: 18px;
+	color: var(--text-2);
+}
+.rcpt-steps[data-compact] {
+	margin: 0 4px 8px;
+	font-size: calc(12px * var(--ui-scale));
+}
+.rcpt-steps-failed {
+	font-size: calc(11px * var(--ui-scale));
+}
+.rcpt-step {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.rcpt-step-mark {
+	display: inline-grid;
+	place-items: center;
+	min-width: 10px;
+	height: 18px;
+}
+.rcpt-step[data-state="done"] {
+	color: var(--text-1);
+}
+.rcpt-step[data-state="now"] {
+	color: var(--text-0);
+}
+
+/* D — the Send button's own label. */
+.rcpt-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	white-space: nowrap;
+}
+.rcpt-button .rcpt-clock {
+	color: inherit;
+	opacity: 0.7;
+}
+.rcpt-button-mark {
+	font-size: calc(11px * var(--ui-scale));
+}
+.rcpt-button[data-phase="unconfirmed"] .rcpt-button-mark {
+	color: var(--warn);
+	font-weight: 700;
+}
