@@ -751,11 +751,13 @@ export interface ProfilesApi {
 
 // ---------- Signals (copy of src/signals/contract.ts; type-only, update in the same slice) ----------
 
-export type SignalSource = 'github' | 'mail'
-export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry'
+export type SignalSource = 'github' | 'mail' | 'agent'
+/** Sources a poller reads and reports health for (agent asks are pushed, never polled). */
+export type SignalPollSource = 'github' | 'mail'
+export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry' | 'ask'
 export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
 export type SignalOwner = 'jakub' | 'managed'
-export type SignalRouteHow = 'sent' | 'started'
+export type SignalRouteHow = 'sent' | 'started' | 'replied'
 export type SignalSourceStatus = 'ok' | 'disabled' | 'unavailable' | 'needs_permission' | 'error'
 
 /** One thread from `GET /api/signals` (heads only; title/head are third-party data). */
@@ -786,12 +788,19 @@ export interface SignalThread {
 	routedAgent: string | null
 	routedHow: SignalRouteHow | null
 	routedAt: string | null
+	/** Agent asks only (null/[] otherwise): short body (line breaks kept), http(s) links, the asking Okena terminal. */
+	body: string | null
+	links: string[]
+	askTerminal: string | null
+	/** Agent asks only: Jakub's answer, kept on the thread whether or not it was delivered. */
+	reply: string | null
+	replyAt: string | null
 	createdAt: string
 	updatedAt: string
 }
 
 export interface SignalSourceHealth {
-	source: SignalSource
+	source: SignalPollSource
 	status: SignalSourceStatus
 	detail: string | null
 	lastPollAt: string | null
@@ -849,4 +858,9 @@ export interface SignalUpdate {
 export interface SignalRouted {
 	agent: string
 	how: SignalRouteHow
+}
+
+/** `POST /api/signals/:id/reply` body: Jakub's answer to an agent ask. */
+export interface SignalReply {
+	text: string
 }

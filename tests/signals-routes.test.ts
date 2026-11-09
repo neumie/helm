@@ -8,6 +8,7 @@ import { DB } from '../src/db/client.js'
 import { ProfileStore } from '../src/profiles/store.js'
 import { apiRoutes } from '../src/server/routes/api.js'
 import type {
+	SignalAskResult,
 	SignalEventsPage,
 	SignalFilteredPage,
 	SignalIncludeResult,
@@ -17,6 +18,7 @@ import type {
 	SignalsSnapshot,
 } from '../src/signals/contract.js'
 import { type IncludeSender, IncludeSenderError } from '../src/signals/include-sender.js'
+import { SIGNAL_OPEN_ASKS_MAX } from '../src/signals/store.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
 
@@ -384,4 +386,128 @@ test('include errors: a refused address is 400, a failed write 500, no writer 50
 		},
 		{ includeSender: null },
 	)
+})
+
+test('agent asks: add, upsert by key, read by key, reply and done by id or key', async () => {
+	await withSignalsApi(async ({ request, post, db, clock }) => {
+		const ask = {
+			key: 'dispatcher:pick',
+			title: 'Pick a variant',
+			body: 'A or B?',
+			links: ['https://storybook.test/?path=/story/a'],
+			from: 'dispatcher',
+			terminal: '01234567-89ab-4def-8123-456789abcdef',
+		}
+		const created = await data<SignalAskResult>(await post('/signals/asks', ask))
+		assert.equal(created.outcome, 'created')
+		assert.equal(created.thread.source, 'agent')
+		assert.equal(created.thread.askTerminal, ask.terminal)
+		const id = created.thread.id
+		assert.equal((await data<SignalAskResult>(await post('/signals/asks', ask))).outcome, 'unchanged')
+		clock.now = new Date('2026-11-05T10:05:00.000Z')
+		const renewed = await data<SignalAskResult>(await post('/signals/asks', { ...ask, body: 'A, B or C?' }))
+		assert.equal(renewed.outcome, 'renewed')
+		assert.equal(renewed.thread.id, id)
+		const unkeyed = await data<SignalAskResult>(await post('/signals/asks', { title: 'Approve?' }))
+		assert.equal(unkeyed.outcome, 'created')
+		assert.notEqual(unkeyed.thread.id, id)
+
+		assert.equal((await data<SignalThread>(await request('/signals/asks?key=dispatcher:pick'))).id, id)
+		const missing = await request('/signals/asks?key=nope')
+		assert.equal(missing.status, 404)
+		assert.deepEqual(await missing.json(), { error: 'Signal not found' })
+		assert.equal((await request('/signals/asks?key=bad%20key')).status, 400)
+		assert.equal((await request('/signals/asks')).status, 400)
+
+		// The snapshot lists asks; health stays poll sources only.
+		const snapshot = await data<SignalsSnapshot>(await request('/signals?source=agent'))
+		assert.equal(snapshot.threads.length, 2)
+		assert.deepEqual(
+			snapshot.sources.map(source => source.source),
+			['github', 'mail'],
+		)
+
+		const replied = await data<SignalThread>(await post(`/signals/${id}/reply`, { text: 'Variant B' }))
+		assert.equal(replied.reply, 'Variant B')
+		assert.equal(replied.state, 'seen')
+		const routed = await data<SignalThread>(
+			await post(`/signals/${id}/routed`, { agent: 'dispatcher', how: 'replied' }),
+		)
+		assert.equal(routed.routedHow, 'replied')
+
+		const done = await data<SignalThread>(await post(`/signals/${id}/done`, {}))
+		assert.equal(done.state, 'done')
+		assert.equal(done.closedReason, 'closed by the agent')
+		const byKey = await data<SignalThread>(
+			await post('/signals/asks/done', { key: 'dispatcher:pick', note: 'Went with B' }),
+		)
+		assert.equal(byKey.id, id)
+		assert.equal(byKey.note, 'Went with B')
+		const noted = await data<SignalThread>(await post(`/signals/${unkeyed.thread.id}/done`, { note: 'Approved' }))
+		assert.equal(noted.state, 'done')
+		assert.equal(noted.note, 'Approved')
+		assert.equal(db.signals.get(unkeyed.thread.id)?.state, 'done')
+	})
+})
+
+test('a new agent ask beyond the open cap is refused with 429; its key can still be renewed', async () => {
+	await withSignalsApi(async ({ post, db }) => {
+		for (let n = 0; n < SIGNAL_OPEN_ASKS_MAX; n++) db.signals.upsertAsk({ key: `ask-${n}`, title: `Ask ${n}` }, NOW)
+		const refused = await post('/signals/asks', { title: 'One too many' })
+		assert.equal(refused.status, 429)
+		assert.deepEqual(await refused.json(), {
+			error: 'Too many open agent asks (50). Close some with helm signal done.',
+		})
+		assert.equal(db.signals.list({ source: 'agent' }, NOW).length, SIGNAL_OPEN_ASKS_MAX, 'nothing was stored')
+		const renewed = await data<SignalAskResult>(await post('/signals/asks', { key: 'ask-0', title: 'Ask 0, again' }))
+		assert.equal(renewed.outcome, 'renewed')
+		await data<SignalThread>(await post('/signals/asks/done', { key: 'ask-1' }))
+		assert.equal((await data<SignalAskResult>(await post('/signals/asks', { title: 'Fits' }))).outcome, 'created')
+	})
+})
+
+test('agent ask routes validate their bodies and map errors', async () => {
+	await withSignalsApi(async ({ post, db }) => {
+		seed(db, [1])
+		const prId = db.signals.list({}, NOW)[0]?.id ?? 0
+		const bad = async (path: string, body: unknown, status = 400) =>
+			assert.equal((await post(path, body)).status, status, `${path} ${JSON.stringify(body)}`)
+
+		await bad('/signals/asks', {})
+		await bad('/signals/asks', { title: '' })
+		await bad('/signals/asks', { title: 'two\nlines' })
+		await bad('/signals/asks', { title: 'x'.repeat(201) })
+		await bad('/signals/asks', { title: 'T', body: 'b'.repeat(1001) })
+		await bad('/signals/asks', { title: 'T', links: ['javascript:alert(1)'] })
+		for (const link of ['https://evil.com\\.github.com/x', 'http:evil.com', 'https:/\\evil.com'])
+			await bad('/signals/asks', { title: 'T', links: [link] })
+		await bad('/signals/asks', { title: 'T', links: Array.from({ length: 9 }, (_, n) => `https://ok.test/${n}`) })
+		await bad('/signals/asks', { title: 'T', key: 'has space' })
+		await bad('/signals/asks', { title: 'T', terminal: 'pane-1' })
+		await bad('/signals/asks', { title: 'T', extra: true })
+		await bad('/signals/asks', '{not json')
+		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(20_000) }, 413)
+		assert.equal(db.signals.list({ source: 'agent' }, NOW).length, 0, 'nothing was stored')
+
+		await bad('/signals/asks/done', {})
+		await bad('/signals/asks/done', { key: 'nope' }, 404)
+		await bad('/signals/asks/done', { key: 'k', note: '' })
+		await bad('/signals/abc/done', {})
+		await bad('/signals/9999/done', {}, 404)
+		await bad(`/signals/${prId}/done`, { note: 'x'.repeat(301) })
+		await bad(`/signals/${prId}/done`, { reason: 'x' })
+
+		const ask = db.signals.upsertAsk({ title: 'Q' }, NOW).thread
+		await bad(`/signals/${ask.id}/reply`, {})
+		await bad(`/signals/${ask.id}/reply`, { text: '   ' })
+		await bad(`/signals/${ask.id}/reply`, { text: 'x'.repeat(2001) })
+		await bad(`/signals/${ask.id}/reply`, { text: '\u0007' })
+		await bad('/signals/9999/reply', { text: 'hi' }, 404)
+		await bad('/signals/0/reply', { text: 'hi' })
+		const notAsk = await post(`/signals/${prId}/reply`, { text: 'hi' })
+		assert.equal(notAsk.status, 400)
+		assert.deepEqual(await notAsk.json(), { error: 'Only agent asks take a reply' })
+		// A GitHub thread can still be closed with done.
+		assert.equal((await data<SignalThread>(await post(`/signals/${prId}/done`, {}))).closedReason, null)
+	})
 })

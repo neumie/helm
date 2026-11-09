@@ -1,18 +1,28 @@
 // Signals wire contract: what the world wants from Jakub (GitHub review requests, comments and
-// failed CI on his PRs, mentions; Apple Mail incl. Sentry alerts), one row per thread.
+// failed CI on his PRs, mentions; Apple Mail incl. Sentry alerts; asks local agents file with
+// `helm signal add`), one row per thread.
 //
 // Shared by the daemon (store, pollers, routes) and the `helm signal` CLI. The desktop app keeps
 // a copied, type-only mirror in app/src/shared-helm.ts (tests/contracts/maintenance.ts checks it).
-// Heads only: a thread never carries a PR/mail body, only bounded one-line heads.
+// Heads only: a thread never carries a PR/mail body, only bounded one-line heads. An agent ask is
+// the one exception: its short, bounded body and links are written by a local agent (still shown
+// as untrusted text, links as text, opened only on an explicit key press).
 
 import { z } from 'zod'
 
-/** Where a thread comes from. Sentry alerts arrive as mail. */
-export const SIGNAL_SOURCES = ['github', 'mail'] as const
+/** Where a thread comes from. Sentry alerts arrive as mail; `agent` = an ask a local agent filed. */
+export const SIGNAL_SOURCES = ['github', 'mail', 'agent'] as const
 export type SignalSource = (typeof SIGNAL_SOURCES)[number]
 
+/**
+ * Sources a poller reads (and reports health for). Agent asks are pushed through
+ * `helm signal add`: never polled, never closed by a poll, no health row.
+ */
+export const SIGNAL_POLL_SOURCES = ['github', 'mail'] as const
+export type SignalPollSource = (typeof SIGNAL_POLL_SOURCES)[number]
+
 /** Why the thread wants Jakub; decides the glyph. A GitHub thread can carry several reasons. */
-export const SIGNAL_KINDS = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry'] as const
+export const SIGNAL_KINDS = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry', 'ask'] as const
 export type SignalKind = (typeof SIGNAL_KINDS)[number]
 
 /** new = unseen foreign activity, seen = looked at, snoozed = until a time, done = handled. */
@@ -23,8 +33,11 @@ export type SignalState = (typeof SIGNAL_STATES)[number]
 export const SIGNAL_OWNERS = ['jakub', 'managed'] as const
 export type SignalOwner = (typeof SIGNAL_OWNERS)[number]
 
-/** How a thread was last routed from the Signals column. */
-export const SIGNAL_ROUTES = ['sent', 'started'] as const
+/**
+ * How a thread was last routed from the Signals column: `sent` to a running agent, `started` a new
+ * one, `replied` = Jakub's answer to an agent ask was typed into the asking agent's terminal.
+ */
+export const SIGNAL_ROUTES = ['sent', 'started', 'replied'] as const
 export type SignalRouteHow = (typeof SIGNAL_ROUTES)[number]
 
 /** Bounds (UTF-16 code units) applied by the store before anything is persisted or served. */
@@ -42,20 +55,71 @@ export const SIGNAL_LIMITS = {
 	detail: 300,
 	activityKey: 512,
 	threadKey: 512,
+	/** Agent asks: one-line title, short body (line breaks kept), links, the caller's key. */
+	askTitle: 200,
+	askBody: 1000,
+	askBodyLines: 12,
+	askLinks: 8,
+	askKey: 200,
+	/** Jakub's answer to an agent ask (line breaks kept). */
+	reply: 2000,
 } as const
+
+/** `--key` of `helm signal add`: the caller's idempotency key (thread key `agent:<key>`). */
+export const SIGNAL_ASK_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]{0,199}$/
+
+/** An Okena terminal id (`$OKENA_TERMINAL_ID`), the only delivery target of a reply. */
+export const SIGNAL_TERMINAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Bidi overrides/isolates and marks: they could reorder text where it is shown. */
+const LINK_BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/
+
+/** A link's literal start: the scheme and both slashes, as written (the URL parser would repair `http:x`). */
+const LINK_PREFIX = /^https?:\/\//i
+
+/**
+ * An agent ask's link as stored and opened: absolute http(s), no credentials, no whitespace,
+ * controls, bidi or backslash, at most `SIGNAL_LIMITS.url` units. The text shown must be what
+ * opens: it starts with a literal `http://`/`https://` and its authority as written is the host
+ * the URL parser sees (the parser treats `\` as `/` and repairs a missing `//`, so
+ * `https://evil.com\.github.com/` would open evil.com). Anything else is refused (null), never
+ * repaired. The one rule for the CLI, the store and main's opener.
+ */
+export function signalAskLinkUrl(value: unknown): string | null {
+	if (typeof value !== 'string' || value.length === 0 || value.length > SIGNAL_LIMITS.url) return null
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: a link with controls or spaces is refused
+	if (/[\s\u0000-\u001f\u007f-\u009f\\]/.test(value) || LINK_BIDI.test(value)) return null
+	const prefix = LINK_PREFIX.exec(value)
+	if (!prefix) return null
+	let url: URL
+	try {
+		url = new URL(value)
+	} catch {
+		return null
+	}
+	if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+	if (url.username !== '' || url.password !== '' || url.hostname === '') return null
+	const authority = value.slice(prefix[0].length).split(/[/?#]/, 1)[0] ?? ''
+	// The parser drops a default port (`https://github.com:443` has host `github.com`).
+	const defaultPort = url.protocol === 'https:' ? ':443' : ':80'
+	const written = authority.toLowerCase()
+	const host = url.host.toLowerCase()
+	if (written !== host && !(url.port === '' && written === `${host}${defaultPort}`)) return null
+	return value
+}
 
 /** One thread, as served by `GET /api/signals` and printed by `helm signal`. */
 export interface SignalThread {
 	/** Short numeric id, unique per daemon DB (the CLI accepts `12` or `#12`). */
 	id: number
-	/** Dedupe key: `github:owner/repo#12`, `mail:<hash>`, `sentry:<SHORT-ID>`. */
+	/** Dedupe key: `github:owner/repo#12`, `mail:<hash>`, `sentry:<SHORT-ID>`, `agent:<key or uuid>`. */
 	threadKey: string
 	source: SignalSource
 	/** Primary kind (glyph). */
 	kind: SignalKind
 	/** Every reason the source currently reports for this thread (e.g. review + mention). */
 	reasons: SignalKind[]
-	/** Short reference: `okena#311`, `PSYON-ADMIN-3F2`, `Psyon`. */
+	/** Short reference: `okena#311`, `PSYON-ADMIN-3F2`, `Psyon`; an agent ask's `from` label. */
 	ref: string
 	/** Full reference for tooltips: `contember/okena#311`, `Klára D. <klara@psyon.cz>`. */
 	fullRef: string
@@ -90,6 +154,18 @@ export interface SignalThread {
 	routedAgent: string | null
 	routedHow: SignalRouteHow | null
 	routedAt: string | null
+	/**
+	 * Agent asks only (null for GitHub/Mail): the ask's short body, line breaks kept, bounded by
+	 * `askBody`/`askBodyLines`. Written by a local agent; shown as plain untrusted text.
+	 */
+	body: string | null
+	/** Agent asks only ([] otherwise): http(s) links (Storybook stories, PRs), see `signalAskLinkUrl`. */
+	links: string[]
+	/** Agent asks only: the asking agent's Okena terminal id, where Jakub's reply is delivered. */
+	askTerminal: string | null
+	/** Agent asks only: Jakub's answer (kept on the thread whether or not it was delivered) and when. */
+	reply: string | null
+	replyAt: string | null
 	createdAt: string
 	updatedAt: string
 }
@@ -99,7 +175,7 @@ export const SIGNAL_SOURCE_STATUSES = ['ok', 'disabled', 'unavailable', 'needs_p
 export type SignalSourceStatus = (typeof SIGNAL_SOURCE_STATUSES)[number]
 
 export interface SignalSourceHealth {
-	source: SignalSource
+	source: SignalPollSource
 	status: SignalSourceStatus
 	/** Plain-language reason for anything but ok (`Mail is not running`, `gh: not logged in`). */
 	detail: string | null
@@ -174,7 +250,8 @@ export interface SignalIncludeResult {
 }
 
 /** One append-only change, streamed by `GET /api/signals/events` and `helm signal watch`. */
-export const SIGNAL_EVENT_TYPES = ['created', 'activity', 'state', 'owner', 'note', 'routed', 'gone'] as const
+/** `reply` = Jakub answered an agent ask (the detail never carries the answer; read it with `show`). */
+export const SIGNAL_EVENT_TYPES = ['created', 'activity', 'state', 'owner', 'note', 'routed', 'gone', 'reply'] as const
 export type SignalEventType = (typeof SIGNAL_EVENT_TYPES)[number]
 
 export interface SignalEvent {
@@ -219,6 +296,67 @@ export const signalRoutedSchema = z
 	.strict()
 export type SignalRouted = z.infer<typeof signalRoutedSchema>
 
+// ---------- agent asks ----------
+
+/**
+ * `POST /api/signals/asks` (`helm signal add`): create an ask, or with `key` upsert the thread
+ * `agent:<key>`. A changed title or body makes it new again (and clears an earlier reply); other
+ * changes (links, from, terminal) refresh it in place; identical input changes nothing.
+ */
+export const signalAskSchema = z
+	.object({
+		key: z.string().regex(SIGNAL_ASK_KEY, 'Key: letters, digits and . _ : / # @ + - (at most 200)').optional(),
+		title: z
+			.string()
+			.trim()
+			.min(1)
+			.max(SIGNAL_LIMITS.askTitle)
+			.refine(title => !/[\r\n]/.test(title), 'The title is one line'),
+		body: z.string().max(SIGNAL_LIMITS.askBody).optional(),
+		links: z
+			.array(
+				z
+					.string()
+					.max(SIGNAL_LIMITS.url)
+					.refine(link => signalAskLinkUrl(link) !== null, 'Links are absolute http(s) URLs without credentials'),
+			)
+			.max(SIGNAL_LIMITS.askLinks)
+			.optional(),
+		/** Who asks, shown as the row's label (default `agent`). */
+		from: z.string().trim().min(1).max(SIGNAL_LIMITS.actor).optional(),
+		/** The asking agent's `$OKENA_TERMINAL_ID`. */
+		terminal: z.string().regex(SIGNAL_TERMINAL_ID).optional(),
+	})
+	.strict()
+export type SignalAsk = z.infer<typeof signalAskSchema>
+
+/** What an upsert did: a new thread, new again (title/body changed), refreshed in place, nothing. */
+export const SIGNAL_ASK_OUTCOMES = ['created', 'renewed', 'updated', 'unchanged'] as const
+export type SignalAskOutcome = (typeof SIGNAL_ASK_OUTCOMES)[number]
+
+/** `POST /api/signals/asks` response `data`. */
+export interface SignalAskResult {
+	outcome: SignalAskOutcome
+	thread: SignalThread
+}
+
+/** `POST /api/signals/:id/done` (`helm signal done ID`): close a thread, optionally with an outcome line. */
+export const signalDoneSchema = z.object({ note: z.string().trim().min(1).max(SIGNAL_LIMITS.note).optional() }).strict()
+export type SignalDone = z.infer<typeof signalDoneSchema>
+
+/** `POST /api/signals/asks/done` (`helm signal done --key KEY`): the same, by the ask's key. */
+export const signalAskDoneSchema = z
+	.object({
+		key: z.string().regex(SIGNAL_ASK_KEY),
+		note: z.string().trim().min(1).max(SIGNAL_LIMITS.note).optional(),
+	})
+	.strict()
+export type SignalAskDone = z.infer<typeof signalAskDoneSchema>
+
+/** `POST /api/signals/:id/reply`: Jakub's answer to an agent ask (agent threads only). */
+export const signalReplySchema = z.object({ text: z.string().trim().min(1).max(SIGNAL_LIMITS.reply) }).strict()
+export type SignalReply = z.infer<typeof signalReplySchema>
+
 // ---------- source → store observation (daemon internal) ----------
 
 /**
@@ -227,7 +365,7 @@ export type SignalRouted = z.infer<typeof signalRoutedSchema>
  */
 export interface SignalObservation {
 	threadKey: string
-	source: SignalSource
+	source: SignalPollSource
 	kind: SignalKind
 	reasons: SignalKind[]
 	ref: string
@@ -250,7 +388,7 @@ export interface SignalObservation {
  * store only upserts and never closes anything.
  */
 export interface SignalPollResult {
-	source: SignalSource
+	source: SignalPollSource
 	observations: SignalObservation[]
 	complete: boolean
 	/** Why a missing thread left the source, per source (`no longer requested`, `read in Mail`). */

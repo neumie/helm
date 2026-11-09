@@ -1106,4 +1106,68 @@ CREATE TABLE IF NOT EXISTS item_okena_terminals (
 CREATE INDEX IF NOT EXISTS idx_item_okena_terminals_terminal ON item_okena_terminals(profile_id, terminal_id);
 `,
 	},
+	{
+		// Agent asks (`helm signal add`): a third source, `agent`, and the columns only an ask uses
+		// (short body, links JSON, the asking Okena terminal, Jakub's reply). It does not touch the
+		// signal_filtered table (39) or item_okena_terminals (40). Every row keeps its id
+		// (events still point at it) and the AUTOINCREMENT high-water mark carries over, so ids never go
+		// back. FK enforcement is off for the rebuild in case a later table references signal_threads.
+		version: 41,
+		disableForeignKeys: true,
+		sql: `
+CREATE TABLE signal_threads_v41 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_key TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('github','mail','agent')),
+  kind TEXT NOT NULL,
+  reasons TEXT NOT NULL DEFAULT '[]',
+  ref TEXT NOT NULL,
+  full_ref TEXT NOT NULL,
+  title TEXT NOT NULL,
+  head TEXT NOT NULL,
+  actor TEXT,
+  url TEXT,
+  repo TEXT,
+  number INTEGER,
+  branch TEXT,
+  state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','seen','snoozed','done')),
+  owner TEXT NOT NULL DEFAULT 'jakub' CHECK (owner IN ('jakub','managed')),
+  snoozed_until TEXT,
+  activity_key TEXT NOT NULL,
+  last_activity_at TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  missed_polls INTEGER NOT NULL DEFAULT 0,
+  closed_reason TEXT,
+  note TEXT,
+  note_at TEXT,
+  managed_by TEXT,
+  routed_agent TEXT,
+  routed_how TEXT,
+  routed_at TEXT,
+  body TEXT,
+  links TEXT NOT NULL DEFAULT '[]',
+  ask_terminal TEXT,
+  reply TEXT,
+  reply_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO signal_threads_v41 (
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, created_at, updated_at
+)
+SELECT
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, created_at, updated_at
+FROM signal_threads;
+DELETE FROM sqlite_sequence WHERE name = 'signal_threads_v41';
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'signal_threads_v41', seq FROM sqlite_sequence WHERE name = 'signal_threads';
+DROP TABLE signal_threads;
+ALTER TABLE signal_threads_v41 RENAME TO signal_threads;
+CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at);
+`,
+	},
 ]

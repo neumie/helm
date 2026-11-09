@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { type HelmConfig, configSchema } from '../src/config.js'
 import { DB } from '../src/db/client.js'
-import type { SignalObservation, SignalPollResult, SignalSource } from '../src/signals/contract.js'
+import type { SignalObservation, SignalPollResult, SignalPollSource } from '../src/signals/contract.js'
 import { type SignalReader, SignalsWatcher } from '../src/signals/watcher.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
@@ -31,7 +31,7 @@ function withDb(run: (db: DB) => Promise<void>) {
 	}
 }
 
-function observation(source: SignalSource, key: string): SignalObservation {
+function observation(source: SignalPollSource, key: string): SignalObservation {
 	return {
 		threadKey: key,
 		source,
@@ -51,12 +51,12 @@ function observation(source: SignalSource, key: string): SignalObservation {
 	}
 }
 
-function result(source: SignalSource, keys: string[], complete = true): SignalPollResult {
+function result(source: SignalPollSource, keys: string[], complete = true): SignalPollResult {
 	return { source, observations: keys.map(key => observation(source, key)), complete, goneReason: 'gone' }
 }
 
 /** A reader whose reads wait until released; records every call and its abort signal. */
-function gatedReader(source: SignalSource, keys: string[]) {
+function gatedReader(source: SignalPollSource, keys: string[]) {
 	const calls: AbortSignal[] = []
 	let release: (() => void) | null = null
 	const reader: SignalReader = {
@@ -80,7 +80,7 @@ function gatedReader(source: SignalSource, keys: string[]) {
 }
 
 function instantReader(
-	source: SignalSource,
+	source: SignalPollSource,
 	keys: string[],
 	health: { status: 'ok' | 'error' | 'needs_permission' | 'unavailable'; detail: string | null } = {
 		status: 'ok',
@@ -302,5 +302,33 @@ test(
 			} catch {}
 			await stopping
 		}
+	}),
+)
+
+test(
+	'complete polls of both sources leave agent asks alone and report no agent health',
+	withDb(async db => {
+		const ask = db.signals.upsertAsk({ key: 'stays', title: 'Pick a variant' }, NOW).thread
+		const github = instantReader('github', [])
+		const mail = instantReader('mail', [])
+		const watcher = new SignalsWatcher(config({ mail: { enabled: true } }), db, {
+			github: github.reader,
+			mail: mail.reader,
+			now: () => NOW,
+		})
+		for (let n = 0; n < 3; n += 1) await watcher.pollOnce()
+		assert.equal(github.calls(), 3)
+		assert.equal(mail.calls(), 3)
+		const after = db.signals.get(ask.id)
+		assert.equal(after?.state, 'new')
+		assert.equal(after?.active, true)
+		const health = watcher.health(db.signals.sources())
+		assert.deepEqual(
+			health.map(entry => [entry.source, entry.status]),
+			[
+				['github', 'ok'],
+				['mail', 'ok'],
+			],
+		)
 	}),
 )

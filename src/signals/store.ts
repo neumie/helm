@@ -1,20 +1,28 @@
 // Global Signals persistence: one row per external thread, an append-only change log
-// and per-source poll health. Every value a poller hands in is untrusted third-party text:
-// it is control/bidi stripped and bounded here, before anything is persisted or served.
+// and per-source poll health. Every value a poller (or an agent filing an ask) hands in is
+// untrusted text: it is control/bidi stripped and bounded here, before anything is persisted
+// or served.
 
+import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import { oneLine } from '../agent-dock/text.js'
+import { boundText, oneLine } from '../agent-dock/text.js'
 import {
+	SIGNAL_ASK_KEY,
 	SIGNAL_EVENT_TYPES,
 	SIGNAL_FILTERED_RETENTION_DAYS,
 	SIGNAL_FILTER_REASONS,
 	SIGNAL_KINDS,
 	SIGNAL_LIMITS,
 	SIGNAL_OWNERS,
+	SIGNAL_POLL_SOURCES,
 	SIGNAL_ROUTES,
 	SIGNAL_SOURCES,
 	SIGNAL_SOURCE_STATUSES,
 	SIGNAL_STATES,
+	SIGNAL_TERMINAL_ID,
+	type SignalAsk,
+	type SignalAskOutcome,
+	type SignalAskResult,
 	type SignalEvent,
 	type SignalEventType,
 	type SignalFilteredEntry,
@@ -24,6 +32,7 @@ import {
 	type SignalObservation,
 	type SignalOwner,
 	type SignalPollResult,
+	type SignalPollSource,
 	type SignalRouteHow,
 	type SignalSource,
 	type SignalSourceHealth,
@@ -31,6 +40,7 @@ import {
 	type SignalState,
 	type SignalThread,
 	type SignalUpdate,
+	signalAskLinkUrl,
 } from './contract.js'
 
 /** Newest events kept; older ones are pruned after each write. */
@@ -48,6 +58,15 @@ export const SIGNAL_FILTERED_LIST_CAP = 300
 
 /** Consecutive complete polls a thread may be missing from before it counts as gone. */
 export const SIGNAL_GONE_AFTER_MISSES = 2
+/** Lines kept of Jakub's reply to an ask (the unit bound is `SIGNAL_LIMITS.reply`). */
+export const SIGNAL_REPLY_LINES = 40
+/** `closed_reason` of an ask the agent closed with `helm signal done`. */
+export const SIGNAL_ASK_CLOSED_REASON = 'closed by the agent'
+/**
+ * Open (not done) agent asks at most. A new one beyond this is refused so asks can never push
+ * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot; renewing a key always works.
+ */
+export const SIGNAL_OPEN_ASKS_MAX = 50
 
 export class SignalNotFoundError extends Error {
 	constructor(id: number) {
@@ -60,6 +79,14 @@ export class SignalInvalidError extends Error {
 	constructor(message: string) {
 		super(message)
 		this.name = 'SignalInvalidError'
+	}
+}
+
+/** A write refused because a bound is full (the route answers 429). */
+export class SignalLimitError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'SignalLimitError'
 	}
 }
 
@@ -106,6 +133,11 @@ interface ThreadRow {
 	routed_agent: string | null
 	routed_how: string | null
 	routed_at: string | null
+	body: string | null
+	links: string
+	ask_terminal: string | null
+	reply: string | null
+	reply_at: string | null
 	created_at: string
 	updated_at: string
 }
@@ -172,6 +204,93 @@ function cleanUrl(value: string | null | undefined): string | null {
 	}
 }
 
+/**
+ * Multi-line untrusted text (an ask's body, Jakub's reply): line breaks kept, every other control
+ * and bidi stripped, trailing spaces and runs of blank lines dropped, at most `maxLines` lines and
+ * `max` units (clipped with an ellipsis). Null when nothing is left.
+ */
+function cleanMultiline(value: unknown, max: number, maxLines: number): string | null {
+	if (typeof value !== 'string') return null
+	const lines = value
+		.replace(BIDI, '')
+		.replace(/\r\n|[\r\u2028\u2029]/g, '\n')
+		.replace(/\t/g, ' ')
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping controls is the point
+		.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '')
+		.split('\n')
+		.map(line => line.trimEnd())
+	const kept: string[] = []
+	for (const line of lines) {
+		if (line === '' && (kept.length === 0 || kept.at(-1) === '')) continue
+		kept.push(line)
+	}
+	while (kept.at(-1) === '') kept.pop()
+	if (kept.length > maxLines) {
+		kept.length = maxLines
+		kept[maxLines - 1] = `${kept[maxLines - 1]}…`
+	}
+	const text = boundText(kept.join('\n'), max).trim()
+	return text === '' ? null : text
+}
+
+/** Stored links JSON → the links that still pass the one link rule; bad JSON reads as none. */
+function parseLinks(raw: string | null): string[] {
+	if (raw === null) return []
+	try {
+		const parsed: unknown = JSON.parse(raw)
+		if (!Array.isArray(parsed)) return []
+		return parsed.flatMap(link => {
+			const url = signalAskLinkUrl(link)
+			return url === null ? [] : [url]
+		})
+	} catch {
+		return []
+	}
+}
+
+/** An ask as it would be stored, every field cleaned; title is never empty. */
+interface CleanAsk {
+	threadKey: string
+	title: string
+	body: string | null
+	links: string[]
+	from: string
+	terminal: string | null
+}
+
+function cleanAsk(input: SignalAsk): CleanAsk {
+	if (input.key !== undefined && (typeof input.key !== 'string' || !SIGNAL_ASK_KEY.test(input.key))) {
+		throw new SignalInvalidError('Invalid ask key')
+	}
+	const title = clean(String(input.title ?? ''), SIGNAL_LIMITS.askTitle)
+	if (title === '') throw new SignalInvalidError('An ask needs a title')
+	const links: string[] = []
+	for (const raw of Array.isArray(input.links) ? input.links : []) {
+		const url = signalAskLinkUrl(raw)
+		if (url !== null && !links.includes(url)) links.push(url)
+		if (links.length === SIGNAL_LIMITS.askLinks) break
+	}
+	const terminal =
+		typeof input.terminal === 'string' && SIGNAL_TERMINAL_ID.test(input.terminal) ? input.terminal.toLowerCase() : null
+	return {
+		threadKey: `agent:${input.key ?? randomUUID()}`,
+		title,
+		body: cleanMultiline(input.body, SIGNAL_LIMITS.askBody, SIGNAL_LIMITS.askBodyLines),
+		links,
+		from: cleanOptional(input.from, SIGNAL_LIMITS.actor) ?? 'agent',
+		terminal,
+	}
+}
+
+/** The row's label columns for an ask: ref/actor = who asks, full ref says where a reply goes. */
+function askLabels(ask: CleanAsk): { ref: string; full_ref: string; actor: string } {
+	return {
+		ref: clean(ask.from, SIGNAL_LIMITS.ref),
+		full_ref: clean(ask.terminal ? `${ask.from} · Okena terminal` : ask.from, SIGNAL_LIMITS.fullRef),
+		actor: ask.from,
+	}
+}
+
 function isoTime(value: string): string | null {
 	const ms = Date.parse(value)
 	return Number.isFinite(ms) ? new Date(ms).toISOString() : null
@@ -211,7 +330,7 @@ function parseDetail(raw: string): EventDetail {
 }
 
 /** Sanitized observation, or null when it cannot be stored (wrong source, bad kind/time/key). */
-function sanitizeObservation(observation: SignalObservation, source: SignalSource): SignalObservation | null {
+function sanitizeObservation(observation: SignalObservation, source: SignalPollSource): SignalObservation | null {
 	if (observation.source !== source || !oneOf(SIGNAL_KINDS, observation.kind)) return null
 	const threadKey = clean(String(observation.threadKey ?? ''), SIGNAL_LIMITS.threadKey)
 	const lastActivityAt = isoTime(String(observation.lastActivityAt ?? ''))
@@ -273,6 +392,11 @@ export function toSignalThread(row: ThreadRow): SignalThread {
 		routedAgent: row.routed_agent,
 		routedHow: oneOf(SIGNAL_ROUTES, row.routed_how) ? row.routed_how : null,
 		routedAt: row.routed_at,
+		body: row.body ?? null,
+		links: parseLinks(row.links ?? null),
+		askTerminal: row.ask_terminal ?? null,
+		reply: row.reply ?? null,
+		replyAt: row.reply_at ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	}
@@ -360,7 +484,8 @@ export class SignalStore {
 
 	/** Upsert one poll's observations, renew threads with newer foreign activity, close gone ones. */
 	applyPoll(result: SignalPollResult, now: Date): SignalApplyResult {
-		if (!oneOf(SIGNAL_SOURCES, result.source)) throw new SignalInvalidError('Unknown signal source')
+		// Agent asks are pushed, never polled: a poll must never upsert or close one.
+		if (!oneOf(SIGNAL_POLL_SOURCES, result.source)) throw new SignalInvalidError('Unknown signal source')
 		const source = result.source
 		const at = now.toISOString()
 		const goneReason = clean(String(result.goneReason ?? ''), SIGNAL_LIMITS.detail) || 'no longer reported'
@@ -634,13 +759,14 @@ export class SignalStore {
 	}
 
 	setSourceHealth(
-		source: SignalSource,
+		source: SignalPollSource,
 		status: SignalSourceStatus,
 		detail: string | null,
 		now: Date,
 		ok: boolean,
 	): void {
-		if (!oneOf(SIGNAL_SOURCES, source)) throw new SignalInvalidError('Unknown signal source')
+		// Only pollers report health; agent asks have no health row.
+		if (!oneOf(SIGNAL_POLL_SOURCES, source)) throw new SignalInvalidError('Unknown signal source')
 		if (!oneOf(SIGNAL_SOURCE_STATUSES, status)) throw new SignalInvalidError('Unknown source status')
 		const at = now.toISOString()
 		const text = cleanOptional(detail, SIGNAL_LIMITS.detail)
@@ -659,7 +785,7 @@ export class SignalStore {
 			.run(source, status, text, polled, ok ? at : null)
 	}
 
-	/** Health of every source; a source that never reported is disabled. */
+	/** Health of every polled source; a source that never reported is disabled. */
 	sources(): SignalSourceHealth[] {
 		const rows = new Map(
 			(
@@ -668,7 +794,7 @@ export class SignalStore {
 					.all() as SourceRow[]
 			).map(row => [row.source, row]),
 		)
-		return SIGNAL_SOURCES.map(source => {
+		return SIGNAL_POLL_SOURCES.map(source => {
 			const row = rows.get(source)
 			return {
 				source,
@@ -677,6 +803,179 @@ export class SignalStore {
 				lastPollAt: row?.last_poll_at ?? null,
 				lastOkAt: row?.last_ok_at ?? null,
 			}
+		})
+	}
+
+	// ---------- agent asks ----------
+
+	/**
+	 * File an ask (`helm signal add`). With a key it upserts `agent:<key>`: a changed title or
+	 * body makes it new again (an earlier reply no longer answers it), a change of links or label
+	 * refreshes it in place, identical input writes nothing. Without a key it always creates.
+	 */
+	upsertAsk(input: SignalAsk, now: Date): SignalAskResult {
+		const at = now.toISOString()
+		const ask = cleanAsk(input)
+		const labels = askLabels(ask)
+		const links = JSON.stringify(ask.links)
+		return this.transaction(() => {
+			const row = this.db.prepare('SELECT * FROM signal_threads WHERE thread_key = ?').get(ask.threadKey) as
+				| ThreadRow
+				| undefined
+			let outcome: SignalAskOutcome
+			let id: number
+			const renews = row !== undefined && (row.title !== ask.title || (row.body ?? null) !== ask.body)
+			// A new ask, or a done one opened again, takes a slot; renewing an open ask does not.
+			if (!row || (renews && row.state === 'done')) {
+				const open = this.db
+					.prepare("SELECT COUNT(*) AS n FROM signal_threads WHERE source = 'agent' AND state <> 'done'")
+					.get() as { n: number }
+				if (open.n >= SIGNAL_OPEN_ASKS_MAX)
+					throw new SignalLimitError(
+						`Too many open agent asks (${SIGNAL_OPEN_ASKS_MAX}). Close some with helm signal done.`,
+					)
+			}
+			if (!row) {
+				const info = this.db
+					.prepare(
+						`INSERT INTO signal_threads (
+						   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+						   state, owner, activity_key, last_activity_at, active, missed_polls,
+						   body, links, ask_terminal, created_at, updated_at
+						 ) VALUES (?, 'agent', 'ask', '["ask"]', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL,
+						   'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+					)
+					.run(
+						ask.threadKey,
+						labels.ref,
+						labels.full_ref,
+						ask.title,
+						ask.title,
+						labels.actor,
+						`ask:${at}`,
+						at,
+						ask.body,
+						links,
+						ask.terminal,
+						at,
+						at,
+					)
+				id = Number(info.lastInsertRowid)
+				this.insertEvent(id, 'created', { owner: 'jakub', kind: 'ask', head: ask.title }, at)
+				outcome = 'created'
+			} else if (renews) {
+				id = row.id
+				this.db
+					.prepare(
+						`UPDATE signal_threads SET title = ?, head = ?, body = ?, links = ?, ref = ?, full_ref = ?, actor = ?,
+						   ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new', snoozed_until = NULL,
+						   closed_reason = NULL, reply = NULL, reply_at = NULL, updated_at = ?
+						 WHERE id = ?`,
+					)
+					.run(
+						ask.title,
+						ask.title,
+						ask.body,
+						links,
+						labels.ref,
+						labels.full_ref,
+						labels.actor,
+						ask.terminal,
+						`ask:${at}`,
+						at,
+						at,
+						id,
+					)
+				this.insertEvent(id, 'activity', { owner: row.owner, kind: 'ask', head: ask.title, state: 'new' }, at)
+				outcome = 'renewed'
+			} else if (
+				row.links !== links ||
+				row.ref !== labels.ref ||
+				row.full_ref !== labels.full_ref ||
+				row.actor !== labels.actor ||
+				(row.ask_terminal ?? null) !== ask.terminal
+			) {
+				id = row.id
+				// No state change and no event; like a poll refresh, a done ask keeps its done time.
+				this.db
+					.prepare(
+						`UPDATE signal_threads SET links = ?, ref = ?, full_ref = ?, actor = ?, ask_terminal = ?, updated_at = ?
+						 WHERE id = ?`,
+					)
+					.run(
+						links,
+						labels.ref,
+						labels.full_ref,
+						labels.actor,
+						ask.terminal,
+						row.state === 'done' ? row.updated_at : at,
+						id,
+					)
+				outcome = 'updated'
+			} else {
+				return { outcome: 'unchanged', thread: toSignalThread(row) }
+			}
+			this.pruneEvents()
+			return { outcome, thread: toSignalThread(this.requireRow(id)) }
+		})
+	}
+
+	/** The ask filed with `--key`, or null. */
+	getAskByKey(key: string): SignalThread | null {
+		if (typeof key !== 'string' || !SIGNAL_ASK_KEY.test(key)) return null
+		return this.getByThreadKey(`agent:${key}`)
+	}
+
+	/**
+	 * Close a thread (`helm signal done`), optionally with an outcome line. An ask the agent closes
+	 * says so in its closed reason. Already done without a note changes nothing.
+	 */
+	done(id: number, note: string | undefined, now: Date): SignalThread {
+		const at = now.toISOString()
+		const text = note === undefined ? null : clean(String(note), SIGNAL_LIMITS.note)
+		if (text === '') throw new SignalInvalidError('Note is empty')
+		return this.transaction(() => {
+			const row = this.requireRow(id)
+			const closing = row.state !== 'done'
+			if (!closing && text === null) return toSignalThread(row)
+			if (closing) {
+				this.db
+					.prepare(
+						`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, updated_at = ?
+						 WHERE id = ?`,
+					)
+					.run(row.source === 'agent' ? SIGNAL_ASK_CLOSED_REASON : null, at, id)
+				this.insertEvent(id, 'state', { owner: row.owner, from: row.state, to: 'done' }, at)
+			}
+			if (text !== null) {
+				this.db
+					.prepare('UPDATE signal_threads SET note = ?, note_at = ?, updated_at = ? WHERE id = ?')
+					.run(text, at, at, id)
+				this.insertEvent(id, 'note', { owner: row.owner, note: text }, at)
+			}
+			this.pruneEvents()
+			return toSignalThread(this.requireRow(id))
+		})
+	}
+
+	/**
+	 * Jakub's answer to an ask, kept on the thread whether or not it reaches the agent. new → seen.
+	 * The event says that he answered, never what (`helm signal show` reads the text).
+	 */
+	reply(id: number, text: string, now: Date): SignalThread {
+		const at = now.toISOString()
+		const answer = cleanMultiline(text, SIGNAL_LIMITS.reply, SIGNAL_REPLY_LINES)
+		return this.transaction(() => {
+			const row = this.requireRow(id)
+			if (row.source !== 'agent') throw new SignalInvalidError('Only agent asks take a reply')
+			if (answer === null) throw new SignalInvalidError('The reply is empty')
+			const state = row.state === 'new' ? 'seen' : row.state
+			this.db
+				.prepare('UPDATE signal_threads SET reply = ?, reply_at = ?, state = ?, updated_at = ? WHERE id = ?')
+				.run(answer, at, state, at, id)
+			this.insertEvent(id, 'reply', { owner: row.owner, state }, at)
+			this.pruneEvents()
+			return toSignalThread(this.requireRow(id))
 		})
 	}
 

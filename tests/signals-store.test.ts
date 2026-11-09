@@ -6,8 +6,20 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { DB } from '../src/db/client.js'
 import { MIGRATIONS } from '../src/db/schema.js'
-import type { SignalFilteredObservation, SignalObservation, SignalPollResult } from '../src/signals/contract.js'
-import { SIGNAL_EVENT_RETENTION, SignalInvalidError, SignalNotFoundError } from '../src/signals/store.js'
+import type {
+	SignalFilteredObservation,
+	SignalObservation,
+	SignalPollResult,
+	SignalPollSource,
+} from '../src/signals/contract.js'
+import {
+	SIGNAL_ASK_CLOSED_REASON,
+	SIGNAL_EVENT_RETENTION,
+	SIGNAL_OPEN_ASKS_MAX,
+	SignalInvalidError,
+	SignalLimitError,
+	SignalNotFoundError,
+} from '../src/signals/store.js'
 
 const T0 = new Date('2026-11-05T10:00:00.000Z')
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000)
@@ -757,4 +769,469 @@ test('filtered log is capped at 1000 rows, keeping the newest', () => {
 		assert.equal(store.listFiltered(T0).entries[0]?.subject, 'Weekly m0@news.example')
 		assert.equal(store.listFiltered(T0, 5000).entries.at(-1)?.subject, 'Weekly m299@news.example')
 	})
+})
+
+const TERMINAL = 'A1B2C3D4-0000-4000-8000-0123456789AB'
+
+test('an ask with a key upserts: created, unchanged, updated in place, renewed', () => {
+	withDb(db => {
+		const ask = {
+			key: 'dispatcher:design-pick',
+			title: 'Pick a row layout',
+			body: 'Two variants.',
+			links: ['https://storybook.test/?path=/story/a'],
+			from: 'dispatcher',
+		}
+		const created = db.signals.upsertAsk(ask, T0)
+		assert.equal(created.outcome, 'created')
+		const thread = created.thread
+		assert.equal(thread.threadKey, 'agent:dispatcher:design-pick')
+		assert.equal(thread.source, 'agent')
+		assert.equal(thread.kind, 'ask')
+		assert.deepEqual(thread.reasons, ['ask'])
+		assert.equal(thread.state, 'new')
+		assert.equal(thread.owner, 'jakub')
+		assert.equal(thread.ref, 'dispatcher')
+		assert.equal(thread.fullRef, 'dispatcher')
+		assert.equal(thread.actor, 'dispatcher')
+		assert.equal(thread.head, 'Pick a row layout')
+		assert.equal(thread.url, null)
+		assert.equal(thread.body, 'Two variants.')
+		assert.deepEqual(thread.links, ['https://storybook.test/?path=/story/a'])
+		assert.equal(thread.askTerminal, null)
+		assert.equal(thread.reply, null)
+		assert.equal(thread.lastActivityAt, T0.toISOString())
+		assert.equal(db.signals.getAskByKey('dispatcher:design-pick')?.id, thread.id)
+		assert.equal(db.signals.getAskByKey('nope'), null)
+		assert.equal(db.signals.getAskByKey('bad key'), null)
+		const createdEvents = db.signals.events(0)
+		assert.deepEqual(
+			createdEvents.map(event => [event.type, event.detail]),
+			[['created', { owner: 'jakub', kind: 'ask', head: 'Pick a row layout' }]],
+		)
+
+		const unchanged = db.signals.upsertAsk(ask, at(1))
+		assert.equal(unchanged.outcome, 'unchanged')
+		assert.equal(unchanged.thread.updatedAt, T0.toISOString())
+
+		// Jakub looked at it; new links and a terminal refresh it without making it new again.
+		db.signals.markSeen(thread.id, at(2))
+		const seq = db.signals.latestSeq()
+		const updated = db.signals.upsertAsk(
+			{ ...ask, links: [...ask.links, 'https://github.com/acme/w/pull/3'], terminal: TERMINAL },
+			at(3),
+		)
+		assert.equal(updated.outcome, 'updated')
+		assert.equal(updated.thread.id, thread.id)
+		assert.equal(updated.thread.state, 'seen')
+		assert.equal(updated.thread.links.length, 2)
+		assert.equal(updated.thread.askTerminal, TERMINAL.toLowerCase())
+		assert.equal(updated.thread.fullRef, 'dispatcher · Okena terminal')
+		assert.equal(updated.thread.updatedAt, at(3).toISOString())
+		assert.equal(updated.thread.lastActivityAt, T0.toISOString())
+		assert.equal(db.signals.latestSeq(), seq, 'a refresh in place writes no event')
+
+		// Jakub answered, then snoozed it; a changed body is a new question: new again, reply cleared.
+		db.signals.reply(thread.id, 'Variant B', at(4))
+		db.signals.update(thread.id, { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(5))
+		const renewed = db.signals.upsertAsk({ ...ask, body: 'Two variants, now with a third.' }, at(6))
+		assert.equal(renewed.outcome, 'renewed')
+		assert.equal(renewed.thread.id, thread.id)
+		assert.equal(renewed.thread.state, 'new')
+		assert.equal(renewed.thread.snoozedUntil, null)
+		assert.equal(renewed.thread.reply, null)
+		assert.equal(renewed.thread.replyAt, null)
+		assert.equal(renewed.thread.body, 'Two variants, now with a third.')
+		assert.deepEqual(renewed.thread.links, ask.links, 'links follow the latest add')
+		assert.equal(renewed.thread.askTerminal, null)
+		assert.equal(renewed.thread.lastActivityAt, at(6).toISOString())
+		const last = db.signals.events(0).at(-1)
+		assert.equal(last?.type, 'activity')
+		assert.deepEqual(last?.detail, { owner: 'jakub', kind: 'ask', head: 'Pick a row layout', state: 'new' })
+
+		// Done, then a changed title reopens it; a done ask refreshed in place keeps its done time.
+		db.signals.done(thread.id, undefined, at(7))
+		const doneLinks = db.signals.upsertAsk({ ...ask, body: 'Two variants, now with a third.', links: [] }, at(8))
+		assert.equal(doneLinks.outcome, 'updated')
+		assert.equal(doneLinks.thread.state, 'done')
+		assert.equal(doneLinks.thread.updatedAt, at(7).toISOString())
+		const reopened = db.signals.upsertAsk({ ...ask, title: 'Pick a row layout (v2)' }, at(9))
+		assert.equal(reopened.outcome, 'renewed')
+		assert.equal(reopened.thread.state, 'new')
+		assert.equal(reopened.thread.closedReason, null)
+		assert.equal(reopened.thread.head, 'Pick a row layout (v2)')
+	})
+})
+
+test('an ask without a key is always a new thread; the owner survives a renewal', () => {
+	withDb(db => {
+		const first = db.signals.upsertAsk({ title: 'Approve the migration?' }, T0)
+		const second = db.signals.upsertAsk({ title: 'Approve the migration?' }, T0)
+		assert.equal(first.outcome, 'created')
+		assert.equal(second.outcome, 'created')
+		assert.notEqual(first.thread.id, second.thread.id)
+		assert.match(first.thread.threadKey, /^agent:[0-9a-f-]{36}$/)
+		assert.equal(first.thread.ref, 'agent', 'from defaults to agent')
+		assert.equal(first.thread.body, null)
+		assert.deepEqual(first.thread.links, [])
+
+		const keyed = db.signals.upsertAsk({ key: 'k1', title: 'One' }, T0)
+		db.signals.update(keyed.thread.id, { owner: 'managed', managedBy: 'dispatcher' }, at(1))
+		const renewed = db.signals.upsertAsk({ key: 'k1', title: 'Two' }, at(2))
+		assert.equal(renewed.outcome, 'renewed')
+		assert.equal(renewed.thread.owner, 'managed')
+		assert.equal(renewed.thread.managedBy, 'dispatcher')
+	})
+})
+
+test('ask input is cleaned and bounded before it is stored', () => {
+	withDb(db => {
+		const body = [
+			'first\u202e line\u0007  ',
+			'',
+			'',
+			'',
+			'\tthird',
+			...Array.from({ length: 20 }, (_, n) => `line ${n}`),
+		].join('\r\n')
+		const { thread } = db.signals.upsertAsk(
+			{
+				key: 'clean',
+				title: `  A \u2066title\u2069 ${'x'.repeat(400)}`,
+				body,
+				links: [
+					'https://ok.test/a',
+					'https://ok.test/a',
+					'javascript:alert(1)',
+					'https://user:pass@ok.test/',
+					'https://ok.test/\u202eb',
+					'ftp://ok.test/',
+					'/relative',
+					'https://ok.test/b',
+				],
+				from: ' Fix \u0000 widget\u202e  pane ',
+				terminal: 'not-a-terminal',
+			},
+			T0,
+		)
+		assert.ok(thread.title.length <= 200)
+		assert.ok(thread.title.startsWith('A title xxx'))
+		assert.ok(thread.title.endsWith('…'))
+		const lines = (thread.body ?? '').split('\n')
+		assert.equal(lines.length, 12)
+		assert.equal(lines[0], 'first line')
+		assert.equal(lines[1], '', 'runs of blank lines collapse to one')
+		assert.equal(lines[2], ' third', 'tabs become spaces')
+		assert.ok(lines[11]?.endsWith('…'))
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: asserting controls are gone
+		assert.equal(/[\u0000-\u0009\u000b-\u001f\u202e]/.test(thread.body ?? ''), false)
+		assert.deepEqual(thread.links, ['https://ok.test/a', 'https://ok.test/b'])
+		assert.equal(thread.ref, 'Fix widget pane')
+		assert.equal(thread.askTerminal, null)
+
+		const long = db.signals.upsertAsk({ title: 'Long', body: `${'y'.repeat(999)}\n${'z'.repeat(5)}` }, T0).thread
+		assert.ok((long.body ?? '').length <= 1000)
+		assert.ok(long.body?.endsWith('…'))
+		const many = Array.from({ length: 12 }, (_, n) => `https://ok.test/${n}`)
+		assert.equal(db.signals.upsertAsk({ title: 'Links', links: many }, T0).thread.links.length, 8)
+		assert.equal(db.signals.upsertAsk({ title: 'Blank body', body: ' \n\u0007\n ' }, T0).thread.body, null)
+		assert.equal(db.signals.upsertAsk({ title: 'From', from: '\u0007 ' }, T0).thread.ref, 'agent')
+
+		assert.throws(() => db.signals.upsertAsk({ title: ' \u0007 ' }, T0), SignalInvalidError)
+		assert.throws(() => db.signals.upsertAsk({ key: 'bad key', title: 'T' }, T0), SignalInvalidError)
+	})
+})
+
+test('an ask link opens what it shows: no backslash, no repaired slashes, the host as written', () => {
+	withDb(db => {
+		const good = [
+			'http://localhost:6006/?path=/story/views-signals-agent-asks--title-rows',
+			'http://localhost:6006/?path=/story/views-signals-agent-asks--body-line',
+			'https://github.com',
+			'HTTPS://GitHub.com/contember/okena/pull/311',
+			'https://github.com:443/x',
+			'https://github.com?tab=checks',
+		]
+		const bad = [
+			'https://evil.com\\.github.com/x',
+			'http:evil.com',
+			'https:/\\evil.com',
+			'https:///evil.com',
+			'https://github.com/a\\b',
+			'https://user@github.com/',
+		]
+		const { thread } = db.signals.upsertAsk({ title: 'Links', links: [...bad, ...good] }, T0)
+		assert.deepEqual(thread.links, good)
+	})
+})
+
+test('open asks are bounded; renewing or updating an existing key always works', () => {
+	withDb(db => {
+		for (let n = 0; n < SIGNAL_OPEN_ASKS_MAX; n++) db.signals.upsertAsk({ key: `ask-${n}`, title: `Ask ${n}` }, T0)
+		const full = () => db.signals.upsertAsk({ title: 'One too many' }, at(1))
+		assert.throws(full, SignalLimitError)
+		assert.throws(full, { message: 'Too many open agent asks (50). Close some with helm signal done.' })
+		assert.throws(() => db.signals.upsertAsk({ key: 'new-key', title: 'Also too many' }, at(1)), SignalLimitError)
+		assert.equal(db.signals.list({ source: 'agent' }, at(1)).length, SIGNAL_OPEN_ASKS_MAX)
+
+		assert.equal(db.signals.upsertAsk({ key: 'ask-0', title: 'Ask 0, renewed' }, at(2)).outcome, 'renewed')
+		assert.equal(
+			db.signals.upsertAsk({ key: 'ask-1', title: 'Ask 1', links: ['https://github.com/'] }, at(2)).outcome,
+			'updated',
+		)
+		assert.equal(db.signals.upsertAsk({ key: 'ask-2', title: 'Ask 2' }, at(2)).outcome, 'unchanged')
+
+		// GitHub/Mail threads never count, and closing an ask makes room.
+		db.signals.applyPoll(poll([github(1)]), at(2))
+		const first = db.signals.getAskByKey('ask-3')
+		assert.ok(first)
+		db.signals.done(first.id, undefined, at(3))
+		assert.equal(db.signals.upsertAsk({ title: 'Fits again' }, at(4)).outcome, 'created')
+		assert.throws(full, SignalLimitError)
+
+		// A done ask opened again by a new title takes a slot too; unchanged or link-only does not.
+		assert.throws(() => db.signals.upsertAsk({ key: 'ask-3', title: 'Ask 3, again' }, at(5)), SignalLimitError)
+		assert.equal(db.signals.getAskByKey('ask-3')?.state, 'done')
+		assert.equal(db.signals.upsertAsk({ key: 'ask-3', title: 'Ask 3' }, at(5)).outcome, 'unchanged')
+		const fourth = db.signals.getAskByKey('ask-4')
+		assert.ok(fourth)
+		db.signals.done(fourth.id, undefined, at(6))
+		assert.equal(db.signals.upsertAsk({ key: 'ask-3', title: 'Ask 3, again' }, at(7)).outcome, 'renewed')
+		assert.equal(db.signals.getAskByKey('ask-3')?.state, 'new')
+	})
+})
+
+test('done closes by id or key, with or without an outcome note', () => {
+	withDb(db => {
+		const ask = db.signals.upsertAsk({ key: 'done-me', title: 'Merge it?' }, T0).thread
+		const done = db.signals.done(ask.id, undefined, at(1))
+		assert.equal(done.state, 'done')
+		assert.equal(done.closedReason, SIGNAL_ASK_CLOSED_REASON)
+		assert.equal(done.updatedAt, at(1).toISOString())
+		assert.deepEqual(db.signals.events(0).at(-1)?.detail, { owner: 'jakub', from: 'new', to: 'done' })
+
+		// Already done without a note: nothing written.
+		const seq = db.signals.latestSeq()
+		assert.equal(db.signals.done(ask.id, undefined, at(2)).updatedAt, at(1).toISOString())
+		assert.equal(db.signals.latestSeq(), seq)
+		// Already done with a note: only the note.
+		const noted = db.signals.done(ask.id, 'Merged as #12', at(3))
+		assert.equal(noted.note, 'Merged as #12')
+		assert.equal(noted.noteAt, at(3).toISOString())
+		assert.deepEqual(
+			db.signals.events(seq).map(event => event.type),
+			['note'],
+		)
+
+		// By key (the route looks the key up, then closes), from snoozed, with a note.
+		const other = db.signals.upsertAsk({ key: 'other', title: 'Later' }, T0).thread
+		db.signals.update(other.id, { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(1))
+		const byKey = db.signals.getAskByKey('other')
+		assert.ok(byKey)
+		const closed = db.signals.done(byKey.id, 'Answered in chat', at(4))
+		assert.equal(closed.state, 'done')
+		assert.equal(closed.snoozedUntil, null)
+		assert.equal(closed.note, 'Answered in chat')
+		assert.deepEqual(
+			db.signals
+				.events(0)
+				.slice(-2)
+				.map(event => [event.type, event.detail.to ?? event.detail.note]),
+			[
+				['state', 'done'],
+				['note', 'Answered in chat'],
+			],
+		)
+
+		// Any source: a GitHub thread closes without the agent's closed reason.
+		db.signals.applyPoll(poll([github(1)]), T0)
+		const pr = db.signals.getByThreadKey('github:acme/widgets#1')
+		assert.ok(pr)
+		assert.equal(db.signals.done(pr.id, undefined, at(5)).closedReason, null)
+
+		assert.throws(() => db.signals.done(999_999, undefined, at(5)), SignalNotFoundError)
+		assert.throws(() => db.signals.done(ask.id, ' \u0007', at(5)), SignalInvalidError)
+	})
+})
+
+test('a reply is kept on the ask, marks it seen and never lands in the event log', () => {
+	withDb(db => {
+		const ask = db.signals.upsertAsk({ key: 'reply', title: 'Which variant?' }, T0).thread
+		const replied = db.signals.reply(ask.id, ' Variant B,\r\nbut keep the \u202edot. \n\n\n\u0007', at(1))
+		assert.equal(replied.reply, 'Variant B,\nbut keep the dot.')
+		assert.equal(replied.replyAt, at(1).toISOString())
+		assert.equal(replied.state, 'seen')
+		const event = db.signals.events(0).at(-1)
+		assert.equal(event?.type, 'reply')
+		assert.deepEqual(event?.detail, { owner: 'jakub', state: 'seen' })
+		assert.equal(JSON.stringify(db.signals.events(0)).includes('Variant'), false)
+
+		// A second answer replaces the first; a snoozed ask stays snoozed.
+		db.signals.update(ask.id, { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(2))
+		const again = db.signals.reply(ask.id, 'Actually A', at(3))
+		assert.equal(again.reply, 'Actually A')
+		assert.equal(again.state, 'snoozed')
+		const long = db.signals.reply(ask.id, 'w'.repeat(5000), at(4))
+		assert.ok((long.reply ?? '').length <= 2000)
+
+		assert.throws(() => db.signals.reply(ask.id, ' \n\u0007 ', at(5)), SignalInvalidError)
+		db.signals.applyPoll(poll([github(1)]), T0)
+		const pr = db.signals.getByThreadKey('github:acme/widgets#1')
+		assert.ok(pr)
+		assert.throws(() => db.signals.reply(pr.id, 'hi', at(5)), /Only agent asks take a reply/)
+		assert.throws(() => db.signals.reply(999_999, 'hi', at(5)), SignalNotFoundError)
+	})
+})
+
+test('polls never touch agent asks; agent is no poll source', () => {
+	withDb(db => {
+		const ask = db.signals.upsertAsk({ key: 'stay', title: 'Still here?' }, T0).thread
+		db.signals.applyPoll(poll([github(1)]), at(1))
+		db.signals.applyPoll(poll([]), at(2))
+		db.signals.applyPoll(poll([]), at(3))
+		db.signals.applyPoll({ source: 'mail', observations: [], complete: true, goneReason: 'read in Mail' }, at(4))
+		db.signals.applyPoll({ source: 'mail', observations: [], complete: true, goneReason: 'read in Mail' }, at(5))
+		const after = db.signals.get(ask.id)
+		assert.equal(after?.state, 'new')
+		assert.equal(after?.active, true)
+		assert.equal(after?.updatedAt, T0.toISOString())
+
+		// A poll observation pretending to be an ask is refused, so is an `agent` poll or health row.
+		const forged = { ...github(9), threadKey: 'agent:stay', source: 'agent' as unknown as SignalPollSource }
+		db.signals.applyPoll(poll([forged]), at(6))
+		assert.equal(db.signals.get(ask.id)?.title, 'Still here?')
+		assert.throws(
+			() =>
+				db.signals.applyPoll(
+					{ source: 'agent' as unknown as SignalPollSource, observations: [], complete: true, goneReason: 'x' },
+					at(6),
+				),
+			SignalInvalidError,
+		)
+		assert.throws(
+			() => db.signals.setSourceHealth('agent' as unknown as SignalPollSource, 'ok', null, at(6), true),
+			SignalInvalidError,
+		)
+		assert.deepEqual(
+			db.signals.sources().map(source => source.source),
+			['github', 'mail'],
+		)
+		assert.equal(db.signals.list({ source: 'agent' }, at(6)).length, 1)
+	})
+})
+
+test('migration 41 keeps every thread, id and event, and ids continue after the old maximum', () => {
+	const root = mkdtempSync(join(tmpdir(), 'helm-signals-v41-'))
+	try {
+		const path = join(root, 'helm.db')
+		new DB(path, 'alpha').close()
+		// Rebuild the v38 table (no agent source, no ask columns) like a daemon before this change.
+		const raw = new Database(path)
+		raw.exec('DROP TABLE signal_threads')
+		raw.exec(`CREATE TABLE signal_threads (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  thread_key TEXT NOT NULL UNIQUE,
+		  source TEXT NOT NULL CHECK (source IN ('github','mail')),
+		  kind TEXT NOT NULL, reasons TEXT NOT NULL DEFAULT '[]', ref TEXT NOT NULL, full_ref TEXT NOT NULL,
+		  title TEXT NOT NULL, head TEXT NOT NULL, actor TEXT, url TEXT, repo TEXT, number INTEGER, branch TEXT,
+		  state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','seen','snoozed','done')),
+		  owner TEXT NOT NULL DEFAULT 'jakub' CHECK (owner IN ('jakub','managed')),
+		  snoozed_until TEXT, activity_key TEXT NOT NULL, last_activity_at TEXT NOT NULL,
+		  active INTEGER NOT NULL DEFAULT 1, missed_polls INTEGER NOT NULL DEFAULT 0, closed_reason TEXT,
+		  note TEXT, note_at TEXT, managed_by TEXT, routed_agent TEXT, routed_how TEXT, routed_at TEXT,
+		  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+		)`)
+		raw.exec('CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at)')
+		const insert = raw.prepare(
+			`INSERT INTO signal_threads (id, thread_key, source, kind, reasons, ref, full_ref, title, head, url,
+			   state, owner, activity_key, last_activity_at, note, routed_agent, routed_how, routed_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, 'r', 'fr', 'T', 'H', ?, ?, ?, 'k', ?, ?, ?, ?, ?, ?, ?)`,
+		)
+		insert.run(
+			7,
+			'github:acme/w#1',
+			'github',
+			'review',
+			'["review"]',
+			'https://github.com/acme/w/pull/1',
+			'seen',
+			'managed',
+			T0.toISOString(),
+			'handled',
+			'fix-w',
+			'sent',
+			T0.toISOString(),
+			T0.toISOString(),
+			at(1).toISOString(),
+		)
+		insert.run(
+			15,
+			'mail:abc',
+			'mail',
+			'mail',
+			'["mail"]',
+			null,
+			'done',
+			'jakub',
+			T0.toISOString(),
+			null,
+			null,
+			null,
+			null,
+			T0.toISOString(),
+			at(2).toISOString(),
+		)
+		// A thread inserted and deleted again: the high-water mark is 40, above every surviving id.
+		raw.prepare("UPDATE sqlite_sequence SET seq = 40 WHERE name = 'signal_threads'").run()
+		raw.prepare('DELETE FROM signal_events').run()
+		const event = raw.prepare('INSERT INTO signal_events (seq, thread_id, type, detail, at) VALUES (?, ?, ?, ?, ?)')
+		event.run(100, 7, 'created', '{"owner":"jakub"}', T0.toISOString())
+		event.run(101, 15, 'state', '{"to":"done"}', at(2).toISOString())
+		// A database at 40 (main's item_okena_terminals) runs only 41: the runner applies versions above its max.
+		raw.prepare('DELETE FROM schema_version WHERE version >= 41').run()
+		raw.close()
+
+		const db = new DB(path, 'alpha')
+		try {
+			const threads = db.signals.list({ includeAllDone: true }, at(3))
+			assert.deepEqual(
+				threads.map(thread => [thread.id, thread.threadKey, thread.source, thread.state, thread.owner]).sort(),
+				[
+					[15, 'mail:abc', 'mail', 'done', 'jakub'],
+					[7, 'github:acme/w#1', 'github', 'seen', 'managed'],
+				].sort(),
+			)
+			const pr = db.signals.get(7)
+			assert.equal(pr?.note, 'handled')
+			assert.equal(pr?.routedAgent, 'fix-w')
+			assert.equal(pr?.url, 'https://github.com/acme/w/pull/1')
+			assert.equal(pr?.updatedAt, at(1).toISOString())
+			assert.equal(pr?.body, null)
+			assert.deepEqual(pr?.links, [])
+			assert.equal(pr?.askTerminal, null)
+			assert.equal(pr?.reply, null)
+			assert.deepEqual(
+				db.signals.events(0).map(row => [row.seq, row.threadId, row.type]),
+				[
+					[100, 7, 'created'],
+					[101, 15, 'state'],
+				],
+			)
+			const versions = (db.signals as unknown as { db: Database.Database }).db
+				.prepare('SELECT MAX(version) AS v FROM schema_version')
+				.get() as { v: number }
+			assert.equal(versions.v, 41)
+			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread
+			assert.equal(ask.id, 41)
+			assert.ok(db.signals.latestSeq() > 101)
+			const indexes = (db.signals as unknown as { db: Database.Database }).db
+				.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'signal_threads'")
+				.all() as Array<{ name: string }>
+			assert.ok(indexes.some(index => index.name === 'idx_signal_threads_state'))
+		} finally {
+			db.close()
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true })
+	}
 })
