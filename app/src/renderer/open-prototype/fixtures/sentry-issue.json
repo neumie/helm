@@ -1,0 +1,109 @@
+{
+	"id": "6123987402",
+	"shortId": "PSYON-API-3F",
+	"title": "TypeError: Cannot read properties of undefined (reading 'ico')",
+	"culprit": "companies/create.ts in saveFirm",
+	"level": "error",
+	"status": "unresolved",
+	"firstSeen": "2026-11-02T08:14:51.000Z",
+	"lastSeen": "2026-11-09T07:41:03.000Z",
+	"count": 418,
+	"userCount": 37,
+	"project": {
+		"slug": "psyon-api",
+		"platform": "node"
+	},
+	"tags": [
+		{
+			"key": "environment",
+			"value": "production"
+		},
+		{
+			"key": "release",
+			"value": "psyon-api@4.18.2"
+		},
+		{
+			"key": "browser",
+			"value": "Chrome 141"
+		}
+	],
+	"latestEvent": {
+		"eventId": "b1f6c5d0e2a94c1c9a3f7e8d2c41b0aa",
+		"request": {
+			"method": "POST",
+			"url": "https://api.psyon.cz/v2/companies",
+			"headers": {
+				"content-type": "application/json"
+			}
+		},
+		"exception": {
+			"values": [
+				{
+					"type": "TypeError",
+					"value": "Cannot read properties of undefined (reading 'ico')",
+					"stacktrace": {
+						"frames": [
+							{
+								"filename": "node:internal/process/task_queues",
+								"function": "processTicksAndRejections",
+								"lineno": 95,
+								"inApp": false
+							},
+							{
+								"filename": "src/routes/companies.ts",
+								"function": "createCompany",
+								"lineno": 61,
+								"inApp": true
+							},
+							{
+								"filename": "src/companies/create.ts",
+								"function": "saveFirm",
+								"lineno": 118,
+								"colno": 27,
+								"inApp": true
+							}
+						]
+					}
+				}
+			]
+		},
+		"breadcrumbs": [
+			{
+				"timestamp": "2026-11-09T07:40:40.000Z",
+				"category": "query",
+				"message": "SELECT * FROM company WHERE ico = $1",
+				"level": "info"
+			},
+			{
+				"timestamp": "2026-11-09T07:40:43.000Z",
+				"category": "http",
+				"message": "GET https://ares.gov.cz/ekonomicke-subjekty/27074358",
+				"level": "info"
+			},
+			{
+				"timestamp": "2026-11-09T07:40:46.000Z",
+				"category": "query",
+				"message": "SELECT * FROM company WHERE ico = $1",
+				"level": "info"
+			},
+			{
+				"timestamp": "2026-11-09T07:40:49.000Z",
+				"category": "http",
+				"message": "GET https://ares.gov.cz/ekonomicke-subjekty/27074358",
+				"level": "info"
+			},
+			{
+				"timestamp": "2026-11-09T07:40:52.000Z",
+				"category": "query",
+				"message": "SELECT * FROM company WHERE ico = $1",
+				"level": "info"
+			},
+			{
+				"timestamp": "2026-11-09T07:40:55.000Z",
+				"category": "http",
+				"message": "GET https://ares.gov.cz/ekonomicke-subjekty/27074358",
+				"level": "info"
+			}
+		]
+	}
+}

@@ -1,0 +1,872 @@
+/* Story-only `helm open` window chrome variants (A, B) and the feedback bubble (D).
+ * Tokens only. One typeface; mono only for literal names (extension tags, cell refs, paths). */
+
+/* ---------- shared ---------- */
+
+.open-traffic {
+	flex: 0 0 90px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding-left: 16px;
+	-webkit-app-region: drag;
+}
+.open-traffic i {
+	width: 12px;
+	height: 12px;
+	border-radius: 999px;
+	background: var(--fill-raised);
+}
+
+.open-ext {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	letter-spacing: 0;
+	line-height: 1;
+	color: var(--text-1);
+}
+.open-ext-pdf {
+	color: var(--ansi-red);
+}
+.open-ext-sheet,
+.open-ext-csv {
+	color: var(--ansi-green);
+}
+.open-ext-image,
+.open-ext-media {
+	color: var(--ansi-magenta);
+}
+.open-ext-json {
+	color: var(--ansi-yellow);
+}
+.open-ext-code,
+.open-ext-html {
+	color: var(--ansi-blue);
+}
+.open-ext-markdown,
+.open-ext-docx,
+.open-ext-email {
+	color: var(--ansi-cyan);
+}
+
+.open-agent-glyph {
+	display: inline-block;
+	width: 12px;
+	text-align: center;
+	flex: none;
+}
+.open-agent-listening {
+	color: var(--accent);
+}
+.open-agent-working {
+	color: var(--accent);
+	animation: open-pulse 1.6s ease-in-out infinite;
+}
+.open-agent-paused {
+	color: var(--warn);
+}
+.open-agent-disconnected {
+	color: var(--text-2);
+}
+@keyframes open-pulse {
+	50% {
+		opacity: 0.4;
+	}
+}
+
+/* Composer (shared by companion, pane, margin, bubble). */
+.open-composer {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px 16px 16px;
+}
+.open-composer-field {
+	width: 100%;
+	box-sizing: border-box;
+	min-height: 64px;
+	resize: none;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: var(--fill-subtle);
+	color: var(--text-0);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	padding: 8px 12px;
+	outline: none;
+}
+.open-composer-field::placeholder {
+	color: var(--text-2);
+}
+.open-composer-field:focus {
+	border-color: var(--accent);
+}
+.open-composer-compact .open-composer-field {
+	min-height: 36px;
+}
+.open-composer-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.open-composer-actions > :last-child {
+	margin-left: auto;
+}
+.open-intent {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+/* Thread entries: flat, separated by space, never boxed. */
+.open-thread {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 12px 16px;
+}
+.open-thread-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12px;
+	color: var(--text-2);
+	min-width: 0;
+}
+.open-thread-meta .open-mono {
+	color: var(--text-1);
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-thread-intent {
+	margin-left: auto;
+	flex: none;
+}
+.open-thread-text {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-0);
+}
+.open-thread-reply,
+.open-thread-working {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-1);
+	display: flex;
+	gap: 8px;
+}
+.open-thread-mark {
+	flex: none;
+	color: var(--text-2);
+	font-size: 9px;
+	line-height: 20px;
+}
+
+/* ---------- A1 title row ---------- */
+
+.open-a1-head,
+.open-b3-head {
+	flex: 0 0 40px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	padding-right: 8px;
+	-webkit-app-region: drag;
+}
+.open-b3-head {
+	padding-left: 16px;
+}
+.open-a1-identity {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+.open-a1-name {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 0 1 auto;
+}
+.open-a1-path {
+	font-size: 12px;
+	color: var(--text-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 0 1 auto;
+}
+.open-a1-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+.open-a1-position {
+	font-size: 12px;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	padding: 0 8px;
+	white-space: nowrap;
+}
+.open-a1-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 8px;
+	margin-left: 4px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.open-a1-agent:hover,
+.open-a1-agent-open {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-a1-agent-state {
+	color: var(--text-2);
+}
+.open-a1-agent:focus-visible,
+.open-a2-agent:focus-visible,
+.open-tab:focus-visible,
+.open-b3-row:focus-visible,
+.open-a3-folder:focus-visible,
+.open-a3-key:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Companion: the quiet conversation column (Document Review's companion, 340px). */
+.open-companion {
+	flex: 0 0 340px;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	background: var(--pane);
+	border-left: 1px solid var(--hairline);
+}
+.open-companion-head {
+	padding: 12px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.open-companion-name {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-0);
+}
+.open-companion-sub {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--text-2);
+}
+.open-companion-threads {
+	flex: 1 1 auto;
+	min-height: 96px;
+	overflow: auto;
+}
+
+/* ---------- A2 status line ---------- */
+
+.open-a2-head {
+	flex: 0 0 32px;
+	display: flex;
+	align-items: center;
+	background: var(--chrome);
+	-webkit-app-region: drag;
+	position: relative;
+}
+.open-a2-title {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	max-width: calc(100% - 220px);
+	margin: 0;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--text-1);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.open-a2-status {
+	flex: 0 0 24px;
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+	background: var(--chrome);
+	border-top: 1px solid var(--hairline);
+	font-size: 12px;
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+}
+.open-a2-seg {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 8px;
+	flex: none;
+}
+.open-a2-seg:first-child {
+	padding-left: 12px;
+}
+.open-a2-path {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: block;
+	line-height: 24px;
+}
+.open-a2-dim {
+	color: var(--text-2);
+}
+.open-a2-fill {
+	flex: 1 1 0;
+}
+.open-a2-keys {
+	color: var(--text-2);
+	gap: 12px;
+	padding-right: 12px;
+}
+.open-a2-agent {
+	border: none;
+	background: none;
+	font: inherit;
+	font-size: 12px;
+	color: var(--text-0);
+	cursor: pointer;
+}
+.open-a2-agent:hover,
+.open-a2-agent[aria-pressed="true"] {
+	background: var(--fill-subtle);
+}
+.open-a2-pane {
+	flex: 0 0 auto;
+	max-height: 40%;
+	min-height: 160px;
+	display: flex;
+	flex-direction: column;
+	background: var(--chrome);
+	border-top: 1px solid var(--hairline);
+}
+.open-a2-pane-threads {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	align-content: start;
+}
+.open-a2-pane .open-composer {
+	padding-top: 4px;
+	flex-direction: row;
+	align-items: flex-end;
+}
+.open-a2-pane .open-composer-field {
+	flex: 1 1 auto;
+}
+.open-a2-pane .open-composer-actions {
+	flex: none;
+}
+
+/* ---------- A3 breadcrumb + margin ---------- */
+
+.open-a3-head {
+	flex: 0 0 44px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	padding-right: 12px;
+	-webkit-app-region: drag;
+}
+.open-a3-crumbs {
+	display: flex;
+	align-items: baseline;
+	min-width: 0;
+	flex: 0 1 auto;
+	overflow: hidden;
+	-webkit-app-region: no-drag;
+}
+.open-a3-crumb {
+	display: inline-flex;
+	align-items: baseline;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+/* Keep the last two folders readable; earlier ones shrink first. */
+.open-a3-crumb:nth-last-child(-n + 3) {
+	flex: none;
+}
+.open-a3-folder {
+	border: none;
+	background: none;
+	padding: 2px 4px;
+	border-radius: 4px;
+	font: inherit;
+	font-size: 13px;
+	color: var(--text-2);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.open-a3-folder:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-a3-sep {
+	color: var(--text-2);
+	padding: 0 2px;
+}
+.open-a3-name {
+	margin: 0 0 0 4px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-0);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+	flex: 0 1 auto;
+}
+.open-a3-format {
+	flex: none;
+	font-size: 12px;
+	color: var(--text-2);
+	white-space: nowrap;
+}
+.open-a3-keys {
+	margin-left: auto;
+	display: flex;
+	gap: 4px;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+.open-a3-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+.open-a3-key:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-a3-key kbd {
+	font-family: var(--font-ui);
+	font-size: 11px;
+	color: var(--text-2);
+}
+.open-a3-agentline {
+	flex: 0 0 28px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 16px;
+	font-size: 12px;
+	color: var(--text-0);
+	background: var(--pane);
+	border-bottom: 1px solid var(--hairline);
+	white-space: nowrap;
+	overflow: hidden;
+}
+.open-a3-dim {
+	color: var(--text-2);
+}
+.open-a3-hint {
+	margin-left: auto;
+}
+.open-a3-margin {
+	flex: 0 0 280px;
+	min-width: 0;
+	overflow: auto;
+	border-left: 1px solid var(--hairline);
+	background: var(--pane);
+	display: flex;
+	flex-direction: column;
+}
+.open-a3-whole {
+	margin-top: auto;
+	border-top: 1px solid var(--hairline);
+}
+
+/* ---------- B1 tabs ---------- */
+
+.open-tabs {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	flex: 1 1 auto;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-webkit-app-region: no-drag;
+}
+.open-tabs::-webkit-scrollbar {
+	display: none;
+}
+.open-tab {
+	display: inline-flex;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	min-width: 112px;
+	max-width: 220px;
+	padding: 0 10px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+.open-tab:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-tab-active {
+	flex-shrink: 0;
+	max-width: 280px;
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+/* Only the open tab carries its ⌘N hint; on every tab it ate the names at ordinary widths. */
+.open-tab-active .open-tab-key {
+	display: inline;
+}
+.open-tab-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-tab-key {
+	display: none;
+	flex: none;
+	font-size: 11px;
+	color: var(--text-2);
+}
+
+/* ---------- B2 palette ---------- */
+
+.open-b2 {
+	position: relative;
+	height: 100vh;
+}
+.open-b2-scrim {
+	position: absolute;
+	inset: 0;
+	background: var(--scrim);
+	z-index: 50;
+}
+.open-palette {
+	position: absolute;
+	z-index: 60;
+	top: 64px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: min(560px, calc(100% - 32px));
+	display: flex;
+	flex-direction: column;
+	background: var(--chrome);
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	box-shadow: var(--shadow-2);
+	overflow: hidden;
+	font-family: var(--font-ui);
+	color: var(--text-0);
+	letter-spacing: -0.01em;
+}
+.open-palette-field {
+	height: 44px;
+	border: none;
+	border-bottom: 1px solid var(--hairline);
+	background: none;
+	color: var(--text-0);
+	font: inherit;
+	font-size: 15px;
+	padding: 0 16px;
+	outline: none;
+}
+.open-palette-field::placeholder {
+	color: var(--text-2);
+}
+.open-palette-list {
+	max-height: 360px;
+	overflow: auto;
+	padding: 4px 0;
+}
+.open-palette-section {
+	padding: 12px 16px 4px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-1);
+}
+.open-palette-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 16px;
+	border: none;
+	background: none;
+	color: var(--text-0);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	min-width: 0;
+	cursor: pointer;
+}
+.open-palette-row:hover {
+	background: var(--fill-subtle);
+}
+.open-palette-row:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.open-palette-row-active {
+	background: var(--fill-raised);
+}
+.open-palette-name {
+	flex: none;
+	max-width: 50%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-palette-path {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--text-2);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-palette-note {
+	flex: none;
+	font-size: 11px;
+	color: var(--text-2);
+}
+.open-palette-keys {
+	display: flex;
+	gap: 16px;
+	padding: 8px 16px;
+	border-top: 1px solid var(--hairline);
+	font-size: 11px;
+	color: var(--text-2);
+}
+
+/* ---------- B3 sidebar list ---------- */
+
+.open-b3-split {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+.open-b3-list {
+	flex: 0 0 248px;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+}
+.open-b3-list-head {
+	flex: 0 0 40px;
+	display: flex;
+	align-items: center;
+	-webkit-app-region: drag;
+}
+.open-b3-scroll {
+	flex: 1 1 auto;
+	overflow: auto;
+	padding-bottom: 8px;
+}
+.open-b3-group {
+	padding-top: 8px;
+}
+.open-b3-folder {
+	margin: 0;
+	padding: 8px 16px 4px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-1);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.open-b3-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	height: 28px;
+	padding: 0 16px;
+	border: none;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+	line-height: 28px;
+}
+.open-b3-row:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-b3-row-active {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+.open-b3-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-b3-meta {
+	flex: none;
+	font-size: 11px;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+.open-b3-foot {
+	flex: 0 0 28px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 16px;
+	font-size: 11px;
+	color: var(--text-2);
+	border-top: 1px solid var(--hairline);
+}
+.open-b3-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+/* ---------- Feedback bubble ---------- */
+
+.open-bubble {
+	position: absolute;
+	z-index: 40;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	background: var(--chrome);
+	border: 1px solid var(--hairline);
+	border-radius: 8px;
+	box-shadow: var(--shadow-1);
+	color: var(--text-0);
+	font-family: var(--font-ui);
+	letter-spacing: -0.01em;
+}
+.open-bubble-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: 12px;
+}
+.open-bubble-place {
+	color: var(--text-1);
+	flex: none;
+}
+.open-bubble-literal {
+	color: var(--text-0);
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.open-bubble-close {
+	margin-left: auto;
+	align-self: center;
+	width: 24px;
+	height: 24px;
+}
+.open-bubble-keys {
+	font-size: 11px;
+	color: var(--text-2);
+	margin-left: auto;
+}
+.open-bubble-keys + * {
+	margin-left: 0;
+}
+.open-bubble-cells {
+	border-collapse: collapse;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	letter-spacing: 0;
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	width: 100%;
+	table-layout: fixed;
+}
+.open-bubble-cells td {
+	padding: 2px 8px 2px 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	border-bottom: 1px solid var(--hairline);
+}
+.open-bubble-value {
+	color: var(--text-1);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 72px;
+	overflow: auto;
+}

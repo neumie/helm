@@ -1,0 +1,1801 @@
+Number,Issued,Client,Service,Net CZK,VAT CZK,Total CZK,Status
+2026-0001,2026-01-16,Brno Makers Lab,Design review,10420,2188,12608,Paid
+2026-0002,2026-02-02,Mountain Retreats,Incident response,29800,6258,36058,Paid
+2026-0003,2026-03-05,Atelier Novák,Design review,4030,846,4876,Paid
+2026-0004,2026-04-07,Mountain Retreats,Consulting,9110,1913,11023,Paid
+2026-0005,2026-05-16,Mountain Retreats,Incident response,21710,4559,26269,Paid
+2026-0006,2026-06-16,Kavárna Lípa,Consulting,19620,4120,23740,Paid
+2026-0007,2026-07-19,Psyon s.r.o.,Consulting,6170,1296,7466,Paid
+2026-0008,2026-08-16,Vltava Logistics,Feature work,6820,1432,8252,Paid
+2026-0009,2026-09-23,Psyon s.r.o.,Incident response,10440,2192,12632,Sent
+2026-0010,2026-10-08,Dentium Clinic,Retainer,7010,1472,8482,Paid
+2026-0011,2026-01-17,Mountain Retreats,Retainer,22930,4815,27745,Sent
+2026-0012,2026-02-04,Kavárna Lípa,Design review,35800,7518,43318,Paid
+2026-0013,2026-03-21,Ostrava Steelworks,Design review,15250,3203,18453,Paid
+2026-0014,2026-04-05,Ostrava Steelworks,Retainer,3860,811,4671,Paid
+2026-0015,2026-05-02,Atelier Novák,Incident response,21540,4523,26063,Paid
+2026-0016,2026-06-02,Mountain Retreats,Design review,9500,1995,11495,Sent
+2026-0017,2026-07-13,Ostrava Steelworks,Feature work,20880,4385,25265,Overdue
+2026-0018,2026-08-05,Mountain Retreats,Incident response,24930,5235,30165,Paid
+2026-0019,2026-09-21,Fakturoid a.s.,Retainer,38800,8148,46948,Paid
+2026-0020,2026-10-25,Brno Makers Lab,Consulting,30810,6470,37280,Paid
+2026-0021,2026-01-18,Kavárna Lípa,Feature work,38340,8051,46391,Paid
+2026-0022,2026-02-23,Vltava Logistics,Incident response,42040,8828,50868,Paid
+2026-0023,2026-03-10,Atelier Novák,Retainer,31080,6527,37607,Paid
+2026-0024,2026-04-13,Psyon s.r.o.,Hosting,34380,7220,41600,Paid
+2026-0025,2026-05-12,Vltava Logistics,Design review,21360,4486,25846,Paid
+2026-0026,2026-06-19,Kavárna Lípa,Consulting,21610,4538,26148,Paid
+2026-0027,2026-07-13,Fakturoid a.s.,Retainer,31130,6537,37667,Paid
+2026-0028,2026-08-09,Mountain Retreats,Feature work,28690,6025,34715,Paid
+2026-0029,2026-09-07,Kavárna Lípa,Feature work,40990,8608,49598,Paid
+2026-0030,2026-10-22,Psyon s.r.o.,Incident response,28840,6056,34896,Paid
+2026-0031,2026-01-09,Vltava Logistics,Incident response,35110,7373,42483,Paid
+2026-0032,2026-02-13,Brno Makers Lab,Feature work,2300,483,2783,Paid
+2026-0033,2026-03-25,Dentium Clinic,Design review,32630,6852,39482,Paid
+2026-0034,2026-04-15,Psyon s.r.o.,Design review,34750,7298,42048,Paid
+2026-0035,2026-05-07,Ostrava Steelworks,Design review,39840,8366,48206,Sent
+2026-0036,2026-06-27,Atelier Novák,Design review,42550,8936,51486,Sent
+2026-0037,2026-07-22,Nordic Freight AB,Retainer,18790,3946,22736,Overdue
+2026-0038,2026-08-23,Nordic Freight AB,Incident response,10920,2293,13213,Paid
+2026-0039,2026-09-20,Ostrava Steelworks,Retainer,39630,8322,47952,Paid
+2026-0040,2026-10-09,Nordic Freight AB,Consulting,40640,8534,49174,Paid
+2026-0041,2026-01-08,Psyon s.r.o.,Consulting,38000,7980,45980,Paid
+2026-0042,2026-02-24,Nordic Freight AB,Hosting,39840,8366,48206,Overdue
+2026-0043,2026-03-18,Nordic Freight AB,Retainer,36490,7663,44153,Paid
+2026-0044,2026-04-02,Kavárna Lípa,Incident response,32230,6768,38998,Sent
+2026-0045,2026-05-24,Fakturoid a.s.,Hosting,33740,7085,40825,Sent
+2026-0046,2026-06-14,Atelier Novák,Feature work,30570,6420,36990,Sent
+2026-0047,2026-07-09,Fakturoid a.s.,Consulting,8140,1709,9849,Sent
+2026-0048,2026-08-13,Mountain Retreats,Consulting,25490,5353,30843,Paid
+2026-0049,2026-09-25,Brno Makers Lab,Incident response,39420,8278,47698,Overdue
+2026-0050,2026-10-01,Psyon s.r.o.,Feature work,24260,5095,29355,Overdue
+2026-0051,2026-01-15,Mountain Retreats,Consulting,17190,3610,20800,Paid
+2026-0052,2026-02-27,Mountain Retreats,Incident response,21710,4559,26269,Paid
+2026-0053,2026-03-21,Ostrava Steelworks,Feature work,36260,7615,43875,Sent
+2026-0054,2026-04-25,Mountain Retreats,Design review,41670,8751,50421,Paid
+2026-0055,2026-05-08,Ostrava Steelworks,Retainer,39280,8249,47529,Paid
+2026-0056,2026-06-03,Dentium Clinic,Design review,8740,1835,10575,Paid
+2026-0057,2026-07-24,Psyon s.r.o.,Consulting,23100,4851,27951,Paid
+2026-0058,2026-08-07,Fakturoid a.s.,Design review,22220,4666,26886,Paid
+2026-0059,2026-09-16,Fakturoid a.s.,Feature work,4280,899,5179,Sent
+2026-0060,2026-10-25,Kavárna Lípa,Retainer,17380,3650,21030,Paid
+2026-0061,2026-01-24,Brno Makers Lab,Feature work,1100,231,1331,Paid
+2026-0062,2026-02-17,Dentium Clinic,Hosting,12380,2600,14980,Overdue
+2026-0063,2026-03-08,Brno Makers Lab,Feature work,27970,5874,33844,Paid
+2026-0064,2026-04-21,Atelier Novák,Incident response,33620,7060,40680,Paid
+2026-0065,2026-05-03,Vltava Logistics,Consulting,3820,802,4622,Paid
+2026-0066,2026-06-15,Brno Makers Lab,Incident response,31680,6653,38333,Overdue
+2026-0067,2026-07-27,Atelier Novák,Feature work,29470,6189,35659,Paid
+2026-0068,2026-08-18,Nordic Freight AB,Feature work,17450,3665,21115,Paid
+2026-0069,2026-09-12,Dentium Clinic,Incident response,39810,8360,48170,Paid
+2026-0070,2026-10-26,Nordic Freight AB,Consulting,24610,5168,29778,Paid
+2026-0071,2026-01-24,Dentium Clinic,Hosting,26690,5605,32295,Paid
+2026-0072,2026-02-01,Fakturoid a.s.,Design review,22880,4805,27685,Paid
+2026-0073,2026-03-15,Ostrava Steelworks,Incident response,5750,1208,6958,Paid
+2026-0074,2026-04-01,Vltava Logistics,Consulting,31280,6569,37849,Paid
+2026-0075,2026-05-12,Atelier Novák,Consulting,4690,985,5675,Paid
+2026-0076,2026-06-06,Vltava Logistics,Retainer,9240,1940,11180,Paid
+2026-0077,2026-07-21,Dentium Clinic,Design review,22800,4788,27588,Paid
+2026-0078,2026-08-15,Psyon s.r.o.,Design review,21800,4578,26378,Paid
+2026-0079,2026-09-14,Nordic Freight AB,Hosting,8760,1840,10600,Paid
+2026-0080,2026-10-13,Atelier Novák,Incident response,8490,1783,10273,Paid
+2026-0081,2026-01-25,Ostrava Steelworks,Retainer,12650,2657,15307,Paid
+2026-0082,2026-02-09,Brno Makers Lab,Hosting,8130,1707,9837,Paid
+2026-0083,2026-03-12,Vltava Logistics,Hosting,41760,8770,50530,Paid
+2026-0084,2026-04-20,Mountain Retreats,Incident response,40540,8513,49053,Paid
+2026-0085,2026-05-16,Psyon s.r.o.,Consulting,1060,223,1283,Sent
+2026-0086,2026-06-13,Fakturoid a.s.,Retainer,7500,1575,9075,Paid
+2026-0087,2026-07-09,Nordic Freight AB,Feature work,39420,8278,47698,Paid
+2026-0088,2026-08-14,Ostrava Steelworks,Incident response,23250,4883,28133,Paid
+2026-0089,2026-09-15,Vltava Logistics,Incident response,1680,353,2033,Paid
+2026-0090,2026-10-27,Mountain Retreats,Consulting,17150,3602,20752,Paid
+2026-0091,2026-01-09,Fakturoid a.s.,Consulting,23390,4912,28302,Sent
+2026-0092,2026-02-08,Psyon s.r.o.,Hosting,3270,687,3957,Paid
+2026-0093,2026-03-20,Ostrava Steelworks,Feature work,26090,5479,31569,Sent
+2026-0094,2026-04-04,Fakturoid a.s.,Incident response,36270,7617,43887,Sent
+2026-0095,2026-05-05,Psyon s.r.o.,Incident response,15470,3249,18719,Paid
+2026-0096,2026-06-02,Nordic Freight AB,Retainer,35550,7466,43016,Paid
+2026-0097,2026-07-06,Mountain Retreats,Incident response,24400,5124,29524,Paid
+2026-0098,2026-08-13,Fakturoid a.s.,Design review,24320,5107,29427,Paid
+2026-0099,2026-09-08,Vltava Logistics,Consulting,37820,7942,45762,Paid
+2026-0100,2026-10-17,Psyon s.r.o.,Incident response,20030,4206,24236,Sent
+2026-0101,2026-01-06,Dentium Clinic,Retainer,42670,8961,51631,Paid
+2026-0102,2026-02-15,Mountain Retreats,Design review,15210,3194,18404,Paid
+2026-0103,2026-03-13,Dentium Clinic,Hosting,7800,1638,9438,Sent
+2026-0104,2026-04-20,Brno Makers Lab,Feature work,32520,6829,39349,Paid
+2026-0105,2026-05-11,Nordic Freight AB,Feature work,30100,6321,36421,Paid
+2026-0106,2026-06-09,Nordic Freight AB,Retainer,12560,2638,15198,Overdue
+2026-0107,2026-07-06,Kavárna Lípa,Retainer,42240,8870,51110,Paid
+2026-0108,2026-08-25,Nordic Freight AB,Feature work,19330,4059,23389,Paid
+2026-0109,2026-09-17,Mountain Retreats,Retainer,34090,7159,41249,Paid
+2026-0110,2026-10-01,Mountain Retreats,Consulting,33840,7106,40946,Paid
+2026-0111,2026-01-15,Ostrava Steelworks,Retainer,13710,2879,16589,Paid
+2026-0112,2026-02-12,Psyon s.r.o.,Hosting,42600,8946,51546,Paid
+2026-0113,2026-03-24,Ostrava Steelworks,Design review,9090,1909,10999,Overdue
+2026-0114,2026-04-05,Kavárna Lípa,Hosting,5760,1210,6970,Paid
+2026-0115,2026-05-21,Vltava Logistics,Feature work,41200,8652,49852,Paid
+2026-0116,2026-06-08,Vltava Logistics,Retainer,4270,897,5167,Overdue
+2026-0117,2026-07-22,Fakturoid a.s.,Feature work,8220,1726,9946,Sent
+2026-0118,2026-08-10,Fakturoid a.s.,Design review,25320,5317,30637,Sent
+2026-0119,2026-09-27,Kavárna Lípa,Hosting,23770,4992,28762,Paid
+2026-0120,2026-10-11,Mountain Retreats,Retainer,3070,645,3715,Sent
+2026-0121,2026-01-24,Brno Makers Lab,Feature work,25170,5286,30456,Paid
+2026-0122,2026-02-03,Fakturoid a.s.,Feature work,10710,2249,12959,Paid
+2026-0123,2026-03-01,Dentium Clinic,Incident response,35180,7388,42568,Sent
+2026-0124,2026-04-05,Brno Makers Lab,Feature work,30290,6361,36651,Paid
+2026-0125,2026-05-18,Kavárna Lípa,Retainer,24140,5069,29209,Paid
+2026-0126,2026-06-06,Psyon s.r.o.,Hosting,39740,8345,48085,Paid
+2026-0127,2026-07-23,Fakturoid a.s.,Consulting,24790,5206,29996,Paid
+2026-0128,2026-08-22,Brno Makers Lab,Feature work,3520,739,4259,Paid
+2026-0129,2026-09-05,Vltava Logistics,Design review,34140,7169,41309,Paid
+2026-0130,2026-10-21,Kavárna Lípa,Retainer,38110,8003,46113,Paid
+2026-0131,2026-01-11,Fakturoid a.s.,Retainer,11050,2321,13371,Sent
+2026-0132,2026-02-15,Ostrava Steelworks,Retainer,30530,6411,36941,Overdue
+2026-0133,2026-03-20,Atelier Novák,Design review,15360,3226,18586,Sent
+2026-0134,2026-04-07,Mountain Retreats,Feature work,33800,7098,40898,Paid
+2026-0135,2026-05-03,Mountain Retreats,Design review,42740,8975,51715,Paid
+2026-0136,2026-06-26,Vltava Logistics,Design review,8210,1724,9934,Paid
+2026-0137,2026-07-07,Atelier Novák,Retainer,15480,3251,18731,Paid
+2026-0138,2026-08-23,Kavárna Lípa,Incident response,34020,7144,41164,Sent
+2026-0139,2026-09-06,Psyon s.r.o.,Design review,16840,3536,20376,Sent
+2026-0140,2026-10-24,Ostrava Steelworks,Feature work,25730,5403,31133,Paid
+2026-0141,2026-01-24,Atelier Novák,Incident response,14660,3079,17739,Sent
+2026-0142,2026-02-21,Fakturoid a.s.,Feature work,22850,4799,27649,Paid
+2026-0143,2026-03-10,Nordic Freight AB,Feature work,36390,7642,44032,Paid
+2026-0144,2026-04-16,Brno Makers Lab,Consulting,7560,1588,9148,Sent
+2026-0145,2026-05-02,Psyon s.r.o.,Hosting,7350,1544,8894,Paid
+2026-0146,2026-06-01,Fakturoid a.s.,Retainer,3450,725,4175,Overdue
+2026-0147,2026-07-15,Fakturoid a.s.,Retainer,38850,8159,47009,Paid
+2026-0148,2026-08-22,Fakturoid a.s.,Feature work,21710,4559,26269,Overdue
+2026-0149,2026-09-27,Nordic Freight AB,Design review,36220,7606,43826,Paid
+2026-0150,2026-10-22,Brno Makers Lab,Hosting,1360,286,1646,Sent
+2026-0151,2026-01-18,Fakturoid a.s.,Hosting,41370,8688,50058,Paid
+2026-0152,2026-02-26,Nordic Freight AB,Incident response,9030,1896,10926,Overdue
+2026-0153,2026-03-08,Brno Makers Lab,Design review,7000,1470,8470,Overdue
+2026-0154,2026-04-10,Atelier Novák,Incident response,18230,3828,22058,Overdue
+2026-0155,2026-05-17,Brno Makers Lab,Hosting,42630,8952,51582,Paid
+2026-0156,2026-06-17,Brno Makers Lab,Consulting,7630,1602,9232,Sent
+2026-0157,2026-07-13,Ostrava Steelworks,Consulting,22610,4748,27358,Paid
+2026-0158,2026-08-03,Kavárna Lípa,Design review,25720,5401,31121,Paid
+2026-0159,2026-09-06,Psyon s.r.o.,Hosting,18110,3803,21913,Paid
+2026-0160,2026-10-19,Dentium Clinic,Hosting,21490,4513,26003,Sent
+2026-0161,2026-01-27,Ostrava Steelworks,Design review,6990,1468,8458,Sent
+2026-0162,2026-02-07,Nordic Freight AB,Feature work,3790,796,4586,Paid
+2026-0163,2026-03-23,Mountain Retreats,Incident response,24140,5069,29209,Paid
+2026-0164,2026-04-12,Nordic Freight AB,Incident response,24200,5082,29282,Sent
+2026-0165,2026-05-03,Vltava Logistics,Design review,26550,5576,32126,Paid
+2026-0166,2026-06-26,Nordic Freight AB,Design review,28860,6061,34921,Paid
+2026-0167,2026-07-03,Atelier Novák,Incident response,31360,6586,37946,Paid
+2026-0168,2026-08-11,Mountain Retreats,Hosting,40990,8608,49598,Paid
+2026-0169,2026-09-25,Kavárna Lípa,Design review,13320,2797,16117,Paid
+2026-0170,2026-10-25,Brno Makers Lab,Consulting,40280,8459,48739,Paid
+2026-0171,2026-01-09,Brno Makers Lab,Hosting,23310,4895,28205,Paid
+2026-0172,2026-02-17,Dentium Clinic,Retainer,38860,8161,47021,Paid
+2026-0173,2026-03-18,Nordic Freight AB,Hosting,1530,321,1851,Paid
+2026-0174,2026-04-20,Mountain Retreats,Feature work,26660,5599,32259,Paid
+2026-0175,2026-05-02,Psyon s.r.o.,Incident response,28280,5939,34219,Paid
+2026-0176,2026-06-24,Psyon s.r.o.,Consulting,41640,8744,50384,Sent
+2026-0177,2026-07-27,Atelier Novák,Retainer,20530,4311,24841,Paid
+2026-0178,2026-08-26,Kavárna Lípa,Design review,3810,800,4610,Sent
+2026-0179,2026-09-08,Dentium Clinic,Feature work,25730,5403,31133,Paid
+2026-0180,2026-10-17,Nordic Freight AB,Consulting,34230,7188,41418,Paid
+2026-0181,2026-01-16,Brno Makers Lab,Design review,11850,2489,14339,Paid
+2026-0182,2026-02-20,Kavárna Lípa,Design review,24850,5219,30069,Overdue
+2026-0183,2026-03-17,Ostrava Steelworks,Consulting,15820,3322,19142,Paid
+2026-0184,2026-04-27,Fakturoid a.s.,Retainer,18890,3967,22857,Paid
+2026-0185,2026-05-07,Mountain Retreats,Retainer,7280,1529,8809,Paid
+2026-0186,2026-06-04,Dentium Clinic,Incident response,36850,7739,44589,Paid
+2026-0187,2026-07-10,Dentium Clinic,Feature work,14860,3121,17981,Paid
+2026-0188,2026-08-21,Psyon s.r.o.,Feature work,38660,8119,46779,Paid
+2026-0189,2026-09-26,Nordic Freight AB,Design review,20860,4381,25241,Paid
+2026-0190,2026-10-02,Mountain Retreats,Hosting,20410,4286,24696,Paid
+2026-0191,2026-01-19,Nordic Freight AB,Hosting,35600,7476,43076,Sent
+2026-0192,2026-02-18,Atelier Novák,Feature work,38560,8098,46658,Sent
+2026-0193,2026-03-14,Vltava Logistics,Design review,1140,239,1379,Paid
+2026-0194,2026-04-12,Ostrava Steelworks,Consulting,42730,8973,51703,Sent
+2026-0195,2026-05-05,Vltava Logistics,Feature work,9830,2064,11894,Paid
+2026-0196,2026-06-19,Dentium Clinic,Feature work,40190,8440,48630,Paid
+2026-0197,2026-07-12,Atelier Novák,Design review,42310,8885,51195,Sent
+2026-0198,2026-08-04,Kavárna Lípa,Design review,38880,8165,47045,Paid
+2026-0199,2026-09-26,Psyon s.r.o.,Feature work,7400,1554,8954,Overdue
+2026-0200,2026-10-25,Mountain Retreats,Feature work,6940,1457,8397,Paid
+2026-0201,2026-01-10,Nordic Freight AB,Consulting,16170,3396,19566,Overdue
+2026-0202,2026-02-14,Dentium Clinic,Consulting,30940,6497,37437,Sent
+2026-0203,2026-03-12,Atelier Novák,Consulting,41500,8715,50215,Overdue
+2026-0204,2026-04-15,Nordic Freight AB,Feature work,11400,2394,13794,Paid
+2026-0205,2026-05-22,Kavárna Lípa,Retainer,29740,6245,35985,Sent
+2026-0206,2026-06-06,Psyon s.r.o.,Design review,29150,6122,35272,Paid
+2026-0207,2026-07-06,Dentium Clinic,Design review,23460,4927,28387,Paid
+2026-0208,2026-08-15,Mountain Retreats,Incident response,18200,3822,22022,Paid
+2026-0209,2026-09-06,Mountain Retreats,Incident response,24520,5149,29669,Paid
+2026-0210,2026-10-24,Kavárna Lípa,Design review,39160,8224,47384,Overdue
+2026-0211,2026-01-07,Fakturoid a.s.,Hosting,30910,6491,37401,Sent
+2026-0212,2026-02-18,Dentium Clinic,Hosting,16460,3457,19917,Sent
+2026-0213,2026-03-03,Mountain Retreats,Design review,23070,4845,27915,Paid
+2026-0214,2026-04-19,Atelier Novák,Retainer,23900,5019,28919,Paid
+2026-0215,2026-05-04,Ostrava Steelworks,Incident response,5320,1117,6437,Paid
+2026-0216,2026-06-02,Dentium Clinic,Feature work,23180,4868,28048,Sent
+2026-0217,2026-07-03,Vltava Logistics,Hosting,31290,6571,37861,Overdue
+2026-0218,2026-08-14,Brno Makers Lab,Design review,5790,1216,7006,Paid
+2026-0219,2026-09-06,Vltava Logistics,Incident response,41290,8671,49961,Paid
+2026-0220,2026-10-09,Fakturoid a.s.,Retainer,1800,378,2178,Paid
+2026-0221,2026-01-22,Kavárna Lípa,Consulting,19140,4019,23159,Paid
+2026-0222,2026-02-15,Ostrava Steelworks,Incident response,12120,2545,14665,Paid
+2026-0223,2026-03-24,Fakturoid a.s.,Feature work,17570,3690,21260,Paid
+2026-0224,2026-04-15,Fakturoid a.s.,Feature work,39830,8364,48194,Paid
+2026-0225,2026-05-04,Dentium Clinic,Design review,7270,1527,8797,Sent
+2026-0226,2026-06-12,Nordic Freight AB,Consulting,36140,7589,43729,Paid
+2026-0227,2026-07-03,Nordic Freight AB,Retainer,22530,4731,27261,Paid
+2026-0228,2026-08-17,Kavárna Lípa,Retainer,9220,1936,11156,Paid
+2026-0229,2026-09-16,Fakturoid a.s.,Retainer,19960,4192,24152,Paid
+2026-0230,2026-10-20,Fakturoid a.s.,Hosting,18340,3851,22191,Paid
+2026-0231,2026-01-22,Psyon s.r.o.,Hosting,8910,1871,10781,Paid
+2026-0232,2026-02-20,Atelier Novák,Incident response,40970,8604,49574,Paid
+2026-0233,2026-03-04,Kavárna Lípa,Consulting,4830,1014,5844,Paid
+2026-0234,2026-04-21,Ostrava Steelworks,Design review,2490,523,3013,Paid
+2026-0235,2026-05-04,Brno Makers Lab,Hosting,8220,1726,9946,Sent
+2026-0236,2026-06-03,Kavárna Lípa,Hosting,30000,6300,36300,Paid
+2026-0237,2026-07-26,Vltava Logistics,Feature work,16230,3408,19638,Paid
+2026-0238,2026-08-05,Fakturoid a.s.,Retainer,28790,6046,34836,Overdue
+2026-0239,2026-09-16,Mountain Retreats,Retainer,21380,4490,25870,Overdue
+2026-0240,2026-10-09,Ostrava Steelworks,Feature work,41460,8707,50167,Paid
+2026-0241,2026-01-13,Psyon s.r.o.,Hosting,34630,7272,41902,Sent
+2026-0242,2026-02-06,Mountain Retreats,Consulting,26330,5529,31859,Paid
+2026-0243,2026-03-27,Psyon s.r.o.,Hosting,25950,5450,31400,Paid
+2026-0244,2026-04-24,Nordic Freight AB,Retainer,25240,5300,30540,Paid
+2026-0245,2026-05-25,Psyon s.r.o.,Design review,5170,1086,6256,Paid
+2026-0246,2026-06-03,Fakturoid a.s.,Incident response,19220,4036,23256,Paid
+2026-0247,2026-07-16,Ostrava Steelworks,Hosting,37560,7888,45448,Paid
+2026-0248,2026-08-09,Psyon s.r.o.,Hosting,34520,7249,41769,Paid
+2026-0249,2026-09-17,Vltava Logistics,Retainer,12940,2717,15657,Paid
+2026-0250,2026-10-01,Vltava Logistics,Consulting,35960,7552,43512,Paid
+2026-0251,2026-01-01,Kavárna Lípa,Feature work,19210,4034,23244,Paid
+2026-0252,2026-02-14,Fakturoid a.s.,Design review,42400,8904,51304,Paid
+2026-0253,2026-03-22,Kavárna Lípa,Design review,23950,5030,28980,Paid
+2026-0254,2026-04-07,Kavárna Lípa,Hosting,34340,7211,41551,Paid
+2026-0255,2026-05-21,Fakturoid a.s.,Design review,7780,1634,9414,Paid
+2026-0256,2026-06-14,Vltava Logistics,Hosting,23990,5038,29028,Sent
+2026-0257,2026-07-05,Ostrava Steelworks,Incident response,21130,4437,25567,Overdue
+2026-0258,2026-08-21,Fakturoid a.s.,Hosting,14640,3074,17714,Paid
+2026-0259,2026-09-06,Kavárna Lípa,Retainer,29850,6269,36119,Sent
+2026-0260,2026-10-14,Brno Makers Lab,Hosting,13140,2759,15899,Paid
+2026-0261,2026-01-20,Dentium Clinic,Incident response,42040,8828,50868,Paid
+2026-0262,2026-02-11,Brno Makers Lab,Consulting,32210,6764,38974,Paid
+2026-0263,2026-03-19,Fakturoid a.s.,Incident response,30550,6416,36966,Paid
+2026-0264,2026-04-20,Psyon s.r.o.,Retainer,24930,5235,30165,Paid
+2026-0265,2026-05-04,Psyon s.r.o.,Retainer,24770,5202,29972,Paid
+2026-0266,2026-06-25,Psyon s.r.o.,Consulting,17960,3772,21732,Paid
+2026-0267,2026-07-23,Fakturoid a.s.,Consulting,28530,5991,34521,Paid
+2026-0268,2026-08-02,Atelier Novák,Design review,14870,3123,17993,Paid
+2026-0269,2026-09-15,Ostrava Steelworks,Incident response,16670,3501,20171,Paid
+2026-0270,2026-10-27,Mountain Retreats,Consulting,6970,1464,8434,Paid
+2026-0271,2026-01-01,Fakturoid a.s.,Incident response,42780,8984,51764,Paid
+2026-0272,2026-02-01,Fakturoid a.s.,Feature work,42260,8875,51135,Paid
+2026-0273,2026-03-23,Kavárna Lípa,Consulting,31060,6523,37583,Sent
+2026-0274,2026-04-01,Mountain Retreats,Hosting,18690,3925,22615,Paid
+2026-0275,2026-05-21,Brno Makers Lab,Hosting,32780,6884,39664,Sent
+2026-0276,2026-06-08,Ostrava Steelworks,Feature work,1700,357,2057,Overdue
+2026-0277,2026-07-18,Mountain Retreats,Retainer,39920,8383,48303,Paid
+2026-0278,2026-08-03,Ostrava Steelworks,Hosting,36140,7589,43729,Sent
+2026-0279,2026-09-18,Kavárna Lípa,Consulting,9330,1959,11289,Paid
+2026-0280,2026-10-13,Vltava Logistics,Retainer,10090,2119,12209,Paid
+2026-0281,2026-01-06,Fakturoid a.s.,Hosting,27570,5790,33360,Paid
+2026-0282,2026-02-03,Psyon s.r.o.,Incident response,14170,2976,17146,Paid
+2026-0283,2026-03-12,Atelier Novák,Feature work,36830,7734,44564,Paid
+2026-0284,2026-04-15,Nordic Freight AB,Feature work,30210,6344,36554,Sent
+2026-0285,2026-05-03,Atelier Novák,Hosting,15620,3280,18900,Paid
+2026-0286,2026-06-23,Dentium Clinic,Feature work,19340,4061,23401,Sent
+2026-0287,2026-07-06,Vltava Logistics,Hosting,36730,7713,44443,Overdue
+2026-0288,2026-08-03,Psyon s.r.o.,Consulting,42260,8875,51135,Paid
+2026-0289,2026-09-06,Atelier Novák,Retainer,16780,3524,20304,Paid
+2026-0290,2026-10-22,Psyon s.r.o.,Design review,4180,878,5058,Paid
+2026-0291,2026-01-17,Kavárna Lípa,Hosting,25200,5292,30492,Paid
+2026-0292,2026-02-23,Kavárna Lípa,Feature work,29120,6115,35235,Paid
+2026-0293,2026-03-04,Dentium Clinic,Retainer,40680,8543,49223,Overdue
+2026-0294,2026-04-02,Dentium Clinic,Consulting,11160,2344,13504,Paid
+2026-0295,2026-05-06,Nordic Freight AB,Hosting,16780,3524,20304,Overdue
+2026-0296,2026-06-14,Vltava Logistics,Design review,23900,5019,28919,Paid
+2026-0297,2026-07-02,Mountain Retreats,Hosting,8180,1718,9898,Paid
+2026-0298,2026-08-08,Atelier Novák,Incident response,5150,1082,6232,Paid
+2026-0299,2026-09-24,Dentium Clinic,Feature work,21240,4460,25700,Paid
+2026-0300,2026-10-12,Kavárna Lípa,Retainer,38350,8054,46404,Sent
+2026-0301,2026-01-06,Fakturoid a.s.,Design review,26240,5510,31750,Sent
+2026-0302,2026-02-17,Nordic Freight AB,Design review,30410,6386,36796,Paid
+2026-0303,2026-03-12,Dentium Clinic,Retainer,21740,4565,26305,Paid
+2026-0304,2026-04-23,Ostrava Steelworks,Retainer,3980,836,4816,Paid
+2026-0305,2026-05-05,Atelier Novák,Incident response,35640,7484,43124,Paid
+2026-0306,2026-06-02,Brno Makers Lab,Consulting,6660,1399,8059,Paid
+2026-0307,2026-07-19,Mountain Retreats,Consulting,33890,7117,41007,Paid
+2026-0308,2026-08-17,Atelier Novák,Retainer,23020,4834,27854,Paid
+2026-0309,2026-09-02,Mountain Retreats,Feature work,7560,1588,9148,Paid
+2026-0310,2026-10-12,Nordic Freight AB,Incident response,16630,3492,20122,Paid
+2026-0311,2026-01-02,Psyon s.r.o.,Feature work,5160,1084,6244,Paid
+2026-0312,2026-02-06,Fakturoid a.s.,Hosting,13940,2927,16867,Paid
+2026-0313,2026-03-25,Kavárna Lípa,Incident response,24940,5237,30177,Paid
+2026-0314,2026-04-18,Nordic Freight AB,Consulting,17090,3589,20679,Paid
+2026-0315,2026-05-02,Ostrava Steelworks,Hosting,12800,2688,15488,Paid
+2026-0316,2026-06-06,Atelier Novák,Consulting,21300,4473,25773,Paid
+2026-0317,2026-07-17,Vltava Logistics,Retainer,13630,2862,16492,Paid
+2026-0318,2026-08-02,Kavárna Lípa,Design review,5380,1130,6510,Paid
+2026-0319,2026-09-10,Psyon s.r.o.,Hosting,13970,2934,16904,Sent
+2026-0320,2026-10-18,Dentium Clinic,Design review,3770,792,4562,Paid
+2026-0321,2026-01-06,Mountain Retreats,Retainer,40450,8495,48945,Paid
+2026-0322,2026-02-15,Fakturoid a.s.,Incident response,21090,4429,25519,Paid
+2026-0323,2026-03-05,Dentium Clinic,Feature work,17530,3681,21211,Paid
+2026-0324,2026-04-04,Mountain Retreats,Consulting,12170,2556,14726,Sent
+2026-0325,2026-05-03,Mountain Retreats,Design review,22460,4717,27177,Paid
+2026-0326,2026-06-07,Dentium Clinic,Design review,6390,1342,7732,Paid
+2026-0327,2026-07-14,Ostrava Steelworks,Hosting,36430,7650,44080,Sent
+2026-0328,2026-08-21,Dentium Clinic,Consulting,24520,5149,29669,Paid
+2026-0329,2026-09-04,Atelier Novák,Consulting,25100,5271,30371,Paid
+2026-0330,2026-10-21,Nordic Freight AB,Consulting,22950,4820,27770,Paid
+2026-0331,2026-01-25,Dentium Clinic,Incident response,33920,7123,41043,Paid
+2026-0332,2026-02-01,Vltava Logistics,Design review,9160,1924,11084,Paid
+2026-0333,2026-03-04,Fakturoid a.s.,Incident response,24940,5237,30177,Paid
+2026-0334,2026-04-09,Kavárna Lípa,Hosting,6500,1365,7865,Paid
+2026-0335,2026-05-05,Atelier Novák,Feature work,15220,3196,18416,Paid
+2026-0336,2026-06-08,Ostrava Steelworks,Feature work,16280,3419,19699,Paid
+2026-0337,2026-07-02,Brno Makers Lab,Incident response,32010,6722,38732,Sent
+2026-0338,2026-08-25,Dentium Clinic,Retainer,2730,573,3303,Sent
+2026-0339,2026-09-03,Dentium Clinic,Hosting,41250,8663,49913,Overdue
+2026-0340,2026-10-03,Brno Makers Lab,Retainer,3550,746,4296,Paid
+2026-0341,2026-01-01,Brno Makers Lab,Incident response,11590,2434,14024,Paid
+2026-0342,2026-02-13,Mountain Retreats,Hosting,39400,8274,47674,Paid
+2026-0343,2026-03-04,Fakturoid a.s.,Feature work,30770,6462,37232,Paid
+2026-0344,2026-04-15,Nordic Freight AB,Hosting,21350,4484,25834,Sent
+2026-0345,2026-05-21,Ostrava Steelworks,Feature work,9210,1934,11144,Sent
+2026-0346,2026-06-06,Dentium Clinic,Design review,9750,2048,11798,Paid
+2026-0347,2026-07-05,Ostrava Steelworks,Feature work,2430,510,2940,Paid
+2026-0348,2026-08-03,Kavárna Lípa,Feature work,2440,512,2952,Paid
+2026-0349,2026-09-11,Atelier Novák,Incident response,41390,8692,50082,Paid
+2026-0350,2026-10-04,Mountain Retreats,Design review,3360,706,4066,Paid
+2026-0351,2026-01-02,Mountain Retreats,Feature work,36390,7642,44032,Paid
+2026-0352,2026-02-03,Kavárna Lípa,Consulting,20200,4242,24442,Paid
+2026-0353,2026-03-23,Fakturoid a.s.,Hosting,29890,6277,36167,Paid
+2026-0354,2026-04-13,Psyon s.r.o.,Feature work,2980,626,3606,Paid
+2026-0355,2026-05-24,Brno Makers Lab,Design review,15700,3297,18997,Paid
+2026-0356,2026-06-19,Nordic Freight AB,Retainer,30540,6413,36953,Paid
+2026-0357,2026-07-06,Fakturoid a.s.,Design review,36200,7602,43802,Paid
+2026-0358,2026-08-17,Psyon s.r.o.,Consulting,18560,3898,22458,Sent
+2026-0359,2026-09-05,Kavárna Lípa,Incident response,960,202,1162,Paid
+2026-0360,2026-10-02,Brno Makers Lab,Hosting,24310,5105,29415,Paid
+2026-0361,2026-01-24,Nordic Freight AB,Feature work,15700,3297,18997,Paid
+2026-0362,2026-02-04,Mountain Retreats,Retainer,40580,8522,49102,Paid
+2026-0363,2026-03-02,Brno Makers Lab,Consulting,3820,802,4622,Paid
+2026-0364,2026-04-16,Atelier Novák,Design review,26540,5573,32113,Paid
+2026-0365,2026-05-25,Psyon s.r.o.,Feature work,10090,2119,12209,Paid
+2026-0366,2026-06-03,Fakturoid a.s.,Design review,25630,5382,31012,Paid
+2026-0367,2026-07-16,Psyon s.r.o.,Feature work,25570,5370,30940,Paid
+2026-0368,2026-08-05,Mountain Retreats,Design review,17970,3774,21744,Paid
+2026-0369,2026-09-24,Vltava Logistics,Consulting,15470,3249,18719,Paid
+2026-0370,2026-10-13,Nordic Freight AB,Feature work,11150,2342,13492,Paid
+2026-0371,2026-01-20,Atelier Novák,Hosting,6190,1300,7490,Sent
+2026-0372,2026-02-04,Mountain Retreats,Feature work,16890,3547,20437,Paid
+2026-0373,2026-03-22,Fakturoid a.s.,Retainer,25090,5269,30359,Paid
+2026-0374,2026-04-15,Brno Makers Lab,Hosting,8560,1798,10358,Sent
+2026-0375,2026-05-17,Fakturoid a.s.,Retainer,860,181,1041,Paid
+2026-0376,2026-06-09,Vltava Logistics,Design review,26140,5489,31629,Paid
+2026-0377,2026-07-04,Kavárna Lípa,Design review,33130,6957,40087,Paid
+2026-0378,2026-08-19,Vltava Logistics,Hosting,38900,8169,47069,Overdue
+2026-0379,2026-09-03,Dentium Clinic,Feature work,42530,8931,51461,Paid
+2026-0380,2026-10-23,Psyon s.r.o.,Hosting,24730,5193,29923,Paid
+2026-0381,2026-01-01,Kavárna Lípa,Feature work,1190,250,1440,Paid
+2026-0382,2026-02-10,Ostrava Steelworks,Feature work,19760,4150,23910,Paid
+2026-0383,2026-03-15,Vltava Logistics,Design review,29780,6254,36034,Paid
+2026-0384,2026-04-06,Psyon s.r.o.,Incident response,30460,6397,36857,Paid
+2026-0385,2026-05-14,Dentium Clinic,Hosting,8800,1848,10648,Sent
+2026-0386,2026-06-22,Fakturoid a.s.,Retainer,26220,5506,31726,Paid
+2026-0387,2026-07-01,Vltava Logistics,Hosting,20890,4387,25277,Paid
+2026-0388,2026-08-24,Psyon s.r.o.,Feature work,22110,4643,26753,Sent
+2026-0389,2026-09-10,Mountain Retreats,Design review,7180,1508,8688,Paid
+2026-0390,2026-10-23,Mountain Retreats,Consulting,32060,6733,38793,Paid
+2026-0391,2026-01-21,Vltava Logistics,Hosting,33800,7098,40898,Paid
+2026-0392,2026-02-05,Nordic Freight AB,Hosting,6530,1371,7901,Sent
+2026-0393,2026-03-26,Psyon s.r.o.,Incident response,26980,5666,32646,Paid
+2026-0394,2026-04-06,Nordic Freight AB,Feature work,3170,666,3836,Overdue
+2026-0395,2026-05-04,Brno Makers Lab,Retainer,15390,3232,18622,Overdue
+2026-0396,2026-06-10,Nordic Freight AB,Feature work,20200,4242,24442,Paid
+2026-0397,2026-07-07,Mountain Retreats,Consulting,24890,5227,30117,Paid
+2026-0398,2026-08-18,Brno Makers Lab,Hosting,8770,1842,10612,Paid
+2026-0399,2026-09-11,Atelier Novák,Incident response,13270,2787,16057,Sent
+2026-0400,2026-10-26,Nordic Freight AB,Retainer,29590,6214,35804,Paid
+2026-0401,2026-01-05,Kavárna Lípa,Retainer,39150,8222,47372,Paid
+2026-0402,2026-02-17,Brno Makers Lab,Design review,21340,4481,25821,Paid
+2026-0403,2026-03-05,Mountain Retreats,Design review,36490,7663,44153,Paid
+2026-0404,2026-04-04,Nordic Freight AB,Consulting,22280,4679,26959,Paid
+2026-0405,2026-05-11,Atelier Novák,Hosting,39980,8396,48376,Paid
+2026-0406,2026-06-21,Dentium Clinic,Retainer,19600,4116,23716,Paid
+2026-0407,2026-07-23,Kavárna Lípa,Feature work,10330,2169,12499,Paid
+2026-0408,2026-08-10,Psyon s.r.o.,Consulting,18490,3883,22373,Paid
+2026-0409,2026-09-19,Brno Makers Lab,Consulting,14940,3137,18077,Paid
+2026-0410,2026-10-06,Nordic Freight AB,Hosting,21290,4471,25761,Sent
+2026-0411,2026-01-26,Psyon s.r.o.,Design review,13640,2864,16504,Paid
+2026-0412,2026-02-08,Nordic Freight AB,Retainer,20200,4242,24442,Paid
+2026-0413,2026-03-07,Vltava Logistics,Design review,1780,374,2154,Paid
+2026-0414,2026-04-20,Atelier Novák,Consulting,1370,288,1658,Paid
+2026-0415,2026-05-20,Kavárna Lípa,Incident response,34890,7327,42217,Paid
+2026-0416,2026-06-13,Atelier Novák,Retainer,36170,7596,43766,Paid
+2026-0417,2026-07-14,Nordic Freight AB,Hosting,4830,1014,5844,Overdue
+2026-0418,2026-08-19,Fakturoid a.s.,Consulting,14320,3007,17327,Sent
+2026-0419,2026-09-09,Vltava Logistics,Feature work,32570,6840,39410,Paid
+2026-0420,2026-10-23,Fakturoid a.s.,Retainer,36070,7575,43645,Paid
+2026-0421,2026-01-01,Mountain Retreats,Consulting,23620,4960,28580,Paid
+2026-0422,2026-02-01,Vltava Logistics,Design review,20070,4215,24285,Paid
+2026-0423,2026-03-13,Mountain Retreats,Feature work,10000,2100,12100,Paid
+2026-0424,2026-04-16,Psyon s.r.o.,Incident response,29100,6111,35211,Overdue
+2026-0425,2026-05-16,Nordic Freight AB,Consulting,5880,1235,7115,Paid
+2026-0426,2026-06-24,Ostrava Steelworks,Consulting,22660,4759,27419,Paid
+2026-0427,2026-07-15,Nordic Freight AB,Retainer,19490,4093,23583,Paid
+2026-0428,2026-08-17,Vltava Logistics,Consulting,10440,2192,12632,Paid
+2026-0429,2026-09-07,Vltava Logistics,Consulting,27680,5813,33493,Paid
+2026-0430,2026-10-06,Atelier Novák,Incident response,13440,2822,16262,Paid
+2026-0431,2026-01-14,Brno Makers Lab,Incident response,2510,527,3037,Overdue
+2026-0432,2026-02-22,Ostrava Steelworks,Hosting,15560,3268,18828,Sent
+2026-0433,2026-03-21,Kavárna Lípa,Design review,8360,1756,10116,Paid
+2026-0434,2026-04-04,Mountain Retreats,Retainer,19330,4059,23389,Sent
+2026-0435,2026-05-23,Psyon s.r.o.,Design review,31350,6584,37934,Paid
+2026-0436,2026-06-23,Atelier Novák,Incident response,24640,5174,29814,Sent
+2026-0437,2026-07-21,Psyon s.r.o.,Feature work,27420,5758,33178,Paid
+2026-0438,2026-08-26,Psyon s.r.o.,Incident response,4200,882,5082,Paid
+2026-0439,2026-09-10,Dentium Clinic,Design review,41030,8616,49646,Sent
+2026-0440,2026-10-15,Atelier Novák,Incident response,1610,338,1948,Paid
+2026-0441,2026-01-08,Ostrava Steelworks,Incident response,24980,5246,30226,Sent
+2026-0442,2026-02-24,Mountain Retreats,Consulting,17910,3761,21671,Paid
+2026-0443,2026-03-07,Nordic Freight AB,Hosting,3680,773,4453,Paid
+2026-0444,2026-04-11,Mountain Retreats,Feature work,40820,8572,49392,Paid
+2026-0445,2026-05-15,Mountain Retreats,Hosting,19550,4106,23656,Paid
+2026-0446,2026-06-10,Fakturoid a.s.,Hosting,7870,1653,9523,Paid
+2026-0447,2026-07-24,Brno Makers Lab,Consulting,12020,2524,14544,Paid
+2026-0448,2026-08-19,Brno Makers Lab,Incident response,18880,3965,22845,Paid
+2026-0449,2026-09-02,Ostrava Steelworks,Feature work,7280,1529,8809,Paid
+2026-0450,2026-10-17,Ostrava Steelworks,Feature work,20210,4244,24454,Paid
+2026-0451,2026-01-09,Fakturoid a.s.,Hosting,8420,1768,10188,Paid
+2026-0452,2026-02-15,Brno Makers Lab,Design review,22260,4675,26935,Paid
+2026-0453,2026-03-15,Mountain Retreats,Feature work,30480,6401,36881,Paid
+2026-0454,2026-04-24,Ostrava Steelworks,Consulting,9000,1890,10890,Sent
+2026-0455,2026-05-08,Kavárna Lípa,Retainer,37770,7932,45702,Paid
+2026-0456,2026-06-19,Kavárna Lípa,Retainer,12440,2612,15052,Paid
+2026-0457,2026-07-02,Vltava Logistics,Retainer,4660,979,5639,Paid
+2026-0458,2026-08-12,Atelier Novák,Retainer,23060,4843,27903,Sent
+2026-0459,2026-09-14,Mountain Retreats,Hosting,34240,7190,41430,Sent
+2026-0460,2026-10-01,Fakturoid a.s.,Hosting,41920,8803,50723,Overdue
+2026-0461,2026-01-27,Nordic Freight AB,Incident response,19860,4171,24031,Paid
+2026-0462,2026-02-02,Vltava Logistics,Incident response,22020,4624,26644,Paid
+2026-0463,2026-03-19,Psyon s.r.o.,Design review,19610,4118,23728,Paid
+2026-0464,2026-04-13,Vltava Logistics,Retainer,38270,8037,46307,Paid
+2026-0465,2026-05-02,Brno Makers Lab,Retainer,26690,5605,32295,Paid
+2026-0466,2026-06-10,Fakturoid a.s.,Consulting,15080,3167,18247,Paid
+2026-0467,2026-07-03,Vltava Logistics,Incident response,35880,7535,43415,Paid
+2026-0468,2026-08-24,Dentium Clinic,Hosting,30200,6342,36542,Paid
+2026-0469,2026-09-07,Kavárna Lípa,Retainer,11340,2381,13721,Paid
+2026-0470,2026-10-24,Nordic Freight AB,Incident response,41480,8711,50191,Paid
+2026-0471,2026-01-05,Vltava Logistics,Consulting,34940,7337,42277,Paid
+2026-0472,2026-02-15,Ostrava Steelworks,Feature work,41790,8776,50566,Sent
+2026-0473,2026-03-07,Atelier Novák,Consulting,30490,6403,36893,Sent
+2026-0474,2026-04-09,Nordic Freight AB,Feature work,42080,8837,50917,Sent
+2026-0475,2026-05-05,Fakturoid a.s.,Hosting,16590,3484,20074,Overdue
+2026-0476,2026-06-19,Kavárna Lípa,Hosting,37240,7820,45060,Sent
+2026-0477,2026-07-06,Mountain Retreats,Incident response,33470,7029,40499,Sent
+2026-0478,2026-08-06,Ostrava Steelworks,Consulting,22410,4706,27116,Paid
+2026-0479,2026-09-07,Fakturoid a.s.,Design review,23990,5038,29028,Paid
+2026-0480,2026-10-07,Mountain Retreats,Hosting,5700,1197,6897,Paid
+2026-0481,2026-01-13,Psyon s.r.o.,Hosting,14850,3119,17969,Paid
+2026-0482,2026-02-23,Vltava Logistics,Consulting,40390,8482,48872,Paid
+2026-0483,2026-03-01,Kavárna Lípa,Incident response,9130,1917,11047,Paid
+2026-0484,2026-04-27,Mountain Retreats,Retainer,37810,7940,45750,Paid
+2026-0485,2026-05-04,Atelier Novák,Consulting,7490,1573,9063,Overdue
+2026-0486,2026-06-27,Ostrava Steelworks,Feature work,18820,3952,22772,Paid
+2026-0487,2026-07-26,Atelier Novák,Incident response,37170,7806,44976,Paid
+2026-0488,2026-08-15,Vltava Logistics,Design review,18540,3893,22433,Overdue
+2026-0489,2026-09-27,Dentium Clinic,Design review,15020,3154,18174,Paid
+2026-0490,2026-10-06,Ostrava Steelworks,Design review,21720,4561,26281,Paid
+2026-0491,2026-01-27,Vltava Logistics,Incident response,41740,8765,50505,Paid
+2026-0492,2026-02-05,Brno Makers Lab,Incident response,18600,3906,22506,Paid
+2026-0493,2026-03-27,Kavárna Lípa,Design review,14130,2967,17097,Paid
+2026-0494,2026-04-26,Ostrava Steelworks,Retainer,40520,8509,49029,Paid
+2026-0495,2026-05-15,Nordic Freight AB,Hosting,40720,8551,49271,Paid
+2026-0496,2026-06-25,Brno Makers Lab,Incident response,4740,995,5735,Paid
+2026-0497,2026-07-11,Mountain Retreats,Consulting,13370,2808,16178,Paid
+2026-0498,2026-08-05,Dentium Clinic,Feature work,30740,6455,37195,Sent
+2026-0499,2026-09-27,Atelier Novák,Feature work,27570,5790,33360,Paid
+2026-0500,2026-10-02,Ostrava Steelworks,Consulting,38410,8066,46476,Paid
+2026-0501,2026-01-27,Mountain Retreats,Design review,14020,2944,16964,Sent
+2026-0502,2026-02-17,Fakturoid a.s.,Design review,2420,508,2928,Paid
+2026-0503,2026-03-10,Atelier Novák,Consulting,5360,1126,6486,Paid
+2026-0504,2026-04-06,Ostrava Steelworks,Consulting,30240,6350,36590,Paid
+2026-0505,2026-05-13,Kavárna Lípa,Design review,25490,5353,30843,Overdue
+2026-0506,2026-06-23,Fakturoid a.s.,Hosting,26320,5527,31847,Paid
+2026-0507,2026-07-05,Psyon s.r.o.,Retainer,41230,8658,49888,Overdue
+2026-0508,2026-08-05,Atelier Novák,Hosting,28270,5937,34207,Paid
+2026-0509,2026-09-19,Psyon s.r.o.,Retainer,8330,1749,10079,Sent
+2026-0510,2026-10-27,Mountain Retreats,Hosting,16800,3528,20328,Paid
+2026-0511,2026-01-21,Fakturoid a.s.,Feature work,22770,4782,27552,Paid
+2026-0512,2026-02-25,Dentium Clinic,Feature work,14040,2948,16988,Paid
+2026-0513,2026-03-18,Psyon s.r.o.,Consulting,34450,7235,41685,Paid
+2026-0514,2026-04-15,Ostrava Steelworks,Hosting,2560,538,3098,Paid
+2026-0515,2026-05-20,Atelier Novák,Design review,21820,4582,26402,Sent
+2026-0516,2026-06-05,Kavárna Lípa,Design review,23390,4912,28302,Paid
+2026-0517,2026-07-03,Vltava Logistics,Design review,4750,998,5748,Paid
+2026-0518,2026-08-15,Fakturoid a.s.,Retainer,11580,2432,14012,Paid
+2026-0519,2026-09-12,Atelier Novák,Feature work,7860,1651,9511,Paid
+2026-0520,2026-10-14,Vltava Logistics,Retainer,14520,3049,17569,Paid
+2026-0521,2026-01-18,Brno Makers Lab,Hosting,7170,1506,8676,Paid
+2026-0522,2026-02-22,Dentium Clinic,Hosting,18110,3803,21913,Paid
+2026-0523,2026-03-27,Fakturoid a.s.,Design review,25910,5441,31351,Overdue
+2026-0524,2026-04-07,Fakturoid a.s.,Consulting,31070,6525,37595,Paid
+2026-0525,2026-05-16,Dentium Clinic,Retainer,950,200,1150,Paid
+2026-0526,2026-06-01,Brno Makers Lab,Incident response,14640,3074,17714,Paid
+2026-0527,2026-07-23,Dentium Clinic,Consulting,37820,7942,45762,Paid
+2026-0528,2026-08-13,Atelier Novák,Design review,35740,7505,43245,Paid
+2026-0529,2026-09-23,Kavárna Lípa,Feature work,33550,7046,40596,Sent
+2026-0530,2026-10-15,Brno Makers Lab,Incident response,23010,4832,27842,Paid
+2026-0531,2026-01-08,Vltava Logistics,Design review,16230,3408,19638,Paid
+2026-0532,2026-02-16,Dentium Clinic,Consulting,26020,5464,31484,Paid
+2026-0533,2026-03-20,Atelier Novák,Retainer,24720,5191,29911,Paid
+2026-0534,2026-04-16,Kavárna Lípa,Feature work,30550,6416,36966,Sent
+2026-0535,2026-05-09,Nordic Freight AB,Feature work,26370,5538,31908,Paid
+2026-0536,2026-06-15,Dentium Clinic,Incident response,22480,4721,27201,Paid
+2026-0537,2026-07-01,Dentium Clinic,Incident response,6910,1451,8361,Paid
+2026-0538,2026-08-06,Mountain Retreats,Design review,34740,7295,42035,Paid
+2026-0539,2026-09-26,Fakturoid a.s.,Feature work,13280,2789,16069,Paid
+2026-0540,2026-10-10,Dentium Clinic,Design review,7710,1619,9329,Paid
+2026-0541,2026-01-11,Kavárna Lípa,Retainer,5940,1247,7187,Sent
+2026-0542,2026-02-26,Psyon s.r.o.,Incident response,41160,8644,49804,Paid
+2026-0543,2026-03-13,Vltava Logistics,Feature work,30950,6500,37450,Paid
+2026-0544,2026-04-06,Atelier Novák,Feature work,7330,1539,8869,Paid
+2026-0545,2026-05-24,Dentium Clinic,Incident response,10420,2188,12608,Paid
+2026-0546,2026-06-17,Kavárna Lípa,Hosting,11430,2400,13830,Paid
+2026-0547,2026-07-27,Kavárna Lípa,Design review,33820,7102,40922,Sent
+2026-0548,2026-08-01,Ostrava Steelworks,Retainer,31530,6621,38151,Paid
+2026-0549,2026-09-19,Mountain Retreats,Feature work,2060,433,2493,Sent
+2026-0550,2026-10-15,Kavárna Lípa,Hosting,5880,1235,7115,Paid
+2026-0551,2026-01-10,Vltava Logistics,Retainer,33340,7001,40341,Paid
+2026-0552,2026-02-11,Dentium Clinic,Consulting,3000,630,3630,Sent
+2026-0553,2026-03-26,Psyon s.r.o.,Design review,34590,7264,41854,Paid
+2026-0554,2026-04-07,Psyon s.r.o.,Hosting,6860,1441,8301,Paid
+2026-0555,2026-05-13,Ostrava Steelworks,Hosting,31160,6544,37704,Sent
+2026-0556,2026-06-18,Fakturoid a.s.,Hosting,32450,6815,39265,Paid
+2026-0557,2026-07-13,Kavárna Lípa,Consulting,11340,2381,13721,Paid
+2026-0558,2026-08-21,Ostrava Steelworks,Retainer,10290,2161,12451,Paid
+2026-0559,2026-09-25,Atelier Novák,Feature work,32220,6766,38986,Sent
+2026-0560,2026-10-16,Mountain Retreats,Retainer,4650,977,5627,Sent
+2026-0561,2026-01-25,Dentium Clinic,Retainer,16300,3423,19723,Paid
+2026-0562,2026-02-16,Nordic Freight AB,Hosting,32630,6852,39482,Overdue
+2026-0563,2026-03-24,Ostrava Steelworks,Consulting,32300,6783,39083,Paid
+2026-0564,2026-04-18,Brno Makers Lab,Consulting,2780,584,3364,Sent
+2026-0565,2026-05-11,Brno Makers Lab,Hosting,18280,3839,22119,Paid
+2026-0566,2026-06-26,Vltava Logistics,Incident response,3090,649,3739,Paid
+2026-0567,2026-07-24,Mountain Retreats,Incident response,8190,1720,9910,Paid
+2026-0568,2026-08-13,Vltava Logistics,Retainer,38790,8146,46936,Paid
+2026-0569,2026-09-10,Vltava Logistics,Design review,36890,7747,44637,Sent
+2026-0570,2026-10-22,Fakturoid a.s.,Hosting,29840,6266,36106,Paid
+2026-0571,2026-01-15,Brno Makers Lab,Design review,1610,338,1948,Paid
+2026-0572,2026-02-22,Nordic Freight AB,Consulting,19800,4158,23958,Paid
+2026-0573,2026-03-08,Ostrava Steelworks,Consulting,31270,6567,37837,Paid
+2026-0574,2026-04-12,Dentium Clinic,Feature work,11350,2384,13734,Paid
+2026-0575,2026-05-22,Brno Makers Lab,Retainer,30460,6397,36857,Paid
+2026-0576,2026-06-09,Mountain Retreats,Feature work,31960,6712,38672,Paid
+2026-0577,2026-07-24,Ostrava Steelworks,Feature work,10990,2308,13298,Sent
+2026-0578,2026-08-06,Nordic Freight AB,Feature work,31210,6554,37764,Paid
+2026-0579,2026-09-01,Mountain Retreats,Design review,8960,1882,10842,Paid
+2026-0580,2026-10-20,Nordic Freight AB,Consulting,31610,6638,38248,Paid
+2026-0581,2026-01-12,Fakturoid a.s.,Hosting,14520,3049,17569,Sent
+2026-0582,2026-02-06,Mountain Retreats,Retainer,31970,6714,38684,Paid
+2026-0583,2026-03-04,Atelier Novák,Design review,28420,5968,34388,Paid
+2026-0584,2026-04-09,Brno Makers Lab,Incident response,20930,4395,25325,Paid
+2026-0585,2026-05-02,Fakturoid a.s.,Feature work,34970,7344,42314,Paid
+2026-0586,2026-06-10,Dentium Clinic,Incident response,42640,8954,51594,Paid
+2026-0587,2026-07-25,Ostrava Steelworks,Retainer,31040,6518,37558,Paid
+2026-0588,2026-08-25,Vltava Logistics,Hosting,21270,4467,25737,Paid
+2026-0589,2026-09-22,Brno Makers Lab,Feature work,8370,1758,10128,Paid
+2026-0590,2026-10-13,Psyon s.r.o.,Design review,25990,5458,31448,Paid
+2026-0591,2026-01-25,Nordic Freight AB,Hosting,37720,7921,45641,Sent
+2026-0592,2026-02-25,Brno Makers Lab,Incident response,15440,3242,18682,Paid
+2026-0593,2026-03-26,Vltava Logistics,Feature work,35750,7508,43258,Paid
+2026-0594,2026-04-06,Nordic Freight AB,Design review,35300,7413,42713,Paid
+2026-0595,2026-05-04,Vltava Logistics,Design review,8280,1739,10019,Paid
+2026-0596,2026-06-10,Kavárna Lípa,Consulting,27530,5781,33311,Paid
+2026-0597,2026-07-27,Brno Makers Lab,Retainer,5330,1119,6449,Paid
+2026-0598,2026-08-14,Kavárna Lípa,Retainer,31140,6539,37679,Paid
+2026-0599,2026-09-11,Mountain Retreats,Consulting,40410,8486,48896,Paid
+2026-0600,2026-10-01,Brno Makers Lab,Feature work,9410,1976,11386,Sent
+2026-0601,2026-01-06,Mountain Retreats,Design review,32360,6796,39156,Overdue
+2026-0602,2026-02-19,Nordic Freight AB,Feature work,4430,930,5360,Paid
+2026-0603,2026-03-22,Vltava Logistics,Retainer,23530,4941,28471,Paid
+2026-0604,2026-04-09,Dentium Clinic,Retainer,6850,1439,8289,Sent
+2026-0605,2026-05-23,Mountain Retreats,Consulting,39730,8343,48073,Paid
+2026-0606,2026-06-15,Ostrava Steelworks,Incident response,1000,210,1210,Paid
+2026-0607,2026-07-04,Fakturoid a.s.,Design review,8050,1691,9741,Paid
+2026-0608,2026-08-19,Psyon s.r.o.,Feature work,12720,2671,15391,Sent
+2026-0609,2026-09-11,Fakturoid a.s.,Retainer,5790,1216,7006,Paid
+2026-0610,2026-10-17,Psyon s.r.o.,Consulting,19310,4055,23365,Sent
+2026-0611,2026-01-21,Atelier Novák,Retainer,14810,3110,17920,Paid
+2026-0612,2026-02-16,Kavárna Lípa,Consulting,33950,7130,41080,Paid
+2026-0613,2026-03-26,Mountain Retreats,Consulting,30390,6382,36772,Sent
+2026-0614,2026-04-04,Psyon s.r.o.,Consulting,17710,3719,21429,Overdue
+2026-0615,2026-05-15,Vltava Logistics,Design review,19620,4120,23740,Paid
+2026-0616,2026-06-01,Kavárna Lípa,Retainer,25260,5305,30565,Paid
+2026-0617,2026-07-27,Psyon s.r.o.,Feature work,34890,7327,42217,Paid
+2026-0618,2026-08-22,Dentium Clinic,Retainer,820,172,992,Sent
+2026-0619,2026-09-03,Fakturoid a.s.,Feature work,16930,3555,20485,Sent
+2026-0620,2026-10-04,Nordic Freight AB,Hosting,5520,1159,6679,Paid
+2026-0621,2026-01-17,Ostrava Steelworks,Design review,26250,5513,31763,Paid
+2026-0622,2026-02-09,Brno Makers Lab,Consulting,33470,7029,40499,Paid
+2026-0623,2026-03-15,Nordic Freight AB,Incident response,35540,7463,43003,Paid
+2026-0624,2026-04-12,Brno Makers Lab,Feature work,31280,6569,37849,Paid
+2026-0625,2026-05-06,Psyon s.r.o.,Incident response,37690,7915,45605,Sent
+2026-0626,2026-06-05,Dentium Clinic,Hosting,30560,6418,36978,Paid
+2026-0627,2026-07-07,Ostrava Steelworks,Incident response,2950,620,3570,Paid
+2026-0628,2026-08-02,Fakturoid a.s.,Design review,30730,6453,37183,Paid
+2026-0629,2026-09-02,Ostrava Steelworks,Feature work,10700,2247,12947,Paid
+2026-0630,2026-10-02,Mountain Retreats,Feature work,9940,2087,12027,Paid
+2026-0631,2026-01-09,Fakturoid a.s.,Feature work,33040,6938,39978,Paid
+2026-0632,2026-02-19,Fakturoid a.s.,Retainer,38390,8062,46452,Paid
+2026-0633,2026-03-21,Dentium Clinic,Incident response,38480,8081,46561,Paid
+2026-0634,2026-04-01,Psyon s.r.o.,Feature work,38000,7980,45980,Paid
+2026-0635,2026-05-14,Brno Makers Lab,Design review,970,204,1174,Overdue
+2026-0636,2026-06-08,Vltava Logistics,Incident response,40740,8555,49295,Paid
+2026-0637,2026-07-02,Atelier Novák,Feature work,31380,6590,37970,Paid
+2026-0638,2026-08-10,Ostrava Steelworks,Feature work,31880,6695,38575,Paid
+2026-0639,2026-09-10,Ostrava Steelworks,Consulting,36050,7571,43621,Paid
+2026-0640,2026-10-10,Nordic Freight AB,Design review,30750,6458,37208,Sent
+2026-0641,2026-01-03,Nordic Freight AB,Design review,6360,1336,7696,Paid
+2026-0642,2026-02-06,Brno Makers Lab,Feature work,40950,8600,49550,Paid
+2026-0643,2026-03-16,Fakturoid a.s.,Retainer,23880,5015,28895,Paid
+2026-0644,2026-04-20,Mountain Retreats,Incident response,37140,7799,44939,Paid
+2026-0645,2026-05-10,Kavárna Lípa,Design review,28710,6029,34739,Paid
+2026-0646,2026-06-19,Kavárna Lípa,Hosting,19840,4166,24006,Paid
+2026-0647,2026-07-03,Atelier Novák,Incident response,21530,4521,26051,Paid
+2026-0648,2026-08-15,Nordic Freight AB,Incident response,34190,7180,41370,Paid
+2026-0649,2026-09-01,Atelier Novák,Consulting,33810,7100,40910,Paid
+2026-0650,2026-10-25,Brno Makers Lab,Incident response,42030,8826,50856,Paid
+2026-0651,2026-01-18,Nordic Freight AB,Incident response,22410,4706,27116,Paid
+2026-0652,2026-02-07,Mountain Retreats,Hosting,25710,5399,31109,Sent
+2026-0653,2026-03-23,Dentium Clinic,Retainer,15850,3329,19179,Paid
+2026-0654,2026-04-12,Ostrava Steelworks,Feature work,8550,1796,10346,Paid
+2026-0655,2026-05-22,Nordic Freight AB,Hosting,7080,1487,8567,Paid
+2026-0656,2026-06-13,Fakturoid a.s.,Feature work,4800,1008,5808,Paid
+2026-0657,2026-07-07,Dentium Clinic,Incident response,7550,1586,9136,Paid
+2026-0658,2026-08-09,Psyon s.r.o.,Feature work,3420,718,4138,Paid
+2026-0659,2026-09-03,Nordic Freight AB,Feature work,35600,7476,43076,Paid
+2026-0660,2026-10-25,Kavárna Lípa,Design review,2090,439,2529,Paid
+2026-0661,2026-01-06,Atelier Novák,Hosting,21570,4530,26100,Paid
+2026-0662,2026-02-07,Dentium Clinic,Retainer,38900,8169,47069,Paid
+2026-0663,2026-03-27,Mountain Retreats,Incident response,1230,258,1488,Paid
+2026-0664,2026-04-27,Ostrava Steelworks,Hosting,6790,1426,8216,Paid
+2026-0665,2026-05-05,Mountain Retreats,Feature work,22630,4752,27382,Sent
+2026-0666,2026-06-12,Dentium Clinic,Consulting,16850,3539,20389,Paid
+2026-0667,2026-07-14,Kavárna Lípa,Incident response,8310,1745,10055,Paid
+2026-0668,2026-08-07,Fakturoid a.s.,Hosting,37170,7806,44976,Paid
+2026-0669,2026-09-26,Kavárna Lípa,Design review,33460,7027,40487,Paid
+2026-0670,2026-10-17,Ostrava Steelworks,Retainer,18860,3961,22821,Paid
+2026-0671,2026-01-16,Fakturoid a.s.,Hosting,9200,1932,11132,Paid
+2026-0672,2026-02-25,Brno Makers Lab,Feature work,24050,5051,29101,Paid
+2026-0673,2026-03-03,Fakturoid a.s.,Design review,10620,2230,12850,Paid
+2026-0674,2026-04-25,Nordic Freight AB,Retainer,22840,4796,27636,Paid
+2026-0675,2026-05-09,Fakturoid a.s.,Design review,39290,8251,47541,Paid
+2026-0676,2026-06-26,Psyon s.r.o.,Retainer,20960,4402,25362,Overdue
+2026-0677,2026-07-11,Atelier Novák,Design review,18060,3793,21853,Sent
+2026-0678,2026-08-24,Dentium Clinic,Hosting,26080,5477,31557,Overdue
+2026-0679,2026-09-06,Dentium Clinic,Design review,1370,288,1658,Sent
+2026-0680,2026-10-08,Psyon s.r.o.,Incident response,22300,4683,26983,Sent
+2026-0681,2026-01-17,Psyon s.r.o.,Consulting,5460,1147,6607,Paid
+2026-0682,2026-02-20,Fakturoid a.s.,Consulting,10770,2262,13032,Paid
+2026-0683,2026-03-01,Psyon s.r.o.,Feature work,19770,4152,23922,Paid
+2026-0684,2026-04-21,Mountain Retreats,Design review,33370,7008,40378,Paid
+2026-0685,2026-05-15,Psyon s.r.o.,Incident response,15580,3272,18852,Paid
+2026-0686,2026-06-18,Kavárna Lípa,Design review,1310,275,1585,Paid
+2026-0687,2026-07-07,Dentium Clinic,Consulting,31920,6703,38623,Paid
+2026-0688,2026-08-01,Atelier Novák,Design review,12750,2678,15428,Overdue
+2026-0689,2026-09-16,Atelier Novák,Consulting,42160,8854,51014,Paid
+2026-0690,2026-10-25,Nordic Freight AB,Feature work,33560,7048,40608,Paid
+2026-0691,2026-01-13,Fakturoid a.s.,Feature work,38680,8123,46803,Paid
+2026-0692,2026-02-21,Mountain Retreats,Incident response,23370,4908,28278,Paid
+2026-0693,2026-03-09,Atelier Novák,Design review,22450,4715,27165,Paid
+2026-0694,2026-04-15,Mountain Retreats,Design review,35360,7426,42786,Paid
+2026-0695,2026-05-08,Mountain Retreats,Hosting,1940,407,2347,Paid
+2026-0696,2026-06-22,Vltava Logistics,Feature work,17090,3589,20679,Paid
+2026-0697,2026-07-05,Mountain Retreats,Design review,39290,8251,47541,Paid
+2026-0698,2026-08-18,Brno Makers Lab,Consulting,5180,1088,6268,Paid
+2026-0699,2026-09-21,Mountain Retreats,Feature work,1240,260,1500,Paid
+2026-0700,2026-10-10,Psyon s.r.o.,Design review,37490,7873,45363,Paid
+2026-0701,2026-01-16,Brno Makers Lab,Consulting,13520,2839,16359,Paid
+2026-0702,2026-02-20,Mountain Retreats,Feature work,13560,2848,16408,Paid
+2026-0703,2026-03-16,Brno Makers Lab,Feature work,4320,907,5227,Paid
+2026-0704,2026-04-24,Dentium Clinic,Design review,28980,6086,35066,Paid
+2026-0705,2026-05-26,Vltava Logistics,Design review,28840,6056,34896,Paid
+2026-0706,2026-06-08,Ostrava Steelworks,Retainer,11800,2478,14278,Sent
+2026-0707,2026-07-03,Psyon s.r.o.,Design review,3940,827,4767,Paid
+2026-0708,2026-08-14,Psyon s.r.o.,Hosting,31550,6626,38176,Sent
+2026-0709,2026-09-17,Ostrava Steelworks,Retainer,36220,7606,43826,Paid
+2026-0710,2026-10-02,Dentium Clinic,Design review,1210,254,1464,Sent
+2026-0711,2026-01-24,Dentium Clinic,Consulting,21150,4442,25592,Paid
+2026-0712,2026-02-14,Fakturoid a.s.,Consulting,42220,8866,51086,Paid
+2026-0713,2026-03-08,Kavárna Lípa,Consulting,15260,3205,18465,Paid
+2026-0714,2026-04-06,Dentium Clinic,Feature work,22890,4807,27697,Paid
+2026-0715,2026-05-05,Atelier Novák,Retainer,15160,3184,18344,Sent
+2026-0716,2026-06-27,Brno Makers Lab,Retainer,37420,7858,45278,Paid
+2026-0717,2026-07-26,Psyon s.r.o.,Incident response,41870,8793,50663,Paid
+2026-0718,2026-08-23,Ostrava Steelworks,Design review,17580,3692,21272,Paid
+2026-0719,2026-09-24,Mountain Retreats,Feature work,5250,1103,6353,Paid
+2026-0720,2026-10-03,Kavárna Lípa,Retainer,26460,5557,32017,Paid
+2026-0721,2026-01-17,Kavárna Lípa,Feature work,5180,1088,6268,Paid
+2026-0722,2026-02-27,Fakturoid a.s.,Hosting,18950,3980,22930,Sent
+2026-0723,2026-03-23,Psyon s.r.o.,Retainer,16100,3381,19481,Sent
+2026-0724,2026-04-02,Ostrava Steelworks,Design review,29570,6210,35780,Paid
+2026-0725,2026-05-25,Atelier Novák,Design review,12800,2688,15488,Paid
+2026-0726,2026-06-04,Nordic Freight AB,Consulting,39970,8394,48364,Paid
+2026-0727,2026-07-08,Brno Makers Lab,Design review,26130,5487,31617,Paid
+2026-0728,2026-08-17,Brno Makers Lab,Consulting,4770,1002,5772,Overdue
+2026-0729,2026-09-16,Atelier Novák,Feature work,37730,7923,45653,Overdue
+2026-0730,2026-10-19,Ostrava Steelworks,Retainer,25130,5277,30407,Overdue
+2026-0731,2026-01-19,Kavárna Lípa,Design review,15450,3245,18695,Paid
+2026-0732,2026-02-19,Vltava Logistics,Hosting,23620,4960,28580,Paid
+2026-0733,2026-03-05,Psyon s.r.o.,Hosting,11780,2474,14254,Paid
+2026-0734,2026-04-24,Brno Makers Lab,Design review,30780,6464,37244,Paid
+2026-0735,2026-05-14,Vltava Logistics,Incident response,13780,2894,16674,Paid
+2026-0736,2026-06-04,Vltava Logistics,Hosting,15520,3259,18779,Paid
+2026-0737,2026-07-08,Psyon s.r.o.,Feature work,40020,8404,48424,Paid
+2026-0738,2026-08-18,Atelier Novák,Hosting,16320,3427,19747,Paid
+2026-0739,2026-09-10,Psyon s.r.o.,Feature work,34810,7310,42120,Paid
+2026-0740,2026-10-05,Atelier Novák,Design review,25970,5454,31424,Paid
+2026-0741,2026-01-14,Dentium Clinic,Design review,41950,8810,50760,Overdue
+2026-0742,2026-02-25,Kavárna Lípa,Hosting,34570,7260,41830,Sent
+2026-0743,2026-03-17,Psyon s.r.o.,Incident response,34190,7180,41370,Paid
+2026-0744,2026-04-18,Atelier Novák,Hosting,15090,3169,18259,Paid
+2026-0745,2026-05-08,Ostrava Steelworks,Retainer,20640,4334,24974,Sent
+2026-0746,2026-06-15,Fakturoid a.s.,Feature work,24320,5107,29427,Paid
+2026-0747,2026-07-03,Brno Makers Lab,Hosting,29530,6201,35731,Paid
+2026-0748,2026-08-11,Brno Makers Lab,Design review,4290,901,5191,Paid
+2026-0749,2026-09-09,Ostrava Steelworks,Feature work,27200,5712,32912,Paid
+2026-0750,2026-10-20,Atelier Novák,Retainer,25740,5405,31145,Overdue
+2026-0751,2026-01-03,Atelier Novák,Feature work,3180,668,3848,Paid
+2026-0752,2026-02-09,Nordic Freight AB,Consulting,3030,636,3666,Overdue
+2026-0753,2026-03-08,Nordic Freight AB,Feature work,32960,6922,39882,Overdue
+2026-0754,2026-04-17,Fakturoid a.s.,Hosting,7900,1659,9559,Paid
+2026-0755,2026-05-02,Mountain Retreats,Design review,1540,323,1863,Paid
+2026-0756,2026-06-01,Atelier Novák,Feature work,38410,8066,46476,Paid
+2026-0757,2026-07-27,Ostrava Steelworks,Incident response,29230,6138,35368,Paid
+2026-0758,2026-08-27,Psyon s.r.o.,Hosting,36590,7684,44274,Paid
+2026-0759,2026-09-04,Brno Makers Lab,Consulting,28620,6010,34630,Paid
+2026-0760,2026-10-15,Mountain Retreats,Hosting,37850,7949,45799,Paid
+2026-0761,2026-01-10,Atelier Novák,Incident response,11150,2342,13492,Overdue
+2026-0762,2026-02-11,Dentium Clinic,Hosting,34320,7207,41527,Paid
+2026-0763,2026-03-18,Dentium Clinic,Feature work,3010,632,3642,Paid
+2026-0764,2026-04-13,Kavárna Lípa,Feature work,31260,6565,37825,Sent
+2026-0765,2026-05-01,Dentium Clinic,Design review,40270,8457,48727,Overdue
+2026-0766,2026-06-09,Vltava Logistics,Hosting,21090,4429,25519,Paid
+2026-0767,2026-07-04,Mountain Retreats,Design review,11120,2335,13455,Paid
+2026-0768,2026-08-24,Vltava Logistics,Incident response,5320,1117,6437,Sent
+2026-0769,2026-09-09,Fakturoid a.s.,Retainer,42040,8828,50868,Paid
+2026-0770,2026-10-16,Psyon s.r.o.,Feature work,24720,5191,29911,Overdue
+2026-0771,2026-01-11,Mountain Retreats,Feature work,18520,3889,22409,Paid
+2026-0772,2026-02-08,Atelier Novák,Design review,12110,2543,14653,Paid
+2026-0773,2026-03-10,Dentium Clinic,Hosting,21280,4469,25749,Sent
+2026-0774,2026-04-09,Brno Makers Lab,Design review,18860,3961,22821,Paid
+2026-0775,2026-05-02,Kavárna Lípa,Design review,10500,2205,12705,Paid
+2026-0776,2026-06-02,Atelier Novák,Feature work,10140,2129,12269,Paid
+2026-0777,2026-07-07,Brno Makers Lab,Incident response,3960,832,4792,Paid
+2026-0778,2026-08-27,Vltava Logistics,Incident response,31330,6579,37909,Paid
+2026-0779,2026-09-23,Ostrava Steelworks,Design review,35110,7373,42483,Paid
+2026-0780,2026-10-04,Atelier Novák,Incident response,37710,7919,45629,Sent
+2026-0781,2026-01-26,Vltava Logistics,Design review,20520,4309,24829,Paid
+2026-0782,2026-02-05,Nordic Freight AB,Hosting,6940,1457,8397,Paid
+2026-0783,2026-03-04,Psyon s.r.o.,Hosting,19100,4011,23111,Paid
+2026-0784,2026-04-05,Vltava Logistics,Incident response,41950,8810,50760,Sent
+2026-0785,2026-05-25,Ostrava Steelworks,Retainer,15780,3314,19094,Sent
+2026-0786,2026-06-03,Psyon s.r.o.,Consulting,28230,5928,34158,Paid
+2026-0787,2026-07-18,Brno Makers Lab,Retainer,38050,7991,46041,Paid
+2026-0788,2026-08-18,Fakturoid a.s.,Consulting,3180,668,3848,Paid
+2026-0789,2026-09-08,Ostrava Steelworks,Retainer,1820,382,2202,Paid
+2026-0790,2026-10-24,Ostrava Steelworks,Incident response,6020,1264,7284,Overdue
+2026-0791,2026-01-15,Mountain Retreats,Feature work,20220,4246,24466,Paid
+2026-0792,2026-02-11,Psyon s.r.o.,Retainer,8860,1861,10721,Paid
+2026-0793,2026-03-23,Psyon s.r.o.,Design review,18310,3845,22155,Sent
+2026-0794,2026-04-22,Mountain Retreats,Consulting,38390,8062,46452,Paid
+2026-0795,2026-05-12,Psyon s.r.o.,Retainer,36600,7686,44286,Overdue
+2026-0796,2026-06-17,Dentium Clinic,Design review,29210,6134,35344,Sent
+2026-0797,2026-07-05,Atelier Novák,Design review,29620,6220,35840,Paid
+2026-0798,2026-08-10,Dentium Clinic,Consulting,12450,2615,15065,Paid
+2026-0799,2026-09-16,Kavárna Lípa,Incident response,24600,5166,29766,Paid
+2026-0800,2026-10-17,Fakturoid a.s.,Retainer,5860,1231,7091,Sent
+2026-0801,2026-01-10,Brno Makers Lab,Retainer,2050,431,2481,Sent
+2026-0802,2026-02-22,Psyon s.r.o.,Consulting,33540,7043,40583,Paid
+2026-0803,2026-03-01,Fakturoid a.s.,Design review,41520,8719,50239,Sent
+2026-0804,2026-04-10,Brno Makers Lab,Feature work,19130,4017,23147,Paid
+2026-0805,2026-05-11,Atelier Novák,Incident response,34520,7249,41769,Sent
+2026-0806,2026-06-27,Ostrava Steelworks,Design review,19480,4091,23571,Paid
+2026-0807,2026-07-12,Fakturoid a.s.,Incident response,37520,7879,45399,Sent
+2026-0808,2026-08-21,Nordic Freight AB,Retainer,30330,6369,36699,Sent
+2026-0809,2026-09-03,Kavárna Lípa,Retainer,37710,7919,45629,Sent
+2026-0810,2026-10-08,Dentium Clinic,Design review,8330,1749,10079,Sent
+2026-0811,2026-01-10,Vltava Logistics,Design review,27980,5876,33856,Sent
+2026-0812,2026-02-03,Brno Makers Lab,Consulting,37450,7865,45315,Sent
+2026-0813,2026-03-03,Kavárna Lípa,Incident response,33780,7094,40874,Paid
+2026-0814,2026-04-05,Dentium Clinic,Retainer,3220,676,3896,Paid
+2026-0815,2026-05-21,Psyon s.r.o.,Hosting,30990,6508,37498,Sent
+2026-0816,2026-06-20,Nordic Freight AB,Design review,33530,7041,40571,Paid
+2026-0817,2026-07-13,Mountain Retreats,Feature work,15500,3255,18755,Sent
+2026-0818,2026-08-06,Dentium Clinic,Incident response,40060,8413,48473,Overdue
+2026-0819,2026-09-23,Atelier Novák,Retainer,12550,2636,15186,Paid
+2026-0820,2026-10-26,Ostrava Steelworks,Incident response,40230,8448,48678,Paid
+2026-0821,2026-01-19,Fakturoid a.s.,Design review,12440,2612,15052,Paid
+2026-0822,2026-02-21,Nordic Freight AB,Design review,39710,8339,48049,Paid
+2026-0823,2026-03-15,Kavárna Lípa,Consulting,1110,233,1343,Paid
+2026-0824,2026-04-19,Ostrava Steelworks,Feature work,3340,701,4041,Sent
+2026-0825,2026-05-15,Mountain Retreats,Retainer,8750,1838,10588,Paid
+2026-0826,2026-06-06,Kavárna Lípa,Retainer,6580,1382,7962,Paid
+2026-0827,2026-07-04,Kavárna Lípa,Feature work,21800,4578,26378,Paid
+2026-0828,2026-08-10,Ostrava Steelworks,Hosting,33120,6955,40075,Sent
+2026-0829,2026-09-05,Atelier Novák,Consulting,32340,6791,39131,Paid
+2026-0830,2026-10-23,Dentium Clinic,Feature work,28080,5897,33977,Sent
+2026-0831,2026-01-07,Psyon s.r.o.,Consulting,28750,6038,34788,Paid
+2026-0832,2026-02-09,Psyon s.r.o.,Incident response,9750,2048,11798,Sent
+2026-0833,2026-03-04,Kavárna Lípa,Retainer,29330,6159,35489,Paid
+2026-0834,2026-04-06,Mountain Retreats,Consulting,27110,5693,32803,Paid
+2026-0835,2026-05-21,Dentium Clinic,Feature work,31490,6613,38103,Paid
+2026-0836,2026-06-13,Atelier Novák,Design review,42330,8889,51219,Paid
+2026-0837,2026-07-25,Brno Makers Lab,Hosting,7930,1665,9595,Paid
+2026-0838,2026-08-03,Vltava Logistics,Hosting,7040,1478,8518,Paid
+2026-0839,2026-09-19,Psyon s.r.o.,Feature work,6390,1342,7732,Paid
+2026-0840,2026-10-13,Dentium Clinic,Design review,1570,330,1900,Paid
+2026-0841,2026-01-18,Atelier Novák,Incident response,1990,418,2408,Overdue
+2026-0842,2026-02-26,Vltava Logistics,Consulting,39350,8264,47614,Paid
+2026-0843,2026-03-22,Atelier Novák,Feature work,11080,2327,13407,Sent
+2026-0844,2026-04-09,Atelier Novák,Design review,8380,1760,10140,Paid
+2026-0845,2026-05-17,Ostrava Steelworks,Feature work,26290,5521,31811,Paid
+2026-0846,2026-06-01,Atelier Novák,Feature work,1400,294,1694,Paid
+2026-0847,2026-07-14,Mountain Retreats,Incident response,24700,5187,29887,Paid
+2026-0848,2026-08-15,Atelier Novák,Retainer,33900,7119,41019,Paid
+2026-0849,2026-09-04,Kavárna Lípa,Consulting,38950,8180,47130,Paid
+2026-0850,2026-10-19,Kavárna Lípa,Retainer,38410,8066,46476,Paid
+2026-0851,2026-01-19,Vltava Logistics,Feature work,5420,1138,6558,Paid
+2026-0852,2026-02-21,Kavárna Lípa,Retainer,15950,3350,19300,Overdue
+2026-0853,2026-03-16,Psyon s.r.o.,Consulting,40670,8541,49211,Paid
+2026-0854,2026-04-27,Kavárna Lípa,Hosting,6550,1376,7926,Overdue
+2026-0855,2026-05-19,Kavárna Lípa,Consulting,22750,4778,27528,Paid
+2026-0856,2026-06-15,Fakturoid a.s.,Incident response,25900,5439,31339,Paid
+2026-0857,2026-07-15,Nordic Freight AB,Retainer,27810,5840,33650,Paid
+2026-0858,2026-08-08,Nordic Freight AB,Feature work,26090,5479,31569,Paid
+2026-0859,2026-09-22,Mountain Retreats,Retainer,35480,7451,42931,Paid
+2026-0860,2026-10-27,Nordic Freight AB,Hosting,21990,4618,26608,Paid
+2026-0861,2026-01-05,Vltava Logistics,Design review,23670,4971,28641,Paid
+2026-0862,2026-02-14,Vltava Logistics,Design review,14150,2972,17122,Paid
+2026-0863,2026-03-03,Dentium Clinic,Hosting,12690,2665,15355,Paid
+2026-0864,2026-04-08,Psyon s.r.o.,Feature work,34040,7148,41188,Sent
+2026-0865,2026-05-16,Fakturoid a.s.,Feature work,960,202,1162,Overdue
+2026-0866,2026-06-04,Atelier Novák,Consulting,25010,5252,30262,Paid
+2026-0867,2026-07-27,Fakturoid a.s.,Feature work,16700,3507,20207,Paid
+2026-0868,2026-08-25,Dentium Clinic,Design review,25810,5420,31230,Paid
+2026-0869,2026-09-03,Atelier Novák,Consulting,7880,1655,9535,Sent
+2026-0870,2026-10-09,Atelier Novák,Consulting,10770,2262,13032,Paid
+2026-0871,2026-01-04,Ostrava Steelworks,Design review,39400,8274,47674,Sent
+2026-0872,2026-02-03,Mountain Retreats,Incident response,18290,3841,22131,Sent
+2026-0873,2026-03-05,Vltava Logistics,Hosting,15160,3184,18344,Sent
+2026-0874,2026-04-26,Dentium Clinic,Design review,16930,3555,20485,Paid
+2026-0875,2026-05-09,Mountain Retreats,Incident response,22150,4652,26802,Paid
+2026-0876,2026-06-15,Kavárna Lípa,Feature work,34680,7283,41963,Paid
+2026-0877,2026-07-08,Psyon s.r.o.,Hosting,18230,3828,22058,Paid
+2026-0878,2026-08-24,Fakturoid a.s.,Consulting,18180,3818,21998,Paid
+2026-0879,2026-09-07,Kavárna Lípa,Incident response,9340,1961,11301,Paid
+2026-0880,2026-10-13,Mountain Retreats,Design review,13400,2814,16214,Paid
+2026-0881,2026-01-13,Kavárna Lípa,Incident response,24030,5046,29076,Paid
+2026-0882,2026-02-04,Ostrava Steelworks,Hosting,5470,1149,6619,Sent
+2026-0883,2026-03-26,Ostrava Steelworks,Hosting,42460,8917,51377,Paid
+2026-0884,2026-04-08,Brno Makers Lab,Design review,40000,8400,48400,Paid
+2026-0885,2026-05-10,Kavárna Lípa,Design review,18520,3889,22409,Paid
+2026-0886,2026-06-09,Nordic Freight AB,Retainer,41500,8715,50215,Paid
+2026-0887,2026-07-01,Nordic Freight AB,Retainer,35380,7430,42810,Paid
+2026-0888,2026-08-14,Ostrava Steelworks,Consulting,42250,8873,51123,Paid
+2026-0889,2026-09-02,Ostrava Steelworks,Retainer,41520,8719,50239,Paid
+2026-0890,2026-10-04,Atelier Novák,Retainer,2090,439,2529,Paid
+2026-0891,2026-01-13,Atelier Novák,Hosting,23580,4952,28532,Paid
+2026-0892,2026-02-26,Fakturoid a.s.,Incident response,24650,5177,29827,Paid
+2026-0893,2026-03-01,Brno Makers Lab,Incident response,24200,5082,29282,Sent
+2026-0894,2026-04-23,Dentium Clinic,Feature work,28750,6038,34788,Overdue
+2026-0895,2026-05-27,Kavárna Lípa,Retainer,17540,3683,21223,Paid
+2026-0896,2026-06-07,Atelier Novák,Design review,32810,6890,39700,Paid
+2026-0897,2026-07-02,Fakturoid a.s.,Hosting,6240,1310,7550,Overdue
+2026-0898,2026-08-22,Psyon s.r.o.,Incident response,6650,1397,8047,Overdue
+2026-0899,2026-09-06,Mountain Retreats,Design review,9350,1964,11314,Overdue
+2026-0900,2026-10-02,Fakturoid a.s.,Retainer,8140,1709,9849,Paid
+2026-0901,2026-01-01,Atelier Novák,Feature work,26480,5561,32041,Paid
+2026-0902,2026-02-20,Mountain Retreats,Design review,11350,2384,13734,Paid
+2026-0903,2026-03-22,Psyon s.r.o.,Consulting,23890,5017,28907,Paid
+2026-0904,2026-04-22,Mountain Retreats,Consulting,28210,5924,34134,Overdue
+2026-0905,2026-05-05,Vltava Logistics,Design review,4330,909,5239,Paid
+2026-0906,2026-06-16,Psyon s.r.o.,Retainer,13520,2839,16359,Paid
+2026-0907,2026-07-10,Fakturoid a.s.,Incident response,28140,5909,34049,Paid
+2026-0908,2026-08-07,Kavárna Lípa,Incident response,19340,4061,23401,Paid
+2026-0909,2026-09-06,Psyon s.r.o.,Consulting,31510,6617,38127,Paid
+2026-0910,2026-10-09,Vltava Logistics,Feature work,8020,1684,9704,Paid
+2026-0911,2026-01-10,Ostrava Steelworks,Feature work,23960,5032,28992,Sent
+2026-0912,2026-02-21,Dentium Clinic,Incident response,30550,6416,36966,Paid
+2026-0913,2026-03-12,Dentium Clinic,Hosting,36030,7566,43596,Paid
+2026-0914,2026-04-23,Ostrava Steelworks,Consulting,39830,8364,48194,Overdue
+2026-0915,2026-05-06,Ostrava Steelworks,Design review,26870,5643,32513,Paid
+2026-0916,2026-06-13,Nordic Freight AB,Retainer,7140,1499,8639,Sent
+2026-0917,2026-07-24,Mountain Retreats,Design review,15900,3339,19239,Paid
+2026-0918,2026-08-08,Kavárna Lípa,Incident response,39460,8287,47747,Paid
+2026-0919,2026-09-08,Brno Makers Lab,Incident response,39600,8316,47916,Paid
+2026-0920,2026-10-20,Mountain Retreats,Retainer,24660,5179,29839,Paid
+2026-0921,2026-01-10,Vltava Logistics,Hosting,34940,7337,42277,Paid
+2026-0922,2026-02-14,Brno Makers Lab,Retainer,25540,5363,30903,Paid
+2026-0923,2026-03-25,Atelier Novák,Design review,40280,8459,48739,Paid
+2026-0924,2026-04-08,Psyon s.r.o.,Incident response,38390,8062,46452,Paid
+2026-0925,2026-05-01,Mountain Retreats,Feature work,18780,3944,22724,Paid
+2026-0926,2026-06-03,Mountain Retreats,Consulting,37270,7827,45097,Paid
+2026-0927,2026-07-16,Fakturoid a.s.,Incident response,5930,1245,7175,Sent
+2026-0928,2026-08-18,Ostrava Steelworks,Design review,40910,8591,49501,Paid
+2026-0929,2026-09-26,Brno Makers Lab,Retainer,2000,420,2420,Paid
+2026-0930,2026-10-19,Fakturoid a.s.,Hosting,35500,7455,42955,Paid
+2026-0931,2026-01-11,Ostrava Steelworks,Incident response,2950,620,3570,Sent
+2026-0932,2026-02-09,Dentium Clinic,Feature work,5540,1163,6703,Paid
+2026-0933,2026-03-16,Mountain Retreats,Retainer,34150,7172,41322,Paid
+2026-0934,2026-04-26,Brno Makers Lab,Design review,36260,7615,43875,Paid
+2026-0935,2026-05-04,Kavárna Lípa,Incident response,7030,1476,8506,Paid
+2026-0936,2026-06-17,Atelier Novák,Hosting,4490,943,5433,Paid
+2026-0937,2026-07-08,Atelier Novák,Retainer,37790,7936,45726,Overdue
+2026-0938,2026-08-12,Fakturoid a.s.,Retainer,21090,4429,25519,Paid
+2026-0939,2026-09-17,Fakturoid a.s.,Feature work,21100,4431,25531,Paid
+2026-0940,2026-10-23,Kavárna Lípa,Consulting,34270,7197,41467,Sent
+2026-0941,2026-01-10,Psyon s.r.o.,Consulting,37520,7879,45399,Paid
+2026-0942,2026-02-17,Kavárna Lípa,Incident response,5940,1247,7187,Paid
+2026-0943,2026-03-13,Fakturoid a.s.,Feature work,8700,1827,10527,Paid
+2026-0944,2026-04-10,Mountain Retreats,Incident response,23600,4956,28556,Paid
+2026-0945,2026-05-21,Vltava Logistics,Incident response,38020,7984,46004,Paid
+2026-0946,2026-06-06,Psyon s.r.o.,Incident response,15650,3287,18937,Paid
+2026-0947,2026-07-13,Brno Makers Lab,Feature work,1750,368,2118,Sent
+2026-0948,2026-08-15,Kavárna Lípa,Feature work,12550,2636,15186,Paid
+2026-0949,2026-09-21,Atelier Novák,Design review,23580,4952,28532,Sent
+2026-0950,2026-10-16,Fakturoid a.s.,Consulting,9520,1999,11519,Paid
+2026-0951,2026-01-22,Nordic Freight AB,Feature work,34980,7346,42326,Paid
+2026-0952,2026-02-12,Vltava Logistics,Design review,23970,5034,29004,Paid
+2026-0953,2026-03-27,Mountain Retreats,Feature work,20580,4322,24902,Paid
+2026-0954,2026-04-05,Brno Makers Lab,Retainer,35750,7508,43258,Paid
+2026-0955,2026-05-09,Mountain Retreats,Consulting,16630,3492,20122,Paid
+2026-0956,2026-06-21,Atelier Novák,Retainer,7990,1678,9668,Sent
+2026-0957,2026-07-02,Kavárna Lípa,Consulting,22060,4633,26693,Paid
+2026-0958,2026-08-13,Kavárna Lípa,Incident response,18400,3864,22264,Paid
+2026-0959,2026-09-13,Dentium Clinic,Retainer,21350,4484,25834,Paid
+2026-0960,2026-10-04,Fakturoid a.s.,Design review,34650,7277,41927,Sent
+2026-0961,2026-01-09,Vltava Logistics,Consulting,18140,3809,21949,Paid
+2026-0962,2026-02-10,Kavárna Lípa,Design review,40270,8457,48727,Paid
+2026-0963,2026-03-11,Nordic Freight AB,Consulting,37670,7911,45581,Paid
+2026-0964,2026-04-02,Brno Makers Lab,Consulting,38790,8146,46936,Sent
+2026-0965,2026-05-14,Fakturoid a.s.,Design review,2000,420,2420,Paid
+2026-0966,2026-06-24,Psyon s.r.o.,Retainer,2250,473,2723,Paid
+2026-0967,2026-07-11,Atelier Novák,Feature work,37650,7907,45557,Paid
+2026-0968,2026-08-11,Dentium Clinic,Consulting,40270,8457,48727,Paid
+2026-0969,2026-09-07,Kavárna Lípa,Incident response,27310,5735,33045,Paid
+2026-0970,2026-10-13,Mountain Retreats,Consulting,30840,6476,37316,Paid
+2026-0971,2026-01-21,Brno Makers Lab,Design review,5520,1159,6679,Paid
+2026-0972,2026-02-24,Dentium Clinic,Feature work,14040,2948,16988,Paid
+2026-0973,2026-03-19,Fakturoid a.s.,Hosting,16580,3482,20062,Paid
+2026-0974,2026-04-19,Atelier Novák,Hosting,9310,1955,11265,Overdue
+2026-0975,2026-05-12,Nordic Freight AB,Consulting,22520,4729,27249,Paid
+2026-0976,2026-06-27,Vltava Logistics,Hosting,39850,8369,48219,Paid
+2026-0977,2026-07-21,Dentium Clinic,Consulting,25990,5458,31448,Paid
+2026-0978,2026-08-26,Kavárna Lípa,Feature work,25930,5445,31375,Paid
+2026-0979,2026-09-04,Psyon s.r.o.,Design review,41240,8660,49900,Paid
+2026-0980,2026-10-23,Ostrava Steelworks,Design review,3380,710,4090,Paid
+2026-0981,2026-01-24,Dentium Clinic,Hosting,14760,3100,17860,Sent
+2026-0982,2026-02-01,Ostrava Steelworks,Feature work,12600,2646,15246,Paid
+2026-0983,2026-03-08,Brno Makers Lab,Feature work,4020,844,4864,Paid
+2026-0984,2026-04-03,Mountain Retreats,Incident response,41930,8805,50735,Paid
+2026-0985,2026-05-21,Vltava Logistics,Consulting,31870,6693,38563,Paid
+2026-0986,2026-06-07,Psyon s.r.o.,Retainer,9500,1995,11495,Paid
+2026-0987,2026-07-12,Kavárna Lípa,Retainer,22800,4788,27588,Sent
+2026-0988,2026-08-15,Kavárna Lípa,Design review,37170,7806,44976,Sent
+2026-0989,2026-09-01,Atelier Novák,Consulting,26940,5657,32597,Overdue
+2026-0990,2026-10-17,Mountain Retreats,Design review,18580,3902,22482,Paid
+2026-0991,2026-01-26,Dentium Clinic,Retainer,24930,5235,30165,Overdue
+2026-0992,2026-02-22,Nordic Freight AB,Hosting,15900,3339,19239,Paid
+2026-0993,2026-03-24,Ostrava Steelworks,Feature work,27690,5815,33505,Sent
+2026-0994,2026-04-14,Kavárna Lípa,Feature work,41930,8805,50735,Paid
+2026-0995,2026-05-27,Ostrava Steelworks,Incident response,9710,2039,11749,Paid
+2026-0996,2026-06-11,Atelier Novák,Retainer,11120,2335,13455,Paid
+2026-0997,2026-07-03,Atelier Novák,Retainer,13140,2759,15899,Sent
+2026-0998,2026-08-21,Fakturoid a.s.,Hosting,33000,6930,39930,Paid
+2026-0999,2026-09-19,Dentium Clinic,Design review,34890,7327,42217,Paid
+2026-1000,2026-10-01,Mountain Retreats,Incident response,28610,6008,34618,Paid
+2026-1001,2026-01-27,Vltava Logistics,Incident response,33490,7033,40523,Paid
+2026-1002,2026-02-07,Vltava Logistics,Incident response,34280,7199,41479,Overdue
+2026-1003,2026-03-20,Nordic Freight AB,Incident response,18190,3820,22010,Paid
+2026-1004,2026-04-02,Ostrava Steelworks,Retainer,33800,7098,40898,Paid
+2026-1005,2026-05-07,Nordic Freight AB,Consulting,9720,2041,11761,Paid
+2026-1006,2026-06-23,Vltava Logistics,Design review,19320,4057,23377,Paid
+2026-1007,2026-07-04,Nordic Freight AB,Design review,27760,5830,33590,Paid
+2026-1008,2026-08-02,Kavárna Lípa,Feature work,12930,2715,15645,Paid
+2026-1009,2026-09-08,Fakturoid a.s.,Incident response,36960,7762,44722,Paid
+2026-1010,2026-10-05,Ostrava Steelworks,Consulting,8260,1735,9995,Paid
+2026-1011,2026-01-18,Brno Makers Lab,Consulting,39850,8369,48219,Paid
+2026-1012,2026-02-21,Brno Makers Lab,Consulting,31140,6539,37679,Paid
+2026-1013,2026-03-17,Psyon s.r.o.,Hosting,21720,4561,26281,Sent
+2026-1014,2026-04-26,Fakturoid a.s.,Design review,19270,4047,23317,Sent
+2026-1015,2026-05-24,Dentium Clinic,Consulting,2690,565,3255,Sent
+2026-1016,2026-06-03,Brno Makers Lab,Design review,9770,2052,11822,Paid
+2026-1017,2026-07-22,Fakturoid a.s.,Consulting,25830,5424,31254,Paid
+2026-1018,2026-08-22,Vltava Logistics,Feature work,6230,1308,7538,Paid
+2026-1019,2026-09-13,Vltava Logistics,Retainer,28520,5989,34509,Paid
+2026-1020,2026-10-07,Dentium Clinic,Hosting,14900,3129,18029,Paid
+2026-1021,2026-01-12,Ostrava Steelworks,Design review,19330,4059,23389,Sent
+2026-1022,2026-02-25,Psyon s.r.o.,Consulting,23110,4853,27963,Paid
+2026-1023,2026-03-26,Nordic Freight AB,Incident response,36540,7673,44213,Paid
+2026-1024,2026-04-20,Nordic Freight AB,Hosting,27120,5695,32815,Paid
+2026-1025,2026-05-20,Ostrava Steelworks,Hosting,42490,8923,51413,Paid
+2026-1026,2026-06-21,Nordic Freight AB,Incident response,21060,4423,25483,Paid
+2026-1027,2026-07-10,Brno Makers Lab,Incident response,14800,3108,17908,Paid
+2026-1028,2026-08-08,Mountain Retreats,Feature work,32240,6770,39010,Paid
+2026-1029,2026-09-26,Vltava Logistics,Incident response,5430,1140,6570,Paid
+2026-1030,2026-10-26,Atelier Novák,Retainer,21690,4555,26245,Paid
+2026-1031,2026-01-17,Dentium Clinic,Incident response,20100,4221,24321,Sent
+2026-1032,2026-02-10,Vltava Logistics,Design review,12150,2552,14702,Paid
+2026-1033,2026-03-04,Mountain Retreats,Design review,16820,3532,20352,Paid
+2026-1034,2026-04-24,Nordic Freight AB,Hosting,41640,8744,50384,Sent
+2026-1035,2026-05-04,Kavárna Lípa,Design review,35490,7453,42943,Paid
+2026-1036,2026-06-05,Ostrava Steelworks,Feature work,17530,3681,21211,Paid
+2026-1037,2026-07-24,Ostrava Steelworks,Incident response,29220,6136,35356,Paid
+2026-1038,2026-08-26,Psyon s.r.o.,Feature work,10050,2111,12161,Paid
+2026-1039,2026-09-20,Dentium Clinic,Hosting,2080,437,2517,Paid
+2026-1040,2026-10-13,Vltava Logistics,Feature work,10060,2113,12173,Paid
+2026-1041,2026-01-07,Vltava Logistics,Design review,12270,2577,14847,Paid
+2026-1042,2026-02-12,Ostrava Steelworks,Design review,35470,7449,42919,Paid
+2026-1043,2026-03-02,Vltava Logistics,Retainer,17730,3723,21453,Paid
+2026-1044,2026-04-21,Vltava Logistics,Hosting,22030,4626,26656,Paid
+2026-1045,2026-05-07,Vltava Logistics,Design review,22020,4624,26644,Paid
+2026-1046,2026-06-15,Kavárna Lípa,Retainer,21190,4450,25640,Paid
+2026-1047,2026-07-20,Nordic Freight AB,Consulting,34770,7302,42072,Paid
+2026-1048,2026-08-25,Brno Makers Lab,Hosting,35710,7499,43209,Paid
+2026-1049,2026-09-02,Brno Makers Lab,Design review,32120,6745,38865,Paid
+2026-1050,2026-10-09,Vltava Logistics,Hosting,21950,4610,26560,Sent
+2026-1051,2026-01-15,Kavárna Lípa,Consulting,5290,1111,6401,Paid
+2026-1052,2026-02-05,Fakturoid a.s.,Feature work,14740,3095,17835,Paid
+2026-1053,2026-03-15,Vltava Logistics,Retainer,35270,7407,42677,Paid
+2026-1054,2026-04-08,Mountain Retreats,Design review,23380,4910,28290,Paid
+2026-1055,2026-05-08,Nordic Freight AB,Consulting,21380,4490,25870,Paid
+2026-1056,2026-06-11,Mountain Retreats,Consulting,38310,8045,46355,Paid
+2026-1057,2026-07-01,Brno Makers Lab,Retainer,17450,3665,21115,Paid
+2026-1058,2026-08-22,Mountain Retreats,Consulting,34910,7331,42241,Paid
+2026-1059,2026-09-10,Atelier Novák,Retainer,18170,3816,21986,Sent
+2026-1060,2026-10-24,Nordic Freight AB,Feature work,24910,5231,30141,Paid
+2026-1061,2026-01-16,Brno Makers Lab,Feature work,35480,7451,42931,Paid
+2026-1062,2026-02-08,Psyon s.r.o.,Consulting,38230,8028,46258,Sent
+2026-1063,2026-03-04,Mountain Retreats,Incident response,42360,8896,51256,Overdue
+2026-1064,2026-04-09,Nordic Freight AB,Consulting,19020,3994,23014,Paid
+2026-1065,2026-05-12,Brno Makers Lab,Retainer,32940,6917,39857,Paid
+2026-1066,2026-06-22,Vltava Logistics,Hosting,24660,5179,29839,Paid
+2026-1067,2026-07-03,Atelier Novák,Feature work,24510,5147,29657,Paid
+2026-1068,2026-08-04,Ostrava Steelworks,Feature work,15320,3217,18537,Paid
+2026-1069,2026-09-15,Kavárna Lípa,Feature work,32680,6863,39543,Paid
+2026-1070,2026-10-27,Kavárna Lípa,Retainer,17240,3620,20860,Sent
+2026-1071,2026-01-22,Psyon s.r.o.,Hosting,7040,1478,8518,Paid
+2026-1072,2026-02-06,Dentium Clinic,Retainer,13560,2848,16408,Paid
+2026-1073,2026-03-12,Atelier Novák,Retainer,13710,2879,16589,Overdue
+2026-1074,2026-04-19,Vltava Logistics,Consulting,14940,3137,18077,Paid
+2026-1075,2026-05-14,Nordic Freight AB,Design review,6760,1420,8180,Paid
+2026-1076,2026-06-01,Ostrava Steelworks,Hosting,8720,1831,10551,Paid
+2026-1077,2026-07-11,Fakturoid a.s.,Design review,38290,8041,46331,Paid
+2026-1078,2026-08-07,Nordic Freight AB,Incident response,25520,5359,30879,Paid
+2026-1079,2026-09-17,Ostrava Steelworks,Consulting,9770,2052,11822,Paid
+2026-1080,2026-10-06,Mountain Retreats,Hosting,11400,2394,13794,Sent
+2026-1081,2026-01-17,Nordic Freight AB,Design review,11400,2394,13794,Sent
+2026-1082,2026-02-23,Ostrava Steelworks,Incident response,34160,7174,41334,Sent
+2026-1083,2026-03-01,Fakturoid a.s.,Design review,6610,1388,7998,Paid
+2026-1084,2026-04-18,Dentium Clinic,Incident response,16000,3360,19360,Paid
+2026-1085,2026-05-15,Ostrava Steelworks,Consulting,2760,580,3340,Paid
+2026-1086,2026-06-25,Ostrava Steelworks,Consulting,1160,244,1404,Sent
+2026-1087,2026-07-06,Nordic Freight AB,Hosting,18570,3900,22470,Paid
+2026-1088,2026-08-07,Nordic Freight AB,Retainer,38940,8177,47117,Paid
+2026-1089,2026-09-10,Nordic Freight AB,Retainer,38410,8066,46476,Paid
+2026-1090,2026-10-16,Atelier Novák,Consulting,1490,313,1803,Sent
+2026-1091,2026-01-21,Nordic Freight AB,Retainer,11600,2436,14036,Overdue
+2026-1092,2026-02-01,Mountain Retreats,Retainer,31720,6661,38381,Overdue
+2026-1093,2026-03-10,Psyon s.r.o.,Consulting,28490,5983,34473,Paid
+2026-1094,2026-04-09,Mountain Retreats,Feature work,39510,8297,47807,Paid
+2026-1095,2026-05-15,Vltava Logistics,Consulting,1190,250,1440,Paid
+2026-1096,2026-06-05,Dentium Clinic,Design review,23480,4931,28411,Sent
+2026-1097,2026-07-24,Nordic Freight AB,Consulting,5900,1239,7139,Paid
+2026-1098,2026-08-14,Vltava Logistics,Retainer,13100,2751,15851,Paid
+2026-1099,2026-09-23,Mountain Retreats,Retainer,38300,8043,46343,Paid
+2026-1100,2026-10-03,Psyon s.r.o.,Design review,24300,5103,29403,Paid
+2026-1101,2026-01-13,Nordic Freight AB,Retainer,18460,3877,22337,Paid
+2026-1102,2026-02-12,Brno Makers Lab,Incident response,27840,5846,33686,Paid
+2026-1103,2026-03-12,Kavárna Lípa,Feature work,15630,3282,18912,Paid
+2026-1104,2026-04-08,Fakturoid a.s.,Hosting,2760,580,3340,Paid
+2026-1105,2026-05-24,Dentium Clinic,Incident response,10310,2165,12475,Sent
+2026-1106,2026-06-12,Kavárna Lípa,Design review,9050,1901,10951,Paid
+2026-1107,2026-07-26,Ostrava Steelworks,Consulting,17760,3730,21490,Paid
+2026-1108,2026-08-27,Atelier Novák,Consulting,14600,3066,17666,Paid
+2026-1109,2026-09-12,Nordic Freight AB,Design review,14660,3079,17739,Paid
+2026-1110,2026-10-12,Atelier Novák,Hosting,40030,8406,48436,Paid
+2026-1111,2026-01-05,Atelier Novák,Retainer,41900,8799,50699,Sent
+2026-1112,2026-02-08,Mountain Retreats,Design review,1210,254,1464,Paid
+2026-1113,2026-03-18,Fakturoid a.s.,Feature work,15870,3333,19203,Sent
+2026-1114,2026-04-15,Vltava Logistics,Design review,930,195,1125,Paid
+2026-1115,2026-05-26,Fakturoid a.s.,Retainer,10040,2108,12148,Paid
+2026-1116,2026-06-10,Ostrava Steelworks,Consulting,7150,1502,8652,Paid
+2026-1117,2026-07-04,Brno Makers Lab,Hosting,5910,1241,7151,Overdue
+2026-1118,2026-08-25,Kavárna Lípa,Design review,12270,2577,14847,Paid
+2026-1119,2026-09-18,Dentium Clinic,Retainer,19130,4017,23147,Sent
+2026-1120,2026-10-22,Ostrava Steelworks,Retainer,23880,5015,28895,Sent
+2026-1121,2026-01-04,Mountain Retreats,Consulting,35750,7508,43258,Sent
+2026-1122,2026-02-02,Psyon s.r.o.,Design review,27780,5834,33614,Paid
+2026-1123,2026-03-26,Brno Makers Lab,Hosting,37600,7896,45496,Sent
+2026-1124,2026-04-11,Atelier Novák,Retainer,42580,8942,51522,Sent
+2026-1125,2026-05-09,Atelier Novák,Design review,6300,1323,7623,Sent
+2026-1126,2026-06-16,Mountain Retreats,Design review,13360,2806,16166,Sent
+2026-1127,2026-07-27,Brno Makers Lab,Design review,6680,1403,8083,Paid
+2026-1128,2026-08-20,Mountain Retreats,Incident response,14960,3142,18102,Sent
+2026-1129,2026-09-21,Nordic Freight AB,Consulting,36120,7585,43705,Paid
+2026-1130,2026-10-01,Vltava Logistics,Incident response,30990,6508,37498,Paid
+2026-1131,2026-01-09,Nordic Freight AB,Incident response,29570,6210,35780,Paid
+2026-1132,2026-02-07,Fakturoid a.s.,Hosting,18480,3881,22361,Paid
+2026-1133,2026-03-21,Psyon s.r.o.,Consulting,32950,6920,39870,Paid
+2026-1134,2026-04-01,Mountain Retreats,Feature work,1960,412,2372,Paid
+2026-1135,2026-05-14,Nordic Freight AB,Design review,7230,1518,8748,Sent
+2026-1136,2026-06-14,Mountain Retreats,Retainer,14770,3102,17872,Overdue
+2026-1137,2026-07-13,Dentium Clinic,Retainer,3890,817,4707,Sent
+2026-1138,2026-08-26,Atelier Novák,Consulting,10900,2289,13189,Paid
+2026-1139,2026-09-12,Mountain Retreats,Retainer,40520,8509,49029,Paid
+2026-1140,2026-10-10,Psyon s.r.o.,Incident response,24420,5128,29548,Sent
+2026-1141,2026-01-04,Mountain Retreats,Hosting,19490,4093,23583,Paid
+2026-1142,2026-02-14,Nordic Freight AB,Incident response,31390,6592,37982,Paid
+2026-1143,2026-03-06,Atelier Novák,Design review,7750,1628,9378,Paid
+2026-1144,2026-04-13,Dentium Clinic,Design review,31070,6525,37595,Paid
+2026-1145,2026-05-06,Fakturoid a.s.,Retainer,32210,6764,38974,Overdue
+2026-1146,2026-06-10,Dentium Clinic,Incident response,36820,7732,44552,Paid
+2026-1147,2026-07-21,Atelier Novák,Incident response,8370,1758,10128,Overdue
+2026-1148,2026-08-22,Nordic Freight AB,Design review,4220,886,5106,Sent
+2026-1149,2026-09-27,Mountain Retreats,Retainer,29570,6210,35780,Paid
+2026-1150,2026-10-22,Fakturoid a.s.,Design review,13950,2930,16880,Sent
+2026-1151,2026-01-07,Nordic Freight AB,Hosting,18060,3793,21853,Paid
+2026-1152,2026-02-09,Fakturoid a.s.,Design review,25100,5271,30371,Overdue
+2026-1153,2026-03-19,Nordic Freight AB,Feature work,30240,6350,36590,Paid
+2026-1154,2026-04-15,Dentium Clinic,Design review,34040,7148,41188,Paid
+2026-1155,2026-05-02,Vltava Logistics,Retainer,6530,1371,7901,Sent
+2026-1156,2026-06-16,Mountain Retreats,Retainer,33530,7041,40571,Sent
+2026-1157,2026-07-07,Psyon s.r.o.,Retainer,17030,3576,20606,Paid
+2026-1158,2026-08-05,Kavárna Lípa,Retainer,39010,8192,47202,Overdue
+2026-1159,2026-09-19,Brno Makers Lab,Feature work,39000,8190,47190,Paid
+2026-1160,2026-10-07,Fakturoid a.s.,Hosting,32600,6846,39446,Paid
+2026-1161,2026-01-21,Psyon s.r.o.,Incident response,39920,8383,48303,Paid
+2026-1162,2026-02-05,Kavárna Lípa,Design review,34980,7346,42326,Paid
+2026-1163,2026-03-24,Mountain Retreats,Hosting,8940,1877,10817,Paid
+2026-1164,2026-04-06,Kavárna Lípa,Retainer,14650,3077,17727,Overdue
+2026-1165,2026-05-05,Nordic Freight AB,Retainer,34780,7304,42084,Sent
+2026-1166,2026-06-24,Dentium Clinic,Retainer,2150,452,2602,Paid
+2026-1167,2026-07-03,Mountain Retreats,Consulting,31530,6621,38151,Sent
+2026-1168,2026-08-18,Vltava Logistics,Incident response,8640,1814,10454,Sent
+2026-1169,2026-09-18,Ostrava Steelworks,Feature work,25100,5271,30371,Paid
+2026-1170,2026-10-21,Kavárna Lípa,Design review,18090,3799,21889,Paid
+2026-1171,2026-01-14,Dentium Clinic,Feature work,15770,3312,19082,Sent
+2026-1172,2026-02-23,Vltava Logistics,Hosting,31230,6558,37788,Paid
+2026-1173,2026-03-11,Ostrava Steelworks,Incident response,37870,7953,45823,Paid
+2026-1174,2026-04-24,Psyon s.r.o.,Retainer,14140,2969,17109,Paid
+2026-1175,2026-05-09,Fakturoid a.s.,Design review,22500,4725,27225,Overdue
+2026-1176,2026-06-10,Kavárna Lípa,Retainer,40770,8562,49332,Paid
+2026-1177,2026-07-17,Mountain Retreats,Incident response,42750,8978,51728,Sent
+2026-1178,2026-08-07,Ostrava Steelworks,Feature work,22180,4658,26838,Sent
+2026-1179,2026-09-14,Ostrava Steelworks,Design review,22210,4664,26874,Sent
+2026-1180,2026-10-14,Fakturoid a.s.,Consulting,3070,645,3715,Paid
+2026-1181,2026-01-26,Fakturoid a.s.,Feature work,5250,1103,6353,Paid
+2026-1182,2026-02-09,Kavárna Lípa,Consulting,35570,7470,43040,Sent
+2026-1183,2026-03-27,Dentium Clinic,Hosting,8530,1791,10321,Paid
+2026-1184,2026-04-17,Nordic Freight AB,Hosting,14190,2980,17170,Paid
+2026-1185,2026-05-07,Dentium Clinic,Hosting,10410,2186,12596,Paid
+2026-1186,2026-06-07,Mountain Retreats,Feature work,39180,8228,47408,Overdue
+2026-1187,2026-07-25,Kavárna Lípa,Incident response,34020,7144,41164,Paid
+2026-1188,2026-08-05,Brno Makers Lab,Hosting,4190,880,5070,Paid
+2026-1189,2026-09-20,Fakturoid a.s.,Incident response,34820,7312,42132,Paid
+2026-1190,2026-10-24,Atelier Novák,Design review,23770,4992,28762,Paid
+2026-1191,2026-01-09,Atelier Novák,Design review,35360,7426,42786,Paid
+2026-1192,2026-02-10,Atelier Novák,Hosting,2100,441,2541,Sent
+2026-1193,2026-03-08,Atelier Novák,Design review,38000,7980,45980,Paid
+2026-1194,2026-04-03,Psyon s.r.o.,Retainer,38450,8075,46525,Paid
+2026-1195,2026-05-11,Dentium Clinic,Hosting,14990,3148,18138,Paid
+2026-1196,2026-06-20,Vltava Logistics,Feature work,8500,1785,10285,Paid
+2026-1197,2026-07-03,Vltava Logistics,Design review,31890,6697,38587,Paid
+2026-1198,2026-08-19,Ostrava Steelworks,Consulting,41990,8818,50808,Paid
+2026-1199,2026-09-12,Nordic Freight AB,Feature work,35910,7541,43451,Paid
+2026-1200,2026-10-20,Ostrava Steelworks,Hosting,30640,6434,37074,Sent
+2026-1201,2026-01-22,Psyon s.r.o.,Feature work,11420,2398,13818,Paid
+2026-1202,2026-02-04,Vltava Logistics,Consulting,9610,2018,11628,Overdue
+2026-1203,2026-03-12,Mountain Retreats,Consulting,27540,5783,33323,Overdue
+2026-1204,2026-04-07,Kavárna Lípa,Design review,10090,2119,12209,Paid
+2026-1205,2026-05-01,Nordic Freight AB,Consulting,30720,6451,37171,Paid
+2026-1206,2026-06-11,Nordic Freight AB,Feature work,13550,2846,16396,Paid
+2026-1207,2026-07-02,Vltava Logistics,Consulting,10300,2163,12463,Overdue
+2026-1208,2026-08-04,Nordic Freight AB,Feature work,5870,1233,7103,Paid
+2026-1209,2026-09-14,Atelier Novák,Design review,21080,4427,25507,Paid
+2026-1210,2026-10-23,Dentium Clinic,Retainer,28760,6040,34800,Paid
+2026-1211,2026-01-05,Brno Makers Lab,Consulting,38910,8171,47081,Paid
+2026-1212,2026-02-21,Dentium Clinic,Feature work,25340,5321,30661,Overdue
+2026-1213,2026-03-07,Mountain Retreats,Incident response,25120,5275,30395,Paid
+2026-1214,2026-04-11,Atelier Novák,Retainer,8620,1810,10430,Paid
+2026-1215,2026-05-01,Mountain Retreats,Hosting,35130,7377,42507,Paid
+2026-1216,2026-06-11,Kavárna Lípa,Feature work,14930,3135,18065,Paid
+2026-1217,2026-07-19,Brno Makers Lab,Consulting,38760,8140,46900,Overdue
+2026-1218,2026-08-14,Fakturoid a.s.,Retainer,33140,6959,40099,Paid
+2026-1219,2026-09-08,Psyon s.r.o.,Incident response,20890,4387,25277,Sent
+2026-1220,2026-10-23,Kavárna Lípa,Retainer,26990,5668,32658,Sent
+2026-1221,2026-01-13,Atelier Novák,Incident response,15300,3213,18513,Paid
+2026-1222,2026-02-23,Ostrava Steelworks,Retainer,7740,1625,9365,Sent
+2026-1223,2026-03-03,Nordic Freight AB,Retainer,14110,2963,17073,Paid
+2026-1224,2026-04-24,Brno Makers Lab,Retainer,33240,6980,40220,Paid
+2026-1225,2026-05-24,Atelier Novák,Retainer,4630,972,5602,Sent
+2026-1226,2026-06-19,Dentium Clinic,Consulting,8330,1749,10079,Paid
+2026-1227,2026-07-19,Psyon s.r.o.,Hosting,22980,4826,27806,Paid
+2026-1228,2026-08-16,Dentium Clinic,Retainer,18010,3782,21792,Paid
+2026-1229,2026-09-12,Mountain Retreats,Retainer,33760,7090,40850,Paid
+2026-1230,2026-10-25,Dentium Clinic,Design review,28490,5983,34473,Paid
+2026-1231,2026-01-03,Mountain Retreats,Retainer,41650,8747,50397,Sent
+2026-1232,2026-02-18,Brno Makers Lab,Retainer,31160,6544,37704,Sent
+2026-1233,2026-03-10,Vltava Logistics,Incident response,26160,5494,31654,Paid
+2026-1234,2026-04-19,Atelier Novák,Incident response,25590,5374,30964,Paid
+2026-1235,2026-05-07,Nordic Freight AB,Feature work,13740,2885,16625,Sent
+2026-1236,2026-06-14,Fakturoid a.s.,Design review,39600,8316,47916,Paid
+2026-1237,2026-07-18,Vltava Logistics,Retainer,7840,1646,9486,Paid
+2026-1238,2026-08-13,Brno Makers Lab,Consulting,3010,632,3642,Sent
+2026-1239,2026-09-14,Kavárna Lípa,Retainer,3790,796,4586,Paid
+2026-1240,2026-10-26,Kavárna Lípa,Incident response,41200,8652,49852,Paid
+2026-1241,2026-01-19,Nordic Freight AB,Hosting,3550,746,4296,Paid
+2026-1242,2026-02-17,Mountain Retreats,Retainer,38320,8047,46367,Sent
+2026-1243,2026-03-19,Brno Makers Lab,Design review,31790,6676,38466,Paid
+2026-1244,2026-04-06,Atelier Novák,Incident response,39880,8375,48255,Overdue
+2026-1245,2026-05-23,Ostrava Steelworks,Hosting,42510,8927,51437,Paid
+2026-1246,2026-06-04,Psyon s.r.o.,Retainer,12540,2633,15173,Paid
+2026-1247,2026-07-13,Psyon s.r.o.,Consulting,26090,5479,31569,Paid
+2026-1248,2026-08-17,Brno Makers Lab,Incident response,27400,5754,33154,Paid
+2026-1249,2026-09-25,Kavárna Lípa,Incident response,14680,3083,17763,Paid
+2026-1250,2026-10-16,Mountain Retreats,Hosting,10250,2153,12403,Paid
+2026-1251,2026-01-19,Nordic Freight AB,Feature work,24930,5235,30165,Sent
+2026-1252,2026-02-21,Nordic Freight AB,Incident response,7680,1613,9293,Paid
+2026-1253,2026-03-20,Nordic Freight AB,Incident response,21240,4460,25700,Paid
+2026-1254,2026-04-27,Dentium Clinic,Incident response,30610,6428,37038,Paid
+2026-1255,2026-05-06,Vltava Logistics,Retainer,7360,1546,8906,Sent
+2026-1256,2026-06-01,Atelier Novák,Retainer,26770,5622,32392,Paid
+2026-1257,2026-07-07,Vltava Logistics,Incident response,11720,2461,14181,Sent
+2026-1258,2026-08-27,Atelier Novák,Hosting,13460,2827,16287,Paid
+2026-1259,2026-09-08,Brno Makers Lab,Retainer,24830,5214,30044,Paid
+2026-1260,2026-10-24,Psyon s.r.o.,Feature work,11200,2352,13552,Sent
+2026-1261,2026-01-23,Mountain Retreats,Hosting,34720,7291,42011,Paid
+2026-1262,2026-02-22,Atelier Novák,Hosting,42270,8877,51147,Paid
+2026-1263,2026-03-24,Dentium Clinic,Hosting,11230,2358,13588,Sent
+2026-1264,2026-04-12,Mountain Retreats,Retainer,6170,1296,7466,Paid
+2026-1265,2026-05-21,Dentium Clinic,Hosting,40750,8558,49308,Paid
+2026-1266,2026-06-25,Fakturoid a.s.,Design review,12100,2541,14641,Paid
+2026-1267,2026-07-11,Kavárna Lípa,Retainer,1160,244,1404,Paid
+2026-1268,2026-08-26,Mountain Retreats,Incident response,17200,3612,20812,Paid
+2026-1269,2026-09-11,Atelier Novák,Hosting,1880,395,2275,Paid
+2026-1270,2026-10-11,Atelier Novák,Incident response,1940,407,2347,Paid
+2026-1271,2026-01-21,Vltava Logistics,Feature work,42110,8843,50953,Paid
+2026-1272,2026-02-17,Dentium Clinic,Hosting,12180,2558,14738,Paid
+2026-1273,2026-03-06,Nordic Freight AB,Feature work,27040,5678,32718,Sent
+2026-1274,2026-04-19,Vltava Logistics,Hosting,27120,5695,32815,Paid
+2026-1275,2026-05-21,Vltava Logistics,Retainer,19980,4196,24176,Paid
+2026-1276,2026-06-24,Ostrava Steelworks,Retainer,8240,1730,9970,Overdue
+2026-1277,2026-07-05,Vltava Logistics,Feature work,8740,1835,10575,Paid
+2026-1278,2026-08-03,Brno Makers Lab,Hosting,36220,7606,43826,Paid
+2026-1279,2026-09-05,Fakturoid a.s.,Consulting,4930,1035,5965,Paid
+2026-1280,2026-10-23,Vltava Logistics,Design review,31870,6693,38563,Paid
+2026-1281,2026-01-08,Brno Makers Lab,Incident response,39420,8278,47698,Sent
+2026-1282,2026-02-14,Mountain Retreats,Feature work,30870,6483,37353,Paid
+2026-1283,2026-03-08,Mountain Retreats,Design review,39470,8289,47759,Paid
+2026-1284,2026-04-15,Brno Makers Lab,Incident response,27880,5855,33735,Sent
+2026-1285,2026-05-16,Dentium Clinic,Feature work,9680,2033,11713,Sent
+2026-1286,2026-06-20,Nordic Freight AB,Consulting,4510,947,5457,Sent
+2026-1287,2026-07-26,Dentium Clinic,Feature work,23880,5015,28895,Sent
+2026-1288,2026-08-27,Brno Makers Lab,Feature work,38800,8148,46948,Paid
+2026-1289,2026-09-24,Atelier Novák,Feature work,30820,6472,37292,Paid
+2026-1290,2026-10-24,Ostrava Steelworks,Consulting,5470,1149,6619,Paid
+2026-1291,2026-01-19,Nordic Freight AB,Feature work,40540,8513,49053,Overdue
+2026-1292,2026-02-20,Nordic Freight AB,Retainer,35990,7558,43548,Paid
+2026-1293,2026-03-12,Dentium Clinic,Consulting,2050,431,2481,Paid
+2026-1294,2026-04-17,Kavárna Lípa,Incident response,27630,5802,33432,Paid
+2026-1295,2026-05-27,Kavárna Lípa,Feature work,15480,3251,18731,Paid
+2026-1296,2026-06-08,Brno Makers Lab,Retainer,19120,4015,23135,Paid
+2026-1297,2026-07-14,Brno Makers Lab,Consulting,34040,7148,41188,Paid
+2026-1298,2026-08-23,Fakturoid a.s.,Design review,36450,7655,44105,Paid
+2026-1299,2026-09-11,Atelier Novák,Consulting,22430,4710,27140,Paid
+2026-1300,2026-10-27,Ostrava Steelworks,Retainer,29310,6155,35465,Sent
+2026-1301,2026-01-08,Fakturoid a.s.,Feature work,20230,4248,24478,Paid
+2026-1302,2026-02-18,Mountain Retreats,Retainer,38100,8001,46101,Paid
+2026-1303,2026-03-12,Dentium Clinic,Retainer,25670,5391,31061,Paid
+2026-1304,2026-04-13,Ostrava Steelworks,Feature work,10000,2100,12100,Paid
+2026-1305,2026-05-08,Dentium Clinic,Retainer,2010,422,2432,Paid
+2026-1306,2026-06-06,Mountain Retreats,Design review,32330,6789,39119,Paid
+2026-1307,2026-07-07,Fakturoid a.s.,Incident response,22940,4817,27757,Paid
+2026-1308,2026-08-24,Fakturoid a.s.,Feature work,28420,5968,34388,Paid
+2026-1309,2026-09-02,Brno Makers Lab,Incident response,7980,1676,9656,Paid
+2026-1310,2026-10-25,Kavárna Lípa,Feature work,27910,5861,33771,Paid
+2026-1311,2026-01-04,Atelier Novák,Consulting,5120,1075,6195,Paid
+2026-1312,2026-02-12,Fakturoid a.s.,Consulting,36860,7741,44601,Paid
+2026-1313,2026-03-14,Fakturoid a.s.,Design review,21330,4479,25809,Paid
+2026-1314,2026-04-15,Fakturoid a.s.,Retainer,30180,6338,36518,Paid
+2026-1315,2026-05-25,Ostrava Steelworks,Consulting,40990,8608,49598,Paid
+2026-1316,2026-06-08,Nordic Freight AB,Consulting,37930,7965,45895,Sent
+2026-1317,2026-07-08,Fakturoid a.s.,Hosting,15700,3297,18997,Sent
+2026-1318,2026-08-11,Dentium Clinic,Incident response,42150,8852,51002,Paid
+2026-1319,2026-09-19,Psyon s.r.o.,Feature work,8320,1747,10067,Overdue
+2026-1320,2026-10-20,Vltava Logistics,Retainer,32700,6867,39567,Sent
+2026-1321,2026-01-11,Atelier Novák,Hosting,9330,1959,11289,Paid
+2026-1322,2026-02-05,Mountain Retreats,Feature work,30690,6445,37135,Paid
+2026-1323,2026-03-23,Vltava Logistics,Incident response,3360,706,4066,Paid
+2026-1324,2026-04-27,Fakturoid a.s.,Feature work,11380,2390,13770,Paid
+2026-1325,2026-05-05,Vltava Logistics,Incident response,23760,4990,28750,Overdue
+2026-1326,2026-06-01,Nordic Freight AB,Design review,30100,6321,36421,Paid
+2026-1327,2026-07-14,Mountain Retreats,Design review,26430,5550,31980,Sent
+2026-1328,2026-08-09,Kavárna Lípa,Consulting,6180,1298,7478,Overdue
+2026-1329,2026-09-15,Brno Makers Lab,Retainer,40960,8602,49562,Sent
+2026-1330,2026-10-26,Mountain Retreats,Design review,27420,5758,33178,Paid
+2026-1331,2026-01-13,Atelier Novák,Retainer,32590,6844,39434,Paid
+2026-1332,2026-02-04,Mountain Retreats,Incident response,25910,5441,31351,Sent
+2026-1333,2026-03-13,Atelier Novák,Incident response,35020,7354,42374,Paid
+2026-1334,2026-04-01,Ostrava Steelworks,Retainer,34630,7272,41902,Paid
+2026-1335,2026-05-12,Fakturoid a.s.,Retainer,39910,8381,48291,Sent
+2026-1336,2026-06-06,Nordic Freight AB,Consulting,15590,3274,18864,Paid
+2026-1337,2026-07-02,Vltava Logistics,Incident response,11810,2480,14290,Paid
+2026-1338,2026-08-15,Atelier Novák,Feature work,6630,1392,8022,Overdue
+2026-1339,2026-09-04,Mountain Retreats,Feature work,7270,1527,8797,Paid
+2026-1340,2026-10-16,Mountain Retreats,Hosting,17160,3604,20764,Paid
+2026-1341,2026-01-06,Psyon s.r.o.,Design review,10840,2276,13116,Overdue
+2026-1342,2026-02-21,Atelier Novák,Design review,42640,8954,51594,Sent
+2026-1343,2026-03-08,Nordic Freight AB,Consulting,8870,1863,10733,Paid
+2026-1344,2026-04-25,Dentium Clinic,Design review,22960,4822,27782,Sent
+2026-1345,2026-05-26,Kavárna Lípa,Incident response,34540,7253,41793,Paid
+2026-1346,2026-06-22,Kavárna Lípa,Feature work,23100,4851,27951,Paid
+2026-1347,2026-07-02,Atelier Novák,Retainer,17620,3700,21320,Overdue
+2026-1348,2026-08-26,Vltava Logistics,Feature work,25490,5353,30843,Paid
+2026-1349,2026-09-08,Vltava Logistics,Incident response,42600,8946,51546,Paid
+2026-1350,2026-10-23,Fakturoid a.s.,Design review,6660,1399,8059,Paid
+2026-1351,2026-01-08,Fakturoid a.s.,Feature work,1230,258,1488,Paid
+2026-1352,2026-02-10,Mountain Retreats,Design review,37720,7921,45641,Paid
+2026-1353,2026-03-21,Vltava Logistics,Consulting,35860,7531,43391,Paid
+2026-1354,2026-04-04,Atelier Novák,Hosting,18950,3980,22930,Paid
+2026-1355,2026-05-08,Dentium Clinic,Incident response,37730,7923,45653,Sent
+2026-1356,2026-06-05,Fakturoid a.s.,Hosting,30620,6430,37050,Paid
+2026-1357,2026-07-20,Ostrava Steelworks,Hosting,15260,3205,18465,Paid
+2026-1358,2026-08-16,Brno Makers Lab,Consulting,39730,8343,48073,Paid
+2026-1359,2026-09-20,Mountain Retreats,Retainer,38530,8091,46621,Paid
+2026-1360,2026-10-03,Dentium Clinic,Hosting,41090,8629,49719,Sent
+2026-1361,2026-01-02,Kavárna Lípa,Hosting,33710,7079,40789,Paid
+2026-1362,2026-02-25,Atelier Novák,Consulting,30620,6430,37050,Paid
+2026-1363,2026-03-06,Kavárna Lípa,Consulting,25590,5374,30964,Paid
+2026-1364,2026-04-10,Vltava Logistics,Retainer,13610,2858,16468,Paid
+2026-1365,2026-05-11,Psyon s.r.o.,Design review,26460,5557,32017,Sent
+2026-1366,2026-06-03,Psyon s.r.o.,Hosting,33910,7121,41031,Paid
+2026-1367,2026-07-09,Nordic Freight AB,Incident response,27780,5834,33614,Paid
+2026-1368,2026-08-19,Dentium Clinic,Incident response,37230,7818,45048,Paid
+2026-1369,2026-09-14,Vltava Logistics,Incident response,38550,8096,46646,Paid
+2026-1370,2026-10-18,Brno Makers Lab,Hosting,1140,239,1379,Paid
+2026-1371,2026-01-08,Brno Makers Lab,Design review,42030,8826,50856,Paid
+2026-1372,2026-02-19,Brno Makers Lab,Consulting,3320,697,4017,Paid
+2026-1373,2026-03-06,Kavárna Lípa,Hosting,30520,6409,36929,Overdue
+2026-1374,2026-04-03,Atelier Novák,Feature work,31920,6703,38623,Overdue
+2026-1375,2026-05-03,Dentium Clinic,Retainer,6310,1325,7635,Overdue
+2026-1376,2026-06-15,Atelier Novák,Design review,34370,7218,41588,Paid
+2026-1377,2026-07-11,Psyon s.r.o.,Incident response,30360,6376,36736,Paid
+2026-1378,2026-08-13,Kavárna Lípa,Consulting,12600,2646,15246,Paid
+2026-1379,2026-09-05,Nordic Freight AB,Design review,11040,2318,13358,Paid
+2026-1380,2026-10-14,Psyon s.r.o.,Consulting,2380,500,2880,Overdue
+2026-1381,2026-01-06,Dentium Clinic,Incident response,22980,4826,27806,Sent
+2026-1382,2026-02-04,Mountain Retreats,Design review,36350,7634,43984,Paid
+2026-1383,2026-03-15,Vltava Logistics,Retainer,16540,3473,20013,Paid
+2026-1384,2026-04-09,Mountain Retreats,Consulting,42770,8982,51752,Paid
+2026-1385,2026-05-20,Dentium Clinic,Retainer,18280,3839,22119,Paid
+2026-1386,2026-06-03,Nordic Freight AB,Hosting,22400,4704,27104,Paid
+2026-1387,2026-07-03,Fakturoid a.s.,Hosting,14970,3144,18114,Paid
+2026-1388,2026-08-22,Brno Makers Lab,Feature work,26700,5607,32307,Paid
+2026-1389,2026-09-18,Ostrava Steelworks,Retainer,29020,6094,35114,Paid
+2026-1390,2026-10-08,Atelier Novák,Incident response,14980,3146,18126,Paid
+2026-1391,2026-01-26,Vltava Logistics,Consulting,17590,3694,21284,Sent
+2026-1392,2026-02-23,Atelier Novák,Consulting,14590,3064,17654,Overdue
+2026-1393,2026-03-06,Psyon s.r.o.,Consulting,34900,7329,42229,Overdue
+2026-1394,2026-04-24,Fakturoid a.s.,Consulting,6650,1397,8047,Paid
+2026-1395,2026-05-14,Dentium Clinic,Hosting,32160,6754,38914,Sent
+2026-1396,2026-06-03,Atelier Novák,Hosting,7730,1623,9353,Sent
+2026-1397,2026-07-21,Ostrava Steelworks,Design review,21000,4410,25410,Sent
+2026-1398,2026-08-18,Mountain Retreats,Design review,24870,5223,30093,Paid
+2026-1399,2026-09-11,Brno Makers Lab,Design review,32970,6924,39894,Paid
+2026-1400,2026-10-08,Mountain Retreats,Retainer,11340,2381,13721,Sent
+2026-1401,2026-01-09,Vltava Logistics,Design review,15580,3272,18852,Sent
+2026-1402,2026-02-24,Vltava Logistics,Retainer,22160,4654,26814,Paid
+2026-1403,2026-03-25,Ostrava Steelworks,Hosting,36510,7667,44177,Overdue
+2026-1404,2026-04-27,Nordic Freight AB,Feature work,32120,6745,38865,Paid
+2026-1405,2026-05-25,Ostrava Steelworks,Hosting,830,174,1004,Paid
+2026-1406,2026-06-07,Kavárna Lípa,Feature work,36000,7560,43560,Paid
+2026-1407,2026-07-25,Kavárna Lípa,Hosting,41820,8782,50602,Paid
+2026-1408,2026-08-18,Dentium Clinic,Feature work,29820,6262,36082,Paid
+2026-1409,2026-09-05,Atelier Novák,Retainer,2750,578,3328,Sent
+2026-1410,2026-10-15,Mountain Retreats,Consulting,10230,2148,12378,Paid
+2026-1411,2026-01-23,Mountain Retreats,Retainer,41240,8660,49900,Sent
+2026-1412,2026-02-12,Mountain Retreats,Design review,18580,3902,22482,Paid
+2026-1413,2026-03-03,Ostrava Steelworks,Consulting,24460,5137,29597,Paid
+2026-1414,2026-04-20,Vltava Logistics,Design review,18500,3885,22385,Paid
+2026-1415,2026-05-11,Dentium Clinic,Design review,16780,3524,20304,Paid
+2026-1416,2026-06-14,Kavárna Lípa,Feature work,33160,6964,40124,Paid
+2026-1417,2026-07-25,Mountain Retreats,Consulting,22280,4679,26959,Sent
+2026-1418,2026-08-17,Psyon s.r.o.,Feature work,23260,4885,28145,Paid
+2026-1419,2026-09-11,Mountain Retreats,Consulting,16050,3371,19421,Paid
+2026-1420,2026-10-02,Psyon s.r.o.,Design review,30680,6443,37123,Paid
+2026-1421,2026-01-24,Ostrava Steelworks,Incident response,32260,6775,39035,Sent
+2026-1422,2026-02-01,Fakturoid a.s.,Design review,39370,8268,47638,Paid
+2026-1423,2026-03-08,Dentium Clinic,Hosting,7710,1619,9329,Paid
+2026-1424,2026-04-25,Psyon s.r.o.,Retainer,42790,8986,51776,Paid
+2026-1425,2026-05-25,Ostrava Steelworks,Incident response,40150,8432,48582,Paid
+2026-1426,2026-06-03,Psyon s.r.o.,Design review,12510,2627,15137,Paid
+2026-1427,2026-07-17,Dentium Clinic,Design review,33270,6987,40257,Paid
+2026-1428,2026-08-24,Kavárna Lípa,Hosting,31170,6546,37716,Paid
+2026-1429,2026-09-02,Fakturoid a.s.,Consulting,24630,5172,29802,Sent
+2026-1430,2026-10-13,Ostrava Steelworks,Consulting,11990,2518,14508,Paid
+2026-1431,2026-01-19,Ostrava Steelworks,Design review,39770,8352,48122,Paid
+2026-1432,2026-02-22,Mountain Retreats,Feature work,28290,5941,34231,Sent
+2026-1433,2026-03-10,Ostrava Steelworks,Retainer,11740,2465,14205,Paid
+2026-1434,2026-04-17,Vltava Logistics,Retainer,12090,2539,14629,Paid
+2026-1435,2026-05-07,Nordic Freight AB,Incident response,8140,1709,9849,Paid
+2026-1436,2026-06-15,Ostrava Steelworks,Consulting,33490,7033,40523,Paid
+2026-1437,2026-07-22,Nordic Freight AB,Hosting,32190,6760,38950,Paid
+2026-1438,2026-08-09,Psyon s.r.o.,Design review,6360,1336,7696,Paid
+2026-1439,2026-09-06,Mountain Retreats,Design review,37540,7883,45423,Overdue
+2026-1440,2026-10-23,Brno Makers Lab,Incident response,27280,5729,33009,Paid
+2026-1441,2026-01-26,Psyon s.r.o.,Feature work,12420,2608,15028,Overdue
+2026-1442,2026-02-08,Atelier Novák,Consulting,18520,3889,22409,Paid
+2026-1443,2026-03-06,Atelier Novák,Hosting,42080,8837,50917,Paid
+2026-1444,2026-04-02,Ostrava Steelworks,Hosting,28380,5960,34340,Paid
+2026-1445,2026-05-17,Dentium Clinic,Incident response,37030,7776,44806,Paid
+2026-1446,2026-06-08,Kavárna Lípa,Consulting,25800,5418,31218,Paid
+2026-1447,2026-07-18,Fakturoid a.s.,Consulting,25500,5355,30855,Paid
+2026-1448,2026-08-04,Nordic Freight AB,Retainer,4770,1002,5772,Sent
+2026-1449,2026-09-18,Kavárna Lípa,Consulting,15000,3150,18150,Paid
+2026-1450,2026-10-24,Dentium Clinic,Hosting,41300,8673,49973,Overdue
+2026-1451,2026-01-09,Atelier Novák,Hosting,23670,4971,28641,Sent
+2026-1452,2026-02-20,Psyon s.r.o.,Retainer,25990,5458,31448,Sent
+2026-1453,2026-03-23,Kavárna Lípa,Consulting,32690,6865,39555,Overdue
+2026-1454,2026-04-16,Fakturoid a.s.,Retainer,19240,4040,23280,Overdue
+2026-1455,2026-05-26,Vltava Logistics,Incident response,42160,8854,51014,Sent
+2026-1456,2026-06-23,Psyon s.r.o.,Incident response,32390,6802,39192,Overdue
+2026-1457,2026-07-13,Mountain Retreats,Design review,30600,6426,37026,Paid
+2026-1458,2026-08-23,Atelier Novák,Consulting,16060,3373,19433,Paid
+2026-1459,2026-09-24,Vltava Logistics,Consulting,22220,4666,26886,Paid
+2026-1460,2026-10-03,Dentium Clinic,Consulting,12280,2579,14859,Paid
+2026-1461,2026-01-19,Ostrava Steelworks,Retainer,21730,4563,26293,Paid
+2026-1462,2026-02-24,Ostrava Steelworks,Incident response,29110,6113,35223,Sent
+2026-1463,2026-03-19,Vltava Logistics,Incident response,14510,3047,17557,Paid
+2026-1464,2026-04-12,Dentium Clinic,Incident response,1480,311,1791,Sent
+2026-1465,2026-05-01,Mountain Retreats,Retainer,14480,3041,17521,Paid
+2026-1466,2026-06-24,Ostrava Steelworks,Design review,31750,6668,38418,Sent
+2026-1467,2026-07-24,Psyon s.r.o.,Design review,21150,4442,25592,Paid
+2026-1468,2026-08-19,Atelier Novák,Feature work,25550,5366,30916,Paid
+2026-1469,2026-09-27,Fakturoid a.s.,Feature work,910,191,1101,Paid
+2026-1470,2026-10-07,Psyon s.r.o.,Retainer,13040,2738,15778,Paid
+2026-1471,2026-01-27,Dentium Clinic,Design review,24530,5151,29681,Overdue
+2026-1472,2026-02-22,Dentium Clinic,Retainer,33540,7043,40583,Paid
+2026-1473,2026-03-02,Atelier Novák,Hosting,1690,355,2045,Paid
+2026-1474,2026-04-26,Kavárna Lípa,Consulting,8440,1772,10212,Paid
+2026-1475,2026-05-11,Fakturoid a.s.,Consulting,17150,3602,20752,Paid
+2026-1476,2026-06-14,Brno Makers Lab,Design review,37140,7799,44939,Paid
+2026-1477,2026-07-22,Atelier Novák,Feature work,30200,6342,36542,Paid
+2026-1478,2026-08-13,Brno Makers Lab,Incident response,23140,4859,27999,Paid
+2026-1479,2026-09-15,Atelier Novák,Hosting,9660,2029,11689,Sent
+2026-1480,2026-10-02,Fakturoid a.s.,Feature work,26570,5580,32150,Sent
+2026-1481,2026-01-24,Mountain Retreats,Retainer,2300,483,2783,Paid
+2026-1482,2026-02-18,Atelier Novák,Incident response,28330,5949,34279,Sent
+2026-1483,2026-03-10,Dentium Clinic,Consulting,23920,5023,28943,Paid
+2026-1484,2026-04-06,Dentium Clinic,Retainer,39720,8341,48061,Paid
+2026-1485,2026-05-08,Kavárna Lípa,Hosting,13810,2900,16710,Overdue
+2026-1486,2026-06-24,Ostrava Steelworks,Incident response,6970,1464,8434,Sent
+2026-1487,2026-07-06,Kavárna Lípa,Consulting,1960,412,2372,Overdue
+2026-1488,2026-08-16,Atelier Novák,Retainer,9080,1907,10987,Paid
+2026-1489,2026-09-13,Brno Makers Lab,Design review,33590,7054,40644,Paid
+2026-1490,2026-10-01,Fakturoid a.s.,Consulting,25260,5305,30565,Overdue
+2026-1491,2026-01-03,Fakturoid a.s.,Incident response,36020,7564,43584,Paid
+2026-1492,2026-02-04,Fakturoid a.s.,Design review,25090,5269,30359,Paid
+2026-1493,2026-03-25,Fakturoid a.s.,Hosting,18070,3795,21865,Paid
+2026-1494,2026-04-10,Psyon s.r.o.,Design review,11380,2390,13770,Paid
+2026-1495,2026-05-02,Atelier Novák,Consulting,38510,8087,46597,Paid
+2026-1496,2026-06-07,Brno Makers Lab,Consulting,28740,6035,34775,Paid
+2026-1497,2026-07-23,Vltava Logistics,Design review,11950,2510,14460,Overdue
+2026-1498,2026-08-01,Mountain Retreats,Retainer,41360,8686,50046,Overdue
+2026-1499,2026-09-26,Atelier Novák,Feature work,31940,6707,38647,Sent
+2026-1500,2026-10-08,Vltava Logistics,Hosting,23770,4992,28762,Paid
+2026-1501,2026-01-17,Dentium Clinic,Feature work,13740,2885,16625,Paid
+2026-1502,2026-02-01,Nordic Freight AB,Incident response,14180,2978,17158,Paid
+2026-1503,2026-03-10,Psyon s.r.o.,Incident response,36830,7734,44564,Paid
+2026-1504,2026-04-20,Vltava Logistics,Consulting,19720,4141,23861,Paid
+2026-1505,2026-05-12,Vltava Logistics,Retainer,22710,4769,27479,Paid
+2026-1506,2026-06-24,Brno Makers Lab,Feature work,1750,368,2118,Paid
+2026-1507,2026-07-15,Fakturoid a.s.,Consulting,9310,1955,11265,Overdue
+2026-1508,2026-08-18,Psyon s.r.o.,Feature work,34750,7298,42048,Sent
+2026-1509,2026-09-16,Kavárna Lípa,Consulting,23040,4838,27878,Paid
+2026-1510,2026-10-04,Fakturoid a.s.,Retainer,18940,3977,22917,Paid
+2026-1511,2026-01-19,Vltava Logistics,Feature work,28940,6077,35017,Overdue
+2026-1512,2026-02-01,Brno Makers Lab,Consulting,10950,2300,13250,Paid
+2026-1513,2026-03-04,Mountain Retreats,Design review,17480,3671,21151,Sent
+2026-1514,2026-04-24,Kavárna Lípa,Design review,1530,321,1851,Paid
+2026-1515,2026-05-05,Fakturoid a.s.,Hosting,22260,4675,26935,Paid
+2026-1516,2026-06-14,Ostrava Steelworks,Design review,35290,7411,42701,Paid
+2026-1517,2026-07-03,Psyon s.r.o.,Feature work,27520,5779,33299,Paid
+2026-1518,2026-08-18,Ostrava Steelworks,Incident response,28270,5937,34207,Sent
+2026-1519,2026-09-03,Ostrava Steelworks,Hosting,34780,7304,42084,Paid
+2026-1520,2026-10-02,Brno Makers Lab,Hosting,25700,5397,31097,Paid
+2026-1521,2026-01-12,Fakturoid a.s.,Incident response,27170,5706,32876,Paid
+2026-1522,2026-02-23,Dentium Clinic,Design review,870,183,1053,Overdue
+2026-1523,2026-03-07,Atelier Novák,Hosting,14690,3085,17775,Paid
+2026-1524,2026-04-01,Dentium Clinic,Hosting,26210,5504,31714,Sent
+2026-1525,2026-05-03,Kavárna Lípa,Incident response,33720,7081,40801,Paid
+2026-1526,2026-06-17,Fakturoid a.s.,Feature work,41280,8669,49949,Overdue
+2026-1527,2026-07-06,Vltava Logistics,Retainer,39820,8362,48182,Sent
+2026-1528,2026-08-13,Atelier Novák,Feature work,25900,5439,31339,Sent
+2026-1529,2026-09-09,Nordic Freight AB,Retainer,28030,5886,33916,Paid
+2026-1530,2026-10-18,Fakturoid a.s.,Consulting,23730,4983,28713,Paid
+2026-1531,2026-01-10,Vltava Logistics,Consulting,30000,6300,36300,Sent
+2026-1532,2026-02-12,Ostrava Steelworks,Consulting,20790,4366,25156,Paid
+2026-1533,2026-03-24,Kavárna Lípa,Feature work,14670,3081,17751,Overdue
+2026-1534,2026-04-20,Kavárna Lípa,Retainer,34930,7335,42265,Paid
+2026-1535,2026-05-26,Mountain Retreats,Consulting,29450,6185,35635,Paid
+2026-1536,2026-06-06,Atelier Novák,Feature work,29150,6122,35272,Sent
+2026-1537,2026-07-03,Kavárna Lípa,Consulting,8450,1775,10225,Paid
+2026-1538,2026-08-27,Atelier Novák,Consulting,14320,3007,17327,Sent
+2026-1539,2026-09-05,Brno Makers Lab,Design review,40350,8474,48824,Paid
+2026-1540,2026-10-24,Nordic Freight AB,Hosting,13800,2898,16698,Overdue
+2026-1541,2026-01-17,Ostrava Steelworks,Retainer,2700,567,3267,Paid
+2026-1542,2026-02-03,Brno Makers Lab,Design review,30270,6357,36627,Paid
+2026-1543,2026-03-21,Ostrava Steelworks,Retainer,40230,8448,48678,Paid
+2026-1544,2026-04-22,Mountain Retreats,Design review,32020,6724,38744,Paid
+2026-1545,2026-05-07,Psyon s.r.o.,Retainer,13500,2835,16335,Paid
+2026-1546,2026-06-11,Vltava Logistics,Incident response,3910,821,4731,Paid
+2026-1547,2026-07-24,Psyon s.r.o.,Design review,9340,1961,11301,Paid
+2026-1548,2026-08-17,Ostrava Steelworks,Incident response,35040,7358,42398,Paid
+2026-1549,2026-09-10,Psyon s.r.o.,Design review,14440,3032,17472,Overdue
+2026-1550,2026-10-16,Mountain Retreats,Hosting,13520,2839,16359,Paid
+2026-1551,2026-01-09,Vltava Logistics,Hosting,35950,7550,43500,Sent
+2026-1552,2026-02-26,Fakturoid a.s.,Incident response,2740,575,3315,Paid
+2026-1553,2026-03-13,Mountain Retreats,Incident response,30530,6411,36941,Paid
+2026-1554,2026-04-10,Mountain Retreats,Incident response,23780,4994,28774,Sent
+2026-1555,2026-05-21,Psyon s.r.o.,Feature work,11100,2331,13431,Paid
+2026-1556,2026-06-12,Brno Makers Lab,Feature work,20200,4242,24442,Paid
+2026-1557,2026-07-07,Dentium Clinic,Feature work,21340,4481,25821,Paid
+2026-1558,2026-08-14,Vltava Logistics,Feature work,23230,4878,28108,Paid
+2026-1559,2026-09-03,Atelier Novák,Design review,7610,1598,9208,Paid
+2026-1560,2026-10-21,Atelier Novák,Retainer,13170,2766,15936,Paid
+2026-1561,2026-01-03,Dentium Clinic,Retainer,3220,676,3896,Sent
+2026-1562,2026-02-17,Atelier Novák,Consulting,5720,1201,6921,Paid
+2026-1563,2026-03-06,Kavárna Lípa,Feature work,29040,6098,35138,Paid
+2026-1564,2026-04-10,Brno Makers Lab,Design review,42420,8908,51328,Paid
+2026-1565,2026-05-24,Atelier Novák,Hosting,25170,5286,30456,Paid
+2026-1566,2026-06-07,Ostrava Steelworks,Feature work,36670,7701,44371,Overdue
+2026-1567,2026-07-08,Vltava Logistics,Retainer,15280,3209,18489,Paid
+2026-1568,2026-08-22,Ostrava Steelworks,Hosting,40530,8511,49041,Paid
+2026-1569,2026-09-22,Ostrava Steelworks,Feature work,18790,3946,22736,Paid
+2026-1570,2026-10-08,Dentium Clinic,Consulting,33010,6932,39942,Paid
+2026-1571,2026-01-20,Mountain Retreats,Hosting,42760,8980,51740,Paid
+2026-1572,2026-02-18,Brno Makers Lab,Retainer,14440,3032,17472,Paid
+2026-1573,2026-03-26,Nordic Freight AB,Incident response,30530,6411,36941,Paid
+2026-1574,2026-04-10,Nordic Freight AB,Consulting,33280,6989,40269,Paid
+2026-1575,2026-05-04,Nordic Freight AB,Design review,17690,3715,21405,Sent
+2026-1576,2026-06-23,Kavárna Lípa,Feature work,23130,4857,27987,Paid
+2026-1577,2026-07-27,Ostrava Steelworks,Design review,42600,8946,51546,Sent
+2026-1578,2026-08-02,Nordic Freight AB,Retainer,13160,2764,15924,Paid
+2026-1579,2026-09-06,Psyon s.r.o.,Incident response,34990,7348,42338,Sent
+2026-1580,2026-10-02,Mountain Retreats,Retainer,17610,3698,21308,Paid
+2026-1581,2026-01-19,Nordic Freight AB,Hosting,17420,3658,21078,Paid
+2026-1582,2026-02-07,Ostrava Steelworks,Retainer,16290,3421,19711,Paid
+2026-1583,2026-03-23,Ostrava Steelworks,Consulting,28190,5920,34110,Paid
+2026-1584,2026-04-16,Vltava Logistics,Consulting,41780,8774,50554,Paid
+2026-1585,2026-05-07,Dentium Clinic,Feature work,35380,7430,42810,Paid
+2026-1586,2026-06-18,Psyon s.r.o.,Consulting,36320,7627,43947,Paid
+2026-1587,2026-07-13,Vltava Logistics,Feature work,40550,8516,49066,Paid
+2026-1588,2026-08-20,Brno Makers Lab,Hosting,40660,8539,49199,Paid
+2026-1589,2026-09-19,Vltava Logistics,Hosting,38110,8003,46113,Paid
+2026-1590,2026-10-11,Kavárna Lípa,Design review,39290,8251,47541,Paid
+2026-1591,2026-01-11,Dentium Clinic,Retainer,14360,3016,17376,Paid
+2026-1592,2026-02-20,Brno Makers Lab,Consulting,8710,1829,10539,Paid
+2026-1593,2026-03-08,Fakturoid a.s.,Feature work,39200,8232,47432,Paid
+2026-1594,2026-04-18,Brno Makers Lab,Retainer,32340,6791,39131,Overdue
+2026-1595,2026-05-11,Vltava Logistics,Consulting,21120,4435,25555,Paid
+2026-1596,2026-06-26,Atelier Novák,Hosting,6010,1262,7272,Paid
+2026-1597,2026-07-21,Kavárna Lípa,Incident response,41100,8631,49731,Paid
+2026-1598,2026-08-03,Fakturoid a.s.,Retainer,15570,3270,18840,Paid
+2026-1599,2026-09-12,Vltava Logistics,Retainer,2570,540,3110,Paid
+2026-1600,2026-10-06,Fakturoid a.s.,Consulting,12160,2554,14714,Paid
+2026-1601,2026-01-13,Mountain Retreats,Consulting,9500,1995,11495,Paid
+2026-1602,2026-02-06,Psyon s.r.o.,Hosting,33340,7001,40341,Paid
+2026-1603,2026-03-24,Mountain Retreats,Retainer,33620,7060,40680,Sent
+2026-1604,2026-04-08,Kavárna Lípa,Incident response,29130,6117,35247,Paid
+2026-1605,2026-05-05,Kavárna Lípa,Hosting,7370,1548,8918,Sent
+2026-1606,2026-06-08,Nordic Freight AB,Feature work,16120,3385,19505,Overdue
+2026-1607,2026-07-07,Kavárna Lípa,Consulting,38680,8123,46803,Paid
+2026-1608,2026-08-06,Vltava Logistics,Consulting,36320,7627,43947,Sent
+2026-1609,2026-09-13,Psyon s.r.o.,Consulting,42290,8881,51171,Paid
+2026-1610,2026-10-23,Ostrava Steelworks,Hosting,32070,6735,38805,Paid
+2026-1611,2026-01-07,Kavárna Lípa,Consulting,40560,8518,49078,Paid
+2026-1612,2026-02-18,Dentium Clinic,Design review,30710,6449,37159,Paid
+2026-1613,2026-03-26,Psyon s.r.o.,Retainer,13070,2745,15815,Paid
+2026-1614,2026-04-10,Dentium Clinic,Incident response,18670,3921,22591,Overdue
+2026-1615,2026-05-25,Vltava Logistics,Consulting,42650,8957,51607,Paid
+2026-1616,2026-06-06,Mountain Retreats,Retainer,34790,7306,42096,Paid
+2026-1617,2026-07-03,Psyon s.r.o.,Hosting,9410,1976,11386,Paid
+2026-1618,2026-08-02,Vltava Logistics,Retainer,9970,2094,12064,Paid
+2026-1619,2026-09-05,Brno Makers Lab,Hosting,2720,571,3291,Paid
+2026-1620,2026-10-24,Kavárna Lípa,Feature work,24670,5181,29851,Paid
+2026-1621,2026-01-04,Atelier Novák,Feature work,38240,8030,46270,Paid
+2026-1622,2026-02-08,Mountain Retreats,Feature work,14980,3146,18126,Sent
+2026-1623,2026-03-11,Kavárna Lípa,Incident response,33680,7073,40753,Sent
+2026-1624,2026-04-03,Atelier Novák,Consulting,33670,7071,40741,Paid
+2026-1625,2026-05-19,Mountain Retreats,Consulting,29310,6155,35465,Paid
+2026-1626,2026-06-08,Atelier Novák,Design review,8700,1827,10527,Paid
+2026-1627,2026-07-15,Nordic Freight AB,Feature work,9700,2037,11737,Sent
+2026-1628,2026-08-21,Psyon s.r.o.,Design review,32160,6754,38914,Paid
+2026-1629,2026-09-25,Brno Makers Lab,Design review,13320,2797,16117,Paid
+2026-1630,2026-10-01,Dentium Clinic,Incident response,26580,5582,32162,Paid
+2026-1631,2026-01-18,Fakturoid a.s.,Retainer,19990,4198,24188,Sent
+2026-1632,2026-02-11,Kavárna Lípa,Incident response,36680,7703,44383,Paid
+2026-1633,2026-03-25,Atelier Novák,Hosting,7270,1527,8797,Paid
+2026-1634,2026-04-11,Psyon s.r.o.,Hosting,13330,2799,16129,Paid
+2026-1635,2026-05-06,Psyon s.r.o.,Consulting,9270,1947,11217,Sent
+2026-1636,2026-06-13,Fakturoid a.s.,Incident response,16480,3461,19941,Paid
+2026-1637,2026-07-09,Nordic Freight AB,Hosting,30970,6504,37474,Paid
+2026-1638,2026-08-18,Dentium Clinic,Incident response,31650,6647,38297,Paid
+2026-1639,2026-09-24,Vltava Logistics,Feature work,6140,1289,7429,Overdue
+2026-1640,2026-10-09,Kavárna Lípa,Retainer,4200,882,5082,Paid
+2026-1641,2026-01-13,Atelier Novák,Hosting,16100,3381,19481,Paid
+2026-1642,2026-02-26,Brno Makers Lab,Consulting,21510,4517,26027,Paid
+2026-1643,2026-03-13,Fakturoid a.s.,Retainer,29470,6189,35659,Sent
+2026-1644,2026-04-08,Mountain Retreats,Hosting,16570,3480,20050,Overdue
+2026-1645,2026-05-02,Brno Makers Lab,Feature work,16180,3398,19578,Sent
+2026-1646,2026-06-06,Dentium Clinic,Retainer,40140,8429,48569,Paid
+2026-1647,2026-07-24,Nordic Freight AB,Hosting,3420,718,4138,Paid
+2026-1648,2026-08-20,Fakturoid a.s.,Incident response,11450,2405,13855,Paid
+2026-1649,2026-09-05,Kavárna Lípa,Feature work,23460,4927,28387,Paid
+2026-1650,2026-10-02,Mountain Retreats,Incident response,41210,8654,49864,Paid
+2026-1651,2026-01-26,Kavárna Lípa,Hosting,19090,4009,23099,Paid
+2026-1652,2026-02-18,Vltava Logistics,Retainer,14220,2986,17206,Paid
+2026-1653,2026-03-26,Vltava Logistics,Feature work,29470,6189,35659,Paid
+2026-1654,2026-04-11,Fakturoid a.s.,Design review,23440,4922,28362,Paid
+2026-1655,2026-05-01,Psyon s.r.o.,Hosting,8730,1833,10563,Overdue
+2026-1656,2026-06-27,Mountain Retreats,Feature work,8240,1730,9970,Paid
+2026-1657,2026-07-27,Kavárna Lípa,Feature work,25160,5284,30444,Sent
+2026-1658,2026-08-15,Kavárna Lípa,Retainer,7590,1594,9184,Paid
+2026-1659,2026-09-23,Kavárna Lípa,Design review,40300,8463,48763,Paid
+2026-1660,2026-10-24,Mountain Retreats,Hosting,38720,8131,46851,Paid
+2026-1661,2026-01-08,Vltava Logistics,Retainer,23140,4859,27999,Sent
+2026-1662,2026-02-26,Kavárna Lípa,Incident response,28860,6061,34921,Paid
+2026-1663,2026-03-23,Atelier Novák,Retainer,7550,1586,9136,Sent
+2026-1664,2026-04-01,Brno Makers Lab,Consulting,7790,1636,9426,Paid
+2026-1665,2026-05-08,Kavárna Lípa,Feature work,13060,2743,15803,Paid
+2026-1666,2026-06-24,Kavárna Lípa,Design review,32230,6768,38998,Paid
+2026-1667,2026-07-16,Kavárna Lípa,Feature work,10600,2226,12826,Paid
+2026-1668,2026-08-01,Mountain Retreats,Retainer,23170,4866,28036,Paid
+2026-1669,2026-09-21,Brno Makers Lab,Incident response,13420,2818,16238,Paid
+2026-1670,2026-10-03,Brno Makers Lab,Feature work,13590,2854,16444,Paid
+2026-1671,2026-01-13,Nordic Freight AB,Feature work,10050,2111,12161,Paid
+2026-1672,2026-02-03,Mountain Retreats,Hosting,38500,8085,46585,Paid
+2026-1673,2026-03-22,Psyon s.r.o.,Retainer,15410,3236,18646,Paid
+2026-1674,2026-04-07,Mountain Retreats,Retainer,8020,1684,9704,Paid
+2026-1675,2026-05-03,Nordic Freight AB,Design review,27830,5844,33674,Paid
+2026-1676,2026-06-05,Psyon s.r.o.,Hosting,35020,7354,42374,Sent
+2026-1677,2026-07-04,Brno Makers Lab,Retainer,20720,4351,25071,Paid
+2026-1678,2026-08-21,Kavárna Lípa,Incident response,19920,4183,24103,Paid
+2026-1679,2026-09-06,Psyon s.r.o.,Consulting,20570,4320,24890,Paid
+2026-1680,2026-10-16,Mountain Retreats,Feature work,38720,8131,46851,Paid
+2026-1681,2026-01-20,Kavárna Lípa,Hosting,23610,4958,28568,Paid
+2026-1682,2026-02-04,Brno Makers Lab,Retainer,15670,3291,18961,Sent
+2026-1683,2026-03-13,Fakturoid a.s.,Design review,38100,8001,46101,Paid
+2026-1684,2026-04-26,Vltava Logistics,Design review,3200,672,3872,Paid
+2026-1685,2026-05-02,Brno Makers Lab,Hosting,35190,7390,42580,Paid
+2026-1686,2026-06-10,Fakturoid a.s.,Hosting,30920,6493,37413,Paid
+2026-1687,2026-07-22,Psyon s.r.o.,Consulting,10070,2115,12185,Overdue
+2026-1688,2026-08-17,Psyon s.r.o.,Consulting,26910,5651,32561,Paid
+2026-1689,2026-09-21,Fakturoid a.s.,Hosting,18700,3927,22627,Paid
+2026-1690,2026-10-18,Kavárna Lípa,Hosting,9670,2031,11701,Paid
+2026-1691,2026-01-05,Brno Makers Lab,Hosting,37360,7846,45206,Paid
+2026-1692,2026-02-02,Kavárna Lípa,Design review,37150,7802,44952,Sent
+2026-1693,2026-03-21,Fakturoid a.s.,Retainer,27370,5748,33118,Paid
+2026-1694,2026-04-18,Brno Makers Lab,Incident response,41890,8797,50687,Sent
+2026-1695,2026-05-08,Mountain Retreats,Retainer,38970,8184,47154,Paid
+2026-1696,2026-06-18,Fakturoid a.s.,Incident response,11020,2314,13334,Paid
+2026-1697,2026-07-06,Dentium Clinic,Incident response,37820,7942,45762,Sent
+2026-1698,2026-08-18,Mountain Retreats,Design review,9100,1911,11011,Paid
+2026-1699,2026-09-01,Brno Makers Lab,Hosting,9170,1926,11096,Paid
+2026-1700,2026-10-05,Nordic Freight AB,Consulting,5630,1182,6812,Sent
+2026-1701,2026-01-19,Psyon s.r.o.,Consulting,41710,8759,50469,Paid
+2026-1702,2026-02-21,Brno Makers Lab,Hosting,36400,7644,44044,Sent
+2026-1703,2026-03-15,Ostrava Steelworks,Hosting,39560,8308,47868,Paid
+2026-1704,2026-04-21,Vltava Logistics,Feature work,20940,4397,25337,Overdue
+2026-1705,2026-05-19,Fakturoid a.s.,Incident response,11550,2426,13976,Paid
+2026-1706,2026-06-25,Atelier Novák,Design review,30860,6481,37341,Paid
+2026-1707,2026-07-04,Brno Makers Lab,Feature work,6090,1279,7369,Sent
+2026-1708,2026-08-19,Ostrava Steelworks,Consulting,11100,2331,13431,Paid
+2026-1709,2026-09-09,Ostrava Steelworks,Design review,25820,5422,31242,Sent
+2026-1710,2026-10-21,Vltava Logistics,Design review,3280,689,3969,Paid
+2026-1711,2026-01-14,Dentium Clinic,Hosting,34850,7319,42169,Sent
+2026-1712,2026-02-14,Ostrava Steelworks,Consulting,19370,4068,23438,Paid
+2026-1713,2026-03-11,Fakturoid a.s.,Consulting,36520,7669,44189,Paid
+2026-1714,2026-04-18,Brno Makers Lab,Hosting,35840,7526,43366,Paid
+2026-1715,2026-05-08,Kavárna Lípa,Design review,38380,8060,46440,Paid
+2026-1716,2026-06-04,Vltava Logistics,Retainer,34630,7272,41902,Sent
+2026-1717,2026-07-07,Atelier Novák,Design review,41180,8648,49828,Paid
+2026-1718,2026-08-21,Mountain Retreats,Design review,10090,2119,12209,Paid
+2026-1719,2026-09-11,Atelier Novák,Design review,15090,3169,18259,Paid
+2026-1720,2026-10-14,Vltava Logistics,Retainer,34420,7228,41648,Sent
+2026-1721,2026-01-15,Dentium Clinic,Feature work,12220,2566,14786,Sent
+2026-1722,2026-02-01,Fakturoid a.s.,Incident response,6920,1453,8373,Sent
+2026-1723,2026-03-16,Ostrava Steelworks,Retainer,16480,3461,19941,Paid
+2026-1724,2026-04-20,Mountain Retreats,Feature work,42160,8854,51014,Paid
+2026-1725,2026-05-07,Atelier Novák,Feature work,21120,4435,25555,Paid
+2026-1726,2026-06-04,Ostrava Steelworks,Incident response,18800,3948,22748,Paid
+2026-1727,2026-07-23,Vltava Logistics,Consulting,40200,8442,48642,Paid
+2026-1728,2026-08-12,Fakturoid a.s.,Feature work,17810,3740,21550,Overdue
+2026-1729,2026-09-05,Atelier Novák,Hosting,10520,2209,12729,Paid
+2026-1730,2026-10-03,Brno Makers Lab,Hosting,28460,5977,34437,Sent
+2026-1731,2026-01-18,Ostrava Steelworks,Incident response,25990,5458,31448,Paid
+2026-1732,2026-02-15,Vltava Logistics,Retainer,37040,7778,44818,Sent
+2026-1733,2026-03-03,Atelier Novák,Retainer,10790,2266,13056,Overdue
+2026-1734,2026-04-11,Dentium Clinic,Design review,22440,4712,27152,Overdue
+2026-1735,2026-05-24,Mountain Retreats,Retainer,29800,6258,36058,Sent
+2026-1736,2026-06-19,Brno Makers Lab,Retainer,40090,8419,48509,Paid
+2026-1737,2026-07-25,Ostrava Steelworks,Incident response,42320,8887,51207,Paid
+2026-1738,2026-08-22,Kavárna Lípa,Design review,17870,3753,21623,Paid
+2026-1739,2026-09-13,Atelier Novák,Incident response,8590,1804,10394,Paid
+2026-1740,2026-10-22,Fakturoid a.s.,Incident response,16530,3471,20001,Paid
+2026-1741,2026-01-01,Fakturoid a.s.,Consulting,7940,1667,9607,Paid
+2026-1742,2026-02-19,Atelier Novák,Hosting,10670,2241,12911,Overdue
+2026-1743,2026-03-18,Atelier Novák,Retainer,27720,5821,33541,Paid
+2026-1744,2026-04-14,Atelier Novák,Retainer,14520,3049,17569,Sent
+2026-1745,2026-05-01,Dentium Clinic,Retainer,12830,2694,15524,Paid
+2026-1746,2026-06-15,Ostrava Steelworks,Hosting,24900,5229,30129,Paid
+2026-1747,2026-07-11,Ostrava Steelworks,Retainer,39790,8356,48146,Paid
+2026-1748,2026-08-27,Atelier Novák,Feature work,28710,6029,34739,Paid
+2026-1749,2026-09-06,Fakturoid a.s.,Feature work,16430,3450,19880,Overdue
+2026-1750,2026-10-11,Nordic Freight AB,Incident response,38630,8112,46742,Paid
+2026-1751,2026-01-15,Psyon s.r.o.,Consulting,20700,4347,25047,Paid
+2026-1752,2026-02-23,Dentium Clinic,Retainer,27880,5855,33735,Paid
+2026-1753,2026-03-15,Ostrava Steelworks,Design review,20730,4353,25083,Paid
+2026-1754,2026-04-26,Vltava Logistics,Incident response,35330,7419,42749,Paid
+2026-1755,2026-05-04,Ostrava Steelworks,Design review,6520,1369,7889,Paid
+2026-1756,2026-06-22,Dentium Clinic,Hosting,12710,2669,15379,Sent
+2026-1757,2026-07-15,Atelier Novák,Hosting,28790,6046,34836,Paid
+2026-1758,2026-08-27,Brno Makers Lab,Design review,12990,2728,15718,Paid
+2026-1759,2026-09-02,Mountain Retreats,Hosting,1030,216,1246,Paid
+2026-1760,2026-10-09,Kavárna Lípa,Incident response,32930,6915,39845,Paid
+2026-1761,2026-01-18,Nordic Freight AB,Hosting,40520,8509,49029,Paid
+2026-1762,2026-02-14,Kavárna Lípa,Hosting,37620,7900,45520,Paid
+2026-1763,2026-03-27,Ostrava Steelworks,Incident response,2550,536,3086,Overdue
+2026-1764,2026-04-10,Kavárna Lípa,Feature work,13650,2867,16517,Overdue
+2026-1765,2026-05-23,Ostrava Steelworks,Design review,37460,7867,45327,Paid
+2026-1766,2026-06-17,Ostrava Steelworks,Incident response,25030,5256,30286,Sent
+2026-1767,2026-07-14,Ostrava Steelworks,Consulting,40600,8526,49126,Sent
+2026-1768,2026-08-15,Fakturoid a.s.,Consulting,37970,7974,45944,Paid
+2026-1769,2026-09-24,Dentium Clinic,Retainer,41480,8711,50191,Paid
+2026-1770,2026-10-23,Psyon s.r.o.,Consulting,33700,7077,40777,Paid
+2026-1771,2026-01-27,Nordic Freight AB,Consulting,3840,806,4646,Overdue
+2026-1772,2026-02-04,Ostrava Steelworks,Incident response,21560,4528,26088,Paid
+2026-1773,2026-03-03,Dentium Clinic,Consulting,25020,5254,30274,Sent
+2026-1774,2026-04-02,Dentium Clinic,Consulting,27700,5817,33517,Paid
+2026-1775,2026-05-07,Nordic Freight AB,Design review,36370,7638,44008,Paid
+2026-1776,2026-06-22,Fakturoid a.s.,Hosting,13670,2871,16541,Paid
+2026-1777,2026-07-02,Dentium Clinic,Incident response,4310,905,5215,Paid
+2026-1778,2026-08-13,Brno Makers Lab,Incident response,22130,4647,26777,Paid
+2026-1779,2026-09-20,Ostrava Steelworks,Retainer,37650,7907,45557,Paid
+2026-1780,2026-10-11,Dentium Clinic,Retainer,16570,3480,20050,Paid
+2026-1781,2026-01-04,Nordic Freight AB,Feature work,28490,5983,34473,Overdue
+2026-1782,2026-02-24,Brno Makers Lab,Consulting,10100,2121,12221,Paid
+2026-1783,2026-03-11,Psyon s.r.o.,Hosting,15580,3272,18852,Overdue
+2026-1784,2026-04-19,Vltava Logistics,Design review,26860,5641,32501,Sent
+2026-1785,2026-05-27,Kavárna Lípa,Consulting,6280,1319,7599,Overdue
+2026-1786,2026-06-13,Psyon s.r.o.,Design review,41090,8629,49719,Paid
+2026-1787,2026-07-24,Nordic Freight AB,Design review,30770,6462,37232,Paid
+2026-1788,2026-08-12,Ostrava Steelworks,Feature work,41700,8757,50457,Paid
+2026-1789,2026-09-06,Mountain Retreats,Hosting,38400,8064,46464,Paid
+2026-1790,2026-10-19,Nordic Freight AB,Retainer,31590,6634,38224,Sent
+2026-1791,2026-01-14,Nordic Freight AB,Design review,40500,8505,49005,Sent
+2026-1792,2026-02-13,Brno Makers Lab,Feature work,35680,7493,43173,Paid
+2026-1793,2026-03-08,Ostrava Steelworks,Consulting,20400,4284,24684,Paid
+2026-1794,2026-04-25,Mountain Retreats,Feature work,11160,2344,13504,Paid
+2026-1795,2026-05-04,Kavárna Lípa,Incident response,9440,1982,11422,Paid
+2026-1796,2026-06-14,Brno Makers Lab,Retainer,2240,470,2710,Paid
+2026-1797,2026-07-10,Atelier Novák,Design review,27320,5737,33057,Sent
+2026-1798,2026-08-26,Mountain Retreats,Feature work,9930,2085,12015,Sent
+2026-1799,2026-09-13,Dentium Clinic,Hosting,13470,2829,16299,Paid
+2026-1800,2026-10-24,Kavárna Lípa,Consulting,28180,5918,34098,Sent

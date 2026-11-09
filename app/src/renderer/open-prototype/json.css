@@ -1,0 +1,302 @@
+/* Story-only `helm open` prototype: structured-data renderer (JSON / JSONL / YAML / TOML).
+ * Tokens only (design-system §2). Color lives on syntax only; rows are flat full-width stripes. */
+
+/* The root fills .open-body; its inner scroller owns scrolling so the toolbar stays put. */
+.open-json {
+	/* --font-ui / --font-mono are documented tokens (design-system §2.2) that no stylesheet defines
+	 * yet; fall back to the documented stacks so mono really is mono. */
+	--open-json-mono: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	--open-json-sans: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	scrollbar-gutter: auto;
+	background: var(--pane);
+}
+
+.open-json-toolbar {
+	flex: 0 0 32px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+	padding: 0 16px;
+	border-bottom: 1px solid var(--hairline);
+}
+
+/* Segmented pair (§3.2 proportions in a 24px track): inset ring, 2px padding, 20px options. */
+.open-json-seg {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	min-width: 0;
+	margin: 0;
+	border: 0;
+	display: inline-grid;
+	grid-template-columns: repeat(2, 1fr);
+	height: 24px;
+	padding: 2px;
+	border-radius: 6px;
+	background: var(--fill-subtle);
+	box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.open-json-seg button {
+	height: 20px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-1);
+	font-family: var(--open-json-sans);
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+.open-json-seg button:hover {
+	color: var(--text-0);
+}
+.open-json-seg button[aria-pressed="true"] {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+.open-json-seg button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Selected path: literal, so mono. Long paths keep their end visible (ellipsis on the left). */
+.open-json .open-json-path {
+	font-family: var(--open-json-mono);
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	direction: rtl;
+	text-align: left;
+	color: var(--text-1);
+}
+.open-json-path > span {
+	direction: ltr;
+	unicode-bidi: bidi-override;
+}
+
+.open-json .open-json-copy {
+	flex: 0 0 auto;
+	width: 24px;
+	padding: 0;
+	margin-left: -8px;
+}
+.open-json .open-json-copy:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.open-json-scroll {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	scrollbar-gutter: stable;
+}
+.open-json-tree {
+	/* Rows are full-width stripes: no reserved gutter strip beside a selected row. */
+	scrollbar-gutter: auto;
+}
+.open-json-scroll:focus {
+	outline: none;
+}
+.open-json-scroll > .open-note {
+	margin: 0 auto;
+}
+
+/* ---- Tree ---- */
+
+.open-json-rows {
+	position: relative;
+	width: 100%;
+}
+
+.open-json-row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	padding-right: 16px;
+	font-family: var(--open-json-mono);
+	font-size: 12px;
+	letter-spacing: 0;
+	line-height: 24px;
+	white-space: nowrap;
+	color: var(--text-0);
+	cursor: default;
+	transition: background-color 140ms ease-out;
+}
+.open-json-row:hover {
+	background: var(--fill-subtle);
+}
+.open-json-row.is-selected {
+	background: var(--fill-raised);
+}
+/* Agent feedback: the anchor being written about. */
+.open-json-row.is-anchor {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.open-json-tree.is-feedback .open-json-row {
+	cursor: pointer;
+}
+/* Keyboard focus lives on the tree; the active row draws the ring (inset so the scroller never clips it). */
+.open-json-tree:focus-visible .open-json-row.is-selected {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.open-json-twisty {
+	flex: 0 0 16px;
+	width: 16px;
+	font-family: var(--open-json-sans);
+	font-size: 12px;
+	color: var(--text-2);
+	text-align: left;
+	user-select: none;
+}
+.open-json-row[aria-expanded] .open-json-twisty {
+	cursor: pointer;
+}
+.open-json-row[aria-expanded] .open-json-twisty:hover {
+	color: var(--text-0);
+}
+
+.open-json-key {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 50%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-1);
+}
+.open-json-key.is-index,
+.open-json-key.is-root {
+	color: var(--text-2);
+}
+.open-json-colon {
+	color: var(--text-2);
+	margin-right: 8px;
+}
+.open-json-key.is-root {
+	margin-right: 8px;
+}
+
+.open-json-summary {
+	flex: 0 0 auto;
+	color: var(--text-2);
+}
+
+.open-json-value {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-0);
+}
+
+/* Syntax colors, shared by tree values and raw tokens. */
+.open-json-value.is-string,
+.open-json .tok-string {
+	color: var(--ansi-green);
+}
+.open-json-value.is-number,
+.open-json .tok-number {
+	color: var(--ansi-cyan);
+}
+.open-json-value.is-boolean,
+.open-json .tok-literal {
+	color: var(--ansi-magenta);
+}
+.open-json-value.is-null {
+	color: var(--text-2);
+}
+.open-json-value.is-date {
+	color: var(--ansi-yellow);
+}
+.open-json-value.is-invalid {
+	color: var(--text-1);
+}
+.open-json-invalid-mark {
+	font-family: var(--open-json-sans);
+	color: var(--text-2);
+}
+.open-json-invalid-glyph {
+	color: var(--ansi-red);
+}
+.open-json .tok-key {
+	color: var(--text-1);
+}
+.open-json .tok-punct,
+.open-json .tok-comment {
+	color: var(--text-2);
+}
+.open-json .tok-section {
+	color: var(--ansi-blue);
+}
+
+/* ---- Raw ---- */
+
+.open-json-raw {
+	background: var(--well);
+}
+.open-json-raw:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.open-json-pre {
+	position: relative;
+	margin: 0;
+	min-width: 100%;
+	box-sizing: border-box;
+	font-family: var(--open-json-mono);
+	font-size: 12px;
+	letter-spacing: 0;
+	line-height: 20px;
+	tab-size: 2;
+}
+
+.open-json-line {
+	position: absolute;
+	top: 8px;
+	left: 0;
+	display: flex;
+	min-width: 100%;
+	width: max-content;
+	height: 20px;
+	white-space: pre;
+}
+
+/* Line numbers stay put while long lines scroll sideways. */
+.open-json-ln {
+	position: sticky;
+	left: 0;
+	flex: 0 0 auto;
+	box-sizing: content-box;
+	padding: 0 16px;
+	text-align: right;
+	color: var(--text-2);
+	background: var(--well);
+	user-select: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.open-json-code {
+	padding-right: 24px;
+	color: var(--text-0);
+	font: inherit;
+}
+.open-json-code::selection,
+.open-json-code *::selection {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}

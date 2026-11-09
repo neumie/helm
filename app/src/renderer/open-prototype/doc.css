@@ -1,0 +1,303 @@
+/* Story-only `helm open` document renderers: DOCX (.open-docx-…) and Markdown (.open-md-…).
+ * Tokens only (design-system §2). The one literal is paper white, which docx-preview itself paints
+ * on its pages (printed formats are paper, not chrome). */
+
+/* Full-bleed scroll owners: the focus ring sits inside the edge so the pane never clips it. */
+.open-docx:focus-visible,
+.open-md:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+/* ---------------------------------------------------------------- DOCX */
+
+.open-docx {
+	display: flex;
+	flex-direction: column;
+	background: var(--well);
+}
+
+.open-docx-host {
+	flex: 0 0 auto;
+}
+.open-docx-host[data-state="loading"] {
+	visibility: hidden;
+	height: 0;
+	overflow: hidden;
+}
+
+/* docx-preview injects `.open-docx-paper-wrapper { background: gray; padding: 30px … }` and a page
+ * shadow; these selectors are one class heavier, so the view keeps the dark ladder. */
+.open-docx-host .open-docx-paper-wrapper {
+	background: transparent;
+	padding: 24px;
+	gap: 24px;
+	align-items: safe center;
+	min-width: min-content;
+}
+.open-docx-host .open-docx-paper-wrapper > section.open-docx-paper {
+	box-shadow: none;
+	margin: 0;
+	zoom: var(--open-docx-scale, 1);
+	flex: 0 0 auto;
+}
+
+/* Links never navigate (href removed); keep the document's own color, show the address on hover. */
+.open-docx-host .open-docx-link {
+	cursor: default;
+}
+
+.open-docx-note {
+	margin: auto;
+}
+
+.open-docx ::highlight(open-feedback-docx) {
+	background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.open-docx[data-feedback="on"] .open-docx-paper ::selection {
+	background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* ---------------------------------------------------------------- Markdown */
+
+.open-md {
+	background: var(--pane);
+	color: var(--text-0);
+}
+
+/* 32px toolbar row, the Rendered/Source pair at its right edge. Sticky so it stays reachable. */
+.open-md-toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	height: 32px;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	padding: 0 16px;
+	background: var(--pane);
+}
+
+.open-md-segmented {
+	display: inline-grid;
+	grid-template-columns: repeat(2, 1fr);
+	height: 24px;
+	padding: 2px;
+	border-radius: 6px;
+	background: var(--fill-subtle);
+	box-shadow: inset 0 0 0 1px var(--hairline);
+	box-sizing: border-box;
+}
+.open-md-segmented button {
+	height: 20px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 500;
+	letter-spacing: -0.01em;
+	cursor: default;
+	transition: background-color var(--motion-state, 140ms) ease-out, color var(--motion-state, 140ms) ease-out;
+}
+.open-md-segmented button:hover {
+	color: var(--text-0);
+}
+.open-md-segmented button[aria-checked="true"] {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+.open-md-segmented button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Rendered prose: Document Review's reading values. */
+.open-md-prose {
+	max-width: 680px;
+	margin: 0 auto;
+	padding: 32px 24px 80px;
+	font-size: 15px;
+	line-height: 1.7;
+	overflow-wrap: break-word;
+}
+.open-md-prose h1,
+.open-md-prose h2,
+.open-md-prose h3,
+.open-md-prose h4,
+.open-md-prose h5,
+.open-md-prose h6 {
+	font-weight: 600;
+	color: var(--text-0);
+	scroll-margin-top: 48px;
+}
+.open-md-prose h1 {
+	font-size: 28px;
+	line-height: 1.25;
+	margin: 0 0 24px;
+}
+.open-md-prose h2 {
+	font-size: 21px;
+	line-height: 1.35;
+	margin: 32px 0 16px;
+}
+.open-md-prose h3,
+.open-md-prose h4,
+.open-md-prose h5,
+.open-md-prose h6 {
+	font-size: 17px;
+	line-height: 1.4;
+	margin: 24px 0 12px;
+}
+.open-md-prose p {
+	margin: 0 0 16px;
+}
+.open-md-prose ul,
+.open-md-prose ol {
+	margin: 0 0 16px;
+	padding-inline-start: 24px;
+}
+.open-md-prose li {
+	margin-bottom: 4px;
+}
+.open-md-prose li::marker {
+	color: var(--text-2);
+}
+.open-md-prose li > ul,
+.open-md-prose li > ol {
+	margin: 4px 0 0;
+}
+.open-md-prose li.open-md-task {
+	list-style: none;
+}
+.open-md-check {
+	color: var(--text-1);
+}
+.open-md-prose strong {
+	font-weight: 600;
+}
+.open-md-prose blockquote {
+	margin: 0 0 16px;
+	padding-inline-start: 16px;
+	border-inline-start: 1px solid var(--hairline-strong);
+	color: var(--text-1);
+}
+.open-md-prose hr {
+	height: 1px;
+	margin: 24px 0;
+	border: 0;
+	background: var(--hairline);
+}
+
+.open-md-code {
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 13px;
+	letter-spacing: 0;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: var(--fill-subtle);
+}
+.open-md-pre {
+	margin: 0 0 16px;
+	padding: 12px 16px;
+	border-radius: 6px;
+	background: var(--well);
+	overflow: auto;
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 13px;
+	line-height: 1.6;
+	letter-spacing: 0;
+	color: var(--text-0);
+}
+.open-md-pre code {
+	font: inherit;
+}
+
+/* Links keep link color but never navigate; the address is the tooltip. */
+.open-md-link {
+	color: var(--accent);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+	text-underline-offset: 3px;
+	overflow-wrap: anywhere;
+}
+
+.open-md-image-note {
+	color: var(--text-2);
+	font-size: 13px;
+}
+.open-md-raw,
+.open-md-raw-block {
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 13px;
+	letter-spacing: 0;
+	color: var(--text-1);
+}
+.open-md-raw-block {
+	margin: 0 0 16px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.open-md-table-scroll {
+	margin: 0 0 16px;
+	overflow-x: auto;
+}
+.open-md-prose table {
+	border-collapse: collapse;
+	min-width: 100%;
+	font-size: 14px;
+	line-height: 1.5;
+	font-variant-numeric: tabular-nums;
+}
+.open-md-prose th,
+.open-md-prose td {
+	padding: 8px 12px;
+	text-align: left;
+	vertical-align: top;
+	border-bottom: 1px solid var(--hairline);
+}
+.open-md-prose th:first-child,
+.open-md-prose td:first-child {
+	padding-left: 0;
+}
+.open-md-prose th {
+	font-weight: 600;
+	color: var(--text-1);
+}
+
+/* Source: raw text, mono, line numbers outside the selectable text. */
+.open-md-source {
+	padding: 12px 0 32px;
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 12px;
+	line-height: 20px;
+	letter-spacing: 0;
+}
+.open-md-src-line {
+	display: grid;
+	grid-template-columns: 56px minmax(0, 1fr);
+	min-height: 20px;
+}
+.open-md-src-num {
+	padding-right: 16px;
+	text-align: right;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+.open-md-src-text {
+	padding-right: 24px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--text-0);
+}
+
+.open-md ::highlight(open-feedback-md) {
+	background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.open-md[data-feedback="on"] ::selection {
+	background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}

@@ -1,0 +1,131 @@
+/* Story-only `helm open` prototype (docs/plans/helm-open/spec.md). Tokens only (design-system §2);
+ * no literals except paper white for printed formats (PDF/DOCX pages are paper, not chrome). */
+
+:root {
+	/* Documented in design-system §2.2 but not yet defined by the app stylesheet; the prototype defines
+	 * them here so every viewer and chrome shares one UI face and one mono face. */
+	--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.open-stage {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100vh;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--pane);
+	color: var(--text-0);
+	font-family: var(--font-ui);
+	font-size: 13px;
+	letter-spacing: -0.01em;
+	-webkit-font-smoothing: antialiased;
+}
+
+.open-body {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	min-width: 0;
+	display: flex;
+}
+
+/* Every renderer root fills .open-body and owns its own scroll. */
+.open-view {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	overflow: auto;
+	scrollbar-gutter: stable;
+}
+
+/* Visible reading scrollbars, same treatment as Document Review (design-system: 10px lane,
+ * transparent track, rounded --thumb with 3px transparent padding). */
+.open-stage ::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+.open-stage ::-webkit-scrollbar-track,
+.open-stage ::-webkit-scrollbar-corner {
+	background: transparent;
+}
+.open-stage ::-webkit-scrollbar-thumb {
+	background: var(--thumb);
+	border: 3px solid transparent;
+	border-radius: 999px;
+	background-clip: content-box;
+}
+.open-stage ::-webkit-scrollbar-thumb:hover {
+	background: var(--thumb-hover);
+	background-clip: content-box;
+}
+
+/* Neutral host for the C stories: the renderer plus one quiet 28px status line. It deliberately
+ * makes no window-chrome decision (that is A). */
+.open-format-status {
+	flex: 0 0 28px;
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 0 16px;
+	background: var(--chrome);
+	border-top: 1px solid var(--hairline);
+	font-size: 12px;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+}
+.open-format-status b {
+	font-weight: 500;
+	color: var(--text-1);
+}
+.open-format-status .open-status-end {
+	margin-left: auto;
+}
+
+/* Loading / unavailable states inside a renderer. */
+.open-note {
+	margin: auto;
+	padding: 32px 16px;
+	max-width: 420px;
+	text-align: center;
+	color: var(--text-1);
+	font-size: 13px;
+	line-height: 1.5;
+}
+.open-note b {
+	display: block;
+	color: var(--text-0);
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+/* Mono for literal locators only (cells, paths, line numbers in code). */
+.open-mono {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	letter-spacing: 0;
+}
+
+/* Display-only selection paint shared by anchors (accent soft fill, 1px accent edge). */
+.open-anchor-box {
+	position: absolute;
+	pointer-events: none;
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	outline: 1px solid var(--accent);
+	border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.open-stage *,
+	.open-stage *::before,
+	.open-stage *::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
