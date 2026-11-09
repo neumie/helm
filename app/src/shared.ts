@@ -433,6 +433,10 @@ export const SIGNALS_IPC = {
 	open: 'signals:open',
 	okenaProjects: 'signals:okena-projects',
 	newAgent: 'signals:new-agent',
+	/** invoke → the filtered mail log (heads only). */
+	filtered: 'signals:filtered',
+	/** invoke(id) → add that filtered mail's sender to the include list. */
+	include: 'signals:include',
 } as const
 
 /** What main pushes: the daemon snapshot, or null with why it is unavailable. */
@@ -494,6 +498,10 @@ export interface SignalsApi {
 	open(url: string): Promise<import('./shared-helm').HelmResult<true>>
 	okenaProjects(repo: string | null): Promise<import('./shared-helm').HelmResult<SignalOkenaProjects>>
 	newAgent(request: SignalNewAgentRequest): Promise<import('./shared-helm').HelmResult<SignalNewAgentResult>>
+	/** Mail the rules kept out of Needs you (last 7 days, heads only). */
+	filtered(): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalFilteredPage>>
+	/** Always show this filtered mail's sender (`signals.mail.includeSenders`, from the next poll). */
+	include(id: number): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalIncludeResult>>
 }
 
 export const AGENT_DOCK_IPC = {

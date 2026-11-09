@@ -803,6 +803,38 @@ export interface SignalsSnapshot {
 	sources: SignalSourceHealth[]
 	seq: number
 	generatedAt: string
+	/** Mail kept out of Needs you in the last 7 days; absent from an older daemon. */
+	filteredCount?: number
+}
+
+export type SignalFilterReason = 'newsletter' | 'campaign' | 'junk' | 'auto-reply' | 'excluded'
+
+/** One filtered mail (heads only), `GET /api/signals/filtered`. */
+export interface SignalFilteredEntry {
+	id: number
+	source: 'mail'
+	senderName: string
+	senderAddress: string
+	/** The address the include list matches (Hide My Email relay decoded). */
+	senderIdentity: string
+	subject: string
+	reason: SignalFilterReason
+	mailbox: string | null
+	url: string | null
+	receivedAt: string
+	lastSeenAt: string
+}
+
+export interface SignalFilteredPage {
+	entries: SignalFilteredEntry[]
+	total: number
+	retentionDays: number
+}
+
+/** `POST /api/signals/filtered/:id/include` response. */
+export interface SignalIncludeResult {
+	address: string
+	added: boolean
 }
 
 /** `POST /api/signals/:id` body (any subset). */

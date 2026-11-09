@@ -114,6 +114,63 @@ export interface SignalsSnapshot {
 	/** Highest event seq at the time of the read (cursor for `GET /api/signals/events`). */
 	seq: number
 	generatedAt: string
+	/**
+	 * Mail kept out of Needs you in the last {@link SIGNAL_FILTERED_RETENTION_DAYS} days (see
+	 * `GET /api/signals/filtered`). Absent from a daemon older than the filtered log.
+	 */
+	filteredCount?: number
+}
+
+// ---------- filtered mail (audit log) ----------
+
+/**
+ * Why a mail candidate was kept out of Needs you. Bulk reasons come from header-only markers
+ * (mail-jxa.ts `bulkReason`): `newsletter` List-Unsubscribe / List-Unsubscribe-Post, `campaign` an
+ * X-Campaign / X-CampaignID / X-Campaign-Id header, `junk` Precedence: junk, `auto-reply`
+ * Auto-Submitted: auto-replied (vacation and out-of-office replies). `excluded` = the sender is on
+ * the exclude list.
+ */
+export const SIGNAL_FILTER_REASONS = ['newsletter', 'campaign', 'junk', 'auto-reply', 'excluded'] as const
+export type SignalFilterReason = (typeof SIGNAL_FILTER_REASONS)[number]
+
+/** How long a filtered candidate stays listed, counted from when it was received. */
+export const SIGNAL_FILTERED_RETENTION_DAYS = 7
+
+/** One filtered mail, heads only (never a body), as `GET /api/signals/filtered` serves it. */
+export interface SignalFilteredEntry {
+	/** Short numeric id (`POST /api/signals/filtered/:id/include`). */
+	id: number
+	source: 'mail'
+	/** Sender display name and address as the From header gave them (third-party data). */
+	senderName: string
+	senderAddress: string
+	/** The address include/exclude globs match: the Hide My Email relay-decoded original when there is one. */
+	senderIdentity: string
+	subject: string
+	reason: SignalFilterReason
+	/** Extra mailbox it was read from (`Clientcare`); null for the inbox. */
+	mailbox: string | null
+	/** message://%3C…%3E (opens it in Mail). */
+	url: string | null
+	/** ISO time Mail received it. */
+	receivedAt: string
+	/** ISO time a poll last saw it filtered. */
+	lastSeenAt: string
+}
+
+/** `GET /api/signals/filtered` response `data`: newest received first. */
+export interface SignalFilteredPage {
+	entries: SignalFilteredEntry[]
+	/** Every listed entry in the retention window (entries may be capped). */
+	total: number
+	retentionDays: number
+}
+
+/** `POST /api/signals/filtered/:id/include` response `data`. */
+export interface SignalIncludeResult {
+	/** The address now on the include list (already on it when `added` is false). */
+	address: string
+	added: boolean
 }
 
 /** One append-only change, streamed by `GET /api/signals/events` and `helm signal watch`. */
@@ -198,4 +255,23 @@ export interface SignalPollResult {
 	complete: boolean
 	/** Why a missing thread left the source, per source (`no longer requested`, `read in Mail`). */
 	goneReason: string
+	/**
+	 * Mail only: candidates this poll kept out of Needs you (logged, heads only) and the message
+	 * keys it kept (dropped from the log, e.g. after their sender was included).
+	 */
+	filtered?: { entries: SignalFilteredObservation[]; keptKeys: string[] }
+}
+
+/** One filtered candidate as a poll saw it; the store bounds every field again. */
+export interface SignalFilteredObservation {
+	/** Normalized Message-ID (lowercase, no angle brackets): the dedupe key across polls. */
+	messageKey: string
+	senderName: string
+	senderAddress: string
+	senderIdentity: string
+	subject: string
+	reason: SignalFilterReason
+	mailbox: string | null
+	url: string | null
+	receivedAt: string
 }

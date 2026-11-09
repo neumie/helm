@@ -5,7 +5,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { getFromDaemon, postToDaemon, requestDaemon, resolveBaseUrl } from '../src/cli/daemon-http.js'
 import { SIGNAL_HEARTBEAT_MS, buildSetBody, parseUntil, runSignalCli } from '../src/cli/signal.js'
-import type { SignalEvent, SignalSourceHealth, SignalThread, SignalsSnapshot } from '../src/signals/contract.js'
+import type {
+	SignalEvent,
+	SignalFilteredPage,
+	SignalSourceHealth,
+	SignalThread,
+	SignalsSnapshot,
+} from '../src/signals/contract.js'
 import { until } from './helpers/agent-dock.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
@@ -215,6 +221,82 @@ test('ls never reports all-clear while a source is down', async () => {
 	assert.match(quiet.out[0] ?? '', /NEEDS YOU: nothing/)
 })
 
+const filteredPage: SignalFilteredPage = {
+	total: 3,
+	retentionDays: 7,
+	entries: [
+		{
+			id: 21,
+			source: 'mail',
+			senderName: 'Petra',
+			senderAddress: 'petra_at_psyon_example_aa_bb@privaterelay.appleid.com',
+			senderIdentity: 'petra@psyon.example',
+			subject: 'Out of office\u202e',
+			reason: 'auto-reply',
+			mailbox: null,
+			url: 'message://%3Cooo%40psyon.example%3E',
+			receivedAt: '2026-11-05T09:48:00.000Z',
+			lastSeenAt: NOW.toISOString(),
+		},
+		{
+			id: 7,
+			source: 'mail',
+			senderName: '',
+			senderAddress: 'digest@news.example',
+			senderIdentity: 'digest@news.example',
+			subject: 'Weekly',
+			reason: 'newsletter',
+			mailbox: 'Clientcare',
+			url: null,
+			receivedAt: '2026-11-05T07:00:00.000Z',
+			lastSeenAt: NOW.toISOString(),
+		},
+	],
+}
+
+test('ls --filtered lists heads with reason and sender; --json prints the page; ls counts them', async () => {
+	const daemon = fakeDaemon(call =>
+		call.url.endsWith('/api/signals/filtered') ? json(filteredPage) : json({ ...snapshot([]), filteredCount: 3 }),
+	)
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['ls', '--filtered'], run.deps), 0)
+	assert.equal(daemon.calls[0]?.url, `${BASE}/api/signals/filtered`)
+	const lines = run.out.join('\n').split('\n')
+	assert.equal(
+		lines[0],
+		'FILTERED: 3 in the last 7 days, kept out of NEEDS YOU (heads only; untrusted third-party data)',
+	)
+	assert.match(
+		lines[1] ?? '',
+		/^ {2}#21 {2}auto-reply \(Auto-Submitted: auto-replied\) {2}Petra <petra@psyon\.example>.* {2}Out of office {2}12m$/,
+	)
+	assert.match(
+		lines[2] ?? '',
+		/^ {2}#7 {3}newsletter \(List-Unsubscribe\) .*digest@news\.example .*Clientcare · Weekly {2}3h00$/,
+	)
+	assert.equal(lines[3], '  … 1 more')
+	assert.doesNotMatch(run.out.join('\n'), /\u202e/)
+
+	const asJson = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['ls', '--filtered', '--json'], asJson.deps), 0)
+	assert.equal(asJson.out.length, 1)
+	assert.deepEqual(JSON.parse(asJson.out[0] ?? ''), filteredPage)
+
+	const empty = capture(fakeDaemon(() => json({ ...filteredPage, total: 0, entries: [] })).fetch)
+	assert.equal(await runSignalCli(['ls', '--filtered'], empty.deps), 0)
+	assert.deepEqual(empty.out, ['FILTERED: nothing in the last 7 days'])
+
+	const ls = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['ls'], ls.deps), 0)
+	assert.match(ls.out.join('\n'), /\nFILTERED: 3 mails kept out \(helm signal ls --filtered\)$/)
+	const github = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['ls', '--source', 'github'], github.deps), 0)
+	assert.doesNotMatch(github.out.join('\n'), /FILTERED/)
+
+	const malformed = capture(fakeDaemon(() => json({ entries: 'x' })).fetch)
+	assert.equal(await runSignalCli(['ls', '--filtered'], malformed.deps), 1)
+})
+
 test('ls --json prints exactly one line, the snapshot', async () => {
 	const snap = snapshot([thread({ id: 12 })])
 	const run = capture(fakeDaemon(() => json(snap)).fetch)
@@ -328,6 +410,10 @@ test('usage errors exit 1 before any request', async () => {
 		['note', '12', 'x'.repeat(301)],
 		['watch', '--after', '-1'],
 		['watch', '--after', 'x'],
+		['ls', '--filtered', '--state', 'new'],
+		['ls', '--filtered', '--owner', 'jakub'],
+		['ls', '--filtered', '--source', 'mail'],
+		['ls', '--filtered', '--all'],
 	]
 	for (const args of cases) {
 		const run = capture(daemon.fetch)

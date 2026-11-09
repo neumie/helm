@@ -11,7 +11,7 @@
 			"dateReceived": "2026-01-15T09:00:38.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "task-1@clientcare.example",
 			"mailbox": "Clientcare"
 		},
@@ -23,7 +23,7 @@
 			"dateReceived": "2026-01-15T08:30:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "comment-7@clientcare.example",
 			"mailbox": "Clientcare"
 		},
@@ -35,7 +35,7 @@
 			"dateReceived": "2026-01-15T08:00:00.000Z",
 			"read": true,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "comment-6@clientcare.example",
 			"mailbox": "Clientcare"
 		},
@@ -47,7 +47,7 @@
 			"dateReceived": "2026-01-14T10:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "both@northwind.cz",
 			"mailbox": "Clientcare"
 		},
@@ -59,7 +59,7 @@
 			"dateReceived": "2026-01-14T10:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "both@northwind.cz",
 			"mailbox": null
 		},
@@ -71,7 +71,7 @@
 			"dateReceived": "2026-01-14T07:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": true,
+			"bulkReason": "newsletter",
 			"root": "news@list.example",
 			"mailbox": "Clientcare"
 		},
@@ -83,7 +83,7 @@
 			"dateReceived": "2025-12-01T07:00:00.000Z",
 			"read": false,
 			"flagged": false,
-			"bulk": false,
+			"bulkReason": null,
 			"root": "old@clientcare.example",
 			"mailbox": "Clientcare"
 		}

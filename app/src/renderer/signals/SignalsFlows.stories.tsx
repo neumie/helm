@@ -20,3 +20,6 @@ export const SendToAgent: Story = { args: { flow: 'send' } }
 
 /** `n` on the Sentry alert: an Okena project, a new worktree branch, claude, ⌘↵ starts it. */
 export const NewAgentInOkena: Story = { args: { flow: 'new-agent' } }
+
+/** `f` / the `5 filtered` line: mail the rules kept out, heads only, last 7 days. `i` always shows the sender. */
+export const FilteredMail: Story = { args: { flow: 'filtered' } }

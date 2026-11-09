@@ -6,6 +6,8 @@ import type Database from 'better-sqlite3'
 import { oneLine } from '../agent-dock/text.js'
 import {
 	SIGNAL_EVENT_TYPES,
+	SIGNAL_FILTERED_RETENTION_DAYS,
+	SIGNAL_FILTER_REASONS,
 	SIGNAL_KINDS,
 	SIGNAL_LIMITS,
 	SIGNAL_OWNERS,
@@ -15,6 +17,9 @@ import {
 	SIGNAL_STATES,
 	type SignalEvent,
 	type SignalEventType,
+	type SignalFilteredEntry,
+	type SignalFilteredObservation,
+	type SignalFilteredPage,
 	type SignalKind,
 	type SignalObservation,
 	type SignalOwner,
@@ -34,6 +39,13 @@ export const SIGNAL_EVENT_RETENTION = 5000
 export const SIGNAL_LIST_CAP = 300
 /** Done threads older than this leave the default list. */
 export const SIGNAL_DONE_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000
+/** Filtered candidates stay listed this long after they were received. */
+export const SIGNAL_FILTERED_RETENTION_MS = SIGNAL_FILTERED_RETENTION_DAYS * 24 * 60 * 60 * 1000
+/** Upper bound of filtered rows kept (newest received first). */
+export const SIGNAL_FILTERED_CAP = 1000
+/** Upper bound of one filtered `list` read. */
+export const SIGNAL_FILTERED_LIST_CAP = 300
+
 /** Consecutive complete polls a thread may be missing from before it counts as gone. */
 export const SIGNAL_GONE_AFTER_MISSES = 2
 
@@ -112,6 +124,22 @@ interface SourceRow {
 	detail: string | null
 	last_poll_at: string | null
 	last_ok_at: string | null
+}
+
+interface FilteredRow {
+	id: number
+	message_key: string
+	source: string
+	sender_name: string
+	sender_address: string
+	sender_identity: string
+	subject: string
+	reason: string
+	mailbox: string | null
+	url: string | null
+	received_at: string
+	first_seen_at: string
+	last_seen_at: string
 }
 
 type EventDetail = Record<string, string | number | boolean | null>
@@ -250,6 +278,48 @@ export function toSignalThread(row: ThreadRow): SignalThread {
 	}
 }
 
+/** The single filtered row → wire mapping. */
+export function toSignalFilteredEntry(row: FilteredRow): SignalFilteredEntry {
+	return {
+		id: row.id,
+		source: 'mail',
+		senderName: row.sender_name,
+		senderAddress: row.sender_address,
+		senderIdentity: row.sender_identity,
+		subject: row.subject,
+		reason: oneOf(SIGNAL_FILTER_REASONS, row.reason) ? row.reason : 'excluded',
+		mailbox: row.mailbox,
+		url: row.url,
+		receivedAt: row.received_at,
+		lastSeenAt: row.last_seen_at,
+	}
+}
+
+/** Sanitized filtered observation, or null when it cannot be stored. */
+function sanitizeFiltered(observation: SignalFilteredObservation): SignalFilteredObservation | null {
+	if (!oneOf(SIGNAL_FILTER_REASONS, observation.reason)) return null
+	const messageKey = clean(String(observation.messageKey ?? ''), SIGNAL_LIMITS.activityKey).toLowerCase()
+	const receivedAt = isoTime(String(observation.receivedAt ?? ''))
+	if (messageKey === '' || receivedAt === null) return null
+	const senderAddress = clean(String(observation.senderAddress ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase()
+	return {
+		messageKey,
+		senderName: clean(String(observation.senderName ?? ''), SIGNAL_LIMITS.actor),
+		senderAddress,
+		senderIdentity:
+			clean(String(observation.senderIdentity ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase() || senderAddress,
+		subject: clean(String(observation.subject ?? ''), SIGNAL_LIMITS.title),
+		reason: observation.reason,
+		mailbox: cleanOptional(observation.mailbox, SIGNAL_LIMITS.ref),
+		// Only Mail links: a filtered entry is always mail.
+		url: (() => {
+			const url = cleanUrl(observation.url)
+			return url?.startsWith('message:') ? url : null
+		})(),
+		receivedAt,
+	}
+}
+
 const HEAD_COLUMNS = [
 	['kind', 'kind'],
 	['reasons', 'reasons'],
@@ -330,10 +400,49 @@ export class SignalStore {
 					}
 				}
 			}
+			if (source === 'mail' && result.filtered) this.applyFiltered(result.filtered, now)
 			this.wakeSnoozedAt(at)
 			this.pruneEvents()
 			return counts
 		})
+	}
+
+	/** Filtered candidates still in the retention window. */
+	filteredCount(now: Date): number {
+		const row = this.db
+			.prepare('SELECT COUNT(*) AS count FROM signal_filtered WHERE received_at >= ?')
+			.get(this.filteredCutoff(now)) as { count: number } | undefined
+		return row?.count ?? 0
+	}
+
+	/** Filtered candidates in the retention window, newest received first. */
+	listFiltered(now: Date, limit = SIGNAL_FILTERED_LIST_CAP): SignalFilteredPage {
+		const bounded = Math.max(1, Math.min(Math.trunc(limit) || 1, SIGNAL_FILTERED_LIST_CAP))
+		const rows = this.db
+			.prepare('SELECT * FROM signal_filtered WHERE received_at >= ? ORDER BY received_at DESC, id DESC LIMIT ?')
+			.all(this.filteredCutoff(now), bounded) as FilteredRow[]
+		return {
+			entries: rows.map(toSignalFilteredEntry),
+			total: this.filteredCount(now),
+			retentionDays: SIGNAL_FILTERED_RETENTION_DAYS,
+		}
+	}
+
+	getFiltered(id: number, now: Date): SignalFilteredEntry | null {
+		if (!Number.isSafeInteger(id) || id <= 0) return null
+		const row = this.db
+			.prepare('SELECT * FROM signal_filtered WHERE id = ? AND received_at >= ?')
+			.get(id, this.filteredCutoff(now)) as FilteredRow | undefined
+		return row ? toSignalFilteredEntry(row) : null
+	}
+
+	/** Drops every filtered row of a sender (its mail shows from the next poll on); returns how many. */
+	forgetFilteredSender(identity: string): number {
+		const address = identity.trim().toLowerCase()
+		if (address === '') return 0
+		return this.db
+			.prepare('DELETE FROM signal_filtered WHERE sender_identity = ? OR sender_address = ?')
+			.run(address, address).changes
 	}
 
 	/** Snoozed threads whose time has come are new again. */
@@ -572,6 +681,61 @@ export class SignalStore {
 	}
 
 	// ---------- internals (callers hold a transaction) ----------
+
+	private filteredCutoff(now: Date): string {
+		return new Date(now.getTime() - SIGNAL_FILTERED_RETENTION_MS).toISOString()
+	}
+
+	/** Log this poll's filtered candidates; forget the ones it kept; prune by age and count. */
+	private applyFiltered(filtered: NonNullable<SignalPollResult['filtered']>, now: Date): void {
+		const at = now.toISOString()
+		const cutoff = this.filteredCutoff(now)
+		const forget = this.db.prepare('DELETE FROM signal_filtered WHERE message_key = ?')
+		for (const key of Array.isArray(filtered.keptKeys) ? filtered.keptKeys : []) {
+			if (typeof key === 'string' && key !== '') forget.run(clean(key, SIGNAL_LIMITS.activityKey).toLowerCase())
+		}
+		const upsert = this.db.prepare(
+			`INSERT INTO signal_filtered (
+			   message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+			   received_at, first_seen_at, last_seen_at
+			 ) VALUES (?, 'mail', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (message_key) DO UPDATE SET
+			   sender_name = excluded.sender_name,
+			   sender_address = excluded.sender_address,
+			   sender_identity = excluded.sender_identity,
+			   subject = excluded.subject,
+			   reason = excluded.reason,
+			   mailbox = excluded.mailbox,
+			   url = excluded.url,
+			   received_at = excluded.received_at,
+			   last_seen_at = excluded.last_seen_at`,
+		)
+		for (const raw of Array.isArray(filtered.entries) ? filtered.entries : []) {
+			const entry = sanitizeFiltered(raw)
+			if (!entry || entry.receivedAt < cutoff) continue
+			upsert.run(
+				entry.messageKey,
+				entry.senderName,
+				entry.senderAddress,
+				entry.senderIdentity,
+				entry.subject,
+				entry.reason,
+				entry.mailbox,
+				entry.url,
+				entry.receivedAt,
+				at,
+				at,
+			)
+		}
+		this.db.prepare('DELETE FROM signal_filtered WHERE received_at < ?').run(cutoff)
+		this.db
+			.prepare(
+				`DELETE FROM signal_filtered WHERE id NOT IN (
+				   SELECT id FROM signal_filtered ORDER BY received_at DESC, id DESC LIMIT ?
+				 )`,
+			)
+			.run(SIGNAL_FILTERED_CAP)
+	}
 
 	private row(id: number): ThreadRow | null {
 		if (!Number.isSafeInteger(id) || id <= 0) return null

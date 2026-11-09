@@ -13,11 +13,13 @@ import {
 	SIGNAL_SOURCES,
 	SIGNAL_STATES,
 	type SignalEventsPage,
+	type SignalIncludeResult,
 	type SignalsSnapshot,
 	signalNoteSchema,
 	signalRoutedSchema,
 	signalUpdateSchema,
 } from '../../signals/contract.js'
+import { type IncludeSender, IncludeSenderError } from '../../signals/include-sender.js'
 import {
 	SignalInvalidError,
 	type SignalListFilter,
@@ -29,6 +31,8 @@ import type { SignalsWatcher } from '../../signals/watcher.js'
 /** Named dependency carried on `ProfileContext.signals`; routes still serve the store without it. */
 export interface SignalRouteDependencies {
 	watcher: Pick<SignalsWatcher, 'requestPoll' | 'health'>
+	/** Adds an exact address to the Mail include list (config file + live config). */
+	includeSender?: IncludeSender
 	/** Test seam for the clock used by store writes. */
 	now?: () => Date
 	/** Long-poll re-check interval; tests shorten it. */
@@ -126,6 +130,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 			sources: deps ? deps.watcher.health(stored) : stored,
 			seq,
 			generatedAt: at.toISOString(),
+			filteredCount: store.filteredCount(at),
 		}
 		return c.json({ data: snapshot })
 	})
@@ -151,6 +156,30 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 			}
 			await pause(Math.min(eventPollMs, Math.max(0, deadline - Date.now())), abort)
 		}
+	})
+
+	// Mail the rules kept out of Needs you, heads only (the audit log behind `N filtered`).
+	routes.get('/filtered', c => c.json({ data: storeFor().listFiltered(now()) }))
+
+	// One key from the filtered log: always show this sender. Only an id from the log is accepted,
+	// never a free-form glob.
+	routes.post('/filtered/:id/include', signalsBody, c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid filtered mail id' }, 400)
+		if (!deps?.includeSender) return c.json({ error: 'This daemon cannot change the include list' }, 503)
+		const store = storeFor()
+		const entry = store.getFiltered(id, now())
+		if (!entry) return c.json({ error: 'Filtered mail not found' }, 404)
+		let result: SignalIncludeResult
+		try {
+			result = deps.includeSender(entry.senderIdentity)
+		} catch (err) {
+			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
+			return c.json({ error: `Failed to save the include list: ${err instanceof Error ? err.message : err}` }, 500)
+		}
+		store.forgetFilteredSender(result.address)
+		deps.watcher.requestPoll()
+		return c.json({ data: result })
 	})
 
 	routes.post('/poll', c => {

@@ -259,3 +259,69 @@ test('send to agent: Esc mid-send keeps it running; the late send still saves it
 	await expect(view.note).toContainText('Sent crane-rental#970 to')
 	expect((await calls(page))?.routed).toEqual([expect.objectContaining({ id: 970, how: 'sent' })])
 })
+
+test('the footer says how much mail was filtered; f and the line open the filtered list, Esc goes back', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-column--column')
+	const line = view.signals.locator('.signals-filtered')
+	await expect(line).toBeVisible()
+	await expect(line).toContainText('5 filtered')
+	// Calm: dim text, no fill, no weight; the `f` key hint shows only while Signals holds the keys.
+	const look = await line.evaluate(node => {
+		const style = getComputedStyle(node)
+		return { weight: Number.parseInt(style.fontWeight, 10), background: style.backgroundColor }
+	})
+	expect(look.weight).toBeLessThan(600)
+	expect(look.background).toBe('rgba(0, 0, 0, 0)')
+	await expect(line.locator('.signals-filtered-key')).toBeVisible()
+	const box = await line.boundingBox()
+	expect(box?.height ?? 0).toBeGreaterThanOrEqual(24)
+	await page.screenshot({ path: test.info().outputPath('signals-filtered-line.png') })
+
+	await page.keyboard.press('f')
+	const list = view.signals.locator('.signals-flow-keys')
+	await expect(list.locator('.signals-title-kind')).toContainText('Filtered mail')
+	await expect(list.locator('.signals-title-context')).toHaveText('5 mails kept out · last 7 days')
+	await expect(list.locator('.signals-tr[data-section="filtered"]')).toHaveCount(5)
+	await expect(list.locator('.signals-tr[data-selected="true"] .signals-td-agent')).toHaveText('auto-reply')
+	await expect(list).toBeFocused()
+
+	await page.keyboard.press('Escape')
+	await expect(view.signals.locator('.signals-title-kind')).toHaveText('Signals')
+	await expect(view.signals).toBeFocused()
+
+	// The line opens it by pointer too, and the keys stay with Signals (not the terminal).
+	await line.click()
+	await expect(list.locator('.signals-title-kind')).toContainText('Filtered mail')
+	await expect(list).toBeFocused()
+})
+
+test('filtered list: j moves, i always shows the sender, o opens the mail; the count follows', async ({ page }) => {
+	const view = await open(page, 'views-signals-flows--filtered-mail')
+	const list = view.signals.locator('.signals-flow-keys')
+	const rows = list.locator('.signals-tr[data-section="filtered"]')
+	await expect(rows).toHaveCount(5)
+	await expect(list).toBeFocused()
+	await page.screenshot({ path: test.info().outputPath('signals-filtered-list.png') })
+
+	await page.keyboard.press('j')
+	await expect(list.locator('.signals-tr[data-selected="true"] .signals-td-ref')).toHaveText('Contember')
+	await page.keyboard.press('o')
+	await expect(list.locator('.signals-note')).toHaveText('Opened in Mail')
+	await page.keyboard.press('i')
+	await expect(list.locator('.signals-note')).toHaveText('news@contember.example is always shown from the next poll')
+	await expect(rows).toHaveCount(4)
+	await expect(list.locator('.signals-title-context')).toHaveText('4 mails kept out · last 7 days')
+	const recorded = await calls(page)
+	expect(recorded?.includes).toEqual([7])
+	expect(recorded?.opened).toEqual(['message://%3Cfiltered-7%40mail.example%3E'])
+	// The selection stays in place (the next row), and the button does the same as `i`.
+	await expect(list.locator('.signals-tr[data-selected="true"] .signals-td-ref')).toHaveText('Fakturoid')
+	await list.getByRole('button', { name: 'Always show sender' }).click()
+	await expect(rows).toHaveCount(3)
+	expect((await calls(page))?.includes).toEqual([7, 6])
+
+	await page.keyboard.press('Escape')
+	await expect(view.signals.locator('.signals-filtered')).toContainText('3 filtered')
+})

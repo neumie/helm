@@ -5,7 +5,9 @@ import type { HelmConfig } from '../src/config.js'
 import type { SignalObservation } from '../src/signals/contract.js'
 import type { SignalCommandRunner } from '../src/signals/github-source.js'
 import {
+	MAIL_BULK_REASONS,
 	type MailAccountIdentity,
+	type MailBulkReason,
 	type MailFilterOptions,
 	type MailMessageHead,
 	dedupeMailMessages,
@@ -13,13 +15,16 @@ import {
 	globToRegExpSource,
 	mailFullRef,
 	mailGoneReason,
+	mailMessageKey,
 	mailRef,
 	mailboxEntryMatches,
+	mapFilteredMail,
 	mapMailThreads,
 	matchesGlob,
 	messageUrl,
 	parseGlobList,
 	parseMailboxList,
+	partitionMail,
 	relayedSenderAddress,
 	senderIdentity,
 	sentryHead,
@@ -106,6 +111,83 @@ test('filter switches: read and bulk mail when asked, include beats exclude', ()
 		NOW,
 	)
 	assert.ok(ids(included).includes('m8@noise.example'))
+})
+
+test('partitionMail: bulk and excluded mail is logged with its reason; read, own and old mail is not', () => {
+	const { kept, filtered } = partitionMail(output.messages, options(), NOW)
+	assert.deepEqual(ids(kept), ids(filterMail(output.messages, options(), NOW)))
+	assert.deepEqual(
+		filtered.map(entry => [entry.message.messageId, entry.reason]),
+		[
+			['m5@news.example', 'newsletter'],
+			['m8@noise.example', 'excluded'],
+		],
+	)
+	// Bulk wins over exclude as the reason; include beats both.
+	const both = partitionMail(output.messages, options({ excludeSenders: ['*@news.example'] }), NOW)
+	assert.equal(both.filtered.find(entry => entry.message.messageId === 'm5@news.example')?.reason, 'newsletter')
+	const included = partitionMail(output.messages, options({ includeSenders: ['*@news.example', 'robot@*'] }), NOW)
+	assert.deepEqual(included.filtered, [])
+	// Nothing filtered when bulk is allowed and nobody is excluded.
+	assert.deepEqual(
+		partitionMail(output.messages, options({ excludeBulk: false, excludeSenders: [] }), NOW).filtered,
+		[],
+	)
+})
+
+test('mapFilteredMail keeps heads only: sender, subject, reason, mailbox, Mail link, received time', () => {
+	const message: MailMessageHead = {
+		messageId: '<Ooo1@Psyon.example>',
+		subject: 'Automatická odpověď:\nRe: Plán',
+		senderName: 'Petra',
+		senderAddress: 'Petra@Psyon.example',
+		dateReceived: '2026-01-15T09:00:00.000Z',
+		read: false,
+		flagged: false,
+		bulkReason: 'auto-reply',
+		root: 'plan@example.com',
+		mailbox: 'Clientcare',
+	}
+	assert.equal(mailMessageKey(message), 'ooo1@psyon.example')
+	const [entry] = mapFilteredMail([{ message, reason: 'auto-reply' }])
+	assert.deepEqual(entry, {
+		messageKey: 'ooo1@psyon.example',
+		senderName: 'Petra',
+		senderAddress: 'petra@psyon.example',
+		senderIdentity: 'petra@psyon.example',
+		subject: 'Automatická odpověď: Re: Plán',
+		reason: 'auto-reply',
+		mailbox: 'Clientcare',
+		url: messageUrl('<Ooo1@Psyon.example>'),
+		receivedAt: '2026-01-15T09:00:00.000Z',
+	})
+})
+
+test('the four regressions Jakub named: Zendesk and Jira kept, out-of-office and newsletter hidden', () => {
+	const named = (fragment: string) => {
+		const index = headerCases.findIndex(entry => entry.name.startsWith(fragment))
+		assert.ok(index >= 0, fragment)
+		return index
+	}
+	const picks = [
+		named('Zendesk agent reply'),
+		named('Jira comment'),
+		named('Out-of-office reply:'),
+		named('Newsletter with'),
+	]
+	const heads = runScript(
+		fakeMail(headerMessages(picks.map(index => headerCases[index] as HeaderCase))).mail,
+		scriptArgs,
+	).messages as MailMessageHead[]
+	const { kept, filtered } = partitionMail(heads, options({ myAddresses: [] }), NOW)
+	assert.deepEqual(
+		kept.map(message => message.subject),
+		[(headerCases[picks[0] as number] as HeaderCase).name, (headerCases[picks[1] as number] as HeaderCase).name],
+	)
+	assert.deepEqual(
+		filtered.map(entry => entry.reason),
+		['auto-reply', 'newsletter'],
+	)
 })
 
 test('mail threads group by conversation root; the latest foreign message decides the row', () => {
@@ -587,17 +669,19 @@ test('JXA script reads in batches, reduces headers to bulk/root and never writes
 		dateReceived: '2026-01-14T09:00:00.000Z',
 		read: false,
 		flagged: false,
-		bulk: false,
+		bulkReason: null,
 		root: 'root@northwind.cz',
 		mailbox: null,
 	})
-	assert.equal(byId.get('news@list.example')?.bulk, true)
-	assert.equal(byId.get('auto@ops.example')?.bulk, true)
+	// List-Id alone is a group a person may write to: kept. An out-of-office reply is not.
+	assert.equal(byId.get('news@list.example')?.bulkReason, null)
+	assert.equal(byId.get('auto@ops.example')?.bulkReason, 'auto-reply')
 	assert.equal(byId.get('auto@ops.example')?.root, 'x@y.example')
 	assert.equal(byId.get('auto@ops.example')?.senderAddress, 'ops@ops.example')
-	assert.equal(byId.get('human@ops.example')?.bulk, false)
+	assert.equal(byId.get('human@ops.example')?.bulkReason, null)
 	assert.equal(byId.get('human@ops.example')?.root, 'human@ops.example')
-	assert.equal(byId.get('alert@sentry.example')?.bulk, true)
+	// Precedence bulk alone (no list marker) never counts.
+	assert.equal(byId.get('alert@sentry.example')?.bulkReason, null)
 	assert.ok(!JSON.stringify(result).includes('body text'))
 
 	// Whole lists, one Apple event per property: dates decide the window, then the cheap filter
@@ -762,7 +846,7 @@ test('Sentry is always in: default globs cover md.getsentry.com, and it survives
 		dateReceived: '2026-01-15T09:00:00.000Z',
 		read: true,
 		flagged: false,
-		bulk: true,
+		bulkReason: 'newsletter',
 		root: 'alert@md.getsentry.com',
 	}
 	const kept = filterMail([sentry], options({ includeSenders: [] }), NOW)
@@ -786,7 +870,7 @@ test('Sentry is always in: default globs cover md.getsentry.com, and it survives
 interface HeaderCase {
 	name: string
 	sender: string
-	bulk: boolean
+	bulkReason: MailBulkReason | null
 	headers: string
 }
 
@@ -809,31 +893,55 @@ function headerMessages(cases: HeaderCase[], read = false): FakeMessage[] {
 	}))
 }
 
-test('JXA bulk markers: list headers, List-Unsubscribe-Post and the X-Campaign names are bulk; transport fingerprints and person mail are not', () => {
+test('JXA bulk markers: List-Unsubscribe(-Post), X-Campaign names, Precedence junk and auto-replies are bulk; Jira, helpdesk, transport fingerprints and person mail are not', () => {
 	const result = runScript(fakeMail(headerMessages(headerCases)).mail, scriptArgs)
 	assert.equal(result.messages.length, headerCases.length)
 	for (const [index, entry] of headerCases.entries()) {
 		const message = result.messages.find(candidate => candidate.messageId === `case-${index}@fixture.example`)
 		assert.ok(message, entry.name)
-		assert.equal(message.bulk, entry.bulk, entry.name)
+		assert.equal(message.bulkReason, entry.bulkReason, entry.name)
 	}
-	assert.ok(headerCases.some(entry => entry.bulk) && headerCases.some(entry => !entry.bulk))
+	for (const reason of MAIL_BULK_REASONS)
+		assert.ok(
+			headerCases.some(entry => entry.bulkReason === reason),
+			reason,
+		)
+	assert.ok(headerCases.some(entry => entry.bulkReason === null))
 })
 
 test('JXA bulk: List-Unsubscribe-Post alone (the relayed StartupJobs alert) is bulk, Auto-Submitted no is not', () => {
 	const base = { id: 1, messageId: 'x@y.example', subject: 's', sender: 'a@b.example', read: false, flagged: false }
 	const bulkOf = (headers: string) =>
 		runScript(fakeMail([{ ...base, date: new Date('2026-01-14T00:00:00Z'), headers }]).mail, scriptArgs).messages[0]
-			.bulk
-	assert.equal(bulkOf('List-Unsubscribe-Post: List-Unsubscribe=One-Click'), true)
-	assert.equal(bulkOf('list-unsubscribe-post: List-Unsubscribe=One-Click'), true)
-	assert.equal(bulkOf('X-Campaign-Id: 1'), true)
-	assert.equal(bulkOf('X-CampaignID: 1'), true)
-	assert.equal(bulkOf('X-Campaign: mailchimp1'), true)
-	assert.equal(bulkOf('X-Campaign-Source: portal'), false)
-	assert.equal(bulkOf('X-Auto-Response-Suppress: All\nX-Mandrill-User: md_1\nX-PM-Message-Id: 1'), false)
-	assert.equal(bulkOf('Auto-Submitted: no\nFeedback-ID: 1:a:b:c\nX-SES-Outgoing: x'), false)
-	assert.equal(bulkOf('Subject: X-Campaign-Id: 1'), false)
+			.bulkReason
+	assert.equal(bulkOf('List-Unsubscribe-Post: List-Unsubscribe=One-Click'), 'newsletter')
+	assert.equal(bulkOf('list-unsubscribe-post: List-Unsubscribe=One-Click'), 'newsletter')
+	assert.equal(bulkOf('X-Campaign-Id: 1'), 'campaign')
+	assert.equal(bulkOf('X-CampaignID: 1'), 'campaign')
+	assert.equal(bulkOf('X-Campaign: mailchimp1'), 'campaign')
+	assert.equal(bulkOf('X-Campaign-Source: portal'), null)
+	assert.equal(bulkOf('X-Auto-Response-Suppress: All\nX-Mandrill-User: md_1\nX-PM-Message-Id: 1'), null)
+	assert.equal(bulkOf('Auto-Submitted: no\nFeedback-ID: 1:a:b:c\nX-SES-Outgoing: x'), null)
+	assert.equal(bulkOf('Subject: X-Campaign-Id: 1'), null)
+})
+
+test('JXA bulk: Precedence decides alone only for junk; Auto-Submitted only for auto-replied', () => {
+	const base = { id: 1, messageId: 'x@y.example', subject: 's', sender: 'a@b.example', read: false, flagged: false }
+	const bulkOf = (headers: string) =>
+		runScript(fakeMail([{ ...base, date: new Date('2026-01-14T00:00:00Z'), headers }]).mail, scriptArgs).messages[0]
+			.bulkReason
+	assert.equal(bulkOf('Precedence: junk'), 'junk')
+	assert.equal(bulkOf('Precedence: JUNK'), 'junk')
+	assert.equal(bulkOf('Precedence: bulk'), null)
+	assert.equal(bulkOf('Precedence: list'), null)
+	assert.equal(bulkOf('Precedence: list\nList-Id: <dev.team.example>'), null)
+	assert.equal(bulkOf('Precedence: bulk\nList-Unsubscribe: <mailto:u@x.example>'), 'newsletter')
+	assert.equal(bulkOf('Precedence: list\nX-Campaign-Id: 9'), 'campaign')
+	assert.equal(bulkOf('List-Id: <a.example>\nList-Unsubscribe: <mailto:u@x.example>'), 'newsletter')
+	assert.equal(bulkOf('Auto-Submitted: auto-replied'), 'auto-reply')
+	assert.equal(bulkOf('Auto-Submitted: Auto-Replied; vacation'), 'auto-reply')
+	assert.equal(bulkOf('Auto-Submitted: auto-generated'), null)
+	assert.equal(bulkOf('Auto-Submitted: auto-notified'), null)
 })
 
 test('the relayed StartupJobs newsletter is dropped by default and its row would be named Startupjobs', () => {
@@ -921,14 +1029,14 @@ test('include and exclude globs match the decoded relay sender as well as the ra
 		dateReceived: '2026-01-15T09:00:00.000Z',
 		read: false,
 		flagged: false,
-		bulk: false,
+		bulkReason: null,
 		root: 'r1@startupjobs.cz',
 	}
 	assert.equal(filterMail([message], options(), NOW).length, 1)
 	assert.equal(filterMail([message], options({ excludeSenders: ['*@startupjobs.cz'] }), NOW).length, 0)
 	assert.equal(filterMail([message], options({ excludeSenders: ['*@privaterelay.appleid.com'] }), NOW).length, 0)
 	// Include beats read, bulk and exclude, by decoded or raw address.
-	const noisy = { ...message, read: true, bulk: true }
+	const noisy = { ...message, read: true, bulkReason: 'newsletter' as const }
 	for (const include of ['*@startupjobs.cz', 'jana_at_*@privaterelay.appleid.com']) {
 		assert.equal(
 			filterMail([noisy], options({ includeSenders: [include], excludeSenders: ['*@startupjobs.cz'] }), NOW).length,
@@ -968,12 +1076,12 @@ test('JXA candidates: a read relayed sender is a candidate when its decoded addr
 		{ ...scriptArgs, include: [] },
 	)
 	assert.equal(sentry.messages.length, 1)
-	assert.equal(sentry.messages[0].bulk, true)
+	assert.equal(sentry.messages[0].bulkReason, null)
 })
 
 test('the JXA relay decoder mirrors relayedSenderAddress', () => {
 	const start = MAIL_JXA_SCRIPT.indexOf('function relayDecode')
-	const end = MAIL_JXA_SCRIPT.indexOf('function isBulk')
+	const end = MAIL_JXA_SCRIPT.indexOf('function token')
 	assert.ok(start > 0 && end > start)
 	const decode = new Function(`${MAIL_JXA_SCRIPT.slice(start, end)}\nreturn relayDecode`)() as (
 		address: string,
@@ -1296,7 +1404,7 @@ test('JXA reads the inbox plus the listed mailboxes only, dedupes by Message-ID 
 	const task = byId.get('task-1@clientcare.example')
 	assert.ok(task)
 	assert.equal(task.mailbox, 'Clientcare')
-	assert.equal(task.bulk, false) // Feedback-ID is a transport fingerprint, never bulk.
+	assert.equal(task.bulkReason, null) // Feedback-ID is a transport fingerprint, never bulk.
 	// The labelled copy of an inbox message is the inbox one.
 	assert.equal(result.messages.filter(message => message.messageId.toLowerCase() === 'reply@northwind.cz').length, 1)
 	assert.equal(byId.get('reply@northwind.cz')?.mailbox, null)
