@@ -1,6 +1,6 @@
 # helm open — a viewer for almost anything
 
-Status: phase 1 (spec + design variants). No production code changes in this phase. The design exploration is story-only under `app/src/renderer/open-prototype/` (Storybook `Views/Helm open/…`); Jakub picks the design from there.
+Status: phase 1 (spec + design variants). No production code changes in this phase. D1–D11 and D13 decided by Jakub on 2026-11-09 (§ Decisions); D12 and D14 open until he picks from Storybook. The design exploration is story-only under `app/src/renderer/open-prototype/` (Storybook `Views/Helm open/…`); Jakub picks the design from there.
 
 ## Problem
 
@@ -151,7 +151,7 @@ Sizes are min+gzip of the prototype's actual bundles where measured (see "Bundle
 
 Limits refuse with the actual number ("platform-report.pdf is 412 MiB; Helm shows PDFs up to 256 MiB. Open in Preview?") and offer Open in default app when the type is on its allowlist, otherwise Reveal in Finder.
 
-**Feedback-mode admission for formats without a journal.** Same owner/mode/hidden/symlink/link rules as today's feedback mode (the file is not written, but the agent learns about it). By default the file must be inside a Git repository equal to the connection workspace, so `relativePath` keeps its meaning; `helm open --listen` on a file outside the workspace refuses with a named fix. Whether feedback on a Downloads PDF should work outside any workspace is decision D13.
+**Feedback-mode admission for formats without a journal.** Same owner/mode/hidden/symlink/link rules as today's feedback mode (the file is not written, but the agent learns about it). By default the file must be inside a Git repository equal to the connection workspace, so `relativePath` keeps its meaning; `helm open --listen` on a file outside the workspace refuses with a named fix. Feedback on a Downloads PDF outside any workspace stays refused for now (D13, decided: workspace only).
 
 ## Feedback anchoring per format
 
@@ -181,9 +181,9 @@ Every anchor carries `revision` = SHA-256 of the document body: for md/jsx/tsx t
 - **Prompt budget.** `feedbackSchema` caps `prompt` at 24 000 UTF-16 units, shared with screenshot lines. The anchor description is capped at 4 000 and counted before admission; previews are cut before the quote, every cut is marked, and if instruction + anchor + screenshot lines would exceed 24 000, Send is refused with a visible count.
 - For a v2 caller `request.anchor` carries the structured locator next to `passage`. Any widening of `feedbackSchema`/`reviewRequestSchema` is optional, and the host emits `anchor` only on a v2 binding.
 
-**Where feedback history lives for formats without an in-file journal.** Appending a journal would corrupt JSON, CSV, PDF, images. Options (decision D5):
+**Where feedback history lives for formats without an in-file journal.** Appending a journal would corrupt JSON, CSV, PDF, images. Options (D5, decided: memory-only first):
 
-- **memory-only** per window (recommended for S8): threads live while the window is open, nothing written;
+- **memory-only** per window (decided for S8): threads live while the window is open, nothing written;
 - private store `<userData>/profiles/<id>/open-history/<sha256(canonical path)>.json`, 0600, bounded like the journal, keyed by file revision (later);
 - sidecar `FILE.helm-review.json` next to the file — rejected: litters repositories and Downloads, and gets committed by accident.
 
@@ -401,23 +401,25 @@ Each slice is shippable alone, keeps every existing test green, and does not cha
 
 Proposed order: S1 → S2 → S3 → S4 → S5 → S7 → S6 → S8 → S8b → S9 → S10. Plain viewing of the most common formats lands before the multi-file shell, and feedback v2 starts once the formats it anchors in exist.
 
-## Decisions for Jakub
+## Decisions
 
-| # | Decision | Options | Recommendation |
+D1–D11 and D13: Jakub agreed with the recommendations on 2026-11-09; they are decided. D12 and D14 stay open until he picks from the Storybook variants. No production slice starts before that.
+
+| # | Decision | Options | Status |
 | --- | --- | --- | --- |
-| D1 | Command model | (a) `helm open` plain, `--listen` / `helm edit` bound; (b) `helm open` binds automatically when run by an agent; (c) separate binaries/verbs | **(a)**. Binding stays an explicit choice of the caller; (b) would need to infer the agent from the environment, which the existing design rejects. |
-| D2 | Agent opens a file that is already open plain | bind that window (after full feedback admission); open a second, bound window | **Bind the existing window** if it never had an owner and passes feedback admission (keeps scroll and context; the owner indicator appears). Retired-owner windows keep refusing, as today. |
-| D3 | Plain-mode access | keep repo-only; allow anywhere readable with the plain-mode table | **Anywhere readable** with one-descriptor admission, hidden allowed except Helm's private paths (by path and inode); `.jsx/.tsx` shown as source, never executed, outside feedback mode; feedback mode keeps every current rule. |
-| D4 | MVP format set | tier 1 only; tier 1 + XLSX; everything up to tier 2 | **Tier 1, then XLSX in S6**; tier 2 after feedback v2. |
-| D5 | Feedback history for formats without a journal | memory-only; private profile store; sidecar | **Memory-only first**, private store later if he misses it; no sidecars. |
-| D6 | PPTX/Keynote/Pages | Quick Look fallback; text-only extraction; none | **Quick Look fallback**; text extraction only if slide-level feedback is wanted. |
-| D7 | `helm open` when the desktop isn't running | refuse (today); package Helm as its own `.app` and launch it; a small launcher bundle that runs `electron <app dir>` | **Refuse for now.** Today's shared unpackaged `com.github.Electron` bundle would start Electron's default app. Launching becomes possible with packaging, which is a project of its own. |
-| D8 | Finder integration | Alternate handler for supported types on a packaged Helm.app; no registration | **Alternate on a packaged build only** — offered in Open With, never the default; never on the shared unpackaged `Electron.app`. |
-| D9 | SheetJS source | vendor tarball pinned with integrity; `exceljs`; npm `xlsx@0.18.5` | **Vendor tarball** (npm 0.18.5 is stale with known advisories; exceljs lacks XLS/ODS). |
-| D10 | Old-host / not-reloaded-Pi compatibility | negotiate per connection (`hello` then `features`); hard version bump | **Negotiate**, so an old desktop, a Pi process not yet `/reload`ed or Pi from another worktree keep working with prompt-text anchors. |
-| D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Delete** in S10. Plan documents → Review: decide with the task-list future. |
-| D12 | Multi-file model and window chrome | B1/B2/B3, A1–A6 | His pick from Storybook; no recommendation. |
-| D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Workspace only in S8**; widen once he wants it, because it tells the agent where files outside its project live. |
+| D1 | Command model | (a) `helm open` plain, `--listen` / `helm edit` bound; (b) `helm open` binds automatically when run by an agent; (c) separate binaries/verbs | **Decided: (a).** Plain `helm open`; an agent binds only via `--listen` / `helm edit`. Binding stays an explicit choice of the caller; (b) would need to infer the agent from the environment, which the existing design rejects. |
+| D2 | Agent opens a file that is already open plain | bind that window (after full feedback admission); open a second, bound window | **Decided: bind the existing window** if it never had an owner and passes feedback admission (keeps scroll and context; the owner indicator appears). Retired-owner windows keep refusing, as today. |
+| D3 | Plain-mode access | keep repo-only; allow anywhere readable with the plain-mode table | **Decided: anywhere readable** under the plain-mode access rules: one-descriptor admission, hidden allowed except Helm's private paths (by path and inode); `.jsx/.tsx` shown as source, never executed, outside feedback mode; feedback mode keeps every current rule. |
+| D4 | MVP format set | tier 1 only; tier 1 + XLSX; everything up to tier 2 | **Decided: tier 1 first, then XLSX in S6**; tier 2 after feedback v2. |
+| D5 | Feedback history for formats without a journal | memory-only; private profile store; sidecar | **Decided: memory-only** feedback history first; private store later if he misses it; no sidecars. |
+| D6 | PPTX/Keynote/Pages | Quick Look fallback; text-only extraction; none | **Decided: Quick Look fallback**; text extraction only if slide-level feedback is wanted. |
+| D7 | `helm open` when the desktop isn't running | refuse (today); package Helm as its own `.app` and launch it; a small launcher bundle that runs `electron <app dir>` | **Decided: refuse** when the desktop isn't running. Today's shared unpackaged `com.github.Electron` bundle would start Electron's default app; launching becomes possible with packaging, a project of its own. |
+| D8 | Finder integration | Alternate handler for supported types on a packaged Helm.app; no registration | **Decided: Alternate handler on a packaged build only** — offered in Finder's Open With, never the default; never on the shared unpackaged `Electron.app`. |
+| D9 | SheetJS source | vendor tarball pinned with integrity; `exceljs`; npm `xlsx@0.18.5` | **Decided: vendored SheetJS tarball**, pinned with integrity (npm 0.18.5 is stale with known advisories; exceljs lacks XLS/ODS). |
+| D10 | Old-host / not-reloaded-Pi compatibility | negotiate per connection (`hello` then `features`); hard version bump | **Decided: negotiate per connection** (`hello` then `features`), so an old desktop, a Pi process not yet `/reload`ed or Pi from another worktree keep working with prompt-text anchors. |
+| D11 | Dormant code | delete `buildReviewInvocation`/`ReviewJsonLines`; keep | **Decided: delete** `buildReviewInvocation`/`ReviewJsonLines` in S10. Still open: Plan documents → Review, decided with the task-list future. |
+| D12 | Multi-file model and window chrome | B1/B2/B3, A1–A6 | **Open.** His pick from Storybook; no recommendation. |
+| D13 | Feedback on non-journal files outside the agent's workspace (a Downloads PDF) | workspace only; any readable file, with `relativePath` replaced by the canonical path for those | **Decided: workspace only** (S8) for now; widen once he wants it, because it tells the agent where files outside its project live. |
 | D14 | Send receipt in the review composer | Today; A composer line; B under your message; C header steps; D send button (see § Send receipt) | **Open.** His pick from Storybook; no recommendation. |
 
 ## Open questions
