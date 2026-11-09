@@ -1,0 +1,89 @@
+{
+	"_comment": "Header-only bulk regression corpus for mail-jxa.ts isBulk. Bulk cases are trimmed recordings from a real inbox (2026-11); person and transactional cases keep the header names real person-to-person, helpdesk and transactional mail carry. Addresses of private people are fictional.",
+	"cases": [
+		{
+			"name": "StartupJobs job alert through Hide My Email: the relay strips List-Unsubscribe and List-Id, keeps List-Unsubscribe-Post",
+			"sender": "StartupJobs <jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com>",
+			"bulk": true,
+			"headers": "From: StartupJobs <jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com>\nReply-To: Petra <support_at_startupjobs_cz_pp77sqsgqd_86cebd37@privaterelay.appleid.com>\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\nSubject: [StartupJobs] Nove nabidky\nMessage-Id: <02ee3e8ebc5a9a7709b2ddfba4a8e421@startupjobs.cz>\nX-Pr-Id: b6c0c949-13dd-4de6-b6d9-ef3f73e8f02d\nX-Pr-Cd: 0"
+		},
+		{
+			"name": "Ecomail newsletter through Hide My Email with Precedence and List-Id",
+			"sender": "\"Martina z Qerka\" <info_at_qerko_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com>",
+			"bulk": true,
+			"headers": "Message-Id: <BF.2B.15905.C6A4CEA6@mta1vrest.sd.prd.sparkpost>\nSubject: Na Martina bez rezervace?\nX-Ecomail-User: qerkoapp\nFrom: \"Martina z Qerka\" <info_at_qerko_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com>\nPrecedence: Bulk\nReply-To: <info_at_qerko_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com>\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\nList-Id: <spc.15996.48293.sparkpostmail.com>"
+		},
+		{
+			"name": "Iterable campaign over Mailgun with no List-Unsubscribe: X-Campaign-Id",
+			"sender": "Claude Team <no-reply@email.claude.com>",
+			"bulk": true,
+			"headers": "X-Mailgun-Sid: WyI0NTY0NyJd\nX-Mailgun-Sending-Ip-Pool-Name: Primary Iterable Shared\nSender: no-reply@email.claude.com\nSubject: Your 5-hour limit has been removed\nFrom: Claude Team <no-reply@email.claude.com>\nX-Campaign-Id: 20740111\nReply-To: no-reply@email.claude.com\nFeedback-ID: 27561806:20740111:109690:iterable\nMessage-Id: <20261105210156.4ab3c5a5a4444c11@email.claude.com>"
+		},
+		{
+			"name": "SmartEmailing newsletter: X-CampaignID",
+			"sender": "Salut <salut@salutrestaurant.example>",
+			"bulk": true,
+			"headers": "From: Salut <salut@salutrestaurant.example>\nX-CampaignID: 000000001431:168624:n:smartemailing\nSubject: Novinky\nMessage-Id: <n1@salutrestaurant.example>"
+		},
+		{
+			"name": "Mailchimp campaign: X-Campaign",
+			"sender": "Shop <news@shop.example>",
+			"bulk": true,
+			"headers": "From: Shop <news@shop.example>\nX-Campaign: mailchimp7a1b2c3d4e.5f6a7b8c9d\nX-campaignid: mailchimp7a1b2c3d4e.5f6a7b8c9d\nSubject: Sale\nX-Report-Abuse: Please report abuse here: https://mailchimp.com/contact/abuse/\nX-MC-User: 1a2b3c4d5e6f7a8b9c0d1e2f3"
+		},
+		{
+			"name": "Person-to-person Outlook / Microsoft 365 mail",
+			"sender": "Petr Example <petr@northwind.example>",
+			"bulk": false,
+			"headers": "Delivered-To: me@example.com\nFrom: Petr Example <petr@northwind.example>\nTo: Jakub <me@example.com>\nCC: Ops <ops@northwind.example>\nSubject: Re: Plan\nThread-Topic: Plan\nThread-Index: AQHcTx1pZt8yQ2a3Q0W1v9xZ0aJb4A==\nImportance: high\nX-Priority: 1\nMessage-ID: <AM9PR01MB1234@eurprd01.prod.outlook.com>\nReferences: <root@northwind.example>\nIn-Reply-To: <root@northwind.example>\nReply-To: Petr Example <petr@northwind.example>\nAccept-Language: cs-CZ, en-US\nContent-Language: cs-CZ\nX-OriginatorOrg: northwind.example"
+		},
+		{
+			"name": "Person-to-person Gmail mail",
+			"sender": "Friend Example <friend.example@gmail.com>",
+			"bulk": false,
+			"headers": "Delivered-To: me@example.com\nX-Google-DKIM-Signature: v=1; a=rsa-sha256\nX-Gm-Message-State: AOJu0Yw\nMIME-Version: 1.0\nReferences: <a@mail.gmail.com>\nIn-Reply-To: <a@mail.gmail.com>\nFrom: Friend Example <friend.example@gmail.com>\nDate: Mon, 9 Nov 2026 10:00:00 +0100\nMessage-ID: <b@mail.gmail.com>\nSubject: Re: Dinner?"
+		},
+		{
+			"name": "Person through Hide My Email (a recruiter writing by hand from PHPMailer)",
+			"sender": "Jana Novakova <jana.novakova_at_startupjobs_cz_pp77sqsgqd_fb028362@privaterelay.appleid.com>",
+			"bulk": false,
+			"headers": "From: Jana Novakova <jana.novakova_at_startupjobs_cz_pp77sqsgqd_fb028362@privaterelay.appleid.com>\nReply-To: Jana Novakova <jana.novakova_at_startupjobs_cz_pp77sqsgqd_fb028362@privaterelay.appleid.com>\nX-Mailer: PHPMailer 6.4.0 (https://github.com/PHPMailer/PHPMailer)\nSubject: Pozice v Praze\nMessage-Id: <r1@startupjobs.cz>\nX-Pr-Id: 4f0d2a37-0c1e-4b8e-9d55-1f0a7b0c2e11\nX-Pr-Cd: 0"
+		},
+		{
+			"name": "Helpdesk agent reply over SendGrid: transport fingerprints are not bulk",
+			"sender": "Eva from Support <support@vendor.example>",
+			"bulk": false,
+			"headers": "From: Eva from Support <support@vendor.example>\nReply-To: support+id123@vendor.example\nSubject: Re: [#4521] Export fails\nIn-Reply-To: <ticket-4521@vendor.example>\nX-SG-EID: u001.abc\nX-SG-ID: u001.def\nFeedback-ID: 1:ticket-reply:helpdesk:vendor"
+		},
+		{
+			"name": "Helpdesk agent reply over Mailgun",
+			"sender": "Tomas <help@saas.example>",
+			"bulk": false,
+			"headers": "From: Tomas <help@saas.example>\nSubject: Re: Billing question\nX-Mailgun-Sid: WyJhYmMiXQ==\nX-Mailgun-Sending-Ip: 198.51.100.7\nX-Mailgun-Variables: {\"ticket\": \"88\"}\nX-Mailgun-Tag: conversation"
+		},
+		{
+			"name": "DocuSign envelope over Amazon SES: transactional, not bulk",
+			"sender": "Petr via Docusign <dse@eumail.docusign.net>",
+			"bulk": false,
+			"headers": "From: Petr via Docusign <dse@eumail.docusign.net>\nSubject: Please DocuSign: Contract.pdf\nFeedback-ID: 3:5264ee81-1ee7-4bb7-812c-2bc18279e9db:1.eu-west-1.abc:AmazonSES\nX-SES-Outgoing: 2026.11.09-54.240.4.1"
+		},
+		{
+			"name": "Postmark transactional mail",
+			"sender": "Contember <welcome@contember.example>",
+			"bulk": false,
+			"headers": "From: Contember <welcome@contember.example>\nSubject: Verify your email\nX-Mailer: Nette Framework\nFeedback-ID: s14219627-_:s14219627:a349487:postmark\nX-PM-Message-Id: 0f6b6f5e-1b1e-4f1e-8a1e-2c3d4e5f6a7b\nX-PM-RCPT: abc\nX-PM-Message-Options: v1;abc\nX-PM-MTA-Pool: transactional-1"
+		},
+		{
+			"name": "Front agent reply relayed through Mandrill: transport, not bulk",
+			"sender": "Lucie <lucie@agency.example>",
+			"bulk": false,
+			"headers": "From: Lucie <lucie@agency.example>\nSubject: Re: Kickoff\nIn-Reply-To: <k1@example.com>\nX-Mandrill-User: md_30995146\nX-MC-Tags: front\nX-Auto-Response-Suppress: OOF, AutoReply"
+		},
+		{
+			"name": "An unknown vendor's X-Campaign-* header is not one of the exact campaign names",
+			"sender": "Ops <ops@vendor.example>",
+			"bulk": false,
+			"headers": "From: Ops <ops@vendor.example>\nSubject: Your ticket\nX-Campaign-Source: support-portal\nX-Campaignname: none"
+		}
+	]
+}

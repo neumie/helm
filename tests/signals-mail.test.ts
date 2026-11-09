@@ -9,11 +9,14 @@ import {
 	type MailMessageHead,
 	filterMail,
 	globToRegExpSource,
+	mailFullRef,
 	mailRef,
 	mapMailThreads,
 	matchesGlob,
 	messageUrl,
 	parseGlobList,
+	relayedSenderAddress,
+	senderIdentity,
 	sentryHead,
 } from '../src/signals/mail-filter.js'
 import { MAIL_JXA_SCRIPT, mailOsascriptArgs } from '../src/signals/mail-jxa.js'
@@ -515,4 +518,221 @@ test('Sentry is always in: default globs cover md.getsentry.com, and it survives
 	assert.ok(result.messages.some(message => message.messageId === 'alert@sentry.example'))
 	assert.ok(touched.includes('allHeaders:6'))
 	assert.ok(!touched.includes('allHeaders:5'))
+})
+
+// ---------- bulk markers and Apple Hide My Email relays ----------
+
+interface HeaderCase {
+	name: string
+	sender: string
+	bulk: boolean
+	headers: string
+}
+
+const headerCases = (
+	JSON.parse(readFileSync(new URL('./fixtures/signals/mail-headers.json', import.meta.url), 'utf8')) as {
+		cases: HeaderCase[]
+	}
+).cases
+
+function headerMessages(cases: HeaderCase[], read = false): FakeMessage[] {
+	return cases.map((entry, index) => ({
+		id: 100 + index,
+		messageId: `case-${index}@fixture.example`,
+		subject: entry.name,
+		sender: entry.sender,
+		date: new Date(Date.UTC(2026, 0, 14, 12, 0, 0) - index * 60_000),
+		read,
+		flagged: false,
+		headers: entry.headers,
+	}))
+}
+
+test('JXA bulk markers: list headers, List-Unsubscribe-Post and the X-Campaign names are bulk; transport fingerprints and person mail are not', () => {
+	const result = runScript(fakeMail(headerMessages(headerCases)).mail, scriptArgs)
+	assert.equal(result.messages.length, headerCases.length)
+	for (const [index, entry] of headerCases.entries()) {
+		const message = result.messages.find(candidate => candidate.messageId === `case-${index}@fixture.example`)
+		assert.ok(message, entry.name)
+		assert.equal(message.bulk, entry.bulk, entry.name)
+	}
+	assert.ok(headerCases.some(entry => entry.bulk) && headerCases.some(entry => !entry.bulk))
+})
+
+test('JXA bulk: List-Unsubscribe-Post alone (the relayed StartupJobs alert) is bulk, Auto-Submitted no is not', () => {
+	const base = { id: 1, messageId: 'x@y.example', subject: 's', sender: 'a@b.example', read: false, flagged: false }
+	const bulkOf = (headers: string) =>
+		runScript(fakeMail([{ ...base, date: new Date('2026-01-14T00:00:00Z'), headers }]).mail, scriptArgs).messages[0]
+			.bulk
+	assert.equal(bulkOf('List-Unsubscribe-Post: List-Unsubscribe=One-Click'), true)
+	assert.equal(bulkOf('list-unsubscribe-post: List-Unsubscribe=One-Click'), true)
+	assert.equal(bulkOf('X-Campaign-Id: 1'), true)
+	assert.equal(bulkOf('X-CampaignID: 1'), true)
+	assert.equal(bulkOf('X-Campaign: mailchimp1'), true)
+	assert.equal(bulkOf('X-Campaign-Source: portal'), false)
+	assert.equal(bulkOf('X-Auto-Response-Suppress: All\nX-Mandrill-User: md_1\nX-PM-Message-Id: 1'), false)
+	assert.equal(bulkOf('Auto-Submitted: no\nFeedback-ID: 1:a:b:c\nX-SES-Outgoing: x'), false)
+	assert.equal(bulkOf('Subject: X-Campaign-Id: 1'), false)
+})
+
+test('the relayed StartupJobs newsletter is dropped by default and its row would be named Startupjobs', () => {
+	const relayed = runScript(fakeMail(headerMessages(headerCases.slice(0, 1))).mail, scriptArgs).messages
+	assert.equal(relayed.length, 1)
+	assert.equal(relayed[0].senderAddress, 'jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com')
+	assert.deepEqual(filterMail(relayed, options(), NOW), [])
+	const [row] = mapMailThreads(filterMail(relayed, options({ excludeBulk: false }), NOW))
+	assert.equal(row.ref, 'Startupjobs')
+	assert.equal(row.fullRef, 'StartupJobs <jobot@startupjobs.cz> via Hide My Email')
+	assert.equal(row.actor, 'StartupJobs')
+})
+
+test('Apple relay addresses decode to the original sender, or to nothing', () => {
+	const relay = (local: string) => `${local}@privaterelay.appleid.com`
+	assert.equal(relayedSenderAddress(relay('jobot_at_startupjobs_cz_pp77sqsgqd_3e707591')), 'jobot@startupjobs.cz')
+	assert.equal(
+		relayedSenderAddress(relay('kamila.example_at_startupjobs_cz_pp77sqsgqd_fb028362')),
+		'kamila.example@startupjobs.cz',
+	)
+	assert.equal(relayedSenderAddress(relay('noreply_at_pdffiller_com_6v2y9yftm9_2aa5dead')), 'noreply@pdffiller.com')
+	assert.equal(
+		relayedSenderAddress(relay('a.b-c_at_mail_my-shop_co_uk_4wb6bxhxvn_0c0003cd')),
+		'a.b-c@mail.my-shop.co.uk',
+	)
+	// The first `_at_` splits user from domain, so an Austrian domain stays decodable.
+	assert.equal(relayedSenderAddress(relay('office_at_firma_at_4wb6bxhxvn_0c0003cd')), 'office@firma.at')
+	// Case and whitespace do not matter.
+	assert.equal(
+		relayedSenderAddress(` ${relay('Info_AT_Qerko_COM_4wb6bxhxvn_0c0003cd').toUpperCase()} `),
+		'info@qerko.com',
+	)
+
+	for (const undecodable of [
+		relay('nobody'),
+		relay('a_at_b_4wb6bxhxvn_0c0003cd'), // one-label domain
+		relay('a_at_example_com'), // no relay token
+		relay('a_at_example_com_4wb6bxhxvn'), // no hex
+		relay('a_at_example_123_4wb6bxhxvn_0c0003cd'), // numeric top label
+		relay('a_at_-bad_com_4wb6bxhxvn_0c0003cd'),
+		relay(`${'u'.repeat(400)}_at_example_com_4wb6bxhxvn_0c0003cd`),
+		'jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com.evil.example',
+		'jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@evil.example',
+		'',
+	]) {
+		assert.equal(relayedSenderAddress(undecodable), null, undecodable)
+	}
+	// Sign in with Apple's newer domain and iCloud+ Hide My Email (on icloud.com) relay the same way;
+	// an ordinary iCloud user is left alone.
+	assert.equal(relayedSenderAddress('hello_at_sarunw_com_4wb6bxhxvn_0c0003cd@private.icloud.com'), 'hello@sarunw.com')
+	assert.equal(relayedSenderAddress('test_at_davemail_io_5rvrmv74x77007_62a85f4e@icloud.com'), 'test@davemail.io')
+	assert.equal(relayedSenderAddress('jakub.example@icloud.com'), null)
+	assert.equal(relayedSenderAddress('john_at_home@icloud.com'), null)
+	assert.equal(senderIdentity(' Petr@Northwind.CZ '), 'petr@northwind.cz')
+	assert.equal(senderIdentity(relay('jobot_at_startupjobs_cz_pp77sqsgqd_3e707591')), 'jobot@startupjobs.cz')
+})
+
+test('relay senders are named by the original domain, else by display name, never "Appleid"', () => {
+	const relay = 'jobot_at_startupjobs_cz_pp77sqsgqd_3e707591@privaterelay.appleid.com'
+	assert.equal(mailRef('StartupJobs', relay), 'Startupjobs')
+	assert.equal(mailRef('', relay), 'Startupjobs')
+	assert.equal(mailRef('Friend', 'friend_at_gmail_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com'), 'Friend')
+	assert.equal(mailRef('', 'friend_at_gmail_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com'), 'friend')
+	assert.equal(mailRef('Some Shop', 'garbled@privaterelay.appleid.com'), 'Some Shop')
+	assert.equal(mailRef('  ', 'garbled@privaterelay.appleid.com'), 'Mail')
+	assert.equal(mailRef('', 'garbled@private.icloud.com'), 'Mail')
+	assert.equal(mailRef('Dave', 'test_at_davemail_io_5rvrmv74x77007_62a85f4e@icloud.com'), 'Davemail')
+	// An ordinary iCloud user is still a person.
+	assert.equal(mailRef('Ann Example', 'ann_example@icloud.com'), 'Ann Example')
+	assert.equal(mailFullRef('Ann', 'ann@icloud.com'), 'Ann <ann@icloud.com>')
+	for (const address of [relay, 'garbled@privaterelay.appleid.com', 'x_at_y@privaterelay.appleid.com']) {
+		for (const name of ['', 'Name']) assert.notEqual(mailRef(name, address).toLowerCase(), 'appleid')
+	}
+	assert.equal(mailFullRef('StartupJobs', relay), 'StartupJobs <jobot@startupjobs.cz> via Hide My Email')
+	assert.equal(mailFullRef('', 'garbled@privaterelay.appleid.com'), 'garbled@privaterelay.appleid.com')
+	assert.equal(mailFullRef('Petr', 'Petr@Northwind.cz'), 'Petr <petr@northwind.cz>')
+})
+
+test('include and exclude globs match the decoded relay sender as well as the raw address', () => {
+	const message: MailMessageHead = {
+		messageId: 'r1@startupjobs.cz',
+		subject: 'Pozice',
+		senderName: 'Jana',
+		senderAddress: 'jana_at_startupjobs_cz_pp77sqsgqd_fb028362@privaterelay.appleid.com',
+		dateReceived: '2026-01-15T09:00:00.000Z',
+		read: false,
+		flagged: false,
+		bulk: false,
+		root: 'r1@startupjobs.cz',
+	}
+	assert.equal(filterMail([message], options(), NOW).length, 1)
+	assert.equal(filterMail([message], options({ excludeSenders: ['*@startupjobs.cz'] }), NOW).length, 0)
+	assert.equal(filterMail([message], options({ excludeSenders: ['*@privaterelay.appleid.com'] }), NOW).length, 0)
+	// Include beats read, bulk and exclude, by decoded or raw address.
+	const noisy = { ...message, read: true, bulk: true }
+	for (const include of ['*@startupjobs.cz', 'jana_at_*@privaterelay.appleid.com']) {
+		assert.equal(
+			filterMail([noisy], options({ includeSenders: [include], excludeSenders: ['*@startupjobs.cz'] }), NOW).length,
+			1,
+			include,
+		)
+	}
+	// A relayed Sentry alert is still Sentry: in, and grouped by short id.
+	const sentry = {
+		...noisy,
+		messageId: 'alert@sentry.example',
+		subject: '[Sentry] PROJ-7 boom',
+		senderAddress: 'noreply_at_md_getsentry_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+	}
+	const kept = filterMail([sentry], options({ includeSenders: [] }), NOW)
+	assert.equal(kept.length, 1)
+	assert.equal(mapMailThreads(kept)[0].threadKey, 'sentry:PROJ-7')
+})
+
+test('JXA candidates: a read relayed sender is a candidate when its decoded address is included', () => {
+	const cases = headerMessages(headerCases.slice(7, 8), true) // the relayed recruiter, already read
+	const plain = runScript(fakeMail(cases).mail, scriptArgs)
+	assert.deepEqual(plain.messages, [])
+	const included = runScript(fakeMail(cases).mail, {
+		...scriptArgs,
+		include: [...scriptArgs.include, globToRegExpSource('*@startupjobs.cz')],
+	})
+	assert.equal(included.messages.length, 1)
+	const sentry = runScript(
+		fakeMail([
+			{
+				...cases[0],
+				sender: 'Sentry <noreply_at_md_getsentry_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com>',
+				headers: 'Precedence: bulk',
+			},
+		]).mail,
+		{ ...scriptArgs, include: [] },
+	)
+	assert.equal(sentry.messages.length, 1)
+	assert.equal(sentry.messages[0].bulk, true)
+})
+
+test('the JXA relay decoder mirrors relayedSenderAddress', () => {
+	const start = MAIL_JXA_SCRIPT.indexOf('function relayDecode')
+	const end = MAIL_JXA_SCRIPT.indexOf('function isBulk')
+	assert.ok(start > 0 && end > start)
+	const decode = new Function(`${MAIL_JXA_SCRIPT.slice(start, end)}\nreturn relayDecode`)() as (
+		address: string,
+	) => string | null
+	const samples = [
+		...headerCases.map(entry => entry.sender.match(/<([^>]+)>/)?.[1] ?? entry.sender),
+		'office_at_firma_at_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+		'a_at_b_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+		'a_at_example_123_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+		'x_at_xn--bcher-kva_ch_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+		'x_at_a--b_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com',
+		' Info_AT_Qerko_COM_4wb6bxhxvn_0c0003cd@PrivateRelay.AppleID.com ',
+		`${'u'.repeat(380)}_at_example_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com`,
+		`${'u'.repeat(400)}_at_example_com_4wb6bxhxvn_0c0003cd@privaterelay.appleid.com`,
+		'garbled@privaterelay.appleid.com',
+		'hello_at_sarunw_com_4wb6bxhxvn_0c0003cd@private.icloud.com',
+		'test_at_davemail_io_5rvrmv74x77007_62a85f4e@icloud.com',
+		'jakub.example@icloud.com',
+		'plain_at_example_com_4wb6bxhxvn_0c0003cd@example.com',
+		'plain@example.com',
+	]
+	for (const sample of samples) assert.equal(decode(sample), relayedSenderAddress(sample), sample)
 })
