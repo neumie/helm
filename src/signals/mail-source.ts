@@ -31,11 +31,18 @@ import {
 	MAIL_MAX_MAILBOX_CANDIDATES,
 	MAIL_MAX_MAILBOX_ENTRIES,
 	MAIL_MAX_MESSAGES,
+	MAIL_SCRIPT_BUDGET_MS,
 	mailOsascriptArgs,
 } from './mail-jxa.js'
 import type { SignalReader } from './watcher.js'
 
-const OSASCRIPT_TIMEOUT_MS = 45_000
+/**
+ * Hard stop for one poll. The script itself stops starting reads after MAIL_SCRIPT_BUDGET_MS and
+ * answers with what it has; the remaining 35 s are room for the Apple event in flight then (one
+ * event stalled 20-40 s on real Mail while it synced). The
+ * watcher arms the next poll only after this one settled, so polls never overlap.
+ */
+export const OSASCRIPT_TIMEOUT_MS = 60_000
 const OSASCRIPT_MAX_BUFFER = 4 * 1024 * 1024
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -62,6 +69,8 @@ const outputSchema = z.union([
 	z.object({
 		running: z.literal(true),
 		truncated: z.boolean(),
+		/** The script ran out of its reading budget and answered with part of the mail. */
+		slow: z.boolean().optional(),
 		myAddresses: z.array(z.string()).max(1000),
 		messages: z.array(z.unknown()).max((MAIL_MAX_CANDIDATES + MAIL_MAX_MAILBOX_CANDIDATES) * 2),
 		/** Configured mailboxes no account has (a typo, a renamed label). */
@@ -100,7 +109,10 @@ function quoted(names: string[]): string {
 	return names.map(name => `"${oneLine(name, 60)}"`).join(', ')
 }
 
+export const MAIL_SLOW_DETAIL = 'Mail answered slowly; this poll read only part of the mail'
+
 interface MailboxTrouble {
+	slow: boolean
 	missing: string[]
 	unreadable: string[]
 	capped: string[]
@@ -109,12 +121,14 @@ interface MailboxTrouble {
 }
 
 /**
- * Mailbox trouble as health: the inbox was read, so the poll still counts (as incomplete), but a
- * configured mailbox is not fully read and the footer says so, never silently. Incomplete polls
- * never auto-close Mail threads.
+ * Partial reads as health: Mail answered, so the poll still counts (as incomplete), but some mail
+ * was not read (Mail too slow for the reading budget, a configured mailbox missing, unreadable or
+ * over the bounds) and the footer says so, never silently. Incomplete polls never auto-close Mail
+ * threads.
  */
 function mailboxHealth(trouble: MailboxTrouble): MailHealth {
 	const parts: string[] = []
+	if (trouble.slow) parts.push(MAIL_SLOW_DETAIL)
 	if (trouble.missing.length > 0) parts.push(`no mailbox named ${quoted(trouble.missing)}`)
 	if (trouble.unreadable.length > 0) parts.push(`could not read ${quoted(trouble.unreadable)}`)
 	if (trouble.capped.length > 0) parts.push(`more mail than one poll reads in ${quoted(trouble.capped)}`)
@@ -168,8 +182,17 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 						maxMessages: MAIL_MAX_MESSAGES,
 						maxCandidates: MAIL_MAX_CANDIDATES,
 						maxMailboxCandidates: MAIL_MAX_MAILBOX_CANDIDATES,
+						budgetMs: MAIL_SCRIPT_BUDGET_MS,
 					}),
-					{ signal, timeout: OSASCRIPT_TIMEOUT_MS, maxBuffer: OSASCRIPT_MAX_BUFFER, env: process.env },
+					{
+						signal,
+						timeout: OSASCRIPT_TIMEOUT_MS,
+						maxBuffer: OSASCRIPT_MAX_BUFFER,
+						env: process.env,
+						// osascript waiting on an Apple event may not stop at SIGTERM; the script only reads,
+						// so killing it outright loses nothing and the poll always settles.
+						killSignal: 'SIGKILL',
+					},
 				)
 				stdout = answer.stdout
 			} catch (error) {
@@ -194,6 +217,7 @@ export function createMailSignalReader(config: HelmConfig, deps: MailSignalReade
 
 			const { messages, dropped } = parseMessages(output.messages)
 			const trouble: MailboxTrouble = {
+				slow: output.slow === true,
 				missing: output.missingMailboxes ?? [],
 				unreadable: output.unreadableMailboxes ?? [],
 				capped: output.cappedMailboxes ?? [],

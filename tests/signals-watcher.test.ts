@@ -245,3 +245,62 @@ test(
 		await watcher.stop()
 	}),
 )
+
+test(
+	'a poll slower than its interval never overlaps the next; the next starts one interval after it settles; the other source keeps polling',
+	withDb(async db => {
+		const flush = () => new Promise(resolve => setImmediate(resolve))
+		const mail = gatedReader('mail', ['mail:abc'])
+		const github = instantReader('github', ['github:acme/a#1'])
+		const watcher = new SignalsWatcher(
+			config({ github: { pollSeconds: 30 }, mail: { enabled: true, pollSeconds: 30 } }),
+			db,
+			{ github: github.reader, mail: mail.reader, now: () => NOW },
+		)
+		// Mock after construction: only the watcher's timers, not the DB or setImmediate.
+		const timers = (await import('node:test')).mock.timers
+		timers.enable({ apis: ['setTimeout', 'Date'], now: NOW.getTime() })
+		try {
+			watcher.start()
+			timers.tick(0)
+			await flush()
+			assert.equal(mail.calls.length, 1)
+			assert.equal(github.calls(), 1)
+			// Mail hangs for three of its intervals: no second Mail read, GitHub keeps its pace.
+			for (let i = 0; i < 3; i++) {
+				timers.tick(30_000)
+				await flush()
+			}
+			assert.equal(mail.calls.length, 1)
+			assert.equal(github.calls(), 4)
+			// A manual poll during the slow read waits for it rather than starting a second one.
+			watcher.requestPoll()
+			await flush()
+			assert.equal(mail.calls.length, 1)
+
+			// Settled: the coalesced manual poll runs at once (the 15s gap since the slow poll began
+			// has long passed), never alongside it.
+			mail.release()
+			await flush()
+			timers.tick(0)
+			await flush()
+			assert.equal(mail.calls.length, 2)
+			// The regular interval counts from when a poll settles.
+			mail.release()
+			await flush()
+			timers.tick(29_999)
+			await flush()
+			assert.equal(mail.calls.length, 2)
+			timers.tick(1)
+			await flush()
+			assert.equal(mail.calls.length, 3)
+		} finally {
+			timers.reset()
+			const stopping = watcher.stop()
+			try {
+				mail.release()
+			} catch {}
+			await stopping
+		}
+	}),
+)

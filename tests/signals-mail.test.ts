@@ -24,8 +24,8 @@ import {
 	senderIdentity,
 	sentryHead,
 } from '../src/signals/mail-filter.js'
-import { MAIL_JXA_SCRIPT, mailOsascriptArgs } from '../src/signals/mail-jxa.js'
-import { createMailSignalReader } from '../src/signals/mail-source.js'
+import { MAIL_JXA_SCRIPT, MAIL_SCRIPT_BUDGET_MS, mailOsascriptArgs } from '../src/signals/mail-jxa.js'
+import { MAIL_SLOW_DETAIL, createMailSignalReader } from '../src/signals/mail-source.js'
 
 interface ScriptOutput {
 	running: boolean
@@ -182,11 +182,11 @@ test('untrusted subjects and names stay one bounded line', () => {
 
 function fakeRunner(answer: () => Promise<{ stdout: string; stderr: string }>): {
 	run: SignalCommandRunner
-	calls: { file: string; args: string[]; timeout: number }[]
+	calls: { file: string; args: string[]; timeout: number; killSignal?: string }[]
 } {
-	const calls: { file: string; args: string[]; timeout: number }[] = []
+	const calls: { file: string; args: string[]; timeout: number; killSignal?: string }[] = []
 	const run: SignalCommandRunner = async (file, args, opts) => {
-		calls.push({ file, args, timeout: opts.timeout })
+		calls.push({ file, args, timeout: opts.timeout, killSignal: opts.killSignal })
 		return answer()
 	}
 	return { run, calls }
@@ -204,13 +204,37 @@ test('reader runs one read-only osascript call and maps the answer', async () =>
 
 	assert.equal(calls.length, 1)
 	assert.equal(calls[0].file, 'osascript')
-	assert.equal(calls[0].timeout, 45_000)
+	assert.equal(calls[0].timeout, 60_000)
+	assert.equal(calls[0].killSignal, 'SIGKILL')
 	assert.deepEqual(calls[0].args.slice(0, 4), ['-l', 'JavaScript', '-e', MAIL_JXA_SCRIPT])
 	const scriptArgs = JSON.parse(calls[0].args[calls[0].args.length - 1])
 	assert.equal(scriptArgs.since, '2026-01-08T10:00:00.000Z')
 	assert.equal(scriptArgs.unreadOnly, true)
 	assert.equal(scriptArgs.include.length, 4)
 	assert.equal(new RegExp(scriptArgs.include[1], 'i').test('alerts@acme.sentry.io'), true)
+	// The script stops starting reads well before the hard stop, leaving room for the event in flight.
+	assert.equal(scriptArgs.budgetMs, MAIL_SCRIPT_BUDGET_MS)
+	assert.ok(MAIL_SCRIPT_BUDGET_MS > 0 && MAIL_SCRIPT_BUDGET_MS <= calls[0].timeout - 15_000)
+})
+
+test('a slow Mail answer is a partial poll and the footer says so', async () => {
+	const answer = { ...output, truncated: true, slow: true }
+	const { run } = fakeRunner(async () => ({ stdout: JSON.stringify(answer), stderr: '' }))
+	const { result, health } = await createMailSignalReader(config, { run, now: () => NOW }).read(
+		new AbortController().signal,
+	)
+	assert.equal(result?.complete, false)
+	assert.equal(result?.observations.length, 5)
+	assert.deepEqual(health, { status: 'error', detail: MAIL_SLOW_DETAIL })
+
+	const both = fakeRunner(async () => ({
+		stdout: JSON.stringify({ ...answer, unreadableMailboxes: ['Work inbox'] }),
+		stderr: '',
+	}))
+	const read = await createMailSignalReader(config, { run: both.run, now: () => NOW }).read(
+		new AbortController().signal,
+	)
+	assert.deepEqual(read.health, { status: 'error', detail: `${MAIL_SLOW_DETAIL}; could not read "Work inbox"` })
 })
 
 test('a truncated or not running Mail never yields a complete poll', async () => {
@@ -302,6 +326,13 @@ interface FakeMailbox {
 	messages: FakeMessage[]
 	/** Reading its messages throws (a mailbox Mail fails to read). */
 	broken?: boolean
+	/**
+	 * Called before each whole-list read with the property asked for and how many reads of it came
+	 * before; may change `messages` (mail arriving or leaving between two Apple events).
+	 */
+	onRead?: (property: string, count: number, messages: FakeMessage[]) => void
+	/** Messages already gone (moved, deleted) when the script asks for them by id. */
+	goneById?: number[]
 }
 
 interface FakeAccount {
@@ -312,9 +343,21 @@ interface FakeAccount {
 	listBroken?: boolean
 }
 
+const WHOLE_LISTS = {
+	id: 'id',
+	messageId: 'messageId',
+	subject: 'subject',
+	sender: 'sender',
+	dateReceived: 'date',
+	readStatus: 'read',
+	flaggedStatus: 'flagged',
+} as const
+
 /**
- * A read-only fake of the JXA Mail object model: any property write throws. `messages` is the
- * unified inbox; `accounts` and `local` hold the named mailboxes the script may resolve.
+ * A read-only fake of the JXA Mail object model: any property write throws, and so do `whose`
+ * filters and index access to messages (the slow paths the script must not take). `messages` is
+ * the first account's inbox; `inboxes` adds more accounts' inboxes, `unified` makes Mail list no
+ * per-account inbox; `accounts` and `local` hold the named mailboxes the script may resolve.
  */
 function fakeMail(
 	messages: FakeMessage[],
@@ -325,11 +368,14 @@ function fakeMail(
 			{ name: 'Work', addresses: ['me@work.example', 'alias@example.com'], mailboxes: [] },
 		] as FakeAccount[],
 		local = [] as FakeMailbox[],
+		inboxes = [] as FakeMailbox[],
+		unified = false,
+		inbox = {} as Partial<FakeMailbox>,
 	} = {},
 ) {
+	/** Whole-list reads (`<mailbox>:<property>`, bare for the first inbox) and per-message reads. */
 	const touched: string[] = []
-	const queries: unknown[] = []
-	/** Mailboxes whose messages were queried, by name (`inbox` for the unified inbox). */
+	/** Mailboxes whose messages were read, by name (`inbox` for the first inbox), once each. */
 	const read: string[] = []
 	const readOnly = <T extends object>(target: T): T =>
 		new Proxy(target, {
@@ -349,48 +395,58 @@ function fakeMail(
 				},
 			}),
 		)
-	const mailbox = (name: string, list: FakeMessage[], broken = false) => {
-		// The inbox keeps the plain batch names the original tests assert on.
-		const tag = name === 'inbox' ? '' : `${name}:`
-		const batch =
-			<K extends keyof FakeMessage>(key: K) =>
-			() => {
-				if (broken) throw new Error(`cannot read ${name}`)
-				touched.push(`${tag}${key}`)
-				return list.map(message => message[key])
-			}
-		const collection = indexed(
-			{
-				id: batch('id'),
-				messageId: batch('messageId'),
-				subject: batch('subject'),
-				sender: batch('sender'),
-				dateReceived: batch('date'),
-				readStatus: batch('read'),
-				flaggedStatus: batch('flagged'),
-			},
-			index => {
-				const message = list[index]
-				return readOnly({
-					id: () => message.id,
-					allHeaders: () => {
-						touched.push(`allHeaders:${message.id}`)
-						return message.headers
-					},
-				})
-			},
-		)
+	const mailbox = (box: FakeMailbox, account: string | null) => {
+		// The first inbox keeps the plain batch names the original tests assert on.
+		const tag = box.name === 'inbox' ? '' : `${box.name}:`
+		const counts: Record<string, number> = {}
+		const batch = (property: keyof typeof WHOLE_LISTS) => () => {
+			if (box.broken) throw new Error(`cannot read ${box.name}`)
+			const count = counts[property] ?? 0
+			counts[property] = count + 1
+			box.onRead?.(property, count, box.messages)
+			if (property === 'dateReceived' && count === 0) read.push(box.name)
+			touched.push(`${tag}${WHOLE_LISTS[property]}`)
+			return box.messages.map(message => message[WHOLE_LISTS[property]])
+		}
+		const lists = Object.fromEntries(Object.keys(WHOLE_LISTS).map(key => [key, batch(key as keyof typeof WHOLE_LISTS)]))
 		return readOnly({
-			messages: readOnly({
-				whose: (query: unknown) => {
-					queries.push(query)
-					read.push(name)
-					return collection
+			account: readOnly({
+				name: () => {
+					if (account === null) throw new Error('local mailbox')
+					return account
 				},
 			}),
+			messages: indexed(
+				{
+					...lists,
+					whose: () => {
+						throw new Error('whose() re-evaluates the whole mailbox per property')
+					},
+					byId: (id: number) => {
+						const message = box.goneById?.includes(id) ? undefined : box.messages.find(each => each.id === id)
+						return readOnly({
+							allHeaders: () => {
+								touched.push(`allHeaders:${id}`)
+								if (!message) throw new Error('no such message')
+								// Mail's Message-ID is the header's: fixtures that copy a message under a new id get
+								// the header to match.
+								return message.headers.replace(/^(message-id:).*$/im, `$1 <${message.messageId.replace(/^<|>$/g, '')}>`)
+							},
+							messageId: () => {
+								touched.push(`messageId:${id}`)
+								if (!message) throw new Error('no such message')
+								return message.messageId
+							},
+						})
+					},
+				},
+				() => {
+					throw new Error('index access re-resolves the message per request')
+				},
+			),
 		})
 	}
-	const mailboxes = (boxes: FakeMailbox[], listBroken = false) =>
+	const mailboxes = (boxes: FakeMailbox[], account: string | null, listBroken = false) =>
 		indexed(
 			{
 				name: () => {
@@ -398,26 +454,33 @@ function fakeMail(
 					return boxes.map(box => box.name)
 				},
 			},
-			index => mailbox(boxes[index].name, boxes[index].messages, boxes[index].broken),
+			index => mailbox(boxes[index], account),
 		)
 	const accountObjects = accounts.map(account =>
 		readOnly({
 			name: () => account.name,
 			emailAddresses: () => account.addresses,
-			mailboxes: mailboxes(account.mailboxes, account.listBroken),
+			mailboxes: mailboxes(account.mailboxes, account.name, account.listBroken),
 		}),
 	)
+	// Copies, so a test that changes a mailbox (onRead) never changes the shared fixtures.
+	const allInboxes = [{ name: 'inbox', ...inbox, messages: [...messages] }, ...inboxes]
+	const inboxObjects = allInboxes.map((box, index) => mailbox(box, accounts[index]?.name ?? `Account ${index}`))
+	const unifiedInbox = mailbox({ name: 'inbox', messages: allInboxes.flatMap(box => box.messages) }, null)
 	const mail = readOnly({
 		running: () => running,
-		inbox: mailbox('inbox', messages),
-		mailboxes: mailboxes(local),
+		inbox: readOnly({
+			messages: unifiedInbox.messages,
+			mailboxes: () => (unified ? [] : inboxObjects),
+		}),
+		mailboxes: mailboxes(local, null),
 		accounts: readOnly(
 			Object.assign(() => accountObjects, {
 				emailAddresses: () => accounts.map(account => account.addresses),
 			}),
 		),
 	})
-	return { mail, touched, queries, read }
+	return { mail, touched, read }
 }
 
 function runScript(mail: unknown, args: Parameters<typeof mailOsascriptArgs>[0]): ScriptOutput {
@@ -437,6 +500,7 @@ const scriptArgs = {
 	maxMessages: 300,
 	maxCandidates: 60,
 	maxMailboxCandidates: 60,
+	budgetMs: 0,
 }
 
 const fakeMessages: FakeMessage[] = [
@@ -504,12 +568,11 @@ const fakeMessages: FakeMessage[] = [
 ]
 
 test('JXA script reads in batches, reduces headers to bulk/root and never writes', () => {
-	const { mail, touched, queries } = fakeMail(fakeMessages)
+	const { mail, touched } = fakeMail(fakeMessages)
 	const result = runScript(mail, scriptArgs)
 	assert.equal(result.running, true)
 	assert.equal(result.truncated, false)
 	assert.deepEqual(result.myAddresses, ['me@example.com', 'me@work.example', 'alias@example.com'])
-	assert.equal(queries.length, 1)
 
 	const byId = new Map(result.messages.map(message => [message.messageId, message]))
 	assert.deepEqual(
@@ -537,15 +600,143 @@ test('JXA script reads in batches, reduces headers to bulk/root and never writes
 	assert.equal(byId.get('alert@sentry.example')?.bulk, true)
 	assert.ok(!JSON.stringify(result).includes('body text'))
 
-	// Headers only for candidates (the read, non-included message is skipped).
-	assert.ok(!touched.includes('allHeaders:5'))
-	assert.deepEqual(touched.slice(0, 7), ['id', 'messageId', 'subject', 'sender', 'date', 'read', 'flagged'])
+	// Whole lists, one Apple event per property: dates decide the window, then the cheap filter
+	// lists, then subjects and flags plus a second id list that proves nothing moved meanwhile.
+	// Never the Message-ID list (Mail fetches it slowly) and never a whose() filter (the fake throws).
+	assert.deepEqual(touched.slice(0, 7), ['date', 'id', 'read', 'sender', 'subject', 'flagged', 'id'])
+	// Then per message by id, and only for candidates (the read, non-included message is skipped);
+	// the Message-ID comes from the headers, or by id when the headers lack it.
+	const perMessage = touched.slice(7)
+	assert.ok(perMessage.every(entry => /^(allHeaders|messageId):\d+$/.test(entry)))
+	assert.ok(!perMessage.includes('allHeaders:5'))
+	assert.ok(!perMessage.includes('messageId:2'))
+	assert.ok(perMessage.includes('messageId:1'))
+})
+
+test('JXA: a mailbox with nothing in the window costs one date list, and one without candidates no subjects', () => {
+	const old = fakeMessages.map(message => ({ ...message, date: new Date('2025-06-01T00:00:00Z') }))
+	const quiet = fakeMail(old)
+	assert.deepEqual(runScript(quiet.mail, scriptArgs).messages, [])
+	assert.deepEqual(quiet.touched, ['date'])
+
+	const readOnlyMail = fakeMail(fakeMessages.filter(message => message.read && message.id !== 6))
+	assert.deepEqual(runScript(readOnlyMail.mail, scriptArgs).messages, [])
+	assert.deepEqual(readOnlyMail.touched, ['date', 'id', 'read', 'sender'])
+})
+
+test('JXA reads every account inbox (not the unified one) and falls back to the unified inbox', () => {
+	const second: FakeMailbox = {
+		name: 'Work inbox',
+		messages: [
+			{ ...fakeMessages[0], id: 11, messageId: 'work@northwind.cz', date: new Date('2026-01-14T09:30:00Z') },
+			// The same mail delivered to both accounts is one message.
+			{ ...fakeMessages[3], id: 14 },
+		],
+	}
+	const split = fakeMail(fakeMessages, { inboxes: [second] })
+	const result = runScript(split.mail, scriptArgs)
+	assert.deepEqual(split.read, ['inbox', 'Work inbox'])
+	const ids = result.messages.map(message => message.messageId)
+	assert.equal(ids[0], 'work@northwind.cz')
+	assert.equal(ids.filter(id => id === 'human@ops.example').length, 1)
+	assert.ok(result.messages.every(message => message.mailbox === null))
+	const dates = result.messages.map(message => message.dateReceived)
+	assert.deepEqual(dates, [...dates].sort().reverse())
+
+	const unified = fakeMail(fakeMessages, { unified: true })
+	assert.deepEqual(
+		runScript(unified.mail, scriptArgs).messages.map(message => message.messageId),
+		runScript(fakeMail(fakeMessages).mail, scriptArgs).messages.map(message => message.messageId),
+	)
+})
+
+test('JXA: mail arriving between two list reads makes the mailbox read again; a mailbox that keeps changing is reported', () => {
+	const arrival: FakeMessage = { ...fakeMessages[0], id: 99, messageId: 'late@northwind.cz' }
+	const once = fakeMail(fakeMessages, {
+		inbox: {
+			onRead: (property, count, list) => {
+				if (property === 'sender' && count === 0) list.unshift(arrival)
+			},
+		},
+	})
+	const settled = runScript(once.mail, scriptArgs)
+	assert.equal(settled.truncated, false)
+	assert.ok(settled.messages.some(message => message.messageId === 'late@northwind.cz'))
+	assert.equal(once.touched.filter(entry => entry === 'date').length, 2)
+
+	// Mail leaving and arriving between the reads keeps the length but moves the ids: read again.
+	const swap = fakeMail([...fakeMessages], {
+		inbox: {
+			onRead: (property, count, list) => {
+				if (property === 'flaggedStatus' && count === 0) list.splice(0, 1, arrival)
+			},
+		},
+	})
+	const swapped = runScript(swap.mail, scriptArgs)
+	assert.equal(swapped.truncated, false)
+	assert.ok(swapped.messages.some(message => message.messageId === 'late@northwind.cz'))
+	assert.ok(!swapped.messages.some(message => message.messageId === 'reply@northwind.cz'))
+
+	const restless = fakeMail(fakeMessages, {
+		inboxes: [{ name: 'Work inbox', messages: [] }],
+		accounts: gmailAccounts(),
+		inbox: {
+			onRead: (property, count, list) => {
+				if (property === 'sender') list.unshift({ ...arrival, id: 1000 + count })
+			},
+		},
+	})
+	const unsettled = runScript(restless.mail, scriptArgs) as unknown as ScriptOutput & { unreadableMailboxes: string[] }
+	assert.equal(unsettled.truncated, true)
+	assert.deepEqual(unsettled.unreadableMailboxes, ['iCloud inbox'])
+})
+
+test('JXA: past its budget the script stops reading and answers with what it has', () => {
+	let clock = 0
+	const realNow = Date.now
+	Date.now = () => clock
+	try {
+		const slowMail = fakeMail(fakeMessages, {
+			inbox: {
+				onRead: property => {
+					if (property === 'flaggedStatus') clock += 30_000
+				},
+			},
+		})
+		const result = runScript(slowMail.mail, { ...scriptArgs, budgetMs: 25_000 }) as unknown as ScriptOutput & {
+			slow: boolean
+		}
+		assert.equal(result.slow, true)
+		assert.equal(result.truncated, true)
+		assert.deepEqual(result.messages, [])
+		assert.ok(!slowMail.touched.some(entry => entry.startsWith('allHeaders:')))
+
+		clock = 0
+		const fast = runScript(fakeMail(fakeMessages).mail, {
+			...scriptArgs,
+			budgetMs: 25_000,
+		}) as unknown as ScriptOutput & {
+			slow: boolean
+		}
+		assert.equal(fast.slow, false)
+		assert.equal(fast.messages.length, 5)
+	} finally {
+		Date.now = realNow
+	}
+})
+
+test('JXA: a candidate gone before its headers are read is skipped and makes the read incomplete', () => {
+	const gone = fakeMail(fakeMessages, { inbox: { goneById: [4] } })
+	const result = runScript(gone.mail, scriptArgs)
+	assert.equal(result.truncated, true)
+	assert.equal(result.messages.length, 4)
+	assert.ok(!result.messages.some(message => message.messageId === 'human@ops.example'))
 })
 
 test('JXA script does nothing when Mail is not running and flags truncation', () => {
 	const stopped = fakeMail(fakeMessages, { running: false })
 	assert.deepEqual(runScript(stopped.mail, scriptArgs), { running: false })
-	assert.deepEqual(stopped.queries, [])
+	assert.deepEqual(stopped.touched, [])
 
 	const capped = runScript(fakeMail(fakeMessages).mail, { ...scriptArgs, maxCandidates: 2 })
 	assert.equal(capped.truncated, true)
@@ -1094,7 +1285,7 @@ function gmailAccounts(clientcare = clientcareMessages, broken = false): FakeAcc
 }
 
 test('JXA reads the inbox plus the listed mailboxes only, dedupes by Message-ID and labels the source', () => {
-	const { mail, read, touched, queries } = fakeMail(fakeMessages, { accounts: gmailAccounts() })
+	const { mail, read, touched } = fakeMail(fakeMessages, { accounts: gmailAccounts() })
 	const result = runScript(mail, { ...scriptArgs, mailboxes: ['neumann@contember.com/clientcare'] })
 	// Never All Mail, Trash, Spam or Sent unless listed; the inbox first.
 	assert.deepEqual(read, ['inbox', 'Clientcare'])
@@ -1112,16 +1303,14 @@ test('JXA reads the inbox plus the listed mailboxes only, dedupes by Message-ID 
 	// Same unread-only rule and window: the read one is not a candidate (no headers read).
 	assert.ok(!byId.has('read-task@clientcare.example'))
 	assert.ok(!touched.includes('allHeaders:203'))
-	assert.ok(!touched.includes('allHeaders:202'))
+	// Outside the window: never a candidate either.
+	assert.ok(!touched.includes('allHeaders:204'))
 	// Newest first across mailboxes.
 	const dates = result.messages.map(message => message.dateReceived)
 	assert.deepEqual(dates, [...dates].sort().reverse())
-	// One query per mailbox, all with the same window.
-	assert.equal(queries.length, 2)
-	for (const query of queries) {
-		const since = (query as { dateReceived: { _greaterThan: Date } }).dateReceived._greaterThan
-		assert.equal(since.toISOString(), scriptArgs.since)
-	}
+	// Whole lists per mailbox, never All Mail's.
+	assert.ok(touched.includes('Clientcare:date'))
+	assert.ok(!touched.some(entry => entry.startsWith('All Mail:')))
 })
 
 test('JXA mailbox entries: unqualified names match in every account and local mailboxes; All Mail only when listed', () => {
@@ -1172,23 +1361,40 @@ test('JXA: one unreadable mailbox leaves the rest read and is reported; the inbo
 	assert.deepEqual(result.unreadableMailboxes, ['Clientcare'])
 	assert.ok(result.messages.some(message => message.messageId === 'reply@northwind.cz'))
 
+	// Mail refusing the inbox list (no permission, Mail quit) fails the whole read.
 	const { mail } = fakeMail(fakeMessages, { accounts: gmailAccounts() })
 	const failingInbox = new Proxy(mail, {
 		get(target, property) {
 			if (property === 'inbox')
 				return {
-					messages: {
-						whose: () => ({
-							id: () => {
-								throw new Error('Not authorized (-1743)')
-							},
-						}),
+					mailboxes: () => {
+						throw new Error('Not authorized (-1743)')
 					},
 				}
 			return Reflect.get(target, property)
 		},
 	})
 	assert.throws(() => runScript(failingInbox, { ...scriptArgs, mailboxes: ['Clientcare'] }), /-1743/)
+
+	// Every inbox failing fails the read too, before any extra mailbox is read; one account's
+	// inbox failing leaves the other inboxes read and is reported.
+	const allBroken = fakeMail(fakeMessages, {
+		accounts: gmailAccounts(),
+		inbox: { broken: true },
+		inboxes: [{ name: 'Work inbox', messages: [], broken: true }],
+	})
+	assert.throws(() => runScript(allBroken.mail, { ...scriptArgs, mailboxes: ['Clientcare'] }), /cannot read inbox/)
+	assert.deepEqual(allBroken.read, [])
+	const oneBroken = fakeMail(fakeMessages, {
+		accounts: gmailAccounts(),
+		inboxes: [{ name: 'Work inbox', messages: [], broken: true }],
+	})
+	const partial = runScript(oneBroken.mail, { ...scriptArgs, mailboxes: ['Clientcare'] }) as unknown as ScriptOutput & {
+		unreadableMailboxes: string[]
+	}
+	assert.equal(partial.truncated, true)
+	assert.deepEqual(partial.unreadableMailboxes, ['neumann@contember.com inbox'])
+	assert.equal(partial.messages.length, 6)
 })
 
 test('JXA: the extra mailboxes are bounded per mailbox and in number', () => {

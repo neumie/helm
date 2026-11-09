@@ -24,6 +24,8 @@ export interface SignalCommandOptions {
 	timeout: number
 	maxBuffer: number
 	env: NodeJS.ProcessEnv
+	/** Signal sent on timeout or abort (execFile's default is SIGTERM). */
+	killSignal?: NodeJS.Signals
 }
 
 /**
