@@ -450,10 +450,13 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		return c.json({ data: result })
 	})
 
-	// `i` on a filtered Slack entry: show its sender again (unmute, or add to the include list).
+	// `i` on a filtered Slack entry: show its sender again (unmute, or add to the include list). Helm
+	// only, like slack-mute: it can reverse a mute Jakub made, so no agent may change it in his name.
 	routes.post('/filtered/:id/slack-include', signalsBody, c => {
 		const id = signalId(c.req.param('id'))
 		if (id === null) return c.json({ error: 'Invalid filtered id' }, 400)
+		const refused = jakubOnly(c, 'change the Slack include list')
+		if (refused) return refused
 		if (!deps?.includeSlackUser) return c.json({ error: 'This daemon cannot change the Slack include list' }, 503)
 		const store = storeFor()
 		const entry = store.getFiltered(id, now())

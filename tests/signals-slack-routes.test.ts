@@ -147,3 +147,22 @@ test('slack-mute: an agent is refused without the control token', async () => {
 		assert.equal((await post(`/${id}/slack-mute`, {})).status, 401)
 	})
 })
+
+test('slack-include: Helm only — an agent without the control token is refused before any mutation', async () => {
+	let called = false
+	await withRoutes(
+		{
+			includeSlackUser: userId => {
+				called = true
+				return { userId, added: true }
+			},
+		},
+		async ({ post }) => {
+			// No control token: refused (401) before the include list is touched.
+			assert.equal((await post('/filtered/5/slack-include', {})).status, 401)
+			assert.equal(called, false)
+			// With the control token the gate passes (404 here: no such filtered entry).
+			assert.equal((await post('/filtered/5/slack-include', {}, true)).status, 404)
+		},
+	)
+})
