@@ -10,6 +10,7 @@ import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launch
 import { runOpenCli } from './open.js'
 import { runReviewCli } from './review.js'
 import { runSignalProcess } from './signal.js'
+import { runSlackProcess } from './slack.js'
 
 // Re-exported for existing callers/tests; the helpers live in the side-effect-free daemon-http.ts.
 export { postToDaemon, resolveBaseUrl }
@@ -28,6 +29,7 @@ Commands:
   review   Legacy advanced document-connection commands
   dock     Agent dock: Claude sessions (Okena, Helm terminals) that need you (watch/ls/show)
   signal   Signals: GitHub, Mail and agent asks that want you (ls/show/add/done/set/note/watch/poll)
+  slack    Slack: connect, read and send (connect/status/user/read/send)
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]
@@ -334,6 +336,12 @@ switch (command) {
 				process.exitCode = 1
 			},
 		)
+		break
+	case 'slack':
+		runSlackProcess(process.argv.slice(3)).catch(error => {
+			console.error(`Error: ${error instanceof Error ? error.message.slice(0, 400) : error}`)
+			process.exitCode = 1
+		})
 		break
 	case 'help':
 	case '--help':
