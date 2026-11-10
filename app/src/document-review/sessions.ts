@@ -10,6 +10,8 @@ interface Pending {
 	feedback: ReviewFeedback
 	claimed: boolean
 	confirmed: boolean
+	/** Host clock at delivery confirmation; the completion deadline never moves past it plus the cap. */
+	confirmedAt: number
 	sequence: number
 	lastReport: string | null
 	archive?: { id: string; settle(value: ArchiveSettlement): void }
@@ -24,6 +26,11 @@ export interface ReviewOwner {
 	retired: boolean
 }
 
+/** The strict v1 control-wire receipt: host timestamps are renderer-only display data and never reach a caller. */
+export function wireReceipt(receipt: ReviewReceipt | null): ReviewReceipt | null {
+	return receipt && { id: receipt.id, outcome: receipt.outcome, detail: receipt.detail }
+}
+
 /** A bounded live mailbox. A caller owns its conversation; Helm owns no agent process. */
 export class ReviewSessions {
 	private readonly owners = new Map<string, ReviewOwner>()
@@ -31,10 +38,16 @@ export class ReviewSessions {
 		string,
 		{ fingerprint: string; receipt: ReviewReceipt; owner: ReviewOwner; settled: string | null }
 	>()
+	/**
+	 * `responseDeadlineMs` is the completion deadline after delivery or after the caller's latest `working` report;
+	 * `responseCapMs` bounds every renewal from delivery, so a looping or forged report cannot hold a request open
+	 * forever. Renewal never settles, revives or replays anything.
+	 */
 	constructor(
 		private readonly changed: () => void,
 		private readonly responseDeadlineMs = 15 * 60 * 1000,
 		private readonly deliveryDeadlineMs = 10000,
+		private readonly responseCapMs = Math.max(2 * 60 * 60 * 1000, responseDeadlineMs),
 	) {}
 	connect(
 		provider: ReviewProvider,
@@ -129,10 +142,12 @@ export class ReviewSessions {
 			(owner.waiter.documentId !== undefined && owner.waiter.documentId !== feedback.request.documentId)
 		)
 			throw new Error('Feedback no longer belongs to this connection.')
+		const sentAt = Date.now()
 		const receipt: ReviewReceipt = {
 			id,
 			outcome: 'pending',
 			detail: 'Handing feedback to the connected caller. This does not confirm an edit.',
+			sentAt,
 		}
 		this.receipts.set(id, { fingerprint, receipt, owner, settled: null })
 		owner.admitting = false
@@ -143,6 +158,7 @@ export class ReviewSessions {
 			role: 'user',
 			...(archive ? { archiveThreadId: archive.id } : {}),
 			text: feedback.request.instruction,
+			at: sentAt,
 			...(feedback.request.passage
 				? {
 						passageContext: {
@@ -156,6 +172,7 @@ export class ReviewSessions {
 			feedback: structuredClone(feedback),
 			claimed: false,
 			confirmed: false,
+			confirmedAt: 0,
 			sequence: -1,
 			lastReport: null,
 			archive,
@@ -234,22 +251,15 @@ export class ReviewSessions {
 			throw new Error('That feedback is not awaiting delivery confirmation.')
 		if (pending.confirmed) return
 		pending.confirmed = true
-		clearTimeout(pending.timer)
-		pending.timer = setTimeout(
-			() =>
-				this.uncertain(
-					owner,
-					'The caller did not report completion before its deadline. Inspect the original session; no feedback is replayed.',
-				),
-			this.responseDeadlineMs,
-		)
-		pending.timer.unref()
+		pending.confirmedAt = Date.now()
+		this.armCompletion(owner, pending)
 		const entry = this.receipts.get(requestId)
 		if (entry)
 			entry.receipt = {
 				id: requestId,
 				outcome: 'dispatched',
 				detail: 'Dispatched to the existing caller. This does not prove provider acceptance or a file edit.',
+				...(entry.receipt.sentAt === undefined ? {} : { sentAt: entry.receipt.sentAt }),
 			}
 		this.changed()
 	}
@@ -276,6 +286,7 @@ export class ReviewSessions {
 		pending.sequence = sequence
 		pending.lastReport = report
 		owner.snapshot.state = state === 'working' ? 'working' : state === 'error' ? 'error' : 'idle'
+		const at = Date.now()
 		if (text) {
 			const messageId = `${requestId}:assistant`
 			const message = owner.snapshot.messages.find(value => value.id === messageId)
@@ -286,12 +297,19 @@ export class ReviewSessions {
 					role: 'assistant',
 					text,
 					...(pending.archive ? { archiveThreadId: pending.archive.id } : {}),
+					at,
 				})
 		}
+		// A newer working report is the caller's own evidence that it is still on this request: renew the
+		// completion deadline, never past the cap from delivery.
+		if (state === 'working') this.armCompletion(owner, pending)
 		if (state !== 'working') {
 			pending.archive?.settle({ state, reply: text })
 			clearTimeout(pending.timer)
-			if (entry) entry.settled = report
+			if (entry) {
+				entry.settled = report
+				entry.receipt = { ...entry.receipt, settledAt: at }
+			}
 			owner.pending = null
 			owner.snapshot.error =
 				state === 'error' ? 'The caller reported a failure. Inspect the document and original session.' : null
@@ -300,6 +318,7 @@ export class ReviewSessions {
 					id: `${requestId}:error`,
 					role: 'activity',
 					text: 'The caller reported a failure. Inspect the document and original session.',
+					at,
 				})
 		}
 		this.bound(owner)
@@ -348,12 +367,34 @@ export class ReviewSessions {
 		clearTimeout(pending.timer)
 		pending.archive?.settle({ state: 'unknown', detail: message })
 		const entry = this.receipts.get(pending.feedback.request.id)
-		if (entry) entry.receipt = { id: entry.receipt.id, outcome: 'unknown', detail: message }
+		if (entry)
+			entry.receipt = {
+				id: entry.receipt.id,
+				outcome: 'unknown',
+				detail: message,
+				...(entry.receipt.sentAt === undefined ? {} : { sentAt: entry.receipt.sentAt }),
+				settledAt: Date.now(),
+			}
 		owner.pending = null
 		owner.snapshot.needsAcknowledgement = true
 		owner.snapshot.error = message
 		owner.snapshot.state = 'error'
 		this.changed()
+	}
+	/** (Re)arm the completion deadline: min(now + deadline, delivery + cap). Never revives a settled request. */
+	private armCompletion(owner: ReviewOwner, pending: Pending): void {
+		if (owner.pending !== pending || !pending.confirmed) return
+		clearTimeout(pending.timer)
+		const delay = Math.max(0, Math.min(this.responseDeadlineMs, pending.confirmedAt + this.responseCapMs - Date.now()))
+		pending.timer = setTimeout(
+			() =>
+				this.uncertain(
+					owner,
+					'The caller did not report completion before its deadline. Inspect the original session; no feedback is replayed.',
+				),
+			delay,
+		)
+		pending.timer.unref()
 	}
 	private bound(owner: ReviewOwner): void {
 		// Include source associations and JSON escaping in the existing payload budget.

@@ -107,6 +107,9 @@ export const sessionSchema = z
 							.object({ documentId: uuid, passage: reviewRequestSchema.shape.passage.unwrap() })
 							.strict()
 							.optional(),
+						// Host display time. The control wire never carries messages (status/list clear them), so
+						// older strict parsers never see it; this keeps the schema an honest description of a snapshot.
+						at: z.number().int().nonnegative().safe().optional(),
 					})
 					.strict(),
 			)

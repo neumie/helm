@@ -11,7 +11,7 @@ import { connectReview, loadReviewConnection } from '../../src/document-review/c
 import { ReviewControlServer } from '../../src/document-review/control-server.js'
 import type { CallerBinding, ReviewControlBackend } from '../../src/document-review/control-server.js'
 import type { ReviewFeedback } from '../../src/document-review/types.js'
-const { ReviewSessions } = sessionsModule
+const { ReviewSessions, wireReceipt } = sessionsModule
 const { readReviewFile, reviewRevision } = documentModule
 const { reviewPrompt } = requestModule
 const run = promisify(execFile)
@@ -74,7 +74,7 @@ export async function callerFixture(deadline = 2000) {
 					sessions.report(binding.id, binding.owner, command.requestId, command.sequence, command.state, command.text)
 					return true
 				case 'receipt':
-					return sessions.receipt(command.requestId, binding.id)
+					return wireReceipt(sessions.receipt(command.requestId, binding.id))
 				case 'disconnect':
 					sessions.disconnect(binding.id, binding.owner)
 					return true

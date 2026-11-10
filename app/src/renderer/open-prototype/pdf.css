@@ -1,0 +1,119 @@
+/* Story-only PDF renderer (helm open prototype). Pages are paper on the --well: the one literal
+ * colour here is paper white, which is the document's own surface, not chrome. */
+
+.open-pdf {
+	background: var(--well);
+	outline: none;
+}
+.open-pdf:focus-visible {
+	/* Full-bleed scroll owner: the ring sits inside its edge, where it cannot be clipped. */
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+/* At least as wide as the view so pages centre; wider when zoom outgrows it (the view scrolls). */
+.open-pdf-pages {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 24px;
+	box-sizing: border-box;
+	width: max-content;
+	min-width: 100%;
+	padding: 24px;
+}
+
+.open-pdf-page {
+	flex: 0 0 auto;
+}
+
+.open-pdf-paper {
+	position: relative;
+	overflow: hidden;
+	background: #fff;
+	border-radius: 2px;
+	color-scheme: only light;
+}
+
+.open-pdf-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	opacity: 0;
+	transition: opacity 150ms ease-out;
+}
+.open-pdf-canvas.open-pdf-painted {
+	opacity: 1;
+}
+
+/* Minimal pdf.js text layer (subset of pdfjs-dist/web/pdf_viewer.css `.textLayer`, which is 168 KB
+ * of viewer chrome we do not want). Text is transparent; only its selection paints. */
+.open-pdf-text {
+	--scale-round-x: 1px;
+	--scale-round-y: 1px;
+	--min-font-size: 1;
+	--text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+	--min-font-size-inv: calc(1 / var(--min-font-size));
+	position: absolute;
+	inset: 0;
+	overflow: clip;
+	line-height: 1;
+	letter-spacing: normal;
+	word-spacing: normal;
+	text-align: initial;
+	text-size-adjust: none;
+	forced-color-adjust: none;
+	transform-origin: 0 0;
+	caret-color: transparent;
+	z-index: 0;
+}
+.open-pdf-text :is(span, br) {
+	position: absolute;
+	color: transparent;
+	white-space: pre;
+	cursor: text;
+	transform-origin: 0% 0%;
+	user-select: text;
+}
+.open-pdf-text > :not(.markedContent),
+.open-pdf-text .markedContent span:not(.markedContent) {
+	--font-height: 0;
+	--scale-x: 1;
+	--rotate: 0deg;
+	z-index: 1;
+	font-size: calc(var(--text-scale-factor) * var(--font-height));
+	transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.open-pdf-text .markedContent {
+	display: contents;
+}
+.open-pdf-text ::selection {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	color: transparent;
+}
+.open-pdf-text br::selection {
+	background: transparent;
+}
+.open-pdf-text .open-pdf-eoc {
+	display: block;
+	position: absolute;
+	inset: 100% 0 0;
+	z-index: 0;
+	cursor: default;
+	user-select: none;
+}
+.open-pdf-text.open-pdf-selecting .open-pdf-eoc {
+	top: 0;
+}
+
+/* Anchors paint above the text; they never take the pointer. */
+.open-pdf-paper > .open-anchor-box {
+	z-index: 2;
+}
+
+/* Alt/Option held in feedback mode: the page is a region surface, text is not selectable. */
+.open-pdf-region-armed .open-pdf-paper,
+.open-pdf-region-armed .open-pdf-text :is(span, br) {
+	cursor: crosshair;
+	user-select: none;
+}

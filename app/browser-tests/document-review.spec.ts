@@ -333,13 +333,22 @@ test('sending a passage question adds its bubble and live reply without normal d
 	await page.getByRole('button', { name: 'Send passage discussion' }).click()
 	await expect(page.getByRole('region', { name: 'Delivery and recovery' })).toHaveCount(0)
 	await expect(page.getByText('Dispatched', { exact: true })).toHaveCount(0)
+	// No success panel: one quiet activity line (spec D14, E5), in the bubble that sent it, never the companion.
+	const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
+	const companionLine = page.locator('.review-companion .review-activity')
+	await expect(bubble.locator('.review-activity')).toHaveCount(1)
+	await expect(bubble.locator('.review-activity')).not.toContainText('Why this specific passage?')
+	await expect(companionLine).toHaveCount(0)
 	const marker = page.getByRole('button', { name: 'Show passage conversation', exact: true })
 	await marker.click()
-	const bubble = page.getByRole('dialog', { name: 'Passage conversation' })
 	await expect(bubble).toContainText('Why this specific passage?')
 	await expect(bubble).not.toContainText('The source locator should identify')
+	await expect(bubble.locator('.review-activity')).toHaveCount(1)
+	await expect(companionLine).toHaveCount(0)
 	await page.evaluate(() => window.__helmDocumentReviewProof?.settle())
 	await expect(bubble).toContainText('This is a fixture reply to the chosen request.')
+	await expect(bubble.locator('.review-activity')).toHaveAttribute('data-phase', 'replied')
+	await expect(bubble.locator('.review-activity .activity-indicator')).toHaveCount(0)
 	await expect(page.locator('.review-companion')).not.toContainText('Why this specific passage?')
 	await expect(page.locator('.review-companion')).not.toContainText('This is a fixture reply to the chosen request.')
 	// The marker was opened while our command was admitted: it offers read-only
@@ -350,6 +359,8 @@ test('sending a passage question adds its bubble and live reply without normal d
 	await expect(passageEditor(page)).toHaveCount(0)
 	await expect(page.getByRole('group', { name: 'Pending selection' })).toHaveCount(0)
 	await page.getByRole('button', { name: 'Close passage conversation' }).click()
+	// A finished passage send stays in its bubble; the whole-document chat never repeats it.
+	await expect(companionLine).toHaveCount(0)
 	await marker.click()
 	await expect(editor).toHaveValue('')
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(1)
@@ -1741,7 +1752,7 @@ test('ordinary clicks, programmatic selection and invalid oversized source never
 	})
 	await reading.dispatchEvent('keyup', { key: 'Shift' })
 	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeVisible()
-	await expect(page.getByRole('alert')).not.toContainText('Select one source block')
+	await expect(page.getByRole('alert').filter({ hasText: 'Select one source block' })).toHaveCount(0)
 	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toBeVisible()
 	await expect(reading).toBeFocused()
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.stats().sends)).toBe(0)
@@ -2970,8 +2981,7 @@ test('conversation sticks to the newest message unless the reader has scrolled a
 	const chat = page.locator('.review-chat')
 	const input = page.getByRole('textbox', { name: 'Whole-document message' })
 	const send = page.locator('.review-companion').getByRole('button', { name: 'Send message', exact: true })
-	const tailDistance = () =>
-		chat.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)
+	const tailDistance = () => chat.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)
 	const resting = await chat.evaluate(element => {
 		const messages = [...element.querySelectorAll('.review-message')]
 		const first = messages[0]?.getBoundingClientRect()

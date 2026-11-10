@@ -1,0 +1,94 @@
+/* Story-only B4: windows cascaded on a desk, Helm's own tabs, its Window menu and ⌘⇧O. Tokens only. */
+.b4-desk {
+	position: relative;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--chrome);
+	--step: 28px;
+	--stack: 2;
+}
+.b4-window {
+	position: absolute;
+	top: calc(var(--depth) * var(--step));
+	left: calc(var(--depth) * var(--step));
+	right: calc((var(--stack) - var(--depth)) * var(--step));
+	bottom: calc((var(--stack) - var(--depth)) * var(--step));
+	border: 1px solid var(--hairline);
+	border-radius: 10px;
+	overflow: hidden;
+	background: var(--pane);
+	box-shadow: var(--shadow-2);
+}
+.b4-desk[data-frame="tabs"] .b4-window {
+	inset: 0;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+}
+.b4-window .open-stage,
+.b4-window .open-b2 {
+	height: 100%;
+}
+.b4-back {
+	background: var(--pane);
+}
+.b4-back-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 40px;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	font-size: 13px;
+	color: var(--text-2);
+}
+.b4-back-name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Static menus in the shared menu look (§3.8). */
+.b4-menu {
+	animation: none;
+	max-height: none;
+	max-width: 320px;
+}
+.b4-tab-menu {
+	position: absolute;
+	top: auto;
+	min-width: 220px;
+}
+.b4-menubar {
+	position: absolute;
+	inset: 0 0 auto;
+	z-index: 70;
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	height: 26px;
+	padding: 0 16px;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	font-size: 13px;
+	color: var(--text-0);
+}
+.b4-menubar-app {
+	font-weight: 600;
+}
+.b4-menubar-open {
+	position: relative;
+	padding: 0 6px;
+	margin: 0 -6px;
+	border-radius: 4px;
+	background: var(--fill-raised);
+}
+.b4-window-menu {
+	top: calc(100% + 4px);
+	left: 0;
+	min-width: 260px;
+}
+.b4-desk[data-frame="menu"] .b4-window {
+	top: calc(26px + var(--depth) * var(--step));
+}

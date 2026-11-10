@@ -1,0 +1,41 @@
+/* Story chrome for E Send receipt only: a frame switcher above one review window. */
+.rcpt-story {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	height: 100dvh;
+	background: var(--pane);
+	color: var(--text-0);
+	font-family: var(--font-ui);
+}
+.rcpt-story-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 16px;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--hairline);
+	background: var(--chrome);
+}
+.rcpt-story-title {
+	display: flex;
+	flex-direction: column;
+	font-size: calc(13px * var(--ui-scale));
+	min-width: 0;
+}
+.rcpt-story-title span {
+	font-size: calc(11px * var(--ui-scale));
+	color: var(--text-2);
+}
+.rcpt-story-frames {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+.rcpt-story-window {
+	min-height: 0;
+	overflow: hidden;
+}
+.rcpt-story-window .document-review,
+.rcpt-story-window .review-start {
+	height: 100%;
+}

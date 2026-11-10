@@ -1,0 +1,229 @@
+/* Story-only `helm open` code view (docs/plans/helm-open/spec.md). Tokens only (design-system §2).
+ * Every editor rule starts with `.open-code .open-code-host .cm-editor`: three classes outrank
+ * CodeMirror's injected light/dark base rules (two scope classes) whatever their mount order. */
+
+/* The editor's own scroller owns scrolling (CodeMirror virtualises lines), so the view root
+ * clips instead of adding a second scrollbar. */
+.open-code {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	scrollbar-gutter: auto;
+	background: var(--well);
+}
+.open-code-host {
+	flex: 1 1 auto;
+	min-height: 0;
+	min-width: 0;
+}
+.open-code-host[hidden] {
+	display: none;
+}
+
+.open-code .open-code-host .cm-editor {
+	height: 100%;
+	background: var(--well);
+	color: var(--text-0);
+	font-size: 12px;
+}
+.open-code .open-code-host .cm-editor.cm-focused {
+	outline: none;
+}
+/* Keyboard arrival only (Tab): pointer focus is shown by the cursor and active line alone.
+ * Inset, because the editor fills the pane edge to edge. */
+.open-code[data-focus-ring] .open-code-host .cm-editor {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.open-code .open-code-host .cm-editor .cm-scroller {
+	font-family: var(--font-mono, "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
+	line-height: 1.6;
+	letter-spacing: 0;
+	overflow: auto;
+}
+.open-code .open-code-host .cm-editor .cm-content {
+	padding: 12px 0;
+	caret-color: var(--accent);
+}
+.open-code .open-code-host .cm-editor .cm-line {
+	padding: 0 16px 0 12px;
+}
+
+/* Gutter: line numbers are literal locators, mono --text-2 on the well, one hairline edge. */
+.open-code .open-code-host .cm-editor .cm-gutters {
+	background: var(--well);
+	color: var(--text-2);
+	border: none;
+	border-right: 1px solid var(--hairline);
+}
+.open-code .open-code-host .cm-editor .cm-lineNumbers .cm-gutterElement {
+	padding: 0 12px 0 16px;
+	min-width: 24px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Active line only while the reader is in the file; an unfocused view stays calm. */
+.open-code .open-code-host .cm-editor .cm-activeLine,
+.open-code .open-code-host .cm-editor .cm-activeLineGutter {
+	background: transparent;
+}
+.open-code .open-code-host .cm-editor.cm-focused .cm-activeLine {
+	background: var(--fill-subtle);
+}
+.open-code .open-code-host .cm-editor.cm-focused .cm-activeLineGutter {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
+/* Cursor: accent, and gone when the view is not focused. */
+.open-code .open-code-host .cm-editor .cm-cursorLayer .cm-cursor {
+	border-left: 2px solid var(--accent);
+}
+.open-code .open-code-host .cm-editor:not(.cm-focused) .cm-cursorLayer {
+	display: none;
+}
+
+/* Selection: accent soft fill; stronger while focused. */
+.open-code .open-code-host .cm-editor .cm-selectionLayer .cm-selectionBackground {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.open-code .open-code-host .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Search matches: soft accent; the current one a step stronger with a 1px accent edge. */
+.open-code .open-code-host .cm-editor .cm-searchMatch {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	border-radius: 2px;
+}
+.open-code .open-code-host .cm-editor .cm-searchMatch.cm-searchMatch-selected {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+	outline: 1px solid var(--accent);
+}
+
+/* Feedback anchor: the lines being written about. Soft accent stripe + accent line numbers. */
+.open-code .open-code-host .cm-editor .cm-line.cm-open-code-anchor {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.open-code .open-code-host .cm-editor .cm-gutterElement.cm-open-code-anchor-gutter {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	color: var(--accent);
+}
+
+/* ---- search panel: one --chrome bar under a hairline, §3.7 fields, quiet buttons ---- */
+
+.open-code .open-code-host .cm-editor .cm-panels {
+	background: var(--chrome);
+	color: var(--text-0);
+	font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif);
+	letter-spacing: -0.01em;
+}
+.open-code .open-code-host .cm-editor .cm-panels-top {
+	border-bottom: 1px solid var(--hairline);
+}
+.open-code .open-code-host .cm-editor .cm-panels-bottom {
+	border-top: 1px solid var(--hairline);
+}
+.open-code .open-code-host .cm-editor .cm-panel.cm-search {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	padding: 8px 48px 8px 16px;
+	font-size: 12px;
+}
+.open-code .open-code-host .cm-editor .cm-panel.cm-search input,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search button,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search label {
+	margin: 0;
+}
+
+.open-code .open-code-host .cm-editor .cm-panel .cm-textfield {
+	box-sizing: border-box;
+	width: 240px;
+	height: 28px;
+	padding: 0 10px;
+	background: var(--fill-subtle);
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	color: var(--text-0);
+	font: inherit;
+	font-size: 12px;
+	outline: none;
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-textfield::placeholder {
+	color: var(--text-2);
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-textfield:hover {
+	border-color: var(--hairline-strong);
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-textfield:focus {
+	border-color: var(--accent);
+}
+
+/* Quiet buttons: no fill or border at rest, --fill-subtle on hover. */
+.open-code .open-code-host .cm-editor .cm-panel .cm-button,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="close"] {
+	box-sizing: border-box;
+	height: 28px;
+	padding: 0 8px;
+	background: transparent;
+	background-image: none;
+	border: none;
+	border-radius: 4px;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-button:hover,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="close"]:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-button:active,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="close"]:active {
+	background: var(--fill-raised);
+	background-image: none;
+}
+.open-code .open-code-host .cm-editor .cm-panel .cm-button:focus-visible,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="close"]:focus-visible,
+.open-code .open-code-host .cm-editor .cm-panel.cm-search input[type="checkbox"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="close"] {
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	width: 28px;
+	padding: 0;
+	font-size: 13px;
+	font-weight: 400;
+}
+
+.open-code .open-code-host .cm-editor .cm-panel.cm-search label {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 28px;
+	font-size: 12px;
+	color: var(--text-1);
+	white-space: nowrap;
+	cursor: pointer;
+}
+.open-code .open-code-host .cm-editor .cm-panel.cm-search label:hover {
+	color: var(--text-0);
+}
+.open-code .open-code-host .cm-editor .cm-panel.cm-search input[type="checkbox"] {
+	width: 12px;
+	height: 12px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+/* The first option label sits a little apart from the action buttons. */
+.open-code .open-code-host .cm-editor .cm-panel.cm-search [name="select"] {
+	margin-right: 8px;
+}

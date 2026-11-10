@@ -90,7 +90,7 @@ export const CliEditing: Story = {
 		docs: {
 			description: {
 				story:
-					'helm edit FILE opens and listens without provider flags. An unspecified caller displays Agent honestly; no provider identity is inferred. This is a display fixture, not CLI or installed-agent delivery certification.',
+					'helm edit FILE opens and listens without provider flags. Without --agent the label comes from exactly one provider environment marker (CLAUDECODE, CODEX_THREAD_ID), otherwise Agent; it is a display label, never authority. This is a display fixture, not CLI or installed-agent delivery certification.',
 			},
 		},
 	},

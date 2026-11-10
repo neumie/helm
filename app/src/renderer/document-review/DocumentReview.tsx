@@ -28,6 +28,7 @@ import { ReviewMarkdown } from './ReviewMarkdown'
 import { SavedAnnotationHighlights } from './SavedAnnotationHighlights'
 import { ScreenshotStrip, screenshotBase64 } from './ScreenshotStrip'
 import type { ReviewShot } from './ScreenshotStrip'
+import { PassageSendContext, SendActivityLine, SendRefusedNote } from './SendActivity'
 import { annotationSaveDraft, captureAnnotationSave, removeReviewAnnotation } from './annotations'
 import { captureArchiveRecovery, currentArchiveRecovery } from './archive-recovery'
 import type { ArchiveRecoveryTarget, ArchiveReviewApi, ArchiveReviewState } from './archive-recovery'
@@ -40,6 +41,7 @@ import {
 	samePassage,
 } from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
+import { type LastSend, type SendActivity, deriveSendActivity } from './send-activity'
 import '../reading-width.css'
 import './document-review.css'
 
@@ -167,9 +169,17 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const [saveError, setSaveError] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const [receipt, setReceipt] = useState<ReviewReceipt | null>(null)
+	const [lastSend, setLastSend] = useState<LastSend | null>(null)
 	const [recovery, setRecovery] = useState<string | null>(null)
 	const [candidate, setCandidate] = useState<Candidate | null>(null)
 	const [passage, setPassageState] = useState<ReviewPassage | null>(null)
+	// Request id of the send whose read-only passage bubble is open (PassageSendContext), so the companion stays quiet.
+	const [inspecting, setInspecting] = useState<string | null>(null)
+	const inspect = useCallback(
+		(requestId: string, open: boolean) =>
+			setInspecting(current => (open ? requestId : current === requestId ? null : current)),
+		[],
+	)
 	const currentPassage = useRef(passage)
 	currentPassage.current = passage
 	const [passageText, setPassageText] = useState('')
@@ -376,6 +386,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		if (before && (!after || before.owner !== after.owner)) {
 			blockedOwner.current = true
 			setOwnerBlocked(true)
+			const blocked = operation.current
+			if (blocked)
+				setLastSend(last =>
+					last?.id === blocked.id ? { ...last, settled: { outcome: 'unconfirmed', at: null } } : last,
+				)
 			operation.current = null
 			setBusy(false)
 			setRecovery(null)
@@ -430,9 +445,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				if (current.error || receiptResult.data?.outcome === 'unknown') {
 					pending.phase = 'uncertain'
 					setRecovery(pending.text)
+					setLastSend(last =>
+						last?.id === pending.id ? { ...last, settled: { outcome: 'unconfirmed', at: null } } : last,
+					)
 				} else {
 					operation.current = null
 					setRecovery(null)
+					const at = receiptResult.data?.settledAt ?? null
+					setLastSend(last => (last?.id === pending.id ? { ...last, settled: { outcome: 'replied', at } } : last))
 				}
 				setBusy(false)
 			}
@@ -531,6 +551,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		const pending = operation.current
 		if (pending && (pending.api !== api || pending.generation !== lifecycle.current)) {
 			pending.phase = 'uncertain'
+			setLastSend(last => (last?.id === pending.id ? { ...last, settled: { outcome: 'unconfirmed', at: null } } : last))
 			setBusy(false)
 			setRecovery(pending.text)
 			setReceipt({
@@ -836,12 +857,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		let next = highlightPassage(state.document.text, state.document.revision, start, end, quote, 'block')
 		if (next && figure.dataset.canvasId) {
 			const attested = state.document.canvas?.blocks.find(
-				item =>
-					item.id === figure.dataset.canvasId &&
-					item.start === start &&
-					item.end === end,
+				item => item.id === figure.dataset.canvasId && item.start === start && item.end === end,
 			)
-			next = attested && next.start === attested.start && next.end === attested.end ? { ...next, canvasId: attested.id } : null
+			next =
+				attested && next.start === attested.start && next.end === attested.end
+					? { ...next, canvasId: attested.id }
+					: null
 		}
 		try {
 			if (next) validateCurrentPassage(next)
@@ -1234,6 +1255,13 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			phase: 'sending',
 		}
 		operation.current = pending
+		setLastSend({
+			id: pending.id,
+			scope: scoped ? 'passage' : 'whole',
+			passage: scope,
+			at: Date.now(),
+			failed: null,
+		})
 		setBusy(true)
 		setError(null)
 		setReceipt(null)
@@ -1272,16 +1300,25 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				restoreShots()
 				return
 			}
-			if (result.error !== undefined) {
+			if (result.error !== undefined && result.uncertain) {
+				// A lost IPC reply may follow delivery: Not confirmed, never Not sent. Keep the text local, not back
+				// in the editor as if nothing went anywhere, and replay nothing.
+				unconfirmed(pending, captured, result.error)
+			} else if (result.error !== undefined) {
 				operation.current = null
 				setBusy(false)
 				setError(result.error)
 				restoreShots()
-				if (scoped && passageEditor.current.token === cleared && currentPassage.current === scope)
+				let restored = false
+				if (scoped && passageEditor.current.token === cleared && currentPassage.current === scope) {
 					writePassage(pending.text)
-				else if (!scoped && editToken.current === cleared)
+					restored = true
+				} else if (!scoped && editToken.current === cleared) {
 					changeDraft(value => ({ ...value, instruction: pending.text }))
-				else setRecovery(pending.text)
+					restored = true
+				} else setRecovery(pending.text)
+				const failed = { reason: result.error, restored, text: restored ? pending.text : null }
+				setLastSend(last => (last?.id === pending.id ? { ...last, failed } : last))
 			} else {
 				sentShots.current.set(`${pending.id}:user`, captured)
 				pending.phase = 'running'
@@ -1298,17 +1335,25 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				restoreShots()
 				return
 			}
-			sentShots.current.set(`${pending.id}:user`, captured)
-			pending.phase = 'uncertain'
-			setBusy(false)
-			setRecovery(pending.text)
-			setReceipt({
-				id: pending.id,
-				outcome: 'unknown',
-				detail:
-					'Delivery could not be confirmed. Check the provider and document before sending again; nothing is replayed.',
-			})
+			unconfirmed(pending, captured)
 		}
+	}
+	function settleLast(id: string, outcome: 'replied' | 'unconfirmed', at: number | null = null): void {
+		setLastSend(last => (last?.id === id ? { ...last, settled: { outcome, at } } : last))
+	}
+	function unconfirmed(pending: Operation, captured: ReviewShot[], detail?: string): void {
+		sentShots.current.set(`${pending.id}:user`, captured)
+		pending.phase = 'uncertain'
+		settleLast(pending.id, 'unconfirmed')
+		setBusy(false)
+		setRecovery(pending.text)
+		setReceipt({
+			id: pending.id,
+			outcome: 'unknown',
+			detail:
+				detail ??
+				'Delivery could not be confirmed. Check the provider and document before sending again; nothing is replayed.',
+		})
 	}
 	async function acknowledge(): Promise<void> {
 		const pending = operation.current
@@ -1616,6 +1661,52 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const activeThreads: PassageThread[] = [...passageThreads.values()]
 		.flat()
 		.filter(thread => samePassage(thread.passage, passage))
+	const sendView: SendActivity | null =
+		selected && lastSend
+			? deriveSendActivity({
+					last: lastSend,
+					operation: operation.current,
+					receipt,
+					session: selected,
+					activity: state?.activity,
+					agent: providerNames[selected.provider],
+				})
+			: null
+	// A passage send speaks in its own bubble while that bubble is open, otherwise in the companion. A bubble
+	// reopened from its marker shows the thread's passage, so it also matches by this send's own request id; the
+	// read-only bubble a marker opens says it through PassageSendContext and keeps the companion quiet meanwhile.
+	const sendInBubble =
+		!!sendView &&
+		sendView.scope === 'passage' &&
+		!!visibleBubble &&
+		(samePassage(sendView.passage, passage) ||
+			activeThreads.some(thread => thread.messages.some(message => message.id === `${sendView.id}:user`)))
+	const sendLine = (where: 'bubble' | 'companion') =>
+		!sendView
+			? null
+			: where === 'bubble'
+				? sendInBubble && <SendActivityLine view={sendView} />
+				: !sendInBubble &&
+					inspecting !== sendView.id &&
+					// A finished passage send stays only in its own bubble, never under the whole-document chat.
+					!(sendView.scope === 'passage' && sendView.phase === 'replied') && <SendActivityLine view={sendView} />
+	// A refusal speaks next to its composer until the next Send or until its restored text is edited; a refresh
+	// clearing `error` does not take it away. When that composer is not on screen the top banner keeps it.
+	const refusedText = lastSend?.failed?.restored
+		? sendView?.scope === 'passage'
+			? passageText
+			: (draft?.instruction ?? '')
+		: null
+	const refusedInline =
+		sendView?.phase === 'not-sent' &&
+		// Restored: until that text is edited. Kept in recovery instead: until recovery is restored or discarded.
+		(lastSend?.failed?.restored ? refusedText === lastSend.failed.text : recovery !== null) &&
+		(sendView.scope === 'whole' || (!!visibleBubble && samePassage(sendView.passage, passage)))
+	// No activity line for this window's send (none yet, reopened mid-request, refused, or not confirmed): the plain
+	// reported Working…/Waiting… state still shows, so an unconfirmed delivery that the caller reports working says so.
+	const lineless = !sendView || sendView.phase === 'not-sent' || sendView.phase === 'unconfirmed'
+	const refusedNote = (scope: 'whole' | 'passage') =>
+		refusedInline && sendView?.scope === scope ? <SendRefusedNote view={sendView} /> : null
 	const feedback = ((receipt && ['unknown', 'rejected'].includes(receipt.outcome)) || recovery !== null) && (
 		// biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded receipt scroll owner supports keyboard reading.
 		<section className="review-feedback-status" tabIndex={0} aria-label="Delivery and recovery">
@@ -1749,27 +1840,30 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		const localShots = shots.current[scope]
 		void shotVersion
 		const canSend = !!text.trim() || localShots.length > 0
-		const blockedReason = !canSend
-			? null
-			: stale
-				? 'This selection is stale. Select the passage again; it will not be guessed.'
-				: canvasMode && !canvasReady
-					? 'Wait for the document canvas to settle, or read Source.'
-					: state.document.error
-						? 'Document unavailable. Retry opening it before sending.'
-						: ownerBlocked
-							? 'Reopen this document from the original agent before sending.'
-							: operation.current?.phase === 'uncertain'
-								? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
-								: operation.current || busy || activeSession
-									? 'Wait for the current request to settle before sending.'
-									: !selected
-										? 'Open this document from your agent to send feedback.'
-										: selected.error
-											? 'Check the conversation outcome before sending.'
-											: !selected.listening
-												? 'Feedback paused. Keep this draft until the conversation is listening.'
-												: null
+		// The Not sent note beside this composer already gives the reason; do not say it twice.
+		const refusedHere = refusedInline && sendView?.scope === scope
+		const blockedReason =
+			!canSend || refusedHere
+				? null
+				: stale
+					? 'This selection is stale. Select the passage again; it will not be guessed.'
+					: canvasMode && !canvasReady
+						? 'Wait for the document canvas to settle, or read Source.'
+						: state.document.error
+							? 'Document unavailable. Retry opening it before sending.'
+							: ownerBlocked
+								? 'Reopen this document from the original agent before sending.'
+								: operation.current?.phase === 'uncertain'
+									? 'Check the outcome in your conversation before sending again. Nothing is replayed.'
+									: operation.current || busy || activeSession
+										? 'Wait for the current request to settle before sending.'
+										: !selected
+											? 'Open this document from your agent to send feedback.'
+											: selected.error
+												? 'Check the conversation outcome before sending.'
+												: !selected.listening
+													? 'Feedback paused. Keep this draft until the conversation is listening.'
+													: null
 		return (
 			<div
 				className="review-writing-surface"
@@ -1917,7 +2011,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			</div>
 		)
 	}
-	return (
+	const page = (
 		<main
 			className="document-review"
 			onKeyDown={event => {
@@ -2136,7 +2230,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					)}
 				</div>
 			)}
-			{(error || saveError) && (
+			{(error || saveError) && !(refusedInline && !saveError && error === sendView?.reason) && (
 				<div className="review-banner" role="alert">
 					<span>{saveError ?? error}</span>
 					{saveError ? (
@@ -2288,12 +2382,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								if (
 									selection?.anchorNode === started.anchor &&
 									selection.anchorOffset === started.anchorOffset &&
-								selection.focusNode === started.focus &&
-						selection.focusOffset === started.focusOffset
-					) {
-						selectFigure(event.target)
-						return
-					}
+									selection.focusNode === started.focus &&
+									selection.focusOffset === started.focusOffset
+								) {
+									selectFigure(event.target)
+									return
+								}
 								if (selection?.isCollapsed) {
 									selectFigure(event.target)
 									return
@@ -2484,16 +2578,12 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 										providerName={selected ? providerNames[selected.provider] : ''}
 										screenshots={sentShots.current}
 									/>
-									{selected?.state === 'working' && samePassage(operation.current?.passage ?? null, passage) && (
-										<output className="review-working">
-											<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
-											Working…
-										</output>
-									)}
+									{sendLine('bubble')}
 								</div>
 							</section>
 							<div className="review-passage-writing">
 								{feedbackPassage && feedback}
+								{refusedNote('passage')}
 								{composer(passage)}
 							</div>
 						</PassageChat>
@@ -2572,13 +2662,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						<div className="review-chat-log">
 							<ArchivedConversation document={state.document} session={selected} />
 							<Conversation document={state.document} session={selected} screenshots={sentShots.current} />
-							{selected?.state === 'working' && !operation.current?.passage && (
+							{sendLine('companion')}
+							{lineless && selected?.state === 'working' && (
 								<output className="review-working">
 									<ActivityIndicator variant="progress" label={`${providerNames[selected.provider]} is working`} />
 									Working…
 								</output>
 							)}
-							{selected?.state === 'waiting' && <output>Waiting for the connected agent’s reply…</output>}
+							{lineless && selected?.state === 'waiting' && <output>Waiting for the connected agent’s reply…</output>}
 							{selected?.error && (
 								<div className="review-warning" role="alert">
 									<p>{selected.error}</p>
@@ -2598,12 +2689,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					</div>
 					<div className="review-companion-bottom">
 						{(!visibleBubble || !feedbackPassage) && feedback}
+						{refusedNote('whole')}
 						{composer(null)}
 					</div>
 				</section>
 			</div>
 		</main>
 	)
+	return <PassageSendContext.Provider value={{ view: sendView, inspect }}>{page}</PassageSendContext.Provider>
 }
 
 function DiscardReplyConfirmation({

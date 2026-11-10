@@ -3,9 +3,15 @@ import type { ReviewApi, ReviewResult } from './document-review/types'
 const token = ipcRenderer.sendSync('document-review:bootstrap') as string | null
 function invoke<T>(channel: string, ...args: unknown[]): Promise<ReviewResult<T>> {
 	if (!token) return Promise.resolve({ error: 'This document review is no longer available. Reopen it in Helm.' })
-	return ipcRenderer
-		.invoke(channel, token, ...args)
-		.catch(() => ({ error: 'Helm could not confirm this operation. Do not automatically resend it.' }))
+	return (
+		ipcRenderer
+			.invoke(channel, token, ...args)
+			// A lost IPC reply may follow an effect: mark it uncertain so the window never treats it as a refusal.
+			.catch(() => ({
+				error: 'Helm could not confirm this operation. Do not automatically resend it.',
+				uncertain: true as const,
+			}))
+	)
 }
 function subscribe(channel: string, listener: () => void): () => void {
 	const handler = () => listener()

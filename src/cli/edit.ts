@@ -24,7 +24,9 @@ Agent continuations (use only the handles returned to THIS conversation):
 
 Optional: --timeout SECONDS (1..3600, default 3600).
 For opening only, --agent, --workspace and --label remain optional overrides.
-An unspecified provider is displayed honestly as Agent, never guessed.
+Without --agent, the provider is Claude Code or Codex when exactly one of their
+own markers (CLAUDECODE, CODEX_THREAD_ID) is set, otherwise Agent. It is only
+a display label, never authority.
 Timeout returns no feedback; resume only the exact returned connection.
 Errors/unknown delivery are never retried or replayed automatically.
 The original conversation keeps its tools, permissions and questions.
@@ -66,6 +68,18 @@ async function feedbackOutput(value: unknown): Promise<void> {
 			error ? reject(error) : resolve(),
 		),
 	)
+}
+
+/**
+ * The provider label `helm edit` opens with: an explicit `--agent` wins; otherwise exactly one of the providers' own
+ * environment markers names it (both or neither stay the honest unspecified `cli`). Markers are inherited by child
+ * processes, so this is a display label only, never authority or session binding.
+ */
+export function editProvider(options: string[], env: NodeJS.ProcessEnv): string[] {
+	if (options.includes('--agent')) return []
+	const claude = !!env.CLAUDECODE
+	const codex = !!env.CODEX_THREAD_ID
+	return ['--agent', claude && !codex ? 'claude' : codex && !claude ? 'codex' : 'cli']
 }
 
 function waitOptions(args: string[]): string[] {
@@ -145,7 +159,7 @@ export async function runEditCli(args: string[]): Promise<void> {
 		return
 	}
 	const options = waitOptions(args.slice(1))
-	const provider = options.includes('--agent') ? [] : ['--agent', 'cli']
+	const provider = editProvider(options, process.env)
 	const label = options.includes('--label') ? [] : ['--label', 'Document conversation']
 	await runReviewCli(['open', action, ...options, ...provider, ...label, '--wait'], feedbackOutput, {
 		windowBound: true,

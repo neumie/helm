@@ -1,0 +1,239 @@
+/* Story-only `helm open` spreadsheet + CSV renderer. Tokens only (design-system §2). */
+
+.open-sheet {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	scrollbar-gutter: auto;
+	background: var(--pane);
+}
+
+/* Formula / value bar: selected range ref, then the active cell's formula or value. */
+.open-sheet-bar {
+	flex: 0 0 28px;
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	font-size: 12px;
+	white-space: nowrap;
+}
+.open-sheet-ref {
+	flex: 0 0 auto;
+	min-width: 96px;
+	padding: 0 12px 0 16px;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+	border-right: 1px solid var(--hairline);
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+.open-sheet-content {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 0 16px 0 12px;
+}
+.open-sheet-formula,
+.open-sheet-value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-0);
+	user-select: text;
+}
+.open-sheet-value {
+	font-size: 12px;
+}
+.open-sheet-result {
+	flex: 0 0 auto;
+	margin-left: auto;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+
+/* The scroll owner. Headers are sticky inside it; cells are absolutely placed by the virtualizers. */
+.open-sheet-scroll {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+	cursor: cell;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-0);
+}
+.open-sheet-content-box {
+	position: relative;
+}
+
+.open-sheet-colheads {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	display: flex;
+	height: 24px;
+	background: var(--chrome);
+}
+.open-sheet-corner {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	flex: 0 0 auto;
+	height: 24px;
+	box-sizing: border-box;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	cursor: default;
+}
+.open-sheet-colhead,
+.open-sheet-rowhead {
+	position: absolute;
+	box-sizing: border-box;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	color: var(--text-2);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+	transition: color var(--motion-state, 140ms) ease-out;
+}
+.open-sheet-colhead {
+	top: 0;
+	cursor: s-resize;
+}
+.open-sheet-rowheads {
+	position: sticky;
+	left: 0;
+	z-index: 2;
+}
+.open-sheet-rowhead {
+	left: 0;
+	right: 0;
+	cursor: e-resize;
+}
+.open-sheet-colhead.is-selected,
+.open-sheet-rowhead.is-selected {
+	color: var(--text-0);
+}
+
+.open-sheet-cells {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+}
+.open-sheet-cell {
+	position: absolute;
+	box-sizing: border-box;
+	height: 24px;
+	padding: 0 8px;
+	line-height: 23px;
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: none;
+}
+.open-sheet-cell.is-right {
+	text-align: right;
+}
+.open-sheet-cell.is-center {
+	text-align: center;
+}
+
+/* Range selection: accent soft fill + 1px accent edge on the range bounds. */
+.open-sheet-selection,
+.open-sheet-anchor,
+.open-sheet-active {
+	position: absolute;
+	z-index: 1;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+.open-sheet-selection {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	border: 1px solid var(--accent);
+}
+/* Feedback anchor being written about: shared paint, square to the cell grid. */
+.open-sheet-anchor {
+	border-radius: 0;
+	outline: none;
+	border: 1px solid var(--accent);
+}
+/* The keyboard focus lands on the active cell: a 2px accent ring when focus is visible. */
+.open-sheet-scroll:focus-visible .open-sheet-active {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+/* Sheet tabs: flat text, active = --text-0 + 2px accent underline (sidebar lifecycle index). */
+.open-sheet-tabs {
+	flex: 0 0 24px;
+	display: flex;
+	align-items: stretch;
+	gap: 16px;
+	padding: 0 16px;
+	background: var(--chrome);
+	border-top: 1px solid var(--hairline);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.open-sheet-tabs::-webkit-scrollbar {
+	display: none;
+}
+.open-sheet-tab {
+	position: relative;
+	flex: 0 0 auto;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--text-1);
+	font: inherit;
+	font-size: 12px;
+	letter-spacing: -0.01em;
+	cursor: pointer;
+	transition: color var(--motion-state, 140ms) ease-out;
+}
+.open-sheet-tab:hover {
+	color: var(--text-0);
+}
+.open-sheet-tab[aria-selected="true"] {
+	color: var(--text-0);
+}
+.open-sheet-tab[aria-selected="true"]::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2px;
+	background: var(--accent);
+}
+.open-sheet-tab {
+	margin: 0 -4px;
+	padding: 0 4px;
+}
+/* The 24px row clips anything outside it, so the ring sits on the tab's own edge. */
+.open-sheet-tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+	border-radius: 4px;
+}
+
+/* open.css's .open-mono reads --font-mono, which the app's :root does not define yet; fall back to
+ * the stack the rest of the app uses for literal text. */
+.open-sheet .open-mono {
+	font-family: var(--font-mono, "SF Mono", Menlo, ui-monospace, monospace);
+}

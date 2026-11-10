@@ -1,0 +1,48 @@
+/* Story-only `helm open` image renderer. Tokens only (design-system §2). */
+
+.open-view.open-image {
+	display: flex;
+	background: var(--well);
+	outline: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+.open-view.open-image:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.open-image[data-cursor="grab"] .open-image-canvas {
+	cursor: grab;
+}
+.open-image[data-cursor="grabbing"] .open-image-canvas {
+	cursor: grabbing;
+}
+.open-image[data-cursor="region"] .open-image-canvas {
+	cursor: crosshair;
+}
+
+.open-image-canvas {
+	position: relative;
+	flex: 0 0 auto;
+	touch-action: none;
+}
+
+.open-image-picture {
+	position: absolute;
+	display: block;
+	max-width: none;
+	pointer-events: none;
+}
+
+/* Checkerboard only under images that actually carry transparency. */
+.open-image-picture[data-transparent] {
+	background-color: var(--well);
+	background-image: conic-gradient(var(--fill-subtle) 25%, transparent 0 50%, var(--fill-subtle) 0 75%, transparent 0);
+	background-size: 16px 16px;
+}
+
+/* Individual pixels read as pixels once each covers more than 2 × 2 screen px. */
+.open-image-picture[data-pixelated] {
+	image-rendering: pixelated;
+}

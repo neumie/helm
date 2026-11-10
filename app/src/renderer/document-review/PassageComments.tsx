@@ -4,6 +4,7 @@ import { Btn } from '../button'
 import { GLYPH } from '../sidebar/ui'
 import { ScreenshotStrip } from './ScreenshotStrip'
 import type { ReviewShot } from './ScreenshotStrip'
+import { PassageSendLine } from './SendActivity'
 import { locatePassageDisplayRanges } from './passage-anchor'
 import { samePassage } from './passage-threads'
 
@@ -321,6 +322,10 @@ function PassageCommentBubble({
 				{/* biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded message scroll owner must support keyboard reading. */}
 				<section className="review-passage-bubble-messages" aria-label="Passage messages" tabIndex={0}>
 					<PassageMessages threads={threads} providerName={providerName} />
+					<PassageSendLine
+						messageIds={threads.flatMap(thread => thread.messages.map(message => message.id))}
+						open={open}
+					/>
 					{onOpenThread &&
 						threads.map((thread, index) => (
 							<Btn
