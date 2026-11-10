@@ -4,8 +4,8 @@ import { lstat, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
-import type { IpcMainInvokeEvent } from 'electron'
+import { BaseWindow, WebContentsView, clipboard, dialog, ipcMain, shell } from 'electron'
+import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron'
 import type { ReviewViewResult } from '../../../src/document-review/protocol'
 import { failureCause, gitRootRefusal, isReviewRefusal, refuse } from '../../../src/document-review/refusal'
 import { decodeScreenshots, discardScreenshots, stageScreenshots } from '../../../src/document-review/screenshot-files'
@@ -43,17 +43,33 @@ import { VIEWER_INDEX_URL, ViewerFileTokens } from './viewer-protocol'
 import type { ViewerSessionFactory, ViewerSessionHandle } from './viewer-session'
 
 const runFile = promisify(execFile)
-/** Feedback-capable windows (bound, unbound review and recovery) share today's bound of eight. */
+/** Feedback-capable views (bound, unbound review and recovery) share today's bound of eight. */
 export const REVIEW_WINDOW_LIMIT = 8
-/** Plain `helm open` windows have their own soft bound, so plain views never make `helm edit` fail. */
+/** Plain `helm open` views have their own soft bound, so plain views never make `helm edit` fail. */
 export const PLAIN_WINDOW_LIMIT = 32
 /** HEIC conversion time one `view` batch may spend; below the CLI's 30 s deadline for the batch's answer. */
 export const VIEW_CONVERT_BUDGET_MS = 24_000
-interface WindowState {
-	/** A plain `helm open` window: read-only, no caller, no saved state. Binding (`--listen`) clears it. */
+/** The review surface (`--pane`) in the dark and light review themes: painted until a view's first frame. */
+const REVIEW_DARK_BACKGROUND = '#141517'
+const REVIEW_LIGHT_BACKGROUND = '#faf9f6'
+/**
+ * One document = one `WebContentsView` (docs/plans/helm-open/spec.md, Per-view access keys). Every access and
+ * lifecycle decision uses the view's own `webContents`; the container only shows, focuses, titles and parents
+ * dialogs, and a move changes nothing but `container`.
+ */
+interface ViewState {
+	/** A plain `helm open` view: read-only, no caller, no saved state. Binding (`--listen`) clears it. */
 	plain: boolean
 	recoveryContext: ArchiveFileContext | null
-	window: BrowserWindow
+	view: WebContentsView
+	/**
+	 * The view's own webContents, captured at creation: every sender check uses it. (`view.webContents` reads
+	 * undefined once the contents are destroyed.)
+	 */
+	contents: WebContents
+	/** Mutable: the window the view is in now. Never used for access. */
+	container: ContainerState
+	/** The view's `webContents.id`, its key in `views`; unchanged by a move. */
 	senderId: number
 	token: string
 	profileId: string
@@ -67,9 +83,28 @@ interface WindowState {
 	allowClose: boolean
 	fileFlights: Set<Promise<unknown>>
 	active: Set<Promise<unknown>>
-	/** The window's own helm-viewer: file tokens; they die with the window. */
+	/** The view's own helm-viewer: file tokens; they move with the view and die with it. */
 	tokens: ViewerFileTokens
 	viewerSession: ViewerSessionHandle | null
+	/** The view's close path ran: `closeDocument` and `onAllClosed` happen once per view. */
+	closed: boolean
+	/** The review surface colour the view and its window paint before the first frame. */
+	background: string
+}
+/** A `BaseWindow` holding views. One view per container until tabs exist (S7b). */
+interface ContainerState {
+	window: BaseWindow
+	/** Strip order. */
+	views: ViewState[]
+	/** The shown view; the others are hidden but keep their access (live reload, a waiting caller). */
+	active: ViewState | null
+	/** Helm's own close of the container (last view gone, profile switch): the per-view guard already ran. */
+	closing: boolean
+	/**
+	 * The guarded view that cancelled a close of the whole window (red button, quit). Once that view confirms and
+	 * closes, the window close runs again, so the clean views close too and a pending quit can finish.
+	 */
+	resumeCloseFor: ViewState | null
 }
 interface ArchiveFileContext {
 	root: string
@@ -95,10 +130,15 @@ interface ReviewWindowDependencies {
 	/** Test seam: where provider session files are read from (default: the user's Claude/Codex roots). */
 	activitySources?: ActivitySources
 	/**
-	 * The window's in-memory session with the helm-viewer: handler, network block and deny-all permissions (main.ts
+	 * The view's in-memory session with the helm-viewer: handler, network block and deny-all permissions (main.ts
 	 * passes the real one). Absent only in the fake-Electron window tests.
 	 */
 	viewerSession?: ViewerSessionFactory
+	/**
+	 * Called once per new view, before it loads. main.ts attaches its shortcut dispatcher here: a `BaseWindow` never
+	 * fires `browser-window-created`.
+	 */
+	onViewCreated?(contents: WebContents): void
 }
 const displayPath = (file: string) => {
 	const home = homedir()
@@ -106,7 +146,9 @@ const displayPath = (file: string) => {
 }
 
 export class DocumentReviewWindows {
-	private readonly windows = new Map<number, WindowState>()
+	/** Keyed by each view's own `webContents.id`. */
+	private readonly windows = new Map<number, ViewState>()
+	private readonly containers = new Set<ContainerState>()
 	private readonly sessions = new Map<string, ReviewSessions>()
 	private readonly drafts = new Map<string, ReviewDraftStore>()
 	private readonly archiveCapacity = new ReviewArchiveCapacity()
@@ -128,9 +170,10 @@ export class DocumentReviewWindows {
 			deps.activitySources,
 		)
 	}
-	private current(state: WindowState): boolean {
+	private current(state: ViewState): boolean {
 		return (
-			!state.window.isDestroyed() &&
+			!state.closed &&
+			!state.contents.isDestroyed() &&
 			this.windows.get(state.senderId) === state &&
 			(state.recoveryContext
 				? this.historicalCurrent(state.recoveryContext) &&
@@ -143,7 +186,7 @@ export class DocumentReviewWindows {
 		if (this.admissionClosed)
 			throw refuse('Review admission is closed. Recover unsaved replies before leaving this profile.')
 	}
-	private requireWritable(state: WindowState): void {
+	private requireWritable(state: ViewState): void {
 		if (state.plain) throw new Error('This window only shows the file. Open it with helm edit to send feedback.')
 		if (state.recoveryContext)
 			throw new Error('This window only recovers an unsaved reply. No feedback or comment can be sent or saved.')
@@ -218,15 +261,13 @@ export class DocumentReviewWindows {
 		// Metadata is observed by any current window, never by an obsolete renderer event.
 		this.publish(context.profileId)
 	}
-	private require(event: IpcMainInvokeEvent, token: unknown): WindowState {
+	private require(event: IpcMainInvokeEvent, token: unknown): ViewState {
 		const state = this.windows.get(event.sender.id)
 		if (!state) throw new Error('This review is no longer current. Reopen it in the active profile.')
-		requireReviewAccess(state.window.webContents, event.sender, event.senderFrame, state.token, token, () =>
-			this.current(state),
-		)
+		requireReviewAccess(state.contents, event.sender, event.senderFrame, state.token, token, () => this.current(state))
 		return state
 	}
-	private optional(event: IpcMainInvokeEvent, token: unknown): WindowState | null {
+	private optional(event: IpcMainInvokeEvent, token: unknown): ViewState | null {
 		try {
 			return this.require(event, token)
 		} catch {
@@ -236,10 +277,10 @@ export class DocumentReviewWindows {
 	private async run<T>(
 		event: IpcMainInvokeEvent,
 		token: unknown,
-		effect: (state: WindowState) => Promise<T> | T,
+		effect: (state: ViewState) => Promise<T> | T,
 		fileOperation = false,
 	): Promise<ReviewResult<T>> {
-		let state: WindowState | null = null
+		let state: ViewState | null = null
 		// Once the effect resolved, a failure can no longer mean "not sent": report it as uncertain.
 		let effected = false
 		try {
@@ -247,7 +288,7 @@ export class DocumentReviewWindows {
 			if (state.active.size >= 16) throw new Error('Review is busy. Wait for the current operation to finish.')
 			const admitted = Promise.resolve().then(() => {
 				this.require(event, token)
-				return effect(state as WindowState)
+				return effect(state as ViewState)
 			})
 			state.active.add(admitted)
 			if (fileOperation) state.fileFlights.add(admitted)
@@ -601,13 +642,20 @@ export class DocumentReviewWindows {
 			const state = this.optional(event, token)
 			if (!state || state.dirty || state.noteSave || state.fileFlights.size > 0 || state.archive.guarded()) return
 			state.allowClose = true
-			state.window.close()
+			const container = state.container
+			const resume = container.resumeCloseFor === state
+			// Only this view: its siblings stay open, unless it had cancelled a close of the whole window.
+			this.closeView(state)
+			if (resume && !container.closing && !container.window.isDestroyed() && container.views.length)
+				container.window.close()
 		})
 	}
-	/** File → Open document… (⌘O in a review window). `parent` is a review window the dialog belongs to. */
-	async chooseFileFromMenu(parent?: BrowserWindow): Promise<void> {
+	/** File → Open document… (⌘O in a document view). The dialog belongs to `parent`'s window. */
+	async chooseFileFromMenu(parent?: WebContents): Promise<void> {
 		const win = this.deps.mainWindow()
-		const dialogParent = parent && this.ownsWindow(parent) ? parent : win
+		const owner = parent ? this.windows.get(parent.id) : undefined
+		const dialogParent: BaseWindow | null =
+			owner && owner.contents === parent && this.current(owner) ? owner.container.window : win
 		const token = this.deps.profileToken()
 		const epoch = this.admissionEpoch
 		const current = () =>
@@ -620,7 +668,7 @@ export class DocumentReviewWindows {
 		if (!current() || this.opening) return
 		this.opening = true
 		try {
-			const picked = await dialog.showOpenDialog(dialogParent as BrowserWindow, {
+			const picked = await dialog.showOpenDialog(dialogParent as BaseWindow, {
 				title: 'Open document for review',
 				filters: [{ name: 'Markdown, JSX or TSX', extensions: ['md', 'jsx', 'tsx'] }],
 				properties: ['openFile'],
@@ -629,7 +677,7 @@ export class DocumentReviewWindows {
 			await this.openFile(picked.filePaths[0], token, current)
 		} catch (error) {
 			if (current())
-				await dialog.showMessageBox(dialogParent as BrowserWindow, {
+				await dialog.showMessageBox(dialogParent as BaseWindow, {
 					type: 'warning',
 					message: 'Document review unavailable',
 					detail: isReviewRefusal(error)
@@ -755,8 +803,7 @@ export class DocumentReviewWindows {
 				if (state.plain) {
 					// D2: an agent's --listen binds the plain window showing this file, after full feedback admission.
 					if (sessionId) await this.bindPlainWindow(state, root, sessionId, current)
-					state.window.show()
-					state.window.focus()
+					this.reveal(state)
 					return
 				}
 				if (state.recoveryContext && sessionId) throw refuse('Close the recovery window before selecting a new caller.')
@@ -768,11 +815,10 @@ export class DocumentReviewWindows {
 					state.selectedSession = sessionId
 					this.publish(state.profileId)
 				}
-				state.window.show()
-				state.window.focus()
+				this.reveal(state)
 				return
 			}
-		if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+		if (this.feedbackViews() >= REVIEW_WINDOW_LIMIT)
 			throw refuse('Eight review windows are open. Close one before opening another.')
 		const profileId = this.deps.profileId()
 		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
@@ -793,20 +839,42 @@ export class DocumentReviewWindows {
 		}
 		await this.createWindow(observation, profileId, token, current, sessionId)
 	}
-	private feedbackWindows(): number {
+	/** The caps count views, wherever they are shown. */
+	private feedbackViews(): number {
 		return [...this.windows.values()].filter(state => !state.plain).length
 	}
-	private plainWindows(): number {
+	private plainViews(): number {
 		return [...this.windows.values()].filter(state => state.plain).length
 	}
-	/** A Helm review or plain viewing window, for the window-aware shortcut dispatcher. */
-	ownsWindow(win: BrowserWindow): boolean {
-		return [...this.windows.values()].some(state => state.window === win)
+	/**
+	 * The focused Helm document window, for the menu and the cockpit's shortcut path: non-null whenever one of
+	 * Helm's document containers (or a view's undocked DevTools) has focus, so the caller never falls back to the
+	 * cockpit. `contents` is the shown view while it is open, even when it lost its access (a profile switch, a
+	 * lapsed recovery): closing still goes through its guard, and `zoom`/`chooseFileFromMenu` check access
+	 * themselves. Null contents only for a window whose last view is closing.
+	 */
+	focused(): { contents: WebContents | null } | null {
+		const open = (state: ViewState | null): state is ViewState =>
+			!!state && !state.closed && !state.contents.isDestroyed() && this.windows.get(state.senderId) === state
+		const focused = BaseWindow.getFocusedWindow()
+		if (focused)
+			for (const container of this.containers)
+				if (container.window === focused) return { contents: open(container.active) ? container.active.contents : null }
+		// BaseWindow.getFocusedWindow does not count a view's undocked DevTools; BrowserWindow's did before S7a.
+		for (const state of this.windows.values())
+			if (open(state) && state.contents.isDevToolsFocused()) return { contents: state.contents }
+		return null
 	}
-	/** Viewer zoom for ⌘= / ⌘- / ⌘0 in a review window; the renderer scales its own reading surface. */
-	zoom(win: BrowserWindow, step: -1 | 0 | 1): void {
-		const state = [...this.windows.values()].find(value => value.window === win)
-		if (state && this.current(state)) sendToLiveRenderer(win.webContents, 'document-review:zoom', step)
+	/** Viewer zoom for ⌘= / ⌘- / ⌘0 in a document view; the renderer scales its own reading surface. */
+	zoom(contents: WebContents, step: -1 | 0 | 1): void {
+		const state = this.windows.get(contents.id)
+		if (state && state.contents === contents && this.current(state))
+			sendToLiveRenderer(contents, 'document-review:zoom', step)
+	}
+	/** ⌘W / File → Close in a document view: closes that view only, through its close guard. */
+	closeViewOf(contents: WebContents): void {
+		const state = this.windows.get(contents.id)
+		if (state && state.contents === contents) this.closeView(state)
 	}
 	/**
 	 * D2: replace a plain window's observation with a feedback-mode one for the caller. Runs the full repository
@@ -814,14 +882,14 @@ export class DocumentReviewWindows {
 	 * a refusal binds nothing and leaves the plain window as it was.
 	 */
 	private async bindPlainWindow(
-		state: WindowState,
+		state: ViewState,
 		root: string,
 		sessionId: string,
 		current: () => boolean,
 	): Promise<void> {
 		if (state.dirty || state.active.size || state.fileFlights.size)
 			throw refuse('This document window is busy. Try again when it settles; nothing was rerouted.')
-		if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+		if (this.feedbackViews() >= REVIEW_WINDOW_LIMIT)
 			throw refuse('Eight review windows are open. Close one before opening another.')
 		const observation = new ReviewDocumentObservation(root, state.observation.file, () => this.publish(state.profileId))
 		await observation.start()
@@ -913,7 +981,7 @@ export class DocumentReviewWindows {
 					format: shown === 'jsx' ? 'canvas' : shown === 'image' ? format : shown,
 				}
 			}
-		if (this.plainWindows() >= PLAIN_WINDOW_LIMIT)
+		if (this.plainViews() >= PLAIN_WINDOW_LIMIT)
 			throw refuse(`${basename(file)} was not opened: ${PLAIN_WINDOW_LIMIT} files are already open. Close one first.`)
 		if (!this.drafts.get(profileId)) this.drafts.set(profileId, new ReviewDraftStore(this.deps.profileDir(profileId)))
 		const tokens = new ViewerFileTokens()
@@ -950,10 +1018,7 @@ export class DocumentReviewWindows {
 	): Promise<void> {
 		const plain = options.plain === true
 		const tokens = options.tokens ?? new ViewerFileTokens()
-		if (
-			!current() ||
-			(plain ? this.plainWindows() >= PLAIN_WINDOW_LIMIT : this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
-		) {
+		if (!current() || (plain ? this.plainViews() >= PLAIN_WINDOW_LIMIT : this.feedbackViews() >= REVIEW_WINDOW_LIMIT)) {
 			await observation.dispose()
 			await tokens.revokeAll()
 			throw new Error('Close a review window before opening another.')
@@ -966,17 +1031,16 @@ export class DocumentReviewWindows {
 			await tokens.revokeAll()
 			throw new Error('Review preferences are unavailable.')
 		}
-		// Every review window (plain or feedback) gets its own in-memory session before anything loads in it.
+		// Every view (plain or feedback) gets its own in-memory session before anything loads in it; the session,
+		// its protocol handler and its tokens move with the view and end with it.
 		const viewerSession = this.deps.viewerSession ? this.deps.viewerSession(tokens) : null
-		const win = new BrowserWindow({
-			width: 1180,
-			height: 800,
-			minWidth: 640,
-			minHeight: 520,
-			title: `${observation.current().name} — Helm`,
-			show: false,
-			titleBarStyle: 'hidden',
-			trafficLightPosition: { x: 16, y: 16 },
+		// A BaseWindow has no ready-to-show: the view shows once its page loaded, so the window and view paint the
+		// review surface colour (the renderer's --pane) until the first frame lands, never the default white.
+		const background =
+			!plain && drafts.load(drafts.key(root, file, sessionId ?? null)).theme === 'light'
+				? REVIEW_LIGHT_BACKGROUND
+				: REVIEW_DARK_BACKGROUND
+		const view = new WebContentsView({
 			webPreferences: {
 				preload: join(this.deps.distDir, 'preload-document-review.cjs'),
 				contextIsolation: true,
@@ -987,17 +1051,22 @@ export class DocumentReviewWindows {
 				...(viewerSession ? { session: viewerSession.session } : {}),
 			},
 		})
-		const senderId = win.webContents.id
-		const state: WindowState = {
+		view.setBackgroundColor(background)
+		const contents = view.webContents
+		const senderId = contents.id
+		const container = this.createContainer(`${observation.current().name} — Helm`, background)
+		const state: ViewState = {
 			plain,
 			recoveryContext,
-			window: win,
+			view,
+			contents,
+			container,
 			senderId,
 			token,
 			profileId,
 			observation,
 			drafts,
-			// A plain window never saves review content: it gets an inert archive of its own, never the file's shared
+			// A plain view never saves review content: it gets an inert archive of its own, never the file's shared
 			// one, so a retained feedback archive neither blocks its close nor becomes reachable through it.
 			archive: plain
 				? new ReviewArchivePersistence(() => {}, this.archiveCapacity)
@@ -1012,74 +1081,231 @@ export class DocumentReviewWindows {
 			active: new Set(),
 			tokens,
 			viewerSession,
+			closed: false,
+			background,
 		}
-		this.windows.set(win.webContents.id, state)
-		win.webContents.setWindowOpenHandler(({ url }) => {
+		this.windows.set(senderId, state)
+		this.attach(state, container)
+		contents.setWindowOpenHandler(({ url }) => {
 			const safe = parseExternalHttpUrl(url)
 			if (!state.recoveryContext && this.current(state) && safe) void shell.openExternal(safe)
 			return { action: 'deny' }
 		})
-		win.webContents.on('will-navigate', event => event.preventDefault())
+		contents.on('will-navigate', event => event.preventDefault())
 		// No document content creates frames in this slice; any subframe navigation is refused.
-		win.webContents.on('will-frame-navigate', event => {
+		contents.on('will-frame-navigate', event => {
 			if (!event.isMainFrame) event.preventDefault()
 		})
-		win.webContents.on('before-input-event', (event, input) => {
+		contents.on('before-input-event', (event, input) => {
 			if (
 				input.type === 'keyDown' &&
 				input.code === 'KeyW' &&
 				(process.platform === 'darwin' ? input.meta : input.control)
 			) {
 				event.preventDefault()
-				win.close()
+				this.closeView(state)
 			}
 		})
-		win.on('close', event => {
-			if (
-				!state.plain &&
-				(state.dirty || state.noteSave || state.fileFlights.size > 0 || state.archive.guarded()) &&
-				!state.allowClose
-			) {
-				event.preventDefault()
-				sendToLiveRenderer(win.webContents, 'document-review:close-requested')
-			}
-		})
-		win.on('closed', () => {
-			this.windows.delete(senderId)
-			// The window's CURRENT observation: binding a plain window replaces it.
-			sessions.closeDocument(state.observation.id)
-			void state.observation.dispose()
-			void state.tokens.revokeAll()
-			state.viewerSession?.dispose()
-			const context = state.plain
-				? undefined
-				: this.archives.get(this.archiveKey(profileId, state.observation.root, state.observation.file))
-			if (context) this.pruneArchive(context)
-			if (!this.windows.size) this.deps.onAllClosed?.()
-		})
-		win.once('ready-to-show', () => {
-			// A wire `view` never takes focus or activates Helm (spec: No focus stealing).
-			if (!this.current(state)) win.close()
-			else if (options.inactive) win.showInactive()
-			else win.show()
-		})
+		// Anything that ends the view's webContents runs the view's own close path.
+		contents.once('destroyed', () => this.finishView(state))
+		this.deps.onViewCreated?.(contents)
 		try {
-			await win.loadURL(VIEWER_INDEX_URL)
+			await contents.loadURL(VIEWER_INDEX_URL)
 		} catch {
-			win.destroy()
-			void tokens.revokeAll()
-			viewerSession?.dispose()
+			state.allowClose = true
+			this.finishView(state)
 			throw new Error('The review window could not load.')
 		}
+		if (state.closed) throw new Error('The review window could not load.')
+		// A view has no ready-to-show: it is shown once its page loaded. A view that lost its authority while loading
+		// closes unseen.
+		if (!this.current(state)) {
+			state.allowClose = true
+			this.finishView(state)
+			return
+		}
+		// A wire `view` never takes focus or activates Helm (spec: No focus stealing).
+		this.reveal(state, options.inactive ? 'inactive' : 'show')
 	}
-	private requireSelectedOwner(state: WindowState, id: string, owner: string): void {
+	/** A container for views: today's review window chrome, without a page of its own. */
+	private createContainer(title: string, backgroundColor: string): ContainerState {
+		const window = new BaseWindow({
+			backgroundColor,
+			width: 1180,
+			height: 800,
+			minWidth: 640,
+			minHeight: 520,
+			title,
+			show: false,
+			titleBarStyle: 'hidden',
+			trafficLightPosition: { x: 16, y: 16 },
+		})
+		const container: ContainerState = { window, views: [], active: null, closing: false, resumeCloseFor: null }
+		this.containers.add(container)
+		// A BaseWindow neither sizes its views nor hands them keyboard focus.
+		const layout = () => this.layout(container)
+		window.on('resize', layout)
+		window.on('maximize', layout)
+		window.on('unmaximize', layout)
+		window.on('restore', layout)
+		window.on('enter-full-screen', layout)
+		window.on('leave-full-screen', layout)
+		window.on('focus', () => {
+			const active = container.active
+			if (active && !active.closed && !active.contents.isDestroyed()) active.contents.focus()
+		})
+		window.on('close', event => {
+			if (container.closing) return
+			// One guarded view keeps the whole window open and asks in its own tab; the others stay too.
+			const guarded = container.views.find(state => this.guarded(state))
+			if (guarded) {
+				event.preventDefault()
+				container.resumeCloseFor = guarded
+				this.select(guarded)
+				sendToLiveRenderer(guarded.contents, 'document-review:close-requested')
+				return
+			}
+			container.closing = true
+			for (const state of [...container.views]) this.finishView(state)
+		})
+		window.on('closed', () => {
+			// A BaseWindow does not destroy its views' webContents: each remaining view runs its own close path.
+			container.closing = true
+			for (const state of [...container.views]) this.finishView(state)
+			this.containers.delete(container)
+		})
+		return container
+	}
+	private layout(container: ContainerState): void {
+		if (container.window.isDestroyed()) return
+		const { width, height } = container.window.getContentBounds()
+		for (const state of container.views) state.view.setBounds({ x: 0, y: 0, width, height })
+	}
+	/** Shows `state` in its container; the container's other views stay hidden but keep their access. */
+	private select(state: ViewState): void {
+		const container = state.container
+		container.active = state
+		for (const other of container.views) other.view.setVisible(other === state)
+		this.layout(container)
+		if (!container.window.isDestroyed()) container.window.setTitle(`${state.observation.current().name} — Helm`)
+	}
+	private attach(state: ViewState, container: ContainerState): void {
+		state.container = container
+		container.views.push(state)
+		container.window.contentView.addChildView(state.view)
+		this.select(state)
+	}
+	private detach(state: ViewState): void {
+		const container = state.container
+		const index = container.views.indexOf(state)
+		if (index < 0) return
+		container.views.splice(index, 1)
+		if (!container.window.isDestroyed()) container.window.contentView.removeChildView(state.view)
+		if (container.active !== state) return
+		container.active = null
+		const next = container.views[Math.min(index, container.views.length - 1)]
+		if (next) this.select(next)
+	}
+	/**
+	 * Select the view's tab, then show its window. `focus` for reopen, `openForCaller` and recovery; `show` and
+	 * `inactive` for a new view (a wire `view` never takes focus).
+	 */
+	private reveal(state: ViewState, mode: 'focus' | 'show' | 'inactive' = 'focus'): void {
+		if (state.closed) return
+		this.select(state)
+		const window = state.container.window
+		if (window.isDestroyed()) return
+		if (mode === 'inactive') {
+			window.showInactive()
+			return
+		}
+		window.show()
+		if (mode === 'focus') window.focus()
+		state.contents.focus()
+	}
+	/**
+	 * Moves a view into the window showing `targetViewId`, or into a new window. Moving is not closing: the view
+	 * keeps its webContents, key, viewer session, tokens, document and caller, and a waiting caller gets no
+	 * `closed`. S7b's Merge All Windows, drag-out and Move Tab to New Window use it; S7a has no UI for it.
+	 */
+	moveView(viewId: number, targetViewId?: number): boolean {
+		const state = this.windows.get(viewId)
+		if (!state || !this.current(state)) return false
+		const target = targetViewId === undefined ? null : this.windows.get(targetViewId)
+		if (targetViewId !== undefined && (!target || !this.current(target) || target.profileId !== state.profileId))
+			return false
+		const source = state.container
+		if (target?.container === source) return true
+		const destination = target
+			? target.container
+			: this.createContainer(`${state.observation.current().name} — Helm`, state.background)
+		this.detach(state)
+		this.attach(state, destination)
+		if (!source.views.length) this.destroyContainer(source)
+		this.reveal(state)
+		return true
+	}
+	/** The main-side close guard (BaseWindow has no cancellable per-view close). */
+	private guarded(state: ViewState): boolean {
+		return (
+			!state.plain &&
+			!state.allowClose &&
+			(state.dirty || state.noteSave || state.fileFlights.size > 0 || state.archive.guarded())
+		)
+	}
+	/** Close one view: a guarded view asks in its own tab and stays; otherwise only this view closes. */
+	private closeView(state: ViewState): boolean {
+		if (state.closed) return true
+		if (this.guarded(state)) {
+			// A close of this view alone replaces an earlier close of its whole window.
+			if (state.container.resumeCloseFor === state) state.container.resumeCloseFor = null
+			this.select(state)
+			sendToLiveRenderer(state.contents, 'document-review:close-requested')
+			return false
+		}
+		this.finishView(state)
+		return true
+	}
+	/** The view's own close path, exactly once: never a container event, never a move. */
+	private finishView(state: ViewState): void {
+		if (state.closed) return
+		state.closed = true
+		const container = state.container
+		if (container.resumeCloseFor === state) container.resumeCloseFor = null
+		this.detach(state)
+		this.windows.delete(state.senderId)
+		// The view's CURRENT observation: binding a plain view replaces it.
+		state.sessions.closeDocument(state.observation.id)
+		void state.observation.dispose()
+		void state.tokens.revokeAll()
+		// WebContents.close() ends the page later: its session (network block, helm-viewer: handler) is disposed only
+		// once the contents are destroyed, never under a still-live page.
+		const viewerSession = state.viewerSession
+		if (state.contents.isDestroyed()) viewerSession?.dispose()
+		else {
+			if (viewerSession) state.contents.once('destroyed', () => viewerSession.dispose())
+			state.contents.close()
+		}
+		const context = state.plain
+			? undefined
+			: this.archives.get(this.archiveKey(state.profileId, state.observation.root, state.observation.file))
+		if (context) this.pruneArchive(context)
+		if (!container.views.length && !container.closing) this.destroyContainer(container)
+		if (!this.windows.size) this.deps.onAllClosed?.()
+	}
+	/** Helm's own close of a container whose views already closed (or are closed by its `closed`). */
+	private destroyContainer(container: ContainerState): void {
+		container.closing = true
+		if (!container.window.isDestroyed()) container.window.close()
+	}
+	private requireSelectedOwner(state: ViewState, id: string, owner: string): void {
 		if (
 			state.selectedSession !== id ||
 			!state.sessions.list(state.observation.root).some(session => session.id === id && session.owner === owner)
 		)
 			throw new Error('The selected conversation owner changed. No control was dispatched.')
 	}
-	private snapshot(state: WindowState): ReviewState {
+	private snapshot(state: ViewState): ReviewState {
 		if (state.plain)
 			return {
 				mode: 'plain',
@@ -1124,7 +1350,7 @@ export class DocumentReviewWindows {
 			this.pendingProfiles.clear()
 			for (const state of this.windows.values())
 				if (profiles.has(state.profileId) && this.current(state))
-					sendToLiveRenderer(state.window.webContents, 'document-review:changed')
+					sendToLiveRenderer(state.contents, 'document-review:changed')
 		}, 80)
 		this.publishTimer.unref()
 	}
@@ -1153,12 +1379,12 @@ export class DocumentReviewWindows {
 						throw new Error('Finish the local draft before opening reply recovery in this window.')
 					existing.recoveryContext = context
 					existing.selectedSession = null
-					existing.window.show()
-					existing.window.focus()
+					// A recovery view never stays hidden behind another tab.
+					this.reveal(existing)
 					this.publish(context.profileId)
 					continue
 				}
-				if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+				if (this.feedbackViews() >= REVIEW_WINDOW_LIMIT)
 					throw new Error('Close a review window, then retry recovery of unsaved replies.')
 				const observation = new ReviewDocumentObservation(context.root, context.file, () =>
 					this.publish(context.profileId),
@@ -1260,8 +1486,9 @@ export class DocumentReviewWindows {
 		const states = [...this.windows.values()]
 		for (const state of states) {
 			state.allowClose = true
-			state.window.close()
+			this.closeView(state)
 		}
+		for (const container of [...this.containers]) this.destroyContainer(container)
 		await Promise.all(states.map(state => state.observation.dispose()))
 		this.admissionClosed = false
 	}
@@ -1277,7 +1504,8 @@ export class DocumentReviewWindows {
 	async stopOwned(): Promise<void> {
 		await this.drainAndRevealFailure()
 	}
+	/** Quit: every container closes through its guard; a dirty view keeps its window open and asks. */
 	requestCloseAll(): void {
-		for (const state of this.windows.values()) state.window.close()
+		for (const container of [...this.containers]) if (!container.window.isDestroyed()) container.window.close()
 	}
 }

@@ -653,29 +653,42 @@ test('plain windows open inactive, are reused, have their own bound, and binding
 		let nextId = 1;
 		const windows = [];
 		const handlers = {};
-		class BrowserWindow {
-			constructor(options) {
-				this.options = options; this.calls = []; this.events = {}; this.destroyed = false;
-				const self = this;
+		// BaseWindow containers with one WebContentsView each (spec: Per-view access keys).
+		class WebContentsView {
+			constructor() {
+				const self = this; this.dead = false;
 				this.webContents = {
-					id: nextId++, isDestroyed: () => self.destroyed,
-					mainFrame: { isDestroyed: () => self.destroyed, send() {} },
-					setWindowOpenHandler() {}, on() {}, send() {},
+					id: nextId++, isDestroyed: () => self.dead,
+					mainFrame: { isDestroyed: () => self.dead, send() {} },
+					setWindowOpenHandler() {}, on() {}, once() {}, send() {}, focus() {},
+					async loadURL() {}, close() { self.dead = true },
 				};
+			}
+			setBounds() {} setVisible() {} setBackgroundColor() {}
+		}
+		class BaseWindow {
+			constructor(options) {
+				this.options = options; this.calls = []; this.events = {}; this.destroyed = false; this.children = [];
+				this.contentView = { addChildView: v => this.children.push(v), removeChildView: v => { this.children = this.children.filter(c => c !== v) } };
 				windows.push(this);
 			}
+			get webContents() { return this.children[0].webContents }
 			on(event, listener) { (this.events[event] ??= []).push(listener); return this }
 			once(event, listener) { return this.on(event, listener) }
 			emit(event, ...args) { for (const listener of this.events[event] ?? []) listener(...args) }
-			async loadFile() { this.emit('ready-to-show') }
-			async loadURL() { this.emit('ready-to-show') }
 			show() { this.calls.push('show') } showInactive() { this.calls.push('showInactive') } focus() { this.calls.push('focus') }
+			setTitle() {} getContentBounds() { return { x: 0, y: 0, width: 1180, height: 800 } }
 			isDestroyed() { return this.destroyed }
-			close() { if (!this.destroyed) { this.destroyed = true; this.emit('closed') } }
-			destroy() { this.close() }
+			close() {
+				if (this.destroyed) return;
+				let prevented = false;
+				this.emit('close', { preventDefault: () => { prevented = true } });
+				if (!prevented) { this.destroyed = true; this.emit('closed') }
+			}
+			destroy() { if (!this.destroyed) { this.destroyed = true; this.emit('closed') } }
 		}
 		require.cache[electron] = { id: electron, filename: electron, loaded: true,
-			exports: { BrowserWindow, dialog: {}, ipcMain: { handle(name, fn) { handlers[name] = fn }, on() {} }, shell: {} } };
+			exports: { BaseWindow, WebContentsView, dialog: {}, ipcMain: { handle(name, fn) { handlers[name] = fn }, on() {} }, shell: {} } };
 		const { DocumentReviewWindows } = local(${JSON.stringify(module)});
 		const { helmPrivatePaths } = local(${JSON.stringify(viewer)});
 		const files = ${JSON.stringify(files)};
