@@ -3,6 +3,17 @@ import { reviewRequestSchema } from './request-admission.js'
 
 export const REVIEW_WIRE_BYTES = 512 * 1024
 export const REVIEW_VERSION = 1
+/**
+ * The negotiated protocol a `hello` answers with. Version 1 hosts have no `hello`: they answer it with the generic
+ * UNCERTAIN failure, which a new CLI reads as "old host" (helm open spec, Wire). Discovery, connection files and
+ * every v1 result keep `version: 1`.
+ */
+export const REVIEW_PROTOCOL = 2
+/** Optional behaviours a caller may ask for on connect after a successful `hello`; none yet (S12 adds session-hint). */
+export const REVIEW_FEATURES: readonly string[] = []
+/** Plain `helm open` files per `view` command, and per second for the whole host. */
+export const REVIEW_VIEW_FILES = 32
+export const REVIEW_VIEW_RATE = 8
 const uuid = z.string().uuid()
 const token = z.string().regex(/^[a-f0-9]{64}$/)
 export const reviewId = z
@@ -41,6 +52,14 @@ export const commandSchema = z.discriminatedUnion('action', [
 		})
 		.strict(),
 	z.object({ action: z.literal('open'), file: path }).strict(),
+	// Effect-free version probe; the only command whose answer tells an old host apart.
+	z
+		.object({ action: z.literal('hello') })
+		.strict(),
+	// Plain viewing: discovery-token authority, no connection or owner, windows open inactive.
+	z
+		.object({ action: z.literal('view'), files: z.array(path).min(1).max(REVIEW_VIEW_FILES) })
+		.strict(),
 	z.object({ action: z.literal('list') }).strict(),
 	z.object({ action: z.literal('status') }).strict(),
 	z
@@ -60,6 +79,12 @@ export const commandSchema = z.discriminatedUnion('action', [
 	z.object({ action: z.literal('disconnect') }).strict(),
 ])
 export type ReviewCommand = z.infer<typeof commandSchema>
+/** Every action this host understands; anything else is refused as unknown, never as a generic failure. */
+export const REVIEW_ACTIONS: ReadonlySet<string> = new Set(
+	commandSchema.options.map(option => option.shape.action.value),
+)
+/** Commands a connected caller sends; `hello` and `view` need only the discovery token. */
+export type ReviewCallerCommand = Exclude<ReviewCommand, { action: 'connect' | 'hello' | 'view' }>
 export const envelopeSchema = z
 	.object({ epoch: uuid, token, id: reviewId.optional(), owner: uuid.optional(), command: commandSchema })
 	.strict()
@@ -69,6 +94,33 @@ export const feedbackSchema = z
 	.strict()
 export const windowClosedSchema = z.object({ closed: z.literal(true), documentId: uuid }).strict()
 export const reviewReadSchema = z.union([feedbackSchema, windowClosedSchema, z.null()])
+export const helloSchema = z
+	.object({
+		protocol: z.number().int().min(2).max(1000),
+		features: z
+			.array(
+				z
+					.string()
+					.min(1)
+					.max(40)
+					.regex(/^[a-z0-9-]+$/),
+			)
+			.max(32),
+	})
+	.strict()
+export type ReviewHello = z.infer<typeof helloSchema>
+const viewFormat = z
+	.string()
+	.min(1)
+	.max(40)
+	.regex(/^[a-z0-9-]+$/)
+export const viewResultSchema = z
+	.object({
+		opened: z.array(z.object({ file: path, documentId: uuid, format: viewFormat }).strict()).max(REVIEW_VIEW_FILES),
+		refused: z.array(z.object({ file: path, reason: z.string().min(1).max(400) }).strict()).max(REVIEW_VIEW_FILES),
+	})
+	.strict()
+export type ReviewViewResult = z.infer<typeof viewResultSchema>
 export const connectedSchema = z.object({ connection: path, id: reviewId, owner: uuid }).strict()
 export const openedSchema = z.object({ documentId: uuid, revision: token, relativePath: path }).strict()
 export const receiptSchema = z

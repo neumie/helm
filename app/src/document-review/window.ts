@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
+import type { ReviewViewResult } from '../../../src/document-review/protocol'
 import { failureCause, gitRootRefusal, isReviewRefusal, refuse } from '../../../src/document-review/refusal'
 import { decodeScreenshots, discardScreenshots, stageScreenshots } from '../../../src/document-review/screenshot-files'
 import {
@@ -33,9 +35,17 @@ import type {
 	ReviewResult,
 	ReviewState,
 } from './types'
+import { readViewerFile } from './viewer-file'
+import type { HelmPrivatePaths } from './viewer-file'
 
 const runFile = promisify(execFile)
+/** Feedback-capable windows (bound, unbound review and recovery) share today's bound of eight. */
+export const REVIEW_WINDOW_LIMIT = 8
+/** Plain `helm open` windows have their own soft bound, so plain views never make `helm edit` fail. */
+export const PLAIN_WINDOW_LIMIT = 32
 interface WindowState {
+	/** A plain `helm open` window: read-only, no caller, no saved state. Binding (`--listen`) clears it. */
+	plain: boolean
 	recoveryContext: ArchiveFileContext | null
 	window: BrowserWindow
 	senderId: number
@@ -70,7 +80,13 @@ interface ReviewWindowDependencies {
 	mainWindow(): BrowserWindow | null
 	/** Resolve only a main-attested public plan artifact, never a renderer path. */
 	planArtifact(itemId: string, name: string): string | null
+	/** Helm's own private paths, refused by plain viewing (by path and by inode). */
+	privatePaths?(): Promise<HelmPrivatePaths>
 	onAllClosed?(): void
+}
+const displayPath = (file: string) => {
+	const home = homedir()
+	return file.startsWith(`${home}${sep}`) ? `~${file.slice(home.length)}` : file
 }
 
 export class DocumentReviewWindows {
@@ -104,6 +120,7 @@ export class DocumentReviewWindows {
 			throw refuse('Review admission is closed. Recover unsaved replies before leaving this profile.')
 	}
 	private requireWritable(state: WindowState): void {
+		if (state.plain) throw new Error('This window only shows the file. Open it with helm edit to send feedback.')
 		if (state.recoveryContext)
 			throw new Error('This window only recovers an unsaved reply. No feedback or comment can be sent or saved.')
 		this.requireAdmission()
@@ -122,7 +139,7 @@ export class DocumentReviewWindows {
 		if (
 			!context.archive.unresolved() &&
 			![...this.windows.values()].some(
-				state => state.profileId === context.profileId && state.observation.file === context.file,
+				state => !state.plain && state.profileId === context.profileId && state.observation.file === context.file,
 			)
 		)
 			this.archives.delete(this.archiveKey(context.profileId, context.root, context.file))
@@ -265,7 +282,7 @@ export class DocumentReviewWindows {
 				if (!file) {
 					const result = await dialog.showOpenDialog(win as BrowserWindow, {
 						title: 'Open document for review',
-						filters: [{ name: 'Markdown or JSX', extensions: ['md', 'jsx', 'tsx'] }],
+						filters: [{ name: 'Markdown, JSX or TSX', extensions: ['md', 'jsx', 'tsx'] }],
 						properties: ['openFile'],
 					})
 					if (!current()) throw new Error('The profile changed while choosing the file. Open it again.')
@@ -278,7 +295,7 @@ export class DocumentReviewWindows {
 				return {
 					error: isReviewRefusal(error)
 						? error.message
-						: 'Could not open the document. Choose a visible regular Markdown or JSX file in a repository you trust.',
+						: 'Could not open the document. Choose a visible regular Markdown, JSX or TSX file in a repository you trust.',
 				}
 			} finally {
 				this.opening = false
@@ -292,6 +309,7 @@ export class DocumentReviewWindows {
 				event,
 				token,
 				async state => {
+					if (state.plain) throw new Error('This window only shows the file. It has no review content to save.')
 					await state.archive.retry()
 					this.require(event, token)
 					await state.observation.refresh()
@@ -316,6 +334,8 @@ export class DocumentReviewWindows {
 				event,
 				token,
 				async state => {
+					// Plain viewing keeps no saved state; its appearance choices live only in the open window.
+					if (state.plain) return true
 					this.requireWritable(state)
 					const draft = reviewDraftSchema.parse(raw)
 					if (draft?.sessionId !== state.selectedSession)
@@ -524,6 +544,7 @@ export class DocumentReviewWindows {
 		)
 		ipcMain.handle('document-review:discard-archive', (event, token: unknown, id: unknown) =>
 			this.run(event, token, state => {
+				if (state.plain) throw new Error('This window only shows the file. It has no unsaved reply.')
 				if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id))
 					throw new Error('Choose a current unsaved reply to discard.')
 				state.archive.discard(id)
@@ -538,7 +559,7 @@ export class DocumentReviewWindows {
 		)
 		ipcMain.on('document-review:dirty', (event, token: unknown, dirty: unknown) => {
 			const state = this.optional(event, token)
-			if (state && !state.recoveryContext && typeof dirty === 'boolean') state.dirty = dirty
+			if (state && !state.plain && !state.recoveryContext && typeof dirty === 'boolean') state.dirty = dirty
 		})
 		ipcMain.on('document-review:close', (event, token: unknown) => {
 			const state = this.optional(event, token)
@@ -547,8 +568,10 @@ export class DocumentReviewWindows {
 			state.window.close()
 		})
 	}
-	async chooseFileFromMenu(): Promise<void> {
+	/** File → Open document… (⌘O in a review window). `parent` is a review window the dialog belongs to. */
+	async chooseFileFromMenu(parent?: BrowserWindow): Promise<void> {
 		const win = this.deps.mainWindow()
+		const dialogParent = parent && this.ownsWindow(parent) ? parent : win
 		const token = this.deps.profileToken()
 		const epoch = this.admissionEpoch
 		const current = () =>
@@ -561,21 +584,21 @@ export class DocumentReviewWindows {
 		if (!current() || this.opening) return
 		this.opening = true
 		try {
-			const picked = await dialog.showOpenDialog(win as BrowserWindow, {
+			const picked = await dialog.showOpenDialog(dialogParent as BrowserWindow, {
 				title: 'Open document for review',
-				filters: [{ name: 'Markdown or JSX', extensions: ['md', 'jsx', 'tsx'] }],
+				filters: [{ name: 'Markdown, JSX or TSX', extensions: ['md', 'jsx', 'tsx'] }],
 				properties: ['openFile'],
 			})
 			if (!current() || picked.canceled || !picked.filePaths[0]) return
 			await this.openFile(picked.filePaths[0], token, current)
 		} catch (error) {
 			if (current())
-				await dialog.showMessageBox(win as BrowserWindow, {
+				await dialog.showMessageBox(dialogParent as BrowserWindow, {
 					type: 'warning',
 					message: 'Document review unavailable',
 					detail: isReviewRefusal(error)
 						? `${error.message} No agent was started.`
-						: 'Choose a regular Markdown or JSX file inside a repository you trust. No agent was started.',
+						: 'Choose a regular Markdown, JSX or TSX file inside a repository you trust. No agent was started.',
 				})
 		} finally {
 			this.opening = false
@@ -684,6 +707,13 @@ export class DocumentReviewWindows {
 			)
 		for (const state of this.windows.values())
 			if (state.token === token && state.observation.file === file) {
+				if (state.plain) {
+					// D2: an agent's --listen binds the plain window showing this file, after full feedback admission.
+					if (sessionId) await this.bindPlainWindow(state, root, sessionId, current)
+					state.window.show()
+					state.window.focus()
+					return
+				}
 				if (state.recoveryContext && sessionId) throw refuse('Close the recovery window before selecting a new caller.')
 				if (sessionId && state.selectedSession !== sessionId) {
 					if (state.selectedSession || state.dirty || state.active.size || state.sessions.isBusy())
@@ -697,7 +727,8 @@ export class DocumentReviewWindows {
 				state.window.focus()
 				return
 			}
-		if (this.windows.size >= 8) throw refuse('Eight review windows are open. Close one before opening another.')
+		if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+			throw refuse('Eight review windows are open. Close one before opening another.')
 		const profileId = this.deps.profileId()
 		if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
 		let drafts = this.drafts.get(profileId)
@@ -717,6 +748,134 @@ export class DocumentReviewWindows {
 		}
 		await this.createWindow(observation, profileId, token, current, sessionId)
 	}
+	private feedbackWindows(): number {
+		return [...this.windows.values()].filter(state => !state.plain).length
+	}
+	private plainWindows(): number {
+		return [...this.windows.values()].filter(state => state.plain).length
+	}
+	/** A Helm review or plain viewing window, for the window-aware shortcut dispatcher. */
+	ownsWindow(win: BrowserWindow): boolean {
+		return [...this.windows.values()].some(state => state.window === win)
+	}
+	/** Viewer zoom for ⌘= / ⌘- / ⌘0 in a review window; the renderer scales its own reading surface. */
+	zoom(win: BrowserWindow, step: -1 | 0 | 1): void {
+		const state = [...this.windows.values()].find(value => value.window === win)
+		if (state && this.current(state)) sendToLiveRenderer(win.webContents, 'document-review:zoom', step)
+	}
+	/**
+	 * D2: replace a plain window's observation with a feedback-mode one for the caller. Runs the full repository
+	 * admission (`readReviewFile`: hidden names, hard links, owner and mode) on the window's canonical file first;
+	 * a refusal binds nothing and leaves the plain window as it was.
+	 */
+	private async bindPlainWindow(
+		state: WindowState,
+		root: string,
+		sessionId: string,
+		current: () => boolean,
+	): Promise<void> {
+		if (state.dirty || state.active.size || state.fileFlights.size)
+			throw refuse('This document window is busy. Try again when it settles; nothing was rerouted.')
+		if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+			throw refuse('Eight review windows are open. Close one before opening another.')
+		const observation = new ReviewDocumentObservation(root, state.observation.file, () => this.publish(state.profileId))
+		await observation.start()
+		if (!current() || !this.current(state) || !state.plain || observation.current().error) {
+			const failure = observation.failure
+			await observation.dispose()
+			if (!current()) throw refuse('The active Helm profile changed. Nothing was opened.')
+			if (!this.current(state) || !state.plain)
+				throw refuse('The document window changed while binding. Nothing was rerouted.')
+			throw isReviewRefusal(failure)
+				? failure
+				: refuse(
+						`${basename(state.observation.file)} could not be read for review (${failureCause(failure)}). Nothing was opened.`,
+					)
+		}
+		const previous = state.observation
+		state.observation = observation
+		state.plain = false
+		state.selectedSession = sessionId
+		state.archive = this.archiveFor(state.profileId, root, observation.file, state.token).archive
+		// The plain observation id ends here; nobody can listen on it (plain windows have no caller).
+		state.sessions.closeDocument(previous.id)
+		void previous.dispose()
+		this.publish(state.profileId)
+	}
+	/**
+	 * Plain viewing over the wire (`helm open`): each file read-only in its own window, opened inactive. Shares the
+	 * opening gate with native, menu and caller opens; every refusal is per file and names it.
+	 */
+	async viewFiles(files: string[], signal: AbortSignal): Promise<ReviewViewResult> {
+		const paths = await this.deps.privatePaths?.()
+		if (!paths) throw refuse('This Helm desktop cannot show files with helm open. Nothing was opened.')
+		this.requireAdmission()
+		if (this.opening) throw refuse('Another document is opening in Helm. Nothing was opened; try again.')
+		const profileId = this.deps.profileId()
+		const token = this.deps.profileToken()
+		const epoch = this.admissionEpoch
+		const current = () =>
+			!this.stopping &&
+			!signal.aborted &&
+			epoch === this.admissionEpoch &&
+			this.deps.allowsToken(token) &&
+			this.deps.profileId() === profileId
+		if (!current())
+			throw refuse('No Helm profile is active (Helm is switching profiles or closing). Nothing was opened.')
+		this.opening = true
+		const result: ReviewViewResult = { opened: [], refused: [] }
+		try {
+			for (const file of files) {
+				try {
+					if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
+					result.opened.push({ file, ...(await this.viewFile(file, token, profileId, paths, current)) })
+				} catch (error) {
+					result.refused.push({
+						file,
+						reason: isReviewRefusal(error)
+							? error.message.slice(0, 400)
+							: `${basename(file)} could not be opened (${failureCause(error)}).`.slice(0, 400),
+					})
+				}
+			}
+		} finally {
+			this.opening = false
+		}
+		return result
+	}
+	private async viewFile(
+		raw: string,
+		token: string,
+		profileId: string,
+		paths: HelmPrivatePaths,
+		current: () => boolean,
+	): Promise<{ documentId: string; format: string }> {
+		if (!isAbsolute(raw)) throw refuse(`${basename(raw)} was not opened: helm open sends absolute paths.`)
+		const { file, format } = await readViewerFile(raw, paths)
+		if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
+		// One window per canonical file. A wire open never takes focus, not even of an existing window.
+		for (const state of this.windows.values())
+			if (state.token === token && state.observation.file === file)
+				return { documentId: state.observation.id, format: state.observation.current().format ?? format }
+		if (this.plainWindows() >= PLAIN_WINDOW_LIMIT)
+			throw refuse(`${basename(file)} was not opened: ${PLAIN_WINDOW_LIMIT} files are already open. Close one first.`)
+		if (!this.drafts.get(profileId)) this.drafts.set(profileId, new ReviewDraftStore(this.deps.profileDir(profileId)))
+		const observation = new ReviewDocumentObservation(dirname(file), file, () => this.publish(profileId), {
+			paths,
+			displayPath: displayPath(file),
+		})
+		await observation.start()
+		if (!current() || observation.current().error) {
+			const failure = observation.failure
+			await observation.dispose()
+			if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
+			throw isReviewRefusal(failure)
+				? failure
+				: refuse(`${basename(file)} could not be read (${failureCause(failure)}). Nothing was opened.`)
+		}
+		await this.createWindow(observation, profileId, token, current, undefined, null, { plain: true, inactive: true })
+		return { documentId: observation.id, format }
+	}
 	private async createWindow(
 		observation: ReviewDocumentObservation,
 		profileId: string,
@@ -724,8 +883,13 @@ export class DocumentReviewWindows {
 		current: () => boolean,
 		sessionId?: string,
 		recoveryContext: ArchiveFileContext | null = null,
+		options: { plain?: boolean; inactive?: boolean } = {},
 	): Promise<void> {
-		if (!current() || this.windows.size >= 8) {
+		const plain = options.plain === true
+		if (
+			!current() ||
+			(plain ? this.plainWindows() >= PLAIN_WINDOW_LIMIT : this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+		) {
 			await observation.dispose()
 			throw new Error('Close a review window before opening another.')
 		}
@@ -754,6 +918,7 @@ export class DocumentReviewWindows {
 		})
 		const senderId = win.webContents.id
 		const state: WindowState = {
+			plain,
 			recoveryContext,
 			window: win,
 			senderId,
@@ -761,7 +926,11 @@ export class DocumentReviewWindows {
 			profileId,
 			observation,
 			drafts,
-			archive: recoveryContext?.archive ?? this.archiveFor(profileId, root, file, token).archive,
+			// A plain window never saves review content: it gets an inert archive of its own, never the file's shared
+			// one, so a retained feedback archive neither blocks its close nor becomes reachable through it.
+			archive: plain
+				? new ReviewArchivePersistence(() => {}, this.archiveCapacity)
+				: (recoveryContext?.archive ?? this.archiveFor(profileId, root, file, token).archive),
 			noteSave: false,
 			sessions,
 			// Persisted preferences are not an authenticated opening caller.
@@ -790,6 +959,7 @@ export class DocumentReviewWindows {
 		})
 		win.on('close', event => {
 			if (
+				!state.plain &&
 				(state.dirty || state.noteSave || state.fileFlights.size > 0 || state.archive.guarded()) &&
 				!state.allowClose
 			) {
@@ -799,15 +969,20 @@ export class DocumentReviewWindows {
 		})
 		win.on('closed', () => {
 			this.windows.delete(senderId)
-			sessions.closeDocument(observation.id)
-			void observation.dispose()
-			const context = this.archives.get(this.archiveKey(profileId, root, file))
+			// The window's CURRENT observation: binding a plain window replaces it.
+			sessions.closeDocument(state.observation.id)
+			void state.observation.dispose()
+			const context = state.plain
+				? undefined
+				: this.archives.get(this.archiveKey(profileId, state.observation.root, state.observation.file))
 			if (context) this.pruneArchive(context)
 			if (!this.windows.size) this.deps.onAllClosed?.()
 		})
 		win.once('ready-to-show', () => {
-			if (this.current(state)) win.show()
-			else win.close()
+			// A wire `view` never takes focus or activates Helm (spec: No focus stealing).
+			if (!this.current(state)) win.close()
+			else if (options.inactive) win.showInactive()
+			else win.show()
 		})
 		try {
 			await win.loadFile(join(this.deps.distDir, 'document-review.html'))
@@ -824,6 +999,15 @@ export class DocumentReviewWindows {
 			throw new Error('The selected conversation owner changed. No control was dispatched.')
 	}
 	private snapshot(state: WindowState): ReviewState {
+		if (state.plain)
+			return {
+				mode: 'plain',
+				document: state.observation.current(),
+				sessions: [],
+				draft: { ...defaultReviewDraft(), sessionId: null, archiveRevision: null },
+				archiveError: null,
+				archiveFailureId: null,
+			}
 		const draft = state.recoveryContext
 			? defaultReviewDraft()
 			: state.drafts.load(state.drafts.key(state.observation.root, state.observation.file, state.selectedSession))
@@ -876,8 +1060,9 @@ export class DocumentReviewWindows {
 					this.archives.get(this.archiveKey(context.profileId, context.root, context.file)) === context &&
 					!!context.archive.failureId()
 				if (!current()) continue
+				// A plain window reads through the viewer admission; recovery needs its own feedback-mode window.
 				const existing = [...this.windows.values()].find(
-					state => state.profileId === context.profileId && state.observation.file === context.file,
+					state => !state.plain && state.profileId === context.profileId && state.observation.file === context.file,
 				)
 				if (existing) {
 					if (existing.dirty || existing.noteSave || existing.fileFlights.size)
@@ -889,7 +1074,8 @@ export class DocumentReviewWindows {
 					this.publish(context.profileId)
 					continue
 				}
-				if (this.windows.size >= 8) throw new Error('Close a review window, then retry recovery of unsaved replies.')
+				if (this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
+					throw new Error('Close a review window, then retry recovery of unsaved replies.')
 				const observation = new ReviewDocumentObservation(context.root, context.file, () =>
 					this.publish(context.profileId),
 				)

@@ -69,9 +69,12 @@ export type ReviewFixtureScenario =
 	| 'passage-list'
 	| 'passage-list-light'
 	| 'content-width'
+	/** A `helm open` window: read-only, no caller, no companion. */
+	| 'plain'
 export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') {
 	const listeners = new Set<() => void>()
 	const closeListeners = new Set<() => void>()
+	const zoomListeners = new Set<(step: -1 | 0 | 1) => void>()
 	let dirty = false
 	let closes = 0
 	let clearedPreferences = 0
@@ -110,7 +113,8 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 				: null,
 		historyTruncated: false,
 	}
-	const editorial = scenario === 'editorial' || scenario === 'editorial-light' || scenario === 'cli'
+	const editorial =
+		scenario === 'editorial' || scenario === 'editorial-light' || scenario === 'cli' || scenario === 'plain'
 	if (editorial) {
 		session.provider = scenario === 'cli' ? 'cli' : 'pi'
 		session.name =
@@ -131,7 +135,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 		]
 	}
 	const draft = defaultReviewDraft()
-	draft.sessionId = scenario === 'no-agent' ? null : session.id
+	draft.sessionId = scenario === 'no-agent' || scenario === 'plain' ? null : session.id
 	draft.theme = [
 		'light',
 		'editorial-light',
@@ -159,11 +163,16 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			},
 		]
 	const state: ReviewState = {
+		...(scenario === 'plain' ? { mode: 'plain' as const } : {}),
 		document: {
 			id: '33333333-3333-4333-8333-333333333333',
-			name: scenario === 'content-width' ? 'kontakty-a-notifikace.md' : 'spec.md',
+			name: scenario === 'content-width' ? 'kontakty-a-notifikace.md' : scenario === 'plain' ? 'notes.md' : 'spec.md',
 			relativePath:
-				scenario === 'content-width' ? 'docs/plans/kontakty-a-notifikace/spec.md' : 'docs/plans/review/spec.md',
+				scenario === 'content-width'
+					? 'docs/plans/kontakty-a-notifikace/spec.md'
+					: scenario === 'plain'
+						? '~/Downloads/notes.md'
+						: 'docs/plans/review/spec.md',
 			text:
 				scenario === 'content-width'
 					? contentWidthFixtureText
@@ -177,7 +186,7 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			error:
 				scenario === 'missing' ? 'Document unavailable. It may have moved, been deleted, or lost permission.' : null,
 		},
-		sessions: scenario === 'no-agent' ? [] : [session],
+		sessions: scenario === 'no-agent' || scenario === 'plain' ? [] : [session],
 		draft,
 	}
 	if (scenario === 'multiple-callers')
@@ -347,6 +356,12 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 			listeners.add(listener)
 			return () => listeners.delete(listener)
 		},
+		onZoom: listener => {
+			zoomListeners.add(listener)
+			return () => {
+				zoomListeners.delete(listener)
+			}
+		},
 	}
 	if (scenario === 'empty-preferences')
 		api.clearEmptyPreferences = async () => {
@@ -356,6 +371,10 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 	return {
 		api,
 		requests,
+		/** Stands in for ⌘= / ⌘- / ⌘0 arriving from main's window-aware shortcut dispatcher. */
+		zoom: (step: -1 | 0 | 1) => {
+			for (const listener of zoomListeners) listener(step)
+		},
 		/** Display fixture enrollment stands in for an external CLI/native connection, never UI creation. */
 		connect: (provider: ReviewSession['provider'] = 'pi') => {
 			const next: ReviewSession = {

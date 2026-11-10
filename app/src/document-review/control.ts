@@ -34,6 +34,7 @@ export function createReviewControl(
 	const backend: ReviewControlBackend = {
 		status: () => ({ available: deps.allowsToken(deps.profileToken()) }),
 		current,
+		view: (files, signal) => deps.windows.viewFiles(files, signal),
 		connect: async command => {
 			const profileId = deps.profileId()
 			const profileToken = deps.profileToken()

@@ -1237,3 +1237,18 @@ fieldset.review-intents {
 .document-review ::highlight(helm-review-saved-annotations) {
 	background-color: color-mix(in srgb, var(--accent) 15%, transparent);
 }
+
+/*
+ * Reading zoom (⌘= / ⌘- / ⌘0, memory only): every reading size multiplies --ui-scale, so the reading area scales
+ * its own copy of it. Layout geometry stays real pixels; nothing outside the reading area changes.
+ */
+.document-review {
+	--review-ui-scale: var(--ui-scale, 1);
+}
+.review-reading {
+	--ui-scale: calc(var(--review-ui-scale) * var(--review-zoom, 1));
+}
+/* A plain `helm open` window has no conversation column. */
+.document-review[data-review-mode="plain"] .review-split {
+	grid-template-columns: minmax(0, 1fr);
+}

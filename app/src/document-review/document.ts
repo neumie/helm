@@ -8,6 +8,8 @@ import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
 import { REVIEW_DOCUMENT_BYTES } from './types'
 import type { ReviewDocument } from './types'
+import { readViewerFile } from './viewer-file'
+import type { HelmPrivatePaths } from './viewer-file'
 
 export const reviewRevision = (text: string) => createHash('sha256').update(text).digest('hex')
 /**
@@ -79,6 +81,12 @@ export async function readReviewFile(root: string, file: string): Promise<string
 	}
 }
 
+/** Plain viewing (`helm open`): the viewer admission instead of the repository grant, and a display path. */
+export interface PlainObservation {
+	paths: HelmPrivatePaths
+	displayPath: string
+}
+
 /** Watches only the granted file's containing directory, never a repository tree. */
 export class ReviewDocumentObservation {
 	readonly id = randomUUID()
@@ -94,11 +102,13 @@ export class ReviewDocumentObservation {
 		readonly root: string,
 		readonly file: string,
 		private readonly changed: () => void,
+		/** Present for a plain `helm open` window: read-only, no repository, the journal hidden but never required. */
+		readonly plain: PlainObservation | null = null,
 	) {
 		this.snapshot = {
 			id: this.id,
 			name: basename(file),
-			relativePath: relative(root, file),
+			relativePath: plain ? plain.displayPath : relative(root, file),
 			revision: '',
 			text: '',
 			previous: null,
@@ -140,8 +150,39 @@ export class ReviewDocumentObservation {
 		})
 		return this.active
 	}
+	/** Plain viewing reruns the whole viewer admission on every read and requires the same canonical file. */
+	private async readPlain(paths: HelmPrivatePaths): Promise<string> {
+		const read = await readViewerFile(this.file, paths)
+		if (read.file !== this.file)
+			throw refuse(`${basename(this.file)} now leads to another file. Open it again with helm open.`)
+		try {
+			// A trailing helm-review journal is review machinery: hidden from plain viewing (its saved comments
+			// belong to feedback mode), never required and never written here. Unreadable, it is shown as text.
+			return parseReviewArtifact(read.text, 'markdown').body
+		} catch {
+			return read.text
+		}
+	}
 	private async read(): Promise<void> {
 		try {
+			if (this.plain) {
+				const text = await this.readPlain(this.plain.paths)
+				if (this.disposed) return
+				const revision = reviewRevision(text)
+				if (revision === this.snapshot.revision && !this.snapshot.error) return
+				this.snapshot = {
+					...this.snapshot,
+					text,
+					revision,
+					format: 'markdown',
+					previous:
+						this.snapshot.revision && revision !== this.snapshot.revision ? this.snapshot.text : this.snapshot.previous,
+					error: null,
+				}
+				this.failure = null
+				if (!this.disposed) this.changed()
+				return
+			}
 			const raw = await readReviewFile(this.root, this.file)
 			if (this.disposed) return
 			const format = /\.md$/i.test(this.file) ? 'markdown' : 'jsx'

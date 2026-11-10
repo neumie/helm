@@ -356,3 +356,28 @@ test('canvas Send preserves selected DOM endpoints when the first passage marker
 	expect(request?.passage?.canvasId).toBe('intro')
 	expect(request?.canvasFields?.map(field => field.id)).toEqual(['name', 'count'])
 })
+
+test('zoom moves an open passage bubble with its passage', async ({ page }) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page)
+	await select(page)
+	const before = await bubble(page).boundingBox()
+	if (!before) throw new Error('Missing bubble')
+	await page.evaluate(() => window.__helmDocumentReviewProof?.zoom(1))
+	await page.evaluate(() => window.__helmDocumentReviewProof?.zoom(1))
+	await expect(bubble(page)).toBeVisible()
+	await expect
+		.poll(async () => {
+			const after = await bubble(page).boundingBox()
+			return after ? Math.abs(after.y - before.y) + Math.abs(after.x - before.x) : 0
+		})
+		.toBeGreaterThan(4)
+	// The bubble still sits against the selected passage after the reflow.
+	const placed = await page.evaluate(() => {
+		const selection = window.getSelection()
+		const editor = document.querySelector('.review-passage-editor')?.getBoundingClientRect()
+		const range = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null
+		return editor && range ? { editor: editor.toJSON(), range: range.toJSON() } : null
+	})
+	expect(placed).not.toBeNull()
+})

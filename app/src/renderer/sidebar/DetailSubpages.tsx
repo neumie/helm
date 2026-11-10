@@ -72,7 +72,7 @@ export function PlanPage({ id, snapshot, onBack }: DetailSubpageProps) {
 			const result = await window.helm.documentReview.open(id, name)
 			if (result.error !== undefined) setReviewError(result.error)
 		} catch {
-			setReviewError('Document review could not open. Try Open Markdown file from the File menu.')
+			setReviewError('Document review could not open. Try File → Open document… from the menu.')
 		} finally {
 			reviewAdmission.current = false
 			setOpeningReview(null)

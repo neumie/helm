@@ -4,10 +4,20 @@ import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import { readPrivateJson } from './private-state.js'
-import { REVIEW_WIRE_BYTES, connectedSchema, connectionSchema, discoverySchema, responseSchema } from './protocol.js'
-import type { ReviewCommand, ReviewConnection, ReviewEnvelope } from './protocol.js'
+import {
+	REVIEW_WIRE_BYTES,
+	connectedSchema,
+	connectionSchema,
+	discoverySchema,
+	helloSchema,
+	responseSchema,
+	viewResultSchema,
+} from './protocol.js'
+import type { ReviewCommand, ReviewConnection, ReviewEnvelope, ReviewHello, ReviewViewResult } from './protocol.js'
+import { UNCERTAIN_REVIEW_FAILURE } from './refusal.js'
 
 export const defaultReviewRoot = () => join(homedir(), '.helm', 'document-review')
+export const MALFORMED_REVIEW_RESPONSE = 'Review response is malformed or oversized. No command will be replayed.'
 
 export async function callReview<T>(
 	authority: { socket: string; epoch: string; token: string; id?: string; owner?: string },
@@ -41,7 +51,13 @@ export async function callReview<T>(
 		const cancelled = () => finish(new Error('Review operation cancelled. Check delivery before sending again.'))
 		const timer = setTimeout(
 			() => finish(new Error('Review operation timed out. Check delivery; do not replay an uncertain command.')),
-			command.action === 'next' ? command.timeoutMs + 2000 : command.action === 'open' ? 15000 : 5000,
+			command.action === 'next'
+				? command.timeoutMs + 2000
+				: command.action === 'view'
+					? 30000
+					: command.action === 'open'
+						? 15000
+						: 5000,
 		)
 		signal?.addEventListener('abort', cancelled, { once: true })
 		socket.once('connect', () => socket.write(bytes))
@@ -73,20 +89,48 @@ export async function callReview<T>(
 				}
 				finish(undefined, schema.parse(response.data))
 			} catch {
-				finish(new Error('Review response is malformed or oversized. No command will be replayed.'))
+				finish(new Error(MALFORMED_REVIEW_RESPONSE))
 			}
 		})
 	})
+}
+async function readDiscovery(root: string) {
+	const discovery = discoverySchema.parse(await readPrivateJson(join(root, 'discovery.json')))
+	if (dirname(discovery.socket) !== resolve(root))
+		throw new Error('Review discovery points outside its private directory.')
+	return discovery
 }
 export async function connectReview(
 	command: Extract<ReviewCommand, { action: 'connect' }>,
 	root = defaultReviewRoot(),
 	signal?: AbortSignal,
 ) {
-	const discovery = discoverySchema.parse(await readPrivateJson(join(root, 'discovery.json')))
-	if (dirname(discovery.socket) !== resolve(root))
-		throw new Error('Review discovery points outside its private directory.')
-	return callReview(discovery, command, connectedSchema, signal)
+	return callReview(await readDiscovery(root), command, connectedSchema, signal)
+}
+/** A protocol-1 host: it has no `hello` and no plain viewing. */
+export const REVIEW_V1: ReviewHello = { protocol: 1, features: [] }
+/**
+ * Learn the host's protocol. Only an answer that is exactly the old generic failure, or malformed, means a version 1
+ * host; any other failure (desktop not running, a definite refusal) is thrown as it is. The version is never
+ * inferred from a failed `view` or `connect`.
+ */
+export async function helloReview(root = defaultReviewRoot(), signal?: AbortSignal): Promise<ReviewHello> {
+	const discovery = await readDiscovery(root)
+	try {
+		return await callReview(discovery, { action: 'hello' }, helloSchema, signal)
+	} catch (error) {
+		const message = error instanceof Error ? error.message : ''
+		if (message === UNCERTAIN_REVIEW_FAILURE || message === MALFORMED_REVIEW_RESPONSE) return REVIEW_V1
+		throw error
+	}
+}
+/** Show files read-only in the desktop (protocol 2). Per-file refusals come back in the result, never thrown. */
+export async function viewReview(
+	files: string[],
+	root = defaultReviewRoot(),
+	signal?: AbortSignal,
+): Promise<ReviewViewResult> {
+	return callReview(await readDiscovery(root), { action: 'view', files }, viewResultSchema, signal)
 }
 export async function loadReviewConnection(file: string): Promise<ReviewConnection> {
 	const descriptor = connectionSchema.parse(await readPrivateJson(file))
@@ -95,9 +139,7 @@ export async function loadReviewConnection(file: string): Promise<ReviewConnecti
 	return descriptor
 }
 export async function reviewHostStatus(root = defaultReviewRoot()) {
-	const discovery = discoverySchema.parse(await readPrivateJson(join(root, 'discovery.json')))
-	if (dirname(discovery.socket) !== resolve(root))
-		throw new Error('Review discovery points outside its private directory.')
+	const discovery = await readDiscovery(root)
 	return callReview(
 		discovery,
 		{ action: 'status' },

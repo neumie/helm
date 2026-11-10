@@ -223,6 +223,17 @@ export const PassageFeedback: Story = {
 	},
 }
 
+export const PlainViewing: Story = {
+	args: { scenario: 'plain' },
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'A `helm open` window: the file read-only, with no conversation, comments or saved state. Selecting text only copies it; ⌘= / ⌘- / ⌘0 zoom the reading area. Document options keeps Read, Source and Changes.',
+			},
+		},
+	},
+}
 export const EmptyPreferencesRecovery: Story = {
 	args: { scenario: 'empty-preferences' },
 	parameters: {

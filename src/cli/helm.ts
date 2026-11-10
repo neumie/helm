@@ -7,6 +7,7 @@ import { postToDaemon, resolveBaseUrl } from './daemon-http.js'
 import { runDockProcess } from './dock.js'
 import { runEditCli } from './edit.js'
 import { STDERR_LOG, STDOUT_LOG, getPid, isLoaded, load, unload } from './launchd.js'
+import { runOpenCli } from './open.js'
 import { runReviewCli } from './review.js'
 import { runSignalProcess } from './signal.js'
 
@@ -22,6 +23,7 @@ Commands:
   logs     Tail daemon logs (--err for stderr)
   add      Create queued Item(s)
   ingest   File a self-contained task (email, note, …) into a project
+  open     Show files read-only in the Helm desktop (helm open FILE…)
   edit     Iterate on a document with your running agent (helm edit FILE)
   review   Legacy advanced document-connection commands
   dock     Agent dock: Claude sessions (Okena, Helm terminals) that need you (watch/ls/show)
@@ -304,9 +306,15 @@ switch (command) {
 			process.exit(1)
 		})
 		break
+	case 'open':
 	case 'edit':
 	case 'review':
-		;(command === 'edit' ? runEditCli : runReviewCli)(process.argv.slice(3)).catch(error => {
+		;(command === 'open'
+			? runOpenCli(process.argv.slice(3)).then(code => {
+					process.exitCode = code
+				})
+			: (command === 'edit' ? runEditCli : runReviewCli)(process.argv.slice(3))
+		).catch(error => {
 			console.error(
 				error instanceof Error && !/ZodError|ENOENT|EACCES/.test(error.message)
 					? error.message.slice(0, 400)

@@ -2,7 +2,13 @@ import { constants } from 'node:fs'
 import { open, realpath } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { callReview, connectReview, loadReviewConnection, reviewHostStatus } from '../document-review/client.js'
+import {
+	callReview,
+	connectReview,
+	helloReview,
+	loadReviewConnection,
+	reviewHostStatus,
+} from '../document-review/client.js'
 import {
 	feedbackSchema,
 	openedSchema,
@@ -167,10 +173,15 @@ export async function runReviewCli(
 	}
 	if (action === 'connect' || (action === 'open' && !connectionFile)) {
 		const provider = z.enum(['claude', 'codex', 'pi', 'cli']).parse(values.get('--agent')) as ReviewProvider
+		const workspace = await realpath(resolve(values.get('--workspace') ?? process.cwd()))
+		// helm edit / helm open --listen learn the host's protocol first (effect-free). A version 1 host keeps the
+		// unchanged v1 connect; connect features (S12's session hint) are only ever sent after a protocol 2 answer.
+		// The legacy helm review surface stays byte-identical and never probes.
+		if (workflow.windowBound) await helloReview()
 		const connected = await connectReview({
 			action: 'connect',
 			provider,
-			workspace: await realpath(resolve(values.get('--workspace') ?? process.cwd())),
+			workspace,
 			label: values.get('--label') ?? `${provider} · tool connection`,
 			transport: 'tool-return',
 		})
