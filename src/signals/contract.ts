@@ -11,18 +11,18 @@
 import { z } from 'zod'
 
 /** Where a thread comes from. Sentry alerts arrive as mail; `agent` = an ask a local agent filed. */
-export const SIGNAL_SOURCES = ['github', 'mail', 'agent'] as const
+export const SIGNAL_SOURCES = ['github', 'mail', 'agent', 'slack'] as const
 export type SignalSource = (typeof SIGNAL_SOURCES)[number]
 
 /**
  * Sources a poller reads (and reports health for). Agent asks are pushed through
  * `helm signal add`: never polled, never closed by a poll, no health row.
  */
-export const SIGNAL_POLL_SOURCES = ['github', 'mail'] as const
+export const SIGNAL_POLL_SOURCES = ['github', 'mail', 'slack'] as const
 export type SignalPollSource = (typeof SIGNAL_POLL_SOURCES)[number]
 
 /** Why the thread wants Jakub; decides the glyph. A GitHub thread can carry several reasons. */
-export const SIGNAL_KINDS = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry', 'ask'] as const
+export const SIGNAL_KINDS = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry', 'ask', 'dm', 'thread'] as const
 export type SignalKind = (typeof SIGNAL_KINDS)[number]
 
 /** new = unseen foreign activity, seen = looked at, snoozed = until a time, done = handled. */
@@ -70,6 +70,8 @@ export const SIGNAL_LIMITS = {
 	askKey: 200,
 	/** Jakub's answer to an agent ask (line breaks kept). */
 	reply: 2000,
+	/** A Slack reply (chat.postMessage) text (UTF-16 units). */
+	slackReply: 4000,
 	/** A mail sender's address as the sender lists match it (RFC 5321 path limit); never clipped. */
 	address: 254,
 } as const
@@ -235,8 +237,12 @@ export interface SignalsSnapshot {
  * Auto-Submitted: auto-replied (vacation and out-of-office replies). `excluded` = the sender is on
  * the exclude list.
  */
-export const SIGNAL_FILTER_REASONS = ['newsletter', 'campaign', 'junk', 'auto-reply', 'excluded'] as const
+export const SIGNAL_FILTER_REASONS = ['newsletter', 'campaign', 'junk', 'auto-reply', 'excluded', 'bot'] as const
 export type SignalFilterReason = (typeof SIGNAL_FILTER_REASONS)[number]
+
+/** A filtered entry's source: mail (bulk/excluded) or Slack (a bot or an excluded user). */
+export const SIGNAL_FILTER_SOURCES = ['mail', 'slack'] as const
+export type SignalFilterSource = (typeof SIGNAL_FILTER_SOURCES)[number]
 
 /** How long a filtered candidate stays listed, counted from when it was received. */
 export const SIGNAL_FILTERED_RETENTION_DAYS = 7
@@ -245,7 +251,7 @@ export const SIGNAL_FILTERED_RETENTION_DAYS = 7
 export interface SignalFilteredEntry {
 	/** Short numeric id (`POST /api/signals/filtered/:id/include`). */
 	id: number
-	source: 'mail'
+	source: SignalFilterSource
 	/** Sender display name and address as the From header gave them (third-party data). */
 	senderName: string
 	senderAddress: string

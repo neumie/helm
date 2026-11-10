@@ -27,6 +27,7 @@ export interface SignalReader {
 export interface SignalsWatcherDeps {
 	github?: SignalReader
 	mail?: SignalReader
+	slack?: SignalReader
 	now?: () => Date
 }
 
@@ -76,6 +77,7 @@ export class SignalsWatcher {
 		this.loops = {
 			github: loop('github', deps.github, config.signals.github.pollSeconds),
 			mail: loop('mail', deps.mail, config.signals.mail.pollSeconds),
+			slack: loop('slack', deps.slack, config.signals.slack.pollSeconds),
 		}
 	}
 
@@ -83,7 +85,9 @@ export class SignalsWatcher {
 	isEnabled(source: SignalPollSource): boolean {
 		const signals = this.config.signals
 		if (!signals.enabled || this.loops[source].reader === undefined) return false
-		return source === 'github' ? signals.github.enabled : signals.mail.enabled
+		if (source === 'github') return signals.github.enabled
+		if (source === 'slack') return signals.slack.enabled
+		return signals.mail.enabled
 	}
 
 	start(): void {
