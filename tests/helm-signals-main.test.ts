@@ -1,7 +1,8 @@
 // Signals column, Electron main side (app/src/signals-main.ts): the daemon is polled only
 // while a window shows the column, pushes are deduplicated, only github.com / Mail links
-// open, Okena parent projects map to GitHub repos, and `n` starts a worktree + Claude
-// through the Okena CLI with a private, short-lived prompt file. Every exec is a fake:
+// open, Okena parent projects map to GitHub repos, `n` starts a worktree + Claude
+// through the Okena CLI with a private, short-lived prompt file, an answer to an agent ask
+// is passed to the daemon and an ask's link opens only as main re-reads it. Every exec is a fake:
 // these tests never run gh, git, Okena or Mail.
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
@@ -13,10 +14,17 @@ import signalsMainModule from '../app/src/signals-main.ts'
 type SignalsMainModule = typeof import('../app/src/signals-main.ts')
 type SignalsBridgeState = import('../app/src/shared.ts').SignalsBridgeState
 type SignalsSnapshot = import('../app/src/shared-helm.ts').SignalsSnapshot
+type SignalThread = import('../app/src/shared-helm.ts').SignalThread
 type SignalsExec = import('../app/src/signals-main.ts').SignalsExec
 type SignalsRequest = import('../app/src/signals-main.ts').SignalsRequest
-const { SignalsMain, githubRepoFromRemote, signalOpenableUrl, resolveOkenaBinary, SIGNALS_POLL_MS } =
-	signalsMainModule as SignalsMainModule
+const {
+	SignalsMain,
+	createSignalsDaemonRequest,
+	githubRepoFromRemote,
+	signalOpenableUrl,
+	resolveOkenaBinary,
+	SIGNALS_POLL_MS,
+} = signalsMainModule as SignalsMainModule
 
 const TOKEN = 'work:1'
 const WINDOW = { id: 1 }
@@ -54,6 +62,11 @@ function snapshot(head: string, generatedAt = '2026-11-05T09:00:00.000Z'): Signa
 				routedAgent: null,
 				routedHow: null,
 				routedAt: null,
+				body: null,
+				links: [],
+				askTerminal: null,
+				reply: null,
+				replyAt: null,
 				createdAt: '2026-11-05T08:00:00.000Z',
 				updatedAt: '2026-11-05T08:00:00.000Z',
 			},
@@ -238,6 +251,8 @@ test('update and routed POST, then re-read at once; the IPC gate refuses other w
 			'signals:new-agent',
 			'signals:okena-projects',
 			'signals:open',
+			'signals:open-link',
+			'signals:reply',
 			'signals:routed',
 			'signals:subscribe',
 			'signals:update',
@@ -358,6 +373,170 @@ test('open allows only github.com https links and Mail message ids', async () =>
 		status: 400,
 	})
 	assert.deepEqual(opened, ['https://github.com/acme/widgets/pull/7'])
+})
+
+/** An agent ask as `GET /api/signals/:id` serves it, links included. */
+function askThread(patch: Partial<SignalThread> = {}): SignalThread {
+	const base = snapshot('x').threads[0] as SignalThread
+	return {
+		...base,
+		id: 5,
+		threadKey: 'agent:design-pick',
+		source: 'agent',
+		kind: 'ask',
+		reasons: ['ask'],
+		ref: 'Signals asks',
+		fullRef: 'Signals asks · Okena terminal',
+		title: 'Pick a row layout',
+		head: 'Pick a row layout',
+		url: null,
+		repo: null,
+		number: null,
+		branch: null,
+		links: ['http://127.0.0.1:6006/?path=/story/a', 'https://github.com/neumie/helm/pull/412'],
+		...patch,
+	}
+}
+
+test('reply passes Jakub’s answer to the daemon and re-reads; the IPC channel is gated', async () => {
+	const h = harness()
+	const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+	h.main.registerIpc({ on: () => undefined, handle: (channel, listener) => handlers.set(channel, listener) })
+	const reply = handlers.get('signals:reply')
+	assert.ok(reply)
+	const refused = (await reply({ sender: { id: 9 } }, 5, { text: 'B' }, TOKEN)) as { error?: string }
+	assert.match(refused.error ?? '', /cannot change signals/)
+	assert.equal(h.calls.length, 0)
+
+	// Only `text` crosses to the daemon (its schema is strict); the text itself is the daemon's to clean.
+	assert.deepEqual(await reply({ sender: WINDOW }, 5, { text: 'Variant B\nship it', extra: true }, TOKEN), {
+		data: { id: 1 },
+	})
+	await flush()
+	assert.deepEqual(h.calls.slice(0, 2), [
+		{ method: 'POST', path: '/signals/5/reply', body: { text: 'Variant B\nship it' } },
+		{ method: 'GET', path: '/signals' },
+	])
+	const before = h.calls.length
+	assert.deepEqual(await h.main.reply(0, { text: 'B' }), { error: 'That signal does not exist.', status: 400 })
+	assert.deepEqual(await h.main.reply(5, { text: '   ' }), { error: 'The answer is empty.', status: 400 })
+	assert.deepEqual(await h.main.reply(5, 'B'), { error: 'The answer is empty.', status: 400 })
+	assert.deepEqual(await h.main.reply(5, { text: 'x'.repeat(2_001) }), {
+		error: 'The answer is too long.',
+		status: 400,
+	})
+	assert.equal(h.calls.length, before)
+	h.main.stop()
+})
+
+test('openLink opens only an agent ask’s stored http(s) link, read fresh from the daemon, while it is the one shown', async () => {
+	const h = harness()
+	const opened: string[] = []
+	;(h.main as unknown as { options: { openExternal: (url: string) => Promise<void> } }).options.openExternal =
+		async url => {
+			opened.push(url)
+		}
+	let served: SignalThread = askThread()
+	h.respond.result = () => ({ data: served })
+
+	assert.deepEqual(await h.main.openLink(5, 1, 'https://github.com/neumie/helm/pull/412'), { data: true })
+	assert.deepEqual(opened, ['https://github.com/neumie/helm/pull/412'])
+	// A fresh GET of that one thread decides what opens, never a value the renderer sent.
+	assert.deepEqual(h.calls, [{ method: 'GET', path: '/signals/5' }])
+
+	// The link changed in place since the column rendered it: nothing opens, Jakub looks again.
+	served = askThread({ links: ['http://127.0.0.1:6006/?path=/story/a', 'https://example.com/elsewhere'] })
+	assert.deepEqual(await h.main.openLink(5, 1, 'https://github.com/neumie/helm/pull/412'), {
+		error: 'The links changed; look at the ask again.',
+		status: 409,
+	})
+	// Shown at another position, or a near match: refused as well.
+	assert.equal(((await h.main.openLink(5, 0, 'https://example.com/elsewhere')) as { status?: number }).status, 409)
+	assert.equal(((await h.main.openLink(5, 1, 'https://example.com/elsewhere/')) as { status?: number }).status, 409)
+	assert.deepEqual(opened, ['https://github.com/neumie/helm/pull/412'])
+	served = askThread()
+
+	// Bad ids and indexes are refused before any read.
+	h.calls.length = 0
+	for (const [id, index, shown] of [
+		[0, 0, 'https://github.com/neumie/helm/pull/412'],
+		['5', 0, 'https://github.com/neumie/helm/pull/412'],
+		[5, -1, 'https://github.com/neumie/helm/pull/412'],
+		[5, 1.5, 'https://github.com/neumie/helm/pull/412'],
+		[5, 8, 'https://github.com/neumie/helm/pull/412'],
+		[5, '0', 'https://github.com/neumie/helm/pull/412'],
+		[5, Number.NaN, 'https://github.com/neumie/helm/pull/412'],
+		[5, null, 'https://github.com/neumie/helm/pull/412'],
+		[5, 1, undefined],
+		[5, 1, null],
+		[5, 1, ''],
+		[5, 1, 42],
+		[5, 1, `https://example.com/${'a'.repeat(2048)}`],
+	] as const)
+		assert.equal(
+			((await h.main.openLink(id, index, shown)) as { status?: number }).status,
+			400,
+			`${id}/${String(index)}/${String(shown).slice(0, 40)}`,
+		)
+	assert.equal(h.calls.length, 0)
+
+	// An index past the stored links, and a GitHub thread (no ask links), open nothing.
+	assert.deepEqual(await h.main.openLink(5, 2, 'https://github.com/neumie/helm/pull/412'), {
+		error: 'That link does not exist.',
+		status: 404,
+	})
+	served = { ...(snapshot('x').threads[0] as SignalThread), links: ['https://github.com/acme/widgets/pull/7'] }
+	assert.deepEqual(await h.main.openLink(1, 0, 'https://github.com/acme/widgets/pull/7'), {
+		error: 'Only agent asks have links to open.',
+		status: 400,
+	})
+
+	// Links the store would never keep are refused again here, even if a thread carried them.
+	for (const bad of [
+		'javascript:alert(1)',
+		'file:///etc/passwd',
+		'https://user:pass@example.com/',
+		'https://example.com/\u202eexe',
+		'https://example.com/a b',
+		'message://%3Cabc%40x%3E',
+	]) {
+		served = askThread({ links: [bad] })
+		assert.deepEqual(await h.main.openLink(5, 0, bad), { error: 'That link does not exist.', status: 404 }, bad)
+	}
+	assert.deepEqual(opened, ['https://github.com/neumie/helm/pull/412'])
+
+	// The daemon down: says so, opens nothing.
+	h.respond.result = () => ({ error: 'fetch failed' })
+	assert.deepEqual(await h.main.openLink(5, 0, 'http://127.0.0.1:6006/?path=/story/a'), {
+		error: 'Helm daemon is not reachable',
+		status: 503,
+	})
+	h.respond.result = () => ({ error: 'Signal not found', status: 404 })
+	assert.deepEqual(await h.main.openLink(5, 0, 'http://127.0.0.1:6006/?path=/story/a'), {
+		error: 'Signal not found',
+		status: 404,
+	})
+	assert.equal(opened.length, 1)
+
+	// Through IPC: the same gate as `open`.
+	const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+	h.main.registerIpc({ on: () => undefined, handle: (channel, listener) => handlers.set(channel, listener) })
+	served = askThread()
+	h.respond.result = () => ({ data: served })
+	const openLink = handlers.get('signals:open-link')
+	assert.match(
+		(
+			(await openLink?.({ sender: WINDOW }, 5, 0, 'http://127.0.0.1:6006/?path=/story/a', 'old:0')) as {
+				error?: string
+			}
+		).error ?? '',
+		/open links/,
+	)
+	assert.deepEqual(await openLink?.({ sender: WINDOW }, 5, 0, 'http://127.0.0.1:6006/?path=/story/a', TOKEN), {
+		data: true,
+	})
+	assert.deepEqual(opened, ['https://github.com/neumie/helm/pull/412', 'http://127.0.0.1:6006/?path=/story/a'])
+	h.main.stop()
 })
 
 test('git remotes normalize to lowercase github owner/repo', () => {
@@ -834,6 +1013,7 @@ test('a read-only (side-by-side) run never writes: no source poll, no thread cha
 	assert.deepEqual(await h.main.update(1, { state: 'seen' }), { error: 'read-only run', status: 403 })
 	assert.deepEqual(await h.main.routed(1, { agent: 'a', how: 'sent' }), { error: 'read-only run', status: 403 })
 	assert.deepEqual(await h.main.newAgent(newAgentRequest()), { error: 'read-only run', status: 403 })
+	assert.deepEqual(await h.main.reply(1, { text: 'yes' }), { error: 'read-only run', status: 403 })
 	assert.ok(h.calls.every(call => call.method === 'GET'))
 	h.main.stop()
 })
@@ -855,4 +1035,45 @@ test('main.ts and preload wire the Signals channels through the gated main-windo
 	assert.match(main, /signalsMain\.stop\(\)/)
 	assert.match(preload, /const SIGNALS_CHANNELS: typeof SIGNALS_IPC = \{/)
 	assert.match(preload, /\} satisfies SignalsApi,/)
+})
+
+test('daemon requests: writes carry the local control token, reads and read-only runs never do', async () => {
+	const seen: { method: string; url: string; headers: Record<string, string> }[] = []
+	const fakeFetch = (async (url: string, init: RequestInit) => {
+		seen.push({ method: init.method ?? 'GET', url, headers: { ...((init.headers as Record<string, string>) ?? {}) } })
+		return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 })
+	}) as unknown as typeof fetch
+	let reads = 0
+	const request = createSignalsDaemonRequest('http://127.0.0.1:7474/', {
+		fetch: fakeFetch,
+		controlToken: async () => {
+			reads += 1
+			return 'T'.repeat(43)
+		},
+	})
+	assert.deepEqual(await request('GET', '/signals'), { data: { ok: true } })
+	assert.deepEqual(await request('POST', '/signals/3/reply', { text: 'B' }), { data: { ok: true } })
+	assert.equal(seen[0]?.headers.Authorization, undefined)
+	assert.equal(seen[1]?.url, 'http://127.0.0.1:7474/api/signals/3/reply')
+	assert.equal(seen[1]?.headers.Authorization, `Bearer ${'T'.repeat(43)}`)
+	assert.equal(seen[1]?.headers['Content-Type'], 'application/json')
+	assert.equal(reads, 1, 'the token is read for writes only')
+
+	const readOnly = createSignalsDaemonRequest('http://127.0.0.1:7474', {
+		fetch: fakeFetch,
+		readOnlyError: 'read only',
+		controlToken: async () => 'T'.repeat(43),
+	})
+	assert.deepEqual(await readOnly('POST', '/signals/3/reply', { text: 'B' }), { error: 'read only', status: 403 })
+	assert.equal(seen.length, 2, 'a read-only run sends nothing')
+
+	const noToken = createSignalsDaemonRequest('http://127.0.0.1:7474', {
+		fetch: fakeFetch,
+		controlToken: async () => {
+			throw new Error('no token file')
+		},
+	})
+	assert.deepEqual(await noToken('POST', '/signals/3', { state: 'done' }), { data: { ok: true } })
+	assert.equal(seen.length, 3, 'without the token a write still goes out')
+	assert.equal(seen[2]?.headers.Authorization, undefined, 'unauthenticated: the daemon refuses only a reply')
 })

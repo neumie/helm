@@ -1,7 +1,8 @@
 // Signals column, Electron main side. The file:// renderer never talks to the daemon or
 // Okena itself: this module polls `GET /api/signals` only while some window shows the
-// Signals column, pushes the snapshot when it changed, forwards Jakub's thread actions,
-// opens a thread's source (github.com or Mail) and starts a new agent in Okena (`n`).
+// Signals column, pushes the snapshot when it changed, forwards Jakub's thread actions
+// (and his answers to agent asks), opens a thread's source (github.com or Mail) or an agent
+// ask's link, and starts a new agent in Okena (`n`).
 //
 // No Electron import: main injects the daemon request, the IPC gate, execFile, openExternal
 // and the push, so this module stays testable under node (tests/helm-signals-main.test.ts).
@@ -19,6 +20,7 @@ import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { oneLine } from '../../src/agent-dock/text'
+import { SIGNAL_LIMITS, signalAskLinkUrl } from '../../src/signals/contract'
 import { parseDaemonEnvelope } from '../../src/util/daemon-response'
 import {
 	SIGNALS_IPC,
@@ -32,6 +34,7 @@ import type {
 	HelmResult,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalReply,
 	SignalRouted,
 	SignalThread,
 	SignalUpdate,
@@ -147,16 +150,29 @@ export function resolveOkenaBinary(env: NodeJS.ProcessEnv, home: string, exists:
  */
 export function createSignalsDaemonRequest(
 	daemonUrl: string,
-	options: { readOnlyError?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
+	options: {
+		readOnlyError?: string
+		fetch?: typeof fetch
+		timeoutMs?: number
+		/** The daemon's local control token (main only): writes carry it, so Jakub's reply is accepted. */
+		controlToken?: () => Promise<string>
+	} = {},
 ): SignalsRequest {
 	const baseUrl = daemonUrl.replace(/\/$/, '')
 	const doFetch = options.fetch ?? fetch
 	return async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<HelmResult<T>> => {
 		if (method !== 'GET' && options.readOnlyError !== undefined) return { error: options.readOnlyError, status: 403 }
 		try {
+			const headers: Record<string, string> = {}
+			if (body !== undefined) headers['Content-Type'] = 'application/json'
+			if (method !== 'GET' && options.controlToken) {
+				// An unreadable token never blocks the other writes; only Jakub's reply is refused (401).
+				const token = await options.controlToken().catch(() => null)
+				if (token) headers.Authorization = `Bearer ${token}`
+			}
 			const res = await doFetch(`${baseUrl}/api${path}`, {
 				method,
-				headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+				headers,
 				body: body === undefined ? undefined : JSON.stringify(body),
 				signal: AbortSignal.timeout(options.timeoutMs ?? SIGNALS_REQUEST_TIMEOUT_MS),
 			})
@@ -346,6 +362,52 @@ export class SignalsMain {
 		}
 	}
 
+	/** Jakub's answer to an agent ask, saved on the thread (delivery is the dock's prompt path). */
+	async reply(id: unknown, body: unknown): Promise<HelmResult<SignalThread>> {
+		const threadId = signalId(id)
+		if (threadId === null) return { error: 'That signal does not exist.', status: 400 }
+		const text =
+			body !== null && typeof body === 'object' && !Array.isArray(body) ? (body as { text?: unknown }).text : undefined
+		if (typeof text !== 'string' || text.trim() === '') return { error: 'The answer is empty.', status: 400 }
+		if (text.length > SIGNAL_LIMITS.reply) return { error: 'The answer is too long.', status: 400 }
+		return this.write<SignalThread>(`/signals/${threadId}/reply`, { text } satisfies SignalReply)
+	}
+
+	/**
+	 * Opens link `index` of agent ask `id`. The link that opens is read fresh from the daemon here and
+	 * must still pass the one link rule, so a forged renderer value can never choose what opens; and it
+	 * must equal `shown`, the link Jakub saw at that position, so a link changed in place between render
+	 * and keypress opens nothing (he looks again).
+	 */
+	async openLink(id: unknown, index: unknown, shown: unknown): Promise<HelmResult<true>> {
+		const threadId = signalId(id)
+		if (threadId === null) return { error: 'That signal does not exist.', status: 400 }
+		if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= SIGNAL_LIMITS.askLinks)
+			return { error: 'That link does not exist.', status: 400 }
+		if (typeof shown !== 'string' || shown.length === 0 || shown.length > SIGNAL_LIMITS.url)
+			return { error: 'That link does not exist.', status: 400 }
+		let read: HelmResult<SignalThread>
+		try {
+			read = await this.options.request<SignalThread>('GET', `/signals/${threadId}`)
+		} catch (error) {
+			read = { error: errorText(error) }
+		}
+		if (read.data === undefined)
+			return { error: read.status === undefined ? SIGNALS_UNREACHABLE : plain(read.error), status: read.status ?? 503 }
+		const thread = read.data
+		if (thread === null || typeof thread !== 'object' || thread.source !== 'agent')
+			return { error: 'Only agent asks have links to open.', status: 400 }
+		const url = signalAskLinkUrl(Array.isArray(thread.links) ? thread.links[index] : undefined)
+		if (!url) return { error: 'That link does not exist.', status: 404 }
+		if (url !== shown) return { error: 'The links changed; look at the ask again.', status: 409 }
+		try {
+			await this.options.openExternal(url)
+			return { data: true }
+		} catch (error) {
+			return { error: `Could not open the link: ${plain(errorText(error))}` }
+		}
+	}
+
 	async okenaProjects(repo: unknown): Promise<HelmResult<SignalOkenaProjects>> {
 		if (repo !== null && (typeof repo !== 'string' || repo.length > REPO_MAX || !REPO_NAME.test(repo)))
 			return { error: 'That is not a GitHub repository name.', status: 400 }
@@ -397,6 +459,12 @@ export class SignalsMain {
 		)
 		ipc.handle(SIGNALS_IPC.open, (event, url, profileToken) =>
 			this.options.acceptsIpc(event.sender, profileToken) ? this.open(url) : refused('open links'),
+		)
+		ipc.handle(SIGNALS_IPC.reply, (event, id, body, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.reply(id, body) : refused('change signals'),
+		)
+		ipc.handle(SIGNALS_IPC.openLink, (event, id, index, url, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.openLink(id, index, url) : refused('open links'),
 		)
 		ipc.handle(SIGNALS_IPC.okenaProjects, (event, repo, profileToken) =>
 			this.options.acceptsIpc(event.sender, profileToken) ? this.okenaProjects(repo) : refused('read Okena projects'),

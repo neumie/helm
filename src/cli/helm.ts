@@ -25,7 +25,7 @@ Commands:
   edit     Iterate on a document with your running agent (helm edit FILE)
   review   Legacy advanced document-connection commands
   dock     Agent dock: Claude sessions (Okena, Helm terminals) that need you (watch/ls/show)
-  signal   Signals: GitHub and Mail threads that want you (ls/show/set/note/watch/poll)
+  signal   Signals: GitHub, Mail and agent asks that want you (ls/show/add/done/set/note/watch/poll)
   help     Show this help message`
 
 const INGEST_HELP = `Usage: helm ingest --project <slug> --title <title> [options]

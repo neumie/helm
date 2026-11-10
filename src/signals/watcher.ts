@@ -1,22 +1,23 @@
 // Signals poller: one independent loop per source (GitHub, Apple Mail), each single-flight with
 // its own timer. Unlike the deploy/plan observers it is NOT gated by the task sidebar watch:
 // Signals must keep working with the app closed. Signals are global (one inbox for Jakub across
-// every Helm profile), so a profile switch never changes where a poll lands.
+// every Helm profile), so a profile switch never changes where a poll lands. Agent asks are
+// pushed through `helm signal add`, so they have no loop here.
 
 import type { HelmConfig } from '../config.js'
 import type { DB } from '../db/client.js'
 import { log } from '../util/logger.js'
 import {
-	SIGNAL_SOURCES,
+	SIGNAL_POLL_SOURCES,
 	type SignalPollResult,
-	type SignalSource,
+	type SignalPollSource,
 	type SignalSourceHealth,
 	type SignalSourceStatus,
 } from './contract.js'
 
 /** One source poller. `result` is null when nothing usable was read; `health` is always set. */
 export interface SignalReader {
-	source: SignalSource
+	source: SignalPollSource
 	read(signal: AbortSignal): Promise<{
 		result: SignalPollResult | null
 		health: { status: SignalSourceStatus; detail: string | null }
@@ -33,7 +34,7 @@ export interface SignalsWatcherDeps {
 export const SIGNAL_MANUAL_POLL_GAP_MS = 15_000
 
 interface SourceLoop {
-	readonly source: SignalSource
+	readonly source: SignalPollSource
 	readonly reader: SignalReader | undefined
 	readonly intervalMs: number
 	timer: ReturnType<typeof setTimeout> | null
@@ -52,7 +53,7 @@ export class SignalsWatcher {
 	/** stop() closes manual and timer admission before it aborts in-flight ticks. */
 	private admissionOpen = true
 	private stopDrain: Promise<void> | null = null
-	private readonly loops: Record<SignalSource, SourceLoop>
+	private readonly loops: Record<SignalPollSource, SourceLoop>
 	private readonly now: () => Date
 
 	constructor(
@@ -61,7 +62,7 @@ export class SignalsWatcher {
 		private readonly deps: SignalsWatcherDeps,
 	) {
 		this.now = deps.now ?? (() => new Date())
-		const loop = (source: SignalSource, reader: SignalReader | undefined, seconds: number): SourceLoop => ({
+		const loop = (source: SignalPollSource, reader: SignalReader | undefined, seconds: number): SourceLoop => ({
 			source,
 			reader,
 			intervalMs: seconds * 1000,
@@ -79,7 +80,7 @@ export class SignalsWatcher {
 	}
 
 	/** Whether a source polls at all (feature on, source on, reader wired). */
-	isEnabled(source: SignalSource): boolean {
+	isEnabled(source: SignalPollSource): boolean {
 		const signals = this.config.signals
 		if (!signals.enabled || this.loops[source].reader === undefined) return false
 		return source === 'github' ? signals.github.enabled : signals.mail.enabled
@@ -89,7 +90,7 @@ export class SignalsWatcher {
 		if (this.running || this.stopDrain) return
 		this.running = true
 		this.admissionOpen = true
-		for (const source of SIGNAL_SOURCES) {
+		for (const source of SIGNAL_POLL_SOURCES) {
 			const loop = this.loops[source]
 			if (this.isEnabled(source)) {
 				this.arm(loop, 0)
@@ -106,7 +107,7 @@ export class SignalsWatcher {
 		this.running = false
 		this.admissionOpen = false
 		const ticks: Promise<void>[] = []
-		for (const source of SIGNAL_SOURCES) {
+		for (const source of SIGNAL_POLL_SOURCES) {
 			const loop = this.loops[source]
 			if (loop.timer) clearTimeout(loop.timer)
 			loop.timer = null
@@ -120,9 +121,9 @@ export class SignalsWatcher {
 	}
 
 	/** Poll one source (or both) now; single-flight per source, resolves when done. */
-	async pollOnce(source?: SignalSource): Promise<void> {
+	async pollOnce(source?: SignalPollSource): Promise<void> {
 		if (source === undefined) {
-			await Promise.all(SIGNAL_SOURCES.map(each => this.pollOnce(each)))
+			await Promise.all(SIGNAL_POLL_SOURCES.map(each => this.pollOnce(each)))
 			return
 		}
 		const loop = this.loops[source]
@@ -144,7 +145,7 @@ export class SignalsWatcher {
 	 */
 	requestPoll(): void {
 		if (!this.running) return
-		for (const source of SIGNAL_SOURCES) {
+		for (const source of SIGNAL_POLL_SOURCES) {
 			if (!this.isEnabled(source)) continue
 			const loop = this.loops[source]
 			if (loop.currentTick) {

@@ -3408,6 +3408,12 @@ body.dragging {
 	grid-area: 1 / 5 / 3 / 6;
 }
 
+/* An agent ask's dim third line (its body's first line · N links). */
+.signals-tr > .signals-td-detail {
+	grid-area: 3 / 3 / 4 / 5;
+	color: var(--dock-dim);
+}
+
 .signals-tr:hover {
 	background: var(--fill-subtle);
 }
@@ -3451,7 +3457,8 @@ body.dragging {
 }
 
 .signals-glyph[data-kind="review"],
-.signals-glyph[data-kind="mail"] {
+.signals-glyph[data-kind="mail"],
+.signals-glyph[data-kind="ask"] {
 	color: var(--warn);
 }
 
@@ -3477,6 +3484,11 @@ body.dragging {
 
 .signals-receipt-mark {
 	color: var(--success);
+}
+
+/* An answer saved on the thread but not typed into the agent: no mark, dim. */
+.signals-receipt[data-how="saved"] {
+	color: var(--dock-dim);
 }
 
 /* ---------- footer: the selected row's keys, the last note, sources that did not answer ---------- */
@@ -3737,6 +3749,59 @@ body.dragging {
 	color: var(--text-0);
 	background: var(--fill-subtle);
 	user-select: text;
+}
+
+/* An agent ask in the reply flow: its own words, read (13/20), plain untrusted text. */
+.signals-ask-title {
+	margin: 4px 0 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-0);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+.signals-ask-body {
+	margin: 4px 0 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+/* Links are shown as text, never as anchors; o (or the links flow) opens them. */
+.signals-ask-links {
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.signals-ask-link {
+	min-width: 0;
+	color: var(--dock-dim);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+/* The links flow: a link is the whole choice (it wraps rather than hiding its end). */
+.signals-choice-label.signals-ask-link {
+	grid-column: 3 / 5;
+	white-space: normal;
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	color: var(--text-1);
+	padding-block: 5px;
+}
+
+/* Jakub's answer is his own prose, not a literal prompt: the UI face at reading size. */
+.signals-answer-input {
+	min-height: calc(var(--dock-prose-lh) * 3 + 16px);
+	font-family: var(--dock-sans);
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	letter-spacing: -0.01em;
 }
 
 .signals-prompt-input:focus,

@@ -1,6 +1,7 @@
 // Signals HTTP surface (`/api/signals/*`): the snapshot the Signals column and `helm signal`
-// read, per-thread state/owner/note/routing writes, a long-poll change feed for the dispatcher,
-// and a coalesced manual poll trigger. Mounted from api.ts. Signals are global: the active Helm
+// read, per-thread state/owner/note/routing writes, agent asks (`helm signal add/done`) and
+// Jakub's replies to them, a long-poll change feed for the dispatcher, and a coalesced manual
+// poll trigger. Mounted from api.ts. Signals are global: the active Helm
 // profile never changes what these routes read or write.
 
 import { Hono } from 'hono'
@@ -9,19 +10,25 @@ import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
 import type { DB } from '../../db/client.js'
 import {
+	SIGNAL_ASK_KEY,
 	SIGNAL_OWNERS,
 	SIGNAL_SOURCES,
 	SIGNAL_STATES,
 	type SignalEventsPage,
 	type SignalIncludeResult,
 	type SignalsSnapshot,
+	signalAskDoneSchema,
+	signalAskSchema,
+	signalDoneSchema,
 	signalNoteSchema,
+	signalReplySchema,
 	signalRoutedSchema,
 	signalUpdateSchema,
 } from '../../signals/contract.js'
 import { type IncludeSender, IncludeSenderError } from '../../signals/include-sender.js'
 import {
 	SignalInvalidError,
+	SignalLimitError,
 	type SignalListFilter,
 	SignalNotFoundError,
 	type SignalStore,
@@ -37,6 +44,12 @@ export interface SignalRouteDependencies {
 	now?: () => Date
 	/** Long-poll re-check interval; tests shorten it. */
 	eventPollMs?: number
+	/**
+	 * Whether a request carries the daemon's local control token (only Helm's main process holds
+	 * it). Jakub's reply to an ask and its `replied` receipt need it, so no agent can answer another
+	 * agent's ask in Jakub's name. Missing = refused.
+	 */
+	controlAuthorized?: (c: Context) => boolean
 }
 
 const MAX_SIGNAL_BODY_BYTES = 16 * 1024
@@ -85,6 +98,8 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const now = deps?.now ?? (() => new Date())
 	const eventPollMs = deps?.eventPollMs ?? DEFAULT_EVENT_POLL_MS
 	const storeFor = (): SignalStore => db.signals
+	const jakubOnly = (c: Context) =>
+		deps?.controlAuthorized?.(c) ? null : c.json({ error: 'Only Helm can record Jakub’s reply' }, 401)
 
 	const parseBody = async <T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> => {
 		try {
@@ -100,6 +115,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const failure = (c: Context, err: unknown) => {
 		if (err instanceof SignalNotFoundError) return c.json({ error: 'Signal not found' }, 404)
 		if (err instanceof SignalInvalidError) return c.json({ error: err.message }, 400)
+		if (err instanceof SignalLimitError) return c.json({ error: err.message }, 429)
 		throw err
 	}
 
@@ -188,6 +204,37 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		return c.json({ data: { requested: true } })
 	})
 
+	routes.post('/asks', signalsBody, async c => {
+		const body = await parseBody(c, signalAskSchema)
+		if ('error' in body) return body.error
+		try {
+			return c.json({ data: storeFor().upsertAsk(body.data, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
+	routes.get('/asks', c => {
+		const key = c.req.query('key') ?? ''
+		if (!SIGNAL_ASK_KEY.test(key)) return c.json({ error: 'Invalid ask key' }, 400)
+		const thread = storeFor().getAskByKey(key)
+		return thread ? c.json({ data: thread }) : c.json({ error: 'Signal not found' }, 404)
+	})
+
+	routes.post('/asks/done', signalsBody, async c => {
+		const body = await parseBody(c, signalAskDoneSchema)
+		if ('error' in body) return body.error
+		const store = storeFor()
+		// No await between lookup and close, so the key cannot move to another thread meanwhile.
+		const thread = store.getAskByKey(body.data.key)
+		if (!thread) return c.json({ error: 'Signal not found' }, 404)
+		try {
+			return c.json({ data: store.done(thread.id, body.data.note, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
 	routes.get('/:id', c => {
 		const id = signalId(c.req.param('id'))
 		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
@@ -224,8 +271,38 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
 		const body = await parseBody(c, signalRoutedSchema)
 		if ('error' in body) return body.error
+		if (body.data.how === 'replied') {
+			const refused = jakubOnly(c)
+			if (refused) return refused
+		}
 		try {
 			return c.json({ data: storeFor().setRouted(id, body.data, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
+	routes.post('/:id/done', signalsBody, async c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const body = await parseBody(c, signalDoneSchema)
+		if ('error' in body) return body.error
+		try {
+			return c.json({ data: storeFor().done(id, body.data.note, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
+	routes.post('/:id/reply', signalsBody, async c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c)
+		if (refused) return refused
+		const body = await parseBody(c, signalReplySchema)
+		if ('error' in body) return body.error
+		try {
+			return c.json({ data: storeFor().reply(id, body.data.text, now()) })
 		} catch (err) {
 			return failure(c, err)
 		}

@@ -2272,7 +2272,13 @@ export function apiRoutes({
 	})
 
 	// Signals: what the world wants from Jakub. Not tied to the task sidebar watch below.
-	api.route('/signals', signalRoutes(db, profileContext?.signals))
+	api.route(
+		'/signals',
+		signalRoutes(
+			db,
+			profileContext?.signals && { ...profileContext.signals, controlAuthorized: localControlAuthorized },
+		),
+	)
 
 	api.post('/poll/watch', async c => {
 		const body = await c.req.json().catch(() => null)

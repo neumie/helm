@@ -2,10 +2,22 @@
 // Driven with injected deps and a fake fetch: no process, no daemon, no DB.
 
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { getFromDaemon, postToDaemon, requestDaemon, resolveBaseUrl } from '../src/cli/daemon-http.js'
-import { SIGNAL_HEARTBEAT_MS, buildSetBody, parseUntil, runSignalCli } from '../src/cli/signal.js'
+import {
+	BODY_FILE_MAX_BYTES,
+	SIGNAL_HEARTBEAT_MS,
+	buildSetBody,
+	okenaTerminalLabel,
+	parseUntil,
+	runSignalCli,
+} from '../src/cli/signal.js'
 import type {
+	SignalAsk,
+	SignalAskResult,
 	SignalEvent,
 	SignalFilteredPage,
 	SignalSourceHealth,
@@ -45,6 +57,11 @@ function thread(overrides: Partial<SignalThread> & { id: number }): SignalThread
 		routedAgent: null,
 		routedHow: null,
 		routedAt: null,
+		body: null,
+		links: [],
+		askTerminal: null,
+		reply: null,
+		replyAt: null,
 		createdAt: '2026-11-05T09:00:00.000Z',
 		updatedAt: '2026-11-05T09:52:00.000Z',
 		...overrides,
@@ -655,4 +672,423 @@ test('watch: daemon down at start waits for it; abort while offline exits 0', as
 		run.out.map(line => JSON.parse(line).t),
 		['daemon-offline'],
 	)
+})
+
+// ---------------------------------------------------------------------------
+// agent asks: add / done / ls / show
+// ---------------------------------------------------------------------------
+
+const TERMINAL = '62e79683-4314-48ae-b687-e6c3e1ff8a30'
+const STORY_1 = 'http://localhost:6006/?path=/story/views-signals-agent-asks--title-rows'
+const STORY_2 = 'http://localhost:6006/?path=/story/views-signals-agent-asks--body-line'
+
+function ask(overrides: Partial<SignalThread> & { id: number }): SignalThread {
+	return thread({
+		threadKey: `agent:ask-${overrides.id}`,
+		source: 'agent',
+		kind: 'ask',
+		reasons: ['ask'],
+		ref: 'dispatcher',
+		fullRef: 'dispatcher · Okena terminal',
+		title: 'Pick the row layout',
+		head: 'Pick the row layout',
+		actor: 'dispatcher',
+		url: null,
+		repo: null,
+		number: null,
+		branch: null,
+		body: 'Both are in Storybook.\nReply 1 or 2.',
+		links: [STORY_1, STORY_2],
+		askTerminal: TERMINAL,
+		...overrides,
+	})
+}
+
+/** A daemon answering asks routes: echoes the posted ask as a thread with `outcome`. */
+function askDaemon(outcome: SignalAskResult['outcome'] = 'created') {
+	return fakeDaemon(call => {
+		const posted = (call.body ?? {}) as Partial<SignalAsk>
+		return json({
+			outcome,
+			thread: ask({
+				id: 12,
+				title: posted.title ?? 'x',
+				head: posted.title ?? 'x',
+				ref: posted.from ?? 'agent',
+				body: posted.body ?? null,
+				links: posted.links ?? [],
+				askTerminal: posted.terminal ?? null,
+				lastActivityAt: NOW.toISOString(),
+			}),
+		})
+	})
+}
+
+test('add sends every option, the terminal and the --from looked up in Okena', async () => {
+	const daemon = askDaemon()
+	const lookups: string[] = []
+	const run = capture(daemon.fetch, {
+		env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL.toUpperCase() },
+		okenaTerminalName: async (id: string) => {
+			lookups.push(id)
+			return 'Signals asks'
+		},
+	})
+	const args = [
+		'add',
+		'--title',
+		'  Pick the row layout  ',
+		'--body',
+		' Both are in Storybook.\nReply 1 or 2. ',
+		'--link',
+		STORY_1,
+		'--link',
+		STORY_2,
+		'--key',
+		'signals-row-layout',
+	]
+	assert.equal(await runSignalCli(args, run.deps), 0)
+	assert.deepEqual(lookups, [TERMINAL])
+	assert.deepEqual(daemon.calls, [
+		{
+			method: 'POST',
+			url: `${BASE}/api/signals/asks`,
+			body: {
+				key: 'signals-row-layout',
+				title: 'Pick the row layout',
+				body: 'Both are in Storybook.\nReply 1 or 2.',
+				links: [STORY_1, STORY_2],
+				from: 'Signals asks',
+				terminal: TERMINAL,
+			},
+		},
+	])
+	assert.deepEqual(run.err, [])
+	const [head, row] = (run.out[0] ?? '').split('\n')
+	assert.equal(head, 'created #12')
+	assert.match(row ?? '', /^ {2}#12 {2}new {2}ask {2}Signals asks {2}Pick the row layout {2}0s$/)
+})
+
+test('add: an explicit --from wins (the terminal is still sent); no terminal → "agent"', async () => {
+	const daemon = askDaemon()
+	let lookedUp = false
+	const named = capture(daemon.fetch, {
+		env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL },
+		okenaTerminalName: async () => {
+			lookedUp = true
+			return 'never used'
+		},
+	})
+	assert.equal(await runSignalCli(['add', '--title', 'Merge #314?', '--from', 'ci-bot'], named.deps), 0)
+	assert.equal(lookedUp, false)
+	assert.deepEqual(daemon.calls[0]?.body, { title: 'Merge #314?', from: 'ci-bot', terminal: TERMINAL })
+
+	// No (or a malformed) terminal id: no lookup, no terminal, from "agent".
+	for (const env of [ENV, { ...ENV, OKENA_TERMINAL_ID: 'not-a-terminal' }]) {
+		const plain = capture(daemon.fetch, {
+			env,
+			okenaTerminalName: async () => {
+				lookedUp = true
+				return 'x'
+			},
+		})
+		assert.equal(await runSignalCli(['add', '--title', 'Merge #314?'], plain.deps), 0)
+		assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Merge #314?', from: 'agent' })
+	}
+	assert.equal(lookedUp, false)
+
+	// A lookup that finds nothing (or fails) falls back to "agent" but keeps the terminal.
+	for (const lookup of [async () => null, async () => Promise.reject(new Error('boom')), async () => ' ‮ ']) {
+		const fallback = capture(daemon.fetch, { env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL }, okenaTerminalName: lookup })
+		assert.equal(await runSignalCli(['add', '--title', 'Merge #314?'], fallback.deps), 0)
+		assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Merge #314?', from: 'agent', terminal: TERMINAL })
+	}
+})
+
+test('okenaTerminalLabel: the name, or the project for an unnamed terminal', () => {
+	const list = JSON.stringify([
+		{ terminal_id: TERMINAL, name: TERMINAL, project_id: 'p', project_name: 'helm' },
+		{ terminal_id: '00529b76-aa85-4007-8692-b836e6349f83', name: 'Signals\u001b asks', project_name: 'helm' },
+	])
+	assert.equal(okenaTerminalLabel(list, TERMINAL.toUpperCase()), 'helm')
+	assert.equal(okenaTerminalLabel(list, '00529b76-aa85-4007-8692-b836e6349f83'), 'Signals asks')
+	assert.equal(okenaTerminalLabel(list, 'ffffffff-aa85-4007-8692-b836e6349f83'), null)
+	assert.equal(okenaTerminalLabel('not json', TERMINAL), null)
+	assert.equal(okenaTerminalLabel('{"terminal_id":1}', TERMINAL), null)
+})
+
+test('add: outcomes in words, --json prints the result on one line', async () => {
+	for (const [outcome, head] of [
+		['created', 'created #12'],
+		['renewed', 'renewed #12 (new again)'],
+		['updated', 'updated #12'],
+		['unchanged', 'unchanged #12'],
+	] as const) {
+		const run = capture(askDaemon(outcome).fetch)
+		assert.equal(await runSignalCli(['add', '--title', 'Merge #314?', '--key', 'merge-314'], run.deps), 0)
+		assert.equal(run.out[0]?.split('\n')[0], head)
+	}
+	const run = capture(askDaemon('renewed').fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'Merge #314?', '--json'], run.deps), 0)
+	assert.equal(run.out.length, 1)
+	assert.equal(run.out[0]?.includes('\n'), false)
+	const result = JSON.parse(run.out[0] ?? '') as SignalAskResult
+	assert.equal(result.outcome, 'renewed')
+	assert.equal(result.thread.id, 12)
+
+	const old = capture(fakeDaemon(() => json(ask({ id: 12 }))).fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'x'], old.deps), 1)
+	assert.match(old.err[0] ?? '', /sent no ask result/)
+})
+
+test('add refuses bad input before any request', async () => {
+	const daemon = fakeDaemon(() => json({}))
+	let lookups = 0
+	const cases: string[][] = [
+		['add'],
+		['add', 'Merge #314?'],
+		['add', '--title', '   '],
+		['add', '--title', 'one\ntwo'],
+		['add', '--title', 'x'.repeat(201)],
+		['add', '--title', 'x', '--body', 'b'.repeat(1001)],
+		['add', '--title', 'x', '--body', Array.from({ length: 13 }, (_, i) => `line ${i}`).join('\n')],
+		['add', '--title', 'x', '--link', 'javascript:alert(1)'],
+		['add', '--title', 'x', '--link', 'https://user:pw@example.com/'],
+		['add', '--title', 'x', '--link', '/relative/path'],
+		['add', '--title', 'x', '--link', 'https://evil.com\\.github.com/x'],
+		['add', '--title', 'x', '--link', 'http:evil.com'],
+		['add', '--title', 'x', '--link', 'https:/\\evil.com'],
+		['add', '--title', 'x', '--link', 'https:///evil.com'],
+		['add', '--title', 'x', '--body', Array.from({ length: 13 }, (_, i) => `line ${i}`).join('\u2028')],
+		['add', '--title', 'x', '--body', Array.from({ length: 13 }, (_, i) => `line ${i}`).join('\u2029')],
+		['add', '--title', 'x', ...Array.from({ length: 9 }, (_, i) => ['--link', `https://example.com/${i}`]).flat()],
+		['add', '--title', 'x', '--key', 'has space'],
+		['add', '--title', 'x', '--key', '-leading'],
+		['add', '--title', 'x', '--body', 'b', '--body-file', '/tmp/x'],
+		['add', '--title', 'x', '--title', 'y'],
+		['add', '--title', 'x', '--from', ''],
+		['add', '--title', 'x', '--from', 'a\nb'],
+		['add', '--title', 'x', '--bogus'],
+		['add', '--title', 'x', '--link'],
+		['add', '--title', 'x', '--note', 'n'],
+		['ls', '--link', 'https://example.com/'],
+		['show', '12', '--link', 'https://example.com/'],
+		['set', '12', '--title', 'x'],
+		['done'],
+		['done', '12', '--key', 'k'],
+		['done', '12', '13'],
+		['done', '--key', 'bad key'],
+		['done', '12', '--note', ' '],
+		['done', '12', '--note', 'n'.repeat(301)],
+		['done', '12', '--link', 'https://example.com/'],
+	]
+	for (const args of cases) {
+		const run = capture(daemon.fetch, {
+			env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL },
+			okenaTerminalName: async () => {
+				lookups++
+				return 'name'
+			},
+		})
+		assert.equal(await runSignalCli(args, run.deps), 1, args.join(' '))
+		assert.match(run.err[0] ?? '', /Run helm signal help\.$/, args.join(' '))
+	}
+	assert.equal(daemon.calls.length, 0)
+	assert.equal(lookups, 0, 'a bad call never runs Okena')
+})
+
+test('add counts body lines as the store keeps them', async () => {
+	const daemon = askDaemon()
+	// Twelve lines once blank runs collapse and leading/trailing blank lines drop: accepted.
+	const lines = Array.from({ length: 11 }, (_, i) => `line ${i}`)
+	const body = `\n\u2028 \u0007\n${lines.slice(0, 5).join('\u2028')}\n\n\u202e\n${lines.slice(5).join('\u2029')}\r\n\n`
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'x', '--body', body], run.deps), 0, run.err.join('\n'))
+	assert.equal(daemon.calls.length, 1)
+	// A thirteenth line separated by U+2028 is refused before any request.
+	const over = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'x', '--body', `${body}\u2028line 12`], over.deps), 1)
+	assert.match(over.err[0] ?? '', /Run helm signal help\.$/)
+	assert.equal(daemon.calls.length, 1)
+})
+
+test('add: a refused ask (429, too many open) prints the daemon message', async () => {
+	const message = 'Too many open agent asks (50). Close some with helm signal done.'
+	const daemon = fakeDaemon(() => json({ error: message }, 429))
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'One too many'], run.deps), 1)
+	assert.equal(daemon.calls.length, 1)
+	assert.equal(run.out.length, 0)
+	assert.ok((run.err[0] ?? '').includes(message), run.err.join('\n'))
+})
+
+test('add --body-file reads a file or stdin, bounded and UTF-8 only', async t => {
+	const dir = mkdtempSync(join(tmpdir(), 'hs-cli-'))
+	t.after(() => rmSync(dir, { recursive: true, force: true }))
+	const file = join(dir, 'body.md')
+	writeFileSync(file, '﻿Both variants are in Storybook.\n\nReply 1 or 2.\n')
+	const daemon = askDaemon()
+	const fromFile = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'Pick one', '--body-file', file], fromFile.deps), 0)
+	assert.deepEqual(daemon.calls[0]?.body, {
+		title: 'Pick one',
+		body: 'Both variants are in Storybook.\n\nReply 1 or 2.',
+		from: 'agent',
+	})
+
+	const asked: number[] = []
+	const fromStdin = capture(daemon.fetch, {
+		readStdin: async (max: number) => {
+			asked.push(max)
+			return Buffer.from('Merge now?\nCI is green.\n')
+		},
+	})
+	assert.equal(await runSignalCli(['add', '--title', 'Merge #314?', '--body-file', '-'], fromStdin.deps), 0)
+	assert.deepEqual(asked, [BODY_FILE_MAX_BYTES])
+	assert.deepEqual(daemon.calls[1]?.body, { title: 'Merge #314?', body: 'Merge now?\nCI is green.', from: 'agent' })
+
+	// Too big, not UTF-8, a directory, a missing file: refused, nothing sent.
+	const big = join(dir, 'big.md')
+	writeFileSync(big, 'x'.repeat(BODY_FILE_MAX_BYTES + 1))
+	const binary = join(dir, 'binary.bin')
+	writeFileSync(binary, Buffer.from([0xff, 0xfe, 0x00, 0x41]))
+	for (const [path, message] of [
+		[big, /larger than 64 KiB/],
+		[binary, /not UTF-8 text/],
+		[dir, /not a regular file/],
+		[join(dir, 'missing.md'), /Could not read --body-file .*ENOENT/],
+	] as const) {
+		const run = capture(daemon.fetch)
+		assert.equal(await runSignalCli(['add', '--title', 'x', '--body-file', path], run.deps), 1, path)
+		assert.match(run.err[0] ?? '', message, path)
+	}
+	const huge = capture(daemon.fetch, { readStdin: async (max: number) => Buffer.alloc(max + 1, 0x61) })
+	assert.equal(await runSignalCli(['add', '--title', 'x', '--body-file', '-'], huge.deps), 1)
+	assert.match(huge.err[0] ?? '', /stdin is larger than 64 KiB/)
+	assert.equal(daemon.calls.length, 2)
+})
+
+test('done by id, by --key, with --note, --json', async () => {
+	const daemon = fakeDaemon(call =>
+		json(
+			ask({
+				id: 12,
+				state: 'done',
+				closedReason: 'closed by the agent',
+				note: (call.body as { note?: string }).note ?? null,
+			}),
+		),
+	)
+	const byId = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['done', '#12'], byId.deps), 0)
+	assert.deepEqual(daemon.calls[0], { method: 'POST', url: `${BASE}/api/signals/12/done`, body: {} })
+	assert.match(
+		byId.out[0] ?? '',
+		/^ {2}#12 {2}done {2}ask {2}dispatcher {2}Pick the row layout .*\(closed by the agent\)$/,
+	)
+
+	const noted = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['done', '12', '--note', ' Jakub picked 2; built it '], noted.deps), 0)
+	assert.deepEqual(daemon.calls[1]?.body, { note: 'Jakub picked 2; built it' })
+
+	const byKey = capture(daemon.fetch)
+	assert.equal(
+		await runSignalCli(['done', '--key', 'signals-row-layout', '--note', 'Built variant 2', '--json'], byKey.deps),
+		0,
+	)
+	assert.deepEqual(daemon.calls[2], {
+		method: 'POST',
+		url: `${BASE}/api/signals/asks/done`,
+		body: { key: 'signals-row-layout', note: 'Built variant 2' },
+	})
+	assert.equal(byKey.out.length, 1)
+	assert.equal(JSON.parse(byKey.out[0] ?? '').state, 'done')
+
+	const missing = capture(fakeDaemon(() => json({ error: 'Signal not found' }, 404)).fetch)
+	assert.equal(await runSignalCli(['done', '--key', 'nope'], missing.deps), 1)
+	assert.deepEqual(missing.err, ['Error: Signal not found'])
+})
+
+test('ls shows an ask row: from, title, and whether the reply reached the agent', async () => {
+	const threads = [
+		ask({ id: 21, lastActivityAt: '2026-11-05T09:58:00.000Z' }),
+		ask({
+			id: 22,
+			state: 'seen',
+			reply: 'Variant 2',
+			replyAt: '2026-11-05T09:55:00.000Z',
+			routedAgent: 'Signals asks',
+			routedHow: 'replied',
+			routedAt: '2026-11-05T09:55:01.000Z',
+			lastActivityAt: '2026-11-05T09:50:00.000Z',
+		}),
+		ask({
+			id: 23,
+			state: 'seen',
+			reply: 'No',
+			replyAt: '2026-11-05T09:45:00.000Z',
+			// A route left from an earlier reply does not deliver this one.
+			routedAgent: 'Signals asks',
+			routedHow: 'replied',
+			routedAt: '2026-11-05T09:30:00.000Z',
+			lastActivityAt: '2026-11-05T09:20:00.000Z',
+		}),
+	]
+	const daemon = fakeDaemon(() => json(snapshot(threads, [])))
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['ls', '--source', 'agent'], run.deps), 0)
+	assert.equal(daemon.calls[0]?.url, `${BASE}/api/signals?source=agent`)
+	const lines = run.out.join('\n').split('\n')
+	assert.equal(lines[0], 'NEEDS YOU', 'asks need no poller health')
+	assert.match(lines[1] ?? '', /^ {2}#21 {2}new {3}ask {2}dispatcher {2}Pick the row layout {2}2m$/)
+	assert.match(lines[2] ?? '', /#22 .*Pick the row layout {2}10m {2}→ replied Signals asks 5m ago$/)
+	assert.match(lines[3] ?? '', /#23 .*Pick the row layout {2}40m {2}\(answered, not delivered\)$/)
+
+	const empty = capture(fakeDaemon(() => json(snapshot([], []))).fetch)
+	assert.equal(await runSignalCli(['ls', '--source', 'agent'], empty.deps), 0)
+	assert.equal(empty.out[0], 'NEEDS YOU: nothing')
+})
+
+test('show prints an ask: body, links, terminal, reply and its delivery, all stripped', async () => {
+	const delivered = ask({
+		id: 22,
+		state: 'seen',
+		title: 'Pick‮ the row',
+		body: 'Both are in Storybook.\n\u001b[31mReply 1 or 2.',
+		reply: 'Variant 2,\nbut with the dim line.',
+		replyAt: '2026-11-05T09:55:00.000Z',
+		routedAgent: 'Signals asks',
+		routedHow: 'replied',
+		routedAt: '2026-11-05T09:55:01.000Z',
+	})
+	const run = capture(fakeDaemon(() => json(delivered)).fetch)
+	assert.equal(await runSignalCli(['show', '22'], run.deps), 0)
+	const out = run.out.join('\n')
+	assert.equal(out.includes('\u001b') || out.includes('‮'), false)
+	assert.match(out, /^title \(written by an agent, untrusted\): Pick the row$/m)
+	assert.match(out, /^body \(written by an agent, untrusted\):\n {2}Both are in Storybook\.\n {2}\[31mReply 1 or 2\.$/m)
+	assert.ok(out.includes(`links:\n  ${STORY_1}\n  ${STORY_2}\n`))
+	assert.match(out, new RegExp(`^terminal: ${TERMINAL}$`, 'm'))
+	assert.match(out, /^reply \(Jakub's answer\):\n {2}Variant 2,\n {2}but with the dim line\.\nreply at: .*\(5m ago\)$/m)
+	assert.match(out, /^reply delivered: yes, typed into Signals asks 5m ago$/m)
+
+	const saved = capture(
+		fakeDaemon(() =>
+			json(ask({ id: 23, body: null, links: [], askTerminal: null, reply: 'No', replyAt: NOW.toISOString() })),
+		).fetch,
+	)
+	assert.equal(await runSignalCli(['show', '23'], saved.deps), 0)
+	const savedOut = saved.out.join('\n')
+	assert.match(savedOut, /^body \(written by an agent, untrusted\): -$/m)
+	assert.match(savedOut, /^links: -$/m)
+	assert.match(savedOut, /^terminal: -$/m)
+	assert.match(savedOut, /^reply delivered: no: read it here$/m)
+
+	const open = capture(fakeDaemon(() => json(ask({ id: 21 }))).fetch)
+	assert.equal(await runSignalCli(['show', '21'], open.deps), 0)
+	assert.match(open.out.join('\n'), /^reply: -$/m)
+	// GitHub threads keep their third-party labels and print no ask fields.
+	const gh = capture(fakeDaemon(() => json(thread({ id: 12 }))).fetch)
+	assert.equal(await runSignalCli(['show', '12'], gh.deps), 0)
+	assert.doesNotMatch(gh.out.join('\n'), /^(body|links|terminal|reply)/m)
 })

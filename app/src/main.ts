@@ -327,7 +327,7 @@ const signalsReadOnly = sideBySideRequested(process.env)
 const signalsMain = new SignalsMain({
 	request: createSignalsDaemonRequest(
 		daemonUrl,
-		signalsReadOnly ? { readOnlyError: SIDE_BY_SIDE_READ_ONLY_ERROR } : {},
+		signalsReadOnly ? { readOnlyError: SIDE_BY_SIDE_READ_ONLY_ERROR } : { controlToken: () => readLocalControlToken() },
 	),
 	acceptsIpc: (sender, profileToken) => sessionIpcGate.allows(profileToken) && sender === mainWindow?.webContents,
 	publish: state => sendToLiveRenderer(mainWindow?.webContents, SIGNALS_IPC.snapshot, state, sessionProfileToken()),
