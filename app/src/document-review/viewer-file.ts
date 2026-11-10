@@ -2,16 +2,26 @@
 // one descriptor, Helm's private files refused by path and by inode. Feedback mode keeps `readReviewFile`.
 import { constants } from 'node:fs'
 import type { Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
-import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
+import {
+	type LineEnding,
+	type TextEncoding,
+	binarySignature,
+	countText,
+	decoderLabel,
+	detectViewerFormat,
+	sizeText,
+	textEncoding,
+	textShape,
+} from '../../../src/document-review/formats'
 import { refuse } from '../../../src/document-review/refusal'
+import { type ViewerFileSource, ViewerSourceChanged } from './viewer-protocol'
 
-/** Plain Markdown is read up to the Markdown renderer's own budget; larger files are refused with the number. */
-export const VIEWER_MARKDOWN_BYTES = 512 * 1024
+export { VIEWER_MARKDOWN_BYTES } from '../../../src/document-review/formats'
 /** How many entries a hard-link check may visit under Helm's private roots before it gives up and refuses. */
 export const PRIVATE_SCAN_ENTRIES = 50_000
-
-export type ViewerFormat = 'markdown'
 
 /**
  * Helm's own state. `trees` are whole private directories; `daemonRoots` hold the daemon's config, database and
@@ -26,7 +36,8 @@ export interface HelmPrivatePaths {
 	tmp: string
 }
 
-const DAEMON_FILE = /^(?:helm|vigil)\.(?:config\.json|db(?:-.*)?)$/i
+/** The daemon root's own files: config, database (+ WAL/SHM) and the profile registry (`ProfileStore.statePath`). */
+const DAEMON_FILE = /^(?:(?:helm|vigil)\.(?:config\.json|db(?:-.*)?)|profiles\.json)$/i
 
 async function canonical(path: string): Promise<string> {
 	try {
@@ -195,46 +206,99 @@ const kind = (stat: Stats) =>
 				: stat.isCharacterDevice() || stat.isBlockDevice()
 					? 'a device'
 					: 'not a regular file'
-const sizeText = (bytes: number) =>
-	bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${Math.ceil(bytes / 1024)} KiB`
+/** Plain formats this version shows; feedback mode keeps `readReviewFile`'s md/jsx/tsx rule. */
+export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data'
 
-/** Which plain viewer shows a canonical path, by its last extension; S1 shows Markdown only. */
-export function viewerFormat(path: string): ViewerFormat {
-	const name = basename(path)
-	const extension = extname(name).toLowerCase()
-	if (extension === '.md' || extension === '.markdown') return 'markdown'
-	if (extension === '.jsx' || extension === '.tsx')
-		throw refuse(
-			`${name} is a component. Use helm edit to preview components; helm open shows Markdown in this version.`,
-		)
-	throw refuse(
-		extension
-			? `Helm can't show ${extension} files yet (${name}); helm open shows Markdown (.md) in this version.`
-			: `Helm can't show ${name}: it has no file extension. helm open shows Markdown (.md) in this version.`,
-	)
+export interface ViewerFormatChoice {
+	format: ViewerFormat
+	/** CodeMirror language id (code/text) or data language (data); 'markdown' for Markdown. */
+	language: string
+	limit: number
+	maxLines: number | null
+	noun: string
+}
+
+/** Which plain viewer shows a canonical path, from the shared registry (src/document-review/formats.ts). */
+export function viewerFormat(path: string): ViewerFormatChoice {
+	const detected = detectViewerFormat(basename(path))
+	if (!detected.ok) throw refuse(detected.reason)
+	const format = detected.entry.format
+	if (format !== 'markdown' && format !== 'code' && format !== 'text' && format !== 'data')
+		throw refuse(`Helm can't show ${detected.entry.noun} yet (${basename(path)}).`)
+	return {
+		format,
+		language: detected.language,
+		limit: detected.entry.maxBytes,
+		maxLines: detected.entry.maxLines ?? null,
+		noun: detected.entry.noun,
+	}
 }
 
 export interface ViewerFile {
 	file: string
 	format: ViewerFormat
+	language: string
 	text: string
 	size: number
+	encoding: TextEncoding
+	lines: number
+	ending: LineEnding
+	/** Only with `pin`: the admitted descriptor, still open. The caller owns it and must close it. */
+	handle?: FileHandle
+	/** Only with `pin`: identity the descriptor must keep for its bytes to still be the admitted ones. */
+	identity?: ViewerFileIdentity
+}
+export interface ViewerFileIdentity {
+	dev: number
+	ino: number
+	size: number
+	mtimeMs: number
+	ctimeMs: number
 }
 export interface ViewerReadHooks {
 	/** Test seam: runs between the path checks and the open, where a path swap would land. */
 	beforeOpen?(canonical: string): Promise<void> | void
+}
+export interface ViewerReadOptions {
+	/** Keep the descriptor open so the viewer protocol can serve exactly these bytes later. */
+	pin?: boolean
+}
+
+/** Decode a text family's bytes, or refuse with what they are instead. */
+export function decodeViewerText(name: string, bytes: Uint8Array): { text: string; encoding: TextEncoding } {
+	const encoding = textEncoding(bytes.subarray(0, 4))
+	if (encoding === 'utf-8') {
+		const what = binarySignature(bytes.subarray(0, 16))
+		if (what) throw refuse(`${name} is not a text file (it starts like ${what}).`)
+	}
+	if ((encoding === 'utf-16le' || encoding === 'utf-16be') && bytes.length % 2 !== 0)
+		throw refuse(`${name} is not valid UTF-16 text (an odd number of bytes).`)
+	let text: string
+	try {
+		text = new TextDecoder(decoderLabel(encoding), { fatal: true, ignoreBOM: true }).decode(bytes)
+	} catch {
+		throw refuse(
+			encoding === 'utf-8'
+				? `${name} is not valid UTF-8 text; Helm shows UTF-8 and UTF-16 (with a byte order mark) text.`
+				: `${name} is not valid UTF-16 text.`,
+		)
+	}
+	if (text.includes('\u0000')) throw refuse(`${name} contains NUL bytes, so it is not a text file.`)
+	return { text, encoding }
 }
 
 /**
  * One admission, one descriptor: realpath → deny by path → lstat (regular file, size) → open with
  * O_NOFOLLOW|O_NONBLOCK|O_NOCTTY → fstat must be the same inode as the lstat and the path, parent unchanged → deny
  * by inode → read → re-stat. Any change refuses with "changed while reading". Never writes, never follows a link
- * after the realpath.
+ * after the realpath. Limits come from the format registry (Markdown 512 KiB, text/code 16 MiB and 1 M lines,
+ * data 32 MiB).
  */
 export async function readViewerFile(
 	rawPath: string,
 	paths: HelmPrivatePaths,
 	hooks: ViewerReadHooks = {},
+	options: ViewerReadOptions = {},
 ): Promise<ViewerFile> {
 	const requested = resolve(rawPath)
 	let file: string
@@ -255,10 +319,11 @@ export async function readViewerFile(
 	if (!before) throw refuse(`${name} changed while it was opened. Try again.`)
 	if (before.isSymbolicLink()) throw refuse(`${name} changed while it was opened (it became a symlink). Try again.`)
 	if (!before.isFile()) throw refuse(`${name} is ${kind(before)}; helm open shows regular files only.`)
-	const format = viewerFormat(file)
-	const limit = VIEWER_MARKDOWN_BYTES
-	if (before.size > limit)
-		throw refuse(`${name} is ${sizeText(before.size)}; Helm shows Markdown up to ${sizeText(limit)}.`)
+	const choice = viewerFormat(file)
+	const limit = choice.limit
+	const tooBig = (size: number) =>
+		refuse(`${name} is ${sizeText(size)}; Helm shows ${choice.noun} up to ${sizeText(limit)}.`)
+	if (before.size > limit) throw tooBig(before.size)
 	await hooks.beforeOpen?.(file)
 	const fd = await open(
 		file,
@@ -270,6 +335,7 @@ export async function readViewerFile(
 		if (code === 'EACCES') throw refuse(`${name} is not readable by Helm.`)
 		throw refuse(`${name} could not be opened (${code ?? 'unknown error'}).`)
 	})
+	let keep = false
 	try {
 		const opened = await fd.stat()
 		const path = await lstat(file).catch(() => null)
@@ -290,9 +356,9 @@ export async function readViewerFile(
 			const linked = await hardLinkRefusal(name, opened, roots)
 			if (linked) throw refuse(linked)
 		}
-		if (opened.size > limit)
-			throw refuse(`${name} is ${sizeText(opened.size)}; Helm shows Markdown up to ${sizeText(limit)}.`)
-		const bytes = Buffer.alloc(limit + 1)
+		if (opened.size > limit) throw tooBig(opened.size)
+		// One byte past the admitted size shows growth; never the whole family limit (32 MiB for a 1 KiB file).
+		const bytes = Buffer.alloc(Math.min(opened.size, limit) + 1)
 		let used = 0
 		while (used < bytes.length) {
 			const read = await fd.read(bytes, used, bytes.length - used, used)
@@ -312,15 +378,36 @@ export async function readViewerFile(
 			still.ino !== opened.ino
 		)
 			throw refuse(`${name} changed while it was read. Try again.`)
-		let text: string
-		try {
-			text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, used))
-		} catch {
-			throw refuse(`${name} is not valid UTF-8 text.`)
+		const { text, encoding } = decodeViewerText(name, bytes.subarray(0, used))
+		const shape = textShape(text)
+		if (choice.maxLines !== null && shape.lines > choice.maxLines)
+			throw refuse(
+				`${name} has ${countText(shape.lines)} lines; Helm shows ${choice.noun} up to ${countText(choice.maxLines)} lines.`,
+			)
+		const result: ViewerFile = {
+			file,
+			format: choice.format,
+			language: choice.language,
+			text,
+			size: used,
+			encoding,
+			lines: shape.lines,
+			ending: shape.ending,
 		}
-		return { file, format, text, size: used }
+		if (options.pin) {
+			keep = true
+			result.handle = fd
+			result.identity = {
+				dev: opened.dev,
+				ino: opened.ino,
+				size: opened.size,
+				mtimeMs: opened.mtimeMs,
+				ctimeMs: opened.ctimeMs,
+			}
+		}
+		return result
 	} finally {
-		await fd.close()
+		if (!keep) await fd.close()
 	}
 }
 
@@ -335,4 +422,44 @@ export function plistWorkingDirectory(plist: string): string | null {
 		.replace(/&apos;/g, "'")
 		.replace(/&amp;/g, '&')
 	return value.startsWith('/') ? value : null
+}
+
+/**
+ * Serves a pinned descriptor's admitted bytes to the viewer protocol: every read first checks the descriptor
+ * still has the identity it had when it was admitted (same inode, size, mtime, ctime), so a file rewritten in
+ * place answers "changed" (409) instead of unvalidated bytes; the watcher then admits the new revision.
+ * `length` may stop short of the file (a plain .tsx hides its trailing review journal).
+ */
+export function pinnedViewerSource(handle: FileHandle, identity: ViewerFileIdentity, length: number): ViewerFileSource {
+	let closed = false
+	return {
+		size: length,
+		async read(offset, count) {
+			if (closed) throw new ViewerSourceChanged('closed')
+			if (offset < 0 || count < 0 || offset + count > length) throw new RangeError('outside the served bytes')
+			const now = await handle.stat()
+			if (
+				now.dev !== identity.dev ||
+				now.ino !== identity.ino ||
+				now.size !== identity.size ||
+				now.mtimeMs !== identity.mtimeMs ||
+				now.ctimeMs !== identity.ctimeMs
+			)
+				throw new ViewerSourceChanged('changed')
+			const bytes = Buffer.alloc(count)
+			let used = 0
+			while (used < count) {
+				const read = await handle.read(bytes, used, count - used, offset + used)
+				if (read.bytesRead === 0) break
+				used += read.bytesRead
+			}
+			if (used !== count) throw new ViewerSourceChanged('short read')
+			return bytes
+		},
+		async close() {
+			if (closed) return
+			closed = true
+			await handle.close()
+		},
+	}
 }

@@ -35,9 +35,23 @@ export interface ReviewDocument {
 	text: string
 	previous: string | null
 	error: string | null
-	format?: 'markdown' | 'jsx'
+	/** `jsx` is the executing canvas (feedback mode only); a plain .jsx/.tsx is `code`, shown as source. */
+	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data'
+	/** Plain code/text/data: bytes come from the view's own helm-viewer: token, never over IPC. */
+	viewer?: ReviewViewerFile
 	canvas?: ReviewCanvasCompilation
 	archive?: CanvasReviewArchive
+}
+export interface ReviewViewerFile {
+	/** helm-viewer://app/file/<token>, valid for this revision and only inside this view. */
+	url: string
+	/** CodeMirror language id for code/text, data language for data. */
+	language: string
+	/** Bytes the token serves. */
+	size: number
+	encoding: 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be'
+	lines: number
+	ending: 'LF' | 'CRLF' | 'CR' | 'mixed' | 'none'
 }
 export interface ReviewAnnotation {
 	id: string

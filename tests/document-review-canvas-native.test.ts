@@ -336,6 +336,7 @@ class FixtureWindow extends EventEmitter {
 	show() {}
 	focus() {}
 	async loadFile(_file: string) {}
+	async loadURL(_url: string) {}
 	close() {
 		let prevented = false
 		this.emit('close', {

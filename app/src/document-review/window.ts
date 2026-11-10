@@ -38,6 +38,8 @@ import type {
 } from './types'
 import { readViewerFile } from './viewer-file'
 import type { HelmPrivatePaths } from './viewer-file'
+import { VIEWER_INDEX_URL, ViewerFileTokens } from './viewer-protocol'
+import type { ViewerSessionFactory, ViewerSessionHandle } from './viewer-session'
 
 const runFile = promisify(execFile)
 /** Feedback-capable windows (bound, unbound review and recovery) share today's bound of eight. */
@@ -62,6 +64,9 @@ interface WindowState {
 	allowClose: boolean
 	fileFlights: Set<Promise<unknown>>
 	active: Set<Promise<unknown>>
+	/** The window's own helm-viewer: file tokens; they die with the window. */
+	tokens: ViewerFileTokens
+	viewerSession: ViewerSessionHandle | null
 }
 interface ArchiveFileContext {
 	root: string
@@ -86,6 +91,11 @@ interface ReviewWindowDependencies {
 	onAllClosed?(): void
 	/** Test seam: where provider session files are read from (default: the user's Claude/Codex roots). */
 	activitySources?: ActivitySources
+	/**
+	 * The window's in-memory session with the helm-viewer: handler, network block and deny-all permissions (main.ts
+	 * passes the real one). Absent only in the fake-Electron window tests.
+	 */
+	viewerSession?: ViewerSessionFactory
 }
 const displayPath = (file: string) => {
 	const home = homedir()
@@ -320,7 +330,11 @@ export class DocumentReviewWindows {
 				event,
 				token,
 				async state => {
-					if (state.plain) throw new Error('This window only shows the file. It has no review content to save.')
+					// A plain window has no review content to save: Retry only reads the file again.
+					if (state.plain) {
+						await state.observation.refresh()
+						return true
+					}
 					await state.archive.retry()
 					this.require(event, token)
 					await state.observation.refresh()
@@ -875,25 +889,35 @@ export class DocumentReviewWindows {
 		if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
 		// One window per canonical file. A wire open never takes focus, not even of an existing window.
 		for (const state of this.windows.values())
-			if (state.token === token && state.observation.file === file)
-				return { documentId: state.observation.id, format: state.observation.current().format ?? format }
+			if (state.token === token && state.observation.file === file) {
+				const shown = state.observation.current().format ?? format
+				// The registry's name: a window bound by helm edit on a .tsx shows the canvas.
+				return { documentId: state.observation.id, format: shown === 'jsx' ? 'canvas' : shown }
+			}
 		if (this.plainWindows() >= PLAIN_WINDOW_LIMIT)
 			throw refuse(`${basename(file)} was not opened: ${PLAIN_WINDOW_LIMIT} files are already open. Close one first.`)
 		if (!this.drafts.get(profileId)) this.drafts.set(profileId, new ReviewDraftStore(this.deps.profileDir(profileId)))
+		const tokens = new ViewerFileTokens()
 		const observation = new ReviewDocumentObservation(dirname(file), file, () => this.publish(profileId), {
 			paths,
 			displayPath: displayPath(file),
+			tokens,
 		})
 		await observation.start()
 		if (!current() || observation.current().error) {
 			const failure = observation.failure
 			await observation.dispose()
+			await tokens.revokeAll()
 			if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
 			throw isReviewRefusal(failure)
 				? failure
 				: refuse(`${basename(file)} could not be read (${failureCause(failure)}). Nothing was opened.`)
 		}
-		await this.createWindow(observation, profileId, token, current, undefined, null, { plain: true, inactive: true })
+		await this.createWindow(observation, profileId, token, current, undefined, null, {
+			plain: true,
+			inactive: true,
+			tokens,
+		})
 		return { documentId: observation.id, format }
 	}
 	private async createWindow(
@@ -903,14 +927,16 @@ export class DocumentReviewWindows {
 		current: () => boolean,
 		sessionId?: string,
 		recoveryContext: ArchiveFileContext | null = null,
-		options: { plain?: boolean; inactive?: boolean } = {},
+		options: { plain?: boolean; inactive?: boolean; tokens?: ViewerFileTokens } = {},
 	): Promise<void> {
 		const plain = options.plain === true
+		const tokens = options.tokens ?? new ViewerFileTokens()
 		if (
 			!current() ||
 			(plain ? this.plainWindows() >= PLAIN_WINDOW_LIMIT : this.feedbackWindows() >= REVIEW_WINDOW_LIMIT)
 		) {
 			await observation.dispose()
+			await tokens.revokeAll()
 			throw new Error('Close a review window before opening another.')
 		}
 		const { root, file } = observation
@@ -918,8 +944,11 @@ export class DocumentReviewWindows {
 		const drafts = this.drafts.get(profileId)
 		if (!drafts) {
 			await observation.dispose()
+			await tokens.revokeAll()
 			throw new Error('Review preferences are unavailable.')
 		}
+		// Every review window (plain or feedback) gets its own in-memory session before anything loads in it.
+		const viewerSession = this.deps.viewerSession ? this.deps.viewerSession(tokens) : null
 		const win = new BrowserWindow({
 			width: 1180,
 			height: 800,
@@ -934,6 +963,9 @@ export class DocumentReviewWindows {
 				contextIsolation: true,
 				nodeIntegration: false,
 				sandbox: true,
+				plugins: false,
+				webviewTag: false,
+				...(viewerSession ? { session: viewerSession.session } : {}),
 			},
 		})
 		const senderId = win.webContents.id
@@ -959,6 +991,8 @@ export class DocumentReviewWindows {
 			allowClose: false,
 			fileFlights: new Set(),
 			active: new Set(),
+			tokens,
+			viewerSession,
 		}
 		this.windows.set(win.webContents.id, state)
 		win.webContents.setWindowOpenHandler(({ url }) => {
@@ -967,6 +1001,10 @@ export class DocumentReviewWindows {
 			return { action: 'deny' }
 		})
 		win.webContents.on('will-navigate', event => event.preventDefault())
+		// No document content creates frames in this slice; any subframe navigation is refused.
+		win.webContents.on('will-frame-navigate', event => {
+			if (!event.isMainFrame) event.preventDefault()
+		})
 		win.webContents.on('before-input-event', (event, input) => {
 			if (
 				input.type === 'keyDown' &&
@@ -992,6 +1030,8 @@ export class DocumentReviewWindows {
 			// The window's CURRENT observation: binding a plain window replaces it.
 			sessions.closeDocument(state.observation.id)
 			void state.observation.dispose()
+			void state.tokens.revokeAll()
+			state.viewerSession?.dispose()
 			const context = state.plain
 				? undefined
 				: this.archives.get(this.archiveKey(profileId, state.observation.root, state.observation.file))
@@ -1005,9 +1045,11 @@ export class DocumentReviewWindows {
 			else win.show()
 		})
 		try {
-			await win.loadFile(join(this.deps.distDir, 'document-review.html'))
+			await win.loadURL(VIEWER_INDEX_URL)
 		} catch {
 			win.destroy()
+			void tokens.revokeAll()
+			viewerSession?.dispose()
 			throw new Error('The review window could not load.')
 		}
 	}

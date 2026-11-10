@@ -560,15 +560,19 @@ test('plain admission sees through macOS firmlink spellings, by path and by inod
 	}
 })
 
-test('plain admission refuses components, unknown types, invalid UTF-8 and files over 512 KiB with the number', async () => {
+test('plain admission shows components as source, refuses later formats and invalid UTF-8, and names the size limit', async () => {
 	const f = await admissionFixture()
 	try {
 		await writeFile(join(f.docs, 'card.tsx'), 'export default () => null\n', { mode: 0o600 })
-		await assert.rejects(readViewerFile(join(f.docs, 'card.tsx'), f.paths), /Use helm edit to preview components/)
+		const card = await readViewerFile(join(f.docs, 'card.tsx'), f.paths)
+		assert.equal(card.format, 'code')
+		assert.equal(card.language, 'tsx')
 		await writeFile(join(f.docs, 'data.csv'), 'a,b\n', { mode: 0o600 })
-		await assert.rejects(readViewerFile(join(f.docs, 'data.csv'), f.paths), /Helm can't show \.csv files yet/)
+		await assert.rejects(readViewerFile(join(f.docs, 'data.csv'), f.paths), /Helm can't show CSV files yet/)
 		await writeFile(join(f.docs, 'Makefile'), 'all:\n', { mode: 0o600 })
-		await assert.rejects(readViewerFile(join(f.docs, 'Makefile'), f.paths), /it has no file extension/)
+		assert.equal((await readViewerFile(join(f.docs, 'Makefile'), f.paths)).format, 'code')
+		await writeFile(join(f.docs, 'notes'), 'x\n', { mode: 0o600 })
+		await assert.rejects(readViewerFile(join(f.docs, 'notes'), f.paths), /it has no file extension/)
 		await writeFile(join(f.docs, 'bytes.md'), Buffer.from([0xc3, 0x28]), { mode: 0o600 })
 		await assert.rejects(readViewerFile(join(f.docs, 'bytes.md'), f.paths), /not valid UTF-8/)
 		await writeFile(join(f.docs, 'big.md'), 'x'.repeat(600 * 1024), { mode: 0o600 })
@@ -664,6 +668,7 @@ test('plain windows open inactive, are reused, have their own bound, and binding
 			once(event, listener) { return this.on(event, listener) }
 			emit(event, ...args) { for (const listener of this.events[event] ?? []) listener(...args) }
 			async loadFile() { this.emit('ready-to-show') }
+			async loadURL() { this.emit('ready-to-show') }
 			show() { this.calls.push('show') } showInactive() { this.calls.push('showInactive') } focus() { this.calls.push('focus') }
 			isDestroyed() { return this.destroyed }
 			close() { if (!this.destroyed) { this.destroyed = true; this.emit('closed') } }
@@ -714,11 +719,12 @@ test('plain windows open inactive, are reused, have their own bound, and binding
 			await edit(files['v0.md']);
 			assert.equal(windows.length, 11);
 			assert.deepEqual(windows[2].calls, ['showInactive', 'show', 'focus']);
-			// A plain window has no review content: retrying or discarding a save through it is refused, and its
-			// archive is its own, so nothing retained for the file can hold its close.
+			// A plain window has no review content: Retry only reads the file again (its Retry read button),
+			// discarding a save through it is refused, and its archive is its own, so nothing retained for the
+			// file can hold its close.
 			const ipc = (name, win, ...args) =>
 				handlers[name]({ sender: win.webContents, senderFrame: win.webContents.mainFrame }, 'current', ...args);
-			assert.match((await ipc('document-review:retry', windows[1])).error, /only shows the file/);
+			assert.deepEqual(await ipc('document-review:retry', windows[1]), { data: true });
 			assert.match(
 				(await ipc('document-review:discard-archive', windows[1], '00000000-0000-4000-8000-000000000000')).error,
 				/only shows the file/,

@@ -9,8 +9,10 @@ export const OPEN_HELP = `Usage: helm open FILE…
 
 Show files read-only in the Helm desktop and return at once. Nothing is
 written, nothing is loaded from the network and no agent is involved.
-This version shows Markdown (.md, .markdown). Any readable file works, inside
-or outside a Git repository; Helm's own private files are refused.
+This version shows Markdown, plain text and logs, code (about 40 languages,
+.jsx/.tsx as source, never run) and JSON, JSON Lines, YAML and TOML as a tree.
+Any readable file works, inside or outside a Git repository; Helm's own
+private files are refused. Nothing from the file comes back to the caller.
 
   helm open notes.md other.md     each file opens in its own window
   helm open --json notes.md       print {opened:[…], refused:[…]} as JSON

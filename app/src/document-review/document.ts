@@ -7,9 +7,10 @@ import { refuse } from '../../../src/document-review/refusal'
 import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
 import { REVIEW_DOCUMENT_BYTES } from './types'
-import type { ReviewDocument } from './types'
-import { readViewerFile } from './viewer-file'
-import type { HelmPrivatePaths } from './viewer-file'
+import type { ReviewDocument, ReviewViewerFile } from './types'
+import { pinnedViewerSource, readViewerFile, viewerFormat } from './viewer-file'
+import type { HelmPrivatePaths, ViewerFileIdentity, ViewerFormat } from './viewer-file'
+import { type ViewerFileSource, type ViewerFileTokens, viewerFileUrl } from './viewer-protocol'
 
 export const reviewRevision = (text: string) => createHash('sha256').update(text).digest('hex')
 /**
@@ -85,7 +86,25 @@ export async function readReviewFile(root: string, file: string): Promise<string
 export interface PlainObservation {
 	paths: HelmPrivatePaths
 	displayPath: string
+	/** The view's own helm-viewer: tokens; code/text/data bytes are served through them, never over IPC. */
+	tokens?: ViewerFileTokens
 }
+interface PlainRead {
+	format: ViewerFormat
+	text: string
+	revision: string
+	viewer?: Omit<ReviewViewerFile, 'url'>
+	source?: ViewerFileSource
+	/** The pinned descriptor's identity: when it moves, the token must too, even for the same bytes. */
+	identity?: ViewerFileIdentity
+}
+const sameIdentity = (a: ViewerFileIdentity | null, b: ViewerFileIdentity | undefined) =>
+	Boolean(a && b) &&
+	a?.dev === b?.dev &&
+	a?.ino === b?.ino &&
+	a?.size === b?.size &&
+	a?.mtimeMs === b?.mtimeMs &&
+	a?.ctimeMs === b?.ctimeMs
 
 /** Watches only the granted file's containing directory, never a repository tree. */
 export class ReviewDocumentObservation {
@@ -96,6 +115,10 @@ export class ReviewDocumentObservation {
 	private again = false
 	private disposed = false
 	private snapshot: ReviewDocument
+	/** The token serving the current plain code/text/data revision. */
+	private token: string | null = null
+	/** Identity the current token's pinned descriptor checks on every read. */
+	private tokenIdentity: ViewerFileIdentity | null = null
 	/** Why the last read failed, for the opener's log and CLI reason; never shown with document text. */
 	failure: unknown = null
 	constructor(
@@ -150,33 +173,86 @@ export class ReviewDocumentObservation {
 		})
 		return this.active
 	}
-	/** Plain viewing reruns the whole viewer admission on every read and requires the same canonical file. */
-	private async readPlain(paths: HelmPrivatePaths): Promise<string> {
-		const read = await readViewerFile(this.file, paths)
-		if (read.file !== this.file)
+	/**
+	 * Plain viewing reruns the whole viewer admission on every read and requires the same canonical file. Markdown
+	 * comes back as text; code, text and data keep their admitted descriptor pinned for the view's token.
+	 */
+	private async readPlain(plain: PlainObservation): Promise<PlainRead> {
+		const pin = Boolean(plain.tokens) && viewerFormat(this.file).format !== 'markdown'
+		const read = await readViewerFile(this.file, plain.paths, {}, { pin })
+		if (read.file !== this.file) {
+			await read.handle?.close()
 			throw refuse(`${basename(this.file)} now leads to another file. Open it again with helm open.`)
-		try {
-			// A trailing helm-review journal is review machinery: hidden from plain viewing (its saved comments
-			// belong to feedback mode), never required and never written here. Unreadable, it is shown as text.
-			return parseReviewArtifact(read.text, 'markdown').body
-		} catch {
-			return read.text
+		}
+		if (read.format === 'markdown') {
+			let text = read.text
+			try {
+				// A trailing helm-review journal is review machinery: hidden from plain viewing (its saved comments
+				// belong to feedback mode), never required and never written here. Unreadable, it is shown as text.
+				text = parseReviewArtifact(read.text, 'markdown').body
+			} catch {}
+			return { format: 'markdown', text, revision: reviewRevision(text) }
+		}
+		let body = read.text
+		// A plain .jsx/.tsx is source; its trailing review journal is hidden like Markdown's. Other formats never
+		// have one, so their tail is never parsed as a journal.
+		if ((read.language === 'jsx' || read.language === 'tsx') && read.encoding.startsWith('utf-8'))
+			try {
+				body = parseReviewArtifact(read.text, 'jsx').body
+			} catch {}
+		const served = body === read.text ? read.size : Buffer.byteLength(body, 'utf8')
+		const viewer = {
+			language: read.language,
+			size: served,
+			encoding: read.encoding,
+			lines: read.lines,
+			ending: read.ending,
+		}
+		const source = read.handle && read.identity ? pinnedViewerSource(read.handle, read.identity, served) : undefined
+		return {
+			format: read.format,
+			text: '',
+			revision: reviewRevision(body),
+			viewer,
+			...(source && read.identity ? { source, identity: read.identity } : {}),
 		}
 	}
 	private async read(): Promise<void> {
 		try {
 			if (this.plain) {
-				const text = await this.readPlain(this.plain.paths)
-				if (this.disposed) return
-				const revision = reviewRevision(text)
-				if (revision === this.snapshot.revision && !this.snapshot.error) return
+				const next = await this.readPlain(this.plain)
+				// Same bytes and no error: nothing to publish, unless the file was touched, chmod-ed or rewritten with
+				// identical bytes. Then the current token answers 409 for good, so it is replaced like a new version.
+				const unchanged =
+					next.revision === this.snapshot.revision &&
+					!this.snapshot.error &&
+					(!next.source || sameIdentity(this.tokenIdentity, next.identity))
+				if (this.disposed || unchanged) {
+					await next.source?.close()
+					return
+				}
+				let viewer: ReviewViewerFile | undefined
+				if (next.viewer && next.source && this.plain.tokens) {
+					const token = this.plain.tokens.issue(next.source)
+					const previous = this.token
+					this.token = token
+					this.tokenIdentity = next.identity ?? null
+					if (previous) void this.plain.tokens.revoke(previous)
+					viewer = { ...next.viewer, url: viewerFileUrl(token) }
+				}
+				const { viewer: _old, ...rest } = this.snapshot
 				this.snapshot = {
-					...this.snapshot,
-					text,
-					revision,
-					format: 'markdown',
+					...rest,
+					text: next.text,
+					revision: next.revision,
+					format: next.format,
+					...(viewer ? { viewer } : {}),
 					previous:
-						this.snapshot.revision && revision !== this.snapshot.revision ? this.snapshot.text : this.snapshot.previous,
+						next.format === 'markdown' && this.snapshot.revision && next.revision !== this.snapshot.revision
+							? this.snapshot.text
+							: next.format === 'markdown'
+								? this.snapshot.previous
+								: null,
 					error: null,
 				}
 				this.failure = null
@@ -234,5 +310,8 @@ export class ReviewDocumentObservation {
 		this.watcher?.close()
 		if (this.timer) clearTimeout(this.timer)
 		await this.active
+		if (this.token && this.plain?.tokens) await this.plain.tokens.revoke(this.token)
+		this.token = null
+		this.tokenIdentity = null
 	}
 }
