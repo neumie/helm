@@ -15,6 +15,7 @@ import modelModule from '../app/src/agent-dock/model.ts'
 import sourceModule from '../app/src/agent-dock/okena-claude-source.ts'
 import reduceModule from '../app/src/agent-dock/reduce.ts'
 import watcherModule from '../app/src/agent-dock/watcher.ts'
+import resolverModule from '../app/src/signals-ask-resolver.ts'
 import { OkenaClient } from '../src/extensions/okena/client.js'
 import { okenaFixture } from './helpers/agent-dock'
 
@@ -68,6 +69,8 @@ class FakeOkenaServer {
 	version = 2_000
 	detail: Json = structuredClone(SHOW_ASK)
 	entries: Json[] = []
+	/** Typed prompts keep their words and a timestamp (else `…`, untimed). */
+	echo: { at: () => string } | null = null
 	posts: Post[] = []
 	gets: string[] = []
 	/** Next dialog POST answers with this instead of closing the dialog. */
@@ -110,7 +113,14 @@ class FakeOkenaServer {
 				if (this.promptReply) return plain(this.promptReply.status, this.promptReply.text)
 				// Okena holds a prompt for a busy pane (hooks live) and types it once the turn ends.
 				if (this.detail.busy === true) return json({ delivery: 'queued' })
-				this.entries.push({ kind: 'user', uuid: `u-${this.entries.length}`, text: '…', origin: 'terminal' })
+				const posted = this.posts.at(-1)?.body as Json | undefined
+				this.entries.push({
+					kind: 'user',
+					uuid: `u-${this.entries.length}`,
+					text: this.echo ? String(posted?.text) : '…',
+					origin: 'terminal',
+					...(this.echo ? { timestamp: this.echo.at() } : {}),
+				})
 				this.detail = { ...this.detail, busy: true }
 				this.version++
 				return json({ delivery: 'pty' })
@@ -188,7 +198,10 @@ function writeProfile(root: string, socketPath: string): string {
 	return baseDir
 }
 
-async function harness(setup?: (okena: FakeOkenaServer) => void) {
+async function harness(
+	setup?: (okena: FakeOkenaServer) => void,
+	extra?: Partial<import('../app/src/agent-dock/watcher.ts').AgentDockWatcherOptions>,
+) {
 	const root = mkdtempSync(join(tmpdir(), 'hda-'))
 	const okena = new FakeOkenaServer()
 	setup?.(okena)
@@ -202,7 +215,8 @@ async function harness(setup?: (okena: FakeOkenaServer) => void) {
 	})
 	const dir = join(root, 'agent-dock')
 	const clock = { now: 1_793_364_800_000 }
-	const source = new CompositeDockSource([new OkenaClaudeSource(new OkenaClient(writeProfile(root, socketPath)))])
+	const okenaSource = new OkenaClaudeSource(new OkenaClient(writeProfile(root, socketPath)))
+	const source = new CompositeDockSource([okenaSource])
 	const watcher = new AgentDockWatcher({
 		dir,
 		source,
@@ -210,6 +224,7 @@ async function harness(setup?: (okena: FakeOkenaServer) => void) {
 		isFocused: () => true,
 		now: () => clock.now,
 		log: () => {},
+		...extra,
 	})
 	await watcher.load()
 	const tick = async (advance = 1_500) => {
@@ -234,7 +249,7 @@ async function harness(setup?: (okena: FakeOkenaServer) => void) {
 		await new Promise<void>(resolve => server.close(() => resolve()))
 		rmSync(root, { recursive: true, force: true })
 	}
-	return { okena, watcher, clock, tick, item, items, disk, done }
+	return { okena, okenaSource, watcher, clock, tick, item, items, disk, done }
 }
 
 const DIALOG_PATH = (id: string) => `/v1/claude/terminals/${TID}/dialogs/${encodeURIComponent(id)}`
@@ -783,6 +798,91 @@ test('a 2xx whose dialog stays open turns amber after 10 s, is not ackable, then
 		assert.equal(h.item().state, 'open')
 		assert.equal(h.item().receipt?.status, 'failed')
 	} finally {
+		await h.done()
+	}
+})
+
+test('Signals asks follow their terminal: Jakub’s prompt closes the ask, Helm’s own hand-off does not', async () => {
+	const { SignalsAskResolver } = resolverModule as typeof import('../app/src/signals-ask-resolver.ts')
+	const clock = { now: 1_793_364_800_000 }
+	const askedAt = new Date(clock.now + 1_000).toISOString()
+	const posts: Array<{ path: string; body: unknown }> = []
+	const resolver = new SignalsAskResolver({
+		request: async <T>(method: 'GET' | 'POST', path: string, body?: unknown) => {
+			if (method === 'POST') {
+				posts.push({ path, body })
+				return { data: {} as T }
+			}
+			const thread = { id: 28, source: 'agent', state: 'new', askTerminal: TID, lastActivityAt: askedAt }
+			return { data: { threads: posts.length ? [] : [thread] } as T }
+		},
+		now: () => clock.now,
+		timers: { setTimeout: () => 0, clearTimeout: () => {} },
+	})
+	const h = await harness(
+		okena => {
+			okena.detail = { ...structuredClone(SHOW_IDLE), busy: false }
+			okena.entries = [
+				{
+					kind: 'user',
+					uuid: 'u-a',
+					timestamp: new Date(clock.now - 60_000).toISOString(),
+					text: 'start',
+					origin: 'terminal',
+				},
+				{ kind: 'assistant', uuid: 'a-1', text: 'Briefing is ready, see the Signals ask.' },
+			]
+			okena.echo = { at: () => new Date(h.clock.now).toISOString() }
+		},
+		{
+			polled: observation => resolver.polled(observation),
+			promptSending: (target, text) => resolver.promptSending(target, text),
+		},
+	)
+	try {
+		h.clock.now = clock.now
+		resolver.bind(ids => h.okenaSource.watchPrompts(ids))
+		resolver.start()
+		await resolver.refresh()
+		await h.tick()
+		await h.tick(TURN_IDLE_MS)
+		clock.now = h.clock.now
+
+		// Helm hands the agent a new prompt (Signals p): typed by Helm, so the ask stays open.
+		const key = h.watcher.snapshot().sessions[0]?.key as string
+		const handoff = await h.watcher.prompt({
+			session: key,
+			sessionId: SID,
+			queue: true,
+			handoff: true,
+			text: 'Look at crane-rental#970: the build fails on main.',
+		})
+		assert.equal(handoff.ok, true)
+		await h.tick()
+		await new Promise(resolve => setImmediate(resolve))
+		assert.equal(posts.length, 0)
+
+		// The turn ends; Jakub types into the terminal. The busy pane is watched, so the prompt is read at once.
+		h.okena.detail = { ...h.okena.detail, busy: false }
+		h.okena.version++
+		await h.tick()
+		const typedAt = new Date(h.clock.now).toISOString()
+		h.okena.entries.push({
+			kind: 'user',
+			uuid: 'u-jakub',
+			timestamp: typedAt,
+			text: 'Ano, pošli to klientovi.',
+			origin: 'terminal',
+		})
+		h.okena.detail = { ...h.okena.detail, busy: true }
+		h.okena.version++
+		await h.tick()
+		await new Promise(resolve => setImmediate(resolve))
+		assert.deepEqual(posts, [{ path: '/signals/28/answered', body: { activityAt: askedAt, promptAt: typedAt } }])
+		// No prompt text reaches the dock's disk.
+		assert.ok(!h.disk().includes('klientovi'))
+	} finally {
+		resolver.stop()
 		await h.done()
 	}
 })

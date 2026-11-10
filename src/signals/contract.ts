@@ -410,6 +410,20 @@ export type SignalAskDone = z.infer<typeof signalAskDoneSchema>
 export const signalReplySchema = z.object({ text: z.string().trim().min(1).max(SIGNAL_LIMITS.reply) }).strict()
 export type SignalReply = z.infer<typeof signalReplySchema>
 
+/**
+ * `POST /api/signals/:id/answered` (Helm only): Jakub sent a prompt into the ask's Okena terminal
+ * after it was asked, so the ask closes as answered there. `activityAt` is the ask's
+ * `lastActivityAt` Helm matched against (a renewed ask is refused with 409); `promptAt` is when
+ * the prompt was written. Never carries the prompt's text.
+ */
+export const signalAnsweredSchema = z
+	.object({
+		activityAt: z.string().datetime({ offset: true }),
+		promptAt: z.string().datetime({ offset: true }),
+	})
+	.strict()
+export type SignalAnswered = z.infer<typeof signalAnsweredSchema>
+
 // ---------- source → store observation (daemon internal) ----------
 
 /**

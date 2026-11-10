@@ -162,6 +162,18 @@ export class OkenaClaudeSource implements DockSource {
 		this.text = DOCK_SOURCE_TEXT[id]
 	}
 
+	/** Terminals whose prompts something waits on (Signals asks bound to them): see transcriptWanted. */
+	private watched: ReadonlySet<string> = new Set()
+
+	/**
+	 * Watch these terminal ids' prompts: their transcript is also read on the idle→busy edge (a
+	 * prompt typed in the terminal is what makes the pane busy) and every TRANSCRIPT_SWEEP_MS while
+	 * busy. Replaces the previous set; ids are lowercase Okena terminal ids.
+	 */
+	watchPrompts(terminalIds: Iterable<string>): void {
+		this.watched = new Set([...terminalIds].map(id => id.toLowerCase()))
+	}
+
 	/** After a dock reply: read this pane's transcript on every tick until `until`, busy or not. */
 	expedite(target: DockPane, until: number): void {
 		const key = sessionKey(target.profile, target.terminalId)
@@ -433,7 +445,14 @@ export class OkenaClaudeSource implements DockSource {
 		const key = sessionKey(profile, terminalId)
 		const read = this.reads.get(key)
 		const request = agentDockTranscriptRequest(state, profile, terminalId)
-		const want = transcriptWanted(read, parsed.value, request, now, agentDockAwaitingReply(state, profile, terminalId))
+		const want = transcriptWanted(
+			read,
+			parsed.value,
+			request,
+			now,
+			agentDockAwaitingReply(state, profile, terminalId),
+			this.watched.has(terminalId.toLowerCase()),
+		)
 		const expedited = read?.expediteUntil !== undefined && now < read.expediteUntil && parsed.value.has_transcript
 		const doRead = want.read || expedited
 		const sessionId = parsed.value.session_id
@@ -494,7 +513,9 @@ export class OkenaClaudeSource implements DockSource {
  * Transcript read policy (pure, exported for tests). Reads while the pane is
  * idle, for its first/new-session read, and while it is busy only when a turn
  * item for it is still live (`awaitingReply`): the reply typed in the terminal
- * is what makes the pane busy, and only the transcript shows it.
+ * is what makes the pane busy, and only the transcript shows it. A `watched`
+ * pane (a Signals ask waits on its prompts) is also read on that edge, and
+ * every TRANSCRIPT_SWEEP_MS while busy (a prompt queued while it works).
  */
 export function transcriptWanted(
 	prev: TerminalReadState | undefined,
@@ -502,6 +523,7 @@ export function transcriptWanted(
 	request: { cursor?: number; sessionId?: string },
 	now: number,
 	awaitingReply = false,
+	watched = false,
 ): { read: boolean; edgeAt?: number } {
 	if (!detail.has_transcript) return { read: false }
 	const idle = detail.busy === false && detail.dialogs.length === 0
@@ -517,7 +539,9 @@ export function transcriptWanted(
 		// Awaiting a reply: read on the idle→busy edge (a reply typed in the terminal is what
 		// makes the pane busy), then every REPLY_READ_MS until the reducer closes the turn.
 		const resumed = prev !== undefined && prev.busy === false && prev.dialogs === 0
-		return { read: awaitingReply && request.cursor !== undefined && (resumed || sinceRead >= REPLY_READ_MS) }
+		if (request.cursor === undefined) return { read: false }
+		if (awaitingReply) return { read: resumed || sinceRead >= REPLY_READ_MS }
+		return { read: watched && (resumed || sinceRead >= TRANSCRIPT_SWEEP_MS) }
 	}
 	if (edge) return { read: true, edgeAt }
 	if (edgeAt !== undefined && now - edgeAt >= TURN_IDLE_MS) {

@@ -6,7 +6,9 @@ import { SignalsWorkspace } from './SignalsWorkspace'
  * no, an approval — filed with `helm signal add` and listed in Needs you with who asked. `r` answers
  * (typed into the asking agent when its Okena terminal is idle, else saved on the thread for
  * `helm signal show`), `o` opens the link (or lists several), `s`/`d` as for any thread. An ask's row
- * adds a dim third line: its body's first line and `· N links`.
+ * adds a dim third line: its body's first line and `· N links`. An ask bound to an Okena terminal
+ * closes on its own once Jakub types a prompt into that terminal after it was asked (Done today:
+ * `answered`).
  */
 const meta: Meta<typeof SignalsWorkspace> = {
 	title: 'Views/Signals/Agent asks',
@@ -26,3 +28,12 @@ export const Reply: Story = { name: 'Reply to an agent ask', args: { flow: 'repl
 
 /** `o` on an ask with three links: each shown as text, 1–3 opens that one. */
 export const Links: Story = { name: 'Open an ask link', args: { flow: 'links' } }
+
+/**
+ * 1 s after load Jakub types a prompt into the `Signals asks` agent's Okena terminal: its open asks
+ * leave Needs you, answered there (`D`: Done today says `answered`).
+ */
+export const AnsweredInTerminal: Story = {
+	name: 'Ask answered in its terminal',
+	args: { terminalPrompt: 'B, s tím body řádkem. A pošli to do PR.' },
+}

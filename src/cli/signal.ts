@@ -68,7 +68,8 @@ Commands:
   show ID            One thread (ID is 12 or #12); an ask also shows its body,
                      links and Jakub's reply
   add                Ask Jakub for something (a design pick, a yes/no, an
-                     approval): --title, --body/--body-file, --link, --from, --key
+                     approval): --title, --body/--body-file, --link, --from,
+                     --key, --terminal
   done ID            Close a thread once handled (--note "outcome")
   done --key KEY     The same, for the ask filed with --key KEY
   set ID             Change a thread: --state, --owner, --until, --agent
@@ -106,9 +107,18 @@ Asks (add):
                      that ask instead of filing a second one; a changed title,
                      body or Okena terminal (another one, or none) makes it new
                      again (and clears an earlier reply)
-  Run from an Okena terminal, the ask remembers it: Jakub's reply is typed into
-  this agent as its next prompt when it is idle, else kept on the thread (read
-  it with helm signal show ID). Close the ask with helm signal done.
+  --terminal ID      File the ask for the agent in Okena terminal ID (a UUID
+                     from okena term ls --json) instead of this terminal; it
+                     must be open in Okena. Default --from: its name
+  Run from an Okena terminal (or with --terminal), the ask remembers it:
+  Jakub's reply is typed into that agent as its next prompt (queued while it
+  works), else kept on the thread (read it with helm signal show ID). The ask
+  also closes on its own ("answered in the terminal") once Jakub types a prompt
+  into that terminal after the ask was filed or renewed, while Helm runs and
+  watches that Okena profile. Prompts Helm typed for him count only when they
+  are his reply to this ask; prompts pasted whole (agent hand-offs, long
+  pastes) and slash commands do not count. Close it yourself with helm signal
+  done.
 
 Examples:
   helm signal add --key signals-row-layout \\
@@ -117,6 +127,8 @@ Examples:
     --link "http://localhost:6006/?path=/story/views-signals-agent-asks--title-rows" \\
     --link "http://localhost:6006/?path=/story/views-signals-agent-asks--body-line"
   printf 'Merge #314 now?\\nCI is green.\\n' | helm signal add --title "Merge #314?" --body-file -
+  helm signal add --terminal 5d3f8a2e-1b4c-4e8a-9f21-6c0d7e9b3a14 \\
+    --title "Approve the VOS slot plan?" --key vos-slots
   helm signal show 12
   helm signal done --key signals-row-layout --note "Jakub picked 2; built it"
   helm signal done 12 --note "Merged"
@@ -166,6 +178,11 @@ export interface SignalCliDeps {
 	 * Defaults to `okena term ls --json`.
 	 */
 	okenaTerminalName?(terminalId: string): Promise<string | null>
+	/**
+	 * `add --terminal`: the raw `okena term ls --json` output, to check that the terminal is open
+	 * (and name it). Null when Okena could not be asked. Defaults to running `okena term ls --json`.
+	 */
+	okenaTerminalList?(): Promise<string | null>
 	/** `add --body-file -`: stdin, at most `maxBytes` (+1 to detect more). Defaults to process.stdin. */
 	readStdin?(maxBytes: number): Promise<Buffer>
 }
@@ -190,6 +207,7 @@ const VALUE_OPTIONS = new Set([
 	'--from',
 	'--key',
 	'--note',
+	'--terminal',
 ])
 /** Value options that may repeat; every other value option given twice is refused. */
 const MULTI_OPTIONS = new Set(['--link'])
@@ -201,7 +219,7 @@ const COMMAND_OPTIONS: Record<string, ReadonlySet<string>> = {
 	show: new Set(['--json']),
 	set: new Set(['--json', '--state', '--owner', '--until', '--agent', '--no-agent']),
 	note: new Set(['--json']),
-	add: new Set(['--json', '--title', '--body', '--body-file', '--link', '--from', '--key']),
+	add: new Set(['--json', '--title', '--body', '--body-file', '--link', '--from', '--key', '--terminal']),
 	done: new Set(['--json', '--key', '--note']),
 	watch: new Set(['--after', '--owner']),
 	poll: new Set(),
@@ -854,6 +872,18 @@ function bodyText(bytes: Buffer, source: string): string {
  * just the id (an unnamed terminal), then its `project_name`; null when absent or unreadable.
  */
 export function okenaTerminalLabel(stdout: string, terminalId: string): string | null {
+	const found = okenaTerminalLookup(stdout, terminalId)
+	return found?.listed ? found.label : null
+}
+
+/**
+ * Whether `okena term ls --json` output lists `terminalId`, and its label (as
+ * {@link okenaTerminalLabel}); null when the output is not a terminal list.
+ */
+export function okenaTerminalLookup(
+	stdout: string,
+	terminalId: string,
+): { listed: false } | { listed: true; label: string | null } | null {
 	let list: unknown
 	try {
 		list = JSON.parse(stdout)
@@ -866,13 +896,13 @@ export function okenaTerminalLabel(stdout: string, terminalId: string): string |
 		(item): item is Record<string, unknown> =>
 			!!item && typeof item === 'object' && String((item as Record<string, unknown>).terminal_id).toLowerCase() === id,
 	)
-	if (!entry) return null
+	if (!entry) return { listed: false }
 	for (const value of [entry.name, entry.project_name]) {
 		if (typeof value !== 'string') continue
 		const label = safe(value, SIGNAL_LIMITS.actor)
-		if (label !== '' && label.toLowerCase() !== id) return label
+		if (label !== '' && label.toLowerCase() !== id) return { listed: true, label }
 	}
-	return null
+	return { listed: true, label: null }
 }
 
 /** `$HELM_OKENA_BIN`, else `~/.local/bin/okena` when it exists, else `okena` on PATH (as the desktop). */
@@ -885,18 +915,24 @@ function okenaBinary(env: NodeJS.ProcessEnv): string {
 
 const execFileAsync = promisify(execFile)
 
-/** Best effort: any failure (no Okena, timeout, odd output) is null, and `--from` becomes `agent`. */
-async function okenaTerminalNameFromCli(terminalId: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+/** `okena term ls --json` output, or null on any failure (no Okena, timeout). */
+async function okenaTerminalListFromCli(env: NodeJS.ProcessEnv): Promise<string | null> {
 	try {
 		const { stdout } = await execFileAsync(okenaBinary(env), ['term', 'ls', '--json'], {
 			timeout: OKENA_LOOKUP_TIMEOUT_MS,
 			maxBuffer: OKENA_LOOKUP_MAX_BUFFER,
 			env,
 		})
-		return okenaTerminalLabel(String(stdout), terminalId)
+		return String(stdout)
 	} catch {
 		return null
 	}
+}
+
+/** Best effort: any failure (no Okena, timeout, odd output) is null, and `--from` becomes `agent`. */
+async function okenaTerminalNameFromCli(terminalId: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+	const stdout = await okenaTerminalListFromCli(env)
+	return stdout === null ? null : okenaTerminalLabel(stdout, terminalId)
 }
 
 /** `--key`, checked against the daemon's key rule. */
@@ -930,6 +966,9 @@ export async function buildAskBody(parsed: ParsedArgs, deps: SignalCliDeps): Pro
 		if (signalAskLinkUrl(link) === null)
 			throw new UsageError(`--link must be an absolute http(s) URL without credentials: ${safe(link, 120)}`)
 	const key = keyOption(values)
+	const terminalArg = values.get('--terminal')?.trim()
+	if (terminalArg !== undefined && !SIGNAL_TERMINAL_ID.test(terminalArg))
+		throw new UsageError(`--terminal must be an Okena terminal id (a UUID; got ${safe(terminalArg, 60)})`)
 	const fromArg = values.get('--from')
 	if (fromArg !== undefined) {
 		if (/[\r\n\u2028\u2029]/.test(fromArg)) throw new UsageError('--from is one line')
@@ -951,11 +990,23 @@ export async function buildAskBody(parsed: ParsedArgs, deps: SignalCliDeps): Pro
 		throw new UsageError(`The body must be at most ${SIGNAL_LIMITS.askBodyLines} lines; link to the rest`)
 
 	// The asking agent's Okena terminal: where Jakub's reply is delivered, and the default name.
+	// `--terminal` files it for another agent's terminal, which must be open in Okena now.
 	const env = deps.env ?? process.env
-	const terminalEnv = env.OKENA_TERMINAL_ID?.trim()
-	const terminal = terminalEnv && SIGNAL_TERMINAL_ID.test(terminalEnv) ? terminalEnv.toLowerCase() : undefined
 	let from = fromArg?.trim()
-	if (from === undefined && terminal !== undefined) {
+	let terminal: string | undefined
+	if (terminalArg !== undefined) {
+		terminal = terminalArg.toLowerCase()
+		const stdout = await (deps.okenaTerminalList ?? (() => okenaTerminalListFromCli(env)))().catch(() => null)
+		const found = stdout === null ? null : okenaTerminalLookup(stdout, terminal)
+		if (found === null)
+			throw new UsageError('--terminal: could not list Okena terminals (okena term ls --json); is Okena running?')
+		if (!found.listed) throw new UsageError(`--terminal: Okena has no open terminal ${terminal}`)
+		if (from === undefined && found.label) from = found.label
+	} else {
+		const terminalEnv = env.OKENA_TERMINAL_ID?.trim()
+		terminal = terminalEnv && SIGNAL_TERMINAL_ID.test(terminalEnv) ? terminalEnv.toLowerCase() : undefined
+	}
+	if (from === undefined && terminal !== undefined && terminalArg === undefined) {
 		const lookup = deps.okenaTerminalName ?? (id => okenaTerminalNameFromCli(id, env))
 		const name = await lookup(terminal).catch(() => null)
 		const label = name ? safe(name, SIGNAL_LIMITS.actor) : ''

@@ -215,6 +215,41 @@ test('transcript policy: a busy pane with a live turn is re-read every REPLY_REA
 	assert.equal(transcriptWanted(prev, working, {}, 1_000 + REPLY_READ_MS, true).read, false)
 })
 
+test('transcript policy: a watched busy pane (a Signals ask waits on it) is read on the edge, then every sweep', () => {
+	const working = detailOf({ ...SHOW_ASK, busy: true, dialogs: [] })
+	const cursor = { cursor: 10, sessionId: SID }
+	const prev = { busy: true, dialogs: 0, sessionId: SID, readAt: 1_000 }
+	// Jakub's prompt is what makes it busy: the edge reads at once.
+	assert.equal(transcriptWanted({ ...prev, busy: false }, working, cursor, 1_001, false, true).read, true)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + REPLY_READ_MS, false, true).read, false)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + TRANSCRIPT_SWEEP_MS - 1, false, true).read, false)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + TRANSCRIPT_SWEEP_MS, false, true).read, true)
+	assert.equal(transcriptWanted(prev, working, cursor, 1_000 + TRANSCRIPT_SWEEP_MS, false, false).read, false)
+})
+
+test('watchPrompts makes the source read a busy watched pane on the idle→busy edge', async () => {
+	const okena = new FakeOkena()
+	const source = new OkenaClaudeSource(okena)
+	let state = createAgentDockState(null, 0)
+	const step = async (now: number) => {
+		const observation = await source.observe(state, now)
+		state = reduce(state, observation, now).state
+		return observation
+	}
+	okena.detail = channelOff(SHOW_IDLE)
+	await step(0) // first (reset) read
+	okena.detail = channelOff({ ...SHOW_ASK, dialogs: [], busy: true })
+	const unwatched = await step(1_000)
+	assert.equal(unwatched.type === 'poll' && unwatched.terminals[0]?.transcript, undefined)
+	okena.detail = channelOff(SHOW_IDLE)
+	await step(2_000)
+	source.watchPrompts([TID.toUpperCase()])
+	okena.detail = channelOff({ ...SHOW_ASK, dialogs: [], busy: true })
+	const watched = await step(3_000)
+	assert.equal(watched.type === 'poll' && watched.terminals[0]?.transcript?.ok, true)
+	source.watchPrompts([])
+})
+
 test('a reply typed in the terminal while a turn is open is read while busy and closes the turn as replied', async () => {
 	const turnUuid = 'b1000000-0000-4000-8000-000000000001'
 	const okena = new FakeOkena()

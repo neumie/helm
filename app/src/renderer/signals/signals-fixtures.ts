@@ -11,6 +11,7 @@ import type {
 	DockSession,
 } from '../../agent-dock/model'
 import type { SignalNewAgentRequest, SignalOkenaProject, SignalsBridgeState } from '../../shared'
+import type { HelmResult } from '../../shared-helm'
 import type {
 	SignalFilteredEntry,
 	SignalSourceHealth,
@@ -18,6 +19,7 @@ import type {
 	SignalUpdate,
 	SignalsSnapshot,
 } from '../../shared-helm'
+import { SignalsAskResolver } from '../../signals-ask-resolver'
 import { nextWeekdayMorning } from './model'
 import type { DockService, SignalsService } from './services'
 
@@ -717,6 +719,12 @@ export interface SignalsFixture {
 	hold(effect: SignalsHeldEffect): void
 	/** Lets every waiting call of this effect finish, and stops holding it. */
 	release(effect: SignalsHeldEffect): void
+	/**
+	 * Browser tests only: a prompt lands in the transcript of this Okena terminal, typed by Jakub
+	 * (or by Helm, when it is what the dock just sent). Runs main's real SignalsAskResolver, which
+	 * closes the open asks bound to that terminal through the fake daemon's `answered` route.
+	 */
+	terminalPrompt(terminalId: string, text: string): Promise<void>
 }
 
 export interface SignalsFixtureOptions {
@@ -802,6 +810,40 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		threads = threads.map(entry => (entry.id === id ? next : entry))
 		publish()
 		return { data: next } as const
+	}
+	// Main's ask resolver against this fake daemon: GET the open asks, POST /signals/:id/answered.
+	let promptSeq = 0
+	const resolver = new SignalsAskResolver({
+		now: clock,
+		timers: { setTimeout: () => 0, clearTimeout: () => undefined },
+		request: async <T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<HelmResult<T>> => {
+			if (method === 'GET') return { data: snapshotOf() as T }
+			const match = /^\/signals\/(\d+)\/answered$/.exec(path)
+			const input = body as { activityAt: string; promptAt: string }
+			if (!match) return { error: 'not found', status: 404 }
+			const id = Number(match[1])
+			const current = threads.find(entry => entry.id === id)
+			if (!current) return { error: 'Signal not found', status: 404 }
+			if (current.lastActivityAt !== input.activityAt) return { error: 'The ask changed', status: 409 }
+			const changed = change(id, (entry, at) => ({
+				...entry,
+				state: 'done',
+				snoozedUntil: null,
+				closedReason: 'answered in the terminal',
+				closedBy: 'jakub',
+				updatedAt: at,
+			}))
+			return changed as HelmResult<T>
+		},
+	})
+	resolver.start()
+	const terminalPrompt = async (terminalId: string, text: string): Promise<void> => {
+		await resolver.refresh()
+		promptSeq += 1
+		resolver.observePrompts(terminalId, [
+			{ uuid: `fixture-prompt-${promptSeq}`, timestamp: iso(clock()), text, origin: 'terminal' },
+		])
+		await resolver.refresh()
 	}
 	const service: SignalsService = {
 		getState: () => state,
@@ -984,6 +1026,8 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		},
 		async prompt(request) {
 			calls.prompts.push(request)
+			const target = dockSnapshot?.sessions.find(entry => entry.key === request.session)
+			if (target) resolver.promptSending({ source: target.source, terminalId: target.terminalId }, request.text)
 			await gate('prompt')
 			// As Okena: a new prompt to a working agent is held until its turn ends.
 			const working =
@@ -993,6 +1037,10 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		},
 		async act(request) {
 			calls.acts.push(request)
+			const item = dockSnapshot?.items.find(entry => entry.id === request.itemId)
+			const target = dockSnapshot?.sessions.find(entry => entry.key === item?.session)
+			if (target && request.action.type === 'prompt')
+				resolver.promptSending({ source: target.source, terminalId: target.terminalId }, request.action.text)
 			await gate('prompt')
 			return result(scripted.act ?? sent)
 		},
@@ -1027,5 +1075,5 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		for (const listener of dockListeners) listener()
 		return item.id
 	}
-	return { service, dock, calls, hold, release, script, openTurn }
+	return { service, dock, calls, hold, release, script, openTurn, terminalPrompt }
 }

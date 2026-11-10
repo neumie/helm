@@ -787,3 +787,47 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		assert.equal((await data<SignalThread>(await post(`/signals/${prId}/done`, {}))).closedReason, null)
 	})
 })
+
+test('an ask closes as answered in its terminal: Helm only, compare-and-set on its activity', async () => {
+	await withSignalsApi(async ({ post, db, clock }) => {
+		const terminal = '01234567-89ab-4def-8123-456789abcdef'
+		const ask = await data<SignalAskResult>(await post('/signals/asks', { key: 'pick', title: 'Pick?', terminal }))
+		const id = ask.thread.id
+		const activityAt = ask.thread.lastActivityAt
+		const promptAt = new Date(NOW.getTime() + 60_000).toISOString()
+		clock.now = new Date(NOW.getTime() + 120_000)
+
+		// An agent cannot close another agent's ask in Jakub's name.
+		const forged = await post(`/signals/${id}/answered`, { activityAt, promptAt })
+		assert.equal(forged.status, 401)
+		assert.deepEqual(await forged.json(), { error: 'Only Helm can record an answer in the terminal' })
+		assert.equal(db.signals.get(id)?.state, 'new')
+
+		// Strict body, real times, newer than the ask, the ask as matched.
+		for (const body of [{}, { activityAt }, { activityAt, promptAt, text: 'yes' }, { activityAt, promptAt: 'soon' }]) {
+			assert.equal((await post(`/signals/${id}/answered`, body, { jakub: true })).status, 400, JSON.stringify(body))
+		}
+		const older = await post(`/signals/${id}/answered`, { activityAt, promptAt: activityAt }, { jakub: true })
+		assert.equal(older.status, 400)
+		const stale = await post(
+			`/signals/${id}/answered`,
+			{ activityAt: new Date(NOW.getTime() - 60_000).toISOString(), promptAt },
+			{ jakub: true },
+		)
+		assert.equal(stale.status, 409)
+		assert.equal((await post('/signals/9999/answered', { activityAt, promptAt }, { jakub: true })).status, 404)
+		const loose = db.signals.upsertAsk({ title: 'No terminal' }, NOW).thread
+		assert.equal(
+			(await post(`/signals/${loose.id}/answered`, { activityAt: loose.lastActivityAt, promptAt }, { jakub: true }))
+				.status,
+			400,
+		)
+
+		const closed = await data<SignalThread>(
+			await post(`/signals/${id}/answered`, { activityAt, promptAt }, { jakub: true }),
+		)
+		assert.equal(closed.state, 'done')
+		assert.equal(closed.closedReason, 'answered in the terminal')
+		assert.equal(closed.closedBy, 'jakub')
+	})
+})

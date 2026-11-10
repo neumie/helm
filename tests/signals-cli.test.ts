@@ -12,6 +12,7 @@ import {
 	SIGNAL_HEARTBEAT_MS,
 	buildSetBody,
 	okenaTerminalLabel,
+	okenaTerminalLookup,
 	parseUntil,
 	runSignalCli,
 } from '../src/cli/signal.js'
@@ -815,6 +816,75 @@ test('okenaTerminalLabel: the name, or the project for an unnamed terminal', () 
 	assert.equal(okenaTerminalLabel(list, 'ffffffff-aa85-4007-8692-b836e6349f83'), null)
 	assert.equal(okenaTerminalLabel('not json', TERMINAL), null)
 	assert.equal(okenaTerminalLabel('{"terminal_id":1}', TERMINAL), null)
+})
+
+test('add --terminal files the ask for another open Okena terminal, named after it', async () => {
+	const OTHER = 'b2b3a76c-45fd-4d9e-b766-b7455b1723e0'
+	const list = JSON.stringify([
+		{ terminal_id: TERMINAL, name: 'dispatcher', project_name: 'vault' },
+		{ terminal_id: OTHER, name: 'VOS sloty', project_name: 'psyon' },
+	])
+	const daemon = askDaemon()
+	let lists = 0
+	let named = 0
+	const deps = (output: string | null | (() => Promise<string | null>)) =>
+		capture(daemon.fetch, {
+			// The dispatcher runs in its own terminal; --terminal wins over it.
+			env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL },
+			okenaTerminalName: async () => {
+				named += 1
+				return 'dispatcher'
+			},
+			okenaTerminalList:
+				typeof output === 'function'
+					? output
+					: async () => {
+							lists += 1
+							return output
+						},
+		})
+	const ok = deps(list)
+	assert.equal(
+		await runSignalCli(['add', '--title', 'Approve the slots?', '--terminal', OTHER.toUpperCase(), '--json'], ok.deps),
+		0,
+	)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Approve the slots?', from: 'VOS sloty', terminal: OTHER })
+	assert.equal(JSON.parse(ok.out[0] ?? '{}').outcome, 'created')
+	// An explicit --from still wins.
+	const from = deps(list)
+	assert.equal(await runSignalCli(['add', '--title', 'T', '--terminal', OTHER, '--from', 'dispatcher'], from.deps), 0)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'T', from: 'dispatcher', terminal: OTHER })
+	assert.equal(named, 0, 'the env terminal is never looked up with --terminal')
+	assert.equal(lists, 2)
+
+	const calls = daemon.calls.length
+	const refused = async (args: string[], output: Parameters<typeof deps>[0], message: RegExp) => {
+		const run = deps(output)
+		assert.equal(await runSignalCli(args, run.deps), 1, args.join(' '))
+		assert.match(run.err.join('\n'), message)
+	}
+	await refused(['add', '--title', 'T', '--terminal', 'pane-1'], list, /--terminal must be an Okena terminal id/)
+	await refused(
+		['add', '--title', 'T', '--terminal', 'ffffffff-aa85-4007-8692-b836e6349f83'],
+		list,
+		/Okena has no open terminal ffffffff-aa85-4007-8692-b836e6349f83/,
+	)
+	await refused(['add', '--title', 'T', '--terminal', OTHER], null, /could not list Okena terminals/)
+	await refused(['add', '--title', 'T', '--terminal', OTHER], 'not json', /could not list Okena terminals/)
+	await refused(
+		['add', '--title', 'T', '--terminal', OTHER],
+		() => Promise.reject(new Error('boom')),
+		/could not list Okena terminals/,
+	)
+	await refused(['done', '1', '--terminal', OTHER], list, /--terminal/)
+	assert.equal(daemon.calls.length, calls, 'nothing was filed')
+})
+
+test('okenaTerminalLookup: listed or not, with its label; null for unreadable output', () => {
+	const list = JSON.stringify([{ terminal_id: TERMINAL, name: TERMINAL, project_name: '' }])
+	assert.deepEqual(okenaTerminalLookup(list, TERMINAL), { listed: true, label: null })
+	assert.deepEqual(okenaTerminalLookup(list, 'ffffffff-aa85-4007-8692-b836e6349f83'), { listed: false })
+	assert.equal(okenaTerminalLookup('{}', TERMINAL), null)
 })
 
 test('add: outcomes in words, --json prints the result on one line', async () => {

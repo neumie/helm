@@ -4,7 +4,7 @@ import leftColumnModule from '../app/src/renderer/left-column.ts'
 import modelModule from '../app/src/renderer/signals/model.ts'
 import { GITHUB_GONE_REASON } from '../src/signals/github-map.js'
 import { MAIL_GONE_REASON, mailGoneReason } from '../src/signals/mail-filter.js'
-import { SIGNAL_ASK_CLOSED_REASON, SIGNAL_MUTED_REASON } from '../src/signals/store.js'
+import { SIGNAL_ASK_ANSWERED_REASON, SIGNAL_ASK_CLOSED_REASON, SIGNAL_MUTED_REASON } from '../src/signals/store.js'
 
 type SignalThread = import('../app/src/shared-helm.ts').SignalThread
 type SignalSourceHealth = import('../app/src/shared-helm.ts').SignalSourceHealth
@@ -705,13 +705,21 @@ test('done reason: the daemon’s own closed reasons and who closed it by hand',
 			ask({ id: 21, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON, closedBy: 'agent' }),
 			ask({ id: 22, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON }),
 			ask({ id: 23, state: 'done', closedBy: 'jakub', reply: 'Yes' }),
+			// Jakub prompted the ask's terminal: Helm closed it as answered there.
+			ask({ id: 24, state: 'done', closedReason: SIGNAL_ASK_ANSWERED_REASON, closedBy: 'jakub' }),
 		]),
 		[
 			['answered', 'answered'],
 			['agent', 'closed by agent'],
 			['agent', 'closed by agent'],
 			['dismissed', 'dismissed'],
+			['answered', 'answered'],
 		],
+	)
+	assert.match(
+		doneReason(ask({ id: 25, state: 'done', closedReason: SIGNAL_ASK_ANSWERED_REASON, closedBy: 'jakub' }))?.title ??
+			'',
+		/^answered · answered in the terminal · closed /,
 	)
 
 	assert.equal(doneReason(thread({ id: 30 })), null, 'only done threads have a reason')

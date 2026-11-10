@@ -75,6 +75,7 @@ import {
 	sideBySideRequested,
 	startupPolicy,
 } from './side-by-side'
+import { SignalsAskResolver } from './signals-ask-resolver'
 import { SignalsMain, createSignalsDaemonRequest } from './signals-main'
 import { isTabGroupColor } from './tab-group-colors'
 import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './terminal-preferences'
@@ -316,6 +317,15 @@ const sessionProfileToken = () => `${sessionProfileId}:${sessionProfileGeneratio
 const acceptsSessionToken = (token: unknown) => token === sessionProfileToken()
 const acceptsSessionIpcToken = (token: unknown) => sessionIpcAdmissionOpen && acceptsSessionToken(token)
 const sessionIpcGate = createSessionIpcGate(acceptsSessionIpcToken)
+// Signals asks that follow their Okena terminal (signals-ask-resolver.ts): the dock's Okena polls
+// show prompts typed into a terminal; an open ask bound to it closes as answered there. Off in a
+// side-by-side dev instance (no daemon writes) and wherever the dock does not run.
+const signalsAskResolver = sideBySideRequested(process.env)
+	? undefined
+	: new SignalsAskResolver({
+			request: createSignalsDaemonRequest(daemonUrl, { controlToken: () => readLocalControlToken() }),
+			log: message => console.info(`[helm] signals: ${message}`),
+		})
 // Agent dock + Claude in Helm terminals (agent-dock-main.ts). Harness runs
 // (screenshot, attestation, custom/tmp userData) never poll the operator's live
 // Okena unless HELM_AGENT_DOCK=1 opts in (side-by-side dev instances do by
@@ -361,6 +371,7 @@ const agentDock = createAgentDockMain({
 			sendToLiveRenderer(mainWindow?.webContents, AGENT_DOCK_IPC.openItem, itemId, sessionProfileToken()),
 		idleBadge: sideBySideLaunch ? 'dev' : '',
 	}),
+	...(signalsAskResolver ? { prompts: signalsAskResolver } : {}),
 })
 /**
  * Helm's own terminal lifecycle tells the hub a terminal (and its Claude session) is gone.

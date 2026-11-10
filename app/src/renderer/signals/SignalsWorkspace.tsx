@@ -9,6 +9,7 @@ import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignal
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
 import {
+	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
 	createSignalsFixture,
 	signalAskFixtures,
@@ -31,6 +32,11 @@ export interface SignalsWorkspaceProps {
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
 	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered' | 'done'
+	/**
+	 * Story only: 1 s after load, Jakub types this prompt into the idle ask agent's Okena terminal
+	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
+	 */
+	terminalPrompt?: string
 }
 
 declare global {
@@ -77,7 +83,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -131,13 +137,18 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 			focusTerminal: () => focusActiveTerminal(root),
 		})
 		const focusFrame = requestAnimationFrame(() => column.focusSignals())
+		const promptTimer =
+			terminalPrompt === undefined
+				? undefined
+				: window.setTimeout(() => void fixture.terminalPrompt(ASK_TERMINAL_IDLE, terminalPrompt), 1_000)
 		return () => {
+			window.clearTimeout(promptTimer)
 			cancelAnimationFrame(focusFrame)
 			disposeShortcut()
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow])
+	}, [options, fixture, flow, terminalPrompt])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
