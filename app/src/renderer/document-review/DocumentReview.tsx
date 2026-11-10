@@ -19,6 +19,7 @@ import type {
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
 import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
+import { PdfViewer } from '../viewer/PdfViewer'
 import { PictureViewer } from '../viewer/PictureViewer'
 import { PlainViewer } from '../viewer/PlainViewer'
 import { DocumentCanvas } from './DocumentCanvas'
@@ -534,9 +535,9 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		[api, refresh, publishDirty],
 	)
 
-	// A picture window scales the picture itself (ImageView subscribes); the reading zoom stays put.
+	// A picture or PDF window scales the picture or pages itself (ImageView/PdfView subscribe); the reading zoom stays.
 	const pictureWindow = useRef(false)
-	pictureWindow.current = state?.mode === 'plain' && Boolean(state.document.picture)
+	pictureWindow.current = state?.mode === 'plain' && Boolean(state.document.picture || state.document.pdf)
 	useEffect(
 		() =>
 			api.onZoom?.(step =>
@@ -2051,6 +2052,19 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	const plain = state.mode === 'plain'
 	const theme = plain ? (plainTheme ?? draft.theme) : draft.theme
+	// PDFs: pdf.js reads this window's helm-viewer:// token by range, in its own worker.
+	if (plain && state.document.pdf)
+		return (
+			<PdfViewer
+				document={state.document}
+				theme={theme}
+				onToggleTheme={() => setPlainTheme(theme === 'dark' ? 'light' : 'dark')}
+				onRetry={() => {
+					void api.retryDocument().then(() => refresh())
+				}}
+				subscribeZoom={api.onZoom}
+			/>
+		)
 	// Pictures: their own view, bytes from this window's helm-viewer:// token; copy goes through main's PNG check.
 	if (plain && state.document.picture)
 		return (

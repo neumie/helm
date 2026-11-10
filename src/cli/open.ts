@@ -12,8 +12,9 @@ written, nothing is loaded from the network and no agent is involved.
 This version shows Markdown, plain text and logs, code (about 40 languages,
 .jsx/.tsx as source, never run), JSON, JSON Lines, YAML and TOML as a tree,
 and pictures: PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, SVG (as an image, never
-run) and HEIC (converted to PNG by macOS sips). A picture's size limit
-(150 MP) is checked in the window, so that refusal shows there.
+run) and HEIC (converted to PNG by macOS sips), and PDFs (no scripts, links
+or forms run). A picture's size limit (150 MP), a PDF's page limit (5,000)
+and a PDF password are handled in the window.
 Any readable file works, inside or outside a Git repository; Helm's own
 private files are refused. Nothing from the file comes back to the caller.
 

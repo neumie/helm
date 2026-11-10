@@ -94,12 +94,26 @@ interface TokenEntry {
 /**
  * One view's file tokens. A token is 256 random bits, reachable only through that view's own session handler, and
  * dies with `revoke`: a revoked token answers 404 at once, and its descriptor closes when the last read in flight
- * finishes. A view holds very few (its current revision), so the table is bounded.
+ * finishes. A view holds very few (its current revision and the one before it), so the table is bounded.
  */
 export class ViewerFileTokens {
 	static readonly LIMIT = 8
 	private readonly entries = new Map<string, TokenEntry>()
+	private readonly listeners = new Set<() => void>()
 	private disposed = false
+
+	/**
+	 * Called when a token's file answered "changed" (409). The view's observation reads the file again, so a reader
+	 * that fetches lazily (pdf.js) gets the next revision's token even when no file-watch event arrives.
+	 */
+	onChanged(listener: () => void): () => void {
+		this.listeners.add(listener)
+		return () => this.listeners.delete(listener)
+	}
+	reportChanged(): void {
+		if (this.disposed) return
+		for (const listener of this.listeners) listener()
+	}
 
 	issue(source: ViewerFileSource): string {
 		if (this.disposed) {
@@ -174,6 +188,7 @@ const MIME: Readonly<Record<string, string>> = {
 	'.svg': 'image/svg+xml',
 	'.bcmap': 'application/octet-stream',
 	'.pfb': 'application/octet-stream',
+	'.icc': 'application/vnd.iccprofile',
 }
 /** Exact MIME type of a bundled asset, or null when the handler does not serve that kind of file. */
 export function assetMime(path: string): string | null {
@@ -257,7 +272,10 @@ export async function handleViewerRequest(request: Request, deps: ViewerHandlerD
 			try {
 				bytes = head ? new Uint8Array(0) : await source.read(start, length)
 			} catch (error) {
-				if (error instanceof ViewerSourceChanged) return plain(409, 'The file changed; it is being read again')
+				if (error instanceof ViewerSourceChanged) {
+					deps.tokens.reportChanged()
+					return plain(409, 'The file changed; it is being read again')
+				}
 				return plain(500, 'The file could not be read')
 			}
 			const sized = { ...headers, 'Content-Length': String(length) }

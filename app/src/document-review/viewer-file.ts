@@ -7,6 +7,7 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import {
 	type LineEnding,
+	PDF_HEAD_BYTES,
 	PICTURE_HEAD_BYTES,
 	type PictureType,
 	type TextEncoding,
@@ -14,6 +15,7 @@ import {
 	countText,
 	decoderLabel,
 	detectViewerFormat,
+	pdfMismatch,
 	pictureMismatch,
 	sizeText,
 	textEncoding,
@@ -210,8 +212,8 @@ const kind = (stat: Stats) =>
 					? 'a device'
 					: 'not a regular file'
 /** Plain formats this version shows; feedback mode keeps `readReviewFile`'s md/jsx/tsx rule. */
-export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data' | 'image' | 'svg' | 'heic'
-const VIEWER_FORMATS: ReadonlySet<string> = new Set(['markdown', 'code', 'text', 'data', 'image', 'svg', 'heic'])
+export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data' | 'image' | 'svg' | 'heic' | 'pdf'
+const VIEWER_FORMATS: ReadonlySet<string> = new Set(['markdown', 'code', 'text', 'data', 'image', 'svg', 'heic', 'pdf'])
 
 export interface ViewerFormatChoice {
 	format: ViewerFormat
@@ -240,9 +242,9 @@ export function viewerFormat(path: string): ViewerFormatChoice {
 export interface ViewerFile {
 	file: string
 	format: ViewerFormat
-	/** CodeMirror/data language for text families; the picture type (`png`, `svg`, `heic`, …) for pictures. */
+	/** CodeMirror/data language for text families; the picture type (`png`, `svg`, `heic`, …) for pictures; `pdf`. */
 	language: string
-	/** Decoded text for text families and SVG; empty for raster and HEIC pictures (their bytes go by token). */
+	/** Decoded text for text families and SVG; empty for raster/HEIC pictures and PDFs (their bytes go by token). */
 	text: string
 	size: number
 	encoding: TextEncoding
@@ -362,10 +364,11 @@ export async function readViewerFile(
 			if (linked) throw refuse(linked)
 		}
 		if (opened.size > limit) throw tooBig(opened.size)
-		if (choice.format === 'image' || choice.format === 'heic') {
-			// Pictures: only the signature is read here; extension and magic must agree. Width/height come from the
-			// header in the viewer's image worker (HEIC from `sips`); nothing in main decodes the bytes.
-			const head = Buffer.alloc(Math.min(opened.size, PICTURE_HEAD_BYTES))
+		if (choice.format === 'image' || choice.format === 'heic' || choice.format === 'pdf') {
+			// Pictures and PDFs: only the signature is read here; extension and magic must agree. Width/height come
+			// from the header in the viewer's image worker (HEIC from `sips`), pages from pdf.js in its own worker;
+			// nothing in main decodes the bytes.
+			const head = Buffer.alloc(Math.min(opened.size, choice.format === 'pdf' ? PDF_HEAD_BYTES : PICTURE_HEAD_BYTES))
 			let got = 0
 			while (got < head.length) {
 				const read = await fd.read(head, got, head.length - got, got)
@@ -385,7 +388,10 @@ export async function readViewerFile(
 			)
 				throw refuse(`${name} changed while it was read. Try again.`)
 			if (opened.size === 0) throw refuse(`${name} is empty.`)
-			const mismatch = pictureMismatch(name, choice.language as Exclude<PictureType, 'svg'>, head)
+			const mismatch =
+				choice.format === 'pdf'
+					? pdfMismatch(name, head)
+					: pictureMismatch(name, choice.language as Exclude<PictureType, 'svg'>, head)
 			if (mismatch) throw refuse(mismatch)
 			const identity = {
 				dev: opened.dev,
@@ -482,9 +488,9 @@ export function plistWorkingDirectory(plist: string): string | null {
 }
 
 /**
- * Serves a pinned descriptor's admitted bytes to the viewer protocol: every read first checks the descriptor
- * still has the identity it had when it was admitted (same inode, size, mtime, ctime), so a file rewritten in
- * place answers "changed" (409) instead of unvalidated bytes; the watcher then admits the new revision.
+ * Serves a pinned descriptor's admitted bytes to the viewer protocol: every read checks before and after that the
+ * descriptor still has the identity it had when it was admitted (same inode, size, mtime, ctime), so a file rewritten
+ * in place answers "changed" (409) instead of unvalidated or mixed bytes; the watcher then admits the new revision.
  * `length` may stop short of the file (a plain .tsx hides its trailing review journal).
  */
 export function pinnedViewerSource(handle: FileHandle, identity: ViewerFileIdentity, length: number): ViewerFileSource {
@@ -494,15 +500,20 @@ export function pinnedViewerSource(handle: FileHandle, identity: ViewerFileIdent
 		async read(offset, count) {
 			if (closed) throw new ViewerSourceChanged('closed')
 			if (offset < 0 || count < 0 || offset + count > length) throw new RangeError('outside the served bytes')
-			const now = await handle.stat()
-			if (
-				now.dev !== identity.dev ||
-				now.ino !== identity.ino ||
-				now.size !== identity.size ||
-				now.mtimeMs !== identity.mtimeMs ||
-				now.ctimeMs !== identity.ctimeMs
-			)
-				throw new ViewerSourceChanged('changed')
+			const unchanged = async () => {
+				const now = await handle.stat()
+				return (
+					now.dev === identity.dev &&
+					now.ino === identity.ino &&
+					now.size === identity.size &&
+					now.mtimeMs === identity.mtimeMs &&
+					// An editor's atomic save unlinks the old inode, which moves only its ctime: once no name points at
+					// it, nothing can open it to write, so its bytes are still the admitted ones (a writer that already
+					// had it open moves mtime).
+					(now.ctimeMs === identity.ctimeMs || now.nlink === 0)
+				)
+			}
+			if (!(await unchanged())) throw new ViewerSourceChanged('changed')
 			const bytes = Buffer.alloc(count)
 			let used = 0
 			while (used < count) {
@@ -511,6 +522,8 @@ export function pinnedViewerSource(handle: FileHandle, identity: ViewerFileIdent
 				used += read.bytesRead
 			}
 			if (used !== count) throw new ViewerSourceChanged('short read')
+			// A write that landed during the read would mix two versions in one answer: check again afterwards.
+			if (!(await unchanged())) throw new ViewerSourceChanged('changed')
 			return bytes
 		},
 		async close() {

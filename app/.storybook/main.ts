@@ -8,6 +8,9 @@ import type { StorybookConfig } from '@storybook/react-vite'
 const config: StorybookConfig = {
 	framework: '@storybook/react-vite',
 	stories: ['../src/renderer/**/*.stories.tsx'],
+	// pdf.js's worker and optional data, at the layout the app build copies to dist/viewer/assets/pdfjs/ (the whole
+	// package here, a superset of what the build ships; the built-entry spec covers the shipped subset).
+	staticDirs: [{ from: '../node_modules/pdfjs-dist', to: '/pdfjs' }],
 	viteFinal: config => {
 		const cacheDirectory = process.env.HELM_STORYBOOK_CACHE_DIR
 		if (cacheDirectory !== undefined) {

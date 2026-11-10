@@ -30,6 +30,17 @@ credentials outside the intentional local command/test.
 
 Remote uses exactly pinned `marked@18.0.11` (MIT, Christopher Jeffrey and contributors): <https://github.com/markedjs/marked>. The complete package license ships in its dependency distribution. Helm uses its lexer only, rendering an explicit React element allowlist instead of generated HTML; images never trigger network requests. The package manager's minimum-release-age policy remains enabled.
 
+## PDF viewer (pdf.js and its data)
+
+`helm open` shows PDFs with exactly pinned `pdfjs-dist@6.4.299` (Mozilla Foundation, Apache-2.0): <https://github.com/mozilla/pdf.js>. The app bundle also ships the package's optional data, each with its license text under `dist/viewer/assets/pdfjs/licenses/`:
+
+- Character maps (`cmaps/`): Adobe Systems Incorporated, BSD-3-Clause.
+- Standard fonts (`standard_fonts/`): Foxit fonts from PDFium (BSD-3-Clause) and Liberation Sans (Red Hat, GPLv2 with the font embedding exceptions in `LICENSE_LIBERATION`).
+- Wasm image decoders: `jbig2.wasm` (PDFium's JBIG2 decoder, BSD-3-Clause), `openjpeg.wasm` (OpenJPEG, BSD-2-Clause), `qcms_bg.wasm` (Mozilla qcms, MIT); their pdf.js build glue is Apache-2.0.
+- ICC profile `CGATS001Compat-v2-micro.icc`: CC0-1.0.
+
+Helm does not ship pdf.js's scripting sandbox (QuickJS) or the no-wasm JavaScript decoder fallbacks.
+
 ## Okena Claude Code preload
 
 `app/src/claude-remote/preload.cjs` (the Bun `--preload` that adds Helm's Claude Code hooks to a Helm terminal's top-level interactive `claude`) is adapted from Okena's Claude Code preload (`preload.js`, revision ef25cc81) and its hook/dialog design (`decision.rs`, `hub.rs`): argv/entry gating, guarded flags and subcommands, and inline `--settings` injection. The hub protocol, tokens and decision encoding are Helm's own.

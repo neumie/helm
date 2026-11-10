@@ -58,6 +58,11 @@ export const VIEWER_TEXT_LINES = 1_000_000
 export const VIEWER_DATA_BYTES = 32 * MiB
 export const VIEWER_IMAGE_BYTES = 256 * MiB
 export const VIEWER_SVG_BYTES = 16 * MiB
+/** PDFs: bytes (pdf.js's ChunkedStream allocates the whole file in its worker) and pages. */
+export const VIEWER_PDF_BYTES = 256 * MiB
+export const VIEWER_PDF_PAGES = 5_000
+/** pdf.js accepts a `%PDF-` header anywhere in the first 1 KiB (junk before it is common); so does Helm. */
+export const PDF_HEAD_BYTES = 1024
 /** Decoded pixels an image may have (width × height after the header check, before any decode). */
 export const VIEWER_IMAGE_PIXELS = 150_000_000
 /** Children of one tree node the data view lists before an "N more" row. */
@@ -75,7 +80,20 @@ const isPng = (head: Uint8Array) => starts(head, PNG)
 const isJpeg = (head: Uint8Array) => starts(head, JPEG)
 const isGif = (head: Uint8Array) => starts(head, ascii('GIF87a')) || starts(head, ascii('GIF89a'))
 const isWebp = (head: Uint8Array) => starts(head, ascii('RIFF')) && starts(head, ascii('WEBP'), 8)
-const isPdf = (head: Uint8Array) => starts(head, ascii('%PDF-'))
+const PDF_HEADER = ascii('%PDF-')
+const isPdf = (head: Uint8Array) => starts(head, PDF_HEADER)
+/** Where the `%PDF-` header starts within the first PDF_HEAD_BYTES, or -1. */
+export function pdfHeaderOffset(head: Uint8Array): number {
+	const end = Math.min(head.length, PDF_HEAD_BYTES) - PDF_HEADER.length
+	for (let at = 0; at <= end; at++) if (starts(head, PDF_HEADER, at)) return at
+	return -1
+}
+/** "invoice.pdf is not a PDF (it starts like a PNG image)." or null when the header is there. */
+export function pdfMismatch(name: string, head: Uint8Array): string | null {
+	if (pdfHeaderOffset(head) >= 0) return null
+	const what = binarySignature(head.subarray(0, 16))
+	return `${name} is not a PDF${what ? ` (it starts like ${what})` : ''}.`
+}
 const isZip = (head: Uint8Array) => starts(head, ZIP)
 const isBmp = (head: Uint8Array) => starts(head, ascii('BM')) && head.length >= 26
 const isIco = (head: Uint8Array) => starts(head, [0, 0, 1, 0]) && head.length >= 6 && (head[4] !== 0 || head[5] !== 0)
@@ -418,7 +436,18 @@ export const FORMATS: readonly FormatEntry[] = [
 		anchors: [],
 		capabilities: IMAGE_CAPS,
 	},
-	later('pdf', 'PDFs', ['.pdf'], 256 * MiB, isPdf),
+	{
+		format: 'pdf',
+		available: true,
+		noun: 'PDFs',
+		extensions: ['.pdf'],
+		magic: head => pdfHeaderOffset(head) >= 0,
+		read: 'stream',
+		maxBytes: VIEWER_PDF_BYTES,
+		journal: 'none',
+		anchors: ['pdf-text'],
+		capabilities: { search: true, zoom: 'scale', print: 'default-app', copy: 'text' },
+	},
 	later('csv', 'CSV files', ['.csv', '.tsv'], 128 * MiB),
 	later('sheet', 'spreadsheets', ['.xlsx', '.xlsm', '.xls', '.ods'], 64 * MiB),
 	later('docx', 'Word documents', ['.docx'], 64 * MiB, isZip),
@@ -513,7 +542,7 @@ export function detectViewerFormat(name: string): FormatDetection {
 					? 'markdown'
 					: entry.format === 'image'
 						? (IMAGE_EXTENSIONS[extension] ?? 'png')
-						: entry.format === 'heic' || entry.format === 'svg'
+						: entry.format === 'heic' || entry.format === 'svg' || entry.format === 'pdf'
 							? entry.format
 							: 'plain'
 	return { ok: true, entry, extension, language }

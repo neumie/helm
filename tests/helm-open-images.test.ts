@@ -520,7 +520,8 @@ test('a picture window serves the file bytes by token with its declared type; a 
 		const next = observation.current().picture
 		assert.ok(next && next.url !== picture.url)
 		assert.equal(next.size, 96852)
-		assert.equal((await ask(picture.url)).status, 404)
+		// Rewritten in place: the previous token stays until the version after, but its descriptor answers 409.
+		assert.equal((await ask(picture.url)).status, 409)
 		// SVG: served as its own bytes, typed image/svg+xml for the <img>.
 		const svgFile = join(f.docs, 'badge.svg')
 		await writeFile(svgFile, await bytesOf('release-badge.svg'))

@@ -9,7 +9,7 @@ import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
 import { convertHeic, memoryViewerSource } from './heic'
 import { REVIEW_DOCUMENT_BYTES } from './types'
-import type { ReviewDocument, ReviewViewerFile, ReviewViewerPicture } from './types'
+import type { ReviewDocument, ReviewViewerFile, ReviewViewerPdf, ReviewViewerPicture } from './types'
 import { pinnedViewerSource, readViewerFile, viewerFormat } from './viewer-file'
 import type { HelmPrivatePaths, ViewerFileIdentity, ViewerFormat } from './viewer-file'
 import { type ViewerFileSource, type ViewerFileTokens, viewerFileUrl } from './viewer-protocol'
@@ -99,6 +99,7 @@ interface PlainRead {
 	revision: string
 	viewer?: Omit<ReviewViewerFile, 'url'>
 	picture?: Omit<ReviewViewerPicture, 'url'>
+	pdf?: Omit<ReviewViewerPdf, 'url'>
 	source?: ViewerFileSource
 	/** The pinned descriptor's identity: when it moves, the token must too, even for the same bytes. */
 	identity?: ViewerFileIdentity
@@ -125,6 +126,12 @@ export class ReviewDocumentObservation {
 	private token: string | null = null
 	/** Identity the current token's pinned descriptor checks on every read. */
 	private tokenIdentity: ViewerFileIdentity | null = null
+	/**
+	 * The revision before the current one keeps its token until the next one arrives: a PDF window keeps showing it
+	 * (and fetching its pages by range) until it has opened the new version, or for good when the new one is refused.
+	 */
+	private retiredToken: string | null = null
+	private stopChanged: (() => void) | null = null
 	/** Why the last read failed, for the opener's log and CLI reason; never shown with document text. */
 	failure: unknown = null
 	constructor(
@@ -158,17 +165,23 @@ export class ReviewDocumentObservation {
 		if (this.disposed) return
 		this.watcher = watch(dirname(this.file), (_event, name) => {
 			if (name !== null && name.toString() !== basename(this.file)) return
-			if (this.timer) clearTimeout(this.timer)
-			this.timer = setTimeout(() => {
-				this.timer = null
-				void this.refresh()
-			}, 160)
+			this.refreshSoon()
 		})
+		// A token that answered 409 means the file changed even if the watcher missed it.
+		this.stopChanged = this.plain?.tokens?.onChanged(() => this.refreshSoon()) ?? null
 		this.watcher.on('error', () => {
 			if (this.disposed) return
 			this.snapshot = { ...this.snapshot, error: 'File watching is unavailable. Reopen the document to reconnect.' }
 			this.changed()
 		})
+	}
+	private refreshSoon(): void {
+		if (this.disposed) return
+		if (this.timer) clearTimeout(this.timer)
+		this.timer = setTimeout(() => {
+			this.timer = null
+			void this.refresh()
+		}, 160)
 	}
 	refresh(): Promise<void> {
 		if (this.disposed) return Promise.resolve()
@@ -206,6 +219,24 @@ export class ReviewDocumentObservation {
 			return { format: 'markdown', text, revision: reviewRevision(text) }
 		}
 		if (read.format === 'image' || read.format === 'heic' || read.format === 'svg') return this.readPicture(read)
+		if (read.format === 'pdf') {
+			// A PDF is served from its pinned descriptor by range; pdf.js parses it in its own worker. The revision is
+			// the file identity (the bytes are never hashed here).
+			const identity = read.identity
+			const revision = `pdf:${identity ? `${identity.dev}:${identity.ino}:${identity.size}:${identity.mtimeMs}:${identity.ctimeMs}` : ''}`
+			if (!read.handle || !identity) {
+				await read.handle?.close()
+				return { format: 'pdf', text: '', revision }
+			}
+			return {
+				format: 'pdf',
+				text: '',
+				revision,
+				pdf: { size: read.size },
+				source: pinnedViewerSource(read.handle, identity, read.size),
+				identity,
+			}
+		}
 		let body = read.text
 		// A plain .jsx/.tsx is source; its trailing review journal is hidden like Markdown's. Other formats never
 		// have one, so their tail is never parsed as a journal.
@@ -297,16 +328,19 @@ export class ReviewDocumentObservation {
 				}
 				let viewer: ReviewViewerFile | undefined
 				let picture: ReviewViewerPicture | undefined
-				if ((next.viewer || next.picture) && next.source && this.plain.tokens) {
+				let pdf: ReviewViewerPdf | undefined
+				if ((next.viewer || next.picture || next.pdf) && next.source && this.plain.tokens) {
 					const token = this.plain.tokens.issue(next.source)
 					const previous = this.token
 					this.token = token
 					this.tokenIdentity = next.identity ?? null
-					if (previous) void this.plain.tokens.revoke(previous)
+					if (this.retiredToken) void this.plain.tokens.revoke(this.retiredToken)
+					this.retiredToken = previous
 					if (next.viewer) viewer = { ...next.viewer, url: viewerFileUrl(token) }
 					if (next.picture) picture = { ...next.picture, url: viewerFileUrl(token) }
+					if (next.pdf) pdf = { ...next.pdf, url: viewerFileUrl(token) }
 				}
-				const { viewer: _old, picture: _oldPicture, ...rest } = this.snapshot
+				const { viewer: _old, picture: _oldPicture, pdf: _oldPdf, ...rest } = this.snapshot
 				this.snapshot = {
 					...rest,
 					text: next.text,
@@ -314,6 +348,7 @@ export class ReviewDocumentObservation {
 					format: next.format === 'svg' || next.format === 'heic' ? 'image' : next.format,
 					...(viewer ? { viewer } : {}),
 					...(picture ? { picture } : {}),
+					...(pdf ? { pdf } : {}),
 					previous:
 						next.format === 'markdown' && this.snapshot.revision && next.revision !== this.snapshot.revision
 							? this.snapshot.text
@@ -377,8 +412,11 @@ export class ReviewDocumentObservation {
 		this.watcher?.close()
 		if (this.timer) clearTimeout(this.timer)
 		await this.active
-		if (this.token && this.plain?.tokens) await this.plain.tokens.revoke(this.token)
+		this.stopChanged?.()
+		if (this.plain?.tokens)
+			for (const token of [this.token, this.retiredToken]) if (token) await this.plain.tokens.revoke(token)
 		this.token = null
+		this.retiredToken = null
 		this.tokenIdentity = null
 	}
 }
