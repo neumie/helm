@@ -43,6 +43,7 @@ import {
 	type SignalThread,
 	type SignalUpdate,
 	signalAskLinkUrl,
+	signalSenderAddress,
 } from './contract.js'
 
 /** Newest events kept; older ones are pruned after each write. */
@@ -148,6 +149,7 @@ interface ThreadRow {
 	reply: string | null
 	reply_at: string | null
 	sender: string | null
+	sender_address: string | null
 	created_at: string
 	updated_at: string
 }
@@ -369,8 +371,8 @@ function sanitizeObservation(observation: SignalObservation, source: SignalPollS
 		branch: cleanOptional(observation.branch, SIGNAL_LIMITS.branch),
 		activityKey: clean(String(observation.activityKey ?? ''), SIGNAL_LIMITS.activityKey),
 		lastActivityAt,
-		sender:
-			source === 'mail' ? (cleanOptional(observation.sender, SIGNAL_LIMITS.fullRef)?.toLowerCase() ?? null) : null,
+		sender: source === 'mail' ? signalSenderAddress(observation.sender) || null : null,
+		senderAddress: source === 'mail' ? signalSenderAddress(observation.senderAddress) || null : null,
 	}
 }
 
@@ -438,13 +440,13 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 	const messageKey = clean(String(observation.messageKey ?? ''), SIGNAL_LIMITS.activityKey).toLowerCase()
 	const receivedAt = isoTime(String(observation.receivedAt ?? ''))
 	if (messageKey === '' || receivedAt === null) return null
-	const senderAddress = clean(String(observation.senderAddress ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase()
+	// Addresses are never clipped: `i` puts them on the sender lists as they are.
+	const senderAddress = signalSenderAddress(observation.senderAddress)
 	return {
 		messageKey,
 		senderName: clean(String(observation.senderName ?? ''), SIGNAL_LIMITS.actor),
 		senderAddress,
-		senderIdentity:
-			clean(String(observation.senderIdentity ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase() || senderAddress,
+		senderIdentity: signalSenderAddress(observation.senderIdentity) || senderAddress,
 		subject: clean(String(observation.subject ?? ''), SIGNAL_LIMITS.title),
 		reason: observation.reason,
 		mailbox: cleanOptional(observation.mailbox, SIGNAL_LIMITS.ref),
@@ -458,7 +460,7 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 }
 
 /** Columns a poll refresh may write that people never see change (no `updated_at` bump). */
-const BOOKKEEPING_COLUMNS = new Set(['missed_polls', 'activity_key', 'sender'])
+const BOOKKEEPING_COLUMNS = new Set(['missed_polls', 'activity_key', 'sender', 'sender_address'])
 
 const HEAD_COLUMNS = [
 	['kind', 'kind'],
@@ -586,21 +588,29 @@ export class SignalStore {
 			.run(address, address).changes
 	}
 
-	/** A mail thread's latest sender as the sender lists match it; null until a Mail poll recorded it. */
-	threadSender(id: number): string | null {
+	/**
+	 * A mail thread's latest sender as the sender lists match it (`identity`, relay-decoded) and as
+	 * it arrived (`raw`, the relay address; equal to `identity` for ordinary mail), plus who owns the
+	 * thread. Null when it is not mail or no Mail poll recorded the sender yet.
+	 */
+	threadSender(id: number): { identity: string; raw: string; owner: SignalOwner } | null {
 		const row = this.row(id)
-		return row?.source === 'mail' ? (row.sender ?? null) : null
+		if (row?.source !== 'mail' || !row.sender) return null
+		return { identity: row.sender, raw: row.sender_address || row.sender, owner: row.owner as SignalOwner }
 	}
 
 	/**
 	 * Jakub muted `identity` (`x`): his open mail threads whose latest message is from it close at
 	 * once (done, `sender muted`, gone from the poll's view so showing the sender again reopens them)
 	 * and their latest message is listed as filtered (`excluded`) until the next poll lists the
-	 * thread's messages itself. Managed threads stay with their agent. Returns the closed ids.
+	 * thread's messages itself. Managed threads stay with their agent. `raw` is the address the mail
+	 * arrived from (the relay address for Hide My Email), listed as the filtered entry's address.
+	 * Returns the closed ids.
 	 */
-	muteSender(identity: string, now: Date): number[] {
-		const sender = identity.trim().toLowerCase()
+	muteSender(identity: string, now: Date, raw?: string): number[] {
+		const sender = signalSenderAddress(identity)
 		if (sender === '') return []
+		const address = signalSenderAddress(raw) || sender
 		const at = now.toISOString()
 		const cutoff = this.filteredCutoff(now)
 		return this.transaction(() => {
@@ -635,7 +645,7 @@ export class SignalStore {
 				listed.run(
 					messageKey,
 					row.actor ?? '',
-					sender,
+					row.sender_address || address,
 					sender,
 					row.title,
 					row.url?.startsWith('message:') ? row.url : null,
@@ -1138,8 +1148,9 @@ export class SignalStore {
 			.prepare(
 				`INSERT INTO signal_threads (
 				   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
-				   state, owner, activity_key, last_activity_at, active, missed_polls, sender, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?, ?)`,
+				   state, owner, activity_key, last_activity_at, active, missed_polls, sender, sender_address,
+				   created_at, updated_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?)`,
 			)
 			.run(
 				observation.threadKey,
@@ -1158,6 +1169,7 @@ export class SignalStore {
 				observation.activityKey,
 				observation.lastActivityAt,
 				observation.sender ?? null,
+				observation.senderAddress ?? null,
 				at,
 				at,
 			)
@@ -1180,6 +1192,8 @@ export class SignalStore {
 		if (row.missed_polls !== 0) update.missed_polls = 0
 		const sender = observation.sender ?? null
 		if ((row.sender ?? null) !== sender) update.sender = sender
+		const senderAddress = observation.senderAddress ?? null
+		if ((row.sender_address ?? null) !== senderAddress) update.sender_address = senderAddress
 		let state = row.state
 		const newer =
 			observation.activityKey !== row.activity_key &&

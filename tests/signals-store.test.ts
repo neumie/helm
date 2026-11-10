@@ -809,14 +809,19 @@ test('mute closes Jakub’s open mail threads from the sender and lists their ma
 			return thread
 		})
 		assert.ok(r1 && r2 && r3 && r4 && other)
-		assert.equal(store.threadSender(r1.id), ridge)
-		assert.equal(store.threadSender(other.id), 'klara@psyon.example')
+		assert.deepEqual(store.threadSender(r1.id), { identity: ridge, raw: ridge, owner: 'jakub' })
+		assert.deepEqual(store.threadSender(other.id), {
+			identity: 'klara@psyon.example',
+			raw: 'klara@psyon.example',
+			owner: 'jakub',
+		})
 		assert.equal(store.threadSender(store.getByThreadKey('github:acme/widgets#1')?.id ?? 0), null)
 		assert.equal(store.threadSender(9999), null)
 		// The sender is never served.
 		assert.equal('sender' in r1, false)
 		store.update(r2.id, { state: 'snoozed', snoozedUntil: at(600).toISOString() }, T0)
 		store.update(r3.id, { owner: 'managed', managedBy: 'agent-a' }, T0)
+		assert.equal(store.threadSender(r3.id)?.owner, 'managed')
 		store.update(r4.id, { state: 'done' }, T0)
 		const seq = store.latestSeq()
 
@@ -872,7 +877,7 @@ test('a thread polled before the sender column learns its sender quietly; muting
 		assert.equal(store.threadSender(legacy.id), null)
 		const seq = store.latestSeq()
 		store.applyPoll(mailThreads([mailThread('legacy', 'hello@eu.ridge.com')]), at(1))
-		assert.equal(store.threadSender(legacy.id), 'hello@eu.ridge.com')
+		assert.equal(store.threadSender(legacy.id)?.identity, 'hello@eu.ridge.com')
 		// Bookkeeping: no visible change, no event.
 		assert.equal(store.get(legacy.id)?.updatedAt, legacy.updatedAt)
 		assert.equal(store.latestSeq(), seq)
@@ -880,6 +885,52 @@ test('a thread polled before the sender column learns its sender quietly; muting
 		// A GitHub observation carrying a sender keeps none.
 		store.applyPoll(poll([{ ...github(1), sender: 'x@y.example' }]), at(2))
 		assert.equal(store.threadSender(store.getByThreadKey('github:acme/widgets#1')?.id ?? 0), null)
+	})
+})
+
+test('a Hide My Email thread keeps its relay address: mute lists it as the filtered mail’s address', () => {
+	withDb(db => {
+		const store = db.signals
+		const relay = 'jana_at_x_cz_abc123_0f@privaterelay.appleid.com'
+		store.applyPoll(mailThreads([mailThread('hme', 'jana@x.cz', { senderAddress: relay })]), T0)
+		const thread = store.getByThreadKey('mail:hme')
+		assert.ok(thread)
+		assert.deepEqual(store.threadSender(thread.id), { identity: 'jana@x.cz', raw: relay, owner: 'jakub' })
+		assert.deepEqual(store.muteSender('jana@x.cz', at(1), relay), [thread.id])
+		const [entry] = store.listFiltered(at(1)).entries
+		assert.equal(entry?.senderIdentity, 'jana@x.cz')
+		assert.equal(entry?.senderAddress, relay)
+	})
+})
+
+test('sender addresses are stored whole up to 254 units and never clipped into a different one', () => {
+	withDb(db => {
+		const store = db.signals
+		const long = `${'a'.repeat(230)}@ridge.example`
+		const tooLong = `${'b'.repeat(250)}@ridge.example`
+		store.applyPoll(
+			mailThreads([mailThread('long', long), mailThread('toolong', tooLong), mailThread('spaced', 'a b@x.cz')]),
+			T0,
+		)
+		const id = (key: string) => store.getByThreadKey(`mail:${key}`)?.id ?? 0
+		assert.equal(store.threadSender(id('long'))?.identity, long)
+		assert.equal(store.threadSender(id('toolong')), null)
+		assert.equal(store.threadSender(id('spaced')), null)
+		store.applyPoll(
+			mailPoll(
+				[
+					filteredEntry('long@x', { senderAddress: long, senderIdentity: long }),
+					filteredEntry('too-long@x', { senderAddress: tooLong, senderIdentity: tooLong }),
+				],
+				[],
+				false,
+			),
+			T0,
+		)
+		const entries = store.listFiltered(T0).entries
+		assert.ok(entries.some(entry => entry.senderAddress === long && entry.senderIdentity === long))
+		assert.ok(entries.some(entry => entry.senderAddress === '' && entry.senderIdentity === ''))
+		assert.ok(entries.every(entry => !entry.senderAddress.includes('…')))
 	})
 })
 

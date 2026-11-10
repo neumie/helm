@@ -836,6 +836,8 @@ export interface SignalFilteredEntry {
 	url: string | null
 	receivedAt: string
 	lastSeenAt: string
+	/** Only a mute (exact exclude entry) keeps it out: `i` unmutes instead of always showing. */
+	unmute?: true
 }
 
 export interface SignalFilteredPage {

@@ -842,7 +842,13 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			return { data: true }
 		},
 		async filtered() {
-			return { data: { entries: filtered.map(entry => ({ ...entry })), total: filtered.length, retentionDays: 7 } }
+			// As the daemon: an `excluded` entry whose sender only a mute keeps out says so (`i` unmutes it).
+			const entries = filtered.map(entry =>
+				entry.reason === 'excluded' && muted.has(entry.senderIdentity)
+					? { ...entry, unmute: true as const }
+					: { ...entry },
+			)
+			return { data: { entries, total: filtered.length, retentionDays: 7 } }
 		},
 		async include(id) {
 			calls.includes.push(id)
@@ -852,7 +858,7 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			// As the daemon: the sender's rows leave the log, and the next poll keeps their mail.
 			filtered = filtered.filter(item => item.senderIdentity !== address)
 			const reopen = muted.get(address)
-			if (entry.reason === 'excluded') {
+			if (entry.reason === 'excluded' && muted.has(address)) {
 				// Unmuted: off the exclude list, never onto the include list; the poll reopens its threads.
 				muted.delete(address)
 				const at = iso(clock())
@@ -878,6 +884,8 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 					error: target.kind === 'sentry' ? 'Sentry alerts always show' : 'Only mail senders can be muted',
 					status: 400,
 				}
+			if (target.owner !== 'jakub')
+				return { error: 'An agent is handling this thread; take it back first', status: 409 }
 			const address = senderOf(target)
 			if (!address) return { error: 'The sender is not known yet; try again after the next Mail poll', status: 409 }
 			// As the daemon's store: Jakub's open mail threads from the sender close, their mail is filtered.

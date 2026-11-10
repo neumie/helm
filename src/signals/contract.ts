@@ -70,7 +70,23 @@ export const SIGNAL_LIMITS = {
 	askKey: 200,
 	/** Jakub's answer to an agent ask (line breaks kept). */
 	reply: 2000,
+	/** A mail sender's address as the sender lists match it (RFC 5321 path limit); never clipped. */
+	address: 254,
 } as const
+
+/**
+ * A mail sender's address as stored for the sender lists: trimmed, lowercase, at most
+ * `SIGNAL_LIMITS.address` units, no whitespace, controls or bidi. Anything else is '' (unknown),
+ * never clipped: a clipped address would land on the exclude list as a different sender.
+ */
+export function signalSenderAddress(value: unknown): string {
+	if (typeof value !== 'string') return ''
+	const address = value.trim().toLowerCase()
+	if (address.length > SIGNAL_LIMITS.address) return ''
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting controls is the point
+	if (/[\s\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(address)) return ''
+	return address
+}
 
 /** `--key` of `helm signal add`: the caller's idempotency key (thread key `agent:<key>`). */
 export const SIGNAL_ASK_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]{0,199}$/
@@ -245,6 +261,12 @@ export interface SignalFilteredEntry {
 	receivedAt: string
 	/** ISO time a poll last saw it filtered. */
 	lastSeenAt: string
+	/**
+	 * Present when only an exact exclude entry (a mute) keeps this sender out: `i` then drops that
+	 * entry and adds nothing (unmute). Absent for a glob Jakub wrote, where `i` adds the address to
+	 * the include list (always show). Older daemons never send it.
+	 */
+	unmute?: true
 }
 
 /** `GET /api/signals/filtered` response `data`: newest received first. */
@@ -416,6 +438,8 @@ export interface SignalObservation {
 	 * relay-decoded original for Hide My Email). Stored for `x` (mute), never served.
 	 */
 	sender?: string | null
+	/** Mail only: that sender's address as it arrived (the relay address for Hide My Email). Never served. */
+	senderAddress?: string | null
 }
 
 /**

@@ -185,8 +185,10 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 	const section = signalSection(thread, now) ?? 'done'
 	if (thread.source === 'agent') return askActions(thread, section)
 	const open: SignalAction | null = thread.url ? { key: 'o', label: 'open' } : null
-	// Mail from a person or a list (never a Sentry alert, which always shows): never show its sender again.
-	const mute: SignalAction | null = thread.kind === 'mail' && thread.source === 'mail' ? MUTE_ACTION : null
+	// Mail from a person or a list (never a Sentry alert, which always shows): never show its sender
+	// again. Only Jakub's own threads: a managed one stays with its agent (the daemon refuses it).
+	const mute: SignalAction | null =
+		thread.kind === 'mail' && thread.source === 'mail' && thread.owner === 'jakub' ? MUTE_ACTION : null
 	const list: Array<SignalAction | null> =
 		section === 'needs'
 			? [
@@ -798,11 +800,12 @@ export function includeNote(result: SignalIncludeResult): string {
 }
 
 /**
- * `i` on a filtered mail: a muted sender (`excluded`) is unmuted (its mail follows the usual rules
- * again), any other is always shown (include list: read and bulk mail too).
+ * `i` on a filtered mail: a muted sender (the daemon marks it `unmute`: only its exact exclude
+ * entry keeps it out) is unmuted, its mail following the usual rules again; any other, an exclude
+ * glob Jakub wrote included, is always shown (include list: read and bulk mail too).
  */
-export function includeAction(entry: Pick<SignalFilteredEntry, 'reason'>): { label: string; button: string } {
-	return entry.reason === 'excluded'
+export function includeAction(entry: Pick<SignalFilteredEntry, 'unmute'>): { label: string; button: string } {
+	return entry.unmute
 		? { label: 'unmute sender', button: 'Unmute sender' }
 		: { label: 'always show sender', button: 'Always show sender' }
 }

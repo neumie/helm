@@ -27,7 +27,12 @@ import {
 	signalRoutedSchema,
 	signalUpdateSchema,
 } from '../../signals/contract.js'
-import { type IncludeSender, IncludeSenderError, type MuteSender } from '../../signals/include-sender.js'
+import {
+	type CanUnmuteSender,
+	type IncludeSender,
+	IncludeSenderError,
+	type MuteSender,
+} from '../../signals/include-sender.js'
 import {
 	SignalInvalidError,
 	SignalLimitError,
@@ -44,6 +49,8 @@ export interface SignalRouteDependencies {
 	includeSender?: IncludeSender
 	/** Adds an exact address to the Mail exclude list (`x`; config file + live config). */
 	muteSender?: MuteSender
+	/** Whether only a mute keeps a filtered sender out (marks the entry `unmute`, so `i` says so). */
+	canUnmuteSender?: CanUnmuteSender
 	/** Test seam for the clock used by store writes. */
 	now?: () => Date
 	/** Long-poll re-check interval; tests shorten it. */
@@ -182,7 +189,17 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	})
 
 	// Mail the rules kept out of Needs you, heads only (the audit log behind `N filtered`).
-	routes.get('/filtered', c => c.json({ data: storeFor().listFiltered(now()) }))
+	routes.get('/filtered', c => {
+		const page = storeFor().listFiltered(now())
+		const canUnmute = deps?.canUnmuteSender
+		if (!canUnmute) return c.json({ data: page })
+		const entries = page.entries.map(entry =>
+			entry.reason === 'excluded' && canUnmute(entry.senderIdentity, entry.senderAddress)
+				? { ...entry, unmute: true as const }
+				: entry,
+		)
+		return c.json({ data: { ...page, entries } })
+	})
 
 	// One key from the filtered log: always show this sender. Only an id from the log is accepted,
 	// never a free-form glob.
@@ -222,17 +239,19 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 				{ error: thread.kind === 'sentry' ? 'Sentry alerts always show' : 'Only mail senders can be muted' },
 				400,
 			)
+		// A managed thread stays with its agent: muting would hide its sender but close nothing.
+		if (thread.owner !== 'jakub') return c.json({ error: 'An agent is handling this thread; take it back first' }, 409)
 		const sender = store.threadSender(id)
 		if (sender === null)
 			return c.json({ error: 'The sender is not known yet; try again after the next Mail poll' }, 409)
 		let muted: ReturnType<MuteSender>
 		try {
-			muted = deps.muteSender(sender)
+			muted = deps.muteSender(sender.identity, { raw: sender.raw })
 		} catch (err) {
 			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
 			return c.json({ error: `Failed to save the exclude list: ${err instanceof Error ? err.message : err}` }, 500)
 		}
-		const result: SignalMuteResult = { ...muted, threadIds: store.muteSender(muted.address, now()) }
+		const result: SignalMuteResult = { ...muted, threadIds: store.muteSender(muted.address, now(), sender.raw) }
 		deps.watcher.restartPoll('mail')
 		return c.json({ data: result })
 	})

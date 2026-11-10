@@ -761,8 +761,8 @@ type FilteredState =
 /**
  * `f` / the `12 filtered` count: the mail the rules kept out of Needs you (heads only, last 7 days),
  * newest first, in place of the list. `i` shows the selected row's sender from the next poll: a
- * muted one (`excluded`, `x` in the list) is unmuted, any other always shown (its exact address goes
- * onto the include list). `o` opens it in Mail, Esc back.
+ * muted one (`x` in the list; the daemon marks it `unmute`) is unmuted, any other always shown (its
+ * exact address goes onto the include list). `o` opens it in Mail, Esc back.
  */
 function FilteredMail({
 	service,
@@ -832,9 +832,7 @@ function FilteredMail({
 			const result = await service.include(entry.id)
 			if (!alive.current) return
 			if (result.error !== undefined) {
-				setNote(
-					`Could not ${entry.reason === 'excluded' ? 'unmute' : 'include'} ${filteredRowView(entry, now).ref}: ${result.error}`,
-				)
+				setNote(`Could not ${entry.unmute ? 'unmute' : 'include'} ${filteredRowView(entry, now).ref}: ${result.error}`)
 				return
 			}
 			setNote(includeNote(result.data))

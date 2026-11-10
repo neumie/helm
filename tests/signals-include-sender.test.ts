@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { configSchema, loadConfig, readConfigFile, writeConfigFile } from '../src/config.js'
-import { IncludeSenderError, createIncludeSender, createMuteSender } from '../src/signals/include-sender.js'
+import {
+	IncludeSenderError,
+	createCanUnmuteSender,
+	createIncludeSender,
+	createMuteSender,
+} from '../src/signals/include-sender.js'
 
 function fixture(t: test.TestContext, includeSenders?: string, excludeSenders?: string) {
 	const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'helm-include-')))
@@ -106,6 +111,53 @@ test('mute refuses when Jakub’s include glob would still show the sender, and 
 	assert.throws(() => mute('alerts@sentry.io'), /Sentry alerts always show/)
 	for (const bad of ['', 'no-at-sign', '*@psyon.example']) assert.throws(() => mute(bad), IncludeSenderError, bad)
 	assert.equal(readConfigFile(path), raw)
+})
+
+test('mute of a Hide My Email sender: the raw relay address counts like the decoded one', t => {
+	// The Mail filter matches the lists against both, so a glob on the relay domain would keep showing it.
+	const relay = 'jana_at_x_cz_abc123_0f@privaterelay.appleid.com'
+	const glob = fixture(t, '*@privaterelay.appleid.com')
+	const raw = readConfigFile(glob.path)
+	assert.throws(
+		() => createMuteSender(glob.path, glob.config)('jana@x.cz', { raw: relay }),
+		/\*@privaterelay\.appleid\.com always shows this sender/,
+	)
+	assert.equal(readConfigFile(glob.path), raw)
+	// An exact include entry for the relay goes with the mute; the decoded address is what is excluded.
+	const exact = fixture(t, relay, '')
+	assert.deepEqual(createMuteSender(exact.path, exact.config)('jana@x.cz', { raw: relay }), {
+		address: 'jana@x.cz',
+		added: true,
+		unincluded: true,
+	})
+	assert.deepEqual(lists(exact.path), { include: '', exclude: 'jana@x.cz' })
+	// An exclude glob on the relay domain already hides it: nothing added.
+	const excluded = fixture(t, '', '*@privaterelay.appleid.com')
+	assert.equal(createMuteSender(excluded.path, excluded.config)('jana@x.cz', { raw: relay }).added, false)
+})
+
+test('mute refuses an address clipped into another one', t => {
+	const { path, config } = fixture(t)
+	assert.throws(() => createMuteSender(path, config)(`${'a'.repeat(196)}…`), IncludeSenderError)
+	assert.throws(() => createMuteSender(path, config)(`a@${'b'.repeat(196)}…`), IncludeSenderError)
+	assert.throws(() => createIncludeSender(path, config)(`a@${'b'.repeat(196)}…`), IncludeSenderError)
+	assert.throws(() => createMuteSender(path, config)(`a@${'b'.repeat(260)}.example`), IncludeSenderError)
+})
+
+test('canUnmute: only an exact exclude entry with no other exclude glob still matching', t => {
+	const relay = 'petra_at_psyon_example_abc_0f@privaterelay.appleid.com'
+	const { config } = fixture(t, '', `hello@eu.ridge.com\n*@builds.example\nci@builds.example\n${relay}`)
+	const canUnmute = createCanUnmuteSender(config)
+	assert.equal(canUnmute('Hello@EU.ridge.com'), true)
+	// Jakub's glob keeps it out whatever `i` drops: `i` must always show it instead.
+	assert.equal(canUnmute('ci@builds.example'), false)
+	assert.equal(canUnmute('deploy@builds.example'), false)
+	assert.equal(canUnmute('petra@psyon.example', relay), true)
+	assert.equal(canUnmute('nobody@x.cz'), false)
+	assert.equal(canUnmute(''), false)
+	// Live: follows the config object, so a mute or an unmute shows on the next listing.
+	config.signals.mail.excludeSenders = ''
+	assert.equal(canUnmute('hello@eu.ridge.com'), false)
 })
 
 test('mute refuses a full exclude list without writing', t => {

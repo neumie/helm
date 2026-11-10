@@ -228,8 +228,9 @@ export function mapFilteredMail(filtered: MailFilteredMessage[]): SignalFiltered
 		return {
 			messageKey: mailMessageKey(message),
 			senderName: line(message.senderName, SIGNAL_LIMITS.actor),
-			senderAddress: line(address, SIGNAL_LIMITS.fullRef),
-			senderIdentity: line(senderIdentity(address), SIGNAL_LIMITS.fullRef),
+			// Never clipped: `i` puts the address on the sender lists as it is (the store drops a bad one).
+			senderAddress: address,
+			senderIdentity: senderIdentity(address),
 			subject: line(message.subject, SIGNAL_LIMITS.title),
 			reason,
 			mailbox: message.mailbox ? line(message.mailbox, MAILBOX_LABEL_MAX) : null,
@@ -448,6 +449,7 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 			activityKey: latest.messageId,
 			lastActivityAt: new Date(Date.parse(latest.dateReceived)).toISOString(),
 			sender: identity,
+			senderAddress: address,
 		})
 	}
 	return observations

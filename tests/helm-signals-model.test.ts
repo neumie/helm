@@ -284,6 +284,9 @@ test('x mutes the sender of mail from a person or a list: Needs you and snoozed,
 	])
 	assert.ok(keys(mail({ state: 'snoozed', snoozedUntil: iso(-60) })).includes('x mute sender'))
 	assert.ok(!keys(mail({ owner: 'managed' })).includes('x mute sender'))
+	// Snoozing a managed thread keeps it with its agent: still no mute (the daemon would close nothing).
+	assert.ok(!keys(mail({ owner: 'managed', state: 'snoozed', snoozedUntil: iso(600) })).includes('x mute sender'))
+	assert.ok(!keys(mail({ owner: 'managed', state: 'snoozed', snoozedUntil: iso(-60) })).includes('x mute sender'))
 	assert.ok(!keys(mail({ state: 'done' })).includes('x mute sender'))
 	assert.ok(!keys(mail({ kind: 'sentry' })).includes('x mute sender'))
 	assert.ok(!keys(thread({ id: 1 })).includes('x mute sender'))
@@ -1014,9 +1017,7 @@ test('filtered mail: the count after Done today, the header summary, rows by dec
 		includeNote({ address: 'jana@x.cz', added: true, unmuted: true }),
 		'jana@x.cz is always shown from the next poll',
 	)
-	assert.deepEqual(includeAction({ reason: 'excluded' }), { label: 'unmute sender', button: 'Unmute sender' })
-	assert.deepEqual(includeAction({ reason: 'newsletter' }), {
-		label: 'always show sender',
-		button: 'Always show sender',
-	})
+	// Only the daemon knows whether a mute alone keeps the sender out (an exclude glob Jakub wrote does not).
+	assert.deepEqual(includeAction({ unmute: true }), { label: 'unmute sender', button: 'Unmute sender' })
+	assert.deepEqual(includeAction({}), { label: 'always show sender', button: 'Always show sender' })
 })

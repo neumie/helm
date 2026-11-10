@@ -412,6 +412,13 @@ test('x mutes the sender: its threads leave at once, its mail is in Filtered, i 
 	await page.keyboard.press('i')
 	await expect(list.locator('.signals-note')).toHaveText('klara@psyon.example is unmuted from the next poll')
 	await expect(muted).toHaveCount(0)
+	// Kept out by an exclude glob Jakub wrote, not a mute: `i` there always shows the sender.
+	const globbed = list.locator('.signals-tr[data-section="filtered"]', { hasText: 'Nightly build finished' })
+	for (let step = 0; step < 8 && (await globbed.getAttribute('data-selected')) !== 'true'; step += 1)
+		await page.keyboard.press('j')
+	await expect(globbed).toHaveAttribute('data-selected', 'true')
+	await expect(list.locator('.signals-foot-hints')).toContainText('always show sender')
+	await expect(list.locator('.signals-foot-hints')).not.toContainText('unmute sender')
 
 	await page.keyboard.press('Escape')
 	await expect(view.signals).toBeFocused()

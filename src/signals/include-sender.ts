@@ -17,8 +17,8 @@ import { isSentrySender, matchesGlob, parseGlobList } from './mail-filter.js'
 
 /** Same bound as the config schema's `includeSenders` / `excludeSenders` (characters). */
 const SENDER_LIST_MAX = 4000
-/** An address the lists can hold as an exact entry: no glob, no whitespace. */
-const PLAIN_ADDRESS = /^[^\s@*]+@[^\s@*]+$/
+/** An address the lists can hold as an exact entry: no glob, no whitespace, nothing clipped (`…`). */
+const PLAIN_ADDRESS = /^[^\s@*…]+@[^\s@*…]+$/
 const ADDRESS_MAX = 254
 
 export class IncludeSenderError extends Error {
@@ -57,7 +57,44 @@ export interface MuteSenderOutcome {
 	unincluded: boolean
 }
 
-export type MuteSender = (address: string) => MuteSenderOutcome
+export interface MuteSenderOptions {
+	/**
+	 * The raw From address when it differs from `address` (a Hide My Email relay). The Mail filter
+	 * matches the lists against both, so both count: its exact include entry goes too, and an include
+	 * glob matching it refuses.
+	 */
+	raw?: string
+}
+
+export type MuteSender = (address: string, options?: MuteSenderOptions) => MuteSenderOutcome
+
+/**
+ * Whether only a mute keeps this sender out: an exact exclude entry for the address (or its raw
+ * relay address) and no other exclude glob matching either. Then `i` on its filtered mail drops
+ * that entry and adds nothing; otherwise `i` adds the address to the include list. Reads the live
+ * config, so it follows every include/mute without a restart.
+ */
+export type CanUnmuteSender = (address: string, raw?: string) => boolean
+
+export function createCanUnmuteSender(config: HelmConfig): CanUnmuteSender {
+	return (address, raw) => {
+		const aliases = senderAliases(address, raw)
+		if (aliases.length === 0) return false
+		const exclude = parseGlobList(config.signals.mail.excludeSenders)
+		const rest = exclude.filter(entry => !aliases.includes(entry.toLowerCase()))
+		return rest.length !== exclude.length && !aliases.some(alias => matchesGlob(alias, rest))
+	}
+}
+
+/** The address and its raw relay address, trimmed and lowercase, empty ones dropped. */
+function senderAliases(address: string, raw?: string): string[] {
+	const aliases = new Set<string>()
+	for (const value of [address, raw ?? '']) {
+		const alias = value.trim().toLowerCase()
+		if (alias !== '') aliases.add(alias)
+	}
+	return [...aliases]
+}
 
 function plainAddress(raw: string, what: string): string {
 	const address = raw.trim().toLowerCase()
@@ -123,8 +160,7 @@ function saveLists(
 export function createIncludeSender(configPath: string, config: HelmConfig): IncludeSender {
 	return (rawAddress, options = {}) => {
 		const address = plainAddress(rawAddress, 'include')
-		const aliases = new Set([address])
-		if (options.raw !== undefined && options.raw.trim() !== '') aliases.add(options.raw.trim().toLowerCase())
+		const aliases = new Set(senderAliases(address, options.raw))
 		const lists = readLists(configPath, config)
 		const exclude = lists.exclude.filter(entry => !aliases.has(entry.toLowerCase()))
 		const unmuted = exclude.length !== lists.exclude.length
@@ -138,18 +174,20 @@ export function createIncludeSender(configPath: string, config: HelmConfig): Inc
 
 /** Writer bound to the daemon's config file and its live config object: never show this sender. */
 export function createMuteSender(configPath: string, config: HelmConfig): MuteSender {
-	return rawAddress => {
+	return (rawAddress, options = {}) => {
 		const address = plainAddress(rawAddress, 'mute')
+		const aliases = senderAliases(address, options.raw)
 		// mail-filter keeps Sentry in whatever the lists say.
-		if (isSentrySender(address)) throw new IncludeSenderError('Sentry alerts always show; they cannot be muted')
+		if (aliases.some(isSentrySender)) throw new IncludeSenderError('Sentry alerts always show; they cannot be muted')
 		const lists = readLists(configPath, config)
-		const include = lists.include.filter(entry => entry.toLowerCase() !== address)
+		const include = lists.include.filter(entry => !aliases.includes(entry.toLowerCase()))
 		const unincluded = include.length !== lists.include.length
-		// An include glob wins over every exclude entry; Jakub's own glob is his to change.
-		const glob = include.find(entry => matchesGlob(address, [entry]))
+		// An include glob wins over every exclude entry (the filter matches it against the decoded and
+		// the raw relay address alike); Jakub's own glob is his to change.
+		const glob = include.find(entry => aliases.some(alias => matchesGlob(alias, [entry])))
 		if (glob !== undefined)
 			throw new IncludeSenderError(`${glob} always shows this sender. Change it in Settings › Signals first`)
-		const added = !matchesGlob(address, lists.exclude)
+		const added = !aliases.some(alias => matchesGlob(alias, lists.exclude))
 		saveLists(configPath, config, lists, unincluded ? include : null, added ? [...lists.exclude, address] : null)
 		return { address, added, unincluded }
 	}

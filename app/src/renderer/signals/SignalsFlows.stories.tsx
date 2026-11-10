@@ -23,6 +23,7 @@ export const NewAgentInOkena: Story = { args: { flow: 'new-agent' } }
 
 /**
  * `f` / the `5 filtered` line: mail the rules kept out, heads only, last 7 days. `i` always shows the
- * sender; on a muted (`excluded`, `x` in the list) row it unmutes it instead (`ci@builds.example`).
+ * sender (also `ci@builds.example`, kept out by an exclude glob); on a row only a mute keeps out (`x`
+ * in the list; the daemon marks it `unmute`) it unmutes it instead.
  */
 export const FilteredMail: Story = { args: { flow: 'filtered' } }

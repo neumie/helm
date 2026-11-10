@@ -18,7 +18,12 @@ import type {
 	SignalThread,
 	SignalsSnapshot,
 } from '../src/signals/contract.js'
-import { type IncludeSender, IncludeSenderError, type MuteSender } from '../src/signals/include-sender.js'
+import {
+	type CanUnmuteSender,
+	type IncludeSender,
+	IncludeSenderError,
+	type MuteSender,
+} from '../src/signals/include-sender.js'
 import { SIGNAL_MUTED_REASON, SIGNAL_OPEN_ASKS_MAX } from '../src/signals/store.js'
 
 const NOW = new Date('2026-11-05T10:00:00.000Z')
@@ -64,7 +69,11 @@ interface Harness {
 
 async function withSignalsApi(
 	run: (harness: Harness) => Promise<void>,
-	options: { includeSender?: IncludeSender | null; muteSender?: MuteSender | null } = {},
+	options: {
+		includeSender?: IncludeSender | null
+		muteSender?: MuteSender | null
+		canUnmuteSender?: CanUnmuteSender
+	} = {},
 ) {
 	const root = mkdtempSync(join(tmpdir(), 'helm-signals-routes-'))
 	const store = new ProfileStore(root, ['work'])
@@ -107,6 +116,7 @@ async function withSignalsApi(
 					options.muteSender === null
 						? undefined
 						: (options.muteSender ?? (address => ({ address, added: true, unincluded: false }))),
+				...(options.canUnmuteSender ? { canUnmuteSender: options.canUnmuteSender } : {}),
 				now: () => clock.now,
 				eventPollMs: 10,
 			},
@@ -411,7 +421,7 @@ test('include errors: a refused address is 400, a failed write 500, no writer 50
 })
 
 function seedMail(db: DB) {
-	const mail = (key: string, sender: string, kind: 'mail' | 'sentry' = 'mail'): SignalObservation => ({
+	const mail = (key: string, sender: string, kind: 'mail' | 'sentry' = 'mail', raw = sender): SignalObservation => ({
 		...observation(0),
 		threadKey: `mail:${key}`,
 		source: 'mail',
@@ -426,6 +436,7 @@ function seedMail(db: DB) {
 		number: null,
 		activityKey: `${key}@mail.example`,
 		sender,
+		senderAddress: raw,
 	})
 	db.signals.applyPoll(
 		{
@@ -435,6 +446,7 @@ function seedMail(db: DB) {
 				mail('ridge2', 'hello@eu.ridge.com'),
 				mail('klara', 'klara@psyon.example'),
 				mail('sentry', 'alerts@sentry.io', 'sentry'),
+				mail('jana', 'jana@x.cz', 'mail', 'jana_at_x_cz_abc_0f@privaterelay.appleid.com'),
 			],
 			complete: true,
 			goneReason: 'no longer unread in the inbox',
@@ -442,11 +454,11 @@ function seedMail(db: DB) {
 		NOW,
 	)
 	const id = (key: string) => db.signals.getByThreadKey(`mail:${key}`)?.id ?? 0
-	return { ridge1: id('ridge1'), ridge2: id('ridge2'), klara: id('klara'), sentry: id('sentry') }
+	return { ridge1: id('ridge1'), ridge2: id('ridge2'), klara: id('klara'), sentry: id('sentry'), jana: id('jana') }
 }
 
 test('POST /signals/:id/mute: Helm only; excludes the sender, closes its open threads, lists them as filtered', async () => {
-	const muted: string[] = []
+	const muted: Array<[string, unknown]> = []
 	await withSignalsApi(
 		async ({ request, post, db, restarts }) => {
 			const ids = seedMail(db)
@@ -469,7 +481,7 @@ test('POST /signals/:id/mute: Helm only; excludes the sender, closes its open th
 					threadIds: [ids.ridge1, ids.ridge2].sort(),
 				},
 			)
-			assert.deepEqual(muted, ['hello@eu.ridge.com'])
+			assert.deepEqual(muted, [['hello@eu.ridge.com', { raw: 'hello@eu.ridge.com' }]])
 			assert.equal(restarts(), 1)
 			const snapshot = await data<SignalsSnapshot>(await request('/signals'))
 			const ridge = snapshot.threads.find(thread => thread.id === ids.ridge2)
@@ -483,14 +495,64 @@ test('POST /signals/:id/mute: Helm only; excludes the sender, closes its open th
 				['Subject ridge1', 'excluded'],
 				['Subject ridge2', 'excluded'],
 			])
+			// Only a mute keeps Ridge out now: `i` there unmutes (the flag comes from the live lists).
+			assert.ok(filtered.entries.every(entry => entry.unmute === true))
+
+			// Hide My Email: the writer sees the relay too (the filter matches the lists against both),
+			// and the filtered mail lists the address it arrived from.
+			assert.equal((await post(`/signals/${ids.jana}/mute`, {}, { jakub: true })).status, 200)
+			assert.deepEqual(muted[1], ['jana@x.cz', { raw: 'jana_at_x_cz_abc_0f@privaterelay.appleid.com' }])
+			const jana = (await data<SignalFilteredPage>(await request('/signals/filtered'))).entries.find(
+				entry => entry.subject === 'Subject jana',
+			)
+			assert.equal(jana?.senderIdentity, 'jana@x.cz')
+			assert.equal(jana?.senderAddress, 'jana_at_x_cz_abc_0f@privaterelay.appleid.com')
 		},
 		{
-			muteSender: address => {
-				muted.push(address)
+			muteSender: (address, options) => {
+				muted.push([address, options])
 				return { address, added: true, unincluded: true }
+			},
+			canUnmuteSender: (address, raw) =>
+				(address === 'hello@eu.ridge.com' && raw === 'hello@eu.ridge.com') ||
+				(address === 'jana@x.cz' && raw === 'jana_at_x_cz_abc_0f@privaterelay.appleid.com'),
+		},
+	)
+})
+
+test('GET /signals/filtered marks `unmute` only on excluded entries only a mute keeps out', async () => {
+	const asked: Array<[string, string | undefined]> = []
+	await withSignalsApi(
+		async ({ request, db }) => {
+			seedFiltered(db)
+			seedMail(db)
+			db.signals.muteSender('hello@eu.ridge.com', NOW)
+			db.signals.muteSender('klara@psyon.example', NOW)
+			const page = await data<SignalFilteredPage>(await request('/signals/filtered'))
+			const by = (subject: string) => page.entries.find(entry => entry.subject === subject)
+			assert.equal(by('Subject ridge1')?.unmute, true)
+			// Jakub's own exclude glob keeps Klara out: `i` there always shows, so no flag.
+			assert.equal('unmute' in (by('Subject klara') ?? {}), false)
+			// Bulk mail is never asked about.
+			assert.equal('unmute' in (by('Weekly') ?? {}), false)
+			assert.equal('unmute' in (by('Out of office') ?? {}), false)
+			assert.ok(asked.every(([address]) => address !== 'digest@news.example'))
+		},
+		{
+			canUnmuteSender: (address, raw) => {
+				asked.push([address, raw])
+				return address === 'hello@eu.ridge.com'
 			},
 		},
 	)
+	// Without the dependency (an older wiring) nothing is marked.
+	await withSignalsApi(async ({ request, db }) => {
+		seedMail(db)
+		db.signals.muteSender('hello@eu.ridge.com', NOW)
+		const page = await data<SignalFilteredPage>(await request('/signals/filtered'))
+		assert.ok(page.entries.length > 0)
+		assert.ok(page.entries.every(entry => !('unmute' in entry)))
+	})
 })
 
 test('mute refusals: id, kind, Sentry, unknown sender, writer errors; nothing closes', async () => {
@@ -520,6 +582,12 @@ test('mute refusals: id, kind, Sentry, unknown sender, writer errors; nothing cl
 		const legacy = await post(`/signals/${db.signals.getByThreadKey('mail:legacy')?.id ?? 0}/mute`, {}, { jakub: true })
 		assert.equal(legacy.status, 409)
 		assert.match(((await legacy.json()) as { error: string }).error, /next Mail poll/)
+		// A managed thread stays with its agent: muting it would close nothing.
+		db.signals.update(ids.ridge1, { owner: 'managed', managedBy: 'agent-a' }, NOW)
+		const managed = await post(`/signals/${ids.ridge1}/mute`, {}, { jakub: true })
+		assert.equal(managed.status, 409)
+		assert.match(((await managed.json()) as { error: string }).error, /take it back first/)
+		assert.equal(db.signals.get(ids.ridge1)?.state, 'new')
 		assert.equal(restarts(), 0)
 	})
 	await withSignalsApi(
