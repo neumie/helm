@@ -40,6 +40,13 @@ export type SignalOwner = (typeof SIGNAL_OWNERS)[number]
 export const SIGNAL_ROUTES = ['sent', 'started', 'replied'] as const
 export type SignalRouteHow = (typeof SIGNAL_ROUTES)[number]
 
+/**
+ * Who closed a thread by hand: `jakub` = through Helm (the request carried the daemon's local
+ * control token, which only Helm's main process holds), `agent` = through `helm signal` (done/set).
+ */
+export const SIGNAL_CLOSERS = ['jakub', 'agent'] as const
+export type SignalCloser = (typeof SIGNAL_CLOSERS)[number]
+
 /** Bounds (UTF-16 code units) applied by the store before anything is persisted or served. */
 export const SIGNAL_LIMITS = {
 	ref: 80,
@@ -145,6 +152,12 @@ export interface SignalThread {
 	active: boolean
 	/** Why it left Needs you on its own (`review submitted`, `read in Mail`), when it did. */
 	closedReason: string | null
+	/**
+	 * A done thread closed by hand: who closed it (see {@link SIGNAL_CLOSERS}). Null while not done,
+	 * when it closed on its own (`closedReason`), or when it was closed before this was recorded.
+	 * Absent from a daemon older than this field.
+	 */
+	closedBy?: SignalCloser | null
 	/** Managed outcome line from `helm signal note` and when it was written. */
 	note: string | null
 	noteAt: string | null

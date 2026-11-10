@@ -475,6 +475,22 @@ test('agent asks: add, upsert by key, read by key, reply and done by id or key',
 	})
 })
 
+test('a close through Helm (control token) is recorded as Jakub, any other as an agent', async () => {
+	await withSignalsApi(async ({ post, db }) => {
+		seed(db, [1, 2, 3])
+		const [one, two, three] = [1, 2, 3].map(n => db.signals.getByThreadKey(`github:acme/widgets#${n}`)?.id ?? 0)
+		const byJakub = await data<SignalThread>(await post(`/signals/${one}`, { state: 'done' }, { jakub: true }))
+		assert.equal(byJakub.closedBy, 'jakub')
+		const byAgent = await data<SignalThread>(await post(`/signals/${two}`, { state: 'done' }))
+		assert.equal(byAgent.closedBy, 'agent')
+		const doneByAgent = await data<SignalThread>(await post(`/signals/${three}/done`, { note: 'Merged' }))
+		assert.equal(doneByAgent.closedBy, 'agent')
+		assert.equal(doneByAgent.note, 'Merged')
+		const reopened = await data<SignalThread>(await post(`/signals/${one}`, { state: 'seen' }, { jakub: true }))
+		assert.equal(reopened.closedBy, null)
+	})
+})
+
 test('a new agent ask beyond the open cap is refused with 429; its key can still be renewed', async () => {
 	await withSignalsApi(async ({ post, db }) => {
 		for (let n = 0; n < SIGNAL_OPEN_ASKS_MAX; n++) db.signals.upsertAsk({ key: `ask-${n}`, title: `Ask ${n}` }, NOW)

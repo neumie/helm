@@ -24,6 +24,7 @@ import {
 	type SignalAskDone,
 	type SignalAskOutcome,
 	type SignalAskResult,
+	type SignalCloser,
 	type SignalDone,
 	type SignalEvent,
 	type SignalEventsPage,
@@ -512,8 +513,14 @@ function rowLine(thread: SignalThread, now: Date, widths: RowWidths = widthsOf([
 		line += `  → ${thread.routedHow} ${safe(thread.routedAgent, SIGNAL_LIMITS.agent)} ${since(thread.routedAt, now)} ago`
 	}
 	if (thread.closedReason) line += `  (${safe(thread.closedReason, SIGNAL_LIMITS.detail)})`
+	else if (thread.state === 'done' && thread.closedBy) line += `  (${closedByText(thread.closedBy)})`
 	else if (!thread.active) line += '  (no longer reported)'
 	return line
+}
+
+/** `closed by Jakub` (in Helm) / `closed by an agent` (`helm signal done/set`). */
+function closedByText(by: SignalCloser): string {
+	return by === 'jakub' ? 'closed by Jakub' : 'closed by an agent'
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +697,7 @@ function showLines(thread: SignalThread, now: Date): string[] {
 	lines.push(`last activity: ${time(thread.lastActivityAt)}`, `active: ${thread.active ? 'yes' : 'no'}`)
 	if (thread.snoozedUntil !== null) lines.push(`snoozed until: ${text(thread.snoozedUntil)}`)
 	if (thread.closedReason !== null) lines.push(`closed: ${text(thread.closedReason)}`)
+	if (thread.state === 'done' && thread.closedBy) lines.push(`closed by: ${closedByText(thread.closedBy)}`)
 	if (thread.managedBy !== null) lines.push(`agent: ${text(thread.managedBy)}`)
 	if (thread.note !== null) lines.push(`note: ${text(thread.note)}`, `note at: ${time(thread.noteAt)}`)
 	if (thread.routedAgent !== null)

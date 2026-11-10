@@ -1170,4 +1170,13 @@ ALTER TABLE signal_threads_v41 RENAME TO signal_threads;
 CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at);
 `,
 	},
+	{
+		// Who closed a done thread by hand: `jakub` (through Helm, control-authenticated) or `agent`
+		// (`helm signal done/set`). Null for rows closed on their own (closed_reason) and for every
+		// row closed before this column existed. Additive: no rebuild, ids and events untouched.
+		version: 42,
+		sql: `
+ALTER TABLE signal_threads ADD COLUMN closed_by TEXT CHECK (closed_by IS NULL OR closed_by IN ('jakub','agent'));
+`,
+	},
 ]
