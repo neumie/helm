@@ -74,7 +74,7 @@ rmSync('dist/document-review.html', { force: true })
 const builtWorkers = {
 	name: 'helm-viewer-workers',
 	setup(context) {
-		context.onResolve({ filter: /\/((data|image)-worker-factory|pdf-assets)$/ }, args => ({
+		context.onResolve({ filter: /\/((data|image|csv)-worker-factory|pdf-assets)$/ }, args => ({
 			path: resolve(args.resolveDir, `${args.path.slice(args.path.lastIndexOf('/') + 1)}.built.ts`),
 		}))
 	},
@@ -87,6 +87,7 @@ const viewer = await build({
 		'document-review': 'src/renderer/document-review.tsx',
 		'data-worker': 'src/renderer/viewer/data-worker.ts',
 		'image-worker': 'src/renderer/viewer/image-worker.ts',
+		'csv-worker': 'src/renderer/viewer/csv-worker.ts',
 	},
 	platform: 'browser',
 	format: 'esm',

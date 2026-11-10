@@ -50,6 +50,12 @@
 	color: var(--text-1);
 	font-size: calc(13px * var(--ui-scale));
 }
+.viewer-note > p {
+	margin: 0 0 12px;
+}
+.viewer-note > p:last-child {
+	margin-bottom: 0;
+}
 .viewer-note-inline {
 	padding: 8px 16px;
 	border-bottom: 1px solid var(--hairline);
@@ -358,6 +364,198 @@
 .viewer-tree-more {
 	color: var(--text-2);
 	font-family: var(--font-ui);
+}
+
+/* ---- CSV/TSV grid (S5): letters and row numbers on --chrome, cells on the well, hairline cell rules ---- */
+
+.viewer-grid {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+	color: var(--text-0);
+}
+.viewer-grid-search-note {
+	color: var(--text-2);
+	font-size: calc(12px * var(--ui-scale));
+}
+/* Value bar: the selected range's reference, then the active cell's whole value on one line. */
+.viewer-grid-bar {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	height: 28px;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	font-size: calc(12px * var(--ui-scale));
+	white-space: nowrap;
+}
+.viewer-grid-ref {
+	flex: 0 0 auto;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+	min-width: 96px;
+	padding: 0 12px 0 16px;
+	box-sizing: border-box;
+	border-right: 1px solid var(--hairline);
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+}
+.viewer-grid-value {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 0 16px 0 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: text;
+}
+/* The one scroll owner: letters, the header row and the numbers are sticky inside it; cells are placed absolutely. */
+.viewer-grid-scroll {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	outline: none;
+	cursor: cell;
+	font-variant-numeric: tabular-nums;
+}
+.viewer-grid-content {
+	position: relative;
+}
+.viewer-grid-letters {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	display: flex;
+	background: var(--chrome);
+}
+.viewer-grid-corner {
+	position: sticky;
+	left: 0;
+	z-index: 1;
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	cursor: default;
+}
+.viewer-grid-letter,
+.viewer-grid-number {
+	position: absolute;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	color: var(--text-2);
+	font-size: 0.92em;
+	user-select: none;
+	transition: color var(--motion-state, 140ms) ease-out;
+}
+.viewer-grid-letter {
+	top: 0;
+	cursor: s-resize;
+}
+.viewer-grid-number {
+	left: 0;
+	right: 0;
+	cursor: e-resize;
+}
+.viewer-grid-letter[data-selected],
+.viewer-grid-number[data-selected] {
+	color: var(--text-0);
+}
+.viewer-grid-numbers {
+	position: sticky;
+	left: 0;
+	z-index: 2;
+}
+/* The header row stays under the letters: names in --text-0 on --chrome, one stronger rule below. */
+.viewer-grid-band {
+	position: sticky;
+	z-index: 3;
+	background: var(--chrome);
+}
+.viewer-grid-band > .viewer-grid-number {
+	position: sticky;
+	right: auto;
+	z-index: 2;
+	border-bottom-color: var(--hairline-strong);
+}
+.viewer-grid-band-cells {
+	position: absolute;
+	inset: 0;
+}
+.viewer-grid-band .viewer-grid-cell {
+	background: var(--chrome);
+	border-bottom-color: var(--hairline-strong);
+	color: var(--text-0);
+}
+.viewer-grid-cells {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+}
+.viewer-grid-cell {
+	position: absolute;
+	box-sizing: border-box;
+	padding: 0 8px;
+	border-right: 1px solid var(--hairline);
+	border-bottom: 1px solid var(--hairline);
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	user-select: none;
+}
+.viewer-grid-cell.is-number {
+	text-align: right;
+}
+.viewer-grid-cell.is-match {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.viewer-grid-cell.is-current-match {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+/* Range selection: accent soft fill and a 1px accent edge; the active cell a 2px ring while the grid has focus. */
+.viewer-grid-selection,
+.viewer-grid-active {
+	position: absolute;
+	z-index: 1;
+	box-sizing: border-box;
+	pointer-events: none;
+}
+.viewer-grid-selection {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	border: 1px solid var(--accent);
+}
+.viewer-grid-selection.is-open-top {
+	border-top: 0;
+}
+.viewer-grid-selection.is-open-bottom {
+	border-bottom: 0;
+}
+.viewer-grid-active {
+	border: 1px solid var(--accent);
+}
+.viewer-grid-scroll:focus-visible .viewer-grid-active,
+.viewer-grid-scroll:focus .viewer-grid-active {
+	border-width: 2px;
+}
+.viewer-grid-scroll:focus-visible {
+	box-shadow: inset 0 0 0 1px var(--accent);
+}
+.viewer-grid-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
 }
 
 /* ---- status line: one quiet --chrome row under a hairline ---- */

@@ -6,6 +6,7 @@ import type { FileHandle } from 'node:fs/promises'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import {
+	CSV_HEAD_BYTES,
 	type LineEnding,
 	PDF_HEAD_BYTES,
 	PICTURE_HEAD_BYTES,
@@ -212,8 +213,18 @@ const kind = (stat: Stats) =>
 					? 'a device'
 					: 'not a regular file'
 /** Plain formats this version shows; feedback mode keeps `readReviewFile`'s md/jsx/tsx rule. */
-export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data' | 'image' | 'svg' | 'heic' | 'pdf'
-const VIEWER_FORMATS: ReadonlySet<string> = new Set(['markdown', 'code', 'text', 'data', 'image', 'svg', 'heic', 'pdf'])
+export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data' | 'image' | 'svg' | 'heic' | 'pdf' | 'csv'
+const VIEWER_FORMATS: ReadonlySet<string> = new Set([
+	'markdown',
+	'code',
+	'text',
+	'data',
+	'image',
+	'svg',
+	'heic',
+	'pdf',
+	'csv',
+])
 
 export interface ViewerFormatChoice {
 	format: ViewerFormat
@@ -242,9 +253,12 @@ export function viewerFormat(path: string): ViewerFormatChoice {
 export interface ViewerFile {
 	file: string
 	format: ViewerFormat
-	/** CodeMirror/data language for text families; the picture type (`png`, `svg`, `heic`, …) for pictures; `pdf`. */
+	/**
+	 * CodeMirror/data language for text families; the picture type (`png`, `svg`, `heic`, …) for pictures; `pdf`;
+	 * `csv` or `tsv` (tab-separated) for CSV files.
+	 */
 	language: string
-	/** Decoded text for text families and SVG; empty for raster/HEIC pictures and PDFs (their bytes go by token). */
+	/** Decoded text for text families and SVG; empty for raster/HEIC pictures, PDFs and CSV (their bytes go by token). */
 	text: string
 	size: number
 	encoding: TextEncoding
@@ -364,11 +378,13 @@ export async function readViewerFile(
 			if (linked) throw refuse(linked)
 		}
 		if (opened.size > limit) throw tooBig(opened.size)
-		if (choice.format === 'image' || choice.format === 'heic' || choice.format === 'pdf') {
-			// Pictures and PDFs: only the signature is read here; extension and magic must agree. Width/height come
-			// from the header in the viewer's image worker (HEIC from `sips`), pages from pdf.js in its own worker;
-			// nothing in main decodes the bytes.
-			const head = Buffer.alloc(Math.min(opened.size, choice.format === 'pdf' ? PDF_HEAD_BYTES : PICTURE_HEAD_BYTES))
+		if (choice.format === 'image' || choice.format === 'heic' || choice.format === 'pdf' || choice.format === 'csv') {
+			// Pictures, PDFs and CSV: only the first bytes are read here; extension and magic must agree. Width/height
+			// come from the header in the viewer's image worker (HEIC from `sips`), pages from pdf.js in its own worker,
+			// rows from the grid's worker (which also decodes strictly); nothing in main decodes the bytes.
+			const headBytes =
+				choice.format === 'pdf' ? PDF_HEAD_BYTES : choice.format === 'csv' ? CSV_HEAD_BYTES : PICTURE_HEAD_BYTES
+			const head = Buffer.alloc(Math.min(opened.size, headBytes))
 			let got = 0
 			while (got < head.length) {
 				const read = await fd.read(head, got, head.length - got, got)
@@ -387,12 +403,22 @@ export async function readViewerFile(
 				still.ino !== opened.ino
 			)
 				throw refuse(`${name} changed while it was read. Try again.`)
-			if (opened.size === 0) throw refuse(`${name} is empty.`)
-			const mismatch =
-				choice.format === 'pdf'
-					? pdfMismatch(name, head)
-					: pictureMismatch(name, choice.language as Exclude<PictureType, 'svg'>, head)
-			if (mismatch) throw refuse(mismatch)
+			// An empty CSV is an empty grid; an empty picture or PDF is nothing to show.
+			if (opened.size === 0 && choice.format !== 'csv') throw refuse(`${name} is empty.`)
+			let encoding: TextEncoding = 'utf-8'
+			if (choice.format === 'csv') {
+				encoding = textEncoding(head)
+				const what = encoding === 'utf-8' ? binarySignature(head) : null
+				if (what) throw refuse(`${name} is not a text file (it starts like ${what}).`)
+				if ((encoding === 'utf-16le' || encoding === 'utf-16be') && opened.size % 2 !== 0)
+					throw refuse(`${name} is not valid UTF-16 text (an odd number of bytes).`)
+			} else {
+				const mismatch =
+					choice.format === 'pdf'
+						? pdfMismatch(name, head)
+						: pictureMismatch(name, choice.language as Exclude<PictureType, 'svg'>, head)
+				if (mismatch) throw refuse(mismatch)
+			}
 			const identity = {
 				dev: opened.dev,
 				ino: opened.ino,
@@ -406,7 +432,7 @@ export async function readViewerFile(
 				language: choice.language,
 				text: '',
 				size: opened.size,
-				encoding: 'utf-8',
+				encoding,
 				lines: 0,
 				ending: 'none',
 				identity,

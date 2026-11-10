@@ -9,7 +9,7 @@ import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
 import { convertHeic, memoryViewerSource } from './heic'
 import { REVIEW_DOCUMENT_BYTES } from './types'
-import type { ReviewDocument, ReviewViewerFile, ReviewViewerPdf, ReviewViewerPicture } from './types'
+import type { ReviewDocument, ReviewViewerCsv, ReviewViewerFile, ReviewViewerPdf, ReviewViewerPicture } from './types'
 import { pinnedViewerSource, readViewerFile, viewerFormat } from './viewer-file'
 import type { HelmPrivatePaths, ViewerFileIdentity, ViewerFormat } from './viewer-file'
 import { type ViewerFileSource, type ViewerFileTokens, viewerFileUrl } from './viewer-protocol'
@@ -100,6 +100,7 @@ interface PlainRead {
 	viewer?: Omit<ReviewViewerFile, 'url'>
 	picture?: Omit<ReviewViewerPicture, 'url'>
 	pdf?: Omit<ReviewViewerPdf, 'url'>
+	csv?: Omit<ReviewViewerCsv, 'url'>
 	source?: ViewerFileSource
 	/** The pinned descriptor's identity: when it moves, the token must too, even for the same bytes. */
 	identity?: ViewerFileIdentity
@@ -119,7 +120,8 @@ export class ReviewDocumentObservation {
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private convertSignal: AbortSignal | undefined
 	private active: Promise<void> | null = null
-	private again = false
+	/** A read asked for while another runs: it starts after that one, so its caller sees the file as it is now. */
+	private next: Promise<void> | null = null
 	private disposed = false
 	private snapshot: ReviewDocument
 	/** The token serving the current plain code/text/data revision. */
@@ -186,15 +188,21 @@ export class ReviewDocumentObservation {
 	refresh(): Promise<void> {
 		if (this.disposed) return Promise.resolve()
 		if (this.active) {
-			this.again = true
-			return this.active
+			// The running read may have opened the file before the change this caller waits for.
+			this.next ??= this.active.then(
+				() => {
+					this.next = null
+					return this.refresh()
+				},
+				() => {
+					this.next = null
+					return this.refresh()
+				},
+			)
+			return this.next
 		}
 		this.active = this.read().finally(() => {
 			this.active = null
-			if (this.again && !this.disposed) {
-				this.again = false
-				void this.refresh()
-			}
 		})
 		return this.active
 	}
@@ -233,6 +241,24 @@ export class ReviewDocumentObservation {
 				text: '',
 				revision,
 				pdf: { size: read.size },
+				source: pinnedViewerSource(read.handle, identity, read.size),
+				identity,
+			}
+		}
+		if (read.format === 'csv') {
+			// CSV is served from its pinned descriptor by range; the grid's worker decodes and parses it. Like a PDF,
+			// the revision is the file identity: a 128 MiB export is never hashed in main.
+			const identity = read.identity
+			const revision = `csv:${identity ? `${identity.dev}:${identity.ino}:${identity.size}:${identity.mtimeMs}:${identity.ctimeMs}` : ''}`
+			if (!read.handle || !identity) {
+				await read.handle?.close()
+				return { format: 'csv', text: '', revision }
+			}
+			return {
+				format: 'csv',
+				text: '',
+				revision,
+				csv: { size: read.size, kind: read.language === 'csv' ? 'csv' : 'tsv', encoding: read.encoding },
 				source: pinnedViewerSource(read.handle, identity, read.size),
 				identity,
 			}
@@ -329,7 +355,8 @@ export class ReviewDocumentObservation {
 				let viewer: ReviewViewerFile | undefined
 				let picture: ReviewViewerPicture | undefined
 				let pdf: ReviewViewerPdf | undefined
-				if ((next.viewer || next.picture || next.pdf) && next.source && this.plain.tokens) {
+				let csv: ReviewViewerCsv | undefined
+				if ((next.viewer || next.picture || next.pdf || next.csv) && next.source && this.plain.tokens) {
 					const token = this.plain.tokens.issue(next.source)
 					const previous = this.token
 					this.token = token
@@ -339,8 +366,9 @@ export class ReviewDocumentObservation {
 					if (next.viewer) viewer = { ...next.viewer, url: viewerFileUrl(token) }
 					if (next.picture) picture = { ...next.picture, url: viewerFileUrl(token) }
 					if (next.pdf) pdf = { ...next.pdf, url: viewerFileUrl(token) }
+					if (next.csv) csv = { ...next.csv, url: viewerFileUrl(token) }
 				}
-				const { viewer: _old, picture: _oldPicture, pdf: _oldPdf, ...rest } = this.snapshot
+				const { viewer: _old, picture: _oldPicture, pdf: _oldPdf, csv: _oldCsv, ...rest } = this.snapshot
 				this.snapshot = {
 					...rest,
 					text: next.text,
@@ -349,6 +377,7 @@ export class ReviewDocumentObservation {
 					...(viewer ? { viewer } : {}),
 					...(picture ? { picture } : {}),
 					...(pdf ? { pdf } : {}),
+					...(csv ? { csv } : {}),
 					previous:
 						next.format === 'markdown' && this.snapshot.revision && next.revision !== this.snapshot.revision
 							? this.snapshot.text

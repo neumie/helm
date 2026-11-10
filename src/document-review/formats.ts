@@ -65,6 +65,12 @@ export const VIEWER_PDF_PAGES = 5_000
 export const PDF_HEAD_BYTES = 1024
 /** Decoded pixels an image may have (width × height after the header check, before any decode). */
 export const VIEWER_IMAGE_PIXELS = 150_000_000
+/** CSV/TSV: bytes (streamed by range to the grid's worker), records, and columns of the widest record. */
+export const VIEWER_CSV_BYTES = 128 * MiB
+export const VIEWER_CSV_ROWS = 1_000_000
+export const VIEWER_CSV_COLUMNS = 16_384
+/** Bytes main reads of a CSV: a byte order mark and a known binary signature fit in the first 16. */
+export const CSV_HEAD_BYTES = 16
 /** Children of one tree node the data view lists before an "N more" row. */
 export const VIEWER_DATA_CHILDREN = 10_000
 
@@ -448,7 +454,17 @@ export const FORMATS: readonly FormatEntry[] = [
 		anchors: ['pdf-text'],
 		capabilities: { search: true, zoom: 'scale', print: 'default-app', copy: 'text' },
 	},
-	later('csv', 'CSV files', ['.csv', '.tsv'], 128 * MiB),
+	{
+		format: 'csv',
+		available: true,
+		noun: 'CSV files',
+		extensions: ['.csv', '.tsv', '.tab'],
+		read: 'stream',
+		maxBytes: VIEWER_CSV_BYTES,
+		journal: 'none',
+		anchors: ['cell'],
+		capabilities: { search: true, zoom: 'font', print: 'default-app', copy: 'range' },
+	},
 	later('sheet', 'spreadsheets', ['.xlsx', '.xlsm', '.xls', '.ods'], 64 * MiB),
 	later('docx', 'Word documents', ['.docx'], 64 * MiB, isZip),
 	later(
@@ -544,7 +560,11 @@ export function detectViewerFormat(name: string): FormatDetection {
 						? (IMAGE_EXTENSIONS[extension] ?? 'png')
 						: entry.format === 'heic' || entry.format === 'svg' || entry.format === 'pdf'
 							? entry.format
-							: 'plain'
+							: entry.format === 'csv'
+								? extension === '.csv'
+									? 'csv'
+									: 'tsv'
+								: 'plain'
 	return { ok: true, entry, extension, language }
 }
 
