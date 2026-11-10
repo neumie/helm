@@ -493,17 +493,20 @@ export function managingSession(
 
 /**
  * `closed_reason` prefixes the daemon writes (src/signals: `MAIL_GONE_REASON` in mail-filter.ts,
- * `SIGNAL_ASK_CLOSED_REASON` in store.ts; tests/helm-signals-model.test.ts maps the real ones).
+ * `SIGNAL_ASK_CLOSED_REASON` and `SIGNAL_ASK_ANSWERED_REASON` in store.ts;
+ * tests/helm-signals-model.test.ts maps the real ones).
  */
 const MAIL_GONE_PREFIX = 'no longer unread in the inbox'
 const ASK_CLOSED_REASON = 'closed by the agent'
+const ASK_ANSWERED_REASON = 'answered in the terminal'
 
 /**
  * How a done thread got done. `read`: Mail stopped listing it unread (read in Mail or on the
  * phone, also moved out of the inbox or older than the window); `gone`: its source stopped
  * reporting it (GitHub: reviewed, answered, CI fixed, merged or closed — the poller cannot tell);
  * `dismissed`: Jakub pressed d in Helm; `agent`: an agent closed it (`helm signal done/set`);
- * `answered`: an agent closed an ask Jakub had answered; `unknown`: closed by hand before the
+ * `answered`: an agent closed an ask Jakub had answered, or Jakub prompted the ask's terminal after
+ * it was asked (Helm closed it, `answered in the terminal`); `unknown`: closed by hand before the
  * daemon recorded who.
  */
 export type DoneReasonKind = 'read' | 'gone' | 'dismissed' | 'agent' | 'answered' | 'unknown'
@@ -524,7 +527,10 @@ export function doneReason(thread: SignalThread): DoneReason | null {
 	const agentWord = thread.managedBy ? `closed by ${oneLine(thread.managedBy, 80)}` : 'closed by agent'
 	let kind: DoneReasonKind
 	let word: string
-	if (reason === ASK_CLOSED_REASON && thread.source === 'agent') {
+	if (reason === ASK_ANSWERED_REASON && thread.source === 'agent') {
+		kind = 'answered'
+		word = 'answered'
+	} else if (reason === ASK_CLOSED_REASON && thread.source === 'agent') {
 		kind = thread.reply ? 'answered' : 'agent'
 		word = kind === 'answered' ? 'answered' : 'closed by agent'
 	} else if (reason?.startsWith(MAIL_GONE_PREFIX)) {

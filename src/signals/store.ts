@@ -66,6 +66,13 @@ export const SIGNAL_REPLY_LINES = 40
 /** `closed_reason` of an ask the agent closed with `helm signal done`. */
 export const SIGNAL_ASK_CLOSED_REASON = 'closed by the agent'
 /**
+ * `closed_reason` of an ask bound to an Okena terminal that closed because Jakub sent a prompt into
+ * that terminal after it was asked (`answered`, Helm's ask resolver).
+ */
+export const SIGNAL_ASK_ANSWERED_REASON = 'answered in the terminal'
+/** How far in the future a terminal prompt's time may be (clock skew) before `answered` refuses it. */
+export const SIGNAL_ANSWERED_SKEW_MS = 60_000
+/**
  * `closed_reason` of a mail thread closed because Jakub muted its sender (`x`). Its mail is listed
  * as filtered (`excluded`) instead; showing the sender again reopens it on the next poll.
  */
@@ -96,6 +103,14 @@ export class SignalLimitError extends Error {
 	constructor(message: string) {
 		super(message)
 		this.name = 'SignalLimitError'
+	}
+}
+
+/** A write refused because the thread changed since the caller read it (the route answers 409). */
+export class SignalConflictError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'SignalConflictError'
 	}
 }
 
@@ -1068,6 +1083,44 @@ export class SignalStore {
 				.prepare('UPDATE signal_threads SET reply = ?, reply_at = ?, state = ?, updated_at = ? WHERE id = ?')
 				.run(answer, at, state, at, id)
 			this.insertEvent(id, 'reply', { owner: row.owner, state }, at)
+			this.pruneEvents()
+			return toSignalThread(this.requireRow(id))
+		})
+	}
+
+	/**
+	 * Jakub sent a prompt into the ask's Okena terminal after it was asked: the ask closes as answered
+	 * there (`SIGNAL_ASK_ANSWERED_REASON`, closed by Jakub). Only for an open ask bound to a terminal.
+	 * `activityAt` must still be the ask's `lastActivityAt` (else it was renewed meanwhile: conflict)
+	 * and `promptAt` later than it and not in the future. An ask already done changes nothing.
+	 */
+	answered(id: number, input: { activityAt: string; promptAt: string }, now: Date): SignalThread {
+		const at = now.toISOString()
+		const activity = Date.parse(input.activityAt)
+		const prompt = Date.parse(input.promptAt)
+		if (!Number.isFinite(activity) || !Number.isFinite(prompt)) throw new SignalInvalidError('Invalid time')
+		return this.transaction(() => {
+			const row = this.requireRow(id)
+			if (row.source !== 'agent' || row.ask_terminal === null)
+				throw new SignalInvalidError('Only an ask bound to a terminal closes from that terminal')
+			if (row.state === 'done') return toSignalThread(row)
+			if (Date.parse(row.last_activity_at) !== activity)
+				throw new SignalConflictError('The ask changed since that prompt was matched')
+			if (prompt <= activity) throw new SignalInvalidError('The prompt is older than the ask')
+			if (prompt > now.getTime() + SIGNAL_ANSWERED_SKEW_MS) throw new SignalInvalidError('The prompt is in the future')
+			this.db
+				.prepare(
+					`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = 'jakub',
+					   updated_at = ?
+					 WHERE id = ?`,
+				)
+				.run(SIGNAL_ASK_ANSWERED_REASON, at, id)
+			this.insertEvent(
+				id,
+				'state',
+				{ owner: row.owner, from: row.state, to: 'done', reason: SIGNAL_ASK_ANSWERED_REASON },
+				at,
+			)
 			this.pruneEvents()
 			return toSignalThread(this.requireRow(id))
 		})

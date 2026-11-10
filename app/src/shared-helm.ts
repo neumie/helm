@@ -884,3 +884,12 @@ export interface SignalRouted {
 export interface SignalReply {
 	text: string
 }
+
+/**
+ * `POST /api/signals/:id/answered` body (Helm only): Jakub prompted the ask's terminal at
+ * `promptAt`, matched against the ask's `lastActivityAt` = `activityAt`.
+ */
+export interface SignalAnswered {
+	activityAt: string
+	promptAt: string
+}

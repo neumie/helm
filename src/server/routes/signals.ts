@@ -19,6 +19,7 @@ import {
 	type SignalIncludeResult,
 	type SignalMuteResult,
 	type SignalsSnapshot,
+	signalAnsweredSchema,
 	signalAskDoneSchema,
 	signalAskSchema,
 	signalDoneSchema,
@@ -34,6 +35,7 @@ import {
 	type MuteSender,
 } from '../../signals/include-sender.js'
 import {
+	SignalConflictError,
 	SignalInvalidError,
 	SignalLimitError,
 	type SignalListFilter,
@@ -130,6 +132,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		if (err instanceof SignalNotFoundError) return c.json({ error: 'Signal not found' }, 404)
 		if (err instanceof SignalInvalidError) return c.json({ error: err.message }, 400)
 		if (err instanceof SignalLimitError) return c.json({ error: err.message }, 429)
+		if (err instanceof SignalConflictError) return c.json({ error: err.message }, 409)
 		throw err
 	}
 
@@ -361,6 +364,22 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		if ('error' in body) return body.error
 		try {
 			return c.json({ data: storeFor().reply(id, body.data.text, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
+	// Helm's ask resolver: Jakub prompted the ask's terminal. Helm only, like the reply: no agent may
+	// close another agent's ask in Jakub's name.
+	routes.post('/:id/answered', signalsBody, async c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c, 'record an answer in the terminal')
+		if (refused) return refused
+		const body = await parseBody(c, signalAnsweredSchema)
+		if ('error' in body) return body.error
+		try {
+			return c.json({ data: storeFor().answered(id, body.data, now()) })
 		} catch (err) {
 			return failure(c, err)
 		}

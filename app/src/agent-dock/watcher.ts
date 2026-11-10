@@ -192,6 +192,17 @@ export interface AgentDockWatcherOptions {
 	 * split into live opens and seed/restart replays (notifier.ts: notifications and the Dock badge).
 	 */
 	observe?(update: AgentDockUpdate): void
+	/**
+	 * Every source poll this tick read, as read (signals-ask-resolver.ts: prompts typed into
+	 * terminals). Called after the reducer applied it; must not throw into the tick.
+	 */
+	polled?(observation: Extract<AgentDockObservation, { type: 'poll' }>): void
+	/**
+	 * Helm is about to send `text` to `target` as a prompt (a dock reply, a Signals hand-off or
+	 * answer), before the source's CAS read and POST: whatever lands in that terminal with these
+	 * words was typed by Helm, not by Jakub at the keyboard.
+	 */
+	promptSending?(target: AgentDockTarget, text: string): void
 }
 
 export class AgentDockWatcher {
@@ -374,6 +385,7 @@ export class AgentDockWatcher {
 			})
 			this.publish(true)
 			this.report()
+			if (action.type === 'prompt') this.hook('promptSending', () => this.options.promptSending?.(target, action.text))
 			try {
 				outcome = await source.act(target, item, action)
 			} catch (error) {
@@ -434,6 +446,7 @@ export class AgentDockWatcher {
 			this.apply({ type: 'prompt.sending', session: key, text, ...(assistantUuid ? { assistantUuid } : {}) })
 			this.publish(true)
 			this.report()
+			this.hook('promptSending', () => this.options.promptSending?.(target, text))
 			try {
 				outcome = await source.prompt(target, expect, text)
 			} catch (error) {
@@ -505,8 +518,10 @@ export class AgentDockWatcher {
 			const observed = await this.options.source.observe(this.state, readFrom)
 			if (this.stopped) return
 			// Stamped with when its reads began: a dock answer refused meanwhile stays refused (see reduce).
-			for (const observation of observed)
+			for (const observation of observed) {
 				this.apply(observation.type === 'poll' ? { ...observation, readFrom } : observation)
+				if (observation.type === 'poll') this.hook('polled', () => this.options.polled?.(observation))
+			}
 			// Only while shown: on content change, plus a slow freshness refresh for "stale Ns" meta.
 			if (this.visible) this.publish(this.now() - this.lastPublishAt >= SNAPSHOT_REFRESH_MS)
 			this.report()
@@ -521,6 +536,15 @@ export class AgentDockWatcher {
 			this.options.push?.sync?.()
 		} catch (error) {
 			this.warn(`push channel sync failed: ${errorMessage(error)}`)
+		}
+	}
+
+	/** Runs an observer hook; its failure is logged, never thrown into the dock. */
+	private hook(name: string, run: () => void): void {
+		try {
+			run()
+		} catch (error) {
+			this.warn(`${name} hook failed: ${errorMessage(error)}`)
 		}
 	}
 

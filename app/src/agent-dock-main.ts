@@ -15,13 +15,13 @@ import { describeOkenaRaise, raiseOkenaApp } from '../../src/extensions/okena/ac
 import { OkenaClient } from '../../src/extensions/okena/client'
 import { ClaudeTranscriptTail } from './agent-dock/claude-transcript-tail'
 import { CompositeDockSource } from './agent-dock/composite-source'
-import type { AgentDockSnapshot } from './agent-dock/model'
+import type { AgentDockObservation, AgentDockSnapshot } from './agent-dock/model'
 import { AgentDockNotifier, type AgentDockNotifierOptions, type AgentDockUpdate } from './agent-dock/notifier'
 import { OkenaClaudeSource } from './agent-dock/okena-claude-source'
 import { createOkenaRaiser } from './agent-dock/okena-raise'
 import { OkenaStreamSubscription } from './agent-dock/okena-stream'
 import { type OkenaRevealDeps, revealOkenaTerminal } from './agent-dock/reveal'
-import { AgentDockWatcher } from './agent-dock/watcher'
+import { type AgentDockTarget, AgentDockWatcher } from './agent-dock/watcher'
 import type { TerminalRef } from './claude-remote/hub-core'
 import { type ClaudeRemote, createClaudeRemote } from './claude-remote/runtime'
 import { claudeRemoteTerminalEnvironment } from './claude-remote/token'
@@ -59,6 +59,22 @@ export interface AgentDockMainOptions {
 	 * Electron's Notification and app.dock in agent-dock-notify-main.ts). Absent: neither.
 	 */
 	notify?: AgentDockNotifierOptions
+	/**
+	 * Watches prompts typed into Okena terminals (signals-ask-resolver.ts: Signals asks close when
+	 * Jakub prompts their terminal). Fed every dock poll and every prompt Helm sends; `bind` gets the
+	 * Okena source's watch hook. Absent: nothing watches.
+	 */
+	prompts?: AgentDockPromptObserver
+}
+
+/** What the dock feeds a prompt watcher (SignalsAskResolver). */
+export interface AgentDockPromptObserver {
+	polled(observation: Extract<AgentDockObservation, { type: 'poll' }>): void
+	promptSending(target: AgentDockTarget, text: string): void
+	/** The Okena source reads these terminals' transcripts while busy too. */
+	bind(watch: (terminalIds: Iterable<string>) => void): void
+	start(): void
+	stop(): void
 }
 
 /** The slice of Electron's ipcMain the dock registers on. */
@@ -142,12 +158,19 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 				publish: options.publish,
 				isFocused: options.isFocused,
 				...(notifier ? { observe: (update: AgentDockUpdate) => notifier.update(update) } : {}),
+				...(options.prompts
+					? {
+							polled: options.prompts.polled.bind(options.prompts),
+							promptSending: options.prompts.promptSending.bind(options.prompts),
+						}
+					: {}),
 				// Helm's hub always pushes (in process); Okena only while its stream is up and every pane reports a lifecycle.
 				push: okenaStream
 					? { healthy: () => okenaStream.healthy() && okenaSource.pushCovered(), sync: () => okenaStream.sync() }
 					: undefined,
 			})
 		: null
+	if (watcher && options.prompts) options.prompts.bind(ids => okenaSource.watchPrompts(ids))
 	// Helm terminals push: a hub change ticks the dock within ~100 ms, focused or not (watcher.nudge).
 	if (watcher && claudeRemote) claudeRemote.hub.onChange(() => watcher?.nudge())
 
@@ -222,9 +245,11 @@ export function createAgentDockMain(options: AgentDockMainOptions): AgentDockMai
 			void (claudeRemote?.start() ?? Promise.resolve(false)).finally(() => {
 				void watcher?.start()
 				okenaStream?.start()
+				if (watcher) options.prompts?.start()
 			}),
 		notificationsEnabled: () => notifier?.isEnabled() ?? false,
 		stop: () => {
+			options.prompts?.stop()
 			okenaStream?.stop()
 			watcher?.stop()
 			notifier?.dispose()

@@ -13,10 +13,12 @@ import type {
 	SignalPollSource,
 } from '../src/signals/contract.js'
 import {
+	SIGNAL_ASK_ANSWERED_REASON,
 	SIGNAL_ASK_CLOSED_REASON,
 	SIGNAL_EVENT_RETENTION,
 	SIGNAL_MUTED_REASON,
 	SIGNAL_OPEN_ASKS_MAX,
+	SignalConflictError,
 	SignalInvalidError,
 	SignalLimitError,
 	SignalNotFoundError,
@@ -1237,6 +1239,82 @@ test('done closes by id or key, with or without an outcome note', () => {
 
 		assert.throws(() => db.signals.done(999_999, undefined, at(5)), SignalNotFoundError)
 		assert.throws(() => db.signals.done(ask.id, ' \u0007', at(5)), SignalInvalidError)
+	})
+})
+
+test('an ask bound to a terminal closes as answered when Jakub prompted it after it was asked', () => {
+	withDb(db => {
+		const terminal = '5d3f8a2e-1b4c-4e8a-9f21-6c0d7e9b3a14'
+		const ask = db.signals.upsertAsk({ key: 'vos', title: 'Approve the slots?', terminal }, T0).thread
+		const asked = ask.lastActivityAt
+		// The prompt must come after the ask, and not from the future.
+		assert.throws(
+			() => db.signals.answered(ask.id, { activityAt: asked, promptAt: T0.toISOString() }, at(1)),
+			SignalInvalidError,
+		)
+		assert.throws(
+			() => db.signals.answered(ask.id, { activityAt: asked, promptAt: at(10).toISOString() }, at(1)),
+			SignalInvalidError,
+		)
+		// Renewed since the prompt was matched: a conflict, nothing changes.
+		const renewed = db.signals.upsertAsk({ key: 'vos', title: 'Approve the slots (v2)?', terminal }, at(2)).thread
+		assert.throws(
+			() => db.signals.answered(ask.id, { activityAt: asked, promptAt: at(1).toISOString() }, at(3)),
+			SignalConflictError,
+		)
+		assert.equal(db.signals.get(ask.id)?.state, 'new')
+
+		const seq = db.signals.latestSeq()
+		const closed = db.signals.answered(
+			ask.id,
+			{ activityAt: renewed.lastActivityAt, promptAt: at(3).toISOString() },
+			at(4),
+		)
+		assert.equal(closed.state, 'done')
+		assert.equal(closed.closedReason, SIGNAL_ASK_ANSWERED_REASON)
+		assert.equal(closed.closedBy, 'jakub')
+		assert.equal(closed.updatedAt, at(4).toISOString())
+		assert.deepEqual(
+			db.signals.events(seq).map(event => [event.type, event.detail]),
+			[['state', { owner: 'jakub', from: 'new', to: 'done', reason: SIGNAL_ASK_ANSWERED_REASON }]],
+		)
+		// Already done: idempotent, no event.
+		const again = db.signals.answered(
+			ask.id,
+			{ activityAt: renewed.lastActivityAt, promptAt: at(5).toISOString() },
+			at(6),
+		)
+		assert.equal(again.updatedAt, at(4).toISOString())
+		assert.equal(db.signals.latestSeq(), seq + 1)
+
+		// Snoozed and managed asks close too.
+		const snoozed = db.signals.upsertAsk({ key: 'later', title: 'Later?', terminal }, T0).thread
+		db.signals.update(snoozed.id, { state: 'snoozed', snoozedUntil: at(60).toISOString() }, at(1))
+		const woke = db.signals.answered(
+			snoozed.id,
+			{ activityAt: snoozed.lastActivityAt, promptAt: at(1).toISOString() },
+			at(2),
+		)
+		assert.equal(woke.state, 'done')
+		assert.equal(woke.snoozedUntil, null)
+
+		// Only asks bound to a terminal.
+		const loose = db.signals.upsertAsk({ title: 'No terminal' }, T0).thread
+		assert.throws(
+			() => db.signals.answered(loose.id, { activityAt: loose.lastActivityAt, promptAt: at(1).toISOString() }, at(2)),
+			SignalInvalidError,
+		)
+		db.signals.applyPoll(poll([github(1)]), T0)
+		const pr = db.signals.getByThreadKey('github:acme/widgets#1')
+		assert.ok(pr)
+		assert.throws(
+			() => db.signals.answered(pr.id, { activityAt: pr.lastActivityAt, promptAt: at(1).toISOString() }, at(2)),
+			SignalInvalidError,
+		)
+		assert.throws(
+			() => db.signals.answered(999_999, { activityAt: asked, promptAt: at(1).toISOString() }, at(2)),
+			SignalNotFoundError,
+		)
 	})
 })
 

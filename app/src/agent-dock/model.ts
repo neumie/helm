@@ -108,6 +108,8 @@ export const okenaClaudeEntrySchema = z.discriminatedUnion('kind', [
 	z.object({
 		kind: z.literal('user'),
 		uuid: z.string(),
+		/** When Claude recorded it (RFC 3339); absent from older Okena. */
+		timestamp: z.string().nullish(),
 		text: z.string(),
 		origin: z.enum(['terminal', 'channel']),
 	}),

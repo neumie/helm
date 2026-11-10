@@ -346,3 +346,56 @@ test('a reply typed in whose receipt cannot be saved says so and keeps the answe
 	await expect(view.row(501).locator('.signals-receipt')).toHaveText('saved now')
 	await expect(view.row(501).locator('.signals-td-agent')).not.toHaveText('→ signals-agent-asks')
 })
+
+test('Jakub typing into an ask agent’s terminal closes its open asks; Done today says answered', async ({ page }) => {
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
+	await expect(view.row(501)).toHaveAttribute('data-section', 'needs')
+	await expect(view.row(504)).toHaveAttribute('data-section', 'needs')
+	await expect(view.row(503)).toHaveAttribute('data-section', 'needs')
+	await page.evaluate(
+		terminal => window.__signalsFixture?.terminalPrompt(terminal, 'B, s tím body řádkem.'),
+		IDLE_TERMINAL,
+	)
+	// Both asks bound to that terminal leave Needs you; the working agent's ask stays.
+	await expect(view.row(501)).toHaveCount(0)
+	await expect(view.row(504)).toHaveCount(0)
+	await expect(view.row(503)).toHaveAttribute('data-section', 'needs')
+	await page.screenshot({ path: test.info().outputPath('signals-asks-answered-in-terminal.png') })
+
+	await page.keyboard.press('Shift+D')
+	const answered = view.signals.locator('.signals-tr[data-signal-id="501"]')
+	await expect(answered).toHaveAttribute('data-done-reason', 'answered')
+	await expect(answered.locator('.signals-td-ref')).toHaveText('Signals asks · answered')
+	await expect(answered.locator('.signals-done-reason')).toHaveAttribute(
+		'title',
+		/^answered · answered in the terminal · closed \d+:\d\d$/,
+	)
+	await page.screenshot({ path: test.info().outputPath('signals-asks-answered-done.png') })
+})
+
+test('a prompt Helm typed counts only as the reply to its own ask; slash commands never count', async ({ page }) => {
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
+	await page.evaluate(terminal => window.__signalsFixture?.terminalPrompt(terminal, '/compact'), IDLE_TERMINAL)
+	await view.row(501).click()
+	await page.keyboard.press('r')
+	await page.keyboard.type('B')
+	await page.keyboard.press('Meta+Enter')
+	await expect(view.note).toHaveText('Replied to signals-agent-asks')
+	// The reply Helm typed lands in the agent's transcript: it answers 501, not the other ask there.
+	const typed = (await calls(page))?.prompts[0]?.text ?? ''
+	expect(typed).toContain('Jakub answered your Signals ask #501.')
+	await expect(view.row(504)).toHaveAttribute('data-section', 'needs')
+	await page.evaluate(([terminal, text]) => window.__signalsFixture?.terminalPrompt(terminal, text), [
+		IDLE_TERMINAL,
+		typed,
+	] as const)
+	await expect(view.row(501)).toHaveCount(0)
+	await expect(view.row(504)).toHaveAttribute('data-section', 'needs')
+})
+
+test('the answered-in-terminal story closes the asks a second after load', async ({ page }) => {
+	const view = await open(page, 'views-signals-agent-asks--answered-in-terminal')
+	await expect(view.row(503)).toHaveAttribute('data-section', 'needs')
+	await expect(view.row(501)).toHaveCount(0, { timeout: 5_000 })
+	await expect(view.row(504)).toHaveCount(0)
+})
