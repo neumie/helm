@@ -68,6 +68,8 @@ export interface HelmClaudeHubOptions {
 	firstLineTimeoutMs?: number
 	/** Reads a session cwd's git branch (default `git branch --show-current`, user-owned dirs only). */
 	readBranch?: BranchReader
+	/** Runs `run` once after `ms`; returns its cancel (default an unref'd setTimeout; tests drive it). */
+	schedule?: (run: () => void, ms: number) => () => void
 }
 
 const requestSchema = z.discriminatedUnion('t', [
@@ -142,6 +144,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private persisting: Promise<void> = Promise.resolve()
 	/** Session cwd -> its branch as last read (null: none / not a work tree) and when. */
 	private readonly branches = new Map<string, { branch: string | null; at: number }>()
+	/** Cancels the timer for the next typing-guard expiry with a prompt queued behind it. */
+	private cancelDue: (() => void) | null = null
 
 	constructor(private readonly options: HelmClaudeHubOptions) {
 		this.now = options.now ?? Date.now
@@ -150,6 +154,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 			terminalName: options.terminalName,
 			onExcludedChange: ids => void this.persistExcluded(ids),
 		})
+		// A queued prompt is typed the moment its terminal is free (a Stop, an interrupt, a dialog closing).
+		this.core.onChange(() => this.typeDuePrompts())
 		const configDir = process.env.CLAUDE_CONFIG_DIR
 		this.roots = options.transcriptRoots ?? [`${homedir()}/.claude`, ...(configDir ? [configDir] : [])]
 	}
@@ -205,6 +211,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		// hub answers there, or the root is not private) must not unlink that hub's socket.
 		const owned = this.server !== null
 		this.listening = false
+		this.cancelDue?.()
+		this.cancelDue = null
 		this.core.shutdown()
 		this.tails.clear()
 		this.server?.close()
@@ -257,7 +265,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 				this.call(() => this.core.transcript(ref(terminalId), query)),
 			postClaudeDialogDecision: async (terminalId, dialogId, decision) =>
 				this.call(() => this.core.decide(ref(terminalId), dialogId, decision as OkenaClaudeDecision)),
-			postClaudePrompt: async (terminalId, text) => this.prompt(ref(terminalId), text),
+			postClaudePrompt: async (terminalId, text, opts) => this.prompt(ref(terminalId), text, opts?.queue === true),
 		}
 	}
 
@@ -309,15 +317,67 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		}
 	}
 
-	private async prompt(ref: TerminalRef, raw: string): Promise<unknown> {
+	private async prompt(ref: TerminalRef, raw: string, queue = false): Promise<unknown> {
 		const text = sanitizePrompt(raw)
 		if (!text) throw errorWithStatus(400, 'empty prompt')
 		if (text.length > HUB_PROMPT_MAX) throw errorWithStatus(400, 'prompt too long')
-		this.call(() => this.core.checkPrompt(ref, this.now()))
+		if (this.call(() => this.core.checkPrompt(ref, this.now(), queue)) === 'queue') {
+			// Okena's `queued`: held until the agent stops, then typed like any reply (typeDuePrompts).
+			this.call(() => this.core.queuePrompt(ref, text))
+			return { delivery: 'queued' }
+		}
 		this.core.typed(ref, this.now())
-		const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
-		// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
-		return { delivery: 'pty', via }
+		try {
+			const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
+			// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
+			return { delivery: 'pty', via }
+		} finally {
+			// The guard runs from the end of the write (a `dtach -p` push can take seconds).
+			this.core.delivered(ref, this.now())
+		}
+	}
+
+	/** Types every queued prompt that is due (hub-core decides); a failed delivery is logged, not retried. */
+	private typeDuePrompts(): void {
+		for (const { ref, text } of this.core.takeDuePrompts(this.now()))
+			void this.options
+				.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
+				.catch(error => {
+					this.warn(
+						`a queued prompt for ${ref.terminalId} was not typed: ${error instanceof Error ? error.message : String(error)}`,
+					)
+				})
+				// Nothing more is typed into it until this write is done (its guard runs from then).
+				.finally(() => this.core.delivered(ref, this.now()))
+		this.armDue()
+	}
+
+	/**
+	 * A typed reply's UserPromptSubmit may never come (Claude dropped it, or it was typed into a
+	 * prompt that ignored it): then no hook event would call typeDuePrompts again while the agent
+	 * sits idle. One timer for the earliest such moment (QUEUED_PROMPT_STALL_MS after the write)
+	 * types the next one then.
+	 */
+	private armDue(): void {
+		this.cancelDue?.()
+		this.cancelDue = null
+		if (!this.listening) return
+		const due = this.core.nextPromptDueAt()
+		if (due === undefined) return
+		const schedule =
+			this.options.schedule ??
+			((run: () => void, ms: number) => {
+				const timer = setTimeout(run, ms)
+				timer.unref()
+				return () => clearTimeout(timer)
+			})
+		this.cancelDue = schedule(
+			() => {
+				this.cancelDue = null
+				this.typeDuePrompts()
+			},
+			Math.max(0, due - this.now()) + 1,
+		)
 	}
 
 	// -------------------------------------------------------------------------

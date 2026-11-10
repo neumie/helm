@@ -1809,14 +1809,19 @@ export function createAgentDockFixture(
 				return { ok: outcome.status === 'sent', outcome, recorded: true }
 			},
 			// A reply from the agent detail: the same act observations main would apply, then the landing poll.
+			// A working agent asked with `queue` gets it held for after its turn (Okena's `queued`): no
+			// landing; a poll past the confirmation window shows it still queued while the agent works.
 			async prompt(request): Promise<AgentDockActResult> {
 				calls.prompts.push(structuredClone(request))
 				const current = scenario
-				if (!current?.state.sessions[request.session])
+				const record = current?.state.sessions[request.session]
+				if (!current || !record)
 					return { ok: false, outcome: { status: 'refused', reason: 'gone', detail: 'The agent is no longer listed.' } }
+				const held = request.queue === true && record.session.status === 'working'
 				apply({
 					type: 'prompt.sending',
 					session: request.session,
+					text: request.text,
 					...(request.assistantUuid ? { assistantUuid: request.assistantUuid } : {}),
 				})
 				await wait(FIXTURE_ACT_STEP_MS)
@@ -1832,8 +1837,12 @@ export function createAgentDockFixture(
 								? { status: 'refused', reason: 'busy', detail: REFUSAL_TEXT.busy }
 								: mode === 'untracked'
 									? { status: 'refused', reason: 'untracked', detail: DOCK_SOURCE_TEXT.okena.untracked }
-									: { status: 'sent', delivery: 'pty' }
+									: { status: 'sent', delivery: held ? 'queued' : 'pty' }
 				apply({ type: 'prompt.result', session: request.session, outcome })
+				if (held && outcome.status === 'sent') {
+					later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
+					return { ok: true, outcome, recorded: true }
+				}
 				if (mode === 'confirm') later(() => apply(promptLandedPoll(current, request.session)))
 				if (mode === 'unconfirmed') later(() => apply(samePoll(current), clock() + ACT_CONFIRM_MS))
 				return { ok: outcome.status === 'sent', outcome, recorded: true }

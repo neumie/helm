@@ -103,3 +103,9 @@ export const DOCK_LIVE_MESSAGE_MAX = 8_192
 
 /** How Okena (or Helm's hub) delivered a reply to the agent. */
 export const DOCK_PROMPT_DELIVERIES = ['channel', 'pty', 'queued'] as const
+
+/**
+ * Deliveries the source holds for after the agent's turn (Okena's queue or its MCP channel, Helm's
+ * hub queue): typed in once the agent stops, so they land at its next prompt, not sooner.
+ */
+export const isHeldDelivery = (delivery: string | undefined): boolean => delivery === 'queued' || delivery === 'channel'

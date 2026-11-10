@@ -250,6 +250,24 @@ export function sessionStillIdle(
 	return { ok: true }
 }
 
+/**
+ * CAS for a new prompt (AgentDockPromptRequest.queue: Signals hands a thread to an agent): the
+ * same Claude session, no dialog open (typing would answer it), and a known busy state. Working is
+ * fine: the source holds the prompt until the turn ends (Okena's `queued`, Helm's hub queue), so
+ * it never lands in a running turn. Not a reply to a message, so the transcript is not checked.
+ */
+export function sessionTakesPrompt(
+	expect: { sessionId?: string },
+	fresh: OkenaClaudeSession,
+	source: DockSourceId = 'okena',
+): DockCheck {
+	if (expect.sessionId && fresh.session_id && expect.sessionId !== fresh.session_id)
+		return refuse('gone', 'A new Claude session started in this pane.')
+	if (fresh.dialogs.length > 0) return refuse('busy', 'The agent opened a dialog; answer that first.')
+	if (fresh.busy !== true && fresh.busy !== false) return refuse('untracked', DOCK_SOURCE_TEXT[source].untracked)
+	return { ok: true }
+}
+
 /** A reply's text as it is sent: trailing whitespace dropped; null when nothing is left. */
 export function promptText(text: string): string | null {
 	const trimmed = text.replace(/\s+$/u, '')

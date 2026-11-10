@@ -899,6 +899,15 @@ test('agent standing: sending / sent / unconfirmed from an item or a reply from 
 	)
 	assert.equal(standingOf([], session({ reply: receipt('sending') }))[1], 'sending')
 	assert.equal(standingOf([], session({ reply: receipt('sent') }))[1], 'sent')
+	// Held by its source for after the turn: it reads queued, not sent.
+	assert.equal(standingOf([], session({ reply: { ...receipt('sent'), delivery: 'queued' } }))[1], 'queued')
+	assert.equal(
+		standingOf(
+			[turnItem({ state: 'sending', receipt: { ...receipt('sent'), delivery: 'queued' } })],
+			session({ status: 'working' }),
+		)[1],
+		'queued',
+	)
 	const unconfirmed = agentStanding(
 		snapshot(OK, [], [session({ reply: receipt('unconfirmed') })]),
 		session({ reply: receipt('unconfirmed') }),
@@ -1026,16 +1035,26 @@ test('agent rows: needs you, reply waiting, sending, working, background, read, 
 	assert.equal(otherAgentsLayout('by-project'), 'by-state')
 })
 
-test('agent detail reply: receipts like a turn reply; blocked while it owes, works or its source is down', () => {
+test('agent detail reply: receipts like a turn reply, queued for a working agent; blocked while it owes or its source is down', () => {
 	const reply = (status: 'sending' | 'sent' | 'unconfirmed' | 'confirmed' | 'refused' | 'failed', extra = {}) =>
 		session({ reply: { action: 'reply', status, at: T, ...extra } })
 	assert.equal(sessionReplyView(session(), T), null)
 	assert.deepEqual(sessionReplyView(reply('sending'), T), { text: 'Sending…', tone: 'neutral' })
-	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'queued' }), T), {
-		text: 'Sending… (queued until the agent is free)',
+	// Held by its source until the agent's turn ends: queued, never unconfirmed for that wait.
+	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'queued' }), T, 'offer-pdf-export'), {
+		text: 'Queued for offer-pdf-export',
 		tone: 'neutral',
 	})
+	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'channel' }), T), {
+		text: 'Queued until the agent is free',
+		tone: 'neutral',
+	})
+	assert.deepEqual(sessionReplyView(reply('sent', { delivery: 'pty' }), T, 'x'), { text: 'Sending…', tone: 'neutral' })
 	assert.deepEqual(sessionReplyView(reply('unconfirmed'), T), { text: 'sent, unconfirmed', tone: 'warn' })
+	assert.deepEqual(sessionReplyView(reply('unconfirmed', { delivery: 'queued' }), T, 'x'), {
+		text: 'sent, unconfirmed',
+		tone: 'warn',
+	})
 	assert.deepEqual(sessionReplyView(reply('confirmed'), T + 1_000), { text: '✓ replied', tone: 'success' })
 	assert.equal(sessionReplyView(reply('confirmed'), T + REPLY_RECEIPT_MS), null)
 	assert.deepEqual(sessionReplyView(reply('refused', { reason: 'gone' }), T), {
@@ -1053,17 +1072,27 @@ test('agent detail reply: receipts like a turn reply; blocked while it owes, wor
 
 	const snap = snapshot(OK)
 	const okena = session({ source: 'okena' })
-	for (const standing of ['read', 'idle', 'background'] as const)
+	// A working agent takes a reply: its source queues it for after the turn.
+	for (const standing of ['read', 'idle', 'background', 'working'] as const)
 		assert.equal(agentReplyBlocked(snap, okena, standing), null)
 	assert.equal(agentReplyBlocked(snap, okena, 'reply-waiting'), 'Answer its open item first')
-	assert.equal(agentReplyBlocked(snap, okena, 'working'), 'Working: reply once it stops')
+	assert.equal(agentReplyBlocked(snap, okena, 'needs-you'), 'Answer its open item first')
+	assert.equal(agentReplyBlocked(snap, okena, 'unknown'), 'State unknown: reply in the terminal')
 	assert.equal(agentReplyBlocked(snap, okena, 'sending'), 'A reply is on its way')
 	// An unconfirmed reply never clears while the agent stays put: it does not block another (the CAS guards it).
 	const replied = (status: 'sent' | 'unconfirmed') =>
 		session({ source: 'okena', reply: { action: 'reply', status, at: T } })
 	assert.equal(agentReplyBlocked(snap, replied('unconfirmed'), 'sending'), null)
 	assert.equal(agentReplyBlocked(snap, replied('sent'), 'sending'), 'A reply is on its way')
-	assert.equal(agentReplyBlocked(snap, okena, 'unknown'), 'State unknown: reply in the terminal')
+	// A held reply never blocks another: the source queues them in order (its receipt lands once the queue drains).
+	assert.equal(
+		agentReplyBlocked(
+			snap,
+			session({ source: 'okena', reply: { action: 'reply', status: 'sent', at: T, delivery: 'queued' } }),
+			'sending',
+		),
+		null,
+	)
 	assert.match(
 		agentReplyBlocked(snapshot({ state: 'down', since: T, lastObservedAt: T, detail: 'x' } as never), okena, 'read') ??
 			'',

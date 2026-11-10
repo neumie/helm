@@ -691,7 +691,8 @@ export type SignalsHeldEffect = 'newAgent' | 'prompt'
 
 /**
  * Outcomes a browser test scripts for the next calls (each applies until replaced): the dock's
- * `prompt` and `act` (default `sent`), and `service.routed` failing with this error (default it saves).
+ * `prompt` and `act` (default `sent`; a `queue` prompt to a working agent `queued`), and
+ * `service.routed` failing with this error (default it saves).
  */
 export interface SignalsFixtureScript {
 	prompt?: DockActOutcome
@@ -894,7 +895,11 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		async prompt(request) {
 			calls.prompts.push(request)
 			await gate('prompt')
-			return result(scripted.prompt ?? sent)
+			// As Okena: a new prompt to a working agent is held until its turn ends.
+			const working =
+				request.queue === true &&
+				dockSnapshot?.sessions.find(entry => entry.key === request.session)?.status === 'working'
+			return result(scripted.prompt ?? (working ? { status: 'sent', delivery: 'queued' } : sent))
 		},
 		async act(request) {
 			calls.acts.push(request)

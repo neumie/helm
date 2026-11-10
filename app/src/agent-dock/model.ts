@@ -285,6 +285,12 @@ export interface DockLastMessage {
 export interface DockSessionReply extends DockReceipt {
 	/** The message Jakub replied to (its uuid), when he saw one. */
 	assistantUuid?: string
+	/**
+	 * The transcript's last user entry when the reply was sent: a reply the source holds for after the
+	 * agent's turn (`delivery` queued/channel) lands at the next user entry, not at the agent's next
+	 * message (a working agent says new things before its turn ends).
+	 */
+	userBefore?: string
 }
 
 export type DockItemKind = (typeof DOCK_ITEM_KINDS)[number]
@@ -382,7 +388,15 @@ export type OkenaPromptDelivery = (typeof DOCK_PROMPT_DELIVERIES)[number]
 
 /** What one act did (main → reducer and → renderer). `detail` is verbatim Okena/transport text, never answer text. */
 export type DockActOutcome =
-	| { status: 'sent'; delivery?: OkenaPromptDelivery }
+	| {
+			status: 'sent'
+			delivery?: OkenaPromptDelivery
+			/**
+			 * A prompt only: the newest user entry of the transcript read just before it was sent (the
+			 * baseline a held prompt lands after; the reducer's own tail may be stale while the agent works).
+			 */
+			userBefore?: string
+	  }
 	/** The request reached Okena but no answer came back (timeout/reset): it may have landed. */
 	| { status: 'unconfirmed'; detail: string }
 	| { status: 'refused'; reason: DockRefusalReason; detail: string }
@@ -458,6 +472,18 @@ export interface AgentDockPromptRequest {
 	sessionId?: string
 	/** The last message Jakub saw; absent when he saw none. */
 	assistantUuid?: string
+	/**
+	 * A working agent may take it: the source holds it and types it once the agent's turn ends
+	 * (Signals hands a thread to an agent; the agent detail's Reply). A working agent's last message is
+	 * not checked; one free now is, when `assistantUuid` says which message the reply answers. Still
+	 * refused: a dialog open (typing would answer it), busy unknown, a new Claude session in the pane.
+	 */
+	queue?: true
+	/**
+	 * A hand-off, not a reply to what Jakub read (Signals `p` and ask answers): never checked against
+	 * the last message, also when the agent is free. Goes with `queue`.
+	 */
+	handoff?: true
 	text: string
 }
 
@@ -466,6 +492,8 @@ export const agentDockPromptRequestSchema = z
 		session: z.string().min(1).max(512),
 		sessionId: z.string().min(1).max(512).optional(),
 		assistantUuid: z.string().min(1).max(512).optional(),
+		queue: z.literal(true).optional(),
+		handoff: z.literal(true).optional(),
 		text: z.string().max(DOCK_PROMPT_MAX),
 	})
 	.strict()
@@ -592,7 +620,8 @@ export type AgentDockObservation =
 	/** How that act went. */
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
 	/** Jakub replied from the agent detail (no item); main is about to run the CAS read and the POST. */
-	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string }
+	/** `text`: the reply's words, so the reducer knows its transcript entry (memory only; never spooled). */
+	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string; text?: string }
 	/** How that reply went. */
 	| { type: 'prompt.result'; session: SessionKey; outcome: DockActOutcome }
 

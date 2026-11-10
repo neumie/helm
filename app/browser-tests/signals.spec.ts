@@ -166,13 +166,8 @@ test('send to agent: the PR agent is preselected, digits pick, ⌘↵ sends and 
 	const agents = page.getByRole('radiogroup', { name: 'Agent' })
 	await expect(agents).toBeVisible()
 	await expect(agents.getByRole('radio', { checked: true })).toHaveCount(1)
-	// A busy agent is listed but refused.
-	const busy = agents.locator('[data-busy="true"]').first()
-	if ((await busy.count()) > 0) {
-		// aria-disabled: listed for context, refused with a note rather than picked.
-		await busy.click({ force: true })
-		await expect(view.note).toContainText('pick an idle agent')
-	}
+	// Working agents are pickable too: nothing in this dock is refused.
+	await expect(agents.locator('[data-busy="true"]')).toHaveCount(0)
 	await page.keyboard.press('1')
 	await page.keyboard.press('Meta+Enter')
 	await expect(agents).toBeHidden()
@@ -183,6 +178,59 @@ test('send to agent: the PR agent is preselected, digits pick, ⌘↵ sends and 
 	expect(recorded?.prompts[0]?.text).toContain('<external source="github"')
 	expect(recorded?.routed).toEqual([expect.objectContaining({ id: 970, how: 'sent' })])
 	await expect(view.signals.locator('.signals-tr[data-signal-id="970"] .signals-receipt')).toContainText('sent')
+})
+
+test('send to agent: a working agent is picked like an idle one and gets the thread queued for after its turn', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-flows--send-to-agent')
+	const agents = page.getByRole('radiogroup', { name: 'Agent' })
+	const working = agents.getByRole('radio', { name: /rental-calendar-sync/ })
+	await expect(working).toContainText('working')
+	await expect(working).not.toHaveAttribute('aria-disabled', 'true')
+	await working.click()
+	await expect(working).toHaveAttribute('aria-checked', 'true')
+	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
+		'Queued for rental-calendar-sync: typed in once it stops working',
+	)
+	await page.keyboard.press('Meta+Enter')
+	await expect(agents).toBeHidden()
+	await expect(view.note).toHaveText('Queued crane-rental#970 for rental-calendar-sync')
+	const recorded = await calls(page)
+	expect(recorded?.prompts).toEqual([
+		expect.objectContaining({ session: expect.stringContaining('t-calendar'), queue: true, handoff: true }),
+	])
+	expect(recorded?.acts).toEqual([])
+	expect(recorded?.routed).toEqual([expect.objectContaining({ id: 970, agent: 'rental-calendar-sync', how: 'sent' })])
+})
+
+test('send to agent: an agent with something open in the dock is refused in words, never sent to', async ({ page }) => {
+	const view = await open(page, 'views-signals-flows--send-to-agent')
+	// Its reply is still on its way: typing another prompt now could land in a dialog or a half-typed reply.
+	await page.evaluate(() => window.__signalsFixture?.openTurn('t-calendar', 'sending'))
+	const agents = page.getByRole('radiogroup', { name: 'Agent' })
+	const blocked = agents.getByRole('radio', { name: /rental-calendar-sync/ })
+	await expect(blocked).toHaveAttribute('aria-disabled', 'true')
+	await page.keyboard.press('2')
+	await expect(blocked).toHaveAttribute('aria-checked', 'false')
+	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
+		'rental-calendar-sync has something open in the dock; answer it there first',
+	)
+	await page.keyboard.press('Escape')
+	await expect(view.signals).toBeFocused()
+	expect((await calls(page))?.prompts).toEqual([])
+})
+
+test('send to agent: an idle agent waiting in the dock is sent the thread as its open turn’s reply', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-flows--send-to-agent')
+	const itemId = await page.evaluate(() => window.__signalsFixture?.openTurn('t-offer'))
+	await page.keyboard.press('Meta+Enter')
+	await expect(view.note).toHaveText('Sent crane-rental#970 to offer-pdf-export')
+	const recorded = await calls(page)
+	expect(recorded?.prompts).toEqual([])
+	expect(recorded?.acts).toEqual([{ itemId, action: { type: 'prompt', text: expect.stringContaining('<external') } }])
 })
 
 test('send to agent: Esc goes back to the list without sending', async ({ page }) => {

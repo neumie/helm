@@ -22,7 +22,8 @@ type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type TerminalRef = import('../app/src/claude-remote/hub-core.ts').TerminalRef
 
-const { ClaudeHubCore, DIALOG_TRUNCATION_MARK, TYPING_GUARD_MS } = coreModule as CoreModule
+const { ClaudeHubCore, DIALOG_TRUNCATION_MARK, QUEUED_PROMPT_STALL_MS, QUEUED_PROMPTS_MAX, TYPING_GUARD_MS } =
+	coreModule as CoreModule
 const { BRANCH_TTL_MS, HelmClaudeHub, interruptMarkerAt, promptChunks, sanitizePrompt } = hubModule as HubModule
 const { claudeHubTokens, claudeRemoteTerminalEnvironment } = tokenModule as TokenModule
 const { OkenaClaudeSource } = sourceModule as SourceModule
@@ -546,13 +547,95 @@ test('prompt gate: idle with no dialog only; a typed reply blocks another until 
 	core.attached(REF, PID)
 	core.checkPrompt(REF, T0)
 	core.typed(REF, T0)
-	assert.throws(() => core.checkPrompt(REF, T0 + 1), { status: 409 })
-	core.checkPrompt(REF, T0 + TYPING_GUARD_MS + 1)
+	// While the write is still going, and for TYPING_GUARD_MS after it ended.
+	assert.throws(() => core.checkPrompt(REF, T0 + TYPING_GUARD_MS + 1), /still being typed/)
+	core.delivered(REF, T0 + 1)
+	assert.throws(() => core.checkPrompt(REF, T0 + 2), { status: 409 })
+	core.checkPrompt(REF, T0 + TYPING_GUARD_MS + 2)
 	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'reply' }))
 	assert.throws(() => core.checkPrompt(REF, T0 + 2), /not idle/)
 	const asked = withDialog('Bash', { command: 'x' })
 	asked.core.attached(REF, PID)
 	assert.throws(() => asked.core.checkPrompt(REF, T0 + 3), /open dialog/)
+})
+
+test('prompt queue: nothing is typed while a write is still going; the guard and the stall run from its end', () => {
+	const core = started()
+	core.attached(REF, PID)
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'work' }))
+	core.queuePrompt(REF, 'A')
+	core.queuePrompt(REF, 'B')
+	core.event(REF, PID, T0 + 2, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'done' }))
+	assert.deepEqual(core.takeDuePrompts(T0 + 3), [{ ref: REF, text: 'A' }])
+	// A's `dtach -p` write is slow: well past the guard and the stall, B still waits for it.
+	assert.equal(core.nextPromptDueAt(), undefined)
+	assert.deepEqual(core.takeDuePrompts(T0 + QUEUED_PROMPT_STALL_MS + 10), [])
+	assert.throws(() => core.checkPrompt(REF, T0 + QUEUED_PROMPT_STALL_MS + 10), /still being typed/)
+	// Written at last: B waits QUEUED_PROMPT_STALL_MS from then for A's UserPromptSubmit.
+	const end = T0 + QUEUED_PROMPT_STALL_MS + 20
+	core.delivered(REF, end)
+	assert.equal(core.nextPromptDueAt(), end + QUEUED_PROMPT_STALL_MS)
+	assert.deepEqual(core.takeDuePrompts(end + TYPING_GUARD_MS + 1), [])
+	// A's prompt arrives and its turn ends: B is typed then, the stall gone with the hook.
+	core.event(REF, PID, end + 100, ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'A' }))
+	core.event(REF, PID, end + 200, ev('Stop', { prompt_id: 'p2', last_assistant_message: 'ok' }))
+	assert.deepEqual(core.takeDuePrompts(end + 300), [{ ref: REF, text: 'B' }])
+})
+
+test('prompt queue: only asked with queue, a busy agent holds it until it is idle with no dialog; never into the next session', () => {
+	const core = started()
+	core.attached(REF, PID)
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'work' }))
+	// A reply (no queue) to a busy agent is still refused; a new prompt is held.
+	assert.throws(() => core.checkPrompt(REF, T0 + 2), /not idle/)
+	assert.equal(core.checkPrompt(REF, T0 + 2, true), 'queue')
+	core.queuePrompt(REF, 'first')
+	core.queuePrompt(REF, 'second')
+	assert.equal(session(core).queued_prompts, 2)
+	assert.deepEqual(core.takeDuePrompts(T0 + 3), [])
+	// A dialog at the turn's end (a subagent's): still held, typing would answer it.
+	const pending = hook()
+	core.permission(
+		REF,
+		PID,
+		T0 + 4,
+		ev('PermissionRequest', { prompt_id: 'p1', agent_id: 'sub', tool_name: 'Bash', tool_input: {} }),
+		pending,
+	)
+	core.event(REF, PID, T0 + 5, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'done' }))
+	assert.equal(session(core).busy, false)
+	assert.deepEqual(core.takeDuePrompts(T0 + 6), [])
+	core.hookGone(REF, session(core).dialogs[0]?.id ?? '')
+	// Idle, no dialog: one at a time, the typing guard holds the next one until its UserPromptSubmit.
+	assert.deepEqual(core.takeDuePrompts(T0 + 7), [{ ref: REF, text: 'first' }])
+	assert.deepEqual(core.takeDuePrompts(T0 + 8), [])
+	core.delivered(REF, T0 + 8)
+	// A new prompt while the queued one is being typed queues behind it, in order.
+	assert.equal(core.checkPrompt(REF, T0 + 8, true), 'queue')
+	core.event(REF, PID, T0 + 9, ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'first' }))
+	core.event(REF, PID, T0 + 10, ev('Stop', { prompt_id: 'p2', last_assistant_message: 'ok' }))
+	assert.deepEqual(core.takeDuePrompts(T0 + 11), [{ ref: REF, text: 'second' }])
+	core.delivered(REF, T0 + 11)
+	assert.equal(session(core).queued_prompts, 0)
+	// Bounded.
+	core.event(REF, PID, T0 + 12, ev('UserPromptSubmit', { prompt_id: 'p3', prompt: 'second' }))
+	for (let i = 0; i < QUEUED_PROMPTS_MAX; i++) core.queuePrompt(REF, `q${i}`)
+	assert.throws(() => core.checkPrompt(REF, T0 + 13, true), /Too many queued prompts/)
+	// A dialog open now: refused, queue or not.
+	const asked = withDialog('Bash', { command: 'x' })
+	asked.core.attached(REF, PID)
+	assert.throws(() => asked.core.checkPrompt(REF, T0 + 3, true), /open dialog/)
+	// Busy unknown (adopted by a hook that says nothing about it, as after a hub restart): never queued.
+	const fresh = new ClaudeHubCore({ prefix: 'bb22' })
+	fresh.event(REF, PID, T0, ev('SubagentStart', { agent_id: 'g1', agent_type: 'Explore' }))
+	fresh.attached(REF, PID)
+	assert.equal(session(fresh).busy, undefined)
+	assert.throws(() => fresh.checkPrompt(REF, T0 + 2, true), /not idle/)
+	// The session ends (or /clear starts another): what is queued is dropped, never typed into the next one.
+	core.event(REF, PID, T0 + 14, ev('SessionStart', { session_id: 'sess-b', source: 'clear' }))
+	assert.equal(session(core).queued_prompts, 0)
+	core.event(REF, PID, T0 + 15, ev('Stop', { session_id: 'sess-b', last_assistant_message: 'cleared' }))
+	assert.deepEqual(core.takeDuePrompts(T0 + 16), [])
 })
 
 test('lifeline: claude killed (-9, crash, /exit) closes it; the session ends, dialogs go back, a reply is refused', () => {
@@ -627,6 +710,7 @@ test('Stop before its UserPromptSubmit: the user entry still lands BEFORE the an
 	core.event(REF, PID, T0 + 2, ev('Stop', { prompt_id: 'p0', last_assistant_message: 'one' }))
 	const before = core.transcript(REF, {}) as { cursor: number }
 	core.typed(REF, T0 + 3)
+	core.delivered(REF, T0 + 3)
 	core.event(REF, PID, T0 + 5, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'two' }))
 	core.event(REF, PID, T0 + 4, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'reply' }))
 	const page = core.transcript(REF, { cursor: before.cursor, sessionId: SID }) as {
@@ -852,7 +936,12 @@ function send(socket: string, line: Record<string, unknown>, waitReply = false):
 	})
 }
 
-async function hubFixture(extra: { readBranch?: (path: string) => Promise<string | null> } = {}) {
+async function hubFixture(
+	extra: {
+		readBranch?: (path: string) => Promise<string | null>
+		schedule?: (run: () => void, ms: number) => () => void
+	} = {},
+) {
 	const dir = mkdtempSync('/tmp/hcr-hub-')
 	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
 	const delivered: Array<{ ref: TerminalRef; chunks: string[] }> = []
@@ -1036,6 +1125,78 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			status: 404,
 		})
 		assert.deepEqual(f.delivered, [])
+	} finally {
+		f.cleanup()
+	}
+})
+
+test('hub: a queued prompt (Signals) to a working agent is typed once its turn stops, as a reply would be', async () => {
+	const f = await hubFixture()
+	try {
+		const source = new OkenaClaudeSource(f.hub, 'helm')
+		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
+		const lifeline = await f.attach()
+		await f.event(ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'build it' }))
+		const pane = { profile: 'helm:work', terminalId: 'term1' }
+		// The dock's plain reply path still refuses a working agent.
+		const reply = await source.prompt(pane, { sessionId: SID }, 'hello')
+		assert.equal(reply.status === 'refused' && reply.reason, 'busy')
+		const queued = await source.prompt(pane, { sessionId: SID, queue: true }, 'Look at crane-rental#970.')
+		assert.deepEqual(queued, { status: 'sent', delivery: 'queued', userBefore: 'user-p1' })
+		assert.deepEqual(f.delivered, [])
+		assert.equal(f.hub.core.session(REF).queued_prompts, 1)
+		// The turn stops: the hub types it like any reply.
+		await f.event(ev('Stop', { prompt_id: 'p1', last_assistant_message: 'Built.' }))
+		assert.deepEqual(f.delivered, [{ ref: REF, chunks: promptChunks('Look at crane-rental#970.') }])
+		assert.equal(f.hub.core.session(REF).queued_prompts, 0)
+		await lifeline.close()
+	} finally {
+		f.cleanup()
+	}
+})
+
+test('hub: a prompt queued behind a typed reply whose UserPromptSubmit never comes is typed when the guard ends', async () => {
+	const timers: Array<{ run: () => void; ms: number; cancelled: boolean }> = []
+	const f = await hubFixture({
+		schedule: (run, ms) => {
+			const timer = { run, ms, cancelled: false }
+			timers.push(timer)
+			return () => {
+				timer.cancelled = true
+			}
+		},
+	})
+	try {
+		const source = new OkenaClaudeSource(f.hub, 'helm')
+		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
+		const lifeline = await f.attach()
+		await f.event(ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'build it' }))
+		await f.event(ev('Stop', { prompt_id: 'p1', last_assistant_message: 'Built.' }))
+		const pane = { profile: 'helm:work', terminalId: 'term1' }
+		// Idle: the first hand-off is typed at once and sets the typing guard.
+		const first = await source.prompt(pane, { sessionId: SID, queue: true, handoff: true }, 'first')
+		assert.equal(first.status, 'sent')
+		assert.equal(f.delivered.length, 1)
+		// A second one while that is being typed is held behind the guard, with a timer for its end.
+		const second = await source.prompt(pane, { sessionId: SID, queue: true, handoff: true }, 'second')
+		assert.deepEqual(second, { status: 'sent', delivery: 'queued', userBefore: 'user-p1' })
+		const live = timers.filter(timer => !timer.cancelled)
+		assert.equal(live.length, 1)
+		// Not at the 5 s guard: the typed prompt's UserPromptSubmit may just be late (async hook) while
+		// Claude already works on it; only QUEUED_PROMPT_STALL_MS after the write is it taken as dropped.
+		assert.equal(live[0]?.ms, QUEUED_PROMPT_STALL_MS + 1)
+		f.setNow(T0 + TYPING_GUARD_MS + 1_000)
+		await f.event(ev('Notification', { message: 'still here' }))
+		assert.equal(f.delivered.length, 1, 'a late, unrelated hook does not type it mid-turn')
+		// The first one's UserPromptSubmit never comes: the timer types the second.
+		f.setNow(T0 + QUEUED_PROMPT_STALL_MS + 1_000)
+		live[0]?.run()
+		assert.deepEqual(f.delivered.at(-1), { ref: REF, chunks: promptChunks('second') })
+		assert.equal(f.hub.core.session(REF).queued_prompts, 0)
+		// Stopping the hub cancels a pending timer.
+		f.hub.stop()
+		assert.ok(timers.every(timer => timer.cancelled || timer === live[0]))
+		await lifeline.close()
 	} finally {
 		f.cleanup()
 	}

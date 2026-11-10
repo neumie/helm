@@ -15,7 +15,7 @@ import type {
 	DockSourceId,
 } from '../../agent-dock/model'
 
-import { DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT } from '../../../../src/agent-dock/dock-vocabulary.js'
+import { DOCK_SOURCE_IDS, DOCK_SOURCE_TEXT, isHeldDelivery } from '../../../../src/agent-dock/dock-vocabulary.js'
 import { itemWaitingSince } from '../../agent-dock/item-order'
 import { alwaysAllowLabels, alwaysAllowRulesOnly, planApproveMode } from '../../agent-dock/review'
 
@@ -157,13 +157,19 @@ function doneText(item: DockItem, receipt: DockReceipt): string {
 	}
 }
 
-const deliveryNote = (receipt: DockReceipt): string =>
-	receipt.delivery === 'queued' ? ' (queued until the agent is free)' : ''
+/** Held for after the agent's turn (see isHeldDelivery): sent, and it reads queued until it lands. */
+const heldText = (receipt: DockReceipt, name?: string): string | null =>
+	receipt.status === 'sent' && isHeldDelivery(receipt.delivery)
+		? name
+			? `Queued for ${name}`
+			: 'Queued until the agent is free'
+		: null
 
 /**
- * The receipt line for an entry/pane, from main's snapshot only: Sending… →
- * ✓ answered (observed) / sent, unconfirmed (amber after 10 s) / refused / the
- * verbatim error. Null when Jakub has not answered this item from the dock.
+ * The receipt line for an entry/pane, from main's snapshot only: Sending… (or Queued… while the
+ * source holds it for after the turn) → ✓ answered (observed) / sent, unconfirmed (amber 10 s
+ * after it should have landed) / refused / the verbatim error. Null when Jakub has not answered
+ * this item from the dock.
  */
 export function receiptView(item: DockItem): ReceiptView | null {
 	const receipt = item.receipt
@@ -178,9 +184,9 @@ export function receiptView(item: DockItem): ReceiptView | null {
 	if (receipt.status === 'failed')
 		return { text: plainAgentLine(receipt.detail ?? 'failed', 300) || 'failed', tone: 'danger' }
 	if (item.state === 'resolved') return null
-	if (item.state === 'sending') return { text: `Sending…${deliveryNote(receipt)}`, tone: 'neutral' }
+	if (item.state === 'sending') return { text: heldText(receipt) ?? 'Sending…', tone: 'neutral' }
 	if (item.state === 'unconfirmed' || receipt.status === 'unconfirmed')
-		return { text: `sent, unconfirmed${deliveryNote(receipt)}`, tone: 'warn' }
+		return { text: 'sent, unconfirmed', tone: 'warn' }
 	return null
 }
 
@@ -1120,11 +1126,14 @@ export function agentStanding(
 	const replyLive = reply && (reply.status === 'sending' || reply.status === 'sent' || reply.status === 'unconfirmed')
 	if (answering || replyLive) {
 		const unconfirmed = answering ? answering.state === 'unconfirmed' : reply?.status === 'unconfirmed'
+		const receipt = answering ? answering.receipt : reply
 		const word = unconfirmed
 			? 'sent, unconfirmed'
-			: (answering?.receipt?.status ?? reply?.status) === 'sending'
+			: receipt?.status === 'sending'
 				? 'sending'
-				: 'sent'
+				: receipt && heldText(receipt)
+					? 'queued'
+					: 'sent'
 		return {
 			standing: 'sending',
 			word,
@@ -1352,18 +1361,19 @@ export const REPLY_RECEIPT_MS = 60_000
 
 /**
  * The receipt of Jakub's reply from the agent detail (`DockSession.reply`), like an item's: Sending…
- * → ✓ replied (observed) / sent, unconfirmed (amber after 10 s) / refused / the verbatim error. Null
+ * (Queued for <name> while the source holds it for after the agent's turn) → ✓ replied (observed) /
+ * sent, unconfirmed (amber 10 s after it should have landed) / refused / the verbatim error. Null
  * with no reply, or once a landed one is older than REPLY_RECEIPT_MS.
  */
-export function sessionReplyView(session: DockSession | undefined, now: number): ReceiptView | null {
+export function sessionReplyView(session: DockSession | undefined, now: number, name?: string): ReceiptView | null {
 	const reply = session?.reply
 	if (!reply) return null
 	switch (reply.status) {
 		case 'sending':
 		case 'sent':
-			return { text: `Sending…${deliveryNote(reply)}`, tone: 'neutral' }
+			return { text: heldText(reply, name) ?? 'Sending…', tone: 'neutral' }
 		case 'unconfirmed':
-			return { text: `sent, unconfirmed${deliveryNote(reply)}`, tone: 'warn' }
+			return { text: 'sent, unconfirmed', tone: 'warn' }
 		case 'confirmed':
 			return now - reply.at < REPLY_RECEIPT_MS ? { text: '✓ replied', tone: 'success' } : null
 		case 'refused':
@@ -1381,8 +1391,9 @@ export function sessionReplyView(session: DockSession | undefined, now: number):
 
 /**
  * Why the agent detail cannot take a reply right now, or null when it can: the agent owes Jakub
- * an item (answer it there), a reply is still in flight, it works (its next stop is the time), is
- * unreadable, or its source is down. An unconfirmed reply does not block another.
+ * an item (answer it there), a reply is still in flight, it is unreadable, or its source is down.
+ * A working agent takes one (queued for after its turn); a queued or unconfirmed reply does not
+ * block another.
  */
 export function agentReplyBlocked(
 	snapshot: AgentDockSnapshot | null,
@@ -1395,16 +1406,17 @@ export function agentReplyBlocked(
 		case 'read':
 		case 'idle':
 		case 'background':
+		// Its reply is held until the turn ends (AgentDockPromptRequest.queue).
+		case 'working':
 			return null
 		case 'needs-you':
 		case 'reply-waiting':
 			return 'Answer its open item first'
 		case 'sending':
-			// Unconfirmed never clears on its own while the agent stays put: Jakub may check the terminal
-			// and reply again (the CAS refuses if the first reply did land).
-			return session.reply?.status === 'unconfirmed' ? null : 'A reply is on its way'
-		case 'working':
-			return 'Working: reply once it stops'
+			// Unconfirmed never clears on its own while the agent stays put: Jakub may check the terminal and reply again (the CAS refuses if it landed).
+			// Queued: another queues behind it (its receipt waits for the source's queue to drain).
+			if (session.reply?.status === 'unconfirmed' || (session.reply && heldText(session.reply))) return null
+			return 'A reply is on its way'
 		default:
 			return 'State unknown: reply in the terminal'
 	}

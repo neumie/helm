@@ -280,13 +280,11 @@ function handled(thread: SignalThread, now: number): boolean {
 
 export type AgentTier = 'pr' | 'branch' | 'repo'
 
-export interface AgentMatch {
+export interface AgentMatch extends AgentDelivery {
 	session: DockSession
 	/** The dock's short name for the agent (same in the dock and here). */
 	name: string
 	tier: AgentTier | null
-	/** Only an idle (or waiting) agent takes a prompt; busy ones are listed dim with their status. */
-	sendable: boolean
 	/** `idle`, `working`, `waiting` … as the dock says it. */
 	status: string
 }
@@ -317,7 +315,7 @@ function sessionTier(thread: SignalThread, session: DockSession): AgentTier | nu
 /**
  * `p`: every agent the dock sees, best match first — `pr` (the session's PR links name this PR),
  * `branch` (it works on the PR's head branch), `repo` (only the repository matches: a guess, shown
- * with `?`, never preselected), then the rest; sendable before busy within a tier.
+ * with `?`, never preselected), then the rest; sendable (idle or working) before blocked within a tier.
  */
 export function matchAgents(thread: SignalThread, snapshot: AgentDockSnapshot | null): AgentMatch[] {
 	const sessions = snapshot?.sessions ?? []
@@ -328,7 +326,7 @@ export function matchAgents(thread: SignalThread, snapshot: AgentDockSnapshot | 
 			session,
 			name: names.get(session.key) ?? session.name,
 			tier: sessionTier(thread, session),
-			sendable: session.status === 'idle' || session.status === 'waiting',
+			...agentDelivery(session, snapshot),
 			status: session.status,
 		}))
 		.sort(
@@ -340,43 +338,93 @@ export function matchAgents(thread: SignalThread, snapshot: AgentDockSnapshot | 
 		)
 }
 
-/** Preselected agent: the first sendable PR match, else the first sendable branch match, else none (-1). */
+/**
+ * Preselected agent: a sendable PR match (an idle one before one that would queue it), else a
+ * sendable branch match the same way, else none (-1). A working best match is still preselected:
+ * the prompt waits for its turn to end.
+ */
 export function defaultAgentPick(matches: readonly AgentMatch[]): number {
-	const pr = matches.findIndex(match => match.tier === 'pr' && match.sendable)
-	if (pr >= 0 && pr < PICK_MAX) return pr
-	const branch = matches.findIndex(match => match.tier === 'branch' && match.sendable)
-	return branch >= 0 && branch < PICK_MAX ? branch : -1
+	for (const tier of ['pr', 'branch'] as const) {
+		const inTier = (match: AgentMatch, index: number): boolean =>
+			match.tier === tier && match.sendable && index < PICK_MAX
+		const now = matches.findIndex((match, index) => inTier(match, index) && !match.queued)
+		if (now >= 0) return now
+		const later = matches.findIndex(inTier)
+		if (later >= 0) return later
+	}
+	return -1
 }
 
 /**
- * How an answer reaches the asking agent: `prompt`, a reply to an idle agent that owes Jakub nothing
- * (`agent-dock:prompt`, main's `sessionStillIdle` CAS); `turn`, a reply to the dock's open turn item
+ * How a prompt reaches an agent: `prompt`, a new prompt to an agent that owes Jakub nothing
+ * (`agent-dock:prompt` with `queue`, main's `sessionTakesPrompt` CAS); `turn`, a reply to the dock's open turn item
  * for that agent (`agent-dock:act`, the turn's own `turnStillWaiting` CAS, which also closes the turn).
  * The dock opens that turn item TURN_IDLE_MS after the agent stops, which is the usual state of an
  * agent that asked and ended its turn, and then refuses a plain prompt.
  */
 export type AskDelivery = { via: 'prompt' } | { via: 'turn'; itemId: number }
 
-export interface AskTarget {
-	session: DockSession
-	/** The dock's short name for the agent (same in the dock and here). */
-	name: string
-	/** How the answer is typed in, or null: it is only saved on the thread (see `blocked`). */
+/**
+ * How a prompt from Signals (a thread handed over with `p`, an ask's answer) reaches a dock agent.
+ * Mirrors what the dock's main accepts: with an unresolved item for the session, only its open turn
+ * item takes it (as that turn's reply: the agent stopped and waits); any other item (a dialog, where
+ * typing would answer it; a turn already sending or unconfirmed) or a reply still sending → none.
+ * Without one, a new prompt (`agent-dock:prompt` with `queue`): typed in at once for an idle (or
+ * `background`) agent, held by Okena or Helm's hub until a `working` agent's turn ends (`queued`).
+ * `waiting` without an item is a dialog the dock has not listed yet; `unknown`/`unreachable`: the
+ * source cannot tell whether the agent is free, and would not type into it either.
+ */
+export interface AgentDelivery {
+	/** How it is typed in, or null (see `blocked`). */
 	delivery: AskDelivery | null
-	/** Why not: `item`, the agent has another open item in the dock (a dialog, a reply in flight); `status`, it is not idle. */
+	/** Why not: `item`, another open item in the dock (a dialog, a reply in flight); `status`, its state (see above). */
 	blocked: 'item' | 'status' | null
 	/** `delivery !== null`. */
 	sendable: boolean
+	/** A new prompt to a working agent: it waits until the agent's turn ends. */
+	queued: boolean
+}
+
+export function agentDelivery(session: DockSession, snapshot: AgentDockSnapshot | null): AgentDelivery {
+	const result = (delivery: AskDelivery | null, blocked: AgentDelivery['blocked']): AgentDelivery => ({
+		delivery,
+		blocked,
+		sendable: delivery !== null,
+		queued: delivery?.via === 'prompt' && session.status === 'working',
+	})
+	if (session.reply?.status === 'sending') return result(null, 'item')
+	const live = (snapshot?.items ?? []).filter(item => item.session === session.key && item.state !== 'resolved')
+	if (live.length > 0) {
+		const [only] = live
+		return live.length === 1 && only && only.kind === 'turn' && only.fact.kind === 'turn' && only.state === 'open'
+			? result({ via: 'turn', itemId: only.id }, null)
+			: result(null, 'item')
+	}
+	return session.status === 'idle' || session.status === 'background' || session.status === 'working'
+		? result({ via: 'prompt' }, null)
+		: result(null, 'status')
+}
+
+/** Why `p` cannot hand a thread to this agent, in words (null when it can). */
+export function agentBlockedNote(match: Pick<AgentMatch, 'blocked' | 'name' | 'status'>): string | null {
+	if (match.blocked === 'item') return `${match.name} has something open in the dock; answer it there first`
+	if (match.blocked !== 'status') return null
+	return match.status === 'waiting'
+		? `${match.name} is waiting on a dialog; answer it first`
+		: `${match.name} is ${match.status}; send it from its terminal`
+}
+
+export interface AskTarget extends AgentDelivery {
+	session: DockSession
+	/** The dock's short name for the agent (same in the dock and here). */
+	name: string
 	status: string
 }
 
 /**
  * Where an answer to an agent ask goes: the Okena dock session in the terminal the ask came from
  * (`askTerminal`, the asker's `$OKENA_TERMINAL_ID`), or null (no terminal, or the dock does not list it).
- * Delivery mirrors what the dock's main accepts: with an unresolved item for the session, only its
- * open turn item takes the answer (as that turn's reply); any other item (a dialog, a turn already
- * sending or unconfirmed) or a reply still sending → only saved. Without one, only an idle agent takes
- * it as a prompt (`waiting` without an item is a dialog the dock has not listed yet).
+ * Delivery is `agentDelivery`'s: a working agent gets it queued for after its turn.
  */
 export function askDeliveryTarget(thread: SignalThread, snapshot: AgentDockSnapshot | null): AskTarget | null {
 	const terminal = thread.source === 'agent' ? thread.askTerminal?.toLowerCase() : undefined
@@ -384,23 +432,12 @@ export function askDeliveryTarget(thread: SignalThread, snapshot: AgentDockSnaps
 	const sessions = snapshot?.sessions ?? []
 	const session = sessions.find(entry => entry.source === 'okena' && entry.terminalId.toLowerCase() === terminal)
 	if (!session) return null
-	const target = (delivery: AskDelivery | null, blocked: AskTarget['blocked']): AskTarget => ({
+	return {
 		session,
 		name: agentNames(sessions).get(session.key) ?? session.name,
-		delivery,
-		blocked,
-		sendable: delivery !== null,
+		...agentDelivery(session, snapshot),
 		status: session.status,
-	})
-	if (session.reply?.status === 'sending') return target(null, 'item')
-	const live = (snapshot?.items ?? []).filter(item => item.session === session.key && item.state !== 'resolved')
-	if (live.length > 0) {
-		const [only] = live
-		return live.length === 1 && only && only.kind === 'turn' && only.fact.kind === 'turn' && only.state === 'open'
-			? target({ via: 'turn', itemId: only.id }, null)
-			: target(null, 'item')
 	}
-	return session.status === 'idle' ? target({ via: 'prompt' }, null) : target(null, 'status')
 }
 
 /** The dock session handling a managed thread (`managedBy` = its short name, pane name or branch). */

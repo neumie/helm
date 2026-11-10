@@ -2,6 +2,7 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
+import { isHeldDelivery } from '../../../src/agent-dock/dock-vocabulary'
 import { boundText, excerptLine } from '../../../src/agent-dock/text'
 import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
 import { SLOWEST_INTERVAL_MS } from './cadence'
@@ -17,6 +18,7 @@ import {
 	type DockActOutcome,
 	type DockActionKind,
 	type DockItem,
+	type DockReceipt,
 	type DockRefusalReason,
 	type DockResolutionBy,
 	type DockSession,
@@ -67,6 +69,57 @@ interface TranscriptTail {
 	lastAssistant?: { uuid: string; text: string; at: number; excerpt: string }
 	/** A user entry was seen after lastAssistant (any origin). */
 	userAfterLastAssistant: boolean
+	/** The newest user entry read (any origin): a held reply lands once a newer one shows up. */
+	lastUserUuid?: string
+}
+
+/** A held reply's words kept for matching its transcript entry (code units, after replyMatchText). */
+export const REPLY_MATCH_MAX = 4_096
+/** A transcript entry shorter than the reply (clipped) still matches on at least this long a prefix. */
+export const REPLY_MATCH_PREFIX = 200
+
+/**
+ * Text as compared between a reply and transcript user entries: control characters (line breaks
+ * too) become spaces, whitespace runs one space, trimmed. Both sources clean the typed text
+ * (`sanitizePrompt`, Okena's own), so only what survives that is compared.
+ */
+export function replyMatchText(text: string, max = Number.POSITIVE_INFINITY): string {
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is removed
+	const plain = text
+		.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+	return plain.length > max ? plain.slice(0, max) : plain
+}
+
+const wordChar = /[\p{L}\p{N}]/u
+
+/** `key` occurs in `text` as a whole (not inside a longer word): "ok" never matches "look". */
+function includesWhole(text: string, key: string): boolean {
+	for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
+		const before = text[at - 1]
+		const after = text[at + key.length]
+		if ((before === undefined || !wordChar.test(before)) && (after === undefined || !wordChar.test(after))) return true
+	}
+	return false
+}
+
+/**
+ * Whether a transcript user entry is this reply: it holds the reply's words (an Okena MCP channel
+ * wraps them in its own markup), or it is a clipped copy of them (the transcript bounded it) that
+ * still carries a REPLY_MATCH_PREFIX-long start. Anything else is not this reply, so a receipt never
+ * reads replied on someone else's prompt; a reply typed in some changed form only goes unconfirmed.
+ */
+export function replyLanded(entryText: string, match: string): boolean {
+	if (!match) return false
+	const entry = replyMatchText(entryText)
+	if (includesWhole(entry, match)) return true
+	if (match.length < REPLY_MATCH_PREFIX) return false
+	const shown = entry.replace(/(?:…|\.\.\.)$/u, '').trimEnd()
+	const at = shown.indexOf(match.slice(0, REPLY_MATCH_PREFIX))
+	if (at < 0) return false
+	const rest = shown.slice(at)
+	return rest.length >= REPLY_MATCH_PREFIX && match.startsWith(rest)
 }
 
 export interface AgentDockSessionRecord {
@@ -91,6 +144,12 @@ export interface AgentDockSessionRecord {
 	 * cadence (agentDockActive) and the gate diagnostics (`turn.gated`) when it never opens.
 	 */
 	gateCandidate?: { uuid: string; idleSince: number; lastIdleAt: number }
+	/**
+	 * The words of the reply in `session.reply` (replyMatchText, REPLY_MATCH_MAX), so a held reply is
+	 * confirmed by its own transcript entry, never by another prompt's. Memory only: never in the
+	 * session view, the spool or an event.
+	 */
+	replyMatch?: string
 	/** Present at the seed tick and its turn not yet evaluated against persisted `seen`. */
 	seedPending: boolean
 	tail: TranscriptTail
@@ -522,12 +581,13 @@ function applyTranscript(
 	page: OkenaClaudeTranscriptPage,
 	liveTurnUuids: Set<string>,
 	now: number,
-): { repliedTurns: Set<string>; activity: boolean } {
+): { repliedTurns: Set<string>; activity: boolean; users: Array<{ uuid: string; text: string }> } {
 	const before = record.tail.lastAssistant
 	const tail: TranscriptTail = page.reset ? { userAfterLastAssistant: false } : { ...record.tail }
 	// On a continuation every live turn's uuid is already behind the cursor.
 	const passed = new Set(page.reset ? [] : liveTurnUuids)
 	const repliedTurns = new Set<string>()
+	const users: Array<{ uuid: string; text: string }> = []
 	let activity = false
 	for (const entry of page.entries) {
 		if (entry.kind === 'assistant') {
@@ -545,6 +605,8 @@ function applyTranscript(
 			if (!page.reset) activity = true
 		} else if (entry.kind === 'user') {
 			tail.userAfterLastAssistant = true
+			tail.lastUserUuid = entry.uuid
+			users.push({ uuid: entry.uuid, text: entry.text })
 			for (const uuid of passed) repliedTurns.add(uuid)
 			if (!page.reset) activity = true
 		}
@@ -552,7 +614,7 @@ function applyTranscript(
 	tail.cursor = page.cursor
 	tail.sessionId = page.session_id
 	record.tail = tail
-	return { repliedTurns, activity }
+	return { repliedTurns, activity, users }
 }
 
 interface TickContext {
@@ -664,12 +726,13 @@ function observeTerminal(
 	if (page && page.session_id === detail.session_id) {
 		const liveTurns = live().filter(item => item.fact.kind === 'turn')
 		const orphanAnchor = record.tail.lastAssistant?.uuid
-		const { repliedTurns, activity } = applyTranscript(
+		const { repliedTurns, activity, users } = applyTranscript(
 			record,
 			page,
 			new Set(liveTurns.map(item => (item.fact as DockTurnFact).assistantUuid)),
 			now,
 		)
+		confirmHeldReply(record, users, now)
 		const newest = record.tail.lastAssistant?.uuid
 		// A settled agent-detail reply (landed, refused, failed) says nothing about a newer message.
 		const settled = record.session.reply
@@ -772,17 +835,40 @@ function settleGateCandidate(
 
 /**
  * A reply sent from the agent detail (no item) lands once the transcript shows a user entry
- * after the message Jakub replied to, or the agent already said something after it.
+ * after the message Jakub replied to, or the agent already said something after it. A held one
+ * waits for its own entry instead (confirmHeldReply).
  */
 function confirmSessionReply(record: AgentDockSessionRecord, now: number): void {
 	const reply = record.session.reply
 	if (!reply || (reply.status !== 'sent' && reply.status !== 'unconfirmed')) return
+	if (isHeldDelivery(reply.delivery)) return
 	const last = record.tail.lastAssistant?.uuid
 	const landed =
 		reply.assistantUuid === undefined
 			? record.tail.userAfterLastAssistant
 			: last !== undefined && (last !== reply.assistantUuid || record.tail.userAfterLastAssistant)
 	if (landed) record.session.reply = { ...reply, status: 'confirmed', at: now }
+}
+
+/**
+ * A reply held for after the turn lands at its own user entry: one of the transcript page's user
+ * entries after `userBefore` (the newest one when it was sent) that is this reply's words. The
+ * agent keeps talking until then, other prompts (an earlier hand-off, Jakub typing in the
+ * terminal) land around it, and the source empties its queue while it is still typing it, so no
+ * newer entry or empty queue alone is evidence. Late is fine: an unconfirmed one confirms too.
+ */
+function confirmHeldReply(
+	record: AgentDockSessionRecord,
+	users: Array<{ uuid: string; text: string }>,
+	now: number,
+): void {
+	const reply = record.session.reply
+	const match = record.replyMatch
+	if (!reply || !match || !isHeldDelivery(reply.delivery)) return
+	if (reply.status !== 'sent' && reply.status !== 'unconfirmed') return
+	const baseline = reply.userBefore === undefined ? -1 : users.findIndex(user => user.uuid === reply.userBefore)
+	if (users.slice(baseline + 1).some(user => replyLanded(user.text, match)))
+		record.session.reply = { ...reply, status: 'confirmed', at: now }
 }
 
 /**
@@ -1088,14 +1174,22 @@ function reduceActResult(draft: Draft, itemId: number, outcome: DockActOutcome):
 }
 
 /** Jakub replied from the agent detail: the reply is on its way (the message he read counts as seen). */
-function reducePromptSending(draft: Draft, key: SessionKey, assistantUuid: string | undefined): void {
+function reducePromptSending(
+	draft: Draft,
+	key: SessionKey,
+	assistantUuid: string | undefined,
+	match: string | undefined,
+): void {
 	const record = draft.state.sessions[key]
 	if (!record) return
+	record.replyMatch = match === undefined ? undefined : replyMatchText(match, REPLY_MATCH_MAX)
+	const userBefore = record.tail.lastUserUuid
 	record.session.reply = {
 		action: 'prompt',
 		status: 'sending',
 		at: draft.now,
 		...(assistantUuid ? { assistantUuid } : {}),
+		...(userBefore ? { userBefore } : {}),
 	}
 	// Only the message the reducer holds as the last one: an older uuid (a stale live read) never
 	// moves `seen` back, which would reopen a turn Jakub already acked.
@@ -1114,6 +1208,8 @@ function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutco
 			at: now,
 			sentAt: now,
 			...(outcome.delivery ? { delivery: outcome.delivery } : {}),
+			// The source's fresh read beats the reducer's tail, which is not read while the agent works.
+			...(outcome.userBefore ? { userBefore: outcome.userBefore } : {}),
 		}
 	else if (outcome.status === 'unconfirmed')
 		record.session.reply = { ...reply, status: 'unconfirmed', at: now, sentAt: now, detail: outcome.detail }
@@ -1127,17 +1223,44 @@ function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutco
 		}
 }
 
+/**
+ * When a sent reply/answer goes unconfirmed: ACT_CONFIRM_MS after it was sent, or, for one the source
+ * holds for after the turn, ACT_CONFIRM_MS after the agent was seen free with nothing left queued (it
+ * would have been typed in by then) or Helm lost sight of it (unknown, source down, no longer
+ * listed: nothing would show it land). Undefined: still held.
+ */
+function unconfirmedFrom(
+	draft: Draft,
+	receipt: DockReceipt,
+	record: AgentDockSessionRecord | undefined,
+): number | undefined {
+	if (receipt.sentAt === undefined) return undefined
+	if (!isHeldDelivery(receipt.delivery)) return receipt.sentAt
+	if (!record) return receipt.sentAt
+	const status = record.session.status
+	// Source down: from when it went down (its rows keep the `since` of their last observed status).
+	const health = draft.state.sources[record.session.source]?.health
+	if (status === 'unreachable') return Math.max(receipt.sentAt, health?.state === 'down' ? health.since : draft.now)
+	if (status === 'unknown') return Math.max(receipt.sentAt, record.session.since ?? 0)
+	if ((status !== 'idle' && status !== 'background') || record.idleSince === undefined) return undefined
+	if (record.session.queuedPrompts > 0) return undefined
+	return Math.max(receipt.sentAt, record.idleSince)
+}
+
 /** Sent but not observed for ACT_CONFIRM_MS: amber "sent, unconfirmed" until observed or acked. */
 function expireUnconfirmed(draft: Draft): void {
 	for (const record of Object.values(draft.state.sessions)) {
 		const reply = record.session.reply
-		if (reply?.status !== 'sent' || reply.sentAt === undefined || draft.now - reply.sentAt < ACT_CONFIRM_MS) continue
+		if (reply?.status !== 'sent') continue
+		const from = unconfirmedFrom(draft, reply, record)
+		if (from === undefined || draft.now - from < ACT_CONFIRM_MS) continue
 		record.session.reply = { ...reply, status: 'unconfirmed', at: draft.now }
 	}
 	for (const item of draft.state.items) {
 		const receipt = item.receipt
-		if (item.state !== 'sending' || receipt?.status !== 'sent' || receipt.sentAt === undefined) continue
-		if (draft.now - receipt.sentAt < ACT_CONFIRM_MS) continue
+		if (item.state !== 'sending' || receipt?.status !== 'sent') continue
+		const from = unconfirmedFrom(draft, receipt, draft.state.sessions[item.session])
+		if (from === undefined || draft.now - from < ACT_CONFIRM_MS) continue
 		item.state = 'unconfirmed'
 		item.receipt = { ...receipt, status: 'unconfirmed', at: draft.now }
 		draft.outcome(item, 'unconfirmed')
@@ -1151,7 +1274,7 @@ export function reduce(prev: AgentDockState, observation: AgentDockObservation, 
 		reduceActSending(draft, observation.itemId, observation.action, observation.always)
 	else if (observation.type === 'act.result') reduceActResult(draft, observation.itemId, observation.outcome)
 	else if (observation.type === 'prompt.sending')
-		reducePromptSending(draft, observation.session, observation.assistantUuid)
+		reducePromptSending(draft, observation.session, observation.assistantUuid, observation.text)
 	else if (observation.type === 'prompt.result') reducePromptResult(draft, observation.session, observation.outcome)
 	else {
 		reducePoll(draft, observation)

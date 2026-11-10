@@ -108,6 +108,8 @@ class FakeOkenaServer {
 			const base = `/v1/claude/terminals/${encodeURIComponent(TID)}`
 			if (url === `${base}/prompt`) {
 				if (this.promptReply) return plain(this.promptReply.status, this.promptReply.text)
+				// Okena holds a prompt for a busy pane (hooks live) and types it once the turn ends.
+				if (this.detail.busy === true) return json({ delivery: 'queued' })
 				this.entries.push({ kind: 'user', uuid: `u-${this.entries.length}`, text: '…', origin: 'terminal' })
 				this.detail = { ...this.detail, busy: true }
 				this.version++
@@ -630,7 +632,11 @@ test('agent detail: the full last message read live; a reply only once its turn 
 			assistantUuid: 'a-1',
 			text: 'Díky, pusť to.\n',
 		})
-		assert.deepEqual(sent, { ok: true, outcome: { status: 'sent', delivery: 'pty' }, recorded: true })
+		assert.deepEqual(sent, {
+			ok: true,
+			outcome: { status: 'sent', delivery: 'pty', userBefore: 'u-a' },
+			recorded: true,
+		})
 		assert.deepEqual(h.okena.posts.at(-1)?.body, { text: 'Díky, pusť to.' })
 		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.status, 'sent')
 		// Okena typed it (the fake adds the user entry and goes busy): the expedited read confirms it.
@@ -638,6 +644,118 @@ test('agent detail: the full last message read live; a reply only once its turn 
 		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.status, 'confirmed')
 		assert.ok(!h.disk().includes('pusť'))
 		assert.ok(!h.disk().includes('Merged'))
+	} finally {
+		await h.done()
+	}
+})
+
+test('queue prompt (Signals, agent detail): a working agent gets it queued, no transcript CAS; a dialog or unknown state refuses', async () => {
+	const h = await harness(okena => {
+		okena.detail = { ...structuredClone(SHOW_IDLE), busy: true }
+		okena.entries = [
+			{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' },
+			{ kind: 'assistant', uuid: 'a-1', text: 'Working on it.' },
+		]
+	})
+	try {
+		await h.tick()
+		const key = h.watcher.snapshot().sessions[0]?.key as string
+		assert.equal(h.watcher.snapshot().sessions[0]?.status, 'working')
+		assert.equal(h.watcher.snapshot().items.length, 0)
+		// A plain reply to a working agent is still refused (it would answer what Jakub has not seen).
+		const reply = await h.watcher.prompt({ session: key, sessionId: SID, assistantUuid: 'a-1', text: 'ok' })
+		assert.equal(reply.outcome.status === 'refused' && reply.outcome.reason, 'busy')
+		assert.deepEqual(h.okena.posts, [])
+
+		// A new prompt: the agent said something since (a-2), which does not matter; Okena queues it.
+		h.okena.entries.push({ kind: 'assistant', uuid: 'a-2', text: 'Still going.' })
+		const transcriptReads = h.okena.gets.filter(url => url.includes('/transcript')).length
+		const queued = await h.watcher.prompt({
+			session: key,
+			sessionId: SID,
+			assistantUuid: 'a-1',
+			queue: true,
+			text: 'Look at crane-rental#970.\n',
+		})
+		// The baseline its receipt waits past is read fresh now (u-a), not the dock's last tick.
+		assert.deepEqual(queued, {
+			ok: true,
+			outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-a' },
+			recorded: true,
+		})
+		assert.deepEqual(
+			h.okena.posts.map(post => [post.url, post.body]),
+			[[`/v1/claude/terminals/${TID}/prompt`, { text: 'Look at crane-rental#970.' }]],
+		)
+		// One fresh transcript read for that baseline; its last message is not checked (a-2 is newer).
+		assert.equal(h.okena.gets.filter(url => url.includes('/transcript')).length, transcriptReads + 1)
+		assert.equal(h.watcher.snapshot().sessions[0]?.reply?.delivery, 'queued')
+
+		// Another Claude session in the pane since Jakub picked it: refused, nothing sent.
+		const other = await h.watcher.prompt({ session: key, sessionId: 'another', queue: true, text: 'x' })
+		assert.equal(other.outcome.status === 'refused' && other.outcome.reason, 'gone')
+		// A dialog open (typing would answer it): refused before any request.
+		h.okena.detail = { ...h.okena.detail, dialogs: [structuredClone(ASK_DIALOG)] }
+		const dialog = await h.watcher.prompt({ session: key, sessionId: SID, queue: true, text: 'x' })
+		assert.equal(dialog.outcome.status === 'refused' && dialog.outcome.reason, 'busy')
+		// Busy unknown (Okena lost the pane's state): untracked, never typed into.
+		const { busy: _busy, ...unknown } = h.okena.detail
+		h.okena.detail = { ...unknown, dialogs: [] }
+		const untracked = await h.watcher.prompt({ session: key, sessionId: SID, queue: true, text: 'x' })
+		assert.equal(untracked.outcome.status === 'refused' && untracked.outcome.reason, 'untracked')
+		assert.equal(h.okena.posts.length, 1)
+	} finally {
+		await h.done()
+	}
+})
+
+test('queue reply (agent detail) to an agent free now keeps the full CAS: the message Jakub read must still be the last', async () => {
+	const h = await harness(okena => {
+		okena.detail = structuredClone(SHOW_IDLE)
+		okena.entries = [
+			{ kind: 'user', uuid: 'u-a', text: 'start', origin: 'terminal' },
+			{ kind: 'assistant', uuid: 'a-1', text: 'Done.' },
+		]
+	})
+	try {
+		await h.tick()
+		const key = h.watcher.snapshot().sessions[0]?.key as string
+		// It said something newer than what Jakub read: refused as changed, nothing sent.
+		h.okena.entries.push({ kind: 'assistant', uuid: 'a-2', text: 'One more thing.' })
+		const reads = h.okena.gets.filter(url => url.includes('/transcript')).length
+		const stale = await h.watcher.prompt({
+			session: key,
+			sessionId: SID,
+			assistantUuid: 'a-1',
+			queue: true,
+			text: 'ok',
+		})
+		assert.equal(stale.outcome.status === 'refused' && stale.outcome.reason, 'changed')
+		assert.ok(h.okena.gets.filter(url => url.includes('/transcript')).length > reads)
+		assert.deepEqual(h.okena.posts, [])
+		// The message he read is the last: typed in.
+		const sent = await h.watcher.prompt({ session: key, sessionId: SID, assistantUuid: 'a-2', queue: true, text: 'ok' })
+		assert.equal(sent.ok, true)
+		assert.deepEqual(
+			h.okena.posts.map(post => [post.url, post.body]),
+			[[`/v1/claude/terminals/${TID}/prompt`, { text: 'ok' }]],
+		)
+		// A Signals hand-off is a new prompt, not an answer to a message: newer messages never refuse it.
+		h.okena.detail = structuredClone(SHOW_IDLE)
+		h.okena.entries.push({ kind: 'assistant', uuid: 'a-3', text: 'Anything else?' })
+		const handoff = await h.watcher.prompt({
+			session: key,
+			sessionId: SID,
+			assistantUuid: 'a-1',
+			queue: true,
+			handoff: true,
+			text: 'Look at crane-rental#970.',
+		})
+		assert.equal(handoff.outcome.status, 'sent')
+		assert.deepEqual(h.okena.posts.at(-1)?.body, { text: 'Look at crane-rental#970.' })
+		// Another session in the pane still refuses it.
+		const gone = await h.watcher.prompt({ session: key, sessionId: 'another', queue: true, handoff: true, text: 'x' })
+		assert.equal(gone.outcome.status === 'refused' && gone.outcome.reason, 'gone')
 	} finally {
 		await h.done()
 	}

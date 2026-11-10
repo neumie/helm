@@ -22,8 +22,15 @@ type AgentDockObservation = import('../app/src/agent-dock/model.ts').AgentDockOb
 type DockItem = import('../app/src/agent-dock/model.ts').DockItem
 type DockAction = import('../app/src/agent-dock/model.ts').DockAction
 
-const { askStillOpen, dockActBody, dockPostFailure, promptText, sessionStillIdle, turnStillWaiting } =
-	actModule as ActModule
+const {
+	askStillOpen,
+	dockActBody,
+	dockPostFailure,
+	promptText,
+	sessionStillIdle,
+	sessionTakesPrompt,
+	turnStillWaiting,
+} = actModule as ActModule
 const { OkenaClaudeSource } = sourceModule as typeof import('../app/src/agent-dock/okena-claude-source.ts')
 const {
 	ACT_CONFIRM_MS,
@@ -704,6 +711,17 @@ test('agent detail CAS: idle, same session, the message Jakub read is still the 
 	assert.equal(promptText('Ano.\n\n'), 'Ano.')
 	assert.equal(promptText('  \n\t'), null)
 	assert.equal(promptText('  indented'), '  indented')
+})
+
+test('new-prompt CAS (Signals queue): idle or working in the same session; a dialog, busy unknown or another session refuses', () => {
+	const reason = (check: unknown) => (check as { reason?: string }).reason
+	assert.deepEqual(sessionTakesPrompt({ sessionId: SID }, session(idle({ busy: false }))), { ok: true })
+	assert.deepEqual(sessionTakesPrompt({ sessionId: SID }, session(idle({ busy: true }))), { ok: true })
+	assert.deepEqual(sessionTakesPrompt({}, session(idle({ busy: true }))), { ok: true })
+	assert.equal(reason(sessionTakesPrompt({ sessionId: SID }, session(idle({ busy: true, dialogs: [DIALOG] })))), 'busy')
+	assert.equal(reason(sessionTakesPrompt({ sessionId: 'other' }, session(idle({ busy: true })))), 'gone')
+	const { busy: _busy, ...unknown } = idle()
+	assert.equal(reason(sessionTakesPrompt({ sessionId: SID }, session(unknown))), 'untracked')
 })
 
 /**
