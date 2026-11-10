@@ -69,7 +69,12 @@ async function withRoutes(
 test('slack-reply: Helm posts and the thread closes "answered in Slack"', async () => {
 	let posted: { text: string } | null = null
 	await withRoutes(
-		{ slackReply: async (_thread, text) => ((posted = { text }), { ok: true }) },
+		{
+			slackReply: async (_thread, text) => {
+				posted = { text }
+				return { ok: true }
+			},
+		},
 		async ({ db, post }) => {
 			db.signals.applyPoll(
 				{ source: 'slack', observations: [slackObs('D1', 'ubob')], complete: true, goneReason: 'gone' },
@@ -104,7 +109,12 @@ test('slack-reply: a Slack post failure is a 502 and the thread stays open', asy
 test('slack-mute: closes the sender threads and excludes the user', async () => {
 	let excluded: string | null = null
 	await withRoutes(
-		{ muteSlackUser: userId => ((excluded = userId), { userId, added: true, unincluded: false }) },
+		{
+			muteSlackUser: userId => {
+				excluded = userId
+				return { userId, added: true, unincluded: false }
+			},
+		},
 		async ({ db, post }) => {
 			db.signals.applyPoll(
 				{

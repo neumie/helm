@@ -44,7 +44,10 @@ test('parseSlackThreadTarget: DM and thread keys', () => {
 test('SlackActions.reply posts to the right channel/thread and escapes', async () => {
 	const calls: { method: string; params: Record<string, unknown> }[] = []
 	const client = {
-		call: async (method: string, params: Record<string, unknown>) => (calls.push({ method, params }), { ok: true }),
+		call: async (method: string, params: Record<string, unknown>) => {
+			calls.push({ method, params })
+			return { ok: true }
+		},
 	} as unknown as SlackClient
 	const actions = new SlackActions({ store: fakeStore(), clientFor: () => client })
 	const res = await actions.reply({ threadKey: 'slack:T1:C1:100.0' }, 'hi <there>')
