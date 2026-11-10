@@ -10,14 +10,31 @@ import {
 	reviewHostStatus,
 } from '../document-review/client.js'
 import {
+	REVIEW_SESSION_HINT,
 	feedbackSchema,
 	openedSchema,
 	receiptSchema,
 	reviewReadSchema,
 	sessionSchema,
 } from '../document-review/protocol.js'
-import type { ReviewCommand } from '../document-review/protocol.js'
+import type { ReviewCommand, ReviewHello } from '../document-review/protocol.js'
 import type { ReviewFeedback, ReviewProvider } from '../document-review/types.js'
+
+/**
+ * The connect fields for the session hint (S12): sent only when the host's hello lists `session-hint`, the caller is
+ * Claude Code or Codex, and that provider's own session variable holds a plausible id. Otherwise nothing, so an
+ * old host or an unknown caller keeps the elapsed-only line.
+ */
+export function sessionHintFields(
+	provider: ReviewProvider,
+	hello: ReviewHello,
+	env: NodeJS.ProcessEnv,
+): { features: ['session-hint']; session: string } | Record<string, never> {
+	if (!hello.features.includes('session-hint')) return {}
+	const session =
+		provider === 'claude' ? env.CLAUDE_CODE_SESSION_ID : provider === 'codex' ? env.CODEX_THREAD_ID : undefined
+	return session && REVIEW_SESSION_HINT.test(session) ? { features: ['session-hint'], session } : {}
+}
 
 export const REVIEW_HELP = `Usage: helm review <command> [options]
 
@@ -177,13 +194,14 @@ export async function runReviewCli(
 		// helm edit / helm open --listen learn the host's protocol first (effect-free). A version 1 host keeps the
 		// unchanged v1 connect; connect features (S12's session hint) are only ever sent after a protocol 2 answer.
 		// The legacy helm review surface stays byte-identical and never probes.
-		if (workflow.windowBound) await helloReview()
+		const hello = workflow.windowBound ? await helloReview() : null
 		const connected = await connectReview({
 			action: 'connect',
 			provider,
 			workspace,
 			label: values.get('--label') ?? `${provider} · tool connection`,
 			transport: 'tool-return',
+			...(hello ? sessionHintFields(provider, hello, process.env) : {}),
 		})
 		connectionFile = connected.connection
 		if (action === 'connect') {

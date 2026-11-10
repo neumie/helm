@@ -62,6 +62,21 @@ function parseEnvelope(bytes: Buffer) {
 			`Unknown review command "${frameName(action)}". Nothing was done; update the helm CLI and the Helm desktop to the same version.`,
 			'malformed command (command.action unknown)',
 		)
+	if (action === 'connect') {
+		const { features, session } = command as { features?: unknown; session?: unknown }
+		if (Array.isArray(features))
+			for (const feature of features)
+				if (typeof feature === 'string' && !(REVIEW_FEATURES as readonly string[]).includes(feature))
+					throw refuse(
+						`Unknown connect feature "${frameName(feature)}". Nothing was done; update the helm CLI and the Helm desktop to the same version.`,
+						'malformed command (connect feature unknown)',
+					)
+		if (session !== undefined && !(Array.isArray(features) && features.includes('session-hint')))
+			throw refuse(
+				'A session hint needs the session-hint connect feature. Nothing was done.',
+				'malformed command (session without session-hint)',
+			)
+	}
 	const parsed = envelopeSchema.safeParse(raw)
 	if (parsed.success) return parsed.data
 	for (const issue of parsed.error.issues)

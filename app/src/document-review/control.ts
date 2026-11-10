@@ -63,7 +63,14 @@ export function createReviewControl(
 			const workspace = await realpath(result.stdout.trim())
 			if (!stillCurrent())
 				throw refuse('The active Helm profile changed while connecting. Nothing was opened; connect again.')
-			const connection = deps.windows.connectCaller(command.provider, workspace, command.label, command.transport)
+			// The session hint (S12) is kept in host memory for display-only progress; only Claude Code and Codex have one.
+			const hint =
+				command.session &&
+				command.features?.includes('session-hint') &&
+				(command.provider === 'claude' || command.provider === 'codex')
+					? { provider: command.provider, session: command.session }
+					: undefined
+			const connection = deps.windows.connectCaller(command.provider, workspace, command.label, command.transport, hint)
 			return { id: connection.id, owner: connection.owner, workspace, profileId, profileToken }
 		},
 		command: async (binding, command, signal) => {

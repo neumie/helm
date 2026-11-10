@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { lstat, open, opendir, readFile, realpath } from 'node:fs/promises'
+import { open, readFile, realpath } from 'node:fs/promises'
 import { request as httpsRequest } from 'node:https'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { findCodexRollouts } from '../provider-files/codex-rollouts.js'
 import { parseClaudeWindows, parseCodexWindows, readCodexPlan } from './provider-usage.js'
 import { USAGE_REQUEST_TIMEOUT_MS, type UsageProvider } from './usage-protocol.js'
 
@@ -352,46 +353,13 @@ async function readCodexSessionTail(path: string, now: number, signal?: AbortSig
 }
 
 /** Charge all entries, not only matches. Incomplete discovery must not claim a newest snapshot. */
-async function newestCodexSessions(root: string, signal?: AbortSignal): Promise<string[] | null> {
-	let visited = 0
-	const walk = async (directory: string, depth: number): Promise<string[] | null> => {
-		signal?.throwIfAborted()
-		if (depth > CODEX_SESSION_DEPTH || (await realpath(directory).catch(() => null)) !== directory) return null
-		signal?.throwIfAborted()
-		const before = await lstat(directory).catch(() => null)
-		if (!before?.isDirectory() || before.isSymbolicLink()) return null
-		signal?.throwIfAborted()
-		const dir = await opendir(directory, { bufferSize: 1 }).catch(() => null)
-		if (!dir) return null
-		const directories: string[] = []
-		const files: string[] = []
-		try {
-			signal?.throwIfAborted()
-			const after = await lstat(directory)
-			if (before.dev !== after.dev || before.ino !== after.ino || after.isSymbolicLink()) return null
-			for (;;) {
-				signal?.throwIfAborted()
-				if (visited >= CODEX_SESSION_ENTRIES) return null
-				const entry = await dir.read()
-				if (!entry) break
-				visited += 1
-				if (entry.isDirectory()) directories.push(entry.name)
-				else if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(join(directory, entry.name))
-			}
-		} finally {
-			await dir.close()
-		}
-		files.sort().reverse()
-		const found = files.slice(0, CODEX_SESSION_FILES)
-		for (const name of directories.sort().reverse()) {
-			if (found.length >= CODEX_SESSION_FILES) break
-			const children = await walk(join(directory, name), depth + 1)
-			if (children === null) return null
-			found.push(...children.slice(0, CODEX_SESSION_FILES - found.length))
-		}
-		return found
-	}
-	return walk(root, 0).catch(() => null)
+function newestCodexSessions(root: string, signal?: AbortSignal): Promise<string[] | null> {
+	return findCodexRollouts(root, {
+		limit: CODEX_SESSION_FILES,
+		entries: CODEX_SESSION_ENTRIES,
+		depth: CODEX_SESSION_DEPTH,
+		signal,
+	})
 }
 
 export async function readCodexLocalUsage(env: UsageEnvironment): Promise<CodexLocal | null> {

@@ -9,8 +9,15 @@ export const REVIEW_VERSION = 1
  * every v1 result keep `version: 1`.
  */
 export const REVIEW_PROTOCOL = 2
-/** Optional behaviours a caller may ask for on connect after a successful `hello`; none yet (S12 adds session-hint). */
-export const REVIEW_FEATURES: readonly string[] = []
+/**
+ * Optional behaviours a caller may ask for on connect, sent only after a successful `hello` lists them.
+ * `session-hint` (S12): `session` carries the caller's own provider session id (Claude Code `CLAUDE_CODE_SESSION_ID`,
+ * Codex `CODEX_THREAD_ID`). Display-only progress may read that session's file; nothing else trusts it.
+ */
+export const REVIEW_FEATURES = ['session-hint'] as const
+export type ReviewFeature = (typeof REVIEW_FEATURES)[number]
+/** A provider session id as a hint: it names a file, so it never holds a path separator or dot. */
+export const REVIEW_SESSION_HINT = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/
 /** Plain `helm open` files per `view` command, and per second for the whole host. */
 export const REVIEW_VIEW_FILES = 32
 export const REVIEW_VIEW_RATE = 8
@@ -49,6 +56,9 @@ export const commandSchema = z.discriminatedUnion('action', [
 			provider: z.enum(['claude', 'codex', 'pi', 'cli']),
 			label,
 			transport: z.enum(['tool-return', 'in-process']),
+			// Only after a successful hello listed them; v1 hosts reject these fields.
+			features: z.array(z.enum(REVIEW_FEATURES)).max(8).optional(),
+			session: z.string().regex(REVIEW_SESSION_HINT).optional(),
 		})
 		.strict(),
 	z.object({ action: z.literal('open'), file: path }).strict(),

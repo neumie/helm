@@ -12,14 +12,36 @@ interface Pending {
 	confirmed: boolean
 	/** Host clock at delivery confirmation; the completion deadline never moves past it plus the cap. */
 	confirmedAt: number
+	/** Host clock the completion deadline currently ends at (0 before confirmation). */
+	until: number
 	sequence: number
 	lastReport: string | null
 	archive?: { id: string; settle(value: ArchiveSettlement): void }
 	timer: ReturnType<typeof setTimeout>
 }
+/**
+ * The provider's own session id a caller offered at connect (`session-hint`, S12). Host memory only, never on the
+ * snapshot or the wire; display-only progress may read that session's file, nothing else uses it.
+ */
+export interface SessionHint {
+	provider: 'claude' | 'codex'
+	session: string
+}
+/** A confirmed, still pending request whose caller hinted its provider session (activity-watcher.ts reads it). */
+export interface ActivityTarget {
+	id: string
+	owner: string
+	requestId: string
+	documentId: string
+	workspace: string
+	hint: SessionHint
+	/** Host clock at the ack. */
+	confirmedAt: number
+}
 export interface ReviewOwner {
 	snapshot: ReviewSession
 	workspace: string
+	hint?: SessionHint
 	admitting: boolean
 	waiter: Waiter | null
 	pending: Pending | null
@@ -54,6 +76,7 @@ export class ReviewSessions {
 		workspace: string,
 		name: string,
 		transport: 'tool-return' | 'in-process',
+		hint?: SessionHint,
 	): ReviewSession {
 		if (this.owners.size >= 32) {
 			const retired = [...this.owners.values()].find(value => value.retired && !value.pending && !value.admitting)
@@ -82,7 +105,15 @@ export class ReviewSessions {
 			error: null,
 			historyTruncated: false,
 		}
-		this.owners.set(snapshot.id, { snapshot, workspace, admitting: false, waiter: null, pending: null, retired: false })
+		this.owners.set(snapshot.id, {
+			snapshot,
+			workspace,
+			...(hint && hint.provider === provider ? { hint: { ...hint } } : {}),
+			admitting: false,
+			waiter: null,
+			pending: null,
+			retired: false,
+		})
 		this.changed()
 		return structuredClone(snapshot)
 	}
@@ -173,6 +204,7 @@ export class ReviewSessions {
 			claimed: false,
 			confirmed: false,
 			confirmedAt: 0,
+			until: 0,
 			sequence: -1,
 			lastReport: null,
 			archive,
@@ -324,6 +356,44 @@ export class ReviewSessions {
 		this.bound(owner)
 		this.changed()
 	}
+	/** Confirmed pending requests of hinted callers; display-only progress reads only these. */
+	activityTargets(): ActivityTarget[] {
+		const targets: ActivityTarget[] = []
+		for (const owner of this.owners.values()) {
+			const pending = owner.pending
+			if (owner.retired || !owner.hint || !pending?.confirmed) continue
+			targets.push({
+				id: owner.snapshot.id,
+				owner: owner.snapshot.owner,
+				requestId: pending.feedback.request.id,
+				documentId: pending.feedback.request.documentId,
+				workspace: owner.workspace,
+				hint: { ...owner.hint },
+				confirmedAt: pending.confirmedAt,
+			})
+		}
+		return targets
+	}
+	/** Whether this exact owner still exists and is not retired (frozen activity is dropped otherwise). */
+	live(id: string, ownerId: string): boolean {
+		const owner = this.owners.get(id)
+		return Boolean(owner && owner.snapshot.owner === ownerId && !owner.retired)
+	}
+	/**
+	 * Freshly observed bound activity (S12, display-only evidence) renews the completion deadline of this exact
+	 * owner and still pending, confirmed request: min(observedAt + deadline, delivery + cap). It never confirms,
+	 * settles, revives or replays anything; a request that is gone stays gone.
+	 */
+	renew(id: string, ownerId: string, requestId: string, observedAt = Date.now()): boolean {
+		const owner = this.owners.get(id)
+		const pending = owner?.pending
+		if (!owner || owner.snapshot.owner !== ownerId || owner.retired || !pending?.confirmed) return false
+		if (pending.feedback.request.id !== requestId) return false
+		// Never shortens a deadline a newer report or observation already set.
+		if (this.completionUntil(pending, observedAt) <= pending.until) return false
+		this.armCompletion(owner, pending, observedAt)
+		return true
+	}
 	receipt(id: string, sessionId?: string): ReviewReceipt | null {
 		const entry = this.receipts.get(id)
 		return entry && (!sessionId || entry.owner.snapshot.id === sessionId) ? { ...entry.receipt } : null
@@ -381,11 +451,14 @@ export class ReviewSessions {
 		owner.snapshot.state = 'error'
 		this.changed()
 	}
-	/** (Re)arm the completion deadline: min(now + deadline, delivery + cap). Never revives a settled request. */
-	private armCompletion(owner: ReviewOwner, pending: Pending): void {
+	/** (Re)arm the completion deadline: min(from + deadline, delivery + cap). Never revives a settled request. */
+	private armCompletion(owner: ReviewOwner, pending: Pending, from = Date.now()): void {
 		if (owner.pending !== pending || !pending.confirmed) return
 		clearTimeout(pending.timer)
-		const delay = Math.max(0, Math.min(this.responseDeadlineMs, pending.confirmedAt + this.responseCapMs - Date.now()))
+		const now = Date.now()
+		const until = this.completionUntil(pending, from)
+		pending.until = until
+		const delay = Math.max(0, until - now)
 		pending.timer = setTimeout(
 			() =>
 				this.uncertain(
@@ -395,6 +468,9 @@ export class ReviewSessions {
 			delay,
 		)
 		pending.timer.unref()
+	}
+	private completionUntil(pending: Pending, from: number): number {
+		return Math.min(Math.min(from, Date.now()) + this.responseDeadlineMs, pending.confirmedAt + this.responseCapMs)
 	}
 	private bound(owner: ReviewOwner): void {
 		// Include source associations and JSON escaping in the existing payload budget.
