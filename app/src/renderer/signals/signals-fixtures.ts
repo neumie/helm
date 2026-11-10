@@ -1011,6 +1011,19 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			if (!url) return { error: 'That link does not exist.', status: 404 }
 			return url === shown ? { data: true } : { error: 'The links changed; look at the ask again.', status: 409 }
 		},
+		async slackReply(id, body) {
+			calls.replies.push({ id, text: body.text })
+			const target = threads.find(entry => entry.id === id)
+			if (target && target.source !== 'slack')
+				return { error: 'Only Slack threads can be replied to here', status: 400 }
+			return change(id, (entry, at) => ({ ...entry, state: 'done', closedReason: 'answered in Slack', updatedAt: at }))
+		},
+		async slackMute(id) {
+			return { data: { userId: 'u', added: true, unincluded: false, threadIds: [id] } }
+		},
+		async slackInclude(_id) {
+			return { data: { userId: 'u', added: true, unmuted: true } }
+		},
 	}
 	let dockSnapshot = options.dock === undefined ? signalsDockFixture(start) : options.dock
 	const dockListeners = new Set<() => void>()

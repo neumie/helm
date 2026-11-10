@@ -751,10 +751,10 @@ export interface ProfilesApi {
 
 // ---------- Signals (copy of src/signals/contract.ts; type-only, update in the same slice) ----------
 
-export type SignalSource = 'github' | 'mail' | 'agent'
+export type SignalSource = 'github' | 'mail' | 'agent' | 'slack'
 /** Sources a poller reads and reports health for (agent asks are pushed, never polled). */
 export type SignalPollSource = 'github' | 'mail'
-export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry' | 'ask'
+export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry' | 'ask' | 'dm' | 'thread'
 export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
 export type SignalOwner = 'jakub' | 'managed'
 export type SignalRouteHow = 'sent' | 'started' | 'replied'
@@ -820,12 +820,13 @@ export interface SignalsSnapshot {
 	filteredCount?: number
 }
 
-export type SignalFilterReason = 'newsletter' | 'campaign' | 'junk' | 'auto-reply' | 'excluded'
+export type SignalFilterReason = 'newsletter' | 'campaign' | 'junk' | 'auto-reply' | 'excluded' | 'bot'
+export type SignalFilterSource = 'mail' | 'slack'
 
 /** One filtered mail (heads only), `GET /api/signals/filtered`. */
 export interface SignalFilteredEntry {
 	id: number
-	source: 'mail'
+	source: SignalFilterSource
 	senderName: string
 	senderAddress: string
 	/** The address the include list matches (Hide My Email relay decoded). */
@@ -864,6 +865,21 @@ export interface SignalMuteResult {
 	unincluded: boolean
 	/** Jakub's open mail threads from it, closed now. */
 	threadIds: number[]
+}
+
+/** `POST /api/signals/:id/slack-mute` / `/filtered/:id/slack-include` response. */
+export interface SignalSlackMuteResult {
+	userId: string
+	added: boolean
+	unincluded: boolean
+	threadIds: number[]
+}
+
+/** `POST /api/signals/filtered/:id/slack-include` response. */
+export interface SignalSlackIncludeResult {
+	userId: string
+	added: boolean
+	unmuted?: boolean
 }
 
 /** `POST /api/signals/:id` body (any subset). */

@@ -18,7 +18,7 @@ import {
 import { createRoot } from 'react-dom/client'
 import type { AgentDockSnapshot } from '../../agent-dock/model'
 import type { SignalOkenaProject } from '../../shared'
-import type { SignalFilteredPage, SignalThread } from '../../shared-helm'
+import type { SignalFilteredPage, SignalIncludeResult, SignalMuteResult, SignalThread } from '../../shared-helm'
 import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
@@ -82,7 +82,7 @@ export interface SignalsColumnProps {
  * `filtered` (f: the filtered mail list), `done` (D: the threads done today).
  */
 export type SignalsFlow =
-	| { type: 'send' | 'new-agent' | 'reply'; id: number }
+	| { type: 'send' | 'new-agent' | 'reply' | 'slack-reply'; id: number }
 	/** `back: 'done'`: opened from the done list, so Esc goes back there. */
 	| { type: 'links'; id: number; back?: 'done' }
 	| { type: 'filtered' | 'done' }
@@ -480,7 +480,10 @@ export function SignalsColumn({
 		if (!thread || !threadActions(thread, now).some(action => action.key === key)) return
 		if (key === 'p' || key === 'n' || key === 'r') {
 			setNote(null)
-			setFlow({ type: key === 'p' ? 'send' : key === 'n' ? 'new-agent' : 'reply', id: thread.id })
+			// `r` on a Slack row opens the Slack reply flow (posts to Slack); on an agent ask, the ask reply.
+			const type =
+				key === 'p' ? 'send' : key === 'n' ? 'new-agent' : thread.source === 'slack' ? 'slack-reply' : 'reply'
+			setFlow({ type, id: thread.id })
 			return
 		}
 		if (key === 'o' && thread.source === 'agent') {
@@ -519,15 +522,20 @@ export function SignalsColumn({
 		}
 		if (key === 'x') {
 			// Mute the sender: every open thread of its leaves at once, the selection skips them all.
+			const slack = thread.source === 'slack'
 			void run(async () => {
-				const result = await service.mute(thread.id)
+				const result = slack ? await service.slackMute(thread.id) : await service.mute(thread.id)
 				if (!alive.current) return
 				if (result.error !== undefined) {
 					setNote(`Could not mute ${thread.ref}: ${result.error}`)
 					return
 				}
 				select(following(allSections, thread.id, new Set([thread.id, ...result.data.threadIds])))
-				setNote(muteNote(thread, result.data))
+				setNote(
+					slack
+						? `Muted ${thread.ref}${result.data.threadIds.length > 0 ? ` · ${result.data.threadIds.length} thread${result.data.threadIds.length === 1 ? '' : 's'}` : ''}`
+						: muteNote(thread, result.data as SignalMuteResult),
+				)
 			})
 			return
 		}
@@ -685,6 +693,8 @@ export function SignalsColumn({
 						onRoute={route}
 						onClose={closeFlow}
 					/>
+				) : flow.type === 'slack-reply' ? (
+					<SlackReplyFlow thread={flowThread} service={service} mod={mod} onClose={closeFlow} onThread={applyThread} />
 				) : flow.type === 'links' ? (
 					<LinksFlow thread={flowThread} onOpen={index => openAskLink(flowThread, index)} onClose={closeFlow} />
 				) : (
@@ -828,14 +838,19 @@ function FilteredMail({
 
 	const include = (): void => {
 		if (!entry) return
+		const slack = entry.source === 'slack'
 		void run(async () => {
-			const result = await service.include(entry.id)
+			const result = slack ? await service.slackInclude(entry.id) : await service.include(entry.id)
 			if (!alive.current) return
 			if (result.error !== undefined) {
 				setNote(`Could not ${entry.unmute ? 'unmute' : 'include'} ${filteredRowView(entry, now).ref}: ${result.error}`)
 				return
 			}
-			setNote(includeNote(result.data))
+			setNote(
+				slack
+					? `${entry.senderName || entry.senderIdentity} is ${result.data.unmuted ? 'unmuted' : 'always shown'} from the next poll`
+					: includeNote(result.data as SignalIncludeResult),
+			)
 			setReload(value => value + 1)
 		})
 	}
@@ -1590,6 +1605,98 @@ function ReplyFlow({
 						sm
 						className="signals-key"
 						busy={routing !== null}
+						ariaKeyShortcuts={mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter'}
+						onClick={() => void send()}
+					>
+						Send
+					</Btn>
+				</span>
+			</footer>
+		</div>
+	)
+}
+
+/**
+ * `r` on a Slack row: Jakub types a reply that is posted to that DM/thread and closes the thread.
+ * Variant A (heads only): shows the thread's ref, the latest line, and an answer field. The thread
+ * text is third-party data, shown as plain text; the answer is Jakub's own words.
+ */
+function SlackReplyFlow({
+	thread,
+	service,
+	mod,
+	onClose,
+	onThread,
+}: {
+	thread: SignalThread
+	service: SignalsService
+	mod: 'cmd' | 'ctrl'
+	onClose(message?: string | null): void
+	onThread(thread: SignalThread): void
+}) {
+	const [text, setText] = useState('')
+	const [note, setNote] = useState<string | null>(null)
+	const [busy, setBusy] = useState(false)
+	const alive = useRef(true)
+	useEffect(
+		() => () => {
+			alive.current = false
+		},
+		[],
+	)
+	const send = async (): Promise<void> => {
+		const answer = text.trim()
+		if (!answer) {
+			setNote('The reply is empty')
+			return
+		}
+		if (busy) return
+		setBusy(true)
+		setNote(null)
+		const result = await service.slackReply(thread.id, { text: answer })
+		if (!alive.current) return
+		setBusy(false)
+		if (result.error !== undefined) {
+			setNote(`Not sent: ${result.error}`)
+			return
+		}
+		onThread(result.data)
+		onClose(`Replied to ${thread.ref} in Slack`)
+	}
+	return (
+		<div
+			ref={takeAnswerKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			onKeyDown={flowKeys({ count: 0, onPick: () => undefined, onSubmit: () => void send(), onClose: () => onClose() })}
+		>
+			<FlowHeader glyph="↩" kind={`Reply to ${thread.ref}`} context={thread.title} onClose={() => onClose()} />
+			<div className="signals-scroll signals-flow">
+				<p className="signals-ask-title">{thread.title}</p>
+				<p className="signals-ask-body">{thread.head}</p>
+				<label className="signals-prompt">
+					<span className="signals-field-label">Reply</span>
+					<textarea
+						className="signals-prompt-input signals-answer-input"
+						value={text}
+						maxLength={4000}
+						spellCheck
+						onChange={event => setText(event.target.value)}
+					/>
+				</label>
+			</div>
+			<footer className="signals-foot">
+				<span className="signals-foot-hints" aria-hidden="true">
+					<Hint keys={submitKeys(mod)}>send</Hint>
+					<Hint keys="esc">back</Hint>
+				</span>
+				<output className="signals-note">{note ?? `Posts to ${thread.ref} on Slack and closes the thread`}</output>
+				<span className="signals-foot-actions">
+					<Btn
+						tone="primary"
+						sm
+						className="signals-key"
+						busy={busy}
 						ariaKeyShortcuts={mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter'}
 						onClick={() => void send()}
 					>

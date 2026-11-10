@@ -23,6 +23,8 @@ import type {
 	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
+	SignalSlackIncludeResult,
+	SignalSlackMuteResult,
 	SignalThread,
 	SignalUpdate,
 } from '../../shared-helm'
@@ -44,6 +46,12 @@ export interface SignalsService {
 	mute(id: number): Promise<HelmResult<SignalMuteResult>>
 	/** Saves Jakub's answer on an agent ask; typing it into the agent is the dock's `prompt`. */
 	reply(id: number, body: SignalReply): Promise<HelmResult<SignalThread>>
+	/** Posts Jakub's reply to a Slack thread/DM and closes it (`r` on a Slack row). */
+	slackReply(id: number, body: { text: string }): Promise<HelmResult<SignalThread>>
+	/** Never show that Slack thread's sender (`x`): exclude list, its open threads close. */
+	slackMute(id: number): Promise<HelmResult<SignalSlackMuteResult>>
+	/** Show a filtered Slack sender again (`i`). */
+	slackInclude(id: number): Promise<HelmResult<SignalSlackIncludeResult>>
 	/**
 	 * Opens link `index` of an agent ask (main re-reads the thread and opens only its stored link, and
 	 * only while it is still `url`, the link shown at that position).
@@ -117,6 +125,13 @@ export function createSignalsService(api: SignalsApi): SignalsService & { dispos
 			api.mute ? api.mute(id) : Promise.resolve({ error: 'This Helm cannot change the exclude list.' }),
 		),
 		reply: guarded((id: number, body: SignalReply) => api.reply(id, body)),
+		slackReply: guarded((id: number, body: { text: string }) => api.slackReply(id, body)),
+		slackMute: guarded((id: number) =>
+			api.slackMute ? api.slackMute(id) : Promise.resolve({ error: 'This Helm cannot change the exclude list.' }),
+		),
+		slackInclude: guarded((id: number) =>
+			api.slackInclude ? api.slackInclude(id) : Promise.resolve({ error: 'This Helm cannot change the include list.' }),
+		),
 		openLink: guarded((id: number, index: number, url: string) => api.openLink(id, index, url)),
 		dispose() {
 			unsubscribe()

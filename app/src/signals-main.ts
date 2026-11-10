@@ -37,6 +37,8 @@ import type {
 	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
+	SignalSlackIncludeResult,
+	SignalSlackMuteResult,
 	SignalThread,
 	SignalUpdate,
 	SignalsSnapshot,
@@ -192,7 +194,7 @@ export function createSignalsDaemonRequest(
 	}
 }
 
-/** A thread's source Jakub may open: https://github.com/… or a Mail `message://%3C…%3E` URL. */
+/** A thread's source Jakub may open: github.com, a `<sub>.slack.com/archives/…` link, or Mail. */
 export function signalOpenableUrl(value: unknown): string | null {
 	if (typeof value !== 'string' || value.length === 0 || value.length > OPEN_URL_MAX) return null
 	if (MESSAGE_URL.test(value)) return value
@@ -202,9 +204,12 @@ export function signalOpenableUrl(value: unknown): string | null {
 	} catch {
 		return null
 	}
-	if (url.protocol !== 'https:' || url.hostname !== 'github.com') return null
+	if (url.protocol !== 'https:') return null
 	if (url.username !== '' || url.password !== '' || url.port !== '') return null
-	return url.href
+	if (url.hostname === 'github.com') return url.href
+	// Slack message permalinks: a slack.com subdomain and the /archives/ path only.
+	if (/^[a-z0-9-]+\.slack\.com$/i.test(url.hostname) && url.pathname.startsWith('/archives/')) return url.href
+	return null
 }
 
 /** `origin` of a checkout → lowercase `owner/repo` for github.com remotes (ssh, scp-like or https); else null. */
@@ -359,9 +364,34 @@ export class SignalsMain {
 		return this.write<SignalMuteResult>(`/signals/${threadId}/mute`, {})
 	}
 
+	/** Posts Jakub's reply to a Slack thread/DM; the daemon closes it as answered in Slack. */
+	async slackReply(id: unknown, body: unknown): Promise<HelmResult<SignalThread>> {
+		const threadId = signalId(id)
+		if (threadId === null) return { error: 'That signal does not exist.', status: 400 }
+		const text =
+			body !== null && typeof body === 'object' && !Array.isArray(body) ? (body as { text?: unknown }).text : undefined
+		if (typeof text !== 'string' || text.trim() === '') return { error: 'The reply is empty.', status: 400 }
+		if (text.length > SIGNAL_LIMITS.slackReply) return { error: 'The reply is too long.', status: 400 }
+		return this.write<SignalThread>(`/signals/${threadId}/slack-reply`, { text })
+	}
+
+	/** Never show a Slack thread's sender: the daemon excludes the user and closes their open threads. */
+	async slackMute(id: unknown): Promise<HelmResult<SignalSlackMuteResult>> {
+		const threadId = signalId(id)
+		if (threadId === null) return { error: 'That signal does not exist.', status: 400 }
+		return this.write<SignalSlackMuteResult>(`/signals/${threadId}/slack-mute`, {})
+	}
+
+	/** Show a filtered Slack sender again (unmute or include). */
+	async slackInclude(id: unknown): Promise<HelmResult<SignalSlackIncludeResult>> {
+		const entryId = signalId(id)
+		if (entryId === null) return { error: 'That filtered message does not exist.', status: 400 }
+		return this.write<SignalSlackIncludeResult>(`/signals/filtered/${entryId}/slack-include`, {})
+	}
+
 	async open(value: unknown): Promise<HelmResult<true>> {
 		const url = signalOpenableUrl(value)
-		if (!url) return { error: 'Only GitHub and Mail links can be opened.', status: 400 }
+		if (!url) return { error: 'Only GitHub, Slack and Mail links can be opened.', status: 400 }
 		try {
 			await this.options.openExternal(url)
 			return { data: true }
@@ -488,6 +518,15 @@ export class SignalsMain {
 		)
 		ipc.handle(SIGNALS_IPC.mute, (event, id, profileToken) =>
 			this.options.acceptsIpc(event.sender, profileToken) ? this.mute(id) : refused('change the exclude list'),
+		)
+		ipc.handle(SIGNALS_IPC.slackReply, (event, id, body, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.slackReply(id, body) : refused('reply to Slack'),
+		)
+		ipc.handle(SIGNALS_IPC.slackMute, (event, id, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.slackMute(id) : refused('change the exclude list'),
+		)
+		ipc.handle(SIGNALS_IPC.slackInclude, (event, id, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.slackInclude(id) : refused('change the include list'),
 		)
 	}
 

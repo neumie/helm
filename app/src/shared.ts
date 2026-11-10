@@ -441,6 +441,12 @@ export const SIGNALS_IPC = {
 	mute: 'signals:mute',
 	/** invoke(id, {text}) → saves Jakub's answer on an agent ask (`POST /api/signals/:id/reply`). */
 	reply: 'signals:reply',
+	/** invoke(id, {text}) → posts Jakub's reply to a Slack thread and closes it (`/:id/slack-reply`). */
+	slackReply: 'signals:slack-reply',
+	/** invoke(id) → never show that Slack thread's sender; its open threads close (`/:id/slack-mute`). */
+	slackMute: 'signals:slack-mute',
+	/** invoke(id) → show a filtered Slack sender again (`/filtered/:id/slack-include`). */
+	slackInclude: 'signals:slack-include',
 	/**
 	 * invoke(id, index, url) → opens link `index` of agent ask `id`, as main re-reads it from the daemon,
 	 * only while it still equals `url` (the link the renderer showed; else 409 `The links changed`).
@@ -518,6 +524,17 @@ export interface SignalsApi {
 		id: number,
 		body: import('./shared-helm').SignalReply,
 	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalThread>>
+	/** Posts Jakub's reply to a Slack thread/DM and closes it (`/:id/slack-reply`, Helm only). */
+	slackReply(
+		id: number,
+		body: { text: string },
+	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalThread>>
+	/** Never show that Slack thread's sender (`x`); its open threads close. */
+	slackMute?(id: number): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalSlackMuteResult>>
+	/** Show a filtered Slack sender again (`i`). */
+	slackInclude?(
+		id: number,
+	): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalSlackIncludeResult>>
 	/**
 	 * Opens link `index` of agent ask `id`; main re-reads the thread and opens only its stored http(s)
 	 * link, and only when it is still `url` (the one shown), else 409 `The links changed; look at the ask again.`

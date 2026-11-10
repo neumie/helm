@@ -43,6 +43,8 @@ import type {
 	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
+	SignalSlackIncludeResult,
+	SignalSlackMuteResult,
 	SignalThread,
 	SignalUpdate,
 } from './shared-helm'
@@ -136,6 +138,9 @@ const SIGNALS_CHANNELS: typeof SIGNALS_IPC = {
 	include: 'signals:include',
 	mute: 'signals:mute',
 	reply: 'signals:reply',
+	slackReply: 'signals:slack-reply',
+	slackMute: 'signals:slack-mute',
+	slackInclude: 'signals:slack-include',
 	openLink: 'signals:open-link',
 }
 
@@ -399,6 +404,9 @@ const api: HelmApi = {
 		include: (id: number) => invokeHelm<SignalIncludeResult>(SIGNALS_CHANNELS.include, id),
 		mute: (id: number) => invokeHelm<SignalMuteResult>(SIGNALS_CHANNELS.mute, id),
 		reply: (id: number, body: SignalReply) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.reply, id, body),
+		slackReply: (id: number, body: { text: string }) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.slackReply, id, body),
+		slackMute: (id: number) => invokeHelm<SignalSlackMuteResult>(SIGNALS_CHANNELS.slackMute, id),
+		slackInclude: (id: number) => invokeHelm<SignalSlackIncludeResult>(SIGNALS_CHANNELS.slackInclude, id),
 		openLink: (id: number, index: number, url: string) => invokeHelm<true>(SIGNALS_CHANNELS.openLink, id, index, url),
 	} satisfies SignalsApi,
 	nav: {
