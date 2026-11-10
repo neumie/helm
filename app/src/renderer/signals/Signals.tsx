@@ -15,7 +15,6 @@ import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
 import {
 	type AgentMatch,
-	type AskLayout,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
@@ -61,8 +60,6 @@ export interface SignalsColumnProps {
 	/** `cmd` on macOS (⌘↵), else `ctrl`. */
 	mod?: 'cmd' | 'ctrl'
 	now?: () => number
-	/** How agent asks read in the list (Jakub picks one; default two lines like the others). */
-	askLayout?: AskLayout
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
@@ -129,18 +126,16 @@ function SignalRow({
 	thread,
 	snapshot,
 	now,
-	askLayout,
 	selected,
 	onSelect,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
-	askLayout: AskLayout
 	selected: boolean
 	onSelect(): void
 }) {
-	const view = signalRowView(thread, snapshot, now, askLayout)
+	const view = signalRowView(thread, snapshot, now)
 	const section = signalSection(thread, now) ?? 'done'
 	return (
 		<li
@@ -205,7 +200,6 @@ function SignalsTable({
 	sections,
 	snapshot,
 	now,
-	askLayout,
 	selected,
 	quietEmpty,
 	onSelect,
@@ -213,7 +207,6 @@ function SignalsTable({
 	sections: SignalSections
 	snapshot: AgentDockSnapshot | null
 	now: number
-	askLayout: AskLayout
 	selected: number | null
 	/** Every source answered: an empty Needs you may say so. */
 	quietEmpty: boolean
@@ -225,7 +218,6 @@ function SignalsTable({
 			thread={thread}
 			snapshot={snapshot}
 			now={now}
-			askLayout={askLayout}
 			selected={selected === thread.id}
 			onSelect={() => onSelect(thread.id)}
 		/>
@@ -268,7 +260,6 @@ export function SignalsColumn({
 	onLeave,
 	mod = 'cmd',
 	now: clock = Date.now,
-	askLayout = 'title',
 	initialSelected,
 	initialFlow = null,
 }: SignalsColumnProps) {
@@ -573,7 +564,6 @@ export function SignalsColumn({
 								sections={sections}
 								snapshot={snapshot}
 								now={now}
-								askLayout={askLayout}
 								selected={current}
 								quietEmpty={allSourcesOk(sources)}
 								onSelect={id => {

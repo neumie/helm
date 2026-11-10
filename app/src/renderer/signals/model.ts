@@ -419,9 +419,6 @@ export function managingSession(
 	return null
 }
 
-/** How an agent ask's row reads (Jakub picks one): two lines like the others, or a third with its body. */
-export type AskLayout = 'title' | 'body'
-
 export interface SignalRowView {
 	glyph: string
 	/** The kind's tone on the glyph: new threads only (seen, snoozed, done read dim). */
@@ -438,13 +435,13 @@ export interface SignalRowView {
 	agentArrow: boolean
 	agentTitle: string | undefined
 	title: string
-	/** `askLayout: 'body'` only: an agent ask's dim extra line, its body's first line and `· N links`. */
+	/** Agent asks only: a dim third line, the body's first line and `· N links` (null when both are empty). */
 	detail: string | null
 }
 
 const linkCount = (count: number): string => (count === 1 ? '1 link' : `${count} links`)
 
-/** The body's first non-empty line and the link count, one plain line (`askLayout: 'body'`). */
+/** The body's first non-empty line and the link count, one plain line. */
 function askDetail(thread: SignalThread): string | null {
 	const first = (thread.body ?? '').split('\n').find(line => line.trim() !== '')
 	const parts = [first ? oneLine(first, 300) : '', thread.links.length > 0 ? linkCount(thread.links.length) : '']
@@ -452,12 +449,7 @@ function askDetail(thread: SignalThread): string | null {
 	return text === '' ? null : text
 }
 
-export function signalRowView(
-	thread: SignalThread,
-	snapshot: AgentDockSnapshot | null,
-	now: number,
-	askLayout: AskLayout = 'title',
-): SignalRowView {
+export function signalRowView(thread: SignalThread, snapshot: AgentDockSnapshot | null, now: number): SignalRowView {
 	const section = signalSection(thread, now) ?? 'done'
 	const ask = thread.source === 'agent'
 	const base = {
@@ -468,7 +460,7 @@ export function signalRowView(
 		receipt: null,
 		agentGlyph: null,
 		agentArrow: false,
-		detail: ask && askLayout === 'body' ? askDetail(thread) : null,
+		detail: ask ? askDetail(thread) : null,
 	}
 	if (section === 'managed') {
 		const managing = managingSession(thread, snapshot)
@@ -495,14 +487,13 @@ export function signalRowView(
 	if (ask) {
 		const answered = askReceipt(thread, now)
 		const replied = answered?.how === 'replied'
-		// The title layout keeps the link count on the row; the body layout says it on its extra line.
-		const links = askLayout === 'title' && thread.links.length > 0 ? linkCount(thread.links.length) : ''
 		return {
 			...base,
 			what: thread.head,
 			age: answered ? '' : formatAgo(now - time(thread.lastActivityAt)),
 			receipt: answered,
-			agent: replied ? (thread.routedAgent ?? '') : links,
+			// The link count is on the body line; the agent cell names where a delivered answer went.
+			agent: replied ? (thread.routedAgent ?? '') : '',
 			agentArrow: replied,
 			agentTitle: replied
 				? `Answer typed into ${thread.routedAgent}`

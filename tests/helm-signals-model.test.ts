@@ -298,22 +298,22 @@ test('agent ask receipts: replied once typed in after the answer, saved while on
 	assert.equal(askReceipt(thread({ id: 2, reply: 'x', replyAt: iso(1) }), NOW), null)
 })
 
-test('agent ask rows: from + title, link count or receipt, the body line only in the body layout', () => {
+test('agent ask rows: from + title, then the body line with the link count', () => {
 	const fresh = signalRowView(ask({ id: 1 }), null, NOW)
 	assert.equal(fresh.glyph, '?')
 	assert.equal(fresh.toned, true)
 	assert.equal(fresh.ref, 'Signals asks')
 	assert.equal(fresh.what, 'Pick a row layout')
 	assert.equal(fresh.age, '10m')
-	assert.equal(fresh.agent, '2 links')
-	assert.equal(fresh.detail, null)
+	assert.equal(fresh.detail, 'Two variants. · 2 links')
+	// The link count is on the body line, not in the agent cell.
+	assert.equal(fresh.agent, '')
 	assert.equal(fresh.title, 'Agent ask · Signals asks · Okena terminal')
-
-	const body = signalRowView(ask({ id: 1 }), null, NOW, 'body')
-	assert.equal(body.detail, 'Two variants. · 2 links')
-	assert.equal(body.agent, '')
-	assert.equal(signalRowView(ask({ id: 1, body: null, links: [] }), null, NOW, 'body').detail, null)
-	assert.equal(signalRowView(ask({ id: 1, body: '\n\n  \nSecond', links: [] }), null, NOW, 'body').detail, 'Second')
+	assert.equal(signalRowView(ask({ id: 1, body: null, links: [] }), null, NOW).detail, null)
+	assert.equal(signalRowView(ask({ id: 1, body: null }), null, NOW).detail, '2 links')
+	assert.equal(signalRowView(ask({ id: 1, body: '\n\n  \nSecond', links: [] }), null, NOW).detail, 'Second')
+	// Only asks: other sources keep two lines.
+	assert.equal(signalRowView(thread({ id: 2 }), null, NOW).detail, null)
 
 	const replied = signalRowView(
 		ask({
@@ -334,6 +334,8 @@ test('agent ask rows: from + title, link count or receipt, the body line only in
 	assert.equal(replied.agentArrow, true)
 	const saved = signalRowView(ask({ id: 1, state: 'seen', reply: 'B', replyAt: iso(4) }), null, NOW)
 	assert.deepEqual(saved.receipt, { how: 'saved', ago: '4m' })
+	assert.equal(saved.agent, '')
+	assert.equal(saved.detail, 'Two variants. · 2 links')
 	assert.equal(saved.agentArrow, false)
 	assert.equal(saved.agentTitle, 'Answer saved on the thread, not delivered')
 

@@ -3408,7 +3408,7 @@ body.dragging {
 	grid-area: 1 / 5 / 3 / 6;
 }
 
-/* `askLayout: 'body'`: an agent ask's dim third line (its body's first line · N links). */
+/* An agent ask's dim third line (its body's first line · N links). */
 .signals-tr > .signals-td-detail {
 	grid-area: 3 / 3 / 4 / 5;
 	color: var(--dock-dim);

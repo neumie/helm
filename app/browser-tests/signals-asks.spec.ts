@@ -32,8 +32,8 @@ async function open(page: Page, id: string) {
 
 const calls = (page: Page) => page.evaluate(() => window.__signalsFixture?.calls)
 
-test('an ask reads as who asks and what, with its link count; the body layout adds the body line', async ({ page }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+test('an ask reads as who asks and what, then a dim line with its body and link count', async ({ page }) => {
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	const ask = view.row(501)
 	await expect(ask).toHaveAttribute('data-section', 'needs')
 	await expect(ask.locator('.signals-glyph')).toHaveText('?')
@@ -41,26 +41,34 @@ test('an ask reads as who asks and what, with its link count; the body layout ad
 	await expect(ask.locator('.signals-td-what')).toHaveText(
 		'Agent ask rows: two lines like the others, or a third with the body?',
 	)
-	await expect(ask.locator('.signals-td-agent')).toHaveText('3 links')
-	await expect(ask.locator('.signals-td-detail')).toHaveCount(0)
+	await expect(ask.locator('.signals-td-detail')).toHaveText(
+		'Two row variants for asks in Needs you, both in Storybook. · 3 links',
+	)
+	// The link count is on the body line, not in the agent cell.
+	await expect(ask.locator('.signals-td-agent')).toHaveText('')
+	await expect(view.row(503).locator('.signals-td-detail')).toHaveText('1 link')
+	// The body line sits under the title, inside the row.
+	const what = await ask.locator('.signals-td-what').boundingBox()
+	const detail = await ask.locator('.signals-td-detail').boundingBox()
+	const row = await ask.boundingBox()
+	if (!what || !detail || !row) throw new Error('ask row not laid out')
+	expect(detail.y).toBeGreaterThanOrEqual(what.y + what.height - 1)
+	expect(detail.y + detail.height).toBeLessThanOrEqual(row.y + row.height + 0.5)
+	// Only asks with a body or links get the line; other sources (and a bare ask) keep two lines.
+	const withLine = await view.signals
+		.locator('.signals-tr:has(.signals-td-detail)')
+		.evaluateAll(rows => rows.map(row => Number((row as HTMLElement).dataset.signalId)))
+	expect(withLine.sort()).toEqual([501, 502, 503])
 	// Links are never anchors anywhere in the column.
 	await expect(view.signals.locator('a')).toHaveCount(0)
 	// The answered ask shows its receipt; the summary no longer counts it.
 	await expect(view.row(504).locator('.signals-receipt')).toContainText('replied')
 	await expect(view.row(504).locator('.signals-td-agent')).toHaveText('→ signals-agent-asks')
-	await page.screenshot({ path: test.info().outputPath('signals-asks-title-rows.png') })
-
-	const body = await open(page, 'views-signals-agent-asks--body-line')
-	await expect(body.row(501).locator('.signals-td-detail')).toHaveText(
-		'Two row variants for asks in Needs you, both in Storybook. · 3 links',
-	)
-	await expect(body.row(501).locator('.signals-td-agent')).toHaveText('')
-	await expect(body.row(503).locator('.signals-td-detail')).toHaveText('1 link')
-	await page.screenshot({ path: test.info().outputPath('signals-asks-body-line.png') })
+	await page.screenshot({ path: test.info().outputPath('signals-asks-needs-you.png') })
 })
 
 test('o on an ask with several links lists them as text; 2 opens the second by position', async ({ page }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await view.row(501).click()
 	await expect(view.signals.locator('.signals-foot-hints')).toContainText('o links')
 	await page.keyboard.press('o')
@@ -95,7 +103,7 @@ test('o on an ask with several links lists them as text; 2 opens the second by p
 test('r on an ask from an idle Okena agent saves the answer, types the fenced prompt in and shows the receipt', async ({
 	page,
 }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await view.row(501).click()
 	await page.keyboard.press('r')
 	await expect(view.answer).toBeFocused()
@@ -140,7 +148,7 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 })
 
 test('r on an ask whose agent is working, or that has no terminal, only saves the answer', async ({ page }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await view.row(503).click()
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
@@ -204,7 +212,7 @@ const reply501 = (answer: string) =>
 test('r on an ask whose agent stopped after asking answers its open dock turn, not a plain prompt', async ({
 	page,
 }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	// The usual case: the agent ran helm signal add and ended its turn; the dock opened a turn item.
 	const itemId = await page.evaluate(id => window.__signalsFixture?.openTurn(id), IDLE_TERMINAL)
 	expect(itemId).toEqual(expect.any(Number))
@@ -226,7 +234,7 @@ test('r on an ask whose agent stopped after asking answers its open dock turn, n
 })
 
 test('r on an ask whose agent has another dock item open only saves the answer', async ({ page }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	// A turn reply already in flight from the dock (not the open turn): the answer is not typed over it.
 	await page.evaluate(id => window.__signalsFixture?.openTurn(id, 'sending'), IDLE_TERMINAL)
 	await view.row(501).click()
@@ -248,7 +256,7 @@ test('r on an ask whose agent has another dock item open only saves the answer',
 test('a reply the dock refuses or cannot confirm stays saved on the thread, never recorded as replied', async ({
 	page,
 }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await page.evaluate(() =>
 		window.__signalsFixture?.script({
 			prompt: { status: 'refused', reason: 'busy', detail: 'The agent is working again.' },
@@ -287,7 +295,7 @@ test('a reply the dock refuses or cannot confirm stays saved on the thread, neve
 })
 
 test('a reply typed in whose receipt cannot be saved says so and keeps the answer on the thread', async ({ page }) => {
-	const view = await open(page, 'views-signals-agent-asks--title-rows')
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await page.evaluate(() => window.__signalsFixture?.script({ routedError: 'database is locked' }))
 	await view.row(501).click()
 	await page.keyboard.press('r')

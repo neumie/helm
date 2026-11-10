@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
-import type { AskLayout } from './model'
 import {
 	type SignalsFixture,
 	createSignalsFixture,
@@ -30,8 +29,6 @@ export interface SignalsWorkspaceProps {
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail list.
 	 */
 	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered'
-	/** How agent asks read in the list. */
-	askLayout?: AskLayout
 }
 
 declare global {
@@ -71,7 +68,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, askLayout = 'title' }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -115,7 +112,6 @@ export function SignalsWorkspace({ scenario = 'column', flow, askLayout = 'title
 					onOpenSettings: () => column.setMode('settings'),
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
-					askLayout,
 					initialFlow,
 				}),
 		})
@@ -132,7 +128,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, askLayout = 'title
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, askLayout])
+	}, [options, fixture, flow])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
