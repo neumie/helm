@@ -441,3 +441,226 @@
 .viewer-picture-image[data-pixelated] {
 	image-rendering: pixelated;
 }
+
+/* ---- PDF view (S4): pages are paper on --well; the one literal colour is paper white, the document's own surface ---- */
+.viewer-pdf {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+.viewer-pdf-body {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+.viewer-pdf-scroll {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: auto;
+	background: var(--well);
+	outline: none;
+	scrollbar-gutter: stable;
+}
+.viewer-pdf-scroll:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+/* At least as wide as the view so pages centre; wider when zoom outgrows it (the view scrolls). */
+.viewer-pdf-pages {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 24px;
+	box-sizing: border-box;
+	width: max-content;
+	min-width: 100%;
+	padding: 24px;
+}
+.viewer-pdf-page {
+	flex: 0 0 auto;
+}
+.viewer-pdf-paper {
+	position: relative;
+	overflow: hidden;
+	background: #fff;
+	border-radius: 2px;
+	color-scheme: only light;
+}
+.viewer-pdf-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	opacity: 0;
+	transition: opacity 150ms ease-out;
+}
+.viewer-pdf-canvas[data-painted] {
+	opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+	.viewer-pdf-canvas {
+		transition: none;
+	}
+}
+/* Minimal pdf.js text layer (the subset of pdfjs-dist/web/pdf_viewer.css `.textLayer` a text layer needs). Text is
+ * transparent; only selection and find highlights paint. */
+.viewer-pdf-text {
+	--scale-round-x: 1px;
+	--scale-round-y: 1px;
+	--min-font-size: 1;
+	--text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+	--min-font-size-inv: calc(1 / var(--min-font-size));
+	position: absolute;
+	inset: 0;
+	overflow: clip;
+	line-height: 1;
+	letter-spacing: normal;
+	word-spacing: normal;
+	text-align: initial;
+	text-size-adjust: none;
+	forced-color-adjust: none;
+	transform-origin: 0 0;
+	caret-color: transparent;
+	z-index: 0;
+}
+.viewer-pdf-text :is(span, br) {
+	position: absolute;
+	color: transparent;
+	white-space: pre;
+	cursor: text;
+	transform-origin: 0% 0%;
+	user-select: text;
+}
+.viewer-pdf-text > :not(.markedContent),
+.viewer-pdf-text .markedContent span:not(.markedContent) {
+	--font-height: 0;
+	--scale-x: 1;
+	--rotate: 0deg;
+	z-index: 1;
+	font-size: calc(var(--text-scale-factor) * var(--font-height));
+	transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.viewer-pdf-text .markedContent {
+	display: contents;
+}
+.viewer-pdf-text ::selection {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+	color: transparent;
+}
+.viewer-pdf-text br::selection {
+	background: transparent;
+}
+.viewer-pdf-text .viewer-pdf-eoc {
+	display: block;
+	position: absolute;
+	inset: 100% 0 0;
+	z-index: 0;
+	cursor: default;
+	user-select: none;
+}
+.viewer-pdf-text.viewer-pdf-selecting .viewer-pdf-eoc {
+	top: 0;
+}
+::highlight(helm-pdf-find) {
+	background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+::highlight(helm-pdf-find-current) {
+	background-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* Outline: a quiet 240px rail on --chrome; entries wrap to two lines and name themselves in full on hover. */
+.viewer-pdf-outline {
+	flex: 0 0 min(240px, 40%);
+	overflow: auto;
+	padding: 8px 0 16px;
+	background: var(--chrome);
+	border-right: 1px solid var(--hairline);
+	scrollbar-gutter: stable;
+}
+.viewer-pdf-outline-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.viewer-pdf-outline-list .viewer-pdf-outline-list {
+	padding-left: 12px;
+}
+.viewer-pdf-outline-item {
+	display: -webkit-box;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 32px;
+	padding: 7px 12px 7px 16px;
+	overflow: hidden;
+	border: 0;
+	background: none;
+	color: var(--text-0);
+	font: inherit;
+	font-size: calc(13px * var(--ui-scale));
+	line-height: 1.4;
+	text-align: left;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	cursor: pointer;
+}
+.viewer-pdf-outline-item:hover {
+	background: var(--fill-subtle);
+}
+.viewer-pdf-outline-item:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.viewer-pdf-outline-item[data-inert] {
+	color: var(--text-1);
+	cursor: default;
+}
+.viewer-pdf-outline-item[data-inert]:hover {
+	background: none;
+}
+.viewer-pdf-go {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+}
+.viewer-pdf-go-field {
+	width: 7ch;
+	font-variant-numeric: tabular-nums;
+}
+/* Password: a short form on the --well, where the pages would be. */
+.viewer-pdf-password {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	max-width: 360px;
+	margin: 48px auto;
+	padding: 0 16px;
+	color: var(--text-0);
+}
+.viewer-pdf-password-title {
+	margin: 0;
+	font-size: calc(14px * var(--ui-scale));
+}
+.viewer-pdf-password-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+}
+.viewer-pdf-password-input.viewer-search-field {
+	width: 100%;
+	height: 32px;
+	font-size: calc(13px * var(--ui-scale));
+}
+.viewer-pdf-password-wrong {
+	margin: 0;
+	color: var(--danger);
+	font-size: calc(12px * var(--ui-scale));
+}
+.viewer-pdf-password-note {
+	margin: 0;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+}

@@ -6,6 +6,7 @@ import { build } from 'esbuild'
 import { VIEWER_CSP } from '../src/document-review/viewer-csp'
 import { assetMime } from '../src/document-review/viewer-protocol'
 import type { createReviewFixture } from '../src/renderer/document-review/fixtures'
+import { buildCjkPdf, buildJbig2Pdf, buildJpxPdf } from '../src/renderer/viewer/pdf-fixture-builder'
 
 declare global {
 	interface Window {
@@ -13,6 +14,7 @@ declare global {
 		__helmNativeReviewProof?: ReturnType<typeof createReviewFixture>
 		__helmNativeViewerFile?: { name: string; format: 'code' | 'data'; language: string; size: number; lines: number }
 		__helmNativeViewerPicture?: { name: string; type: 'jpeg' | 'svg'; mime: string; size: number }
+		__helmNativeViewerPdf?: { name: string; size: number }
 	}
 }
 
@@ -25,7 +27,9 @@ test.beforeAll(async () => {
 			contents: `import {createReviewFixture} from ${JSON.stringify(fixturePath)};
 const viewer = window.__helmNativeViewerFile;
 const picture = window.__helmNativeViewerPicture;
-const fixture = createReviewFixture(viewer || picture ? 'plain' : window.__helmNativeReviewScenario);
+const pdf = window.__helmNativeViewerPdf;
+const fixture = createReviewFixture(viewer || picture || pdf ? 'plain' : window.__helmNativeReviewScenario);
+if (pdf) fixture.replaceDocument({ name: pdf.name, format: 'pdf', text: '', previous: null, revision: '1'.repeat(64), pdf: { url: 'file/' + pdf.name, size: pdf.size } });
 if (picture) fixture.replaceDocument({ name: picture.name, format: 'image', text: '', previous: null, revision: '1'.repeat(64), picture: { url: 'file/' + picture.name, type: picture.type, mime: picture.mime, size: picture.size, fileSize: picture.size } });
 if (viewer) fixture.replaceDocument({ name: viewer.name, format: viewer.format, text: '', previous: null, revision: '1'.repeat(64), viewer: { url: 'file/' + viewer.name, language: viewer.language, size: viewer.size, encoding: 'utf-8', lines: viewer.lines, ending: 'LF' } });
 window.documentReview = fixture.api; window.__helmNativeReviewProof = fixture;`,
@@ -286,6 +290,109 @@ for (const [name, picture] of Object.entries(PICTURES))
 		await page.waitForTimeout(300)
 		expect(outside).toEqual([])
 		expect(await page.title()).not.toBe('svg-script-ran')
+		expect(errors).toEqual([])
+		expect(violations).toEqual([])
+	})
+
+// PDFs through the same built entry: pdf.js's own module worker, CMaps and wasm decoders come from assets/pdfjs/
+// under the real CSP ('wasm-unsafe-eval', no eval), and the file is read by Range like a helm-viewer: token.
+const fax = (() => {
+	const width = 320
+	const height = 200
+	const pixels = Uint8Array.from({ length: width * height }, (_, index) => {
+		const x = index % width
+		const y = Math.floor(index / width)
+		return x < 6 || y < 6 || x >= width - 6 || y >= height - 6 || (x > 40 && x < 140 && y > 40 && y < 120) ? 1 : 0
+	})
+	return { width, height, pixels }
+})()
+const PDFS = {
+	'platform-report-2026-10.pdf': {
+		text: 'Platform report, October 2026',
+		asset: /^assets\/pdfjs\/build\/pdf\.worker\.min\.mjs$/,
+	},
+	'invoices-asia-2026-11.pdf': { text: '請求書', asset: /^assets\/pdfjs\/cmaps\/UniJIS-UCS2-H\.bcmap$/ },
+	'fax-2026-10-21.pdf': { text: null, asset: /^assets\/pdfjs\/wasm\/jbig2\.wasm$/ },
+	'form-error-jpeg2000.pdf': { text: null, asset: /^assets\/pdfjs\/wasm\/openjpeg\.wasm$/ },
+} as const
+const pdfBytes = async (name: keyof typeof PDFS) =>
+	name === 'invoices-asia-2026-11.pdf'
+		? Buffer.from(buildCjkPdf())
+		: name === 'fax-2026-10-21.pdf'
+			? Buffer.from(buildJbig2Pdf(fax))
+			: name === 'form-error-jpeg2000.pdf'
+				? readFile(resolve(__dirname, '../src/renderer/viewer/fixtures/pdf/form-error.jp2')).then(jp2 =>
+						Buffer.from(buildJpxPdf(new Uint8Array(jp2), 760, 520)),
+					)
+				: readFile(resolve(__dirname, '../src/renderer/viewer/fixtures/pdf', name))
+for (const [name, expected] of Object.entries(PDFS) as [keyof typeof PDFS, (typeof PDFS)[keyof typeof PDFS]][])
+	test(`built native entry shows the PDF ${name} under the viewer CSP`, async ({ page, baseURL }) => {
+		if (!baseURL) throw new Error('Use the owned loopback workbench baseURL')
+		const bytes = await pdfBytes(name)
+		const entry = new URL('/__helm-native-review/', baseURL)
+		const served: string[] = []
+		const ranges: string[] = []
+		const outside: string[] = []
+		page.on('request', request => {
+			if (!request.url().startsWith(entry.origin) && !request.url().startsWith('blob:')) outside.push(request.url())
+		})
+		await page.route(`${entry.href}**`, async route => {
+			const path = new URL(route.request().url()).pathname.slice(entry.pathname.length)
+			served.push(path)
+			if (path === `file/${name}`) {
+				const range = /^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range ?? '')
+				if (!range) return route.fulfill({ status: 400, body: '' })
+				const start = Number(range[1])
+				const end = Math.min(Number(range[2]), bytes.length - 1)
+				ranges.push(`${start}-${end}`)
+				return route.fulfill({
+					status: 206,
+					body: bytes.subarray(start, end + 1),
+					headers: {
+						'Content-Type': 'application/octet-stream',
+						'Content-Range': `bytes ${start}-${end}/${bytes.length}`,
+						'X-Content-Type-Options': 'nosniff',
+						'Content-Security-Policy': "sandbox; default-src 'none'",
+					},
+				})
+			}
+			const asset = assets.get(path)
+			if (!asset) return route.fulfill({ status: 404, body: '' })
+			await route.fulfill({
+				status: 200,
+				body: asset.body,
+				headers: {
+					'Content-Type': asset.contentType,
+					'Content-Security-Policy': VIEWER_CSP,
+					'X-Content-Type-Options': 'nosniff',
+				},
+			})
+		})
+		await page.addInitScript(
+			value => {
+				window.__helmNativeViewerPdf = value
+			},
+			{ name, size: bytes.length },
+		)
+		const errors: string[] = []
+		const violations: string[] = []
+		page.on('pageerror', error => errors.push(error.message))
+		page.on('console', message => {
+			if (/Content Security Policy|unsafe-eval/i.test(message.text())) violations.push(message.text())
+		})
+		await page.setViewportSize({ width: 1100, height: 760 })
+		await page.goto(entry.href)
+		await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+		await expect(page.locator('[data-pdf-page="1"] canvas[data-painted]')).toBeVisible({ timeout: 20000 })
+		if (expected.text) await expect(page.locator('[data-pdf-page="1"] .viewer-pdf-text')).toContainText(expected.text)
+		await expect(page.locator('.viewer-status-position')).toHaveText(/^Page 1 of \d+$/)
+		expect(served.some(path => expected.asset.test(path))).toBe(true)
+		// pdf.js and the view are their own lazy chunks, loaded only for a PDF.
+		expect(served.some(path => /^assets\/PdfView-.*\.js$/.test(path))).toBe(true)
+		expect(ranges.length).toBeGreaterThan(0)
+		expect(served).not.toContain('assets/pdfjs/wasm/jbig2_nowasm_fallback.js')
+		await page.waitForTimeout(300)
+		expect(outside).toEqual([])
 		expect(errors).toEqual([])
 		expect(violations).toEqual([])
 	})

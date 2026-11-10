@@ -36,11 +36,13 @@ export interface ReviewDocument {
 	previous: string | null
 	error: string | null
 	/** `jsx` is the executing canvas (feedback mode only); a plain .jsx/.tsx is `code`, shown as source. */
-	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data' | 'image'
+	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data' | 'image' | 'pdf'
 	/** Plain code/text/data: bytes come from the view's own helm-viewer: token, never over IPC. */
 	viewer?: ReviewViewerFile
 	/** Plain pictures (raster, SVG, HEIC as the PNG `sips` made): bytes come from the view's token too. */
 	picture?: ReviewViewerPicture
+	/** Plain PDFs: pdf.js reads the view's token by range. */
+	pdf?: ReviewViewerPdf
 	canvas?: ReviewCanvasCompilation
 	archive?: CanvasReviewArchive
 }
@@ -67,6 +69,12 @@ export interface ReviewViewerPicture {
 	fileSize: number
 	/** Converted HEIC: the size `sips` reported, before any orientation. */
 	pixels?: { width: number; height: number }
+}
+export interface ReviewViewerPdf {
+	/** helm-viewer://app/file/<token>, valid for this revision and only inside this view. Read by range. */
+	url: string
+	/** Bytes the token serves (the file's size). */
+	size: number
 }
 export interface ReviewAnnotation {
 	id: string

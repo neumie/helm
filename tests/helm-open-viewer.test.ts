@@ -55,6 +55,7 @@ test('the last extension decides the family; compound archives, unknown and late
 		'events.ndjson': ['data', 'jsonl'],
 		'config.yml': ['data', 'yaml'],
 		'Cargo.toml': ['data', 'toml'],
+		'report.final.pdf': ['pdf', 'pdf'],
 	}
 	for (const [name, [format, language]] of Object.entries(shown)) {
 		const detected = detectViewerFormat(name)
@@ -66,7 +67,7 @@ test('the last extension decides the family; compound archives, unknown and late
 		'backup.tar.gz': /backup\.tar\.gz is an archive; Helm doesn't open archives\./,
 		'site.tgz': /is an archive/,
 		'bundle.zip': /is an archive/,
-		'report.final.pdf': /Helm can't show PDFs yet \(report\.final\.pdf\)/,
+		'contract.final.docx': /Helm can't show Word documents yet \(contract\.final\.docx\)/,
 		'export.csv': /Helm can't show CSV files yet/,
 		'deck.pptx': /presentations and iWork files yet/,
 		'thing.weird': /Helm can't show \.weird files \(thing\.weird\)\./,
@@ -441,7 +442,9 @@ test('touching a viewed file without changing its bytes replaces the dead token'
 		assert.notEqual(second, first)
 		assert.equal((await ask(second)).status, 200)
 		assert.equal(await (await ask(second)).text(), 'package main\n')
-		assert.equal((await ask(first)).status, 404)
+		// The previous revision's token lives until the next one (a PDF keeps reading it until it has opened the new
+		// version); its descriptor sees the touch, so it answers "changed".
+		assert.equal((await ask(first)).status, 409)
 		const published = changes
 		// Nothing moved: no new token, nothing published.
 		await observation.refresh()
