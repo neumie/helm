@@ -1063,6 +1063,53 @@ test('done closes by id or key, with or without an outcome note', () => {
 	})
 })
 
+test('closed_by records who closed a thread by hand and is forgotten once it is not done', () => {
+	withDb(db => {
+		db.signals.applyPoll(poll([github(1), github(2)]), T0)
+		const one = db.signals.getByThreadKey('github:acme/widgets#1')?.id ?? 0
+		const two = db.signals.getByThreadKey('github:acme/widgets#2')?.id ?? 0
+		assert.equal(db.signals.get(one)?.closedBy, null)
+
+		// Through Helm (the route passes `jakub`), and by default an agent (`helm signal set`).
+		assert.equal(db.signals.update(one, { state: 'done' }, at(1), 'jakub').closedBy, 'jakub')
+		assert.equal(db.signals.update(two, { state: 'done' }, at(1)).closedBy, 'agent')
+		// Already done: another close keeps who closed it first.
+		assert.equal(db.signals.update(one, { state: 'done' }, at(2), 'agent').closedBy, 'jakub')
+		assert.equal(db.signals.done(one, 'Merged', at(2)).closedBy, 'jakub')
+		// Leaving done forgets it: by hand, and by newer foreign activity.
+		assert.equal(db.signals.update(one, { state: 'seen' }, at(3), 'jakub').closedBy, null)
+		db.signals.applyPoll(
+			poll([github(1), github(2, { activityKey: 'later', lastActivityAt: at(4).toISOString() })]),
+			at(4),
+		)
+		assert.equal(db.signals.get(two)?.state, 'new')
+		assert.equal(db.signals.get(two)?.closedBy, null)
+
+		// Closed on its own: the reason says why, nobody closed it.
+		db.signals.update(two, { state: 'done' }, at(5), 'jakub')
+		db.signals.update(two, { state: 'seen' }, at(6), 'jakub')
+		db.signals.applyPoll(poll([github(1)]), at(7))
+		db.signals.applyPoll(poll([github(1)]), at(8))
+		const gone = db.signals.get(two)
+		assert.equal(gone?.state, 'done')
+		assert.equal(gone?.closedReason, 'no longer open or requested')
+		assert.equal(gone?.closedBy, null)
+
+		// An ask: the agent closing it keeps the agent's closed reason; Jakub closing it does not.
+		const ask = db.signals.upsertAsk({ key: 'who', title: 'Ship it?' }, T0).thread
+		const byAgent = db.signals.done(ask.id, undefined, at(9))
+		assert.equal(byAgent.closedReason, SIGNAL_ASK_CLOSED_REASON)
+		assert.equal(byAgent.closedBy, 'agent')
+		// A renewed ask is open again: no closer.
+		const renewed = db.signals.upsertAsk({ key: 'who', title: 'Ship it now?' }, at(10)).thread
+		assert.equal(renewed.state, 'new')
+		assert.equal(renewed.closedBy, null)
+		const byJakub = db.signals.done(renewed.id, undefined, at(11), 'jakub')
+		assert.equal(byJakub.closedReason, null)
+		assert.equal(byJakub.closedBy, 'jakub')
+	})
+})
+
 test('a reply is kept on the ask, marks it seen and never lands in the event log', () => {
 	withDb(db => {
 		const ask = db.signals.upsertAsk({ key: 'reply', title: 'Which variant?' }, T0).thread
@@ -1229,7 +1276,9 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 			const versions = (db.signals as unknown as { db: Database.Database }).db
 				.prepare('SELECT MAX(version) AS v FROM schema_version')
 				.get() as { v: number }
-			assert.equal(versions.v, 41)
+			// 41 rebuilt the table, then 42 added closed_by (null for every existing row).
+			assert.equal(versions.v, 42)
+			assert.equal(db.signals.get(15)?.closedBy, null)
 			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread
 			assert.equal(ask.id, 41)
 			assert.ok(db.signals.latestSeq() > 101)

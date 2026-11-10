@@ -758,6 +758,8 @@ export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'se
 export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
 export type SignalOwner = 'jakub' | 'managed'
 export type SignalRouteHow = 'sent' | 'started' | 'replied'
+/** Who closed a done thread by hand: Jakub through Helm, or an agent through `helm signal`. */
+export type SignalCloser = 'jakub' | 'agent'
 export type SignalSourceStatus = 'ok' | 'disabled' | 'unavailable' | 'needs_permission' | 'error'
 
 /** One thread from `GET /api/signals` (heads only; title/head are third-party data). */
@@ -782,6 +784,8 @@ export interface SignalThread {
 	lastActivityAt: string
 	active: boolean
 	closedReason: string | null
+	/** A done thread closed by hand: who (null otherwise; absent from an older daemon). */
+	closedBy?: SignalCloser | null
 	note: string | null
 	noteAt: string | null
 	managedBy: string | null

@@ -51,7 +51,7 @@ export const REPLY_PROMPT_MAX = 16_384
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
-/** Done rows listed under `Snoozed · done` (the header counts all of the last 24 hours). */
+/** Done rows listed under `Done today N · hide` (the count counts all of the last 24 hours). */
 export const DONE_LISTED_MAX = 30
 /** Digits 1–9 pick a choice; longer lists still render, unnumbered. */
 export const PICK_MAX = 9
@@ -419,6 +419,74 @@ export function managingSession(
 	return null
 }
 
+// ---------- how a done thread got done ----------
+
+/**
+ * `closed_reason` prefixes the daemon writes (src/signals: `MAIL_GONE_REASON` in mail-filter.ts,
+ * `SIGNAL_ASK_CLOSED_REASON` in store.ts; tests/helm-signals-model.test.ts maps the real ones).
+ */
+const MAIL_GONE_PREFIX = 'no longer unread in the inbox'
+const ASK_CLOSED_REASON = 'closed by the agent'
+
+/**
+ * How a done thread got done. `read`: Mail stopped listing it unread (read in Mail or on the
+ * phone, also moved out of the inbox or older than the window); `gone`: its source stopped
+ * reporting it (GitHub: reviewed, answered, CI fixed, merged or closed — the poller cannot tell);
+ * `dismissed`: Jakub pressed d in Helm; `agent`: an agent closed it (`helm signal done/set`);
+ * `answered`: an agent closed an ask Jakub had answered; `unknown`: closed by hand before the
+ * daemon recorded who.
+ */
+export type DoneReasonKind = 'read' | 'gone' | 'dismissed' | 'agent' | 'answered' | 'unknown'
+
+export interface DoneReason {
+	kind: DoneReasonKind
+	/** `read in Mail`, `gone from GitHub`, `dismissed`, `closed by pricelist-import`. */
+	word: string
+	/** Tooltip: the word, the daemon's own reason, the note and the time it closed. */
+	title: string
+}
+
+/** How a done thread got done, or null when it is not done. */
+export function doneReason(thread: SignalThread): DoneReason | null {
+	if (thread.state !== 'done') return null
+	const reason = thread.closedReason
+	const note = thread.note
+	const agentWord = thread.managedBy ? `closed by ${oneLine(thread.managedBy, 80)}` : 'closed by agent'
+	let kind: DoneReasonKind
+	let word: string
+	if (reason === ASK_CLOSED_REASON && thread.source === 'agent') {
+		kind = thread.reply ? 'answered' : 'agent'
+		word = kind === 'answered' ? 'answered' : 'closed by agent'
+	} else if (reason?.startsWith(MAIL_GONE_PREFIX)) {
+		kind = 'read'
+		word = 'read in Mail'
+	} else if (reason !== null) {
+		kind = 'gone'
+		word = thread.source === 'agent' ? 'gone' : `gone from ${SOURCE_LABEL[thread.source]}`
+	} else if (thread.closedBy === 'jakub') {
+		// Only Jakub dismisses (`d`); the column's own word for it.
+		kind = 'dismissed'
+		word = 'dismissed'
+	} else if (thread.closedBy === 'agent' || thread.owner === 'managed' || note !== null) {
+		// Before `closedBy`: Jakub cannot dismiss a managed thread, and only agents write notes.
+		kind = 'agent'
+		word = agentWord
+	} else {
+		kind = 'unknown'
+		word = 'marked done'
+	}
+	const closedAt = time(thread.updatedAt)
+	const title = [
+		word,
+		reason !== null && reason !== word ? reason : '',
+		note ? oneLine(note, 300) : '',
+		closedAt ? `closed ${clockTime(closedAt)}` : '',
+	]
+		.filter(Boolean)
+		.join(' · ')
+	return { kind, word, title }
+}
+
 export interface SignalRowView {
 	glyph: string
 	/** The kind's tone on the glyph: new threads only (seen, snoozed, done read dim). */
@@ -437,6 +505,8 @@ export interface SignalRowView {
 	title: string
 	/** Agent asks only: a dim third line, the body's first line and `· N links` (null when both are empty). */
 	detail: string | null
+	/** Done rows: how it got done (`data-done-reason`), its words after the ref and their tooltip. */
+	doneReason: DoneReason | null
 }
 
 const linkCount = (count: number): string => (count === 1 ? '1 link' : `${count} links`)
@@ -453,6 +523,7 @@ export function signalRowView(thread: SignalThread, snapshot: AgentDockSnapshot 
 	const section = signalSection(thread, now) ?? 'done'
 	const ask = thread.source === 'agent'
 	const base = {
+		doneReason: null,
 		glyph: KIND_GLYPH[thread.kind],
 		toned: thread.state === 'new',
 		ref: thread.ref,
@@ -475,11 +546,21 @@ export function signalRowView(thread: SignalThread, snapshot: AgentDockSnapshot 
 				: 'Managed by the dispatcher',
 		}
 	}
-	if (section === 'snoozed' || section === 'done') {
+	if (section === 'snoozed') {
 		return {
 			...base,
 			what: thread.head,
-			age: section === 'snoozed' ? snoozeLabel(thread.snoozedUntil, now) : clockTime(time(thread.updatedAt)),
+			age: snoozeLabel(thread.snoozedUntil, now),
+			agent: '',
+			agentTitle: thread.closedReason ?? undefined,
+		}
+	}
+	if (section === 'done') {
+		return {
+			...base,
+			doneReason: doneReason(thread),
+			what: thread.head,
+			age: clockTime(time(thread.updatedAt)),
 			agent: '',
 			agentTitle: thread.closedReason ?? undefined,
 		}
@@ -553,9 +634,6 @@ export function signalsSummary(
 	return parts.join(' · ')
 }
 
-export const closedHeader = (sections: SignalSections): string =>
-	`Snoozed ${sections.snoozed.length} · done today ${sections.doneToday}`
-
 // ---------- source health ----------
 
 /** One dim footer line per source that is on but not ok; never an all-clear from missing data. */
@@ -609,7 +687,7 @@ export const FILTER_REASON_TITLE: Record<SignalFilterReason, string> = {
 	excluded: 'Sender is on the exclude list in Settings › Signals',
 }
 
-/** The dim footer line (`12 filtered`), or null when nothing was filtered or the daemon cannot say. */
+/** The dim `12 filtered` after the done count, or null when nothing was filtered or the daemon cannot say. */
 export function filteredLine(count: number | undefined): string | null {
 	return typeof count === 'number' && count > 0 ? `${count} filtered` : null
 }

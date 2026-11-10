@@ -14,6 +14,7 @@ import {
 	SIGNAL_OWNERS,
 	SIGNAL_SOURCES,
 	SIGNAL_STATES,
+	type SignalCloser,
 	type SignalEventsPage,
 	type SignalIncludeResult,
 	type SignalsSnapshot,
@@ -47,7 +48,8 @@ export interface SignalRouteDependencies {
 	/**
 	 * Whether a request carries the daemon's local control token (only Helm's main process holds
 	 * it). Jakub's reply to an ask and its `replied` receipt need it, so no agent can answer another
-	 * agent's ask in Jakub's name. Missing = refused.
+	 * agent's ask in Jakub's name. Missing = refused. A thread closed through a request carrying it
+	 * is recorded as closed by Jakub, any other close as closed by an agent (`helm signal`).
 	 */
 	controlAuthorized?: (c: Context) => boolean
 }
@@ -100,6 +102,8 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const storeFor = (): SignalStore => db.signals
 	const jakubOnly = (c: Context) =>
 		deps?.controlAuthorized?.(c) ? null : c.json({ error: 'Only Helm can record Jakub’s reply' }, 401)
+	/** Who a close through this request is recorded as (display only, never an authorization). */
+	const closer = (c: Context): SignalCloser => (deps?.controlAuthorized?.(c) ? 'jakub' : 'agent')
 
 	const parseBody = async <T>(c: Context, schema: z.ZodType<T>): Promise<{ data: T } | { error: Response }> => {
 		try {
@@ -229,7 +233,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		const thread = store.getAskByKey(body.data.key)
 		if (!thread) return c.json({ error: 'Signal not found' }, 404)
 		try {
-			return c.json({ data: store.done(thread.id, body.data.note, now()) })
+			return c.json({ data: store.done(thread.id, body.data.note, now(), closer(c)) })
 		} catch (err) {
 			return failure(c, err)
 		}
@@ -248,7 +252,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		const body = await parseBody(c, signalUpdateSchema)
 		if ('error' in body) return body.error
 		try {
-			return c.json({ data: storeFor().update(id, body.data, now()) })
+			return c.json({ data: storeFor().update(id, body.data, now(), closer(c)) })
 		} catch (err) {
 			return failure(c, err)
 		}
@@ -288,7 +292,7 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		const body = await parseBody(c, signalDoneSchema)
 		if ('error' in body) return body.error
 		try {
-			return c.json({ data: storeFor().done(id, body.data.note, now()) })
+			return c.json({ data: storeFor().done(id, body.data.note, now(), closer(c)) })
 		} catch (err) {
 			return failure(c, err)
 		}

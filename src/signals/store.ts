@@ -8,6 +8,7 @@ import type Database from 'better-sqlite3'
 import { boundText, oneLine } from '../agent-dock/text.js'
 import {
 	SIGNAL_ASK_KEY,
+	SIGNAL_CLOSERS,
 	SIGNAL_EVENT_TYPES,
 	SIGNAL_FILTERED_RETENTION_DAYS,
 	SIGNAL_FILTER_REASONS,
@@ -23,6 +24,7 @@ import {
 	type SignalAsk,
 	type SignalAskOutcome,
 	type SignalAskResult,
+	type SignalCloser,
 	type SignalEvent,
 	type SignalEventType,
 	type SignalFilteredEntry,
@@ -128,6 +130,7 @@ interface ThreadRow {
 	active: number
 	missed_polls: number
 	closed_reason: string | null
+	closed_by: string | null
 	note: string | null
 	note_at: string | null
 	managed_by: string | null
@@ -387,6 +390,7 @@ export function toSignalThread(row: ThreadRow): SignalThread {
 		lastActivityAt: row.last_activity_at,
 		active: row.active === 1,
 		closedReason: row.closed_reason,
+		closedBy: oneOf(SIGNAL_CLOSERS, row.closed_by) ? row.closed_by : null,
 		note: row.note,
 		noteAt: row.note_at,
 		managedBy: row.managed_by,
@@ -621,7 +625,11 @@ export class SignalStore {
 		return row ? toSignalThread(row) : null
 	}
 
-	update(id: number, patch: SignalUpdate, now: Date): SignalThread {
+	/**
+	 * Change state/owner/agent. `by` is who asks (the route knows: Helm or `helm signal`); a thread
+	 * it moves to done remembers it as `closed_by`.
+	 */
+	update(id: number, patch: SignalUpdate, now: Date, by: SignalCloser = 'agent'): SignalThread {
 		const at = now.toISOString()
 		return this.transaction(() => {
 			const row = this.requireRow(id)
@@ -630,6 +638,7 @@ export class SignalStore {
 				owner: row.owner,
 				snoozed_until: row.snoozed_until,
 				closed_reason: row.closed_reason,
+				closed_by: row.closed_by,
 				managed_by: row.managed_by,
 			}
 			if (patch.state !== undefined) {
@@ -645,6 +654,8 @@ export class SignalStore {
 				}
 				next.state = patch.state
 				next.closed_reason = null
+				// Already done stays as it was closed; closing records who; leaving done forgets it.
+				if (patch.state !== row.state) next.closed_by = patch.state === 'done' ? by : null
 			}
 			// Jakub putting a gone thread back into new/seen himself wins over the auto-close of a
 			// complete poll: clear its miss count so `closeReturnedGone` leaves it alone.
@@ -663,12 +674,13 @@ export class SignalStore {
 				next.owner !== row.owner ||
 				next.snoozed_until !== row.snoozed_until ||
 				next.closed_reason !== row.closed_reason ||
+				next.closed_by !== row.closed_by ||
 				next.managed_by !== row.managed_by
 			if (!changed) return toSignalThread(row)
 			this.db
 				.prepare(
-					`UPDATE signal_threads SET state = ?, owner = ?, snoozed_until = ?, closed_reason = ?, managed_by = ?,
-					   missed_polls = ?, updated_at = ?
+					`UPDATE signal_threads SET state = ?, owner = ?, snoozed_until = ?, closed_reason = ?, closed_by = ?,
+					   managed_by = ?, missed_polls = ?, updated_at = ?
 					 WHERE id = ?`,
 				)
 				.run(
@@ -676,6 +688,7 @@ export class SignalStore {
 					next.owner,
 					next.snoozed_until,
 					next.closed_reason,
+					next.closed_by,
 					next.managed_by,
 					reopenedByHand ? 0 : row.missed_polls,
 					at,
@@ -873,7 +886,7 @@ export class SignalStore {
 					.prepare(
 						`UPDATE signal_threads SET title = ?, head = ?, body = ?, links = ?, ref = ?, full_ref = ?, actor = ?,
 						   ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new', snoozed_until = NULL,
-						   closed_reason = NULL, reply = NULL, reply_at = NULL, updated_at = ?
+						   closed_reason = NULL, closed_by = NULL, reply = NULL, reply_at = NULL, updated_at = ?
 						 WHERE id = ?`,
 					)
 					.run(
@@ -923,9 +936,10 @@ export class SignalStore {
 
 	/**
 	 * Close a thread (`helm signal done`), optionally with an outcome line. An ask the agent closes
-	 * says so in its closed reason. Already done without a note changes nothing.
+	 * says so in its closed reason. `by` is who asks (`closed_by`). Already done without a note
+	 * changes nothing.
 	 */
-	done(id: number, note: string | undefined, now: Date): SignalThread {
+	done(id: number, note: string | undefined, now: Date, by: SignalCloser = 'agent'): SignalThread {
 		const at = now.toISOString()
 		const text = note === undefined ? null : clean(String(note), SIGNAL_LIMITS.note)
 		if (text === '') throw new SignalInvalidError('Note is empty')
@@ -936,10 +950,11 @@ export class SignalStore {
 			if (closing) {
 				this.db
 					.prepare(
-						`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, updated_at = ?
+						`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = ?,
+						   updated_at = ?
 						 WHERE id = ?`,
 					)
-					.run(row.source === 'agent' ? SIGNAL_ASK_CLOSED_REASON : null, at, id)
+					.run(row.source === 'agent' && by === 'agent' ? SIGNAL_ASK_CLOSED_REASON : null, by, at, id)
 				this.insertEvent(id, 'state', { owner: row.owner, from: row.state, to: 'done' }, at)
 			}
 			if (text !== null) {
@@ -1100,6 +1115,7 @@ export class SignalStore {
 				update.state = 'new'
 				update.snoozed_until = null
 				update.closed_reason = null
+				if (row.closed_by !== null) update.closed_by = null
 			}
 		} else {
 			if (observation.activityKey !== row.activity_key) update.activity_key = observation.activityKey
@@ -1108,6 +1124,7 @@ export class SignalStore {
 				state = 'seen'
 				update.state = 'seen'
 				update.closed_reason = null
+				if (row.closed_by !== null) update.closed_by = null
 			}
 		}
 		const columns = Object.keys(update)
@@ -1143,13 +1160,15 @@ export class SignalStore {
 		// Going inactive alone is bookkeeping: `updated_at` (a done thread's done time) moves only on close.
 		this.db
 			.prepare(
-				`UPDATE signal_threads SET missed_polls = ?, active = 0, state = ?, closed_reason = ?, updated_at = ?
+				`UPDATE signal_threads SET missed_polls = ?, active = 0, state = ?, closed_reason = ?, closed_by = ?,
+				   updated_at = ?
 				 WHERE id = ?`,
 			)
 			.run(
 				missed,
 				close ? 'done' : row.state,
 				close ? goneReason : row.closed_reason,
+				close ? null : row.closed_by,
 				close ? at : row.updated_at,
 				row.id,
 			)
@@ -1172,7 +1191,8 @@ export class SignalStore {
 	private closeGone(row: { id: number; owner: string; state: string }, goneReason: string, at: string): void {
 		this.db
 			.prepare(
-				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, updated_at = ?
+				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = NULL,
+				   updated_at = ?
 				 WHERE id = ?`,
 			)
 			.run(goneReason, at, row.id)

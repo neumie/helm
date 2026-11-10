@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import leftColumnModule from '../app/src/renderer/left-column.ts'
 import modelModule from '../app/src/renderer/signals/model.ts'
+import { GITHUB_GONE_REASON } from '../src/signals/github-map.js'
+import { MAIL_GONE_REASON, mailGoneReason } from '../src/signals/mail-filter.js'
+import { SIGNAL_ASK_CLOSED_REASON } from '../src/signals/store.js'
 
 type SignalThread = import('../app/src/shared-helm.ts').SignalThread
 type SignalSourceHealth = import('../app/src/shared-helm.ts').SignalSourceHealth
@@ -21,8 +24,8 @@ const {
 	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
-	closedHeader,
 	defaultAgentPick,
+	doneReason,
 	following,
 	formatAgo,
 	healthLines,
@@ -190,7 +193,6 @@ test('sections split by owner and state, newest activity first, done only for a 
 	)
 	assert.deepEqual(sections.done.map(entry => entry.id).sort(), [5, 7])
 	assert.equal(sections.doneToday, 2)
-	assert.equal(closedHeader(sections), 'Snoozed 1 · done today 2')
 	assert.deepEqual(
 		orderedRows(sections).map(entry => entry.id),
 		[2, 1, 3, 4, ...sections.done.map(entry => entry.id)],
@@ -528,6 +530,120 @@ test('row view: needs hint, routed receipt, managed note with dock status, snooz
 	)
 })
 
+test('done reason: the daemon’s own closed reasons and who closed it by hand', () => {
+	const done = (patch: Partial<SignalThread> & { id: number }) =>
+		thread({ state: 'done', active: false, updatedAt: iso(50), ...patch })
+	const mail = { source: 'mail' as const, kind: 'mail' as const }
+	const kinds = (rows: SignalThread[]) => rows.map(row => [doneReason(row)?.kind, doneReason(row)?.word])
+
+	// Every reason the daemon writes today maps (the real constants, not copies).
+	assert.deepEqual(
+		kinds([
+			done({ id: 1, ...mail, closedReason: MAIL_GONE_REASON }),
+			done({ id: 2, ...mail, closedReason: mailGoneReason(['Clientcare']) }),
+			done({ id: 3, ...mail, closedReason: mailGoneReason(['Clientcare', 'Work/Ops']) }),
+			done({ id: 4, source: 'mail', kind: 'sentry', closedReason: mailGoneReason([]) }),
+			done({ id: 5, closedReason: GITHUB_GONE_REASON }),
+			done({ id: 6, ...mail, closedReason: 'no longer reported' }),
+			done({ id: 7, closedReason: 'no longer reported' }),
+		]),
+		[
+			['read', 'read in Mail'],
+			['read', 'read in Mail'],
+			['read', 'read in Mail'],
+			['read', 'read in Mail'],
+			['gone', 'gone from GitHub'],
+			['gone', 'gone from Mail'],
+			['gone', 'gone from GitHub'],
+		],
+	)
+
+	// By hand: Helm records Jakub, `helm signal` an agent (with the managing agent's name when known).
+	assert.deepEqual(
+		kinds([
+			done({ id: 10, closedBy: 'jakub' }),
+			done({ id: 11, closedBy: 'agent', note: 'Merged' }),
+			done({ id: 12, closedBy: 'agent', owner: 'managed', managedBy: 'fix-widget' }),
+			// Before the daemon recorded who: a managed thread or a note means an agent; else unknown.
+			done({ id: 13, owner: 'managed' }),
+			done({ id: 14, note: 'Merged' }),
+			done({ id: 15 }),
+			done({ id: 16, closedBy: undefined }),
+		]),
+		[
+			['dismissed', 'dismissed'],
+			['agent', 'closed by agent'],
+			['agent', 'closed by fix-widget'],
+			['agent', 'closed by agent'],
+			['agent', 'closed by agent'],
+			['unknown', 'marked done'],
+			['unknown', 'marked done'],
+		],
+	)
+
+	// Asks: the agent closing an answered ask = answered; unanswered = closed by agent; Jakub's d = dismissed.
+	assert.deepEqual(
+		kinds([
+			ask({ id: 20, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON, closedBy: 'agent', reply: 'Yes' }),
+			ask({ id: 21, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON, closedBy: 'agent' }),
+			ask({ id: 22, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON }),
+			ask({ id: 23, state: 'done', closedBy: 'jakub', reply: 'Yes' }),
+		]),
+		[
+			['answered', 'answered'],
+			['agent', 'closed by agent'],
+			['agent', 'closed by agent'],
+			['dismissed', 'dismissed'],
+		],
+	)
+
+	assert.equal(doneReason(thread({ id: 30 })), null, 'only done threads have a reason')
+	const noted = doneReason(done({ id: 31, closedBy: 'agent', note: 'Merged as #12' }))
+	const at = new Date(NOW - 50 * MINUTE)
+	assert.equal(
+		noted?.title,
+		`closed by agent · Merged as #12 · closed ${at.getHours()}:${String(at.getMinutes()).padStart(2, '0')}`,
+	)
+	assert.match(
+		doneReason(done({ id: 32, ...mail, closedReason: MAIL_GONE_REASON }))?.title ?? '',
+		/^read in Mail · no longer unread in the inbox · closed /,
+	)
+})
+
+test('a done row keeps its close time and says how it got done after the ref', () => {
+	const closed = new Date(NOW - 50 * MINUTE)
+	const clock = `${closed.getHours()}:${String(closed.getMinutes()).padStart(2, '0')}`
+	const row = thread({
+		id: 1,
+		state: 'done',
+		owner: 'managed',
+		managedBy: 'fix-widget',
+		closedBy: 'agent',
+		note: 'Merged',
+		updatedAt: closed.toISOString(),
+	})
+	const view = signalRowView(row, null, NOW)
+	assert.equal(view.age, clock)
+	assert.equal(view.detail, null)
+	assert.equal(view.doneReason?.kind, 'agent')
+	assert.equal(view.doneReason?.word, 'closed by fix-widget')
+	assert.equal(view.doneReason?.title, `closed by fix-widget · Merged · closed ${clock}`)
+	// An answered ask keeps its body line; how it got done goes after the ref.
+	const answered = ask({
+		id: 2,
+		state: 'done',
+		body: 'Pick one',
+		links: [],
+		closedReason: SIGNAL_ASK_CLOSED_REASON,
+		reply: 'B',
+		updatedAt: closed.toISOString(),
+	})
+	assert.equal(signalRowView(answered, null, NOW).detail, 'Pick one')
+	assert.equal(signalRowView(answered, null, NOW).doneReason?.word, 'answered')
+	// Not done: no reason.
+	assert.equal(signalRowView(thread({ id: 3 }), null, NOW).doneReason, null)
+})
+
 test('summary counts what still needs Jakub', () => {
 	const sections = signalSections(
 		[
@@ -745,7 +861,7 @@ test('branch suggestions: PR head branch, issue number, mail subject slug', () =
 	assert.equal(oneLine('a\u0000b\n\tc', 10), 'a b c')
 })
 
-test('filtered mail: the footer line, the header summary, rows by decoded sender and the include note', () => {
+test('filtered mail: the count after Done today, the header summary, rows by decoded sender and the include note', () => {
 	assert.equal(filteredLine(undefined), null)
 	assert.equal(filteredLine(0), null)
 	assert.equal(filteredLine(12), '12 filtered')
