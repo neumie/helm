@@ -156,7 +156,7 @@ const capture = () => {
 test('hello answers protocol 2; a version 1 host is learned from hello only and helm open says to update', async () => {
 	const fresh = await newHost()
 	try {
-		assert.deepEqual(await helloReview(fresh.root), { protocol: 2, features: [] })
+		assert.deepEqual(await helloReview(fresh.root), { protocol: 2, features: ['session-hint'] })
 	} finally {
 		await fresh.close()
 	}
@@ -223,6 +223,51 @@ test('unknown commands and unknown command fields are refused definitively with 
 		])
 	} finally {
 		await fresh.close()
+	}
+})
+
+test('connect carries the session hint only with the session-hint feature; unknown features are refused definitively', async () => {
+	const root = join(await realpath(await mkdtemp('/tmp/hop-')), 'r')
+	const seen: unknown[] = []
+	const host = new ReviewControlServer(root, {
+		status: () => ({ available: true }),
+		current: () => true,
+		connect: async command => {
+			seen.push(command)
+			throw refuse('Recorded; nothing connected.')
+		},
+		command: () => assert.fail('no caller command'),
+		disconnect: () => {},
+	})
+	await host.start()
+	try {
+		const discovery = JSON.parse(await readFile(join(root, 'discovery.json'), 'utf8'))
+		const raw = (command: unknown) =>
+			callReview(discovery, command as never, helloSchema).then(
+				() => assert.fail('must be refused'),
+				(error: Error) => error.message,
+			)
+		const base = {
+			action: 'connect',
+			workspace: root,
+			provider: 'claude',
+			label: 'Claude Code',
+			transport: 'tool-return',
+		}
+		const session = randomUUID()
+		assert.equal(await raw({ ...base, features: ['session-hint'], session }), 'Recorded; nothing connected.')
+		assert.deepEqual(seen, [{ ...base, features: ['session-hint'], session }])
+		assert.match(
+			await raw({ ...base, features: ['anchors-v3'] }),
+			/^Unknown connect feature "anchors-v3"\. Nothing was done/,
+		)
+		assert.match(await raw({ ...base, session }), /^A session hint needs the session-hint connect feature/)
+		assert.equal(seen.length, 1)
+		// An old CLI's connect (no features) is unchanged.
+		assert.equal(await raw(base), 'Recorded; nothing connected.')
+		assert.deepEqual(seen[1], base)
+	} finally {
+		await host.stop()
 	}
 })
 

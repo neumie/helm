@@ -19,13 +19,14 @@ import { parseExternalHttpUrl } from '../external-url'
 import { sendToLiveRenderer } from '../renderer-lifecycle'
 import type { SessionRegistry } from '../sessions'
 import { requireReviewAccess } from './access'
+import { type ActivitySources, ReviewActivityWatcher } from './activity-watcher'
 import { appendReviewArtifact, parseReviewArtifact } from './canvas-artifact'
 import { ReviewArchiveCapacity, ReviewArchivePersistence } from './canvas-persistence'
 import { ReviewDocumentObservation, readReviewFile, reviewRevision } from './document'
 import { ReviewDraftStore, reviewDraftSchema } from './drafts'
 import { reviewPrompt } from './request'
 import { parseReviewRequest } from './request-admission'
-import { ReviewSessions } from './sessions'
+import { ReviewSessions, type SessionHint } from './sessions'
 import { defaultReviewDraft } from './types'
 import type {
 	CanvasReviewEntry,
@@ -83,6 +84,8 @@ interface ReviewWindowDependencies {
 	/** Helm's own private paths, refused by plain viewing (by path and by inode). */
 	privatePaths?(): Promise<HelmPrivatePaths>
 	onAllClosed?(): void
+	/** Test seam: where provider session files are read from (default: the user's Claude/Codex roots). */
+	activitySources?: ActivitySources
 }
 const displayPath = (file: string) => {
 	const home = homedir()
@@ -103,7 +106,15 @@ export class DocumentReviewWindows {
 	private admissionEpoch = 0
 	private publishTimer: ReturnType<typeof setTimeout> | null = null
 	private readonly pendingProfiles = new Set<string>()
-	constructor(private readonly deps: ReviewWindowDependencies) {}
+	/** Display-only progress from hinted callers' own session files (S12); never trusted beyond deadline renewal. */
+	private readonly activity: ReviewActivityWatcher
+	constructor(private readonly deps: ReviewWindowDependencies) {
+		this.activity = new ReviewActivityWatcher(
+			() => this.sessions.entries(),
+			profileId => this.publish(profileId),
+			deps.activitySources,
+		)
+	}
 	private current(state: WindowState): boolean {
 		return (
 			!state.window.isDestroyed() &&
@@ -605,9 +616,15 @@ export class DocumentReviewWindows {
 		}
 	}
 	/** Only the private native control service calls this; no renderer can enroll a caller. */
-	connectCaller(provider: ReviewProvider, workspace: string, name: string, transport: 'tool-return' | 'in-process') {
+	connectCaller(
+		provider: ReviewProvider,
+		workspace: string,
+		name: string,
+		transport: 'tool-return' | 'in-process',
+		hint?: SessionHint,
+	) {
 		this.requireAdmission()
-		return this.sessionsFor(this.deps.profileId()).connect(provider, workspace, name, transport)
+		return this.sessionsFor(this.deps.profileId()).connect(provider, workspace, name, transport, hint)
 	}
 	callerSessions(profileId: string): ReviewSessions {
 		return this.sessionsFor(profileId)
@@ -635,7 +652,10 @@ export class DocumentReviewWindows {
 	private sessionsFor(profileId: string): ReviewSessions {
 		let sessions = this.sessions.get(profileId)
 		if (!sessions) {
-			sessions = new ReviewSessions(() => this.publish(profileId))
+			sessions = new ReviewSessions(() => {
+				this.publish(profileId)
+				this.activity.kick()
+			})
 			this.sessions.set(profileId, sessions)
 		}
 		return sessions
@@ -1028,6 +1048,9 @@ export class DocumentReviewWindows {
 			},
 			archiveError: state.archive.error(),
 			archiveFailureId: state.archive.failureId(),
+			activity: state.recoveryContext
+				? null
+				: this.activity.activity(state.profileId, state.selectedSession, state.observation.id),
 		}
 	}
 	private publish(profileId: string): void {

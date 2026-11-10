@@ -41,7 +41,14 @@ export async function callerFixture(deadline = 2000) {
 		},
 		connect: async command => {
 			assert.equal(command.workspace, workspace)
-			const session = sessions.connect(command.provider, workspace, command.label, command.transport)
+			// The session hint (S12) as the desktop keeps it: Claude Code and Codex only, host memory only.
+			const hint =
+				command.session &&
+				command.features?.includes('session-hint') &&
+				(command.provider === 'claude' || command.provider === 'codex')
+					? { provider: command.provider, session: command.session }
+					: undefined
+			const session = sessions.connect(command.provider, workspace, command.label, command.transport, hint)
 			return { id: session.id, owner: session.owner, workspace, profileId: 'work', profileToken: 'work:1' }
 		},
 		command: async (binding, command, signal) => {

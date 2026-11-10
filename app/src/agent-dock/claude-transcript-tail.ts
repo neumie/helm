@@ -14,10 +14,10 @@
 // reports nothing, never a guess. A missing or unreadable file is looked up again at most
 // every LOCATE_RETRY_MS.
 
-import { constants } from 'node:fs'
-import { open, readdir, realpath, stat } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
+import { type JsonlCursor, readAppendedJsonl } from '../../../src/provider-files/bounded-jsonl'
 import {
 	type BackgroundTaskState,
 	type ObservedBackgroundTasks,
@@ -34,7 +34,7 @@ export const LOCATE_RETRY_MS = 60_000
 export const TAIL_SESSIONS_MAX = 128
 /** Project folders stat'ed when the cwd-named one does not hold the session. */
 const LOCATE_SCAN_MAX = 4096
-const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/
+export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/
 
 /** What OkenaClaudeSource asks per pane (structural, so tests inject a double). */
 export interface BackgroundTaskObserver {
@@ -49,7 +49,8 @@ interface Tail {
 	path?: string
 	/** When the file was last looked for and not found. */
 	missedAt?: number
-	offset: number
+	/** Null = the next read takes a fresh window. */
+	cursor: JsonlCursor | null
 	tasks: BackgroundTaskState
 	/** The main agent's recent tool calls (answered-dialog proof, tool-calls.ts). */
 	calls: ToolCallState
@@ -59,14 +60,57 @@ interface Tail {
 /** Claude's project folder name for a cwd (every character but [A-Za-z0-9] becomes '-'). */
 export const claudeProjectDir = (cwd: string): string => cwd.replace(/[^A-Za-z0-9]/g, '-')
 
+/** Claude config dirs: $CLAUDE_CONFIG_DIR, then ~/.claude. */
+export const claudeConfigRoots = (): string[] => {
+	const configDir = process.env.CLAUDE_CONFIG_DIR
+	return [...(configDir ? [configDir] : []), join(homedir(), '.claude')]
+}
+
+/**
+ * `<root>/projects/<cwd folder>/<sessionId>.jsonl`, else any project folder holding it (at most 4096 folders).
+ * Returns the real path and the real `projects` folder it is under; undefined when not found.
+ */
+export async function locateClaudeTranscript(
+	roots: readonly string[],
+	sessionId: string,
+	cwd: string | undefined,
+): Promise<{ path: string; base: string } | undefined> {
+	if (!SESSION_ID.test(sessionId)) return undefined
+	const name = `${sessionId}.jsonl`
+	for (const root of roots) {
+		const base = await realpath(join(root, 'projects')).catch(() => null)
+		if (!base) continue
+		const folders = cwd ? [claudeProjectDir(cwd)] : []
+		for (const folder of folders) {
+			const found = await inside(base, join(base, folder, name))
+			if (found) return { path: found, base }
+		}
+		// Long cwds get a shortened folder name (and Claude may run elsewhere than the pane's project).
+		const entries = await readdir(base, { withFileTypes: true }).catch(() => [])
+		for (const entry of entries.slice(0, LOCATE_SCAN_MAX)) {
+			if (!entry.isDirectory() || folders.includes(entry.name)) continue
+			const found = await inside(base, join(base, entry.name, name))
+			if (found) return { path: found, base }
+		}
+	}
+	return undefined
+}
+
+async function inside(base: string, path: string): Promise<string | undefined> {
+	// lstat: a symlinked `<session>.jsonl` (to another session's file) is refused, not followed.
+	const info = await lstat(path).catch(() => null)
+	if (!info?.isFile()) return undefined
+	const real = await realpath(path).catch(() => null)
+	return real?.startsWith(`${base}${sep}`) ? real : undefined
+}
+
 export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 	private readonly tails = new Map<string, Tail>()
 	private readonly roots: string[]
 
 	/** `roots`: Claude config dirs (default ~/.claude and $CLAUDE_CONFIG_DIR). */
 	constructor(roots?: string[]) {
-		const configDir = process.env.CLAUDE_CONFIG_DIR
-		this.roots = roots ?? [...(configDir ? [configDir] : []), join(homedir(), '.claude')]
+		this.roots = roots ?? claudeConfigRoots()
 	}
 
 	async observe(
@@ -76,7 +120,7 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 		if (!SESSION_ID.test(sessionId)) return undefined
 		let tail = this.tails.get(sessionId)
 		if (!tail) {
-			tail = { offset: 0, tasks: emptyBackgroundTasks(), calls: emptyToolCalls(), seenAt: options.now }
+			tail = { cursor: null, tasks: emptyBackgroundTasks(), calls: emptyToolCalls(), seenAt: options.now }
 			this.tails.set(sessionId, tail)
 			this.prune()
 		}
@@ -89,7 +133,7 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 				// every tick (a scan of the projects folder each poll for a file it cannot read).
 				tail.path = undefined
 				tail.missedAt = options.now
-				tail.offset = 0
+				tail.cursor = null
 				tail.tasks = emptyBackgroundTasks()
 				tail.calls = emptyToolCalls()
 				return undefined
@@ -114,89 +158,30 @@ export class ClaudeTranscriptTail implements BackgroundTaskObserver {
 	private async read(tail: Tail, sessionId: string, cwd: string | undefined, now: number): Promise<boolean> {
 		if (tail.path === undefined) {
 			if (tail.missedAt !== undefined && now - tail.missedAt < LOCATE_RETRY_MS) return false
-			const found = await this.locate(sessionId, cwd)
+			const found = await locateClaudeTranscript(this.roots, sessionId, cwd)
 			if (!found) {
 				tail.missedAt = now
 				return false
 			}
-			tail.path = found
+			tail.path = found.path
 			tail.missedAt = undefined
-			tail.offset = 0
+			tail.cursor = null
 			tail.tasks = emptyBackgroundTasks()
 			tail.calls = emptyToolCalls()
 		}
-		const handle = await open(tail.path, constants.O_RDONLY | constants.O_NOFOLLOW)
-		try {
-			const info = await handle.stat()
-			if (!info.isFile() || (typeof process.getuid === 'function' && info.uid !== process.getuid()))
-				throw new Error('not a transcript file')
-			// Shrunk (rewritten) or a first read: start over from a fresh window.
-			let fresh = tail.offset === 0 || info.size < tail.offset
-			if (!fresh && info.size - tail.offset > READ_MAX_BYTES) fresh = true
-			const start = fresh ? Math.max(0, info.size - FIRST_READ_BYTES) : tail.offset
-			if (fresh) {
-				tail.tasks = emptyBackgroundTasks()
-				tail.calls = emptyToolCalls()
-			}
-			const length = info.size - start
-			if (length <= 0) {
-				tail.offset = info.size
-				return true
-			}
-			const buffer = Buffer.alloc(length)
-			const { bytesRead } = await handle.read(buffer, 0, length, start)
-			const chunk = buffer.subarray(0, bytesRead)
-			const lastNewline = chunk.lastIndexOf(0x0a)
-			if (lastNewline === -1) {
-				// No complete line yet: a fresh window is read again next time.
-				if (fresh) tail.offset = 0
-				return true
-			}
-			// A window that starts mid-file starts mid-line: skip to the first full one.
-			const firstLine = fresh && start > 0 ? chunk.indexOf(0x0a) + 1 : 0
-			const text = chunk.subarray(firstLine, lastNewline).toString('utf8')
-			let tasks = tail.tasks
-			let calls = tail.calls
-			for (const line of text.split('\n')) {
-				if (!line) continue
-				tasks = applyBackgroundLine(tasks, line)
-				calls = applyToolCallLine(calls, line)
-			}
-			tail.tasks = tasks
-			tail.calls = calls
-			tail.offset = start + lastNewline + 1
-			return true
-		} finally {
-			await handle.close()
+		const read = await readAppendedJsonl(tail.path, tail.cursor, {
+			firstReadBytes: FIRST_READ_BYTES,
+			maxReadBytes: READ_MAX_BYTES,
+		})
+		let tasks = read.fresh ? emptyBackgroundTasks() : tail.tasks
+		let calls = read.fresh ? emptyToolCalls() : tail.calls
+		for (const line of read.lines) {
+			tasks = applyBackgroundLine(tasks, line)
+			calls = applyToolCallLine(calls, line)
 		}
-	}
-
-	/** `<root>/projects/<cwd folder>/<sessionId>.jsonl`, else any project folder holding it. */
-	private async locate(sessionId: string, cwd: string | undefined): Promise<string | undefined> {
-		const name = `${sessionId}.jsonl`
-		for (const root of this.roots) {
-			const base = await realpath(join(root, 'projects')).catch(() => null)
-			if (!base) continue
-			const folders = cwd ? [claudeProjectDir(cwd)] : []
-			for (const folder of folders) {
-				const found = await this.inside(base, join(base, folder, name))
-				if (found) return found
-			}
-			// Long cwds get a shortened folder name (and Claude may run elsewhere than the pane's project).
-			const entries = await readdir(base, { withFileTypes: true }).catch(() => [])
-			for (const entry of entries.slice(0, LOCATE_SCAN_MAX)) {
-				if (!entry.isDirectory() || folders.includes(entry.name)) continue
-				const found = await this.inside(base, join(base, entry.name, name))
-				if (found) return found
-			}
-		}
-		return undefined
-	}
-
-	private async inside(base: string, path: string): Promise<string | undefined> {
-		const info = await stat(path).catch(() => null)
-		if (!info?.isFile()) return undefined
-		const real = await realpath(path).catch(() => null)
-		return real?.startsWith(`${base}${sep}`) ? real : undefined
+		tail.tasks = tasks
+		tail.calls = calls
+		tail.cursor = read.cursor
+		return true
 	}
 }
