@@ -261,3 +261,8 @@ test('SlackSessionStore: save, list, get, remove', async () => {
 	assert.deepEqual(await store.list(), [])
 	assert.equal(await store.get('T1'), null)
 })
+
+test('snappy: an over-cap declared length throws instead of allocating', () => {
+	// Preamble 0xffffffff0f = ~4 GiB declared length; must be refused, not allocated.
+	assert.throws(() => snappyDecompress(Uint8Array.from([0xff, 0xff, 0xff, 0xff, 0x0f, 0x00])), SnappyError)
+})

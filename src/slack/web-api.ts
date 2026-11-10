@@ -14,7 +14,11 @@ export type SlackFetch = (url: string, init: RequestInit) => Promise<Response>
 
 export interface SlackClientOptions {
 	fetch?: SlackFetch
-	/** Only a loopback (`127.0.0.1`/`localhost`) URL is accepted here; anything else is ignored. */
+	/**
+	 * Test-only loopback override (a fake Slack server). Only a loopback (`127.0.0.1`/`localhost`)
+	 * `http://` URL is accepted; anything else falls back to slack.com. Never sourced from the
+	 * process environment — see the constructor — so an agent-controlled env cannot redirect the token.
+	 */
 	apiUrl?: string
 	now?: () => number
 }
@@ -79,7 +83,11 @@ export class SlackClient {
 		private readonly creds: SlackSessionCreds,
 		options: SlackClientOptions = {},
 	) {
-		this.apiUrl = resolveApiUrl(options.apiUrl ?? process.env.HELM_SLACK_API_URL)
+		// The loopback override is ONLY the explicit `apiUrl` option (test injection). It is never
+		// read from the process environment: the `helm slack` CLI runs with an agent-controlled env,
+		// and an env-driven override to a loopback server the agent binds would exfiltrate the token
+		// and cookie. With no option, the token only ever goes to slack.com.
+		this.apiUrl = resolveApiUrl(options.apiUrl)
 		this.doFetch = options.fetch ?? ((url, init) => fetch(url, init))
 		this.now = options.now ?? (() => Date.now())
 	}

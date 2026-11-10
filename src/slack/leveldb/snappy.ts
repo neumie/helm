@@ -12,6 +12,13 @@ export class SnappyError extends Error {
 	}
 }
 
+/**
+ * Cap the declared uncompressed length so a crafted preamble (e.g. `0xffffffff`) cannot ask for a
+ * multi-GiB allocation before any byte is read. LevelDB Local Storage blocks are a few KiB; 64 MiB
+ * is far above any real block and bounds the allocation.
+ */
+const MAX_DECOMPRESSED = 64 * 1024 * 1024
+
 export function snappyDecompress(input: Uint8Array): Uint8Array {
 	let pos = 0
 	// Preamble: the uncompressed length as a varint (little-endian base-128).
@@ -26,6 +33,7 @@ export function snappyDecompress(input: Uint8Array): Uint8Array {
 		if (shift > 32) throw new SnappyError('length preamble too long')
 	}
 	length >>>= 0
+	if (length > MAX_DECOMPRESSED) throw new SnappyError('declared length exceeds the cap')
 	const out = new Uint8Array(length)
 	let outPos = 0
 

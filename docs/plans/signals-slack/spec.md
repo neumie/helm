@@ -49,10 +49,31 @@ runtime, with Jakub's macOS consent, and keeps a copy in Helm's own Keychain.
   `connect`/`status` print only team name, user name, and ok/error. Tests use crafted fixtures and a fake
   Slack server; no fixture contains a real credential.
 
-- **Slack base URL** `https://slack.com/api/`. `HELM_SLACK_API_URL` overrides it **only** with a loopback
-  `http://127.0.0.1|localhost:<port>/` URL (tests); a token is never sent to any non-slack.com host.
-  Calls are form POSTs: `token` in the body, `Cookie: d=<xoxd>`, a browser-like `User-Agent`, no Helm or
-  Jakub identity in headers.
+- **Slack base URL** `https://slack.com/api/`. The loopback override is a **test-only explicit `apiUrl`
+  option** (never read from the process environment — an agent-controlled env must not be able to redirect
+  the token to a loopback server it binds); a token is never sent to any non-slack.com host. Calls are
+  form POSTs: `token` in the body, `Cookie: d=<xoxd>`, a browser-like `User-Agent`, no Helm or Jakub
+  identity in headers.
+
+### Security boundary (same-uid trust)
+
+Helm already trusts same-uid local processes to a degree: its local control token lives in an
+owner-readable `~/.helm/local-api-token`. Slack inherits that boundary and does not widen it:
+
+- Helm's stored Slack session (Keychain service `helm.slack`) is created non-interactively so the headless
+  daemon can poll without a GUI prompt. A consequence is that **any same-uid process can read it** with
+  `security find-generic-password -s helm.slack -a <acct> -w` — there is no code-signed ACL for an
+  unpackaged dev build. So the Keychain protects the secrets from being written to logs/files/argv, **not**
+  from a hostile process running as Jakub's own user. A hostile same-uid agent can therefore obtain the
+  `xoxc`/`xoxd` session and talk to Slack directly, bypassing every CLI guard.
+- Consequently the `helm slack send` self-only guard and the Helm-only write routes are a **safety rail**
+  (against naive/accidental agent misuse, and against the daemon/renderer being tricked) — not a hard
+  boundary against a hostile same-uid agent, who could skip the CLI entirely. `HELM_SLACK_SEND_SELF_ONLY=1`
+  is the hard self-only guard for the supervised live test.
+- The CLI reads the send allowlist from the fixed default loopback daemon over an unauthenticated GET; a
+  port-squatter answering `:7474` while the real daemon is down could serve a permissive list. This adds
+  nothing beyond the same-uid capability above (such an agent already has the token), so it is accepted
+  rather than papered over with request auth that cannot verify the responder.
 
 - **Risks (report to Jakub).** This is undocumented, unofficial use of the web-client session: Slack may
   change the storage format or the API, or flag automated use (ToS). Helm keeps the footprint small

@@ -102,3 +102,17 @@ test('web-api: a loopback apiUrl override is honoured (for tests)', async () => 
 	await client.call('auth.test')
 	assert.match(calls[0].url, /^http:\/\/127\.0\.0\.1:8099\/api\/auth\.test$/)
 })
+
+test('web-api: HELM_SLACK_API_URL env is ignored — the token can only go to slack.com', async () => {
+	const prev = process.env.HELM_SLACK_API_URL
+	process.env.HELM_SLACK_API_URL = 'http://127.0.0.1:9999/api/'
+	try {
+		const { calls, fetchImpl } = fakeFetch(() => ({ json: { ok: true } }))
+		const client = new SlackClient(creds, { fetch: fetchImpl })
+		await client.call('auth.test')
+		assert.match(calls[0].url, /^https:\/\/slack\.com\/api\//)
+	} finally {
+		if (prev === undefined) delete process.env.HELM_SLACK_API_URL
+		else process.env.HELM_SLACK_API_URL = prev
+	}
+})
