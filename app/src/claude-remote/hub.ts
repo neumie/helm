@@ -327,27 +327,36 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 			return { delivery: 'queued' }
 		}
 		this.core.typed(ref, this.now())
-		this.armDue()
-		const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
-		// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
-		return { delivery: 'pty', via }
+		try {
+			const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
+			// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
+			return { delivery: 'pty', via }
+		} finally {
+			// The guard runs from the end of the write (a `dtach -p` push can take seconds).
+			this.core.delivered(ref, this.now())
+		}
 	}
 
 	/** Types every queued prompt that is due (hub-core decides); a failed delivery is logged, not retried. */
 	private typeDuePrompts(): void {
 		for (const { ref, text } of this.core.takeDuePrompts(this.now()))
-			void this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS).catch(error => {
-				this.warn(
-					`a queued prompt for ${ref.terminalId} was not typed: ${error instanceof Error ? error.message : String(error)}`,
-				)
-			})
+			void this.options
+				.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
+				.catch(error => {
+					this.warn(
+						`a queued prompt for ${ref.terminalId} was not typed: ${error instanceof Error ? error.message : String(error)}`,
+					)
+				})
+				// Nothing more is typed into it until this write is done (its guard runs from then).
+				.finally(() => this.core.delivered(ref, this.now()))
 		this.armDue()
 	}
 
 	/**
-	 * A typing guard ends with no hook event (the typed reply's UserPromptSubmit never came: Claude
-	 * dropped it, or it was typed into a prompt that ignored it), so nothing would call typeDuePrompts
-	 * again while the agent sits idle. One timer for the earliest such expiry types the next one then.
+	 * A typed reply's UserPromptSubmit may never come (Claude dropped it, or it was typed into a
+	 * prompt that ignored it): then no hook event would call typeDuePrompts again while the agent
+	 * sits idle. One timer for the earliest such moment (QUEUED_PROMPT_STALL_MS after the write)
+	 * types the next one then.
 	 */
 	private armDue(): void {
 		this.cancelDue?.()

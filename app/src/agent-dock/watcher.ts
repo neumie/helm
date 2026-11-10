@@ -431,7 +431,7 @@ export class AgentDockWatcher {
 		let outcome: DockActOutcome
 		let recorded = false
 		try {
-			this.apply({ type: 'prompt.sending', session: key, ...(assistantUuid ? { assistantUuid } : {}) })
+			this.apply({ type: 'prompt.sending', session: key, text, ...(assistantUuid ? { assistantUuid } : {}) })
 			this.publish(true)
 			this.report()
 			try {

@@ -1821,6 +1821,7 @@ export function createAgentDockFixture(
 				apply({
 					type: 'prompt.sending',
 					session: request.session,
+					text: request.text,
 					...(request.assistantUuid ? { assistantUuid: request.assistantUuid } : {}),
 				})
 				await wait(FIXTURE_ACT_STEP_MS)

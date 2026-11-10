@@ -77,6 +77,13 @@ const CLOSED_TERMINALS_MAX = 256
 export const EVENT_STRING_MAX = 4096
 /** A reply the hub typed blocks a second one until its UserPromptSubmit, at most this long. */
 export const TYPING_GUARD_MS = 5_000
+/**
+ * A queued prompt typed behind another waits for that one's UserPromptSubmit (then its turn's
+ * Stop), at most this long: the hook is async, so it can arrive seconds late while Claude already
+ * works on the typed prompt, and typing the next one then would land it mid-turn. Only past this,
+ * with no hook at all, is the typed prompt taken as dropped and the next one typed.
+ */
+export const QUEUED_PROMPT_STALL_MS = 30_000
 /** Prompts a terminal holds for after its agent's turn (asked with `queue`); more are refused. */
 export const QUEUED_PROMPTS_MAX = 8
 /** A transcript marker this much older than the active prompt's hook belongs to an earlier prompt. */
@@ -128,6 +135,10 @@ interface TerminalState {
 	entries: Entry[]
 	nextSeq: number
 	typingUntil?: number
+	/** When the hub last typed into it (cleared by the typed prompt's UserPromptSubmit). */
+	typedAt?: number
+	/** A delivery (attached pty write or `dtach -p`) is still writing: nothing else is typed meanwhile. */
+	delivering?: boolean
 	/**
 	 * Prompts asked with `queue` while the agent was busy, typed one at a time once it is idle with
 	 * no dialog (`takeDuePrompts`). Dropped with the session: never delivered to the next one.
@@ -476,7 +487,7 @@ export class ClaudeHubCore {
 		if (!this.hasLifeline(t, t.primary.pid))
 			throw new HubError(409, 'The Claude session is not connected to Helm; reply in the terminal.')
 		if (t.dialogs.length > 0) throw new HubError(409, 'The agent has an open dialog; answer that first.')
-		const typing = t.typingUntil !== undefined && now < t.typingUntil
+		const typing = t.delivering === true || (t.typingUntil !== undefined && now < t.typingUntil)
 		if (queue && (t.busy === true || typing || t.queued.length > 0)) {
 			if (t.queued.length >= QUEUED_PROMPTS_MAX) throw new HubError(409, 'Too many queued prompts.')
 			return 'queue'
@@ -505,10 +516,11 @@ export class ClaudeHubCore {
 			const primary = t.primary
 			if (t.queued.length === 0 || !primary || primary.ended || !this.listed(t)) continue
 			if (!this.hasLifeline(t, primary.pid) || t.busy !== false || t.dialogs.length > 0) continue
-			if (t.typingUntil !== undefined && now < t.typingUntil) continue
+			const at = this.queuedTypingAt(t)
+			if (at === undefined || now < at) continue
 			const text = t.queued.shift()
 			if (text === undefined) continue
-			t.typingUntil = now + TYPING_GUARD_MS
+			this.markTyping(t, now)
 			due.push({ ref: { ...t.ref }, text })
 		}
 		if (due.length > 0) this.changed()
@@ -516,9 +528,9 @@ export class ClaudeHubCore {
 	}
 
 	/**
-	 * When the next queued prompt waits only on a typing guard: its expiry (the earliest one), else
-	 * undefined. The guard ends without any hook event (a reply whose UserPromptSubmit never came), so
-	 * the hub arms a timer for it instead of waiting for the next change.
+	 * When the next queued prompt waits only on time (a typed prompt whose UserPromptSubmit never
+	 * came): the earliest such moment, else undefined. Nothing else would end that wait (no hook
+	 * comes), so the hub arms a timer for it instead of waiting for the next change.
 	 */
 	nextPromptDueAt(): number | undefined {
 		let due: number | undefined
@@ -526,16 +538,47 @@ export class ClaudeHubCore {
 			const primary = t.primary
 			if (t.queued.length === 0 || !primary || primary.ended || !this.listed(t)) continue
 			if (!this.hasLifeline(t, primary.pid) || t.busy !== false || t.dialogs.length > 0) continue
-			if (t.typingUntil === undefined) continue
-			if (due === undefined || t.typingUntil < due) due = t.typingUntil
+			if (t.typingUntil === undefined && t.typedAt === undefined) continue
+			const at = this.queuedTypingAt(t)
+			if (at !== undefined && (due === undefined || at < due)) due = at
 		}
 		return due
 	}
 
-	/** The hub typed a reply: block another until its UserPromptSubmit (or TYPING_GUARD_MS). */
+	/** The hub is typing a reply: block another until its UserPromptSubmit (or TYPING_GUARD_MS after the write). */
 	typed(ref: TerminalRef, now: number): void {
 		const t = this.terminals.get(terminalKey(ref))
-		if (t) t.typingUntil = now + TYPING_GUARD_MS
+		if (t) this.markTyping(t, now)
+	}
+
+	/**
+	 * A delivery `typed` / `takeDuePrompts` started has finished writing (or failed). The guard then
+	 * runs from now, unless the prompt's UserPromptSubmit already came (the agent took it).
+	 */
+	delivered(ref: TerminalRef, now: number): void {
+		const t = this.terminals.get(terminalKey(ref))
+		if (!t) return
+		t.delivering = false
+		if (t.typedAt !== undefined) {
+			t.typedAt = now
+			t.typingUntil = now + TYPING_GUARD_MS
+		}
+		this.changed()
+	}
+
+	private markTyping(t: TerminalState, now: number): void {
+		t.typingUntil = now + TYPING_GUARD_MS
+		t.typedAt = now
+		t.delivering = true
+	}
+
+	/** When a queued prompt may be typed into `t` (undefined: not while a delivery is still writing). */
+	private queuedTypingAt(t: TerminalState): number | undefined {
+		if (t.delivering) return undefined
+		return Math.max(
+			t.typingUntil ?? Number.NEGATIVE_INFINITY,
+			t.typedAt === undefined ? Number.NEGATIVE_INFINITY : t.typedAt + QUEUED_PROMPT_STALL_MS,
+		)
 	}
 
 	// -------------------------------------------------------------------------
@@ -768,6 +811,7 @@ export class ClaudeHubCore {
 		t.backgroundShells = 0
 		t.entries = []
 		t.typingUntil = undefined
+		t.typedAt = undefined
 		t.queued = []
 	}
 
@@ -829,6 +873,7 @@ export class ClaudeHubCore {
 
 	private userPrompt(t: TerminalState, promptId: string | undefined, prompt: string, at: number): void {
 		t.typingUntil = undefined
+		t.typedAt = undefined
 		// A background subagent's completion is delivered as a prompt; it is not a reply.
 		if (!prompt.trimStart().startsWith('<task-notification>')) this.userEntry(t, promptId, prompt)
 		// Async hooks: this prompt's Stop may already have arrived. Then it is not busy again.

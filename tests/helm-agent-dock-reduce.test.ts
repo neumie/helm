@@ -33,6 +33,8 @@ const {
 	agentDockTranscriptRequest,
 	createAgentDockState,
 	reduce,
+	replyLanded,
+	replyMatchText,
 } = reduceModule as ReduceModule
 type CadenceModule = typeof import('../app/src/agent-dock/cadence.ts')
 const { RECONCILE_INTERVAL_MS, SLOWEST_INTERVAL_MS } = cadenceModule as CadenceModule
@@ -101,7 +103,7 @@ function okenaState(version: number, terminals: string[], dialogs: Record<string
 function page(entries: Json[], opts: { cursor: number; reset?: boolean; sessionId?: string }): Json {
 	return { session_id: opts.sessionId ?? SID, entries, cursor: opts.cursor, reset: opts.reset ?? false }
 }
-const user = (uuid: string): Json => ({ kind: 'user', uuid, text: 'go on', origin: 'terminal' })
+const user = (uuid: string, text = 'go on', origin = 'terminal'): Json => ({ kind: 'user', uuid, text, origin })
 const assistant = (uuid: string, text = 'Done.'): Json => ({ kind: 'assistant', uuid, text })
 
 let stateVersion = 2000
@@ -1288,7 +1290,11 @@ function workingPane(): { state: AgentDockState; at: number } {
 
 test('a reply queued for a working agent reads queued while it keeps talking; it lands only at its next user entry', () => {
 	const { state, at } = workingPane()
-	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1' }, at).state
+	const sending = reduce(
+		state,
+		{ type: 'prompt.sending', session: KEY, assistantUuid: 'w1', text: 'Pak ještě spusť testy.' },
+		at,
+	).state
 	// The newest user entry when Jakub sent: only a newer one is his reply.
 	assert.equal(sessionOf(sending, at)?.reply?.userBefore, 'u-work')
 	const sent = reduce(
@@ -1308,10 +1314,17 @@ test('a reply queued for a working agent reads queued while it keeps talking; it
 		[at + 60_000, poll(idle({ queued_prompts: 1 }))],
 	]).state
 	assert.equal(sessionOf(stopped, at + 60_000)?.reply?.status, 'sent')
-	// Typed in at last: its user entry lands it.
-	const landed = reduce(
+	// Another prompt lands first (Jakub typed in the terminal) and the queue is empty: not this reply.
+	const other = reduce(
 		stopped,
-		poll(working(), { transcript: page([user('u-queued')], { cursor: 1_630_000 }) }),
+		poll(working(), { transcript: page([user('u-term', 'jen rychle: co ten build?')], { cursor: 1_625_000 }) }),
+		at + 60_500,
+	).state
+	assert.equal(sessionOf(other, at + 60_500)?.reply?.status, 'sent')
+	// Typed in at last: its own user entry lands it.
+	const landed = reduce(
+		other,
+		poll(working(), { transcript: page([user('u-queued', 'Pak ještě spusť testy.')], { cursor: 1_630_000 }) }),
 		at + 61_000,
 	).state
 	assert.equal(sessionOf(landed, at + 61_000)?.reply?.status, 'confirmed')
@@ -1321,27 +1334,107 @@ test('a queued reply waits past the source’s fresh baseline, not the dock’s 
 	const { state, at } = workingPane()
 	// The dock last read u-work; Jakub had typed u-later in the terminal since, which the source read fresh.
 	const sent = run(state, [
-		[at, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1' }],
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1', text: 'A pak commitni.' }],
 		[
 			at + 100,
 			{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-later' } },
 		],
 	]).state
 	assert.equal(sessionOf(sent, at + 100)?.reply?.userBefore, 'u-later')
-	// The dock now reads u-later (with nothing queued any more): not Jakub's reply, still held.
+	// The dock now reads u-later, with the same words even: it is before the baseline, still held.
 	const later = reduce(
 		sent,
-		poll(working(), { transcript: page([user('u-later')], { cursor: 1_610_000 }) }),
+		poll(working(), { transcript: page([user('u-later', 'A pak commitni.')], { cursor: 1_610_000 }) }),
 		at + 2000,
 	).state
 	assert.equal(sessionOf(later, at + 2000)?.reply?.status, 'sent')
 	// Only a user entry newer than that is.
 	const landed = reduce(
 		later,
-		poll(working(), { transcript: page([user('u-queued')], { cursor: 1_620_000 }) }),
+		poll(working(), { transcript: page([user('u-queued', 'A pak commitni.')], { cursor: 1_620_000 }) }),
 		at + 4000,
 	).state
 	assert.equal(sessionOf(landed, at + 4000)?.reply?.status, 'confirmed')
+})
+
+test('a held reply is matched by its own words: channel markup and a clipped copy count, a word inside another does not', () => {
+	const long = `Jakub hands you this thread. ${'Context line. '.repeat(40)}Please fix it.`
+	const key = replyMatchText(long)
+	assert.equal(replyLanded(long.replace(/ /g, '\n'), key), true, 'line breaks and spaces alike')
+	assert.equal(replyLanded(`<channel source="okena">${long}</channel>`, key), true, 'an Okena MCP channel wraps it')
+	assert.equal(replyLanded(`${long.slice(0, 300)}…`, key), true, 'the transcript clipped it')
+	assert.equal(replyLanded(long.slice(0, 120), key), false, 'too little of it to tell')
+	assert.equal(
+		replyLanded(`${long.slice(0, 300)} something else entirely`, key),
+		false,
+		'same start, other words: another hand-off',
+	)
+	assert.equal(replyLanded('ok', replyMatchText('ok')), true)
+	assert.equal(replyLanded('look at this', replyMatchText('ok')), false)
+	assert.equal(replyLanded('ok, then commit', replyMatchText('ok')), true)
+	assert.equal(replyLanded('anything', ''), false)
+})
+
+test('two held replies: the first one landing never confirms the second (one receipt slot, its own words)', () => {
+	const { state, at } = workingPane()
+	const second = run(state, [
+		// A Signals hand-off held first; then Jakub's reply from the agent detail takes the receipt slot.
+		[at, { type: 'prompt.sending', session: KEY, text: 'Look at crane-rental#970.' }],
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-work' } },
+		],
+		[at + 200, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1', text: 'A pak commitni.' }],
+		[
+			at + 300,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-work' } },
+		],
+		// The turn ends, the hand-off is typed (its entry read) and the source holds nothing more:
+		// the second one is being typed now.
+		[
+			at + 5000,
+			poll(idle({ queued_prompts: 0 }), {
+				transcript: page([user('u-t1', 'Look at crane-rental#970.')], { cursor: 1_610_000 }),
+			}),
+		],
+	]).state
+	assert.equal(sessionOf(second, at + 5000)?.reply?.status, 'sent')
+	const landed = reduce(
+		second,
+		poll(working(), { transcript: page([user('u-r', 'A pak commitni.')], { cursor: 1_620_000 }) }),
+		at + 6000,
+	).state
+	assert.equal(sessionOf(landed, at + 6000)?.reply?.status, 'confirmed')
+})
+
+test('a held reply survives a source blip: unconfirmed only 10 s after the source went down, and confirms late', () => {
+	const { state, at } = workingPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1', text: 'Pak ještě spusť testy.' }],
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-work' } },
+		],
+		[at + 60_000, poll(working({ queued_prompts: 1 }))],
+		// One failed poll a minute after sending: not "a minute unconfirmed".
+		[at + 61_000, down()],
+	]).state
+	assert.equal(sessionOf(sent, at + 61_000)?.reply?.status, 'sent')
+	const back = reduce(sent, poll(working({ queued_prompts: 1 })), at + 62_000).state
+	assert.equal(sessionOf(back, at + 62_000)?.reply?.status, 'sent')
+	// Down for good: unconfirmed 10 s after it went down.
+	const lost = run(back, [
+		[at + 63_000, down()],
+		[at + 73_100, down()],
+	]).state
+	assert.equal(sessionOf(lost, at + 73_100)?.reply?.status, 'unconfirmed')
+	// Its own entry read later still confirms it.
+	const late = reduce(
+		lost,
+		poll(working(), { transcript: page([user('u-r', 'Pak ještě spusť testy.')], { cursor: 1_640_000 }) }),
+		at + 80_000,
+	).state
+	assert.equal(sessionOf(late, at + 80_000)?.reply?.status, 'confirmed')
 })
 
 test('a queued reply goes unconfirmed only 10 s after the agent is seen free with nothing left queued', () => {

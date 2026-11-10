@@ -620,7 +620,8 @@ export type AgentDockObservation =
 	/** How that act went. */
 	| { type: 'act.result'; itemId: number; outcome: DockActOutcome }
 	/** Jakub replied from the agent detail (no item); main is about to run the CAS read and the POST. */
-	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string }
+	/** `text`: the reply's words, so the reducer knows its transcript entry (memory only; never spooled). */
+	| { type: 'prompt.sending'; session: SessionKey; assistantUuid?: string; text?: string }
 	/** How that reply went. */
 	| { type: 'prompt.result'; session: SessionKey; outcome: DockActOutcome }
 
