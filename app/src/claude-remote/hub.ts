@@ -150,6 +150,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 			terminalName: options.terminalName,
 			onExcludedChange: ids => void this.persistExcluded(ids),
 		})
+		// A queued prompt is typed the moment its terminal is free (a Stop, an interrupt, a dialog closing).
+		this.core.onChange(() => this.typeDuePrompts())
 		const configDir = process.env.CLAUDE_CONFIG_DIR
 		this.roots = options.transcriptRoots ?? [`${homedir()}/.claude`, ...(configDir ? [configDir] : [])]
 	}
@@ -257,7 +259,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 				this.call(() => this.core.transcript(ref(terminalId), query)),
 			postClaudeDialogDecision: async (terminalId, dialogId, decision) =>
 				this.call(() => this.core.decide(ref(terminalId), dialogId, decision as OkenaClaudeDecision)),
-			postClaudePrompt: async (terminalId, text) => this.prompt(ref(terminalId), text),
+			postClaudePrompt: async (terminalId, text, opts) => this.prompt(ref(terminalId), text, opts?.queue === true),
 		}
 	}
 
@@ -309,15 +311,29 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		}
 	}
 
-	private async prompt(ref: TerminalRef, raw: string): Promise<unknown> {
+	private async prompt(ref: TerminalRef, raw: string, queue = false): Promise<unknown> {
 		const text = sanitizePrompt(raw)
 		if (!text) throw errorWithStatus(400, 'empty prompt')
 		if (text.length > HUB_PROMPT_MAX) throw errorWithStatus(400, 'prompt too long')
-		this.call(() => this.core.checkPrompt(ref, this.now()))
+		if (this.call(() => this.core.checkPrompt(ref, this.now(), queue)) === 'queue') {
+			// Okena's `queued`: held until the agent stops, then typed like any reply (typeDuePrompts).
+			this.call(() => this.core.queuePrompt(ref, text))
+			return { delivery: 'queued' }
+		}
 		this.core.typed(ref, this.now())
 		const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
 		// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
 		return { delivery: 'pty', via }
+	}
+
+	/** Types every queued prompt that is due (hub-core decides); a failed delivery is logged, not retried. */
+	private typeDuePrompts(): void {
+		for (const { ref, text } of this.core.takeDuePrompts(this.now()))
+			void this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS).catch(error => {
+				this.warn(
+					`a queued prompt for ${ref.terminalId} was not typed: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			})
 	}
 
 	// -------------------------------------------------------------------------

@@ -36,6 +36,8 @@ export interface DockSource {
 export interface DockPromptExpect {
 	sessionId?: string
 	assistantUuid?: string
+	/** A new prompt (AgentDockPromptRequest.queue): a busy agent gets it queued; the last message is not checked. */
+	queue?: boolean
 }
 
 export class CompositeDockSource implements AgentDockObservationSource {

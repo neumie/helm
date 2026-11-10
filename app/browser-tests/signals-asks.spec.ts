@@ -9,7 +9,8 @@ declare global {
 
 // Agent asks in the Signals column (design §3.25), on the production column with the in-memory
 // fixture services: the row shows who asks and what, `o` opens a link (or lists several), `r`
-// saves Jakub's answer and types it into the asking agent only when its Okena terminal is idle.
+// saves Jakub's answer and types it into the asking agent when its Okena terminal is idle (queued
+// for after the turn while it works).
 
 const IDLE_TERMINAL = '5d3f8a2e-1c47-4b9e-9a06-3e7b2c8f41d0'
 
@@ -126,6 +127,7 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 		session: `okena-default:${IDLE_TERMINAL}`,
 		sessionId: `session-${IDLE_TERMINAL}`,
 		assistantUuid: 'message-signals-asks',
+		queue: true,
 		text: expect.any(String),
 	})
 	expect(prompt?.text).toBe(
@@ -147,12 +149,39 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 	await expect(view.row(501).locator('.signals-td-agent')).toHaveText('→ signals-agent-asks')
 })
 
-test('r on an ask whose agent is working, or that has no terminal, only saves the answer', async ({ page }) => {
+test('r on an ask whose agent is working queues the answer for after its turn', async ({ page }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await view.row(503).click()
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
-		'okena-stream-lease is working: the answer is saved on the thread',
+		'Queued for okena-stream-lease: typed in once it stops working',
+	)
+	await page.keyboard.type('Approved')
+	await page.getByRole('button', { name: 'Send' }).click()
+	await expect(view.note).toHaveText('Queued the answer for okena-stream-lease')
+	const recorded = await calls(page)
+	expect(recorded?.replies).toEqual([{ id: 503, text: 'Approved' }])
+	expect(recorded?.prompts).toEqual([
+		expect.objectContaining({ session: expect.stringContaining(':'), queue: true, text: expect.any(String) }),
+	])
+	expect(recorded?.acts).toEqual([])
+	expect(recorded?.routed).toEqual([{ id: 503, agent: 'okena-stream-lease', how: 'replied' }])
+})
+
+test('r on an ask whose agent has an item open in the dock, or that has no terminal, only saves the answer', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-agent-asks--needs-you')
+	await page.evaluate(() => {
+		const fixture = window.__signalsFixture
+		const busy = fixture?.dock.snapshot()?.sessions.find(entry => entry.name === 'okena-stream-lease')
+		if (!fixture || !busy) throw new Error('no okena-stream-lease session')
+		fixture.openTurn(busy.terminalId, 'sending')
+	})
+	await view.row(503).click()
+	await page.keyboard.press('r')
+	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
+		'okena-stream-lease has an open question in the dock; the answer is saved on the thread',
 	)
 	await page.keyboard.type('Approved')
 	await page.getByRole('button', { name: 'Send' }).click()

@@ -458,6 +458,13 @@ export interface AgentDockPromptRequest {
 	sessionId?: string
 	/** The last message Jakub saw; absent when he saw none. */
 	assistantUuid?: string
+	/**
+	 * A new prompt, not a reply to the message Jakub read (Signals hands a thread to an agent):
+	 * a working agent gets it queued for after its turn (the source holds it and types it once the
+	 * agent stops), and the last message is not checked. Still refused: a dialog open (typing would
+	 * answer it), busy unknown, a new Claude session in the pane.
+	 */
+	queue?: true
 	text: string
 }
 
@@ -466,6 +473,7 @@ export const agentDockPromptRequestSchema = z
 		session: z.string().min(1).max(512),
 		sessionId: z.string().min(1).max(512).optional(),
 		assistantUuid: z.string().min(1).max(512).optional(),
+		queue: z.literal(true).optional(),
 		text: z.string().max(DOCK_PROMPT_MAX),
 	})
 	.strict()

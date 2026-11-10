@@ -77,6 +77,8 @@ const CLOSED_TERMINALS_MAX = 256
 export const EVENT_STRING_MAX = 4096
 /** A reply the hub typed blocks a second one until its UserPromptSubmit, at most this long. */
 export const TYPING_GUARD_MS = 5_000
+/** Prompts a terminal holds for after its agent's turn (asked with `queue`); more are refused. */
+export const QUEUED_PROMPTS_MAX = 8
 /** A transcript marker this much older than the active prompt's hook belongs to an earlier prompt. */
 const MARKER_SLACK_MS = 250
 
@@ -126,6 +128,11 @@ interface TerminalState {
 	entries: Entry[]
 	nextSeq: number
 	typingUntil?: number
+	/**
+	 * Prompts asked with `queue` while the agent was busy, typed one at a time once it is idle with
+	 * no dialog (`takeDuePrompts`). Dropped with the session: never delivered to the next one.
+	 */
+	queued: string[]
 	/** Open lifelines by claude pid (count: a reconnect may overlap the old close). */
 	lifelines: Map<number, number>
 	/** `helm dock watch` registered this session id before the hub knew the session. */
@@ -457,16 +464,55 @@ export class ClaudeHubCore {
 		this.changed()
 	}
 
-	/** Whether a reply may be typed into this terminal now; throws a 409 HubError otherwise. */
-	checkPrompt(ref: TerminalRef, now: number): void {
+	/**
+	 * Whether a reply may be typed into this terminal now; throws a 409 HubError otherwise. With
+	 * `queue` (a new prompt, not a reply to what Jakub read), a busy agent or a reply still being
+	 * typed answers `queue`: the caller holds it with `queuePrompt`, typed once the turn ends.
+	 */
+	checkPrompt(ref: TerminalRef, now: number, queue = false): 'type' | 'queue' {
 		const t = this.visibleTerminal(ref)
 		if (!t.primary || t.primary.ended) throw new HubError(409, 'No Claude session with hooks in this terminal.')
 		// Without claude's own open connection the pty may hold a bare shell: never type into it.
 		if (!this.hasLifeline(t, t.primary.pid))
 			throw new HubError(409, 'The Claude session is not connected to Helm; reply in the terminal.')
 		if (t.dialogs.length > 0) throw new HubError(409, 'The agent has an open dialog; answer that first.')
+		const typing = t.typingUntil !== undefined && now < t.typingUntil
+		if (queue && (t.busy === true || typing || t.queued.length > 0)) {
+			if (t.queued.length >= QUEUED_PROMPTS_MAX) throw new HubError(409, 'Too many queued prompts.')
+			return 'queue'
+		}
 		if (t.busy !== false) throw new HubError(409, 'The agent is not idle; reply when it stops.')
-		if (t.typingUntil !== undefined && now < t.typingUntil) throw new HubError(409, 'A reply is still being typed.')
+		if (typing) throw new HubError(409, 'A reply is still being typed.')
+		return 'type'
+	}
+
+	/** Hold a prompt `checkPrompt` answered `queue` for: typed once the agent's turn ends. */
+	queuePrompt(ref: TerminalRef, text: string): void {
+		const t = this.visibleTerminal(ref)
+		if (t.queued.length >= QUEUED_PROMPTS_MAX) throw new HubError(409, 'Too many queued prompts.')
+		t.queued.push(text)
+		this.changed()
+	}
+
+	/**
+	 * Queued prompts due now, one per terminal, taken off its queue (and the typing guard set): the
+	 * primary is live with its lifeline open, idle, no dialog (a subagent's too: typing would answer
+	 * it), and no reply still being typed. The hub calls this on every change and types them.
+	 */
+	takeDuePrompts(now: number): Array<{ ref: TerminalRef; text: string }> {
+		const due: Array<{ ref: TerminalRef; text: string }> = []
+		for (const t of this.terminals.values()) {
+			const primary = t.primary
+			if (t.queued.length === 0 || !primary || primary.ended || !this.listed(t)) continue
+			if (!this.hasLifeline(t, primary.pid) || t.busy !== false || t.dialogs.length > 0) continue
+			if (t.typingUntil !== undefined && now < t.typingUntil) continue
+			const text = t.queued.shift()
+			if (text === undefined) continue
+			t.typingUntil = now + TYPING_GUARD_MS
+			due.push({ ref: { ...t.ref }, text })
+		}
+		if (due.length > 0) this.changed()
+		return due
 	}
 
 	/** The hub typed a reply: block another until its UserPromptSubmit (or TYPING_GUARD_MS). */
@@ -557,7 +603,7 @@ export class ClaudeHubCore {
 			hooks_attached: primary !== undefined,
 			channel_attached: false,
 			...(primary && t.busy !== undefined ? { busy: t.busy } : {}),
-			queued_prompts: 0,
+			queued_prompts: primary ? t.queued.length : 0,
 			dialogs: t.dialogs.map(dialog => ({
 				id: dialog.id,
 				tool_name: dialog.toolName,
@@ -628,6 +674,7 @@ export class ClaudeHubCore {
 				backgroundShells: 0,
 				entries: [],
 				nextSeq: 1,
+				queued: [],
 				lifelines: new Map(),
 			}
 			this.terminals.set(key, t)
@@ -704,6 +751,7 @@ export class ClaudeHubCore {
 		t.backgroundShells = 0
 		t.entries = []
 		t.typingUntil = undefined
+		t.queued = []
 	}
 
 	private sessionStart(
@@ -739,6 +787,7 @@ export class ClaudeHubCore {
 		primary.ended = true
 		pushBounded(t.endedSessions, primary.sessionId, ENDED_SESSIONS_MAX)
 		this.releaseAll(t)
+		t.queued = []
 		t.busy = undefined
 		t.activePrompt = undefined
 		t.subagents.clear()

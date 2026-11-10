@@ -22,7 +22,7 @@ type ReduceModule = typeof import('../app/src/agent-dock/reduce.ts')
 type ModelModule = typeof import('../app/src/agent-dock/model.ts')
 type TerminalRef = import('../app/src/claude-remote/hub-core.ts').TerminalRef
 
-const { ClaudeHubCore, DIALOG_TRUNCATION_MARK, TYPING_GUARD_MS } = coreModule as CoreModule
+const { ClaudeHubCore, DIALOG_TRUNCATION_MARK, QUEUED_PROMPTS_MAX, TYPING_GUARD_MS } = coreModule as CoreModule
 const { BRANCH_TTL_MS, HelmClaudeHub, interruptMarkerAt, promptChunks, sanitizePrompt } = hubModule as HubModule
 const { claudeHubTokens, claudeRemoteTerminalEnvironment } = tokenModule as TokenModule
 const { OkenaClaudeSource } = sourceModule as SourceModule
@@ -555,6 +555,60 @@ test('prompt gate: idle with no dialog only; a typed reply blocks another until 
 	assert.throws(() => asked.core.checkPrompt(REF, T0 + 3), /open dialog/)
 })
 
+test('prompt queue: only asked with queue, a busy agent holds it until it is idle with no dialog; never into the next session', () => {
+	const core = started()
+	core.attached(REF, PID)
+	core.event(REF, PID, T0 + 1, ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'work' }))
+	// A reply (no queue) to a busy agent is still refused; a new prompt is held.
+	assert.throws(() => core.checkPrompt(REF, T0 + 2), /not idle/)
+	assert.equal(core.checkPrompt(REF, T0 + 2, true), 'queue')
+	core.queuePrompt(REF, 'first')
+	core.queuePrompt(REF, 'second')
+	assert.equal(session(core).queued_prompts, 2)
+	assert.deepEqual(core.takeDuePrompts(T0 + 3), [])
+	// A dialog at the turn's end (a subagent's): still held, typing would answer it.
+	const pending = hook()
+	core.permission(
+		REF,
+		PID,
+		T0 + 4,
+		ev('PermissionRequest', { prompt_id: 'p1', agent_id: 'sub', tool_name: 'Bash', tool_input: {} }),
+		pending,
+	)
+	core.event(REF, PID, T0 + 5, ev('Stop', { prompt_id: 'p1', last_assistant_message: 'done' }))
+	assert.equal(session(core).busy, false)
+	assert.deepEqual(core.takeDuePrompts(T0 + 6), [])
+	core.hookGone(REF, session(core).dialogs[0]?.id ?? '')
+	// Idle, no dialog: one at a time, the typing guard holds the next one until its UserPromptSubmit.
+	assert.deepEqual(core.takeDuePrompts(T0 + 7), [{ ref: REF, text: 'first' }])
+	assert.deepEqual(core.takeDuePrompts(T0 + 8), [])
+	// A new prompt while the queued one is being typed queues behind it, in order.
+	assert.equal(core.checkPrompt(REF, T0 + 8, true), 'queue')
+	core.event(REF, PID, T0 + 9, ev('UserPromptSubmit', { prompt_id: 'p2', prompt: 'first' }))
+	core.event(REF, PID, T0 + 10, ev('Stop', { prompt_id: 'p2', last_assistant_message: 'ok' }))
+	assert.deepEqual(core.takeDuePrompts(T0 + 11), [{ ref: REF, text: 'second' }])
+	assert.equal(session(core).queued_prompts, 0)
+	// Bounded.
+	core.event(REF, PID, T0 + 12, ev('UserPromptSubmit', { prompt_id: 'p3', prompt: 'second' }))
+	for (let i = 0; i < QUEUED_PROMPTS_MAX; i++) core.queuePrompt(REF, `q${i}`)
+	assert.throws(() => core.checkPrompt(REF, T0 + 13, true), /Too many queued prompts/)
+	// A dialog open now: refused, queue or not.
+	const asked = withDialog('Bash', { command: 'x' })
+	asked.core.attached(REF, PID)
+	assert.throws(() => asked.core.checkPrompt(REF, T0 + 3, true), /open dialog/)
+	// Busy unknown (adopted by a hook that says nothing about it, as after a hub restart): never queued.
+	const fresh = new ClaudeHubCore({ prefix: 'bb22' })
+	fresh.event(REF, PID, T0, ev('SubagentStart', { agent_id: 'g1', agent_type: 'Explore' }))
+	fresh.attached(REF, PID)
+	assert.equal(session(fresh).busy, undefined)
+	assert.throws(() => fresh.checkPrompt(REF, T0 + 2, true), /not idle/)
+	// The session ends (or /clear starts another): what is queued is dropped, never typed into the next one.
+	core.event(REF, PID, T0 + 14, ev('SessionStart', { session_id: 'sess-b', source: 'clear' }))
+	assert.equal(session(core).queued_prompts, 0)
+	core.event(REF, PID, T0 + 15, ev('Stop', { session_id: 'sess-b', last_assistant_message: 'cleared' }))
+	assert.deepEqual(core.takeDuePrompts(T0 + 16), [])
+})
+
 test('lifeline: claude killed (-9, crash, /exit) closes it; the session ends, dialogs go back, a reply is refused', () => {
 	const core = started()
 	core.attached(REF, PID)
@@ -1036,6 +1090,31 @@ test('end to end: AskUserQuestion → dock ask item → act answer reaches the w
 			status: 404,
 		})
 		assert.deepEqual(f.delivered, [])
+	} finally {
+		f.cleanup()
+	}
+})
+
+test('hub: a queued prompt (Signals) to a working agent is typed once its turn stops, as a reply would be', async () => {
+	const f = await hubFixture()
+	try {
+		const source = new OkenaClaudeSource(f.hub, 'helm')
+		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
+		const lifeline = await f.attach()
+		await f.event(ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'build it' }))
+		const pane = { profile: 'helm:work', terminalId: 'term1' }
+		// The dock's plain reply path still refuses a working agent.
+		const reply = await source.prompt(pane, { sessionId: SID }, 'hello')
+		assert.equal(reply.status === 'refused' && reply.reason, 'busy')
+		const queued = await source.prompt(pane, { sessionId: SID, queue: true }, 'Look at crane-rental#970.')
+		assert.deepEqual(queued, { status: 'sent', delivery: 'queued' })
+		assert.deepEqual(f.delivered, [])
+		assert.equal(f.hub.core.session(REF).queued_prompts, 1)
+		// The turn stops: the hub types it like any reply.
+		await f.event(ev('Stop', { prompt_id: 'p1', last_assistant_message: 'Built.' }))
+		assert.deepEqual(f.delivered, [{ ref: REF, chunks: promptChunks('Look at crane-rental#970.') }])
+		assert.equal(f.hub.core.session(REF).queued_prompts, 0)
+		await lifeline.close()
 	} finally {
 		f.cleanup()
 	}

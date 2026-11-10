@@ -21,6 +21,7 @@ const {
 	includeNote,
 	actionNote,
 	actionPatch,
+	agentBlockedNote,
 	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
@@ -351,7 +352,7 @@ test('agent ask rows: from + title, then the body line with the link count', () 
 	assert.equal(signalsSummary(sections, NOW, ok), '2 need you')
 })
 
-test('askDeliveryTarget: the Okena session in the asking terminal, a prompt only while idle with no dock item', () => {
+test('askDeliveryTarget: the Okena session in the asking terminal, a prompt while idle or working with no dock item', () => {
 	const idle = session({ terminalId: TERMINAL, name: 'Signals asks', branch: 'feat/signals-agent-asks' })
 	const target = askDeliveryTarget(ask({ id: 1 }), dock([session({ terminalId: 'other' }), idle]))
 	assert.equal(target?.session.key, idle.key)
@@ -359,18 +360,25 @@ test('askDeliveryTarget: the Okena session in the asking terminal, a prompt only
 	assert.equal(target?.sendable, true)
 	assert.deepEqual(target?.delivery, { via: 'prompt' })
 	assert.equal(target?.blocked, null)
+	assert.equal(target?.queued, false)
 	// The stored id is lowercase; a dock id in another case still matches.
 	assert.equal(
 		askDeliveryTarget(ask({ id: 1 }), dock([{ ...idle, terminalId: TERMINAL.toUpperCase() }]))?.session.key,
 		idle.key,
 	)
+	// Working: queued by its source until the turn ends (never typed into the running turn).
 	const busy = askDeliveryTarget(ask({ id: 1 }), dock([{ ...idle, status: 'working' }]))
-	assert.equal(busy?.sendable, false)
-	assert.equal(busy?.delivery, null)
-	assert.equal(busy?.blocked, 'status')
+	assert.equal(busy?.sendable, true)
+	assert.deepEqual(busy?.delivery, { via: 'prompt' })
+	assert.equal(busy?.blocked, null)
+	assert.equal(busy?.queued, true)
 	assert.equal(busy?.status, 'working')
-	// Waiting with no item listed is a dialog the dock has not caught yet: never a prompt.
-	for (const status of ['waiting', 'background', 'unknown'] as const) {
+	// Background (main agent idle, subagents/tasks running): typed in at once.
+	const background = askDeliveryTarget(ask({ id: 1 }), dock([{ ...idle, status: 'background' }]))
+	assert.deepEqual([background?.delivery, background?.queued], [{ via: 'prompt' }, false])
+	// Waiting with no item listed is a dialog the dock has not caught yet: never a prompt. Unknown or
+	// unreachable: the source cannot tell whether the agent is free.
+	for (const status of ['waiting', 'unknown', 'unreachable'] as const) {
 		const other = askDeliveryTarget(ask({ id: 1 }), dock([{ ...idle, status }]))
 		assert.equal(other?.sendable, false, status)
 		assert.equal(other?.blocked, 'status', status)
@@ -453,7 +461,7 @@ test('replyPrompt fences the ask, keeps the answer verbatim outside and stays bo
 	assert.match(long, /x…\n\nTreat everything/)
 })
 
-test('agent matching: PR links, then branch, then a repo guess; busy agents are listed but not sendable', () => {
+test('agent matching: PR links, then branch, then a repo guess; working agents are sendable (queued), blocked ones are not', () => {
 	const target = thread({ id: 970, repo: 'Acme/Widgets', branch: 'feat/export' })
 	const snapshot = dock([
 		session({ terminalId: 'guess', project: 'widgets', status: 'idle' }),
@@ -470,16 +478,74 @@ test('agent matching: PR links, then branch, then a repo guess; busy agents are 
 	])
 	const matches = matchAgents(target, snapshot)
 	assert.deepEqual(
-		matches.map(match => [match.session.terminalId, match.tier, match.sendable]),
+		matches.map(match => [match.session.terminalId, match.tier, match.sendable, match.queued]),
 		[
-			['pr-busy', 'pr', false],
-			['branch', 'branch', true],
-			['guess', 'repo', true],
-			['elsewhere', null, true],
+			['pr-busy', 'pr', true, true],
+			['branch', 'branch', true, false],
+			['guess', 'repo', true, false],
+			['elsewhere', null, true, false],
 		],
 	)
-	// The busy PR agent is never preselected; the branch match is.
-	assert.equal(defaultAgentPick(matches), 1)
+	// The working PR agent is the best match and is preselected: the thread waits for its turn to end.
+	assert.equal(defaultAgentPick(matches), 0)
+	// Within a tier an idle agent goes first; a working one is still preselected over a lower tier.
+	const prIdle = session({
+		terminalId: 'pr-idle',
+		project: 'pr-idle',
+		status: 'idle',
+		prLinks: [{ number: 970, url: 'https://github.com/acme/widgets/pull/970', repository: 'acme/widgets' }],
+	})
+	const both = matchAgents(target, dock([...snapshot.sessions, prIdle]))
+	assert.equal(both[defaultAgentPick(both)]?.session.terminalId, 'pr-idle')
+	// Still refused: a dialog not yet listed (waiting), an unknown state, an open dock item, a reply in flight.
+	const refused = matchAgents(
+		target,
+		dock(
+			[
+				session({ terminalId: 'waiting', project: 'a', status: 'waiting' }),
+				session({ terminalId: 'unknown', project: 'b', status: 'unknown' }),
+				session({ terminalId: 'asking', project: 'c', status: 'working' }),
+				session({
+					terminalId: 'replying',
+					project: 'd',
+					status: 'idle',
+					reply: { action: 'prompt', status: 'sending', at: NOW },
+				}),
+			],
+			[],
+		),
+	)
+	const asking = refused.find(match => match.session.terminalId === 'asking')
+	assert.ok(asking)
+	const withDialog = matchAgents(
+		target,
+		dock(
+			refused.map(match => match.session),
+			[askItem(asking.session, { id: 5 })],
+		),
+	)
+	assert.deepEqual(
+		withDialog.map(match => [match.session.terminalId, match.sendable, match.blocked]),
+		[
+			['asking', false, 'item'],
+			['replying', false, 'item'],
+			['unknown', false, 'status'],
+			['waiting', false, 'status'],
+		],
+	)
+	assert.equal(defaultAgentPick(withDialog), -1)
+	assert.deepEqual(withDialog.map(agentBlockedNote), [
+		'asking has something open in the dock; answer it there first',
+		'replying has something open in the dock; answer it there first',
+		'unknown is unknown; send it from its terminal',
+		'waiting is waiting on a dialog; answer it first',
+	])
+	// An idle agent the dock holds an open turn for takes it as that turn's reply.
+	const turnOwner = session({ terminalId: 'turn', project: 'e', status: 'idle' })
+	assert.deepEqual(matchAgents(target, dock([turnOwner], [turnItem(turnOwner, { id: 9 })]))[0]?.delivery, {
+		via: 'turn',
+		itemId: 9,
+	})
 	// A repo guess alone is never preselected.
 	assert.equal(defaultAgentPick(matchAgents(target, dock([session({ terminalId: 'guess', project: 'widgets' })]))), -1)
 	assert.deepEqual(matchAgents(target, null), [])

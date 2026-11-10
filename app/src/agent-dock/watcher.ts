@@ -397,7 +397,8 @@ export class AgentDockWatcher {
 	 * A reply from the agent detail to an agent that owes Jakub nothing (renderer IPC input,
 	 * validated here). Like act(): preconditions → `prompt.sending` (published) → source CAS read
 	 * + prompt POST → the session's reply receipt. An agent with a live item is answered through
-	 * that item instead. Resolves; never throws.
+	 * that item instead. `queue` (a Signals hand-off) lets a working agent take it queued for after
+	 * its turn. Resolves; never throws.
 	 */
 	async prompt(request: unknown): Promise<AgentDockActResult> {
 		const refused = (reason: DockRefusalReason, detail = REFUSAL_TEXT[reason]): AgentDockActResult => ({
@@ -406,7 +407,7 @@ export class AgentDockWatcher {
 		})
 		const parsed = parseAgentDockPromptRequest(request)
 		if (!parsed.ok) return refused('invalid', parsed.error)
-		const { session: key, sessionId, assistantUuid, text } = parsed.value
+		const { session: key, sessionId, assistantUuid, queue, text } = parsed.value
 		if (this.stopped) return { ok: false, outcome: { status: 'failed', detail: 'The agent dock stopped.' } }
 		if (this.acting) return refused('in_flight')
 		const session = this.state.sessions[key]?.session
@@ -419,7 +420,11 @@ export class AgentDockWatcher {
 		const source = this.options.source
 		if (!source.prompt) return { ok: false, outcome: { status: 'failed', detail: 'This Helm build cannot reply.' } }
 		const target: AgentDockTarget = { source: session.source, profile: session.profile, terminalId: session.terminalId }
-		const expect = { ...(sessionId ? { sessionId } : {}), ...(assistantUuid ? { assistantUuid } : {}) }
+		const expect = {
+			...(sessionId ? { sessionId } : {}),
+			...(assistantUuid ? { assistantUuid } : {}),
+			...(queue ? { queue: true } : {}),
+		}
 
 		this.acting = true
 		let outcome: DockActOutcome

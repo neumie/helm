@@ -31,6 +31,7 @@ import {
 	type SignalSections,
 	actionNote,
 	actionPatch,
+	agentBlockedNote,
 	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
@@ -1283,7 +1284,7 @@ function SendFlow({
 		const choice = matches[index]
 		if (!choice) return
 		if (!choice.sendable) {
-			setNote(`${choice.name} is ${choice.status}; pick an idle agent`)
+			setNote(agentBlockedNote(choice))
 			return
 		}
 		setPicked(choice.session.key)
@@ -1298,8 +1299,9 @@ function SendFlow({
 			setNote(matches.length === 0 ? 'No agent is running. n starts a new one' : 'Pick an agent first')
 			return
 		}
-		if (!match.sendable) {
-			setNote(`${match.name} is ${match.status}; pick an idle agent`)
+		const delivery = match.delivery
+		if (!delivery) {
+			setNote(agentBlockedNote(match))
 			return
 		}
 		if (!text.trim()) {
@@ -1308,19 +1310,26 @@ function SendFlow({
 		}
 		setNote(null)
 		const name = match.name
-		const request = {
-			session: match.session.key,
-			...(match.session.sessionId ? { sessionId: match.session.sessionId } : {}),
-			...(match.session.lastMessage ? { assistantUuid: match.session.lastMessage.uuid } : {}),
-			text,
-		}
+		const session = match.session
+		// Decided at submit, as Jakub saw it; main checks it again. A working agent gets it queued.
+		const effect =
+			delivery.via === 'turn'
+				? () => dock.act({ itemId: delivery.itemId, action: { type: 'prompt', text } })
+				: () =>
+						dock.prompt({
+							session: session.key,
+							...(session.sessionId ? { sessionId: session.sessionId } : {}),
+							...(session.lastMessage ? { assistantUuid: session.lastMessage.uuid } : {}),
+							queue: true,
+							text,
+						})
 		const failed = await onRoute({
 			id: thread.id,
 			type: 'send',
 			label: `Sending to ${name}…`,
 			flowAlive: () => alive.current,
 			attempt: async () => {
-				const outcome = (await dock.prompt(request)).outcome
+				const outcome = (await effect()).outcome
 				if (outcome.status !== 'sent')
 					return {
 						failed:
@@ -1328,11 +1337,13 @@ function SendFlow({
 								? `Not confirmed: ${outcome.detail}. Check ${name} before sending again`
 								: `Not sent: ${outcome.detail}`,
 					}
+				// Okena or Helm's hub holds it until the agent's turn ends (Okena's MCP channel too).
+				const queued = outcome.delivery === 'queued' || outcome.delivery === 'channel'
 				return {
 					agent: name,
 					how: 'sent',
-					done: `Sent ${thread.ref} to ${name}`,
-					unsaved: error => `Sent to ${name}; the receipt was not saved: ${error}`,
+					done: queued ? `Queued ${thread.ref} for ${name}` : `Sent ${thread.ref} to ${name}`,
+					unsaved: error => `${queued ? `Queued for ${name}` : `Sent to ${name}`}; the receipt was not saved: ${error}`,
 				}
 			},
 		})
@@ -1371,7 +1382,14 @@ function SendFlow({
 					<Hint keys="esc">back</Hint>
 				</span>
 				<output className="signals-note">
-					{note ?? (routing ? routing.label : match ? `Typed into ${match.name}’s terminal as its next prompt` : '')}
+					{note ??
+						(routing
+							? routing.label
+							: match
+								? match.queued
+									? `Queued for ${match.name}: typed in once it stops working`
+									: `Typed into ${match.name}’s terminal as its next prompt`
+								: '')}
 				</output>
 				<span className="signals-foot-actions">
 					<Btn
@@ -1411,8 +1429,9 @@ const takeAnswerKeys = (node: HTMLDivElement | null) =>
 /**
  * `r` on an agent ask: Jakub types a short answer. It is always saved on the thread first (the
  * agent can read it with `helm signal show`); when the ask came from an Okena terminal whose agent
- * is idle, it is also typed into that agent as its next prompt through the dock's CAS-guarded
- * prompt path, fenced like any other prompt. Never auto-sent: only ⌘↵ or Send.
+ * is idle (or working: queued until its turn ends), it is also typed into that agent as its next
+ * prompt through the dock's CAS-guarded prompt path, fenced like any other prompt. Never auto-sent:
+ * only ⌘↵ or Send.
  */
 function ReplyFlow({
 	thread,
@@ -1449,7 +1468,9 @@ function ReplyFlow({
 	)
 	const where = target
 		? target.sendable
-			? `Typed into ${target.name}’s terminal as its next prompt`
+			? target.queued
+				? `Queued for ${target.name}: typed in once it stops working`
+				: `Typed into ${target.name}’s terminal as its next prompt`
 			: target.blocked === 'item'
 				? `${target.name} has an open question in the dock; the answer is saved on the thread`
 				: `${target.name} is ${target.status}: the answer is saved on the thread`
@@ -1480,6 +1501,7 @@ function ReplyFlow({
 								session: session.key,
 								...(session.sessionId ? { sessionId: session.sessionId } : {}),
 								...(session.lastMessage ? { assistantUuid: session.lastMessage.uuid } : {}),
+								queue: true,
 								text: prompt,
 							})
 		const failed = await onRoute({
@@ -1501,10 +1523,11 @@ function ReplyFlow({
 								: `Saved on #${thread.id}; not delivered: ${outcome.detail}`,
 						thread: saved.data,
 					}
+				const queued = outcome.delivery === 'queued' || outcome.delivery === 'channel'
 				return {
 					agent: deliver.name,
 					how: 'replied',
-					done: `Replied to ${deliver.name}`,
+					done: queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`,
 					unsaved: error => `Replied to ${deliver.name}; the receipt was not saved: ${error}`,
 					thread: saved.data,
 				}
