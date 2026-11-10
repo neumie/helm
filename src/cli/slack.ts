@@ -12,7 +12,7 @@ import { slackMrkdwnToPlain, slackTsToIso } from '../signals/slack-map.js'
 import { type SlackSession, SlackSessionStore, readSlackAppSessions, sessionInfo } from '../slack/session.js'
 import { SlackClient } from '../slack/web-api.js'
 import type { SlackAuthTest, SlackMessage, SlackRepliesResponse, SlackUser } from '../slack/web-types.js'
-import { type DaemonMethod, daemonBaseUrl, requestDaemon } from './daemon-http.js'
+import { DEFAULT_DAEMON_URL, type DaemonMethod, daemonBaseUrl, requestDaemon } from './daemon-http.js'
 
 export const SLACK_HELP = `Usage: helm slack <command> [options]
 
@@ -300,17 +300,27 @@ async function runRead(actions: SlackActions, store: SlackSessionStore, flags: F
 async function runSend(actions: SlackActions, store: SlackSessionStore, flags: Flags): Promise<void> {
 	const baseUrl = daemonBaseUrl(flags.url)
 	const to = flags.rest[0]
-	if (!to && flags.signal === undefined) fail('Give --to <target> (or --signal ID)')
+	const fromSignal = flags.signal !== undefined
+	if (!to && !fromSignal) fail('Give --to <target> (or --signal ID)')
+	// A positional target alongside --signal is ambiguous and could slip a matching name past the
+	// guard while the message goes to the signal's channel; refuse the combination.
+	if (to && fromSignal) fail('Give either --to <target> or --signal ID, not both')
 	const target = await resolveTarget(actions, flags, baseUrl)
 	const session = await sessionFor(store, target.teamId)
 	if (!session) fail('Not connected. Run: helm slack connect')
 
-	// Self-only guard: resolve the target to a user/channel and allow it only when it is Jakub's own
-	// DM, or signals.slack.agentSendTo permits it. HELM_SLACK_SEND_SELF_ONLY forces self-only.
-	const selfOnly = process.env.HELM_SLACK_SEND_SELF_ONLY === '1'
-	const allowList = selfOnly ? [] : parseAllow(await daemonConfig<string>(baseUrl, ['signals', 'slack', 'agentSendTo']))
+	// Self-only guard. The allowlist (signals.slack.agentSendTo) is security policy, so it is read
+	// only from a TRUSTED daemon — the fixed default loopback URL, never the agent-supplied --url /
+	// $HELM_URL, which could point at a server that returns a permissive list. A non-loopback or
+	// overridden daemon, or HELM_SLACK_SEND_SELF_ONLY, forces self-only. The guard checks only the
+	// identifiers the send will actually use (target.channel / target.user), plus the typed `to`
+	// ONLY when `to` is what produced the target (never on the --signal path).
+	const selfOnly = process.env.HELM_SLACK_SEND_SELF_ONLY === '1' || baseUrl !== DEFAULT_DAEMON_URL
+	const allowList = selfOnly
+		? []
+		: parseAllow(await daemonConfig<string>(DEFAULT_DAEMON_URL, ['signals', 'slack', 'agentSendTo']))
 	const isSelf = target.user !== undefined && target.user === session.userId
-	const allowed = isSelf || allowList.includes('*') || isAllowed(target, to, allowList)
+	const allowed = isSelf || allowList.includes('*') || isAllowed(target, fromSignal ? undefined : to, allowList)
 	if (!allowed) {
 		fail(
 			selfOnly
