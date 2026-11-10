@@ -4,7 +4,16 @@
 // color on glyphs only, no cards, no box-drawing, key hints as words. Data and effects come from
 // injected services (services.ts); row text, matching and prompts from the pure model.ts.
 
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+	type KeyboardEvent,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from 'react'
 import { createRoot } from 'react-dom/client'
 import type { AgentDockSnapshot } from '../../agent-dock/model'
 import type { SignalOkenaProject } from '../../shared'
@@ -13,8 +22,12 @@ import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
+import { storedPreference } from '../stored-preference'
 import {
 	type AgentMatch,
+	type DoneHeaderLook,
+	type DoneReasonLook,
+	type FilteredLook,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
@@ -24,7 +37,6 @@ import {
 	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
-	closedHeader,
 	defaultAgentPick,
 	filteredLine,
 	filteredRowView,
@@ -50,6 +62,40 @@ import type { DockService, SignalsService } from './services'
 /** Re-render ages while nothing else changes. */
 const AGE_TICK_MS = 30_000
 
+/** A flag the column reads and toggles: the stored preference, or a story's memory-only one. */
+interface DoneShownFlag {
+	get(): boolean
+	set(value: boolean): void
+	subscribe(listener: () => void): () => void
+}
+
+/**
+ * Whether the done rows under `Snoozed · done today` are listed (`D`, or a click on the count).
+ * Collapsed by default; the choice is kept per renderer (Helm's userData), like the dock's layout.
+ */
+export const signalsDoneShown: DoneShownFlag = storedPreference<boolean>(
+	'helm.signals.doneShown',
+	raw => raw === 'shown',
+	shown => (shown ? 'shown' : null),
+)
+
+/** Review fixtures: a flag that starts at `initial` and never touches storage. */
+function memoryFlag(initial: boolean): DoneShownFlag {
+	let value = initial
+	const listeners = new Set<() => void>()
+	return {
+		get: () => value,
+		set(next) {
+			value = next
+			for (const listener of listeners) listener()
+		},
+		subscribe(listener) {
+			listeners.add(listener)
+			return () => listeners.delete(listener)
+		},
+	}
+}
+
 export interface SignalsColumnProps {
 	service: SignalsService
 	dock: DockService
@@ -63,6 +109,14 @@ export interface SignalsColumnProps {
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
+	/** Review fixtures only: start with the done rows listed or not, without the stored preference. */
+	initialDoneShown?: boolean
+	/** Where a done row says how it got done (Jakub picks; `none` = the current look). */
+	doneReasonLook?: DoneReasonLook
+	/** How the done count reads in the closed subhead (Jakub picks; `count` = the current text). */
+	doneHeaderLook?: DoneHeaderLook
+	/** Where the `5 filtered` count rests (Jakub picks; `footer` = the current look). */
+	filteredLook?: FilteredLook
 }
 
 /**
@@ -127,20 +181,23 @@ function SignalRow({
 	snapshot,
 	now,
 	selected,
+	look,
 	onSelect,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: boolean
+	look: DoneReasonLook
 	onSelect(): void
 }) {
-	const view = signalRowView(thread, snapshot, now)
+	const view = signalRowView(thread, snapshot, now, look)
 	const section = signalSection(thread, now) ?? 'done'
 	return (
 		<li
 			className="signals-tr"
 			data-section={section}
+			data-done-reason={view.doneReason ?? undefined}
 			data-signal-id={thread.id}
 			data-selected={selected ? 'true' : undefined}
 			aria-current={selected ? 'true' : undefined}
@@ -156,11 +213,19 @@ function SignalRow({
 			<span className="signals-glyph" data-kind={view.toned ? thread.kind : undefined} aria-hidden="true">
 				{view.glyph}
 			</span>
-			<span className="signals-td-ref">{view.ref}</span>
+			<span className="signals-td-ref">
+				{view.ref}
+				{view.refNote ? (
+					<span className="signals-done-reason" title={view.reasonTitle}>
+						{' · '}
+						{view.refNote}
+					</span>
+				) : null}
+			</span>
 			<span className="signals-td-what" title={view.what}>
 				{view.what}
 			</span>
-			<span className="signals-td-age">
+			<span className="signals-td-age" title={view.reasonAt === 'age' ? view.reasonTitle : undefined}>
 				{view.receipt ? (
 					// An answer only saved on the thread was not delivered: no check mark.
 					<span className="signals-receipt" data-how={view.receipt.how}>
@@ -187,12 +252,76 @@ function SignalRow({
 				{view.agent}
 			</span>
 			{view.detail ? (
-				<span className="signals-td-detail" title={view.detail}>
+				<span className="signals-td-detail" title={view.reasonAt === 'line' ? view.reasonTitle : view.detail}>
 					{view.detail}
 				</span>
 			) : null}
 			<span className="signals-edge" />
 		</li>
+	)
+}
+
+/**
+ * The done count as a text button (`D` toggles it while Signals holds the keys). `count`: just
+ * `done today 10`; `word` and `split`: `· show` / `· hide` after it.
+ */
+function DoneToggle({
+	count,
+	shown,
+	look,
+	capital,
+	onToggle,
+}: {
+	count: number
+	shown: boolean
+	look: DoneHeaderLook
+	/** Starts its own line (`split`): `Done today 10`. */
+	capital: boolean
+	onToggle(): void
+}) {
+	const label = `${capital ? 'Done' : 'done'} today ${count}`
+	if (count === 0) return <>{label}</>
+	return (
+		<button
+			type="button"
+			className="signals-done-toggle"
+			aria-expanded={shown}
+			aria-keyshortcuts="Shift+D"
+			title={shown ? 'Hide the threads done today' : 'Show the threads done today'}
+			// Pointer use keeps the keys on the Signals surface, as a row click does.
+			onMouseDown={event => {
+				event.preventDefault()
+				event.currentTarget.closest<HTMLElement>('section.signals')?.focus({ preventScroll: true })
+			}}
+			onClick={onToggle}
+		>
+			{label}
+			{look === 'count' ? null : ` · ${shown ? 'hide' : 'show'}`}
+			<span className="signals-done-key" aria-hidden="true">
+				{' '}
+				· <kbd>D</kbd>
+			</span>
+		</button>
+	)
+}
+
+/** `5 filtered · f`: opens the filtered mail list; the keys stay on the Signals surface. */
+function FilteredButton({ text, onOpen }: { text: string; onOpen(): void }) {
+	return (
+		<button
+			type="button"
+			className="signals-filtered"
+			aria-keyshortcuts="f"
+			title="Mail the rules kept out of Needs you (last 7 days)"
+			onMouseDown={event => event.preventDefault()}
+			onClick={onOpen}
+		>
+			{text}
+			<span className="signals-filtered-key" aria-hidden="true">
+				{' '}
+				· <kbd>f</kbd>
+			</span>
+		</button>
 	)
 }
 
@@ -202,14 +331,26 @@ function SignalsTable({
 	now,
 	selected,
 	quietEmpty,
+	doneShown,
+	doneReasonLook,
+	doneHeaderLook,
+	onToggleDone,
+	closedExtra,
 	onSelect,
 }: {
+	/** With the done rows already left out while they are collapsed. */
 	sections: SignalSections
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: number | null
 	/** Every source answered: an empty Needs you may say so. */
 	quietEmpty: boolean
+	doneShown: boolean
+	doneReasonLook: DoneReasonLook
+	doneHeaderLook: DoneHeaderLook
+	onToggleDone(): void
+	/** Rests after the done count (the filtered count, look `closed`). */
+	closedExtra?: ReactNode
 	onSelect(id: number): void
 }) {
 	const row = (thread: SignalThread) => (
@@ -219,7 +360,17 @@ function SignalsTable({
 			snapshot={snapshot}
 			now={now}
 			selected={selected === thread.id}
+			look={doneReasonLook}
 			onSelect={() => onSelect(thread.id)}
+		/>
+	)
+	const toggle = (capital: boolean) => (
+		<DoneToggle
+			count={sections.doneToday}
+			shown={doneShown}
+			look={doneHeaderLook}
+			capital={capital}
+			onToggle={onToggleDone}
 		/>
 	)
 	return (
@@ -244,10 +395,28 @@ function SignalsTable({
 					Nothing is managed. m hands a thread to the dispatcher
 				</li>
 			)}
-			<li className="signals-subhead" role="presentation">
-				{closedHeader(sections)}
-			</li>
-			{sections.snoozed.map(row)}
+			{doneHeaderLook === 'split' ? (
+				<>
+					{sections.snoozed.length > 0 ? (
+						<li className="signals-subhead" role="presentation">
+							Snoozed {sections.snoozed.length}
+						</li>
+					) : null}
+					{sections.snoozed.map(row)}
+					<li className="signals-subhead" role="presentation" data-done-header="">
+						{toggle(true)}
+						{closedExtra ? <> · {closedExtra}</> : null}
+					</li>
+				</>
+			) : (
+				<>
+					<li className="signals-subhead" role="presentation" data-done-header="">
+						Snoozed {sections.snoozed.length} · {toggle(false)}
+						{closedExtra ? <> · {closedExtra}</> : null}
+					</li>
+					{sections.snoozed.map(row)}
+				</>
+			)}
 			{sections.done.map(row)}
 		</ul>
 	)
@@ -262,6 +431,10 @@ export function SignalsColumn({
 	now: clock = Date.now,
 	initialSelected,
 	initialFlow = null,
+	initialDoneShown,
+	doneReasonLook = 'none',
+	doneHeaderLook = 'count',
+	filteredLook = 'footer',
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -280,6 +453,10 @@ export function SignalsColumn({
 	const [routing, setRouting] = useState<RouteJob | null>(null)
 	const flowRef = useRef<SignalsFlow>(flow)
 	flowRef.current = flow
+	const [doneFlag] = useState<DoneShownFlag>(() =>
+		initialDoneShown === undefined ? signalsDoneShown : memoryFlag(initialDoneShown),
+	)
+	const doneShown = useSyncExternalStore(doneFlag.subscribe, doneFlag.get)
 
 	useEffect(() => {
 		alive.current = true
@@ -291,7 +468,9 @@ export function SignalsColumn({
 	}, [clock])
 
 	const threads = useMemo(() => mergeThreads(bridge.snapshot?.threads ?? [], overrides), [bridge.snapshot, overrides])
-	const sections = useMemo(() => signalSections(threads, now), [threads, now])
+	const allSections = useMemo(() => signalSections(threads, now), [threads, now])
+	// Collapsed done rows are neither listed nor walked by j/k; the subhead still counts them.
+	const sections = useMemo(() => (doneShown ? allSections : { ...allSections, done: [] }), [allSections, doneShown])
 	const rows = useMemo(() => orderedRows(sections), [sections])
 	const current = keepSelection(rows, selected)
 	const sources = bridge.snapshot?.sources ?? []
@@ -468,6 +647,26 @@ export function SignalsColumn({
 		}
 	}
 
+	/** `D` / the done count: list or hide the threads done today. */
+	const toggleDone = (): void => {
+		if (allSections.doneToday === 0) return
+		const next = !doneShown
+		if (!next) {
+			// Hiding the selected done row: the selection stays nearby, on the last row still listed.
+			const selectedDone = sections.done.some(thread => thread.id === current)
+			const kept = [...allSections.needs, ...allSections.managed, ...allSections.snoozed]
+			if (selectedDone) setSelected(kept.at(-1)?.id ?? null)
+		} else {
+			requestAnimationFrame(() =>
+				sectionRef.current
+					?.querySelector<HTMLElement>('.signals-tr[data-section="done"]')
+					?.scrollIntoView?.({ block: 'nearest' }),
+			)
+		}
+		setNote(null)
+		doneFlag.set(next)
+	}
+
 	const openFiltered = (): void => {
 		setNote(null)
 		setFlow({ type: 'filtered' })
@@ -491,6 +690,7 @@ export function SignalsColumn({
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
 		else if (/^[pnmtsdor]$/.test(event.key)) act(event.key as SignalActionKey)
 		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
+		else if (event.key === 'D' && allSections.doneToday > 0) toggleDone()
 		else return
 		event.preventDefault()
 	}
@@ -498,6 +698,15 @@ export function SignalsColumn({
 	const selectedThread = rows.find(thread => thread.id === current)
 	const health = healthLines(sources)
 	const filtered = filteredLine(filteredCount)
+	const filteredButton = filtered ? (
+		<FilteredButton
+			text={filtered}
+			onOpen={() => {
+				openFiltered()
+				sectionRef.current?.focus({ preventScroll: true })
+			}}
+		/>
+	) : null
 	return (
 		<section
 			ref={sectionRef}
@@ -553,6 +762,9 @@ export function SignalsColumn({
 							<span className="signals-title-context">
 								{signalsSummary(sections, now, bridge.snapshot ? sources : null)}
 							</span>
+							{filteredLook === 'header' && filteredButton ? (
+								<span className="signals-title-filtered">· {filteredButton}</span>
+							) : null}
 						</span>
 						<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
 							{GLYPH.settings}
@@ -566,6 +778,11 @@ export function SignalsColumn({
 								now={now}
 								selected={current}
 								quietEmpty={allSourcesOk(sources)}
+								doneShown={doneShown}
+								doneReasonLook={doneReasonLook}
+								doneHeaderLook={doneHeaderLook}
+								onToggleDone={toggleDone}
+								closedExtra={filteredLook === 'closed' ? filteredButton : null}
 								onSelect={id => {
 									setSelected(id)
 									setNote(null)
@@ -584,6 +801,7 @@ export function SignalsColumn({
 										</Hint>
 									))
 								: null}
+							{filteredLook === 'key' && filtered ? <Hint keys="f">{filtered}</Hint> : null}
 						</span>
 						<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
 						{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
@@ -592,26 +810,8 @@ export function SignalsColumn({
 								{line}
 							</span>
 						))}
-						{filtered ? (
-							<span className="signals-foot-filtered">
-								<button
-									type="button"
-									className="signals-filtered"
-									aria-keyshortcuts="f"
-									title="Mail the rules kept out of Needs you (last 7 days)"
-									onMouseDown={event => event.preventDefault()}
-									onClick={() => {
-										openFiltered()
-										sectionRef.current?.focus({ preventScroll: true })
-									}}
-								>
-									{filtered}
-									<span className="signals-filtered-key" aria-hidden="true">
-										{' '}
-										· <kbd>f</kbd>
-									</span>
-								</button>
-							</span>
+						{filteredLook === 'footer' && filteredButton ? (
+							<span className="signals-foot-filtered">{filteredButton}</span>
 						) : null}
 					</footer>
 				</>

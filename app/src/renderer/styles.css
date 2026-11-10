@@ -3577,8 +3577,37 @@ body.dragging {
 	color: var(--text-1);
 }
 
+/* The filtered count in the header line (filtered look `header`): after the summary, never cut. */
+.signals-title-filtered {
+	flex: none;
+	white-space: nowrap;
+	color: var(--dock-dim);
+}
+
+/* `done today 10`: the collapsed done rows' count in the closed subhead, a plain text button like
+ * `12 filtered`; `D` reads as a key hint while Signals holds the keys. */
+.signals-done-toggle {
+	min-height: 24px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: var(--dock-dim);
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+
+.signals-done-toggle:hover {
+	color: var(--text-1);
+}
+
+.signals-done-key {
+	font: inherit;
+	color: var(--text-1);
+}
+
 /* Key hints and choice numbers show only while Signals holds the keys (§3.24). */
-.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-filtered-key),
+.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-filtered-key, .signals-done-key),
 .signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
 	visibility: hidden;
 }

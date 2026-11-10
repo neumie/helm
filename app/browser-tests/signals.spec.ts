@@ -66,8 +66,10 @@ test('j and k move the selection; s, d and m move the thread and select the next
 	await expect(view.selected).toHaveAttribute('data-signal-id', second ?? '')
 	await expect(view.note).toContainText('Snoozed')
 
+	// Done rows are collapsed: a dismissed thread leaves the list and counts in `done today`.
 	await page.keyboard.press('d')
-	await expect(view.signals.locator(`.signals-tr[data-signal-id="${second}"]`)).toHaveAttribute('data-section', 'done')
+	await expect(view.signals.locator(`.signals-tr[data-signal-id="${second}"]`)).toHaveCount(0)
+	await expect(view.signals.locator('[data-done-header]')).toContainText('done today 3')
 
 	const third = await view.selected.getAttribute('data-signal-id')
 	await page.keyboard.press('m')

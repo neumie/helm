@@ -419,6 +419,95 @@ export function managingSession(
 	return null
 }
 
+// ---------- how a done thread got done ----------
+
+/**
+ * `closed_reason` prefixes the daemon writes (src/signals: `MAIL_GONE_REASON` in mail-filter.ts,
+ * `SIGNAL_ASK_CLOSED_REASON` in store.ts; tests/helm-signals-model.test.ts maps the real ones).
+ */
+const MAIL_GONE_PREFIX = 'no longer unread in the inbox'
+const ASK_CLOSED_REASON = 'closed by the agent'
+
+/**
+ * How a done thread got done. `read`: Mail stopped listing it unread (read in Mail or on the
+ * phone, also moved out of the inbox or older than the window); `gone`: its source stopped
+ * reporting it (GitHub: reviewed, answered, CI fixed, merged or closed — the poller cannot tell);
+ * `dismissed`: Jakub pressed d in Helm; `agent`: an agent closed it (`helm signal done/set`);
+ * `answered`: an agent closed an ask Jakub had answered; `unknown`: closed by hand before the
+ * daemon recorded who.
+ */
+export type DoneReasonKind = 'read' | 'gone' | 'dismissed' | 'agent' | 'answered' | 'unknown'
+
+export interface DoneReason {
+	kind: DoneReasonKind
+	/** `read in Mail`, `gone from GitHub`, `dismissed`, `closed by pricelist-import`. */
+	word: string
+	/** At most 9 characters, for the age cell: `read`, `gone`, `dismissed`, `by agent`. */
+	short: string
+	/** The agent's outcome line (`helm signal done --note`), when it wrote one. */
+	note: string | null
+	/** Tooltip: the word, the daemon's own reason, the note and the time it closed. */
+	title: string
+}
+
+/** Where to show a done row's reason (Jakub picks; `none` = the time only, reason as tooltip). */
+export const DONE_REASON_LOOKS = ['none', 'age', 'ref', 'line'] as const
+export type DoneReasonLook = (typeof DONE_REASON_LOOKS)[number]
+
+/** How the collapsed done count reads in the closed subhead (Jakub picks). */
+export const DONE_HEADER_LOOKS = ['count', 'word', 'split'] as const
+export type DoneHeaderLook = (typeof DONE_HEADER_LOOKS)[number]
+
+const DONE_SHORT: Record<DoneReasonKind, string> = {
+	read: 'read',
+	gone: 'gone',
+	dismissed: 'dismissed',
+	agent: 'by agent',
+	answered: 'answered',
+	unknown: 'done',
+}
+
+/** How a done thread got done, or null when it is not done. */
+export function doneReason(thread: SignalThread): DoneReason | null {
+	if (thread.state !== 'done') return null
+	const reason = thread.closedReason
+	const note = thread.note
+	const agentWord = thread.managedBy ? `closed by ${oneLine(thread.managedBy, 80)}` : 'closed by agent'
+	let kind: DoneReasonKind
+	let word: string
+	if (reason === ASK_CLOSED_REASON && thread.source === 'agent') {
+		kind = thread.reply ? 'answered' : 'agent'
+		word = kind === 'answered' ? 'answered' : 'closed by agent'
+	} else if (reason?.startsWith(MAIL_GONE_PREFIX)) {
+		kind = 'read'
+		word = 'read in Mail'
+	} else if (reason !== null) {
+		kind = 'gone'
+		word = thread.source === 'agent' ? 'gone' : `gone from ${SOURCE_LABEL[thread.source]}`
+	} else if (thread.closedBy === 'jakub') {
+		// Only Jakub dismisses (`d`); the column's own word for it.
+		kind = 'dismissed'
+		word = 'dismissed'
+	} else if (thread.closedBy === 'agent' || thread.owner === 'managed' || note !== null) {
+		// Before `closedBy`: Jakub cannot dismiss a managed thread, and only agents write notes.
+		kind = 'agent'
+		word = agentWord
+	} else {
+		kind = 'unknown'
+		word = 'marked done'
+	}
+	const closedAt = time(thread.updatedAt)
+	const title = [
+		word,
+		reason !== null && reason !== word ? reason : '',
+		note ? oneLine(note, 300) : '',
+		closedAt ? `closed ${clockTime(closedAt)}` : '',
+	]
+		.filter(Boolean)
+		.join(' · ')
+	return { kind, word, short: DONE_SHORT[kind], note: note ? oneLine(note, 300) : null, title }
+}
+
 export interface SignalRowView {
 	glyph: string
 	/** The kind's tone on the glyph: new threads only (seen, snoozed, done read dim). */
@@ -437,6 +526,13 @@ export interface SignalRowView {
 	title: string
 	/** Agent asks only: a dim third line, the body's first line and `· N links` (null when both are empty). */
 	detail: string | null
+	/** Which cell shows a done row's reason (null: none does, look `none`) and its tooltip. */
+	reasonAt: Exclude<DoneReasonLook, 'none'> | null
+	reasonTitle?: string
+	/** A done row's reason after the ref (`okena#298 · gone from GitHub`), look `ref` only. */
+	refNote: string | null
+	/** Done rows: how it got done (`data-done-reason`), whatever the look. */
+	doneReason: DoneReasonKind | null
 }
 
 const linkCount = (count: number): string => (count === 1 ? '1 link' : `${count} links`)
@@ -449,10 +545,18 @@ function askDetail(thread: SignalThread): string | null {
 	return text === '' ? null : text
 }
 
-export function signalRowView(thread: SignalThread, snapshot: AgentDockSnapshot | null, now: number): SignalRowView {
+export function signalRowView(
+	thread: SignalThread,
+	snapshot: AgentDockSnapshot | null,
+	now: number,
+	look: DoneReasonLook = 'none',
+): SignalRowView {
 	const section = signalSection(thread, now) ?? 'done'
 	const ask = thread.source === 'agent'
 	const base = {
+		refNote: null,
+		doneReason: null,
+		reasonAt: null,
 		glyph: KIND_GLYPH[thread.kind],
 		toned: thread.state === 'new',
 		ref: thread.ref,
@@ -475,13 +579,35 @@ export function signalRowView(thread: SignalThread, snapshot: AgentDockSnapshot 
 				: 'Managed by the dispatcher',
 		}
 	}
-	if (section === 'snoozed' || section === 'done') {
+	if (section === 'snoozed') {
 		return {
 			...base,
 			what: thread.head,
-			age: section === 'snoozed' ? snoozeLabel(thread.snoozedUntil, now) : clockTime(time(thread.updatedAt)),
+			age: snoozeLabel(thread.snoozedUntil, now),
 			agent: '',
 			agentTitle: thread.closedReason ?? undefined,
+		}
+	}
+	if (section === 'done') {
+		const reason = doneReason(thread)
+		const at = clockTime(time(thread.updatedAt))
+		const view: SignalRowView = {
+			...base,
+			doneReason: reason?.kind ?? null,
+			what: thread.head,
+			age: at,
+			agent: '',
+			agentTitle: thread.closedReason ?? undefined,
+		}
+		if (!reason || look === 'none') return view
+		if (look === 'age') return { ...view, age: reason.short, reasonAt: look, reasonTitle: reason.title }
+		if (look === 'ref') return { ...view, refNote: reason.word, reasonAt: look, reasonTitle: reason.title }
+		return {
+			...view,
+			reasonAt: look,
+			// An ask's body line gives way: how it got done is what a done row is read for.
+			detail: reason.note ? `${reason.word} · ${reason.note}` : reason.word,
+			reasonTitle: reason.title,
 		}
 	}
 	if (ask) {
@@ -610,6 +736,14 @@ export const FILTER_REASON_TITLE: Record<SignalFilterReason, string> = {
 }
 
 /** The dim footer line (`12 filtered`), or null when nothing was filtered or the daemon cannot say. */
+/**
+ * Where the `5 filtered` count rests (Jakub picks; `footer` = the current look): the footer's last
+ * line, after the done count in the closed subhead, nowhere (`f` only, its hint with the row keys),
+ * or the header's summary line.
+ */
+export const FILTERED_LOOKS = ['footer', 'closed', 'key', 'header'] as const
+export type FilteredLook = (typeof FILTERED_LOOKS)[number]
+
 export function filteredLine(count: number | undefined): string | null {
 	return typeof count === 'number' && count > 0 ? `${count} filtered` : null
 }

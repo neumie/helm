@@ -8,10 +8,12 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
+import type { DoneHeaderLook, DoneReasonLook, FilteredLook } from './model'
 import {
 	type SignalsFixture,
 	createSignalsFixture,
 	signalAskFixtures,
+	signalDoneFixtures,
 	signalSourcesFixture,
 	signalThreadFixtures,
 	signalsAskSessions,
@@ -21,14 +23,20 @@ import {
 export interface SignalsWorkspaceProps {
 	/**
 	 * `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission;
-	 * `asks`: agent asks on top of the column's threads, their agents in the dock.
+	 * `asks`: agent asks on top of the column's threads, their agents in the dock; `done`: more
+	 * threads done today, one per way a thread gets done.
 	 */
-	scenario?: 'column' | 'quiet' | 'source-down' | 'asks'
+	scenario?: 'column' | 'quiet' | 'source-down' | 'asks' | 'done'
 	/**
 	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail list.
 	 */
 	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered'
+	/** Start with the done rows listed (memory only); absent = the stored preference (collapsed). */
+	doneShown?: boolean
+	doneReasonLook?: DoneReasonLook
+	doneHeaderLook?: DoneHeaderLook
+	filteredLook?: FilteredLook
 }
 
 declare global {
@@ -51,6 +59,13 @@ function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture
 		})
 	if (scenario === 'source-down')
 		return createSignalsFixture({ threads, sources: signalSourcesFixture(now, 'needs_permission') })
+	if (scenario === 'done') {
+		const dock = signalsDockFixture(now)
+		return createSignalsFixture({
+			threads: [...threads, ...signalDoneFixtures(now)],
+			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
+		})
+	}
 	if (scenario === 'asks') {
 		const dock = signalsDockFixture(now)
 		return createSignalsFixture({
@@ -68,7 +83,14 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({
+	scenario = 'column',
+	flow,
+	doneShown,
+	doneReasonLook,
+	doneHeaderLook,
+	filteredLook,
+}: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -113,6 +135,10 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
+					initialDoneShown: doneShown,
+					doneReasonLook,
+					doneHeaderLook,
+					filteredLook,
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -128,7 +154,7 @@ export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspace
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow])
+	}, [options, fixture, flow, doneShown, doneReasonLook, doneHeaderLook, filteredLook])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
