@@ -20,6 +20,7 @@ import type {
 	HelmResult,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
 	SignalThread,
@@ -39,6 +40,8 @@ export interface SignalsService {
 	filtered(): Promise<HelmResult<SignalFilteredPage>>
 	/** Always show that filtered mail's sender. */
 	include(id: number): Promise<HelmResult<SignalIncludeResult>>
+	/** Never show that mail thread's sender (`x`): exclude list, its open threads close. */
+	mute(id: number): Promise<HelmResult<SignalMuteResult>>
 	/** Saves Jakub's answer on an agent ask; typing it into the agent is the dock's `prompt`. */
 	reply(id: number, body: SignalReply): Promise<HelmResult<SignalThread>>
 	/**
@@ -109,6 +112,9 @@ export function createSignalsService(api: SignalsApi): SignalsService & { dispos
 		),
 		include: guarded((id: number) =>
 			api.include ? api.include(id) : Promise.resolve({ error: 'This Helm cannot change the include list.' }),
+		),
+		mute: guarded((id: number) =>
+			api.mute ? api.mute(id) : Promise.resolve({ error: 'This Helm cannot change the exclude list.' }),
 		),
 		reply: guarded((id: number, body: SignalReply) => api.reply(id, body)),
 		openLink: guarded((id: number, index: number, url: string) => api.openLink(id, index, url)),

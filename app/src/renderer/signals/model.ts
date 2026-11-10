@@ -11,6 +11,7 @@ import type {
 	SignalFilteredPage,
 	SignalIncludeResult,
 	SignalKind,
+	SignalMuteResult,
 	SignalSource,
 	SignalSourceHealth,
 	SignalThread,
@@ -64,10 +65,21 @@ const time = (iso: string | null | undefined): number => {
 const byActivity = (a: SignalThread, b: SignalThread): number =>
 	time(b.lastActivityAt) - time(a.lastActivityAt) || b.id - a.id
 
-/** Which section a thread is listed in, or null (done more than a day ago: not listed). */
+/**
+ * `closed_reason` of a mail thread closed by muting its sender (`SIGNAL_MUTED_REASON` in
+ * src/signals/store.ts; tests/helm-signals-model.test.ts maps the real one). Its mail lives in
+ * Filtered mail from then on, so it is not listed as done.
+ */
+const MUTED_REASON = 'sender muted'
+
+/**
+ * Which section a thread is listed in, or null: done more than a day ago, or closed by muting its
+ * sender (Filtered mail lists that mail instead).
+ */
 export function signalSection(thread: SignalThread, now: number): SignalSection | null {
 	if (thread.state === 'snoozed') return 'snoozed'
-	if (thread.state === 'done') return now - time(thread.updatedAt) <= DAY ? 'done' : null
+	if (thread.state === 'done')
+		return now - time(thread.updatedAt) <= DAY && thread.closedReason !== MUTED_REASON ? 'done' : null
 	return thread.owner === 'managed' ? 'managed' : 'needs'
 }
 
@@ -98,15 +110,17 @@ export function orderedRows(sections: SignalSections): SignalThread[] {
 }
 
 /**
- * Where the selection goes when `id` leaves its section (s/d/m/t): the next row of the same
- * section, else the previous one, else the thread itself (now listed elsewhere).
+ * Where the selection goes when `id` leaves its section (s/d/m/t; `x` takes every row in `leaving`
+ * with it): the next staying row of the same section, else the previous one, else the thread
+ * itself (now listed elsewhere).
  */
-export function following(sections: SignalSections, id: number): number {
+export function following(sections: SignalSections, id: number, leaving: ReadonlySet<number> = new Set([id])): number {
 	for (const key of ['needs', 'managed', 'snoozed', 'done'] as const) {
 		const peers = sections[key]
 		const index = peers.findIndex(thread => thread.id === id)
 		if (index < 0) continue
-		return (peers[index + 1] ?? peers[index - 1])?.id ?? id
+		const stays = (thread: SignalThread) => !leaving.has(thread.id)
+		return (peers.slice(index + 1).find(stays) ?? peers.slice(0, index).reverse().find(stays))?.id ?? id
 	}
 	return id
 }
@@ -159,7 +173,7 @@ export function nextWeekdayMorning(now: number): Date {
 
 // ---------- actions ----------
 
-export type SignalActionKey = 'p' | 'n' | 'm' | 't' | 's' | 'd' | 'o' | 'r'
+export type SignalActionKey = 'p' | 'n' | 'm' | 't' | 's' | 'd' | 'o' | 'r' | 'x'
 
 export interface SignalAction {
 	key: SignalActionKey
@@ -171,6 +185,8 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 	const section = signalSection(thread, now) ?? 'done'
 	if (thread.source === 'agent') return askActions(thread, section)
 	const open: SignalAction | null = thread.url ? { key: 'o', label: 'open' } : null
+	// Mail from a person or a list (never a Sentry alert, which always shows): never show its sender again.
+	const mute: SignalAction | null = thread.kind === 'mail' && thread.source === 'mail' ? MUTE_ACTION : null
 	const list: Array<SignalAction | null> =
 		section === 'needs'
 			? [
@@ -179,6 +195,7 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 					{ key: 'm', label: 'manage' },
 					{ key: 's', label: 'snooze' },
 					{ key: 'd', label: 'dismiss' },
+					mute,
 					open,
 				]
 			: section === 'managed'
@@ -190,10 +207,24 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 							{ key: 't', label: 'wake' },
 							{ key: 'm', label: 'manage' },
 							{ key: 'd', label: 'dismiss' },
+							mute,
 							open,
 						]
 					: [{ key: 't', label: 'reopen' }, open]
 	return list.filter((action): action is SignalAction => action !== null)
+}
+
+const MUTE_ACTION: SignalAction = { key: 'x', label: 'mute sender' }
+
+/**
+ * After `x`: `Muted Ridge · 9 threads` (the threads that left Needs you; Filtered mail lists them),
+ * saying when the sender also left the include list.
+ */
+export function muteNote(thread: Pick<SignalThread, 'ref'>, result: SignalMuteResult): string {
+	const count = result.threadIds.length
+	const threads = count > 0 ? ` · ${count} thread${count === 1 ? '' : 's'}` : ''
+	const include = result.unincluded ? ' · no longer always shown' : ''
+	return `Muted ${thread.ref}${threads}${include}`
 }
 
 /**
@@ -762,7 +793,18 @@ export function filteredRowView(entry: SignalFilteredEntry, now: number): Filter
 /** The status line after `i`. */
 export function includeNote(result: SignalIncludeResult): string {
 	const address = oneLine(result.address, 200)
-	return result.added ? `${address} is always shown from the next poll` : `${address} is already on the include list`
+	if (result.added) return `${address} is always shown from the next poll`
+	return result.unmuted ? `${address} is unmuted from the next poll` : `${address} is already on the include list`
+}
+
+/**
+ * `i` on a filtered mail: a muted sender (`excluded`) is unmuted (its mail follows the usual rules
+ * again), any other is always shown (include list: read and bulk mail too).
+ */
+export function includeAction(entry: Pick<SignalFilteredEntry, 'reason'>): { label: string; button: string } {
+	return entry.reason === 'excluded'
+		? { label: 'unmute sender', button: 'Unmute sender' }
+		: { label: 'always show sender', button: 'Always show sender' }
 }
 
 // ---------- prompts ----------

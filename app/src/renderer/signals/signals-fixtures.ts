@@ -682,8 +682,10 @@ export interface SignalsFixtureCalls {
 	acts: AgentDockActRequest[]
 	okenaProjects: Array<string | null>
 	newAgents: SignalNewAgentRequest[]
-	/** Filtered-mail ids `i` asked to always show. */
+	/** Filtered-mail ids `i` asked to always show (or unmute). */
 	includes: number[]
+	/** Mail thread ids `x` muted the sender of. */
+	mutes: number[]
 }
 
 /** The routing effects a browser test can hold in flight (`newAgent`: the Okena start, `prompt`: the dock send, prompt or act). */
@@ -727,6 +729,12 @@ export interface SignalsFixtureOptions {
 	filtered?: SignalFilteredEntry[]
 }
 
+/** A fixture mail thread's sender address, from its `Name <address>` full ref (the daemon stores it apart). */
+function senderOf(thread: SignalThread): string | null {
+	const match = /<([^<>\s]+@[^<>\s]+)>\s*$/.exec(thread.fullRef)
+	return match?.[1]?.toLowerCase() ?? null
+}
+
 /**
  * In-memory column services: updates apply like the daemon's store (state/owner/snooze rules, routed
  * receipts) and push a new snapshot, as main does after a re-read.
@@ -738,6 +746,9 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 	const sources = options.sources ?? signalSourcesFixture(start)
 	let filtered = (options.filtered ?? signalFilteredFixtures(start)).map(entry => ({ ...entry }))
 	const included: string[] = []
+	/** Muted senders and the threads muting closed (`x`); `i` on their filtered mail reopens them. */
+	const muted = new Map<string, number[]>()
+	let nextFiltered = 100
 	let seq = 1
 	const listeners = new Set<() => void>()
 	const snapshotOf = (): SignalsSnapshot => ({
@@ -764,6 +775,7 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 		okenaProjects: [],
 		newAgents: [],
 		includes: [],
+		mutes: [],
 	}
 	const held = new Map<SignalsHeldEffect, { wait: Promise<void>; release(): void }>()
 	const hold = (effect: SignalsHeldEffect): void => {
@@ -837,12 +849,82 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			const entry = filtered.find(item => item.id === id)
 			if (!entry) return { error: 'Filtered mail not found', status: 404 }
 			const address = entry.senderIdentity
-			const added = !included.includes(address)
-			if (added) included.push(address)
 			// As the daemon: the sender's rows leave the log, and the next poll keeps their mail.
 			filtered = filtered.filter(item => item.senderIdentity !== address)
+			const reopen = muted.get(address)
+			if (entry.reason === 'excluded') {
+				// Unmuted: off the exclude list, never onto the include list; the poll reopens its threads.
+				muted.delete(address)
+				const at = iso(clock())
+				threads = threads.map(item =>
+					reopen?.includes(item.id)
+						? { ...item, state: 'seen', active: true, closedReason: null, closedBy: null, updatedAt: at }
+						: item,
+				)
+				publish()
+				return { data: { address, added: false, unmuted: true } }
+			}
+			const added = !included.includes(address)
+			if (added) included.push(address)
 			publish()
 			return { data: { address, added } }
+		},
+		async mute(id) {
+			calls.mutes.push(id)
+			const target = threads.find(entry => entry.id === id)
+			if (!target) return { error: 'Signal not found', status: 404 }
+			if (target.source !== 'mail' || target.kind !== 'mail')
+				return {
+					error: target.kind === 'sentry' ? 'Sentry alerts always show' : 'Only mail senders can be muted',
+					status: 400,
+				}
+			const address = senderOf(target)
+			if (!address) return { error: 'The sender is not known yet; try again after the next Mail poll', status: 409 }
+			// As the daemon's store: Jakub's open mail threads from the sender close, their mail is filtered.
+			const closing = threads.filter(
+				entry =>
+					entry.source === 'mail' &&
+					entry.kind === 'mail' &&
+					entry.owner === 'jakub' &&
+					entry.state !== 'done' &&
+					senderOf(entry) === address,
+			)
+			const at = iso(clock())
+			const ids = closing.map(entry => entry.id)
+			threads = threads.map(entry =>
+				ids.includes(entry.id)
+					? {
+							...entry,
+							state: 'done',
+							snoozedUntil: null,
+							active: false,
+							closedReason: 'sender muted',
+							closedBy: 'jakub',
+							updatedAt: at,
+						}
+					: entry,
+			)
+			const listed = closing.map(
+				(entry): SignalFilteredEntry => ({
+					id: ++nextFiltered,
+					source: 'mail',
+					senderName: entry.actor ?? '',
+					senderAddress: address,
+					senderIdentity: address,
+					subject: entry.title,
+					reason: 'excluded',
+					mailbox: null,
+					url: entry.url,
+					receivedAt: entry.lastActivityAt,
+					lastSeenAt: at,
+				}),
+			)
+			filtered = [...listed, ...filtered].sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt))
+			muted.set(address, [...(muted.get(address) ?? []), ...ids])
+			const unincluded = included.includes(address)
+			if (unincluded) included.splice(included.indexOf(address), 1)
+			publish()
+			return { data: { address, added: true, unincluded, threadIds: ids } }
 		},
 		async okenaProjects(repo) {
 			calls.okenaProjects.push(repo)

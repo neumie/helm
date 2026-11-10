@@ -17,6 +17,7 @@ import {
 	type SignalCloser,
 	type SignalEventsPage,
 	type SignalIncludeResult,
+	type SignalMuteResult,
 	type SignalsSnapshot,
 	signalAskDoneSchema,
 	signalAskSchema,
@@ -26,7 +27,7 @@ import {
 	signalRoutedSchema,
 	signalUpdateSchema,
 } from '../../signals/contract.js'
-import { type IncludeSender, IncludeSenderError } from '../../signals/include-sender.js'
+import { type IncludeSender, IncludeSenderError, type MuteSender } from '../../signals/include-sender.js'
 import {
 	SignalInvalidError,
 	SignalLimitError,
@@ -38,9 +39,11 @@ import type { SignalsWatcher } from '../../signals/watcher.js'
 
 /** Named dependency carried on `ProfileContext.signals`; routes still serve the store without it. */
 export interface SignalRouteDependencies {
-	watcher: Pick<SignalsWatcher, 'requestPoll' | 'health'>
-	/** Adds an exact address to the Mail include list (config file + live config). */
+	watcher: Pick<SignalsWatcher, 'requestPoll' | 'restartPoll' | 'health'>
+	/** Shows a filtered sender again: unmutes it or adds it to the Mail include list (config file + live config). */
 	includeSender?: IncludeSender
+	/** Adds an exact address to the Mail exclude list (`x`; config file + live config). */
+	muteSender?: MuteSender
 	/** Test seam for the clock used by store writes. */
 	now?: () => Date
 	/** Long-poll re-check interval; tests shorten it. */
@@ -100,8 +103,8 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	const now = deps?.now ?? (() => new Date())
 	const eventPollMs = deps?.eventPollMs ?? DEFAULT_EVENT_POLL_MS
 	const storeFor = (): SignalStore => db.signals
-	const jakubOnly = (c: Context) =>
-		deps?.controlAuthorized?.(c) ? null : c.json({ error: 'Only Helm can record Jakub’s reply' }, 401)
+	const jakubOnly = (c: Context, what = 'record Jakub’s reply') =>
+		deps?.controlAuthorized?.(c) ? null : c.json({ error: `Only Helm can ${what}` }, 401)
 	/** Who a close through this request is recorded as (display only, never an authorization). */
 	const closer = (c: Context): SignalCloser => (deps?.controlAuthorized?.(c) ? 'jakub' : 'agent')
 
@@ -192,13 +195,45 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		if (!entry) return c.json({ error: 'Filtered mail not found' }, 404)
 		let result: SignalIncludeResult
 		try {
-			result = deps.includeSender(entry.senderIdentity)
+			result = deps.includeSender(entry.senderIdentity, { raw: entry.senderAddress, reason: entry.reason })
 		} catch (err) {
 			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
 			return c.json({ error: `Failed to save the include list: ${err instanceof Error ? err.message : err}` }, 500)
 		}
 		store.forgetFilteredSender(result.address)
-		deps.watcher.requestPoll()
+		deps.watcher.restartPoll('mail')
+		return c.json({ data: result })
+	})
+
+	// `x` on a mail row: never show its sender (exclude list), and close Jakub's open mail threads
+	// from it at once; their mail is listed as filtered (`excluded`), where `i` shows it again.
+	// Helm only: hiding Jakub's mail is his call, never an agent's.
+	routes.post('/:id/mute', signalsBody, c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c, 'mute a sender')
+		if (refused) return refused
+		if (!deps?.muteSender) return c.json({ error: 'This daemon cannot change the exclude list' }, 503)
+		const store = storeFor()
+		const thread = store.get(id)
+		if (!thread) return c.json({ error: 'Signal not found' }, 404)
+		if (thread.source !== 'mail' || thread.kind !== 'mail')
+			return c.json(
+				{ error: thread.kind === 'sentry' ? 'Sentry alerts always show' : 'Only mail senders can be muted' },
+				400,
+			)
+		const sender = store.threadSender(id)
+		if (sender === null)
+			return c.json({ error: 'The sender is not known yet; try again after the next Mail poll' }, 409)
+		let muted: ReturnType<MuteSender>
+		try {
+			muted = deps.muteSender(sender)
+		} catch (err) {
+			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
+			return c.json({ error: `Failed to save the exclude list: ${err instanceof Error ? err.message : err}` }, 500)
+		}
+		const result: SignalMuteResult = { ...muted, threadIds: store.muteSender(muted.address, now()) }
+		deps.watcher.restartPoll('mail')
 		return c.json({ data: result })
 	})
 

@@ -447,6 +447,7 @@ export function mapMailThreads(messages: MailMessageHead[]): SignalObservation[]
 			branch: null,
 			activityKey: latest.messageId,
 			lastActivityAt: new Date(Date.parse(latest.dateReceived)).toISOString(),
+			sender: identity,
 		})
 	}
 	return observations

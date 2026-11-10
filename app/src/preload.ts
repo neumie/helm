@@ -40,6 +40,7 @@ import type {
 	ProfilesApi,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
 	SignalThread,
@@ -133,6 +134,7 @@ const SIGNALS_CHANNELS: typeof SIGNALS_IPC = {
 	newAgent: 'signals:new-agent',
 	filtered: 'signals:filtered',
 	include: 'signals:include',
+	mute: 'signals:mute',
 	reply: 'signals:reply',
 	openLink: 'signals:open-link',
 }
@@ -395,6 +397,7 @@ const api: HelmApi = {
 		newAgent: (request: SignalNewAgentRequest) => invokeHelm<SignalNewAgentResult>(SIGNALS_CHANNELS.newAgent, request),
 		filtered: () => invokeHelm<SignalFilteredPage>(SIGNALS_CHANNELS.filtered),
 		include: (id: number) => invokeHelm<SignalIncludeResult>(SIGNALS_CHANNELS.include, id),
+		mute: (id: number) => invokeHelm<SignalMuteResult>(SIGNALS_CHANNELS.mute, id),
 		reply: (id: number, body: SignalReply) => invokeHelm<SignalThread>(SIGNALS_CHANNELS.reply, id, body),
 		openLink: (id: number, index: number, url: string) => invokeHelm<true>(SIGNALS_CHANNELS.openLink, id, index, url),
 	} satisfies SignalsApi,

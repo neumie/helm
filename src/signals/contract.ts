@@ -257,9 +257,27 @@ export interface SignalFilteredPage {
 
 /** `POST /api/signals/filtered/:id/include` response `data`. */
 export interface SignalIncludeResult {
-	/** The address now on the include list (already on it when `added` is false). */
+	/** The sender shown again (on the include list when `added`; maybe through a glob already). */
 	address: string
+	/** True when the address went onto the include list. */
 	added: boolean
+	/**
+	 * Present (true) when its exact entry left the exclude list: an `excluded` entry is unmuted, not
+	 * added to the include list, unless another exclude glob still matches. Absent from older daemons.
+	 */
+	unmuted?: boolean
+}
+
+/** `POST /api/signals/:id/mute` response `data` (`x` on a mail row, Helm only). */
+export interface SignalMuteResult {
+	/** The sender now on the exclude list (the relay-decoded original for Hide My Email). */
+	address: string
+	/** False when an exclude glob already matched it. */
+	added: boolean
+	/** True when its exact entry left the include list (the two lists never hold the same address). */
+	unincluded: boolean
+	/** Jakub's open mail threads from it, closed now (they show as filtered `excluded`). */
+	threadIds: number[]
 }
 
 /** One append-only change, streamed by `GET /api/signals/events` and `helm signal watch`. */
@@ -393,6 +411,11 @@ export interface SignalObservation {
 	/** Fingerprint of the latest foreign activity; changes ⇒ candidate for "new again". */
 	activityKey: string
 	lastActivityAt: string
+	/**
+	 * Mail only: the latest message's sender as the include/exclude lists match it (lowercase, the
+	 * relay-decoded original for Hide My Email). Stored for `x` (mute), never served.
+	 */
+	sender?: string | null
 }
 
 /**

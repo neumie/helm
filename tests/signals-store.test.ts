@@ -15,6 +15,7 @@ import type {
 import {
 	SIGNAL_ASK_CLOSED_REASON,
 	SIGNAL_EVENT_RETENTION,
+	SIGNAL_MUTED_REASON,
 	SIGNAL_OPEN_ASKS_MAX,
 	SignalInvalidError,
 	SignalLimitError,
@@ -757,6 +758,131 @@ test('filtered log: a message the next poll keeps leaves it; rows expire after 7
 	})
 })
 
+function mailThread(
+	key: string,
+	sender: string | undefined,
+	patch: Partial<SignalObservation> = {},
+): SignalObservation {
+	return {
+		threadKey: `mail:${key}`,
+		source: 'mail',
+		kind: 'mail',
+		reasons: ['mail'],
+		ref: 'Ridge',
+		fullRef: `Ridge <${sender ?? 'unknown@x.example'}>`,
+		title: `Subject ${key}`,
+		head: `Subject ${key}`,
+		actor: 'Ridge',
+		url: `message://%3C${key}%40ridge.example%3E`,
+		repo: null,
+		number: null,
+		branch: null,
+		activityKey: `<${key.toUpperCase()}@ridge.example>`,
+		lastActivityAt: at(-60).toISOString(),
+		...(sender === undefined ? {} : { sender }),
+		...patch,
+	}
+}
+
+function mailThreads(observations: SignalObservation[], complete = true): SignalPollResult {
+	return { ...mailPoll([], [], complete), observations }
+}
+
+test('mute closes Jakub’s open mail threads from the sender and lists their mail as filtered', () => {
+	withDb(db => {
+		const store = db.signals
+		const ridge = 'hello@eu.ridge.com'
+		store.applyPoll(
+			mailThreads([
+				mailThread('r1', 'Hello@EU.ridge.com'),
+				mailThread('r2', ridge),
+				mailThread('r3', ridge),
+				mailThread('r4', ridge),
+				mailThread('other', 'klara@psyon.example'),
+			]),
+			T0,
+		)
+		store.applyPoll(poll([github(1)]), T0)
+		const [r1, r2, r3, r4, other] = ['r1', 'r2', 'r3', 'r4', 'other'].map(key => {
+			const thread = store.getByThreadKey(`mail:${key}`)
+			assert.ok(thread)
+			return thread
+		})
+		assert.ok(r1 && r2 && r3 && r4 && other)
+		assert.equal(store.threadSender(r1.id), ridge)
+		assert.equal(store.threadSender(other.id), 'klara@psyon.example')
+		assert.equal(store.threadSender(store.getByThreadKey('github:acme/widgets#1')?.id ?? 0), null)
+		assert.equal(store.threadSender(9999), null)
+		// The sender is never served.
+		assert.equal('sender' in r1, false)
+		store.update(r2.id, { state: 'snoozed', snoozedUntil: at(600).toISOString() }, T0)
+		store.update(r3.id, { owner: 'managed', managedBy: 'agent-a' }, T0)
+		store.update(r4.id, { state: 'done' }, T0)
+		const seq = store.latestSeq()
+
+		const muted = store.muteSender(' Hello@EU.ridge.com ', at(1))
+		assert.deepEqual(muted.sort(), [r1.id, r2.id].sort())
+		for (const id of muted) {
+			const thread = store.get(id)
+			assert.equal(thread?.state, 'done')
+			assert.equal(thread?.closedReason, SIGNAL_MUTED_REASON)
+			assert.equal(thread?.closedBy, 'jakub')
+			assert.equal(thread?.active, false)
+			assert.equal(thread?.snoozedUntil, null)
+			assert.equal(thread?.updatedAt, at(1).toISOString())
+		}
+		// A managed thread stays with its agent; done and other senders' threads are untouched.
+		assert.equal(store.get(r3.id)?.owner, 'managed')
+		assert.equal(store.get(r3.id)?.state, 'new')
+		assert.equal(store.get(r4.id)?.closedReason, null)
+		assert.equal(store.get(other.id)?.state, 'new')
+		assert.deepEqual(
+			store.events(seq).map(event => [event.threadId, event.type, (event.detail as { reason?: string }).reason]),
+			[r1.id, r2.id].sort().map(id => [id, 'state', SIGNAL_MUTED_REASON]),
+		)
+		const filtered = store.listFiltered(at(1)).entries
+		assert.deepEqual(filtered.map(entry => [entry.subject, entry.reason, entry.senderIdentity, entry.url]).sort(), [
+			['Subject r1', 'excluded', ridge, 'message://%3Cr1%40ridge.example%3E'],
+			['Subject r2', 'excluded', ridge, 'message://%3Cr2%40ridge.example%3E'],
+		])
+		assert.deepEqual(store.muteSender(ridge, at(2)), [], 'nothing left to close')
+		assert.equal(store.listFiltered(at(2)).total, 2, 'the same messages are one row each')
+
+		// Polls without the muted threads (the exclude list keeps them out) never relabel them as gone.
+		store.applyPoll(mailThreads([mailThread('other', 'klara@psyon.example')]), at(3))
+		store.applyPoll(mailThreads([mailThread('other', 'klara@psyon.example')]), at(4))
+		store.applyPoll(mailThreads([mailThread('other', 'klara@psyon.example')]), at(5))
+		assert.equal(store.get(r1.id)?.closedReason, SIGNAL_MUTED_REASON)
+		assert.equal(store.get(r1.id)?.updatedAt, at(1).toISOString())
+		// Shown again (`i`): the next poll that reports the thread reopens it as seen.
+		store.applyPoll(mailThreads([mailThread('r1', ridge), mailThread('other', 'klara@psyon.example')]), at(6))
+		assert.equal(store.get(r1.id)?.state, 'seen')
+		assert.equal(store.get(r1.id)?.closedReason, null)
+		assert.equal(store.get(r1.id)?.closedBy, null)
+		assert.equal(store.get(r2.id)?.closedReason, SIGNAL_MUTED_REASON)
+	})
+})
+
+test('a thread polled before the sender column learns its sender quietly; muting a blank sender closes nothing', () => {
+	withDb(db => {
+		const store = db.signals
+		store.applyPoll(mailThreads([mailThread('legacy', undefined, { fullRef: 'Ridge <hello@eu.ridge.com>' })]), T0)
+		const legacy = store.getByThreadKey('mail:legacy')
+		assert.ok(legacy)
+		assert.equal(store.threadSender(legacy.id), null)
+		const seq = store.latestSeq()
+		store.applyPoll(mailThreads([mailThread('legacy', 'hello@eu.ridge.com')]), at(1))
+		assert.equal(store.threadSender(legacy.id), 'hello@eu.ridge.com')
+		// Bookkeeping: no visible change, no event.
+		assert.equal(store.get(legacy.id)?.updatedAt, legacy.updatedAt)
+		assert.equal(store.latestSeq(), seq)
+		assert.deepEqual(store.muteSender('  ', at(2)), [])
+		// A GitHub observation carrying a sender keeps none.
+		store.applyPoll(poll([{ ...github(1), sender: 'x@y.example' }]), at(2))
+		assert.equal(store.threadSender(store.getByThreadKey('github:acme/widgets#1')?.id ?? 0), null)
+	})
+})
+
 test('filtered log is capped at 1000 rows, keeping the newest', () => {
 	withDb(db => {
 		const store = db.signals
@@ -1276,9 +1402,10 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 			const versions = (db.signals as unknown as { db: Database.Database }).db
 				.prepare('SELECT MAX(version) AS v FROM schema_version')
 				.get() as { v: number }
-			// 41 rebuilt the table, then 42 added closed_by (null for every existing row).
-			assert.equal(versions.v, 42)
+			// 41 rebuilt the table, 42 added closed_by, 43 the mail sender (both null for every existing row).
+			assert.equal(versions.v, 43)
 			assert.equal(db.signals.get(15)?.closedBy, null)
+			assert.equal(db.signals.threadSender(15), null)
 			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread
 			assert.equal(ask.id, 41)
 			assert.ok(db.signals.latestSeq() > 101)

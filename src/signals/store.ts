@@ -65,6 +65,11 @@ export const SIGNAL_REPLY_LINES = 40
 /** `closed_reason` of an ask the agent closed with `helm signal done`. */
 export const SIGNAL_ASK_CLOSED_REASON = 'closed by the agent'
 /**
+ * `closed_reason` of a mail thread closed because Jakub muted its sender (`x`). Its mail is listed
+ * as filtered (`excluded`) instead; showing the sender again reopens it on the next poll.
+ */
+export const SIGNAL_MUTED_REASON = 'sender muted'
+/**
  * Open (not done) agent asks at most. A new one beyond this is refused so asks can never push
  * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot. Renewing or refreshing an open
  * ask always works; reopening a done one takes a slot like a new ask.
@@ -142,6 +147,7 @@ interface ThreadRow {
 	ask_terminal: string | null
 	reply: string | null
 	reply_at: string | null
+	sender: string | null
 	created_at: string
 	updated_at: string
 }
@@ -363,6 +369,8 @@ function sanitizeObservation(observation: SignalObservation, source: SignalPollS
 		branch: cleanOptional(observation.branch, SIGNAL_LIMITS.branch),
 		activityKey: clean(String(observation.activityKey ?? ''), SIGNAL_LIMITS.activityKey),
 		lastActivityAt,
+		sender:
+			source === 'mail' ? (cleanOptional(observation.sender, SIGNAL_LIMITS.fullRef)?.toLowerCase() ?? null) : null,
 	}
 }
 
@@ -448,6 +456,9 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 		receivedAt,
 	}
 }
+
+/** Columns a poll refresh may write that people never see change (no `updated_at` bump). */
+const BOOKKEEPING_COLUMNS = new Set(['missed_polls', 'activity_key', 'sender'])
 
 const HEAD_COLUMNS = [
 	['kind', 'kind'],
@@ -573,6 +584,69 @@ export class SignalStore {
 		return this.db
 			.prepare('DELETE FROM signal_filtered WHERE sender_identity = ? OR sender_address = ?')
 			.run(address, address).changes
+	}
+
+	/** A mail thread's latest sender as the sender lists match it; null until a Mail poll recorded it. */
+	threadSender(id: number): string | null {
+		const row = this.row(id)
+		return row?.source === 'mail' ? (row.sender ?? null) : null
+	}
+
+	/**
+	 * Jakub muted `identity` (`x`): his open mail threads whose latest message is from it close at
+	 * once (done, `sender muted`, gone from the poll's view so showing the sender again reopens them)
+	 * and their latest message is listed as filtered (`excluded`) until the next poll lists the
+	 * thread's messages itself. Managed threads stay with their agent. Returns the closed ids.
+	 */
+	muteSender(identity: string, now: Date): number[] {
+		const sender = identity.trim().toLowerCase()
+		if (sender === '') return []
+		const at = now.toISOString()
+		const cutoff = this.filteredCutoff(now)
+		return this.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT * FROM signal_threads
+					 WHERE source = 'mail' AND kind = 'mail' AND sender = ? AND owner = 'jakub' AND state <> 'done'`,
+				)
+				.all(sender) as ThreadRow[]
+			const close = this.db.prepare(
+				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = 'jakub',
+				   active = 0, missed_polls = 0, updated_at = ?
+				 WHERE id = ?`,
+			)
+			const listed = this.db.prepare(
+				`INSERT INTO signal_filtered (
+				   message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+				   received_at, first_seen_at, last_seen_at
+				 ) VALUES (?, 'mail', ?, ?, ?, ?, 'excluded', NULL, ?, ?, ?, ?)
+				 ON CONFLICT (message_key) DO UPDATE SET reason = 'excluded', last_seen_at = excluded.last_seen_at`,
+			)
+			for (const row of rows) {
+				close.run(SIGNAL_MUTED_REASON, at, row.id)
+				this.insertEvent(
+					row.id,
+					'state',
+					{ owner: row.owner, from: row.state, to: 'done', reason: SIGNAL_MUTED_REASON },
+					at,
+				)
+				const messageKey = row.activity_key.trim().replace(/^<|>$/g, '').toLowerCase()
+				if (messageKey === '' || row.last_activity_at < cutoff) continue
+				listed.run(
+					messageKey,
+					row.actor ?? '',
+					sender,
+					sender,
+					row.title,
+					row.url?.startsWith('message:') ? row.url : null,
+					row.last_activity_at,
+					at,
+					at,
+				)
+			}
+			if (rows.length > 0) this.pruneEvents()
+			return rows.map(row => row.id)
+		})
 	}
 
 	/** Snoozed threads whose time has come are new again. */
@@ -1064,8 +1138,8 @@ export class SignalStore {
 			.prepare(
 				`INSERT INTO signal_threads (
 				   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
-				   state, owner, activity_key, last_activity_at, active, missed_polls, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?)`,
+				   state, owner, activity_key, last_activity_at, active, missed_polls, sender, created_at, updated_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?, ?)`,
 			)
 			.run(
 				observation.threadKey,
@@ -1083,6 +1157,7 @@ export class SignalStore {
 				heads.branch,
 				observation.activityKey,
 				observation.lastActivityAt,
+				observation.sender ?? null,
 				at,
 				at,
 			)
@@ -1103,6 +1178,8 @@ export class SignalStore {
 		}
 		if (row.active !== 1) update.active = 1
 		if (row.missed_polls !== 0) update.missed_polls = 0
+		const sender = observation.sender ?? null
+		if ((row.sender ?? null) !== sender) update.sender = sender
 		let state = row.state
 		const newer =
 			observation.activityKey !== row.activity_key &&
@@ -1129,11 +1206,10 @@ export class SignalStore {
 		}
 		const columns = Object.keys(update)
 		if (columns.length === 0) return false
-		// Bookkeeping alone (missed_polls, the key) does not count as a change people see. A done
-		// thread keeps its done time (`updated_at`) through head refreshes; only a state change moves it.
+		// Bookkeeping alone (missed_polls, the key, the sender) does not count as a change people see.
+		// A done thread keeps its done time (`updated_at`) through head refreshes; only a state change moves it.
 		const visible =
-			state !== row.state ||
-			(row.state !== 'done' && columns.some(column => column !== 'missed_polls' && column !== 'activity_key'))
+			state !== row.state || (row.state !== 'done' && columns.some(column => !BOOKKEEPING_COLUMNS.has(column)))
 		if (visible) update.updated_at = at
 		const assignments = Object.keys(update).map(column => `${column} = ?`)
 		this.db

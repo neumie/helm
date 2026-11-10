@@ -4,7 +4,7 @@ import leftColumnModule from '../app/src/renderer/left-column.ts'
 import modelModule from '../app/src/renderer/signals/model.ts'
 import { GITHUB_GONE_REASON } from '../src/signals/github-map.js'
 import { MAIL_GONE_REASON, mailGoneReason } from '../src/signals/mail-filter.js'
-import { SIGNAL_ASK_CLOSED_REASON } from '../src/signals/store.js'
+import { SIGNAL_ASK_CLOSED_REASON, SIGNAL_MUTED_REASON } from '../src/signals/store.js'
 
 type SignalThread = import('../app/src/shared-helm.ts').SignalThread
 type SignalSourceHealth = import('../app/src/shared-helm.ts').SignalSourceHealth
@@ -18,7 +18,9 @@ const {
 	filteredLine,
 	filteredRowView,
 	filteredSummary,
+	includeAction,
 	includeNote,
+	muteNote,
 	actionNote,
 	actionPatch,
 	agentBlockedNote,
@@ -220,6 +222,10 @@ test('selection follows to the next row of the same section, else the previous, 
 	assert.equal(following(sections, 1), 2)
 	assert.equal(following(sections, 3), 2)
 	assert.equal(following(sections, 9), 9)
+	// `x` takes every thread of the sender with it: the selection skips them all.
+	assert.equal(following(sections, 1, new Set([1, 2])), 3)
+	assert.equal(following(sections, 3, new Set([3, 2])), 1)
+	assert.equal(following(sections, 2, new Set([1, 2, 3])), 2)
 	const rows = orderedRows(sections)
 	assert.equal(keepSelection(rows, 2), 2)
 	assert.equal(keepSelection(rows, 42), 1)
@@ -259,7 +265,49 @@ test('actions per section and the store patch each key makes', () => {
 		snoozedUntil: nextWeekdayMorning(NOW).toISOString(),
 	})
 	assert.equal(actionPatch('p', thread({ id: 1 }), NOW), null)
+	assert.equal(actionPatch('x', thread({ id: 1 }), NOW), null)
 	assert.equal(actionNote('s', thread({ id: 1 }), NOW), 'Snoozed widgets#1 until Fri 9:00')
+})
+
+test('x mutes the sender of mail from a person or a list: Needs you and snoozed, never Sentry, GitHub or done', () => {
+	const keys = (entry: SignalThread) => threadActions(entry, NOW).map(action => `${action.key} ${action.label}`)
+	const mail = (patch: Partial<SignalThread> = {}) =>
+		thread({ id: 43, threadKey: 'mail:abc', source: 'mail', kind: 'mail', ref: 'Ridge', ...patch })
+	assert.deepEqual(keys(mail()), [
+		'p send to agent',
+		'n new agent',
+		'm manage',
+		's snooze',
+		'd dismiss',
+		'x mute sender',
+		'o open',
+	])
+	assert.ok(keys(mail({ state: 'snoozed', snoozedUntil: iso(-60) })).includes('x mute sender'))
+	assert.ok(!keys(mail({ owner: 'managed' })).includes('x mute sender'))
+	assert.ok(!keys(mail({ state: 'done' })).includes('x mute sender'))
+	assert.ok(!keys(mail({ kind: 'sentry' })).includes('x mute sender'))
+	assert.ok(!keys(thread({ id: 1 })).includes('x mute sender'))
+
+	assert.equal(
+		muteNote({ ref: 'Ridge' }, { address: 'hello@eu.ridge.com', added: true, unincluded: false, threadIds: [1, 2, 3] }),
+		'Muted Ridge · 3 threads',
+	)
+	assert.equal(
+		muteNote({ ref: 'Ridge' }, { address: 'hello@eu.ridge.com', added: true, unincluded: true, threadIds: [1] }),
+		'Muted Ridge · 1 thread · no longer always shown',
+	)
+	assert.equal(
+		muteNote({ ref: 'Ridge' }, { address: 'hello@eu.ridge.com', added: false, unincluded: false, threadIds: [] }),
+		'Muted Ridge',
+	)
+	// Muted mail lives in Filtered mail: never listed as done, whatever its done time.
+	const muted = mail({ state: 'done', updatedAt: iso(5), closedReason: SIGNAL_MUTED_REASON, closedBy: 'jakub' })
+	const sections = signalSections([muted, mail({ id: 44, state: 'done', updatedAt: iso(5) })], NOW)
+	assert.deepEqual(
+		sections.done.map(entry => entry.id),
+		[44],
+	)
+	assert.equal(sections.doneToday, 1)
 })
 
 test('agent asks: r reply instead of p/n/m, o opens one link or lists several, none without links', () => {
@@ -958,4 +1006,17 @@ test('filtered mail: the count after Done today, the header summary, rows by dec
 
 	assert.equal(includeNote({ address: 'jana@x.cz', added: true }), 'jana@x.cz is always shown from the next poll')
 	assert.equal(includeNote({ address: 'jana@x.cz', added: false }), 'jana@x.cz is already on the include list')
+	assert.equal(
+		includeNote({ address: 'jana@x.cz', added: false, unmuted: true }),
+		'jana@x.cz is unmuted from the next poll',
+	)
+	assert.equal(
+		includeNote({ address: 'jana@x.cz', added: true, unmuted: true }),
+		'jana@x.cz is always shown from the next poll',
+	)
+	assert.deepEqual(includeAction({ reason: 'excluded' }), { label: 'unmute sender', button: 'Unmute sender' })
+	assert.deepEqual(includeAction({ reason: 'newsletter' }), {
+		label: 'always show sender',
+		button: 'Always show sender',
+	})
 })

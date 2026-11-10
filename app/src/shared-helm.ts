@@ -847,7 +847,21 @@ export interface SignalFilteredPage {
 /** `POST /api/signals/filtered/:id/include` response. */
 export interface SignalIncludeResult {
 	address: string
+	/** Went onto the include list. */
 	added: boolean
+	/** Its exact entry left the exclude list (it was muted); absent from older daemons. */
+	unmuted?: boolean
+}
+
+/** `POST /api/signals/:id/mute` response (`x`, Helm only). */
+export interface SignalMuteResult {
+	/** Now on the exclude list (relay-decoded). */
+	address: string
+	added: boolean
+	/** Its exact entry left the include list. */
+	unincluded: boolean
+	/** Jakub's open mail threads from it, closed now. */
+	threadIds: number[]
 }
 
 /** `POST /api/signals/:id` body (any subset). */
