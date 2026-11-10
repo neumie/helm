@@ -276,7 +276,7 @@ test('after the done count, how much mail was filtered; f and the count open the
 	})
 	expect(look.weight).toBeLessThan(600)
 	expect(look.background).toBe('rgba(0, 0, 0, 0)')
-	await expect(line.locator('.signals-filtered-key')).toBeVisible()
+	await expect(line.locator('.signals-list-key')).toBeVisible()
 	const box = await line.boundingBox()
 	expect(box?.height ?? 0).toBeGreaterThanOrEqual(24)
 	await page.screenshot({ path: test.info().outputPath('signals-filtered-line.png') })

@@ -51,7 +51,7 @@ export const REPLY_PROMPT_MAX = 16_384
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
-/** Done rows listed under `Done today N · hide` (the count counts all of the last 24 hours). */
+/** Done rows listed in the Done today list (`D`; its count counts all of the last 24 hours). */
 export const DONE_LISTED_MAX = 30
 /** Digits 1–9 pick a choice; longer lists still render, unnumbered. */
 export const PICK_MAX = 9

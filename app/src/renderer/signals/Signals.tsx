@@ -7,6 +7,7 @@
 import {
 	type KeyboardEvent,
 	type ReactNode,
+	type RefObject,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -22,7 +23,6 @@ import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
-import { storedPreference } from '../stored-preference'
 import {
 	type AgentMatch,
 	PICK_MAX,
@@ -59,40 +59,6 @@ import type { DockService, SignalsService } from './services'
 /** Re-render ages while nothing else changes. */
 const AGE_TICK_MS = 30_000
 
-/** A flag the column reads and toggles: the stored preference, or a story's memory-only one. */
-interface DoneShownFlag {
-	get(): boolean
-	set(value: boolean): void
-	subscribe(listener: () => void): () => void
-}
-
-/**
- * Whether the done rows under `Done today N · show` are listed (`D`, or a click on the count).
- * Collapsed by default; the choice is kept per renderer (Helm's userData), like the dock's layout.
- */
-export const signalsDoneShown: DoneShownFlag = storedPreference<boolean>(
-	'helm.signals.doneShown',
-	raw => raw === 'shown',
-	shown => (shown ? 'shown' : null),
-)
-
-/** Review fixtures: a flag that starts at `initial` and never touches storage. */
-function memoryFlag(initial: boolean): DoneShownFlag {
-	let value = initial
-	const listeners = new Set<() => void>()
-	return {
-		get: () => value,
-		set(next) {
-			value = next
-			for (const listener of listeners) listener()
-		},
-		subscribe(listener) {
-			listeners.add(listener)
-			return () => listeners.delete(listener)
-		},
-	}
-}
-
 export interface SignalsColumnProps {
 	service: SignalsService
 	dock: DockService
@@ -106,15 +72,18 @@ export interface SignalsColumnProps {
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
-	/** Review fixtures only: start with the done rows listed or not, without the stored preference. */
-	initialDoneShown?: boolean
 }
 
 /**
  * `send` (p), `new-agent` (n), `reply` (r on an agent ask), `links` (o on an ask with several links),
- * `filtered` (f: the filtered mail list).
+ * `filtered` (f: the filtered mail list), `done` (D: the threads done today).
  */
-export type SignalsFlow = { type: 'send' | 'new-agent' | 'reply' | 'links'; id: number } | { type: 'filtered' } | null
+export type SignalsFlow =
+	| { type: 'send' | 'new-agent' | 'reply'; id: number }
+	/** `back: 'done'`: opened from the done list, so Esc goes back there. */
+	| { type: 'links'; id: number; back?: 'done' }
+	| { type: 'filtered' | 'done' }
+	| null
 
 /** What a flow's attempt (the dock prompt / the Okena start / an answer) came back with. */
 export type RouteAttempt =
@@ -192,9 +161,9 @@ function SignalRow({
 			aria-current={selected ? 'true' : undefined}
 			title={view.title}
 			onMouseDown={event => {
-				// Selecting gives the surface the keys (j k p n …), without scrolling or a focus ring on the row.
+				// Selecting gives the surface the keys (j k p n …; the done list's own), without scrolling or a focus ring.
 				event.preventDefault()
-				event.currentTarget.closest<HTMLElement>('section.signals')?.focus({ preventScroll: true })
+				event.currentTarget.closest<HTMLElement>('.signals-flow-keys, section.signals')?.focus({ preventScroll: true })
 				onSelect()
 			}}
 		>
@@ -251,50 +220,38 @@ function SignalRow({
 }
 
 /**
- * `Done today 10 · show`: the done count as a text button that lists or hides the done rows (`D`
- * toggles it while Signals holds the keys). A count of 0 is plain text.
+ * `Done today 8 · D` / `5 filtered · f`: a dim text button that opens its list in place of the
+ * column's (the list takes the keys); the key hint shows only while Signals holds the keys.
  */
-function DoneToggle({ count, shown, onToggle }: { count: number; shown: boolean; onToggle(): void }) {
-	const label = `Done today ${count}`
-	if (count === 0) return <>{label}</>
+function ListButton({
+	className,
+	text,
+	keys,
+	keyShortcuts,
+	title,
+	onOpen,
+}: {
+	className: string
+	text: string
+	keys: string
+	keyShortcuts: string
+	title: string
+	onOpen(): void
+}) {
 	return (
 		<button
 			type="button"
-			className="signals-done-toggle"
-			aria-expanded={shown}
-			aria-keyshortcuts="Shift+D"
-			title={shown ? 'Hide the threads done today' : 'Show the threads done today'}
-			// Pointer use keeps the keys on the Signals surface, as a row click does.
-			onMouseDown={event => {
-				event.preventDefault()
-				event.currentTarget.closest<HTMLElement>('section.signals')?.focus({ preventScroll: true })
-			}}
-			onClick={onToggle}
-		>
-			{label} · {shown ? 'hide' : 'show'}
-			<span className="signals-done-key" aria-hidden="true">
-				{' '}
-				· <kbd>D</kbd>
-			</span>
-		</button>
-	)
-}
-
-/** `5 filtered · f`: opens the filtered mail list; the keys stay on the Signals surface. */
-function FilteredButton({ text, onOpen }: { text: string; onOpen(): void }) {
-	return (
-		<button
-			type="button"
-			className="signals-filtered"
-			aria-keyshortcuts="f"
-			title="Mail the rules kept out of Needs you (last 7 days)"
+			className={`signals-list-btn ${className}`}
+			aria-keyshortcuts={keyShortcuts}
+			title={title}
+			// The opened list takes the keys; a pointer press never moves focus on its own.
 			onMouseDown={event => event.preventDefault()}
 			onClick={onOpen}
 		>
 			{text}
-			<span className="signals-filtered-key" aria-hidden="true">
+			<span className="signals-list-key" aria-hidden="true">
 				{' '}
-				· <kbd>f</kbd>
+				· <kbd>{keys}</kbd>
 			</span>
 		</button>
 	)
@@ -306,20 +263,19 @@ function SignalsTable({
 	now,
 	selected,
 	quietEmpty,
-	doneShown,
-	onToggleDone,
+	done,
 	filtered,
 	onSelect,
 }: {
-	/** With the done rows already left out while they are collapsed. */
+	/** Needs you, Managed and Snoozed (done rows are listed only in their own view). */
 	sections: SignalSections
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: number | null
 	/** Every source answered: an empty Needs you may say so. */
 	quietEmpty: boolean
-	doneShown: boolean
-	onToggleDone(): void
+	/** The `Done today 8 · D` button, or the plain `Done today 0`. */
+	done: ReactNode
 	/** The `5 filtered · f` button, after the done count; null when nothing was filtered. */
 	filtered: ReactNode
 	onSelect(id: number): void
@@ -363,10 +319,9 @@ function SignalsTable({
 			) : null}
 			{sections.snoozed.map(row)}
 			<li className="signals-subhead" role="presentation" data-done-header="">
-				<DoneToggle count={sections.doneToday} shown={doneShown} onToggle={onToggleDone} />
+				{done}
 				{filtered ? <> · {filtered}</> : null}
 			</li>
-			{sections.done.map(row)}
 		</ul>
 	)
 }
@@ -380,7 +335,6 @@ export function SignalsColumn({
 	now: clock = Date.now,
 	initialSelected,
 	initialFlow = null,
-	initialDoneShown,
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -389,6 +343,8 @@ export function SignalsColumn({
 		initialSelected ?? (initialFlow && 'id' in initialFlow ? initialFlow.id : null),
 	)
 	const [flow, setFlow] = useState<SignalsFlow>(initialFlow)
+	// The done list's selection, kept while a links list opened from it is on screen.
+	const [doneSelected, setDoneSelected] = useState<number | null>(null)
 	const [note, setNote] = useState<string | null>(null)
 	const [overrides, setOverrides] = useState<ReadonlyMap<number, SignalThread>>(() => new Map())
 	const sectionRef = useRef<HTMLElement>(null)
@@ -399,10 +355,6 @@ export function SignalsColumn({
 	const [routing, setRouting] = useState<RouteJob | null>(null)
 	const flowRef = useRef<SignalsFlow>(flow)
 	flowRef.current = flow
-	const [doneFlag] = useState<DoneShownFlag>(() =>
-		initialDoneShown === undefined ? signalsDoneShown : memoryFlag(initialDoneShown),
-	)
-	const doneShown = useSyncExternalStore(doneFlag.subscribe, doneFlag.get)
 
 	useEffect(() => {
 		alive.current = true
@@ -415,8 +367,8 @@ export function SignalsColumn({
 
 	const threads = useMemo(() => mergeThreads(bridge.snapshot?.threads ?? [], overrides), [bridge.snapshot, overrides])
 	const allSections = useMemo(() => signalSections(threads, now), [threads, now])
-	// Collapsed done rows are neither listed nor walked by j/k; the subhead still counts them.
-	const sections = useMemo(() => (doneShown ? allSections : { ...allSections, done: [] }), [allSections, doneShown])
+	// Done rows are listed only in their own view (D); the list's subhead counts them.
+	const sections = useMemo(() => ({ ...allSections, done: [] }), [allSections])
 	const rows = useMemo(() => orderedRows(sections), [sections])
 	const current = keepSelection(rows, selected)
 	const sources = bridge.snapshot?.sources ?? []
@@ -431,9 +383,9 @@ export function SignalsColumn({
 			?.scrollIntoView?.({ block: 'nearest' })
 	}, [current])
 
-	// A flow whose thread left the snapshot closes; the list keeps the keys.
+	// A flow whose thread left the snapshot closes; the list (or the done list it came from) keeps the keys.
 	useEffect(() => {
-		if (flow && 'id' in flow && !flowThread) setFlow(null)
+		if (flow && 'id' in flow && !flowThread) setFlow(flow.type === 'links' && flow.back ? { type: flow.back } : null)
 	}, [flow, flowThread])
 
 	const applyThread = useCallback((thread: SignalThread) => {
@@ -446,9 +398,12 @@ export function SignalsColumn({
 
 	const closeFlow = useCallback(
 		(message?: string | null) => {
-			setFlow(null)
+			// Links opened from the done list go back to it, which takes the keys itself when it mounts.
+			const open = flowRef.current
+			const back = open?.type === 'links' && open.back ? open.back : null
+			setFlow(back ? { type: back } : null)
 			if (message !== undefined) setNote(message)
-			refocus()
+			if (!back) refocus()
 		},
 		[refocus],
 	)
@@ -510,8 +465,15 @@ export function SignalsColumn({
 		}
 	}
 
-	const act = (key: SignalActionKey): void => {
-		const thread = rows.find(entry => entry.id === current)
+	/**
+	 * An action key on `thread` (the list's selected row, or the done list's): `select` moves that
+	 * list's selection once the thread leaves its group.
+	 */
+	const act = (
+		key: SignalActionKey,
+		thread = rows.find(entry => entry.id === current),
+		select: (id: number) => void = setSelected,
+	): void => {
 		if (!thread || !threadActions(thread, now).some(action => action.key === key)) return
 		if (key === 'p' || key === 'n' || key === 'r') {
 			setNote(null)
@@ -522,7 +484,11 @@ export function SignalsColumn({
 			// Several links: pick one by number. One: open it at once, as `o` does for a thread's source.
 			if (thread.links.length > 1) {
 				setNote(null)
-				setFlow({ type: 'links', id: thread.id })
+				setFlow({
+					type: 'links',
+					id: thread.id,
+					...(flowRef.current?.type === 'done' ? { back: 'done' as const } : {}),
+				})
 				return
 			}
 			void run(async () => {
@@ -550,7 +516,7 @@ export function SignalsColumn({
 		}
 		const patch = actionPatch(key, thread, now)
 		if (!patch) return
-		const next = following(sections, thread.id)
+		const next = following(allSections, thread.id)
 		void run(async () => {
 			const result = await service.update(thread.id, patch)
 			if (!alive.current) return
@@ -559,7 +525,7 @@ export function SignalsColumn({
 				return
 			}
 			applyThread(result.data)
-			setSelected(next)
+			select(next)
 			setNote(actionNote(key, thread, now))
 		})
 	}
@@ -593,24 +559,11 @@ export function SignalsColumn({
 		}
 	}
 
-	/** `D` / the done count: list or hide the threads done today. */
-	const toggleDone = (): void => {
-		if (allSections.doneToday === 0) return
-		const next = !doneShown
-		if (!next) {
-			// Hiding the selected done row: the selection stays nearby, on the last row still listed.
-			const selectedDone = sections.done.some(thread => thread.id === current)
-			const kept = [...allSections.needs, ...allSections.managed, ...allSections.snoozed]
-			if (selectedDone) setSelected(kept.at(-1)?.id ?? null)
-		} else {
-			requestAnimationFrame(() =>
-				sectionRef.current
-					?.querySelector<HTMLElement>('.signals-tr[data-section="done"]')
-					?.scrollIntoView?.({ block: 'nearest' }),
-			)
-		}
+	/** `D` / the done count: the threads done today, in place of the list. */
+	const openDone = (): void => {
 		setNote(null)
-		doneFlag.set(next)
+		setDoneSelected(null)
+		setFlow({ type: 'done' })
 	}
 
 	const openFiltered = (): void => {
@@ -636,7 +589,7 @@ export function SignalsColumn({
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
 		else if (/^[pnmtsdor]$/.test(event.key)) act(event.key as SignalActionKey)
 		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
-		else if (event.key === 'D' && allSections.doneToday > 0) toggleDone()
+		else if (event.key === 'D' && allSections.doneToday > 0) openDone()
 		else return
 		event.preventDefault()
 	}
@@ -645,14 +598,29 @@ export function SignalsColumn({
 	const health = healthLines(sources)
 	const filtered = filteredLine(filteredCount)
 	const filteredButton = filtered ? (
-		<FilteredButton
+		<ListButton
+			className="signals-filtered"
 			text={filtered}
-			onOpen={() => {
-				openFiltered()
-				sectionRef.current?.focus({ preventScroll: true })
-			}}
+			keys="f"
+			keyShortcuts="f"
+			title="Mail the rules kept out of Needs you (last 7 days)"
+			onOpen={openFiltered}
 		/>
 	) : null
+	const doneLabel = `Done today ${allSections.doneToday}`
+	const doneButton =
+		allSections.doneToday > 0 ? (
+			<ListButton
+				className="signals-done"
+				text={doneLabel}
+				keys="D"
+				keyShortcuts="Shift+D"
+				title="Threads done in the last 24 hours, and how each got done"
+				onOpen={openDone}
+			/>
+		) : (
+			doneLabel
+		)
 	return (
 		<section
 			ref={sectionRef}
@@ -665,6 +633,18 @@ export function SignalsColumn({
 		>
 			{flow?.type === 'filtered' ? (
 				<FilteredMail service={service} count={filteredCount} now={now} onClose={closeFlow} />
+			) : flow?.type === 'done' ? (
+				<DoneToday
+					sections={allSections}
+					snapshot={snapshot}
+					now={now}
+					selected={doneSelected}
+					onSelect={setDoneSelected}
+					note={note}
+					onNote={setNote}
+					onAct={(key, thread) => act(key, thread, setDoneSelected)}
+					onClose={closeFlow}
+				/>
 			) : flow && flowThread ? (
 				flow.type === 'send' ? (
 					<SendFlow
@@ -721,8 +701,7 @@ export function SignalsColumn({
 								now={now}
 								selected={current}
 								quietEmpty={allSourcesOk(sources)}
-								doneShown={doneShown}
-								onToggleDone={toggleDone}
+								done={doneButton}
 								filtered={filteredButton}
 								onSelect={id => {
 									setSelected(id)
@@ -763,7 +742,7 @@ type FilteredState =
 	| { status: 'ready'; page: SignalFilteredPage }
 
 /**
- * `f` / the `12 filtered` line: the mail the rules kept out of Needs you (heads only, last 7 days),
+ * `f` / the `12 filtered` count: the mail the rules kept out of Needs you (heads only, last 7 days),
  * newest first, in place of the list. `i` always shows the selected row's sender from the next poll
  * (adds its exact address to the include list), `o` opens it in Mail, Esc back.
  */
@@ -853,6 +832,251 @@ function FilteredMail({
 		})
 	}
 
+	const onKey = (key: string): boolean => {
+		if (key === 'i') include()
+		else if (key === 'o') open()
+		else return false
+		return true
+	}
+
+	const context =
+		state.status === 'ready' ? filteredSummary(state.page) : state.status === 'error' ? 'Unavailable' : 'Reading…'
+	const more = state.status === 'ready' ? state.page.total - entries.length : 0
+	return (
+		<SignalsListView
+			glyph="@"
+			kind="Filtered mail"
+			context={context}
+			scrollRef={scrollRef}
+			onStep={delta => {
+				setIndex(Math.max(0, Math.min(entries.length - 1, at + delta)))
+				setNote(null)
+			}}
+			onKey={onKey}
+			onClose={onClose}
+			hints={
+				entry ? (
+					<>
+						<Hint keys="i">always show sender</Hint>
+						{entry.url ? <Hint keys="o">open</Hint> : null}
+					</>
+				) : null
+			}
+			note={note}
+			action={
+				entry ? (
+					<Btn sm ariaKeyShortcuts="i" onClick={include}>
+						Always show sender
+					</Btn>
+				) : null
+			}
+		>
+			{state.status === 'loading' ? <p className="signals-placeholder">Reading filtered mail…</p> : null}
+			{state.status === 'error' ? <p className="signals-placeholder">{state.error}</p> : null}
+			{state.status === 'ready' ? (
+				entries.length > 0 ? (
+					<ul className="signals-table" aria-label="Filtered mail">
+						{entries.map((item, position) => {
+							const view = filteredRowView(item, now)
+							const selected = position === at
+							return (
+								<li
+									key={item.id}
+									className="signals-tr"
+									data-section="filtered"
+									data-filtered-id={item.id}
+									data-selected={selected ? 'true' : undefined}
+									aria-current={selected ? 'true' : undefined}
+									title={view.title}
+									onMouseDown={event => {
+										event.preventDefault()
+										event.currentTarget.closest<HTMLElement>('.signals-flow-keys')?.focus({ preventScroll: true })
+										setIndex(position)
+										setNote(null)
+									}}
+								>
+									<span className="signals-edge" />
+									<span className="signals-glyph" aria-hidden="true">
+										@
+									</span>
+									<span className="signals-td-ref">{view.ref}</span>
+									<span className="signals-td-what" title={view.what}>
+										{view.what}
+									</span>
+									<span className="signals-td-age">{view.age}</span>
+									<span className="signals-td-agent" title={view.title}>
+										{view.reason}
+									</span>
+									<span className="signals-edge" />
+								</li>
+							)
+						})}
+						{more > 0 ? (
+							<li className="signals-empty" role="presentation">
+								… {more} more (helm signal ls --filtered)
+							</li>
+						) : null}
+					</ul>
+				) : (
+					<p className="signals-placeholder">Nothing was filtered in the last 7 days</p>
+				)
+			) : null}
+		</SignalsListView>
+	)
+}
+
+/**
+ * `D` / the `Done today 8` count: the threads done in the last 24 hours, newest first, in place of
+ * the list, each saying how it got done. Built like Filtered mail: `j`/`k` move, the selected row's
+ * actions as keys (`t` reopen, `o` open), Esc back. Rows come from the column's own snapshot, so a
+ * reopened thread leaves here at once and the selection moves to the next done row.
+ */
+function DoneToday({
+	sections,
+	snapshot,
+	now,
+	selected,
+	onSelect,
+	note,
+	onNote,
+	onAct,
+	onClose,
+}: {
+	sections: SignalSections
+	snapshot: AgentDockSnapshot | null
+	now: number
+	/** The column keeps it, so it survives a links list opened from here. */
+	selected: number | null
+	onSelect(id: number): void
+	/** The column's status line (its actions write it; it stays after Esc). */
+	note: string | null
+	onNote(note: string | null): void
+	/** The column's action keys on `thread` (a reopened thread moves the selection to the next done row). */
+	onAct(key: SignalActionKey, thread: SignalThread): void
+	onClose(message?: string | null): void
+}) {
+	const rows = sections.done
+	const current = keepSelection(rows, selected)
+	const thread = rows.find(entry => entry.id === current)
+	const scrollRef = useRef<HTMLDivElement>(null)
+
+	// The row shown selected is the one kept: a push of a newer done thread never moves it, and a
+	// links list opened from here comes back to it.
+	useEffect(() => {
+		if (current !== null && current !== selected) onSelect(current)
+	}, [current, selected, onSelect])
+
+	useEffect(() => {
+		if (current === null) return
+		scrollRef.current
+			?.querySelector<HTMLElement>(`[data-signal-id="${current}"]`)
+			?.scrollIntoView?.({ block: 'nearest' })
+	}, [current])
+
+	const actions = thread ? threadActions(thread, now) : []
+	const more = sections.doneToday - rows.length
+	return (
+		<SignalsListView
+			glyph="✓"
+			kind="Done today"
+			context={`${sections.doneToday} in the last 24 hours`}
+			scrollRef={scrollRef}
+			onStep={delta => {
+				const index = rows.findIndex(entry => entry.id === current)
+				const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))]
+				if (!next) return
+				onSelect(next.id)
+				onNote(null)
+			}}
+			onKey={key => {
+				if (!/^[pnmtsdor]$/.test(key)) return false
+				if (thread) onAct(key as SignalActionKey, thread)
+				return true
+			}}
+			onClose={onClose}
+			hints={actions.map(action => (
+				<Hint key={action.key} keys={action.key}>
+					{action.label}
+				</Hint>
+			))}
+			note={note}
+			action={
+				thread && actions.some(action => action.key === 't') ? (
+					<Btn sm ariaKeyShortcuts="t" onClick={() => onAct('t', thread)}>
+						Reopen
+					</Btn>
+				) : null
+			}
+		>
+			{rows.length > 0 ? (
+				<ul className="signals-table" aria-label="Done today">
+					{rows.map(entry => (
+						<SignalRow
+							key={entry.id}
+							thread={entry}
+							snapshot={snapshot}
+							now={now}
+							selected={entry.id === current}
+							onSelect={() => {
+								onSelect(entry.id)
+								onNote(null)
+							}}
+						/>
+					))}
+					{more > 0 ? (
+						<li className="signals-empty" role="presentation">
+							… {more} more (helm signal ls --state done)
+						</li>
+					) : null}
+				</ul>
+			) : (
+				<p className="signals-placeholder">Nothing was done in the last 24 hours</p>
+			)}
+		</SignalsListView>
+	)
+}
+
+/**
+ * A list in place of the column's (Filtered mail, Done today): the flow header with a dim glyph,
+ * one scroll owner, then the key hints, the status line and one quiet button. It takes the keys:
+ * `j`/`k` (↓/↑) move, Esc back to Signals, `onKey` the list's own (true when handled).
+ */
+function SignalsListView({
+	glyph,
+	kind,
+	context,
+	scrollRef,
+	onStep,
+	onKey,
+	onClose,
+	hints,
+	note,
+	action,
+	children,
+}: {
+	glyph: string
+	kind: string
+	context: string
+	scrollRef: RefObject<HTMLDivElement | null>
+	onStep(delta: number): void
+	onKey(key: string): boolean
+	onClose(message?: string | null): void
+	hints: ReactNode
+	note: string | null
+	action: ReactNode
+	children: ReactNode
+}) {
+	const rootRef = useRef<HTMLDivElement>(null)
+	// Opened, it takes the keys (as a flow does).
+	useEffect(() => rootRef.current?.focus({ preventScroll: true }), [])
+	// The footer button went away while it had focus (it acted on the last row): the keys stay here.
+	const hasAction = action !== null && action !== undefined
+	useEffect(() => {
+		const root = rootRef.current
+		const active = document.activeElement
+		if (!hasAction && root && (!active || active === document.body || !active.isConnected))
+			root.focus({ preventScroll: true })
+	}, [hasAction])
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
 		if (event.key === 'Escape') {
 			event.preventDefault()
@@ -861,95 +1085,25 @@ function FilteredMail({
 			return
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return
-		const step = (delta: number): void => {
-			setIndex(Math.max(0, Math.min(entries.length - 1, at + delta)))
-			setNote(null)
-		}
-		if (event.key === 'j' || event.key === 'ArrowDown') step(1)
-		else if (event.key === 'k' || event.key === 'ArrowUp') step(-1)
-		else if (event.key === 'i') include()
-		else if (event.key === 'o') open()
-		else return
+		if (event.key === 'j' || event.key === 'ArrowDown') onStep(1)
+		else if (event.key === 'k' || event.key === 'ArrowUp') onStep(-1)
+		else if (!onKey(event.key)) return
 		event.preventDefault()
 		event.stopPropagation()
 	}
-
-	const context =
-		state.status === 'ready' ? filteredSummary(state.page) : state.status === 'error' ? 'Unavailable' : 'Reading…'
-	const more = state.status === 'ready' ? state.page.total - entries.length : 0
 	return (
-		<div className="signals-flow-keys" ref={takeKeys} tabIndex={-1} onKeyDown={onKeyDown}>
-			<FlowHeader glyph="@" kind="Filtered mail" context={context} quiet onClose={() => onClose()} />
+		<div className="signals-flow-keys" ref={rootRef} tabIndex={-1} onKeyDown={onKeyDown}>
+			<FlowHeader glyph={glyph} kind={kind} context={context} quiet onClose={() => onClose()} />
 			<div className="signals-scroll" ref={scrollRef}>
-				{state.status === 'loading' ? <p className="signals-placeholder">Reading filtered mail…</p> : null}
-				{state.status === 'error' ? <p className="signals-placeholder">{state.error}</p> : null}
-				{state.status === 'ready' ? (
-					entries.length > 0 ? (
-						<ul className="signals-table" aria-label="Filtered mail">
-							{entries.map((item, position) => {
-								const view = filteredRowView(item, now)
-								const selected = position === at
-								return (
-									<li
-										key={item.id}
-										className="signals-tr"
-										data-section="filtered"
-										data-filtered-id={item.id}
-										data-selected={selected ? 'true' : undefined}
-										aria-current={selected ? 'true' : undefined}
-										title={view.title}
-										onMouseDown={event => {
-											event.preventDefault()
-											event.currentTarget.closest<HTMLElement>('.signals-flow')?.focus({ preventScroll: true })
-											setIndex(position)
-											setNote(null)
-										}}
-									>
-										<span className="signals-edge" />
-										<span className="signals-glyph" aria-hidden="true">
-											@
-										</span>
-										<span className="signals-td-ref">{view.ref}</span>
-										<span className="signals-td-what" title={view.what}>
-											{view.what}
-										</span>
-										<span className="signals-td-age">{view.age}</span>
-										<span className="signals-td-agent" title={view.title}>
-											{view.reason}
-										</span>
-										<span className="signals-edge" />
-									</li>
-								)
-							})}
-							{more > 0 ? (
-								<li className="signals-empty" role="presentation">
-									… {more} more (helm signal ls --filtered)
-								</li>
-							) : null}
-						</ul>
-					) : (
-						<p className="signals-placeholder">Nothing was filtered in the last 7 days</p>
-					)
-				) : null}
+				{children}
 			</div>
 			<footer className="signals-foot">
 				<span className="signals-foot-hints" aria-hidden="true">
-					{entry ? (
-						<>
-							<Hint keys="i">always show sender</Hint>
-							{entry.url ? <Hint keys="o">open</Hint> : null}
-						</>
-					) : null}
+					{hints}
 					<Hint keys="esc">back</Hint>
 				</span>
 				<output className="signals-note">{note}</output>
-				{entry ? (
-					<span className="signals-foot-actions">
-						<Btn sm ariaKeyShortcuts="i" onClick={include}>
-							Always show sender
-						</Btn>
-					</span>
-				) : null}
+				{action ? <span className="signals-foot-actions">{action}</span> : null}
 			</footer>
 		</div>
 	)
@@ -965,7 +1119,7 @@ function FlowHeader({
 	glyph: string
 	kind: string
 	context: string
-	/** A dim, untoned glyph (the filtered list: nothing there wants Jakub). */
+	/** A dim, untoned glyph (the filtered and done lists: nothing there wants Jakub). */
 	quiet?: boolean
 	onClose(): void
 }) {

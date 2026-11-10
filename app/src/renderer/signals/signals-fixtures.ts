@@ -335,7 +335,8 @@ export function signalAskFixtures(now = Date.now()): SignalThread[] {
  * More threads done today, one per way a thread gets done (with okena#298 gone from GitHub and
  * crane-rental#965 dismissed in {@link signalThreadFixtures}): mail read in Mail (also a Sentry
  * alert), a managed mail closed by its agent with a note, a PR an agent closed, an answered ask the
- * agent closed, and one closed by hand before the daemon recorded who.
+ * agent closed (two links: `o` lists them from the Done today list), and one closed by hand before
+ * the daemon recorded who.
  */
 export function signalDoneFixtures(now = Date.now()): SignalThread[] {
 	const done = (seed: ThreadSeed & { closedMinutesAgo: number }): SignalThread => {
@@ -423,6 +424,7 @@ export function signalDoneFixtures(now = Date.now()): SignalThread[] {
 			title: 'Filtered count in the footer or the header?',
 			head: 'Filtered count in the footer or the header?',
 			actor: 'Signals asks',
+			links: ['https://github.com/neumie/helm/pull/402', 'https://github.com/neumie/helm/pull/403'],
 			askTerminal: ASK_TERMINAL_IDLE,
 			reply: 'Footer',
 			replyAt: iso(now - 230 * MINUTE),
