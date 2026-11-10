@@ -273,7 +273,7 @@
 .document-review ::highlight(helm-review-comment-passage) {
 	background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.document-review [data-figure-selected='true'] {
+.document-review [data-figure-selected="true"] {
 	outline: 2px solid var(--accent);
 	outline-offset: 3px;
 	background-color: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -902,6 +902,60 @@
 	gap: 8px;
 	font-size: calc(13px * var(--ui-scale));
 	color: var(--text-1);
+}
+/* Send activity line (spec D14, E5): under the newest message of the conversation that sent. The §3.21 indicator
+   shows only while the caller is seen working; the 6px slot keeps the text on one edge in every phase. No colour. */
+.review-activity {
+	display: grid;
+	grid-template-columns: 6px minmax(0, 1fr);
+	column-gap: 8px;
+	align-items: start;
+	min-width: 0;
+	font-size: calc(13px * var(--ui-scale));
+	line-height: 20px;
+	color: var(--text-1);
+}
+.review-activity-slot {
+	display: grid;
+	place-items: center;
+	height: 20px;
+}
+.review-activity-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.review-activity-meta {
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+.review-activity-done,
+.review-activity-done .review-activity-text {
+	color: var(--text-2);
+}
+/* A refusal before any effect, next to the composer that sent it. Colour only on the glyph. */
+.review-send-refused {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 1fr);
+	column-gap: 6px;
+	align-items: start;
+	min-width: 0;
+	margin: 0 0 8px;
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 18px;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+}
+.review-send-refused-glyph {
+	display: grid;
+	place-items: center;
+	height: 18px;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 700;
+	line-height: 1;
+	color: var(--danger);
+}
+.review-send-refused-lead {
+	color: var(--text-0);
 }
 .review-identity span,
 .review-meta,

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
 import type { ReviewSessions } from '../app/src/document-review/sessions'
+import { editProvider } from '../src/cli/edit'
 import { callerFixture } from './helpers/document-review-caller'
 
 const run = promisify(execFile)
@@ -17,13 +18,18 @@ async function until(condition: () => boolean) {
 		await new Promise(resolve => setTimeout(resolve, 10))
 	}
 }
-async function fixture() {
+/** These tests run inside agents: drop the providers' own markers so `helm edit` stays the unspecified cli. */
+function withoutAgentMarkers(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const { CLAUDECODE: _claude, CODEX_THREAD_ID: _codex, ...rest } = env
+	return rest
+}
+async function fixture(markers: NodeJS.ProcessEnv = {}) {
 	const f = await callerFixture(30000)
 	const children: ReturnType<typeof run>[] = []
 	const command = (...args: string[]) => {
 		const child = run(process.execPath, ['--import', tsx, cli, 'edit', ...args], {
 			cwd: f.workspace,
-			env: { ...process.env, HOME: f.workspace },
+			env: { ...withoutAgentMarkers(process.env), HOME: f.workspace, ...markers },
 			timeout: 30000,
 			maxBuffer: 1000000,
 		})
@@ -392,6 +398,42 @@ test('edit help is simple, and malformed input performs no enrollment', async ()
 			await assert.rejects(f.command(...args))
 		assert.equal(f.sessions.list(f.workspace).length, 0)
 		assert.equal(f.opens(), 0)
+	} finally {
+		await f.close()
+	}
+})
+
+test('the edit provider label comes from exactly one provider marker; an explicit --agent wins', () => {
+	assert.deepEqual(editProvider([], {}), ['--agent', 'cli'])
+	assert.deepEqual(editProvider([], { CLAUDECODE: '1' }), ['--agent', 'claude'])
+	assert.deepEqual(editProvider([], { CODEX_THREAD_ID: '0199-thread' }), ['--agent', 'codex'])
+	// Both markers (a Codex started from a Claude Code shell, or the reverse) cannot be told apart: unspecified.
+	assert.deepEqual(editProvider([], { CLAUDECODE: '1', CODEX_THREAD_ID: '0199-thread' }), ['--agent', 'cli'])
+	assert.deepEqual(editProvider([], { CLAUDECODE: '' }), ['--agent', 'cli'])
+	assert.deepEqual(editProvider(['--agent', 'pi'], { CLAUDECODE: '1' }), [])
+})
+
+test('helm edit inside Claude Code opens as Claude Code, recorded like an explicit --agent', async () => {
+	const f = await fixture({ CLAUDECODE: '1' })
+	try {
+		const opening = f.command('spec.md', '--timeout', '1')
+		await until(() => f.sessions.list(f.workspace)[0]?.listening === true)
+		const owner = f.sessions.list(f.workspace)[0]
+		assert.equal(owner?.provider, 'claude')
+		assert.equal(owner?.name, 'Document conversation')
+		await opening
+	} finally {
+		await f.close()
+	}
+})
+
+test('an explicit --agent beats a Codex marker', async () => {
+	const f = await fixture({ CODEX_THREAD_ID: '0199-thread' })
+	try {
+		const opening = f.command('spec.md', '--timeout', '1', '--agent', 'pi')
+		await until(() => f.sessions.list(f.workspace)[0]?.listening === true)
+		assert.equal(f.sessions.list(f.workspace)[0]?.provider, 'pi')
+		await opening
 	} finally {
 		await f.close()
 	}

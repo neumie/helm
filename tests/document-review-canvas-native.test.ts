@@ -24,6 +24,13 @@ import type {
 	ReviewResult,
 	ReviewState,
 } from '../src/document-review/types.js'
+
+/** These tests run inside agents: drop the providers' own markers so `helm edit` stays the unspecified cli. */
+function withoutAgentMarkers(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const { CLAUDECODE: _claude, CODEX_THREAD_ID: _codex, ...rest } = env
+	return rest
+}
+
 const { parseReviewRequest } = admissionModule
 const { reviewPrompt, validatePassage } = requestModule
 const { reviewDraftSchema } = draftModule
@@ -557,7 +564,7 @@ test('the actual native control route releases a real helm edit CLI when its win
 			['--import', import.meta.resolve('tsx'), resolve('src/cli/helm.ts'), 'edit', f.file],
 			{
 				cwd: f.root,
-				env: { ...process.env, HOME: f.root },
+				env: { ...withoutAgentMarkers(process.env), HOME: f.root },
 				timeout: 30000,
 				maxBuffer: 1000000,
 			},
@@ -614,7 +621,7 @@ test('real helm edit reports why the native host refused to open a file, and the
 		const result = await runFile(
 			process.execPath,
 			['--import', import.meta.resolve('tsx'), resolve('src/cli/helm.ts'), 'edit', file, '--timeout', '1'],
-			{ cwd: f.root, env: { ...process.env, HOME: f.root }, timeout: 30000, maxBuffer: 1000000 },
+			{ cwd: f.root, env: { ...withoutAgentMarkers(process.env), HOME: f.root }, timeout: 30000, maxBuffer: 1000000 },
 		).then(
 			() => assert.fail(`${file} must be refused`),
 			(error: { stderr: string }) => error.stderr,
@@ -1423,7 +1430,11 @@ for (const failing of [false, true]) {
 				// The synchronous effect runs first; retire access before run() publishes its reply.
 				await Promise.resolve()
 				f.setRendererAdmission(false)
-				assert.deepEqual(await pending, { error: 'This review is no longer current. Reopen it in the active profile.' })
+				// After the effect ran, losing admission can no longer mean "nothing happened": the reply says uncertain.
+				assert.deepEqual(await pending, {
+					error: 'This review is no longer current. Reopen it in the active profile.',
+					...(failing ? {} : { uncertain: true }),
+				})
 				if (failing) assert.deepEqual(await readFile(privateFile), original)
 				else assert.deepEqual(JSON.parse(await readFile(privateFile, 'utf8')), {})
 				f.setRendererAdmission(true)

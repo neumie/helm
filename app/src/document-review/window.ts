@@ -199,6 +199,8 @@ export class DocumentReviewWindows {
 		fileOperation = false,
 	): Promise<ReviewResult<T>> {
 		let state: WindowState | null = null
+		// Once the effect resolved, a failure can no longer mean "not sent": report it as uncertain.
+		let effected = false
 		try {
 			state = this.require(event, token)
 			if (state.active.size >= 16) throw new Error('Review is busy. Wait for the current operation to finish.')
@@ -215,13 +217,17 @@ export class DocumentReviewWindows {
 				state.active.delete(admitted)
 				if (fileOperation) state.fileFlights.delete(admitted)
 			}
+			effected = true
 			this.require(event, token)
 			return { data }
 		} catch (error) {
 			try {
 				this.require(event, token)
 			} catch {
-				return { error: 'This review is no longer current. Reopen it in the active profile.' }
+				return {
+					error: 'This review is no longer current. Reopen it in the active profile.',
+					...(effected ? { uncertain: true as const } : {}),
+				}
 			}
 			// Our domain errors contain only actionable copy; never return native path/argv diagnostics.
 			const message = error instanceof Error ? error.message : ''

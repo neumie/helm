@@ -1672,6 +1672,9 @@ const CLAUDE_SESSION_ENV = new Set([
 	'CLAUDE_CODE_MESSAGING_SOCKET',
 	'CLAUDE_CODE_MESSAGING_TOKEN',
 	'CLAUDE_CODE_SSE_PORT',
+	// Codex's session identity: `helm edit` reads it as a provider marker, so a Helm started from Codex must not
+	// label every terminal's agent as Codex.
+	'CODEX_THREAD_ID',
 ])
 
 function shellEnv(): Record<string, string> {

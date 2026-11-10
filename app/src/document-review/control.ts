@@ -6,6 +6,7 @@ import { defaultReviewRoot } from '../../../src/document-review/client'
 import { ReviewControlServer } from '../../../src/document-review/control-server'
 import type { CallerBinding, ReviewControlBackend } from '../../../src/document-review/control-server'
 import { gitRootRefusal, refuse } from '../../../src/document-review/refusal'
+import { wireReceipt } from './sessions'
 import type { DocumentReviewWindows } from './window'
 
 const run = promisify(execFile)
@@ -115,7 +116,7 @@ export function createReviewControl(
 					caller.report(binding.id, binding.owner, command.requestId, command.sequence, command.state, command.text)
 					return true
 				case 'receipt':
-					return caller.receipt(command.requestId, binding.id)
+					return wireReceipt(caller.receipt(command.requestId, binding.id))
 				case 'disconnect':
 					caller.disconnect(binding.id, binding.owner)
 					return true
