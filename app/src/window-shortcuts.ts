@@ -50,3 +50,43 @@ export function routeShortcut(
 	}
 	return action ? { kind: 'action', action } : { kind: 'pass' }
 }
+
+/**
+ * Where a shortcut or menu item acts: a cockpit-side BrowserWindow, or one document view (spec: Per-view access
+ * keys). A document view is a WebContentsView in a BaseWindow container; the container itself is never a target.
+ */
+export type ShortcutTarget<W, V> = { window: W } | { review: V }
+
+/**
+ * The target of a menu item. `document` is non-null whenever one of Helm's document containers is focused; its
+ * `contents` is the shown view, null while that view closes. A focused document container never falls back to
+ * the cockpit, or ⌘W / File → Close would close a terminal tab and the font keys would step the terminal font.
+ */
+export function focusedShortcutTarget<W, V>(
+	document: { contents: V | null } | null,
+	focusedBrowserWindow: W | null,
+	mainWindow: W | null,
+): ShortcutTarget<W, V> | null {
+	if (document) return document.contents ? { review: document.contents } : null
+	const window = focusedBrowserWindow ?? mainWindow
+	return window ? { window } : null
+}
+
+export type ShortcutEffect<W, V> =
+	| { kind: 'none' }
+	/** The cockpit's handler for a configurable action. */
+	| { kind: 'action'; action: ShortcutAction; target: ShortcutTarget<W, V> }
+	| { kind: 'zoom'; view: V; step: -1 | 0 | 1 }
+	/** Close that view only, through its close guard; its window's other views stay. */
+	| { kind: 'close-view'; view: V }
+	| { kind: 'open-file'; view: V }
+
+/** The effect of a route on a target. A document-only route on a cockpit target does nothing. */
+export function shortcutEffect<W, V>(target: ShortcutTarget<W, V>, route: ShortcutRoute): ShortcutEffect<W, V> {
+	if (route.kind === 'action') return { kind: 'action', action: route.action, target }
+	if (!('review' in target)) return { kind: 'none' }
+	if (route.kind === 'zoom') return { kind: 'zoom', view: target.review, step: route.step }
+	if (route.kind === 'close-window') return { kind: 'close-view', view: target.review }
+	if (route.kind === 'open-file') return { kind: 'open-file', view: target.review }
+	return { kind: 'none' }
+}

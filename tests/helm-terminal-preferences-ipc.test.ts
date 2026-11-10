@@ -65,7 +65,7 @@ test('menus display cached effective bindings but physical-code dispatcher owns 
 	assert.match(main, /registerAccelerator: false/)
 	assert.match(main, /matchingShortcutAction/)
 	assert.match(main, /app\.on\('browser-window-created'/)
-	assert.match(main, /const closeFocused = \(window/)
+	assert.match(main, /const closeFocused = \(target: ShortcutTarget/)
 })
 
 test('main resolves the persisted preference for ordinary spawns while scheduled adoption stays on HOME', () => {

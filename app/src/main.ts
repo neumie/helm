@@ -5,6 +5,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
 import {
+	BaseWindow,
 	BrowserWindow,
 	Menu,
 	Notification,
@@ -17,7 +18,7 @@ import {
 	session,
 	shell,
 } from 'electron'
-import type { IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import * as pty from 'node-pty'
 import { localControlTokenPath, readLocalControlToken } from '../../src/auth/local-control'
 import { PlanWorkspace } from '../../src/plan/workspace'
@@ -83,7 +84,14 @@ import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { TerminalWarmPool, type WarmProcess } from './terminal-warm'
 import { THEME_PRESETS } from './theme-presets'
-import { type ShortcutRoute, type ShortcutWindowKind, routeShortcut } from './window-shortcuts'
+import {
+	type ShortcutRoute,
+	type ShortcutWindowKind,
+	type ShortcutTarget as WindowShortcutTarget,
+	focusedShortcutTarget,
+	routeShortcut,
+	shortcutEffect,
+} from './window-shortcuts'
 
 // HELM_URL preferred; VIGIL_URL still honored (legacy compat).
 const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://localhost:7474'
@@ -278,6 +286,9 @@ const documentReviewWindows = new DocumentReviewWindows({
 		return storage.registry
 	},
 	mainWindow: () => mainWindow,
+	// A BaseWindow never fires browser-window-created: each document view gets the shortcut dispatcher itself.
+	onViewCreated: contents =>
+		contents.on('before-input-event', (event, input) => dispatchShortcutInput({ review: contents }, event, input)),
 	planArtifact: (id, name) => {
 		const item = helmBridge.getSnapshot().items?.find(item => item.id === id)
 		if (!item?.plan || item.profileId !== sessionProfileId) return null
@@ -449,7 +460,8 @@ function deliverOpenItem(itemId: string, epoch: number | null = null): void {
 	pendingOpenItem = { itemId, epoch }
 	const win = mainWindow
 	if (!win || win.isDestroyed()) {
-		if (app.isReady() && BrowserWindow.getAllWindows().length === 0) createWindow()
+		// Document windows are BaseWindows: they count, as they did when they were BrowserWindows.
+		if (app.isReady() && BaseWindow.getAllWindows().length === 0) createWindow()
 		return
 	}
 	if (win.isMinimized()) win.restore()
@@ -536,7 +548,12 @@ interface ActiveShortcutRecorder {
 	record(input: Parameters<typeof recordedShortcutInput>[0]): ReturnType<typeof recordedShortcutInput>
 }
 let shortcutRecorder: ActiveShortcutRecorder | null = null
-let menuShortcutHandlers: Partial<Record<ShortcutAction, (window: BrowserWindow) => void>> = {}
+let menuShortcutHandlers: Partial<Record<ShortcutAction, (target: ShortcutTarget | null) => void>> = {}
+type ShortcutTarget = WindowShortcutTarget<BrowserWindow, WebContents>
+/** A focused document window resolves to its shown view, never to the cockpit (window-shortcuts.ts). */
+function focusedTarget(): ShortcutTarget | null {
+	return focusedShortcutTarget(documentReviewWindows.focused(), BrowserWindow.getFocusedWindow(), mainWindow)
+}
 
 /** Captures one renderer-owned Primary chord in main, never raw terminal input. */
 function recordShortcut(win: BrowserWindow): Promise<ShortcutChord | null> {
@@ -579,12 +596,12 @@ function cancelShortcutRecorder(): void {
  * authoritative physical-code menu path and is installed for every Helm window.
  */
 function dispatchShortcutInput(
-	window: BrowserWindow,
+	target: ShortcutTarget,
 	event: { preventDefault(): void },
 	input: Parameters<typeof recordedShortcutInput>[0],
 ): void {
 	const recorder = shortcutRecorder
-	if (recorder?.window === window) {
+	if ('window' in target && recorder?.window === target.window) {
 		const recorded = recorder.record(input)
 		// Recorder arbitration deliberately precedes persistent shortcuts.
 		if (recorded.consume) event.preventDefault()
@@ -607,25 +624,27 @@ function dispatchShortcutInput(
 		shiftKey: input.shift === true,
 	}
 	const action = matchingShortcutAction(currentTerminalPreferences.shortcuts, 'menu', key, process.platform)
-	const route = routeShortcut(shortcutWindowKind(window), action, key, process.platform)
+	const route = routeShortcut(shortcutWindowKind(target), action, key, process.platform)
 	if (route.kind === 'pass') return
 	event.preventDefault()
-	runShortcutRoute(window, route)
+	runShortcutRoute(target, route)
 }
 
-/** Document Review windows have their own zoom, close and open; every other window is the cockpit's. */
-function shortcutWindowKind(window: BrowserWindow): ShortcutWindowKind {
-	return !window.isDestroyed() && documentReviewWindows.ownsWindow(window) ? 'document' : 'cockpit'
+/** Document views have their own zoom, close and open; every other window is the cockpit's. */
+function shortcutWindowKind(target: ShortcutTarget): ShortcutWindowKind {
+	return 'review' in target ? 'document' : 'cockpit'
 }
-function runShortcutRoute(window: BrowserWindow, route: ShortcutRoute): void {
-	if (route.kind === 'action') menuShortcutHandlers[route.action]?.(window)
-	else if (route.kind === 'zoom') documentReviewWindows.zoom(window, route.step)
-	else if (route.kind === 'close-window') window.close()
-	else if (route.kind === 'open-file') void documentReviewWindows.chooseFileFromMenu(window)
+function runShortcutRoute(target: ShortcutTarget, route: ShortcutRoute): void {
+	const effect = shortcutEffect(target, route)
+	// A document route acts on that view only: its window's other views and the cockpit are never touched.
+	if (effect.kind === 'action') menuShortcutHandlers[effect.action]?.(effect.target)
+	else if (effect.kind === 'zoom') documentReviewWindows.zoom(effect.view, effect.step)
+	else if (effect.kind === 'close-view') documentReviewWindows.closeViewOf(effect.view)
+	else if (effect.kind === 'open-file') void documentReviewWindows.chooseFileFromMenu(effect.view)
 }
 
 app.on('browser-window-created', (_event, window) => {
-	window.webContents.on('before-input-event', (event, input) => dispatchShortcutInput(window, event, input))
+	window.webContents.on('before-input-event', (event, input) => dispatchShortcutInput({ window }, event, input))
 })
 
 function defaultShell(): string {
@@ -1642,8 +1661,10 @@ function buildMenu(): void {
 		() =>
 			mainWindow?.webContents.send(channel, ...args)
 	const bindings = currentTerminalPreferences.shortcuts
-	const closeFocused = (window = BrowserWindow.getFocusedWindow()) => {
-		if (window && window !== mainWindow) window.close()
+	const closeFocused = (target: ShortcutTarget | null = focusedTarget()) => {
+		if (!target) return
+		if ('review' in target) documentReviewWindows.closeViewOf(target.review)
+		else if (target.window !== mainWindow) target.window.close()
 		else mainWindow?.webContents.send('tab:close')
 	}
 	menuShortcutHandlers = {
@@ -1664,7 +1685,7 @@ function buildMenu(): void {
 			label,
 			...(binding ? { accelerator: electronAccelerator(binding), registerAccelerator: false } : {}),
 			click: () => {
-				const target = BrowserWindow.getFocusedWindow() ?? mainWindow
+				const target = focusedTarget()
 				if (!target) return
 				const route = routeShortcut(
 					shortcutWindowKind(target),
@@ -1681,8 +1702,9 @@ function buildMenu(): void {
 		label: force ? 'Force Reload' : 'Reload',
 		accelerator: force ? 'CmdOrCtrl+Shift+R' : 'CmdOrCtrl+R',
 		click: () => {
+			// BrowserWindow.getFocusedWindow() is null while a document window (a BaseWindow) is focused.
 			const target = BrowserWindow.getFocusedWindow()
-			if (!target || shortcutWindowKind(target) === 'document') return
+			if (!target) return
 			if (force) target.webContents.reloadIgnoringCache()
 			else target.webContents.reload()
 		},
@@ -1697,8 +1719,7 @@ function buildMenu(): void {
 					// No accelerator: macOS ignores registerAccelerator:false, and a menu ⌘O would also fire in the
 					// cockpit, where ⌘O belongs to the agent dock. The shortcut dispatcher runs ⌘O in document windows.
 					click: () => {
-						const target = BrowserWindow.getFocusedWindow()
-						void documentReviewWindows.chooseFileFromMenu(target ?? undefined)
+						void documentReviewWindows.chooseFileFromMenu(documentReviewWindows.focused()?.contents ?? undefined)
 					},
 				},
 			],
@@ -3220,7 +3241,8 @@ void app.whenReady().then(async () => {
 	}
 	if (!profileSwitchAttestationMode) {
 		app.on('activate', () => {
-			if (BrowserWindow.getAllWindows().length === 0) createWindow()
+			// Document windows are BaseWindows: they count, as they did when they were BrowserWindows.
+			if (BaseWindow.getAllWindows().length === 0) createWindow()
 		})
 	}
 })

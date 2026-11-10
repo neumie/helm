@@ -24,6 +24,7 @@ import type {
 	ReviewResult,
 	ReviewState,
 } from '../src/document-review/types.js'
+import { FixtureContainer, FixtureView, createdWindows } from './helpers/review-window-fakes'
 
 /** These tests run inside agents: drop the providers' own markers so `helm edit` stays the unspecified cli. */
 function withoutAgentMarkers(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -310,67 +311,13 @@ type FixtureIpcHandler = (...args: unknown[]) => unknown
 let fixtureModule: NativeFixtureModule | null = null
 const handlers = new Map<string, FixtureIpcHandler>()
 const ipcEvents = new EventEmitter()
-const createdWindows: FixtureWindow[] = []
-let nextContentsId = 0
-class FixtureWindow extends EventEmitter {
-	dead = false
-	webContents = Object.assign(new EventEmitter(), {
-		id: ++nextContentsId,
-		mainFrame: {
-			dead: false,
-			isDestroyed() {
-				return this.dead
-			},
-			send() {},
-		},
-		isDestroyed: () => this.dead,
-		setWindowOpenHandler() {},
-	})
-	constructor(_options: unknown) {
-		super()
-		createdWindows.push(this)
-	}
-	isDestroyed() {
-		return this.dead
-	}
-	show() {}
-	focus() {}
-	async loadFile(_file: string) {}
-	async loadURL(_url: string) {}
-	close() {
-		let prevented = false
-		this.emit('close', {
-			preventDefault() {
-				prevented = true
-			},
-		})
-		if (prevented) return false
-		this.destroy()
-		return true
-	}
-	destroy() {
-		if (this.dead) return
-		this.dead = true
-		this.webContents.mainFrame.dead = true
-		this.emit('closed')
-	}
-	reloadFrame() {
-		this.webContents.mainFrame.dead = true
-		this.webContents.mainFrame = {
-			dead: false,
-			isDestroyed() {
-				return this.dead
-			},
-			send() {},
-		}
-	}
-}
 async function loadNativeFixture() {
 	if (fixtureModule) return fixtureModule
 	const temp = await mkdtemp('/tmp/hr-cn-bundle-')
 	fixtureBundle = temp
 	const electron = {
-		BrowserWindow: FixtureWindow,
+		BaseWindow: FixtureContainer,
+		WebContentsView: FixtureView,
 		ipcMain: {
 			handle: (channel: string, handler: FixtureIpcHandler) => handlers.set(channel, handler),
 			on: (channel: string, handler: FixtureIpcHandler) => ipcEvents.on(channel, handler),
@@ -449,7 +396,7 @@ async function nativeFixture(format: 'md' | 'tsx' = 'md') {
 	const sessions = manager.callerSessions('profile')
 	const reopen = async () => {
 		await manager.openFile(file, 'current', () => rendererAdmission, undefined, root)
-		return createdWindows.at(-1) as FixtureWindow
+		return createdWindows.at(-1) as FixtureContainer
 	}
 	let window = await reopen()
 	const event = () => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame })
@@ -515,7 +462,7 @@ async function nativeFixture(format: 'md' | 'tsx' = 'md') {
 		send,
 		window: () => window,
 		useLatestWindow: () => {
-			window = createdWindows.at(-1) as FixtureWindow
+			window = createdWindows.at(-1) as FixtureContainer
 			return window
 		},
 		setRendererAdmission: (value: boolean) => {
@@ -1024,7 +971,7 @@ test(
 					await writeFile(file, f.body, { mode: 0o600 })
 					await f.manager.openFile(file, 'current', () => true, undefined, f.root)
 				}
-				const window = createdWindows.at(-1) as FixtureWindow
+				const window = createdWindows.at(-1) as FixtureContainer
 				const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
 				const invoke = async <T>(channel: string, ...args: unknown[]) =>
 					(await handlers.get(`document-review:${channel}`)?.(event, 'current', ...args)) as ReviewResult<T>
@@ -1053,7 +1000,7 @@ test(
 			const ninth = join(f.root, 'review-nine.md')
 			await writeFile(ninth, f.body, { mode: 0o600 })
 			await f.manager.openFile(ninth, 'current', () => true, undefined, f.root)
-			const window = createdWindows.at(-1) as FixtureWindow
+			const window = createdWindows.at(-1) as FixtureContainer
 			const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
 			const invoke = async <T>(channel: string, ...args: unknown[]) =>
 				(await handlers.get(`document-review:${channel}`)?.(event, 'current', ...args)) as ReviewResult<T>
@@ -1187,7 +1134,7 @@ test(
 				for (const operation of ['save', 'select', 'send', 'acknowledge', 'interrupt', 'receipt'])
 					assert.ok((await f.invoke(operation, state.draft)).error, operation)
 				assert.equal(recovery.close(), false)
-				const foreign = new FixtureWindow({})
+				const foreign = new FixtureContainer({})
 				const discard = handlers.get('document-review:discard-archive')
 				assert.ok(discard)
 				const foreignResult = (await discard(
