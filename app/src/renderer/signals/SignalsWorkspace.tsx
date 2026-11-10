@@ -28,11 +28,9 @@ export interface SignalsWorkspaceProps {
 	scenario?: 'column' | 'quiet' | 'source-down' | 'asks' | 'done'
 	/**
 	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
-	 * and links: the `Signals asks` row-layout ask), or the filtered mail list.
+	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
-	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered'
-	/** Start with the done rows listed (memory only); absent = the stored preference (collapsed). */
-	doneShown?: boolean
+	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered' | 'done'
 }
 
 declare global {
@@ -72,14 +70,14 @@ function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture
 	return createSignalsFixture({ threads })
 }
 
-const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'filtered'>, number> = {
+const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'filtered' | 'done'>, number> = {
 	send: 970,
 	'new-agent': 42,
 	reply: 501,
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, doneShown }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -95,7 +93,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, doneShown }: Signa
 		if (!root || !left) return
 		window.__signalsFixture = fixture
 		const initialFlow: SignalsFlow =
-			flow === 'filtered' ? { type: 'filtered' } : flow ? { type: flow, id: FLOW_THREAD[flow] } : null
+			flow === 'filtered' || flow === 'done' ? { type: flow } : flow ? { type: flow, id: FLOW_THREAD[flow] } : null
 		const column = mountLeftColumn({
 			left,
 			mode: memoryLeftColumnMode('signals'),
@@ -124,7 +122,6 @@ export function SignalsWorkspace({ scenario = 'column', flow, doneShown }: Signa
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
-					initialDoneShown: doneShown,
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -140,7 +137,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, doneShown }: Signa
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, doneShown])
+	}, [options, fixture, flow])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

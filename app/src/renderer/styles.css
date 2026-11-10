@@ -3348,14 +3348,14 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-/* `Done today 8 · show · 5 filtered`: two buttons on one line. It wraps between them on a narrow
- * column instead of cutting the filtered count off, and leaves their focus rings unclipped. */
+/* `Done today 8 · 5 filtered`: two buttons on one line. It wraps between them on a narrow column
+ * instead of cutting the filtered count off, and leaves their focus rings unclipped. */
 .signals-subhead[data-done-header] {
 	overflow: visible;
 	white-space: normal;
 }
 
-.signals-subhead[data-done-header] :is(.signals-done-toggle, .signals-filtered) {
+.signals-subhead[data-done-header] .signals-list-btn {
 	white-space: nowrap;
 }
 
@@ -3564,9 +3564,10 @@ body.dragging {
 	letter-spacing: -0.01em;
 }
 
-/* `5 filtered`: the mail the rules kept out, after the done count; opens the filtered list. A plain
- * text button (no fill at rest); `f` reads as a key hint while Signals holds the keys. */
-.signals-filtered {
+/* `Done today 8` and `5 filtered` after it: each opens its list (Done today, Filtered mail) in
+ * place of the column's. Plain text buttons (no fill at rest); `D` / `f` read as key hints while
+ * Signals holds the keys. */
+.signals-list-btn {
 	min-height: 24px;
 	padding: 0;
 	border: none;
@@ -3578,39 +3579,17 @@ body.dragging {
 	transition: color 140ms ease-out;
 }
 
-.signals-filtered:hover {
+.signals-list-btn:hover {
 	color: var(--text-1);
 }
 
-.signals-filtered-key {
-	font: inherit;
-	color: var(--text-1);
-}
-
-/* `Done today 10 · show`: the done rows' count on its own subhead line, a plain text button like
- * `5 filtered`; `D` reads as a key hint while Signals holds the keys. */
-.signals-done-toggle {
-	min-height: 24px;
-	padding: 0;
-	border: none;
-	background: transparent;
-	font: inherit;
-	color: var(--dock-dim);
-	cursor: pointer;
-	transition: color 140ms ease-out;
-}
-
-.signals-done-toggle:hover {
-	color: var(--text-1);
-}
-
-.signals-done-key {
+.signals-list-key {
 	font: inherit;
 	color: var(--text-1);
 }
 
 /* Key hints and choice numbers show only while Signals holds the keys (§3.24). */
-.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-filtered-key, .signals-done-key),
+.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-list-key),
 .signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
 	visibility: hidden;
 }
