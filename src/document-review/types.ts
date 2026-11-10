@@ -36,9 +36,11 @@ export interface ReviewDocument {
 	previous: string | null
 	error: string | null
 	/** `jsx` is the executing canvas (feedback mode only); a plain .jsx/.tsx is `code`, shown as source. */
-	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data'
+	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data' | 'image'
 	/** Plain code/text/data: bytes come from the view's own helm-viewer: token, never over IPC. */
 	viewer?: ReviewViewerFile
+	/** Plain pictures (raster, SVG, HEIC as the PNG `sips` made): bytes come from the view's token too. */
+	picture?: ReviewViewerPicture
 	canvas?: ReviewCanvasCompilation
 	archive?: CanvasReviewArchive
 }
@@ -52,6 +54,19 @@ export interface ReviewViewerFile {
 	encoding: 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be'
 	lines: number
 	ending: 'LF' | 'CRLF' | 'CR' | 'mixed' | 'none'
+}
+export interface ReviewViewerPicture {
+	/** helm-viewer://app/file/<token>, valid for this revision and only inside this view. */
+	url: string
+	type: 'png' | 'jpeg' | 'gif' | 'webp' | 'avif' | 'bmp' | 'ico' | 'svg' | 'heic'
+	/** The type the window gives the blob; never sniffed. HEIC is served as PNG. */
+	mime: string
+	/** Bytes the token serves. */
+	size: number
+	/** Bytes of the file on disk (differs from `size` for a converted HEIC). */
+	fileSize: number
+	/** Converted HEIC: the size `sips` reported, before any orientation. */
+	pixels?: { width: number; height: number }
 }
 export interface ReviewAnnotation {
 	id: string
@@ -159,6 +174,8 @@ export interface ReviewApi {
 	acknowledge(sessionId: string, owner: string): Promise<ReviewResult<boolean>>
 	receipt(id: string): Promise<ReviewResult<ReviewReceipt | null>>
 	retryDocument(): Promise<ReviewResult<boolean>>
+	/** Plain picture windows: put PNG bytes the window encoded on the clipboard (main checks the structure only). */
+	copyImage?(png: Uint8Array): Promise<ReviewResult<boolean>>
 	/** Explicitly reclaim exactly empty private preferences; never source comments or caller authority. */
 	clearEmptyPreferences?(): Promise<ReviewResult<{ removed: number }>>
 	discardArchive?(failureId: string): Promise<ReviewResult<boolean>>

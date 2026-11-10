@@ -7,11 +7,14 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import {
 	type LineEnding,
+	PICTURE_HEAD_BYTES,
+	type PictureType,
 	type TextEncoding,
 	binarySignature,
 	countText,
 	decoderLabel,
 	detectViewerFormat,
+	pictureMismatch,
 	sizeText,
 	textEncoding,
 	textShape,
@@ -207,7 +210,8 @@ const kind = (stat: Stats) =>
 					? 'a device'
 					: 'not a regular file'
 /** Plain formats this version shows; feedback mode keeps `readReviewFile`'s md/jsx/tsx rule. */
-export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data'
+export type ViewerFormat = 'markdown' | 'code' | 'text' | 'data' | 'image' | 'svg' | 'heic'
+const VIEWER_FORMATS: ReadonlySet<string> = new Set(['markdown', 'code', 'text', 'data', 'image', 'svg', 'heic'])
 
 export interface ViewerFormatChoice {
 	format: ViewerFormat
@@ -223,10 +227,9 @@ export function viewerFormat(path: string): ViewerFormatChoice {
 	const detected = detectViewerFormat(basename(path))
 	if (!detected.ok) throw refuse(detected.reason)
 	const format = detected.entry.format
-	if (format !== 'markdown' && format !== 'code' && format !== 'text' && format !== 'data')
-		throw refuse(`Helm can't show ${detected.entry.noun} yet (${basename(path)}).`)
+	if (!VIEWER_FORMATS.has(format)) throw refuse(`Helm can't show ${detected.entry.noun} yet (${basename(path)}).`)
 	return {
-		format,
+		format: format as ViewerFormat,
 		language: detected.language,
 		limit: detected.entry.maxBytes,
 		maxLines: detected.entry.maxLines ?? null,
@@ -237,7 +240,9 @@ export function viewerFormat(path: string): ViewerFormatChoice {
 export interface ViewerFile {
 	file: string
 	format: ViewerFormat
+	/** CodeMirror/data language for text families; the picture type (`png`, `svg`, `heic`, …) for pictures. */
 	language: string
+	/** Decoded text for text families and SVG; empty for raster and HEIC pictures (their bytes go by token). */
 	text: string
 	size: number
 	encoding: TextEncoding
@@ -357,6 +362,55 @@ export async function readViewerFile(
 			if (linked) throw refuse(linked)
 		}
 		if (opened.size > limit) throw tooBig(opened.size)
+		if (choice.format === 'image' || choice.format === 'heic') {
+			// Pictures: only the signature is read here; extension and magic must agree. Width/height come from the
+			// header in the viewer's image worker (HEIC from `sips`); nothing in main decodes the bytes.
+			const head = Buffer.alloc(Math.min(opened.size, PICTURE_HEAD_BYTES))
+			let got = 0
+			while (got < head.length) {
+				const read = await fd.read(head, got, head.length - got, got)
+				if (read.bytesRead === 0) break
+				got += read.bytesRead
+			}
+			const after = await fd.stat()
+			const still = await lstat(file).catch(() => null)
+			if (
+				got !== head.length ||
+				after.size !== opened.size ||
+				after.mtimeMs !== opened.mtimeMs ||
+				after.ctimeMs !== opened.ctimeMs ||
+				!still ||
+				still.dev !== opened.dev ||
+				still.ino !== opened.ino
+			)
+				throw refuse(`${name} changed while it was read. Try again.`)
+			if (opened.size === 0) throw refuse(`${name} is empty.`)
+			const mismatch = pictureMismatch(name, choice.language as Exclude<PictureType, 'svg'>, head)
+			if (mismatch) throw refuse(mismatch)
+			const identity = {
+				dev: opened.dev,
+				ino: opened.ino,
+				size: opened.size,
+				mtimeMs: opened.mtimeMs,
+				ctimeMs: opened.ctimeMs,
+			}
+			const result: ViewerFile = {
+				file,
+				format: choice.format,
+				language: choice.language,
+				text: '',
+				size: opened.size,
+				encoding: 'utf-8',
+				lines: 0,
+				ending: 'none',
+				identity,
+			}
+			if (options.pin) {
+				keep = true
+				result.handle = fd
+			}
+			return result
+		}
 		// One byte past the admitted size shows growth; never the whole family limit (32 MiB for a 1 KiB file).
 		const bytes = Buffer.alloc(Math.min(opened.size, limit) + 1)
 		let used = 0
@@ -379,6 +433,9 @@ export async function readViewerFile(
 		)
 			throw refuse(`${name} changed while it was read. Try again.`)
 		const { text, encoding } = decodeViewerText(name, bytes.subarray(0, used))
+		// An SVG is shown only as an <img>; the text must at least have an <svg> element (no SVGZ, no HTML).
+		if (choice.format === 'svg' && !/<(?:[A-Za-z_][\w.-]*:)?svg[\s>/]/.test(text))
+			throw refuse(`${name} is not an SVG image (it has no <svg> element).`)
 		const shape = textShape(text)
 		if (choice.maxLines !== null && shape.lines > choice.maxLines)
 			throw refuse(

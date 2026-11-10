@@ -56,6 +56,10 @@ export const VIEWER_MARKDOWN_BYTES = 512 * KiB
 export const VIEWER_TEXT_BYTES = 16 * MiB
 export const VIEWER_TEXT_LINES = 1_000_000
 export const VIEWER_DATA_BYTES = 32 * MiB
+export const VIEWER_IMAGE_BYTES = 256 * MiB
+export const VIEWER_SVG_BYTES = 16 * MiB
+/** Decoded pixels an image may have (width × height after the header check, before any decode). */
+export const VIEWER_IMAGE_PIXELS = 150_000_000
 /** Children of one tree node the data view lists before an "N more" row. */
 export const VIEWER_DATA_CHILDREN = 10_000
 
@@ -73,6 +77,98 @@ const isGif = (head: Uint8Array) => starts(head, ascii('GIF87a')) || starts(head
 const isWebp = (head: Uint8Array) => starts(head, ascii('RIFF')) && starts(head, ascii('WEBP'), 8)
 const isPdf = (head: Uint8Array) => starts(head, ascii('%PDF-'))
 const isZip = (head: Uint8Array) => starts(head, ZIP)
+const isBmp = (head: Uint8Array) => starts(head, ascii('BM')) && head.length >= 26
+const isIco = (head: Uint8Array) => starts(head, [0, 0, 1, 0]) && head.length >= 6 && (head[4] !== 0 || head[5] !== 0)
+
+/** Brands of an ISO-BMFF `ftyp` box at the start (major + compatible), or null when there is none. */
+function ftypBrands(head: Uint8Array): string[] | null {
+	if (head.length < 16 || !starts(head, ascii('ftyp'), 4)) return null
+	const size = ((head[0] ?? 0) << 24) | ((head[1] ?? 0) << 16) | ((head[2] ?? 0) << 8) | (head[3] ?? 0)
+	if (size < 16 || size > 4096) return null
+	const end = Math.min(size, head.length)
+	const brand = (at: number) =>
+		String.fromCharCode(head[at] ?? 0, head[at + 1] ?? 0, head[at + 2] ?? 0, head[at + 3] ?? 0)
+	const brands = [brand(8)]
+	for (let at = 16; at + 4 <= end; at += 4) brands.push(brand(at))
+	return brands
+}
+const AVIF_BRANDS = new Set(['avif', 'avis'])
+const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'])
+const isAvif = (head: Uint8Array) => Boolean(ftypBrands(head)?.some(brand => AVIF_BRANDS.has(brand)))
+/** HEIC/HEIF: a HEIF brand and no AVIF brand (an AVIF also carries `mif1`). */
+const isHeic = (head: Uint8Array) => {
+	const brands = ftypBrands(head)
+	return Boolean(brands?.some(brand => HEIC_BRANDS.has(brand)) && !brands?.some(brand => AVIF_BRANDS.has(brand)))
+}
+
+/** Raster types Chromium decodes from bytes; HEIC and SVG are their own families. */
+export type ImageType = 'png' | 'jpeg' | 'gif' | 'webp' | 'avif' | 'bmp' | 'ico'
+export type PictureType = ImageType | 'svg' | 'heic'
+export const IMAGE_EXTENSIONS: Readonly<Record<string, ImageType>> = {
+	'.png': 'png',
+	'.apng': 'png',
+	'.jpg': 'jpeg',
+	'.jpeg': 'jpeg',
+	'.jpe': 'jpeg',
+	'.jfif': 'jpeg',
+	'.gif': 'gif',
+	'.webp': 'webp',
+	'.avif': 'avif',
+	'.bmp': 'bmp',
+	'.ico': 'ico',
+}
+export const PICTURE_WORDS: Readonly<Record<PictureType, string>> = {
+	png: 'PNG',
+	jpeg: 'JPEG',
+	gif: 'GIF',
+	webp: 'WebP',
+	avif: 'AVIF',
+	bmp: 'BMP',
+	ico: 'ICO',
+	svg: 'SVG',
+	heic: 'HEIC',
+}
+/** The type the browser is told the bytes are; HEIC is served as the PNG `sips` made. */
+export const PICTURE_MIME: Readonly<Record<PictureType, string>> = {
+	png: 'image/png',
+	jpeg: 'image/jpeg',
+	gif: 'image/gif',
+	webp: 'image/webp',
+	avif: 'image/avif',
+	bmp: 'image/bmp',
+	ico: 'image/x-icon',
+	svg: 'image/svg+xml',
+	heic: 'image/png',
+}
+const PICTURE_MAGIC: Readonly<Record<Exclude<PictureType, 'svg'>, (head: Uint8Array) => boolean>> = {
+	png: isPng,
+	jpeg: isJpeg,
+	gif: isGif,
+	webp: isWebp,
+	avif: isAvif,
+	bmp: isBmp,
+	ico: isIco,
+	heic: isHeic,
+}
+/** Bytes a picture's signature needs: the longest is an `ftyp` box with its compatible brands. */
+export const PICTURE_HEAD_BYTES = 256
+/** What picture type the first bytes are, or null. SVG is text and has no signature. */
+export function pictureTypeOf(head: Uint8Array): Exclude<PictureType, 'svg'> | null {
+	for (const [type, test] of Object.entries(PICTURE_MAGIC)) if (test(head)) return type as Exclude<PictureType, 'svg'>
+	return null
+}
+/**
+ * Extension and magic must agree: "photo.png is not a PNG image (it starts like a JPEG image)". Returns the
+ * refusal, or null when the bytes are what the name says.
+ */
+export function pictureMismatch(name: string, expected: Exclude<PictureType, 'svg'>, head: Uint8Array): string | null {
+	if (PICTURE_MAGIC[expected](head)) return null
+	const found = pictureTypeOf(head)
+	const what = found
+		? `${found === 'avif' ? 'an' : 'a'} ${PICTURE_WORDS[found]} image`
+		: binarySignature(head.subarray(0, 16))
+	return `${name} is not a${expected === 'avif' ? 'n' : ''} ${PICTURE_WORDS[expected]} image${what ? ` (it starts like ${what})` : ''}.`
+}
 
 /** Known binary signatures, for "report.txt is not text (it starts like a PDF)". */
 const SIGNATURES: readonly { test: (head: Uint8Array) => boolean; what: string }[] = [
@@ -81,6 +177,8 @@ const SIGNATURES: readonly { test: (head: Uint8Array) => boolean; what: string }
 	{ test: isJpeg, what: 'a JPEG image' },
 	{ test: isGif, what: 'a GIF image' },
 	{ test: isWebp, what: 'a WebP image' },
+	{ test: isAvif, what: 'an AVIF image' },
+	{ test: isHeic, what: 'a HEIC image' },
 	{ test: isZip, what: 'a zip archive' },
 	{ test: head => starts(head, OLE), what: 'an Office document' },
 	{ test: head => starts(head, [0x1f, 0x8b]), what: 'a gzip archive' },
@@ -95,6 +193,7 @@ const SIGNATURES: readonly { test: (head: Uint8Array) => boolean; what: string }
 ]
 
 const TEXT_CAPS = { search: true, zoom: 'font', print: 'view', copy: 'text' } as const
+const IMAGE_CAPS = { search: false, zoom: 'scale', print: 'view', copy: 'image' } as const
 const LATER_CAPS = { search: false, zoom: 'scale', print: 'default-app', copy: 'text' } as const
 const later = (
 	format: ViewerFormat,
@@ -284,15 +383,41 @@ export const FORMATS: readonly FormatEntry[] = [
 		anchors: ['json-pointer'],
 		capabilities: TEXT_CAPS,
 	},
-	later(
-		'image',
-		'images',
-		['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp', '.ico'],
-		256 * MiB,
-		head => isPng(head) || isJpeg(head) || isGif(head) || isWebp(head),
-	),
-	later('heic', 'HEIC images', ['.heic', '.heif'], 256 * MiB),
-	later('svg', 'SVG images', ['.svg'], 16 * MiB),
+	{
+		format: 'image',
+		available: true,
+		noun: 'images',
+		extensions: Object.keys(IMAGE_EXTENSIONS),
+		magic: head => pictureTypeOf(head) !== null && pictureTypeOf(head) !== 'heic',
+		read: 'bytes',
+		maxBytes: VIEWER_IMAGE_BYTES,
+		journal: 'none',
+		anchors: [],
+		capabilities: IMAGE_CAPS,
+	},
+	{
+		format: 'heic',
+		available: true,
+		noun: 'HEIC images',
+		extensions: ['.heic', '.heif', '.hif'],
+		magic: isHeic,
+		read: 'bytes',
+		maxBytes: VIEWER_IMAGE_BYTES,
+		journal: 'none',
+		anchors: [],
+		capabilities: IMAGE_CAPS,
+	},
+	{
+		format: 'svg',
+		available: true,
+		noun: 'SVG images',
+		extensions: ['.svg'],
+		read: 'utf8-text',
+		maxBytes: VIEWER_SVG_BYTES,
+		journal: 'none',
+		anchors: [],
+		capabilities: IMAGE_CAPS,
+	},
 	later('pdf', 'PDFs', ['.pdf'], 256 * MiB, isPdf),
 	later('csv', 'CSV files', ['.csv', '.tsv'], 128 * MiB),
 	later('sheet', 'spreadsheets', ['.xlsx', '.xlsm', '.xls', '.ods'], 64 * MiB),
@@ -386,7 +511,11 @@ export function detectViewerFormat(name: string): FormatDetection {
 				? (DATA_LANGUAGES[extension] ?? 'json')
 				: entry.format === 'markdown'
 					? 'markdown'
-					: 'plain'
+					: entry.format === 'image'
+						? (IMAGE_EXTENSIONS[extension] ?? 'png')
+						: entry.format === 'heic' || entry.format === 'svg'
+							? entry.format
+							: 'plain'
 	return { ok: true, entry, extension, language }
 }
 

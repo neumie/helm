@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="480" height="320" viewBox="0 0 480 320">
+  <title>Release badge</title>
+  <script>window.parent.postMessage('svg-script-ran', '*'); document.title = 'svg-script-ran'</script>
+  <rect width="480" height="320" rx="24" fill="#1f2430"/>
+  <circle cx="120" cy="160" r="64" fill="#5b8cff"/>
+  <path d="M96 160 l18 18 l36 -40" stroke="#fff" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="212" y="150" font-family="Helvetica, Arial, sans-serif" font-size="40" fill="#e8eaf0">Release</text>
+  <text x="212" y="198" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#9aa3b5">v2.14.0 shipped</text>
+  <image href="https://example.invalid/tracker.png" x="0" y="0" width="1" height="1"/>
+  <image xlink:href="https://example.invalid/tracker-legacy.png" x="0" y="0" width="1" height="1"/>
+  <foreignObject x="0" y="280" width="480" height="40"><div xmlns="http://www.w3.org/1999/xhtml"><img src="https://example.invalid/foreign.png"/></div></foreignObject>
+</svg>

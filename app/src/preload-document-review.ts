@@ -27,6 +27,7 @@ const api: ReviewApi = {
 	save: draft => invoke('document-review:save', draft),
 	receipt: id => invoke('document-review:receipt', id),
 	retryDocument: () => invoke('document-review:retry'),
+	copyImage: png => invoke('document-review:copy-image', png),
 	clearEmptyPreferences: () => invoke('document-review:clear-empty-preferences'),
 	discardArchive: failureId => invoke('document-review:discard-archive', failureId),
 	dirty: value => ipcRenderer.send('document-review:dirty', token, value),

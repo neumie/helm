@@ -12,6 +12,7 @@ declare global {
 		__helmNativeReviewScenario?: 'normal' | 'not-listening' | 'working'
 		__helmNativeReviewProof?: ReturnType<typeof createReviewFixture>
 		__helmNativeViewerFile?: { name: string; format: 'code' | 'data'; language: string; size: number; lines: number }
+		__helmNativeViewerPicture?: { name: string; type: 'jpeg' | 'svg'; mime: string; size: number }
 	}
 }
 
@@ -23,7 +24,9 @@ test.beforeAll(async () => {
 			resolveDir: resolve(__dirname, '..'),
 			contents: `import {createReviewFixture} from ${JSON.stringify(fixturePath)};
 const viewer = window.__helmNativeViewerFile;
-const fixture = createReviewFixture(viewer ? 'plain' : window.__helmNativeReviewScenario);
+const picture = window.__helmNativeViewerPicture;
+const fixture = createReviewFixture(viewer || picture ? 'plain' : window.__helmNativeReviewScenario);
+if (picture) fixture.replaceDocument({ name: picture.name, format: 'image', text: '', previous: null, revision: '1'.repeat(64), picture: { url: 'file/' + picture.name, type: picture.type, mime: picture.mime, size: picture.size, fileSize: picture.size } });
 if (viewer) fixture.replaceDocument({ name: viewer.name, format: viewer.format, text: '', previous: null, revision: '1'.repeat(64), viewer: { url: 'file/' + viewer.name, language: viewer.language, size: viewer.size, encoding: 'utf-8', lines: viewer.lines, ending: 'LF' } });
 window.documentReview = fixture.api; window.__helmNativeReviewProof = fixture;`,
 			loader: 'ts',
@@ -213,6 +216,76 @@ for (const [name, file] of Object.entries(VIEWER_FILES))
 			expect(served.some(path => /^assets\/go-.*\.js$/.test(path))).toBe(true)
 		}
 		expect(served.filter(path => path.startsWith('assets/chunk-')).length).toBeGreaterThan(0)
+		expect(errors).toEqual([])
+		expect(violations).toEqual([])
+	})
+
+// Pictures through the same built entry: the image worker chunk checks the header from 'self', the bytes become a
+// blob: image (img-src allows blob:), and an SVG's script and external images stay inert under the real CSP.
+const PICTURES = {
+	'phone-photo-rotated.jpg': { type: 'jpeg', mime: 'image/jpeg', size: '520 × 760' },
+	'release-badge.svg': { type: 'svg', mime: 'image/svg+xml', size: '480 × 320' },
+} as const
+for (const [name, picture] of Object.entries(PICTURES))
+	test(`built native entry shows the picture ${name} under the viewer CSP`, async ({ page, baseURL }) => {
+		if (!baseURL) throw new Error('Use the owned loopback workbench baseURL')
+		const bytes = await readFile(resolve(__dirname, '../src/renderer/viewer/fixtures/images', name))
+		const entry = new URL('/__helm-native-review/', baseURL)
+		const served: string[] = []
+		const outside: string[] = []
+		page.on('request', request => {
+			if (!request.url().startsWith(entry.origin) && !request.url().startsWith('blob:')) outside.push(request.url())
+		})
+		await page.route(`${entry.href}**`, async route => {
+			const path = new URL(route.request().url()).pathname.slice(entry.pathname.length)
+			served.push(path)
+			if (path === `file/${name}`)
+				return route.fulfill({
+					status: 200,
+					body: bytes,
+					headers: {
+						'Content-Type': 'application/octet-stream',
+						'X-Content-Type-Options': 'nosniff',
+						'Content-Security-Policy': "sandbox; default-src 'none'",
+					},
+				})
+			const asset = assets.get(path)
+			if (!asset) return route.fulfill({ status: 404, body: '' })
+			await route.fulfill({
+				status: 200,
+				body: asset.body,
+				headers: {
+					'Content-Type': asset.contentType,
+					'Content-Security-Policy': VIEWER_CSP,
+					'X-Content-Type-Options': 'nosniff',
+				},
+			})
+		})
+		await page.addInitScript(
+			value => {
+				window.__helmNativeViewerPicture = value
+			},
+			{ name, type: picture.type, mime: picture.mime, size: bytes.length },
+		)
+		const errors: string[] = []
+		const violations: string[] = []
+		page.on('pageerror', error => errors.push(error.message))
+		page.on('console', message => {
+			if (/Content Security Policy/i.test(message.text())) violations.push(message.text())
+		})
+		await page.setViewportSize({ width: 1100, height: 760 })
+		await page.goto(entry.href)
+		await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+		const image = page.locator('.viewer-picture-image')
+		await expect(image).toBeVisible()
+		await expect(image).toHaveAttribute('src', /^blob:/)
+		await expect(page.locator('.viewer-status')).toContainText(picture.size)
+		// Raster headers are checked in the image worker; an SVG has no pixel header and goes straight to <img>.
+		if (picture.type === 'svg') expect(served).not.toContain('assets/image-worker.js')
+		else expect(served).toContain('assets/image-worker.js')
+		await page.waitForTimeout(300)
+		expect(outside).toEqual([])
+		expect(await page.title()).not.toBe('svg-script-ran')
 		expect(errors).toEqual([])
 		expect(violations).toEqual([])
 	})

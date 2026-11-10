@@ -396,3 +396,48 @@
 		display: none;
 	}
 }
+
+/* ---- picture view (S3): the picture keeps its own colors on --well; only the chrome follows the theme ---- */
+.viewer-picture {
+	position: relative;
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	background: var(--well);
+	outline: none;
+	user-select: none;
+	-webkit-user-select: none;
+	scrollbar-gutter: stable;
+}
+.viewer-picture:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.viewer-picture[data-cursor="grab"] .viewer-picture-canvas {
+	cursor: grab;
+}
+.viewer-picture[data-cursor="grabbing"] .viewer-picture-canvas {
+	cursor: grabbing;
+}
+.viewer-picture-canvas {
+	position: relative;
+	flex: 0 0 auto;
+	touch-action: none;
+}
+.viewer-picture-image {
+	position: absolute;
+	display: block;
+	max-width: none;
+	pointer-events: none;
+}
+/* Checkerboard only under pictures that actually carry transparency. */
+.viewer-picture-image[data-transparent] {
+	background-color: var(--well);
+	background-image: conic-gradient(var(--fill-subtle) 25%, transparent 0 50%, var(--fill-subtle) 0 75%, transparent 0);
+	background-size: 16px 16px;
+}
+/* Individual pixels read as pixels once each covers more than 2 × 2 screen px. */
+.viewer-picture-image[data-pixelated] {
+	image-rendering: pixelated;
+}

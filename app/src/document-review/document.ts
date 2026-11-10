@@ -3,11 +3,13 @@ import { constants, watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, dirname, relative, sep } from 'node:path'
+import { PICTURE_MIME, type PictureType } from '../../../src/document-review/formats'
 import { refuse } from '../../../src/document-review/refusal'
 import { parseReviewArtifact } from './canvas-artifact'
 import { compileReviewCanvas } from './canvas-compiler'
+import { convertHeic, memoryViewerSource } from './heic'
 import { REVIEW_DOCUMENT_BYTES } from './types'
-import type { ReviewDocument, ReviewViewerFile } from './types'
+import type { ReviewDocument, ReviewViewerFile, ReviewViewerPicture } from './types'
 import { pinnedViewerSource, readViewerFile, viewerFormat } from './viewer-file'
 import type { HelmPrivatePaths, ViewerFileIdentity, ViewerFormat } from './viewer-file'
 import { type ViewerFileSource, type ViewerFileTokens, viewerFileUrl } from './viewer-protocol'
@@ -88,12 +90,15 @@ export interface PlainObservation {
 	displayPath: string
 	/** The view's own helm-viewer: tokens; code/text/data bytes are served through them, never over IPC. */
 	tokens?: ViewerFileTokens
+	/** Test seam for the HEIC conversion (another `sips`, shorter budgets). */
+	heic?: import('./heic').HeicOptions
 }
 interface PlainRead {
 	format: ViewerFormat
 	text: string
 	revision: string
 	viewer?: Omit<ReviewViewerFile, 'url'>
+	picture?: Omit<ReviewViewerPicture, 'url'>
 	source?: ViewerFileSource
 	/** The pinned descriptor's identity: when it moves, the token must too, even for the same bytes. */
 	identity?: ViewerFileIdentity
@@ -111,6 +116,7 @@ export class ReviewDocumentObservation {
 	readonly id = randomUUID()
 	private watcher: FSWatcher | null = null
 	private timer: ReturnType<typeof setTimeout> | null = null
+	private convertSignal: AbortSignal | undefined
 	private active: Promise<void> | null = null
 	private again = false
 	private disposed = false
@@ -141,8 +147,14 @@ export class ReviewDocumentObservation {
 	current(): ReviewDocument {
 		return { ...this.snapshot }
 	}
-	async start(): Promise<void> {
-		await this.refresh()
+	/** `convert` bounds a HEIC conversion during this first read only (helm open's batch budget). */
+	async start(options: { convert?: AbortSignal } = {}): Promise<void> {
+		this.convertSignal = options.convert
+		try {
+			await this.refresh()
+		} finally {
+			this.convertSignal = undefined
+		}
 		if (this.disposed) return
 		this.watcher = watch(dirname(this.file), (_event, name) => {
 			if (name !== null && name.toString() !== basename(this.file)) return
@@ -193,6 +205,7 @@ export class ReviewDocumentObservation {
 			} catch {}
 			return { format: 'markdown', text, revision: reviewRevision(text) }
 		}
+		if (read.format === 'image' || read.format === 'heic' || read.format === 'svg') return this.readPicture(read)
 		let body = read.text
 		// A plain .jsx/.tsx is source; its trailing review journal is hidden like Markdown's. Other formats never
 		// have one, so their tail is never parsed as a journal.
@@ -217,6 +230,57 @@ export class ReviewDocumentObservation {
 			...(source && read.identity ? { source, identity: read.identity } : {}),
 		}
 	}
+	/**
+	 * Pictures: raster and SVG bytes are served from the pinned descriptor as they are; a HEIC is converted to PNG
+	 * out of process once per file identity (a spurious watch event does not convert it again).
+	 */
+	private async readPicture(read: Awaited<ReturnType<typeof readViewerFile>>): Promise<PlainRead> {
+		const type = read.language as PictureType
+		const identity = read.identity
+		const revision =
+			read.format === 'svg'
+				? reviewRevision(read.text)
+				: `picture:${identity ? `${identity.dev}:${identity.ino}:${identity.size}:${identity.mtimeMs}:${identity.ctimeMs}` : ''}`
+		const fileSize = read.size
+		if (!read.handle || !identity) {
+			await read.handle?.close()
+			return { format: 'image', text: '', revision }
+		}
+		const pinned = pinnedViewerSource(read.handle, identity, read.size)
+		if (read.format !== 'heic')
+			return {
+				format: 'image',
+				text: '',
+				revision,
+				picture: { type, mime: PICTURE_MIME[type], size: read.size, fileSize },
+				source: pinned,
+				identity,
+			}
+		if (revision === this.snapshot.revision && !this.snapshot.error) {
+			await pinned.close()
+			return { format: 'image', text: '', revision }
+		}
+		try {
+			const signal = this.convertSignal ?? this.plain?.heic?.signal
+			const converted = await convertHeic(basename(this.file), pinned, { ...this.plain?.heic, signal })
+			return {
+				format: 'image',
+				text: '',
+				revision,
+				picture: {
+					type: 'heic',
+					mime: PICTURE_MIME.heic,
+					size: converted.png.length,
+					fileSize,
+					pixels: { width: converted.width, height: converted.height },
+				},
+				source: memoryViewerSource(converted.png),
+				identity,
+			}
+		} finally {
+			await pinned.close()
+		}
+	}
 	private async read(): Promise<void> {
 		try {
 			if (this.plain) {
@@ -232,21 +296,24 @@ export class ReviewDocumentObservation {
 					return
 				}
 				let viewer: ReviewViewerFile | undefined
-				if (next.viewer && next.source && this.plain.tokens) {
+				let picture: ReviewViewerPicture | undefined
+				if ((next.viewer || next.picture) && next.source && this.plain.tokens) {
 					const token = this.plain.tokens.issue(next.source)
 					const previous = this.token
 					this.token = token
 					this.tokenIdentity = next.identity ?? null
 					if (previous) void this.plain.tokens.revoke(previous)
-					viewer = { ...next.viewer, url: viewerFileUrl(token) }
+					if (next.viewer) viewer = { ...next.viewer, url: viewerFileUrl(token) }
+					if (next.picture) picture = { ...next.picture, url: viewerFileUrl(token) }
 				}
-				const { viewer: _old, ...rest } = this.snapshot
+				const { viewer: _old, picture: _oldPicture, ...rest } = this.snapshot
 				this.snapshot = {
 					...rest,
 					text: next.text,
 					revision: next.revision,
-					format: next.format,
+					format: next.format === 'svg' || next.format === 'heic' ? 'image' : next.format,
 					...(viewer ? { viewer } : {}),
+					...(picture ? { picture } : {}),
 					previous:
 						next.format === 'markdown' && this.snapshot.revision && next.revision !== this.snapshot.revision
 							? this.snapshot.text
