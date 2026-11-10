@@ -22,6 +22,7 @@ import { createApp } from './server/app.js'
 import { createGithubSignalReader } from './signals/github-source.js'
 import { createCanUnmuteSender, createIncludeSender, createMuteSender } from './signals/include-sender.js'
 import { createMailSignalReader } from './signals/mail-source.js'
+import { createSlackSignalReader } from './signals/slack-source.js'
 import { SignalsWatcher } from './signals/watcher.js'
 import { createSolver } from './solver/registry.js'
 import { createSpawner } from './spawner/registry.js'
@@ -107,6 +108,7 @@ async function main() {
 	const signalsWatcher = new SignalsWatcher(config, db, {
 		github: createGithubSignalReader(config),
 		mail: createMailSignalReader(config),
+		slack: createSlackSignalReader(config),
 	})
 	// The only resident-admission lease is daemon-memory scoped. Scheduled recovery
 	// still starts before HTTP and queue admission, even while recurrence is disabled.
