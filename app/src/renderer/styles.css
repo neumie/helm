@@ -3782,6 +3782,48 @@ body.dragging {
 	user-select: text;
 }
 
+/* Slack reply-flow preview variants (SignalsSlack.stories.tsx): B excerpt, C live thread. */
+.signals-slack-excerpt,
+.signals-slack-thread {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 4px 0 12px;
+	user-select: text;
+}
+.signals-slack-line {
+	margin: 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+}
+.signals-slack-msg {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.signals-slack-meta {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+}
+.signals-slack-who {
+	font-size: 12px;
+	color: var(--text-1);
+}
+.signals-slack-at {
+	font-size: 11px;
+	color: var(--dock-dim);
+}
+.signals-slack-text {
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-0);
+}
+.signals-slack-msg.is-me .signals-slack-text {
+	color: var(--dock-dim);
+}
+
 /* Links are shown as text, never as anchors; o (or the links flow) opens them. */
 .signals-ask-links {
 	margin: 4px 0 0;

@@ -753,7 +753,7 @@ export interface ProfilesApi {
 
 export type SignalSource = 'github' | 'mail' | 'agent' | 'slack'
 /** Sources a poller reads and reports health for (agent asks are pushed, never polled). */
-export type SignalPollSource = 'github' | 'mail'
+export type SignalPollSource = 'github' | 'mail' | 'slack'
 export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry' | 'ask' | 'dm' | 'thread'
 export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
 export type SignalOwner = 'jakub' | 'managed'
