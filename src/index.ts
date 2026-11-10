@@ -22,7 +22,9 @@ import { createApp } from './server/app.js'
 import { createGithubSignalReader } from './signals/github-source.js'
 import { createCanUnmuteSender, createIncludeSender, createMuteSender } from './signals/include-sender.js'
 import { createMailSignalReader } from './signals/mail-source.js'
+import { SlackActions } from './signals/slack-actions.js'
 import { createSlackSignalReader } from './signals/slack-source.js'
+import { createCanUnmuteSlackUser, createIncludeSlackUser, createMuteSlackUser } from './signals/slack-users.js'
 import { SignalsWatcher } from './signals/watcher.js'
 import { createSolver } from './solver/registry.js'
 import { createSpawner } from './spawner/registry.js'
@@ -110,6 +112,7 @@ async function main() {
 		mail: createMailSignalReader(config),
 		slack: createSlackSignalReader(config),
 	})
+	const slackActions = new SlackActions()
 	// The only resident-admission lease is daemon-memory scoped. Scheduled recovery
 	// still starts before HTTP and queue admission, even while recurrence is disabled.
 	const residentLeases = new ResidentLeaseManager()
@@ -147,6 +150,10 @@ async function main() {
 				includeSender: createIncludeSender(configPath, config),
 				muteSender: createMuteSender(configPath, config),
 				canUnmuteSender: createCanUnmuteSender(config),
+				slackReply: (thread, text) => slackActions.reply(thread, text),
+				muteSlackUser: createMuteSlackUser(configPath, config),
+				includeSlackUser: createIncludeSlackUser(configPath, config),
+				canUnmuteSlackUser: createCanUnmuteSlackUser(config),
 			},
 		},
 		scheduledRuns,

@@ -18,6 +18,8 @@ import {
 	type SignalEventsPage,
 	type SignalIncludeResult,
 	type SignalMuteResult,
+	type SignalSlackMuteResult,
+	type SignalThread,
 	type SignalsSnapshot,
 	signalAnsweredSchema,
 	signalAskDoneSchema,
@@ -26,6 +28,7 @@ import {
 	signalNoteSchema,
 	signalReplySchema,
 	signalRoutedSchema,
+	signalSlackReplySchema,
 	signalUpdateSchema,
 } from '../../signals/contract.js'
 import {
@@ -64,6 +67,14 @@ export interface SignalRouteDependencies {
 	 * is recorded as closed by Jakub, any other close as closed by an agent (`helm signal`).
 	 */
 	controlAuthorized?: (c: Context) => boolean
+	/** Posts Jakub's reply to a Slack thread/DM (Helm only), then the store closes it. */
+	slackReply?: (thread: SignalThread, text: string) => Promise<{ ok: boolean; error?: string }>
+	/** Adds a Slack user id to the exclude list (`x`; config file + live config). */
+	muteSlackUser?: (userId: string) => { userId: string; added: boolean; unincluded: boolean }
+	/** Shows a filtered Slack sender again: unmutes it or adds it to includeUsers. */
+	includeSlackUser?: (userId: string, reason?: string) => { userId: string; added: boolean; unmuted?: boolean }
+	/** Whether only a mute keeps a filtered Slack sender out (marks the entry `unmute`). */
+	canUnmuteSlackUser?: (userId: string) => boolean
 }
 
 const MAX_SIGNAL_BODY_BYTES = 16 * 1024
@@ -195,12 +206,16 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 	routes.get('/filtered', c => {
 		const page = storeFor().listFiltered(now())
 		const canUnmute = deps?.canUnmuteSender
-		if (!canUnmute) return c.json({ data: page })
-		const entries = page.entries.map(entry =>
-			entry.reason === 'excluded' && canUnmute(entry.senderIdentity, entry.senderAddress)
-				? { ...entry, unmute: true as const }
-				: entry,
-		)
+		const canUnmuteSlack = deps?.canUnmuteSlackUser
+		if (!canUnmute && !canUnmuteSlack) return c.json({ data: page })
+		const entries = page.entries.map(entry => {
+			if (entry.reason !== 'excluded') return entry
+			const unmute =
+				entry.source === 'slack'
+					? canUnmuteSlack?.(entry.senderIdentity)
+					: canUnmute?.(entry.senderIdentity, entry.senderAddress)
+			return unmute ? { ...entry, unmute: true as const } : entry
+		})
 		return c.json({ data: { ...page, entries } })
 	})
 
@@ -383,6 +398,76 @@ export function signalRoutes(db: DB, deps?: SignalRouteDependencies): Hono {
 		} catch (err) {
 			return failure(c, err)
 		}
+	})
+
+	// `r` on a Slack row: post Jakub's reply to Slack, then close the thread. Helm only, like the ask
+	// reply: no agent may post to Slack in Jakub's name.
+	routes.post('/:id/slack-reply', signalsBody, async c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c, 'reply to Slack')
+		if (refused) return refused
+		if (!deps?.slackReply) return c.json({ error: 'This daemon cannot post to Slack' }, 503)
+		const store = storeFor()
+		const thread = store.get(id)
+		if (!thread) return c.json({ error: 'Signal not found' }, 404)
+		if (thread.source !== 'slack') return c.json({ error: 'Only Slack threads can be replied to here' }, 400)
+		const body = await parseBody(c, signalSlackReplySchema)
+		if ('error' in body) return body.error
+		const posted = await deps.slackReply(thread, body.data.text)
+		if (!posted.ok) return c.json({ error: `Could not post to Slack: ${posted.error ?? 'failed'}` }, 502)
+		try {
+			return c.json({ data: store.markSlackAnswered(id, now()) })
+		} catch (err) {
+			return failure(c, err)
+		}
+	})
+
+	// `x` on a Slack row: never show its sender (exclude list) and close Jakub's open Slack threads
+	// from that user. Helm only.
+	routes.post('/:id/slack-mute', signalsBody, c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid signal id' }, 400)
+		const refused = jakubOnly(c, 'mute a Slack sender')
+		if (refused) return refused
+		if (!deps?.muteSlackUser) return c.json({ error: 'This daemon cannot change the Slack exclude list' }, 503)
+		const store = storeFor()
+		const thread = store.get(id)
+		if (!thread) return c.json({ error: 'Signal not found' }, 404)
+		if (thread.source !== 'slack') return c.json({ error: 'Only Slack senders can be muted here' }, 400)
+		if (thread.owner !== 'jakub') return c.json({ error: 'An agent is handling this thread; take it back first' }, 409)
+		const sender = store.threadSlackSender(id)
+		if (sender === null) return c.json({ error: 'The sender is not known yet; try again after the next poll' }, 409)
+		let muted: ReturnType<NonNullable<SignalRouteDependencies['muteSlackUser']>>
+		try {
+			muted = deps.muteSlackUser(sender.userId)
+		} catch (err) {
+			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
+			return c.json({ error: `Failed to save the exclude list: ${err instanceof Error ? err.message : err}` }, 500)
+		}
+		const result: SignalSlackMuteResult = { ...muted, threadIds: store.muteSlackUser(muted.userId, now()) }
+		deps.watcher.restartPoll('slack')
+		return c.json({ data: result })
+	})
+
+	// `i` on a filtered Slack entry: show its sender again (unmute, or add to the include list).
+	routes.post('/filtered/:id/slack-include', signalsBody, c => {
+		const id = signalId(c.req.param('id'))
+		if (id === null) return c.json({ error: 'Invalid filtered id' }, 400)
+		if (!deps?.includeSlackUser) return c.json({ error: 'This daemon cannot change the Slack include list' }, 503)
+		const store = storeFor()
+		const entry = store.getFiltered(id, now())
+		if (!entry || entry.source !== 'slack') return c.json({ error: 'Filtered Slack message not found' }, 404)
+		let result: ReturnType<NonNullable<SignalRouteDependencies['includeSlackUser']>>
+		try {
+			result = deps.includeSlackUser(entry.senderIdentity, entry.reason)
+		} catch (err) {
+			if (err instanceof IncludeSenderError) return c.json({ error: err.message }, 400)
+			return c.json({ error: `Failed to save the include list: ${err instanceof Error ? err.message : err}` }, 500)
+		}
+		store.forgetFilteredSender(result.userId)
+		deps.watcher.restartPoll('slack')
+		return c.json({ data: result })
 	})
 
 	routes.post('/:id/seen', signalsBody, c => {
