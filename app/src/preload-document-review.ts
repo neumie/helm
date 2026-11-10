@@ -32,6 +32,13 @@ const api: ReviewApi = {
 	dirty: value => ipcRenderer.send('document-review:dirty', token, value),
 	onCloseRequested: listener => subscribe('document-review:close-requested', listener),
 	onChanged: listener => subscribe('document-review:changed', listener),
+	onZoom: listener => {
+		const handler = (_event: unknown, step: unknown) => {
+			if (step === -1 || step === 0 || step === 1) listener(step)
+		}
+		ipcRenderer.on('document-review:zoom', handler)
+		return () => ipcRenderer.removeListener('document-review:zoom', handler)
+	},
 	close: () => ipcRenderer.send('document-review:close', token),
 }
 contextBridge.exposeInMainWorld('documentReview', api)

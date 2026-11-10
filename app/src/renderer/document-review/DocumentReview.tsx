@@ -159,6 +159,9 @@ function ChangeReview({ before, after }: { before: string; after: string }) {
 	)
 }
 
+/** Reading zoom levels, as in a browser; ⌘0 returns to 1. */
+const REVIEW_ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+
 export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const [state, setState] = useState<ArchiveReviewState | null>(null)
 	const archiveFlight = useRef<object | null>(null)
@@ -251,6 +254,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	const documentOptions = useRef<HTMLButtonElement>(null)
 	const backToReading = useRef<HTMLButtonElement>(null)
 	const [narrow, setNarrow] = useState(false)
+	/** Reading zoom from ⌘= / ⌘- / ⌘0 (window-aware dispatcher); memory only, never saved. */
+	const [zoom, setZoom] = useState(1)
+	// A plain window has no saved state: its reading surface choice stays in this window and never marks the
+	// draft dirty, so binding it to a caller later still hydrates that caller's draft.
+	const [plainTheme, setPlainTheme] = useState<ReviewDraft['theme'] | null>(null)
 	const mounted = useRef(false)
 	const hydrated = useRef(false)
 	const latest = useRef({ state, draft })
@@ -523,6 +531,27 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		},
 		[api, refresh, publishDirty],
 	)
+
+	useEffect(
+		() =>
+			api.onZoom?.(step =>
+				setZoom(value => {
+					if (step === 0) return 1
+					const index = REVIEW_ZOOM_STEPS.indexOf(value)
+					const next = REVIEW_ZOOM_STEPS[(index < 0 ? REVIEW_ZOOM_STEPS.indexOf(1) : index) + step]
+					return next ?? value
+				}),
+			),
+		[api],
+	)
+	// Zoom reflows the reading area without resizing any observed box: anchored bubbles and margin markers listen
+	// for window resize, so tell them once per zoom change (after the new scale is laid out).
+	const zoomed = useRef(zoom)
+	useLayoutEffect(() => {
+		if (zoomed.current === zoom) return
+		zoomed.current = zoom
+		window.dispatchEvent(new Event('resize'))
+	}, [zoom])
 
 	const changeDraft = useCallback(
 		(update: (value: ReviewDraft) => ReviewDraft) => {
@@ -838,6 +867,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	function selectFigure(target: EventTarget | null): void {
 		if (!(target instanceof Element) || !reading.current?.contains(target) || !state) return
+		// A plain `helm open` window only shows the file: nothing to select for, copying stays native.
+		if (state.mode === 'plain') return
 		if (target.closest('button, input, textarea, select, label, a, .review-passage-comments, .review-passage-bubble'))
 			return
 		const figure = target.closest<HTMLElement>('[data-canvas-id], [data-review-image]')
@@ -879,6 +910,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	function captureSelection(pointer = false): void {
 		clearFigureMark()
+		if (latest.current.state?.mode === 'plain') return
 		const selection = window.getSelection()
 		setCandidate(null)
 		if (
@@ -2011,6 +2043,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			</div>
 		)
 	}
+	const plain = state.mode === 'plain'
+	const theme = plain ? (plainTheme ?? draft.theme) : draft.theme
 	const page = (
 		<main
 			className="document-review"
@@ -2021,9 +2055,10 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					returnToDocument()
 				}
 			}}
-			data-review-theme={draft.theme}
+			data-review-theme={theme}
+			data-review-mode={plain ? 'plain' : undefined}
 			data-text-selection={passage !== null && textSelectionScope.current === passage}
-			style={{ '--review-companion-width': `${draft.paneWidth}px` } as CSSProperties}
+			style={{ '--review-companion-width': `${draft.paneWidth}px`, '--review-zoom': String(zoom) } as CSSProperties}
 		>
 			<header className="review-header">
 				<div className="review-identity">
@@ -2063,7 +2098,10 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						triggerClass={buttonClassName({ tone: 'ghost', sm: true })}
 						align="end"
 						entries={[
-							...(['document', 'source', 'changes', 'comments'] as const).map((mode, index) => ({
+							...(plain
+								? (['document', 'source', 'changes'] as const)
+								: (['document', 'source', 'changes', 'comments'] as const)
+							).map((mode, index) => ({
 								label:
 									mode === 'document'
 										? 'Read'
@@ -2089,14 +2127,17 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								onSelect: () => setDocumentDetails(!documentDetails),
 							},
 							{
-								label: draft.theme === 'dark' ? 'Light reading surface' : 'Dark reading surface',
-								onSelect: () => changeDraft(value => ({ ...value, theme: value.theme === 'dark' ? 'light' : 'dark' })),
+								label: theme === 'dark' ? 'Light reading surface' : 'Dark reading surface',
+								onSelect: () =>
+									plain
+										? setPlainTheme(theme === 'dark' ? 'light' : 'dark')
+										: changeDraft(value => ({ ...value, theme: value.theme === 'dark' ? 'light' : 'dark' })),
 							},
 						]}
 					/>
 				</div>
 			</header>
-			{(narrow || view !== 'document') && (
+			{((narrow && !plain) || view !== 'document') && (
 				<div className="review-toolbar">
 					<div className="review-document-tools">
 						{view !== 'document' && (
@@ -2120,7 +2161,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							</>
 						)}
 					</div>
-					{narrow && (
+					{narrow && !plain && (
 						<div className="review-pane-switch">
 							<Btn
 								ariaCurrent={pane === 'document' ? 'page' : undefined}
@@ -2162,7 +2203,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					<p>
 						Revision <code>{state.document.revision}</code>
 					</p>
-					{api.clearEmptyPreferences && (
+					{api.clearEmptyPreferences && !plain && (
 						<>
 							<Btn
 								tone="quiet"
@@ -2196,10 +2237,16 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								)}
 						</>
 					)}
-					<p className="review-permission-note">
-						Discuss requests no edits, but is not a new sandbox. Your agent keeps its permissions; handle approvals and
-						Stop in its terminal. Feedback is delivered only while it is listening.
-					</p>
+					{plain ? (
+						<p className="review-permission-note">
+							Shown read-only with helm open. To send feedback, run helm edit on this file from your agent.
+						</p>
+					) : (
+						<p className="review-permission-note">
+							Discuss requests no edits, but is not a new sandbox. Your agent keeps its permissions; handle approvals
+							and Stop in its terminal. Feedback is delivered only while it is listening.
+						</p>
+					)}
 				</section>
 			)}
 			{state.archiveError && (
@@ -2270,8 +2317,8 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					ref={documentPane}
 					className="review-document-pane"
 					data-contents-stacked={contentsStacked}
-					aria-label="Repository document"
-					hidden={narrow && pane !== 'document'}
+					aria-label={plain ? 'Document' : 'Repository document'}
+					hidden={!plain && narrow && pane !== 'document'}
 				>
 					{outline && (
 						<nav ref={contentsNav} id="review-contents" className="review-contents" aria-label="Contents">
@@ -2601,7 +2648,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 						</fieldset>
 					)}
 				</section>
-				{!narrow && (
+				{!narrow && !plain && (
 					<div
 						className="review-divider"
 						role="separator"
@@ -2630,7 +2677,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					ref={companion}
 					className="review-companion"
 					aria-label="Review conversation"
-					hidden={narrow && pane !== 'conversation'}
+					hidden={plain || (narrow && pane !== 'conversation')}
 				>
 					<header className="review-conversation-header">
 						<div className="review-conversation-title">

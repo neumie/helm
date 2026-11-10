@@ -1,0 +1,338 @@
+// Plain-mode admission for `helm open` (docs/plans/helm-open/spec.md, Access and security): one canonical path,
+// one descriptor, Helm's private files refused by path and by inode. Feedback mode keeps `readReviewFile`.
+import { constants } from 'node:fs'
+import type { Stats } from 'node:fs'
+import { lstat, open, readdir, realpath } from 'node:fs/promises'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { refuse } from '../../../src/document-review/refusal'
+
+/** Plain Markdown is read up to the Markdown renderer's own budget; larger files are refused with the number. */
+export const VIEWER_MARKDOWN_BYTES = 512 * 1024
+/** How many entries a hard-link check may visit under Helm's private roots before it gives up and refuses. */
+export const PRIVATE_SCAN_ENTRIES = 50_000
+
+export type ViewerFormat = 'markdown'
+
+/**
+ * Helm's own state. `trees` are whole private directories; `daemonRoots` hold the daemon's config, database and
+ * profiles next to unrelated repository files, so only those names are private there.
+ */
+export interface HelmPrivatePaths {
+	trees: string[]
+	daemonRoots: string[]
+	files: string[]
+	uid: number | null
+	/** Folder that holds Helm's `/tmp/helm-*-<uid>` socket and run directories (canonical `/private/tmp` on macOS). */
+	tmp: string
+}
+
+const DAEMON_FILE = /^(?:helm|vigil)\.(?:config\.json|db(?:-.*)?)$/i
+
+async function canonical(path: string): Promise<string> {
+	try {
+		return await realpath(path)
+	} catch {
+		return resolve(path)
+	}
+}
+
+/** Canonicalises every root once so a later path comparison sees `/private/tmp`, never `/tmp`. */
+export async function helmPrivatePaths(input: {
+	home: string
+	userData: string
+	daemonRoots: string[]
+	authFile: string
+	uid: number | null
+	tmp?: string
+}): Promise<HelmPrivatePaths> {
+	return {
+		trees: await Promise.all(
+			[join(input.home, '.helm'), input.userData, join(input.home, 'Library', 'Logs', 'helm')].map(canonical),
+		),
+		daemonRoots: await Promise.all(input.daemonRoots.map(canonical)),
+		files: [await canonical(input.authFile)],
+		uid: input.uid,
+		tmp: await canonical(input.tmp ?? '/tmp'),
+	}
+}
+
+const inside = (path: string, root: string) => path === root || path.startsWith(`${root}${sep}`)
+/**
+ * macOS firmlinks: `realpath` keeps `/System/Volumes/Data/Users/…` as written although it is `/Users/…`. The
+ * path check compares both spellings; the inode check below catches every other alias.
+ */
+const DATA_VOLUME = '/System/Volumes/Data'
+const pathSpellings = (path: string) =>
+	path.startsWith(`${DATA_VOLUME}/`) ? [path, path.slice(DATA_VOLUME.length)] : [path]
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
+const tmpEntry = (name: string, uid: number | null) =>
+	uid !== null && (name === `helm-${uid}` || (name.startsWith('helm-') && name.endsWith(`-${uid}`)))
+
+/** Path half of the deny check, on the canonical path. Returns the refusal, or null when the path is not private. */
+export function privatePathRefusal(path: string, paths: HelmPrivatePaths): string | null {
+	for (const spelling of pathSpellings(path)) {
+		const refusal = spellingRefusal(spelling, paths)
+		if (refusal) return refusal
+	}
+	return null
+}
+function spellingRefusal(path: string, paths: HelmPrivatePaths): string | null {
+	const name = basename(path)
+	const message = `${name} is one of Helm's private files; helm open never shows them.`
+	if (path.split(sep).some(part => part.toLowerCase().startsWith('.helm-'))) return message
+	if (paths.trees.some(root => inside(path, root))) return message
+	if (paths.files.includes(path)) return message
+	for (const root of paths.daemonRoots)
+		if ((dirname(path) === root && DAEMON_FILE.test(name)) || inside(path, join(root, 'profiles'))) return message
+	if (inside(path, paths.tmp)) {
+		const first = path.slice(paths.tmp.length + 1).split(sep)[0] ?? ''
+		if (tmpEntry(first, paths.uid)) return message
+	}
+	return null
+}
+
+/** Every private root a hard link to the opened inode could hide behind (same device only). */
+async function privateRoots(paths: HelmPrivatePaths): Promise<string[]> {
+	const roots = [...paths.trees, ...paths.files]
+	for (const root of paths.daemonRoots) {
+		roots.push(join(root, 'profiles'))
+		try {
+			for (const name of await readdir(root)) if (DAEMON_FILE.test(name)) roots.push(join(root, name))
+		} catch (error) {
+			// A missing daemon root holds nothing; one Helm cannot list could hide anything.
+			if (!missing(error)) throw refuse(unchecked(root))
+		}
+	}
+	try {
+		for (const name of await readdir(paths.tmp)) if (tmpEntry(name, paths.uid)) roots.push(join(paths.tmp, name))
+	} catch (error) {
+		if (!missing(error)) throw refuse(unchecked(paths.tmp))
+	}
+	return roots
+}
+const unchecked = (folder: string) =>
+	`Helm could not check its private files in ${folder}, so helm open shows nothing until it can. Nothing was opened.`
+const linkedMessage = (name: string) =>
+	`${name} is a hard link to one of Helm's private files; helm open never shows it.`
+const identity = (stat: { dev: number; ino: number }) => `${stat.dev}:${stat.ino}`
+
+/**
+ * Inode half of the deny check, for every file: the opened inode must not be one of Helm's private roots, and no
+ * folder on its canonical path may be one either. This catches a path alias the string check cannot see (a
+ * firmlink, another mount of the same volume) without walking anything.
+ */
+async function aliasRefusal(name: string, file: string, stat: Stats, roots: string[]): Promise<string | null> {
+	const ids = new Set<string>()
+	for (const root of roots) {
+		const entry = await lstat(root).catch(error => {
+			if (missing(error)) return null
+			throw refuse(unchecked(root))
+		})
+		if (entry) ids.add(identity(entry))
+	}
+	// The path check already passed, so a match was reached under another name: a hard link or an alias.
+	if (ids.has(identity(stat)))
+		return stat.nlink > 1 ? linkedMessage(name) : `${name} is one of Helm's private files; helm open never shows them.`
+	for (let folder = dirname(file); ; folder = dirname(folder)) {
+		const entry = await lstat(folder).catch(() => null)
+		if (!entry) throw refuse(`${name} changed while it was opened. Try again.`)
+		if (ids.has(identity(entry))) return `${name} is one of Helm's private files; helm open never shows them.`
+		if (folder === dirname(folder)) return null
+	}
+}
+
+/**
+ * Hard-link half of the deny check, for a file with more than one link: `ln ~/.helm/local-api-token notes.md` must not
+ * show the token. Walks Helm's private roots without following symlinks, within PRIVATE_SCAN_ENTRIES; a walk that
+ * cannot finish refuses instead of guessing.
+ */
+async function hardLinkRefusal(name: string, stat: Stats, roots: string[]): Promise<string | null> {
+	let budget = PRIVATE_SCAN_ENTRIES
+	const incomplete = `${name} has more than one hard link and Helm could not check all of its private files against it. Copy ${name} and open the copy.`
+	const pending: string[] = []
+	for (const root of roots) {
+		const entry = await lstat(root).catch(error => {
+			if (missing(error)) return null
+			throw refuse(incomplete)
+		})
+		if (!entry || entry.dev !== stat.dev) continue
+		if (entry.ino === stat.ino) return linkedMessage(name)
+		if (entry.isDirectory()) pending.push(root)
+	}
+	while (pending.length) {
+		const folder = pending.pop() as string
+		let names: string[]
+		try {
+			names = await readdir(folder)
+		} catch {
+			// A walk that cannot finish refuses instead of guessing.
+			return incomplete
+		}
+		for (const child of names) {
+			if (--budget < 0) return incomplete
+			const path = join(folder, child)
+			let entry: Stats
+			try {
+				entry = await lstat(path)
+			} catch {
+				return incomplete
+			}
+			if (entry.dev !== stat.dev) continue
+			if (entry.ino === stat.ino) return linkedMessage(name)
+			if (entry.isDirectory()) pending.push(path)
+		}
+	}
+	return null
+}
+
+const kind = (stat: Stats) =>
+	stat.isDirectory()
+		? 'a folder'
+		: stat.isFIFO()
+			? 'a named pipe'
+			: stat.isSocket()
+				? 'a socket'
+				: stat.isCharacterDevice() || stat.isBlockDevice()
+					? 'a device'
+					: 'not a regular file'
+const sizeText = (bytes: number) =>
+	bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${Math.ceil(bytes / 1024)} KiB`
+
+/** Which plain viewer shows a canonical path, by its last extension; S1 shows Markdown only. */
+export function viewerFormat(path: string): ViewerFormat {
+	const name = basename(path)
+	const extension = extname(name).toLowerCase()
+	if (extension === '.md' || extension === '.markdown') return 'markdown'
+	if (extension === '.jsx' || extension === '.tsx')
+		throw refuse(
+			`${name} is a component. Use helm edit to preview components; helm open shows Markdown in this version.`,
+		)
+	throw refuse(
+		extension
+			? `Helm can't show ${extension} files yet (${name}); helm open shows Markdown (.md) in this version.`
+			: `Helm can't show ${name}: it has no file extension. helm open shows Markdown (.md) in this version.`,
+	)
+}
+
+export interface ViewerFile {
+	file: string
+	format: ViewerFormat
+	text: string
+	size: number
+}
+export interface ViewerReadHooks {
+	/** Test seam: runs between the path checks and the open, where a path swap would land. */
+	beforeOpen?(canonical: string): Promise<void> | void
+}
+
+/**
+ * One admission, one descriptor: realpath → deny by path → lstat (regular file, size) → open with
+ * O_NOFOLLOW|O_NONBLOCK|O_NOCTTY → fstat must be the same inode as the lstat and the path, parent unchanged → deny
+ * by inode → read → re-stat. Any change refuses with "changed while reading". Never writes, never follows a link
+ * after the realpath.
+ */
+export async function readViewerFile(
+	rawPath: string,
+	paths: HelmPrivatePaths,
+	hooks: ViewerReadHooks = {},
+): Promise<ViewerFile> {
+	const requested = resolve(rawPath)
+	let file: string
+	try {
+		file = await realpath(requested)
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code
+		const name = basename(requested)
+		if (code === 'ENOENT') throw refuse(`${name} does not exist.`)
+		if (code === 'EACCES') throw refuse(`${name} is not readable by Helm (a folder on its path is closed).`)
+		if (code === 'ELOOP') throw refuse(`${name} is a symlink loop.`)
+		throw refuse(`${name} could not be resolved (${code ?? 'unknown error'}).`)
+	}
+	const name = basename(file)
+	const denied = privatePathRefusal(file, paths)
+	if (denied) throw refuse(denied)
+	const before = await lstat(file).catch(() => null)
+	if (!before) throw refuse(`${name} changed while it was opened. Try again.`)
+	if (before.isSymbolicLink()) throw refuse(`${name} changed while it was opened (it became a symlink). Try again.`)
+	if (!before.isFile()) throw refuse(`${name} is ${kind(before)}; helm open shows regular files only.`)
+	const format = viewerFormat(file)
+	const limit = VIEWER_MARKDOWN_BYTES
+	if (before.size > limit)
+		throw refuse(`${name} is ${sizeText(before.size)}; Helm shows Markdown up to ${sizeText(limit)}.`)
+	await hooks.beforeOpen?.(file)
+	const fd = await open(
+		file,
+		constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (constants.O_NOCTTY ?? 0),
+	).catch(error => {
+		const code = (error as NodeJS.ErrnoException).code
+		if (code === 'ELOOP') throw refuse(`${name} changed while it was opened (it became a symlink). Try again.`)
+		if (code === 'ENOENT') throw refuse(`${name} changed while it was opened (it is gone). Try again.`)
+		if (code === 'EACCES') throw refuse(`${name} is not readable by Helm.`)
+		throw refuse(`${name} could not be opened (${code ?? 'unknown error'}).`)
+	})
+	try {
+		const opened = await fd.stat()
+		const path = await lstat(file).catch(() => null)
+		if (
+			!opened.isFile() ||
+			!path ||
+			opened.dev !== before.dev ||
+			opened.ino !== before.ino ||
+			path.dev !== opened.dev ||
+			path.ino !== opened.ino ||
+			(await realpath(dirname(file)).catch(() => null)) !== dirname(file)
+		)
+			throw refuse(`${name} changed while it was opened. Try again.`)
+		const roots = await privateRoots(paths)
+		const alias = await aliasRefusal(name, file, opened, roots)
+		if (alias) throw refuse(alias)
+		if (opened.nlink > 1) {
+			const linked = await hardLinkRefusal(name, opened, roots)
+			if (linked) throw refuse(linked)
+		}
+		if (opened.size > limit)
+			throw refuse(`${name} is ${sizeText(opened.size)}; Helm shows Markdown up to ${sizeText(limit)}.`)
+		const bytes = Buffer.alloc(limit + 1)
+		let used = 0
+		while (used < bytes.length) {
+			const read = await fd.read(bytes, used, bytes.length - used, used)
+			if (read.bytesRead === 0) break
+			used += read.bytesRead
+		}
+		const after = await fd.stat()
+		const still = await lstat(file).catch(() => null)
+		if (
+			used > limit ||
+			used !== opened.size ||
+			after.size !== opened.size ||
+			after.mtimeMs !== opened.mtimeMs ||
+			after.ctimeMs !== opened.ctimeMs ||
+			!still ||
+			still.dev !== opened.dev ||
+			still.ino !== opened.ino
+		)
+			throw refuse(`${name} changed while it was read. Try again.`)
+		let text: string
+		try {
+			text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, used))
+		} catch {
+			throw refuse(`${name} is not valid UTF-8 text.`)
+		}
+		return { file, format, text, size: used }
+	} finally {
+		await fd.close()
+	}
+}
+
+/** The launchd daemon's `WorkingDirectory` from its plist text (where it keeps helm.db), or null. */
+export function plistWorkingDirectory(plist: string): string | null {
+	const match = /<key>WorkingDirectory<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)
+	if (!match?.[1]) return null
+	const value = match[1]
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&amp;/g, '&')
+	return value.startsWith('/') ? value : null
+}

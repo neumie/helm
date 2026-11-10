@@ -3,10 +3,17 @@ import { constants } from 'node:fs'
 import { chmod, lstat, open, unlink } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Server, Socket } from 'node:net'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-state.js'
-import { REVIEW_WIRE_BYTES, envelopeSchema } from './protocol.js'
-import type { ReviewCommand, ReviewConnection } from './protocol.js'
+import {
+	REVIEW_ACTIONS,
+	REVIEW_FEATURES,
+	REVIEW_PROTOCOL,
+	REVIEW_VIEW_RATE,
+	REVIEW_WIRE_BYTES,
+	envelopeSchema,
+} from './protocol.js'
+import type { ReviewCallerCommand, ReviewCommand, ReviewConnection, ReviewViewResult } from './protocol.js'
 import { describeReviewFailure, refuse } from './refusal.js'
 
 export interface CallerBinding {
@@ -19,11 +26,12 @@ export interface CallerBinding {
 export interface ReviewControlBackend {
 	connect(command: Extract<ReviewCommand, { action: 'connect' }>): Promise<CallerBinding>
 	current(binding: CallerBinding): boolean
-	command(
-		binding: CallerBinding,
-		command: Exclude<ReviewCommand, { action: 'connect' }>,
-		signal: AbortSignal,
-	): Promise<unknown> | unknown
+	command(binding: CallerBinding, command: ReviewCallerCommand, signal: AbortSignal): Promise<unknown> | unknown
+	/**
+	 * Plain viewing (`helm open`): show each file read-only, without a caller. Every refusal is per file and names it.
+	 * Absent on hosts that cannot show plain windows; the server then refuses `view` as a whole.
+	 */
+	view?(files: string[], signal: AbortSignal): Promise<ReviewViewResult>
 	disconnect(binding: CallerBinding): void
 	status(): { available: boolean }
 }
@@ -38,6 +46,34 @@ interface Identity {
 	ino: number
 }
 const equal = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
+/** A name from an untrusted frame, safe for one log line and the CLI: ASCII word characters only, bounded. */
+const frameName = (value: string) => value.replace(/[^A-Za-z0-9_-]/g, '?').slice(0, 40) || '?'
+/**
+ * Unknown actions and unknown fields are definite refusals (nothing ran), so a newer CLI can tell "this host does
+ * not know that" from a failure after an effect. Older hosts answered both with the generic uncertain text.
+ */
+function parseEnvelope(bytes: Buffer) {
+	const raw: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+	const command = (raw as { command?: { action?: unknown } } | null)?.command
+	const action = command?.action
+	if (typeof action === 'string' && !REVIEW_ACTIONS.has(action))
+		// The reply names the caller's own command; the log line never repeats frame content.
+		throw refuse(
+			`Unknown review command "${frameName(action)}". Nothing was done; update the helm CLI and the Helm desktop to the same version.`,
+			'malformed command (command.action unknown)',
+		)
+	const parsed = envelopeSchema.safeParse(raw)
+	if (parsed.success) return parsed.data
+	for (const issue of parsed.error.issues)
+		if (issue.code === 'unrecognized_keys' && issue.path[0] === 'command' && typeof action === 'string') {
+			const keys = issue.keys.slice(0, 4).map(frameName).join(', ')
+			throw refuse(
+				`Unknown field ${keys} in review command "${frameName(action)}". Nothing was done; update the helm CLI and the Helm desktop to the same version.`,
+				'malformed command (command unrecognized_keys)',
+			)
+		}
+	throw parsed.error
+}
 
 /** Private desktop-only UDS. No daemon, provider process, terminal input, or session-file access. */
 export class ReviewControlServer {
@@ -50,6 +86,9 @@ export class ReviewControlServer {
 	private server: Server | null = null
 	private stopping = false
 	private pendingConnections = 0
+	/** Admission times of plain-view files in the last second, and the one view command allowed at a time. */
+	private viewTimes: number[] = []
+	private viewing = false
 	constructor(
 		readonly root: string,
 		private readonly backend: ReviewControlBackend,
@@ -206,7 +245,7 @@ export class ReviewControlServer {
 		})
 	}
 	private async handle(bytes: Buffer, signal: AbortSignal, context: { action: string }): Promise<unknown> {
-		const message = envelopeSchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)))
+		const message = parseEnvelope(bytes)
 		context.action = message.command.action
 		if (this.stopping) throw refuse('Helm is closing its review host. Nothing was done.')
 		if (signal.aborted) throw refuse('The review command was cancelled before it ran.')
@@ -217,7 +256,11 @@ export class ReviewControlServer {
 		if (!message.id) {
 			if (message.owner || !equal(message.token, this.token))
 				throw refuse('The review discovery token is not current. Nothing was done; connect again.')
+			// Synchronous, effect-free and without a generic-error path: a new CLI must never mistake a transient
+			// failure here for an old host and quietly downgrade.
+			if (message.command.action === 'hello') return { protocol: REVIEW_PROTOCOL, features: [...REVIEW_FEATURES] }
 			if (message.command.action === 'status') return { version: 1, epoch: this.epoch, ...this.backend.status() }
+			if (message.command.action === 'view') return this.view(message.command.files, signal)
 			if (message.command.action !== 'connect') throw refuse('Connect first; nothing was done.')
 			for (const binding of this.bindings.values())
 				if (binding.operations === 0 && !this.backend.current(binding)) await this.retire(binding)
@@ -265,6 +308,8 @@ export class ReviewControlServer {
 			message.owner !== binding.owner ||
 			!equal(message.token, binding.token) ||
 			message.command.action === 'connect' ||
+			message.command.action === 'hello' ||
+			message.command.action === 'view' ||
 			!this.backend.current(binding)
 		)
 			throw refuse(
@@ -273,7 +318,7 @@ export class ReviewControlServer {
 		if (binding.operations >= 2) throw refuse('This connection already has two operations running. Nothing was done.')
 		binding.operations++
 		try {
-			const value = await this.backend.command(binding, message.command, signal)
+			const value = await this.backend.command(binding, message.command as ReviewCallerCommand, signal)
 			if (
 				signal.aborted ||
 				this.stopping ||
@@ -284,6 +329,32 @@ export class ReviewControlServer {
 		} finally {
 			binding.operations--
 			if (binding.operations === 0 && !this.backend.current(binding)) await this.retire(binding)
+		}
+	}
+	/**
+	 * Plain viewing. One view command at a time, and at most REVIEW_VIEW_RATE files per second for the whole host:
+	 * files over the rate are refused by name (the CLI sends batches a second apart, so it never hits this).
+	 */
+	private async view(files: string[], signal: AbortSignal): Promise<ReviewViewResult> {
+		const view = this.backend.view?.bind(this.backend)
+		if (!view) throw refuse('This Helm desktop cannot show files with helm open. Nothing was opened.')
+		if (this.viewing) throw refuse('Helm is still opening files from another helm open. Nothing was opened; try again.')
+		const now = Date.now()
+		this.viewTimes = this.viewTimes.filter(time => now - time < 1000)
+		const budget = Math.max(0, REVIEW_VIEW_RATE - this.viewTimes.length)
+		const admitted = files.slice(0, budget)
+		const late = files.slice(budget).map(file => ({
+			file,
+			reason: `${basename(file)} was not opened: Helm opens at most ${REVIEW_VIEW_RATE} files per second. Open it again.`,
+		}))
+		for (const _file of admitted) this.viewTimes.push(now)
+		if (!admitted.length) return { opened: [], refused: late }
+		this.viewing = true
+		try {
+			const result = await view(admitted, signal)
+			return { opened: result.opened, refused: [...result.refused, ...late] }
+		} finally {
+			this.viewing = false
 		}
 	}
 	private async retire(binding: Binding): Promise<void> {

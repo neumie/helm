@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, powerMonitor, screen, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
-import { readLocalControlToken } from '../../src/auth/local-control'
+import { localControlTokenPath, readLocalControlToken } from '../../src/auth/local-control'
 import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
@@ -16,6 +16,8 @@ import { agentDockNotifyOptions } from './agent-dock-notify-main'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
 import { createReviewControl } from './document-review/control'
+import { helmPrivatePaths, plistWorkingDirectory } from './document-review/viewer-file'
+import type { HelmPrivatePaths } from './document-review/viewer-file'
 import { DocumentReviewWindows } from './document-review/window'
 import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
@@ -66,6 +68,7 @@ import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { TerminalWarmPool, type WarmProcess } from './terminal-warm'
 import { THEME_PRESETS } from './theme-presets'
+import { type ShortcutRoute, type ShortcutWindowKind, routeShortcut } from './window-shortcuts'
 
 // HELM_URL preferred; VIGIL_URL still honored (legacy compat).
 const daemonUrl = process.env.HELM_URL ?? process.env.VIGIL_URL ?? 'http://localhost:7474'
@@ -215,8 +218,34 @@ const piAgentStatusIntegration = new PiAgentStatusIntegration()
 // Remote is global and independent of Item daemon availability. The controller
 // fixes its owner-private root itself; renderers cannot select paths or routes.
 const remotePairing = new RemotePairingController()
+let reviewPrivatePaths: Promise<HelmPrivatePaths> | null = null
 const documentReviewWindows = new DocumentReviewWindows({
 	distDir: __dirname,
+	// Plain `helm open` refuses Helm's own state by path and inode: this checkout's daemon files and the launchd
+	// daemon's working directory (the operator's daemon may run from another checkout).
+	privatePaths: () => {
+		reviewPrivatePaths ??= (async () => {
+			let launchd: string | null = null
+			try {
+				launchd = plistWorkingDirectory(
+					await fs.promises.readFile(
+						path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.helm.daemon.plist'),
+						'utf8',
+					),
+				)
+			} catch {
+				/* no launchd daemon installed */
+			}
+			return helmPrivatePaths({
+				home: os.homedir(),
+				userData: app.getPath('userData'),
+				daemonRoots: [path.resolve(app.getAppPath(), '..'), ...(launchd ? [launchd] : [])],
+				authFile: localControlTokenPath(),
+				uid: process.getuid?.() ?? null,
+			})
+		})()
+		return reviewPrivatePaths
+	},
 	profileToken: () => sessionProfileToken(),
 	allowsToken: token => acceptsSessionIpcToken(token) && !profileSwitchCoordinator?.isSwitching(),
 	profileId: () => sessionProfileId,
@@ -538,21 +567,29 @@ function dispatchShortcutInput(
 		!input.code
 	)
 		return
-	const action = matchingShortcutAction(
-		currentTerminalPreferences.shortcuts,
-		'menu',
-		{
-			code: input.code,
-			metaKey: input.meta === true,
-			ctrlKey: input.control === true,
-			altKey: input.alt === true,
-			shiftKey: input.shift === true,
-		},
-		process.platform,
-	)
-	if (!action) return
+	const key = {
+		code: input.code,
+		metaKey: input.meta === true,
+		ctrlKey: input.control === true,
+		altKey: input.alt === true,
+		shiftKey: input.shift === true,
+	}
+	const action = matchingShortcutAction(currentTerminalPreferences.shortcuts, 'menu', key, process.platform)
+	const route = routeShortcut(shortcutWindowKind(window), action, key, process.platform)
+	if (route.kind === 'pass') return
 	event.preventDefault()
-	menuShortcutHandlers[action]?.(window)
+	runShortcutRoute(window, route)
+}
+
+/** Document Review windows have their own zoom, close and open; every other window is the cockpit's. */
+function shortcutWindowKind(window: BrowserWindow): ShortcutWindowKind {
+	return !window.isDestroyed() && documentReviewWindows.ownsWindow(window) ? 'document' : 'cockpit'
+}
+function runShortcutRoute(window: BrowserWindow, route: ShortcutRoute): void {
+	if (route.kind === 'action') menuShortcutHandlers[route.action]?.(window)
+	else if (route.kind === 'zoom') documentReviewWindows.zoom(window, route.step)
+	else if (route.kind === 'close-window') window.close()
+	else if (route.kind === 'open-file') void documentReviewWindows.chooseFileFromMenu(window)
 }
 
 app.on('browser-window-created', (_event, window) => {
@@ -1596,10 +1633,28 @@ function buildMenu(): void {
 			...(binding ? { accelerator: electronAccelerator(binding), registerAccelerator: false } : {}),
 			click: () => {
 				const target = BrowserWindow.getFocusedWindow() ?? mainWindow
-				if (target) menuShortcutHandlers[action]?.(target)
+				if (!target) return
+				const route = routeShortcut(
+					shortcutWindowKind(target),
+					action,
+					{ code: '', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false },
+					process.platform,
+				)
+				if (route.kind !== 'pass' && route.kind !== 'swallow') runShortcutRoute(target, route)
 			},
 		}
 	}
+	// A reload drops a document window's bound caller state and memory-only threads, so only the cockpit reloads.
+	const reload = (force: boolean): Electron.MenuItemConstructorOptions => ({
+		label: force ? 'Force Reload' : 'Reload',
+		accelerator: force ? 'CmdOrCtrl+Shift+R' : 'CmdOrCtrl+R',
+		click: () => {
+			const target = BrowserWindow.getFocusedWindow()
+			if (!target || shortcutWindowKind(target) === 'document') return
+			if (force) target.webContents.reloadIgnoringCache()
+			else target.webContents.reload()
+		},
+	})
 	const template: Electron.MenuItemConstructorOptions[] = [
 		...(process.platform === 'darwin' ? [macApplicationMenu(profileMenu())] : [profileMenu()]),
 		{
@@ -1607,8 +1662,11 @@ function buildMenu(): void {
 			submenu: [
 				{
 					label: 'Open document…',
+					// No accelerator: macOS ignores registerAccelerator:false, and a menu ⌘O would also fire in the
+					// cockpit, where ⌘O belongs to the agent dock. The shortcut dispatcher runs ⌘O in document windows.
 					click: () => {
-						void documentReviewWindows.chooseFileFromMenu()
+						const target = BrowserWindow.getFocusedWindow()
+						void documentReviewWindows.chooseFileFromMenu(target ?? undefined)
 					},
 				},
 			],
@@ -1631,8 +1689,8 @@ function buildMenu(): void {
 				menuItem('Smaller text', 'fontSmaller'),
 				menuItem('Reset text size', 'fontReset'),
 				{ type: 'separator' },
-				{ role: 'reload' },
-				{ role: 'forceReload' },
+				reload(false),
+				reload(true),
 				{ role: 'toggleDevTools' },
 			],
 		},

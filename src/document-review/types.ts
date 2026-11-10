@@ -121,6 +121,8 @@ export interface ReviewActivity {
 	outputTokens: number | null
 }
 export interface ReviewState {
+	/** `plain`: a `helm open` window that only shows the file (no caller, companion or saved state). */
+	mode?: 'plain'
 	document: ReviewDocument
 	sessions: ReviewSession[]
 	draft: ReviewDraft
@@ -149,6 +151,8 @@ export interface ReviewApi {
 	dirty(value: boolean): void
 	onCloseRequested(listener: () => void): () => void
 	onChanged(listener: () => void): () => void
+	/** ⌘= / ⌘- / ⌘0 from the window-aware shortcut dispatcher: 1 bigger, -1 smaller, 0 reset. */
+	onZoom?(listener: (step: -1 | 0 | 1) => void): () => void
 	close(): void
 }
 export interface ReviewFeedback {
