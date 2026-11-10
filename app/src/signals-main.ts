@@ -34,6 +34,7 @@ import type {
 	HelmResult,
 	SignalFilteredPage,
 	SignalIncludeResult,
+	SignalMuteResult,
 	SignalReply,
 	SignalRouted,
 	SignalThread,
@@ -351,6 +352,13 @@ export class SignalsMain {
 		return this.write<SignalIncludeResult>(`/signals/filtered/${entryId}/include`, {})
 	}
 
+	/** Never show a mail thread's sender: the daemon adds it to the exclude list and closes its open threads. */
+	async mute(id: unknown): Promise<HelmResult<SignalMuteResult>> {
+		const threadId = signalId(id)
+		if (threadId === null) return { error: 'That signal does not exist.', status: 400 }
+		return this.write<SignalMuteResult>(`/signals/${threadId}/mute`, {})
+	}
+
 	async open(value: unknown): Promise<HelmResult<true>> {
 		const url = signalOpenableUrl(value)
 		if (!url) return { error: 'Only GitHub and Mail links can be opened.', status: 400 }
@@ -477,6 +485,9 @@ export class SignalsMain {
 		)
 		ipc.handle(SIGNALS_IPC.include, (event, id, profileToken) =>
 			this.options.acceptsIpc(event.sender, profileToken) ? this.include(id) : refused('change the include list'),
+		)
+		ipc.handle(SIGNALS_IPC.mute, (event, id, profileToken) =>
+			this.options.acceptsIpc(event.sender, profileToken) ? this.mute(id) : refused('change the exclude list'),
 		)
 	}
 

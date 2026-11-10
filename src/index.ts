@@ -20,7 +20,7 @@ import { scheduledReporterCommand } from './scheduled-runs/reporter-command.js'
 import { ScheduledRunService } from './scheduled-runs/service.js'
 import { createApp } from './server/app.js'
 import { createGithubSignalReader } from './signals/github-source.js'
-import { createIncludeSender } from './signals/include-sender.js'
+import { createCanUnmuteSender, createIncludeSender, createMuteSender } from './signals/include-sender.js'
 import { createMailSignalReader } from './signals/mail-source.js'
 import { SignalsWatcher } from './signals/watcher.js'
 import { createSolver } from './solver/registry.js'
@@ -140,7 +140,12 @@ async function main() {
 				profileIds: () => profiles.registeredProfileIds(),
 			},
 			knowledge,
-			signals: { watcher: signalsWatcher, includeSender: createIncludeSender(configPath, config) },
+			signals: {
+				watcher: signalsWatcher,
+				includeSender: createIncludeSender(configPath, config),
+				muteSender: createMuteSender(configPath, config),
+				canUnmuteSender: createCanUnmuteSender(config),
+			},
 		},
 		scheduledRuns,
 		watching => {

@@ -41,9 +41,11 @@ import {
 	filteredSummary,
 	following,
 	healthLines,
+	includeAction,
 	includeNote,
 	keepSelection,
 	matchAgents,
+	muteNote,
 	newAgentPrompt,
 	orderedRows,
 	replyPrompt,
@@ -515,6 +517,20 @@ export function SignalsColumn({
 			})
 			return
 		}
+		if (key === 'x') {
+			// Mute the sender: every open thread of its leaves at once, the selection skips them all.
+			void run(async () => {
+				const result = await service.mute(thread.id)
+				if (!alive.current) return
+				if (result.error !== undefined) {
+					setNote(`Could not mute ${thread.ref}: ${result.error}`)
+					return
+				}
+				select(following(allSections, thread.id, new Set([thread.id, ...result.data.threadIds])))
+				setNote(muteNote(thread, result.data))
+			})
+			return
+		}
 		const patch = actionPatch(key, thread, now)
 		if (!patch) return
 		const next = following(allSections, thread.id)
@@ -588,7 +604,7 @@ export function SignalsColumn({
 		}
 		if (event.key === 'j' || event.key === 'ArrowDown') move(1)
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
-		else if (/^[pnmtsdor]$/.test(event.key)) act(event.key as SignalActionKey)
+		else if (/^[pnmtsdorx]$/.test(event.key)) act(event.key as SignalActionKey)
 		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
 		else if (event.key === 'D' && allSections.doneToday > 0) openDone()
 		else return
@@ -628,7 +644,7 @@ export function SignalsColumn({
 			className="signals"
 			aria-label="Signals"
 			aria-keyshortcuts={mod === 'cmd' ? 'Meta+Shift+I' : undefined}
-			// biome-ignore lint/a11y/noNoninteractiveTabindex: the surface takes the keys (j k p n m t s d o r).
+			// biome-ignore lint/a11y/noNoninteractiveTabindex: the surface takes the keys (j k p n m t s d o r x).
 			tabIndex={0}
 			onKeyDown={onKeyDown}
 		>
@@ -744,8 +760,9 @@ type FilteredState =
 
 /**
  * `f` / the `12 filtered` count: the mail the rules kept out of Needs you (heads only, last 7 days),
- * newest first, in place of the list. `i` always shows the selected row's sender from the next poll
- * (adds its exact address to the include list), `o` opens it in Mail, Esc back.
+ * newest first, in place of the list. `i` shows the selected row's sender from the next poll: a
+ * muted one (`x` in the list; the daemon marks it `unmute`) is unmuted, any other always shown (its
+ * exact address goes onto the include list). `o` opens it in Mail, Esc back.
  */
 function FilteredMail({
 	service,
@@ -815,7 +832,7 @@ function FilteredMail({
 			const result = await service.include(entry.id)
 			if (!alive.current) return
 			if (result.error !== undefined) {
-				setNote(`Could not include ${filteredRowView(entry, now).ref}: ${result.error}`)
+				setNote(`Could not ${entry.unmute ? 'unmute' : 'include'} ${filteredRowView(entry, now).ref}: ${result.error}`)
 				return
 			}
 			setNote(includeNote(result.data))
@@ -858,7 +875,7 @@ function FilteredMail({
 			hints={
 				entry ? (
 					<>
-						<Hint keys="i">always show sender</Hint>
+						<Hint keys="i">{includeAction(entry).label}</Hint>
 						{entry.url ? <Hint keys="o">open</Hint> : null}
 					</>
 				) : null
@@ -867,7 +884,7 @@ function FilteredMail({
 			action={
 				entry ? (
 					<Btn sm ariaKeyShortcuts="i" onClick={include}>
-						Always show sender
+						{includeAction(entry).button}
 					</Btn>
 				) : null
 			}

@@ -43,6 +43,7 @@ import {
 	type SignalThread,
 	type SignalUpdate,
 	signalAskLinkUrl,
+	signalSenderAddress,
 } from './contract.js'
 
 /** Newest events kept; older ones are pruned after each write. */
@@ -64,6 +65,11 @@ export const SIGNAL_GONE_AFTER_MISSES = 2
 export const SIGNAL_REPLY_LINES = 40
 /** `closed_reason` of an ask the agent closed with `helm signal done`. */
 export const SIGNAL_ASK_CLOSED_REASON = 'closed by the agent'
+/**
+ * `closed_reason` of a mail thread closed because Jakub muted its sender (`x`). Its mail is listed
+ * as filtered (`excluded`) instead; showing the sender again reopens it on the next poll.
+ */
+export const SIGNAL_MUTED_REASON = 'sender muted'
 /**
  * Open (not done) agent asks at most. A new one beyond this is refused so asks can never push
  * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot. Renewing or refreshing an open
@@ -142,6 +148,8 @@ interface ThreadRow {
 	ask_terminal: string | null
 	reply: string | null
 	reply_at: string | null
+	sender: string | null
+	sender_address: string | null
 	created_at: string
 	updated_at: string
 }
@@ -363,6 +371,8 @@ function sanitizeObservation(observation: SignalObservation, source: SignalPollS
 		branch: cleanOptional(observation.branch, SIGNAL_LIMITS.branch),
 		activityKey: clean(String(observation.activityKey ?? ''), SIGNAL_LIMITS.activityKey),
 		lastActivityAt,
+		sender: source === 'mail' ? signalSenderAddress(observation.sender) || null : null,
+		senderAddress: source === 'mail' ? signalSenderAddress(observation.senderAddress) || null : null,
 	}
 }
 
@@ -430,13 +440,13 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 	const messageKey = clean(String(observation.messageKey ?? ''), SIGNAL_LIMITS.activityKey).toLowerCase()
 	const receivedAt = isoTime(String(observation.receivedAt ?? ''))
 	if (messageKey === '' || receivedAt === null) return null
-	const senderAddress = clean(String(observation.senderAddress ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase()
+	// Addresses are never clipped: `i` puts them on the sender lists as they are.
+	const senderAddress = signalSenderAddress(observation.senderAddress)
 	return {
 		messageKey,
 		senderName: clean(String(observation.senderName ?? ''), SIGNAL_LIMITS.actor),
 		senderAddress,
-		senderIdentity:
-			clean(String(observation.senderIdentity ?? ''), SIGNAL_LIMITS.fullRef).toLowerCase() || senderAddress,
+		senderIdentity: signalSenderAddress(observation.senderIdentity) || senderAddress,
 		subject: clean(String(observation.subject ?? ''), SIGNAL_LIMITS.title),
 		reason: observation.reason,
 		mailbox: cleanOptional(observation.mailbox, SIGNAL_LIMITS.ref),
@@ -448,6 +458,9 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 		receivedAt,
 	}
 }
+
+/** Columns a poll refresh may write that people never see change (no `updated_at` bump). */
+const BOOKKEEPING_COLUMNS = new Set(['missed_polls', 'activity_key', 'sender', 'sender_address'])
 
 const HEAD_COLUMNS = [
 	['kind', 'kind'],
@@ -573,6 +586,77 @@ export class SignalStore {
 		return this.db
 			.prepare('DELETE FROM signal_filtered WHERE sender_identity = ? OR sender_address = ?')
 			.run(address, address).changes
+	}
+
+	/**
+	 * A mail thread's latest sender as the sender lists match it (`identity`, relay-decoded) and as
+	 * it arrived (`raw`, the relay address; equal to `identity` for ordinary mail), plus who owns the
+	 * thread. Null when it is not mail or no Mail poll recorded the sender yet.
+	 */
+	threadSender(id: number): { identity: string; raw: string; owner: SignalOwner } | null {
+		const row = this.row(id)
+		if (row?.source !== 'mail' || !row.sender) return null
+		return { identity: row.sender, raw: row.sender_address || row.sender, owner: row.owner as SignalOwner }
+	}
+
+	/**
+	 * Jakub muted `identity` (`x`): his open mail threads whose latest message is from it close at
+	 * once (done, `sender muted`, gone from the poll's view so showing the sender again reopens them)
+	 * and their latest message is listed as filtered (`excluded`) until the next poll lists the
+	 * thread's messages itself. Managed threads stay with their agent. `raw` is the address the mail
+	 * arrived from (the relay address for Hide My Email), listed as the filtered entry's address.
+	 * Returns the closed ids.
+	 */
+	muteSender(identity: string, now: Date, raw?: string): number[] {
+		const sender = signalSenderAddress(identity)
+		if (sender === '') return []
+		const address = signalSenderAddress(raw) || sender
+		const at = now.toISOString()
+		const cutoff = this.filteredCutoff(now)
+		return this.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT * FROM signal_threads
+					 WHERE source = 'mail' AND kind = 'mail' AND sender = ? AND owner = 'jakub' AND state <> 'done'`,
+				)
+				.all(sender) as ThreadRow[]
+			const close = this.db.prepare(
+				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = 'jakub',
+				   active = 0, missed_polls = 0, updated_at = ?
+				 WHERE id = ?`,
+			)
+			const listed = this.db.prepare(
+				`INSERT INTO signal_filtered (
+				   message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+				   received_at, first_seen_at, last_seen_at
+				 ) VALUES (?, 'mail', ?, ?, ?, ?, 'excluded', NULL, ?, ?, ?, ?)
+				 ON CONFLICT (message_key) DO UPDATE SET reason = 'excluded', last_seen_at = excluded.last_seen_at`,
+			)
+			for (const row of rows) {
+				close.run(SIGNAL_MUTED_REASON, at, row.id)
+				this.insertEvent(
+					row.id,
+					'state',
+					{ owner: row.owner, from: row.state, to: 'done', reason: SIGNAL_MUTED_REASON },
+					at,
+				)
+				const messageKey = row.activity_key.trim().replace(/^<|>$/g, '').toLowerCase()
+				if (messageKey === '' || row.last_activity_at < cutoff) continue
+				listed.run(
+					messageKey,
+					row.actor ?? '',
+					row.sender_address || address,
+					sender,
+					row.title,
+					row.url?.startsWith('message:') ? row.url : null,
+					row.last_activity_at,
+					at,
+					at,
+				)
+			}
+			if (rows.length > 0) this.pruneEvents()
+			return rows.map(row => row.id)
+		})
 	}
 
 	/** Snoozed threads whose time has come are new again. */
@@ -1064,8 +1148,9 @@ export class SignalStore {
 			.prepare(
 				`INSERT INTO signal_threads (
 				   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
-				   state, owner, activity_key, last_activity_at, active, missed_polls, created_at, updated_at
-				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?)`,
+				   state, owner, activity_key, last_activity_at, active, missed_polls, sender, sender_address,
+				   created_at, updated_at
+				 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?)`,
 			)
 			.run(
 				observation.threadKey,
@@ -1083,6 +1168,8 @@ export class SignalStore {
 				heads.branch,
 				observation.activityKey,
 				observation.lastActivityAt,
+				observation.sender ?? null,
+				observation.senderAddress ?? null,
 				at,
 				at,
 			)
@@ -1103,6 +1190,10 @@ export class SignalStore {
 		}
 		if (row.active !== 1) update.active = 1
 		if (row.missed_polls !== 0) update.missed_polls = 0
+		const sender = observation.sender ?? null
+		if ((row.sender ?? null) !== sender) update.sender = sender
+		const senderAddress = observation.senderAddress ?? null
+		if ((row.sender_address ?? null) !== senderAddress) update.sender_address = senderAddress
 		let state = row.state
 		const newer =
 			observation.activityKey !== row.activity_key &&
@@ -1129,11 +1220,10 @@ export class SignalStore {
 		}
 		const columns = Object.keys(update)
 		if (columns.length === 0) return false
-		// Bookkeeping alone (missed_polls, the key) does not count as a change people see. A done
-		// thread keeps its done time (`updated_at`) through head refreshes; only a state change moves it.
+		// Bookkeeping alone (missed_polls, the key, the sender) does not count as a change people see.
+		// A done thread keeps its done time (`updated_at`) through head refreshes; only a state change moves it.
 		const visible =
-			state !== row.state ||
-			(row.state !== 'done' && columns.some(column => column !== 'missed_polls' && column !== 'activity_key'))
+			state !== row.state || (row.state !== 'done' && columns.some(column => !BOOKKEEPING_COLUMNS.has(column)))
 		if (visible) update.updated_at = at
 		const assignments = Object.keys(update).map(column => `${column} = ?`)
 		this.db

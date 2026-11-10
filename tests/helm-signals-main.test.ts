@@ -248,6 +248,7 @@ test('update and routed POST, then re-read at once; the IPC gate refuses other w
 		[
 			'signals:filtered',
 			'signals:include',
+			'signals:mute',
 			'signals:new-agent',
 			'signals:okena-projects',
 			'signals:open',
@@ -334,6 +335,33 @@ test('filtered reads the log; include POSTs one id and re-reads; both gated; rea
 
 	const readOnly = harness({ readOnly: true })
 	assert.deepEqual(await readOnly.main.include(3), { error: 'read-only run', status: 403 })
+	assert.equal(readOnly.calls.length, 0)
+	readOnly.main.stop()
+})
+
+test('mute POSTs one thread id and re-reads; gated like include; read-only runs cannot mute', async () => {
+	const h = harness()
+	const handlers = new Map<string, (event: { sender: unknown }, ...args: unknown[]) => unknown>()
+	h.main.registerIpc({ on: () => undefined, handle: (channel, listener) => handlers.set(channel, listener) })
+	const mute = handlers.get('signals:mute')
+	assert.ok(mute)
+	assert.match(((await mute({ sender: { id: 9 } }, 43, TOKEN)) as { error: string }).error, /exclude list/)
+	assert.match(((await mute({ sender: WINDOW }, 43, 'old:0')) as { error: string }).error, /exclude list/)
+	assert.equal(h.calls.length, 0)
+	assert.deepEqual(await mute({ sender: WINDOW }, 43, TOKEN), { data: { id: 1 } })
+	await flush()
+	assert.deepEqual(h.calls.slice(0, 2), [
+		{ method: 'POST', path: '/signals/43/mute', body: {} },
+		{ method: 'GET', path: '/signals' },
+	])
+	assert.deepEqual(await mute({ sender: WINDOW }, '43/../1', TOKEN), {
+		error: 'That signal does not exist.',
+		status: 400,
+	})
+	h.main.stop()
+
+	const readOnly = harness({ readOnly: true })
+	assert.deepEqual(await readOnly.main.mute(43), { error: 'read-only run', status: 403 })
 	assert.equal(readOnly.calls.length, 0)
 	readOnly.main.stop()
 })

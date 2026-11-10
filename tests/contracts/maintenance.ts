@@ -26,4 +26,5 @@ export type SignalUpdateDesktop = Assert<Compatible<Signals.SignalUpdate, Deskto
 export type SignalRoutedDesktop = Assert<Compatible<Signals.SignalRouted, Desktop.SignalRouted>>
 export type SignalFilteredPageDesktop = Assert<Compatible<Signals.SignalFilteredPage, Desktop.SignalFilteredPage>>
 export type SignalIncludeResultDesktop = Assert<Compatible<Signals.SignalIncludeResult, Desktop.SignalIncludeResult>>
+export type SignalMuteResultDesktop = Assert<Compatible<Signals.SignalMuteResult, Desktop.SignalMuteResult>>
 export type SignalReplyDesktop = Assert<Compatible<Signals.SignalReply, Desktop.SignalReply>>

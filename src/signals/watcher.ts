@@ -156,6 +156,17 @@ export class SignalsWatcher {
 		}
 	}
 
+	/**
+	 * A source's settings changed under a read in flight (`x` muted a sender, `i` showed one
+	 * again): that read began with the old lists, so it is aborted (an aborted read is never
+	 * persisted; it would reopen the threads just muted) and a fresh poll follows.
+	 */
+	restartPoll(source: SignalPollSource): void {
+		if (!this.running) return
+		this.loops[source].currentAbort?.abort()
+		this.requestPoll()
+	}
+
 	private manualDelay(loop: SourceLoop): number {
 		return Math.max(0, loop.lastStartAt + SIGNAL_MANUAL_POLL_GAP_MS - Date.now())
 	}

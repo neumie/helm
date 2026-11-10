@@ -1179,4 +1179,16 @@ CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at)
 ALTER TABLE signal_threads ADD COLUMN closed_by TEXT CHECK (closed_by IS NULL OR closed_by IN ('jakub','agent'));
 `,
 	},
+	{
+		// The sender of a mail thread's latest message, as the include/exclude lists match it
+		// (`sender`, relay-decoded) and as it arrived (`sender_address`, the Hide My Email relay), so
+		// `x` in the Signals column can mute it (exclude list) and close its open threads. Mail only,
+		// never served. Null for every row until its next Mail poll. Additive: ids and events untouched.
+		version: 43,
+		sql: `
+ALTER TABLE signal_threads ADD COLUMN sender TEXT;
+ALTER TABLE signal_threads ADD COLUMN sender_address TEXT;
+CREATE INDEX IF NOT EXISTS idx_signal_threads_sender ON signal_threads(sender);
+`,
+	},
 ]

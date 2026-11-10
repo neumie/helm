@@ -435,8 +435,10 @@ export const SIGNALS_IPC = {
 	newAgent: 'signals:new-agent',
 	/** invoke → the filtered mail log (heads only). */
 	filtered: 'signals:filtered',
-	/** invoke(id) → add that filtered mail's sender to the include list. */
+	/** invoke(id) → show that filtered mail's sender again (unmute it, or add it to the include list). */
 	include: 'signals:include',
+	/** invoke(id) → never show that mail thread's sender (exclude list); its open threads close. */
+	mute: 'signals:mute',
 	/** invoke(id, {text}) → saves Jakub's answer on an agent ask (`POST /api/signals/:id/reply`). */
 	reply: 'signals:reply',
 	/**
@@ -509,6 +511,8 @@ export interface SignalsApi {
 	filtered(): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalFilteredPage>>
 	/** Always show this filtered mail's sender (`signals.mail.includeSenders`, from the next poll). */
 	include(id: number): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalIncludeResult>>
+	/** Never show this mail thread's sender (`signals.mail.excludeSenders`); its open threads close now. */
+	mute?(id: number): Promise<import('./shared-helm').HelmResult<import('./shared-helm').SignalMuteResult>>
 	/** Saves Jakub's answer on an agent ask (delivery to the agent is the dock's prompt path, separately). */
 	reply(
 		id: number,

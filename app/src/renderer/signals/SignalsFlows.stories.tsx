@@ -21,5 +21,9 @@ export const SendToAgent: Story = { args: { flow: 'send' } }
 /** `n` on the Sentry alert: an Okena project, a new worktree branch, claude, ⌘↵ starts it. */
 export const NewAgentInOkena: Story = { args: { flow: 'new-agent' } }
 
-/** `f` / the `5 filtered` line: mail the rules kept out, heads only, last 7 days. `i` always shows the sender. */
+/**
+ * `f` / the `5 filtered` line: mail the rules kept out, heads only, last 7 days. `i` always shows the
+ * sender (also `ci@builds.example`, kept out by an exclude glob); on a row only a mute keeps out (`x`
+ * in the list; the daemon marks it `unmute`) it unmutes it instead.
+ */
 export const FilteredMail: Story = { args: { flow: 'filtered' } }

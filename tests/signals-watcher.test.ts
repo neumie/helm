@@ -225,6 +225,38 @@ test(
 )
 
 test(
+	'restartPoll drops a read begun under the old sender lists; the other source keeps its read',
+	withDb(async db => {
+		const github = gatedReader('github', ['github:acme/a#1'])
+		const mail = gatedReader('mail', ['mail:abc'])
+		const watcher = new SignalsWatcher(config({ mail: { enabled: true } }), db, {
+			github: github.reader,
+			mail: mail.reader,
+			now: () => NOW,
+		})
+		watcher.start()
+		const deadline = Date.now() + 2_000
+		while ((github.calls.length === 0 || mail.calls.length === 0) && Date.now() < deadline)
+			await new Promise(resolve => setTimeout(resolve, 5))
+		// `x` muted a sender while this Mail read ran: it would report the muted thread again.
+		watcher.restartPoll('mail')
+		assert.equal(mail.calls[0]?.aborted, true)
+		assert.equal(github.calls[0]?.aborted, false)
+		mail.release()
+		github.release()
+		await new Promise(resolve => setTimeout(resolve, 20))
+		assert.deepEqual(
+			db.signals.list({}, NOW).map(thread => thread.source),
+			['github'],
+			'the stale Mail read is not persisted',
+		)
+		await watcher.stop()
+		watcher.restartPoll('mail')
+		assert.equal(mail.calls.length, 1, 'no admission after stop')
+	}),
+)
+
+test(
 	'manual polls are coalesced and spaced',
 	withDb(async db => {
 		const github = instantReader('github', ['github:acme/a#1'])
